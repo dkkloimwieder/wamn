@@ -7,7 +7,7 @@
 //! body to both paths and compares the two answers. The two widget-maker
 //! projections are served by a route only: no wiring for them exists in the
 //! release or the catalog, so their answers prove that a route runs no graph
-//! walk.
+//! walk. The last section shows the conditional read of a list route.
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -85,6 +85,31 @@ impl Paths {
             "{path} answered differently\n wiring: {wiring:?}\n  route: {route:?}"
         );
         Ok(wiring.1)
+    }
+
+    /// Send a GET to a route with an optional If-None-Match, and return the
+    /// status, the ETag and the body text.
+    async fn conditional(
+        &self,
+        path: &str,
+        if_none_match: Option<&str>,
+    ) -> anyhow::Result<(u16, Option<String>, String)> {
+        let mut request = self
+            .client
+            .get(format!("{}{ROUTE_PREFIX}{path}", self.endpoint))
+            .header("Host", &self.host)
+            .bearer_auth(&self.bearer);
+        if let Some(tag) = if_none_match {
+            request = request.header("If-None-Match", tag);
+        }
+        let response = request.send().await.with_context(|| path.to_owned())?;
+        let status = response.status().as_u16();
+        let etag = response
+            .headers()
+            .get("etag")
+            .map(|value| value.to_str().map(ToOwned::to_owned))
+            .transpose()?;
+        Ok((status, etag, response.text().await?))
     }
 
     /// Send one body through the route only.
@@ -331,6 +356,49 @@ async fn a_route_answers_every_operation_kind_as_its_one_node_wiring() -> anyhow
     // NO WALK. The projections have no wiring anywhere in this release.
     value(&paths.route("/widget_maker/list", &json!([{}])).await?)?;
     value(&paths.route("/widget_maker/query", &json!([{}])).await?)?;
+
+    // CONDITIONAL READS. A list answers with a weak ETag from the versions of
+    // the relations it reads. The same GET with that tag answers 304 with no
+    // body and runs no read, and a write changes the tag. The fixture get
+    // declares no revision field, so it has no ETag.
+    let (status, etag, _) = paths.conditional("/widget/query", None).await?;
+    let etag = etag
+        .filter(|_| status == 200)
+        .with_context(|| format!("the list answers 200 with an ETag, not {status}"))?;
+    anyhow::ensure!(etag.starts_with("W/\""), "a list tag is weak: {etag}");
+    let (status, again, body) = paths.conditional("/widget/query", Some(&etag)).await?;
+    anyhow::ensure!(
+        status == 304 && again.as_deref() == Some(etag.as_str()) && body.is_empty(),
+        "an unchanged list answers 304 with its tag and no body: {status} {again:?} {body}"
+    );
+    value(
+        &paths
+            .route(
+                "/widget/create",
+                &json!([{"request_id": "create-3", "idempotency_key": "create-3", "code": "standard"}]),
+            )
+            .await?,
+    )?;
+    let (status, changed, _) = paths.conditional("/widget/query", Some(&etag)).await?;
+    anyhow::ensure!(
+        status == 200 && changed.is_some() && changed.as_deref() != Some(etag.as_str()),
+        "a write changes the list tag: {status} {changed:?} {etag}"
+    );
+    let (status, get_tag, _) = paths
+        .conditional(
+            &format!(
+                "/widget/get?{}",
+                wamn_execution_contract::encode_read_query(
+                    json!({"id": other}).as_object().context("an item")?
+                )
+            ),
+            None,
+        )
+        .await?;
+    anyhow::ensure!(
+        status == 200 && get_tag.is_none(),
+        "a get without a revision field has no ETag: {status} {get_tag:?}"
+    );
 
     application.shutdown().await?;
     Ok(())

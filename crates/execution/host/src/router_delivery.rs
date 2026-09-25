@@ -8,8 +8,8 @@ use std::sync::Arc;
 use opentelemetry::KeyValue;
 use opentelemetry::metrics::{Counter, Meter};
 use wamn_catalog::{
-    AdmittedComponent, AttachmentAuthPolicy, AttachmentTarget, ServingManifest,
-    parse_attachment_auth_policy,
+    AdmittedComponent, AttachmentAuthPolicy, AttachmentTarget, OperationKind, ServingManifest,
+    ServingRoute, parse_attachment_auth_policy,
 };
 use wamn_engine::release_manifest::LoadedRelease;
 use wamn_event_wire::Causation;
@@ -25,7 +25,8 @@ use wash_runtime::wit::{WitInterface, WitWorld};
 use crate::operation::{
     OperationHost, OperationRefusal, OperationRefusalKind, authorize_registered_operation,
 };
-use crate::route::{RouteCall, invoke_route};
+use crate::read_cache::{get_tag, list_tag, matches};
+use crate::route::{RouteCall, authorize_route, invoke_route};
 use wamn_engine::operation::node_types;
 
 mod bindings {
@@ -203,8 +204,9 @@ impl RouterDeliveryBridge {
     ) -> DeliveryReport {
         let label_eligible = caller.is_some() && matches!(request.source, Source::Attachment(_));
         let mut deadline_adjustments = Vec::new();
+        let mut etag = None;
         let outcome = self
-            .deliver_inner(request, caller, &mut deadline_adjustments)
+            .deliver_inner(request, caller, &mut deadline_adjustments, &mut etag)
             .await;
         let mut actor_labels = Vec::new();
         if label_eligible && let Ok(DeliveryOutcome::Respond(payload)) = &outcome {
@@ -226,6 +228,7 @@ impl RouterDeliveryBridge {
         DeliveryReport {
             outcome,
             actor_labels,
+            etag,
             deadline_adjustments: deadline_adjustments
                 .into_iter()
                 .map(|adjustment| delivery::DeadlineAdjustment {
@@ -242,6 +245,7 @@ impl RouterDeliveryBridge {
         request: DeliveryRequest,
         caller: Option<AuthenticatedCaller>,
         deadline_adjustments: &mut Vec<DeadlineAdjustment>,
+        etag: &mut Option<String>,
     ) -> Result<DeliveryOutcome, DeliveryError> {
         let DeliveryRequest {
             source,
@@ -250,6 +254,7 @@ impl RouterDeliveryBridge {
             caller: _,
             trace,
             parent_causation,
+            if_none_match,
         } = request;
         if delivery_id.is_empty() {
             return Err(DeliveryError::InvalidRequest);
@@ -297,23 +302,31 @@ impl RouterDeliveryBridge {
                 component,
                 operation,
             } => {
-                let result = invoke_route(
-                    &self.operations,
-                    RouteCall {
-                        attachment_id: source.id(),
-                        package_id: &target.package_id,
-                        component,
-                        operation,
-                        delivery_id: &delivery_id,
-                        payload: &payload,
-                        caller,
-                        traceparent: traceparent.as_deref(),
-                        tracestate: tracestate.as_deref(),
-                        causation,
-                    },
-                )
-                .await
-                .and_then(settle_route);
+                let read = self.release.manifest().routes.iter().find(|route| {
+                    route.package_id == target.package_id
+                        && route.component == *component
+                        && route.operation == *operation
+                        && route.kind.is_read()
+                });
+                let result = self
+                    .run_route(
+                        RouteCall {
+                            attachment_id: source.id(),
+                            package_id: &target.package_id,
+                            component,
+                            operation,
+                            delivery_id: &delivery_id,
+                            payload: &payload,
+                            caller,
+                            traceparent: traceparent.as_deref(),
+                            tracestate: tracestate.as_deref(),
+                            causation,
+                        },
+                        read,
+                        if_none_match.as_deref(),
+                        etag,
+                    )
+                    .await;
                 return match result {
                     Ok(settled) => {
                         self.record(&attributes, DeliveryClass::Delivered);
@@ -362,6 +375,84 @@ impl RouterDeliveryBridge {
                 },
             )
             .await
+    }
+
+    /// Call one route, with the ETag of a read (`docs/plan/http-reads.md`
+    /// section 4.3).
+    ///
+    /// A list reads the model versions of its relations before it runs, and a
+    /// match with If-None-Match answers not-modified without running it. The
+    /// caller passes the operation grant first. A `get` runs, and its tag comes
+    /// from the revision of the record it returns. A read without a tag, and
+    /// every other route, runs as before.
+    async fn run_route(
+        &self,
+        call: RouteCall<'_>,
+        read: Option<&ServingRoute>,
+        if_none_match: Option<&str>,
+        etag: &mut Option<String>,
+    ) -> anyhow::Result<RouteSettlement> {
+        let release = self
+            .operations
+            .release_identity()
+            .manifest_digest
+            .to_string();
+        let not_modified = || RouteSettlement {
+            outcome: DeliveryOutcome::NotModified,
+            label: "not-modified",
+            result: serde_json::Value::Null,
+        };
+        let mut tag = None;
+        if let Some(read) =
+            read.filter(|read| read.kind != OperationKind::Get && !read.reads.is_empty())
+        {
+            authorize_route(&self.operations, &call).await?;
+            match self.list_tag(read, &release).await {
+                Ok(list) if if_none_match.is_some_and(|value| matches(value, &list)) => {
+                    *etag = Some(list);
+                    return Ok(not_modified());
+                }
+                Ok(list) => tag = Some(list),
+                Err(error) => {
+                    tracing::warn!(%error, "model versions unavailable; the list has no ETag");
+                }
+            }
+        }
+        let settled = settle_route(invoke_route(&self.operations, call).await?)?;
+        if !matches!(settled.outcome, DeliveryOutcome::Respond(_)) {
+            return Ok(settled);
+        }
+        if let Some(revision) = read.and_then(|read| read.revision.as_deref()) {
+            tag = get_tag(&release, &settled.result, revision);
+        }
+        if let Some(tag) = &tag
+            && if_none_match.is_some_and(|value| matches(value, tag))
+        {
+            *etag = Some(tag.clone());
+            return Ok(not_modified());
+        }
+        *etag = tag;
+        Ok(settled)
+    }
+
+    /// The weak ETag of a list from the current versions of the relations it reads.
+    async fn list_tag(&self, read: &ServingRoute, release: &str) -> anyhow::Result<String> {
+        let names = read
+            .reads
+            .iter()
+            .map(|relation| (relation.schema.as_str(), relation.relation.as_str()))
+            .collect::<Vec<_>>();
+        let versions = self
+            .operations
+            .postgres
+            .model_versions(&self.operations.project, &names)
+            .await?;
+        anyhow::ensure!(
+            versions.len() == names.len(),
+            "model-version-count-mismatch"
+        );
+        let versions = read.reads.iter().zip(versions).collect::<Vec<_>>();
+        Ok(list_tag(release, &versions))
     }
 
     /// Settle a delivery that the route path or the driver refused, or that

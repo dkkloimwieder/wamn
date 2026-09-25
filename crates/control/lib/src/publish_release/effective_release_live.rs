@@ -326,7 +326,7 @@ async fn mint(
     request: &MintReleaseManifest<'_>,
     manifests: &BTreeMap<String, wamn_schema_generator::PackageManifest>,
     hashes: &BTreeMap<String, String>,
-    kinds: &super::RouteKinds,
+    kinds: &super::RouteContracts,
 ) -> MintedReleaseManifest {
     let transaction = project.transaction().await.expect("begin release mint");
     let release = mint_release_manifest_with_package_manifests(

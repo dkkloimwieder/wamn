@@ -43,20 +43,7 @@ pub(crate) async fn invoke_route(
     route: RouteCall<'_>,
 ) -> anyhow::Result<Result<node_types::Emission, node_types::NodeError>> {
     let components = host.release_components().await?;
-    let component = route_component(
-        &components,
-        route.package_id,
-        route.component,
-        route.operation,
-    )?;
-    let fact = component
-        .operation(route.operation)
-        .context("route-operation-fact-missing")?;
-    authorize_registered_operation(
-        route.caller.as_ref(),
-        fact.registered_operation.as_deref(),
-        fact.fresh_only,
-    )?;
+    let component = authorized_component(&components, &route)?;
     let release = &host.release.manifest().release;
     let span = invocation_span(
         &InvocationSite {
@@ -121,6 +108,40 @@ pub(crate) async fn invoke_route(
     }
     .instrument(span)
     .await
+}
+
+/// Apply the operation grant of one route without calling it.
+///
+/// A conditional read calls it before it answers not-modified, so a 304 never
+/// answers a caller that the read itself would refuse.
+pub(crate) async fn authorize_route(
+    host: &OperationHost,
+    route: &RouteCall<'_>,
+) -> anyhow::Result<()> {
+    let components = host.release_components().await?;
+    authorized_component(&components, route).map(|_| ())
+}
+
+/// The component of one route, after the caller passed its operation grant.
+fn authorized_component<'a>(
+    components: &'a [AdmittedComponent],
+    route: &RouteCall<'_>,
+) -> anyhow::Result<&'a AdmittedComponent> {
+    let component = route_component(
+        components,
+        route.package_id,
+        route.component,
+        route.operation,
+    )?;
+    let fact = component
+        .operation(route.operation)
+        .context("route-operation-fact-missing")?;
+    authorize_registered_operation(
+        route.caller.as_ref(),
+        fact.registered_operation.as_deref(),
+        fact.fresh_only,
+    )?;
+    Ok(component)
 }
 
 /// The one admitted component of the package that exports the route operation.

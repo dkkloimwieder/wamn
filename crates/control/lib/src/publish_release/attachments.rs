@@ -2,7 +2,7 @@
 
 use super::{
     AuthoredHttpRoute, BTreeMap, BTreeSet, MintManifestError, MintManifestErrorKind, PathBuf,
-    RouteKinds, ServingAttachment, canonical_http_route_template, normalize_http_route,
+    RouteContracts, ServingAttachment, canonical_http_route_template, normalize_http_route,
 };
 use wamn_catalog::AttachmentTarget;
 
@@ -176,7 +176,7 @@ pub(super) fn validate_attachment_definition_hashes(
 pub(super) fn resolve_route_host_overlay(
     authored: &BTreeMap<String, ServingAttachment>,
     route_host: Option<&str>,
-    route_kinds: &RouteKinds,
+    route_contracts: &RouteContracts,
 ) -> Result<BTreeMap<String, ServingAttachment>, MintManifestError> {
     validate_authored_attachment_routes(authored)?;
     validate_attachment_definition_hashes(authored)?;
@@ -215,7 +215,7 @@ pub(super) fn resolve_route_host_overlay(
         ) {
             continue;
         }
-        let method = route_method(attachment_id, attachment, route_kinds)?;
+        let method = route_method(attachment_id, attachment, route_contracts)?;
         let route = attachment
             .definition
             .as_object_mut()
@@ -285,14 +285,14 @@ pub(super) fn resolve_route_host_overlay(
 fn route_method(
     attachment_id: &str,
     attachment: &ServingAttachment,
-    route_kinds: &RouteKinds,
+    route_contracts: &RouteContracts,
 ) -> Result<&'static str, MintManifestError> {
     let AttachmentTarget::Route { operation, .. } = &attachment.target else {
         return Ok("POST");
     };
-    route_kinds
+    route_contracts
         .get(&(attachment.package_id.clone(), operation.clone()))
-        .map(|kind| kind.http_method())
+        .map(|contract| contract.kind.http_method())
         .ok_or_else(|| {
             MintManifestError::new(
                 MintManifestErrorKind::GeneratedPackageMetadata,

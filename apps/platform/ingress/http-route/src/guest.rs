@@ -131,10 +131,12 @@ impl Backend for GuestBackend {
                 tracestate: trace.tracestate,
             }),
             parent_causation: None,
+            if_none_match: request.if_none_match,
         };
         let report = delivery::deliver(request).await;
         DeliveryReport {
             actor_labels: report.actor_labels,
+            etag: report.etag,
             outcome: report
                 .outcome
                 .map(convert_delivery_outcome)
@@ -213,6 +215,7 @@ fn convert_delivery_outcome(
             })
         }
         delivery::DeliveryOutcome::Cancelled => DeliveryOutcome::Cancelled,
+        delivery::DeliveryOutcome::NotModified => DeliveryOutcome::NotModified,
     }
 }
 

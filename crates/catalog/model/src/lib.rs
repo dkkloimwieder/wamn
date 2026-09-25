@@ -44,8 +44,8 @@ pub use serving_manifest::{
     RELEASE_MANIFEST_CONFIGMAP_PREFIX, RELEASE_MANIFEST_FILE_NAME, RELEASE_MANIFEST_MOUNT_PATH,
     RouteAttachment, SERVING_MANIFEST_FORMAT_VERSION, SESSION_AUTHENTICATION_MODE,
     ServingAttachment, ServingComponent, ServingComponentOperation, ServingManifest,
-    ServingRegistration, ServingRegistrationInput, ServingRelease, ServingRoute, ServingWiring,
-    UNSUPPORTED_SERVING_MANIFEST_VERSION_REFUSAL, WiringAttachment, WorkflowSection,
+    ServingRegistration, ServingRegistrationInput, ServingRelation, ServingRelease, ServingRoute,
+    ServingWiring, UNSUPPORTED_SERVING_MANIFEST_VERSION_REFUSAL, WiringAttachment, WorkflowSection,
     parse_attachment_auth_policy, release_manifest_configmap_name,
 };
 pub use wiring::{

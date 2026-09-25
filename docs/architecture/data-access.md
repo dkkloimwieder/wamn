@@ -622,6 +622,7 @@ A `TRUNCATE` fires no row trigger, so the statement trigger adds 1 at once.
 
 Both trigger functions run as their owner.
 `wamn_app` holds no privilege on `wamn_cache`, so a guest cannot write a version directly.
+The callable-HTTP admitter role holds `USAGE` on `wamn_cache` and `SELECT` on `model_versions`, because the host reads the versions for the [ETag](execution.md) of a list.
 The catalog reader skips both triggers by name, as it skips the record history triggers.
 
 ## Canonical values and SQL names

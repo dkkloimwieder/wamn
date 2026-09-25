@@ -7,10 +7,10 @@ use anyhow::Context as _;
 use serde_json::{Value, json};
 use tokio_postgres::NoTls;
 use wamn_catalog::{
-    AttachmentTarget, OperationKind, ServingAttachment, ServingManifest, ServingRoute,
-    WiringDocument,
+    AttachmentTarget, ServingAttachment, ServingManifest, ServingRoute, WiringDocument,
 };
 use wamn_control::apply_package::{ApplyPackageRequest, apply_package};
+use wamn_control::publish_release::package_route;
 use wamn_control::push_component::{
     AdmitComponentRequest, admit_component, project_admitted_component_for_verification,
 };
@@ -533,11 +533,16 @@ fn selected_attachments(
             // As publish does: a route to a read is a GET, and every other
             // route and every wiring is a POST.
             let method = match &attachment.target {
-                AttachmentTarget::Route { operation, .. } => {
+                AttachmentTarget::Route {
+                    component,
+                    operation,
+                } => {
                     let root = roots
                         .get(&attachment.package_id)
                         .context("a route attachment names an assembled package")?;
-                    operation_kind(root, operation)?.http_method()
+                    package_route(root, &attachment.package_id, component, operation)?
+                        .kind
+                        .http_method()
                 }
                 AttachmentTarget::Wiring { .. } => "POST",
             };
@@ -552,9 +557,8 @@ fn selected_attachments(
     Ok(result)
 }
 
-/// One manifest route for each route attachment. The kind is the `kind` of
-/// the package's generated contract `operation.json`, the same source that
-/// publish reads.
+/// One manifest route for each route attachment, read from the package's
+/// generated contract `operation.json` by the same function that publish uses.
 fn attachment_routes(
     attachments: &BTreeMap<String, ServingAttachment>,
     roots: &BTreeMap<String, &Path>,
@@ -571,33 +575,12 @@ fn attachment_routes(
         let root = roots
             .get(&attachment.package_id)
             .context("a route attachment names an assembled package")?;
-        routes.insert(ServingRoute {
-            package_id: attachment.package_id.clone(),
-            component: component.clone(),
-            operation: operation.clone(),
-            kind: operation_kind(root, operation)?,
-        });
+        routes.insert(package_route(
+            root,
+            &attachment.package_id,
+            component,
+            operation,
+        )?);
     }
     Ok(routes)
-}
-
-fn operation_kind(root: &Path, operation: &str) -> anyhow::Result<OperationKind> {
-    for model in std::fs::read_dir(root.join("generated/contracts"))? {
-        let model = model?.path();
-        if !model.is_dir() {
-            continue;
-        }
-        for contract in std::fs::read_dir(&model)? {
-            let contract = contract?.path();
-            if !contract.to_string_lossy().ends_with(".operation.json") {
-                continue;
-            }
-            let value: Value = serde_json::from_slice(&std::fs::read(&contract)?)?;
-            if value["operation"] == operation {
-                return serde_json::from_value(value["kind"].clone())
-                    .with_context(|| format!("read the kind of {}", contract.display()));
-            }
-        }
-    }
-    anyhow::bail!("no generated contract declares operation {operation}")
 }

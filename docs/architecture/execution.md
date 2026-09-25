@@ -35,6 +35,18 @@ A successful read also sends `Vary: Authorization, Cookie`.
 Every other response sends `Cache-Control: no-store`: a write, any status other than 200, and any request that carries `x-wamn-csrf`.
 [`read_cache_control`](../../crates/platform/runtime/src/plugins/flow_http_routing.rs) owns the values.
 
+A read also carries an ETag, which the host derives and compares.
+A `get` has a strong ETag from the manifest digest of the release and the revision field of the record that it returns.
+A `query` or `projection` has a weak ETag from the manifest digest and the [model versions](data-access.md#model-versions) of the relations that it reads.
+Publish writes the relations and the revision field into the serving manifest route from the generated contract, and a history table stands for its model relation.
+The router forwards `If-None-Match` on a GET, and the host compares it with the weak comparison.
+For a list, the host applies the operation grant, reads the versions, and answers not-modified on a match without running the read.
+For a `get`, the host runs the read and then compares.
+On not-modified, the router answers 304 with the ETag, the `Cache-Control` and `Vary` of the route, and no body.
+A read without a revision field, or with no declared relations, has no ETag, and a failed version read leaves the list without one.
+A `get` tag follows `row_version`, so a row that is deleted and created again under the same natural key can match an old tag.
+[`read_cache`](../../crates/execution/host/src/read_cache.rs) owns the tags.
+
 A route input that fails its schema returns HTTP 400 with the code `schema-invalid`.
 The body carries the RFC 6901 pointer of the offending value in `data.pointer`:
 

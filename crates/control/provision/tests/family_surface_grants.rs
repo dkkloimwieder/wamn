@@ -725,14 +725,16 @@ fn the_http_admitter_role_adds_exactly_the_fresh_permission_reads() {
     expected.push("relation|app_system|permissions|SELECT".to_owned());
     expected.push("relation|app_system|user_roles|SELECT".to_owned());
     expected.push("relation|app_system|users|SELECT".to_owned());
+    expected.push("relation|wamn_cache|model_versions|SELECT".to_owned());
     expected.push("schema|app_system|app_system|USAGE".to_owned());
     expected.push("schema|catalog|catalog|USAGE".to_owned());
+    expected.push("schema|wamn_cache|wamn_cache|USAGE".to_owned());
     expected.sort();
     assert_eq!(
         load_role_grants(&admin, stable),
         expected,
         "the callable-HTTP admitter's aclexplode grants are not exactly USAGE \
-         on catalog and app_system plus the ten SELECTs its host reads"
+         on catalog, app_system and wamn_cache plus the eleven SELECTs its host reads"
     );
     // Convergence, same as the executor arm: a run-plane privilege handed to
     // this family out of band is REMOVED by a re-apply, not merely unmentioned.

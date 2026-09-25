@@ -1335,6 +1335,8 @@ mod tests {
             component: invocation.origin.component.clone(),
             operation: invocation.origin.operation.clone(),
             kind: OperationKind::Command,
+            reads: BTreeSet::new(),
+            revision: None,
         });
         authorize_release_closure(&manifest, &invocation, &snapshot)
             .expect("a released route authorizes its origin export");

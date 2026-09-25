@@ -38,6 +38,7 @@ struct FakeBackend {
     delivery: Result<DeliveryOutcome, DeliveryError>,
     actor_labels: Vec<(String, String)>,
     deadline_adjustments: Vec<DeadlineAdjustment>,
+    etag: Option<String>,
     schema: Result<(), SchemaInvalid>,
     fault: Fault,
     authenticated_attachments: Vec<String>,
@@ -55,6 +56,7 @@ impl FakeBackend {
             actor_labels: Vec::new(),
             routes: vec![route],
             deadline_adjustments: Vec::new(),
+            etag: None,
             auth: Ok(Some(AUTHENTICATED_USER_ID.to_string())),
             delivery: Ok(DeliveryOutcome::Respond(r#"{"ok":true}"#.to_string())),
             schema: Ok(()),
@@ -145,6 +147,7 @@ impl Backend for FakeBackend {
                 self.delivery.clone()
             },
             deadline_adjustments: self.deadline_adjustments.clone(),
+            etag: self.etag.clone(),
         }
     }
 }
@@ -1014,4 +1017,68 @@ fn only_a_successful_read_without_the_csrf_header_carries_its_cache_control() {
     let output = request(&mut backend, &head(), br#"{"amount":1}"#);
     assert_eq!(output.status, 200);
     assert_eq!(output.cache_headers(), no_store, "a write");
+}
+
+#[test]
+fn a_read_forwards_if_none_match_and_answers_not_modified_with_its_tag_and_no_body() {
+    const READ: &str = "private, max-age=10, stale-while-revalidate=60";
+    const TAG: &str = "W/\"0123456789abcdef0123456789abcdef\"";
+    let mut read = route();
+    read.method = "GET".to_string();
+    read.path = "/receipts/list".to_string();
+    read.mappings = Vec::new();
+    read.cache_control = Some(READ.to_string());
+    let mut get = head();
+    get.method = "get".to_string();
+    get.target = "/receipts/list".to_string();
+    get.headers.push(Header {
+        name: "If-None-Match".to_string(),
+        value: TAG.to_string(),
+    });
+
+    let mut backend = FakeBackend::new(read.clone());
+    backend.etag = Some(TAG.to_string());
+    let output = request(&mut backend, &get, b"");
+    assert_eq!(output.status, 200);
+    assert_eq!(
+        backend.deliveries[0].if_none_match.as_deref(),
+        Some(TAG),
+        "the host compares the tag"
+    );
+    assert_eq!(
+        output.cache_headers(),
+        [
+            ("cache-control", READ.to_string()),
+            ("vary", "Authorization, Cookie".to_string()),
+            ("etag", TAG.to_string()),
+        ]
+    );
+
+    let mut backend = FakeBackend::new(read);
+    backend.etag = Some(TAG.to_string());
+    backend.delivery = Ok(DeliveryOutcome::NotModified);
+    let output = request(&mut backend, &get, b"");
+    assert_eq!(output.status, 304);
+    assert!(output.body.is_empty(), "a 304 has no body");
+    assert_eq!(
+        output.cache_headers(),
+        [
+            ("cache-control", READ.to_string()),
+            ("vary", "Authorization, Cookie".to_string()),
+            ("etag", TAG.to_string()),
+        ]
+    );
+
+    let mut write = head();
+    write.headers.push(Header {
+        name: "if-none-match".to_string(),
+        value: TAG.to_string(),
+    });
+    let mut backend = FakeBackend::new(route());
+    let output = request(&mut backend, &write, br#"{"amount":1}"#);
+    assert_eq!(output.status, 200);
+    assert_eq!(
+        backend.deliveries[0].if_none_match, None,
+        "a write is never conditional"
+    );
 }

@@ -107,6 +107,8 @@ fn routes() -> BTreeSet<ServingRoute> {
         component: "http-request".into(),
         operation: "platform-fixture-overlay:widget/get@3.0.0".into(),
         kind: OperationKind::Get,
+        reads: BTreeSet::new(),
+        revision: None,
     }])
 }
 

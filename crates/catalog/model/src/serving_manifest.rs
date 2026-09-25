@@ -388,6 +388,24 @@ pub struct ServingRoute {
     pub component: String,
     pub operation: String,
     pub kind: OperationKind,
+    /// The model relations that a read of this route reads, from the
+    /// `relations` of its generated contract. A history table stands for its
+    /// model relation, whose version changes in the same transaction. A route
+    /// of another kind reads none.
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    pub reads: BTreeSet<ServingRelation>,
+    /// The result field that carries the record revision of a `get`, from
+    /// `record.revision_field` of its generated contract.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub revision: Option<String>,
+}
+
+/// One relation of a project database, by schema and name.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
+pub struct ServingRelation {
+    pub schema: String,
+    pub relation: String,
 }
 
 /// What one release attachment invokes.
@@ -1396,6 +1414,8 @@ mod tests {
             component: "http-request".into(),
             operation: "base:widget/get@1.0.0".into(),
             kind: OperationKind::Get,
+            reads: BTreeSet::new(),
+            revision: None,
         }])
     }
 

@@ -434,7 +434,9 @@ fn quoted_column_list(columns: &[&str]) -> String {
 /// [`HTTP_ADMITTER_CATALOG_RELATIONS`] and the three app-system relations below.
 /// Human permission reads join the active application user to its role grants;
 /// service permission reads continue to read `app_system.permissions` alone.
-/// `USAGE` on those two schemas plus ten `SELECT`s is the family's authority.
+/// A read route's ETag reads `wamn_cache.model_versions`
+/// (`deploy/sql/model-versions.sql`). `USAGE` on those three schemas plus
+/// eleven `SELECT`s is the family's authority.
 ///
 /// # What it deliberately does NOT hold
 ///
@@ -458,10 +460,12 @@ pub fn grant_http_admitter_surface_sql(schema: &str) -> String {
     let schema = quote_ident(schema);
     let mut sql = format!(
         "{ensure} \
-         REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA catalog, app_system, {schema} FROM {role}; \
-         REVOKE ALL PRIVILEGES ON ALL ROUTINES IN SCHEMA catalog, app_system, {schema} FROM {role}; \
-         REVOKE ALL PRIVILEGES ON SCHEMA catalog, app_system, {schema} FROM {role}; \
-         GRANT USAGE ON SCHEMA catalog, app_system TO {role};",
+         REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA catalog, app_system, wamn_cache, {schema} \
+         FROM {role}; \
+         REVOKE ALL PRIVILEGES ON ALL ROUTINES IN SCHEMA catalog, app_system, wamn_cache, {schema} \
+         FROM {role}; \
+         REVOKE ALL PRIVILEGES ON SCHEMA catalog, app_system, wamn_cache, {schema} FROM {role}; \
+         GRANT USAGE ON SCHEMA catalog, app_system, wamn_cache TO {role};",
         ensure = ensure_workload_acl_role_sql(WorkloadRoleFamily::HttpAdmitter),
     );
     for relation in HTTP_ADMITTER_CATALOG_RELATIONS {
@@ -476,7 +480,8 @@ pub fn grant_http_admitter_surface_sql(schema: &str) -> String {
         sql,
         " GRANT SELECT ON TABLE app_system.\"permissions\" TO {role}; \
          GRANT SELECT ON TABLE app_system.\"users\" TO {role}; \
-         GRANT SELECT ON TABLE app_system.\"user_roles\" TO {role};"
+         GRANT SELECT ON TABLE app_system.\"user_roles\" TO {role}; \
+         GRANT SELECT ON TABLE wamn_cache.\"model_versions\" TO {role};"
     )
     .expect("writing to a String cannot fail");
     sql
@@ -983,13 +988,13 @@ mod tests {
         let sql = grant_http_admitter_surface_sql("wamn_run");
         assert_eq!(
             surface_grants(WorkloadRoleFamily::HttpAdmitter, &sql),
-            "REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA catalog, app_system, \"wamn_run\" \
+            "REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA catalog, app_system, wamn_cache, \"wamn_run\" \
              FROM \"wamn_http_admitter\"; \
-             REVOKE ALL PRIVILEGES ON ALL ROUTINES IN SCHEMA catalog, app_system, \"wamn_run\" \
+             REVOKE ALL PRIVILEGES ON ALL ROUTINES IN SCHEMA catalog, app_system, wamn_cache, \"wamn_run\" \
              FROM \"wamn_http_admitter\"; \
-             REVOKE ALL PRIVILEGES ON SCHEMA catalog, app_system, \"wamn_run\" \
+             REVOKE ALL PRIVILEGES ON SCHEMA catalog, app_system, wamn_cache, \"wamn_run\" \
              FROM \"wamn_http_admitter\"; \
-             GRANT USAGE ON SCHEMA catalog, app_system TO \"wamn_http_admitter\"; \
+             GRANT USAGE ON SCHEMA catalog, app_system, wamn_cache TO \"wamn_http_admitter\"; \
              GRANT SELECT ON TABLE catalog.\"effective_release_packages\" \
              TO \"wamn_http_admitter\"; \
              GRANT SELECT ON TABLE catalog.\"wirings\" TO \"wamn_http_admitter\"; \
@@ -1001,9 +1006,10 @@ mod tests {
              GRANT SELECT ON TABLE catalog.\"connection_generations\" TO \"wamn_http_admitter\"; \
              GRANT SELECT ON TABLE app_system.\"permissions\" TO \"wamn_http_admitter\"; \
              GRANT SELECT ON TABLE app_system.\"users\" TO \"wamn_http_admitter\"; \
-             GRANT SELECT ON TABLE app_system.\"user_roles\" TO \"wamn_http_admitter\";",
-            "the callable-HTTP admitter reads seven catalog relations and three permission relations, and holds \
-             nothing on the run plane, no write of any grain, and no EXECUTE"
+             GRANT SELECT ON TABLE app_system.\"user_roles\" TO \"wamn_http_admitter\"; \
+             GRANT SELECT ON TABLE wamn_cache.\"model_versions\" TO \"wamn_http_admitter\";",
+            "the callable-HTTP admitter reads seven catalog relations, three permission relations and the \
+             model versions, and holds nothing on the run plane, no write of any grain, and no EXECUTE"
         );
         // The schema is an identifier position and is quoted, not interpolated.
         assert!(grant_http_admitter_surface_sql("we\"ird").contains("\"we\"\"ird\""));

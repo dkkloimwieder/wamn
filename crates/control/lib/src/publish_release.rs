@@ -16,8 +16,8 @@ use wamn_catalog::{
     AdmittedComponent, AdmittedComponentEffect, AdmittedComponentOperation, AttachmentTarget,
     ComponentPackageScope, EffectiveReleaseId, ManifestDigest, OperationKind, PackageCoordinate,
     SERVING_MANIFEST_FORMAT_VERSION, ServingAttachment, ServingComponent, ServingManifest,
-    ServingRegistration, ServingRelease, ServingRoute, ServingWiring, WiringDocument,
-    WorkflowSection, validate_resolved_wiring_compatibility,
+    ServingRegistration, ServingRelation, ServingRelease, ServingRoute, ServingWiring,
+    WiringDocument, WorkflowSection, validate_resolved_wiring_compatibility,
 };
 use wamn_control_registry::Triple;
 use wamn_schema_control::{
@@ -38,6 +38,7 @@ use components::{
     project_serving_component, resolve_component_dependency_closure, resolve_route_component,
     resolve_wiring_components, resolved_wiring_entry_operation, validate_anonymous_wiring_closure,
 };
+pub use package_sources::package_route;
 use package_sources::read_package_manifests;
 
 pub use components::effect_free_operation_dependencies;
@@ -343,9 +344,30 @@ impl std::error::Error for MintManifestError {
     }
 }
 
-/// The contract kind of each generated operation, keyed by package id and
-/// exact operation.
-type RouteKinds = BTreeMap<(String, String), OperationKind>;
+/// The facts a route takes from the generated contract of the operation it
+/// calls, keyed by package id and exact operation.
+type RouteContracts = BTreeMap<(String, String), RouteContract>;
+
+/// What a route takes from the generated contract `operation.json` of its
+/// operation: the kind, the relations a read reads, and the revision field of
+/// a `get`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct RouteContract {
+    kind: OperationKind,
+    reads: BTreeSet<ServingRelation>,
+    revision: Option<String>,
+}
+
+#[cfg(test)]
+impl From<OperationKind> for RouteContract {
+    fn from(kind: OperationKind) -> Self {
+        Self {
+            kind,
+            reads: BTreeSet::new(),
+            revision: None,
+        }
+    }
+}
 
 /// What one release component member binds: a wiring node or a route.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -470,9 +492,9 @@ pub async fn mint_local(
         .context("local release identity exhausted")?
         .max(args.effective_release_id);
     let authored = read_package_attachments(&args.attachments, &args.package_manifests)?;
-    let (package_manifests, _, route_kinds) = read_package_manifests(&args.package_manifests)?;
+    let (package_manifests, _, route_contracts) = read_package_manifests(&args.package_manifests)?;
     let attachments =
-        resolve_route_host_overlay(&authored, args.route_host.as_deref(), &route_kinds)?;
+        resolve_route_host_overlay(&authored, args.route_host.as_deref(), &route_contracts)?;
     let packages = args.packages.iter().cloned().collect::<BTreeSet<_>>();
     let targets = args.wirings.iter().cloned().collect::<BTreeSet<_>>();
     ensure!(
@@ -568,7 +590,7 @@ pub async fn mint_local(
     }
     let routes = project_routes(
         &request,
-        &route_kinds,
+        &route_contracts,
         &component_facts,
         &mut components,
         &mut membership,
@@ -674,12 +696,12 @@ async fn mint_candidate(
     );
     let authored_attachments =
         read_package_attachments(&args.attachments, &args.package_manifests)?;
-    let (package_manifests, package_manifest_hashes, route_kinds) =
+    let (package_manifests, package_manifest_hashes, route_contracts) =
         read_package_manifests(&args.package_manifests)?;
     let attachments = resolve_route_host_overlay(
         &authored_attachments,
         args.route_host.as_deref(),
-        &route_kinds,
+        &route_contracts,
     )?;
     let packages = args.packages.iter().cloned().collect::<BTreeSet<_>>();
     ensure!(
@@ -754,7 +776,7 @@ async fn mint_candidate(
         &request,
         &package_manifests,
         &package_manifest_hashes,
-        &route_kinds,
+        &route_contracts,
         &run_schema,
         &source_policy,
     )
@@ -780,7 +802,7 @@ async fn mint_in_transaction(
     request: &MintReleaseManifest<'_>,
     package_manifests: &BTreeMap<String, wamn_schema_generator::PackageManifest>,
     package_manifest_hashes: &BTreeMap<String, String>,
-    route_kinds: &RouteKinds,
+    route_contracts: &RouteContracts,
     run_schema: &BareSchemaName,
     source_policy: &AuthoritativeEnvironmentPolicy,
 ) -> anyhow::Result<MintedReleaseManifest> {
@@ -793,7 +815,7 @@ async fn mint_in_transaction(
         request,
         package_manifests,
         package_manifest_hashes,
-        route_kinds,
+        route_contracts,
     )
     .await?;
     let projected =
@@ -1144,8 +1166,8 @@ fn sha256(bytes: &[u8]) -> String {
 /// Mint a release promoted from a published one.
 ///
 /// The source manifest is the authority once published, so its registrations
-/// and the kinds of its routes carry over. Promotion never reads a package
-/// folder.
+/// and the contract facts of its routes carry over. Promotion never reads a
+/// package folder.
 pub async fn mint_promoted_release_manifest(
     transaction: &Transaction<'_>,
     request: &MintReleaseManifest<'_>,
@@ -1153,12 +1175,16 @@ pub async fn mint_promoted_release_manifest(
     routes: &BTreeSet<ServingRoute>,
 ) -> Result<MintedReleaseManifest, MintManifestError> {
     let package_manifests = BTreeMap::new();
-    let route_kinds = routes
+    let route_contracts = routes
         .iter()
         .map(|route| {
             (
                 (route.package_id.clone(), route.operation.clone()),
-                route.kind,
+                RouteContract {
+                    kind: route.kind,
+                    reads: route.reads.clone(),
+                    revision: route.revision.clone(),
+                },
             )
         })
         .collect();
@@ -1167,7 +1193,7 @@ pub async fn mint_promoted_release_manifest(
         request,
         &package_manifests,
         None,
-        &route_kinds,
+        &route_contracts,
         Some(registrations),
     )
     .await
@@ -1178,14 +1204,14 @@ async fn mint_release_manifest_with_package_manifests(
     request: &MintReleaseManifest<'_>,
     package_manifests: &BTreeMap<String, wamn_schema_generator::PackageManifest>,
     package_manifest_hashes: &BTreeMap<String, String>,
-    route_kinds: &RouteKinds,
+    route_contracts: &RouteContracts,
 ) -> Result<MintedReleaseManifest, MintManifestError> {
     mint_release_manifest_from_sources(
         transaction,
         request,
         package_manifests,
         Some(package_manifest_hashes),
-        route_kinds,
+        route_contracts,
         None,
     )
     .await
@@ -1196,7 +1222,7 @@ async fn mint_release_manifest_from_sources(
     request: &MintReleaseManifest<'_>,
     package_manifests: &BTreeMap<String, wamn_schema_generator::PackageManifest>,
     package_manifest_hashes: Option<&BTreeMap<String, String>>,
-    route_kinds: &RouteKinds,
+    route_contracts: &RouteContracts,
     promoted_registrations: Option<&BTreeMap<String, ServingRegistration>>,
 ) -> Result<MintedReleaseManifest, MintManifestError> {
     transaction
@@ -1274,7 +1300,7 @@ async fn mint_release_manifest_from_sources(
 
     let routes = project_routes(
         request,
-        route_kinds,
+        route_contracts,
         &component_facts,
         &mut components,
         &mut membership,
@@ -1829,7 +1855,7 @@ fn project_wiring_document(
 /// published manifest a promotion copies.
 fn project_routes(
     request: &MintReleaseManifest<'_>,
-    route_kinds: &RouteKinds,
+    route_contracts: &RouteContracts,
     component_facts: &BTreeMap<(String, String), Vec<AdmittedComponent>>,
     components: &mut BTreeSet<ServingComponent>,
     membership: &mut BTreeSet<ReleaseComponentMembership>,
@@ -1864,7 +1890,7 @@ fn project_routes(
             ))
             .map_or(&[][..], Vec::as_slice);
         let fact = resolve_route_component(attachment_id, attachment, component, operation, facts)?;
-        let kind = *route_kinds
+        let contract = route_contracts
             .get(&(attachment.package_id.clone(), operation.clone()))
             .ok_or_else(|| {
                 MintManifestError::new(
@@ -1891,7 +1917,9 @@ fn project_routes(
             package_id: attachment.package_id.clone(),
             component: component.clone(),
             operation: operation.clone(),
-            kind,
+            kind: contract.kind,
+            reads: contract.reads.clone(),
+            revision: contract.revision.clone(),
         });
     }
     Ok(routes)
@@ -2236,9 +2264,12 @@ mod tests {
                 .count(),
             1
         );
-        let resolved =
-            resolve_route_host_overlay(&authored, Some("Fixture.Localhost"), &RouteKinds::new())
-                .expect("merged routes retain deployment-owned host binding");
+        let resolved = resolve_route_host_overlay(
+            &authored,
+            Some("Fixture.Localhost"),
+            &RouteContracts::new(),
+        )
+        .expect("merged routes retain deployment-owned host binding");
         assert!(
             resolved
                 .values()
@@ -2308,9 +2339,12 @@ mod tests {
             ),
         ])
         .expect("distinct attachment identities merge before route validation");
-        let error =
-            resolve_route_host_overlay(&authored, Some("fixture.localhost"), &RouteKinds::new())
-                .expect_err("canonical route collisions remain refused after package merging");
+        let error = resolve_route_host_overlay(
+            &authored,
+            Some("fixture.localhost"),
+            &RouteContracts::new(),
+        )
+        .expect_err("canonical route collisions remain refused after package merging");
 
         assert_eq!(error.kind(), MintManifestErrorKind::Document);
         assert!(error.detail().contains("canonical path and method"));
@@ -2374,7 +2408,7 @@ mod tests {
         };
         let authored = BTreeMap::from([("fixture-http".to_owned(), attachment)]);
 
-        let missing = resolve_route_host_overlay(&authored, None, &RouteKinds::new())
+        let missing = resolve_route_host_overlay(&authored, None, &RouteContracts::new())
             .expect_err("a routed release requires its deployment hostname");
         assert_eq!(missing.kind(), MintManifestErrorKind::RouteHostUnbound);
         assert_eq!(missing.kind().as_str(), "route-host-unbound");
@@ -2382,7 +2416,7 @@ mod tests {
         assert!(missing.detail().contains("--route-host"));
 
         let resolved =
-            resolve_route_host_overlay(&authored, Some("Route.Example"), &RouteKinds::new())
+            resolve_route_host_overlay(&authored, Some("Route.Example"), &RouteContracts::new())
                 .expect("the deployment overlay resolves the route hostname");
         assert!(
             authored["fixture-http"].definition["route"]
@@ -2412,8 +2446,9 @@ mod tests {
                 .get_mut("fixture-http")
                 .expect("the attachment exists"),
         );
-        let package_host = resolve_route_host_overlay(&package_authored, None, &RouteKinds::new())
-            .expect_err("package content cannot author a deployment hostname");
+        let package_host =
+            resolve_route_host_overlay(&package_authored, None, &RouteContracts::new())
+                .expect_err("package content cannot author a deployment hostname");
         assert_eq!(package_host.kind(), MintManifestErrorKind::Document);
         assert!(package_host.detail().contains("remove it"));
         assert!(package_host.detail().contains("--route-host"));
@@ -2423,7 +2458,7 @@ mod tests {
             .get_mut("fixture-http")
             .expect("the attachment exists")
             .kind = wamn_catalog::AttachmentKind::Internal;
-        let package_host = resolve_route_host_overlay(&non_routed, None, &RouteKinds::new())
+        let package_host = resolve_route_host_overlay(&non_routed, None, &RouteContracts::new())
             .expect_err("every attachment kind refuses an authored route hostname");
         assert_eq!(package_host.kind(), MintManifestErrorKind::Document);
 
@@ -2440,7 +2475,7 @@ mod tests {
         let extra = resolve_route_host_overlay(
             &extra_route_field,
             Some("route.example"),
-            &RouteKinds::new(),
+            &RouteContracts::new(),
         )
         .expect_err("package route schema admits only a path");
         assert_eq!(extra.kind(), MintManifestErrorKind::Document);
@@ -2458,7 +2493,7 @@ mod tests {
         refresh_definition_hash(&mut second);
         colliding.insert("fixture-http-alias".to_owned(), second);
         let collision =
-            resolve_route_host_overlay(&colliding, Some("route.example"), &RouteKinds::new())
+            resolve_route_host_overlay(&colliding, Some("route.example"), &RouteContracts::new())
                 .expect_err("one overlay host cannot carry ambiguous route templates");
         assert_eq!(collision.kind(), MintManifestErrorKind::Document);
         assert!(collision.detail().contains("canonical path and method"));
@@ -2507,7 +2542,7 @@ mod tests {
                 ),
             ),
         ]);
-        let kinds: RouteKinds = [
+        let kinds: RouteContracts = [
             ("widget/get", OperationKind::Get),
             ("widget/query", OperationKind::Query),
             ("widget/load", OperationKind::Projection),
@@ -2521,7 +2556,7 @@ mod tests {
                     "source_fixture".to_owned(),
                     format!("source-fixture:{operation}@1.0.0"),
                 ),
-                kind,
+                RouteContract::from(kind),
             )
         })
         .collect();
@@ -2539,7 +2574,7 @@ mod tests {
         }
 
         let unknown =
-            resolve_route_host_overlay(&authored, Some("route.example"), &RouteKinds::new())
+            resolve_route_host_overlay(&authored, Some("route.example"), &RouteContracts::new())
                 .expect_err("a route to an operation with no contract kind refuses");
         assert_eq!(
             unknown.kind(),

@@ -2,8 +2,11 @@
 
 use std::path::Path;
 
+use wamn_record_history::{HISTORY_TABLE_SUFFIX, is_history_table_name};
+
 use super::{
-    BTreeMap, MintManifestError, MintManifestErrorKind, OperationKind, PathBuf, RouteKinds, sha256,
+    BTreeMap, BTreeSet, MintManifestError, MintManifestErrorKind, OperationKind, PathBuf,
+    RouteContract, RouteContracts, ServingRelation, ServingRoute, sha256,
 };
 
 /// Every package's parsed manifest, every package's manifest digest, and the
@@ -11,7 +14,7 @@ use super::{
 pub(super) type PackageManifestSources = (
     BTreeMap<String, wamn_schema_generator::PackageManifest>,
     BTreeMap<String, String>,
-    RouteKinds,
+    RouteContracts,
 );
 
 pub(super) fn read_package_manifests(
@@ -19,7 +22,7 @@ pub(super) fn read_package_manifests(
 ) -> Result<PackageManifestSources, MintManifestError> {
     let mut manifests = BTreeMap::new();
     let mut hashes = BTreeMap::new();
-    let mut kinds = RouteKinds::new();
+    let mut kinds = RouteContracts::new();
     for path in paths {
         let bytes = std::fs::read(path).map_err(|error| {
             MintManifestError::with_source(
@@ -77,8 +80,8 @@ pub(super) fn read_package_manifests(
         })?;
         validate_package_metadata(&manifest, &metadata)?;
         let package_id = manifest.package.id.clone();
-        for (operation, kind) in read_operation_kinds(root)? {
-            kinds.insert((package_id.clone(), operation), kind);
+        for (operation, contract) in read_operation_contracts(root)? {
+            kinds.insert((package_id.clone(), operation), contract);
         }
         if manifests.insert(package_id.clone(), manifest).is_some() {
             return Err(MintManifestError::new(
@@ -91,15 +94,68 @@ pub(super) fn read_package_manifests(
     Ok((manifests, hashes, kinds))
 }
 
-/// The `kind` of every generated contract `operation.json` under the package.
+/// The manifest route of one route attachment of the package at `root`, as
+/// publish writes it from the generated contract of its operation.
 ///
-/// The generated contract is the only source of an operation kind. A package
+/// A local application assembly calls it, so a test release carries the same
+/// route facts as a published one.
+///
+/// # Errors
+///
+/// Returns [`MintManifestError`] when no generated contract declares the
+/// operation, or a contract cannot be read.
+pub fn package_route(
+    root: &Path,
+    package_id: &str,
+    component: &str,
+    operation: &str,
+) -> Result<ServingRoute, MintManifestError> {
+    let (_, contract) = read_operation_contracts(root)?
+        .into_iter()
+        .find(|(declared, _)| declared == operation)
+        .ok_or_else(|| {
+            MintManifestError::new(
+                MintManifestErrorKind::GeneratedPackageMetadata,
+                format!(
+                    "no generated contract of package {package_id:?} declares operation {operation:?}; regenerate the package evidence"
+                ),
+            )
+        })?;
+    Ok(ServingRoute {
+        package_id: package_id.to_owned(),
+        component: component.to_owned(),
+        operation: operation.to_owned(),
+        kind: contract.kind,
+        reads: contract.reads,
+        revision: contract.revision,
+    })
+}
+
+/// The route facts of every generated contract `operation.json` under the package.
+///
+/// The generated contract is the only source of an operation kind, of the
+/// relations a read reads, and of the revision field of a `get`. A package
 /// that generates no contract has no operation a route can call.
-fn read_operation_kinds(root: &Path) -> Result<Vec<(String, OperationKind)>, MintManifestError> {
+fn read_operation_contracts(
+    root: &Path,
+) -> Result<Vec<(String, RouteContract)>, MintManifestError> {
     #[derive(serde::Deserialize)]
     struct Contract {
         operation: String,
         kind: OperationKind,
+        #[serde(default)]
+        relations: Vec<Relation>,
+        #[serde(default)]
+        record: Option<Record>,
+    }
+    #[derive(serde::Deserialize)]
+    struct Relation {
+        schema: String,
+        table: String,
+    }
+    #[derive(serde::Deserialize)]
+    struct Record {
+        revision_field: Option<String>,
     }
     let unreadable = |path: &Path, error: std::io::Error| {
         MintManifestError::with_source(
@@ -136,7 +192,40 @@ fn read_operation_kinds(root: &Path) -> Result<Vec<(String, OperationKind)>, Min
                     error,
                 )
             })?;
-            kinds.push((contract.operation, contract.kind));
+            let reads = if contract.kind.is_read() {
+                contract
+                    .relations
+                    .into_iter()
+                    .map(|relation| {
+                        // A history table changes in the same transaction as
+                        // its model relation, whose version a read keys on.
+                        let table = if is_history_table_name(&relation.table) {
+                            relation.table[..relation.table.len() - HISTORY_TABLE_SUFFIX.len()]
+                                .to_owned()
+                        } else {
+                            relation.table
+                        };
+                        ServingRelation {
+                            schema: relation.schema,
+                            relation: table,
+                        }
+                    })
+                    .collect()
+            } else {
+                BTreeSet::new()
+            };
+            let revision = contract
+                .record
+                .and_then(|record| record.revision_field)
+                .filter(|_| contract.kind == OperationKind::Get);
+            kinds.push((
+                contract.operation,
+                RouteContract {
+                    kind: contract.kind,
+                    reads,
+                    revision,
+                },
+            ));
         }
     }
     Ok(kinds)
@@ -165,4 +254,76 @@ pub(super) fn validate_package_metadata(
         ));
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::BTreeSet;
+    use std::path::Path;
+
+    use wamn_catalog::{OperationKind, ServingRelation};
+
+    use super::package_route;
+
+    fn app(name: &str) -> std::path::PathBuf {
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../../apps")
+            .join(name)
+    }
+
+    fn relations(names: &[(&str, &str)]) -> BTreeSet<ServingRelation> {
+        names
+            .iter()
+            .map(|(schema, relation)| ServingRelation {
+                schema: (*schema).to_owned(),
+                relation: (*relation).to_owned(),
+            })
+            .collect()
+    }
+
+    /// A route carries the relations its read reads and the revision field of
+    /// its `get`, from the generated contract that publish reads.
+    #[test]
+    fn a_read_route_carries_its_relations_and_a_get_its_revision() {
+        let wms = app("wamn_wms");
+        let get = package_route(&wms, "wamn_wms", "wms", "wamn-wms:pallet/get@1.0.0")
+            .expect("the pallet get has a contract");
+        assert_eq!(get.kind, OperationKind::Get);
+        assert_eq!(get.revision.as_deref(), Some("row_version"));
+        assert_eq!(get.reads, relations(&[("wms", "pallet")]));
+
+        let query = package_route(&wms, "wamn_wms", "wms", "wamn-wms:pallet/query@1.0.0")
+            .expect("the pallet query has a contract");
+        assert_eq!((query.kind, query.revision), (OperationKind::Query, None));
+        assert_eq!(query.reads, relations(&[("wms", "pallet")]));
+
+        let aggregate = package_route(
+            &wms,
+            "wamn_wms",
+            "wms",
+            "wamn-wms:inventory/aggregate@1.0.0",
+        )
+        .expect("the authored projection has a contract");
+        assert_eq!(
+            aggregate.reads,
+            relations(&[("wms", "pallet"), ("wms", "pallet_quantity")])
+        );
+
+        let history = package_route(
+            &app("wamn_receiving"),
+            "wamn_receiving",
+            "receiving",
+            "wamn-receiving:receiving/load-purchase-order-history@1.0.0",
+        )
+        .expect("the history projection has a contract");
+        assert_eq!(
+            history.reads,
+            relations(&[("receiving", "purchase_order")]),
+            "a history table stands for its model relation"
+        );
+
+        let write = package_route(&wms, "wamn_wms", "wms", "wamn-wms:inventory/move@1.0.0")
+            .expect("the move command has a contract");
+        assert_eq!((write.reads, write.revision), (BTreeSet::new(), None));
+    }
 }

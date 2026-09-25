@@ -88,6 +88,9 @@ pub struct DeliveryRequest<Caller> {
     pub payload: String,
     pub caller: Option<Caller>,
     pub trace: Option<TraceContext>,
+    /// The If-None-Match value of a GET, which the host compares with the
+    /// read's ETag.
+    pub if_none_match: Option<String>,
 }
 
 /// Stable router failure classes preserved by the delivery bridge.
@@ -143,6 +146,8 @@ pub enum DeliveryOutcome {
     Failed(DeliveryFailure),
     PartiallyCompleted(PartialCompletion),
     Cancelled,
+    /// The read's ETag matched If-None-Match.
+    NotModified,
 }
 
 /// Host-side delivery refusal before a router outcome exists.
@@ -171,6 +176,8 @@ pub struct DeliveryReport {
     pub actor_labels: Vec<(String, String)>,
     pub outcome: Result<DeliveryOutcome, DeliveryError>,
     pub deadline_adjustments: Vec<DeadlineAdjustment>,
+    /// The ETag of a read that responded or was not modified.
+    pub etag: Option<String>,
 }
 
 /// A bounded HTTP response produced by the adapter.
@@ -181,23 +188,41 @@ pub struct HttpResponse {
     pub content_type: &'static str,
     pub body: Vec<u8>,
     pub deadline_adjustments: Vec<DeadlineAdjustment>,
-    /// The Cache-Control value of a successful read. None is `no-store`.
+    /// The cache facts of a read that responded or was not modified. None is
+    /// `no-store` with no ETag. Boxed, because every refusal is an
+    /// `HttpResponse` too and most responses carry none.
+    pub read: Option<Box<ReadCache>>,
+}
+
+/// The cache facts of one read response.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReadCache {
+    /// The Cache-Control value that the host derived for the route. None is
+    /// `no-store`, as for a request that carries the CSRF header.
     pub cache_control: Option<String>,
+    /// The ETag that the host derived for the read.
+    pub etag: Option<String>,
 }
 
 impl HttpResponse {
     /// The cache headers of this response. A successful read sends the value
     /// that the host derived for its route and varies on the caller's
-    /// credentials. Every other response is `no-store`.
+    /// credentials. Every other response is `no-store`. A read with an ETag
+    /// also sends it.
     #[must_use]
     pub fn cache_headers(&self) -> Vec<(&'static str, String)> {
-        match &self.cache_control {
+        let read = self.read.as_deref();
+        let mut headers = match read.and_then(|read| read.cache_control.as_ref()) {
             Some(value) => vec![
                 ("cache-control", value.clone()),
                 ("vary", "Authorization, Cookie".to_string()),
             ],
             None => vec![("cache-control", "no-store".to_string())],
+        };
+        if let Some(etag) = read.and_then(|read| read.etag.as_ref()) {
+            headers.push(("etag", etag.clone()));
         }
+        headers
     }
 }
 
@@ -402,6 +427,9 @@ async fn try_handle(
         return Err(error_response(429, "route-capacity-exhausted"));
     };
     let trace = trace_context(&head.headers);
+    let if_none_match = (method == "GET")
+        .then(|| header_values(&head.headers, "if-none-match").join(", "))
+        .filter(|value| !value.is_empty());
     let delivery_id = backend.new_delivery_id();
     let report = backend
         .deliver(DeliveryRequest {
@@ -410,6 +438,7 @@ async fn try_handle(
             payload,
             caller,
             trace,
+            if_none_match,
         })
         .await;
     let mut response = match report.outcome {
@@ -418,8 +447,11 @@ async fn try_handle(
     };
     response.deadline_adjustments = report.deadline_adjustments;
     response.actor_labels = report.actor_labels;
-    if response.status == 200 {
-        response.cache_control = cache_control;
+    if matches!(response.status, 200 | 304) {
+        response.read = Some(Box::new(ReadCache {
+            cache_control,
+            etag: report.etag,
+        }));
     }
     Ok(response)
 }
@@ -764,7 +796,7 @@ fn delivery_response(outcome: DeliveryOutcome) -> HttpResponse {
         DeliveryOutcome::Respond(payload) => HttpResponse {
             deadline_adjustments: Vec::new(),
             actor_labels: Vec::new(),
-            cache_control: None,
+            read: None,
             status: 200,
             content_type: "application/json",
             body: payload.into_bytes(),
@@ -789,6 +821,14 @@ fn delivery_response(outcome: DeliveryOutcome) -> HttpResponse {
         }
         DeliveryOutcome::PartiallyCompleted(partial) => partial_response(partial),
         DeliveryOutcome::Cancelled => error_response(503, "execution-cancelled"),
+        DeliveryOutcome::NotModified => HttpResponse {
+            deadline_adjustments: Vec::new(),
+            actor_labels: Vec::new(),
+            read: None,
+            status: 304,
+            content_type: "application/json",
+            body: Vec::new(),
+        },
     }
 }
 
@@ -819,7 +859,7 @@ fn partial_response(partial: PartialCompletion) -> HttpResponse {
     HttpResponse {
         deadline_adjustments: Vec::new(),
         actor_labels: Vec::new(),
-        cache_control: None,
+        read: None,
         status: failure.status,
         content_type: "application/json",
         body: serde_json::to_vec(
@@ -849,7 +889,7 @@ fn operation_refusal_response(code: &str, operation: &str) -> HttpResponse {
     HttpResponse {
         deadline_adjustments: Vec::new(),
         actor_labels: Vec::new(),
-        cache_control: None,
+        read: None,
         status: 403,
         content_type: "application/json",
         body: serde_json::to_vec(&json!({
@@ -888,7 +928,7 @@ fn detailed_error_response(
     HttpResponse {
         deadline_adjustments: Vec::new(),
         actor_labels: Vec::new(),
-        cache_control: None,
+        read: None,
         status,
         content_type: "application/json",
         body: serde_json::to_vec(&ErrorEnvelope {
@@ -902,7 +942,7 @@ fn error_response(status: u16, code: &str) -> HttpResponse {
     HttpResponse {
         deadline_adjustments: Vec::new(),
         actor_labels: Vec::new(),
-        cache_control: None,
+        read: None,
         status,
         content_type: "application/json",
         body: serde_json::to_vec(&json!({"error":{"code":code}})).unwrap_or_default(),
@@ -913,7 +953,7 @@ fn body_too_large_response(limit: usize) -> HttpResponse {
     HttpResponse {
         deadline_adjustments: Vec::new(),
         actor_labels: Vec::new(),
-        cache_control: None,
+        read: None,
         status: 413,
         content_type: "text/plain; charset=utf-8",
         body: format!("request body exceeds {limit}-byte limit\n").into_bytes(),

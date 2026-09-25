@@ -21,7 +21,7 @@ use super::{
     query_variants, relation, rust_type_identifier, server_owned_fields, sha256, sql,
     writable_path,
 };
-use crate::manifest::{FieldReference, OperationErrorDetailKey};
+use crate::manifest::{FieldReference, OperationErrorDetailKey, StaticSqlRelationDeclaration};
 use wamn_record_history::HISTORY_COLUMNS;
 
 #[expect(
@@ -839,6 +839,30 @@ fn emit_operation_contracts(
         operation_contract.insert(
             "lists".to_owned(),
             json!({"model": model_name, "key_field": "id"}),
+        );
+    }
+    // A read states the relations it reads, whoever wrote it, in the member an
+    // authored read declares. The host keys a list ETag on their versions and
+    // never guesses them (docs/plan/http-reads.md section 4.3).
+    if matches!(action, CrudAction::Get | CrudAction::Query) {
+        let mut select_fields = table
+            .columns()
+            .iter()
+            .map(|column| column.name().to_owned())
+            .collect::<Vec<_>>();
+        select_fields.sort();
+        operation_contract.insert(
+            "relations".to_owned(),
+            json!([StaticSqlRelationDeclaration {
+                schema: model.schema.clone(),
+                table: model.table.clone(),
+                select_fields,
+                insert_fields: Vec::new(),
+                update_fields: Vec::new(),
+                delete: false,
+                lock: false,
+                constraints: Vec::new(),
+            }]),
         );
     }
     if let Some(claim) = claim.filter(|_| action == CrudAction::Create) {

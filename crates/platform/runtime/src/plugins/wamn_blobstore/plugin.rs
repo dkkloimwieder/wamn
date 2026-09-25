@@ -830,6 +830,8 @@ mod tests {
             component: route.origin.component.clone(),
             operation: route.origin.operation.clone(),
             kind: wamn_catalog::OperationKind::Command,
+            reads: BTreeSet::new(),
+            revision: None,
         });
         assert_eq!(
             authorize_closure(&route, Some(&manifest), None, &snapshot),

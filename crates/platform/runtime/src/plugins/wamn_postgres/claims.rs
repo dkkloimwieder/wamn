@@ -1827,6 +1827,39 @@ impl WamnPostgres {
             .collect()
     }
 
+    /// The model version of each named relation (`deploy/sql/model-versions.sql`).
+    ///
+    /// A relation that no transaction changed has no row, and its version is 0.
+    /// The names come from the loaded release, never from client input.
+    pub async fn model_versions(
+        &self,
+        project: &str,
+        relations: &[(&str, &str)],
+    ) -> anyhow::Result<Vec<i64>> {
+        anyhow::ensure!(valid_project(project), "invalid model-version project");
+        if relations.is_empty() {
+            return Ok(Vec::new());
+        }
+        let (schemas, tables): (Vec<&str>, Vec<&str>) = relations.iter().copied().unzip();
+        let (connection, _policy) = self
+            .checkout_platform(project, AuthorityClass::CallableHttp)
+            .await
+            .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+        let rows = connection
+            .query(
+                "SELECT COALESCE(current.version, 0) \
+                   FROM unnest($1::text[], $2::text[]) WITH ORDINALITY \
+                        AS named (schema_name, relation_name, position) \
+                   LEFT JOIN wamn_cache.model_versions AS current \
+                     USING (schema_name, relation_name) \
+                  ORDER BY named.position",
+                &[&schemas, &tables],
+            )
+            .await
+            .context("read the model versions")?;
+        rows.into_iter().map(|row| Ok(row.try_get(0)?)).collect()
+    }
+
     /// Read the current permissions of an org-issued user in this tenant.
     ///
     /// Route authentication first requires membership in the release environment.

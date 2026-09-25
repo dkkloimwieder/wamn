@@ -86,6 +86,8 @@ Option A is correct for every writer, and the version becomes visible in the sam
 - A read that has no revision field, or whose relations are unknown, gets no ETag and `Cache-Control: no-cache`.
 - For a `get`, the router runs the read and then compares the tag. The 304 saves the transfer. For a list, the router compares the tag before it runs the read, so the 304 also saves the database work.
 
+These rules landed with `wamn-rst8.4`, and [execution](../architecture/execution.md) describes them. By owner ruling of 2026-09-25, the host compares the tag, not the router, and the router writes the status. The generator writes `relations` on every read contract, so the host reads them and never guesses.
+
 ### 4.4 `request_id` on a GET
 
 Ruled: a read carries no `request_id` at all. A fixed value that the router adds is a `request_id` that means nothing, so the router does not add one. If the span of a read needs an identity, the router mints a trace identity, which is not a `request_id`. A write still sends its own `request_id` and `idempotency_key`.
@@ -117,7 +119,7 @@ This table uses `private` for every generated read, as section 5 states.
 
 The list values `max-age=10, stale-while-revalidate=60` are a provisional first pick. The owner revisits them with the CDN epic.
 
-The `Cache-Control` and `Vary` rows landed with `wamn-rst8.2`, and [execution](../architecture/execution.md) describes them. The ETag columns wait for `wamn-rst8.4`.
+The `Cache-Control` and `Vary` rows landed with `wamn-rst8.2`, and the ETag columns with `wamn-rst8.4`. [Execution](../architecture/execution.md) describes them.
 
 ## 5. Shared caches
 

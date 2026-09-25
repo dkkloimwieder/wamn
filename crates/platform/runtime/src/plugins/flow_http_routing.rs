@@ -1617,6 +1617,8 @@ mod tests {
                     component: "http-request".into(),
                     operation: "request".into(),
                     kind,
+                    reads: BTreeSet::new(),
+                    revision: None,
                 }]),
                 BTreeMap::from([("route".to_string(), route)]),
             );

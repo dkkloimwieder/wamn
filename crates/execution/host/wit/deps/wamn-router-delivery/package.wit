@@ -32,6 +32,9 @@ interface delivery {
     caller: option<authenticated-caller>,
     trace: option<trace-context>,
     parent-causation: option<parent-causation>,
+    /// The If-None-Match value of a read. The host compares it with the
+    /// read's ETag and answers not-modified on a match.
+    if-none-match: option<string>,
   }
 
   /// The router's exhaustive terminal failure classes.
@@ -70,6 +73,8 @@ interface delivery {
     failed(delivery-failure),
     partially-completed(partial-completion),
     cancelled,
+    /// The read's ETag matched If-None-Match. The response has no body.
+    not-modified,
   }
 
   /// One exact registered operation the originating caller cannot invoke.
@@ -123,6 +128,8 @@ interface delivery {
     deadline-adjustments: list<deadline-adjustment>,
     /// Labels only for actor IDs in the authorized result.
     actor-labels: list<tuple<string, string>>,
+    /// The ETag of a read that responded or was not modified.
+    etag: option<string>,
   }
 
   deliver: async func(request: delivery-request) -> delivery-report;
