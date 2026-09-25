@@ -15,6 +15,7 @@ const COMPONENT_MANIFESTS: [&str; 2] = ["apps/Cargo.toml", "apps/platform/no-std
 const COMPONENT_TOOL: &str = "tools/build-components";
 const COMPONENT_VIRTUALIZATION: &str = "tools/component-virtualization.json";
 const COMPONENT_COMPOSITION: &str = "tools/component-composition.json";
+const GUEST_RUSTFLAGS: &str = "tools/guest-rustflags";
 const COMPOSER_PACKAGE: &str = "wamn-component-composer";
 
 #[derive(Debug, Deserialize)]
@@ -305,9 +306,49 @@ fn write_fake_metadata(directory: &Path, manifest: &Path, metadata: &[u8]) {
     .expect("failed to write canned Cargo metadata");
 }
 
-fn metadata_with_target_directory(metadata: &[u8], target_directory: &Path) -> Vec<u8> {
+/// Cargo metadata for a fake build: the target directory moves into the
+/// scratch tree, and so does each package directory, so no pin beside a
+/// repository crate applies to the fake bytes. Every guest the build selects
+/// gets a raw file, because the fake Cargo writes none and the tool refuses a
+/// missing guest.
+fn metadata_for_fake_build(
+    metadata: &[u8],
+    root: &Path,
+    sources: &Path,
+    target_directory: &Path,
+) -> Vec<u8> {
     let mut value: Value = serde_json::from_slice(metadata).expect("Cargo metadata must be JSON");
     value["target_directory"] = Value::String(target_directory.display().to_string());
+    let release = target_directory.join("wasm32-wasip2").join("release");
+    fs::create_dir_all(&release).expect("failed to create fake release directory");
+    for package in value["packages"]
+        .as_array_mut()
+        .expect("Cargo metadata packages must be an array")
+    {
+        let manifest = PathBuf::from(
+            package["manifest_path"]
+                .as_str()
+                .expect("manifest path must be a string"),
+        );
+        if let Ok(relative) = manifest.strip_prefix(root) {
+            package["manifest_path"] = Value::String(sources.join(relative).display().to_string());
+        }
+        for target in package["targets"]
+            .as_array()
+            .expect("Cargo metadata targets must be an array")
+        {
+            let kinds = target["kind"]
+                .as_array()
+                .expect("target kinds must be an array");
+            if kinds.iter().any(|kind| kind == "cdylib" || kind == "bin") {
+                let name = target["name"]
+                    .as_str()
+                    .expect("target name must be a string");
+                fs::write(release.join(format!("{name}.wasm")), format!("raw:{name}"))
+                    .expect("failed to write fake raw guest");
+            }
+        }
+    }
     serde_json::to_vec(&value).expect("rewritten Cargo metadata must serialize")
 }
 
@@ -578,6 +619,7 @@ fn component_build_requires_declared_app_crates_and_accepts_new_cargo_members() 
         COMPONENT_TOOL,
         COMPONENT_VIRTUALIZATION,
         COMPONENT_COMPOSITION,
+        GUEST_RUSTFLAGS,
     ] {
         let destination = scratch.join(relative);
         fs::create_dir_all(destination.parent().expect("fixture file has a parent"))
@@ -749,7 +791,12 @@ fn component_build_normalizes_only_declared_artifacts_to_separate_outputs() {
         );
         let target_directory = scratch.join(format!("{} target", manifest.replace('/', "-")));
         fs::create_dir(&target_directory).expect("failed to create fake target directory");
-        let rewritten = metadata_with_target_directory(&output.stdout, &target_directory);
+        let rewritten = metadata_for_fake_build(
+            &output.stdout,
+            &root,
+            &scratch.join("sources"),
+            &target_directory,
+        );
         write_fake_metadata(&metadata_directory, &root.join(manifest), &rewritten);
         target_directories.insert(manifest.to_owned(), target_directory);
     }
