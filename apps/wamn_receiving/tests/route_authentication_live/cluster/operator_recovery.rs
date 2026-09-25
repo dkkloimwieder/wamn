@@ -22,6 +22,14 @@ const SYSTEM: &str = "wamn-system";
 const REQUEST_ID: &str = "00000000-0000-4000-8000-000000000929";
 const ORDER_ID: &str = "00000000-0000-0000-0000-000000000301";
 const OUTAGE_SECONDS: u32 = 150;
+/// How long the outage may run past OUTAGE_SECONDS while a Host has not yet
+/// recorded the loss-of-heartbeat guard. The operator reaches the guard per
+/// Host on its own reconcile timing, about 25 seconds after "not reporting"
+/// in the wamn-9izh run.
+const GUARD_BOUND_SECONDS: u32 = 90;
+/// How long one operator transition may wait for its logs and events to
+/// carry the recorded cause.
+const TRANSITION_BOUND_SECONDS: u64 = 30;
 const RECOVERY_SECONDS: u32 = 120;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -397,54 +405,72 @@ impl Recovery<'_> {
                 } else {
                     let label = format!("operator-transition-{}", current.restart_count);
                     let pod = format!("pod/{}", current.pod_name);
-                    let previous_log = self
-                        .run(
-                            &format!("{label}-previous-log"),
-                            &[
+                    self.write(
+                        &format!("{label}-state"),
+                        &json!({"previous":previous,"current":current}),
+                    )?;
+                    // The recorded termination is read once. Its logs and
+                    // events are read again, for a bounded time, until they
+                    // carry the cause: the kubelet can already hold the
+                    // next container of the crash loop (wamn-203x).
+                    let deadline = Instant::now() + Duration::from_secs(TRANSITION_BOUND_SECONDS);
+                    let mut transition = loop {
+                        let mut logs = Vec::new();
+                        for (suffix, previous_only) in
+                            [("previous-log", true), ("current-log", false)]
+                        {
+                            let mut args = vec![
                                 "-n",
                                 SYSTEM,
                                 "logs",
                                 &pod,
                                 "-c",
                                 "runtime-operator",
-                                "--previous",
                                 "--timestamps",
-                            ],
-                            30,
-                            true,
-                        )
-                        .await?;
-                    let event_log = self
-                        .run(
-                            &format!("{label}-events"),
-                            &[
-                                "-n",
-                                SYSTEM,
-                                "get",
-                                "events",
-                                "--field-selector",
-                                &format!("involvedObject.uid={}", current.pod_uid),
-                                "-o",
-                                "json",
-                            ],
-                            30,
-                            true,
-                        )
-                        .await?;
-                    self.write(
-                        &format!("{label}-state"),
-                        &json!({"previous":previous,"current":current}),
-                    )?;
-                    let events = serde_json::from_slice(&event_log).unwrap_or_else(|_| json!({}));
-                    let mut transition = supervised_restart(
-                        &previous,
-                        &current,
-                        &String::from_utf8_lossy(&previous_log),
-                        &events,
-                        self.scheduler_fault_started
-                            .context("the scheduler fault start was recorded")?,
-                        &self.scheduler_address,
-                    )?;
+                            ];
+                            if previous_only {
+                                args.push("--previous");
+                            }
+                            logs.extend(
+                                self.run(&format!("{label}-{suffix}"), &args, 30, true)
+                                    .await?,
+                            );
+                            logs.push(b'\n');
+                        }
+                        let event_log = self
+                            .run(
+                                &format!("{label}-events"),
+                                &[
+                                    "-n",
+                                    SYSTEM,
+                                    "get",
+                                    "events",
+                                    "--field-selector",
+                                    &format!("involvedObject.uid={}", current.pod_uid),
+                                    "-o",
+                                    "json",
+                                ],
+                                30,
+                                true,
+                            )
+                            .await?;
+                        let events =
+                            serde_json::from_slice(&event_log).unwrap_or_else(|_| json!({}));
+                        let classified = supervised_restart(
+                            &previous,
+                            &current,
+                            &String::from_utf8_lossy(&logs),
+                            &events,
+                            self.scheduler_fault_started
+                                .context("the scheduler fault start was recorded")?,
+                            &self.scheduler_address,
+                        );
+                        match classified {
+                            Ok(transition) => break transition,
+                            Err(error) if Instant::now() >= deadline => return Err(error),
+                            Err(_) => tokio::time::sleep(Duration::from_secs(5)).await,
+                        }
+                    };
                     self.operator_fresh_after = now();
                     transition["observed_at"] = json!(self.operator_fresh_after);
                     self.operator_transitions.push(transition);
@@ -930,7 +956,11 @@ pub(super) async fn assert_recovery(cluster: &ReceivingCluster) -> anyhow::Resul
         recovery.phases.insert("scheduler-stopped".to_owned(),json!({"started":stopped,"required_seconds":OUTAGE_SECONDS}));
         recovery.write("phases",&recovery.phases)?;
         let mut guarded = BTreeSet::new();
-        while outage.elapsed() < Duration::from_secs(u64::from(OUTAGE_SECONDS)) {
+        let every_host = recovery.original_hosts.iter().map(|(uid,_)|uid.clone()).collect::<BTreeSet<_>>();
+        while outage.elapsed() < Duration::from_secs(u64::from(OUTAGE_SECONDS))
+            || (guarded != every_host
+                && outage.elapsed() < Duration::from_secs(u64::from(OUTAGE_SECONDS + GUARD_BOUND_SECONDS)))
+        {
             let pods = recovery.get("scheduler-still-stopped",SYSTEM,"pods",&["-l","wasmcloud.com/name=nats"]).await?;
             ensure!(array(&pods,"/items")?.is_empty(),"the scheduler resumed before the required outage interval ended");
             let current = recovery.snapshot("scheduler-down").await?;
@@ -944,7 +974,7 @@ pub(super) async fn assert_recovery(cluster: &ReceivingCluster) -> anyhow::Resul
             recovery.samples(&samples)?;
             tokio::time::sleep(Duration::from_secs(5)).await;
         }
-        ensure!(guarded == recovery.original_hosts.iter().map(|(uid,_)|uid.clone()).collect(), "the native loss-of-heartbeat guard was not observed for every Host");
+        ensure!(guarded == every_host, "the native loss-of-heartbeat guard was not observed for every Host");
         ensure!(recovery.samples(&samples)?.iter().any(|sample| epoch_seconds(sample.timestamp * 1_000_000) >= stopped), "no actual request sampled the stopped interval");
         let resumed = now();
         let phase = recovery.phases.get_mut("scheduler-stopped").context("the scheduler outage was recorded")?;

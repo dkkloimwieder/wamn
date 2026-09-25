@@ -247,7 +247,6 @@ pub fn supervised_restart(
             "startup refusal must identify the observed container start"
         );
         let started = timestamp(text(termination, "/startedAt")?)?;
-        let finished = timestamp(text(termination, "/finishedAt")?)?;
         ensure!(
             started >= since,
             "the operator startup refusal predates the scheduler fault"
@@ -271,7 +270,11 @@ pub fn supervised_restart(
             let Ok(detail) = serde_json::from_str::<Value>(fields[4]) else {
                 continue;
             };
-            if started <= stamp && stamp < finished + 1.0 && detail["error"] == expected {
+            // The kubelet keeps one stopped container. When the crash loop
+            // stops the next container before this read, the recorded
+            // termination still identifies the observed exit, and the cause
+            // comes from a later container of the same pod in the same fault.
+            if started <= stamp && detail["error"] == expected {
                 setup_errors.push(line);
             }
         }
@@ -489,6 +492,17 @@ mod tests {
         assert_eq!(
             supervised_restart(&previous, &current, log, &events, since, address)?["cause"],
             "scheduler-nats-startup-timeout"
+        );
+        // wamn-203x: the observed container's log is gone, and the next
+        // container of the same crash loop records the cause after it.
+        let later = log.replace("00:32:41Z", "00:33:03Z");
+        assert_eq!(
+            supervised_restart(&previous, &current, &later, &events, since, address)?["cause"],
+            "scheduler-nats-startup-timeout"
+        );
+        let earlier = log.replace("00:32:41Z", "00:32:30Z");
+        assert!(
+            supervised_restart(&previous, &current, &earlier, &events, since, address).is_err()
         );
         previous.termination.as_mut().unwrap()["containerID"] = json!("containerd://other");
         assert!(supervised_restart(&previous, &current, log, &events, since, address).is_err());
