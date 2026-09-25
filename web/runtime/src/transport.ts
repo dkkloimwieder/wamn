@@ -16,6 +16,7 @@
 import { z } from "zod";
 
 import { encodeReadQuery } from "./readQuery.js";
+import { createReadStore, type ReadReply } from "./readCache.js";
 import type {
   ErrorCase,
   FieldMap,
@@ -417,6 +418,18 @@ function classifyPartial(
  */
 export function createTransport(options: TransportOptions): Transport {
   const call = options.fetch ?? globalThis.fetch;
+  // The store belongs to this transport and to one session, so one caller's
+  // reads never answer another's.
+  const reads = createReadStore();
+  const send = async (target: string, init: RequestInit): Promise<ReadReply> => {
+    const response = await call(`${options.baseUrl}${target}`, init);
+    return {
+      status: response.status,
+      body: await response.text(),
+      cacheControl: response.headers.get("cache-control"),
+      etag: response.headers.get("etag"),
+    };
+  };
   return {
     async invoke(request: WireRequest): Promise<Outcome<JsonValue>> {
       const read = request.method === "GET";
@@ -440,7 +453,9 @@ export function createTransport(options: TransportOptions): Transport {
         // The CSRF cookie is read on every request, because a renewal replaces
         // it. Without it the header stays off, and the router decides. A read
         // needs no CSRF header, and a request with one is never cached.
+        // A new session or a renewal sets a new cookie, and empties the store.
         const csrf = cookieValue((options.cookies ?? (() => document.cookie))(), CSRF_COOKIE);
+        reads.belongTo(csrf);
         if (csrf !== null && !read) {
           headers[CSRF_HEADER] = csrf;
         }
@@ -450,10 +465,29 @@ export function createTransport(options: TransportOptions): Transport {
       }
       let reply: HttpReply;
       try {
-        const response = await call(`${options.baseUrl}${target}`, init);
-        reply = { status: response.status, body: await response.text() };
+        if (read) {
+          // The store is the only client cache, so the browser cache never
+          // answers under it, and a 304 always reaches it.
+          init.cache = "no-store";
+          const stored = (outcome: Outcome<JsonValue>) =>
+            outcome.status === "completed" || outcome.status === "refused";
+          reply = await reads.read(
+            `${request.operation} ${target}`,
+            (tag) =>
+              send(target, tag === null ? init : { ...init, headers: { ...headers, "if-none-match": tag } }),
+            (candidate) => stored(classify(request.contract, null, candidate)),
+          );
+        } else {
+          reply = await send(target, init);
+        }
       } catch (error) {
         return uncertain(`the request did not complete: ${String(error)}`);
+      } finally {
+        // Any write can change what a stored read returns, so every stored
+        // read revalidates next (wamn-fjdo narrows this to the write's models).
+        if (!read) {
+          reads.invalidate();
+        }
       }
       return classify(request.contract, requestId, reply);
     },

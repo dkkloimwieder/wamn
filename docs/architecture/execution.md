@@ -464,6 +464,13 @@ The browser trusts the platform for the values inside a reply, so it holds no sc
 A reply whose value violates its own field contract therefore reads as completed in the browser and as uncertain in the terminal.
 The runtime also holds what a generated component calls: the state of one read, the members of a draft, and the display text of a declared value.
 
+Each transport holds a [read store](../../web/runtime/src/readCache.ts), keyed by the operation and the canonical GET target.
+Equal reads in flight share one request, and a list stays fresh for its `max-age`.
+A stale entry with an ETag sends `If-None-Match`, and a 304 reuses the stored reply.
+The store keeps only a 200 reply that classifies as completed or refused, and it calls fetch with `cache: "no-store"`, so the browser HTTP cache never answers under it.
+Any write marks every stored read stale, because the browser cannot tell which models a write changed.
+A new CSRF cookie empties the store, so one session's reads never answer the next session.
+
 A package that generates TypeScript also generates [SolidJS components](../../crates/schema/generator/src/client_component.rs), one for each operation the plan gives a role.
 A table renders the plan's columns over TanStack Table, with one control for each page control the plan names.
 It appends the next page while the last reply carried a cursor.
