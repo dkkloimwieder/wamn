@@ -37,6 +37,12 @@ If an overlay is composed and its base app is not in the selection, the build fa
 Do not combine guests into a new grouped Cargo invocation.
 Cargo combines dependency features within each invocation, which can change artifact bytes.
 
+[`tools/guest-rustflags`](../../tools/guest-rustflags) sets the RUSTFLAGS of every guest build.
+It maps the repository to `/wamn` and the Cargo home to `/cargo`, so no guest carries a local path.
+`tools/build-components` and the Dockerfile `component-builder` stage call it. Nothing else sets guest RUSTFLAGS.
+The build tool refuses a guest that contains `/home/`, the Cargo home, or the repository path.
+A plain `cargo build` of a guest does not use the script, so its bytes depend on the machine. Do not pin such a guest.
+
 After virtualization, the tool composes each overlay whose component declaration names a base operation dependency.
 `wamn-component-composer` joins the overlay component, each base component, and each participant component into one component.
 [`tools/component-composition.json`](../../tools/component-composition.json) names the participant crates of each overlay package under `participants`.
@@ -102,6 +108,9 @@ WAMN_DIGEST_PROFILE_ALL_PLAN="$WAMN_RESULTS/all-plan.json" \
   one_commit_built_under_two_profiles_yields_identical_guest_digests \
   -- --include-ignored --exact --nocapture
 ```
+
+Both comparisons use one Cargo home, so they do not test the Cargo home mapping.
+To test it, build one guest with a second `CARGO_HOME` path and compare its digest.
 
 Inspect the plans and comparison output before changing digest pins.
 Use these comparisons when guest dependencies, selected features, workspace membership, or build flags change.

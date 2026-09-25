@@ -26,7 +26,7 @@
 //!
 //! The companion channel — absolute `file!()` strings that `include!`d package
 //! sources bake into the artifact — is closed by `--remap-path-prefix` in
-//! `tools/build-components`, asserted below so the two cannot drift apart.
+//! `tools/guest-rustflags`, asserted below so the two cannot drift apart.
 //!
 //! A shared Cargo invocation previously changed guest bytes when the selected
 //! packages changed (`wamn-10yt.61`). Each guest now uses its own invocation.
@@ -42,8 +42,8 @@ use sha2::{Digest as _, Sha256};
 /// Every workspace whose members are compiled into guest artifacts.
 const GUEST_WORKSPACES: [&str; 2] = ["apps/Cargo.toml", "apps/platform/no-std/Cargo.toml"];
 
-/// The one call every guest workspace leg compiles through.
-const BUILD_TOOL: &str = "tools/build-components";
+/// The one place that sets the RUSTFLAGS of every guest build.
+const GUEST_RUSTFLAGS: &str = "tools/guest-rustflags";
 
 fn repository_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -286,10 +286,10 @@ fn no_guest_workspace_declares_a_dependency_outside_itself() {
 
 #[test]
 fn the_shared_guest_build_remaps_the_source_prefix() {
-    let tool = read(BUILD_TOOL);
+    let tool = read(GUEST_RUSTFLAGS);
     assert!(
-        tool.contains("--remap-path-prefix=$WAMN_REPOSITORY_ROOT="),
-        "{BUILD_TOOL} must remap the repository root out of guest artifacts; without it the \
+        tool.contains("--remap-path-prefix=%s=/wamn"),
+        "{GUEST_RUSTFLAGS} must remap the repository root out of guest artifacts; without it the \
          absolute file!() strings that include!d package sources carry survive into the bytes \
          and the digest moves with the checkout (wamn-10yt.10.29)"
     );

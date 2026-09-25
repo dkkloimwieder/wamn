@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+# Prints the RUSTFLAGS of every guest build (wamn-rie7). This is the one place
+# that sets them: tools/build-components and the Dockerfile component-builder
+# stage call it, and nothing else sets guest RUSTFLAGS.
+#
+# A guest carries file!() and panic-location strings of its own sources and of
+# every registry crate, as absolute paths. Mapping the repository to /wamn and
+# the Cargo home to /cargo keeps checkout and machine paths out of the bytes, so
+# a local build and the image build give one digest. Cargo's profile
+# `trim-paths` would say this at profile level but is unstable in Cargo 1.98.1,
+# and a .cargo/config.toml entry cannot name a path that differs per machine.
+set -euo pipefail
+
+repository="$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)"
+cargo_home="${CARGO_HOME:-$HOME/.cargo}"
+printf '%s--remap-path-prefix=%s=/wamn --remap-path-prefix=%s=/cargo\n' \
+  "${RUSTFLAGS:+$RUSTFLAGS }" "$repository" "$cargo_home"

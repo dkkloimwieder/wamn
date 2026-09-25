@@ -71,6 +71,11 @@ readonly WAMN_REPOSITORY_ROOT="$(
 readonly WAMN_VIRTUALIZATION_MANIFEST="$WAMN_REPOSITORY_ROOT/tools/component-virtualization.json"
 readonly WAMN_COMPOSITION_MANIFEST="$WAMN_REPOSITORY_ROOT/tools/component-composition.json"
 readonly WAMN_CARGO="${CARGO:-cargo}"
+readonly WAMN_CARGO_HOME="${CARGO_HOME:-$HOME/.cargo}"
+WAMN_GUEST_RUSTFLAGS="$("$WAMN_TOOL_DIRECTORY/guest-rustflags")" || {
+  wamn_fail 70 'tools/guest-rustflags failed'
+}
+readonly WAMN_GUEST_RUSTFLAGS
 
 command -v jq >/dev/null 2>&1 || wamn_fail 127 'jq is required'
 command -v sha256sum >/dev/null 2>&1 || wamn_fail 127 'sha256sum is required'
@@ -409,10 +414,10 @@ wamn_build() {
     leg_status=0
     # DIGEST STABILITY, second of two channels. Relocation (wamn-10yt.10.29) put
     # every guest-consumed crate inside this workspace so `-C metadata` stops
-    # deriving from an absolute path; this closes the other channel, the
-    # `file!()` strings that `include!`d package sources bake into the artifact.
-    # `trim-paths` would say it at profile level but is unstable in Cargo 1.98.
-    RUSTFLAGS="${RUSTFLAGS:+$RUSTFLAGS }--remap-path-prefix=$WAMN_REPOSITORY_ROOT=/wamn" \
+    # deriving from an absolute path; tools/guest-rustflags closes the other
+    # channel, the absolute source paths that file!() and panic locations bake
+    # into the artifact. wamn_artifact_plan refuses a guest that still has one.
+    RUSTFLAGS="$WAMN_GUEST_RUSTFLAGS" \
       "$WAMN_CARGO" "${arguments[@]}" || leg_status=$?
     if ((leg_status != 0)); then
       printf 'build-components: FAIL: %s (exit %d)\n' "$manifest" "$leg_status" >&2
@@ -436,6 +441,9 @@ wamn_artifact_plan() {
     [[ -s "$input" ]] || {
       wamn_fail 65 "raw component is missing or empty for $package: $input"
     }
+    if grep -a -F -q -e '/home/' -e "$WAMN_CARGO_HOME" -e "$WAMN_REPOSITORY_ROOT" -- "$input"; then
+      wamn_fail 65 "raw component embeds a local path for $package: $input (see tools/guest-rustflags)"
+    fi
     digest="$(sha256sum -- "$input")" || {
       wamn_fail 65 "cannot hash raw component for $package: $input"
     }

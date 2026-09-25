@@ -101,13 +101,17 @@ COPY .cargo/config.toml /build/.cargo/config.toml
 COPY Cargo.toml /build/Cargo.toml
 COPY crates /build/crates
 COPY apps /build/apps
+COPY tools/guest-rustflags /build/tools/guest-rustflags
 WORKDIR /build/apps
 
+# tools/guest-rustflags maps /build to /wamn and the Cargo home to /cargo, so
+# each guest here has the digest of the same guest built by tools/build-components.
 FROM component-toolchain AS component-builder
 RUN --mount=type=cache,id=wamn-component-cargo-registry,target=/usr/local/cargo/registry,sharing=locked \
     --mount=type=cache,id=wamn-component-cargo-git,target=/usr/local/cargo/git,sharing=locked \
     --mount=type=cache,id=wamn-component-target,target=/build/apps/target,sharing=locked \
-    cargo +1.98.1 build --locked --release --target wasm32-wasip2 \
+    export RUSTFLAGS="$(/build/tools/guest-rustflags)" \
+ && cargo +1.98.1 build --locked --release --target wasm32-wasip2 \
       -p http-route \
  && cargo +1.98.1 build --locked --release --target wasm32-wasip2 \
       -p materializer \
