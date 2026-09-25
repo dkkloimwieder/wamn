@@ -71,7 +71,9 @@ import {
   type LocationListRow,
 } from "../location.js";
 import {
+  get as purchaseOrderGet,
   query as purchaseOrderQuery,
+  type PurchaseOrderGetRequest,
   type PurchaseOrderQueryRequest,
   type PurchaseOrderQueryRow,
 } from "../purchase_order.js";
@@ -540,6 +542,11 @@ export function ReceivingRecordReceiptForm(props: ReceivingRecordReceiptFormProp
         : appendPage(valuePurchaseOrderIdOptions(), rows, outcome.value.nextCursor),
     );
   };
+  const readValuePurchaseOrderIdRecord = async (key: string): Promise<PurchaseOrderQueryRow | null> => {
+    const request = writeMember({ requestId: newRequestId() }, ["id"], key) as PurchaseOrderGetRequest;
+    const outcome = await purchaseOrderGet(props.transport, [request]);
+    return outcome.status === "completed" ? ((outcome.value ?? null) as unknown as PurchaseOrderQueryRow | null) : null;
+  };
   void readValuePurchaseOrderIdOptions(null);
 
   return (
@@ -635,6 +642,7 @@ export function ReceivingRecordReceiptForm(props: ReceivingRecordReceiptFormProp
               }}
               hasNextPage={hasNextPage(valuePurchaseOrderIdOptions())}
               onNextPage={() => void readValuePurchaseOrderIdOptions(valuePurchaseOrderIdOptions().cursor)}
+              readRow={readValuePurchaseOrderIdRecord}
               error={refusalMarks(refusal()?.member ?? null, "value.purchase_order_id") ? (refusal()?.text ?? null) : null}
             />
           )}

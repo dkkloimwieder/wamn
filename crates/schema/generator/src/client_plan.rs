@@ -238,6 +238,24 @@ pub struct PopulatedInput<'a> {
     /// The revision that the chosen row supplies, when a revision input
     /// states `revision_of` this input.
     pub revision: Option<ChosenRevision<'a>>,
+    /// The read that loads one held record the list did not return, so the
+    /// selector shows its text. It is the read the list's rows open, and it
+    /// returns the key field and the display field.
+    pub read: Option<RecordRead<'a>>,
+}
+
+/// The read that returns one record by its key.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RecordRead<'a> {
+    /// Canonical identity of the read.
+    pub operation: &'a str,
+    /// Model that owns the read, which is the module an emitter imports it
+    /// from.
+    pub model: &'a str,
+    /// Operation name of the read inside its own model.
+    pub name: &'a str,
+    /// Input path of the read that takes the key.
+    pub key_input: &'a str,
 }
 
 /// A revision that the operator's choice in one selector supplies.
@@ -438,12 +456,14 @@ impl<'a> ClientPlan<'a> {
     ///
     /// This runs after every screen exists, for the reason `link_rows` does:
     /// the list that serves an input belongs to another operation, and one
-    /// screen's IR never states another's.
+    /// screen's IR never states another's. It runs after `link_rows` too,
+    /// because the read that loads a held record is the one the list's rows
+    /// open by record.
     fn populate_inputs(&mut self) {
         let lists: Vec<Lister<'a>> = self.screens().filter_map(Lister::of).collect();
         let populated: Vec<_> = self
             .screens()
-            .map(|screen| populated_inputs(screen, &lists))
+            .map(|screen| populated_inputs(screen, &lists, self))
             .collect();
         let mut populated = populated.into_iter();
         for model in &mut self.models {
@@ -912,38 +932,58 @@ fn resolved_columns<'a>(
                 .iter()
                 .filter(|list| list.model == reference.model)
                 .find_map(|list| {
-                    let display = list.display();
-                    let read = plan
-                        .screens()
-                        .find(|candidate| candidate.contract.operation == list.operation)?
-                        .row_links
-                        .iter()
-                        .filter(|link| link.reason == LinkReason::Record)
-                        .find_map(|link| {
-                            plan.screens()
-                                .find(|candidate| candidate.contract.operation == link.operation)
-                        })?;
-                    let key_input = read.record?.key_input?;
                     // The read must return the text the list shows, or the
                     // cell would show a different field than the selector.
-                    read.columns
-                        .iter()
-                        .any(|field| field.path == display)
-                        .then_some(ResolvedColumn {
-                            column: column.path.as_str(),
-                            read_operation: read.contract.operation.as_str(),
-                            read_model: read.model,
-                            read_name: read.name,
-                            key_input,
-                            display_field: display,
-                        })
+                    let display = list.display();
+                    let read = record_read(list, plan, &[display])?;
+                    Some(ResolvedColumn {
+                        column: column.path.as_str(),
+                        read_operation: read.operation,
+                        read_model: read.model,
+                        read_name: read.name,
+                        key_input: read.key_input,
+                        display_field: display,
+                    })
                 })
         })
         .collect()
 }
 
+/// The read that the rows of one list open by record, when it returns every
+/// field in `fields`.
+fn record_read<'a>(
+    list: &Lister<'a>,
+    plan: &ClientPlan<'a>,
+    fields: &[&str],
+) -> Option<RecordRead<'a>> {
+    let read = plan
+        .screens()
+        .find(|candidate| candidate.contract.operation == list.operation)?
+        .row_links
+        .iter()
+        .filter(|link| link.reason == LinkReason::Record)
+        .find_map(|link| {
+            plan.screens()
+                .find(|candidate| candidate.contract.operation == link.operation)
+        })?;
+    let key_input = read.record?.key_input?;
+    fields
+        .iter()
+        .all(|wanted| read.columns.iter().any(|field| field.path == *wanted))
+        .then_some(RecordRead {
+            operation: read.contract.operation.as_str(),
+            model: read.model,
+            name: read.name,
+            key_input,
+        })
+}
+
 /// Bind one screen's inputs to the lists that offer their records.
-fn populated_inputs<'a>(screen: &ScreenPlan<'a>, lists: &[Lister<'a>]) -> Vec<PopulatedInput<'a>> {
+fn populated_inputs<'a>(
+    screen: &ScreenPlan<'a>,
+    lists: &[Lister<'a>],
+    plan: &ClientPlan<'a>,
+) -> Vec<PopulatedInput<'a>> {
     let contract: &'a OperationIr = screen.contract;
     let input_leaves = leaf_fields(&contract.input_fields);
     screen
@@ -1004,6 +1044,9 @@ fn populated_inputs<'a>(screen: &ScreenPlan<'a>, lists: &[Lister<'a>]) -> Vec<Po
                 cursor_input: list.cursor_input,
                 narrowed_by,
                 revision,
+                // The read returns the value the form stores and the text the
+                // selector shows, so a loaded record reads as a listed row.
+                read: record_read(list, plan, &[list.key_field, list.display()]),
             })
         })
         .collect()

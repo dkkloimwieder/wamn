@@ -1,8 +1,9 @@
 use serde_json::json;
 use wamn_schema_generator::client_ir::{ClientContractIr, FieldIr, OperationIr};
 use wamn_schema_generator::client_plan::{
-    ChosenRevision, ClientPlan, LinkReason, NoRole, ResolvedColumn, Role, RowLink, Rows,
-    ScreenPlan, SuppliedKind, UnresolvedColumn, UnsearchableSelector, effective_result_fields,
+    ChosenRevision, ClientPlan, LinkReason, NoRole, RecordRead, ResolvedColumn, Role, RowLink,
+    Rows, ScreenPlan, SuppliedKind, UnresolvedColumn, UnsearchableSelector,
+    effective_result_fields,
 };
 
 #[path = "support/platform_fixture.rs"]
@@ -838,6 +839,56 @@ fn a_table_column_that_names_a_record_states_the_read_that_shows_it() {
             column: "maker_id",
             model: "widget_maker",
         }]
+    );
+}
+
+/// A selector states the read that loads a held record its list did not
+/// return, by the rule a table column uses (wamn-1jrv).
+#[test]
+fn a_selector_states_the_read_that_loads_a_record_off_its_list() {
+    let ir = release();
+    let plan = ClientPlan::from_ir(&ir);
+    let read = |name: &str, path: &str| {
+        screen(&plan, name)
+            .population
+            .iter()
+            .find(|input| input.input == path)
+            .unwrap_or_else(|| panic!("{name} populates {path}"))
+            .read
+    };
+    assert_eq!(
+        read("update", "change.maker_id"),
+        Some(RecordRead {
+            operation: "platform-fixture:widget-maker/get@1.0.0",
+            model: "widget_maker",
+            name: "get",
+            key_input: "id",
+        }),
+        "the maker selector loads a maker through the get its list's rows open"
+    );
+
+    // With no served get, the list's rows open no record read, so the
+    // selector shows only the rows its list returns.
+    let mut unserved = release();
+    unserved
+        .models
+        .iter_mut()
+        .find(|model| model.name == "widget_maker")
+        .expect("the second model")
+        .operations
+        .iter_mut()
+        .find(|operation| operation.name == "get")
+        .expect("the maker get")
+        .route = None;
+    let plan = ClientPlan::from_ir(&unserved);
+    assert_eq!(
+        screen(&plan, "update")
+            .population
+            .iter()
+            .find(|input| input.input == "change.maker_id")
+            .expect("the maker selector")
+            .read,
+        None
     );
 }
 

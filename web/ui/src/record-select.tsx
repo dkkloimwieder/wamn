@@ -4,7 +4,8 @@
  * The generated selector owns the read: it holds the rows, sends the search
  * and follows the cursor. This control shows those rows, reports the text the
  * operator typed, and offers the next page. It filters nothing itself, so the
- * options are exactly the rows the release sent.
+ * options are exactly the rows the release sent. A stored value that no row
+ * carries is read by itself, so the control shows its text.
  */
 
 import {
@@ -51,6 +52,12 @@ export interface RecordSelectProps<Row extends object> {
   /** True while the last reply carried a cursor. */
   readonly hasNextPage?: boolean;
   readonly onNextPage?: () => void;
+  /**
+   * Reads the one record a stored value names, or null. The control calls it
+   * once for each value that no listed or chosen row carries, such as a value
+   * a row action filled from a record off the first page.
+   */
+  readonly readRow?: (value: string) => Promise<Row | null>;
 }
 
 export function RecordSelect<Row extends object>(props: RecordSelectProps<Row>) {
@@ -80,6 +87,42 @@ export function RecordSelect<Row extends object>(props: RecordSelectProps<Row>) 
     }),
   );
 
+  // A stored value that no row carries is read once, and the row it returns
+  // shows as the chosen one. A value the operator changed meanwhile wins.
+  // The combobox shows only a selection it offers, so a read row that the
+  // list did not return is offered after the listed rows.
+  const [loaded, setLoaded] = createSignal<Row | null>(null);
+  const offered = (): Row[] => {
+    const row = loaded();
+    const listed = [...props.options];
+    return row !== null &&
+      row === selected() &&
+      !listed.some((option) => props.optionValue(option) === props.optionValue(row))
+      ? [...listed, row]
+      : listed;
+  };
+  const asked = new Set<string>();
+  createEffect(() => {
+    const value = props.value;
+    const read = props.readRow;
+    if (read === undefined || value === null || value === "" || selected() !== null) {
+      return;
+    }
+    if (asked.has(value)) {
+      return;
+    }
+    asked.add(value);
+    read(value).then(
+      (row) => {
+        if (row !== null && props.value === value) {
+          setLoaded(() => row);
+          setChosen(() => row);
+        }
+      },
+      () => undefined,
+    );
+  });
+
   let pending: ReturnType<typeof setTimeout> | undefined;
   onCleanup(() => clearTimeout(pending));
   const typed = (text: string) => {
@@ -98,7 +141,7 @@ export function RecordSelect<Row extends object>(props: RecordSelectProps<Row>) 
     <Field data-invalid={props.error ? "true" : undefined}>
       <FieldLabel id={labelId}>{props.label}</FieldLabel>
       <Combobox<Row>
-        options={[...props.options]}
+        options={offered()}
         optionValue={(row) => props.optionValue(row)}
         optionTextValue={(row) => props.optionLabel(row)}
         optionLabel={(row) => props.optionLabel(row)}

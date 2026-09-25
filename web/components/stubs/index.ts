@@ -136,7 +136,10 @@ export function selectorStub(): { transport: Transport; sent: WireRequest[] } {
   };
 }
 
-/** One transport that answers a search and a next page from the same list. */
+/**
+ * One transport that answers a search and a next page from the same list.
+ * Southwind is on the second page, and the maker read returns it by key.
+ */
 export function paged(): { transport: Transport; sent: WireRequest[] } {
   const sent: WireRequest[] = [];
   return {
@@ -149,6 +152,14 @@ export function paged(): { transport: Transport; sent: WireRequest[] } {
             status: "completed",
             value: { id: "written", edit_version: 1 },
           });
+        }
+        if (request.operation.includes("/get@")) {
+          const key = String((request.items[0] as { id?: string }).id);
+          return Promise.resolve<Outcome<JsonValue>>(
+            key === SOUTH
+              ? { status: "completed", value: { id: SOUTH, name: "Southwind" } }
+              : { status: "refused", code: "not_found", detail: null },
+          );
         }
         const item = request.items[0] as {
           filter?: { name?: string[] };

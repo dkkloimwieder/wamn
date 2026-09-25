@@ -16,8 +16,8 @@ import { afterEach, describe, expect, it } from "vitest";
 import type { JsonValue } from "@wamn/web-runtime";
 
 import { WidgetCreateForm } from "../fixture/components/widget.js";
-import { choose, openSelector } from "./choose.js";
-import { MAKER, paged, selectorStub as stub } from "../stubs/index.js";
+import { choose, openSelector, selector } from "./choose.js";
+import { MAKER, SOUTH, paged, selectorStub as stub } from "../stubs/index.js";
 
 afterEach(cleanup);
 
@@ -42,6 +42,19 @@ describe("a populated input", () => {
     await waitFor(() => expect(sent).toHaveLength(2));
     const submission = sent[1]?.items[0] as { [key: string]: JsonValue };
     expect(submission["maker_id"]).toBe(MAKER);
+  });
+});
+
+describe("a selector that holds a record its list did not return", () => {
+  it("reads that record and shows its text (wamn-1jrv)", async () => {
+    const { transport, sent } = paged();
+    // A row action filled Southwind, which is on the second page.
+    render(() => (
+      <WidgetCreateForm transport={transport} initial={{ code: "standard", makerId: SOUTH }} />
+    ));
+    await waitFor(() => expect(selector("maker id").value).toBe("Southwind"));
+    const reads = sent.filter((request) => request.operation.includes("widget-maker/get@"));
+    expect(reads.map((request) => (request.items[0] as { id: string }).id)).toEqual([SOUTH]);
   });
 });
 

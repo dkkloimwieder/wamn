@@ -71,17 +71,23 @@ import {
   type InventorySplitResult,
 } from "../inventory.js";
 import {
+  get as locationGet,
   query as locationQuery,
+  type LocationGetRequest,
   type LocationQueryRequest,
   type LocationQueryRow,
 } from "../location.js";
 import {
+  get as palletGet,
   query as palletQuery,
+  type PalletGetRequest,
   type PalletQueryRequest,
   type PalletQueryRow,
 } from "../pallet.js";
 import {
+  get as productGet,
   query as productQuery,
+  type ProductGetRequest,
   type ProductQueryRequest,
   type ProductQueryRow,
 } from "../product.js";
@@ -194,6 +200,11 @@ export function InventoryAdjustForm(props: InventoryAdjustFormProps) {
         : appendPage(valuePalletIdOptions(), rows, outcome.value.nextCursor),
     );
   };
+  const readValuePalletIdRecord = async (key: string): Promise<PalletQueryRow | null> => {
+    const request = writeMember({ requestId: newRequestId() }, ["id"], key) as PalletGetRequest;
+    const outcome = await palletGet(props.transport, [request]);
+    return outcome.status === "completed" ? ((outcome.value ?? null) as unknown as PalletQueryRow | null) : null;
+  };
   void readValuePalletIdOptions(null);
   const [valueProductIdOptions, setValueProductIdOptions] = createSignal<PageState<ProductQueryRow>>(emptyPage<ProductQueryRow>());
   const [valueProductIdSearch, setValueProductIdSearch] = createSignal("");
@@ -215,6 +226,11 @@ export function InventoryAdjustForm(props: InventoryAdjustFormProps) {
         ? firstPage(rows, outcome.value.nextCursor)
         : appendPage(valueProductIdOptions(), rows, outcome.value.nextCursor),
     );
+  };
+  const readValueProductIdRecord = async (key: string): Promise<ProductQueryRow | null> => {
+    const request = writeMember({ requestId: newRequestId() }, ["id"], key) as ProductGetRequest;
+    const outcome = await productGet(props.transport, [request]);
+    return outcome.status === "completed" ? ((outcome.value ?? null) as unknown as ProductQueryRow | null) : null;
   };
   void readValueProductIdOptions(null);
 
@@ -244,6 +260,7 @@ export function InventoryAdjustForm(props: InventoryAdjustFormProps) {
               }}
               hasNextPage={hasNextPage(valuePalletIdOptions())}
               onNextPage={() => void readValuePalletIdOptions(valuePalletIdOptions().cursor)}
+              readRow={readValuePalletIdRecord}
               error={refusalMarks(refusal()?.member ?? null, "value.pallet_id") ? (refusal()?.text ?? null) : null}
             />
           )}
@@ -263,6 +280,7 @@ export function InventoryAdjustForm(props: InventoryAdjustFormProps) {
               }}
               hasNextPage={hasNextPage(valueProductIdOptions())}
               onNextPage={() => void readValueProductIdOptions(valueProductIdOptions().cursor)}
+              readRow={readValueProductIdRecord}
               error={refusalMarks(refusal()?.member ?? null, "value.product_id") ? (refusal()?.text ?? null) : null}
             />
           )}
@@ -533,6 +551,11 @@ export function InventoryMergeForm(props: InventoryMergeFormProps) {
         : appendPage(valueSourcePalletIdOptions(), rows, outcome.value.nextCursor),
     );
   };
+  const readValueSourcePalletIdRecord = async (key: string): Promise<PalletQueryRow | null> => {
+    const request = writeMember({ requestId: newRequestId() }, ["id"], key) as PalletGetRequest;
+    const outcome = await palletGet(props.transport, [request]);
+    return outcome.status === "completed" ? ((outcome.value ?? null) as unknown as PalletQueryRow | null) : null;
+  };
   void readValueSourcePalletIdOptions(null);
   const [valueTargetPalletIdOptions, setValueTargetPalletIdOptions] = createSignal<PageState<PalletQueryRow>>(emptyPage<PalletQueryRow>());
   const [valueTargetPalletIdSearch, setValueTargetPalletIdSearch] = createSignal("");
@@ -555,6 +578,11 @@ export function InventoryMergeForm(props: InventoryMergeFormProps) {
         ? firstPage(rows, outcome.value.nextCursor)
         : appendPage(valueTargetPalletIdOptions(), rows, outcome.value.nextCursor),
     );
+  };
+  const readValueTargetPalletIdRecord = async (key: string): Promise<PalletQueryRow | null> => {
+    const request = writeMember({ requestId: newRequestId() }, ["id"], key) as PalletGetRequest;
+    const outcome = await palletGet(props.transport, [request]);
+    return outcome.status === "completed" ? ((outcome.value ?? null) as unknown as PalletQueryRow | null) : null;
   };
   void readValueTargetPalletIdOptions(null);
 
@@ -584,6 +612,7 @@ export function InventoryMergeForm(props: InventoryMergeFormProps) {
               }}
               hasNextPage={hasNextPage(valueSourcePalletIdOptions())}
               onNextPage={() => void readValueSourcePalletIdOptions(valueSourcePalletIdOptions().cursor)}
+              readRow={readValueSourcePalletIdRecord}
               error={refusalMarks(refusal()?.member ?? null, "value.source_pallet_id") ? (refusal()?.text ?? null) : null}
             />
           )}
@@ -608,6 +637,7 @@ export function InventoryMergeForm(props: InventoryMergeFormProps) {
               }}
               hasNextPage={hasNextPage(valueTargetPalletIdOptions())}
               onNextPage={() => void readValueTargetPalletIdOptions(valueTargetPalletIdOptions().cursor)}
+              readRow={readValueTargetPalletIdRecord}
               error={refusalMarks(refusal()?.member ?? null, "value.target_pallet_id") ? (refusal()?.text ?? null) : null}
             />
           )}
@@ -717,6 +747,11 @@ export function InventoryMoveForm(props: InventoryMoveFormProps) {
         : appendPage(valuePalletIdOptions(), rows, outcome.value.nextCursor),
     );
   };
+  const readValuePalletIdRecord = async (key: string): Promise<PalletQueryRow | null> => {
+    const request = writeMember({ requestId: newRequestId() }, ["id"], key) as PalletGetRequest;
+    const outcome = await palletGet(props.transport, [request]);
+    return outcome.status === "completed" ? ((outcome.value ?? null) as unknown as PalletQueryRow | null) : null;
+  };
   void readValuePalletIdOptions(null);
   const [valueToLocationIdOptions, setValueToLocationIdOptions] = createSignal<PageState<LocationQueryRow>>(emptyPage<LocationQueryRow>());
   const [valueToLocationIdSearch, setValueToLocationIdSearch] = createSignal("");
@@ -738,6 +773,11 @@ export function InventoryMoveForm(props: InventoryMoveFormProps) {
         ? firstPage(rows, outcome.value.nextCursor)
         : appendPage(valueToLocationIdOptions(), rows, outcome.value.nextCursor),
     );
+  };
+  const readValueToLocationIdRecord = async (key: string): Promise<LocationQueryRow | null> => {
+    const request = writeMember({ requestId: newRequestId() }, ["id"], key) as LocationGetRequest;
+    const outcome = await locationGet(props.transport, [request]);
+    return outcome.status === "completed" ? ((outcome.value ?? null) as unknown as LocationQueryRow | null) : null;
   };
   void readValueToLocationIdOptions(null);
 
@@ -767,6 +807,7 @@ export function InventoryMoveForm(props: InventoryMoveFormProps) {
               }}
               hasNextPage={hasNextPage(valuePalletIdOptions())}
               onNextPage={() => void readValuePalletIdOptions(valuePalletIdOptions().cursor)}
+              readRow={readValuePalletIdRecord}
               error={refusalMarks(refusal()?.member ?? null, "value.pallet_id") ? (refusal()?.text ?? null) : null}
             />
           )}
@@ -786,6 +827,7 @@ export function InventoryMoveForm(props: InventoryMoveFormProps) {
               }}
               hasNextPage={hasNextPage(valueToLocationIdOptions())}
               onNextPage={() => void readValueToLocationIdOptions(valueToLocationIdOptions().cursor)}
+              readRow={readValueToLocationIdRecord}
               error={refusalMarks(refusal()?.member ?? null, "value.to_location_id") ? (refusal()?.text ?? null) : null}
             />
           )}
@@ -903,6 +945,11 @@ export function InventorySplitForm(props: InventorySplitFormProps) {
         : appendPage(valueProductIdOptions(), rows, outcome.value.nextCursor),
     );
   };
+  const readValueProductIdRecord = async (key: string): Promise<ProductQueryRow | null> => {
+    const request = writeMember({ requestId: newRequestId() }, ["id"], key) as ProductGetRequest;
+    const outcome = await productGet(props.transport, [request]);
+    return outcome.status === "completed" ? ((outcome.value ?? null) as unknown as ProductQueryRow | null) : null;
+  };
   void readValueProductIdOptions(null);
   const [valueSourcePalletIdOptions, setValueSourcePalletIdOptions] = createSignal<PageState<PalletQueryRow>>(emptyPage<PalletQueryRow>());
   const [valueSourcePalletIdSearch, setValueSourcePalletIdSearch] = createSignal("");
@@ -925,6 +972,11 @@ export function InventorySplitForm(props: InventorySplitFormProps) {
         : appendPage(valueSourcePalletIdOptions(), rows, outcome.value.nextCursor),
     );
   };
+  const readValueSourcePalletIdRecord = async (key: string): Promise<PalletQueryRow | null> => {
+    const request = writeMember({ requestId: newRequestId() }, ["id"], key) as PalletGetRequest;
+    const outcome = await palletGet(props.transport, [request]);
+    return outcome.status === "completed" ? ((outcome.value ?? null) as unknown as PalletQueryRow | null) : null;
+  };
   void readValueSourcePalletIdOptions(null);
   const [valueToLocationIdOptions, setValueToLocationIdOptions] = createSignal<PageState<LocationQueryRow>>(emptyPage<LocationQueryRow>());
   const [valueToLocationIdSearch, setValueToLocationIdSearch] = createSignal("");
@@ -946,6 +998,11 @@ export function InventorySplitForm(props: InventorySplitFormProps) {
         ? firstPage(rows, outcome.value.nextCursor)
         : appendPage(valueToLocationIdOptions(), rows, outcome.value.nextCursor),
     );
+  };
+  const readValueToLocationIdRecord = async (key: string): Promise<LocationQueryRow | null> => {
+    const request = writeMember({ requestId: newRequestId() }, ["id"], key) as LocationGetRequest;
+    const outcome = await locationGet(props.transport, [request]);
+    return outcome.status === "completed" ? ((outcome.value ?? null) as unknown as LocationQueryRow | null) : null;
   };
   void readValueToLocationIdOptions(null);
 
@@ -986,6 +1043,7 @@ export function InventorySplitForm(props: InventorySplitFormProps) {
               }}
               hasNextPage={hasNextPage(valueProductIdOptions())}
               onNextPage={() => void readValueProductIdOptions(valueProductIdOptions().cursor)}
+              readRow={readValueProductIdRecord}
               error={refusalMarks(refusal()?.member ?? null, "value.product_id") ? (refusal()?.text ?? null) : null}
             />
           )}
@@ -1016,6 +1074,7 @@ export function InventorySplitForm(props: InventorySplitFormProps) {
               }}
               hasNextPage={hasNextPage(valueSourcePalletIdOptions())}
               onNextPage={() => void readValueSourcePalletIdOptions(valueSourcePalletIdOptions().cursor)}
+              readRow={readValueSourcePalletIdRecord}
               error={refusalMarks(refusal()?.member ?? null, "value.source_pallet_id") ? (refusal()?.text ?? null) : null}
             />
           )}
@@ -1050,6 +1109,7 @@ export function InventorySplitForm(props: InventorySplitFormProps) {
               }}
               hasNextPage={hasNextPage(valueToLocationIdOptions())}
               onNextPage={() => void readValueToLocationIdOptions(valueToLocationIdOptions().cursor)}
+              readRow={readValueToLocationIdRecord}
               error={refusalMarks(refusal()?.member ?? null, "value.to_location_id") ? (refusal()?.text ?? null) : null}
             />
           )}

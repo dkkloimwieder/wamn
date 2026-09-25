@@ -1585,6 +1585,25 @@ fn emit_form(
         names.insert(format!("{list_function} as {alias}"));
         names.insert(format!("type {list_stem}Request"));
         names.insert(format!("type {list_stem}Row"));
+        if let Some(read) = populated.read {
+            let read_function = crate::client_ts::function_name(read.name).map_err(|error| {
+                ClientComponentError::new(
+                    ClientComponentErrorKind::UnwrittenRole,
+                    error.to_string(),
+                )
+            })?;
+            let read_stem = crate::client_ts::type_stem(read.model, read.name);
+            let names = if read.model == screen.model {
+                &mut *bindings
+            } else {
+                foreign.entry(read.model.to_owned()).or_default()
+            };
+            names.insert(format!(
+                "{read_function} as {}",
+                foreign_alias(read.model, read.name)
+            ));
+            names.insert(format!("type {read_stem}Request"));
+        }
         emit_selector_state(source, populated, runtime);
     }
 
@@ -1842,6 +1861,21 @@ fn emit_selector_state(
     )
     .expect("write");
 
+    // A held record the list did not return, such as one a row action filled
+    // from off the first page, is read by itself. The read returns the key
+    // and the display field, which are all the selector reads of a row.
+    if let Some(read) = populated.read {
+        let read_stem = crate::client_ts::type_stem(read.model, read.name);
+        writeln!(
+            source,
+            "  const read{state_upper}Record = async (key: string): Promise<{stem}Row | null> => {{\n    const request = writeMember({{ requestId: newRequestId() }}, {}, key) as {read_stem}Request;\n    const outcome = await {}(props.transport, [request]);\n    return outcome.status === \"completed\" ? ((outcome.value ?? null) as unknown as {stem}Row | null) : null;\n  }};",
+            member_literal(read.key_input),
+            foreign_alias(read.model, read.name)
+        )
+        .expect("write");
+        runtime.insert("writeMember");
+    }
+
     if let Some(narrowing) = populated.narrowed_by {
         let source_member = member_path(narrowing.input).join(".");
         writeln!(
@@ -1909,6 +1943,9 @@ fn emit_selector_control(
             "{pad}  hasNextPage={{hasNextPage({state}Options())}}\n{pad}  onNextPage={{() => void read{state_upper}Options({state}Options().cursor)}}"
         )
         .expect("write");
+    }
+    if populated.read.is_some() {
+        writeln!(source, "{pad}  readRow={{read{state_upper}Record}}").expect("write");
     }
     writeln!(
         source,

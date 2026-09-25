@@ -169,6 +169,11 @@ export function PalletCreateForm(props: PalletCreateFormProps) {
         : appendPage(locationIdOptions(), rows, outcome.value.nextCursor),
     );
   };
+  const readLocationIdRecord = async (key: string): Promise<LocationQueryRow | null> => {
+    const request = writeMember({ requestId: newRequestId() }, ["id"], key) as LocationGetRequest;
+    const outcome = await locationGet(props.transport, [request]);
+    return outcome.status === "completed" ? ((outcome.value ?? null) as unknown as LocationQueryRow | null) : null;
+  };
   void readLocationIdOptions(null);
 
   return (
@@ -197,6 +202,7 @@ export function PalletCreateForm(props: PalletCreateFormProps) {
               }}
               hasNextPage={hasNextPage(locationIdOptions())}
               onNextPage={() => void readLocationIdOptions(locationIdOptions().cursor)}
+              readRow={readLocationIdRecord}
               error={refusalMarks(refusal()?.member ?? null, "location_id") ? (refusal()?.text ?? null) : null}
             />
           )}
