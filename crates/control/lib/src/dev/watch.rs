@@ -58,8 +58,9 @@ impl GitSource {
 ///
 /// `check-ignore` reports a tracked path as not ignored, so this answers the
 /// exact question the watcher has: is this directory the repository's own
-/// output rather than authored source.
-async fn git_ignored(
+/// output rather than authored source. The Generate input digest asks the same
+/// question of each package directory, so one rule bounds both.
+pub(super) async fn git_ignored(
     repository: &Path,
     candidates: &[PathBuf],
 ) -> Result<BTreeSet<PathBuf>, GitSourceError> {

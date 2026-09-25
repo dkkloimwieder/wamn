@@ -39,7 +39,7 @@ use super::read::{
     dev_read_channel,
 };
 use super::target_database;
-use super::watch::GitSource;
+use super::watch::{GitSource, git_ignored};
 use super::{DevRunNotice, DevStage, DevStageFailure, DevStageRunner};
 use crate::print_release_env::ReleaseCarrier;
 
@@ -968,7 +968,7 @@ impl ProductionDevStageRunner {
             .into_iter()
             .map(|package| package.root)
             .collect::<Vec<_>>();
-        let input_digest = self.generate_inputs_digest()?;
+        let input_digest = self.generate_inputs_digest().await?;
         let prepared = PreparedLocalGrants {
             target: target_database::prepare_configuration(&self.config).map_err(|source| {
                 ProductionDevStageError::owner("prepare local target privileges", source)
@@ -981,7 +981,7 @@ impl ProductionDevStageRunner {
             input_digest,
         };
         self.reconcile_local_grants(&prepared, false).await?;
-        if prepared.input_digest != self.generate_inputs_digest()? {
+        if prepared.input_digest != self.generate_inputs_digest().await? {
             return Err(ProductionDevStageError::invalid(
                 "validate local grant inputs",
                 "source inputs changed during grant validation; retry the candidate",
@@ -1326,11 +1326,11 @@ impl ProductionDevStageRunner {
     ///
     /// Includes package contracts, SQL, grants, verifier sources and active
     /// checkers. Component Rust edits leave these generation inputs unchanged.
-    fn generate_inputs_digest(&self) -> Result<String, ProductionDevStageError> {
+    async fn generate_inputs_digest(&self) -> Result<String, ProductionDevStageError> {
         let mut inputs: Vec<(String, String)> = Vec::new();
         for package in self.package_inputs()? {
-            let mut package_inputs = Vec::new();
-            collect_authored_bytes(&package.root, &package.root, &mut package_inputs)?;
+            let package_inputs =
+                collect_package_bytes(self.git.repository_root(), &package.root).await?;
             inputs.extend(
                 package_inputs
                     .into_iter()
@@ -1770,6 +1770,60 @@ async fn committed_file(
     Ok(output.status.success().then_some(output.stdout))
 }
 
+/// Read every authored file of the package at `root`.
+///
+/// The walk skips the generated subtree, `node_modules`, and each directory
+/// that the ignore rules of `repository` cover, such as `web/dist`. Those hold
+/// installed packages and build output, not package source, and a package
+/// manager can fill them with links to directories (wamn-qjuy). The watcher
+/// bounds itself by the same ignore rules.
+async fn collect_package_bytes(
+    repository: &Path,
+    root: &Path,
+) -> Result<Vec<(String, String)>, ProductionDevStageError> {
+    let mut inputs = Vec::new();
+    let mut pending = vec![root.to_owned()];
+    while let Some(directory) = pending.pop() {
+        let entries = std::fs::read_dir(&directory).map_err(|source| {
+            ProductionDevStageError::owner("read the package tree", source.into())
+        })?;
+        let mut directories = Vec::new();
+        for entry in entries {
+            let entry = entry.map_err(|source| {
+                ProductionDevStageError::owner("read the package tree", source.into())
+            })?;
+            let path = entry.path();
+            if path.file_name().is_some_and(|name| {
+                name == "generated" || name == "target" || name == ".sqlx" || name == "node_modules"
+            }) {
+                continue;
+            }
+            let kind = entry.file_type().map_err(|source| {
+                ProductionDevStageError::owner("read the package tree", source.into())
+            })?;
+            if kind.is_dir() {
+                directories.push(path);
+                continue;
+            }
+            inputs.push(authored_file(root, &path)?);
+        }
+        let ignored = git_ignored(repository, &directories)
+            .await
+            .map_err(|source| {
+                ProductionDevStageError::owner(
+                    "read the ignore rules of the package tree",
+                    source.into(),
+                )
+            })?;
+        pending.extend(
+            directories
+                .into_iter()
+                .filter(|directory| !ignored.contains(directory)),
+        );
+    }
+    Ok(inputs)
+}
+
 /// Read every authored file under `directory`, skipping the generated subtree.
 ///
 /// A read failure is a refusal rather than an omission: a file the walk cannot
@@ -1799,29 +1853,29 @@ fn collect_authored_bytes(
             collect_authored_bytes(root, &path, inputs)?;
             continue;
         }
-        let bytes = std::fs::read(&path).map_err(|source| {
-            ProductionDevStageError::owner("read an authored package file", source.into())
-        })?;
-        let relative = path.strip_prefix(root).unwrap_or(&path);
-        inputs.push((
-            relative.to_string_lossy().into_owned(),
-            // Authored inputs are text. Encoding the bytes rather than the text
-            // keeps a non-UTF-8 file from hashing to the same value as another.
-            bytes.iter().fold(String::new(), |mut hex, byte| {
-                use std::fmt::Write as _;
-                write!(hex, "{byte:02x}").expect("writing to a string is infallible");
-                hex
-            }),
-        ));
+        inputs.push(authored_file(root, &path)?);
     }
     Ok(())
 }
 
-#[expect(
-    clippy::unused_async_trait_impl,
-    reason = "`DevStageRunner` declares its stage seam as `async fn`; the stages this \
-              runner answers from already-read state still have to match the trait"
-)]
+/// One authored file, as its path relative to `root` and its bytes in hex.
+fn authored_file(root: &Path, path: &Path) -> Result<(String, String), ProductionDevStageError> {
+    let bytes = std::fs::read(path).map_err(|source| {
+        ProductionDevStageError::owner("read an authored package file", source.into())
+    })?;
+    let relative = path.strip_prefix(root).unwrap_or(path);
+    Ok((
+        relative.to_string_lossy().into_owned(),
+        // Authored inputs are text. Encoding the bytes rather than the text
+        // keeps a non-UTF-8 file from hashing to the same value as another.
+        bytes.iter().fold(String::new(), |mut hex, byte| {
+            use std::fmt::Write as _;
+            write!(hex, "{byte:02x}").expect("writing to a string is infallible");
+            hex
+        }),
+    ))
+}
+
 impl DevStageRunner for ProductionDevStageRunner {
     type Error = ProductionDevStageError;
 
@@ -1857,14 +1911,14 @@ impl DevStageRunner for ProductionDevStageRunner {
             }
             DevStage::Acl => {
                 return Ok(self.acl_input_digest.as_deref()
-                    == Some(self.generate_inputs_digest()?.as_str()));
+                    == Some(self.generate_inputs_digest().await?.as_str()));
             }
             _ => {}
         }
         if stage != DevStage::Generate {
             return Ok(false);
         }
-        let digest = self.generate_inputs_digest()?;
+        let digest = self.generate_inputs_digest().await?;
         let outputs = generated_outputs_digest(&self.package_inputs()?)?;
         if outputs != "missing"
             && self.generate_input_digest.as_deref() == Some(digest.as_str())
@@ -2782,6 +2836,53 @@ mod tests {
         );
         fs::remove_dir_all(root.join("generated")).unwrap();
         assert_ne!(generated_outputs_digest(&[package]).unwrap(), original);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn package_inputs_skip_installed_packages_and_ignored_output() {
+        let root = std::env::temp_dir().join(format!(
+            "wamn-package-inputs-{}-{}",
+            std::process::id(),
+            TEMPORARY_FILE_SEQUENCE.fetch_add(1, Ordering::Relaxed)
+        ));
+        let package = root.join("apps/demo");
+        for (path, bytes) in [
+            (root.join(".gitignore"), &b"dist/\n"[..]),
+            (package.join("wamn.json"), b"{}"),
+            (package.join("web/src/main.tsx"), b"export {};"),
+            (package.join("web/dist/index.js"), b"built"),
+            (
+                package.join("web/node_modules/.pnpm/vite/index.js"),
+                b"installed",
+            ),
+        ] {
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(path, bytes).unwrap();
+        }
+        // pnpm links each package to a directory. Reading the link as a file
+        // refused the whole Generate stage.
+        std::os::unix::fs::symlink(
+            package.join("web/node_modules/.pnpm/vite"),
+            package.join("web/node_modules/vite"),
+        )
+        .unwrap();
+        let status = std::process::Command::new("git")
+            .arg("-C")
+            .arg(&root)
+            .args(["init", "--quiet"])
+            .status()
+            .unwrap();
+        assert!(status.success());
+
+        let mut paths = collect_package_bytes(&root, &package)
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|(path, _)| path)
+            .collect::<Vec<_>>();
+        paths.sort();
+        assert_eq!(paths, ["wamn.json", "web/src/main.tsx"]);
         fs::remove_dir_all(root).unwrap();
     }
 

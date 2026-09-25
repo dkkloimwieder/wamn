@@ -96,6 +96,8 @@ Cargo controls which selected components need compilation.
 Named SQL and operation contract changes refresh generation against the retained database.
 SQLx metadata is prepared again only when [its inputs](running-tests.md#application-generation-and-sqlx) changed.
 Changes to generator inputs, dependency locks, checker tools, or grants also invalidate the corresponding generated state.
+The generator inputs are the files of the package, without `node_modules` and without any directory that the Git ignore rules cover, such as `web/dist`.
+The watcher uses the same ignore rules.
 Missing or changed generated files prevent reuse.
 Receiving and Acme use the shared SQLx CLI 0.9.0 commands and their existing verifier targets.
 
