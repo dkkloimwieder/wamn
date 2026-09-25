@@ -45,9 +45,9 @@ pub(crate) fn encode(output: &[contract::AggregateOutcome]) -> String {
                 "value": { "rows": value.rows.iter().map(|row| json!({
                     "product_id": row.product_id,
                     "location_id": row.location_id,
-                    "status": row.status,
+                    "disposition": row.disposition,
                     "quantity": row.quantity,
-                    "pallet_count": row.pallet_count,
+                    "packaging_count": row.packaging_count,
                 })).collect::<Vec<_>>() }
             }),
             Err(error) => json!({
@@ -115,9 +115,9 @@ macro_rules! row {
         $target {
             product_id: row.product_id.0,
             location_id: row.location_id.0,
-            status: row.status,
+            disposition: row.disposition,
             quantity: row.quantity.0,
-            pallet_count: row.pallet_count,
+            packaging_count: row.packaging_count,
         }
     }};
 }

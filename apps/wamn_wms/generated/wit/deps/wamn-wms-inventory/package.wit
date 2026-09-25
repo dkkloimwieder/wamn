@@ -1,17 +1,128 @@
 package wamn-wms:inventory@1.0.0;
 
+interface get {
+  use wamn:node/types@0.1.0.{emission, node-context, node-error};
+
+  record get-request {
+    id: string,
+  }
+
+  record invalid-input-detail {
+    field: string,
+  }
+
+  record not-found-detail {
+    field: string,
+    id: string,
+  }
+
+  record permission-denied-detail {
+    operation: string,
+  }
+
+  variant get-error {
+    invalid-input(invalid-input-detail),
+    not-found(not-found-detail),
+    retry,
+    timeout,
+    permission-denied(permission-denied-detail),
+    internal-error,
+  }
+
+  record get-item {
+    input: result<get-request, invalid-input-detail>,
+  }
+
+  record get-row {
+    created-at: string,
+    disposition: string,
+    id: string,
+    lifecycle: string,
+    location-id: string,
+    packaging-id: string,
+    product-id: string,
+    quantity: string,
+    row-version: s32,
+  }
+
+  record get-result {
+    value: get-row,
+  }
+
+  record get-outcome {
+    outcome: result<get-result, get-error>,
+  }
+
+  run: async func(ctx: node-context, input: list<get-item>) -> result<list<get-outcome>, node-error>;
+  run-json: async func(ctx: node-context, input: string) -> result<emission, node-error>;
+}
+
+interface query {
+  use wamn:node/types@0.1.0.{emission, node-context, node-error};
+
+  record query-request {
+    cursor: option<string>,
+    limit: option<s64>,
+  }
+
+  record invalid-input-detail {
+    field: string,
+    minimum: option<s64>,
+    maximum: option<s64>,
+    observed: option<s64>,
+  }
+
+  record permission-denied-detail {
+    operation: string,
+  }
+
+  variant query-error {
+    invalid-input(invalid-input-detail),
+    retry,
+    timeout,
+    permission-denied(permission-denied-detail),
+    internal-error,
+  }
+
+  record query-item {
+    input: result<query-request, invalid-input-detail>,
+  }
+
+  record query-row {
+    created-at: string,
+    disposition: string,
+    id: string,
+    lifecycle: string,
+    location-id: string,
+    packaging-id: string,
+    product-id: string,
+    quantity: string,
+    row-version: s32,
+  }
+
+  record query-result {
+    value: list<query-row>,
+    next-cursor: option<string>,
+  }
+
+  record query-outcome {
+    outcome: result<query-result, query-error>,
+  }
+
+  run: async func(ctx: node-context, input: list<query-item>) -> result<list<query-outcome>, node-error>;
+  run-json: async func(ctx: node-context, input: string) -> result<emission, node-error>;
+}
+
 interface adjust {
   use wamn:node/types@0.1.0.{emission, node-context, node-error};
 
   record adjust-request {
     expected-row-version: s32,
     idempotency-key: string,
+    inventory-id: string,
     occurred-at: string,
-    pallet-id: string,
-    product-id: string,
-    quantity: string,
-    reason-code: string,
-    status: string,
+    reason: string,
+    to-quantity: string,
   }
 
   record concurrency-conflict-detail {
@@ -30,7 +141,7 @@ interface adjust {
     observed: option<s64>,
   }
 
-  record pallet-not-found-detail {
+  record not-found-detail {
     field: string,
     id: string,
   }
@@ -39,15 +150,9 @@ interface adjust {
     operation: string,
   }
 
-  record quantity-not-found-detail {
-    field: string,
-    id: string,
-  }
-
   variant adjust-error {
     invalid-input(invalid-input-detail),
-    pallet-not-found(pallet-not-found-detail),
-    quantity-not-found(quantity-not-found-detail),
+    not-found(not-found-detail),
     concurrency-conflict(concurrency-conflict-detail),
     idempotency-conflict(idempotency-conflict-detail),
     retry,
@@ -62,10 +167,14 @@ interface adjust {
   }
 
   record adjust-result {
-    movement-id: string,
-    pallet-id: string,
-    adjusted-quantity: string,
-    pallet-status: string,
+    operation-id: string,
+    inventory-id: string,
+    product-id: string,
+    packaging-id: string,
+    location-id: string,
+    quantity: string,
+    disposition: string,
+    lifecycle: string,
     row-version: s32,
   }
 
@@ -106,9 +215,9 @@ interface aggregate {
   record aggregate-row {
     product-id: string,
     location-id: string,
-    status: string,
+    disposition: string,
     quantity: string,
-    pallet-count: s32,
+    packaging-count: s32,
   }
 
   record aggregate-result {
@@ -127,11 +236,12 @@ interface merge {
   use wamn:node/types@0.1.0.{emission, node-context, node-error};
 
   record merge-request {
-    expected-row-version: s32,
+    expected-from-row-version: s32,
+    expected-to-row-version: s32,
+    from-inventory-id: string,
     idempotency-key: string,
     occurred-at: string,
-    source-pallet-id: string,
-    target-pallet-id: string,
+    to-inventory-id: string,
   }
 
   record concurrency-conflict-detail {
@@ -150,7 +260,7 @@ interface merge {
     observed: option<s64>,
   }
 
-  record pallet-not-found-detail {
+  record not-found-detail {
     field: string,
     id: string,
   }
@@ -161,7 +271,7 @@ interface merge {
 
   variant merge-error {
     invalid-input(invalid-input-detail),
-    pallet-not-found(pallet-not-found-detail),
+    not-found(not-found-detail),
     concurrency-conflict(concurrency-conflict-detail),
     idempotency-conflict(idempotency-conflict-detail),
     retry,
@@ -176,11 +286,16 @@ interface merge {
   }
 
   record merge-result {
-    movement-id: string,
-    source-pallet-id: string,
-    target-pallet-id: string,
-    target-status: string,
+    operation-id: string,
+    inventory-id: string,
+    product-id: string,
+    packaging-id: string,
+    location-id: string,
+    quantity: string,
+    disposition: string,
+    lifecycle: string,
     row-version: s32,
+    from-inventory-id: string,
   }
 
   record merge-outcome {
@@ -198,9 +313,10 @@ interface move {
   record move-request {
     expected-row-version: s32,
     idempotency-key: string,
+    inventory-id: string,
     occurred-at: string,
-    pallet-id: string,
     to-location-id: string,
+    to-packaging-id: string,
   }
 
   record concurrency-conflict-detail {
@@ -219,12 +335,7 @@ interface move {
     observed: option<s64>,
   }
 
-  record location-not-found-detail {
-    field: string,
-    id: string,
-  }
-
-  record pallet-not-found-detail {
+  record not-found-detail {
     field: string,
     id: string,
   }
@@ -235,8 +346,7 @@ interface move {
 
   variant move-error {
     invalid-input(invalid-input-detail),
-    pallet-not-found(pallet-not-found-detail),
-    location-not-found(location-not-found-detail),
+    not-found(not-found-detail),
     concurrency-conflict(concurrency-conflict-detail),
     idempotency-conflict(idempotency-conflict-detail),
     retry,
@@ -251,10 +361,14 @@ interface move {
   }
 
   record move-result {
-    movement-id: string,
-    pallet-id: string,
+    operation-id: string,
+    inventory-id: string,
+    product-id: string,
+    packaging-id: string,
     location-id: string,
-    pallet-status: string,
+    quantity: string,
+    disposition: string,
+    lifecycle: string,
     row-version: s32,
   }
 
@@ -272,14 +386,12 @@ interface split {
 
   record split-request {
     expected-row-version: s32,
+    from-inventory-id: string,
     idempotency-key: string,
-    new-pallet-code: string,
     occurred-at: string,
-    product-id: string,
     quantity: string,
-    source-pallet-id: string,
-    status: string,
     to-location-id: string,
+    to-packaging-id: string,
   }
 
   record concurrency-conflict-detail {
@@ -293,8 +405,6 @@ interface split {
 
   record insufficient-quantity-detail {
     field: string,
-    maximum: option<s64>,
-    observed: option<s64>,
   }
 
   record invalid-input-detail {
@@ -304,12 +414,7 @@ interface split {
     observed: option<s64>,
   }
 
-  record location-not-found-detail {
-    field: string,
-    id: string,
-  }
-
-  record pallet-not-found-detail {
+  record not-found-detail {
     field: string,
     id: string,
   }
@@ -318,19 +423,12 @@ interface split {
     operation: string,
   }
 
-  record quantity-not-found-detail {
-    field: string,
-    id: string,
-  }
-
   variant split-error {
     invalid-input(invalid-input-detail),
-    pallet-not-found(pallet-not-found-detail),
-    location-not-found(location-not-found-detail),
-    quantity-not-found(quantity-not-found-detail),
-    insufficient-quantity(insufficient-quantity-detail),
+    not-found(not-found-detail),
     concurrency-conflict(concurrency-conflict-detail),
     idempotency-conflict(idempotency-conflict-detail),
+    insufficient-quantity(insufficient-quantity-detail),
     retry,
     timeout,
     permission-denied(permission-denied-detail),
@@ -343,11 +441,16 @@ interface split {
   }
 
   record split-result {
-    movement-id: string,
-    source-pallet-id: string,
-    new-pallet-id: string,
-    source-status: string,
+    operation-id: string,
+    inventory-id: string,
+    product-id: string,
+    packaging-id: string,
+    location-id: string,
+    quantity: string,
+    disposition: string,
+    lifecycle: string,
     row-version: s32,
+    new-inventory-id: string,
   }
 
   record split-outcome {

@@ -96,8 +96,8 @@
       "additionalProperties": false,
       "description": "The runtime-assertion phase: where the released route answers from this machine, and the fixture the journey seeded, declared ONCE there and handed over here so the test carries no second copy of it.",
       "properties": {
-        "pallet_id": {
-          "description": "The fixture pallet the contention moves.",
+        "inventory_id": {
+          "description": "The fixture inventory the contention moves.",
           "type": "string"
         },
         "route_endpoint": {
@@ -107,12 +107,17 @@
         "to_location_id": {
           "description": "The fixture location it moves to.",
           "type": "string"
+        },
+        "to_packaging_id": {
+          "description": "Existing packaging at the destination.",
+          "type": "string"
         }
       },
       "required": [
-        "pallet_id",
+        "inventory_id",
         "route_endpoint",
-        "to_location_id"
+        "to_location_id",
+        "to_packaging_id"
       ],
       "type": "object"
     }
@@ -198,7 +203,7 @@
           "type": "null"
         }
       ],
-      "description": "Known only once the released route is reachable from this machine and the fixture rows exist (wamn-362o.27). The shell amends it in; the runtime assertions refuse to run without it rather than guess an endpoint or a pallet."
+      "description": "Known only once the released route is reachable from this machine and the fixture rows exist (wamn-362o.27). The shell amends it in; the runtime assertions refuse to run without it rather than guess an endpoint or a inventory."
     },
     "system_pg_url": {
       "type": "string"

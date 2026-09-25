@@ -1,0 +1,268 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT\n    model.created_at,\n    model.from_disposition,\n    model.from_inventory_id,\n    model.from_lifecycle,\n    model.from_location_id,\n    model.from_packaging_id,\n    model.from_product_id,\n    model.from_quantity,\n    model.id,\n    model.inventory_id,\n    model.occurred_at,\n    model.operation_id,\n    model.reason,\n    model.to_disposition,\n    model.to_inventory_id,\n    model.to_lifecycle,\n    model.to_location_id,\n    model.to_packaging_id,\n    model.to_product_id,\n    model.to_quantity,\n    model.type\nFROM inventory_transaction AS model\nWHERE model.id = $1::uuid;\n",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "created_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "inventory_transaction",
+            "name": "created_at"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "from_disposition",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "inventory_transaction",
+            "name": "from_disposition"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "from_inventory_id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "inventory_transaction",
+            "name": "from_inventory_id"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "from_lifecycle",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "inventory_transaction",
+            "name": "from_lifecycle"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "from_location_id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "inventory_transaction",
+            "name": "from_location_id"
+          }
+        }
+      },
+      {
+        "ordinal": 5,
+        "name": "from_packaging_id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "inventory_transaction",
+            "name": "from_packaging_id"
+          }
+        }
+      },
+      {
+        "ordinal": 6,
+        "name": "from_product_id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "inventory_transaction",
+            "name": "from_product_id"
+          }
+        }
+      },
+      {
+        "ordinal": 7,
+        "name": "from_quantity",
+        "type_info": "Numeric",
+        "origin": {
+          "Table": {
+            "table": "inventory_transaction",
+            "name": "from_quantity"
+          }
+        }
+      },
+      {
+        "ordinal": 8,
+        "name": "id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "inventory_transaction",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "ordinal": 9,
+        "name": "inventory_id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "inventory_transaction",
+            "name": "inventory_id"
+          }
+        }
+      },
+      {
+        "ordinal": 10,
+        "name": "occurred_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "inventory_transaction",
+            "name": "occurred_at"
+          }
+        }
+      },
+      {
+        "ordinal": 11,
+        "name": "operation_id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "inventory_transaction",
+            "name": "operation_id"
+          }
+        }
+      },
+      {
+        "ordinal": 12,
+        "name": "reason",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "inventory_transaction",
+            "name": "reason"
+          }
+        }
+      },
+      {
+        "ordinal": 13,
+        "name": "to_disposition",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "inventory_transaction",
+            "name": "to_disposition"
+          }
+        }
+      },
+      {
+        "ordinal": 14,
+        "name": "to_inventory_id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "inventory_transaction",
+            "name": "to_inventory_id"
+          }
+        }
+      },
+      {
+        "ordinal": 15,
+        "name": "to_lifecycle",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "inventory_transaction",
+            "name": "to_lifecycle"
+          }
+        }
+      },
+      {
+        "ordinal": 16,
+        "name": "to_location_id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "inventory_transaction",
+            "name": "to_location_id"
+          }
+        }
+      },
+      {
+        "ordinal": 17,
+        "name": "to_packaging_id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "inventory_transaction",
+            "name": "to_packaging_id"
+          }
+        }
+      },
+      {
+        "ordinal": 18,
+        "name": "to_product_id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "inventory_transaction",
+            "name": "to_product_id"
+          }
+        }
+      },
+      {
+        "ordinal": 19,
+        "name": "to_quantity",
+        "type_info": "Numeric",
+        "origin": {
+          "Table": {
+            "table": "inventory_transaction",
+            "name": "to_quantity"
+          }
+        }
+      },
+      {
+        "ordinal": 20,
+        "name": "type",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "inventory_transaction",
+            "name": "type"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false,
+      true,
+      false,
+      true,
+      true,
+      true,
+      true,
+      false,
+      false,
+      false,
+      false,
+      false,
+      true,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "415ff10efad420f62823d9ed298308bb70ac86049ebe4ef47242cb36f64ed79f"
+}

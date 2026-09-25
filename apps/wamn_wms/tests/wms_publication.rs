@@ -28,59 +28,7 @@ struct Operation {
 // table, the declaration and attachments.json widen together --
 // wamn-362o.10 grew the guest from one operation to seven and widened all
 // four in one commit.
-const OPERATIONS: [Operation; 20] = [
-    Operation {
-        token: "wamn-wms:pallet/get@1.0.0",
-        attachment: "pallet-get-http",
-        route: "/pallet/get",
-    },
-    Operation {
-        token: "wamn-wms:pallet/query@1.0.0",
-        attachment: "pallet-query-http",
-        route: "/pallet/query",
-    },
-    Operation {
-        // RULED 2026-09-24 (wamn-nq1b): the move route calls the export like
-        // every other operation. The label wiring is not on the request path.
-        token: "wamn-wms:inventory/move@1.0.0",
-        attachment: "inventory-move-http",
-        route: "/inventory/move",
-    },
-    Operation {
-        token: "wamn-wms:inventory/adjust@1.0.0",
-        attachment: "inventory-adjust-http",
-        route: "/inventory/adjust",
-    },
-    Operation {
-        token: "wamn-wms:inventory/merge@1.0.0",
-        attachment: "inventory-merge-http",
-        route: "/inventory/merge",
-    },
-    Operation {
-        token: "wamn-wms:inventory/split@1.0.0",
-        attachment: "inventory-split-http",
-        route: "/inventory/split",
-    },
-    Operation {
-        token: "wamn-wms:inventory/aggregate@1.0.0",
-        attachment: "inventory-aggregate-http",
-        route: "/inventory/aggregate",
-    },
-    Operation {
-        token: "wamn-wms:inventory-movement/get@1.0.0",
-        attachment: "inventory-movement-get-http",
-        route: "/inventory_movement/get",
-    },
-    Operation {
-        token: "wamn-wms:inventory-movement/query@1.0.0",
-        attachment: "inventory-movement-query-http",
-        route: "/inventory_movement/query",
-    },
-    Operation {
-        token: "wamn-wms:location/create@1.0.0",
-        attachment: "location-create-http",
-        route: "/location/create",
-    },
+const OPERATIONS: [Operation; 21] = [
     Operation {
         token: "wamn-wms:location/get@1.0.0",
         attachment: "location-get-http",
@@ -92,29 +40,14 @@ const OPERATIONS: [Operation; 20] = [
         route: "/location/query",
     },
     Operation {
+        token: "wamn-wms:location/create@1.0.0",
+        attachment: "location-create-http",
+        route: "/location/create",
+    },
+    Operation {
         token: "wamn-wms:location/update@1.0.0",
         attachment: "location-update-http",
         route: "/location/update",
-    },
-    Operation {
-        token: "wamn-wms:pallet/create@1.0.0",
-        attachment: "pallet-create-http",
-        route: "/pallet/create",
-    },
-    Operation {
-        token: "wamn-wms:pallet-quantity/get@1.0.0",
-        attachment: "pallet-quantity-get-http",
-        route: "/pallet_quantity/get",
-    },
-    Operation {
-        token: "wamn-wms:pallet-quantity/query@1.0.0",
-        attachment: "pallet-quantity-query-http",
-        route: "/pallet_quantity/query",
-    },
-    Operation {
-        token: "wamn-wms:product/create@1.0.0",
-        attachment: "product-create-http",
-        route: "/product/create",
     },
     Operation {
         token: "wamn-wms:product/get@1.0.0",
@@ -127,9 +60,79 @@ const OPERATIONS: [Operation; 20] = [
         route: "/product/query",
     },
     Operation {
+        token: "wamn-wms:product/create@1.0.0",
+        attachment: "product-create-http",
+        route: "/product/create",
+    },
+    Operation {
         token: "wamn-wms:product/update@1.0.0",
         attachment: "product-update-http",
         route: "/product/update",
+    },
+    Operation {
+        token: "wamn-wms:packaging/get@1.0.0",
+        attachment: "packaging-get-http",
+        route: "/packaging/get",
+    },
+    Operation {
+        token: "wamn-wms:packaging/query@1.0.0",
+        attachment: "packaging-query-http",
+        route: "/packaging/query",
+    },
+    Operation {
+        token: "wamn-wms:inventory/get@1.0.0",
+        attachment: "inventory-get-http",
+        route: "/inventory/get",
+    },
+    Operation {
+        token: "wamn-wms:inventory/query@1.0.0",
+        attachment: "inventory-query-http",
+        route: "/inventory/query",
+    },
+    Operation {
+        token: "wamn-wms:inventory-transaction/get@1.0.0",
+        attachment: "inventory-transaction-get-http",
+        route: "/inventory_transaction/get",
+    },
+    Operation {
+        token: "wamn-wms:inventory-transaction/query@1.0.0",
+        attachment: "inventory-transaction-query-http",
+        route: "/inventory_transaction/query",
+    },
+    Operation {
+        token: "wamn-wms:inventory/move@1.0.0",
+        attachment: "inventory-move-http",
+        route: "/inventory/move",
+    },
+    Operation {
+        token: "wamn-wms:inventory/adjust@1.0.0",
+        attachment: "inventory-adjust-http",
+        route: "/inventory/adjust",
+    },
+    Operation {
+        token: "wamn-wms:inventory/split@1.0.0",
+        attachment: "inventory-split-http",
+        route: "/inventory/split",
+    },
+    Operation {
+        token: "wamn-wms:inventory/merge@1.0.0",
+        attachment: "inventory-merge-http",
+        route: "/inventory/merge",
+    },
+    Operation {
+        token: "wamn-wms:packaging/create@1.0.0",
+        attachment: "packaging-create-http",
+        route: "/packaging/create",
+    },
+    Operation {
+        token: "wamn-wms:packaging/close@1.0.0",
+        attachment: "packaging-close-http",
+        route: "/packaging/close",
+    },
+    Operation {
+        token: "wamn-wms:inventory/aggregate@1.0.0",
+        attachment: "inventory-aggregate-http",
+        route: "/inventory/aggregate",
     },
 ];
 
@@ -236,7 +239,8 @@ fn the_move_route_demands_exactly_what_the_command_requires() {
         required,
         [
             "idempotency_key",
-            "pallet_id",
+            "inventory_id",
+            "to_packaging_id",
             "to_location_id",
             "expected_row_version",
             "occurred_at"

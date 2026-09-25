@@ -1,0 +1,41 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO packaging_create_command (idempotency_key, canonical_command) VALUES ($1, $2) ON CONFLICT (idempotency_key) DO NOTHING RETURNING operation_id, packaging_id;\n",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "operation_id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "packaging_create_command",
+            "name": "operation_id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "packaging_id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "packaging_create_command",
+            "name": "packaging_id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Bytea"
+      ]
+    },
+    "nullable": [
+      false,
+      false
+    ]
+  },
+  "hash": "46c3b517c87087cc115ce30ba03048bbbe971171e6de143ed90fbe8c5e496ee9"
+}

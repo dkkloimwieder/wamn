@@ -8,11 +8,12 @@ Task `wamn-s43x.11` owns this correction. Production alignment remains separate 
 
 ## Evidence and execution
 
-Production source review used revision `1931d925f15e3e33ef2fc4899a8a46e96f0b4125` and the unchanged command sources on this branch.
-The scenario, schema, implementations, SQL, and existing tests define the current production baseline.
+The initial production review used revision `1931d925f15e3e33ef2fc4899a8a46e96f0b4125`.
+The scenario, schema, implementations, SQL, and tests at that revision define the former production baseline.
 The owner's latest work order and answers define the new Inventory/Packaging target.
-No production code changed, and no application or deployed test ran for this model revision.
-Existing application test mappings below describe inspected assertions, not new runtime results.
+The explicit-location model revision changed no production code.
+Task `wamn-s43x.10` subsequently replaces production with the target model.
+The formal source and measured proof results remain unchanged by that production work.
 
 The toolchain is Kani 0.68.0, CBMC 6.11.0, and nightly Rust dated 2026-08-21.
 The [run instructions](../../../docs/operations/running-tests.md#wms-formal-model) reproduce the experiment.
@@ -73,81 +74,77 @@ Move and split accept explicit destination locations and record direct inventory
 The transaction observer reconstructs location from transaction rows without reading packaging location.
 The bounds and command set remain unchanged. Packaging relocation remains outside this correction.
 
-## Target versus production
+## Production alignment
 
-The previous correction at `e017dee28` separated pallet status from available/held quantity rows.
-That correction modeled current production, including mixed active pallet statuses during merge.
-The new owner rules define a different command unit: a scalar inventory identity with one disposition, separate from packaging.
-The revised model therefore refuses unequal inventory dispositions without silently changing either one.
-The prior production finding remains valid and does not define the new target policy.
+Task `wamn-s43x.10` replaces the old POC schema, APIs, commands, generated clients, fixtures, and tests.
+The earlier source baseline remains available at Git commit `df515100b`.
+That baseline combined pallet state with stock status and reconstructed some replay results from mutable state.
+Beads `wamn-s43x.1`, `wamn-s43x.5`, and `wamn-s43x.6` track the replay, closed-inventory, and incomplete-history findings.
 
-Beads `wamn-s43x.10` tracks this domain alignment separately from the prototype.
-Current [merge](../data/src/inventory_merge.rs) transfers all source pallet rows by product and stock status.
-Its [lock test](../data/src/inventory_merge.rs) accepts a held source pallet and an available target pallet.
-The [target update](../command/inventory_merge/touch_target.sql) preserves target pallet status.
-The [quantity update](../command/inventory_merge/add_to_target.sql) and [insertion](../command/inventory_merge/place_on_target.sql) preserve each stock status.
-Current production can therefore retain both available and held stock on one target pallet.
-This is not a target inventory merge between unequal dispositions.
+The replacement uses independent inventory disposition, inventory lifecycle, and packaging lifecycle.
+Move and split explicitly change inventory location and packaging references.
+Merge requires equal product and disposition, closes source inventory, and preserves packaging metadata.
+Every inventory mutation and its complete transaction rows share one explicit PostgreSQL transaction.
+The claim stores the whole returned result before commit.
+History failure rolls back state changes, earlier history inserts, and the claim.
 
-Current move relocates a whole pallet. The target move explicitly changes one inventory's packaging reference and physical location.
-Current split creates a pallet. The target split creates inventory inside existing open packaging.
-Current merge retires the source pallet. The target merge closes source inventory and leaves packaging lifecycle unchanged.
-The current schema has no separate generic packaging lifecycle with the owner's empty-closure invariant.
-The prototype models that invariant without changing production storage or commands.
-
-Beads `wamn-s43x.6` records incomplete inventory history.
-The [movement schema](../migrations/0001_initial.sql) lacks complete lineage and paired transition values.
-Rows already group through command type and `idempotency_key`, but lack an explicit `operation_id`.
-Existing grouping does not supply the missing transition snapshots.
-The [split insertion](../command/inventory_split/insert_movement.sql) and [merge insertion](../command/inventory_merge/insert_movement.sql) omit complete snapshots for both affected identities.
-The [adjustment insertion](../command/inventory_adjust/insert_movement.sql) records the resulting count without its starting count.
-A read-only public movement model alone does not establish immutable storage.
-
-Beads `wamn-s43x.1` records replay that reads mutable pallet status.
-[Split](../data/src/inventory_split.rs), [merge](../data/src/inventory_merge.rs), and [adjustment](../data/src/inventory_adjust.rs) reread current status during replay.
-[Move](../data/src/inventory_move.rs) stores its original result status in the claim.
-The target requires the complete original result, independent of later changes.
-The formal model follows that rule for inventory and packaging snapshots.
-
-Beads `wamn-s43x.5` records the missing final-state refusal in move.
-The [move lock](../command/inventory_move/lock_pallet.sql) and command body do not reject the terminal pallet state.
-The other three command implementations reject that state.
-This remains a source finding, not a new runtime reproduction.
-
-Production retains old quantity rows on a terminal pallet and excludes them from the live aggregate.
-The target closes source inventory with zero current quantity and preserves original quantity in transactions.
-That representation difference does not itself establish production double counting.
-All production findings remain open until implementation changes and tests resolve them.
+The package grants only insertion and reading on `InventoryTransaction`.
+No trigger or compatibility path supplies ledger atomicity.
+Application row locks protect business validation and packaging closure.
+Database constraints retain structural identity, reference, quantity, and lifecycle rules.
+Administrative fixture creation is a baseline operation outside the public command model.
 
 ## Property and test mapping
 
-The [local runner](../tests/local_business.rs), `local_business::operations_and_replay`, calls assertions in [wms_runtime_live.rs](../tests/wms_runtime_live.rs).
-The mappings below identify shared business rules and explicit gaps.
-They do not claim equivalence between pallet commands and the new inventory commands.
+The [local runner](../tests/local_business.rs) calls the real-route assertions in [wms_runtime_live.rs](../tests/wms_runtime_live.rs).
+The tests supplement the bounded formal model. They do not prove production equivalence.
 
-| Required property | Formal obligation | Existing application evidence or gap |
+| Required property | Formal obligation | Application assertion |
 | --- | --- | --- |
-| 1. Move preserves quantity | `quantities_and_closed_inventory` | `assert_contention_and_replay` and `assert_remaining_operations` exercise pallet moves. Inventory repackaging has no equivalent test. |
-| 2. Split conserves quantity | `quantities_and_closed_inventory` | `assert_remaining_operations` splits three units and examines resulting inventory. |
-| 3. Merge conserves quantity | `quantities_and_closed_inventory` | `assert_remaining_operations` merges stock and requires seven units on one live pallet. |
-| 4. Adjustment changes quantity | `quantities_and_closed_inventory` | `assert_remaining_operations` counts inventory to seven. Adjustment preparation tests require a reason. |
-| 5. Split source lineage | `complete_transactions`, `split_history_is_complete` | No complete paired snapshot assertion. See `wamn-s43x.6`. |
-| 6. Merge source lineage | `complete_transactions` | No assertion for explicit source lineage on both affected inventory rows. See `wamn-s43x.6`. |
-| 7. Complete affected history | `complete_transactions` | Current history cannot express the full target transition. See `wamn-s43x.6`. |
-| 8. Existing history immutable | `state_and_history_preservation` | Inspected tests do not compare complete prior transaction snapshots. |
-| 9. Original replay, no mutation | `original_result_and_changed_intent` | Move compares full results in `assert_label_delivery_and_replay`. Split compares identity and revision in `assert_remaining_operations`. |
-| 10. Later changes preserve replay | Both two-operation history harnesses | Split/merge/adjustment lack full-result coverage after later status changes. See `wamn-s43x.1`. |
-| 11. Changed intent refuses | `original_result_and_changed_intent` | Canonical-command unit tests and move claim behavior cover selected intent differences. |
-| 12. Closed inventory refuses | `quantities_and_closed_inventory` | Merge lock tests require live pallets. Inspected move tests lack terminal-state refusal. See `wamn-s43x.5`. |
-| 13. Packaging/location snapshots | `complete_transactions` | Current move tests inspect location, but no generic packaging transition exists. See `wamn-s43x.10`. |
-| Equal dispositions and packaging lifecycle | `quantities_and_closed_inventory`, `state_and_history_preservation` | New target rules have no direct current-production equivalents. |
+| Move preserves quantity | `quantities_and_closed_inventory` | Contended moves retain stock and explicitly select destination packaging and location. |
+| Split and merge conserve quantity | `quantities_and_closed_inventory` | Available and held split/merge cases compare resulting quantities. |
+| Adjustment changes quantity | `quantities_and_closed_inventory` | Adjustment preserves a positive decimal count and requires a reason. |
+| Split lineage | `split_history_is_complete` | Both split rows share an operation, and the new row names the source. |
+| Merge lineage | `complete_transactions` | Both merge rows name the source and target identities. |
+| Complete affected history | `complete_transactions` | History assertions inspect both identities. Failed second-row insertion rolls back all state. |
+| Immutable history | `state_and_history_preservation` | Later commands preserve prior rows. Database grants refuse application updates and deletion. |
+| Original replay without mutation | `original_result_and_changed_intent` | Full split, adjust, and merge results survive later mutations. |
+| Later changes preserve replay | Two-operation history harnesses | A held split replays its original result after its child closes. |
+| Changed intent refuses | `original_result_and_changed_intent` | Changed split intent refuses under the existing key. Claim-law tests exercise the SQL claims. |
+| Closed inventory refuses | `quantities_and_closed_inventory` | All four ordinary commands refuse closed inventory with complete state snapshots. |
+| Packaging/location snapshots | `complete_transactions` | Transactions retain explicit location and packaging values. Wrong destination location refuses. |
+| Disposition and packaging lifecycle | `state_and_history_preservation` | Unequal dispositions refuse. Empty packaging closes. Closed packaging refuses inventory. |
 
-The six native examples test held-stock split and merge, mismatched dispositions, packaging/location snapshots, empty closure, and closed-packaging refusal.
-They also compare immutable history, original replay results, adjustment reasons, and changed intent.
-The location regression changes packaging metadata alone and confirms that inventory location remains unchanged.
-That divergent open-inventory state violates the co-location invariant.
-Move and split refuse mismatched destination locations without mutation.
-Beads `wamn-s43x.3` retains the older application gaps for held splitting and complete refusal snapshots.
+The six formal native examples retain their original coverage and source hashes.
+They include a packaging-only location edit that leaves inventory location unchanged and violates co-location.
+Production supplies no packaging-location mutation command in this phase.
+
+## Production test results
+
+The replacement passed the local runtime suite on a fresh PostgreSQL database.
+The suite ran real WMS components through HTTP and finished in 51.86 seconds.
+It also exercised packaging creation and replay after packaging closure.
+The forced history failure rejected the second split row after the earlier writes.
+The inventory, history, and claim snapshots remained unchanged after rollback.
+
+The native WMS suite passed twelve tests, including offline SQL compilation, publication contracts, and wiring shape.
+Six tests require explicit runtime or cluster inputs and remained ignored in that native command.
+The separate local runtime command ran the inventory case described above.
+The generated terminal example passed three native tests and both synthetic terminal scenarios: success and refusal.
+The synthetic scenarios do not establish deployed cluster behavior.
+
+Generator unit tests passed all forty-three cases, and browser component generation passed twenty-six cases.
+The browser TypeScript compilation passed after regeneration of WMS and Receiving clients.
+Guest, generator, and all-target WMS test Clippy runs passed with warnings denied.
+Claim-law, journey-schema, and label-template tests passed.
+The small seed loaded ten products, ten locations, ten packaging records, and nineteen inventory records with platform audit stamps enabled.
+
+The formal Rust source hashes still match the completed Kani and deliberate-defect runs recorded above.
+Production alignment changed no formal Rust source, so those runs were not repeated.
+The deployed cluster cases did not run during this production correction.
+Bead `wamn-g4kj` retains the existing unattached label-workflow finding.
+Raw production logs remain in `/tmp/wamn-production-alignment/` on this host.
+
 
 ## Practicality and limits
 
@@ -155,7 +152,7 @@ The model keeps two inventory identities, two claims, two operations, and a six-
 Two packaging identities make packaging references and lifecycle explicit without modeling infrastructure.
 It remains smaller than the four production command files alone, excluding SQL and generated code.
 The business model contains 473 lines, with 496 lines of proofs and 312 lines of native examples.
-The four production command files contain 1,296 lines before their SQL and generated dependencies.
+The earlier production baseline contained 1,296 lines across its four command files, before SQL and generated dependencies.
 The transaction observer tests history completeness independently of quantity conservation.
 The measured solver cost appears in the execution record above. Routine CI cost remains unmeasured.
 

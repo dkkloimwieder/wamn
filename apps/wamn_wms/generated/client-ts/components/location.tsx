@@ -69,8 +69,8 @@ import {
   type InventorySplitFormInitial,
 } from "./inventory.js";
 import {
-  type PalletCreateFormInitial,
-} from "./pallet.js";
+  type PackagingCreateFormInitial,
+} from "./packaging.js";
 
 /** What an operator types for `wamn-wms:location/create@1.0.0`. */
 const CREATE_INPUT = z.object({
@@ -196,7 +196,7 @@ export function LocationGetDetail(props: LocationGetDetailProps) {
     () => props.input,
     async (input: LocationGetDetailInput) => {
       const read = await get(props.transport, [
-        { ...input, requestId: newRequestId() } as LocationGetRequest,
+        { ...input } as LocationGetRequest,
       ]);
       props.onOutcome?.(read);
       if (read.status !== "completed") {
@@ -264,8 +264,8 @@ export interface LocationQueryTableProps {
   readonly onFillInventoryMove?: (initial: InventoryMoveFormInitial) => void;
   /** Called with the values one row hands to `wamn-wms:inventory/split@1.0.0`. */
   readonly onFillInventorySplit?: (initial: InventorySplitFormInitial) => void;
-  /** Called with the values one row hands to `wamn-wms:pallet/create@1.0.0`. */
-  readonly onFillPalletCreate?: (initial: PalletCreateFormInitial) => void;
+  /** Called with the values one row hands to `wamn-wms:packaging/create@1.0.0`. */
+  readonly onFillPackagingCreate?: (initial: PackagingCreateFormInitial) => void;
   /** Called with every outcome this screen reads. */
   readonly onOutcome?: (outcome: Outcome<LocationQueryResult>) => void;
 }
@@ -291,7 +291,6 @@ export function LocationQueryTable(props: LocationQueryTableProps) {
     const request = {
       ...controls(),
       ...props.fixed,
-      requestId: newRequestId(),
     } as LocationQueryRequest;
     const sent = cursor === null ? request : (writeMember(request, ["cursor"], cursor) as LocationQueryRequest);
     const outcome = await query(props.transport, [sent]);
@@ -366,15 +365,15 @@ export function LocationQueryTable(props: LocationQueryTableProps) {
       ),
     },
     {
-      id: "fillPalletCreate",
+      id: "fillPackagingCreate",
       header: "",
       cell: (cell) => (
-        <Show when={props.onFillPalletCreate}>
+        <Show when={props.onFillPackagingCreate}>
           <Button
             type="button"
             variant="outline"
             size="sm"
-            onClick={() => props.onFillPalletCreate?.(writeMember({} as PalletCreateFormInitial, ["locationId"], cell.row.original.id))}
+            onClick={() => props.onFillPackagingCreate?.(writeMember({} as PackagingCreateFormInitial, ["value", "locationId"], cell.row.original.id))}
           >
             create
           </Button>
@@ -490,7 +489,7 @@ export function LocationUpdateForm(props: LocationUpdateFormProps) {
   // change another writer makes after it refuses as a conflict.
   const [record, { refetch: readAgain }] = createResource(
     () => props.key,
-    (key: LocationGetDetailInput) => get(props.transport, [{ ...key, requestId: newRequestId() }]),
+    (key: LocationGetDetailInput) => get(props.transport, [key]),
   );
 
   const form = createForm(() => ({

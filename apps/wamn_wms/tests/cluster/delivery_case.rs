@@ -176,7 +176,7 @@ pub(super) async fn run(
             "value":{"rows":[{
                 "product_id":"00000000-0000-0000-0000-000000000101",
                 "location_id":"00000000-0000-0000-0000-000000000201",
-                "status":"available","quantity":"10","pallet_count":1
+                "disposition":"available","quantity":"10","packaging_count":1
             }]}
         }]),
     )?;

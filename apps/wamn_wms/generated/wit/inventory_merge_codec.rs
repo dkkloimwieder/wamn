@@ -26,11 +26,12 @@ struct JsonRequest {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct JsonRoot {
-    expected_row_version: i32,
+    expected_from_row_version: i32,
+    expected_to_row_version: i32,
+    from_inventory_id: String,
     idempotency_key: String,
     occurred_at: String,
-    source_pallet_id: String,
-    target_pallet_id: String,
+    to_inventory_id: String,
 }
 
 pub(crate) fn decode(input: &str) -> Result<Vec<contract::MergeItem>, CodecError> {
@@ -39,11 +40,12 @@ pub(crate) fn decode(input: &str) -> Result<Vec<contract::MergeItem>, CodecError
         .map(|(request_id, body)| {
             let input = serde_json::from_value::<JsonRequest>(body)
                 .map(|request| contract::MergeRequest {
-                    expected_row_version: request.value.expected_row_version,
+                    expected_from_row_version: request.value.expected_from_row_version,
+                    expected_to_row_version: request.value.expected_to_row_version,
+                    from_inventory_id: request.value.from_inventory_id,
                     idempotency_key: request.value.idempotency_key,
                     occurred_at: request.value.occurred_at,
-                    source_pallet_id: request.value.source_pallet_id,
-                    target_pallet_id: request.value.target_pallet_id,
+                    to_inventory_id: request.value.to_inventory_id,
                 })
                 .map_err(|_| invalid("input"));
             Ok(contract::MergeItem { request_id, input })
@@ -67,11 +69,16 @@ pub(crate) fn encode(output: &[contract::MergeOutcome]) -> String {
             Ok(value) => json!({
                 "request_id": item.request_id,
                 "value": {
-                    "movement_id": value.movement_id,
-                    "source_pallet_id": value.source_pallet_id,
-                    "target_pallet_id": value.target_pallet_id,
-                    "target_status": value.target_status,
+                    "operation_id": value.operation_id,
+                    "inventory_id": value.inventory_id,
+                    "product_id": value.product_id,
+                    "packaging_id": value.packaging_id,
+                    "location_id": value.location_id,
+                    "quantity": value.quantity,
+                    "disposition": value.disposition,
+                    "lifecycle": value.lifecycle,
                     "row_version": value.row_version,
+                    "from_inventory_id": value.from_inventory_id,
                 }
             }),
             Err(error) => json!({
@@ -99,11 +106,11 @@ fn error_value(error: &contract::MergeError) -> Value {
             }
             ("invalid_input", detail)
         }
-        contract::MergeError::PalletNotFound(value) => {
+        contract::MergeError::NotFound(value) => {
             let mut detail = Map::new();
             detail.insert("field".to_owned(), json!(value.field));
             detail.insert("id".to_owned(), json!(value.id));
-            ("pallet_not_found", detail)
+            ("not_found", detail)
         }
         contract::MergeError::ConcurrencyConflict(value) => {
             let mut detail = Map::new();
@@ -137,15 +144,15 @@ fn error_value(error: &contract::MergeError) -> Value {
 fn normalize(request: &mut contract::MergeRequest) -> Result<(), contract::InvalidInputDetail> {
     let _ = &request;
     {
-        let value = &mut request.source_pallet_id;
+        let value = &mut request.from_inventory_id;
         if !canonical_uuid(value) {
-            return Err(invalid("value.source_pallet_id"));
+            return Err(invalid("value.from_inventory_id"));
         }
     }
     {
-        let value = &mut request.target_pallet_id;
+        let value = &mut request.to_inventory_id;
         if !canonical_uuid(value) {
-            return Err(invalid("value.target_pallet_id"));
+            return Err(invalid("value.to_inventory_id"));
         }
     }
     Ok(())
@@ -185,11 +192,16 @@ macro_rules! row {
     ($row:expr, $target:path) => {{
         let row = $row;
         $target {
-            movement_id: row.movement_id.0,
-            source_pallet_id: row.source_pallet_id.0,
-            target_pallet_id: row.target_pallet_id.0,
-            target_status: row.target_status,
+            operation_id: row.operation_id.0,
+            inventory_id: row.inventory_id.0,
+            product_id: row.product_id.0,
+            packaging_id: row.packaging_id.0,
+            location_id: row.location_id.0,
+            quantity: row.quantity.0,
+            disposition: row.disposition,
+            lifecycle: row.lifecycle,
             row_version: row.row_version,
+            from_inventory_id: row.from_inventory_id.0,
         }
     }};
 }
@@ -231,14 +243,14 @@ pub(crate) fn map_error(
                 observed,
             })
         }
-        "pallet_not_found" => {
+        "not_found" => {
             let Some(field) = detail("field") else {
                 return contract::MergeError::InternalError;
             };
             let Some(id) = detail("id") else {
                 return contract::MergeError::InternalError;
             };
-            contract::MergeError::PalletNotFound(contract::PalletNotFoundDetail { field, id })
+            contract::MergeError::NotFound(contract::NotFoundDetail { field, id })
         }
         "concurrency_conflict" => {
             let Some(expected_row_version) =

@@ -31,7 +31,7 @@
 //! per-item outcome reporting for nodes whose work can fail per item.
 //!
 //! `template_id` is a **wiring parameter**, not an input field. Template choice
-//! is authoring intent: a wirer picks "pallet label" once and the wiring then
+//! is authoring intent: a wirer picks "inventory label" once and the wiring then
 //! declares honestly what it renders, so gate cases can pin golden output per
 //! wiring. Taking it from the input would make every caller a template chooser
 //! and the wiring's behaviour caller-dependent. It also puts the closed set in

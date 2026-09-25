@@ -32,166 +32,99 @@ CREATE TABLE wms.location_command (
         CHECK (octet_length(canonical_command) > 0)
 );
 
-CREATE TABLE wms.pallet (
-    id uuid CONSTRAINT pallet_id_pkey PRIMARY KEY DEFAULT gen_random_uuid(),
-    pallet_code text NOT NULL CONSTRAINT pallet_pallet_code_key UNIQUE,
-    location_id uuid NOT NULL
-        CONSTRAINT pallet_location_id_fkey
-        REFERENCES wms.location (id),
-    status text NOT NULL,
+CREATE TABLE wms.packaging (
+    id uuid CONSTRAINT packaging_id_pkey PRIMARY KEY DEFAULT gen_random_uuid(),
+    type text NOT NULL,
+    code text NOT NULL CONSTRAINT packaging_code_key UNIQUE,
+    location_id uuid NOT NULL CONSTRAINT packaging_location_id_fkey REFERENCES wms.location(id),
+    lifecycle text NOT NULL DEFAULT 'open' CONSTRAINT packaging_lifecycle_check CHECK (lifecycle IN ('open', 'closed')),
     row_version int4 NOT NULL DEFAULT 1,
-    created_at timestamptz NOT NULL,
-    created_by uuid NOT NULL,
-    updated_at timestamptz NOT NULL,
-    updated_by uuid NOT NULL,
-    CONSTRAINT pallet_status_check
-        CHECK (status IN ('available', 'held', 'consumed'))
-);
-
-CREATE TABLE wms.pallet_command (
-    idempotency_key text
-        CONSTRAINT pallet_command_idempotency_key_pkey PRIMARY KEY,
-    canonical_command bytea NOT NULL,
-    pallet_id uuid NOT NULL DEFAULT gen_random_uuid()
-        CONSTRAINT pallet_command_pallet_id_key UNIQUE,
-    CONSTRAINT pallet_command_canonical_command_check
-        CHECK (octet_length(canonical_command) > 0)
-);
-
-CREATE TABLE wms.pallet_quantity (
-    id uuid CONSTRAINT pallet_quantity_id_pkey PRIMARY KEY DEFAULT gen_random_uuid(),
-    pallet_id uuid NOT NULL
-        CONSTRAINT pallet_quantity_pallet_id_fkey
-        REFERENCES wms.pallet (id),
-    product_id uuid NOT NULL
-        CONSTRAINT pallet_quantity_product_id_fkey
-        REFERENCES wms.product (id),
-    status text NOT NULL,
-    quantity numeric NOT NULL,
     created_at timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    CONSTRAINT pallet_quantity_pallet_id_product_id_status_key
-        UNIQUE (pallet_id, product_id, status),
-    CONSTRAINT pallet_quantity_status_check
-        CHECK (status IN ('available', 'held')),
-    CONSTRAINT pallet_quantity_quantity_check CHECK (quantity > 0)
+    CONSTRAINT packaging_type_check CHECK (length(trim(type)) > 0),
+    CONSTRAINT packaging_code_check CHECK (length(trim(code)) > 0)
+);
+
+CREATE TABLE wms.inventory (
+    id uuid CONSTRAINT inventory_id_pkey PRIMARY KEY DEFAULT gen_random_uuid(),
+    product_id uuid NOT NULL CONSTRAINT inventory_product_id_fkey REFERENCES wms.product(id),
+    packaging_id uuid NOT NULL CONSTRAINT inventory_packaging_id_fkey REFERENCES wms.packaging(id),
+    location_id uuid NOT NULL CONSTRAINT inventory_location_id_fkey REFERENCES wms.location(id),
+    quantity numeric NOT NULL,
+    disposition text NOT NULL CONSTRAINT inventory_disposition_check CHECK (disposition IN ('available', 'held')),
+    lifecycle text NOT NULL DEFAULT 'open' CONSTRAINT inventory_lifecycle_check CHECK (lifecycle IN ('open', 'closed')),
+    row_version int4 NOT NULL DEFAULT 1,
+    created_at timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT inventory_quantity_lifecycle_check CHECK (
+        (lifecycle = 'open' AND quantity > 0) OR (lifecycle = 'closed' AND quantity = 0)
+    )
+);
+
+CREATE TABLE wms.inventory_transaction (
+    id uuid CONSTRAINT inventory_transaction_id_pkey PRIMARY KEY DEFAULT gen_random_uuid(),
+    operation_id uuid NOT NULL,
+    type text NOT NULL CONSTRAINT inventory_transaction_type_check CHECK (type IN ('move', 'adjust', 'split', 'merge')),
+    inventory_id uuid NOT NULL CONSTRAINT inventory_transaction_inventory_id_fkey REFERENCES wms.inventory(id),
+    from_inventory_id uuid NOT NULL CONSTRAINT inventory_transaction_from_inventory_id_fkey REFERENCES wms.inventory(id),
+    to_inventory_id uuid NOT NULL CONSTRAINT inventory_transaction_to_inventory_id_fkey REFERENCES wms.inventory(id),
+    from_product_id uuid CONSTRAINT inventory_transaction_from_product_id_fkey REFERENCES wms.product(id),
+    to_product_id uuid NOT NULL CONSTRAINT inventory_transaction_to_product_id_fkey REFERENCES wms.product(id),
+    from_packaging_id uuid CONSTRAINT inventory_transaction_from_packaging_id_fkey REFERENCES wms.packaging(id),
+    to_packaging_id uuid NOT NULL CONSTRAINT inventory_transaction_to_packaging_id_fkey REFERENCES wms.packaging(id),
+    from_location_id uuid CONSTRAINT inventory_transaction_from_location_id_fkey REFERENCES wms.location(id),
+    to_location_id uuid NOT NULL CONSTRAINT inventory_transaction_to_location_id_fkey REFERENCES wms.location(id),
+    from_quantity numeric NOT NULL,
+    to_quantity numeric NOT NULL,
+    from_disposition text,
+    to_disposition text NOT NULL,
+    from_lifecycle text,
+    to_lifecycle text NOT NULL,
+    occurred_at timestamptz NOT NULL,
+    reason text,
+    created_at timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT inventory_transaction_operation_id_inventory_id_key UNIQUE (operation_id, inventory_id),
+    CONSTRAINT inventory_transaction_type_reason_check CHECK (type <> 'adjust' OR (reason IS NOT NULL AND length(trim(reason)) > 0))
 );
 
 CREATE TABLE wms.inventory_move_command (
-    idempotency_key text
-        CONSTRAINT inventory_move_command_idempotency_key_pkey PRIMARY KEY,
-    canonical_command bytea NOT NULL,
-    movement_id uuid NOT NULL DEFAULT gen_random_uuid()
-        CONSTRAINT inventory_move_command_movement_id_key UNIQUE,
-    pallet_id uuid NOT NULL,
-    pallet_status text,
-    row_version int4,
-    CONSTRAINT inventory_move_command_canonical_command_check
-        CHECK (octet_length(canonical_command) > 0),
-    CONSTRAINT inventory_move_command_pallet_status_check
-        CHECK (
-            pallet_status IS NULL
-            OR pallet_status IN ('available', 'held', 'consumed')
-        ),
-    CONSTRAINT inventory_move_command_row_version_check
-        CHECK (row_version IS NULL OR row_version > 0),
-    CONSTRAINT inventory_move_command_pallet_status_row_version_check
-        CHECK (
-            (pallet_status IS NULL AND row_version IS NULL)
-            OR (pallet_status IS NOT NULL AND row_version IS NOT NULL)
-        )
+    idempotency_key text CONSTRAINT inventory_move_command_idempotency_key_pkey PRIMARY KEY,
+    canonical_command bytea NOT NULL CONSTRAINT inventory_move_command_canonical_command_check CHECK (octet_length(canonical_command) > 0),
+    operation_id uuid NOT NULL DEFAULT gen_random_uuid() CONSTRAINT inventory_move_command_operation_id_key UNIQUE,
+    result text
 );
 
 CREATE TABLE wms.inventory_adjust_command (
-    idempotency_key text
-        CONSTRAINT inventory_adjust_command_idempotency_key_pkey PRIMARY KEY,
-    canonical_command bytea NOT NULL,
-    movement_id uuid NOT NULL DEFAULT gen_random_uuid()
-        CONSTRAINT inventory_adjust_command_movement_id_key UNIQUE,
-    pallet_id uuid NOT NULL,
-    adjusted_quantity numeric,
-    row_version int4,
-    CONSTRAINT inventory_adjust_command_canonical_command_check
-        CHECK (octet_length(canonical_command) > 0),
-    CONSTRAINT inventory_adjust_command_adjusted_quantity_check
-        CHECK (adjusted_quantity IS NULL OR adjusted_quantity > 0),
-    CONSTRAINT inventory_adjust_command_row_version_check
-        CHECK (row_version IS NULL OR row_version > 0),
-    CONSTRAINT inventory_adjust_command_adjusted_quantity_row_version_check
-        CHECK (
-            (adjusted_quantity IS NULL AND row_version IS NULL)
-            OR (adjusted_quantity IS NOT NULL AND row_version IS NOT NULL)
-        )
-);
-
-CREATE TABLE wms.inventory_merge_command (
-    idempotency_key text
-        CONSTRAINT inventory_merge_command_idempotency_key_pkey PRIMARY KEY,
-    canonical_command bytea NOT NULL,
-    movement_id uuid NOT NULL DEFAULT gen_random_uuid()
-        CONSTRAINT inventory_merge_command_movement_id_key UNIQUE,
-    source_pallet_id uuid NOT NULL,
-    target_pallet_id uuid NOT NULL,
-    row_version int4,
-    CONSTRAINT inventory_merge_command_canonical_command_check
-        CHECK (octet_length(canonical_command) > 0),
-    CONSTRAINT inventory_merge_command_source_pallet_id_target_pallet_id_check
-        CHECK (source_pallet_id <> target_pallet_id),
-    CONSTRAINT inventory_merge_command_row_version_check
-        CHECK (row_version IS NULL OR row_version > 0)
+    idempotency_key text CONSTRAINT inventory_adjust_command_idempotency_key_pkey PRIMARY KEY,
+    canonical_command bytea NOT NULL CONSTRAINT inventory_adjust_command_canonical_command_check CHECK (octet_length(canonical_command) > 0),
+    operation_id uuid NOT NULL DEFAULT gen_random_uuid() CONSTRAINT inventory_adjust_command_operation_id_key UNIQUE,
+    result text
 );
 
 CREATE TABLE wms.inventory_split_command (
-    idempotency_key text
-        CONSTRAINT inventory_split_command_idempotency_key_pkey PRIMARY KEY,
-    canonical_command bytea NOT NULL,
-    movement_id uuid NOT NULL DEFAULT gen_random_uuid()
-        CONSTRAINT inventory_split_command_movement_id_key UNIQUE,
-    source_pallet_id uuid NOT NULL,
-    new_pallet_id uuid NOT NULL DEFAULT gen_random_uuid()
-        CONSTRAINT inventory_split_command_new_pallet_id_key UNIQUE,
-    row_version int4,
-    CONSTRAINT inventory_split_command_canonical_command_check
-        CHECK (octet_length(canonical_command) > 0),
-    CONSTRAINT inventory_split_command_row_version_check
-        CHECK (row_version IS NULL OR row_version > 0)
+    idempotency_key text CONSTRAINT inventory_split_command_idempotency_key_pkey PRIMARY KEY,
+    canonical_command bytea NOT NULL CONSTRAINT inventory_split_command_canonical_command_check CHECK (octet_length(canonical_command) > 0),
+    operation_id uuid NOT NULL DEFAULT gen_random_uuid() CONSTRAINT inventory_split_command_operation_id_key UNIQUE,
+    new_inventory_id uuid NOT NULL DEFAULT gen_random_uuid() CONSTRAINT inventory_split_command_new_inventory_id_key UNIQUE,
+    result text
 );
 
-CREATE TABLE wms.inventory_movement (
-    id uuid CONSTRAINT inventory_movement_id_pkey PRIMARY KEY DEFAULT gen_random_uuid(),
-    -- No foreign key: FOUR commands write movements, so this cannot reference
-    -- one claim table. Each command's own claim row is the authority for its
-    -- existence, and this column groups the rows one command wrote.
-    idempotency_key text NOT NULL,
-    pallet_id uuid NOT NULL
-        CONSTRAINT inventory_movement_pallet_id_fkey
-        REFERENCES wms.pallet (id),
-    product_id uuid NOT NULL
-        CONSTRAINT inventory_movement_product_id_fkey
-        REFERENCES wms.product (id),
-    kind text NOT NULL,
-    from_location_id uuid
-        CONSTRAINT inventory_movement_from_location_id_fkey
-        REFERENCES wms.location (id),
-    to_location_id uuid
-        CONSTRAINT inventory_movement_to_location_id_fkey
-        REFERENCES wms.location (id),
-    quantity numeric NOT NULL,
-    reason_code text,
-    occurred_at timestamptz NOT NULL,
-    created_at timestamptz NOT NULL,
-    created_by uuid NOT NULL,
-    CONSTRAINT inventory_movement_kind_check
-        CHECK (kind IN ('move', 'adjust', 'merge', 'split')),
-    CONSTRAINT inventory_movement_quantity_check CHECK (quantity > 0),
-    CONSTRAINT inventory_movement_kind_from_location_id_to_location_id_check
-        CHECK (
-            kind <> 'move'
-            OR (
-                from_location_id IS NOT NULL
-                AND to_location_id IS NOT NULL
-                AND from_location_id <> to_location_id
-            )
-        ),
-    CONSTRAINT inventory_movement_kind_reason_code_check
-        CHECK (kind <> 'adjust' OR reason_code IS NOT NULL)
+CREATE TABLE wms.inventory_merge_command (
+    idempotency_key text CONSTRAINT inventory_merge_command_idempotency_key_pkey PRIMARY KEY,
+    canonical_command bytea NOT NULL CONSTRAINT inventory_merge_command_canonical_command_check CHECK (octet_length(canonical_command) > 0),
+    operation_id uuid NOT NULL DEFAULT gen_random_uuid() CONSTRAINT inventory_merge_command_operation_id_key UNIQUE,
+    result text
+);
+
+CREATE TABLE wms.packaging_create_command (
+    idempotency_key text CONSTRAINT packaging_create_command_idempotency_key_pkey PRIMARY KEY,
+    canonical_command bytea NOT NULL CONSTRAINT packaging_create_command_canonical_command_check CHECK (octet_length(canonical_command) > 0),
+    operation_id uuid NOT NULL DEFAULT gen_random_uuid() CONSTRAINT packaging_create_command_operation_id_key UNIQUE,
+    packaging_id uuid NOT NULL DEFAULT gen_random_uuid() CONSTRAINT packaging_create_command_packaging_id_key UNIQUE,
+    result text
+);
+
+CREATE TABLE wms.packaging_close_command (
+    idempotency_key text CONSTRAINT packaging_close_command_idempotency_key_pkey PRIMARY KEY,
+    canonical_command bytea NOT NULL CONSTRAINT packaging_close_command_canonical_command_check CHECK (octet_length(canonical_command) > 0),
+    operation_id uuid NOT NULL DEFAULT gen_random_uuid() CONSTRAINT packaging_close_command_operation_id_key UNIQUE,
+    result text
 );

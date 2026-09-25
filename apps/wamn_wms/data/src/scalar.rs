@@ -10,10 +10,6 @@ use wamn_postgres_statements::{Numeric, TimestampTz, Uuid};
 
 use crate::error::{AccessError, AccessErrorKind};
 
-/// The pallet status a command refuses to work on: a consumed pallet is
-/// history, not live stock (`inventory_aggregate.sql` says why).
-pub(crate) const CONSUMED: &str = "consumed";
-
 pub(crate) fn uuid(field: &str, value: &str) -> Result<Uuid, AccessError> {
     value
         .parse::<uuid::Uuid>()
@@ -78,15 +74,6 @@ pub(crate) fn numeric(field: &str, value: &str) -> Result<Numeric, AccessError> 
     Ok(Numeric(respelled))
 }
 
-/// The status of a QUANTITY row, which is never `consumed`: consumption is a
-/// pallet's fate, and its rows keep the status they had.
-pub(crate) fn quantity_status(field: &str, value: &str) -> Result<String, AccessError> {
-    match value {
-        "available" | "held" => Ok(value.to_owned()),
-        _ => Err(AccessError::field(AccessErrorKind::InvalidInput, field)),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -118,13 +105,5 @@ mod tests {
         for refused in ["", ".", "0", "0.0", "00.000", "-1", "1e3", " 1", "1,5"] {
             assert!(numeric("f", refused).is_err(), "{refused:?} must refuse");
         }
-    }
-
-    #[test]
-    fn a_quantity_status_is_never_consumed() {
-        assert!(quantity_status("f", "available").is_ok());
-        assert!(quantity_status("f", "held").is_ok());
-        assert!(quantity_status("f", "consumed").is_err());
-        assert!(quantity_status("f", "").is_err());
     }
 }

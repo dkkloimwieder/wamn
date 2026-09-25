@@ -1072,7 +1072,8 @@ fn emit_decode_result(
         writeln!(
             source,
             "            {}: row.decode({:?})?,",
-            field.name, field.name
+            field.name,
+            field.name.trim_start_matches("r#")
         )
         .expect("writing to a String cannot fail");
     }

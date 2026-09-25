@@ -30,7 +30,7 @@
           "schema": {
             "type": "string",
             "enum": [
-              "pallet",
+              "inventory",
               "location",
               "product"
             ]

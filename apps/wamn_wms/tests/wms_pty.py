@@ -1,10 +1,5 @@
 #!/usr/bin/env python3
-"""Drive the composed WMS form against a disposable live route.
-
-Run each mode with its own evidence directory. The caller owns the labels bucket.
-Success requires the bucket. Partial requires the caller to remove that bucket.
-Credentials enter through private files. Evidence omits authorization headers.
-"""
+"""Drive the direct WMS inventory route on a disposable installation."""
 
 import argparse
 import hashlib
@@ -44,7 +39,7 @@ class Relay:
 
             def do_POST(self):
                 body = self.rfile.read(int(self.headers.get("Content-Length", "0")))
-                record = {"method": "POST", "path": self.path,
+                record = {"method": self.command, "path": urlsplit(self.path).path,
                           "host": self.headers.get("Host"),
                           "content_type": self.headers.get("Content-Type"),
                           "request_body": body.decode("utf-8", "replace"),
@@ -56,10 +51,10 @@ class Relay:
                     require(record["authorization_matches"], "operator used the wrong credential")
                     constructor = http.client.HTTPSConnection if upstream.scheme == "https" else http.client.HTTPConnection
                     connection = constructor(upstream.hostname, upstream.port, timeout=timeout)
-                    connection.request("POST", upstream.path.rstrip("/") + self.path, body=body,
+                    connection.request(self.command, upstream.path.rstrip("/") + self.path, body=body,
                                        headers={"Host": self.headers["Host"],
                                                 "Authorization": self.headers["Authorization"],
-                                                "Content-Type": self.headers["Content-Type"]})
+                                                "Content-Type": self.headers.get("Content-Type", "application/json")})
                     response = connection.getresponse()
                     answer = response.read()
                     record.update(status=response.status, response_body=answer.decode("utf-8", "replace"),
@@ -80,6 +75,8 @@ class Relay:
                 finally:
                     if connection is not None:
                         connection.close()
+
+            do_GET = do_POST
 
         self.server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
         self.url = "http://127.0.0.1:" + str(self.server.server_port)
@@ -103,159 +100,95 @@ SET LOCAL app.user_id = '{FIXTURE_PRINCIPAL}';
 INSERT INTO wms.product (id, product_code) VALUES ('{ids.product}', '{prefix}-PRODUCT');
 INSERT INTO wms.location (id, location_code) VALUES
   ('{ids.source}', '{prefix}-FROM'), ('{ids.destination}', '{prefix}-TO');
-INSERT INTO wms.pallet (id, pallet_code, location_id, status)
-  VALUES ('{ids.pallet}', '{prefix}-PALLET', '{ids.source}', 'available');
-INSERT INTO wms.pallet_quantity (pallet_id, product_id, quantity, status)
-  VALUES ('{ids.pallet}', '{ids.product}', 10.0000, 'available');
+INSERT INTO wms.packaging (id, type, code, location_id) VALUES
+  ('{ids.packaging_source}', 'tote', '{prefix}-FROM', '{ids.source}'),
+  ('{ids.packaging_destination}', 'carton', '{prefix}-TO', '{ids.destination}');
+INSERT INTO wms.inventory (id, packaging_id, location_id, product_id, quantity, disposition)
+  VALUES ('{ids.inventory}', '{ids.packaging_source}', '{ids.source}', '{ids.product}', 10.0000, 'available');
 COMMIT;""")
 
 
 def snapshot(db, name, ids):
     return db.sql(name, f"""SELECT json_build_object(
-  'claims', (SELECT count(*) FROM wms.inventory_move_command WHERE pallet_id = '{ids.pallet}'),
-  'movements', (SELECT count(*) FROM wms.inventory_movement WHERE pallet_id = '{ids.pallet}'),
-  'command', (SELECT row_to_json(command) FROM (
-    SELECT idempotency_key, movement_id, pallet_id, pallet_status, row_version
-    FROM wms.inventory_move_command WHERE pallet_id = '{ids.pallet}') AS command),
-  'movement', (SELECT row_to_json(movement) FROM (
-    SELECT idempotency_key, pallet_id, product_id, from_location_id, to_location_id, kind, quantity::text
-    FROM wms.inventory_movement WHERE pallet_id = '{ids.pallet}') AS movement),
-  'pallet', (SELECT json_build_object('location_id', location_id, 'status', status, 'row_version', row_version)
-    FROM wms.pallet WHERE id = '{ids.pallet}'),
-  'quantity', (SELECT json_agg(json_build_object('product_id', product_id, 'quantity', quantity::text, 'status', status))
-    FROM wms.pallet_quantity WHERE pallet_id = '{ids.pallet}'));""", parse=True)
+  'claims', (SELECT count(*) FROM wms.inventory_move_command WHERE result::jsonb->>'inventory_id' = '{ids.inventory}'),
+  'movements', (SELECT count(*) FROM wms.inventory_transaction WHERE inventory_id = '{ids.inventory}'),
+  'command', (SELECT result::json FROM wms.inventory_move_command WHERE result::jsonb->>'inventory_id' = '{ids.inventory}'),
+  'movement', (SELECT json_build_object('operation_id', operation_id, 'inventory_id', inventory_id,
+      'from_location_id', from_location_id, 'to_location_id', to_location_id,
+      'from_packaging_id', from_packaging_id, 'to_packaging_id', to_packaging_id,
+      'type', type, 'from_quantity', from_quantity::text, 'to_quantity', to_quantity::text)
+    FROM wms.inventory_transaction WHERE inventory_id = '{ids.inventory}'),
+  'inventory', (SELECT json_build_object('location_id', location_id, 'packaging_id', packaging_id,
+      'disposition', disposition, 'lifecycle', lifecycle, 'quantity', quantity::text, 'row_version', row_version)
+    FROM wms.inventory WHERE id = '{ids.inventory}'));""", parse=True)
 
 
 def cleanup(db, ids):
+    # The disposable fixture owner uses administrative authority for cleanup.
     remaining = db.sql("90-cleanup", f"""BEGIN;
-DELETE FROM wms.inventory_movement WHERE pallet_id = '{ids.pallet}';
-DELETE FROM wms.inventory_move_command WHERE pallet_id = '{ids.pallet}';
-DELETE FROM wms.pallet_quantity WHERE pallet_id = '{ids.pallet}';
-DELETE FROM wms.pallet WHERE id = '{ids.pallet}';
+DELETE FROM wms.inventory_transaction WHERE inventory_id = '{ids.inventory}';
+DELETE FROM wms.inventory_move_command WHERE result::jsonb->>'inventory_id' = '{ids.inventory}';
+DELETE FROM wms.inventory WHERE id = '{ids.inventory}';
+DELETE FROM wms.packaging WHERE id IN ('{ids.packaging_source}', '{ids.packaging_destination}');
 DELETE FROM wms.location WHERE id IN ('{ids.source}', '{ids.destination}');
 DELETE FROM wms.product WHERE id = '{ids.product}';
 COMMIT;
-SELECT (SELECT count(*) FROM wms.pallet WHERE id = '{ids.pallet}')
-  + (SELECT count(*) FROM wms.location WHERE id IN ('{ids.source}', '{ids.destination}'))
-  + (SELECT count(*) FROM wms.product WHERE id = '{ids.product}');""")
+SELECT count(*) FROM wms.inventory WHERE id = '{ids.inventory}';""")
     require(remaining == "0", "owned WMS fixture cleanup left rows")
 
 
 def drive(session, relay, db, evidence, ids, mode):
-    def frame(name):
-        evidence.write(name + ".txt", session.display.text() + "\n")
-
-    def keys(description, data):
-        evidence.event("keys", description=description, bytes=data.hex())
-        session.send(data)
-
     def edit(pointer, value):
-        if "Enter saves; Esc cancels" in session.display.text():
-            session.text(pointer)
-        else:
-            # The form order comes from the generated input descriptor.
+        if "Enter saves; Esc cancels" not in session.display.text():
             session.text(pointer + " (")
             rows = session.display.text().splitlines()
-            position = next(index for index, row in enumerate(rows) if pointer + " (" in row)
-            selected = next(index for index, row in enumerate(rows) if "> /" in row)
+            position = next(i for i, row in enumerate(rows) if pointer + " (" in row)
+            selected = next(i for i, row in enumerate(rows) if "> /" in row)
             distance = position - selected
-            keys("select " + pointer, (b"\x1b[B" if distance >= 0 else b"\x1b[A") * abs(distance))
-            session.until(lambda: any(
-                "> " + pointer + " (" in row for row in session.display.text().splitlines()
-            ), "selected input " + pointer)
-            keys("open " + pointer, b"\r")
-            session.text("Enter saves; Esc cancels")
-        keys("set " + pointer, value.encode() + b"\r")
+            session.send((b"\x1b[B" if distance >= 0 else b"\x1b[A") * abs(distance))
+            session.until(lambda: any("> " + pointer + " (" in row for row in session.display.text().splitlines()), "selected input")
+            session.send(b"\r")
+        session.text(pointer)
+        session.send(value.encode() + b"\r")
         session.until(lambda: "Enter saves; Esc cancels" not in session.display.text(), "saved input")
 
-    session.text("pallet / get")
-    require(termios.tcgetattr(session.slave) != session.original, "operator did not enter raw terminal mode")
-    edit("/id", ids.pallet)
-    frame("10-read-input")
-    keys("read the owned pallet", b"\x13")
+    session.text("inventory / get")
+    require(termios.tcgetattr(session.slave) != session.original, "operator did not enter raw mode")
+    edit("/id", ids.inventory)
+    session.send(b"\x13")
     session.text("inventory / move")
     edit("/value/to_location_id", ids.destination)
-    session.text(ids.pallet)
-    require(any("/value/expected_row_version" in row and row.rstrip(" │").endswith(": 1")
-                for row in session.display.text().splitlines()), "composition did not bind the read revision")
-    frame("11-move-input")
-    keys("submit the composed move once", b"\x13")
-    state = "Succeeded. This intent is spent" if mode == "success" else "Partially completed; committed work remains."
-    session.text(state)
-    frame("12-completion")
+    edit("/value/to_packaging_id", ids.packaging_destination)
+    session.send(b"\x13")
+    session.text("Succeeded." if mode == "success" else "Refused: invalid_input")
     records = relay.snapshot()
-    require([record["path"] for record in records] == ["/pallet/get", "/inventory/move"],
-            "the form did not send exactly one read and one move")
-    move = records[1]
-    request = json.loads(move["request_body"])
-    require(len(request) == 1, "move request is not a single-item envelope")
+    require([(r["method"], r["path"]) for r in records] == [("GET", "/inventory/get"), ("POST", "/inventory/move")], "one read and one command are required")
+    request = json.loads(records[1]["request_body"])
     command = request[0]["value"]
-    require(set(command) == {"idempotency_key", "occurred_at", "pallet_id", "to_location_id", "expected_row_version"}
-            and command["pallet_id"] == ids.pallet and command["to_location_id"] == ids.destination
-            and command["expected_row_version"] == 1, "move body differs from the bound read and entered destination")
-    response = json.loads(move["response_body"])
-    answer = response if mode == "success" else response["committed_result"]
-    require(len(answer) == 1 and answer[0]["request_id"] == request[0]["request_id"],
-            "move response does not match the submitted request")
-    value = answer[0]["value"]
-    movement_id = str(uuid.UUID(value["movement_id"]))
-    committed = {"movement_id": movement_id, "pallet_id": ids.pallet,
-                 "location_id": ids.destination, "pallet_status": "available", "row_version": 2}
+    require(set(command) == {"idempotency_key","occurred_at","inventory_id","to_packaging_id","to_location_id","expected_row_version"}, "unexpected command fields")
+    require(command["inventory_id"] == ids.inventory and command["expected_row_version"] == 1
+            and command["to_packaging_id"] == ids.packaging_destination and command["to_location_id"] == ids.destination, "command differs from selected inventory and destination")
+    response = json.loads(records[1]["response_body"])[0]
+    require(response["request_id"] == request[0]["request_id"], "response identity differs")
+    observed = snapshot(db, "committed-db", ids)
     if mode == "success":
-        require(move["status"] == 200 and set(value) == set(committed) | {"zpl", "stored"},
-                "successful move did not return the declared enriched result")
-        require(all(value[key] == expected for key, expected in committed.items()), "successful movement result differs")
-        require(value["stored"]["key"] == movement_id and value["stored"]["container"]
-                and value["zpl"], "successful result has no stored label key or label content")
-        session.text("stored.key: " + movement_id)
-        session.text("stored.container: " + value["stored"]["container"])
-        frame("13-stored-label-key")
+        value = response["value"]
+        expected = {"operation_id":str(uuid.UUID(value["operation_id"])),"inventory_id":ids.inventory,
+                    "product_id":ids.product,"packaging_id":ids.packaging_destination,"location_id":ids.destination,
+                    "quantity":"10.0000","disposition":"available","lifecycle":"open","row_version":2}
+        require(value == expected and observed["command"] == expected, "original result differs from stored claim")
+        require(observed["claims"] == observed["movements"] == 1, "move requires one claim and one transaction")
+        require(observed["inventory"]["location_id"] == ids.destination and observed["inventory"]["packaging_id"] == ids.packaging_destination, "inventory did not move explicitly")
+        require(observed["movement"]["from_location_id"] == ids.source and observed["movement"]["to_location_id"] == ids.destination
+                and observed["movement"]["from_quantity"] == observed["movement"]["to_quantity"] == "10.0000", "move history is incomplete")
+        session.send(b"\x13")
+        session.text("This intent is spent")
+        require(len(relay.snapshot()) == 2, "spent command sent another request")
     else:
-        require(move["status"] == 500 and set(response) == {"committed_result", "failed_outcome"}
-                and value == committed, "partial response does not preserve the exact committed movement")
-        failure = response["failed_outcome"]
-        require(set(failure) == {"code", "message", "effect_outcome"}
-                and failure["code"] == "write_failed" and failure["effect_outcome"] == "responded"
-                and failure["message"], "partial response differs from the missing-bucket failure")
-        session.text("Committed result:")
-        session.text(movement_id)
-        session.text("Failed outcome:")
-        session.text("write_failed")
-        session.text("responded")
-        frame("13-partial-result-and-failure")
-    observed = snapshot(db, "14-committed-db", ids)
-    require(observed["claims"] == observed["movements"] == 1, "move did not commit exactly one claim and movement")
-    require(observed["command"] == {"idempotency_key": command["idempotency_key"], "movement_id": movement_id,
-                                    "pallet_id": ids.pallet, "pallet_status": "available", "row_version": 2},
-            "database claim differs from the visible committed result")
-    require(observed["pallet"] == {"location_id": ids.destination, "status": "available", "row_version": 2},
-            "pallet did not retain the committed move")
-    require(observed["movement"] == {"idempotency_key": command["idempotency_key"], "pallet_id": ids.pallet,
-                                     "product_id": ids.product, "from_location_id": ids.source,
-                                     "to_location_id": ids.destination, "kind": "move", "quantity": "10.0000"},
-            "movement differs from the seeded quantity and locations")
-    require(observed["quantity"] == [{"product_id": ids.product, "quantity": "10.0000", "status": "available"}],
-            "move changed the pallet quantity")
-    keys("attempt captured retry of the spent move", b"\x1b[18~")  # F7
-    session.text("this submission does not permit captured retry")
-    frame("15-retry-refused")
-    session.quiet(2)
-    keys("attempt submit of the spent move", b"\x13")
-    session.text("start a new command explicitly")
-    frame("16-resubmit-refused")
-    session.quiet(2)
-    require(snapshot(db, "17-spent-db", ids) == observed, "spent controls changed the committed database state")
-    require(len(relay.snapshot()) == 2, "spent controls sent another HTTP request")
-    keys("quit the completed operator", b"q")
-    session.finish()
-    frame("18-restored-terminal")
-    return {"exit_code": session.process.returncode, "terminal_restored": True, "mode": mode,
-            "movement_id": movement_id, "pallet_id": ids.pallet, "location_id": ids.destination,
-            "row_version": 2, "http_requests": 2, "read_requests": 1, "move_requests": 1,
-            "committed_claims": 1, "committed_movements": 1, "spent_controls_send_nothing": True,
-            "stored": value.get("stored"), "stored_key": "wms/" + movement_id if mode == "success" else None,
-            "label_sha256": hashlib.sha256(value["zpl"].encode()).hexdigest() if mode == "success" else None,
-            "partial_result_and_failure_visible": mode == "partial"}
+        require(response["error"]["code"] == "invalid_input", "wrong refusal")
+        require(observed["claims"] == observed["movements"] == 0 and observed["inventory"]["location_id"] == ids.source, "refusal mutated business state")
+    evidence.write("result-frame.txt", session.display.text() + "\n")
+    return {"mode":mode,"request_count":len(records),"inventory_id":ids.inventory,"row_version":observed["inventory"]["row_version"]}
 
 
 def main():
@@ -264,7 +197,7 @@ def main():
         parser.add_argument("--" + name, required=True, type=Path)
     for name in ("endpoint", "host", "target-instance"):
         parser.add_argument("--" + name, required=True)
-    parser.add_argument("--mode", choices=("success", "partial"), required=True)
+    parser.add_argument("--mode", choices=("success", "refusal"), required=True)
     parser.add_argument("--timeout", type=float, default=60.0)
     args = parser.parse_args()
     evidence = session = relay = db = ids = helper = None
@@ -285,7 +218,7 @@ def main():
         helper.TIMEOUT = args.timeout
         helper.ROWS, helper.COLUMNS = 60, 260
         evidence = support.Evidence(args.evidence_dir, [token, database_url, unquote(urlsplit(database_url).password or "")])
-        ids = SimpleNamespace(**{key: str(uuid.uuid4()) for key in ("pallet", "product", "source", "destination")})
+        ids = SimpleNamespace(**{key: str(uuid.uuid4()) for key in ("inventory", "product", "source", "destination", "packaging_source", "packaging_destination")})
         prefix = "WMS-TUI-" + uuid.uuid4().hex[:8]
         evidence.json("inputs.json", {"binary": str(binary), "binary_sha256": hashlib.sha256(binary.read_bytes()).hexdigest(),
                       "driver_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),

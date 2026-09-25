@@ -11,46 +11,6 @@
     "state": "satisfied"
   },
   "models": {
-    "inventory_movement": {
-      "schema": "wms",
-      "table": "inventory_movement",
-      "owner": "wamn_wms",
-      "server_owned_fields": [
-        "id"
-      ],
-      "enum_fields": {},
-      "audit_log": {
-        "columns": [
-          "created_at",
-          "created_by"
-        ],
-        "retention": "none"
-      },
-      "operations": {
-        "get": {
-          "permission": "inventory_movement.get",
-          "result": "one"
-        },
-        "query": {
-          "permission": "inventory_movement.query",
-          "pagination": {
-            "default_sort": {
-              "field": "created_at",
-              "direction": "ascending"
-            },
-            "tie_breaker": {
-              "field": "id"
-            }
-          },
-          "limit": {
-            "default": 100,
-            "minimum": 1,
-            "maximum": 100
-          },
-          "result": "page"
-        }
-      }
-    },
     "location": {
       "schema": "wms",
       "table": "location",
@@ -115,188 +75,6 @@
           ],
           "revision_field": "row_version",
           "result": "one"
-        }
-      }
-    },
-    "pallet": {
-      "schema": "wms",
-      "table": "pallet",
-      "owner": "wamn_wms",
-      "server_owned_fields": [
-        "id",
-        "row_version",
-        "created_at",
-        "updated_at"
-      ],
-      "enum_fields": {
-        "status": [
-          "available",
-          "held",
-          "consumed"
-        ]
-      },
-      "audit_log": {
-        "columns": [
-          "created_at",
-          "created_by",
-          "updated_at",
-          "updated_by"
-        ],
-        "retention": "none"
-      },
-      "operations": {
-        "get": {
-          "permission": "pallet.get",
-          "revision_field": "row_version",
-          "result": "one"
-        },
-        "query": {
-          "permission": "pallet.query",
-          "revision_field": "row_version",
-          "authored_sql": {
-            "default": "query/open_pallet.sql",
-            "variants": [
-              {
-                "field": "pallet_code",
-                "direction": "ascending",
-                "path": "query/open_pallet_by_pallet_code_ascending.sql"
-              },
-              {
-                "field": "pallet_code",
-                "direction": "descending",
-                "path": "query/open_pallet_by_pallet_code_descending.sql"
-              },
-              {
-                "field": "location_id",
-                "direction": "ascending",
-                "path": "query/open_pallet_by_location_id_ascending.sql"
-              },
-              {
-                "field": "location_id",
-                "direction": "descending",
-                "path": "query/open_pallet_by_location_id_descending.sql"
-              },
-              {
-                "field": "updated_at",
-                "direction": "ascending",
-                "path": "query/open_pallet_by_updated_at_ascending.sql"
-              },
-              {
-                "field": "updated_at",
-                "direction": "descending",
-                "path": "query/open_pallet_by_updated_at_descending.sql"
-              },
-              {
-                "field": "created_at",
-                "direction": "ascending",
-                "path": "query/open_pallet.sql"
-              },
-              {
-                "field": "created_at",
-                "direction": "descending",
-                "path": "query/open_pallet_by_created_at_descending.sql"
-              }
-            ]
-          },
-          "filters": [
-            {
-              "field": "status"
-            },
-            {
-              "field": "location_id"
-            },
-            {
-              "field": "pallet_code"
-            }
-          ],
-          "sort": {
-            "fields": [
-              "pallet_code",
-              "location_id",
-              "updated_at",
-              "created_at"
-            ],
-            "directions": [
-              "ascending",
-              "descending"
-            ]
-          },
-          "pagination": {
-            "default_sort": {
-              "field": "created_at",
-              "direction": "ascending"
-            },
-            "tie_breaker": {
-              "field": "id"
-            }
-          },
-          "limit": {
-            "default": 100,
-            "minimum": 1,
-            "maximum": 100
-          },
-          "result": "page"
-        },
-        "create": {
-          "permission": "pallet.create",
-          "writable_fields": [
-            "pallet_code",
-            "location_id",
-            "status"
-          ],
-          "values": {
-            "status": [
-              "available",
-              "held"
-            ]
-          },
-          "claim": {
-            "table": "pallet_command",
-            "identities": {
-              "id": "pallet_id"
-            }
-          },
-          "result": "one"
-        }
-      }
-    },
-    "pallet_quantity": {
-      "schema": "wms",
-      "table": "pallet_quantity",
-      "owner": "wamn_wms",
-      "server_owned_fields": [
-        "id",
-        "created_at"
-      ],
-      "enum_fields": {},
-      "audit_log": {
-        "columns": [
-          "created_at"
-        ],
-        "retention": "none"
-      },
-      "operations": {
-        "get": {
-          "permission": "pallet_quantity.get",
-          "result": "one"
-        },
-        "query": {
-          "permission": "pallet_quantity.query",
-          "pagination": {
-            "default_sort": {
-              "field": "created_at",
-              "direction": "ascending"
-            },
-            "tie_breaker": {
-              "field": "id"
-            }
-          },
-          "limit": {
-            "default": 100,
-            "minimum": 1,
-            "maximum": 100
-          },
-          "result": "page"
         }
       }
     },
@@ -366,29 +144,149 @@
           "result": "one"
         }
       }
+    },
+    "packaging": {
+      "schema": "wms",
+      "table": "packaging",
+      "owner": "wamn_wms",
+      "server_owned_fields": [
+        "id",
+        "created_at",
+        "row_version"
+      ],
+      "enum_fields": {
+        "lifecycle": [
+          "open",
+          "closed"
+        ]
+      },
+      "audit_log": {
+        "columns": [
+          "created_at"
+        ],
+        "retention": "none"
+      },
+      "operations": {
+        "get": {
+          "permission": "packaging.get",
+          "result": "one",
+          "revision_field": "row_version"
+        },
+        "query": {
+          "permission": "packaging.query",
+          "pagination": {
+            "default_sort": {
+              "field": "created_at",
+              "direction": "ascending"
+            },
+            "tie_breaker": {
+              "field": "id"
+            }
+          },
+          "limit": {
+            "default": 100,
+            "minimum": 1,
+            "maximum": 100
+          },
+          "result": "page",
+          "revision_field": "row_version"
+        }
+      }
+    },
+    "inventory": {
+      "schema": "wms",
+      "table": "inventory",
+      "owner": "wamn_wms",
+      "server_owned_fields": [
+        "id",
+        "created_at",
+        "row_version"
+      ],
+      "enum_fields": {
+        "disposition": [
+          "available",
+          "held"
+        ],
+        "lifecycle": [
+          "open",
+          "closed"
+        ]
+      },
+      "audit_log": {
+        "columns": [
+          "created_at"
+        ],
+        "retention": "none"
+      },
+      "operations": {
+        "get": {
+          "permission": "inventory.get",
+          "result": "one",
+          "revision_field": "row_version"
+        },
+        "query": {
+          "permission": "inventory.query",
+          "pagination": {
+            "default_sort": {
+              "field": "created_at",
+              "direction": "ascending"
+            },
+            "tie_breaker": {
+              "field": "id"
+            }
+          },
+          "limit": {
+            "default": 100,
+            "minimum": 1,
+            "maximum": 100
+          },
+          "result": "page",
+          "revision_field": "row_version"
+        }
+      }
+    },
+    "inventory_transaction": {
+      "schema": "wms",
+      "table": "inventory_transaction",
+      "owner": "wamn_wms",
+      "server_owned_fields": [
+        "id",
+        "created_at"
+      ],
+      "enum_fields": {},
+      "audit_log": {
+        "columns": [
+          "created_at"
+        ],
+        "retention": "none"
+      },
+      "operations": {
+        "get": {
+          "permission": "inventory_transaction.get",
+          "result": "one"
+        },
+        "query": {
+          "permission": "inventory_transaction.query",
+          "pagination": {
+            "default_sort": {
+              "field": "created_at",
+              "direction": "ascending"
+            },
+            "tie_breaker": {
+              "field": "id"
+            }
+          },
+          "limit": {
+            "default": 100,
+            "minimum": 1,
+            "maximum": 100
+          },
+          "result": "page"
+        }
+      }
     }
   },
   "internal_relations": {
-    "inventory_move_command": {
-      "schema": "wms",
-      "table": "inventory_move_command",
-      "cdc": "excluded"
-    },
-    "inventory_adjust_command": {
-      "schema": "wms",
-      "table": "inventory_adjust_command",
-      "cdc": "excluded"
-    },
-    "inventory_merge_command": {
-      "schema": "wms",
-      "table": "inventory_merge_command",
-      "cdc": "excluded"
-    },
-    "inventory_split_command": {
-      "schema": "wms",
-      "table": "inventory_split_command",
-      "cdc": "excluded"
-    },
     "location_command": {
       "schema": "wms",
       "table": "location_command",
@@ -399,9 +297,34 @@
       "table": "product_command",
       "cdc": "excluded"
     },
-    "pallet_command": {
+    "inventory_move_command": {
       "schema": "wms",
-      "table": "pallet_command",
+      "table": "inventory_move_command",
+      "cdc": "excluded"
+    },
+    "inventory_adjust_command": {
+      "schema": "wms",
+      "table": "inventory_adjust_command",
+      "cdc": "excluded"
+    },
+    "inventory_split_command": {
+      "schema": "wms",
+      "table": "inventory_split_command",
+      "cdc": "excluded"
+    },
+    "inventory_merge_command": {
+      "schema": "wms",
+      "table": "inventory_merge_command",
+      "cdc": "excluded"
+    },
+    "packaging_create_command": {
+      "schema": "wms",
+      "table": "packaging_create_command",
+      "cdc": "excluded"
+    },
+    "packaging_close_command": {
+      "schema": "wms",
+      "table": "packaging_close_command",
       "cdc": "excluded"
     }
   },
@@ -417,7 +340,7 @@
       "claim": {
         "table": "inventory_move_command",
         "identities": {
-          "movement_id": "movement_id"
+          "operation_id": "operation_id"
         },
         "claim": "claim_command",
         "replay": "find_replay",
@@ -431,41 +354,49 @@
         },
         "fields": [
           {
-            "path": "request_id",
             "type": "text",
-            "nullable": false
+            "nullable": false,
+            "path": "request_id"
           },
           {
-            "path": "value.idempotency_key",
             "type": "text",
-            "nullable": false
+            "nullable": false,
+            "path": "value.idempotency_key"
           },
           {
-            "path": "value.pallet_id",
             "type": "uuid",
             "nullable": false,
+            "path": "value.inventory_id",
             "references": {
-              "model": "pallet"
+              "model": "inventory"
             }
           },
           {
-            "path": "value.to_location_id",
             "type": "uuid",
             "nullable": false,
+            "path": "value.to_packaging_id",
+            "references": {
+              "model": "packaging"
+            }
+          },
+          {
+            "type": "uuid",
+            "nullable": false,
+            "path": "value.to_location_id",
             "references": {
               "model": "location"
             }
           },
           {
-            "path": "value.expected_row_version",
             "type": "int32",
             "nullable": false,
+            "path": "value.expected_row_version",
             "revision": true
           },
           {
-            "path": "value.occurred_at",
             "type": "timestamptz",
-            "nullable": false
+            "nullable": false,
+            "path": "value.occurred_at"
           }
         ]
       },
@@ -473,34 +404,49 @@
         "class": "one",
         "fields": [
           {
-            "path": "movement_id",
             "type": "uuid",
-            "nullable": false
+            "nullable": false,
+            "path": "operation_id"
           },
           {
-            "path": "pallet_id",
             "type": "uuid",
-            "nullable": false
+            "nullable": false,
+            "path": "inventory_id"
           },
           {
-            "path": "location_id",
             "type": "uuid",
-            "nullable": false
+            "nullable": false,
+            "path": "product_id"
           },
           {
-            "path": "pallet_status",
+            "type": "uuid",
+            "nullable": false,
+            "path": "packaging_id"
+          },
+          {
+            "type": "uuid",
+            "nullable": false,
+            "path": "location_id"
+          },
+          {
+            "type": "numeric",
+            "nullable": false,
+            "path": "quantity"
+          },
+          {
             "type": "text",
             "nullable": false,
-            "values": [
-              "available",
-              "held",
-              "consumed"
-            ]
+            "path": "disposition"
           },
           {
-            "path": "row_version",
+            "type": "text",
+            "nullable": false,
+            "path": "lifecycle"
+          },
+          {
             "type": "int32",
             "nullable": false,
+            "path": "row_version",
             "revision": true
           }
         ]
@@ -513,8 +459,7 @@
       },
       "errors": [
         "invalid_input",
-        "pallet_not_found",
-        "location_not_found",
+        "not_found",
         "concurrency_conflict",
         "idempotency_conflict",
         "retry",
@@ -523,18 +468,6 @@
         "internal_error"
       ],
       "error_details": {
-        "pallet_not_found": {
-          "required": [
-            "field",
-            "id"
-          ]
-        },
-        "location_not_found": {
-          "required": [
-            "field",
-            "id"
-          ]
-        },
         "idempotency_conflict": {
           "required": [
             "field"
@@ -547,56 +480,37 @@
           "schema": "wms",
           "table": "inventory_move_command",
           "select_fields": [
-            "canonical_command",
             "idempotency_key",
-            "movement_id",
-            "pallet_id",
-            "pallet_status",
-            "row_version"
+            "canonical_command",
+            "result",
+            "operation_id"
           ],
           "insert_fields": [
-            "canonical_command",
             "idempotency_key",
-            "pallet_id"
+            "canonical_command"
           ],
           "update_fields": [
-            "pallet_status",
-            "row_version"
+            "result"
           ],
           "lock": false,
           "constraints": []
         },
         {
           "schema": "wms",
-          "table": "inventory_movement",
-          "select_fields": [
-            "id"
-          ],
-          "insert_fields": [
-            "from_location_id",
-            "idempotency_key",
-            "kind",
-            "occurred_at",
-            "pallet_id",
-            "product_id",
-            "quantity",
-            "to_location_id"
-          ],
-          "update_fields": [],
-          "lock": false,
-          "constraints": []
-        },
-        {
-          "schema": "wms",
-          "table": "pallet",
+          "table": "inventory",
           "select_fields": [
             "id",
+            "product_id",
+            "packaging_id",
             "location_id",
-            "row_version",
-            "status"
+            "quantity",
+            "disposition",
+            "lifecycle",
+            "row_version"
           ],
           "insert_fields": [],
           "update_fields": [
+            "packaging_id",
             "location_id",
             "row_version"
           ],
@@ -605,25 +519,47 @@
         },
         {
           "schema": "wms",
-          "table": "pallet_quantity",
+          "table": "packaging",
           "select_fields": [
-            "pallet_id",
-            "product_id",
-            "quantity",
-            "status"
+            "id",
+            "type",
+            "code",
+            "location_id",
+            "lifecycle",
+            "row_version"
           ],
           "insert_fields": [],
           "update_fields": [],
-          "lock": false,
+          "lock": true,
           "constraints": []
         },
         {
           "schema": "wms",
-          "table": "location",
+          "table": "inventory_transaction",
           "select_fields": [
             "id"
           ],
-          "insert_fields": [],
+          "insert_fields": [
+            "operation_id",
+            "inventory_id",
+            "from_inventory_id",
+            "to_inventory_id",
+            "from_product_id",
+            "from_packaging_id",
+            "from_location_id",
+            "from_quantity",
+            "from_disposition",
+            "from_lifecycle",
+            "occurred_at",
+            "reason",
+            "type",
+            "to_product_id",
+            "to_packaging_id",
+            "to_location_id",
+            "to_quantity",
+            "to_disposition",
+            "to_lifecycle"
+          ],
           "update_fields": [],
           "lock": false,
           "constraints": []
@@ -647,24 +583,14 @@
               "nullable": false
             },
             {
-              "name": "movement_id",
-              "type": "uuid",
-              "nullable": false
-            },
-            {
-              "name": "pallet_id",
-              "type": "uuid",
-              "nullable": false
-            },
-            {
-              "name": "pallet_status",
+              "name": "result",
               "type": "text",
               "nullable": true
             },
             {
-              "name": "row_version",
-              "type": "int32",
-              "nullable": true
+              "name": "operation_id",
+              "type": "uuid",
+              "nullable": false
             }
           ]
         },
@@ -681,172 +607,12 @@
               "name": "canonical_command",
               "type": "bytes",
               "nullable": false
-            },
-            {
-              "name": "pallet_id",
-              "type": "uuid",
-              "nullable": false
             }
           ],
           "row": [
             {
-              "name": "movement_id",
+              "name": "operation_id",
               "type": "uuid",
-              "nullable": false
-            }
-          ]
-        },
-        "lock_pallet": {
-          "path": "command/inventory_move/lock_pallet.sql",
-          "fetch": "optional_one",
-          "parameters": [
-            {
-              "name": "pallet_id",
-              "type": "uuid",
-              "nullable": false
-            }
-          ],
-          "row": [
-            {
-              "name": "location_id",
-              "type": "uuid",
-              "nullable": false
-            },
-            {
-              "name": "row_version",
-              "type": "int32",
-              "nullable": false
-            },
-            {
-              "name": "status",
-              "type": "text",
-              "nullable": false
-            }
-          ]
-        },
-        "select_pallet_quantity": {
-          "path": "command/inventory_move/select_pallet_quantity.sql",
-          "fetch": "bounded_list",
-          "parameters": [
-            {
-              "name": "pallet_id",
-              "type": "uuid",
-              "nullable": false
-            }
-          ],
-          "row": [
-            {
-              "name": "product_id",
-              "type": "uuid",
-              "nullable": false
-            },
-            {
-              "name": "quantity",
-              "type": "numeric",
-              "nullable": false
-            },
-            {
-              "name": "status",
-              "type": "text",
-              "nullable": false
-            }
-          ]
-        },
-        "validate_location": {
-          "path": "command/inventory_move/validate_location.sql",
-          "fetch": "optional_one",
-          "parameters": [
-            {
-              "name": "location_id",
-              "type": "uuid",
-              "nullable": false
-            }
-          ],
-          "row": [
-            {
-              "name": "id",
-              "type": "uuid",
-              "nullable": false
-            }
-          ]
-        },
-        "insert_movement": {
-          "path": "command/inventory_move/insert_movement.sql",
-          "fetch": "one",
-          "parameters": [
-            {
-              "name": "idempotency_key",
-              "type": "text",
-              "nullable": false
-            },
-            {
-              "name": "pallet_id",
-              "type": "uuid",
-              "nullable": false
-            },
-            {
-              "name": "product_id",
-              "type": "uuid",
-              "nullable": false
-            },
-            {
-              "name": "from_location_id",
-              "type": "uuid",
-              "nullable": false
-            },
-            {
-              "name": "to_location_id",
-              "type": "uuid",
-              "nullable": false
-            },
-            {
-              "name": "quantity",
-              "type": "numeric",
-              "nullable": false
-            },
-            {
-              "name": "occurred_at",
-              "type": "timestamptz",
-              "nullable": false
-            }
-          ],
-          "row": [
-            {
-              "name": "id",
-              "type": "uuid",
-              "nullable": false
-            }
-          ]
-        },
-        "move_pallet": {
-          "path": "command/inventory_move/move_pallet.sql",
-          "fetch": "one",
-          "parameters": [
-            {
-              "name": "pallet_id",
-              "type": "uuid",
-              "nullable": false
-            },
-            {
-              "name": "to_location_id",
-              "type": "uuid",
-              "nullable": false
-            }
-          ],
-          "row": [
-            {
-              "name": "location_id",
-              "type": "uuid",
-              "nullable": false
-            },
-            {
-              "name": "row_version",
-              "type": "int32",
-              "nullable": false
-            },
-            {
-              "name": "status",
-              "type": "text",
               "nullable": false
             }
           ]
@@ -866,12 +632,67 @@
               "nullable": false
             },
             {
-              "name": "movement_id",
+              "name": "operation_id",
               "type": "uuid",
               "nullable": false
             },
             {
-              "name": "pallet_status",
+              "name": "result",
+              "type": "text",
+              "nullable": false
+            }
+          ],
+          "row": [
+            {
+              "name": "result",
+              "type": "text",
+              "nullable": true
+            }
+          ]
+        },
+        "lock_inventory": {
+          "path": "command/inventory_move/lock_inventory.sql",
+          "fetch": "optional_one",
+          "parameters": [
+            {
+              "name": "inventory_id",
+              "type": "uuid",
+              "nullable": false
+            }
+          ],
+          "row": [
+            {
+              "name": "id",
+              "type": "uuid",
+              "nullable": false
+            },
+            {
+              "name": "product_id",
+              "type": "uuid",
+              "nullable": false
+            },
+            {
+              "name": "packaging_id",
+              "type": "uuid",
+              "nullable": false
+            },
+            {
+              "name": "location_id",
+              "type": "uuid",
+              "nullable": false
+            },
+            {
+              "name": "quantity",
+              "type": "numeric",
+              "nullable": false
+            },
+            {
+              "name": "disposition",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "lifecycle",
               "type": "text",
               "nullable": false
             },
@@ -880,17 +701,189 @@
               "type": "int32",
               "nullable": false
             }
+          ]
+        },
+        "lock_packaging": {
+          "path": "command/inventory_move/lock_packaging.sql",
+          "fetch": "bounded_list",
+          "parameters": [
+            {
+              "name": "from_packaging_id",
+              "type": "uuid",
+              "nullable": false
+            },
+            {
+              "name": "to_packaging_id",
+              "type": "uuid",
+              "nullable": false
+            }
           ],
           "row": [
             {
-              "name": "pallet_status",
+              "name": "id",
+              "type": "uuid",
+              "nullable": false
+            },
+            {
+              "name": "type",
               "type": "text",
-              "nullable": true
+              "nullable": false
+            },
+            {
+              "name": "code",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "location_id",
+              "type": "uuid",
+              "nullable": false
+            },
+            {
+              "name": "lifecycle",
+              "type": "text",
+              "nullable": false
             },
             {
               "name": "row_version",
               "type": "int32",
+              "nullable": false
+            }
+          ]
+        },
+        "insert_transaction": {
+          "path": "command/inventory_move/insert_transaction.sql",
+          "fetch": "one",
+          "parameters": [
+            {
+              "name": "operation_id",
+              "type": "uuid",
+              "nullable": false
+            },
+            {
+              "name": "inventory_id",
+              "type": "uuid",
+              "nullable": false
+            },
+            {
+              "name": "from_inventory_id",
+              "type": "uuid",
+              "nullable": false
+            },
+            {
+              "name": "to_inventory_id",
+              "type": "uuid",
+              "nullable": false
+            },
+            {
+              "name": "from_product_id",
+              "type": "uuid",
               "nullable": true
+            },
+            {
+              "name": "from_packaging_id",
+              "type": "uuid",
+              "nullable": true
+            },
+            {
+              "name": "from_location_id",
+              "type": "uuid",
+              "nullable": true
+            },
+            {
+              "name": "from_quantity",
+              "type": "numeric",
+              "nullable": false
+            },
+            {
+              "name": "from_disposition",
+              "type": "text",
+              "nullable": true
+            },
+            {
+              "name": "from_lifecycle",
+              "type": "text",
+              "nullable": true
+            },
+            {
+              "name": "occurred_at",
+              "type": "timestamptz",
+              "nullable": false
+            },
+            {
+              "name": "reason",
+              "type": "text",
+              "nullable": true
+            }
+          ],
+          "row": [
+            {
+              "name": "id",
+              "type": "uuid",
+              "nullable": false
+            }
+          ]
+        },
+        "apply": {
+          "path": "command/inventory_move/apply.sql",
+          "fetch": "one",
+          "parameters": [
+            {
+              "name": "inventory_id",
+              "type": "uuid",
+              "nullable": false
+            },
+            {
+              "name": "to_packaging_id",
+              "type": "uuid",
+              "nullable": false
+            },
+            {
+              "name": "to_location_id",
+              "type": "uuid",
+              "nullable": false
+            }
+          ],
+          "row": [
+            {
+              "name": "id",
+              "type": "uuid",
+              "nullable": false
+            },
+            {
+              "name": "product_id",
+              "type": "uuid",
+              "nullable": false
+            },
+            {
+              "name": "packaging_id",
+              "type": "uuid",
+              "nullable": false
+            },
+            {
+              "name": "location_id",
+              "type": "uuid",
+              "nullable": false
+            },
+            {
+              "name": "quantity",
+              "type": "numeric",
+              "nullable": false
+            },
+            {
+              "name": "disposition",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "lifecycle",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "row_version",
+              "type": "int32",
+              "nullable": false
             }
           ]
         }
@@ -907,7 +900,7 @@
       "claim": {
         "table": "inventory_adjust_command",
         "identities": {
-          "movement_id": "movement_id"
+          "operation_id": "operation_id"
         },
         "claim": "claim_command",
         "replay": "find_replay",
@@ -921,60 +914,43 @@
         },
         "fields": [
           {
-            "path": "request_id",
             "type": "text",
-            "nullable": false
+            "nullable": false,
+            "path": "request_id"
           },
           {
-            "path": "value.idempotency_key",
             "type": "text",
-            "nullable": false
+            "nullable": false,
+            "path": "value.idempotency_key"
           },
           {
-            "path": "value.pallet_id",
             "type": "uuid",
             "nullable": false,
+            "path": "value.inventory_id",
             "references": {
-              "model": "pallet"
+              "model": "inventory"
             }
           },
           {
-            "path": "value.product_id",
-            "type": "uuid",
-            "nullable": false,
-            "references": {
-              "model": "product"
-            }
-          },
-          {
-            "path": "value.status",
-            "type": "text",
-            "nullable": false,
-            "values": [
-              "available",
-              "held"
-            ]
-          },
-          {
-            "path": "value.quantity",
             "type": "numeric",
-            "nullable": false
+            "nullable": false,
+            "path": "value.to_quantity"
           },
           {
-            "path": "value.reason_code",
             "type": "text",
-            "nullable": false
+            "nullable": false,
+            "path": "value.reason"
           },
           {
-            "path": "value.expected_row_version",
             "type": "int32",
             "nullable": false,
+            "path": "value.expected_row_version",
             "revision": true
           },
           {
-            "path": "value.occurred_at",
             "type": "timestamptz",
-            "nullable": false
+            "nullable": false,
+            "path": "value.occurred_at"
           }
         ]
       },
@@ -982,34 +958,49 @@
         "class": "one",
         "fields": [
           {
-            "path": "movement_id",
             "type": "uuid",
-            "nullable": false
+            "nullable": false,
+            "path": "operation_id"
           },
           {
-            "path": "pallet_id",
             "type": "uuid",
-            "nullable": false
+            "nullable": false,
+            "path": "inventory_id"
           },
           {
-            "path": "adjusted_quantity",
+            "type": "uuid",
+            "nullable": false,
+            "path": "product_id"
+          },
+          {
+            "type": "uuid",
+            "nullable": false,
+            "path": "packaging_id"
+          },
+          {
+            "type": "uuid",
+            "nullable": false,
+            "path": "location_id"
+          },
+          {
             "type": "numeric",
-            "nullable": false
+            "nullable": false,
+            "path": "quantity"
           },
           {
-            "path": "pallet_status",
             "type": "text",
             "nullable": false,
-            "values": [
-              "available",
-              "held",
-              "consumed"
-            ]
+            "path": "disposition"
           },
           {
-            "path": "row_version",
+            "type": "text",
+            "nullable": false,
+            "path": "lifecycle"
+          },
+          {
             "type": "int32",
             "nullable": false,
+            "path": "row_version",
             "revision": true
           }
         ]
@@ -1022,8 +1013,7 @@
       },
       "errors": [
         "invalid_input",
-        "pallet_not_found",
-        "quantity_not_found",
+        "not_found",
         "concurrency_conflict",
         "idempotency_conflict",
         "retry",
@@ -1032,18 +1022,6 @@
         "internal_error"
       ],
       "error_details": {
-        "pallet_not_found": {
-          "required": [
-            "field",
-            "id"
-          ]
-        },
-        "quantity_not_found": {
-          "required": [
-            "field",
-            "id"
-          ]
-        },
         "idempotency_conflict": {
           "required": [
             "field"
@@ -1056,55 +1034,37 @@
           "schema": "wms",
           "table": "inventory_adjust_command",
           "select_fields": [
-            "adjusted_quantity",
-            "canonical_command",
             "idempotency_key",
-            "movement_id",
-            "pallet_id",
-            "row_version"
+            "canonical_command",
+            "result",
+            "operation_id"
           ],
           "insert_fields": [
-            "canonical_command",
             "idempotency_key",
-            "pallet_id"
+            "canonical_command"
           ],
           "update_fields": [
-            "adjusted_quantity",
-            "row_version"
+            "result"
           ],
           "lock": false,
           "constraints": []
         },
         {
           "schema": "wms",
-          "table": "inventory_movement",
-          "select_fields": [
-            "id"
-          ],
-          "insert_fields": [
-            "idempotency_key",
-            "kind",
-            "occurred_at",
-            "pallet_id",
-            "product_id",
-            "quantity",
-            "reason_code"
-          ],
-          "update_fields": [],
-          "lock": false,
-          "constraints": []
-        },
-        {
-          "schema": "wms",
-          "table": "pallet",
+          "table": "inventory",
           "select_fields": [
             "id",
+            "product_id",
+            "packaging_id",
             "location_id",
-            "row_version",
-            "status"
+            "quantity",
+            "disposition",
+            "lifecycle",
+            "row_version"
           ],
           "insert_fields": [],
           "update_fields": [
+            "quantity",
             "row_version"
           ],
           "lock": true,
@@ -1112,18 +1072,48 @@
         },
         {
           "schema": "wms",
-          "table": "pallet_quantity",
+          "table": "packaging",
           "select_fields": [
             "id",
-            "pallet_id",
-            "product_id",
-            "quantity",
-            "status"
+            "type",
+            "code",
+            "location_id",
+            "lifecycle",
+            "row_version"
           ],
           "insert_fields": [],
-          "update_fields": [
-            "quantity"
+          "update_fields": [],
+          "lock": true,
+          "constraints": []
+        },
+        {
+          "schema": "wms",
+          "table": "inventory_transaction",
+          "select_fields": [
+            "id"
           ],
+          "insert_fields": [
+            "operation_id",
+            "inventory_id",
+            "from_inventory_id",
+            "to_inventory_id",
+            "from_product_id",
+            "from_packaging_id",
+            "from_location_id",
+            "from_quantity",
+            "from_disposition",
+            "from_lifecycle",
+            "occurred_at",
+            "reason",
+            "type",
+            "to_product_id",
+            "to_packaging_id",
+            "to_location_id",
+            "to_quantity",
+            "to_disposition",
+            "to_lifecycle"
+          ],
+          "update_fields": [],
           "lock": false,
           "constraints": []
         }
@@ -1146,24 +1136,14 @@
               "nullable": false
             },
             {
-              "name": "movement_id",
-              "type": "uuid",
-              "nullable": false
-            },
-            {
-              "name": "pallet_id",
-              "type": "uuid",
-              "nullable": false
-            },
-            {
-              "name": "adjusted_quantity",
-              "type": "numeric",
+              "name": "result",
+              "type": "text",
               "nullable": true
             },
             {
-              "name": "row_version",
-              "type": "int32",
-              "nullable": true
+              "name": "operation_id",
+              "type": "uuid",
+              "nullable": false
             }
           ]
         },
@@ -1180,149 +1160,12 @@
               "name": "canonical_command",
               "type": "bytes",
               "nullable": false
-            },
-            {
-              "name": "pallet_id",
-              "type": "uuid",
-              "nullable": false
             }
           ],
           "row": [
             {
-              "name": "movement_id",
+              "name": "operation_id",
               "type": "uuid",
-              "nullable": false
-            }
-          ]
-        },
-        "lock_pallet": {
-          "path": "command/inventory_adjust/lock_pallet.sql",
-          "fetch": "optional_one",
-          "parameters": [
-            {
-              "name": "pallet_id",
-              "type": "uuid",
-              "nullable": false
-            }
-          ],
-          "row": [
-            {
-              "name": "location_id",
-              "type": "uuid",
-              "nullable": false
-            },
-            {
-              "name": "row_version",
-              "type": "int32",
-              "nullable": false
-            },
-            {
-              "name": "status",
-              "type": "text",
-              "nullable": false
-            }
-          ]
-        },
-        "set_quantity": {
-          "path": "command/inventory_adjust/set_quantity.sql",
-          "fetch": "optional_one",
-          "parameters": [
-            {
-              "name": "pallet_id",
-              "type": "uuid",
-              "nullable": false
-            },
-            {
-              "name": "product_id",
-              "type": "uuid",
-              "nullable": false
-            },
-            {
-              "name": "status",
-              "type": "text",
-              "nullable": false
-            },
-            {
-              "name": "quantity",
-              "type": "numeric",
-              "nullable": false
-            }
-          ],
-          "row": [
-            {
-              "name": "id",
-              "type": "uuid",
-              "nullable": false
-            },
-            {
-              "name": "quantity",
-              "type": "numeric",
-              "nullable": false
-            }
-          ]
-        },
-        "insert_movement": {
-          "path": "command/inventory_adjust/insert_movement.sql",
-          "fetch": "one",
-          "parameters": [
-            {
-              "name": "idempotency_key",
-              "type": "text",
-              "nullable": false
-            },
-            {
-              "name": "pallet_id",
-              "type": "uuid",
-              "nullable": false
-            },
-            {
-              "name": "product_id",
-              "type": "uuid",
-              "nullable": false
-            },
-            {
-              "name": "quantity",
-              "type": "numeric",
-              "nullable": false
-            },
-            {
-              "name": "reason_code",
-              "type": "text",
-              "nullable": false
-            },
-            {
-              "name": "occurred_at",
-              "type": "timestamptz",
-              "nullable": false
-            }
-          ],
-          "row": [
-            {
-              "name": "id",
-              "type": "uuid",
-              "nullable": false
-            }
-          ]
-        },
-        "touch_pallet": {
-          "path": "command/inventory_adjust/touch_pallet.sql",
-          "fetch": "one",
-          "parameters": [
-            {
-              "name": "pallet_id",
-              "type": "uuid",
-              "nullable": false
-            }
-          ],
-          "row": [
-            {
-              "name": "row_version",
-              "type": "int32",
-              "nullable": false
-            },
-            {
-              "name": "status",
-              "type": "text",
               "nullable": false
             }
           ]
@@ -1342,331 +1185,30 @@
               "nullable": false
             },
             {
-              "name": "movement_id",
+              "name": "operation_id",
               "type": "uuid",
               "nullable": false
             },
             {
-              "name": "adjusted_quantity",
-              "type": "numeric",
-              "nullable": false
-            },
-            {
-              "name": "row_version",
-              "type": "int32",
-              "nullable": false
-            }
-          ],
-          "row": [
-            {
-              "name": "adjusted_quantity",
-              "type": "numeric",
-              "nullable": true
-            },
-            {
-              "name": "row_version",
-              "type": "int32",
-              "nullable": true
-            }
-          ]
-        }
-      }
-    },
-    "inventory.merge": {
-      "kind": "command",
-      "visibility": "public",
-      "permission": "inventory.merge",
-      "connection": "postgres",
-      "transaction": "explicit_per_input",
-      "automatic_retry": false,
-      "idempotent_by": "claim",
-      "claim": {
-        "table": "inventory_merge_command",
-        "identities": {
-          "movement_id": "movement_id"
-        },
-        "claim": "claim_command",
-        "replay": "find_replay",
-        "finalize": "finalize_command"
-      },
-      "input": {
-        "raw_body_maximum": 1048576,
-        "envelope": {
-          "minimum": 1,
-          "maximum": 100
-        },
-        "fields": [
-          {
-            "path": "request_id",
-            "type": "text",
-            "nullable": false
-          },
-          {
-            "path": "value.idempotency_key",
-            "type": "text",
-            "nullable": false
-          },
-          {
-            "path": "value.source_pallet_id",
-            "type": "uuid",
-            "nullable": false,
-            "references": {
-              "model": "pallet"
-            }
-          },
-          {
-            "path": "value.target_pallet_id",
-            "type": "uuid",
-            "nullable": false,
-            "references": {
-              "model": "pallet"
-            }
-          },
-          {
-            "path": "value.expected_row_version",
-            "type": "int32",
-            "nullable": false,
-            "revision": true,
-            "revision_of": "value.target_pallet_id"
-          },
-          {
-            "path": "value.occurred_at",
-            "type": "timestamptz",
-            "nullable": false
-          }
-        ]
-      },
-      "result": {
-        "class": "one",
-        "fields": [
-          {
-            "path": "movement_id",
-            "type": "uuid",
-            "nullable": false
-          },
-          {
-            "path": "source_pallet_id",
-            "type": "uuid",
-            "nullable": false
-          },
-          {
-            "path": "target_pallet_id",
-            "type": "uuid",
-            "nullable": false
-          },
-          {
-            "path": "target_status",
-            "type": "text",
-            "nullable": false,
-            "values": [
-              "available",
-              "held",
-              "consumed"
-            ]
-          },
-          {
-            "path": "row_version",
-            "type": "int32",
-            "nullable": false,
-            "revision": true
-          }
-        ]
-      },
-      "canonicalization": {
-        "excluded_fields": [
-          "request_id",
-          "value.idempotency_key"
-        ]
-      },
-      "errors": [
-        "invalid_input",
-        "pallet_not_found",
-        "concurrency_conflict",
-        "idempotency_conflict",
-        "retry",
-        "timeout",
-        "permission_denied",
-        "internal_error"
-      ],
-      "error_details": {
-        "pallet_not_found": {
-          "required": [
-            "field",
-            "id"
-          ]
-        },
-        "idempotency_conflict": {
-          "required": [
-            "field"
-          ]
-        }
-      },
-      "constraint_errors": {},
-      "relations": [
-        {
-          "schema": "wms",
-          "table": "inventory_merge_command",
-          "select_fields": [
-            "canonical_command",
-            "idempotency_key",
-            "movement_id",
-            "row_version",
-            "source_pallet_id",
-            "target_pallet_id"
-          ],
-          "insert_fields": [
-            "canonical_command",
-            "idempotency_key",
-            "source_pallet_id",
-            "target_pallet_id"
-          ],
-          "update_fields": [
-            "row_version"
-          ],
-          "lock": false,
-          "constraints": []
-        },
-        {
-          "schema": "wms",
-          "table": "inventory_movement",
-          "select_fields": [
-            "id"
-          ],
-          "insert_fields": [
-            "idempotency_key",
-            "kind",
-            "occurred_at",
-            "pallet_id",
-            "product_id",
-            "quantity"
-          ],
-          "update_fields": [],
-          "lock": false,
-          "constraints": []
-        },
-        {
-          "schema": "wms",
-          "table": "pallet",
-          "select_fields": [
-            "id",
-            "location_id",
-            "row_version",
-            "status"
-          ],
-          "insert_fields": [],
-          "update_fields": [
-            "row_version",
-            "status"
-          ],
-          "lock": true,
-          "constraints": []
-        },
-        {
-          "schema": "wms",
-          "table": "pallet_quantity",
-          "select_fields": [
-            "id",
-            "pallet_id",
-            "product_id",
-            "quantity",
-            "status"
-          ],
-          "insert_fields": [
-            "pallet_id",
-            "product_id",
-            "quantity",
-            "status"
-          ],
-          "update_fields": [
-            "quantity"
-          ],
-          "lock": false,
-          "constraints": []
-        }
-      ],
-      "statements": {
-        "find_replay": {
-          "path": "command/inventory_merge/find_replay.sql",
-          "fetch": "optional_one",
-          "parameters": [
-            {
-              "name": "idempotency_key",
+              "name": "result",
               "type": "text",
               "nullable": false
             }
           ],
           "row": [
             {
-              "name": "canonical_command",
-              "type": "bytes",
-              "nullable": false
-            },
-            {
-              "name": "movement_id",
-              "type": "uuid",
-              "nullable": false
-            },
-            {
-              "name": "source_pallet_id",
-              "type": "uuid",
-              "nullable": false
-            },
-            {
-              "name": "target_pallet_id",
-              "type": "uuid",
-              "nullable": false
-            },
-            {
-              "name": "row_version",
-              "type": "int32",
+              "name": "result",
+              "type": "text",
               "nullable": true
             }
           ]
         },
-        "claim_command": {
-          "path": "command/inventory_merge/claim_command.sql",
+        "lock_inventory": {
+          "path": "command/inventory_adjust/lock_inventory.sql",
           "fetch": "optional_one",
           "parameters": [
             {
-              "name": "idempotency_key",
-              "type": "text",
-              "nullable": false
-            },
-            {
-              "name": "canonical_command",
-              "type": "bytes",
-              "nullable": false
-            },
-            {
-              "name": "source_pallet_id",
-              "type": "uuid",
-              "nullable": false
-            },
-            {
-              "name": "target_pallet_id",
-              "type": "uuid",
-              "nullable": false
-            }
-          ],
-          "row": [
-            {
-              "name": "movement_id",
-              "type": "uuid",
-              "nullable": false
-            }
-          ]
-        },
-        "lock_both_pallets": {
-          "path": "command/inventory_merge/lock_both_pallets.sql",
-          "fetch": "bounded_list",
-          "parameters": [
-            {
-              "name": "source_pallet_id",
-              "type": "uuid",
-              "nullable": false
-            },
-            {
-              "name": "target_pallet_id",
+              "name": "inventory_id",
               "type": "uuid",
               "nullable": false
             }
@@ -1674,6 +1216,16 @@
           "row": [
             {
               "name": "id",
+              "type": "uuid",
+              "nullable": false
+            },
+            {
+              "name": "product_id",
+              "type": "uuid",
+              "nullable": false
+            },
+            {
+              "name": "packaging_id",
               "type": "uuid",
               "nullable": false
             },
@@ -1683,67 +1235,39 @@
               "nullable": false
             },
             {
+              "name": "quantity",
+              "type": "numeric",
+              "nullable": false
+            },
+            {
+              "name": "disposition",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "lifecycle",
+              "type": "text",
+              "nullable": false
+            },
+            {
               "name": "row_version",
               "type": "int32",
               "nullable": false
-            },
-            {
-              "name": "status",
-              "type": "text",
-              "nullable": false
             }
           ]
         },
-        "select_source_quantity": {
-          "path": "command/inventory_merge/select_source_quantity.sql",
+        "lock_packaging": {
+          "path": "command/inventory_adjust/lock_packaging.sql",
           "fetch": "bounded_list",
           "parameters": [
             {
-              "name": "source_pallet_id",
-              "type": "uuid",
-              "nullable": false
-            }
-          ],
-          "row": [
-            {
-              "name": "product_id",
+              "name": "from_packaging_id",
               "type": "uuid",
               "nullable": false
             },
             {
-              "name": "quantity",
-              "type": "numeric",
-              "nullable": false
-            },
-            {
-              "name": "status",
-              "type": "text",
-              "nullable": false
-            }
-          ]
-        },
-        "add_to_target": {
-          "path": "command/inventory_merge/add_to_target.sql",
-          "fetch": "optional_one",
-          "parameters": [
-            {
-              "name": "target_pallet_id",
+              "name": "to_packaging_id",
               "type": "uuid",
-              "nullable": false
-            },
-            {
-              "name": "product_id",
-              "type": "uuid",
-              "nullable": false
-            },
-            {
-              "name": "status",
-              "type": "text",
-              "nullable": false
-            },
-            {
-              "name": "quantity",
-              "type": "numeric",
               "nullable": false
             }
           ],
@@ -1754,78 +1278,95 @@
               "nullable": false
             },
             {
-              "name": "quantity",
-              "type": "numeric",
-              "nullable": false
-            }
-          ]
-        },
-        "place_on_target": {
-          "path": "command/inventory_merge/place_on_target.sql",
-          "fetch": "one",
-          "parameters": [
-            {
-              "name": "target_pallet_id",
-              "type": "uuid",
-              "nullable": false
-            },
-            {
-              "name": "product_id",
-              "type": "uuid",
-              "nullable": false
-            },
-            {
-              "name": "status",
+              "name": "type",
               "type": "text",
               "nullable": false
             },
             {
-              "name": "quantity",
-              "type": "numeric",
-              "nullable": false
-            }
-          ],
-          "row": [
-            {
-              "name": "id",
-              "type": "uuid",
-              "nullable": false
-            },
-            {
-              "name": "quantity",
-              "type": "numeric",
-              "nullable": false
-            }
-          ]
-        },
-        "insert_movement": {
-          "path": "command/inventory_merge/insert_movement.sql",
-          "fetch": "one",
-          "parameters": [
-            {
-              "name": "idempotency_key",
+              "name": "code",
               "type": "text",
               "nullable": false
             },
             {
-              "name": "pallet_id",
+              "name": "location_id",
               "type": "uuid",
               "nullable": false
             },
             {
-              "name": "product_id",
+              "name": "lifecycle",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "row_version",
+              "type": "int32",
+              "nullable": false
+            }
+          ]
+        },
+        "insert_transaction": {
+          "path": "command/inventory_adjust/insert_transaction.sql",
+          "fetch": "one",
+          "parameters": [
+            {
+              "name": "operation_id",
               "type": "uuid",
               "nullable": false
             },
             {
-              "name": "quantity",
+              "name": "inventory_id",
+              "type": "uuid",
+              "nullable": false
+            },
+            {
+              "name": "from_inventory_id",
+              "type": "uuid",
+              "nullable": false
+            },
+            {
+              "name": "to_inventory_id",
+              "type": "uuid",
+              "nullable": false
+            },
+            {
+              "name": "from_product_id",
+              "type": "uuid",
+              "nullable": true
+            },
+            {
+              "name": "from_packaging_id",
+              "type": "uuid",
+              "nullable": true
+            },
+            {
+              "name": "from_location_id",
+              "type": "uuid",
+              "nullable": true
+            },
+            {
+              "name": "from_quantity",
               "type": "numeric",
               "nullable": false
+            },
+            {
+              "name": "from_disposition",
+              "type": "text",
+              "nullable": true
+            },
+            {
+              "name": "from_lifecycle",
+              "type": "text",
+              "nullable": true
             },
             {
               "name": "occurred_at",
               "type": "timestamptz",
               "nullable": false
+            },
+            {
+              "name": "reason",
+              "type": "text",
+              "nullable": true
             }
           ],
           "row": [
@@ -1836,77 +1377,61 @@
             }
           ]
         },
-        "consume_source": {
-          "path": "command/inventory_merge/consume_source.sql",
+        "apply": {
+          "path": "command/inventory_adjust/apply.sql",
           "fetch": "one",
           "parameters": [
             {
-              "name": "source_pallet_id",
+              "name": "inventory_id",
               "type": "uuid",
-              "nullable": false
-            }
-          ],
-          "row": [
-            {
-              "name": "row_version",
-              "type": "int32",
-              "nullable": false
-            }
-          ]
-        },
-        "touch_target": {
-          "path": "command/inventory_merge/touch_target.sql",
-          "fetch": "one",
-          "parameters": [
-            {
-              "name": "target_pallet_id",
-              "type": "uuid",
-              "nullable": false
-            }
-          ],
-          "row": [
-            {
-              "name": "row_version",
-              "type": "int32",
               "nullable": false
             },
             {
-              "name": "status",
-              "type": "text",
+              "name": "to_quantity",
+              "type": "numeric",
               "nullable": false
             }
-          ]
-        },
-        "finalize_command": {
-          "path": "command/inventory_merge/finalize_command.sql",
-          "fetch": "one",
-          "parameters": [
+          ],
+          "row": [
             {
-              "name": "idempotency_key",
+              "name": "id",
+              "type": "uuid",
+              "nullable": false
+            },
+            {
+              "name": "product_id",
+              "type": "uuid",
+              "nullable": false
+            },
+            {
+              "name": "packaging_id",
+              "type": "uuid",
+              "nullable": false
+            },
+            {
+              "name": "location_id",
+              "type": "uuid",
+              "nullable": false
+            },
+            {
+              "name": "quantity",
+              "type": "numeric",
+              "nullable": false
+            },
+            {
+              "name": "disposition",
               "type": "text",
               "nullable": false
             },
             {
-              "name": "canonical_command",
-              "type": "bytes",
-              "nullable": false
-            },
-            {
-              "name": "movement_id",
-              "type": "uuid",
+              "name": "lifecycle",
+              "type": "text",
               "nullable": false
             },
             {
               "name": "row_version",
               "type": "int32",
               "nullable": false
-            }
-          ],
-          "row": [
-            {
-              "name": "row_version",
-              "type": "int32",
-              "nullable": true
             }
           ]
         }
@@ -1923,8 +1448,8 @@
       "claim": {
         "table": "inventory_split_command",
         "identities": {
-          "movement_id": "movement_id",
-          "new_pallet_id": "new_pallet_id"
+          "operation_id": "operation_id",
+          "new_inventory_id": "new_inventory_id"
         },
         "claim": "claim_command",
         "replay": "find_replay",
@@ -1938,68 +1463,54 @@
         },
         "fields": [
           {
-            "path": "request_id",
             "type": "text",
-            "nullable": false
+            "nullable": false,
+            "path": "request_id"
           },
           {
-            "path": "value.idempotency_key",
             "type": "text",
-            "nullable": false
+            "nullable": false,
+            "path": "value.idempotency_key"
           },
           {
-            "path": "value.source_pallet_id",
             "type": "uuid",
             "nullable": false,
+            "path": "value.from_inventory_id",
             "references": {
-              "model": "pallet"
+              "model": "inventory"
             }
           },
           {
-            "path": "value.product_id",
-            "type": "uuid",
-            "nullable": false,
-            "references": {
-              "model": "product"
-            }
-          },
-          {
-            "path": "value.status",
-            "type": "text",
-            "nullable": false,
-            "values": [
-              "available",
-              "held"
-            ]
-          },
-          {
-            "path": "value.quantity",
             "type": "numeric",
-            "nullable": false
+            "nullable": false,
+            "path": "value.quantity"
           },
           {
-            "path": "value.new_pallet_code",
-            "type": "text",
-            "nullable": false
-          },
-          {
-            "path": "value.to_location_id",
             "type": "uuid",
             "nullable": false,
+            "path": "value.to_packaging_id",
+            "references": {
+              "model": "packaging"
+            }
+          },
+          {
+            "type": "uuid",
+            "nullable": false,
+            "path": "value.to_location_id",
             "references": {
               "model": "location"
             }
           },
           {
-            "path": "value.expected_row_version",
             "type": "int32",
             "nullable": false,
+            "path": "value.expected_row_version",
             "revision": true
           },
           {
-            "path": "value.occurred_at",
             "type": "timestamptz",
-            "nullable": false
+            "nullable": false,
+            "path": "value.occurred_at"
           }
         ]
       },
@@ -2007,35 +1518,55 @@
         "class": "one",
         "fields": [
           {
-            "path": "movement_id",
             "type": "uuid",
-            "nullable": false
+            "nullable": false,
+            "path": "operation_id"
           },
           {
-            "path": "source_pallet_id",
             "type": "uuid",
-            "nullable": false
+            "nullable": false,
+            "path": "inventory_id"
           },
           {
-            "path": "new_pallet_id",
             "type": "uuid",
-            "nullable": false
+            "nullable": false,
+            "path": "product_id"
           },
           {
-            "path": "source_status",
+            "type": "uuid",
+            "nullable": false,
+            "path": "packaging_id"
+          },
+          {
+            "type": "uuid",
+            "nullable": false,
+            "path": "location_id"
+          },
+          {
+            "type": "numeric",
+            "nullable": false,
+            "path": "quantity"
+          },
+          {
             "type": "text",
             "nullable": false,
-            "values": [
-              "available",
-              "held",
-              "consumed"
-            ]
+            "path": "disposition"
           },
           {
-            "path": "row_version",
+            "type": "text",
+            "nullable": false,
+            "path": "lifecycle"
+          },
+          {
             "type": "int32",
             "nullable": false,
+            "path": "row_version",
             "revision": true
+          },
+          {
+            "type": "uuid",
+            "nullable": false,
+            "path": "new_inventory_id"
           }
         ]
       },
@@ -2047,46 +1578,22 @@
       },
       "errors": [
         "invalid_input",
-        "pallet_not_found",
-        "location_not_found",
-        "quantity_not_found",
-        "insufficient_quantity",
+        "not_found",
         "concurrency_conflict",
         "idempotency_conflict",
+        "insufficient_quantity",
         "retry",
         "timeout",
         "permission_denied",
         "internal_error"
       ],
       "error_details": {
-        "pallet_not_found": {
+        "idempotency_conflict": {
           "required": [
-            "field",
-            "id"
-          ]
-        },
-        "location_not_found": {
-          "required": [
-            "field",
-            "id"
-          ]
-        },
-        "quantity_not_found": {
-          "required": [
-            "field",
-            "id"
+            "field"
           ]
         },
         "insufficient_quantity": {
-          "required": [
-            "field"
-          ],
-          "optional": [
-            "maximum",
-            "observed"
-          ]
-        },
-        "idempotency_conflict": {
           "required": [
             "field"
           ]
@@ -2098,69 +1605,46 @@
           "schema": "wms",
           "table": "inventory_split_command",
           "select_fields": [
-            "canonical_command",
             "idempotency_key",
-            "movement_id",
-            "new_pallet_id",
-            "row_version",
-            "source_pallet_id"
+            "canonical_command",
+            "result",
+            "operation_id",
+            "new_inventory_id"
           ],
           "insert_fields": [
-            "canonical_command",
             "idempotency_key",
-            "source_pallet_id"
+            "canonical_command"
           ],
           "update_fields": [
+            "result"
+          ],
+          "lock": false,
+          "constraints": []
+        },
+        {
+          "schema": "wms",
+          "table": "inventory",
+          "select_fields": [
+            "id",
+            "product_id",
+            "packaging_id",
+            "location_id",
+            "quantity",
+            "disposition",
+            "lifecycle",
             "row_version"
           ],
-          "lock": false,
-          "constraints": []
-        },
-        {
-          "schema": "wms",
-          "table": "inventory_movement",
-          "select_fields": [
-            "id"
-          ],
           "insert_fields": [
-            "idempotency_key",
-            "kind",
-            "occurred_at",
-            "pallet_id",
+            "id",
             "product_id",
-            "quantity"
-          ],
-          "update_fields": [],
-          "lock": false,
-          "constraints": []
-        },
-        {
-          "schema": "wms",
-          "table": "location",
-          "select_fields": [
-            "id"
-          ],
-          "insert_fields": [],
-          "update_fields": [],
-          "lock": false,
-          "constraints": []
-        },
-        {
-          "schema": "wms",
-          "table": "pallet",
-          "select_fields": [
-            "id",
+            "packaging_id",
             "location_id",
-            "row_version",
-            "status"
-          ],
-          "insert_fields": [
-            "id",
-            "location_id",
-            "pallet_code",
-            "status"
+            "quantity",
+            "disposition",
+            "lifecycle"
           ],
           "update_fields": [
+            "quantity",
             "row_version"
           ],
           "lock": true,
@@ -2168,23 +1652,48 @@
         },
         {
           "schema": "wms",
-          "table": "pallet_quantity",
+          "table": "packaging",
           "select_fields": [
             "id",
-            "pallet_id",
-            "product_id",
-            "quantity",
-            "status"
+            "type",
+            "code",
+            "location_id",
+            "lifecycle",
+            "row_version"
+          ],
+          "insert_fields": [],
+          "update_fields": [],
+          "lock": true,
+          "constraints": []
+        },
+        {
+          "schema": "wms",
+          "table": "inventory_transaction",
+          "select_fields": [
+            "id"
           ],
           "insert_fields": [
-            "pallet_id",
-            "product_id",
-            "quantity",
-            "status"
+            "operation_id",
+            "inventory_id",
+            "from_inventory_id",
+            "to_inventory_id",
+            "from_product_id",
+            "from_packaging_id",
+            "from_location_id",
+            "from_quantity",
+            "from_disposition",
+            "from_lifecycle",
+            "occurred_at",
+            "reason",
+            "type",
+            "to_product_id",
+            "to_packaging_id",
+            "to_location_id",
+            "to_quantity",
+            "to_disposition",
+            "to_lifecycle"
           ],
-          "update_fields": [
-            "quantity"
-          ],
+          "update_fields": [],
           "lock": false,
           "constraints": []
         }
@@ -2207,24 +1716,19 @@
               "nullable": false
             },
             {
-              "name": "movement_id",
-              "type": "uuid",
-              "nullable": false
-            },
-            {
-              "name": "source_pallet_id",
-              "type": "uuid",
-              "nullable": false
-            },
-            {
-              "name": "new_pallet_id",
-              "type": "uuid",
-              "nullable": false
-            },
-            {
-              "name": "row_version",
-              "type": "int32",
+              "name": "result",
+              "type": "text",
               "nullable": true
+            },
+            {
+              "name": "operation_id",
+              "type": "uuid",
+              "nullable": false
+            },
+            {
+              "name": "new_inventory_id",
+              "type": "uuid",
+              "nullable": false
             }
           ]
         },
@@ -2241,276 +1745,17 @@
               "name": "canonical_command",
               "type": "bytes",
               "nullable": false
-            },
-            {
-              "name": "source_pallet_id",
-              "type": "uuid",
-              "nullable": false
             }
           ],
           "row": [
             {
-              "name": "movement_id",
+              "name": "operation_id",
               "type": "uuid",
               "nullable": false
             },
             {
-              "name": "new_pallet_id",
+              "name": "new_inventory_id",
               "type": "uuid",
-              "nullable": false
-            }
-          ]
-        },
-        "lock_pallet": {
-          "path": "command/inventory_split/lock_pallet.sql",
-          "fetch": "optional_one",
-          "parameters": [
-            {
-              "name": "source_pallet_id",
-              "type": "uuid",
-              "nullable": false
-            }
-          ],
-          "row": [
-            {
-              "name": "location_id",
-              "type": "uuid",
-              "nullable": false
-            },
-            {
-              "name": "row_version",
-              "type": "int32",
-              "nullable": false
-            },
-            {
-              "name": "status",
-              "type": "text",
-              "nullable": false
-            }
-          ]
-        },
-        "select_quantity": {
-          "path": "command/inventory_split/select_quantity.sql",
-          "fetch": "optional_one",
-          "parameters": [
-            {
-              "name": "source_pallet_id",
-              "type": "uuid",
-              "nullable": false
-            },
-            {
-              "name": "product_id",
-              "type": "uuid",
-              "nullable": false
-            },
-            {
-              "name": "status",
-              "type": "text",
-              "nullable": false
-            }
-          ],
-          "row": [
-            {
-              "name": "quantity",
-              "type": "numeric",
-              "nullable": false
-            }
-          ]
-        },
-        "take_from_source": {
-          "path": "command/inventory_split/take_from_source.sql",
-          "fetch": "optional_one",
-          "parameters": [
-            {
-              "name": "source_pallet_id",
-              "type": "uuid",
-              "nullable": false
-            },
-            {
-              "name": "product_id",
-              "type": "uuid",
-              "nullable": false
-            },
-            {
-              "name": "status",
-              "type": "text",
-              "nullable": false
-            },
-            {
-              "name": "quantity",
-              "type": "numeric",
-              "nullable": false
-            }
-          ],
-          "row": [
-            {
-              "name": "id",
-              "type": "uuid",
-              "nullable": false
-            },
-            {
-              "name": "quantity",
-              "type": "numeric",
-              "nullable": false
-            }
-          ]
-        },
-        "validate_location": {
-          "path": "command/inventory_split/validate_location.sql",
-          "fetch": "optional_one",
-          "parameters": [
-            {
-              "name": "to_location_id",
-              "type": "uuid",
-              "nullable": false
-            }
-          ],
-          "row": [
-            {
-              "name": "id",
-              "type": "uuid",
-              "nullable": false
-            }
-          ]
-        },
-        "create_pallet": {
-          "path": "command/inventory_split/create_pallet.sql",
-          "fetch": "one",
-          "parameters": [
-            {
-              "name": "new_pallet_id",
-              "type": "uuid",
-              "nullable": false
-            },
-            {
-              "name": "new_pallet_code",
-              "type": "text",
-              "nullable": false
-            },
-            {
-              "name": "to_location_id",
-              "type": "uuid",
-              "nullable": false
-            },
-            {
-              "name": "status",
-              "type": "text",
-              "nullable": false
-            }
-          ],
-          "row": [
-            {
-              "name": "id",
-              "type": "uuid",
-              "nullable": false
-            },
-            {
-              "name": "row_version",
-              "type": "int32",
-              "nullable": false
-            },
-            {
-              "name": "status",
-              "type": "text",
-              "nullable": false
-            }
-          ]
-        },
-        "place_quantity": {
-          "path": "command/inventory_split/place_quantity.sql",
-          "fetch": "one",
-          "parameters": [
-            {
-              "name": "new_pallet_id",
-              "type": "uuid",
-              "nullable": false
-            },
-            {
-              "name": "product_id",
-              "type": "uuid",
-              "nullable": false
-            },
-            {
-              "name": "status",
-              "type": "text",
-              "nullable": false
-            },
-            {
-              "name": "quantity",
-              "type": "numeric",
-              "nullable": false
-            }
-          ],
-          "row": [
-            {
-              "name": "id",
-              "type": "uuid",
-              "nullable": false
-            },
-            {
-              "name": "quantity",
-              "type": "numeric",
-              "nullable": false
-            }
-          ]
-        },
-        "insert_movement": {
-          "path": "command/inventory_split/insert_movement.sql",
-          "fetch": "one",
-          "parameters": [
-            {
-              "name": "idempotency_key",
-              "type": "text",
-              "nullable": false
-            },
-            {
-              "name": "pallet_id",
-              "type": "uuid",
-              "nullable": false
-            },
-            {
-              "name": "product_id",
-              "type": "uuid",
-              "nullable": false
-            },
-            {
-              "name": "quantity",
-              "type": "numeric",
-              "nullable": false
-            },
-            {
-              "name": "occurred_at",
-              "type": "timestamptz",
-              "nullable": false
-            }
-          ],
-          "row": [
-            {
-              "name": "id",
-              "type": "uuid",
-              "nullable": false
-            }
-          ]
-        },
-        "touch_source": {
-          "path": "command/inventory_split/touch_source.sql",
-          "fetch": "one",
-          "parameters": [
-            {
-              "name": "source_pallet_id",
-              "type": "uuid",
-              "nullable": false
-            }
-          ],
-          "row": [
-            {
-              "name": "row_version",
-              "type": "int32",
-              "nullable": false
-            },
-            {
-              "name": "status",
-              "type": "text",
               "nullable": false
             }
           ]
@@ -2530,8 +1775,68 @@
               "nullable": false
             },
             {
-              "name": "movement_id",
+              "name": "operation_id",
               "type": "uuid",
+              "nullable": false
+            },
+            {
+              "name": "result",
+              "type": "text",
+              "nullable": false
+            }
+          ],
+          "row": [
+            {
+              "name": "result",
+              "type": "text",
+              "nullable": true
+            }
+          ]
+        },
+        "lock_inventory": {
+          "path": "command/inventory_split/lock_inventory.sql",
+          "fetch": "optional_one",
+          "parameters": [
+            {
+              "name": "inventory_id",
+              "type": "uuid",
+              "nullable": false
+            }
+          ],
+          "row": [
+            {
+              "name": "id",
+              "type": "uuid",
+              "nullable": false
+            },
+            {
+              "name": "product_id",
+              "type": "uuid",
+              "nullable": false
+            },
+            {
+              "name": "packaging_id",
+              "type": "uuid",
+              "nullable": false
+            },
+            {
+              "name": "location_id",
+              "type": "uuid",
+              "nullable": false
+            },
+            {
+              "name": "quantity",
+              "type": "numeric",
+              "nullable": false
+            },
+            {
+              "name": "disposition",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "lifecycle",
+              "type": "text",
               "nullable": false
             },
             {
@@ -2539,12 +1844,1585 @@
               "type": "int32",
               "nullable": false
             }
+          ]
+        },
+        "lock_packaging": {
+          "path": "command/inventory_split/lock_packaging.sql",
+          "fetch": "bounded_list",
+          "parameters": [
+            {
+              "name": "from_packaging_id",
+              "type": "uuid",
+              "nullable": false
+            },
+            {
+              "name": "to_packaging_id",
+              "type": "uuid",
+              "nullable": false
+            }
           ],
           "row": [
             {
+              "name": "id",
+              "type": "uuid",
+              "nullable": false
+            },
+            {
+              "name": "type",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "code",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "location_id",
+              "type": "uuid",
+              "nullable": false
+            },
+            {
+              "name": "lifecycle",
+              "type": "text",
+              "nullable": false
+            },
+            {
               "name": "row_version",
               "type": "int32",
+              "nullable": false
+            }
+          ]
+        },
+        "insert_transaction": {
+          "path": "command/inventory_split/insert_transaction.sql",
+          "fetch": "one",
+          "parameters": [
+            {
+              "name": "operation_id",
+              "type": "uuid",
+              "nullable": false
+            },
+            {
+              "name": "inventory_id",
+              "type": "uuid",
+              "nullable": false
+            },
+            {
+              "name": "from_inventory_id",
+              "type": "uuid",
+              "nullable": false
+            },
+            {
+              "name": "to_inventory_id",
+              "type": "uuid",
+              "nullable": false
+            },
+            {
+              "name": "from_product_id",
+              "type": "uuid",
               "nullable": true
+            },
+            {
+              "name": "from_packaging_id",
+              "type": "uuid",
+              "nullable": true
+            },
+            {
+              "name": "from_location_id",
+              "type": "uuid",
+              "nullable": true
+            },
+            {
+              "name": "from_quantity",
+              "type": "numeric",
+              "nullable": false
+            },
+            {
+              "name": "from_disposition",
+              "type": "text",
+              "nullable": true
+            },
+            {
+              "name": "from_lifecycle",
+              "type": "text",
+              "nullable": true
+            },
+            {
+              "name": "occurred_at",
+              "type": "timestamptz",
+              "nullable": false
+            },
+            {
+              "name": "reason",
+              "type": "text",
+              "nullable": true
+            }
+          ],
+          "row": [
+            {
+              "name": "id",
+              "type": "uuid",
+              "nullable": false
+            }
+          ]
+        },
+        "apply": {
+          "path": "command/inventory_split/apply.sql",
+          "fetch": "optional_one",
+          "parameters": [
+            {
+              "name": "inventory_id",
+              "type": "uuid",
+              "nullable": false
+            },
+            {
+              "name": "quantity",
+              "type": "numeric",
+              "nullable": false
+            }
+          ],
+          "row": [
+            {
+              "name": "id",
+              "type": "uuid",
+              "nullable": false
+            },
+            {
+              "name": "product_id",
+              "type": "uuid",
+              "nullable": false
+            },
+            {
+              "name": "packaging_id",
+              "type": "uuid",
+              "nullable": false
+            },
+            {
+              "name": "location_id",
+              "type": "uuid",
+              "nullable": false
+            },
+            {
+              "name": "quantity",
+              "type": "numeric",
+              "nullable": false
+            },
+            {
+              "name": "disposition",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "lifecycle",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "row_version",
+              "type": "int32",
+              "nullable": false
+            }
+          ]
+        },
+        "create_inventory": {
+          "path": "command/inventory_split/create_inventory.sql",
+          "fetch": "one",
+          "parameters": [
+            {
+              "name": "id",
+              "type": "uuid",
+              "nullable": false
+            },
+            {
+              "name": "product_id",
+              "type": "uuid",
+              "nullable": false
+            },
+            {
+              "name": "packaging_id",
+              "type": "uuid",
+              "nullable": false
+            },
+            {
+              "name": "location_id",
+              "type": "uuid",
+              "nullable": false
+            },
+            {
+              "name": "quantity",
+              "type": "numeric",
+              "nullable": false
+            },
+            {
+              "name": "disposition",
+              "type": "text",
+              "nullable": false
+            }
+          ],
+          "row": [
+            {
+              "name": "id",
+              "type": "uuid",
+              "nullable": false
+            },
+            {
+              "name": "product_id",
+              "type": "uuid",
+              "nullable": false
+            },
+            {
+              "name": "packaging_id",
+              "type": "uuid",
+              "nullable": false
+            },
+            {
+              "name": "location_id",
+              "type": "uuid",
+              "nullable": false
+            },
+            {
+              "name": "quantity",
+              "type": "numeric",
+              "nullable": false
+            },
+            {
+              "name": "disposition",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "lifecycle",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "row_version",
+              "type": "int32",
+              "nullable": false
+            }
+          ]
+        }
+      }
+    },
+    "inventory.merge": {
+      "kind": "command",
+      "visibility": "public",
+      "permission": "inventory.merge",
+      "connection": "postgres",
+      "transaction": "explicit_per_input",
+      "automatic_retry": false,
+      "idempotent_by": "claim",
+      "claim": {
+        "table": "inventory_merge_command",
+        "identities": {
+          "operation_id": "operation_id"
+        },
+        "claim": "claim_command",
+        "replay": "find_replay",
+        "finalize": "finalize_command"
+      },
+      "input": {
+        "raw_body_maximum": 1048576,
+        "envelope": {
+          "minimum": 1,
+          "maximum": 100
+        },
+        "fields": [
+          {
+            "type": "text",
+            "nullable": false,
+            "path": "request_id"
+          },
+          {
+            "type": "text",
+            "nullable": false,
+            "path": "value.idempotency_key"
+          },
+          {
+            "type": "uuid",
+            "nullable": false,
+            "path": "value.from_inventory_id",
+            "references": {
+              "model": "inventory"
+            }
+          },
+          {
+            "type": "uuid",
+            "nullable": false,
+            "path": "value.to_inventory_id",
+            "references": {
+              "model": "inventory"
+            }
+          },
+          {
+            "type": "int32",
+            "nullable": false,
+            "path": "value.expected_from_row_version",
+            "revision": true
+          },
+          {
+            "type": "int32",
+            "nullable": false,
+            "path": "value.expected_to_row_version",
+            "revision": true
+          },
+          {
+            "type": "timestamptz",
+            "nullable": false,
+            "path": "value.occurred_at"
+          }
+        ]
+      },
+      "result": {
+        "class": "one",
+        "fields": [
+          {
+            "type": "uuid",
+            "nullable": false,
+            "path": "operation_id"
+          },
+          {
+            "type": "uuid",
+            "nullable": false,
+            "path": "inventory_id"
+          },
+          {
+            "type": "uuid",
+            "nullable": false,
+            "path": "product_id"
+          },
+          {
+            "type": "uuid",
+            "nullable": false,
+            "path": "packaging_id"
+          },
+          {
+            "type": "uuid",
+            "nullable": false,
+            "path": "location_id"
+          },
+          {
+            "type": "numeric",
+            "nullable": false,
+            "path": "quantity"
+          },
+          {
+            "type": "text",
+            "nullable": false,
+            "path": "disposition"
+          },
+          {
+            "type": "text",
+            "nullable": false,
+            "path": "lifecycle"
+          },
+          {
+            "type": "int32",
+            "nullable": false,
+            "path": "row_version",
+            "revision": true
+          },
+          {
+            "type": "uuid",
+            "nullable": false,
+            "path": "from_inventory_id"
+          }
+        ]
+      },
+      "canonicalization": {
+        "excluded_fields": [
+          "request_id",
+          "value.idempotency_key"
+        ]
+      },
+      "errors": [
+        "invalid_input",
+        "not_found",
+        "concurrency_conflict",
+        "idempotency_conflict",
+        "retry",
+        "timeout",
+        "permission_denied",
+        "internal_error"
+      ],
+      "error_details": {
+        "idempotency_conflict": {
+          "required": [
+            "field"
+          ]
+        }
+      },
+      "constraint_errors": {},
+      "relations": [
+        {
+          "schema": "wms",
+          "table": "inventory_merge_command",
+          "select_fields": [
+            "idempotency_key",
+            "canonical_command",
+            "result",
+            "operation_id"
+          ],
+          "insert_fields": [
+            "idempotency_key",
+            "canonical_command"
+          ],
+          "update_fields": [
+            "result"
+          ],
+          "lock": false,
+          "constraints": []
+        },
+        {
+          "schema": "wms",
+          "table": "inventory",
+          "select_fields": [
+            "id",
+            "product_id",
+            "packaging_id",
+            "location_id",
+            "quantity",
+            "disposition",
+            "lifecycle",
+            "row_version"
+          ],
+          "insert_fields": [],
+          "update_fields": [
+            "quantity",
+            "lifecycle",
+            "row_version"
+          ],
+          "lock": true,
+          "constraints": []
+        },
+        {
+          "schema": "wms",
+          "table": "packaging",
+          "select_fields": [
+            "id",
+            "type",
+            "code",
+            "location_id",
+            "lifecycle",
+            "row_version"
+          ],
+          "insert_fields": [],
+          "update_fields": [],
+          "lock": true,
+          "constraints": []
+        },
+        {
+          "schema": "wms",
+          "table": "inventory_transaction",
+          "select_fields": [
+            "id"
+          ],
+          "insert_fields": [
+            "operation_id",
+            "inventory_id",
+            "from_inventory_id",
+            "to_inventory_id",
+            "from_product_id",
+            "from_packaging_id",
+            "from_location_id",
+            "from_quantity",
+            "from_disposition",
+            "from_lifecycle",
+            "occurred_at",
+            "reason",
+            "type",
+            "to_product_id",
+            "to_packaging_id",
+            "to_location_id",
+            "to_quantity",
+            "to_disposition",
+            "to_lifecycle"
+          ],
+          "update_fields": [],
+          "lock": false,
+          "constraints": []
+        }
+      ],
+      "statements": {
+        "find_replay": {
+          "path": "command/inventory_merge/find_replay.sql",
+          "fetch": "optional_one",
+          "parameters": [
+            {
+              "name": "idempotency_key",
+              "type": "text",
+              "nullable": false
+            }
+          ],
+          "row": [
+            {
+              "name": "canonical_command",
+              "type": "bytes",
+              "nullable": false
+            },
+            {
+              "name": "result",
+              "type": "text",
+              "nullable": true
+            },
+            {
+              "name": "operation_id",
+              "type": "uuid",
+              "nullable": false
+            }
+          ]
+        },
+        "claim_command": {
+          "path": "command/inventory_merge/claim_command.sql",
+          "fetch": "optional_one",
+          "parameters": [
+            {
+              "name": "idempotency_key",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "canonical_command",
+              "type": "bytes",
+              "nullable": false
+            }
+          ],
+          "row": [
+            {
+              "name": "operation_id",
+              "type": "uuid",
+              "nullable": false
+            }
+          ]
+        },
+        "finalize_command": {
+          "path": "command/inventory_merge/finalize_command.sql",
+          "fetch": "one",
+          "parameters": [
+            {
+              "name": "idempotency_key",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "canonical_command",
+              "type": "bytes",
+              "nullable": false
+            },
+            {
+              "name": "operation_id",
+              "type": "uuid",
+              "nullable": false
+            },
+            {
+              "name": "result",
+              "type": "text",
+              "nullable": false
+            }
+          ],
+          "row": [
+            {
+              "name": "result",
+              "type": "text",
+              "nullable": true
+            }
+          ]
+        },
+        "lock_inventory": {
+          "path": "command/inventory_merge/lock_inventory.sql",
+          "fetch": "bounded_list",
+          "parameters": [
+            {
+              "name": "from_inventory_id",
+              "type": "uuid",
+              "nullable": false
+            },
+            {
+              "name": "to_inventory_id",
+              "type": "uuid",
+              "nullable": false
+            }
+          ],
+          "row": [
+            {
+              "name": "id",
+              "type": "uuid",
+              "nullable": false
+            },
+            {
+              "name": "product_id",
+              "type": "uuid",
+              "nullable": false
+            },
+            {
+              "name": "packaging_id",
+              "type": "uuid",
+              "nullable": false
+            },
+            {
+              "name": "location_id",
+              "type": "uuid",
+              "nullable": false
+            },
+            {
+              "name": "quantity",
+              "type": "numeric",
+              "nullable": false
+            },
+            {
+              "name": "disposition",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "lifecycle",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "row_version",
+              "type": "int32",
+              "nullable": false
+            }
+          ]
+        },
+        "lock_packaging": {
+          "path": "command/inventory_merge/lock_packaging.sql",
+          "fetch": "bounded_list",
+          "parameters": [
+            {
+              "name": "from_packaging_id",
+              "type": "uuid",
+              "nullable": false
+            },
+            {
+              "name": "to_packaging_id",
+              "type": "uuid",
+              "nullable": false
+            }
+          ],
+          "row": [
+            {
+              "name": "id",
+              "type": "uuid",
+              "nullable": false
+            },
+            {
+              "name": "type",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "code",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "location_id",
+              "type": "uuid",
+              "nullable": false
+            },
+            {
+              "name": "lifecycle",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "row_version",
+              "type": "int32",
+              "nullable": false
+            }
+          ]
+        },
+        "insert_transaction": {
+          "path": "command/inventory_merge/insert_transaction.sql",
+          "fetch": "one",
+          "parameters": [
+            {
+              "name": "operation_id",
+              "type": "uuid",
+              "nullable": false
+            },
+            {
+              "name": "inventory_id",
+              "type": "uuid",
+              "nullable": false
+            },
+            {
+              "name": "from_inventory_id",
+              "type": "uuid",
+              "nullable": false
+            },
+            {
+              "name": "to_inventory_id",
+              "type": "uuid",
+              "nullable": false
+            },
+            {
+              "name": "from_product_id",
+              "type": "uuid",
+              "nullable": true
+            },
+            {
+              "name": "from_packaging_id",
+              "type": "uuid",
+              "nullable": true
+            },
+            {
+              "name": "from_location_id",
+              "type": "uuid",
+              "nullable": true
+            },
+            {
+              "name": "from_quantity",
+              "type": "numeric",
+              "nullable": false
+            },
+            {
+              "name": "from_disposition",
+              "type": "text",
+              "nullable": true
+            },
+            {
+              "name": "from_lifecycle",
+              "type": "text",
+              "nullable": true
+            },
+            {
+              "name": "occurred_at",
+              "type": "timestamptz",
+              "nullable": false
+            },
+            {
+              "name": "reason",
+              "type": "text",
+              "nullable": true
+            }
+          ],
+          "row": [
+            {
+              "name": "id",
+              "type": "uuid",
+              "nullable": false
+            }
+          ]
+        },
+        "close_source": {
+          "path": "command/inventory_merge/close_source.sql",
+          "fetch": "one",
+          "parameters": [
+            {
+              "name": "inventory_id",
+              "type": "uuid",
+              "nullable": false
+            }
+          ],
+          "row": [
+            {
+              "name": "id",
+              "type": "uuid",
+              "nullable": false
+            },
+            {
+              "name": "product_id",
+              "type": "uuid",
+              "nullable": false
+            },
+            {
+              "name": "packaging_id",
+              "type": "uuid",
+              "nullable": false
+            },
+            {
+              "name": "location_id",
+              "type": "uuid",
+              "nullable": false
+            },
+            {
+              "name": "quantity",
+              "type": "numeric",
+              "nullable": false
+            },
+            {
+              "name": "disposition",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "lifecycle",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "row_version",
+              "type": "int32",
+              "nullable": false
+            }
+          ]
+        },
+        "apply": {
+          "path": "command/inventory_merge/apply.sql",
+          "fetch": "one",
+          "parameters": [
+            {
+              "name": "inventory_id",
+              "type": "uuid",
+              "nullable": false
+            },
+            {
+              "name": "quantity",
+              "type": "numeric",
+              "nullable": false
+            }
+          ],
+          "row": [
+            {
+              "name": "id",
+              "type": "uuid",
+              "nullable": false
+            },
+            {
+              "name": "product_id",
+              "type": "uuid",
+              "nullable": false
+            },
+            {
+              "name": "packaging_id",
+              "type": "uuid",
+              "nullable": false
+            },
+            {
+              "name": "location_id",
+              "type": "uuid",
+              "nullable": false
+            },
+            {
+              "name": "quantity",
+              "type": "numeric",
+              "nullable": false
+            },
+            {
+              "name": "disposition",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "lifecycle",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "row_version",
+              "type": "int32",
+              "nullable": false
+            }
+          ]
+        }
+      }
+    },
+    "packaging.create": {
+      "kind": "command",
+      "visibility": "public",
+      "permission": "packaging.create",
+      "connection": "postgres",
+      "transaction": "explicit_per_input",
+      "automatic_retry": false,
+      "idempotent_by": "claim",
+      "claim": {
+        "table": "packaging_create_command",
+        "identities": {
+          "operation_id": "operation_id",
+          "packaging_id": "packaging_id"
+        },
+        "claim": "claim_command",
+        "replay": "find_replay",
+        "finalize": "finalize_command"
+      },
+      "input": {
+        "raw_body_maximum": 1048576,
+        "envelope": {
+          "minimum": 1,
+          "maximum": 100
+        },
+        "fields": [
+          {
+            "type": "text",
+            "nullable": false,
+            "path": "request_id"
+          },
+          {
+            "type": "text",
+            "nullable": false,
+            "path": "value.idempotency_key"
+          },
+          {
+            "type": "text",
+            "nullable": false,
+            "path": "value.type"
+          },
+          {
+            "type": "text",
+            "nullable": false,
+            "path": "value.code"
+          },
+          {
+            "type": "uuid",
+            "nullable": false,
+            "path": "value.location_id",
+            "references": {
+              "model": "location"
+            }
+          }
+        ]
+      },
+      "result": {
+        "class": "one",
+        "fields": [
+          {
+            "type": "uuid",
+            "nullable": false,
+            "path": "operation_id"
+          },
+          {
+            "type": "uuid",
+            "nullable": false,
+            "path": "packaging_id"
+          },
+          {
+            "type": "text",
+            "nullable": false,
+            "path": "type"
+          },
+          {
+            "type": "text",
+            "nullable": false,
+            "path": "code"
+          },
+          {
+            "type": "uuid",
+            "nullable": false,
+            "path": "location_id"
+          },
+          {
+            "type": "text",
+            "nullable": false,
+            "path": "lifecycle"
+          },
+          {
+            "type": "int32",
+            "nullable": false,
+            "path": "row_version",
+            "revision": true
+          }
+        ]
+      },
+      "canonicalization": {
+        "excluded_fields": [
+          "request_id",
+          "value.idempotency_key"
+        ]
+      },
+      "errors": [
+        "invalid_input",
+        "not_found",
+        "concurrency_conflict",
+        "idempotency_conflict",
+        "retry",
+        "timeout",
+        "permission_denied",
+        "internal_error"
+      ],
+      "error_details": {
+        "idempotency_conflict": {
+          "required": [
+            "field"
+          ]
+        }
+      },
+      "constraint_errors": {},
+      "relations": [
+        {
+          "schema": "wms",
+          "table": "packaging_create_command",
+          "select_fields": [
+            "idempotency_key",
+            "canonical_command",
+            "result",
+            "operation_id",
+            "packaging_id"
+          ],
+          "insert_fields": [
+            "idempotency_key",
+            "canonical_command"
+          ],
+          "update_fields": [
+            "result"
+          ],
+          "lock": false,
+          "constraints": []
+        },
+        {
+          "schema": "wms",
+          "table": "packaging",
+          "select_fields": [
+            "id",
+            "type",
+            "code",
+            "location_id",
+            "lifecycle",
+            "row_version"
+          ],
+          "insert_fields": [
+            "id",
+            "type",
+            "code",
+            "location_id",
+            "lifecycle"
+          ],
+          "update_fields": [],
+          "lock": false,
+          "constraints": []
+        },
+        {
+          "schema": "wms",
+          "table": "location",
+          "select_fields": [
+            "id"
+          ],
+          "insert_fields": [],
+          "update_fields": [],
+          "lock": false,
+          "constraints": []
+        }
+      ],
+      "statements": {
+        "find_replay": {
+          "path": "command/packaging_create/find_replay.sql",
+          "fetch": "optional_one",
+          "parameters": [
+            {
+              "name": "idempotency_key",
+              "type": "text",
+              "nullable": false
+            }
+          ],
+          "row": [
+            {
+              "name": "canonical_command",
+              "type": "bytes",
+              "nullable": false
+            },
+            {
+              "name": "result",
+              "type": "text",
+              "nullable": true
+            },
+            {
+              "name": "operation_id",
+              "type": "uuid",
+              "nullable": false
+            },
+            {
+              "name": "packaging_id",
+              "type": "uuid",
+              "nullable": false
+            }
+          ]
+        },
+        "claim_command": {
+          "path": "command/packaging_create/claim_command.sql",
+          "fetch": "optional_one",
+          "parameters": [
+            {
+              "name": "idempotency_key",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "canonical_command",
+              "type": "bytes",
+              "nullable": false
+            }
+          ],
+          "row": [
+            {
+              "name": "operation_id",
+              "type": "uuid",
+              "nullable": false
+            },
+            {
+              "name": "packaging_id",
+              "type": "uuid",
+              "nullable": false
+            }
+          ]
+        },
+        "finalize_command": {
+          "path": "command/packaging_create/finalize_command.sql",
+          "fetch": "one",
+          "parameters": [
+            {
+              "name": "idempotency_key",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "canonical_command",
+              "type": "bytes",
+              "nullable": false
+            },
+            {
+              "name": "operation_id",
+              "type": "uuid",
+              "nullable": false
+            },
+            {
+              "name": "result",
+              "type": "text",
+              "nullable": false
+            }
+          ],
+          "row": [
+            {
+              "name": "result",
+              "type": "text",
+              "nullable": true
+            }
+          ]
+        },
+        "validate_location": {
+          "path": "command/packaging_create/validate_location.sql",
+          "fetch": "optional_one",
+          "parameters": [
+            {
+              "name": "location_id",
+              "type": "uuid",
+              "nullable": false
+            }
+          ],
+          "row": [
+            {
+              "name": "id",
+              "type": "uuid",
+              "nullable": false
+            }
+          ]
+        },
+        "apply": {
+          "path": "command/packaging_create/apply.sql",
+          "fetch": "one",
+          "parameters": [
+            {
+              "name": "id",
+              "type": "uuid",
+              "nullable": false
+            },
+            {
+              "name": "type",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "code",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "location_id",
+              "type": "uuid",
+              "nullable": false
+            }
+          ],
+          "row": [
+            {
+              "name": "id",
+              "type": "uuid",
+              "nullable": false
+            },
+            {
+              "name": "type",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "code",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "location_id",
+              "type": "uuid",
+              "nullable": false
+            },
+            {
+              "name": "lifecycle",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "row_version",
+              "type": "int32",
+              "nullable": false
+            }
+          ]
+        }
+      }
+    },
+    "packaging.close": {
+      "kind": "command",
+      "visibility": "public",
+      "permission": "packaging.close",
+      "connection": "postgres",
+      "transaction": "explicit_per_input",
+      "automatic_retry": false,
+      "idempotent_by": "claim",
+      "claim": {
+        "table": "packaging_close_command",
+        "identities": {
+          "operation_id": "operation_id"
+        },
+        "claim": "claim_command",
+        "replay": "find_replay",
+        "finalize": "finalize_command"
+      },
+      "input": {
+        "raw_body_maximum": 1048576,
+        "envelope": {
+          "minimum": 1,
+          "maximum": 100
+        },
+        "fields": [
+          {
+            "type": "text",
+            "nullable": false,
+            "path": "request_id"
+          },
+          {
+            "type": "text",
+            "nullable": false,
+            "path": "value.idempotency_key"
+          },
+          {
+            "type": "uuid",
+            "nullable": false,
+            "path": "value.packaging_id",
+            "references": {
+              "model": "packaging"
+            }
+          },
+          {
+            "type": "int32",
+            "nullable": false,
+            "path": "value.expected_row_version",
+            "revision": true
+          }
+        ]
+      },
+      "result": {
+        "class": "one",
+        "fields": [
+          {
+            "type": "uuid",
+            "nullable": false,
+            "path": "operation_id"
+          },
+          {
+            "type": "uuid",
+            "nullable": false,
+            "path": "packaging_id"
+          },
+          {
+            "type": "text",
+            "nullable": false,
+            "path": "type"
+          },
+          {
+            "type": "text",
+            "nullable": false,
+            "path": "code"
+          },
+          {
+            "type": "uuid",
+            "nullable": false,
+            "path": "location_id"
+          },
+          {
+            "type": "text",
+            "nullable": false,
+            "path": "lifecycle"
+          },
+          {
+            "type": "int32",
+            "nullable": false,
+            "path": "row_version",
+            "revision": true
+          }
+        ]
+      },
+      "canonicalization": {
+        "excluded_fields": [
+          "request_id",
+          "value.idempotency_key"
+        ]
+      },
+      "errors": [
+        "invalid_input",
+        "not_found",
+        "concurrency_conflict",
+        "idempotency_conflict",
+        "retry",
+        "timeout",
+        "permission_denied",
+        "internal_error"
+      ],
+      "error_details": {
+        "idempotency_conflict": {
+          "required": [
+            "field"
+          ]
+        }
+      },
+      "constraint_errors": {},
+      "relations": [
+        {
+          "schema": "wms",
+          "table": "packaging_close_command",
+          "select_fields": [
+            "idempotency_key",
+            "canonical_command",
+            "result",
+            "operation_id"
+          ],
+          "insert_fields": [
+            "idempotency_key",
+            "canonical_command"
+          ],
+          "update_fields": [
+            "result"
+          ],
+          "lock": false,
+          "constraints": []
+        },
+        {
+          "schema": "wms",
+          "table": "packaging",
+          "select_fields": [
+            "id",
+            "type",
+            "code",
+            "location_id",
+            "lifecycle",
+            "row_version"
+          ],
+          "insert_fields": [],
+          "update_fields": [
+            "lifecycle",
+            "row_version"
+          ],
+          "lock": true,
+          "constraints": []
+        },
+        {
+          "schema": "wms",
+          "table": "inventory",
+          "select_fields": [
+            "id",
+            "packaging_id",
+            "lifecycle"
+          ],
+          "insert_fields": [],
+          "update_fields": [],
+          "lock": false,
+          "constraints": []
+        }
+      ],
+      "statements": {
+        "find_replay": {
+          "path": "command/packaging_close/find_replay.sql",
+          "fetch": "optional_one",
+          "parameters": [
+            {
+              "name": "idempotency_key",
+              "type": "text",
+              "nullable": false
+            }
+          ],
+          "row": [
+            {
+              "name": "canonical_command",
+              "type": "bytes",
+              "nullable": false
+            },
+            {
+              "name": "result",
+              "type": "text",
+              "nullable": true
+            },
+            {
+              "name": "operation_id",
+              "type": "uuid",
+              "nullable": false
+            }
+          ]
+        },
+        "claim_command": {
+          "path": "command/packaging_close/claim_command.sql",
+          "fetch": "optional_one",
+          "parameters": [
+            {
+              "name": "idempotency_key",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "canonical_command",
+              "type": "bytes",
+              "nullable": false
+            }
+          ],
+          "row": [
+            {
+              "name": "operation_id",
+              "type": "uuid",
+              "nullable": false
+            }
+          ]
+        },
+        "finalize_command": {
+          "path": "command/packaging_close/finalize_command.sql",
+          "fetch": "one",
+          "parameters": [
+            {
+              "name": "idempotency_key",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "canonical_command",
+              "type": "bytes",
+              "nullable": false
+            },
+            {
+              "name": "operation_id",
+              "type": "uuid",
+              "nullable": false
+            },
+            {
+              "name": "result",
+              "type": "text",
+              "nullable": false
+            }
+          ],
+          "row": [
+            {
+              "name": "result",
+              "type": "text",
+              "nullable": true
+            }
+          ]
+        },
+        "lock_packaging": {
+          "path": "command/packaging_close/lock_packaging.sql",
+          "fetch": "optional_one",
+          "parameters": [
+            {
+              "name": "packaging_id",
+              "type": "uuid",
+              "nullable": false
+            }
+          ],
+          "row": [
+            {
+              "name": "id",
+              "type": "uuid",
+              "nullable": false
+            },
+            {
+              "name": "type",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "code",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "location_id",
+              "type": "uuid",
+              "nullable": false
+            },
+            {
+              "name": "lifecycle",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "row_version",
+              "type": "int32",
+              "nullable": false
+            }
+          ]
+        },
+        "open_inventory": {
+          "path": "command/packaging_close/open_inventory.sql",
+          "fetch": "optional_one",
+          "parameters": [
+            {
+              "name": "packaging_id",
+              "type": "uuid",
+              "nullable": false
+            }
+          ],
+          "row": [
+            {
+              "name": "id",
+              "type": "uuid",
+              "nullable": false
+            }
+          ]
+        },
+        "apply": {
+          "path": "command/packaging_close/apply.sql",
+          "fetch": "one",
+          "parameters": [
+            {
+              "name": "packaging_id",
+              "type": "uuid",
+              "nullable": false
+            }
+          ],
+          "row": [
+            {
+              "name": "id",
+              "type": "uuid",
+              "nullable": false
+            },
+            {
+              "name": "type",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "code",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "location_id",
+              "type": "uuid",
+              "nullable": false
+            },
+            {
+              "name": "lifecycle",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "row_version",
+              "type": "int32",
+              "nullable": false
             }
           ]
         }
@@ -2572,7 +3450,7 @@
             "nullable": false
           },
           {
-            "path": "status",
+            "path": "disposition",
             "type": "text",
             "nullable": false,
             "values": [
@@ -2586,7 +3464,7 @@
             "nullable": false
           },
           {
-            "path": "pallet_count",
+            "path": "packaging_count",
             "type": "int32",
             "nullable": false
           }
@@ -2603,25 +3481,14 @@
       "relations": [
         {
           "schema": "wms",
-          "table": "pallet",
+          "table": "inventory",
           "select_fields": [
-            "id",
-            "location_id",
-            "status"
-          ],
-          "insert_fields": [],
-          "update_fields": [],
-          "lock": false,
-          "constraints": []
-        },
-        {
-          "schema": "wms",
-          "table": "pallet_quantity",
-          "select_fields": [
-            "pallet_id",
             "product_id",
+            "location_id",
+            "disposition",
             "quantity",
-            "status"
+            "packaging_id",
+            "lifecycle"
           ],
           "insert_fields": [],
           "update_fields": [],
@@ -2646,7 +3513,7 @@
               "nullable": false
             },
             {
-              "name": "status",
+              "name": "disposition",
               "type": "text",
               "nullable": false
             },
@@ -2656,7 +3523,7 @@
               "nullable": true
             },
             {
-              "name": "pallet_count",
+              "name": "packaging_count",
               "type": "int32",
               "nullable": true
             }

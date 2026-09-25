@@ -1,129 +1,63 @@
-//! `inventory.split` -- part of one quantity row moved onto a NEW pallet.
-//!
-//! ```text
-//! canonicalize the body
-//! → find a replay: same key ⇒ return the ORIGINAL result, unchanged
-//! → claim the key, which pre-generates the movement id AND the new pallet id
-//! → lock the source pallet     (the serialization point)
-//! → compare expected_row_version to observed
-//! → validate the destination
-//! → read the quantity row, then take from it (it must keep stock)
-//! → create the new pallet, place the quantity on it, write the movement
-//! → bump the source's revision
-//! → finalize the claim with the result
-//! ```
-//!
-//! The new pallet's id comes from the claim, exactly as the movement id does:
-//! a split that minted it during the work would mint a SECOND pallet on
-//! replay and leave real stock on a ghost (`claim_command.sql`). The new
-//! pallet inherits the source's status -- a split of a held pallet does not
-//! release the hold. The source must keep stock: moving everything is a move.
-
-use serde::Deserialize;
-use wamn_postgres_statements::{Connection, Numeric, TimestampTz, Uuid};
-
+//! `inventory.split` with atomic state, immutable history, and stored replay results.
 use crate::error::{self, AccessError, AccessErrorKind};
 use crate::generated::wamn::inventory_split as sql;
 use crate::scalar;
+use serde::{Deserialize, Serialize};
+use wamn_postgres_statements::{Connection, Numeric};
 
-/// One envelope item's command body.
 #[derive(Debug, Deserialize)]
 pub struct SplitCommand {
     pub idempotency_key: String,
-    pub source_pallet_id: String,
-    pub product_id: String,
-    pub status: String,
+    pub from_inventory_id: String,
     pub quantity: String,
-    pub new_pallet_code: String,
+    pub to_packaging_id: String,
     pub to_location_id: String,
     pub expected_row_version: i32,
     pub occurred_at: String,
 }
 
-/// What one accepted split answers with.
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct SplitResult {
-    pub movement_id: String,
-    pub source_pallet_id: String,
-    pub new_pallet_id: String,
-    pub source_status: String,
+    pub operation_id: String,
+    pub inventory_id: String,
+    pub product_id: String,
+    pub packaging_id: String,
+    pub location_id: String,
+    pub quantity: String,
+    pub disposition: String,
+    pub lifecycle: String,
     pub row_version: i32,
+    pub new_inventory_id: String,
 }
 
-#[derive(Debug)]
-struct Parsed {
-    source_pallet_id: Uuid,
-    product_id: Uuid,
-    status: String,
-    quantity: Numeric,
-    to_location_id: Uuid,
-    occurred_at: TimestampTz,
-}
-
-fn parse(command: &SplitCommand) -> Result<Parsed, AccessError> {
-    if command.new_pallet_code.is_empty() {
-        return Err(AccessError::field(
-            AccessErrorKind::InvalidInput,
-            "value.new_pallet_code",
-        ));
-    }
-    Ok(Parsed {
-        source_pallet_id: scalar::uuid("value.source_pallet_id", &command.source_pallet_id)?,
-        product_id: scalar::uuid("value.product_id", &command.product_id)?,
-        status: scalar::quantity_status("value.status", &command.status)?,
-        quantity: scalar::numeric("value.quantity", &command.quantity)?,
-        to_location_id: scalar::uuid("value.to_location_id", &command.to_location_id)?,
-        occurred_at: scalar::timestamp("value.occurred_at", &command.occurred_at)?,
-    })
-}
-
-fn canonical_command(command: &SplitCommand, parsed: &Parsed) -> Vec<u8> {
-    wamn_execution_contract::canonical_json_bytes(&serde_json::json!({
-        "source_pallet_id": parsed.source_pallet_id.0,
-        "product_id": parsed.product_id.0,
-        "status": parsed.status,
-        "quantity": parsed.quantity.0,
-        "new_pallet_code": command.new_pallet_code,
-        "to_location_id": parsed.to_location_id.0,
-        "expected_row_version": command.expected_row_version,
-        "occurred_at": parsed.occurred_at.0,
-    }))
-}
-
-/// Run one command item in exactly one transaction.
+/// Apply one command or return its complete original result.
 ///
 /// # Errors
-///
-/// [`AccessError`] carrying the literal and detail the operation contract
-/// declares for that refusal.
+/// Returns the refusal declared by the operation contract.
 pub async fn execute(command: &SplitCommand) -> Result<SplitResult, AccessError> {
-    let parsed = parse(command)?;
-    let canonical = canonical_command(command, &parsed);
-
+    scalar::text("value.idempotency_key", Some(&command.idempotency_key))?;
+    let from_inventory_id = scalar::uuid("value.from_inventory_id", &command.from_inventory_id)?;
+    let quantity = scalar::numeric("value.quantity", &command.quantity)?;
+    let to_packaging_id = scalar::uuid("value.to_packaging_id", &command.to_packaging_id)?;
+    let to_location_id = scalar::uuid("value.to_location_id", &command.to_location_id)?;
+    let expected_row_version = command.expected_row_version;
+    let occurred_at = scalar::timestamp("value.occurred_at", &command.occurred_at)?;
+    let canonical = wamn_execution_contract::canonical_json_bytes(&serde_json::json!({
+        "from_inventory_id": from_inventory_id.0,
+        "quantity": quantity.0,
+        "to_packaging_id": to_packaging_id.0,
+        "to_location_id": to_location_id.0,
+        "expected_row_version": expected_row_version,
+        "occurred_at": occurred_at.0,
+    }));
     let mut connection = Connection::new();
-    let transaction = connection
-        .begin()
-        .await
-        .map_err(|e| error::from_statement(&e))?;
-    run(sql::begin_claim(transaction), command, &canonical, &parsed).await
-}
-
-fn retry() -> AccessError {
-    AccessError::new(AccessErrorKind::Retry, serde_json::json!({}))
-}
-
-fn internal() -> AccessError {
-    AccessError::new(AccessErrorKind::InternalError, serde_json::json!({}))
-}
-
-async fn run(
-    mut transaction: sql::PendingClaim,
-    command: &SplitCommand,
-    canonical: &[u8],
-    parsed: &Parsed,
-) -> Result<SplitResult, AccessError> {
-    let key = command.idempotency_key.clone();
-    if let Some(replay) = sql::find_replay(&mut transaction, key.clone())
+    let mut transaction = sql::begin_claim(
+        connection
+            .begin()
+            .await
+            .map_err(|e| error::from_statement(&e))?,
+    );
+    if let Some(replay) = sql::find_replay(&mut transaction, command.idempotency_key.clone())
         .await
         .map_err(|e| error::from_statement(&e))?
     {
@@ -133,205 +67,149 @@ async fn run(
                 "value.idempotency_key",
             ));
         }
-        let Some(row_version) = replay.row_version else {
-            return Err(retry());
-        };
-        // The source's status was never this command's to change, so the
-        // live row's is the original's.
-        let source = sql::lock_pallet(&mut transaction, replay.source_pallet_id.clone())
-            .await
-            .map_err(|e| error::from_statement(&e))?
-            .ok_or_else(internal)?;
-        return Ok(SplitResult {
-            movement_id: replay.movement_id.0,
-            source_pallet_id: replay.source_pallet_id.0,
-            new_pallet_id: replay.new_pallet_id.0,
-            source_status: source.status,
-            row_version,
-        });
+        let result = replay.result.ok_or_else(retry)?;
+        return serde_json::from_str(&result).map_err(|_| internal());
     }
-
     let claim = sql::claim_command(
         &mut transaction,
-        key.clone(),
-        canonical.to_vec(),
-        parsed.source_pallet_id.clone(),
+        command.idempotency_key.clone(),
+        canonical.clone(),
     )
     .await
     .map_err(|e| error::from_statement(&e))?
     .ok_or_else(retry)?;
-
-    // THE SERIALIZATION POINT.
-    let not_found = || {
-        AccessError::missing(
-            AccessErrorKind::PalletNotFound,
-            "value.source_pallet_id",
-            &parsed.source_pallet_id.0,
-        )
+    let source = sql::lock_inventory(&mut transaction, from_inventory_id.clone())
+        .await
+        .map_err(|e| error::from_statement(&e))?
+        .ok_or_else(|| missing("value.from_inventory_id", &from_inventory_id.0))?;
+    require_open(&source, expected_row_version)?;
+    let packaging = sql::lock_packaging(
+        &mut transaction,
+        source.packaging_id.clone(),
+        to_packaging_id.clone(),
+    )
+    .await
+    .map_err(|e| error::from_statement(&e))?;
+    let source_packaging = packaging
+        .iter()
+        .find(|row| row.id == source.packaging_id)
+        .ok_or_else(|| missing("value.inventory_id", &source.id.0))?;
+    if source_packaging.lifecycle != "open" || source_packaging.location_id != source.location_id {
+        return Err(invalid("value.inventory_id"));
+    }
+    let destination = packaging
+        .iter()
+        .find(|row| row.id == to_packaging_id)
+        .ok_or_else(|| missing("value.to_packaging_id", &to_packaging_id.0))?;
+    if destination.lifecycle != "open" {
+        return Err(invalid("value.to_packaging_id"));
+    }
+    if destination.location_id != to_location_id {
+        return Err(invalid("value.to_location_id"));
+    }
+    let result_row = sql::apply(
+        &mut transaction,
+        from_inventory_id.clone(),
+        quantity.clone(),
+    )
+    .await
+    .map_err(|e| error::from_statement(&e))?
+    .ok_or_else(|| AccessError::field(AccessErrorKind::InsufficientQuantity, "value.quantity"))?;
+    sql::create_inventory(
+        &mut transaction,
+        claim.new_inventory_id.clone(),
+        source.product_id.clone(),
+        to_packaging_id,
+        to_location_id,
+        quantity,
+        source.disposition.clone(),
+    )
+    .await
+    .map_err(|e| error::from_statement(&e))?;
+    sql::insert_transaction(
+        &mut transaction,
+        claim.operation_id.clone(),
+        from_inventory_id.clone(),
+        from_inventory_id.clone(),
+        from_inventory_id.clone(),
+        Some(source.product_id.clone()),
+        Some(source.packaging_id.clone()),
+        Some(source.location_id.clone()),
+        source.quantity.clone(),
+        Some(source.disposition.clone()),
+        Some(source.lifecycle.clone()),
+        occurred_at.clone(),
+        None,
+    )
+    .await
+    .map_err(|e| error::from_statement(&e))?;
+    sql::insert_transaction(
+        &mut transaction,
+        claim.operation_id.clone(),
+        claim.new_inventory_id.clone(),
+        from_inventory_id.clone(),
+        claim.new_inventory_id.clone(),
+        None,
+        None,
+        None,
+        Numeric("0".into()),
+        None,
+        None,
+        occurred_at.clone(),
+        None,
+    )
+    .await
+    .map_err(|e| error::from_statement(&e))?;
+    let result = SplitResult {
+        operation_id: claim.operation_id.0.clone(),
+        inventory_id: result_row.id.0,
+        product_id: result_row.product_id.0,
+        packaging_id: result_row.packaging_id.0,
+        location_id: result_row.location_id.0,
+        quantity: result_row.quantity.0,
+        disposition: result_row.disposition,
+        lifecycle: result_row.lifecycle,
+        row_version: result_row.row_version,
+        new_inventory_id: claim.new_inventory_id.0,
     };
-    let locked = sql::lock_pallet(&mut transaction, parsed.source_pallet_id.clone())
-        .await
-        .map_err(|e| error::from_statement(&e))?
-        .ok_or_else(not_found)?;
-    if locked.status == scalar::CONSUMED {
-        return Err(not_found());
-    }
-    if locked.row_version != command.expected_row_version {
-        return Err(AccessError::conflict(
-            command.expected_row_version,
-            locked.row_version,
-        ));
-    }
-
-    sql::validate_location(&mut transaction, parsed.to_location_id.clone())
-        .await
-        .map_err(|e| error::from_statement(&e))?
-        .ok_or_else(|| {
-            AccessError::missing(
-                AccessErrorKind::LocationNotFound,
-                "value.to_location_id",
-                &parsed.to_location_id.0,
-            )
-        })?;
-
-    // Read before taking, so the refusal can say which of two things is
-    // wrong: no such row, or a row that cannot spare what was asked.
-    let held = sql::select_quantity(
-        &mut transaction,
-        parsed.source_pallet_id.clone(),
-        parsed.product_id.clone(),
-        parsed.status.clone(),
-    )
-    .await
-    .map_err(|e| error::from_statement(&e))?
-    .ok_or_else(|| {
-        AccessError::missing(
-            AccessErrorKind::QuantityNotFound,
-            "value.product_id",
-            &parsed.product_id.0,
-        )
-    })?;
-    sql::take_from_source(
-        &mut transaction,
-        parsed.source_pallet_id.clone(),
-        parsed.product_id.clone(),
-        parsed.status.clone(),
-        parsed.quantity.clone(),
-    )
-    .await
-    .map_err(|e| error::from_statement(&e))?
-    .ok_or_else(|| AccessError::insufficient("value.quantity", &held.quantity.0))?;
-
-    sql::create_pallet(
-        &mut transaction,
-        claim.new_pallet_id.clone(),
-        command.new_pallet_code.clone(),
-        parsed.to_location_id.clone(),
-        locked.status.clone(),
-    )
-    .await
-    .map_err(|e| error::from_statement(&e))?;
-    sql::place_quantity(
-        &mut transaction,
-        claim.new_pallet_id.clone(),
-        parsed.product_id.clone(),
-        parsed.status.clone(),
-        parsed.quantity.clone(),
-    )
-    .await
-    .map_err(|e| error::from_statement(&e))?;
-    sql::insert_movement(
-        &mut transaction,
-        key.clone(),
-        parsed.source_pallet_id.clone(),
-        parsed.product_id.clone(),
-        parsed.quantity.clone(),
-        parsed.occurred_at.clone(),
-    )
-    .await
-    .map_err(|e| error::from_statement(&e))?;
-
-    let touched = sql::touch_source(&mut transaction, parsed.source_pallet_id.clone())
-        .await
-        .map_err(|e| error::from_statement(&e))?;
-
+    let stored = serde_json::to_string(&result).map_err(|_| internal())?;
     let finalized = sql::finalize_command(
         transaction,
-        key,
-        canonical.to_vec(),
-        claim.movement_id.clone(),
-        touched.row_version,
+        command.idempotency_key.clone(),
+        canonical,
+        claim.operation_id,
+        stored,
     )
     .await
     .map_err(|e| error::from_statement(&e))?;
-    if finalized.row.row_version.is_none() {
+    if finalized.row.result.is_none() {
         return Err(retry());
     }
-
     finalized
         .commit()
         .await
         .map_err(|e| error::from_statement(&e))?;
-    Ok(SplitResult {
-        movement_id: claim.movement_id.0,
-        source_pallet_id: parsed.source_pallet_id.0.clone(),
-        new_pallet_id: claim.new_pallet_id.0,
-        source_status: touched.status,
-        row_version: touched.row_version,
-    })
+    Ok(result)
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn command() -> SplitCommand {
-        SplitCommand {
-            idempotency_key: "k".to_owned(),
-            source_pallet_id: "00000000-0000-0000-0000-000000000301".to_owned(),
-            product_id: "00000000-0000-0000-0000-000000000101".to_owned(),
-            status: "available".to_owned(),
-            quantity: "4".to_owned(),
-            new_pallet_code: "PAL-302".to_owned(),
-            to_location_id: "00000000-0000-0000-0000-000000000202".to_owned(),
-            expected_row_version: 1,
-            occurred_at: "2026-09-05T00:00:00Z".to_owned(),
-        }
+fn retry() -> AccessError {
+    AccessError::new(AccessErrorKind::Retry, serde_json::json!({}))
+}
+fn internal() -> AccessError {
+    AccessError::new(AccessErrorKind::InternalError, serde_json::json!({}))
+}
+fn missing(field: &str, id: &str) -> AccessError {
+    AccessError::missing(AccessErrorKind::NotFound, field, id)
+}
+fn invalid(field: &str) -> AccessError {
+    AccessError::field(AccessErrorKind::InvalidInput, field)
+}
+fn require_open(row: &sql::LockInventoryRow, expected: i32) -> Result<(), AccessError> {
+    if row.lifecycle != "open" {
+        return Err(invalid("value.inventory_id"));
     }
-
-    #[test]
-    fn the_canonical_command_excludes_the_key_and_names_every_other_field() {
-        let command = command();
-        let bytes = canonical_command(&command, &parse(&command).unwrap());
-        let text = String::from_utf8(bytes).unwrap();
-        assert!(!text.contains("idempotency_key"));
-        for field in [
-            "source_pallet_id",
-            "product_id",
-            "status",
-            "quantity",
-            "new_pallet_code",
-            "to_location_id",
-            "expected_row_version",
-            "occurred_at",
-        ] {
-            assert!(text.contains(field), "{field} is part of the identity");
-        }
+    if row.row_version != expected {
+        return Err(AccessError::conflict(expected, row.row_version));
     }
-
-    #[test]
-    fn a_blank_pallet_code_and_a_zero_quantity_refuse_before_any_statement() {
-        let mut blank = command();
-        blank.new_pallet_code.clear();
-        assert_eq!(
-            parse(&blank).unwrap_err().detail()["field"],
-            "value.new_pallet_code"
-        );
-        let mut zero = command();
-        zero.quantity = "0.0".to_owned();
-        assert_eq!(
-            parse(&zero).unwrap_err().detail()["field"],
-            "value.quantity"
-        );
-    }
+    Ok(())
 }

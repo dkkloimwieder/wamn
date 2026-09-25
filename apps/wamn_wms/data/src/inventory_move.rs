@@ -1,319 +1,182 @@
-//! `inventory.move` — the contended command.
-//!
-//! One pallet moved between locations, transactionally, multi-row, with
-//! optimistic concurrency at the row that actually contends. The generator
-//! wrote every statement and its decoding; what is authored here is the ORDER
-//! those statements run in and what each refusal means.
-//!
-//! # The shape of one item
-//!
-//! ```text
-//! canonicalize the body
-//! → find a replay: same key ⇒ return the ORIGINAL result, unchanged
-//! → claim the key, which pre-generates the movement id
-//! → lock the pallet          (the serialization point)
-//! → compare expected_row_version to observed
-//! → validate the destination
-//! → write one movement per quantity row
-//! → move the pallet and bump its revision
-//! → finalize the claim with the result
-//! ```
-//!
-//! The lock is on `pallet` and not on `pallet_quantity` deliberately: two
-//! concurrent moves of one pallet must not both succeed by touching different
-//! quantity rows, and the pallet is what makes them serialize.
-
-use serde::Deserialize;
-use wamn_postgres_statements::{Connection, TimestampTz, Uuid};
-
+//! `inventory.move` with atomic state, immutable history, and stored replay results.
 use crate::error::{self, AccessError, AccessErrorKind};
 use crate::generated::wamn::inventory_move as sql;
 use crate::scalar;
+use serde::{Deserialize, Serialize};
+use wamn_postgres_statements::Connection;
 
-/// One envelope item's command body.
 #[derive(Debug, Deserialize)]
 pub struct MoveCommand {
     pub idempotency_key: String,
-    pub pallet_id: String,
+    pub inventory_id: String,
+    pub to_packaging_id: String,
     pub to_location_id: String,
     pub expected_row_version: i32,
     pub occurred_at: String,
 }
 
-/// What one accepted move answers with.
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct MoveResult {
-    pub movement_id: String,
-    pub pallet_id: String,
+    pub operation_id: String,
+    pub inventory_id: String,
+    pub product_id: String,
+    pub packaging_id: String,
     pub location_id: String,
-    pub pallet_status: String,
+    pub quantity: String,
+    pub disposition: String,
+    pub lifecycle: String,
     pub row_version: i32,
 }
 
-/// The command's scalars in their one wire spelling.
-#[derive(Debug)]
-struct Parsed {
-    pallet_id: Uuid,
-    to_location_id: Uuid,
-    occurred_at: TimestampTz,
-}
-
-fn parse(command: &MoveCommand) -> Result<Parsed, AccessError> {
-    Ok(Parsed {
-        pallet_id: scalar::uuid("value.pallet_id", &command.pallet_id)?,
-        to_location_id: scalar::uuid("value.to_location_id", &command.to_location_id)?,
-        occurred_at: scalar::timestamp("value.occurred_at", &command.occurred_at)?,
-    })
-}
-
-/// Run one command item in exactly one transaction.
+/// Apply one command or return its complete original result.
 ///
 /// # Errors
-///
-/// [`AccessError`] carrying the literal and detail the operation contract
-/// declares for that refusal.
+/// Returns the refusal declared by the operation contract.
 pub async fn execute(command: &MoveCommand) -> Result<MoveResult, AccessError> {
-    let parsed = parse(command)?;
-    let canonical = canonical_command(command, &parsed);
-
+    scalar::text("value.idempotency_key", Some(&command.idempotency_key))?;
+    let inventory_id = scalar::uuid("value.inventory_id", &command.inventory_id)?;
+    let to_packaging_id = scalar::uuid("value.to_packaging_id", &command.to_packaging_id)?;
+    let to_location_id = scalar::uuid("value.to_location_id", &command.to_location_id)?;
+    let expected_row_version = command.expected_row_version;
+    let occurred_at = scalar::timestamp("value.occurred_at", &command.occurred_at)?;
+    let canonical = wamn_execution_contract::canonical_json_bytes(&serde_json::json!({
+        "inventory_id": inventory_id.0,
+        "to_packaging_id": to_packaging_id.0,
+        "to_location_id": to_location_id.0,
+        "expected_row_version": expected_row_version,
+        "occurred_at": occurred_at.0,
+    }));
     let mut connection = Connection::new();
-    let transaction = connection
-        .begin()
-        .await
-        .map_err(|e| error::from_statement(&e))?;
-    run(sql::begin_claim(transaction), command, &canonical, &parsed).await
-}
-
-/// The bytes the idempotency key keys: the RE-SPELLED command, so two
-/// deliveries of one move canonicalize alike whatever case or offset each was
-/// written in.
-///
-/// The key itself and `request_id` are EXCLUDED: two deliveries of one
-/// operator action differ in neither the pallet moved nor its destination,
-/// only in the envelope that carried them. Canonical JSON gives sorted keys,
-/// so the same command produces the same bytes whatever order it arrived in.
-fn canonical_command(command: &MoveCommand, parsed: &Parsed) -> Vec<u8> {
-    wamn_execution_contract::canonical_json_bytes(&serde_json::json!({
-        "pallet_id": parsed.pallet_id.0,
-        "to_location_id": parsed.to_location_id.0,
-        "expected_row_version": command.expected_row_version,
-        "occurred_at": parsed.occurred_at.0,
-    }))
-}
-
-async fn run(
-    mut transaction: sql::PendingClaim,
-    command: &MoveCommand,
-    canonical: &[u8],
-    parsed: &Parsed,
-) -> Result<MoveResult, AccessError> {
-    // A REPLAY RETURNS THE ORIGINAL RESULT, unchanged. Not a fresh execution
-    // that happens to agree — the claim row holds what the first attempt
-    // decided, including the movement id a downstream label key depends on.
+    let mut transaction = sql::begin_claim(
+        connection
+            .begin()
+            .await
+            .map_err(|e| error::from_statement(&e))?,
+    );
     if let Some(replay) = sql::find_replay(&mut transaction, command.idempotency_key.clone())
         .await
         .map_err(|e| error::from_statement(&e))?
     {
         if replay.canonical_command != canonical {
-            // Same key, different command. That is two moves wearing one
-            // identity, and answering either would be wrong.
             return Err(AccessError::field(
                 AccessErrorKind::IdempotencyConflict,
                 "value.idempotency_key",
             ));
         }
-        let (Some(pallet_status), Some(row_version)) = (replay.pallet_status, replay.row_version)
-        else {
-            // Claimed but never finalized: the first attempt died between the
-            // claim and the commit. Retryable, and the retry will re-run the
-            // work under the same claim.
-            return Err(AccessError::new(
-                AccessErrorKind::Retry,
-                serde_json::json!({}),
-            ));
-        };
-        return Ok(MoveResult {
-            movement_id: replay.movement_id.0.clone(),
-            pallet_id: replay.pallet_id.0.clone(),
-            location_id: command.to_location_id.clone(),
-            pallet_status,
-            row_version,
-        });
+        let result = replay.result.ok_or_else(retry)?;
+        return serde_json::from_str(&result).map_err(|_| internal());
     }
-
     let claim = sql::claim_command(
         &mut transaction,
         command.idempotency_key.clone(),
-        canonical.to_vec(),
-        parsed.pallet_id.clone(),
+        canonical.clone(),
     )
     .await
     .map_err(|e| error::from_statement(&e))?
-    .ok_or_else(|| AccessError::new(AccessErrorKind::Retry, serde_json::json!({})))?;
-
-    // THE SERIALIZATION POINT.
-    let locked = sql::lock_pallet(&mut transaction, parsed.pallet_id.clone())
+    .ok_or_else(retry)?;
+    let source = sql::lock_inventory(&mut transaction, inventory_id.clone())
         .await
         .map_err(|e| error::from_statement(&e))?
-        .ok_or_else(|| {
-            AccessError::missing(
-                AccessErrorKind::PalletNotFound,
-                "value.pallet_id",
-                &command.pallet_id,
-            )
-        })?;
-
-    if locked.row_version != command.expected_row_version {
-        return Err(AccessError::conflict(
-            command.expected_row_version,
-            locked.row_version,
-        ));
-    }
-
-    sql::validate_location(&mut transaction, parsed.to_location_id.clone())
-        .await
-        .map_err(|e| error::from_statement(&e))?
-        .ok_or_else(|| {
-            AccessError::missing(
-                AccessErrorKind::LocationNotFound,
-                "value.to_location_id",
-                &command.to_location_id,
-            )
-        })?;
-
-    // ONE MOVEMENT PER QUANTITY ROW. The history says WHAT moved, not merely
-    // that something did — which is the multi-row half of this command.
-    let quantities = sql::select_pallet_quantity(&mut transaction, parsed.pallet_id.clone())
-        .await
-        .map_err(|e| error::from_statement(&e))?;
-    for quantity in &quantities {
-        sql::insert_movement(
-            &mut transaction,
-            command.idempotency_key.clone(),
-            parsed.pallet_id.clone(),
-            quantity.product_id.clone(),
-            locked.location_id.clone(),
-            parsed.to_location_id.clone(),
-            quantity.quantity.clone(),
-            parsed.occurred_at.clone(),
-        )
-        .await
-        .map_err(|e| error::from_statement(&e))?;
-    }
-
-    let moved = sql::move_pallet(
+        .ok_or_else(|| missing("value.inventory_id", &inventory_id.0))?;
+    require_open(&source, expected_row_version)?;
+    let packaging = sql::lock_packaging(
         &mut transaction,
-        parsed.pallet_id.clone(),
-        parsed.to_location_id.clone(),
+        source.packaging_id.clone(),
+        to_packaging_id.clone(),
     )
     .await
     .map_err(|e| error::from_statement(&e))?;
-
+    let source_packaging = packaging
+        .iter()
+        .find(|row| row.id == source.packaging_id)
+        .ok_or_else(|| missing("value.inventory_id", &source.id.0))?;
+    if source_packaging.lifecycle != "open" || source_packaging.location_id != source.location_id {
+        return Err(invalid("value.inventory_id"));
+    }
+    let destination = packaging
+        .iter()
+        .find(|row| row.id == to_packaging_id)
+        .ok_or_else(|| missing("value.to_packaging_id", &to_packaging_id.0))?;
+    if destination.lifecycle != "open" {
+        return Err(invalid("value.to_packaging_id"));
+    }
+    if destination.location_id != to_location_id {
+        return Err(invalid("value.to_location_id"));
+    }
+    let result_row = sql::apply(
+        &mut transaction,
+        inventory_id.clone(),
+        to_packaging_id,
+        to_location_id,
+    )
+    .await
+    .map_err(|e| error::from_statement(&e))?;
+    sql::insert_transaction(
+        &mut transaction,
+        claim.operation_id.clone(),
+        inventory_id.clone(),
+        inventory_id.clone(),
+        inventory_id.clone(),
+        Some(source.product_id.clone()),
+        Some(source.packaging_id.clone()),
+        Some(source.location_id.clone()),
+        source.quantity.clone(),
+        Some(source.disposition.clone()),
+        Some(source.lifecycle.clone()),
+        occurred_at.clone(),
+        None,
+    )
+    .await
+    .map_err(|e| error::from_statement(&e))?;
+    let result = MoveResult {
+        operation_id: claim.operation_id.0.clone(),
+        inventory_id: result_row.id.0,
+        product_id: result_row.product_id.0,
+        packaging_id: result_row.packaging_id.0,
+        location_id: result_row.location_id.0,
+        quantity: result_row.quantity.0,
+        disposition: result_row.disposition,
+        lifecycle: result_row.lifecycle,
+        row_version: result_row.row_version,
+    };
+    let stored = serde_json::to_string(&result).map_err(|_| internal())?;
     let finalized = sql::finalize_command(
         transaction,
         command.idempotency_key.clone(),
-        canonical.to_vec(),
-        claim.movement_id.clone(),
-        moved.status.clone(),
-        moved.row_version,
+        canonical,
+        claim.operation_id,
+        stored,
     )
     .await
     .map_err(|e| error::from_statement(&e))?;
-    if finalized.row.row_version.is_none() {
-        // The guarded finalize matched nothing, so this claim was already
-        // finalized by a concurrent attempt. Refusing beats reporting a result
-        // this transaction did not write.
-        return Err(AccessError::new(
-            AccessErrorKind::Retry,
-            serde_json::json!({}),
-        ));
+    if finalized.row.result.is_none() {
+        return Err(retry());
     }
-
     finalized
         .commit()
         .await
         .map_err(|e| error::from_statement(&e))?;
-    Ok(MoveResult {
-        movement_id: claim.movement_id.0.clone(),
-        pallet_id: command.pallet_id.clone(),
-        location_id: moved.location_id.0.clone(),
-        pallet_status: moved.status,
-        row_version: moved.row_version,
-    })
+    Ok(result)
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn command(pallet_id: &str, occurred_at: &str) -> MoveCommand {
-        MoveCommand {
-            idempotency_key: "k".to_owned(),
-            pallet_id: pallet_id.to_owned(),
-            to_location_id: "00000000-0000-0000-0000-000000000201".to_owned(),
-            expected_row_version: 1,
-            occurred_at: occurred_at.to_owned(),
-        }
+fn retry() -> AccessError {
+    AccessError::new(AccessErrorKind::Retry, serde_json::json!({}))
+}
+fn internal() -> AccessError {
+    AccessError::new(AccessErrorKind::InternalError, serde_json::json!({}))
+}
+fn missing(field: &str, id: &str) -> AccessError {
+    AccessError::missing(AccessErrorKind::NotFound, field, id)
+}
+fn invalid(field: &str) -> AccessError {
+    AccessError::field(AccessErrorKind::InvalidInput, field)
+}
+fn require_open(row: &sql::LockInventoryRow, expected: i32) -> Result<(), AccessError> {
+    if row.lifecycle != "open" {
+        return Err(invalid("value.inventory_id"));
     }
-
-    /// Two spellings of one move are ONE command under the key: the canonical
-    /// bytes come from the respelled scalars, not the caller's. The uuid half
-    /// is already refused at the input port, whose released pattern pins a
-    /// lowercase-hyphenated uuid; the OFFSET half reaches this code, because
-    /// the port only asks `occurred_at` for `format: date-time`.
-    #[test]
-    fn the_canonical_command_is_spelling_independent_and_excludes_the_key() {
-        let upper = command(
-            "00000000-0000-0000-0000-00000000030A",
-            "2026-09-05T02:00:00+02:00",
-        );
-        let lower = command(
-            "00000000-0000-0000-0000-00000000030a",
-            "2026-09-05T00:00:00.000000Z",
-        );
-        let mut other_key = command(
-            "00000000-0000-0000-0000-00000000030a",
-            "2026-09-05T00:00:00Z",
-        );
-        other_key.idempotency_key = "different".to_owned();
-        let bytes = |command: &MoveCommand| canonical_command(command, &parse(command).unwrap());
-        assert_eq!(bytes(&upper), bytes(&lower));
-        assert_eq!(bytes(&lower), bytes(&other_key));
-        assert!(
-            !String::from_utf8(bytes(&lower))
-                .unwrap()
-                .contains("idempotency_key")
-        );
+    if row.row_version != expected {
+        return Err(AccessError::conflict(expected, row.row_version));
     }
-
-    /// A move that differs in what it MOVES is a different command, so the
-    /// bytes must still separate one from another.
-    #[test]
-    fn a_different_destination_is_a_different_command() {
-        let here = command(
-            "00000000-0000-0000-0000-00000000030a",
-            "2026-09-05T00:00:00Z",
-        );
-        let mut there = command(
-            "00000000-0000-0000-0000-00000000030a",
-            "2026-09-05T00:00:00Z",
-        );
-        there.to_location_id = "00000000-0000-0000-0000-000000000202".to_owned();
-        let bytes = |command: &MoveCommand| canonical_command(command, &parse(command).unwrap());
-        assert_ne!(bytes(&here), bytes(&there));
-    }
-
-    #[test]
-    fn an_unspellable_scalar_is_refused_before_any_statement() {
-        let mut pallet = command("not-a-uuid", "2026-09-05T00:00:00Z");
-        assert_eq!(
-            parse(&pallet).unwrap_err().detail()["field"],
-            "value.pallet_id"
-        );
-        pallet = command("00000000-0000-0000-0000-00000000030a", "yesterday");
-        assert_eq!(
-            parse(&pallet).unwrap_err().detail()["field"],
-            "value.occurred_at"
-        );
-    }
+    Ok(())
 }

@@ -1,0 +1,64 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT canonical_command, result, operation_id, new_inventory_id FROM inventory_split_command WHERE idempotency_key = $1;\n",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "canonical_command",
+        "type_info": "Bytea",
+        "origin": {
+          "Table": {
+            "table": "inventory_split_command",
+            "name": "canonical_command"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "result",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "inventory_split_command",
+            "name": "result"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "operation_id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "inventory_split_command",
+            "name": "operation_id"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "new_inventory_id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "inventory_split_command",
+            "name": "new_inventory_id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": [
+      false,
+      true,
+      false,
+      false
+    ]
+  },
+  "hash": "577bd6e23d8ebf7e5eb3587215a8ddce70013010beedb910ae91c193a21b1874"
+}

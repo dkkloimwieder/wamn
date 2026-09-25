@@ -64,10 +64,6 @@ import {
   type ProductUpdateResult,
   update,
 } from "../product.js";
-import {
-  type InventoryAdjustFormInitial,
-  type InventorySplitFormInitial,
-} from "./inventory.js";
 
 /** What an operator types for `wamn-wms:product/create@1.0.0`. */
 const CREATE_INPUT = z.object({
@@ -193,7 +189,7 @@ export function ProductGetDetail(props: ProductGetDetailProps) {
     () => props.input,
     async (input: ProductGetDetailInput) => {
       const read = await get(props.transport, [
-        { ...input, requestId: newRequestId() } as ProductGetRequest,
+        { ...input } as ProductGetRequest,
       ]);
       props.onOutcome?.(read);
       if (read.status !== "completed") {
@@ -257,10 +253,6 @@ export interface ProductQueryTableProps {
   readonly onRowSelect?: (row: ProductQueryRow) => void;
   /** Called when the operator opens `wamn-wms:product/get@1.0.0` from one row. */
   readonly onOpenProductGet?: (row: ProductQueryRow) => void;
-  /** Called with the values one row hands to `wamn-wms:inventory/adjust@1.0.0`. */
-  readonly onFillInventoryAdjust?: (initial: InventoryAdjustFormInitial) => void;
-  /** Called with the values one row hands to `wamn-wms:inventory/split@1.0.0`. */
-  readonly onFillInventorySplit?: (initial: InventorySplitFormInitial) => void;
   /** Called with every outcome this screen reads. */
   readonly onOutcome?: (outcome: Outcome<ProductQueryResult>) => void;
 }
@@ -286,7 +278,6 @@ export function ProductQueryTable(props: ProductQueryTableProps) {
     const request = {
       ...controls(),
       ...props.fixed,
-      requestId: newRequestId(),
     } as ProductQueryRequest;
     const sent = cursor === null ? request : (writeMember(request, ["cursor"], cursor) as ProductQueryRequest);
     const outcome = await query(props.transport, [sent]);
@@ -324,38 +315,6 @@ export function ProductQueryTable(props: ProductQueryTableProps) {
             onClick={() => props.onOpenProductGet?.(cell.row.original)}
           >
             get
-          </Button>
-        </Show>
-      ),
-    },
-    {
-      id: "fillInventoryAdjust",
-      header: "",
-      cell: (cell) => (
-        <Show when={props.onFillInventoryAdjust}>
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            onClick={() => props.onFillInventoryAdjust?.(writeMember({} as InventoryAdjustFormInitial, ["value", "productId"], cell.row.original.id))}
-          >
-            adjust
-          </Button>
-        </Show>
-      ),
-    },
-    {
-      id: "fillInventorySplit",
-      header: "",
-      cell: (cell) => (
-        <Show when={props.onFillInventorySplit}>
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            onClick={() => props.onFillInventorySplit?.(writeMember({} as InventorySplitFormInitial, ["value", "productId"], cell.row.original.id))}
-          >
-            split
           </Button>
         </Show>
       ),
@@ -469,7 +428,7 @@ export function ProductUpdateForm(props: ProductUpdateFormProps) {
   // change another writer makes after it refuses as a conflict.
   const [record, { refetch: readAgain }] = createResource(
     () => props.key,
-    (key: ProductGetDetailInput) => get(props.transport, [{ ...key, requestId: newRequestId() }]),
+    (key: ProductGetDetailInput) => get(props.transport, [key]),
   );
 
   const form = createForm(() => ({

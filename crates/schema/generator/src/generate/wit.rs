@@ -2,7 +2,9 @@
 
 use std::fmt::Write as _;
 
-use super::wit_adapters::{emit_error_mapper, emit_export_adapter, emit_row_adapter};
+use super::wit_adapters::{
+    emit_error_mapper, emit_export_adapter, emit_row_adapter, wit_rust_member,
+};
 use super::{
     AccessOperationErrorLiteral, BTreeMap, Column, ColumnType, ContractFieldDeclaration,
     CrudAction, CustomOperationDeclaration, CustomOperationResultDeclaration, GenerateError,
@@ -2101,6 +2103,7 @@ fn emit_contract_tree_assignments(
                 .trim_end_matches("[]"),
         )
         .unwrap();
+        let contract_member = wit_rust_member(member.trim_start_matches("r#"));
         if field.children.is_empty() {
             let conversion = if column_type_of(&field.type_name).is_some_and(int64_is_json_string) {
                 if field.nullable {
@@ -2117,11 +2120,14 @@ fn emit_contract_tree_assignments(
             } else {
                 ""
             };
-            writeln!(source, "{indent}{member}: {access}.{member}{conversion},")
-                .expect("writing to a String cannot fail");
+            writeln!(
+                source,
+                "{indent}{contract_member}: {access}.{member}{conversion},"
+            )
+            .expect("writing to a String cannot fail");
         } else if field.type_name == "array" || field.path.ends_with("[]") {
             let nested = rust_type_identifier(&field_type_suffix(&field.path, root));
-            writeln!(source, "{indent}{member}: {access}.{member}.into_iter().map(|value| contract::{type_name}{nested} {{").expect("writing to a String cannot fail");
+            writeln!(source, "{indent}{contract_member}: {access}.{member}.into_iter().map(|value| contract::{type_name}{nested} {{").expect("writing to a String cannot fail");
             emit_contract_tree_assignments(
                 source,
                 type_name,
@@ -2133,8 +2139,11 @@ fn emit_contract_tree_assignments(
             writeln!(source, "{indent}}}).collect(),").expect("writing to a String cannot fail");
         } else {
             let nested = rust_type_identifier(&field_type_suffix(&field.path, root));
-            writeln!(source, "{indent}{member}: contract::{type_name}{nested} {{")
-                .expect("writing to a String cannot fail");
+            writeln!(
+                source,
+                "{indent}{contract_member}: contract::{type_name}{nested} {{"
+            )
+            .expect("writing to a String cannot fail");
             emit_contract_tree_assignments(
                 source,
                 type_name,
@@ -2183,6 +2192,7 @@ fn emit_tree_validation(source: &mut String, fields: &[FieldIr], access: &str, i
                 .trim_end_matches("[]"),
         )
         .expect("validated field has a Rust name");
+        let member = wit_rust_member(member.trim_start_matches("r#"));
         let field_access = format!("{access}.{member}");
         if !field.children.is_empty() {
             if field.type_name == "array" || field.path.ends_with("[]") {
@@ -2404,7 +2414,7 @@ fn emit_codec_result_field_for(
     nullable: bool,
     carrier: &str,
 ) {
-    let name = rust_identifier(field).expect("validated result field has a Rust name");
+    let name = wit_rust_member(field);
     if ty == ColumnType::Json {
         let value = if nullable {
             format!(

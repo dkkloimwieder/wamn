@@ -1,88 +1,85 @@
-# WMS inventory scenario
+# WMS inventory
 
-WMS moves stock between pallets and locations.
-It owns its [manifest](wamn.json), [migrations](migrations/), command SQL, guest, and application assertions.
-WMS owns its `wms.location` and `wms.product` tables.
-It does not share Receiving's physical tables.
+WMS uses `Inventory`, `Packaging`, and `InventoryTransaction` as its business records.
+Install this prototype in a fresh disposable database.
+The initial schema replaces the earlier POC. It supplies no migration or compatibility API.
 
-## Stock and commands
+## Inventory and packaging
 
-The data model contains `product`, `location`, `pallet`, `pallet_quantity`, and `inventory_movement`.
-Stock status is `available` or `held`.
-The pallet row provides the common lock and `row_version` for competing commands.
-Quantities belong to their product and status rows.
-`inventory_movement` records the committed movement history.
-The platform stamp trigger records who created and changed each `pallet` row and when, and who created each `inventory_movement` row and when.
-Command SQL writes no stamp column.
+Inventory identifies a quantity of one product with one disposition.
+Its disposition is `available` or `held`. Its lifecycle is `open` or `closed`.
+Open inventory has positive quantity. Closed inventory has zero quantity.
+Ordinary commands refuse closed inventory.
 
-The four commands have distinct authority and effects:
+Inventory stores its current `location_id` explicitly.
+Packaging stores its own `location_id` separately.
+Open inventory references open packaging at the same location.
+Commands check that relationship while they hold locks on the affected rows.
+Changing packaging metadata never implicitly relocates inventory.
 
-| Operation | Purpose |
-|---|---|
-| `inventory.move` | Move a pallet to another location. |
-| `inventory.adjust` | Change quantity with a reason. |
-| `inventory.merge` | Move stock between two pallets and retire the source. |
-| `inventory.split` | Transfer quantity into a newly identified pallet. |
+Packaging has an identity, `type`, code, location, lifecycle, and revision.
+Types describe physical handling, such as `tote`, `carton`, or `pallet`.
+Packaging is not inventory. Multiple inventory identities can share it.
+Different dispositions can share packaging without merging their inventory identities.
 
-The command owns one explicit transaction for each input item.
-It claims the caller's idempotency key, locks the relevant pallet rows, and compares the expected revision.
-It validates quantity and status before committing the movement, quantity changes, and new revision.
-A refusal reports the declared application error.
-`concurrency_conflict` carries both `expected_row_version` and `observed_row_version`.
+## Commands
 
-The move claim stores the original `movement_id` and result.
-Repeating the same command returns that result without another movement.
-Changing its body under the same key refuses.
-Two competing moves on the same pallet must produce one success and one `concurrency_conflict`.
+Every command owns one explicit PostgreSQL transaction.
+It reads or claims its request key, locks affected rows, checks the rules, applies changes, records history, and stores its result.
+It commits only after every step succeeds. Any failure rolls back the complete operation.
+Multiple inventory rows and multiple packaging rows are locked in database ID order.
 
-## Reads and labels
+`inventory.move` takes an inventory identity, destination packaging, and explicit destination location.
+It requires open destination packaging at that location.
+It changes the inventory's packaging and location while preserving quantity and disposition.
+A move within the same location or packaging is permitted.
 
-`pallet.get` and `pallet.query` provide the declared reads.
-The query filters on `status`, `location_id`, and `pallet_code`.
-It sorts on `pallet_code`, `location_id`, `updated_at`, or `created_at`.
-Its default order uses `created_at` with an `id` tie-breaker and an opaque cursor.
-`updated_at` changes only when a command changes the pallet row.
-Sorting across the quantity join is outside its declared query.
+`inventory.adjust` replaces a positive quantity and requires a nonempty reason.
+It preserves identity, product, packaging, location, disposition, and lifecycle.
+It is the quantity-conservation exception.
 
-Each other model has a generated `get` and a generated `query` that pages by `created_at`.
-The `location` and `product` queries filter on their code.
-`location` and `product` also have a generated `create` and `update`, and `pallet` has a generated `create`.
-Each create takes its identity from its own claim table, so a retry of one key returns the first row.
-Each update binds `row_version`. Every WMS revision is an `int4`, and the pallet revision is one too.
-`inventory_movement` has no write, because it is a log that the commands write.
+`inventory.split` takes a positive quantity strictly below the source quantity.
+It creates a new inventory identity in existing open packaging at the explicit destination location.
+Both identities retain the source product and disposition. Their total quantity stays unchanged.
 
-`inventory.aggregate` returns a bounded projection grouped by status, product, and location.
-It is a current SQL read rather than an event-maintained rollup.
-The [projection implementation](data/src/inventory_aggregate.rs) owns its result.
+`inventory.merge` requires distinct open identities with the same product and disposition.
+It checks both expected revisions, adds source quantity to target quantity, and closes the source with zero quantity.
+It preserves the target's packaging and location. It does not close either packaging record.
 
-`/inventory/move` is a route to `inventory.move`, like every other operation.
-The [label wiring](publication/wirings/inventory_move_and_label.json) stays in the tree, but no attachment names it:
+`packaging.create` creates empty open packaging with a type, unique code, and existing location.
+`packaging.close` requires that no open inventory references that packaging.
+Closed inventory references do not prevent closure.
+There is no packaging relocation, reopening, or implicit disposition-change command.
 
-```text
-inventory.move → label-render → blob-put
-```
+## Transactions and replay
 
-Publish registers a wiring on an event only when an event handler is its entry node, and this wiring enters at the move command.
-Epic 2 (wamn-xs9a) decides how the label step runs on the move event, and wamn-g4kj holds that input.
-Until then, no route renders or stores a label.
+Each successful inventory command inserts one immutable transaction row per affected inventory identity.
+Split and merge each insert two rows under one `operation_id`.
+The subject `inventory_id` identifies the row whose attributes change.
+The `from_inventory_id` and `to_inventory_id` preserve lineage.
+Both merge rows name the source and target inventory identities.
 
-## Application observations
+Transaction rows store complete `from_*` and `to_*` product, packaging, location, quantity, disposition, and lifecycle values.
+They also store the operation type, occurrence time, and adjustment reason.
+A new split identity has zero `from_quantity` and null prior attributes.
+Application authority permits only `INSERT` and `SELECT` on the transaction table.
+No application operation updates or deletes these rows.
 
-The [cluster cases](tests/cluster.rs) exercise released routes, contention, replay, and label output.
-Separate cases exercise committed work after label failure, terminal output, browser output, and host restart.
-The label cases still expect the label on the move response, and wamn-g4kj updates them.
-The [terminal example](examples/wms_move.rs) uses generated screens and the common client submission layer.
-These owners replace the original proposal's earlier restriction against a WMS operator interface.
+The command claim stores the complete returned result as immutable replay data.
+An exact replay returns that result without inventory or history changes.
+Changed intent under the same key refuses. Later inventory changes never reconstruct an earlier result.
+Claims and history share the inventory transaction, so a history insertion failure also removes the claim.
 
-The simulator's `scan_event` and `seed_inventory` profiles supply deterministic traffic shapes.
-They use codes such as `PAL-000000`, `LOC-0000`, and `SKU-00000`.
-The route driver exercises actual operation permissions and commands.
-Traffic generation does not grant direct database mutation authority.
+## Scope and tests
 
-Application assertions require the original movement identity on replay and one label object for that movement.
-They also require exactly one conflict under two competing moves.
-The [operator methods](../../docs/testing/application-tests.md#operator-outcomes) distinguish partial completion from an unknown outcome.
+Product and location creation, update, and reads remain available.
+Inventory, packaging, and transaction reads use generated contracts and bounded pages.
+The aggregate reads inventory's explicit location and groups open stock by product, location, and disposition.
+Its packaging count counts distinct packaging identities.
 
-Cross-package reference tables, joined quantity sorting, and custom label-template authoring remain outside this scenario.
-Cycle counts, putaway strategies, and wave picking need separate application requirements.
-The app introduces no new platform capability or shared user-interface abstraction by itself.
+Fresh fixtures supply baseline stock. This phase introduces no stock-admission command, unpackaged stock, or lot/serial policy.
+Production retains positive decimal quantities. The independent formal model uses small integer bounds.
+
+[The formal assessment](formal/assessment.md) maps properties to the application tests.
+[The local runtime test](tests/local_business.rs) exercises real commands, transaction rollback, replay, history, and database permissions.
+[The publication test](tests/wms_publication.rs) checks the exported routes and their authorization modes.

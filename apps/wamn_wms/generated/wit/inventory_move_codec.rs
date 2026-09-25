@@ -28,9 +28,10 @@ struct JsonRequest {
 struct JsonRoot {
     expected_row_version: i32,
     idempotency_key: String,
+    inventory_id: String,
     occurred_at: String,
-    pallet_id: String,
     to_location_id: String,
+    to_packaging_id: String,
 }
 
 pub(crate) fn decode(input: &str) -> Result<Vec<contract::MoveItem>, CodecError> {
@@ -41,9 +42,10 @@ pub(crate) fn decode(input: &str) -> Result<Vec<contract::MoveItem>, CodecError>
                 .map(|request| contract::MoveRequest {
                     expected_row_version: request.value.expected_row_version,
                     idempotency_key: request.value.idempotency_key,
+                    inventory_id: request.value.inventory_id,
                     occurred_at: request.value.occurred_at,
-                    pallet_id: request.value.pallet_id,
                     to_location_id: request.value.to_location_id,
+                    to_packaging_id: request.value.to_packaging_id,
                 })
                 .map_err(|_| invalid("input"));
             Ok(contract::MoveItem { request_id, input })
@@ -67,10 +69,14 @@ pub(crate) fn encode(output: &[contract::MoveOutcome]) -> String {
             Ok(value) => json!({
                 "request_id": item.request_id,
                 "value": {
-                    "movement_id": value.movement_id,
-                    "pallet_id": value.pallet_id,
+                    "operation_id": value.operation_id,
+                    "inventory_id": value.inventory_id,
+                    "product_id": value.product_id,
+                    "packaging_id": value.packaging_id,
                     "location_id": value.location_id,
-                    "pallet_status": value.pallet_status,
+                    "quantity": value.quantity,
+                    "disposition": value.disposition,
+                    "lifecycle": value.lifecycle,
                     "row_version": value.row_version,
                 }
             }),
@@ -99,17 +105,11 @@ fn error_value(error: &contract::MoveError) -> Value {
             }
             ("invalid_input", detail)
         }
-        contract::MoveError::PalletNotFound(value) => {
+        contract::MoveError::NotFound(value) => {
             let mut detail = Map::new();
             detail.insert("field".to_owned(), json!(value.field));
             detail.insert("id".to_owned(), json!(value.id));
-            ("pallet_not_found", detail)
-        }
-        contract::MoveError::LocationNotFound(value) => {
-            let mut detail = Map::new();
-            detail.insert("field".to_owned(), json!(value.field));
-            detail.insert("id".to_owned(), json!(value.id));
-            ("location_not_found", detail)
+            ("not_found", detail)
         }
         contract::MoveError::ConcurrencyConflict(value) => {
             let mut detail = Map::new();
@@ -143,15 +143,21 @@ fn error_value(error: &contract::MoveError) -> Value {
 fn normalize(request: &mut contract::MoveRequest) -> Result<(), contract::InvalidInputDetail> {
     let _ = &request;
     {
-        let value = &mut request.pallet_id;
+        let value = &mut request.inventory_id;
         if !canonical_uuid(value) {
-            return Err(invalid("value.pallet_id"));
+            return Err(invalid("value.inventory_id"));
         }
     }
     {
         let value = &mut request.to_location_id;
         if !canonical_uuid(value) {
             return Err(invalid("value.to_location_id"));
+        }
+    }
+    {
+        let value = &mut request.to_packaging_id;
+        if !canonical_uuid(value) {
+            return Err(invalid("value.to_packaging_id"));
         }
     }
     Ok(())
@@ -191,10 +197,14 @@ macro_rules! row {
     ($row:expr, $target:path) => {{
         let row = $row;
         $target {
-            movement_id: row.movement_id.0,
-            pallet_id: row.pallet_id.0,
+            operation_id: row.operation_id.0,
+            inventory_id: row.inventory_id.0,
+            product_id: row.product_id.0,
+            packaging_id: row.packaging_id.0,
             location_id: row.location_id.0,
-            pallet_status: row.pallet_status,
+            quantity: row.quantity.0,
+            disposition: row.disposition,
+            lifecycle: row.lifecycle,
             row_version: row.row_version,
         }
     }};
@@ -237,23 +247,14 @@ pub(crate) fn map_error(
                 observed,
             })
         }
-        "pallet_not_found" => {
+        "not_found" => {
             let Some(field) = detail("field") else {
                 return contract::MoveError::InternalError;
             };
             let Some(id) = detail("id") else {
                 return contract::MoveError::InternalError;
             };
-            contract::MoveError::PalletNotFound(contract::PalletNotFoundDetail { field, id })
-        }
-        "location_not_found" => {
-            let Some(field) = detail("field") else {
-                return contract::MoveError::InternalError;
-            };
-            let Some(id) = detail("id") else {
-                return contract::MoveError::InternalError;
-            };
-            contract::MoveError::LocationNotFound(contract::LocationNotFoundDetail { field, id })
+            contract::MoveError::NotFound(contract::NotFoundDetail { field, id })
         }
         "concurrency_conflict" => {
             let Some(expected_row_version) =

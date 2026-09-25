@@ -1,0 +1,64 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT canonical_command, result, operation_id, packaging_id FROM packaging_create_command WHERE idempotency_key = $1;\n",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "canonical_command",
+        "type_info": "Bytea",
+        "origin": {
+          "Table": {
+            "table": "packaging_create_command",
+            "name": "canonical_command"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "result",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "packaging_create_command",
+            "name": "result"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "operation_id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "packaging_create_command",
+            "name": "operation_id"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "packaging_id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "packaging_create_command",
+            "name": "packaging_id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": [
+      false,
+      true,
+      false,
+      false
+    ]
+  },
+  "hash": "51d59b1aa11b7ede557d8b8a01250117340827bd586444e50347f2c8eadbb28c"
+}

@@ -75,7 +75,7 @@ The operations pages own build commands and artifact comparisons.
 
 The label renderer is an effect-free transform from fields to ZPL printer text.
 `template_id` is a wiring parameter, not a caller input field.
-The closed template set is `pallet`, `location`, and `product`.
+The closed template set is `inventory`, `location`, and `product`.
 An unknown template refuses during declaration validation or rendering.
 
 The shared [label template library](../../apps/platform/no-std/label-template/src/lib.rs) emits `^PW812`, `^LL1218`, and `^MD0`.

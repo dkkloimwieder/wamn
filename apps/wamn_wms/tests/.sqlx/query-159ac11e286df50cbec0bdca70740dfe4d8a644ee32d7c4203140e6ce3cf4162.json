@@ -1,0 +1,112 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE inventory SET quantity = 0, lifecycle = 'closed', row_version = row_version + 1 WHERE id = $1 RETURNING id, product_id, packaging_id, location_id, quantity, disposition, lifecycle, row_version;\n",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "inventory",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "product_id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "inventory",
+            "name": "product_id"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "packaging_id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "inventory",
+            "name": "packaging_id"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "location_id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "inventory",
+            "name": "location_id"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "quantity",
+        "type_info": "Numeric",
+        "origin": {
+          "Table": {
+            "table": "inventory",
+            "name": "quantity"
+          }
+        }
+      },
+      {
+        "ordinal": 5,
+        "name": "disposition",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "inventory",
+            "name": "disposition"
+          }
+        }
+      },
+      {
+        "ordinal": 6,
+        "name": "lifecycle",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "inventory",
+            "name": "lifecycle"
+          }
+        }
+      },
+      {
+        "ordinal": 7,
+        "name": "row_version",
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "inventory",
+            "name": "row_version"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "159ac11e286df50cbec0bdca70740dfe4d8a644ee32d7c4203140e6ce3cf4162"
+}

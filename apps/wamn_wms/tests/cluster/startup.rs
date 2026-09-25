@@ -241,7 +241,7 @@ async fn request(
     // A get is a read: its one item travels in the query string, with no
     // request identity.
     let query = wamn_execution_contract::encode_read_query(
-        json!({"id":super::application::PALLET_ID})
+        json!({"id":super::application::INVENTORY_ID})
             .as_object()
             .context("the get item is an object")?,
     );
@@ -358,7 +358,7 @@ test "$1" = 200
     json!({"apiVersion":"batch/v1","kind":"Job","metadata":{"name":job,"namespace":cluster},"spec":{"activeDeadlineSeconds":200,"backoffLimit":0,"template":{"spec":{"restartPolicy":"Never","containers":[{"name":"probe","image":HTTP_PROBE_IMAGE,"imagePullPolicy":"IfNotPresent","terminationMessagePolicy":"File","command":["/bin/sh","-ec"],"args":[script],"env":[
         {"name":"ROUTE_CALLER_PAT","valueFrom":{"secretKeyRef":{"name":secret,"key":"token"}}},
         {"name":"ROUTE_HOST","value":route_host},{"name":"TRACEPARENT","value":format!("00-{trace_id}-{parent_span}-01")},
-        {"name":"ROUTE_URL","value":format!("http://flow-http.{cluster}.svc.cluster.local/pallet/get?{query}")}
+        {"name":"ROUTE_URL","value":format!("http://flow-http.{cluster}.svc.cluster.local/inventory/get?{query}")}
     ]}]}}}})
 }
 
@@ -406,8 +406,8 @@ fn assert_response(result: &Value, restarted: bool) -> anyhow::Result<f64> {
         rows.len() == 1
             && rows[0].get("request_id").is_none()
             && rows[0].get("error").is_none()
-            && rows[0]["value"]["id"] == super::application::PALLET_ID,
-        "startup response must return the requested WMS pallet without an error"
+            && rows[0]["value"]["id"] == super::application::INVENTORY_ID,
+        "startup response must return the requested WMS inventory without an error"
     );
     Ok(total * 1000.0)
 }
@@ -783,7 +783,7 @@ mod tests {
     #[test]
     fn startup_job_reports_immediate_delayed_and_failed_responses() {
         use std::os::unix::fs::PermissionsExt as _;
-        let query = "id=%22selected-pallet%22&note=%22it%27s%20quoted%22";
+        let query = "id=%22selected-inventory%22&note=%22it%27s%20quoted%22";
         let job = request_job(
             "selected-environment",
             "selected.example",
@@ -822,7 +822,7 @@ mod tests {
         );
         assert_eq!(
             env[3],
-            json!({"name":"ROUTE_URL","value":format!("http://flow-http.selected-environment.svc.cluster.local/pallet/get?{query}")})
+            json!({"name":"ROUTE_URL","value":format!("http://flow-http.selected-environment.svc.cluster.local/inventory/get?{query}")})
         );
         assert_eq!(env.len(), 4);
         let script = container["args"][0].as_str().unwrap();
@@ -951,14 +951,14 @@ printf '%s 0.001 0.002' "$status"
     }
 
     #[test]
-    fn startup_request_keeps_the_recovery_limit_and_pallet_identity() {
-        let body = json!([{"value":{"id":super::super::application::PALLET_ID}}]);
+    fn startup_request_keeps_the_recovery_limit_and_inventory_identity() {
+        let body = json!([{"value":{"id":super::super::application::INVENTORY_ID}}]);
         let mut result = json!({"status":"200","first_seconds":"0.010","total_seconds":"0.020","recovery_seconds":120,"body_hex":hex::encode(serde_json::to_vec(&body).unwrap())});
         assert!((assert_response(&result, true).unwrap() - 20.0).abs() < f64::EPSILON);
         result["recovery_seconds"] = json!(121);
         assert!(assert_response(&result, true).is_err());
         result["recovery_seconds"] = json!(120);
-        let keyed = json!([{"request_id":"startup-restart-first","value":{"id":super::super::application::PALLET_ID}}]);
+        let keyed = json!([{"request_id":"startup-restart-first","value":{"id":super::super::application::INVENTORY_ID}}]);
         let mut echoed = result.clone();
         echoed["body_hex"] = json!(hex::encode(serde_json::to_vec(&keyed).unwrap()));
         assert!(

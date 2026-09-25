@@ -1,81 +1,89 @@
 // @generated from migration IR; do not edit.
 
 #[derive(Debug, sqlx::FromRow)]
+pub struct ApplyRow {
+    pub id: uuid::Uuid,
+    pub product_id: uuid::Uuid,
+    pub packaging_id: uuid::Uuid,
+    pub location_id: uuid::Uuid,
+    pub quantity: rust_decimal::Decimal,
+    pub disposition: String,
+    pub lifecycle: String,
+    pub row_version: i32,
+}
+
+#[derive(Debug, sqlx::FromRow)]
 pub struct ClaimCommandRow {
-    pub movement_id: uuid::Uuid,
+    pub operation_id: uuid::Uuid,
 }
 
 #[derive(Debug, sqlx::FromRow)]
 pub struct FinalizeCommandRow {
-    pub pallet_status: Option<String>,
-    pub row_version: Option<i32>,
+    pub result: Option<String>,
 }
 
 #[derive(Debug, sqlx::FromRow)]
 pub struct FindReplayRow {
     pub canonical_command: Vec<u8>,
-    pub movement_id: uuid::Uuid,
-    pub pallet_id: uuid::Uuid,
-    pub pallet_status: Option<String>,
-    pub row_version: Option<i32>,
+    pub result: Option<String>,
+    pub operation_id: uuid::Uuid,
 }
 
 #[derive(Debug, sqlx::FromRow)]
-pub struct InsertMovementRow {
+pub struct InsertTransactionRow {
     pub id: uuid::Uuid,
 }
 
 #[derive(Debug, sqlx::FromRow)]
-pub struct LockPalletRow {
-    pub location_id: uuid::Uuid,
-    pub row_version: i32,
-    pub status: String,
-}
-
-#[derive(Debug, sqlx::FromRow)]
-pub struct MovePalletRow {
-    pub location_id: uuid::Uuid,
-    pub row_version: i32,
-    pub status: String,
-}
-
-#[derive(Debug, sqlx::FromRow)]
-pub struct SelectPalletQuantityRow {
+pub struct LockInventoryRow {
+    pub id: uuid::Uuid,
     pub product_id: uuid::Uuid,
+    pub packaging_id: uuid::Uuid,
+    pub location_id: uuid::Uuid,
     pub quantity: rust_decimal::Decimal,
-    pub status: String,
+    pub disposition: String,
+    pub lifecycle: String,
+    pub row_version: i32,
 }
 
 #[derive(Debug, sqlx::FromRow)]
-pub struct ValidateLocationRow {
+pub struct LockPackagingRow {
     pub id: uuid::Uuid,
+    pub r#type: String,
+    pub code: String,
+    pub location_id: uuid::Uuid,
+    pub lifecycle: String,
+    pub row_version: i32,
 }
 
+pub(crate) const APPLY_SQL: &str = include_str!("../../command/inventory_move/apply.sql");
 pub(crate) const CLAIM_COMMAND_SQL: &str =
     include_str!("../../command/inventory_move/claim_command.sql");
 pub(crate) const FINALIZE_COMMAND_SQL: &str =
     include_str!("../../command/inventory_move/finalize_command.sql");
 pub(crate) const FIND_REPLAY_SQL: &str =
     include_str!("../../command/inventory_move/find_replay.sql");
-pub(crate) const INSERT_MOVEMENT_SQL: &str =
-    include_str!("../../command/inventory_move/insert_movement.sql");
-pub(crate) const LOCK_PALLET_SQL: &str =
-    include_str!("../../command/inventory_move/lock_pallet.sql");
-pub(crate) const MOVE_PALLET_SQL: &str =
-    include_str!("../../command/inventory_move/move_pallet.sql");
-pub(crate) const SELECT_PALLET_QUANTITY_SQL: &str =
-    include_str!("../../command/inventory_move/select_pallet_quantity.sql");
-pub(crate) const VALIDATE_LOCATION_SQL: &str =
-    include_str!("../../command/inventory_move/validate_location.sql");
+pub(crate) const INSERT_TRANSACTION_SQL: &str =
+    include_str!("../../command/inventory_move/insert_transaction.sql");
+pub(crate) const LOCK_INVENTORY_SQL: &str =
+    include_str!("../../command/inventory_move/lock_inventory.sql");
+pub(crate) const LOCK_PACKAGING_SQL: &str =
+    include_str!("../../command/inventory_move/lock_packaging.sql");
 
+pub(crate) fn apply_inventory_id_bind_fixture() -> uuid::Uuid {
+    uuid::Uuid::nil()
+}
+pub(crate) fn apply_to_packaging_id_bind_fixture() -> uuid::Uuid {
+    uuid::Uuid::nil()
+}
+pub(crate) fn apply_to_location_id_bind_fixture() -> uuid::Uuid {
+    uuid::Uuid::nil()
+}
 pub(crate) fn claim_command_idempotency_key_bind_fixture() -> String {
     String::new()
 }
 pub(crate) fn claim_command_canonical_command_bind_fixture() -> Vec<u8> {
     Vec::new()
-}
-pub(crate) fn claim_command_pallet_id_bind_fixture() -> uuid::Uuid {
-    uuid::Uuid::nil()
 }
 pub(crate) fn finalize_command_idempotency_key_bind_fixture() -> String {
     String::new()
@@ -83,51 +91,57 @@ pub(crate) fn finalize_command_idempotency_key_bind_fixture() -> String {
 pub(crate) fn finalize_command_canonical_command_bind_fixture() -> Vec<u8> {
     Vec::new()
 }
-pub(crate) fn finalize_command_movement_id_bind_fixture() -> uuid::Uuid {
+pub(crate) fn finalize_command_operation_id_bind_fixture() -> uuid::Uuid {
     uuid::Uuid::nil()
 }
-pub(crate) fn finalize_command_pallet_status_bind_fixture() -> String {
+pub(crate) fn finalize_command_result_bind_fixture() -> String {
     String::new()
-}
-pub(crate) fn finalize_command_row_version_bind_fixture() -> i32 {
-    0_i32
 }
 pub(crate) fn find_replay_idempotency_key_bind_fixture() -> String {
     String::new()
 }
-pub(crate) fn insert_movement_idempotency_key_bind_fixture() -> String {
-    String::new()
-}
-pub(crate) fn insert_movement_pallet_id_bind_fixture() -> uuid::Uuid {
+pub(crate) fn insert_transaction_operation_id_bind_fixture() -> uuid::Uuid {
     uuid::Uuid::nil()
 }
-pub(crate) fn insert_movement_product_id_bind_fixture() -> uuid::Uuid {
+pub(crate) fn insert_transaction_inventory_id_bind_fixture() -> uuid::Uuid {
     uuid::Uuid::nil()
 }
-pub(crate) fn insert_movement_from_location_id_bind_fixture() -> uuid::Uuid {
+pub(crate) fn insert_transaction_from_inventory_id_bind_fixture() -> uuid::Uuid {
     uuid::Uuid::nil()
 }
-pub(crate) fn insert_movement_to_location_id_bind_fixture() -> uuid::Uuid {
+pub(crate) fn insert_transaction_to_inventory_id_bind_fixture() -> uuid::Uuid {
     uuid::Uuid::nil()
 }
-pub(crate) fn insert_movement_quantity_bind_fixture() -> rust_decimal::Decimal {
+pub(crate) fn insert_transaction_from_product_id_bind_fixture() -> Option<uuid::Uuid> {
+    None
+}
+pub(crate) fn insert_transaction_from_packaging_id_bind_fixture() -> Option<uuid::Uuid> {
+    None
+}
+pub(crate) fn insert_transaction_from_location_id_bind_fixture() -> Option<uuid::Uuid> {
+    None
+}
+pub(crate) fn insert_transaction_from_quantity_bind_fixture() -> rust_decimal::Decimal {
     rust_decimal::Decimal::ZERO
 }
-pub(crate) fn insert_movement_occurred_at_bind_fixture() -> chrono::DateTime<chrono::Utc> {
+pub(crate) fn insert_transaction_from_disposition_bind_fixture() -> Option<String> {
+    None
+}
+pub(crate) fn insert_transaction_from_lifecycle_bind_fixture() -> Option<String> {
+    None
+}
+pub(crate) fn insert_transaction_occurred_at_bind_fixture() -> chrono::DateTime<chrono::Utc> {
     chrono::DateTime::<chrono::Utc>::UNIX_EPOCH
 }
-pub(crate) fn lock_pallet_pallet_id_bind_fixture() -> uuid::Uuid {
+pub(crate) fn insert_transaction_reason_bind_fixture() -> Option<String> {
+    None
+}
+pub(crate) fn lock_inventory_inventory_id_bind_fixture() -> uuid::Uuid {
     uuid::Uuid::nil()
 }
-pub(crate) fn move_pallet_pallet_id_bind_fixture() -> uuid::Uuid {
+pub(crate) fn lock_packaging_from_packaging_id_bind_fixture() -> uuid::Uuid {
     uuid::Uuid::nil()
 }
-pub(crate) fn move_pallet_to_location_id_bind_fixture() -> uuid::Uuid {
-    uuid::Uuid::nil()
-}
-pub(crate) fn select_pallet_quantity_pallet_id_bind_fixture() -> uuid::Uuid {
-    uuid::Uuid::nil()
-}
-pub(crate) fn validate_location_location_id_bind_fixture() -> uuid::Uuid {
+pub(crate) fn lock_packaging_to_packaging_id_bind_fixture() -> uuid::Uuid {
     uuid::Uuid::nil()
 }

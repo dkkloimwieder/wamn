@@ -3,7 +3,7 @@
 //!
 //! These are frozen literals, matching the repository's established golden
 //! shape. A change to any rendered byte must be a deliberate edit here, not a
-//! silent drift: a label already printed and applied to a pallet does not
+//! silent drift: a label already printed and applied to a inventory does not
 //! re-render.
 //!
 //! The geometry line (`^PW812 ^LL1218 ^MD0`) assumes 4in x 6in stock at
@@ -13,14 +13,14 @@
 use label_template::{RenderErrorKind, TEMPLATE_IDS, render};
 use serde_json::json;
 
-const PALLET: &str = "\
+const INVENTORY: &str = "\
 ^XA
 ^PW812
 ^LL1218
 ^MD0
 ^CI28
-^FO40,40^A0N,36,36^FDPALLET^FS
-^FO40,96^A0N,28,28^FDPallet: PAL-000042^FS
+^FO40,40^A0N,36,36^FDINVENTORY^FS
+^FO40,96^A0N,28,28^FDInventory: PAL-000042^FS
 ^FO40,136^A0N,28,28^FDLocation: LOC-0007^FS
 ^FO40,176^BY3^BCN,120,Y,N,N^FDPAL-000042^FS
 ^XZ
@@ -53,13 +53,13 @@ const PRODUCT: &str = "\
 ";
 
 #[test]
-fn pallet_matches_its_golden_vector() {
+fn inventory_matches_its_golden_vector() {
     let zpl = render(
-        "pallet",
-        &json!({"pallet_id": "PAL-000042", "location_id": "LOC-0007"}),
+        "inventory",
+        &json!({"inventory_id": "PAL-000042", "location_id": "LOC-0007"}),
     )
-    .expect("the pallet template renders");
-    assert_eq!(zpl, PALLET);
+    .expect("the inventory template renders");
+    assert_eq!(zpl, INVENTORY);
 }
 
 #[test]
@@ -86,7 +86,7 @@ fn every_template_id_has_a_golden_vector() {
     assert_eq!(TEMPLATE_IDS.len(), 3, "the template set changed size");
     for id in TEMPLATE_IDS {
         assert!(
-            matches!(id, "pallet" | "location" | "product"),
+            matches!(id, "inventory" | "location" | "product"),
             "template {id:?} has no golden vector in this file"
         );
     }
@@ -94,10 +94,10 @@ fn every_template_id_has_a_golden_vector() {
 
 #[test]
 fn rendering_is_a_pure_function_of_its_input() {
-    let fields = json!({"pallet_id": "PAL-000042", "location_id": "LOC-0007"});
+    let fields = json!({"inventory_id": "PAL-000042", "location_id": "LOC-0007"});
     assert_eq!(
-        render("pallet", &fields).expect("first render"),
-        render("pallet", &fields).expect("second render"),
+        render("inventory", &fields).expect("first render"),
+        render("inventory", &fields).expect("second render"),
         "two renders of one input disagreed"
     );
 }
@@ -107,11 +107,11 @@ fn rendering_is_a_pure_function_of_its_input() {
 #[test]
 fn unknown_extra_fields_are_ignored() {
     let zpl = render(
-        "pallet",
-        &json!({"pallet_id": "PAL-000042", "location_id": "LOC-0007", "weight_kg": 480}),
+        "inventory",
+        &json!({"inventory_id": "PAL-000042", "location_id": "LOC-0007", "weight_kg": 480}),
     )
     .expect("extra fields do not refuse");
-    assert_eq!(zpl, PALLET);
+    assert_eq!(zpl, INVENTORY);
 }
 
 #[test]
@@ -123,7 +123,7 @@ fn an_unknown_template_is_refused() {
 
 #[test]
 fn a_missing_required_field_is_refused() {
-    let error = render("pallet", &json!({"pallet_id": "PAL-000042"})).expect_err("must refuse");
+    let error = render("inventory", &json!({"inventory_id": "PAL-000042"})).expect_err("must refuse");
     assert_eq!(error.kind(), RenderErrorKind::MissingField);
     assert!(error.detail().contains("location_id"), "{}", error.detail());
 }
@@ -134,8 +134,8 @@ fn a_missing_required_field_is_refused() {
 fn a_zpl_control_character_is_refused() {
     for injected in ["PAL^XZ", "PAL~JA"] {
         let error = render(
-            "pallet",
-            &json!({"pallet_id": injected, "location_id": "LOC-0007"}),
+            "inventory",
+            &json!({"inventory_id": injected, "location_id": "LOC-0007"}),
         )
         .expect_err("must refuse");
         assert_eq!(error.kind(), RenderErrorKind::InvalidField, "{injected}");
@@ -146,8 +146,8 @@ fn a_zpl_control_character_is_refused() {
 fn a_non_string_or_empty_field_is_refused() {
     for bad in [json!(42), json!(""), json!(null)] {
         let error = render(
-            "pallet",
-            &json!({"pallet_id": bad, "location_id": "LOC-0007"}),
+            "inventory",
+            &json!({"inventory_id": bad, "location_id": "LOC-0007"}),
         )
         .expect_err("must refuse");
         assert_eq!(error.kind(), RenderErrorKind::InvalidField, "{bad}");

@@ -6,10 +6,9 @@
 //! One package-grain component exporting every WMS operation.
 
 mod inventory;
-mod inventory_movement;
+mod inventory_transaction;
 mod location;
-mod pallet;
-mod pallet_quantity;
+mod packaging;
 mod product;
 
 wit_bindgen::generate!({
@@ -25,17 +24,18 @@ wit_bindgen::generate!({
           export wamn-wms:inventory/merge@1.0.0;
           export wamn-wms:inventory/move@1.0.0;
           export wamn-wms:inventory/split@1.0.0;
-          export wamn-wms:inventory-movement/get@1.0.0;
-          export wamn-wms:inventory-movement/query@1.0.0;
+          export wamn-wms:inventory-transaction/get@1.0.0;
+          export wamn-wms:inventory-transaction/query@1.0.0;
           export wamn-wms:location/create@1.0.0;
           export wamn-wms:location/get@1.0.0;
           export wamn-wms:location/query@1.0.0;
           export wamn-wms:location/update@1.0.0;
-          export wamn-wms:pallet/create@1.0.0;
-          export wamn-wms:pallet/get@1.0.0;
-          export wamn-wms:pallet/query@1.0.0;
-          export wamn-wms:pallet-quantity/get@1.0.0;
-          export wamn-wms:pallet-quantity/query@1.0.0;
+          export wamn-wms:packaging/create@1.0.0;
+          export wamn-wms:packaging/close@1.0.0;
+          export wamn-wms:packaging/get@1.0.0;
+          export wamn-wms:packaging/query@1.0.0;
+          export wamn-wms:inventory/get@1.0.0;
+          export wamn-wms:inventory/query@1.0.0;
           export wamn-wms:product/create@1.0.0;
           export wamn-wms:product/get@1.0.0;
           export wamn-wms:product/query@1.0.0;
@@ -46,10 +46,9 @@ wit_bindgen::generate!({
         "../../../crates/execution/workflow/router/wit",
         "../../../crates/platform/runtime/wit/deps/wamn-postgres",
         "../generated/wit/deps/wamn-wms-inventory",
-        "../generated/wit/deps/wamn-wms-inventory-movement",
+        "../generated/wit/deps/wamn-wms-inventory-transaction",
         "../generated/wit/deps/wamn-wms-location",
-        "../generated/wit/deps/wamn-wms-pallet",
-        "../generated/wit/deps/wamn-wms-pallet-quantity",
+        "../generated/wit/deps/wamn-wms-packaging",
         "../generated/wit/deps/wamn-wms-product",
     ],
     generate_all,
@@ -59,3 +58,11 @@ wit_bindgen::generate!({
 struct Component;
 
 export!(Component);
+
+fn detail(error: &wamn_wms_data_access::AccessError, key: &str) -> Option<String> {
+    let value = error.detail().get(key)?;
+    value
+        .as_str()
+        .map(str::to_owned)
+        .or_else(|| value.as_i64().map(|value| value.to_string()))
+}

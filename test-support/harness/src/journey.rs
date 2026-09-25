@@ -52,7 +52,7 @@ pub struct JourneyDocument {
     /// Known only once the released route is reachable from this machine and
     /// the fixture rows exist (wamn-362o.27). The shell amends it in; the
     /// runtime assertions refuse to run without it rather than guess an
-    /// endpoint or a pallet.
+    /// endpoint or a inventory.
     pub runtime: Option<RuntimePhase>,
 }
 
@@ -66,10 +66,12 @@ pub struct RuntimePhase {
     /// on a kind node's docker-network address. The Host header still names
     /// the released route host.
     pub route_endpoint: String,
-    /// The fixture pallet the contention moves.
-    pub pallet_id: String,
+    /// The fixture inventory the contention moves.
+    pub inventory_id: String,
     /// The fixture location it moves to.
     pub to_location_id: String,
+    /// Existing packaging at the destination.
+    pub to_packaging_id: String,
 }
 
 /// The materializer phase's inputs: the project-environment database the
@@ -182,7 +184,7 @@ pub fn parse_journey_document(bytes: &[u8]) -> anyhow::Result<JourneyDocument> {
     if let Some(runtime) = &document.runtime {
         for (field, value) in [
             ("runtime.route_endpoint", &runtime.route_endpoint),
-            ("runtime.pallet_id", &runtime.pallet_id),
+            ("runtime.inventory_id", &runtime.inventory_id),
             ("runtime.to_location_id", &runtime.to_location_id),
         ] {
             anyhow::ensure!(!value.is_empty(), "journey document field {field} is empty");

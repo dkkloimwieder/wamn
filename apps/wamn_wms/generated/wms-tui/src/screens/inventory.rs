@@ -9,7 +9,7 @@ pub static ADJUST_SPEC: screen::ScreenSpec = screen::ScreenSpec {
     kind: "command",
     input: crate::inventory::INVENTORY_ADJUST_INPUT_SCHEMA,
     input_schema: Some(
-        "{\"items\":{\"additionalProperties\":false,\"properties\":{\"request_id\":{\"minLength\":1,\"type\":\"string\"},\"value\":{\"additionalProperties\":false,\"properties\":{\"expected_row_version\":{\"type\":\"integer\"},\"idempotency_key\":{\"minLength\":1,\"type\":\"string\"},\"occurred_at\":{\"format\":\"date-time\",\"type\":\"string\"},\"pallet_id\":{\"pattern\":\"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$\",\"type\":\"string\"},\"product_id\":{\"pattern\":\"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$\",\"type\":\"string\"},\"quantity\":{\"pattern\":\"^[0-9]+(\\\\.[0-9]+)?$\",\"type\":\"string\"},\"reason_code\":{\"minLength\":1,\"type\":\"string\"},\"status\":{\"enum\":[\"available\",\"held\"],\"type\":\"string\"}},\"required\":[\"idempotency_key\",\"pallet_id\",\"product_id\",\"status\",\"quantity\",\"reason_code\",\"expected_row_version\",\"occurred_at\"],\"type\":\"object\"}},\"required\":[\"request_id\",\"value\"],\"type\":\"object\"},\"maxItems\":100,\"minItems\":1,\"type\":\"array\"}",
+        "{\"items\":{\"additionalProperties\":false,\"properties\":{\"request_id\":{\"minLength\":1,\"type\":\"string\"},\"value\":{\"additionalProperties\":false,\"properties\":{\"expected_row_version\":{\"type\":\"integer\"},\"idempotency_key\":{\"minLength\":1,\"type\":\"string\"},\"inventory_id\":{\"format\":\"uuid\",\"pattern\":\"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$\",\"type\":\"string\"},\"occurred_at\":{\"format\":\"date-time\",\"type\":\"string\"},\"reason\":{\"minLength\":1,\"type\":\"string\"},\"to_quantity\":{\"pattern\":\"^[0-9]+(\\\\.[0-9]+)?$\",\"type\":\"string\"}},\"required\":[\"idempotency_key\",\"inventory_id\",\"to_quantity\",\"reason\",\"expected_row_version\",\"occurred_at\"],\"type\":\"object\"}},\"required\":[\"request_id\",\"value\"],\"type\":\"object\"},\"maxItems\":100,\"minItems\":1,\"type\":\"array\"}",
     ),
     response: submission::ResponseContract {
         schema: Some("{\"type\":\"array\"}"),
@@ -38,7 +38,7 @@ pub static ADJUST_SPEC: screen::ScreenSpec = screen::ScreenSpec {
                 sources: &["envelope_count", "malformed_input"],
             },
             submission::ErrorCase {
-                literal: "pallet_not_found",
+                literal: "not_found",
                 required: &["field", "id"],
                 sources: &["transaction_invariant"],
             },
@@ -46,11 +46,6 @@ pub static ADJUST_SPEC: screen::ScreenSpec = screen::ScreenSpec {
                 literal: "permission_denied",
                 required: &["operation"],
                 sources: &["permission_denied"],
-            },
-            submission::ErrorCase {
-                literal: "quantity_not_found",
-                required: &["field", "id"],
-                sources: &["transaction_invariant"],
             },
             submission::ErrorCase {
                 literal: "retry",
@@ -155,6 +150,75 @@ pub fn aggregate(binding: submission::SessionBinding) -> screen::Screen {
     screen::Screen::new(&AGGREGATE_SPEC, binding)
 }
 
+pub static GET_SPEC: screen::ScreenSpec = screen::ScreenSpec {
+    model: "inventory",
+    name: "get",
+    operation: "wamn-wms:inventory/get@1.0.0",
+    kind: "get",
+    input: crate::inventory::INVENTORY_GET_INPUT_SCHEMA,
+    input_schema: Some(
+        "{\"items\":{\"additionalProperties\":false,\"properties\":{\"id\":{\"pattern\":\"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$\",\"type\":\"string\"}},\"required\":[\"id\"],\"type\":\"object\"},\"maxItems\":100,\"minItems\":1,\"type\":\"array\"}",
+    ),
+    response: submission::ResponseContract {
+        schema: Some("{\"type\":\"array\"}"),
+        partial_schema: None,
+        fields: crate::inventory::INVENTORY_GET_RESULT_SCHEMA,
+        result_class: Some("one"),
+        errors: &[
+            submission::ErrorCase {
+                literal: "internal_error",
+                required: &[],
+                sources: &["query_error", "row_limit_exceeded"],
+            },
+            submission::ErrorCase {
+                literal: "invalid_input",
+                required: &["field"],
+                sources: &[],
+            },
+            submission::ErrorCase {
+                literal: "not_found",
+                required: &["field", "id"],
+                sources: &[],
+            },
+            submission::ErrorCase {
+                literal: "permission_denied",
+                required: &["operation"],
+                sources: &["permission_denied"],
+            },
+            submission::ErrorCase {
+                literal: "retry",
+                required: &[],
+                sources: &["connection_unavailable", "serialization_failure"],
+            },
+            submission::ErrorCase {
+                literal: "timeout",
+                required: &[],
+                sources: &["statement_timeout"],
+            },
+        ],
+        kind: "get",
+        transaction: Some("implicit"),
+        direct: true,
+        replay: submission::Replay::Unknown,
+    },
+    route: Some(crate::inventory::get_route),
+    fresh_only: false,
+    record: Some(screen::RecordLink {
+        relation: "wms.inventory",
+        key_field: "id",
+        key_input: Some("id"),
+    }),
+    revision: None,
+    revision_inputs: &[],
+    requires_composition: false,
+    supplied: &[],
+};
+
+#[must_use]
+pub fn get(binding: submission::SessionBinding) -> screen::Screen {
+    screen::Screen::new(&GET_SPEC, binding)
+}
+
 pub static MERGE_SPEC: screen::ScreenSpec = screen::ScreenSpec {
     model: "inventory",
     name: "merge",
@@ -162,7 +226,7 @@ pub static MERGE_SPEC: screen::ScreenSpec = screen::ScreenSpec {
     kind: "command",
     input: crate::inventory::INVENTORY_MERGE_INPUT_SCHEMA,
     input_schema: Some(
-        "{\"items\":{\"additionalProperties\":false,\"properties\":{\"request_id\":{\"minLength\":1,\"type\":\"string\"},\"value\":{\"additionalProperties\":false,\"properties\":{\"expected_row_version\":{\"type\":\"integer\"},\"idempotency_key\":{\"minLength\":1,\"type\":\"string\"},\"occurred_at\":{\"format\":\"date-time\",\"type\":\"string\"},\"source_pallet_id\":{\"pattern\":\"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$\",\"type\":\"string\"},\"target_pallet_id\":{\"pattern\":\"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$\",\"type\":\"string\"}},\"required\":[\"idempotency_key\",\"source_pallet_id\",\"target_pallet_id\",\"expected_row_version\",\"occurred_at\"],\"type\":\"object\"}},\"required\":[\"request_id\",\"value\"],\"type\":\"object\"},\"maxItems\":100,\"minItems\":1,\"type\":\"array\"}",
+        "{\"items\":{\"additionalProperties\":false,\"properties\":{\"request_id\":{\"minLength\":1,\"type\":\"string\"},\"value\":{\"additionalProperties\":false,\"properties\":{\"expected_from_row_version\":{\"type\":\"integer\"},\"expected_to_row_version\":{\"type\":\"integer\"},\"from_inventory_id\":{\"format\":\"uuid\",\"pattern\":\"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$\",\"type\":\"string\"},\"idempotency_key\":{\"minLength\":1,\"type\":\"string\"},\"occurred_at\":{\"format\":\"date-time\",\"type\":\"string\"},\"to_inventory_id\":{\"format\":\"uuid\",\"pattern\":\"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$\",\"type\":\"string\"}},\"required\":[\"idempotency_key\",\"from_inventory_id\",\"to_inventory_id\",\"expected_from_row_version\",\"expected_to_row_version\",\"occurred_at\"],\"type\":\"object\"}},\"required\":[\"request_id\",\"value\"],\"type\":\"object\"},\"maxItems\":100,\"minItems\":1,\"type\":\"array\"}",
     ),
     response: submission::ResponseContract {
         schema: Some("{\"type\":\"array\"}"),
@@ -191,7 +255,7 @@ pub static MERGE_SPEC: screen::ScreenSpec = screen::ScreenSpec {
                 sources: &["envelope_count", "malformed_input"],
             },
             submission::ErrorCase {
-                literal: "pallet_not_found",
+                literal: "not_found",
                 required: &["field", "id"],
                 sources: &["transaction_invariant"],
             },
@@ -220,7 +284,10 @@ pub static MERGE_SPEC: screen::ScreenSpec = screen::ScreenSpec {
     fresh_only: false,
     record: None,
     revision: None,
-    revision_inputs: &["value.expected_row_version"],
+    revision_inputs: &[
+        "value.expected_from_row_version",
+        "value.expected_to_row_version",
+    ],
     requires_composition: true,
     supplied: &[
         screen::SuppliedField {
@@ -250,7 +317,7 @@ pub static MOVE_SPEC: screen::ScreenSpec = screen::ScreenSpec {
     kind: "command",
     input: crate::inventory::INVENTORY_MOVE_INPUT_SCHEMA,
     input_schema: Some(
-        "{\"items\":{\"additionalProperties\":false,\"properties\":{\"request_id\":{\"minLength\":1,\"type\":\"string\"},\"value\":{\"additionalProperties\":false,\"properties\":{\"expected_row_version\":{\"type\":\"integer\"},\"idempotency_key\":{\"minLength\":1,\"type\":\"string\"},\"occurred_at\":{\"format\":\"date-time\",\"type\":\"string\"},\"pallet_id\":{\"pattern\":\"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$\",\"type\":\"string\"},\"to_location_id\":{\"pattern\":\"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$\",\"type\":\"string\"}},\"required\":[\"idempotency_key\",\"pallet_id\",\"to_location_id\",\"expected_row_version\",\"occurred_at\"],\"type\":\"object\"}},\"required\":[\"request_id\",\"value\"],\"type\":\"object\"},\"maxItems\":100,\"minItems\":1,\"type\":\"array\"}",
+        "{\"items\":{\"additionalProperties\":false,\"properties\":{\"request_id\":{\"minLength\":1,\"type\":\"string\"},\"value\":{\"additionalProperties\":false,\"properties\":{\"expected_row_version\":{\"type\":\"integer\"},\"idempotency_key\":{\"minLength\":1,\"type\":\"string\"},\"inventory_id\":{\"format\":\"uuid\",\"pattern\":\"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$\",\"type\":\"string\"},\"occurred_at\":{\"format\":\"date-time\",\"type\":\"string\"},\"to_location_id\":{\"format\":\"uuid\",\"pattern\":\"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$\",\"type\":\"string\"},\"to_packaging_id\":{\"format\":\"uuid\",\"pattern\":\"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$\",\"type\":\"string\"}},\"required\":[\"idempotency_key\",\"inventory_id\",\"to_packaging_id\",\"to_location_id\",\"expected_row_version\",\"occurred_at\"],\"type\":\"object\"}},\"required\":[\"request_id\",\"value\"],\"type\":\"object\"},\"maxItems\":100,\"minItems\":1,\"type\":\"array\"}",
     ),
     response: submission::ResponseContract {
         schema: Some("{\"type\":\"array\"}"),
@@ -279,12 +346,7 @@ pub static MOVE_SPEC: screen::ScreenSpec = screen::ScreenSpec {
                 sources: &["envelope_count", "malformed_input"],
             },
             submission::ErrorCase {
-                literal: "location_not_found",
-                required: &["field", "id"],
-                sources: &["transaction_invariant"],
-            },
-            submission::ErrorCase {
-                literal: "pallet_not_found",
+                literal: "not_found",
                 required: &["field", "id"],
                 sources: &["transaction_invariant"],
             },
@@ -336,6 +398,70 @@ pub fn r#move(binding: submission::SessionBinding) -> screen::Screen {
     screen::Screen::new(&MOVE_SPEC, binding)
 }
 
+pub static QUERY_SPEC: screen::ScreenSpec = screen::ScreenSpec {
+    model: "inventory",
+    name: "query",
+    operation: "wamn-wms:inventory/query@1.0.0",
+    kind: "query",
+    input: crate::inventory::INVENTORY_QUERY_INPUT_SCHEMA,
+    input_schema: Some(
+        "{\"items\":{\"additionalProperties\":false,\"properties\":{\"cursor\":{\"minLength\":1,\"type\":\"string\"},\"limit\":{\"maximum\":100,\"minimum\":1,\"type\":\"integer\"}},\"type\":\"object\"},\"maxItems\":100,\"minItems\":1,\"type\":\"array\"}",
+    ),
+    response: submission::ResponseContract {
+        schema: Some("{\"type\":\"array\"}"),
+        partial_schema: None,
+        fields: crate::inventory::INVENTORY_QUERY_RESULT_SCHEMA,
+        result_class: Some("page"),
+        errors: &[
+            submission::ErrorCase {
+                literal: "internal_error",
+                required: &[],
+                sources: &["query_error", "row_limit_exceeded"],
+            },
+            submission::ErrorCase {
+                literal: "invalid_input",
+                required: &["field"],
+                sources: &[],
+            },
+            submission::ErrorCase {
+                literal: "permission_denied",
+                required: &["operation"],
+                sources: &["permission_denied"],
+            },
+            submission::ErrorCase {
+                literal: "retry",
+                required: &[],
+                sources: &["connection_unavailable", "serialization_failure"],
+            },
+            submission::ErrorCase {
+                literal: "timeout",
+                required: &[],
+                sources: &["statement_timeout"],
+            },
+        ],
+        kind: "query",
+        transaction: Some("implicit"),
+        direct: true,
+        replay: submission::Replay::Unknown,
+    },
+    route: Some(crate::inventory::query_route),
+    fresh_only: false,
+    record: Some(screen::RecordLink {
+        relation: "wms.inventory",
+        key_field: "id",
+        key_input: None,
+    }),
+    revision: None,
+    revision_inputs: &[],
+    requires_composition: false,
+    supplied: &[],
+};
+
+#[must_use]
+pub fn query(binding: submission::SessionBinding) -> screen::Screen {
+    screen::Screen::new(&QUERY_SPEC, binding)
+}
+
 pub static SPLIT_SPEC: screen::ScreenSpec = screen::ScreenSpec {
     model: "inventory",
     name: "split",
@@ -343,7 +469,7 @@ pub static SPLIT_SPEC: screen::ScreenSpec = screen::ScreenSpec {
     kind: "command",
     input: crate::inventory::INVENTORY_SPLIT_INPUT_SCHEMA,
     input_schema: Some(
-        "{\"items\":{\"additionalProperties\":false,\"properties\":{\"request_id\":{\"minLength\":1,\"type\":\"string\"},\"value\":{\"additionalProperties\":false,\"properties\":{\"expected_row_version\":{\"type\":\"integer\"},\"idempotency_key\":{\"minLength\":1,\"type\":\"string\"},\"new_pallet_code\":{\"minLength\":1,\"type\":\"string\"},\"occurred_at\":{\"format\":\"date-time\",\"type\":\"string\"},\"product_id\":{\"pattern\":\"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$\",\"type\":\"string\"},\"quantity\":{\"pattern\":\"^[0-9]+(\\\\.[0-9]+)?$\",\"type\":\"string\"},\"source_pallet_id\":{\"pattern\":\"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$\",\"type\":\"string\"},\"status\":{\"enum\":[\"available\",\"held\"],\"type\":\"string\"},\"to_location_id\":{\"pattern\":\"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$\",\"type\":\"string\"}},\"required\":[\"idempotency_key\",\"source_pallet_id\",\"product_id\",\"status\",\"quantity\",\"new_pallet_code\",\"to_location_id\",\"expected_row_version\",\"occurred_at\"],\"type\":\"object\"}},\"required\":[\"request_id\",\"value\"],\"type\":\"object\"},\"maxItems\":100,\"minItems\":1,\"type\":\"array\"}",
+        "{\"items\":{\"additionalProperties\":false,\"properties\":{\"request_id\":{\"minLength\":1,\"type\":\"string\"},\"value\":{\"additionalProperties\":false,\"properties\":{\"expected_row_version\":{\"type\":\"integer\"},\"from_inventory_id\":{\"format\":\"uuid\",\"pattern\":\"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$\",\"type\":\"string\"},\"idempotency_key\":{\"minLength\":1,\"type\":\"string\"},\"occurred_at\":{\"format\":\"date-time\",\"type\":\"string\"},\"quantity\":{\"pattern\":\"^[0-9]+(\\\\.[0-9]+)?$\",\"type\":\"string\"},\"to_location_id\":{\"format\":\"uuid\",\"pattern\":\"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$\",\"type\":\"string\"},\"to_packaging_id\":{\"format\":\"uuid\",\"pattern\":\"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$\",\"type\":\"string\"}},\"required\":[\"idempotency_key\",\"from_inventory_id\",\"quantity\",\"to_packaging_id\",\"to_location_id\",\"expected_row_version\",\"occurred_at\"],\"type\":\"object\"}},\"required\":[\"request_id\",\"value\"],\"type\":\"object\"},\"maxItems\":100,\"minItems\":1,\"type\":\"array\"}",
     ),
     response: submission::ResponseContract {
         schema: Some("{\"type\":\"array\"}"),
@@ -377,12 +503,7 @@ pub static SPLIT_SPEC: screen::ScreenSpec = screen::ScreenSpec {
                 sources: &["envelope_count", "malformed_input"],
             },
             submission::ErrorCase {
-                literal: "location_not_found",
-                required: &["field", "id"],
-                sources: &["transaction_invariant"],
-            },
-            submission::ErrorCase {
-                literal: "pallet_not_found",
+                literal: "not_found",
                 required: &["field", "id"],
                 sources: &["transaction_invariant"],
             },
@@ -390,11 +511,6 @@ pub static SPLIT_SPEC: screen::ScreenSpec = screen::ScreenSpec {
                 literal: "permission_denied",
                 required: &["operation"],
                 sources: &["permission_denied"],
-            },
-            submission::ErrorCase {
-                literal: "quantity_not_found",
-                required: &["field", "id"],
-                sources: &["transaction_invariant"],
             },
             submission::ErrorCase {
                 literal: "retry",

@@ -1,6 +1,6 @@
 use wamn_wms_data_access::product;
 
-use crate::pallet::detail;
+use crate::detail;
 
 mod get {
     use super::{detail, product};

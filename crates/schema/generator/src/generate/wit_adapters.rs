@@ -30,7 +30,8 @@ pub(super) fn emit_row_adapter<'a>(
         } else {
             value.replace("value", &format!("row.{field}"))
         };
-        writeln!(source, "            {field}: {value},").expect("writing to a String cannot fail");
+        writeln!(source, "            {}: {value},", wit_rust_member(name))
+            .expect("writing to a String cannot fail");
     }
     source.push_str("        }\n    }};\n}\n#[allow(unused_imports)]\npub(crate) use row;\n");
     source
@@ -211,4 +212,25 @@ macro_rules! export_operation {{
 pub(crate) use export_operation;
 "#
     )
+}
+
+/// WIT's Rust binding suffixes escaped keywords; SQL rows use raw identifiers.
+pub(super) fn wit_rust_member(name: &str) -> String {
+    let member = rust_identifier(name).expect("validated field has a Rust name");
+    match member.strip_prefix("r#") {
+        Some(keyword) => format!("{keyword}_"),
+        None => member,
+    }
+}
+
+#[cfg(test)]
+mod keyword_tests {
+    use super::*;
+
+    #[test]
+    fn type_crosses_the_sql_to_wit_boundary_without_changing_its_wire_name() {
+        assert_eq!(wit_rust_member("type"), "type_");
+        let source = emit_row_adapter([("type", ColumnType::Text, false)]);
+        assert!(source.contains("type_: row.r#type,"));
+    }
 }

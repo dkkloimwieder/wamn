@@ -1,0 +1,41 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO inventory_split_command (idempotency_key, canonical_command) VALUES ($1, $2) ON CONFLICT (idempotency_key) DO NOTHING RETURNING operation_id, new_inventory_id;\n",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "operation_id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "inventory_split_command",
+            "name": "operation_id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "new_inventory_id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "inventory_split_command",
+            "name": "new_inventory_id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Bytea"
+      ]
+    },
+    "nullable": [
+      false,
+      false
+    ]
+  },
+  "hash": "284545cbbfd286d9d24de92cc6fbd9a824a489800b392ee70f67f4d020583255"
+}

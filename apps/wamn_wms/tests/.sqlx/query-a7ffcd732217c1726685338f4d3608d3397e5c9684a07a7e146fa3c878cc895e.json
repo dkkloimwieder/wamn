@@ -1,0 +1,31 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE inventory_adjust_command SET result = $4 WHERE idempotency_key = $1 AND canonical_command = $2 AND operation_id = $3 AND result IS NULL RETURNING result;\n",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "result",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "inventory_adjust_command",
+            "name": "result"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Bytea",
+        "Uuid",
+        "Text"
+      ]
+    },
+    "nullable": [
+      true
+    ]
+  },
+  "hash": "a7ffcd732217c1726685338f4d3608d3397e5c9684a07a7e146fa3c878cc895e"
+}

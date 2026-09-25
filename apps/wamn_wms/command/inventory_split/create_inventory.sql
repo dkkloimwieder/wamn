@@ -1,0 +1,1 @@
+INSERT INTO inventory (id, product_id, packaging_id, location_id, quantity, disposition, lifecycle) VALUES ($1, $2, $3, $4, $5, $6, 'open') RETURNING id, product_id, packaging_id, location_id, quantity, disposition, lifecycle, row_version;

@@ -206,7 +206,6 @@ export function SupplierQueryTable(props: SupplierQueryTableProps) {
     const request = {
       ...controls(),
       ...props.fixed,
-      requestId: newRequestId(),
     } as SupplierQueryRequest;
     const sent = cursor === null ? request : (writeMember(request, ["cursor"], cursor) as SupplierQueryRequest);
     const outcome = await query(props.transport, [sent]);

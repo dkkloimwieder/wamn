@@ -72,7 +72,10 @@ async fn operations_and_replay() -> anyhow::Result<()> {
     );
     crate::wms_runtime_live::assert_contention_and_replay(&route, &runtime, initial_revision)
         .await?;
+    crate::wms_runtime_live::assert_history_failure_rolls_back(&route, &runtime, &admin).await?;
     crate::wms_runtime_live::assert_remaining_operations(&route, &runtime).await?;
+    crate::wms_runtime_live::assert_inventory_refusals_and_held_split(&route, &runtime, &admin)
+        .await?;
     drop(admin);
     connection.abort();
     application.shutdown().await?;

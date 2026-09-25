@@ -1,0 +1,64 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT product_id, location_id, disposition, sum(quantity) AS quantity, count(DISTINCT packaging_id)::integer AS packaging_count FROM inventory WHERE lifecycle = 'open' GROUP BY product_id, location_id, disposition ORDER BY product_id, location_id, disposition;\n",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "product_id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "inventory",
+            "name": "product_id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "location_id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "inventory",
+            "name": "location_id"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "disposition",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "inventory",
+            "name": "disposition"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "quantity",
+        "type_info": "Numeric",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 4,
+        "name": "packaging_count",
+        "type_info": "Int4",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      null,
+      null
+    ]
+  },
+  "hash": "d69f4ccb82c417503e4f33b6e11bf78bbcded15fb8ab5342c04b880fcec24304"
+}

@@ -25,7 +25,7 @@ use core::fmt::Write as _;
 use serde_json::Value;
 
 /// Every template this crate renders, in wire form.
-pub const TEMPLATE_IDS: [&str; 3] = ["pallet", "location", "product"];
+pub const TEMPLATE_IDS: [&str; 3] = ["inventory", "location", "product"];
 
 /// Print width, label length and media darkness, emitted by every template.
 ///
@@ -116,10 +116,10 @@ impl RenderErrorKind {
 /// non-empty string free of ZPL control characters.
 pub fn render(template_id: &str, fields: &Value) -> Result<String, RenderError> {
     let spec = match template_id {
-        "pallet" => TemplateSpec {
-            title: "PALLET",
-            barcode: "pallet_id",
-            lines: &["pallet_id", "location_id"],
+        "inventory" => TemplateSpec {
+            title: "INVENTORY",
+            barcode: "inventory_id",
+            lines: &["inventory_id", "location_id"],
         },
         "location" => TemplateSpec {
             title: "LOCATION",
@@ -181,7 +181,7 @@ impl TemplateSpec {
 /// The human label printed beside a field's value.
 fn label_of(name: &str) -> &'static str {
     match name {
-        "pallet_id" => "Pallet",
+        "inventory_id" => "Inventory",
         "location_id" => "Location",
         "product_id" => "SKU",
         "description" => "Desc",

@@ -12,12 +12,6 @@ pub enum AccessErrorKind {
     InvalidInput,
     /// A model read named a row that does not exist.
     NotFound,
-    /// The named pallet does not exist, or is consumed and so not live stock.
-    PalletNotFound,
-    /// The destination location does not exist.
-    LocationNotFound,
-    /// The pallet holds no quantity row for that product and status.
-    QuantityNotFound,
     /// The quantity row cannot spare what was asked and still hold stock.
     InsufficientQuantity,
     /// The caller wrote against a revision the row no longer carries.
@@ -47,9 +41,6 @@ impl AccessErrorKind {
         match self {
             Self::InvalidInput => "invalid_input",
             Self::NotFound => "not_found",
-            Self::PalletNotFound => "pallet_not_found",
-            Self::LocationNotFound => "location_not_found",
-            Self::QuantityNotFound => "quantity_not_found",
             Self::InsufficientQuantity => "insufficient_quantity",
             Self::ConcurrencyConflict => "concurrency_conflict",
             Self::IdempotencyConflict => "idempotency_conflict",
@@ -114,16 +105,6 @@ impl AccessError {
                 "expected_row_version": expected,
                 "observed_row_version": observed,
             }),
-        )
-    }
-
-    /// A split asking for more than the row can spare, carrying what it holds
-    /// so the caller can ask again for less rather than guess.
-    #[must_use]
-    pub fn insufficient(field: &str, observed: &str) -> Self {
-        Self::new(
-            AccessErrorKind::InsufficientQuantity,
-            serde_json::json!({ "field": field, "observed": observed }),
         )
     }
 

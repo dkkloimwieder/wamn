@@ -62,9 +62,9 @@ pub(super) async fn hold(work: &Path, enabled: bool) -> anyhow::Result<()> {
     let duration = Duration::try_from_secs_f64(seconds)?;
     if enabled {
         eprintln!(
-            "WMS browser route: http://127.0.0.1:8080/. The private caller token is in {}. Use /pallet/get to read pallet {} before sending /inventory/move with its current row_version. The environment remains available for {seconds} seconds or until interrupted.",
+            "WMS browser route: http://127.0.0.1:8080/. The private caller token is in {}. Use /inventory/get to read inventory {} before sending /inventory/move with its current row_version. The environment remains available for {seconds} seconds or until interrupted.",
             work.join("route-caller-pat.json").display(),
-            super::application::PALLET_ID
+            super::application::INVENTORY_ID
         );
     }
     tokio::time::sleep(duration).await;

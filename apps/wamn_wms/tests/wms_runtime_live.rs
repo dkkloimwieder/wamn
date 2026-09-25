@@ -1,16 +1,16 @@
 //! `[WMS-RUNTIME-LIVE]` — the two assertions structure cannot make, over the
 //! local business route or released label route.
 //!
-//! ONE. Two moves of the same pallet, in flight together, yield EXACTLY ONE
+//! ONE. Two moves of the same inventory, in flight together, yield EXACTLY ONE
 //! `concurrency_conflict`. Not at least one: two would mean neither moved.
-//! Not zero: that would mean the lock is not the pallet. And the count can
+//! Not zero: that would mean the lock is not the inventory. And the count can
 //! coincide -- a serialized pair gives the same count as a working lock, and
 //! one request never arriving gives one success and zero conflicts -- so the
 //! two are fired behind one barrier and the SURVIVOR is asserted to have
 //! moved the stock from its own response: `location_id` is the target and
 //! `row_version` advanced once, while the loser observed that exact revision.
 //!
-//! TWO. The winner's exact body replayed returns the same `movement_id` --
+//! TWO. The winner's exact body replayed returns the same `operation_id` --
 //! by construction (command-identity-from-claim), not by an early-return
 //! path.
 //!
@@ -140,8 +140,9 @@ fn move_body(
         "request_id": request_id,
         "value": {
             "idempotency_key": idempotency_key,
-            "pallet_id": runtime.pallet_id,
+            "inventory_id": runtime.inventory_id,
             "to_location_id": runtime.to_location_id,
+            "to_packaging_id": runtime.to_packaging_id,
             "expected_row_version": expected_revision,
             "occurred_at": OCCURRED_AT,
         }
@@ -215,20 +216,20 @@ pub(crate) async fn assert_contention_and_replay(
     let value = &winner["value"];
     anyhow::ensure!(
         value["location_id"] == runtime.to_location_id.as_str(),
-        "the winner's pallet is at the target location: {value}"
+        "the winner's inventory is at the target location: {value}"
     );
     anyhow::ensure!(
         value["row_version"].as_i64() == Some(next_revision),
-        "the winner advanced the pallet's row_version from {initial_revision}: {value}"
+        "the winner advanced the inventory's row_version from {initial_revision}: {value}"
     );
     anyhow::ensure!(
-        value["pallet_id"] == runtime.pallet_id.as_str(),
-        "the winner moved the fixture pallet: {value}"
+        value["inventory_id"] == runtime.inventory_id.as_str(),
+        "the winner moved the fixture inventory: {value}"
     );
-    let movement_id = value["movement_id"]
+    let operation_id = value["operation_id"]
         .as_str()
         .filter(|id| id.len() == 36)
-        .context("the winner carries a movement_id")?
+        .context("the winner carries a operation_id")?
         .to_owned();
     // And the loser lost to THAT version, not to something else.
     anyhow::ensure!(
@@ -245,15 +246,15 @@ pub(crate) async fn assert_contention_and_replay(
     let answer = route.post(&client, "/inventory/move", &replay).await?;
     let replayed = item(&answer, REQUEST_ID_REPLAY)?;
     anyhow::ensure!(
-        replayed["value"]["movement_id"] == movement_id.as_str(),
-        "a replay returns the same movement_id {movement_id}: {replayed}"
+        replayed["value"]["operation_id"] == operation_id.as_str(),
+        "a replay returns the same operation_id {operation_id}: {replayed}"
     );
     anyhow::ensure!(
         replayed["value"]["row_version"].as_i64() == Some(next_revision),
         "a replay returns the original result, not a second move: {replayed}"
     );
 
-    Ok(json!({"movement_id": movement_id}))
+    Ok(json!({"operation_id": operation_id}))
 }
 
 /// Exercise the deployed composed move and require replay to return its exact result.
@@ -269,12 +270,12 @@ pub(crate) async fn assert_label_delivery_and_replay(
     let answer = route.post(&client, "/inventory/move", &body).await?;
     let moved = value(&answer, "label-move")?;
     anyhow::ensure!(
-        moved["pallet_id"] == runtime.pallet_id.as_str()
+        moved["inventory_id"] == runtime.inventory_id.as_str()
             && moved["location_id"] == runtime.to_location_id.as_str()
             && moved["row_version"] == 2,
         "the composed route returns the committed move: {moved}"
     );
-    let movement_id = uuid(&moved["movement_id"])?;
+    let operation_id = uuid(&moved["operation_id"])?;
 
     let mut replay = body;
     replay[0]["request_id"] = json!("label-replay");
@@ -282,9 +283,9 @@ pub(crate) async fn assert_label_delivery_and_replay(
     let replayed = value(&answer, "label-replay")?;
     anyhow::ensure!(
         replayed == moved,
-        "the composed route replay returns the original move {movement_id}: {replayed}"
+        "the composed route replay returns the original move {operation_id}: {replayed}"
     );
-    Ok(json!({"movement_id": movement_id}))
+    Ok(json!({"operation_id": operation_id}))
 }
 
 /// The `value` of the single item answering `request_id`, or the refusal as
@@ -324,13 +325,6 @@ fn refusal<'a>(answer: &'a Value, request_id: &str, code: &str) -> anyhow::Resul
     Ok(&error["detail"])
 }
 
-fn quantity(value: &Value) -> anyhow::Result<f64> {
-    value
-        .as_str()
-        .and_then(|text| text.parse::<f64>().ok())
-        .with_context(|| format!("a numeric crosses the wire as a decimal string: {value}"))
-}
-
 fn revision(value: &Value) -> anyhow::Result<i64> {
     value
         .as_i64()
@@ -349,217 +343,231 @@ pub(crate) async fn assert_remaining_operations(
     route: &Route,
     runtime: &RuntimePhase,
 ) -> anyhow::Result<Value> {
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(60))
-        .build()
-        .context("build the route client")?;
-    let pallet_id = runtime.pallet_id.as_str();
-
-    // WHERE THE FIXTURE STANDS, from the warehouse's own answers rather than
-    // from an assumption about which test ran first: the pallet's revision and
-    // location by get, and its product by the live-stock aggregate.
+    let client = reqwest::Client::new();
     let answer = route
-        .get(&client, "/pallet/get", &json!({"id": pallet_id}))
+        .get(
+            &client,
+            "/inventory/get",
+            &json!({"id":runtime.inventory_id}),
+        )
         .await?;
-    let pallet = read_value(&answer)?;
-    anyhow::ensure!(
-        pallet["status"] == "available",
-        "the fixture pallet is live: {pallet}"
-    );
-    let version = revision(&pallet["row_version"])?;
-    let location = uuid(&pallet["location_id"])?;
-
-    let answer = route
-        .get(&client, "/inventory/aggregate", &json!({}))
-        .await?;
-    let rows = read_value(&answer)?["rows"].clone();
-    let rows = rows.as_array().context("aggregate answers rows")?;
-    anyhow::ensure!(
-        rows.len() == 1 && rows[0]["pallet_count"] == 1 && rows[0]["status"] == "available",
-        "one product on one live pallet: {rows:?}"
-    );
-    anyhow::ensure!(
-        rows[0]["location_id"] == location.as_str(),
-        "at the pallet's location: {rows:?}"
-    );
-    let product_id = uuid(&rows[0]["product_id"])?;
-    let held = quantity(&rows[0]["quantity"])?;
-
-    // ADJUST: count the row to 7. The movement records what was counted and
-    // the pallet's revision moves.
-    let answer = route
-        .post(&client, "/inventory/adjust", &json!([{"request_id": "ops-adjust", "value": {
-            "idempotency_key": "ops-adjust-key", "pallet_id": pallet_id, "product_id": product_id,
-            "status": "available", "quantity": "7", "reason_code": "cycle-count",
-            "expected_row_version": version, "occurred_at": OCCURRED_AT,
-        }}]))
-        .await?;
-    let adjusted = value(&answer, "ops-adjust")?;
-    let adjusted_revision = version + 1;
-    anyhow::ensure!(
-        (quantity(&adjusted["adjusted_quantity"])? - 7.0).abs() < f64::EPSILON
-            && adjusted["row_version"].as_i64() == Some(adjusted_revision)
-            && adjusted["pallet_status"] == "available",
-        "the adjust counted 7 and advanced the revision from {version} (held {held}): {adjusted}"
-    );
-    uuid(&adjusted["movement_id"])?;
-
-    // SPLIT: 3 units onto a new pallet beside the source. The new pallet's id
-    // comes from the claim, so the exact body again yields the SAME id.
-    let split = json!([{"request_id": "ops-split", "value": {
-        "idempotency_key": "ops-split-key", "source_pallet_id": pallet_id, "product_id": product_id,
-        "status": "available", "quantity": "3", "new_pallet_code": "PAL-302",
-        "to_location_id": location, "expected_row_version": version + 1, "occurred_at": OCCURRED_AT,
+    let original = read_value(&answer)?.clone();
+    let version = revision(&original["row_version"])?;
+    let split = json!([{"request_id":"split","value":{
+        "idempotency_key":"split-key","from_inventory_id":runtime.inventory_id,
+        "quantity":"3","to_packaging_id":runtime.to_packaging_id,
+        "to_location_id":runtime.to_location_id,"expected_row_version":version,
+        "occurred_at":OCCURRED_AT
     }}]);
     let answer = route.post(&client, "/inventory/split", &split).await?;
-    let first = value(&answer, "ops-split")?;
-    let split_revision = version + 2;
+    let split_result = value(&answer, "split")?.clone();
+    let child = uuid(&split_result["new_inventory_id"])?;
     anyhow::ensure!(
-        first["row_version"].as_i64() == Some(split_revision)
-            && first["source_status"] == "available",
-        "the split advanced the source: {first}"
+        split_result["quantity"] == "7",
+        "split retains seven units: {answer}"
     );
-    let new_pallet_id = uuid(&first["new_pallet_id"])?;
-    let split_movement_id = uuid(&first["movement_id"])?;
-    let mut replay = split.clone();
-    replay[0]["request_id"] = json!("ops-split-replay");
-    let answer = route.post(&client, "/inventory/split", &replay).await?;
-    let replayed = value(&answer, "ops-split-replay")?;
-    anyhow::ensure!(
-        replayed["new_pallet_id"] == new_pallet_id.as_str()
-            && replayed["movement_id"] == split_movement_id.as_str()
-            && replayed["row_version"].as_i64() == Some(split_revision),
-        "a replayed split returns the same new pallet {new_pallet_id}, not a second one: {replayed}"
-    );
-    // And a split asking for more than the row holds is refused with what it
-    // holds: 4, after 7 less the 3 that left.
-    let answer = route
-        .post(
-            &client,
-            "/inventory/split",
-            &json!([{"request_id": "ops-split-too-much", "value": {
-                "idempotency_key": "ops-split-too-much-key", "source_pallet_id": pallet_id,
-                "product_id": product_id, "status": "available", "quantity": "100",
-                "new_pallet_code": "PAL-303", "to_location_id": location,
-                "expected_row_version": version + 2, "occurred_at": OCCURRED_AT,
-            }}]),
-        )
+    let history = route
+        .get(&client, "/inventory_transaction/query", &json!({}))
         .await?;
-    let detail = refusal(&answer, "ops-split-too-much", "insufficient_quantity")?;
+    let rows = read_value(&history)?["item"]
+        .as_array()
+        .context("transaction page")?;
+    let split_rows: Vec<_> = rows
+        .iter()
+        .filter(|r| r["operation_id"] == split_result["operation_id"])
+        .collect();
     anyhow::ensure!(
-        detail["field"] == "value.quantity" && detail["observed"] == 4,
-        "the refusal names the field and what the row holds: {detail}"
+        split_rows.len() == 2,
+        "split records both identities: {history}"
+    );
+    let new_row = split_rows
+        .iter()
+        .find(|r| r["inventory_id"] == child)
+        .context("child transaction")?;
+    anyhow::ensure!(
+        new_row["from_inventory_id"] == runtime.inventory_id
+            && new_row["to_inventory_id"] == child
+            && new_row["from_quantity"] == "0"
+            && new_row["to_quantity"] == "3"
+            && new_row["from_location_id"].is_null()
+            && new_row["to_location_id"] == runtime.to_location_id,
+        "split retains lineage and explicit locations: {new_row}"
     );
 
-    // MERGE the new pallet back. The source is consumed -- a tombstone, the
-    // platform admits no DELETE -- and the target's revision moves.
-    let answer = route
-        .post(
-            &client,
-            "/inventory/merge",
-            &json!([{"request_id": "ops-merge", "value": {
-                "idempotency_key": "ops-merge-key", "source_pallet_id": new_pallet_id,
-                "target_pallet_id": pallet_id, "expected_row_version": version + 2,
-                "occurred_at": OCCURRED_AT,
-            }}]),
-        )
-        .await?;
-    let merged = value(&answer, "ops-merge")?;
-    let merged_revision = version + 3;
+    let adjust = json!([{"request_id":"adjust","value":{
+        "idempotency_key":"adjust-key","inventory_id":child,"to_quantity":"4.50",
+        "reason":"cycle-count","expected_row_version":1,"occurred_at":OCCURRED_AT
+    }}]);
+    let answer = route.post(&client, "/inventory/adjust", &adjust).await?;
+    let adjusted = value(&answer, "adjust")?.clone();
     anyhow::ensure!(
-        merged["row_version"].as_i64() == Some(merged_revision)
-            && merged["target_status"] == "available"
-            && merged["target_pallet_id"] == pallet_id
-            && merged["source_pallet_id"] == new_pallet_id.as_str(),
-        "the merge advanced the target: {merged}"
+        adjusted["quantity"] == "4.50",
+        "decimal adjustment preserves scale: {answer}"
     );
-    let answer = route
-        .get(&client, "/pallet/get", &json!({"id": new_pallet_id}))
-        .await?;
-    let consumed = read_value(&answer)?;
+    let merge = json!([{"request_id":"merge","value":{
+        "idempotency_key":"merge-key","from_inventory_id":child,"to_inventory_id":runtime.inventory_id,
+        "expected_from_row_version":2,"expected_to_row_version":version+1,"occurred_at":OCCURRED_AT
+    }}]);
+    let answer = route.post(&client, "/inventory/merge", &merge).await?;
+    let merged = value(&answer, "merge")?.clone();
     anyhow::ensure!(
-        consumed["status"] == "consumed",
-        "the merged pallet reads consumed: {consumed}"
+        merged["quantity"] == "11.50",
+        "merge conserves adjusted stock: {answer}"
     );
-    let answer = route
-        .post(
-            &client,
-            "/inventory/merge",
-            &json!([{"request_id": "ops-merge-self", "value": {
-                "idempotency_key": "ops-merge-self-key", "source_pallet_id": pallet_id,
-                "target_pallet_id": pallet_id, "expected_row_version": version + 3,
-                "occurred_at": OCCURRED_AT,
-            }}]),
-        )
+    let history = route
+        .get(&client, "/inventory_transaction/query", &json!({}))
         .await?;
-    let detail = refusal(&answer, "ops-merge-self", "invalid_input")?;
+    let rows = read_value(&history)?["item"]
+        .as_array()
+        .context("transaction page")?;
+    for row in &split_rows {
+        anyhow::ensure!(
+            rows.contains(row),
+            "later commands preserve earlier transaction rows"
+        );
+    }
+    let merge_rows: Vec<_> = rows
+        .iter()
+        .filter(|r| r["operation_id"] == merged["operation_id"])
+        .collect();
     anyhow::ensure!(
-        detail["field"] == "value.target_pallet_id",
-        "a self-merge names its field: {detail}"
+        merge_rows.len() == 2
+            && merge_rows
+                .iter()
+                .all(|r| r["from_inventory_id"] == child
+                    && r["to_inventory_id"] == runtime.inventory_id),
+        "both merge rows preserve source lineage: {history}"
     );
-
-    // LIVE STOCK EXCLUDES THE CONSUMED PALLET: 4 left plus the 3 merged back
-    // is 7, on one pallet, though the consumed one still holds its history.
-    let answer = route
-        .get(&client, "/inventory/aggregate", &json!({}))
-        .await?;
-    let rows = read_value(&answer)?["rows"].clone();
-    let rows = rows.as_array().context("aggregate answers rows")?;
+    let source_row = merge_rows
+        .iter()
+        .find(|r| r["inventory_id"] == child)
+        .context("source transaction")?;
     anyhow::ensure!(
-        rows.len() == 1
-            && (quantity(&rows[0]["quantity"])? - 7.0).abs() < f64::EPSILON
-            && rows[0]["pallet_count"] == 1,
-        "the aggregate counts 7 on one live pallet and not the consumed one: {rows:?}"
+        source_row["to_quantity"] == "0" && source_row["to_lifecycle"] == "closed",
+        "merge closes source: {source_row}"
     );
 
-    // QUERY: two pallets exist. By pallet code descending, one per page, the
-    // new one comes first and the cursor continues to the fixture; the
-    // consumed filter finds exactly the merged one.
-    let sort = json!({"field": "pallet_code", "direction": "descending"});
-    let answer = route
-        .get(&client, "/pallet/query", &json!({"sort": sort, "limit": 1}))
+    for (path, body, expected) in [
+        ("/inventory/split", &split, &split_result),
+        ("/inventory/adjust", &adjust, &adjusted),
+        ("/inventory/merge", &merge, &merged),
+    ] {
+        let answer = route.post(&client, path, body).await?;
+        anyhow::ensure!(
+            &answer[0]["value"] == expected,
+            "replay returns the whole original result: {answer}"
+        );
+    }
+    let mut changed = split.clone();
+    changed[0]["value"]["quantity"] = json!("2");
+    let answer = route.post(&client, "/inventory/split", &changed).await?;
+    refusal(&answer, "split", "idempotency_conflict")?;
+    let closed_move = json!([{"request_id":"closed","value":{
+        "idempotency_key":"closed-key","inventory_id":child,
+        "to_packaging_id":runtime.to_packaging_id,"to_location_id":runtime.to_location_id,
+        "expected_row_version":3,"occurred_at":OCCURRED_AT
+    }}]);
+    let answer = route.post(&client, "/inventory/move", &closed_move).await?;
+    refusal(&answer, "closed", "invalid_input")?;
+    let close = json!([{"request_id":"close","value":{
+        "idempotency_key":"close-nonempty","packaging_id":runtime.to_packaging_id,"expected_row_version":1
+    }}]);
+    let answer = route.post(&client, "/packaging/close", &close).await?;
+    refusal(&answer, "close", "invalid_input")?;
+    let history_after = route
+        .get(&client, "/inventory_transaction/query", &json!({}))
         .await?;
-    let page = read_value(&answer)?;
     anyhow::ensure!(
-        page["item"]
-            .as_array()
-            .is_some_and(|items| items.len() == 1)
-            && page["item"][0]["id"] == new_pallet_id.as_str(),
-        "the first page holds the new pallet: {page}"
-    );
-    let cursor = page["next_cursor"]
-        .as_str()
-        .with_context(|| format!("a second page exists, so the first carries a cursor: {page}"))?
-        .to_owned();
-    let answer = route
-        .get(
-            &client,
-            "/pallet/query",
-            &json!({"sort": sort, "limit": 1, "cursor": cursor}),
-        )
-        .await?;
-    let page = read_value(&answer)?;
-    anyhow::ensure!(
-        page["item"][0]["id"] == pallet_id && page["next_cursor"].is_null(),
-        "the second page holds the fixture pallet and ends: {page}"
+        history_after == history,
+        "replay and refusals append no history"
     );
     let answer = route
         .get(
             &client,
-            "/pallet/query",
-            &json!({"filter": {"status": ["consumed"]}}),
+            "/inventory/get",
+            &json!({"id":runtime.inventory_id}),
         )
         .await?;
-    let page = read_value(&answer)?;
     anyhow::ensure!(
-        page["item"]
-            .as_array()
-            .is_some_and(|items| items.len() == 1)
-            && page["item"][0]["id"] == new_pallet_id.as_str(),
-        "the consumed filter finds exactly the merged pallet: {page}"
+        read_value(&answer)?["quantity"] == "11.50",
+        "refusals and replay leave inventory unchanged"
     );
+    let close_empty = json!([{"request_id":"close-empty","value":{
+        "idempotency_key":"close-empty-key","packaging_id":crate::business_fixture::PACKAGING_A_ID,"expected_row_version":1
+    }}]);
+    let answer = route
+        .post(&client, "/packaging/close", &close_empty)
+        .await?;
+    let closed = value(&answer, "close-empty")?.clone();
+    anyhow::ensure!(closed["lifecycle"] == "closed", "empty packaging closes");
+    let replay = route
+        .post(&client, "/packaging/close", &close_empty)
+        .await?;
+    anyhow::ensure!(
+        replay[0]["value"] == closed,
+        "closure replay preserves result"
+    );
+    let create = json!([{"request_id":"create-packaging","value":{
+        "idempotency_key":"create-packaging-key","type":"tote","code":"REPLAY-TOTE",
+        "location_id":runtime.to_location_id
+    }}]);
+    let answer = route.post(&client, "/packaging/create", &create).await?;
+    let created = value(&answer, "create-packaging")?.clone();
+    anyhow::ensure!(
+        created["type"] == "tote",
+        "packaging type crosses the contract"
+    );
+    let close_created = json!([{"request_id":"close-created","value":{
+        "idempotency_key":"close-created-key","packaging_id":created["packaging_id"],
+        "expected_row_version":1
+    }}]);
+    let answer = route
+        .post(&client, "/packaging/close", &close_created)
+        .await?;
+    anyhow::ensure!(value(&answer, "close-created")?["lifecycle"] == "closed");
+    let replay = route.post(&client, "/packaging/create", &create).await?;
+    anyhow::ensure!(
+        value(&replay, "create-packaging")? == &created,
+        "creation replay returns its original open packaging result"
+    );
+    Ok(json!({"split_inventory_id":child}))
+}
 
-    Ok(json!({"split_pallet_id": new_pallet_id}))
+/// Force the second split history insert to fail after both inventory writes.
+pub(crate) async fn assert_history_failure_rolls_back(
+    route: &Route,
+    runtime: &RuntimePhase,
+    admin: &tokio_postgres::Client,
+) -> anyhow::Result<()> {
+    let client = reqwest::Client::new();
+    let answer = route
+        .get(
+            &client,
+            "/inventory/get",
+            &json!({"id":runtime.inventory_id}),
+        )
+        .await?;
+    let current = read_value(&answer)?;
+    let snapshot = "SELECT jsonb_build_object('inventory', (SELECT jsonb_agg(to_jsonb(i) ORDER BY id) FROM wms.inventory i), 'history', (SELECT jsonb_agg(to_jsonb(t) ORDER BY id) FROM wms.inventory_transaction t), 'claims', (SELECT jsonb_agg(to_jsonb(c) ORDER BY idempotency_key) FROM wms.inventory_split_command c))";
+    let from: Value = admin.query_one(snapshot, &[]).await?.get(0);
+    admin.batch_execute("ALTER TABLE wms.inventory_transaction ADD CONSTRAINT test_reject_child CHECK (from_quantity <> 0) NOT VALID").await?;
+    let body = json!([{"request_id":"fail-history","value":{
+        "idempotency_key":"fail-history-key","from_inventory_id":runtime.inventory_id,
+        "quantity":"1","to_packaging_id":runtime.to_packaging_id,"to_location_id":runtime.to_location_id,
+        "expected_row_version":current["row_version"],"occurred_at":OCCURRED_AT
+    }}]);
+    let attempted = route.post(&client, "/inventory/split", &body).await;
+    admin
+        .batch_execute("ALTER TABLE wms.inventory_transaction DROP CONSTRAINT test_reject_child")
+        .await?;
+    let answer = attempted?;
+    refusal(&answer, "fail-history", "internal_error")?;
+    let to: Value = admin.query_one(snapshot, &[]).await?.get(0);
+    anyhow::ensure!(
+        from == to,
+        "failed second history insert rolls back inventory, first history row, and claim: {to}"
+    );
+    Ok(())
 }
 
 pub(crate) async fn assert_committed_move_after_label_failure(
@@ -575,7 +583,11 @@ pub(crate) async fn assert_committed_move_after_label_failure(
         .build()
         .context("build the route client")?;
     let before = route
-        .get(&client, "/pallet/get", &json!({"id":runtime.pallet_id}))
+        .get(
+            &client,
+            "/inventory/get",
+            &json!({"id":runtime.inventory_id}),
+        )
         .await?;
     let before = read_value(&before)?;
     let revision = revision(&before["row_version"])?;
@@ -587,8 +599,9 @@ pub(crate) async fn assert_committed_move_after_label_failure(
     let request_id = format!("partial-{key}");
     let body = json!([{"request_id":request_id,"value":{
         "idempotency_key":key,
-        "pallet_id":runtime.pallet_id,
+        "inventory_id":runtime.inventory_id,
         "to_location_id":runtime.to_location_id,
+        "to_packaging_id":runtime.to_packaging_id,
         "expected_row_version":revision,
         "occurred_at":OCCURRED_AT
     }}]);
@@ -618,14 +631,13 @@ pub(crate) async fn assert_committed_move_after_label_failure(
             .is_some_and(|item| item.len() == 2 && item.contains_key("value")),
         "the committed envelope has only request_id and value: {committed}"
     );
-    let movement_id = uuid(&committed["value"]["movement_id"])?;
-    uuid::Uuid::parse_str(&movement_id).context("the committed movement identity is a UUID")?;
+    let operation_id = uuid(&committed["value"]["operation_id"])?;
+    uuid::Uuid::parse_str(&operation_id).context("the committed movement identity is a UUID")?;
     let expected = json!({
-        "movement_id":movement_id,
-        "pallet_id":runtime.pallet_id,
-        "location_id":runtime.to_location_id,
-        "pallet_status":before["status"],
-        "row_version":revision+1
+        "operation_id":operation_id,"inventory_id":runtime.inventory_id,
+        "product_id":before["product_id"],"packaging_id":runtime.to_packaging_id,
+        "location_id":runtime.to_location_id,"quantity":before["quantity"],
+        "disposition":before["disposition"],"lifecycle":before["lifecycle"],"row_version":revision+1
     });
     anyhow::ensure!(
         committed["value"] == expected,
@@ -661,36 +673,40 @@ pub(crate) async fn assert_committed_move_after_label_failure(
         "the store failure carries its nonempty message: {failure:?}"
     );
     let after = route
-        .get(&client, "/pallet/get", &json!({"id":runtime.pallet_id}))
+        .get(
+            &client,
+            "/inventory/get",
+            &json!({"id":runtime.inventory_id}),
+        )
         .await?;
     let after = read_value(&after)?;
     anyhow::ensure!(
         after["location_id"] == expected["location_id"]
             && after["row_version"] == expected["row_version"]
-            && after["status"] == expected["pallet_status"],
+            && after["lifecycle"] == expected["lifecycle"],
         "the later read shows the movement stayed committed: {after}"
     );
     Ok((
         http,
         json!({
-            "request_id":request_id,"idempotency_key":key,"movement_id":movement_id,
-            "pallet_id":runtime.pallet_id,"location_id":runtime.to_location_id,
-            "row_version":revision+1,"pallet_status":before["status"],
+            "request_id":request_id,"idempotency_key":key,"operation_id":operation_id,
+            "inventory_id":runtime.inventory_id,"location_id":runtime.to_location_id,
+            "row_version":revision+1,"lifecycle":before["lifecycle"],
             "command_requests":1,"effect_outcome":failure["effect_outcome"]
         }),
     ))
 }
 
 /// Check the label objects returned by the store's existing client.
-pub(crate) fn assert_single_label(objects: &[Value], movement_id: &str) -> anyhow::Result<()> {
+pub(crate) fn assert_single_label(objects: &[Value], operation_id: &str) -> anyhow::Result<()> {
     let label_count = objects.len();
     let label_key = objects
         .first()
         .and_then(|object| object["key"].as_str())
         .unwrap_or("");
     anyhow::ensure!(
-        label_count == 1 && label_key == movement_id,
-        "expected exactly one label object named {movement_id} under wms/, found {label_count}: {label_key}"
+        label_count == 1 && label_key == operation_id,
+        "expected exactly one label object named {operation_id} under wms/, found {label_count}: {label_key}"
     );
     Ok(())
 }
@@ -700,56 +716,48 @@ pub(crate) async fn assert_committed_rows(
     project: &tokio_postgres::Client,
     expected: &Value,
 ) -> anyhow::Result<Value> {
-    let command_key = expected["idempotency_key"]
+    let key = expected["idempotency_key"]
         .as_str()
-        .context("the result has a command key")?;
-    let pallet = expected["pallet_id"]
-        .as_str()
-        .context("the result has a pallet id")?;
+        .context("command key")?;
     let row = project
         .query_one(
-            r"SELECT json_build_object(
-    'command_count', (SELECT count(*) FROM wms.inventory_move_command WHERE idempotency_key = $1),
-    'movement_count', (SELECT count(*) FROM wms.inventory_movement WHERE idempotency_key = $1),
-    'quantity_count', (SELECT count(*) FROM wms.pallet_quantity WHERE pallet_id = $2::text::uuid),
-    'command', (SELECT row_to_json(command) FROM (
-        SELECT movement_id, pallet_id, pallet_status, row_version
-        FROM wms.inventory_move_command WHERE idempotency_key = $1
-    ) AS command),
-    'movement', (SELECT row_to_json(movement) FROM (
-        SELECT id, idempotency_key, pallet_id, from_location_id, to_location_id, kind
-        FROM wms.inventory_movement WHERE idempotency_key = $1
-    ) AS movement),
-    'pallet', (SELECT row_to_json(pallet) FROM (
-        SELECT id, location_id, status, row_version FROM wms.pallet WHERE id = $2::text::uuid
-    ) AS pallet)
-);",
-            &[&command_key, &pallet],
+            "SELECT result::jsonb FROM wms.inventory_move_command WHERE idempotency_key = $1",
+            &[&key],
         )
-        .await
-        .context("read the committed WMS rows")?;
-    let observed: Value = row.get(0);
-    let expected_row_version = revision(&expected["row_version"])?;
+        .await?;
+    let result: Value = row.get(0);
     anyhow::ensure!(
-        observed["command_count"] == 1
-            && observed["movement_count"] == 1
-            && observed["quantity_count"] == 1
-            && observed["command"]["movement_id"] == expected["movement_id"]
-            && observed["command"]["pallet_id"] == expected["pallet_id"]
-            && observed["command"]["pallet_status"] == expected["pallet_status"]
-            && observed["command"]["row_version"].as_i64() == Some(expected_row_version)
-            && observed["movement"]["idempotency_key"] == expected["idempotency_key"]
-            && observed["movement"]["pallet_id"] == expected["pallet_id"]
-            && observed["movement"]["to_location_id"] == expected["location_id"]
-            && observed["movement"]["from_location_id"] != observed["movement"]["to_location_id"]
-            && observed["movement"]["kind"] == "move"
-            && observed["pallet"]["id"] == expected["pallet_id"]
-            && observed["pallet"]["location_id"] == expected["location_id"]
-            && observed["pallet"]["status"] == expected["pallet_status"]
-            && observed["pallet"]["row_version"].as_i64() == Some(expected_row_version),
-        "the WMS committed rows disagree with the response: {observed}"
+        result["operation_id"] == expected["operation_id"]
+            && result["row_version"] == expected["row_version"],
+        "claim retains original result"
     );
-    Ok(observed)
+    let id = expected["inventory_id"].as_str().context("inventory id")?;
+    let row = project
+        .query_one(
+            "SELECT to_jsonb(i) FROM wms.inventory i WHERE id = $1::text::uuid",
+            &[&id],
+        )
+        .await?;
+    let inventory: Value = row.get(0);
+    anyhow::ensure!(
+        inventory["location_id"] == result["location_id"]
+            && inventory["row_version"] == result["row_version"],
+        "inventory effect committed"
+    );
+    let operation = result["operation_id"].as_str().context("operation id")?;
+    let rows = project.query("SELECT to_jsonb(t) FROM wms.inventory_transaction t WHERE operation_id = $1::text::uuid", &[&operation]).await?;
+    anyhow::ensure!(
+        rows.len() == 1,
+        "one affected inventory has one transaction"
+    );
+    let history: Value = rows[0].get(0);
+    anyhow::ensure!(
+        history["inventory_id"] == id
+            && history["to_location_id"] == result["location_id"]
+            && history["type"] == "move",
+        "history retains explicit inventory transition"
+    );
+    Ok(json!({"command":result,"inventory":inventory,"transaction":history}))
 }
 
 pub(crate) fn write_result(directory: &Path, name: &str, result: &Value) -> anyhow::Result<()> {
@@ -760,6 +768,191 @@ pub(crate) fn write_result(directory: &Path, name: &str, result: &Value) -> anyh
         .with_context(|| format!("write test result {}", path.display()))
 }
 
+async fn business_snapshot(admin: &tokio_postgres::Client) -> anyhow::Result<Value> {
+    Ok(admin.query_one("SELECT jsonb_build_object(
+        'inventory',(SELECT jsonb_agg(to_jsonb(i) ORDER BY id) FROM wms.inventory i),
+        'packaging',(SELECT jsonb_agg(to_jsonb(p) ORDER BY id) FROM wms.packaging p),
+        'history',(SELECT jsonb_agg(to_jsonb(t) ORDER BY id) FROM wms.inventory_transaction t),
+        'move',(SELECT jsonb_agg(to_jsonb(c) ORDER BY idempotency_key) FROM wms.inventory_move_command c),
+        'adjust',(SELECT jsonb_agg(to_jsonb(c) ORDER BY idempotency_key) FROM wms.inventory_adjust_command c),
+        'split',(SELECT jsonb_agg(to_jsonb(c) ORDER BY idempotency_key) FROM wms.inventory_split_command c),
+        'merge',(SELECT jsonb_agg(to_jsonb(c) ORDER BY idempotency_key) FROM wms.inventory_merge_command c),
+        'close',(SELECT jsonb_agg(to_jsonb(c) ORDER BY idempotency_key) FROM wms.packaging_close_command c))", &[]).await?.get(0))
+}
+
+async fn refused_without_change(
+    route: &Route,
+    admin: &tokio_postgres::Client,
+    path: &str,
+    command: Value,
+    code: &str,
+) -> anyhow::Result<()> {
+    let from = business_snapshot(admin).await?;
+    let answer = route
+        .post(
+            &reqwest::Client::new(),
+            path,
+            &json!([{"request_id":"refuse","value":command}]),
+        )
+        .await?;
+    refusal(&answer, "refuse", code)?;
+    anyhow::ensure!(
+        from == business_snapshot(admin).await?,
+        "refused {path} changed business state"
+    );
+    Ok(())
+}
+
+pub(crate) async fn assert_inventory_refusals_and_held_split(
+    route: &Route,
+    runtime: &RuntimePhase,
+    admin: &tokio_postgres::Client,
+) -> anyhow::Result<()> {
+    let client = reqwest::Client::new();
+    let answer = route
+        .get(
+            &client,
+            "/inventory/get",
+            &json!({"id":runtime.inventory_id}),
+        )
+        .await?;
+    let target = read_value(&answer)?;
+    let held = "00000000-0000-0000-0000-000000000302";
+    admin.batch_execute("BEGIN; SELECT set_config('app.user_id','00000000-0000-4000-8000-0000000000f1',true), set_config('app.operation','admin:seed-held-inventory',true)").await?;
+    admin.execute("INSERT INTO wms.inventory(id,product_id,packaging_id,location_id,quantity,disposition) SELECT $1::text::uuid,product_id,packaging_id,location_id,5,'held' FROM wms.inventory WHERE id=$2::text::uuid", &[&held,&runtime.inventory_id]).await?;
+    admin.batch_execute("COMMIT").await?;
+    refused_without_change(route, admin, "/inventory/merge", json!({
+        "idempotency_key":"different-disposition","from_inventory_id":held,"to_inventory_id":runtime.inventory_id,
+        "expected_from_row_version":1,"expected_to_row_version":target["row_version"],"occurred_at":OCCURRED_AT
+    }), "invalid_input").await?;
+    for (packaging, location) in [
+        (
+            runtime.to_packaging_id.as_str(),
+            crate::business_fixture::LOCATION_A_ID,
+        ),
+        (
+            crate::business_fixture::PACKAGING_A_ID,
+            crate::business_fixture::LOCATION_A_ID,
+        ),
+    ] {
+        for path in ["/inventory/move", "/inventory/split"] {
+            let mut body = json!({"idempotency_key":format!("bad-destination-{path}-{packaging}"),
+                "to_packaging_id":packaging,"to_location_id":location,"expected_row_version":1,"occurred_at":OCCURRED_AT});
+            if path.ends_with("move") {
+                body["inventory_id"] = json!(held);
+            } else {
+                body["from_inventory_id"] = json!(held);
+                body["quantity"] = json!("1");
+            }
+            refused_without_change(route, admin, path, body, "invalid_input").await?;
+        }
+    }
+    let split = json!([{"request_id":"held-split","value":{
+        "idempotency_key":"held-split","from_inventory_id":held,"quantity":"2",
+        "to_packaging_id":runtime.to_packaging_id,"to_location_id":runtime.to_location_id,
+        "expected_row_version":1,"occurred_at":OCCURRED_AT}}]);
+    let answer = route.post(&client, "/inventory/split", &split).await?;
+    let original = value(&answer, "held-split")?.clone();
+    let child = uuid(&original["new_inventory_id"])?;
+    let answer = route
+        .get(&client, "/inventory/get", &json!({"id":child}))
+        .await?;
+    anyhow::ensure!(
+        read_value(&answer)?["disposition"] == "held" && read_value(&answer)?["quantity"] == "2",
+        "split preserves held disposition"
+    );
+    let answer = route
+        .post(
+            &client,
+            "/inventory/merge",
+            &json!([{"request_id":"held-merge","value":{
+        "idempotency_key":"held-merge","from_inventory_id":child,"to_inventory_id":held,
+        "expected_from_row_version":1,"expected_to_row_version":2,"occurred_at":OCCURRED_AT}}]),
+        )
+        .await?;
+    anyhow::ensure!(
+        value(&answer, "held-merge")?["quantity"] == "5",
+        "held merge conserves quantity"
+    );
+    let replay = route.post(&client, "/inventory/split", &split).await?;
+    anyhow::ensure!(
+        replay[0]["value"] == original,
+        "held split replay survives child closure"
+    );
+    for path in [
+        "/inventory/move",
+        "/inventory/adjust",
+        "/inventory/split",
+        "/inventory/merge",
+    ] {
+        let mut body =
+            json!({"idempotency_key":format!("closed-{path}"),"occurred_at":OCCURRED_AT});
+        if path.ends_with("merge") {
+            body["from_inventory_id"] = json!(child);
+            body["to_inventory_id"] = json!(held);
+            body["expected_from_row_version"] = json!(2);
+            body["expected_to_row_version"] = json!(3);
+        } else {
+            body["expected_row_version"] = json!(2);
+            body[if path.ends_with("split") {
+                "from_inventory_id"
+            } else {
+                "inventory_id"
+            }] = json!(child);
+            if path.ends_with("adjust") {
+                body["to_quantity"] = json!("1");
+                body["reason"] = json!("cycle-count");
+            } else {
+                body["to_packaging_id"] = json!(runtime.to_packaging_id);
+                body["to_location_id"] = json!(runtime.to_location_id);
+            }
+            if path.ends_with("split") {
+                body["quantity"] = json!("1");
+            }
+        }
+        refused_without_change(route, admin, path, body, "invalid_input").await?;
+    }
+    refused_without_change(
+        route,
+        admin,
+        "/inventory/merge",
+        json!({
+            "idempotency_key":"closed-target","from_inventory_id":held,"to_inventory_id":child,
+            "expected_from_row_version":3,"expected_to_row_version":2,"occurred_at":OCCURRED_AT
+        }),
+        "invalid_input",
+    )
+    .await?;
+    refused_without_change(
+        route,
+        admin,
+        "/inventory/split",
+        json!({
+            "idempotency_key":"split-all","from_inventory_id":held,"quantity":"5",
+            "to_packaging_id":runtime.to_packaging_id,"to_location_id":runtime.to_location_id,
+            "expected_row_version":3,"occurred_at":OCCURRED_AT
+        }),
+        "insufficient_quantity",
+    )
+    .await?;
+    for (quantity, reason) in [("0", "cycle-count"), ("5", " ")] {
+        refused_without_change(route, admin, "/inventory/adjust", json!({
+            "idempotency_key":format!("bad-adjust-{quantity}"),"inventory_id":held,
+            "to_quantity":quantity,"reason":reason,"expected_row_version":3,"occurred_at":OCCURRED_AT
+        }), "invalid_input").await?;
+    }
+    // The app role can read and append history, but cannot rewrite or delete it.
+    let grants=admin.query_one("SELECT has_column_privilege('wamn_app','wms.inventory_transaction','inventory_id','INSERT'), has_column_privilege('wamn_app','wms.inventory_transaction','inventory_id','SELECT'), has_any_column_privilege('wamn_app','wms.inventory_transaction','UPDATE'), has_table_privilege('wamn_app','wms.inventory_transaction','DELETE')",&[]).await?;
+    anyhow::ensure!(
+        grants.get::<_, bool>(0)
+            && grants.get::<_, bool>(1)
+            && !grants.get::<_, bool>(2)
+            && !grants.get::<_, bool>(3),
+        "history grants permit only append and read"
+    );
+    Ok(())
+}
+
 #[cfg(test)]
 mod shape {
     use super::*;
@@ -767,8 +960,9 @@ mod shape {
     fn runtime() -> RuntimePhase {
         RuntimePhase {
             route_endpoint: "http://10.0.0.2:30999".to_owned(),
-            pallet_id: "00000000-0000-0000-0000-000000000301".to_owned(),
+            inventory_id: "00000000-0000-0000-0000-000000000301".to_owned(),
             to_location_id: "00000000-0000-0000-0000-000000000202".to_owned(),
+            to_packaging_id: "00000000-0000-0000-0000-000000000502".to_owned(),
         }
     }
 
@@ -781,7 +975,8 @@ mod shape {
         let value = &items[0]["value"];
         for key in [
             "idempotency_key",
-            "pallet_id",
+            "inventory_id",
+            "to_packaging_id",
             "to_location_id",
             "expected_row_version",
             "occurred_at",
@@ -791,7 +986,7 @@ mod shape {
         assert_eq!(value["expected_row_version"], 1);
         assert_eq!(
             value.as_object().expect("object").len(),
-            5,
+            6,
             "exactly the declared fields, nothing extra"
         );
     }

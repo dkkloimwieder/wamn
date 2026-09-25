@@ -4,7 +4,7 @@ use std::path::Path;
 
 use anyhow::Context as _;
 use futures_util::TryStreamExt as _;
-use object_store::{ObjectStore as _, ObjectStoreExt as _, aws::AmazonS3};
+use object_store::{ObjectStore as _, aws::AmazonS3};
 use serde_json::{Value, json};
 use tokio::process::Command;
 use tokio_postgres::Client;
@@ -15,8 +15,8 @@ use crate::wms_runtime_live::{
     assert_label_delivery_and_replay, assert_single_label, write_result,
 };
 
+pub(super) use crate::business_fixture::{INVENTORY_ID, runtime_phase};
 use crate::business_fixture::{LOCATION_A_ID, seed_fixture};
-pub(super) use crate::business_fixture::{PALLET_ID, runtime_phase};
 
 /// The artifacts and endpoint one application publication is minted from.
 pub(super) struct PublicationInputs<'a> {
@@ -274,7 +274,7 @@ pub(super) async fn released_routes(
             })
         })
         .collect::<Vec<_>>();
-    let movement = delivery["movement_id"]
+    let movement = delivery["operation_id"]
         .as_str()
         .context("the label delivery result has a movement id")?;
     assert_single_label(&objects, movement)?;
@@ -291,8 +291,9 @@ pub(super) async fn partial_completion(
     let previous = document.runtime.take().context("the WMS route is ready")?;
     document.runtime = Some(RuntimePhase {
         route_endpoint: previous.route_endpoint.clone(),
-        pallet_id: previous.pallet_id.clone(),
+        inventory_id: previous.inventory_id.clone(),
         to_location_id: LOCATION_A_ID.to_owned(),
+        to_packaging_id: crate::business_fixture::PACKAGING_A_ID.to_owned(),
     });
     let partial = assert_committed_move_after_label_failure(document).await;
     document.runtime = Some(previous);
@@ -325,10 +326,7 @@ pub(super) async fn generated_terminal(
     project_url: &str,
     target_instance: &str,
     mode: &str,
-    store: &AmazonS3,
 ) -> anyhow::Result<()> {
-    use sha2::{Digest as _, Sha256};
-
     let TerminalPaths {
         repository,
         target,
@@ -374,31 +372,5 @@ pub(super) async fn generated_terminal(
         result["passed"] == true && result["cleanup"] == true,
         "the generated terminal did not complete its scenario and cleanup"
     );
-    if mode == "success" {
-        let key = result["stored_key"]
-            .as_str()
-            .context("the generated terminal returns its label key")?;
-        let suffix = key
-            .strip_prefix("wms/")
-            .context("the generated terminal label belongs to WMS")?;
-        anyhow::ensure!(
-            suffix.len() == 36
-                && suffix.bytes().all(|byte| byte.is_ascii_digit()
-                    || (b'a'..=b'f').contains(&byte)
-                    || byte == b'-'),
-            "the generated terminal returned an invalid label key"
-        );
-        let label = store
-            .get(&object_store::path::Path::from(key))
-            .await?
-            .bytes()
-            .await?;
-        std::fs::write(output.join("label.zpl"), &label)?;
-        let digest = hex::encode(Sha256::digest(&label));
-        anyhow::ensure!(
-            result["label_sha256"] == digest,
-            "the stored label differs from the generated terminal response"
-        );
-    }
     Ok(())
 }

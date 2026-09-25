@@ -1,143 +1,60 @@
-//! `inventory.merge` -- one pallet absorbed into another.
-//!
-//! ```text
-//! canonicalize the body
-//! → find a replay: same key ⇒ return the ORIGINAL result, unchanged
-//! → claim the key, which pre-generates the movement id
-//! → lock BOTH pallets, in id order   (the serialization point)
-//! → compare expected_row_version to the target's
-//! → for each source quantity row: add it to the target's matching row,
-//!   or place a new one, and write a movement
-//! → consume the source (a tombstone: the platform admits no DELETE)
-//! → bump the target's revision
-//! → finalize the claim with the result
-//! ```
-//!
-//! The revision the caller names is the TARGET's: that is the pallet the
-//! command answers with and the one whose stock changes. The source only has
-//! to be live, and once consumed it can never be merged again, so a stale
-//! view of it has nothing to race. Both are locked in id order -- two merges
-//! naming one pair in opposite orders cannot deadlock (`lock_both_pallets.sql`).
-//! Movements are recorded against the source, the pallet the stock left.
-
-use serde::Deserialize;
-use wamn_postgres_statements::{Connection, TimestampTz, Uuid};
-
+//! `inventory.merge` with atomic state, immutable history, and stored replay results.
 use crate::error::{self, AccessError, AccessErrorKind};
 use crate::generated::wamn::inventory_merge as sql;
 use crate::scalar;
+use serde::{Deserialize, Serialize};
+use wamn_postgres_statements::Connection;
 
-/// One envelope item's command body.
 #[derive(Debug, Deserialize)]
 pub struct MergeCommand {
     pub idempotency_key: String,
-    pub source_pallet_id: String,
-    pub target_pallet_id: String,
-    pub expected_row_version: i32,
+    pub from_inventory_id: String,
+    pub to_inventory_id: String,
+    pub expected_from_row_version: i32,
+    pub expected_to_row_version: i32,
     pub occurred_at: String,
 }
 
-/// What one accepted merge answers with.
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct MergeResult {
-    pub movement_id: String,
-    pub source_pallet_id: String,
-    pub target_pallet_id: String,
-    pub target_status: String,
+    pub operation_id: String,
+    pub inventory_id: String,
+    pub product_id: String,
+    pub packaging_id: String,
+    pub location_id: String,
+    pub quantity: String,
+    pub disposition: String,
+    pub lifecycle: String,
     pub row_version: i32,
+    pub from_inventory_id: String,
 }
 
-#[derive(Debug)]
-struct Parsed {
-    source_pallet_id: Uuid,
-    target_pallet_id: Uuid,
-    occurred_at: TimestampTz,
-}
-
-fn parse(command: &MergeCommand) -> Result<Parsed, AccessError> {
-    let parsed = Parsed {
-        source_pallet_id: scalar::uuid("value.source_pallet_id", &command.source_pallet_id)?,
-        target_pallet_id: scalar::uuid("value.target_pallet_id", &command.target_pallet_id)?,
-        occurred_at: scalar::timestamp("value.occurred_at", &command.occurred_at)?,
-    };
-    // A pallet merged into itself is refused here; the claim table's check
-    // constraint would refuse it too, as an opaque internal_error.
-    if parsed.source_pallet_id.0 == parsed.target_pallet_id.0 {
-        return Err(AccessError::field(
-            AccessErrorKind::InvalidInput,
-            "value.target_pallet_id",
-        ));
-    }
-    Ok(parsed)
-}
-
-fn canonical_command(command: &MergeCommand, parsed: &Parsed) -> Vec<u8> {
-    wamn_execution_contract::canonical_json_bytes(&serde_json::json!({
-        "source_pallet_id": parsed.source_pallet_id.0,
-        "target_pallet_id": parsed.target_pallet_id.0,
-        "expected_row_version": command.expected_row_version,
-        "occurred_at": parsed.occurred_at.0,
-    }))
-}
-
-/// Run one command item in exactly one transaction.
+/// Apply one command or return its complete original result.
 ///
 /// # Errors
-///
-/// [`AccessError`] carrying the literal and detail the operation contract
-/// declares for that refusal.
+/// Returns the refusal declared by the operation contract.
 pub async fn execute(command: &MergeCommand) -> Result<MergeResult, AccessError> {
-    let parsed = parse(command)?;
-    let canonical = canonical_command(command, &parsed);
-
+    scalar::text("value.idempotency_key", Some(&command.idempotency_key))?;
+    let from_inventory_id = scalar::uuid("value.from_inventory_id", &command.from_inventory_id)?;
+    let to_inventory_id = scalar::uuid("value.to_inventory_id", &command.to_inventory_id)?;
+    let expected_from_row_version = command.expected_from_row_version;
+    let expected_to_row_version = command.expected_to_row_version;
+    let occurred_at = scalar::timestamp("value.occurred_at", &command.occurred_at)?;
+    let canonical = wamn_execution_contract::canonical_json_bytes(&serde_json::json!({
+        "from_inventory_id": from_inventory_id.0,
+        "to_inventory_id": to_inventory_id.0,
+        "expected_from_row_version": expected_from_row_version,
+        "expected_to_row_version": expected_to_row_version,
+        "occurred_at": occurred_at.0,
+    }));
     let mut connection = Connection::new();
-    let transaction = connection
-        .begin()
-        .await
-        .map_err(|e| error::from_statement(&e))?;
-    run(sql::begin_claim(transaction), command, &canonical, &parsed).await
-}
-
-fn retry() -> AccessError {
-    AccessError::new(AccessErrorKind::Retry, serde_json::json!({}))
-}
-
-fn internal() -> AccessError {
-    AccessError::new(AccessErrorKind::InternalError, serde_json::json!({}))
-}
-
-/// The target row, once BOTH locked rows are found by id and live: a missing
-/// one is the refusal that names it, and a consumed one is not live stock and
-/// refuses the same way.
-fn locked_target(
-    rows: Vec<sql::LockBothPalletsRow>,
-    parsed: &Parsed,
-) -> Result<sql::LockBothPalletsRow, AccessError> {
-    let mut source = None;
-    let mut target = None;
-    for row in rows {
-        if row.id.0 == parsed.source_pallet_id.0 {
-            source = Some(row);
-        } else if row.id.0 == parsed.target_pallet_id.0 {
-            target = Some(row);
-        }
-    }
-    let live = |row: Option<sql::LockBothPalletsRow>, field: &str, id: &Uuid| {
-        row.filter(|row| row.status != scalar::CONSUMED)
-            .ok_or_else(|| AccessError::missing(AccessErrorKind::PalletNotFound, field, &id.0))
-    };
-    live(source, "value.source_pallet_id", &parsed.source_pallet_id)?;
-    live(target, "value.target_pallet_id", &parsed.target_pallet_id)
-}
-
-async fn run(
-    mut transaction: sql::PendingClaim,
-    command: &MergeCommand,
-    canonical: &[u8],
-    parsed: &Parsed,
-) -> Result<MergeResult, AccessError> {
-    let key = command.idempotency_key.clone();
-    if let Some(replay) = sql::find_replay(&mut transaction, key.clone())
+    let mut transaction = sql::begin_claim(
+        connection
+            .begin()
+            .await
+            .map_err(|e| error::from_statement(&e))?,
+    );
+    if let Some(replay) = sql::find_replay(&mut transaction, command.idempotency_key.clone())
         .await
         .map_err(|e| error::from_statement(&e))?
     {
@@ -147,184 +64,159 @@ async fn run(
                 "value.idempotency_key",
             ));
         }
-        let Some(row_version) = replay.row_version else {
-            return Err(retry());
-        };
-        // The target's status was never this command's to change, so the
-        // live row's is the original's.
-        let rows = sql::lock_both_pallets(
-            &mut transaction,
-            replay.source_pallet_id.clone(),
-            replay.target_pallet_id.clone(),
-        )
-        .await
-        .map_err(|e| error::from_statement(&e))?;
-        let target = rows
-            .into_iter()
-            .find(|row| row.id.0 == replay.target_pallet_id.0)
-            .ok_or_else(internal)?;
-        return Ok(MergeResult {
-            movement_id: replay.movement_id.0,
-            source_pallet_id: replay.source_pallet_id.0,
-            target_pallet_id: replay.target_pallet_id.0,
-            target_status: target.status,
-            row_version,
-        });
+        let result = replay.result.ok_or_else(retry)?;
+        return serde_json::from_str(&result).map_err(|_| internal());
     }
-
     let claim = sql::claim_command(
         &mut transaction,
-        key.clone(),
-        canonical.to_vec(),
-        parsed.source_pallet_id.clone(),
-        parsed.target_pallet_id.clone(),
+        command.idempotency_key.clone(),
+        canonical.clone(),
     )
     .await
     .map_err(|e| error::from_statement(&e))?
     .ok_or_else(retry)?;
-
-    // THE SERIALIZATION POINT: both rows, in id order.
-    let rows = sql::lock_both_pallets(
+    if from_inventory_id == to_inventory_id {
+        return Err(invalid("value.to_inventory_id"));
+    }
+    let locked = sql::lock_inventory(
         &mut transaction,
-        parsed.source_pallet_id.clone(),
-        parsed.target_pallet_id.clone(),
+        from_inventory_id.clone(),
+        to_inventory_id.clone(),
     )
     .await
     .map_err(|e| error::from_statement(&e))?;
-    let target = locked_target(rows, parsed)?;
-    if target.row_version != command.expected_row_version {
-        return Err(AccessError::conflict(
-            command.expected_row_version,
-            target.row_version,
-        ));
+    let source = locked
+        .iter()
+        .find(|row| row.id == from_inventory_id)
+        .ok_or_else(|| missing("value.from_inventory_id", &from_inventory_id.0))?;
+    let target = locked
+        .iter()
+        .find(|row| row.id == to_inventory_id)
+        .ok_or_else(|| missing("value.to_inventory_id", &to_inventory_id.0))?;
+    require_open(source, expected_from_row_version)?;
+    require_open(target, expected_to_row_version)?;
+    if source.product_id != target.product_id || source.disposition != target.disposition {
+        return Err(invalid("value.to_inventory_id"));
     }
-
-    // EVERY SOURCE ROW LANDS ON THE TARGET, matched by product and status,
-    // and each is a movement of its own.
-    let quantities = sql::select_source_quantity(&mut transaction, parsed.source_pallet_id.clone())
-        .await
-        .map_err(|e| error::from_statement(&e))?;
-    for quantity in &quantities {
-        let added = sql::add_to_target(
-            &mut transaction,
-            parsed.target_pallet_id.clone(),
-            quantity.product_id.clone(),
-            quantity.status.clone(),
-            quantity.quantity.clone(),
-        )
-        .await
-        .map_err(|e| error::from_statement(&e))?;
-        if added.is_none() {
-            sql::place_on_target(
-                &mut transaction,
-                parsed.target_pallet_id.clone(),
-                quantity.product_id.clone(),
-                quantity.status.clone(),
-                quantity.quantity.clone(),
-            )
-            .await
-            .map_err(|e| error::from_statement(&e))?;
-        }
-        sql::insert_movement(
-            &mut transaction,
-            key.clone(),
-            parsed.source_pallet_id.clone(),
-            quantity.product_id.clone(),
-            quantity.quantity.clone(),
-            parsed.occurred_at.clone(),
-        )
-        .await
-        .map_err(|e| error::from_statement(&e))?;
+    let to_packaging_id = target.packaging_id.clone();
+    let packaging = sql::lock_packaging(
+        &mut transaction,
+        source.packaging_id.clone(),
+        to_packaging_id.clone(),
+    )
+    .await
+    .map_err(|e| error::from_statement(&e))?;
+    let source_packaging = packaging
+        .iter()
+        .find(|row| row.id == source.packaging_id)
+        .ok_or_else(|| missing("value.inventory_id", &source.id.0))?;
+    if source_packaging.lifecycle != "open" || source_packaging.location_id != source.location_id {
+        return Err(invalid("value.inventory_id"));
     }
-
-    sql::consume_source(&mut transaction, parsed.source_pallet_id.clone())
+    let destination = packaging
+        .iter()
+        .find(|row| row.id == to_packaging_id)
+        .ok_or_else(|| missing("value.to_packaging_id", &to_packaging_id.0))?;
+    if destination.lifecycle != "open" {
+        return Err(invalid("value.to_packaging_id"));
+    }
+    if destination.location_id != target.location_id {
+        return Err(invalid("value.to_inventory_id"));
+    }
+    sql::close_source(&mut transaction, from_inventory_id.clone())
         .await
         .map_err(|e| error::from_statement(&e))?;
-    let touched = sql::touch_target(&mut transaction, parsed.target_pallet_id.clone())
-        .await
-        .map_err(|e| error::from_statement(&e))?;
-
+    let result_row = sql::apply(
+        &mut transaction,
+        to_inventory_id.clone(),
+        source.quantity.clone(),
+    )
+    .await
+    .map_err(|e| error::from_statement(&e))?;
+    sql::insert_transaction(
+        &mut transaction,
+        claim.operation_id.clone(),
+        from_inventory_id.clone(),
+        from_inventory_id.clone(),
+        to_inventory_id.clone(),
+        Some(source.product_id.clone()),
+        Some(source.packaging_id.clone()),
+        Some(source.location_id.clone()),
+        source.quantity.clone(),
+        Some(source.disposition.clone()),
+        Some(source.lifecycle.clone()),
+        occurred_at.clone(),
+        None,
+    )
+    .await
+    .map_err(|e| error::from_statement(&e))?;
+    sql::insert_transaction(
+        &mut transaction,
+        claim.operation_id.clone(),
+        to_inventory_id.clone(),
+        from_inventory_id.clone(),
+        to_inventory_id.clone(),
+        Some(target.product_id.clone()),
+        Some(target.packaging_id.clone()),
+        Some(target.location_id.clone()),
+        target.quantity.clone(),
+        Some(target.disposition.clone()),
+        Some(target.lifecycle.clone()),
+        occurred_at.clone(),
+        None,
+    )
+    .await
+    .map_err(|e| error::from_statement(&e))?;
+    let result = MergeResult {
+        operation_id: claim.operation_id.0.clone(),
+        inventory_id: result_row.id.0,
+        product_id: result_row.product_id.0,
+        packaging_id: result_row.packaging_id.0,
+        location_id: result_row.location_id.0,
+        quantity: result_row.quantity.0,
+        disposition: result_row.disposition,
+        lifecycle: result_row.lifecycle,
+        row_version: result_row.row_version,
+        from_inventory_id: from_inventory_id.0,
+    };
+    let stored = serde_json::to_string(&result).map_err(|_| internal())?;
     let finalized = sql::finalize_command(
         transaction,
-        key,
-        canonical.to_vec(),
-        claim.movement_id.clone(),
-        touched.row_version,
+        command.idempotency_key.clone(),
+        canonical,
+        claim.operation_id,
+        stored,
     )
     .await
     .map_err(|e| error::from_statement(&e))?;
-    if finalized.row.row_version.is_none() {
+    if finalized.row.result.is_none() {
         return Err(retry());
     }
-
     finalized
         .commit()
         .await
         .map_err(|e| error::from_statement(&e))?;
-    Ok(MergeResult {
-        movement_id: claim.movement_id.0,
-        source_pallet_id: parsed.source_pallet_id.0.clone(),
-        target_pallet_id: parsed.target_pallet_id.0.clone(),
-        target_status: touched.status,
-        row_version: touched.row_version,
-    })
+    Ok(result)
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    const SOURCE: &str = "00000000-0000-0000-0000-000000000301";
-    const TARGET: &str = "00000000-0000-0000-0000-000000000302";
-
-    fn command(source: &str, target: &str) -> MergeCommand {
-        MergeCommand {
-            idempotency_key: "k".to_owned(),
-            source_pallet_id: source.to_owned(),
-            target_pallet_id: target.to_owned(),
-            expected_row_version: 1,
-            occurred_at: "2026-09-05T00:00:00Z".to_owned(),
-        }
+fn retry() -> AccessError {
+    AccessError::new(AccessErrorKind::Retry, serde_json::json!({}))
+}
+fn internal() -> AccessError {
+    AccessError::new(AccessErrorKind::InternalError, serde_json::json!({}))
+}
+fn missing(field: &str, id: &str) -> AccessError {
+    AccessError::missing(AccessErrorKind::NotFound, field, id)
+}
+fn invalid(field: &str) -> AccessError {
+    AccessError::field(AccessErrorKind::InvalidInput, field)
+}
+fn require_open(row: &sql::LockInventoryRow, expected: i32) -> Result<(), AccessError> {
+    if row.lifecycle != "open" {
+        return Err(invalid("value.inventory_id"));
     }
-
-    fn row(id: &str, status: &str) -> sql::LockBothPalletsRow {
-        sql::LockBothPalletsRow {
-            id: Uuid(id.to_owned()),
-            location_id: Uuid("00000000-0000-0000-0000-000000000201".to_owned()),
-            row_version: 1,
-            status: status.to_owned(),
-        }
+    if row.row_version != expected {
+        return Err(AccessError::conflict(expected, row.row_version));
     }
-
-    #[test]
-    fn a_pallet_merged_into_itself_is_invalid_input() {
-        let error = parse(&command(SOURCE, SOURCE)).unwrap_err();
-        assert_eq!(error.kind(), AccessErrorKind::InvalidInput);
-        assert_eq!(error.detail()["field"], "value.target_pallet_id");
-        assert!(parse(&command(SOURCE, TARGET)).is_ok());
-    }
-
-    /// The lock answers in id order and may answer with fewer rows than
-    /// asked; the pair is found by id, and a consumed pallet is not live.
-    #[test]
-    fn the_locked_pair_is_found_by_id_and_must_be_live() {
-        let parsed = parse(&command(TARGET, SOURCE)).unwrap();
-        let target =
-            locked_target(vec![row(SOURCE, "available"), row(TARGET, "held")], &parsed).unwrap();
-        assert_eq!(target.id.0, SOURCE);
-
-        let parsed = parse(&command(SOURCE, TARGET)).unwrap();
-        let missing = locked_target(vec![row(SOURCE, "available")], &parsed).unwrap_err();
-        assert_eq!(missing.kind(), AccessErrorKind::PalletNotFound);
-        assert_eq!(missing.detail()["field"], "value.target_pallet_id");
-        assert_eq!(missing.detail()["id"], TARGET);
-
-        let consumed = locked_target(
-            vec![row(SOURCE, "consumed"), row(TARGET, "available")],
-            &parsed,
-        )
-        .unwrap_err();
-        assert_eq!(consumed.kind(), AccessErrorKind::PalletNotFound);
-        assert_eq!(consumed.detail()["field"], "value.source_pallet_id");
-    }
+    Ok(())
 }

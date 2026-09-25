@@ -1,9 +1,4 @@
-//! `inventory.aggregate` -- live stock by product, location and status.
-//!
-//! One authored statement (`query/inventory_aggregate.sql`), which excludes
-//! consumed pallets and says why. The result is the bounded list the contract
-//! declares; the input carries nothing but its correlation id.
-
+//! Open inventory totals by product, explicit location, and disposition.
 use wamn_postgres_statements::Connection;
 
 use crate::error::{self, AccessError};

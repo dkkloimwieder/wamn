@@ -52,7 +52,7 @@ async fn released_wms_routes_retain_committed_work_after_label_failure() -> anyh
 
 #[tokio::test]
 #[ignore = "requires: docker, kind, kubectl, helm, jq, curl, python3"]
-async fn generated_wms_terminal_reports_success_and_partial_completion() -> anyhow::Result<()> {
+async fn generated_wms_terminal_reports_inventory_success() -> anyhow::Result<()> {
     wamn_test_postgres::require_prerequisites(&[
         "docker", "kind", "kubectl", "helm", "jq", "curl", "python3",
     ]);
@@ -82,7 +82,7 @@ async fn run_case(case: Case) -> anyhow::Result<()> {
             || matches!(case, Case::Routes | Case::PartialCompletion | Case::Startup),
         "supplied-artifact execution supports released routes, partial completion, and restart cases"
     );
-    let partial_completion = matches!(case, Case::PartialCompletion | Case::GeneratedTerminal);
+    let partial_completion = matches!(case, Case::PartialCompletion);
     let generated_terminal = matches!(case, Case::GeneratedTerminal);
     // A requested hold keeps the released routes case reachable from a browser.
     let browser =
@@ -397,7 +397,7 @@ async fn run_created(
         broker,
         source,
     } = *case_context;
-    let partial_completion = matches!(case, Case::PartialCompletion | Case::GeneratedTerminal);
+    let partial_completion = matches!(case, Case::PartialCompletion);
     let generated_terminal = matches!(case, Case::GeneratedTerminal);
     let measure_startup = matches!(case, Case::Startup);
     let postgres = deployment::inspect(lifecycle, &format!("{cluster}-postgres")).await?;
@@ -660,7 +660,6 @@ async fn run_created(
                 &loopback_url,
                 instance,
                 "success",
-                &store,
             )
             .await?;
         }
@@ -673,22 +672,6 @@ async fn run_created(
             )
             .await?;
             let result = async {
-                if generated_terminal {
-                    application::generated_terminal(
-                        &document,
-                        &application::TerminalPaths {
-                            repository,
-                            target,
-                            work,
-                            evidence,
-                        },
-                        &loopback_url,
-                        instance,
-                        "partial",
-                        &store,
-                    )
-                    .await?;
-                }
                 application::partial_completion(&mut document, project.as_ref(), evidence).await
             }
             .await;

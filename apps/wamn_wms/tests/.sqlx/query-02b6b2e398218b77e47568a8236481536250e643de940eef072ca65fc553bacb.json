@@ -1,0 +1,126 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT\n    model.created_at,\n    model.disposition,\n    model.id,\n    model.lifecycle,\n    model.location_id,\n    model.packaging_id,\n    model.product_id,\n    model.quantity,\n    model.row_version\nFROM inventory AS model\nWHERE\n    ($1::timestamptz IS NULL OR model.created_at > $1::timestamptz\n        OR (model.created_at = $1::timestamptz AND model.id > $2::uuid))\nORDER BY model.created_at ASC, model.id ASC\nLIMIT $3::int8;\n",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "created_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "inventory",
+            "name": "created_at"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "disposition",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "inventory",
+            "name": "disposition"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "inventory",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "lifecycle",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "inventory",
+            "name": "lifecycle"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "location_id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "inventory",
+            "name": "location_id"
+          }
+        }
+      },
+      {
+        "ordinal": 5,
+        "name": "packaging_id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "inventory",
+            "name": "packaging_id"
+          }
+        }
+      },
+      {
+        "ordinal": 6,
+        "name": "product_id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "inventory",
+            "name": "product_id"
+          }
+        }
+      },
+      {
+        "ordinal": 7,
+        "name": "quantity",
+        "type_info": "Numeric",
+        "origin": {
+          "Table": {
+            "table": "inventory",
+            "name": "quantity"
+          }
+        }
+      },
+      {
+        "ordinal": 8,
+        "name": "row_version",
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "inventory",
+            "name": "row_version"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Timestamptz",
+        "Uuid",
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "02b6b2e398218b77e47568a8236481536250e643de940eef072ca65fc553bacb"
+}

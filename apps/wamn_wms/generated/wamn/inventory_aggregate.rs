@@ -6,13 +6,13 @@ use wamn_postgres_statements::Transaction;
 pub struct InventoryAggregateRow {
     pub product_id: wamn_postgres_statements::Uuid,
     pub location_id: wamn_postgres_statements::Uuid,
-    pub status: String,
+    pub disposition: String,
     pub quantity: Option<wamn_postgres_statements::Numeric>,
-    pub pallet_count: Option<i32>,
+    pub packaging_count: Option<i32>,
 }
 
 pub(crate) const INVENTORY_AGGREGATE_DIGEST: &str =
-    "sha256:2cc5ea81ca5065df2d32549a71b23c118f026354cccfd9f30222141c14586db7";
+    "sha256:d69f4ccb82c417503e4f33b6e11bf78bbcded15fb8ab5342c04b880fcec24304";
 
 pub(crate) async fn inventory_aggregate(
     transaction: &mut Transaction,
@@ -22,9 +22,9 @@ pub(crate) async fn inventory_aggregate(
         Ok(InventoryAggregateRow {
             product_id: row.decode("product_id")?,
             location_id: row.decode("location_id")?,
-            status: row.decode("status")?,
+            disposition: row.decode("disposition")?,
             quantity: row.decode("quantity")?,
-            pallet_count: row.decode("pallet_count")?,
+            packaging_count: row.decode("packaging_count")?,
         })
     })
 }

@@ -21,7 +21,7 @@ import { defineConfig, type ProxyOptions } from "vite";
  */
 const PREFIXES = {
   receiving: ["/purchase_order", "/receipt", "/receiving", "/location", "/supplier"],
-  wms: ["/pallet", "/inventory", "/location", "/product", "/pallet_quantity", "/inventory_movement"],
+  wms: ["/packaging", "/inventory", "/location", "/product", "/inventory_transaction"],
 } as const;
 
 /** The application this server demonstrates. Receiving, when the variable is unset. */

@@ -24,7 +24,7 @@ const CONFLICT_CASE: &str = "changed_request_under_a_live_key_refuses";
 
 /// The canonical command fields, spelled the way
 /// `apps/wamn_wms/data/src/inventory_move.rs` spells them.
-const PALLET_ID: Uuid = Uuid::from_u128(0xc1a1_0001);
+const INVENTORY_ID: Uuid = Uuid::from_u128(0xc1a1_0001);
 const TO_LOCATION_ID: Uuid = Uuid::from_u128(0xc1a1_0002);
 const CHANGED_LOCATION_ID: Uuid = Uuid::from_u128(0xc1a1_0003);
 const OCCURRED_AT: &str = "2026-09-05T12:00:00.000000Z";
@@ -43,16 +43,16 @@ impl CommandFixture for MoveFixture {
     fn bind(&self, statement: &str, bind: &str, claim: Option<&Row>) -> Result<BindValue> {
         match (statement, bind) {
             (_, "idempotency_key") => Ok(Box::new(self.idempotency_key.clone())),
-            ("claim_command", "pallet_id") => Ok(Box::new(PALLET_ID)),
             // THE IDENTITY COMES FROM THE CLAIM. The command binds back the
             // value the claim statement returned. Nothing here mints an id,
             // so a replay returns the same one by construction.
-            ("finalize_command", "movement_id") => {
+            ("finalize_command", "operation_id") => {
                 let claim = claim.context("finalize_command runs after the claim")?;
-                Ok(Box::new(claim.try_get::<_, Uuid>("movement_id")?))
+                Ok(Box::new(claim.try_get::<_, Uuid>("operation_id")?))
             }
-            ("finalize_command", "pallet_status") => Ok(Box::new("available".to_owned())),
-            ("finalize_command", "row_version") => Ok(Box::new(2_i32)),
+            ("finalize_command", "result") => Ok(Box::new(
+                json!({"quantity":"10","lifecycle":"open","row_version":2}).to_string(),
+            )),
             _ => bail!("the fixture has no value for {statement}.{bind}"),
         }
     }
@@ -80,8 +80,8 @@ async fn a_replay_returns_the_immutable_original_result_and_writes_nothing() -> 
         report.refusal
     );
     ensure!(
-        report.claim_identity.contains_key("movement_id"),
-        "the claim statement must mint movement_id, and it returned {:?}",
+        report.claim_identity.contains_key("operation_id"),
+        "the claim statement must mint operation_id, and it returned {:?}",
         report.claim_identity.keys().collect::<Vec<_>>()
     );
     Ok(())
@@ -164,7 +164,8 @@ fn contract() -> Result<ClaimContract> {
 /// value without the idempotency key, as canonical JSON.
 fn canonical_move_command(to_location_id: Uuid) -> Vec<u8> {
     canonical_json_bytes(&json!({
-        "pallet_id": PALLET_ID.hyphenated().to_string(),
+        "inventory_id": INVENTORY_ID.hyphenated().to_string(),
+        "to_packaging_id": INVENTORY_ID.hyphenated().to_string(),
         "to_location_id": to_location_id.hyphenated().to_string(),
         "expected_row_version": 1,
         "occurred_at": OCCURRED_AT,

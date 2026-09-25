@@ -61,7 +61,7 @@ fn the_composed_wiring_is_a_three_node_graph() {
 ///
 /// `template_id` chooses the label once, at authoring, so a gate case can pin
 /// golden output. `key_field` and `body_field` are where blob-put looks, and
-/// pointing the key at `movement_id` is what makes a redelivery overwrite one
+/// pointing the key at `operation_id` is what makes a redelivery overwrite one
 /// object instead of writing a second.
 #[test]
 fn the_wirings_params_carry_the_mapping() {
@@ -70,12 +70,12 @@ fn the_wirings_params_carry_the_mapping() {
     );
     let wiring = wamn_catalog::WiringDocument::parse(&document).expect("parses");
 
-    assert_eq!(wiring.nodes["label"].params["template_id"], "pallet");
+    assert_eq!(wiring.nodes["label"].params["template_id"], "inventory");
 
     let store = &wiring.nodes["store"].params;
     assert_eq!(store["store_alias"], "labels");
     assert_eq!(
-        store["key_field"], "/movement_id",
+        store["key_field"], "/operation_id",
         "the object key must be the claim-generated movement id, or a \
          redelivery writes a second label"
     );

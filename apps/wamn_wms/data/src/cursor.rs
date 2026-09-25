@@ -1,4 +1,4 @@
-//! Opaque keyset cursor encoding for `pallet.query`, the closed v1 shape
+//! Opaque keyset cursor encoding for `inventory.query`, the closed v1 shape
 //! `apps/wamn_wms/generated/contracts/cursor-v1.json` fixes: canonical compact
 //! JSON of `{direction, field, id, key, v}`, unpadded base64url, and a decode
 //! that refuses anything it would not have minted itself.
@@ -203,30 +203,23 @@ mod tests {
     #[test]
     fn a_cursor_from_another_sort_or_spelling_is_invalid_input() {
         let id = Uuid::parse_str(ID).unwrap();
-        let valid = encode_cursor(
-            "pallet_code",
-            CursorDirection::Ascending,
-            &"PAL-1".to_owned(),
-            id,
-        );
+        let valid = encode_cursor("code", CursorDirection::Ascending, &"PKG-1".to_owned(), id);
         for encoded in [
             "not-base64!".to_owned(),
             format!("{valid}="),
             URL_SAFE_NO_PAD.encode(
-                br#"{"field":"pallet_code","v":1,"direction":"ascending","key":"PAL-1","id":"01234567-89ab-cdef-0123-456789abcdef"}"#,
+                br#"{"field":"code","v":1,"direction":"ascending","key":"PKG-1","id":"01234567-89ab-cdef-0123-456789abcdef"}"#,
             ),
             URL_SAFE_NO_PAD.encode(
-                br#"{"direction":"ascending","field":"pallet_code","id":"01234567-89AB-CDEF-0123-456789ABCDEF","key":"PAL-1","v":1}"#,
+                br#"{"direction":"ascending","field":"code","id":"01234567-89AB-CDEF-0123-456789ABCDEF","key":"PKG-1","v":1}"#,
             ),
         ] {
-            let error = decode_cursor::<String>(&encoded, "pallet_code", CursorDirection::Ascending)
+            let error = decode_cursor::<String>(&encoded, "code", CursorDirection::Ascending)
                 .unwrap_err();
             assert_eq!(error.kind(), AccessErrorKind::InvalidInput);
         }
         assert!(decode_cursor::<String>(&valid, "created_at", CursorDirection::Ascending).is_err());
-        assert!(
-            decode_cursor::<String>(&valid, "pallet_code", CursorDirection::Descending).is_err()
-        );
-        assert!(decode_cursor::<Uuid>(&valid, "pallet_code", CursorDirection::Ascending).is_err());
+        assert!(decode_cursor::<String>(&valid, "code", CursorDirection::Descending).is_err());
+        assert!(decode_cursor::<Uuid>(&valid, "code", CursorDirection::Ascending).is_err());
     }
 }

@@ -1,94 +1,91 @@
 // @generated from migration IR; do not edit.
 
 #[derive(Debug)]
-pub struct ClaimCommandRow {
-    pub movement_id: wamn_postgres_statements::Uuid,
-    pub new_pallet_id: wamn_postgres_statements::Uuid,
+pub struct ApplyRow {
+    pub id: wamn_postgres_statements::Uuid,
+    pub product_id: wamn_postgres_statements::Uuid,
+    pub packaging_id: wamn_postgres_statements::Uuid,
+    pub location_id: wamn_postgres_statements::Uuid,
+    pub quantity: wamn_postgres_statements::Numeric,
+    pub disposition: String,
+    pub lifecycle: String,
+    pub row_version: i32,
 }
 
 #[derive(Debug)]
-pub struct CreatePalletRow {
+pub struct ClaimCommandRow {
+    pub operation_id: wamn_postgres_statements::Uuid,
+    pub new_inventory_id: wamn_postgres_statements::Uuid,
+}
+
+#[derive(Debug)]
+pub struct CreateInventoryRow {
     pub id: wamn_postgres_statements::Uuid,
+    pub product_id: wamn_postgres_statements::Uuid,
+    pub packaging_id: wamn_postgres_statements::Uuid,
+    pub location_id: wamn_postgres_statements::Uuid,
+    pub quantity: wamn_postgres_statements::Numeric,
+    pub disposition: String,
+    pub lifecycle: String,
     pub row_version: i32,
-    pub status: String,
 }
 
 #[derive(Debug)]
 pub struct FinalizeCommandRow {
-    pub row_version: Option<i32>,
+    pub result: Option<String>,
 }
 
 #[derive(Debug)]
 pub struct FindReplayRow {
     pub canonical_command: Vec<u8>,
-    pub movement_id: wamn_postgres_statements::Uuid,
-    pub source_pallet_id: wamn_postgres_statements::Uuid,
-    pub new_pallet_id: wamn_postgres_statements::Uuid,
-    pub row_version: Option<i32>,
+    pub result: Option<String>,
+    pub operation_id: wamn_postgres_statements::Uuid,
+    pub new_inventory_id: wamn_postgres_statements::Uuid,
 }
 
 #[derive(Debug)]
-pub struct InsertMovementRow {
+pub struct InsertTransactionRow {
     pub id: wamn_postgres_statements::Uuid,
 }
 
 #[derive(Debug)]
-pub struct LockPalletRow {
+pub struct LockInventoryRow {
+    pub id: wamn_postgres_statements::Uuid,
+    pub product_id: wamn_postgres_statements::Uuid,
+    pub packaging_id: wamn_postgres_statements::Uuid,
     pub location_id: wamn_postgres_statements::Uuid,
+    pub quantity: wamn_postgres_statements::Numeric,
+    pub disposition: String,
+    pub lifecycle: String,
     pub row_version: i32,
-    pub status: String,
 }
 
 #[derive(Debug)]
-pub struct PlaceQuantityRow {
+pub struct LockPackagingRow {
     pub id: wamn_postgres_statements::Uuid,
-    pub quantity: wamn_postgres_statements::Numeric,
-}
-
-#[derive(Debug)]
-pub struct SelectQuantityRow {
-    pub quantity: wamn_postgres_statements::Numeric,
-}
-
-#[derive(Debug)]
-pub struct TakeFromSourceRow {
-    pub id: wamn_postgres_statements::Uuid,
-    pub quantity: wamn_postgres_statements::Numeric,
-}
-
-#[derive(Debug)]
-pub struct TouchSourceRow {
+    pub r#type: String,
+    pub code: String,
+    pub location_id: wamn_postgres_statements::Uuid,
+    pub lifecycle: String,
     pub row_version: i32,
-    pub status: String,
 }
 
-#[derive(Debug)]
-pub struct ValidateLocationRow {
-    pub id: wamn_postgres_statements::Uuid,
-}
-
+pub(crate) const APPLY_DIGEST: &str =
+    "sha256:1320ff697a976159bfc7c048ce0b1bd184184e600c71bdd9c69483dabe1fece0";
 pub(crate) const CLAIM_COMMAND_DIGEST: &str =
-    "sha256:2256a274724c0d79beee91fb5f94f0963c428848099dfbd226833dcb9d943a67";
-pub(crate) const CREATE_PALLET_DIGEST: &str =
-    "sha256:1e17d1f7ab74aecb89b4da78a6e946859719a78eb07af7d52efb2f6c0a8a52c6";
+    "sha256:284545cbbfd286d9d24de92cc6fbd9a824a489800b392ee70f67f4d020583255";
+pub(crate) const CREATE_INVENTORY_DIGEST: &str =
+    "sha256:d9e936d60336a0cb473c02a809b476481832ba7f398f86312788eb9464f94202";
 pub(crate) const FINALIZE_COMMAND_DIGEST: &str =
-    "sha256:1193cc2835abd0b43372c07d60852e801bb579b85a34f4480d1199bd485f9ed8";
+    "sha256:5062b0b6425ef75c1aa24b4849725f42f7c9658ac0fb75b047e245e82bc3bbc8";
 pub(crate) const FIND_REPLAY_DIGEST: &str =
-    "sha256:38c3a3247c43b4fd938d7a66737f80bd31e45ab2ce676e169f2d4143dfebb810";
-pub(crate) const INSERT_MOVEMENT_DIGEST: &str =
-    "sha256:e4ccda97b9ef5cb01093515c83086ba546dec9f46691c2f3ca477764991ad3ef";
-pub(crate) const LOCK_PALLET_DIGEST: &str =
-    "sha256:a55bfebbebf5bba9540074165b1e5750116fda67b8ef07439c89469ed1ffece3";
-pub(crate) const PLACE_QUANTITY_DIGEST: &str =
-    "sha256:7441c97e8175dadd886f000b59b6f1706a55e89f183b2e5bd4a154a7ba5b74f8";
-pub(crate) const SELECT_QUANTITY_DIGEST: &str =
-    "sha256:9e8cae601ec91090165e5d3e72999e7c7aaf5937c7e0ec1b8c17f52b7d54d4f3";
-pub(crate) const TAKE_FROM_SOURCE_DIGEST: &str =
-    "sha256:d2d1f7e49de0b5cb74c0d1d672bb9cf8a50e930b529463f93d054f5f5145467c";
-pub(crate) const TOUCH_SOURCE_DIGEST: &str =
-    "sha256:1015523c5b8bfcec2e8b84ed44c5b1a20fb39209656c0f78f3f68408850070d9";
-pub(crate) const VALIDATE_LOCATION_DIGEST: &str =
-    "sha256:043f1cb7e8359f79c83b7944e308c1d4238a2bc7b0eac50a0093e53e7563d516";
+    "sha256:577bd6e23d8ebf7e5eb3587215a8ddce70013010beedb910ae91c193a21b1874";
+pub(crate) const INSERT_TRANSACTION_DIGEST: &str =
+    "sha256:7a8a198d17cc8768315adc35a54588e275043dc886eed3f67bdf950c421abd0d";
+pub(crate) const LOCK_INVENTORY_DIGEST: &str =
+    "sha256:fa2fa96abd2b992f7fa50dd2cb2ae5194930f891534f7220c122bb3ce5645351";
+pub(crate) const LOCK_PACKAGING_DIGEST: &str =
+    "sha256:84b8b00d46ee3266ea0fdeee6553b218aa79cf40ae3d8d8fe4a8d40093da52ca";
 
 /// One claim and its work, with no commit before finalization.
 #[derive(Debug)]
@@ -125,11 +122,39 @@ impl PendingClaim {
     }
 }
 
+pub(crate) async fn apply(
+    claim: &mut PendingClaim,
+    inventory_id: wamn_postgres_statements::Uuid,
+    quantity: wamn_postgres_statements::Numeric,
+) -> Result<Option<ApplyRow>, wamn_postgres_statements::StatementError> {
+    let rows = claim
+        .transaction
+        .run(
+            APPLY_DIGEST,
+            vec![
+                wamn_postgres_statements::into_sql_value(inventory_id),
+                wamn_postgres_statements::into_sql_value(quantity),
+            ],
+        )
+        .await?;
+    wamn_postgres_statements::decode_optional(APPLY_DIGEST, rows, |row| {
+        Ok(ApplyRow {
+            id: row.decode("id")?,
+            product_id: row.decode("product_id")?,
+            packaging_id: row.decode("packaging_id")?,
+            location_id: row.decode("location_id")?,
+            quantity: row.decode("quantity")?,
+            disposition: row.decode("disposition")?,
+            lifecycle: row.decode("lifecycle")?,
+            row_version: row.decode("row_version")?,
+        })
+    })
+}
+
 pub(crate) async fn claim_command(
     claim: &mut PendingClaim,
     idempotency_key: String,
     canonical_command: Vec<u8>,
-    source_pallet_id: wamn_postgres_statements::Uuid,
 ) -> Result<Option<ClaimCommandRow>, wamn_postgres_statements::StatementError> {
     let rows = claim
         .transaction
@@ -138,42 +163,50 @@ pub(crate) async fn claim_command(
             vec![
                 wamn_postgres_statements::into_sql_value(idempotency_key),
                 wamn_postgres_statements::into_sql_value(canonical_command),
-                wamn_postgres_statements::into_sql_value(source_pallet_id),
             ],
         )
         .await?;
     wamn_postgres_statements::decode_optional(CLAIM_COMMAND_DIGEST, rows, |row| {
         Ok(ClaimCommandRow {
-            movement_id: row.decode("movement_id")?,
-            new_pallet_id: row.decode("new_pallet_id")?,
+            operation_id: row.decode("operation_id")?,
+            new_inventory_id: row.decode("new_inventory_id")?,
         })
     })
 }
 
-pub(crate) async fn create_pallet(
+pub(crate) async fn create_inventory(
     claim: &mut PendingClaim,
-    new_pallet_id: wamn_postgres_statements::Uuid,
-    new_pallet_code: String,
-    to_location_id: wamn_postgres_statements::Uuid,
-    status: String,
-) -> Result<CreatePalletRow, wamn_postgres_statements::StatementError> {
+    id: wamn_postgres_statements::Uuid,
+    product_id: wamn_postgres_statements::Uuid,
+    packaging_id: wamn_postgres_statements::Uuid,
+    location_id: wamn_postgres_statements::Uuid,
+    quantity: wamn_postgres_statements::Numeric,
+    disposition: String,
+) -> Result<CreateInventoryRow, wamn_postgres_statements::StatementError> {
     let rows = claim
         .transaction
         .run(
-            CREATE_PALLET_DIGEST,
+            CREATE_INVENTORY_DIGEST,
             vec![
-                wamn_postgres_statements::into_sql_value(new_pallet_id),
-                wamn_postgres_statements::into_sql_value(new_pallet_code),
-                wamn_postgres_statements::into_sql_value(to_location_id),
-                wamn_postgres_statements::into_sql_value(status),
+                wamn_postgres_statements::into_sql_value(id),
+                wamn_postgres_statements::into_sql_value(product_id),
+                wamn_postgres_statements::into_sql_value(packaging_id),
+                wamn_postgres_statements::into_sql_value(location_id),
+                wamn_postgres_statements::into_sql_value(quantity),
+                wamn_postgres_statements::into_sql_value(disposition),
             ],
         )
         .await?;
-    wamn_postgres_statements::decode_one(CREATE_PALLET_DIGEST, rows, |row| {
-        Ok(CreatePalletRow {
+    wamn_postgres_statements::decode_one(CREATE_INVENTORY_DIGEST, rows, |row| {
+        Ok(CreateInventoryRow {
             id: row.decode("id")?,
+            product_id: row.decode("product_id")?,
+            packaging_id: row.decode("packaging_id")?,
+            location_id: row.decode("location_id")?,
+            quantity: row.decode("quantity")?,
+            disposition: row.decode("disposition")?,
+            lifecycle: row.decode("lifecycle")?,
             row_version: row.decode("row_version")?,
-            status: row.decode("status")?,
         })
     })
 }
@@ -182,8 +215,8 @@ pub(crate) async fn finalize_command(
     mut claim: PendingClaim,
     idempotency_key: String,
     canonical_command: Vec<u8>,
-    movement_id: wamn_postgres_statements::Uuid,
-    row_version: i32,
+    operation_id: wamn_postgres_statements::Uuid,
+    result: String,
 ) -> Result<FinalizedClaim, wamn_postgres_statements::StatementError> {
     let rows = claim
         .transaction
@@ -192,14 +225,14 @@ pub(crate) async fn finalize_command(
             vec![
                 wamn_postgres_statements::into_sql_value(idempotency_key),
                 wamn_postgres_statements::into_sql_value(canonical_command),
-                wamn_postgres_statements::into_sql_value(movement_id),
-                wamn_postgres_statements::into_sql_value(row_version),
+                wamn_postgres_statements::into_sql_value(operation_id),
+                wamn_postgres_statements::into_sql_value(result),
             ],
         )
         .await?;
     let row = wamn_postgres_statements::decode_one(FINALIZE_COMMAND_DIGEST, rows, |row| {
         Ok(FinalizeCommandRow {
-            row_version: row.decode("row_version")?,
+            result: row.decode("result")?,
         })
     })?;
     Ok(FinalizedClaim {
@@ -222,173 +255,107 @@ pub(crate) async fn find_replay(
     wamn_postgres_statements::decode_optional(FIND_REPLAY_DIGEST, rows, |row| {
         Ok(FindReplayRow {
             canonical_command: row.decode("canonical_command")?,
-            movement_id: row.decode("movement_id")?,
-            source_pallet_id: row.decode("source_pallet_id")?,
-            new_pallet_id: row.decode("new_pallet_id")?,
-            row_version: row.decode("row_version")?,
+            result: row.decode("result")?,
+            operation_id: row.decode("operation_id")?,
+            new_inventory_id: row.decode("new_inventory_id")?,
         })
     })
 }
 
-pub(crate) async fn insert_movement(
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the parameters are the statement's bind list"
+)]
+pub(crate) async fn insert_transaction(
     claim: &mut PendingClaim,
-    idempotency_key: String,
-    pallet_id: wamn_postgres_statements::Uuid,
-    product_id: wamn_postgres_statements::Uuid,
-    quantity: wamn_postgres_statements::Numeric,
+    operation_id: wamn_postgres_statements::Uuid,
+    inventory_id: wamn_postgres_statements::Uuid,
+    from_inventory_id: wamn_postgres_statements::Uuid,
+    to_inventory_id: wamn_postgres_statements::Uuid,
+    from_product_id: Option<wamn_postgres_statements::Uuid>,
+    from_packaging_id: Option<wamn_postgres_statements::Uuid>,
+    from_location_id: Option<wamn_postgres_statements::Uuid>,
+    from_quantity: wamn_postgres_statements::Numeric,
+    from_disposition: Option<String>,
+    from_lifecycle: Option<String>,
     occurred_at: wamn_postgres_statements::TimestampTz,
-) -> Result<InsertMovementRow, wamn_postgres_statements::StatementError> {
+    reason: Option<String>,
+) -> Result<InsertTransactionRow, wamn_postgres_statements::StatementError> {
     let rows = claim
         .transaction
         .run(
-            INSERT_MOVEMENT_DIGEST,
+            INSERT_TRANSACTION_DIGEST,
             vec![
-                wamn_postgres_statements::into_sql_value(idempotency_key),
-                wamn_postgres_statements::into_sql_value(pallet_id),
-                wamn_postgres_statements::into_sql_value(product_id),
-                wamn_postgres_statements::into_sql_value(quantity),
+                wamn_postgres_statements::into_sql_value(operation_id),
+                wamn_postgres_statements::into_sql_value(inventory_id),
+                wamn_postgres_statements::into_sql_value(from_inventory_id),
+                wamn_postgres_statements::into_sql_value(to_inventory_id),
+                wamn_postgres_statements::into_sql_value(from_product_id),
+                wamn_postgres_statements::into_sql_value(from_packaging_id),
+                wamn_postgres_statements::into_sql_value(from_location_id),
+                wamn_postgres_statements::into_sql_value(from_quantity),
+                wamn_postgres_statements::into_sql_value(from_disposition),
+                wamn_postgres_statements::into_sql_value(from_lifecycle),
                 wamn_postgres_statements::into_sql_value(occurred_at),
+                wamn_postgres_statements::into_sql_value(reason),
             ],
         )
         .await?;
-    wamn_postgres_statements::decode_one(INSERT_MOVEMENT_DIGEST, rows, |row| {
-        Ok(InsertMovementRow {
+    wamn_postgres_statements::decode_one(INSERT_TRANSACTION_DIGEST, rows, |row| {
+        Ok(InsertTransactionRow {
             id: row.decode("id")?,
         })
     })
 }
 
-pub(crate) async fn lock_pallet(
+pub(crate) async fn lock_inventory(
     claim: &mut PendingClaim,
-    source_pallet_id: wamn_postgres_statements::Uuid,
-) -> Result<Option<LockPalletRow>, wamn_postgres_statements::StatementError> {
+    inventory_id: wamn_postgres_statements::Uuid,
+) -> Result<Option<LockInventoryRow>, wamn_postgres_statements::StatementError> {
     let rows = claim
         .transaction
         .run(
-            LOCK_PALLET_DIGEST,
-            vec![wamn_postgres_statements::into_sql_value(source_pallet_id)],
+            LOCK_INVENTORY_DIGEST,
+            vec![wamn_postgres_statements::into_sql_value(inventory_id)],
         )
         .await?;
-    wamn_postgres_statements::decode_optional(LOCK_PALLET_DIGEST, rows, |row| {
-        Ok(LockPalletRow {
+    wamn_postgres_statements::decode_optional(LOCK_INVENTORY_DIGEST, rows, |row| {
+        Ok(LockInventoryRow {
+            id: row.decode("id")?,
+            product_id: row.decode("product_id")?,
+            packaging_id: row.decode("packaging_id")?,
             location_id: row.decode("location_id")?,
+            quantity: row.decode("quantity")?,
+            disposition: row.decode("disposition")?,
+            lifecycle: row.decode("lifecycle")?,
             row_version: row.decode("row_version")?,
-            status: row.decode("status")?,
         })
     })
 }
 
-pub(crate) async fn place_quantity(
+pub(crate) async fn lock_packaging(
     claim: &mut PendingClaim,
-    new_pallet_id: wamn_postgres_statements::Uuid,
-    product_id: wamn_postgres_statements::Uuid,
-    status: String,
-    quantity: wamn_postgres_statements::Numeric,
-) -> Result<PlaceQuantityRow, wamn_postgres_statements::StatementError> {
+    from_packaging_id: wamn_postgres_statements::Uuid,
+    to_packaging_id: wamn_postgres_statements::Uuid,
+) -> Result<Vec<LockPackagingRow>, wamn_postgres_statements::StatementError> {
     let rows = claim
         .transaction
         .run(
-            PLACE_QUANTITY_DIGEST,
+            LOCK_PACKAGING_DIGEST,
             vec![
-                wamn_postgres_statements::into_sql_value(new_pallet_id),
-                wamn_postgres_statements::into_sql_value(product_id),
-                wamn_postgres_statements::into_sql_value(status),
-                wamn_postgres_statements::into_sql_value(quantity),
+                wamn_postgres_statements::into_sql_value(from_packaging_id),
+                wamn_postgres_statements::into_sql_value(to_packaging_id),
             ],
         )
         .await?;
-    wamn_postgres_statements::decode_one(PLACE_QUANTITY_DIGEST, rows, |row| {
-        Ok(PlaceQuantityRow {
+    wamn_postgres_statements::decode_all(LOCK_PACKAGING_DIGEST, rows, |row| {
+        Ok(LockPackagingRow {
             id: row.decode("id")?,
-            quantity: row.decode("quantity")?,
-        })
-    })
-}
-
-pub(crate) async fn select_quantity(
-    claim: &mut PendingClaim,
-    source_pallet_id: wamn_postgres_statements::Uuid,
-    product_id: wamn_postgres_statements::Uuid,
-    status: String,
-) -> Result<Option<SelectQuantityRow>, wamn_postgres_statements::StatementError> {
-    let rows = claim
-        .transaction
-        .run(
-            SELECT_QUANTITY_DIGEST,
-            vec![
-                wamn_postgres_statements::into_sql_value(source_pallet_id),
-                wamn_postgres_statements::into_sql_value(product_id),
-                wamn_postgres_statements::into_sql_value(status),
-            ],
-        )
-        .await?;
-    wamn_postgres_statements::decode_optional(SELECT_QUANTITY_DIGEST, rows, |row| {
-        Ok(SelectQuantityRow {
-            quantity: row.decode("quantity")?,
-        })
-    })
-}
-
-pub(crate) async fn take_from_source(
-    claim: &mut PendingClaim,
-    source_pallet_id: wamn_postgres_statements::Uuid,
-    product_id: wamn_postgres_statements::Uuid,
-    status: String,
-    quantity: wamn_postgres_statements::Numeric,
-) -> Result<Option<TakeFromSourceRow>, wamn_postgres_statements::StatementError> {
-    let rows = claim
-        .transaction
-        .run(
-            TAKE_FROM_SOURCE_DIGEST,
-            vec![
-                wamn_postgres_statements::into_sql_value(source_pallet_id),
-                wamn_postgres_statements::into_sql_value(product_id),
-                wamn_postgres_statements::into_sql_value(status),
-                wamn_postgres_statements::into_sql_value(quantity),
-            ],
-        )
-        .await?;
-    wamn_postgres_statements::decode_optional(TAKE_FROM_SOURCE_DIGEST, rows, |row| {
-        Ok(TakeFromSourceRow {
-            id: row.decode("id")?,
-            quantity: row.decode("quantity")?,
-        })
-    })
-}
-
-pub(crate) async fn touch_source(
-    claim: &mut PendingClaim,
-    source_pallet_id: wamn_postgres_statements::Uuid,
-) -> Result<TouchSourceRow, wamn_postgres_statements::StatementError> {
-    let rows = claim
-        .transaction
-        .run(
-            TOUCH_SOURCE_DIGEST,
-            vec![wamn_postgres_statements::into_sql_value(source_pallet_id)],
-        )
-        .await?;
-    wamn_postgres_statements::decode_one(TOUCH_SOURCE_DIGEST, rows, |row| {
-        Ok(TouchSourceRow {
+            r#type: row.decode("type")?,
+            code: row.decode("code")?,
+            location_id: row.decode("location_id")?,
+            lifecycle: row.decode("lifecycle")?,
             row_version: row.decode("row_version")?,
-            status: row.decode("status")?,
-        })
-    })
-}
-
-pub(crate) async fn validate_location(
-    claim: &mut PendingClaim,
-    to_location_id: wamn_postgres_statements::Uuid,
-) -> Result<Option<ValidateLocationRow>, wamn_postgres_statements::StatementError> {
-    let rows = claim
-        .transaction
-        .run(
-            VALIDATE_LOCATION_DIGEST,
-            vec![wamn_postgres_statements::into_sql_value(to_location_id)],
-        )
-        .await?;
-    wamn_postgres_statements::decode_optional(VALIDATE_LOCATION_DIGEST, rows, |row| {
-        Ok(ValidateLocationRow {
-            id: row.decode("id")?,
         })
     })
 }

@@ -1,0 +1,1 @@
+UPDATE inventory SET quantity = 0, lifecycle = 'closed', row_version = row_version + 1 WHERE id = $1 RETURNING id, product_id, packaging_id, location_id, quantity, disposition, lifecycle, row_version;

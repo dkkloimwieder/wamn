@@ -42,15 +42,15 @@ try:
     # A package database grants the record history image functions to wamn_app, so the preflight creates that role.
     db.sql('00-record-history-app-grants', 'CREATE ROLE wamn_app NOLOGIN;\n' + (tree / 'deploy/sql/record-history-app-grants.sql').read_text())
     for model in json.loads((tree / 'apps/wamn_wms/wamn.json').read_text())['models'].values():
-        columns = model['audit_log']['columns']
+        columns = model.get('audit_log', {}).get('columns', [])
         if columns:
             db.sql('00-trigger-' + model['table'], f"CREATE TRIGGER wamn_record_history_stamp BEFORE INSERT OR UPDATE ON {model['schema']}.{model['table']} FOR EACH ROW EXECUTE FUNCTION wamn_history.stamp_row({', '.join(repr(column) for column in columns)});")
-    ids = SimpleNamespace(**{key: str(uuid.uuid4()) for key in ('pallet','product','source','destination')})
+    ids = SimpleNamespace(**{key: str(uuid.uuid4()) for key in ('inventory','product','source','destination','packaging_source','packaging_destination')})
     driver.seed(db, ids, 'PREFLIGHT-' + uuid.uuid4().hex[:8])
     observed = driver.snapshot(db, '03-observation', ids)
     assert observed['claims'] == observed['movements'] == 0
-    assert observed['pallet'] == {'location_id': ids.source, 'status': 'available', 'row_version': 1}
-    assert observed['quantity'] == [{'product_id': ids.product, 'quantity': '10.0000', 'status': 'available'}]
+    assert observed['inventory'] == {'location_id':ids.source,'packaging_id':ids.packaging_source,
+        'disposition':'available','lifecycle':'open','quantity':'10.0000','row_version':1}
     driver.cleanup(db, ids)
     result['passed'] = True
 except Exception as error:

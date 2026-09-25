@@ -50,7 +50,7 @@ The browser sees one origin, and the local stack has two.
 The application host serves plain HTTP and selects its release by the `Host` header, which a browser cannot set.
 The identity process serves HTTPS with a certificate it signed itself, which a browser does not trust.
 `vite.config.ts` carries `/password` to the issuer and the path prefixes of the selected release to that release.
-Receiving has five prefixes. WMS has six: `/pallet`, `/inventory`, `/location`, `/product`, `/pallet_quantity` and `/inventory_movement`.
+Receiving has five prefixes. WMS has five: `/packaging`, `/inventory`, `/location`, `/product`, and `/inventory_transaction`.
 
 ## Seed data
 
@@ -71,7 +71,7 @@ For WMS, apply the size you want with `wms-seed.sql`. The WMS checklist runs at 
 psql "$TARGET_DATABASE_URL" -v scale=1000 -f ../../apps/wamn_wms/tests/fixtures/wms-seed.sql
 ```
 
-The large size writes 1000 products, 1000 locations, 1000 pallets with 100 of them held, and 1999 quantity rows.
+The large size writes 1000 products, 1000 locations, 1000 packaging identities and 1999 inventory rows, including held stock.
 `wms-seed-small.sql` is the saved small size.
 
 ## The evaluation
@@ -95,13 +95,13 @@ The filled table belongs in the notes of Beads `wamn-78or`, because this package
 
 Fill one row for each WMS component at the 1000 seed. Write `yes`, `no`, or `n/a`.
 The filled table belongs in the notes of Beads `wamn-nq1b`, because this package is deleted.
-A command form sends the revision of the pallet row you select, because the release binds no read that supplies it.
+A command form sends the revision of the inventory row you select, because the release binds no read that supplies it.
 
 | Component | Mounts | Reads | Submits | Refusal on the right field | Revision conflict | Paging | Row link | Picker searches |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| `PalletQueryTable` | | | | | | | | |
-| `PalletGetDetail` | | | | | | | | |
-| `PalletCreateForm` | | | | | | | | |
+| `PackagingQueryTable` | | | | | | | | |
+| `PackagingGetDetail` | | | | | | | | |
+| `PackagingCreateForm` | | | | | | | | |
 | `InventoryMoveForm` | | | | | | | | |
 | `InventoryAdjustForm` | | | | | | | | |
 | `InventoryMergeForm` | | | | | | | | |
@@ -115,10 +115,10 @@ A command form sends the revision of the pallet row you select, because the rele
 | `ProductGetDetail` | | | | | | | | |
 | `ProductCreateForm` | | | | | | | | |
 | `ProductUpdateForm` | | | | | | | | |
-| `PalletQuantityQueryTable` | | | | | | | | |
-| `PalletQuantityGetDetail` | | | | | | | | |
-| `InventoryMovementQueryTable` | | | | | | | | |
-| `InventoryMovementGetDetail` | | | | | | | | |
+| `InventoryQueryTable` | | | | | | | | |
+| `InventoryGetDetail` | | | | | | | | |
+| `InventoryTransactionQueryTable` | | | | | | | | |
+| `InventoryTransactionGetDetail` | | | | | | | | |
 
 ## The Epic 5 checks
 

@@ -1,0 +1,1 @@
+{"items":{"additionalProperties":false,"properties":{"cursor":{"minLength":1,"type":"string"},"limit":{"maximum":100,"minimum":1,"type":"integer"}},"type":"object"},"maxItems":100,"minItems":1,"type":"array"}

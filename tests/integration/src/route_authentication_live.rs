@@ -1098,7 +1098,7 @@ fn generated_journey_schema_and_strict_parser_share_one_field_authority() {
     assert_eq!(runtime["additionalProperties"], false);
     assert_eq!(
         runtime["required"],
-        serde_json::json!(["pallet_id", "route_endpoint", "to_location_id"])
+        serde_json::json!(["inventory_id", "route_endpoint", "to_location_id", "to_packaging_id"])
     );
     let phase = &schema["definitions"]["MaterializerPhase"];
     assert_eq!(phase["additionalProperties"], false);
@@ -1166,7 +1166,7 @@ fn the_checked_in_example_document_parses_with_every_field() {
         .runtime
         .expect("the example carries the runtime phase");
     assert_eq!(runtime.route_endpoint, "http://10.0.0.2:30999");
-    assert_eq!(runtime.pallet_id, "00000000-0000-0000-0000-000000000301");
+    assert_eq!(runtime.inventory_id, "00000000-0000-0000-0000-000000000301");
 }
 
 fn example_document() -> Vec<u8> {

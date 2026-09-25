@@ -3,7 +3,7 @@
 This independent Rust model studies inventory transitions, immutable transactions, and stored command results.
 Beads task `wamn-s43x.11` owns the explicit-location correction.
 The owner defines the target business rules below.
-Production differences remain explicit in the [assessment](assessment.md).
+The [assessment](assessment.md) records the former production differences and the replacement implementation mappings.
 
 ## Business state
 

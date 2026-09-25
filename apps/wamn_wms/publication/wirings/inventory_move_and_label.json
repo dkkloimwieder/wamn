@@ -14,7 +14,7 @@
       "interface-version": "0.1.0",
       "operation": "wamn:node/handler@0.1.0",
       "params": {
-        "template_id": "pallet"
+        "template_id": "inventory"
       }
     },
     "store": {
@@ -23,7 +23,7 @@
       "operation": "wamn:node/async-handler@0.1.0",
       "params": {
         "store_alias": "labels",
-        "key_field": "/movement_id",
+        "key_field": "/operation_id",
         "body_field": "/zpl"
       },
       "terminal": "respond"
@@ -59,22 +59,36 @@
           "value": {
             "type": "object",
             "required": [
-              "movement_id",
-              "pallet_id",
+              "operation_id",
+              "inventory_id",
+              "product_id",
+              "packaging_id",
               "location_id",
-              "pallet_status",
+              "quantity",
+              "disposition",
+              "lifecycle",
               "row_version",
               "zpl",
               "stored"
             ],
             "additionalProperties": false,
             "properties": {
-              "movement_id": {
+              "operation_id": {
                 "type": "string",
                 "format": "uuid",
                 "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
               },
-              "pallet_id": {
+              "inventory_id": {
+                "type": "string",
+                "format": "uuid",
+                "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+              },
+              "product_id": {
+                "type": "string",
+                "format": "uuid",
+                "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+              },
+              "packaging_id": {
                 "type": "string",
                 "format": "uuid",
                 "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
@@ -84,13 +98,17 @@
                 "format": "uuid",
                 "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
               },
-              "pallet_status": {
+              "quantity": {
                 "type": "string",
-                "enum": [
-                  "available",
-                  "held",
-                  "consumed"
-                ]
+                "pattern": "^[0-9]+(\\.[0-9]+)?$"
+              },
+              "disposition": {
+                "type": "string",
+                "minLength": 1
+              },
+              "lifecycle": {
+                "type": "string",
+                "minLength": 1
               },
               "row_version": {
                 "type": "integer"
