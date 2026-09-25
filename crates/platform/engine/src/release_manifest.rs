@@ -459,4 +459,70 @@ mod tests {
             ReleaseLoadErrorKind::ManifestRejected
         );
     }
+
+    fn carried_fact() -> AdmittedComponent {
+        AdmittedComponent {
+            scope: wamn_catalog::ComponentPackageScope {
+                tenant_id: "t1".into(),
+                package_id: "cat".into(),
+                package_version: "1.0.0".into(),
+            },
+            component: "transform".into(),
+            interface_version: "0.1".into(),
+            operations: BTreeMap::from([(
+                "map".into(),
+                wamn_catalog::AdmittedComponentOperation {
+                    pre_commit: None,
+                    pre_commit_required: false,
+                    registered_operation: None,
+                    fresh_only: false,
+                    committed_result_schema: None,
+                    dependencies: Vec::new(),
+                    input_ports: Vec::new(),
+                    output_ports: Vec::new(),
+                    parameters: Vec::new(),
+                    statements: BTreeMap::new(),
+                },
+            )]),
+            component_digest: COMPONENT.into(),
+            imports: Vec::new(),
+            imports_fingerprint: String::new(),
+            effects: Vec::new(),
+        }
+    }
+
+    /// One change to a carried fact.
+    type Mutation = fn(&mut AdmittedComponent);
+
+    #[test]
+    fn an_admitted_component_the_release_does_not_carry_is_refused() {
+        let release = LoadedRelease::load_canonical_bytes(&fixture().canonical_bytes(), "fixture")
+            .expect("the fixture loads");
+        validate_component_in_release(&release, &carried_fact()).expect("the carried fact passes");
+
+        let mutations: [(&str, Mutation); 5] = [
+            ("another tenant", |fact| fact.scope.tenant_id = "t2".into()),
+            ("another package version", |fact| {
+                fact.scope.package_version = "2.0.0".into();
+            }),
+            ("another digest", |fact| {
+                fact.component_digest =
+                    "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+                        .into();
+            }),
+            ("another component", |fact| fact.component = "other".into()),
+            ("another operation", |fact| {
+                let operation = fact.operations["map"].clone();
+                fact.operations.insert("reduce".into(), operation);
+            }),
+        ];
+        for (change, mutate) in mutations {
+            let mut fact = carried_fact();
+            mutate(&mut fact);
+            assert!(
+                validate_component_in_release(&release, &fact).is_err(),
+                "a fact with {change} is refused"
+            );
+        }
+    }
 }
