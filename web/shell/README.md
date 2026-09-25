@@ -16,12 +16,13 @@ A reload renews the session from the renewal cookie, so the page keeps nothing i
 | `/<audience>` | The first screen of the application. |
 | `/<audience>/<path>` | One screen. With no session, the page asks for the password on the same address and then shows the screen. |
 | `/<audience>/<path>/<id>` | One record page, for example `/<audience>/pallets/<id>`. The navigation entry of its model stays active. |
+| `/<audience>/<path>?<query>` | One form, for example `/<audience>/inventory/move?value.palletId=<id>`. The query holds the values that a row filled. |
 | Any other address | A page that says no page is there. |
 
 ## Use it in an application
 
 An application web page lives in `apps/<app>/web/`, and the generator never writes it.
-Its route table is a list of sections, and each section is a list of screens and records:
+Its route table is a list of sections, and each section is a list of screens and other routes:
 
 ```tsx
 const SECTIONS: readonly ShellSection[] = [
@@ -31,6 +32,7 @@ const SECTIONS: readonly ShellSection[] = [
       {
         path: "pallets",
         label: PalletQueryTableLabel,
+        actions: [{ label: PalletCreateFormLabel, path: "pallets/new" }],
         component: (props) => (
           <PalletQueryTable
             transport={props.transport}
@@ -39,7 +41,16 @@ const SECTIONS: readonly ShellSection[] = [
         ),
       },
     ],
-    records: [
+    routes: [
+      {
+        path: "pallets/new",
+        component: (props) => (
+          <PalletCreateForm
+            transport={props.transport}
+            onSubmitted={(outcome) => outcome.status === "completed" && props.close()}
+          />
+        ),
+      },
       {
         path: "pallets/:id",
         component: (props) => <PalletGetDetail transport={props.transport} input={{ id: props.params.id ?? "" }} />,
@@ -53,19 +64,24 @@ A section label names the model and is written by hand.
 A screen label is the label constant that the generated module exports, so no label is written twice.
 If a model has one screen, the navigation shows one entry with the model name.
 If a model has more than one screen, the navigation shows the model name with the screen labels below it.
-A record route has no navigation entry. A table row opens it through the row callback of the generated table.
+A record page or a form has no navigation entry.
+A table row opens a record page or a form through a row callback of the generated table.
+A route can list `actions`, which the shell shows as buttons above the route.
+An action path can name a route parameter, such as `:id` in `locations/:id/update`, and the shell fills it from the address.
 
 The shell owns the router, and a screen never imports it.
-The shell renders a screen with three props:
+The shell renders a screen with five props:
 
 | Prop | Value |
 | --- | --- |
 | `transport` | The transport of the signed-in session. It sends every API call under `/api`. |
 | `params` | The values in the address, by the names in the route path, for example `id` for `pallets/:id`. |
-| `open(path)` | Opens a path below the environment. The caller encodes each value that it puts in the path. |
+| `search` | The values in the query of the address, for example `value.palletId`. |
+| `open(path)` | Opens a path below the environment, with a query if the caller gives one. The caller encodes each value that it puts in the path. |
+| `close()` | Returns to the page that opened this one. If no page opened it, for example after a pasted address, it opens the first screen of the section. |
 
 The page mounts `<Shell title=... sections=... />` inside `ColorModeProvider`, beside one `Toaster`.
-The layout comes from `AppFrame` and `CardPage` in `@wamn/ui`, so the shell states no class.
+The layout comes from `AppFrame`, `CardPage` and `ScreenActions` in `@wamn/ui`, so the shell states no class.
 
 ## The dev server
 

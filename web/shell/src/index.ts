@@ -11,6 +11,7 @@ export {
   API_BASE,
   Shell,
   type ScreenProps,
+  type ShellAction,
   type ShellProps,
   type ShellRoute,
   type ShellScreen,

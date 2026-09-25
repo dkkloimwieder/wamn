@@ -60,6 +60,7 @@ Add an item only when an emitter target, or a page that places the generated com
 | `TableScreen` | One table screen: its filter form, its rows and its next page, stacked with one gap |
 | `AppFrame` | The signed-in page of an application: the sidebar with its navigation, a header, and the screen |
 | `CardPage` | One card in the middle of an empty page, for signing in and for an address with no page |
+| `ScreenActions` | The row of buttons above a screen |
 
 `RecordSelect` filters nothing itself, so its options are exactly the rows the release sent.
 A search matches a value in full, because a declared filter compares with `IN`.

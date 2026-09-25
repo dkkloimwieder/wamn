@@ -65,7 +65,7 @@ Each application writes its navigation by hand in its route table, grouped by mo
 
 ### 4.5 Record and command screens
 
-Issue 2 built the record routes, which [execution](../architecture/execution.md) describes. The record route actions open the forms, and a create form has its own route. The key in the path replaces the selected record that the demo holds in memory.
+Issue 2 built the record routes and issue 3 built the form routes, which [execution](../architecture/execution.md) describes. The key and the filled values in the address replace the selected record and the fills that the demo holds in memory.
 
 ### 4.6 The environment in the address
 
@@ -73,11 +73,11 @@ The demo writes the environment into the address fragment, so a reload renews th
 
 ## 5. Issues
 
-Issues 1 and 2 are filed. Each next issue is scoped after the owner reviews the one before it.
+Issues 1 to 3 are filed. Each next issue is scoped after the owner reviews the one before it.
 
 1. `wamn-d0zc.1`: the shell package and the WMS application. Sign in and sign out, the layout with a sidebar and a header, one route for each WMS table screen, a not-found route, and the `/api` prefix. Component tests on a stub transport.
 2. `wamn-d0zc.2`: WMS record pages. A table row opens `/<path>/<id>`, and the page mounts the get detail from the key in the address.
-3. WMS command screens: the forms open from routes.
+3. `wamn-d0zc.3`: WMS command forms on their own routes, opened from a table action, a row or a record page, and returning to the opener when they complete.
 4. Receiving on the shell.
 5. Delete `web/demo`, and move its run instructions and seed notes to the applications.
 

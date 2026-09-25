@@ -494,7 +494,10 @@ The [app shell](../../web/shell/README.md) places the components on routes, and 
 An application web page in `apps/<app>/web/` gives the shell a hand-written route table of screens, grouped by model.
 The navigation names a model with one screen by the model alone, and it lists the screen labels only below a model with more than one screen.
 A record page carries its key in the address, for example `pallets/<id>`, and a table row opens it through the row callback.
-The shell owns the router. A screen gets the address values and an `open(path)` function as props, beside the transport.
+The shell owns the router. A screen gets the address values, the query values, `open(path)` and `close()` as props, beside the transport.
+Each command form has its own route. A create or merge form opens from a button above its table, and an update form from a button above its record page.
+A row that fills a form opens it with the filled values in the query, so a reload keeps them. A completed submission returns to the page that opened the form, and a refusal stays on the form.
+A form whose revision no read supplies, such as `inventory.move`, reads the pallet that the address names and sends the revision that it read.
 The first segment of every address is the environment audience, so a reload renews the cookie session with nothing in browser storage.
 A screen address with no session asks for the password on that address, and it shows the screen after sign in.
 The page calls the release under `/api`, and the proxy in front of it strips that prefix, so no page path meets a route template.

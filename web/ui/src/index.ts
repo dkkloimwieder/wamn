@@ -48,12 +48,14 @@ export {
 export {
   AppFrame,
   CardPage,
+  ScreenActions,
   type AppFrameProps,
   type CardPageProps,
   type FrameEntry,
   type FrameItem,
   type FrameLink,
   type FrameSection,
+  type ScreenActionsProps,
 } from "./frame";
 export { gridFeatures, type GridFeatures } from "./grid";
 export { announceOutcome } from "./outcome";

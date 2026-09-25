@@ -5,6 +5,7 @@
  * the context and the actions, and the screen below it. The navigation is a list
  * of entries, and an entry is one link or a labeled group of links. CardPage is one card in
  * the middle of an empty page, for signing in and for an address with no page.
+ * ScreenActions is the row of buttons above a screen.
  */
 
 import { For, type Component, type JSX } from "solid-js";
@@ -110,6 +111,14 @@ export function AppFrame(props: AppFrameProps): JSX.Element {
       </SidebarInset>
     </SidebarProvider>
   );
+}
+
+export interface ScreenActionsProps {
+  readonly children: JSX.Element;
+}
+
+export function ScreenActions(props: ScreenActionsProps): JSX.Element {
+  return <div class="mb-4 flex flex-wrap gap-2">{props.children}</div>;
 }
 
 export interface CardPageProps {

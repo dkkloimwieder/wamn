@@ -40,6 +40,20 @@ function stubScreen(name: string) {
   };
 }
 
+/** A form page that shows its key and query values, and closes. */
+function stubForm(props: ScreenProps) {
+  return (
+    <>
+      <p>
+        update {props.params.id} with {props.search.note ?? "no note"}
+      </p>
+      <button type="button" onClick={() => props.close()}>
+        done
+      </button>
+    </>
+  );
+}
+
 /** A record page that shows the key from its address, and opens another record. */
 function stubRecord(props: ScreenProps) {
   return (
@@ -56,7 +70,10 @@ const SECTIONS: readonly ShellSection[] = [
   {
     label: "Pallets",
     screens: [{ path: "pallets", label: "query", component: stubScreen("pallets") }],
-    records: [{ path: "pallets/:id", component: stubRecord }],
+    routes: [
+      { path: "pallets/:id", component: stubRecord, actions: [{ label: "update", path: "pallets/:id/update?note=hi" }] },
+      { path: "pallets/:id/update", component: stubForm },
+    ],
   },
   {
     label: "Products",
@@ -208,6 +225,26 @@ describe("the app shell", () => {
     open(`/${AUD}/pallets/abc`, fetch);
     expect(await screen.findByText("pallet abc record")).toBeDefined();
     expect(state.calls).toEqual(["/password/renew"]);
+  });
+
+  it("opens a form from an action, and the form returns to the page that opened it", async () => {
+    const { fetch } = identity(true);
+    open(`/${AUD}/pallets/abc`, fetch);
+    fireEvent.click(await screen.findByText("update"));
+    expect(await screen.findByText("update abc with hi")).toBeDefined();
+    expect(window.location.pathname).toBe(`/${AUD}/pallets/abc/update`);
+    fireEvent.click(screen.getByText("done"));
+    expect(await screen.findByText("pallet abc record")).toBeDefined();
+    expect(window.location.pathname).toBe(`/${AUD}/pallets/abc`);
+  });
+
+  it("returns from a form that no page opened to the first screen of its section", async () => {
+    const { fetch } = identity(true);
+    open(`/${AUD}/pallets/abc/update`, fetch);
+    expect(await screen.findByText("update abc with no note")).toBeDefined();
+    fireEvent.click(screen.getByText("done"));
+    expect(await screen.findByText("pallets screen")).toBeDefined();
+    expect(window.location.pathname).toBe(`/${AUD}/pallets`);
   });
 
   it("shows no page for an address that names none", async () => {

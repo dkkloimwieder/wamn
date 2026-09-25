@@ -41,6 +41,7 @@ import {
   FieldGroup,
   FieldLabel,
   Input,
+  ScreenActions,
   useColorMode,
   type FrameEntry,
   type FrameItem,
@@ -68,18 +69,40 @@ export interface ScreenProps {
   readonly transport: Transport;
   /** The values in the address, by the names in the route path, such as `id` for `pallets/:id`. */
   readonly params: Readonly<Record<string, string | undefined>>;
+  /** The values in the query of the address, such as `palletId` for `inventory/move?palletId=<id>`. */
+  readonly search: Readonly<Record<string, string | undefined>>;
   /**
-   * Opens a path below the environment, such as `pallets/<id>`. The caller
-   * encodes each value it puts in the path.
+   * Opens a path below the environment, such as `pallets/<id>` or
+   * `inventory/move?palletId=<id>`. The caller encodes each value it puts in
+   * the path.
    */
   readonly open: (path: string) => void;
+  /**
+   * Returns to the page that opened this one. When no page of the application
+   * opened it, for example a pasted address, it goes to the first screen of
+   * the section.
+   */
+  readonly close: () => void;
 }
 
-/** One route of the application, with no navigation entry, such as a record page. */
+/** One button above a route, which opens a path. */
+export interface ShellAction {
+  /** The button label, from the form label the generated module exports. */
+  readonly label: string;
+  /**
+   * The path it opens, below the environment. A parameter of the route, such
+   * as `:id` in `locations/:id/update`, takes its value from the address.
+   */
+  readonly path: string;
+}
+
+/** One route of the application, with no navigation entry, such as a record page or a form. */
 export interface ShellRoute {
   /** The path below the environment, with no leading slash, such as `pallets/:id`. */
   readonly path: string;
   readonly component: Component<ScreenProps>;
+  /** The buttons above the route, such as the create form of a table. */
+  readonly actions?: readonly ShellAction[];
 }
 
 /** One screen of the application, on its own route, with a navigation entry. */
@@ -97,8 +120,8 @@ export interface ShellSection {
   /** The model name, such as `Pallets`. */
   readonly label: string;
   readonly screens: readonly ShellScreen[];
-  /** The routes of the model that the navigation does not list, such as its record page. */
-  readonly records?: readonly ShellRoute[];
+  /** The routes of the model that the navigation does not list, such as its record page and its forms. */
+  readonly routes?: readonly ShellRoute[];
 }
 
 export interface ShellProps {
@@ -111,34 +134,71 @@ export interface ShellProps {
 
 const TransportContext = createContext<Transport>();
 
+/** The state a page opened by `open` carries, so that `close` can go back to it. */
+interface Opened {
+  readonly opened: true;
+}
+
 /**
  * One route with the transport of the session it renders in, its address
- * values, and a way to open another path. Each one is read here, while the
- * route renders. A component uses its props later, in an event handler, where
- * no context is in reach.
+ * values, a way to open another path and a way back. Each one is read here,
+ * while the route renders. A component uses its props later, in an event
+ * handler, where no context is in reach.
  */
-function screenRoute(route: ShellRoute): Component {
+function screenRoute(route: ShellRoute, home: string): Component {
   return () => {
     const transport = useContext(TransportContext);
     if (transport === undefined) {
       throw new Error("a screen renders outside a signed-in session");
     }
     const params = useParams();
+    const location = useLocation<Opened>();
     const navigate = useNavigate();
+    const open = (path: string) => navigate(`/${params.aud}/${path}`, { state: { opened: true } });
+    const close = () =>
+      location.state?.opened === true ? navigate(-1) : navigate(`/${params.aud}/${home}`, { replace: true });
+    const fill = (path: string) =>
+      path.replace(/:(\w+)/g, (_, name: string) => encodeURIComponent(params[name] ?? ""));
     return (
-      <route.component
-        transport={transport}
-        params={params}
-        open={(path) => navigate(`/${params.aud}/${path}`)}
-      />
+      <>
+        <Show when={route.actions}>
+          {(actions) => (
+            <ScreenActions>
+              <For each={actions()}>
+                {(action) => (
+                  <Button variant="outline" size="sm" onClick={() => open(fill(action.path))}>
+                    {action.label}
+                  </Button>
+                )}
+              </For>
+            </ScreenActions>
+          )}
+        </Show>
+        <route.component
+          transport={transport}
+          params={params}
+          search={single(location.query)}
+          open={open}
+          close={close}
+        />
+      </>
     );
   };
+}
+
+/** The query values, with the first value of a repeated name. */
+function single(query: Readonly<Record<string, string | string[] | undefined>>): Record<string, string | undefined> {
+  return Object.fromEntries(
+    Object.entries(query).map(([name, value]) => [name, Array.isArray(value) ? value[0] : value]),
+  );
 }
 
 export function Shell(props: ShellProps): JSX.Element {
   const options: SessionOptions = props.fetch === undefined ? {} : { fetch: props.fetch };
   const screens = props.sections.flatMap((section) => section.screens);
-  const routes = props.sections.flatMap((section) => [...section.screens, ...(section.records ?? [])]);
+  const routes = props.sections.flatMap((section) =>
+    [...section.screens, ...(section.routes ?? [])].map((route) => ({ route, home: section.screens[0]?.path ?? "" })),
+  );
   const first = screens[0];
   return (
     <Router>
@@ -152,8 +212,8 @@ export function Shell(props: ShellProps): JSX.Element {
         )}
       >
         <Route path="/" component={() => (first === undefined ? <NotFound /> : <Navigate href={first.path} />)} />
-        {routes.map((route) => (
-          <Route path={`/${route.path}`} component={screenRoute(route)} />
+        {routes.map(({ route, home }) => (
+          <Route path={`/${route.path}`} component={screenRoute(route, home)} />
         ))}
         <Route path="*" component={NotFound} />
       </Route>
