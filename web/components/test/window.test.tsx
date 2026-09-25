@@ -5,13 +5,16 @@
  * brings later rows in. Paging does not change: the second page appends to
  * the first (wamn-ly11.1).
  *
- * The document has no layout, so the test gives the scroll box and each row
- * the height a browser would measure. The subject is the fixture's page table, which
- * `check_client_components` writes into `fixture/` before this runs.
+ * The document has no layout, so the test gives the scroll box the height a
+ * browser would measure. Every row is `ROW_HEIGHT` tall and is not measured.
+ * The subject is the fixture's page table, which `check_client_components`
+ * writes into `fixture/` before this runs.
  */
 
 import { cleanup, fireEvent, render, screen, waitFor } from "@solidjs/testing-library";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+
+import { ROW_HEIGHT } from "@wamn/ui";
 
 import { WidgetQueryTable } from "../fixture/components/widget.js";
 import { page, tableStub as stub } from "../stubs/index.js";
@@ -19,19 +22,13 @@ import { page, tableStub as stub } from "../stubs/index.js";
 /** The height the scroll box measures, which holds about ten rows. */
 const BOX = 480;
 
-/** The height each rendered row measures. */
-const ROW = 48;
-
 const measured = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "offsetHeight");
 
 beforeAll(() => {
   Object.defineProperty(HTMLElement.prototype, "offsetHeight", {
     configurable: true,
     get(this: HTMLElement) {
-      if (this.dataset["slot"] === "scroll-area-viewport") {
-        return BOX;
-      }
-      return this.dataset["index"] === undefined ? 0 : ROW;
+      return this.dataset["slot"] === "scroll-area-viewport" ? BOX : 0;
     },
   });
 });
@@ -63,7 +60,7 @@ describe("a table that holds 1000 rows", () => {
     expect(screen.queryByText("w0999")).toBeNull();
 
     const box = document.querySelector<HTMLElement>('[data-slot="scroll-area-viewport"]')!;
-    box.scrollTop = 1000 * ROW;
+    box.scrollTop = 1000 * ROW_HEIGHT;
     fireEvent.scroll(box);
 
     await waitFor(() => expect(screen.getByText("w0999")).toBeDefined());
