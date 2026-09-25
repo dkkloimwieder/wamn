@@ -314,9 +314,12 @@ pub fn config(directory: &Path, digest: String) -> EdgeConfig {
             listen: "127.0.0.1:0".parse().expect("address"),
         },
         device: None,
+        forward: None,
     }
 }
 
 pub async fn start(config: EdgeConfig) -> EdgeHost {
-    serve(config).await.expect("the edge serves its bundle")
+    Box::pin(serve(config))
+        .await
+        .expect("the edge serves its bundle")
 }

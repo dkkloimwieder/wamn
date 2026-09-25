@@ -164,6 +164,7 @@ The samples, as issue `wamn-e5in.8` built them in [`samples.rs`](../../services/
 - A completed item stores its `value` as `body`, in the transaction that finishes its intent. A failed item stores no sample. `SqliteIntentStore::transact` and `finish_in` let the edge write its table in that transaction.
 - The device route must change records and must name no idempotency key, and the edge refuses to start otherwise.
 - The serial reader drops a trailing carriage return. It drops an empty frame, a frame that is not UTF-8, and a frame longer than `max_frame`. It counts each dropped frame for the diagnostics, because drops show a misconfigured scale, and logs the first drop only (owner ruling).
+- Issue `wamn-e5in.9` added `refused_at`, `resolved_basis` and `resolved_at` to the sample row (owner ruling: the sample store owns its row, and 4.7 still holds for the intent log). A sample is pending until it is forwarded or refused. A refused sample keeps the platform's reason in `last_error`. An operator lists refused samples with `wamn-edge samples list` and closes one with `wamn-edge samples resolve <sample_key> <basis>` while the edge is stopped. A resolved sample is never forwarded.
 
 `begin` commits before the export runs. After a power loss, a begun intent with no outcome is uncertain, and the edge never runs it again. The reading of that intent is lost, and the next reading replaces it. The promise holds only if the SD card honors a flush. The closeout records the card that the test used.
 
@@ -188,6 +189,15 @@ The intent rules, as issue `wamn-e5in.7` built them in the [engine](../../crates
 | C | A token signed by an edge key. | The platform trusts a new key per box. |
 
 The forward calls a command route with `request_id` set to `sample_key`, so the platform's idempotency makes a repeated forward harmless. The client is `hyper-util` with `hyper-rustls`, which wash-runtime links already, so the forward adds no crate.
+
+The forward, as issue `wamn-e5in.9` built it in [`forward.rs`](../../services/edge/src/forward.rs):
+
+- The configuration section `forward` names the https `url`, the `token_file`, an optional `ca_file` of extra PEM roots, and the `key_field`. The edge refuses to start if anyone but the owner of the token file can read it.
+- The platform keys a command by its idempotency key field, not by `request_id`. So the forward also writes the sample key into `key_field`, for example `value.idempotency_key` (owner ruling). The device operation stays a transform of one frame.
+- Each attempt reads the pending samples from the store, one sample per request. A retry never comes from memory, and a restart continues where the store says.
+- A refusal is an outcome (owner ruling). An item error or a 4xx status stores the sample as refused, and the forward never sends it again.
+- No answer, a timeout, or a 5xx status leaves the sample pending, and the forward waits a backoff from 5 seconds to 15 minutes. A 401, 403, 408 or 429 status is retried the same way, because it concerns the credential or the moment, not the sample.
+- The forward wakes when a sample is stored. A forward in flight when the edge stops is dropped, and the platform key makes its repeat harmless.
 
 ### 4.9 Size and dependency budget
 

@@ -28,6 +28,15 @@ toml = { workspace = true }
 # The sample key and the capture time of each frame.
 uuid = { workspace = true, features = ["v4"] }
 chrono = { workspace = true, features = ["clock"] }
+# The forward: HTTPS with rustls over aws-lc-rs, which wash-runtime links
+# already, so the forward adds no crate (spec 4.8).
+bytes = { workspace = true }
+http-body-util = { workspace = true }
+hyper = { workspace = true }
+hyper-rustls = { workspace = true, features = ["http1"] }
+hyper-util = { workspace = true, features = ["client-legacy", "http1", "tokio"] }
+rustls = { workspace = true, features = ["aws-lc-rs", "std"] }
+rustls-native-certs = { workspace = true }
 anyhow = { workspace = true }
 async-trait = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
@@ -35,7 +44,8 @@ serde_json = { workspace = true }
 sha2 = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "signal", "sync", "time"] }
 tracing = { workspace = true }
-tracing-subscriber = { workspace = true }
+# RUST_LOG selects the log level.
+tracing-subscriber = { workspace = true, features = ["env-filter"] }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["io-util", "macros", "net", "rt"] }
@@ -48,6 +58,9 @@ base64 = { workspace = true }
 ring = { workspace = true }
 # The device test writes frames into a pseudo-terminal pair.
 rustix = { workspace = true, features = ["pty"] }
+# The forward test serves an HTTPS platform with its own certificate authority.
+rcgen = { workspace = true }
+tokio-rustls = { workspace = true }
 
 [lints]
 workspace = true

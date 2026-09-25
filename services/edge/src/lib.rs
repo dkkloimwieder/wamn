@@ -12,6 +12,9 @@
 //!   routes behind a local ingress, and runs the device loop.
 //! - [`device`], [`serial`] and [`samples`]: the device loop, its serial
 //!   source, and the samples it stores.
+//! - [`forward`]: the forward of each sample to a platform route over HTTPS.
+//! - [`refusals`]: the `wamn-edge samples` commands, which list and resolve
+//!   refused samples while the edge is stopped.
 //! - [`authenticator`], [`delivery`], [`policy`] and [`application`]: the
 //!   edge side of the engine's route and operation traits.
 //! - [`intents`]: the `wamn-edge intents` commands, which list and resolve
@@ -39,9 +42,11 @@ pub mod authenticator;
 pub mod config;
 pub mod delivery;
 pub mod device;
+pub mod forward;
 pub mod grants;
 pub mod intents;
 pub mod policy;
+pub mod refusals;
 pub mod release;
 pub mod samples;
 pub mod serial;

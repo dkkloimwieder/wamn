@@ -4,7 +4,8 @@
 //! engine, the two route plugins over the edge authenticator and delivery, and
 //! an ingress. The route guest runs as its own workload, built from the bundle
 //! bytes. The application loads once as a native application. When the
-//! configuration names a device, the device loop calls the same delivery.
+//! configuration names a device, the device loop calls the same delivery, and
+//! when it names a forward, the forward sends each stored sample on.
 
 use std::collections::HashMap;
 use std::net::SocketAddr;
@@ -30,6 +31,7 @@ use crate::authenticator::EdgeAuthenticator;
 use crate::config::EdgeConfig;
 use crate::delivery::EdgeDelivery;
 use crate::device::{self, DeviceLoop};
+use crate::forward::{self, Forward};
 use crate::release::{EdgeRelease, file_digest};
 use crate::samples::SampleStore;
 
@@ -43,6 +45,7 @@ pub struct EdgeHost {
     addr: SocketAddr,
     stopping: tokio::sync::watch::Sender<bool>,
     device: Option<DeviceLoop>,
+    forward: Option<Forward>,
     samples: SampleStore,
 }
 
@@ -63,11 +66,15 @@ impl EdgeHost {
     }
 
     /// Refuse new requests and frames, let the device call in flight finish,
-    /// then stop the host and its workloads.
+    /// drop a forward in flight, then stop the host and its workloads. The
+    /// platform key makes the repeat of a dropped forward harmless.
     pub async fn stop(self) -> anyhow::Result<()> {
         let _ = self.stopping.send(true);
         if let Some(device) = self.device {
             device.join().await;
+        }
+        if let Some(forward) = self.forward {
+            forward.join().await;
         }
         self.host.stop().await
     }
@@ -141,11 +148,25 @@ pub async fn serve(config: EdgeConfig) -> anyhow::Result<EdgeHost> {
         host.stop().await?;
         anyhow::bail!("the route guest did not start: {status:?}");
     }
+    let forward = match &config.forward {
+        Some(forward) => match forward::start(forward, samples.clone(), stopped.clone()) {
+            Ok(forward) => Some(forward),
+            Err(error) => {
+                let _ = stopping.send(true);
+                host.stop().await?;
+                return Err(error.context("start the forward"));
+            }
+        },
+        None => None,
+    };
     let device = match &config.device {
         Some(device) => match device::start(device, &release, delivery, samples.clone(), stopped) {
             Ok(device) => Some(device),
             Err(error) => {
                 let _ = stopping.send(true);
+                if let Some(forward) = forward {
+                    forward.join().await;
+                }
                 host.stop().await?;
                 return Err(error.context("start the device loop"));
             }
@@ -156,6 +177,7 @@ pub async fn serve(config: EdgeConfig) -> anyhow::Result<EdgeHost> {
         bundle_digest = release.bundle_digest(),
         %addr,
         device = config.device.is_some(),
+        forward = config.forward.is_some(),
         "wamn-edge serves its release"
     );
     Ok(EdgeHost {
@@ -163,6 +185,7 @@ pub async fn serve(config: EdgeConfig) -> anyhow::Result<EdgeHost> {
         addr,
         stopping,
         device,
+        forward,
         samples,
     })
 }

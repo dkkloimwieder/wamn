@@ -72,6 +72,22 @@ const OVERRIDES: &[(&str, &[&str], Shape)] = &[
         &["device", "serial", "max_frame"],
         Shape::Integer,
     ),
+    ("WAMN_EDGE_FORWARD_URL", &["forward", "url"], Shape::Text),
+    (
+        "WAMN_EDGE_FORWARD_TOKEN_FILE",
+        &["forward", "token_file"],
+        Shape::Text,
+    ),
+    (
+        "WAMN_EDGE_FORWARD_CA_FILE",
+        &["forward", "ca_file"],
+        Shape::Text,
+    ),
+    (
+        "WAMN_EDGE_FORWARD_KEY_FIELD",
+        &["forward", "key_field"],
+        Shape::Text,
+    ),
 ];
 
 /// Everything the box needs to serve.
@@ -85,6 +101,10 @@ pub struct EdgeConfig {
     /// The device loop. Without it, the box serves routes only.
     #[serde(default)]
     pub device: Option<DeviceConfig>,
+    /// The forward of samples to the platform. Without it, samples stay in
+    /// the store.
+    #[serde(default)]
+    pub forward: Option<ForwardConfig>,
 }
 
 /// The release bundle that the box serves.
@@ -156,6 +176,23 @@ pub struct SerialConfig {
     pub max_frame: usize,
 }
 
+/// The platform route that receives each sample.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ForwardConfig {
+    /// The `https` URL of the platform route.
+    pub url: String,
+    /// The file of the device PAT. Only its owner may read it.
+    pub token_file: PathBuf,
+    /// PEM certificates that the forward trusts beside the system roots.
+    #[serde(default)]
+    pub ca_file: Option<PathBuf>,
+    /// The item field of the platform route's idempotency key, such as
+    /// `value.idempotency_key`. The forward writes the sample key into it.
+    #[serde(default)]
+    pub key_field: Option<String>,
+}
+
 impl EdgeConfig {
     /// Read the file at `path`, when there is one, and apply the overrides
     /// from the environment.
@@ -219,6 +256,8 @@ mod tests {
         let config = parse(EXAMPLE, &[]).expect("the example parses");
         let device = config.device.expect("the example has a device");
         assert_eq!(device.serial.baud, 9600);
+        let forward = config.forward.expect("the example has a forward");
+        assert_eq!(forward.key_field.as_deref(), Some("value.idempotency_key"));
         assert_eq!(config.http.listen.port(), 8080);
     }
 

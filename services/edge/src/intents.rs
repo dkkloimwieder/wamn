@@ -17,7 +17,7 @@ use wamn_run_state_sqlite::SqliteIntentStore;
 
 /// How to call the intents commands.
 pub const USAGE: &str = "usage: wamn-edge [--config <path>], or wamn-edge [--config <path>] \
-     intents list, or wamn-edge [--config <path>] intents resolve <id> \
+     samples list|resolve, or wamn-edge [--config <path>] intents list, or wamn-edge [--config <path>] intents resolve <id> \
      <external-evidence|counterparty-confirmation|operator-judgment>";
 
 /// Run one intents command over the run-state file at `db`, and return its output.

@@ -2,7 +2,8 @@
 //! is interrupted.
 //!
 //! `wamn-edge [--config <path>] intents ...` lists and resolves uncertain
-//! intents instead, while the edge is stopped. Without `--config`,
+//! intents instead, and `samples ...` lists and resolves refused samples,
+//! while the edge is stopped. Without `--config`,
 //! `WAMN_EDGE_CONFIG` names the file, and without either, every key comes from
 //! its `WAMN_EDGE_*` variable.
 
@@ -10,8 +11,8 @@ use std::path::PathBuf;
 
 use anyhow::{Context as _, bail};
 use wamn_edge::config::{CONFIG_VARIABLE, EdgeConfig};
-use wamn_edge::intents;
 use wamn_edge::serve::serve;
+use wamn_edge::{intents, refusals};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -34,6 +35,10 @@ async fn main() -> anyhow::Result<()> {
         }
         Some((command, rest)) if command == "intents" => {
             print!("{}", intents::run(rest, &config.store.db).await?);
+            Ok(())
+        }
+        Some((command, rest)) if command == "samples" => {
+            print!("{}", refusals::run(rest, &config.store.db).await?);
             Ok(())
         }
         Some(_) => bail!(intents::USAGE),
