@@ -5,8 +5,8 @@
  * The source of the load owns the rows, the times and the cap, and starts a
  * new load when the cap changes.
  *
- * The table declares one static bundle: `gridFeatures`, column filtering, and
- * the filtered and sorted row models. It renders through `WindowedTable`, so a
+ * The table declares one static bundle: `gridFeatures`, column and global
+ * filtering, and the filtered and sorted row models. It renders through `WindowedTable`, so a
  * table above `WINDOW_FROM` rows draws only the rows in view.
  *
  * A header click sorts. The sort state lives in the table. If the set is fully
@@ -19,6 +19,11 @@
  * on a fully read set. On a set that is not fully read, the filters stay in
  * the table state, apply to no row, and their chips are disabled.
  *
+ * One search box keeps the rows whose shown text contains the search, in any
+ * case, in a visible column that is not json or bytes. It applies with the
+ * filters, before the sort. On a set that is not fully read, it is disabled,
+ * says why, and applies to no row.
+ *
  * The table fills the height of its container, which the app sizes. The
  * toolbar stays above the grid, and the grid body is the only element that
  * scrolls, so it is the element the windowing measures against.
@@ -27,6 +32,7 @@
 import {
   columnFilteringFeature,
   createFilteredRowModel,
+  globalFilteringFeature,
   createSortedRowModel,
   createTable,
   tableFeatures,
@@ -35,11 +41,13 @@ import {
   type Row,
 } from "@tanstack/solid-table";
 import { ArrowDown, ArrowUp, X } from "lucide-solid";
-import { createMemo, For, type JSX, Match, Show, Switch } from "solid-js";
+import { createMemo, createUniqueId, For, type JSX, Match, Show, Switch } from "solid-js";
 
 import { DataGrid, DataGridContainer } from "../blocks/data-grid";
 import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
+import { Field, FieldDescription, FieldLabel } from "../components/ui/field";
+import { Input } from "../components/ui/input";
 import { TextField } from "../fields";
 import { gridFeatures } from "../grid";
 import { WindowedTable } from "../windowed-table";
@@ -108,7 +116,16 @@ export interface DataTableProps<TRow extends object> {
   readonly sortMaxFields: number;
   /** Called with the whole new sort after a click, when the set is not fully read. */
   readonly onSortChange: (sort: readonly DataTableSort<TRow>[]) => void;
+  /** The fields hidden when the table first draws. A view replaces them later. */
+  readonly hiddenFields?: readonly (keyof TRow & string)[] | undefined;
 }
+
+/** The text the search box shows when the set is not fully read. */
+const SEARCH_NEEDS_FULL_SET = "Search applies only to a fully read set.";
+
+/** True when a cell's shown text contains the search, in any case. */
+const searchMatches = (value: unknown, search: string) =>
+  value !== null && value !== undefined && String(value).toLowerCase().includes(search.toLowerCase());
 
 /**
  * The feature bundle of every data table: the grid features, column filtering,
@@ -117,6 +134,8 @@ export interface DataTableProps<TRow extends object> {
 const dataTableFeatures = tableFeatures({
   ...gridFeatures,
   columnFilteringFeature,
+  // globalFilteringFeature requires columnFilteringFeature, declared above.
+  globalFilteringFeature,
   filteredRowModel: createFilteredRowModel(),
   sortedRowModel: createSortedRowModel(),
 });
@@ -188,6 +207,7 @@ export function DataTable<TRow extends object>(props: DataTableProps<TRow>): JSX
             filterMatches(column.type, row.original[column.field], filter),
           { autoRemove: (filter: unknown) => filter === undefined },
         ),
+        enableGlobalFilter: column.type !== "json" && column.type !== "bytes",
         // Read on each call, so a set that stops being fully read limits the sort.
         get enableSorting() {
           return props.fullyRead || props.sortFields.some((sort) => sort.field === column.field);
@@ -212,6 +232,15 @@ export function DataTable<TRow extends object>(props: DataTableProps<TRow>): JSX
     get manualFiltering() {
       return !props.fullyRead;
     },
+    // TanStack searches hidden columns too, so the table limits it to visible ones.
+    // The option types its column over any features, so it names this bundle.
+    getColumnCanGlobalFilter: (column) =>
+      (column as unknown as Column<DataTableFeatures, TRow, unknown>).getIsVisible(),
+    globalFilterFn: (row: Row<DataTableFeatures, TRow>, columnId: string, search: string) =>
+      searchMatches(row.getValue(columnId), search),
+    initialState: {
+      columnVisibility: Object.fromEntries((props.hiddenFields ?? []).map((field) => [field, false])),
+    },
     get enableMultiSort() {
       return props.sortMaxFields > 1;
     },
@@ -222,6 +251,9 @@ export function DataTable<TRow extends object>(props: DataTableProps<TRow>): JSX
     sortDescFirst: false,
     enableSortingRemoval: false,
   });
+
+  const search = () => (table.atoms.globalFilter?.get() as string | undefined) ?? "";
+  const searchId = createUniqueId();
 
   /** The active filters, in the order they were set, as their chips name them. */
   const filters = createMemo(() =>
@@ -263,6 +295,23 @@ export function DataTable<TRow extends object>(props: DataTableProps<TRow>): JSX
           <Button type="button" variant="outline" disabled={props.busy} onClick={() => props.onRefresh()}>
             refresh
           </Button>
+          <Field class="w-64">
+            <FieldLabel for={searchId}>search</FieldLabel>
+            <Input
+              id={searchId}
+              type="search"
+              value={search()}
+              disabled={!props.fullyRead}
+              onInput={(event) =>
+                table.setGlobalFilter(
+                  event.currentTarget.value === "" ? undefined : event.currentTarget.value,
+                )
+              }
+            />
+            <Show when={!props.fullyRead}>
+              <FieldDescription>{SEARCH_NEEDS_FULL_SET}</FieldDescription>
+            </Show>
+          </Field>
         </div>
         <div role="status" class="flex flex-col items-end gap-1 text-sm text-muted-foreground">
           <Show when={props.startedAt}>
@@ -315,7 +364,8 @@ export function DataTable<TRow extends object>(props: DataTableProps<TRow>): JSX
         recordCount={props.rows.length}
         isLoading={props.busy}
         emptyMessage={
-          props.refusal ?? (filters().length > 0 ? "No row matches the filters." : null)
+          props.refusal ??
+          (filters().length > 0 || search() !== "" ? "No row matches the search and filters." : null)
         }
       >
         {/* The grid takes the height the toolbar leaves, in place of its fixed one. */}

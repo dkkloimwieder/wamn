@@ -213,6 +213,10 @@
   @apply has-data-checked:bg-primary/5 has-data-checked:border-primary/30 dark:has-data-checked:border-primary/20 dark:has-data-checked:bg-primary/10 gap-2 leading-snug group-data-[disabled=true]/field:opacity-50 has-[>[data-slot=field]]:rounded-none has-[>[data-slot=field]]:border [&>[data-slot=field]]:p-2 peer-data-disabled:opacity-50;
 }
 
+.z-field-description {
+  @apply text-muted-foreground text-left text-xs/relaxed [[data-variant=legend]+&]:-mt-1.5;
+}
+
 .z-field-error {
   @apply text-destructive text-xs;
 }
