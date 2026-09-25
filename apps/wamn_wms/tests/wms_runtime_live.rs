@@ -777,7 +777,7 @@ mod shape {
         ] {
             assert!(value.get(key).is_some(), "value carries {key}");
         }
-        assert_eq!(value["expected_row_version"], "1");
+        assert_eq!(value["expected_row_version"], 1);
         assert_eq!(
             value.as_object().expect("object").len(),
             5,
