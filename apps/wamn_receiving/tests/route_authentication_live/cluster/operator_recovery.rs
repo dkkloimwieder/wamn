@@ -215,12 +215,30 @@ struct Recovery<'a> {
     released: BTreeSet<String>,
     phases: BTreeMap<String, Value>,
 }
-/// The UIDs of the workloads whose Ready condition is True.
+/// The releases with a ready workload: each ready workload's owning
+/// WorkloadReplicaSet, or the workload itself when nothing owns it. A
+/// replica set can replace its workload during recovery, so a workload UID
+/// does not identify a release.
 fn ready_workloads(workloads: &[Value]) -> anyhow::Result<BTreeSet<String>> {
     workloads
         .iter()
         .filter(|workload| ready(workload))
-        .map(|workload| text(workload, "/metadata/uid").map(str::to_owned))
+        .map(|workload| {
+            let owner = workload
+                .pointer("/metadata/ownerReferences")
+                .and_then(Value::as_array)
+                .and_then(|owners| {
+                    owners
+                        .iter()
+                        .find(|owner| owner["kind"] == "WorkloadReplicaSet")
+                });
+            match owner {
+                Some(owner) => {
+                    text(owner, "/name").map(|name| format!("WorkloadReplicaSet/{name}"))
+                }
+                None => text(workload, "/metadata/name").map(|name| format!("Workload/{name}")),
+            }
+        })
         .collect()
 }
 impl Recovery<'_> {
@@ -877,7 +895,7 @@ pub(super) async fn assert_recovery(cluster: &ReceivingCluster) -> anyhow::Resul
         };
         Ok::<Value,anyhow::Error>(json!({"result":"pass","context":context,"scope":"shared-scheduler-outage",
             "request_origin":"owned-nodeport","phases":recovery.phases,"hosts_preserved":recovery.original_hosts,"host_processes_preserved":recovery.original_pods,
-            "operator":recovery.original_operator,"released_workload_uids":recovery.released,
+            "operator":recovery.original_operator,"released":recovery.released,
             "before_workload_uids":ids(&before.workloads)?,"after_workload_uids":ids(&after.workloads)?}))
     }.await;
     let mut cleanup_errors = Vec::new();
