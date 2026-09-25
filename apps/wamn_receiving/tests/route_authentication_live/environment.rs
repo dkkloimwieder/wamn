@@ -855,24 +855,50 @@ pub(super) async fn seed_preexisting_quality_fixture(project: &Client) -> anyhow
 }
 
 pub(super) async fn seed_materializer_trigger_rows(project: &Client) -> anyhow::Result<()> {
+    seed_materializer_order(
+        project,
+        "00000000-0000-0000-0000-000000000304",
+        "00000000-0000-0000-0000-000000000504",
+        "PO-304",
+    )
+    .await
+}
+
+/// One untouched open purchase order with one line, for one materializer
+/// trigger. A rerun of the materializer stage seeds a new one.
+pub(super) async fn seed_materializer_order(
+    project: &Client,
+    order_id: &str,
+    line_id: &str,
+    number: &str,
+) -> anyhow::Result<()> {
     bind_fixture_principal(project, TENANT).await?;
     project
         .batch_execute(
             "INSERT INTO receiving.supplier (id, name) VALUES \
                ('00000000-0000-0000-0000-000000000404', 'SUPPLIER-404') \
-             ON CONFLICT ON CONSTRAINT supplier_id_pkey DO NOTHING; \
-             INSERT INTO receiving.purchase_order \
-               (id, purchase_order_number, supplier_id, status, row_version) \
-             VALUES \
-               ('00000000-0000-0000-0000-000000000304', 'PO-304', \
-                '00000000-0000-0000-0000-000000000404', 'open', 1); \
-             INSERT INTO receiving.purchase_order_line \
-               (id, purchase_order_id, line_number, item_id, ordered_quantity, received_quantity) \
-             VALUES \
-               ('00000000-0000-0000-0000-000000000504', \
-                '00000000-0000-0000-0000-000000000304', 1, \
-                '00000000-0000-0000-0000-000000000101', 9.0000, 0.0000);",
+             ON CONFLICT ON CONSTRAINT supplier_id_pkey DO NOTHING;",
         )
         .await
-        .context("seed the untouched materializer journey purchase order")
+        .context("seed the materializer journey supplier")?;
+    project
+        .execute(
+            "INSERT INTO receiving.purchase_order \
+               (id, purchase_order_number, supplier_id, status, row_version) \
+             VALUES ($1::text::uuid, $2, '00000000-0000-0000-0000-000000000404', 'open', 1)",
+            &[&order_id, &number],
+        )
+        .await
+        .context("seed the untouched materializer journey purchase order")?;
+    project
+        .execute(
+            "INSERT INTO receiving.purchase_order_line \
+               (id, purchase_order_id, line_number, item_id, ordered_quantity, received_quantity) \
+             VALUES ($1::text::uuid, $2::text::uuid, 1, \
+                     '00000000-0000-0000-0000-000000000101', 9.0000, 0.0000)",
+            &[&line_id, &order_id],
+        )
+        .await
+        .context("seed the untouched materializer journey purchase order line")?;
+    Ok(())
 }

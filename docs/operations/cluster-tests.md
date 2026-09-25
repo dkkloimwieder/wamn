@@ -45,6 +45,39 @@ The test builds its required guests, native programs, and images.
 It owns its broker credentials and provisions the declared streams before host activation.
 It keeps normal TLS peer verification and separate scheduler and event credentials.
 
+The same case also runs as stages on one kept cluster.
+A stage that fails runs again in minutes, without a new build or cluster.
+Run the setup stage first. It prints `WAMN_RECEIVING_CLUSTER=<name>` and keeps the cluster:
+
+```bash
+cargo test --locked --offline -p wamn-receiving-tests --lib \
+  route_authentication_live::cluster::stages::setup_stage -- --exact --ignored --nocapture
+```
+
+Then run the materializer, startup, and outage stages in any order, each as often as necessary:
+
+```bash
+export WAMN_RECEIVING_CLUSTER=<name>
+cargo test --locked --offline -p wamn-receiving-tests --lib \
+  route_authentication_live::cluster::stages::materializer_stage -- --exact --ignored
+cargo test --locked --offline -p wamn-receiving-tests --lib \
+  route_authentication_live::cluster::stages::startup_stage -- --exact --ignored
+cargo test --locked --offline -p wamn-receiving-tests --lib \
+  route_authentication_live::cluster::stages::outage_stage -- --exact --ignored
+```
+
+The outage stage checks the heartbeat guard and the supervised operator exits during one scheduler outage, then restarts the operator.
+An attached stage runs the committed test code at HEAD against the images of the setup commit.
+It refuses when a production path changed since the setup stage.
+Remove the cluster, its containers, its private files, and its image tags with the teardown stage:
+
+```bash
+cargo test --locked --offline -p wamn-receiving-tests --lib \
+  route_authentication_live::cluster::stages::teardown_stage -- --exact --ignored
+```
+
+A commit that changes only test files keeps the host and identity images, so a new setup stage after a test fix also reuses them.
+
 For `[RECEIVING-POSTCOMMIT]`, select the sequential baseline and additive installation comparison:
 
 ```bash

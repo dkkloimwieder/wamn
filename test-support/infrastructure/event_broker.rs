@@ -203,6 +203,34 @@ pub fn prepare(
     })
 }
 
+/// Read back the broker files that `prepare` wrote into `work`, for a later
+/// process that attaches to the same environment.
+pub fn load(work: &Path) -> anyhow::Result<EventBroker> {
+    let directory = work.join("event-nats");
+    let role = |name: &str| -> anyhow::Result<Credentials> {
+        let username = std::fs::read_to_string(directory.join(format!("{name}-username")))
+            .with_context(|| format!("read the {name} broker username"))?;
+        let password_file = directory.join(format!("{name}-password"));
+        ensure!(
+            password_file.is_file(),
+            "the {name} broker password file is missing"
+        );
+        Ok(Credentials {
+            username,
+            password_file,
+        })
+    };
+    Ok(EventBroker {
+        configuration: directory.join("nats.conf"),
+        binding: directory.join("binding.json"),
+        provisioning: role("provisioning")?,
+        runtime: role("runtime")?,
+        publisher: role("publisher")?,
+        materializer: role("materializer")?,
+        observer: role("observer")?,
+    })
+}
+
 fn subject_token(value: &str) -> bool {
     !value.is_empty()
         && value

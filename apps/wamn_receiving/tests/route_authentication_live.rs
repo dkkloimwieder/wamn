@@ -87,9 +87,9 @@ use environment::{
     overlay_package_root, overlay_route_path, package_root, publish_journey_release,
     push_journey_components, reconcile_journey_data_access, released_component_digests,
     render_component_declarations, repository_root, required_journey, required_journey_path,
-    seed_materializer_trigger_rows, seed_preexisting_quality_fixture, seed_receiving_business_rows,
-    verify_journey_components_are_effectful, verify_journey_operation_grants,
-    verify_zero_case_gate_reports,
+    seed_materializer_order, seed_materializer_trigger_rows, seed_preexisting_quality_fixture,
+    seed_receiving_business_rows, verify_journey_components_are_effectful,
+    verify_journey_operation_grants, verify_zero_case_gate_reports,
 };
 use routes::copy_fresh_only_package;
 use runtime::{

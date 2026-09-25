@@ -241,7 +241,11 @@ pub(super) async fn finish(
     if result.is_err() {
         resources::capture_failure(&cluster.resources).await;
     }
-    let cleanup = resources::remove(&mut cluster.resources).await;
+    let cleanup = if cluster.resources.kept() {
+        resources::stop_reader(&mut cluster.resources).await
+    } else {
+        resources::remove(&mut cluster.resources).await
+    };
     let result = match (result, cleanup) {
         (Ok(()), Ok(())) => Ok(()),
         (Err(error), Ok(())) | (Ok(()), Err(error)) => Err(error),

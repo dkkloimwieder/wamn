@@ -28,6 +28,11 @@ pub(super) async fn assert_startup(
     instance: &str,
 ) -> anyhow::Result<()> {
     let private = cluster.resources.work.join("startup-burst");
+    // A rerun of the startup stage on a kept cluster replaces its own
+    // private files from the earlier attempt.
+    if private.exists() {
+        fs::remove_dir_all(&private)?;
+    }
     DirBuilder::new().mode(0o700).create(&private)?;
     let evidence = cluster.resources.evidence.join("startup-burst");
     fs::create_dir(&evidence)?;
@@ -257,27 +262,26 @@ async fn prepare_scheduler_tls(
         evidence.join("scheduler-deployment-before.json"),
         &deployment,
     )?;
-    let patch = private.join("scheduler-volume-patch.json");
-    fs::write(
-        &patch,
-        serde_json::to_vec(&scheduler_volume_patch(&serde_json::from_slice(
-            &deployment,
-        )?)?)?,
-    )?;
-    checked(
-        kubectl(&cluster.resources)
-            .args([
-                "-n",
-                "wamn-system",
-                "patch",
-                "deployment",
-                "nats",
-                "--type=json",
-                "--patch-file",
-            ])
-            .arg(&patch),
-    )
-    .await?;
+    // An earlier startup stage on a kept cluster already moved the scheduler
+    // to the test certificate. The rollout check below still runs.
+    if let Some(patch_document) = scheduler_volume_patch(&serde_json::from_slice(&deployment)?)? {
+        let patch = private.join("scheduler-volume-patch.json");
+        fs::write(&patch, serde_json::to_vec(&patch_document)?)?;
+        checked(
+            kubectl(&cluster.resources)
+                .args([
+                    "-n",
+                    "wamn-system",
+                    "patch",
+                    "deployment",
+                    "nats",
+                    "--type=json",
+                    "--patch-file",
+                ])
+                .arg(&patch),
+        )
+        .await?;
+    }
     checked(kubectl(&cluster.resources).args([
         "-n",
         "wamn-system",
@@ -331,7 +335,9 @@ async fn prepare_scheduler_tls(
     Ok(())
 }
 
-fn scheduler_volume_patch(deployment: &Value) -> anyhow::Result<Value> {
+/// The patch that moves the scheduler to the test certificate, or `None` when
+/// the scheduler already uses it.
+fn scheduler_volume_patch(deployment: &Value) -> anyhow::Result<Option<Value>> {
     let volumes = deployment["spec"]["template"]["spec"]["volumes"]
         .as_array()
         .context("the scheduler Deployment has volumes")?;
@@ -345,15 +351,18 @@ fn scheduler_volume_patch(deployment: &Value) -> anyhow::Result<Value> {
         "the scheduler must have exactly one certificate volume"
     );
     let (index, volume) = matches[0];
+    if volume["secret"]["secretName"] == "receiving-startup-nats-tls" {
+        return Ok(None);
+    }
     ensure!(
         volume["secret"]["secretName"] == "wasmcloud-nats-tls",
         "the owned scheduler must still use the chart certificate before test setup"
     );
     let path = format!("/spec/template/spec/volumes/{index}/secret/secretName");
-    Ok(json!([
+    Ok(Some(json!([
         {"op":"test", "path":path, "value":"wasmcloud-nats-tls"},
         {"op":"replace", "path":path, "value":"receiving-startup-nats-tls"},
-    ]))
+    ])))
 }
 
 async fn forward(
@@ -635,7 +644,7 @@ mod tests {
             {"name":"nats-cert", "secret":{"secretName":"wasmcloud-nats-tls"}},
             {"name":"jetstream", "emptyDir":{}},
         ]}}}});
-        let patch = scheduler_volume_patch(&deployment).unwrap();
+        let patch = scheduler_volume_patch(&deployment).unwrap().unwrap();
         assert_eq!(patch.as_array().unwrap().len(), 2);
         assert_eq!(patch[0]["op"], "test");
         assert_eq!(patch[1]["op"], "replace");
@@ -645,6 +654,10 @@ mod tests {
                 "/spec/template/spec/volumes/1/secret/secretName"
             );
         }
+        // A rerun on a kept cluster finds the test certificate in place.
+        deployment["spec"]["template"]["spec"]["volumes"][1]["secret"]["secretName"] =
+            json!("receiving-startup-nats-tls");
+        assert!(scheduler_volume_patch(&deployment).unwrap().is_none());
         deployment["spec"]["template"]["spec"]["volumes"][1]["secret"]["secretName"] =
             json!("another-certificate");
         assert!(scheduler_volume_patch(&deployment).is_err());

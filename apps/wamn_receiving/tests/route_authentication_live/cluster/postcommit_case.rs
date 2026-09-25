@@ -189,9 +189,16 @@ async fn exercise(cluster: &mut ReceivingCluster) -> anyhow::Result<()> {
         &resources.evidence,
     )
     .await?;
-    let (phase, update_trace, receipt_trace) =
-        materializer_case::trigger(cluster, &route, &endpoint).await?;
-    super::super::materializer::assert_materializer_causation(&phase, observer.clone()).await?;
+    let baseline = super::super::materializer::materializer_baseline(observer.clone()).await?;
+    let (phase, update_trace, receipt_trace) = materializer_case::trigger(
+        cluster,
+        &route.database_url,
+        &endpoint,
+        &materializer_case::TriggerOrder::seeded(),
+    )
+    .await?;
+    super::super::materializer::assert_materializer_causation(&phase, observer.clone(), &baseline)
+        .await?;
     cluster.inputs.materializer = Some(phase);
     assert_materializer_logs(cluster, &hosts.pods).await?;
     wamn_test_infrastructure::traces::telemetry::collect(

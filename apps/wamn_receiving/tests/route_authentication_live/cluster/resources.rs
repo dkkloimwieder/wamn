@@ -37,6 +37,9 @@ pub(super) struct Resources {
         tokio::task::JoinHandle<anyhow::Result<()>>,
     )>,
     owned: bool,
+    /// A kept cluster outlives this process: a later stage attaches to it,
+    /// and only the teardown stage removes it.
+    kept: bool,
 }
 
 /// Reserve a new name before any lifecycle action can create a resource.
@@ -60,30 +63,7 @@ pub(super) async fn prepare(
         std::env::consts::ARCH == "x86_64",
         "the Receiving images require an x86_64 build host"
     );
-    let status = checked(Command::new("git").current_dir(repository).args([
-        "status",
-        "--porcelain",
-        "--untracked-files=normal",
-        "--",
-        ".",
-        ":(exclude).beads/issues.jsonl",
-        ":(exclude).beads/interactions.jsonl",
-    ]))
-    .await?;
-    ensure!(
-        status.is_empty(),
-        "commit the final source before running the cluster test"
-    );
-    let source = String::from_utf8(
-        checked(Command::new("git").current_dir(repository).args([
-            "rev-parse",
-            "--verify",
-            "HEAD",
-        ]))
-        .await?,
-    )?
-    .trim()
-    .to_owned();
+    let source = committed_head(repository).await?;
     let name = format!("wamn-receiving-{}", uuid::Uuid::new_v4().simple());
     let lifecycle = repository.join("tools/receiving-cluster-journey-run");
     for action in ["docker-version", "clusters", "containers", "images"] {
@@ -135,6 +115,7 @@ pub(super) async fn prepare(
         lifecycle,
         reader: None,
         owned: false,
+        kept: false,
     };
     write_private(
         &cluster.evidence.join("source.json"),
@@ -145,6 +126,110 @@ pub(super) async fn prepare(
         }))?,
     )?;
     Ok(cluster)
+}
+
+/// The HEAD commit of a clean tree. A cluster test runs committed source only.
+pub(super) async fn committed_head(repository: &Path) -> anyhow::Result<String> {
+    let status = checked(Command::new("git").current_dir(repository).args([
+        "status",
+        "--porcelain",
+        "--untracked-files=normal",
+        "--",
+        ".",
+        ":(exclude).beads/issues.jsonl",
+        ":(exclude).beads/interactions.jsonl",
+    ]))
+    .await?;
+    ensure!(
+        status.is_empty(),
+        "commit the final source before running the cluster test"
+    );
+    Ok(String::from_utf8(
+        checked(Command::new("git").current_dir(repository).args([
+            "rev-parse",
+            "--verify",
+            "HEAD",
+        ]))
+        .await?,
+    )?
+    .trim()
+    .to_owned())
+}
+
+/// The host image identity of HEAD: the source the host and identity images
+/// are built from, without the test-only files (tools/journey-image-cache).
+pub(super) async fn host_identity(repository: &Path) -> anyhow::Result<String> {
+    let identity = checked(
+        Command::new(repository.join("tools/journey-image-cache"))
+            .arg("identity")
+            .arg(repository)
+            .arg("host"),
+    )
+    .await?;
+    Ok(String::from_utf8(identity)?.trim().to_owned())
+}
+
+/// Attach to a cluster that a setup stage kept. `test_source` names the test
+/// code that runs against it.
+pub(super) async fn attach(
+    repository: &Path,
+    evidence: &Path,
+    kept: &super::stages::Kept,
+    test_source: &str,
+) -> anyhow::Result<Resources> {
+    let lifecycle = repository.join("tools/receiving-cluster-journey-run");
+    let clusters = checked(Command::new(&lifecycle).args(["clusters", &kept.cluster])).await?;
+    ensure!(
+        String::from_utf8_lossy(&clusters)
+            .lines()
+            .any(|line| line == kept.cluster),
+        "the kept Receiving cluster {} does not exist",
+        kept.cluster
+    );
+    ensure!(
+        evidence.is_absolute() && !evidence.exists(),
+        "the evidence directory must be a new absolute path"
+    );
+    DirBuilder::new().mode(0o700).create(evidence)?;
+    let cluster = Resources {
+        repository: repository.to_owned(),
+        work: std::env::temp_dir().join(&kept.cluster),
+        evidence: evidence.to_owned(),
+        name: kept.cluster.clone(),
+        source: kept.source.clone(),
+        lifecycle,
+        host_image: kept.host_image.clone(),
+        gates_image: None,
+        identity_image: kept.identity_image.clone(),
+        candidate: None,
+        reader: None,
+        owned: true,
+        kept: true,
+    };
+    write_private(
+        &cluster.evidence.join("source.json"),
+        &serde_json::to_vec_pretty(&json!({
+            "source_commit":cluster.source,"test_commit":test_source,"cluster":cluster.name,
+            "host_image":cluster.host_image,"identity_image":cluster.identity_image,
+        }))?,
+    )?;
+    Ok(cluster)
+}
+
+impl Resources {
+    /// Leave the cluster in place when this process ends.
+    pub(super) fn keep(&mut self) {
+        self.kept = true;
+    }
+
+    /// Remove a kept cluster at the end of this process.
+    pub(super) fn release(&mut self) {
+        self.kept = false;
+    }
+
+    pub(super) fn kept(&self) -> bool {
+        self.kept
+    }
 }
 
 pub(super) async fn prepare_files(cluster: &Resources) -> anyhow::Result<String> {
@@ -405,8 +490,10 @@ pub(super) async fn capture_failure(cluster: &Resources) {
     }
 }
 
-pub(super) async fn remove(cluster: &mut Resources) -> anyhow::Result<()> {
-    let reader_result = if let Some((cancellation, mut task)) = cluster.reader.take() {
+/// Stop the in-process CDC reader. A kept cluster keeps its replication slot,
+/// and the next stage that needs the reader starts it again.
+pub(super) async fn stop_reader(cluster: &mut Resources) -> anyhow::Result<()> {
+    if let Some((cancellation, mut task)) = cluster.reader.take() {
         cancellation.shutdown();
         if let Ok(result) =
             tokio::time::timeout(std::time::Duration::from_secs(10), &mut task).await
@@ -423,7 +510,11 @@ pub(super) async fn remove(cluster: &mut Resources) -> anyhow::Result<()> {
         }
     } else {
         Ok(())
-    };
+    }
+}
+
+pub(super) async fn remove(cluster: &mut Resources) -> anyhow::Result<()> {
+    let reader_result = stop_reader(cluster).await;
     if cluster.owned {
         checked(
             Command::new(&cluster.lifecycle)
@@ -466,6 +557,9 @@ impl Drop for Resources {
         if let Some((cancellation, task)) = &self.reader {
             cancellation.shutdown();
             task.abort();
+        }
+        if self.kept {
+            return;
         }
         if self.owned {
             let status = std::process::Command::new(&self.lifecycle)

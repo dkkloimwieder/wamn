@@ -5,7 +5,7 @@ use std::time::Duration;
 
 use anyhow::{Context as _, ensure};
 use serde_json::{Value, json};
-use wamn_control::provision_project_env::{ProvisionedRoute, secret_value};
+use wamn_control::provision_project_env::secret_value;
 use wamn_gate_harness::journey::MaterializerPhase;
 
 use super::{ReceivingCluster, apply, checked, kubectl, resources};
@@ -172,10 +172,50 @@ fn validate_response(status: u16, content_type: &str, body: &[u8]) -> anyhow::Re
     Ok(())
 }
 
+/// The untouched purchase order that one trigger updates and receives against.
+pub(super) struct TriggerOrder {
+    pub order_id: String,
+    pub line_id: String,
+    pub idempotency_key: String,
+}
+
+impl TriggerOrder {
+    /// The order that provisioning seeds for the first trigger on a cluster.
+    pub(super) fn seeded() -> Self {
+        Self {
+            order_id: "00000000-0000-0000-0000-000000000304".to_owned(),
+            line_id: "00000000-0000-0000-0000-000000000504".to_owned(),
+            idempotency_key: "materializer-receipt-command".to_owned(),
+        }
+    }
+
+    /// Seed a new order, so a stage can trigger again on a kept cluster.
+    pub(super) async fn fresh(database_url: &str) -> anyhow::Result<Self> {
+        let run = uuid::Uuid::new_v4();
+        let order = Self {
+            order_id: run.to_string(),
+            line_id: uuid::Uuid::new_v4().to_string(),
+            idempotency_key: format!("materializer-receipt-command-{}", run.simple()),
+        };
+        let (project, task) = super::super::connect(database_url).await?;
+        let seeded = super::super::seed_materializer_order(
+            project.as_ref(),
+            &order.order_id,
+            &order.line_id,
+            &format!("PO-{}", run.simple()),
+        )
+        .await;
+        task.abort();
+        seeded?;
+        Ok(order)
+    }
+}
+
 pub(super) async fn trigger(
     cluster: &ReceivingCluster,
-    route: &ProvisionedRoute,
+    database_url: &str,
     endpoint: &str,
+    order: &TriggerOrder,
 ) -> anyhow::Result<(MaterializerPhase, String, String)> {
     let update_trace = uuid::Uuid::new_v4().simple().to_string();
     let receipt_trace = uuid::Uuid::new_v4().simple().to_string();
@@ -198,7 +238,7 @@ pub(super) async fn trigger(
         let update = http.post(format!("{endpoint}/acme/purchase_order/update"))
             .header("Host", &cluster.inputs.route_host).bearer_auth(&token)
             .header("traceparent", format!("00-{update_trace}-1111111111111111-01"))
-            .json(&json!([{"request_id":"materializer-order","id":"00000000-0000-0000-0000-000000000304",
+            .json(&json!([{"request_id":"materializer-order","id":order.order_id,
                 "expected_row_version":1,"change":{"acme_inspection_required":true,"acme_quality_status":"pending"}}]))
             .send().await?;
         ensure!(update.status() == reqwest::StatusCode::OK, "the materializer order update must return HTTP 200");
@@ -206,7 +246,7 @@ pub(super) async fn trigger(
         fs::write(cluster.resources.evidence.join("materializer-update.json"), serde_json::to_vec_pretty(&update)?)?;
         ensure!(update.as_array().is_some_and(|items| items.len() == 1)
             && update[0]["request_id"] == "materializer-order"
-            && update[0]["value"]["id"] == "00000000-0000-0000-0000-000000000304"
+            && update[0]["value"]["id"] == order.order_id.as_str()
             && update[0]["value"]["row_version"] == 2
             && update[0]["value"]["acme_inspection_required"] == true
             && update[0]["value"]["acme_quality_status"] == "pending",
@@ -217,9 +257,9 @@ pub(super) async fn trigger(
             .header("Host", &cluster.inputs.route_host).bearer_auth(&token)
             .header("traceparent", format!("00-{receipt_trace}-2222222222222222-01"))
             .json(&json!([{"request_id":"materializer-receipt","value":{
-                "idempotency_key":"materializer-receipt-command","purchase_order_id":"00000000-0000-0000-0000-000000000304",
+                "idempotency_key":order.idempotency_key,"purchase_order_id":order.order_id,
                 "receipt_reference":"MATERIALIZER-RECEIPT","occurred_at":"2026-08-31T12:34:00.000000Z",
-                "line":[{"purchase_order_line_id":"00000000-0000-0000-0000-000000000504","quantity":"9.0000",
+                "line":[{"purchase_order_line_id":order.line_id,"quantity":"9.0000",
                     "location_id":"00000000-0000-0000-0000-000000000201"}]}}]))
             .send().await?;
         ensure!(receipt.status() == reqwest::StatusCode::OK, "the materializer Receipt command must return HTTP 200");
@@ -229,7 +269,7 @@ pub(super) async fn trigger(
         ensure!(receipt.as_array().is_some_and(|items| items.len() == 1)
             && receipt[0]["request_id"] == "materializer-receipt"
             && receipt[0]["value"].as_object().is_some_and(|value| value.len() == 4)
-            && receipt[0]["value"]["purchase_order_id"] == "00000000-0000-0000-0000-000000000304"
+            && receipt[0]["value"]["purchase_order_id"] == order.order_id.as_str()
             && receipt[0]["value"]["purchase_order_status"] == "complete"
             && receipt[0]["value"]["row_version"] == 3
             && receipt[0]["value"].get("acme_inspection_required").is_none()
@@ -240,7 +280,7 @@ pub(super) async fn trigger(
         let detail = http.post(format!("{endpoint}/acme/purchase_order/get"))
             .header("Host", &cluster.inputs.route_host).bearer_auth(&token)
             .json(&json!([{"request_id":"materializer-receipt-detail",
-                "id":"00000000-0000-0000-0000-000000000304"}]))
+                "id":order.order_id}]))
             .send().await?;
         ensure!(detail.status() == reqwest::StatusCode::OK,
             "the materializer Receipt detail read must return HTTP 200");
@@ -249,13 +289,13 @@ pub(super) async fn trigger(
             serde_json::to_vec_pretty(&detail)?)?;
         ensure!(detail.as_array().is_some_and(|items| items.len() == 1)
             && detail[0]["request_id"] == "materializer-receipt-detail"
-            && detail[0]["value"]["id"] == "00000000-0000-0000-0000-000000000304"
+            && detail[0]["value"]["id"] == order.order_id.as_str()
             && detail[0]["value"]["row_version"] == 3
             && detail[0]["value"]["acme_inspection_required"] == true
             && detail[0]["value"]["acme_quality_status"] == "pending",
             "the separate materializer Receipt detail read must retain its expected state");
         Ok::<_, anyhow::Error>(MaterializerPhase {
-            project_pg_url: route.database_url.clone(), nats_url: cluster.nats_url.clone(), receipt_id: receipt_id.to_owned(),
+            project_pg_url: database_url.to_owned(), nats_url: cluster.nats_url.clone(), receipt_id: receipt_id.to_owned(),
         })
     }).await.context("the materializer HTTP commands exceeded 90 seconds")?
         .map(|phase| (phase, update_trace, receipt_trace))

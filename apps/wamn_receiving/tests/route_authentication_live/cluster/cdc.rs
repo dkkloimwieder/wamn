@@ -111,12 +111,24 @@ pub(super) async fn configure(
             "the reader credential must select the owned PostgreSQL endpoint"
         );
     }
+    reader_args(work, nats_url, nats_username, nats_password_file, source)
+}
+
+/// The reader arguments from the credentials that `configure` wrote. A later
+/// stage restarts the reader with them against the same replication slot.
+pub(super) fn reader_args(
+    work: &Path,
+    nats_url: &str,
+    nats_username: String,
+    nats_password_file: PathBuf,
+    source: &async_nats::jetstream::stream::Config,
+) -> anyhow::Result<EventReaderArgs> {
     Ok(EventReaderArgs {
         org: ORG.to_owned(),
         project: PROJECT.to_owned(),
         env: ENVIRONMENT.to_owned(),
-        system_database_url: secret_value(&registry_secret, "url")?,
-        cdc_url: secret_value(&cdc_secret, "url")?,
+        system_database_url: secret_value(&work.join("registry-reader.json"), "url")?,
+        cdc_url: secret_value(&work.join("cdc-reader.json"), "url")?,
         nats_url: nats_url.to_owned(),
         nats_username: Some(nats_username),
         nats_password_file: Some(nats_password_file),

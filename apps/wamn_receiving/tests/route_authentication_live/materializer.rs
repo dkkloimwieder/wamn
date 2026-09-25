@@ -6,9 +6,53 @@ use super::*;
 /// `crates/identity/project-state`.
 const MATERIALIZER_PRINCIPAL: &str = "968bd0cc-e612-5d29-9d6c-af1993b8df0a";
 
+/// The materializer durable and advisory stream before one trigger. A trigger
+/// delivers exactly one more event and emits no advisory, so a stage can run
+/// again on the same cluster.
+#[derive(Debug, Default)]
+pub(super) struct MaterializerBaseline {
+    consumer_sequence: u64,
+    advisories: u64,
+}
+
+pub(super) async fn materializer_baseline(
+    nats: async_nats::Client,
+) -> anyhow::Result<MaterializerBaseline> {
+    let jetstream = async_nats::jetstream::new(nats);
+    let stream = jetstream
+        .get_stream(MATERIALIZER_STREAM)
+        .await
+        .context("read the production reader's event stream")?;
+    let consumer = stream
+        .consumer_info(MATERIALIZER_DURABLE)
+        .await
+        .context("read the exact materializer durable")?;
+    anyhow::ensure!(
+        consumer.delivered.consumer_sequence == consumer.ack_floor.consumer_sequence
+            && consumer.num_ack_pending == 0
+            && consumer.num_pending == 0,
+        "the materializer durable is not settled before the trigger: {consumer:?}"
+    );
+    let advisories = jetstream
+        .get_stream(wamn_event_wire::delivery_advisory_stream(
+            MATERIALIZER_STREAM,
+        ))
+        .await
+        .context("read the production reader's broker advisory stream")?
+        .info()
+        .await?
+        .state
+        .messages;
+    Ok(MaterializerBaseline {
+        consumer_sequence: consumer.delivered.consumer_sequence,
+        advisories,
+    })
+}
+
 pub(super) async fn assert_materializer_causation(
     phase: &MaterializerPhase,
     nats: async_nats::Client,
+    baseline: &MaterializerBaseline,
 ) -> anyhow::Result<()> {
     let MaterializerPhase {
         project_pg_url: project_url,
@@ -172,9 +216,9 @@ pub(super) async fn assert_materializer_causation(
             .await
             .context("read the exact materializer durable")?;
         if consumer.name == MATERIALIZER_DURABLE
-            && consumer.delivered.consumer_sequence == 1
+            && consumer.delivered.consumer_sequence == baseline.consumer_sequence + 1
             && consumer.delivered.stream_sequence == receipt_sequence
-            && consumer.ack_floor.consumer_sequence == 1
+            && consumer.ack_floor.consumer_sequence == baseline.consumer_sequence + 1
             && consumer.ack_floor.stream_sequence == receipt_sequence
             && consumer.num_ack_pending == 0
             && consumer.num_pending == 0
@@ -195,7 +239,7 @@ pub(super) async fn assert_materializer_causation(
         .await
         .context("read the production reader's broker advisory stream")?;
     anyhow::ensure!(
-        delivery_advisories.info().await?.state.messages == 0,
+        delivery_advisories.info().await?.state.messages == baseline.advisories,
         "successful materialization emitted a delivery advisory"
     );
 

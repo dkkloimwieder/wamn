@@ -16,6 +16,7 @@ mod resources;
 mod route_cases;
 mod session_cases;
 mod session_cluster;
+mod stages;
 mod startup_case;
 
 use std::fs;
@@ -135,7 +136,33 @@ async fn start_with(
     let result = admin.batch_execute("CREATE DATABASE wamn_system").await;
     task.abort();
     result.context("create the owned system database")?;
-    let inputs = JourneyDocument {
+    let inputs = journey_inputs(
+        &cluster,
+        &artifacts,
+        &postgres_address.to_string(),
+        &authority,
+        registry_auth_file,
+    );
+    Ok(ReceivingCluster {
+        resources: cluster,
+        inputs,
+        artifacts,
+        broker,
+        nats_url,
+        source,
+    })
+}
+
+/// The journey inputs of one cluster, from its owned PostgreSQL address and
+/// registry authority. A later stage rebuilds the same inputs when it attaches.
+fn journey_inputs(
+    cluster: &Resources,
+    artifacts: &Artifacts,
+    postgres_address: &str,
+    authority: &str,
+    registry_auth_file: PathBuf,
+) -> JourneyDocument {
+    JourneyDocument {
         system_pg_url: format!("postgresql://postgres:probe@{postgres_address}:5432/wamn_system"),
         component_directory: artifacts.components.clone(),
         compilation_cache_directory: cluster.work.join("wasmtime-cache"),
@@ -152,15 +179,7 @@ async fn start_with(
         postcommit: None,
         materializer: None,
         runtime: None,
-    };
-    Ok(ReceivingCluster {
-        resources: cluster,
-        inputs,
-        artifacts,
-        broker,
-        nats_url,
-        source,
-    })
+    }
 }
 
 fn declared_consumers() -> anyhow::Result<Vec<async_nats::jetstream::consumer::pull::Config>> {
