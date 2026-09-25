@@ -6,6 +6,10 @@
 //!   release loaded from a local directory and pinned by one bundle digest.
 //! - [`grants`]: [`Grants`](grants::Grants), the permissions of each role on
 //!   the box.
+//! - [`serve`]: [`serve`](serve::serve), which loads the release and serves
+//!   its routes behind a local ingress.
+//! - [`authenticator`], [`delivery`], [`policy`] and [`application`]: the
+//!   edge side of the engine's route and operation traits.
 //!
 //! This crate refuses to depend on:
 //!
@@ -24,7 +28,12 @@
 //! wash-runtime and pins that list. If its size costs the Pi too much, the
 //! answer is a wash-runtime fork with those features off.
 
+pub mod application;
+pub mod authenticator;
+pub mod delivery;
 pub mod grants;
+pub mod policy;
 pub mod release;
+pub mod serve;
 
 use wamn_run_state as _;

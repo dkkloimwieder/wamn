@@ -8,7 +8,8 @@ use anyhow::Context as _;
 use chrono::DateTime;
 use serde::Deserialize;
 use url::Url;
-use wamn_platform_identity::{PAT_TOKEN_PREFIX, PrincipalId};
+use wamn_platform_identity::PrincipalId;
+use wamn_session::PAT_TOKEN_PREFIX;
 
 /// The provisioning request stops after five seconds and never retries issuance.
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(5);

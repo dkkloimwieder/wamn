@@ -10,19 +10,32 @@ license.workspace = true
 # dependency test measures what these bring.
 wamn-engine = { workspace = true }
 wamn-run-state = { workspace = true }
+# The one writer of the run-state file on the box.
+wamn-run-state-sqlite = { workspace = true }
 # Local routes verify sessions over a key file, and grants name role slugs.
 wamn-session = { workspace = true }
 # The admitted component facts and the serving manifest of a release bundle.
 wamn-catalog = { workspace = true }
+# The plain host, its ingress and the route guest's workload. No `oci`.
+wash-runtime = { workspace = true }
+anyhow = { workspace = true }
+async-trait = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 sha2 = { workspace = true }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "signal", "sync", "time"] }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
 
 [dev-dependencies]
-tokio = { workspace = true, features = ["macros", "rt"] }
+tokio = { workspace = true, features = ["io-util", "macros", "net", "rt"] }
 # The release tests build a manifest from parts, which wamn-catalog gates
 # behind `test-util`. Never add this feature to the normal dependency.
 wamn-catalog = { workspace = true, features = ["test-util"] }
+# The route test encodes its guest from WAT and signs sessions with a file key.
+wat = "=1.254.0"
+base64 = { workspace = true }
+ring = { workspace = true }
 
 [lints]
 workspace = true

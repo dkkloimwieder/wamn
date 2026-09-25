@@ -11,6 +11,8 @@
 //! - [`file_keys`]: [`FileKeys`](file_keys::FileKeys), the key source that
 //!   reads a key set from a local file.
 //! - [`SessionError`]: the error of this crate.
+//! - [`PAT_TOKEN_PREFIX`]: the marker of a personal access token, which
+//!   tells a PAT from a session token on the same carrier.
 //!
 //! The cloud key source, `IssuerKeys`, fetches the issuer's keys over HTTPS and
 //! lives in `wamn-runtime`. Signing and every database read stay in
@@ -24,6 +26,11 @@
 //! The edge links this crate, and the edge dependency test refuses Postgres.
 
 use std::fmt;
+
+/// Marker every first-party personal access token starts with. A token reads
+/// `wamn_pat_<16 hex lookup digits>_<64 hex secret digits>`; the lookup half is
+/// stored in the clear as the index key, the whole string only as a digest.
+pub const PAT_TOKEN_PREFIX: &str = "wamn_pat_";
 
 pub mod file_keys;
 pub mod keys;

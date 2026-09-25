@@ -10,7 +10,7 @@ use wamn_engine::flow_http_routing::AuthenticatedCaller;
 use wamn_engine::invocation_trace::{INVOCATION_TRACES_ID, InvocationTrace, InvocationTraces};
 use wamn_engine::release_manifest::LoadedRelease;
 use wamn_engine::router_delivery::{
-    OperationRefusal, OperationRefusalKind, authorize_registered_operation,
+    OperationRefusal, OperationRefusalKind, authorize_released_operation,
 };
 use wamn_runtime::plugins::connection_http::{self, CONNECTION_HTTP_ID, ConnectionHttp};
 use wamn_runtime::plugins::wamn_blobstore::plugin::{
@@ -186,15 +186,7 @@ impl InvocationPolicy for NativePolicy {
                 .operations
                 .get(operation)
                 .context("native invocation operation is not released")?;
-            // The entry's own grant first, so a refusal names it, then every
-            // other operation its call graph reaches.
-            let own = released.registered_operation.as_deref();
-            authorize_registered_operation(caller, own, released.fresh_only)?;
-            for permission in &released.permissions {
-                if Some(permission.as_str()) != own {
-                    authorize_registered_operation(caller, Some(permission), released.fresh_only)?;
-                }
-            }
+            authorize_released_operation(caller, released)?;
         }
         let guard = NativeAuthorityGuard {
             policy: self.clone(),

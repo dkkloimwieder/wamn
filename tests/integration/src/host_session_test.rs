@@ -134,7 +134,7 @@ fn fixture(bytes: &[u8]) -> anyhow::Result<Fixture> {
         principal.as_str() == fixture.human_id
             && fixture
                 .human_pat
-                .starts_with(wamn_platform_identity::PAT_TOKEN_PREFIX),
+                .starts_with(wamn_session::PAT_TOKEN_PREFIX),
         "host fixture human credential refused"
     );
     let roles = fixture.roles.iter().collect::<BTreeSet<_>>();

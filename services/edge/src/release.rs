@@ -4,11 +4,12 @@
 //! holds:
 //!
 //! - `edge-release.json`: the bundle, which names the SHA-256 of the next
-//!   three files.
+//!   four files.
 //! - The canonical serving manifest.
 //! - `components.json`: the admitted component facts of the release, which the
 //!   cloud host reads from its catalog.
 //! - `grants.json`: the permissions of each role ([`Grants`]).
+//! - `flow-http.wasm`: the http-route ingress guest that serves the routes.
 //! - `<sha256>.wasm`: the bytes of each component.
 //!
 //! The edge configuration pins the bundle digest, as a pod template pins the
@@ -19,11 +20,13 @@
 use std::collections::BTreeSet;
 use std::fmt::{self, Write as _};
 use std::path::Path;
+use std::sync::Arc;
 
 use serde::Deserialize;
 use sha2::{Digest as _, Sha256};
 use wamn_catalog::{AdmittedComponent, RELEASE_MANIFEST_FILE_NAME};
 use wamn_engine::artifact_source::{ArtifactSource as _, LocalComponentSource};
+use wamn_engine::operation::native_workload::NativeComponent;
 use wamn_engine::release_manifest::{LoadedRelease, validate_component_in_release};
 
 use crate::grants::{GRANTS_FILE_NAME, Grants};
@@ -32,6 +35,8 @@ use crate::grants::{GRANTS_FILE_NAME, Grants};
 pub const BUNDLE_FILE_NAME: &str = "edge-release.json";
 /// The component facts file name inside a release bundle directory.
 pub const COMPONENTS_FILE_NAME: &str = "components.json";
+/// The ingress guest file name inside a release bundle directory.
+pub const INGRESS_FILE_NAME: &str = "flow-http.wasm";
 /// The one bundle format this edge reads.
 pub const BUNDLE_FORMAT: u32 = 1;
 
@@ -42,16 +47,37 @@ struct Bundle {
     manifest: String,
     components: String,
     grants: String,
+    ingress: String,
 }
 
-/// A release, its component facts, and its grants, each checked against the
-/// pinned bundle digest.
-#[derive(Debug)]
+/// A release, its component facts, its grants and its ingress guest, each
+/// checked against the pinned bundle digest.
 pub struct EdgeRelease {
     bundle_digest: String,
-    release: LoadedRelease,
+    release: Arc<LoadedRelease>,
     components: Vec<AdmittedComponent>,
+    /// The verified bytes of each component, in the order of `components`.
+    bodies: Vec<Vec<u8>>,
     grants: Grants,
+    ingress: Vec<u8>,
+}
+
+/// Hand-written so a debug print names the guest by size, not by its bytes.
+impl fmt::Debug for EdgeRelease {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("EdgeRelease")
+            .field("bundle_digest", &self.bundle_digest)
+            .field("release", &self.release)
+            .field("components", &self.components)
+            .field(
+                "body_bytes",
+                &self.bodies.iter().map(Vec::len).sum::<usize>(),
+            )
+            .field("grants", &self.grants)
+            .field("ingress_bytes", &self.ingress.len())
+            .finish()
+    }
 }
 
 impl EdgeRelease {
@@ -82,20 +108,24 @@ impl EdgeRelease {
             })?;
         check_one_fact_per_component(&release, &components)?;
         let source = LocalComponentSource::new(directory.to_path_buf());
+        let mut bodies = Vec::with_capacity(components.len());
         for component in &components {
-            source.pull_verified(component).await.map_err(|error| {
+            bodies.push(source.pull_verified(component).await.map_err(|error| {
                 EdgeReleaseError::new(EdgeReleaseErrorKind::Mismatch, error.to_string())
-            })?;
+            })?);
         }
 
         let grants_bytes = read_pinned(directory, GRANTS_FILE_NAME, &bundle.grants)?;
         let grants = Grants::parse(&grants_bytes, release.manifest())?;
+        let ingress = read_pinned(directory, INGRESS_FILE_NAME, &bundle.ingress)?;
 
         Ok(Self {
             bundle_digest: bundle_digest.to_owned(),
-            release,
+            release: Arc::new(release),
             components,
+            bodies,
             grants,
+            ingress,
         })
     }
 
@@ -105,7 +135,7 @@ impl EdgeRelease {
     }
 
     /// The loaded serving manifest and its identity.
-    pub fn release(&self) -> &LoadedRelease {
+    pub fn release(&self) -> &Arc<LoadedRelease> {
         &self.release
     }
 
@@ -114,9 +144,26 @@ impl EdgeRelease {
         &self.components
     }
 
+    /// Each admitted fact with its verified bytes, for the native loader.
+    pub fn native_components(&self) -> Vec<NativeComponent> {
+        self.components
+            .iter()
+            .zip(&self.bodies)
+            .map(|(fact, bytes)| NativeComponent {
+                fact: fact.clone(),
+                bytes: bytes.clone(),
+            })
+            .collect()
+    }
+
     /// The permissions of each role.
     pub fn grants(&self) -> &Grants {
         &self.grants
+    }
+
+    /// The bytes of the ingress guest.
+    pub fn ingress(&self) -> &[u8] {
+        &self.ingress
     }
 }
 

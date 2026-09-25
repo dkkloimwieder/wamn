@@ -12,7 +12,8 @@ use wamn_catalog::{
 };
 use wamn_edge::grants::GRANTS_FILE_NAME;
 use wamn_edge::release::{
-    BUNDLE_FILE_NAME, COMPONENTS_FILE_NAME, EdgeRelease, EdgeReleaseErrorKind, file_digest,
+    BUNDLE_FILE_NAME, COMPONENTS_FILE_NAME, EdgeRelease, EdgeReleaseErrorKind, INGRESS_FILE_NAME,
+    file_digest,
 };
 
 const TENANT: &str = "t1";
@@ -23,6 +24,7 @@ const PERMISSION: &str = "scale:device/record@1.0.0";
 /// A registered export is keyed by its permission identity.
 const OPERATION: &str = PERMISSION;
 const BODY: &[u8] = b"the device component bytes";
+const INGRESS: &[u8] = b"the route guest bytes";
 
 fn manifest() -> ServingManifest {
     ServingManifest::new(
@@ -95,6 +97,7 @@ struct Bundle {
     components: Vec<u8>,
     grants: Vec<u8>,
     body: Vec<u8>,
+    ingress: Vec<u8>,
 }
 
 impl Bundle {
@@ -105,6 +108,7 @@ impl Bundle {
             grants: serde_json::to_vec(&json!({"roles": {"operator": [PERMISSION]}}))
                 .expect("grants"),
             body: BODY.to_vec(),
+            ingress: INGRESS.to_vec(),
         }
     }
 
@@ -122,11 +126,13 @@ impl Bundle {
             "manifest": file_digest(&self.manifest),
             "components": file_digest(&self.components),
             "grants": file_digest(&self.grants),
+            "ingress": file_digest(&self.ingress),
         }))
         .expect("bundle");
         write(&directory, RELEASE_MANIFEST_FILE_NAME, &self.manifest);
         write(&directory, COMPONENTS_FILE_NAME, &self.components);
         write(&directory, GRANTS_FILE_NAME, &self.grants);
+        write(&directory, INGRESS_FILE_NAME, &self.ingress);
         let tag = file_digest(BODY);
         let tag = tag.strip_prefix("sha256:").expect("digest prefix");
         write(&directory, &format!("{tag}.wasm"), &self.body);
@@ -153,6 +159,7 @@ async fn a_pinned_bundle_loads_and_grants_permissions_by_role() {
     assert_eq!(release.bundle_digest(), digest);
     assert_eq!(release.release().release().effective_release_id, 7);
     assert_eq!(release.components(), [fact()]);
+    assert_eq!(release.ingress(), INGRESS);
     assert_eq!(
         release
             .grants()
@@ -173,6 +180,7 @@ async fn a_changed_file_does_not_match_its_pin() {
         RELEASE_MANIFEST_FILE_NAME,
         COMPONENTS_FILE_NAME,
         GRANTS_FILE_NAME,
+        INGRESS_FILE_NAME,
     ] {
         let (directory, digest) = Bundle::valid().write();
         let mut bytes = std::fs::read(directory.join(name)).expect("read");

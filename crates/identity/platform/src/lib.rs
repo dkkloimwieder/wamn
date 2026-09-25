@@ -20,6 +20,7 @@ use ring::rand::{SecureRandom as _, SystemRandom};
 use sha2::{Digest as _, Sha256};
 use subtle::ConstantTimeEq as _;
 use tokio_postgres::{GenericClient, Row, Statement, error::SqlState};
+use wamn_session::PAT_TOKEN_PREFIX;
 
 pub mod password;
 pub mod password_login;
@@ -119,11 +120,6 @@ pub const MAX_PAT_LABEL_LEN: usize = 200;
 /// Longest accepted personal-access-token lifetime. Expiry is mandatory, so
 /// every issued token dies within a year even if nobody revokes it.
 pub const MAX_PAT_TTL: Duration = Duration::from_hours(365 * 24);
-
-/// Marker every first-party personal access token starts with. A token reads
-/// `wamn_pat_<16 hex lookup digits>_<64 hex secret digits>`; the lookup half is
-/// stored in the clear as the index key, the whole string only as a digest.
-pub const PAT_TOKEN_PREFIX: &str = "wamn_pat_";
 
 /// Construct the canonical service-principal subject for one route caller.
 pub fn route_caller_subject(

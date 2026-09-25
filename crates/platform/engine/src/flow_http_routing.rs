@@ -35,6 +35,7 @@ use wamn_catalog::{
     AttachmentAuthPolicy, AttachmentKind, AttachmentRef, OperationKind, ServingManifest,
     parse_attachment_auth_policy,
 };
+use wamn_session::PAT_TOKEN_PREFIX;
 use wash_runtime::engine::ctx::{ActiveCtx, SharedCtx, extract_active_ctx};
 use wash_runtime::engine::workload::WorkloadItem;
 use wash_runtime::plugin::{HostPlugin, WitInterfaces};
@@ -843,6 +844,73 @@ fn input_mapping(value: &Value) -> Option<Mapping> {
             None => Cardinality::One,
         },
     })
+}
+
+/// The one credential that a request to a protected route presents.
+#[derive(Clone, Copy)]
+pub enum RouteCredential<'a> {
+    /// A session token. `csrf` is `Some` when the token came by the session
+    /// cookie: the request then passes the CSRF check, and the flag says
+    /// whether the route requires the header, which a read route does not.
+    Session { token: &'a str, csrf: Option<bool> },
+    /// A PAT. The authenticator reads it with [`required_bearer_token`] once
+    /// it has a mechanism to check one.
+    Pat,
+}
+
+/// Hand-written so a debug print never shows the token.
+impl std::fmt::Debug for RouteCredential<'_> {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Session { csrf, .. } => formatter
+                .debug_struct("Session")
+                .field("csrf", csrf)
+                .finish_non_exhaustive(),
+            Self::Pat => formatter.write_str("Pat"),
+        }
+    }
+}
+
+/// Select the one credential that a protected route request presents.
+///
+/// A request with both a session cookie and an `authorization` header refuses.
+/// A session cookie on a session route is a session. Otherwise a bearer token
+/// is a session, unless the route also admits a PAT and the token carries the
+/// PAT prefix. The wire shape selects one mechanism, and a failed
+/// authentication never falls back to another credential.
+pub fn route_credential<'a>(
+    request: &AuthenticationRequest<'a>,
+) -> Result<RouteCredential<'a>, AuthRejection> {
+    let AuthenticationRequest {
+        manifest,
+        attachment,
+        policy,
+        headers,
+        ..
+    } = *request;
+    let cookie = session_cookie(headers)?;
+    let has_authorization = headers
+        .iter()
+        .any(|header| header.name.eq_ignore_ascii_case("authorization"));
+    if has_authorization && cookie.is_some() {
+        return Err(unauthorized());
+    }
+    if let Some(token) = cookie.filter(|_| policy.allows_session()) {
+        return Ok(RouteCredential::Session {
+            token,
+            csrf: Some(!serves_read(manifest, attachment)),
+        });
+    }
+    let session = policy.allows_session()
+        && (!policy.allows_pat()
+            || bearer_token(headers).is_some_and(|token| !token.starts_with(PAT_TOKEN_PREFIX)));
+    if session {
+        return Ok(RouteCredential::Session {
+            token: required_bearer_token(headers)?,
+            csrf: None,
+        });
+    }
+    Ok(RouteCredential::Pat)
 }
 
 /// Extract one standard bearer presentation without exposing why it failed.

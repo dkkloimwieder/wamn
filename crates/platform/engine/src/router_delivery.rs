@@ -13,8 +13,8 @@ use std::sync::Arc;
 
 use anyhow::Context as _;
 use wamn_catalog::{
-    AdmittedComponent, AttachmentAuthPolicy, AttachmentTarget, ServingManifest,
-    parse_attachment_auth_policy,
+    AdmittedComponent, AttachmentAuthPolicy, AttachmentTarget, ServingComponentOperation,
+    ServingManifest, parse_attachment_auth_policy,
 };
 use wamn_event_wire::Causation;
 use wamn_project_state::PlatformComponent;
@@ -430,6 +430,25 @@ impl fmt::Display for OperationRefusal {
 }
 
 impl std::error::Error for OperationRefusal {}
+
+/// Check the grant of a released operation before its entry runs.
+///
+/// The entry's own grant comes first, so a refusal names it. Then every other
+/// operation that its call graph reaches, which publish folded into
+/// `permissions`.
+pub fn authorize_released_operation(
+    caller: Option<&AuthenticatedCaller>,
+    released: &ServingComponentOperation,
+) -> Result<(), OperationRefusal> {
+    let own = released.registered_operation.as_deref();
+    authorize_registered_operation(caller, own, released.fresh_only)?;
+    for permission in &released.permissions {
+        if Some(permission.as_str()) != own {
+            authorize_registered_operation(caller, Some(permission), released.fresh_only)?;
+        }
+    }
+    Ok(())
+}
 
 /// Check that the originating caller holds the registered operation grant.
 pub fn authorize_registered_operation(

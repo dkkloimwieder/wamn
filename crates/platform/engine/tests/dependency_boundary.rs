@@ -79,6 +79,10 @@ const ACCEPTED: &[(&str, &str)] = &[
         "the platform component a registration delivery runs as",
     ),
     ("wamn-run-state", "the intent store trait"),
+    (
+        "wamn-session",
+        "the PAT prefix that selects a route credential",
+    ),
     ("wash-runtime", "the native runtime"),
     ("wasmparser", "component admission"),
     ("wasmtime", "the native runtime"),

@@ -87,6 +87,13 @@ Option A keeps one path matcher and one lowering, by the uniformity rule. Issue 
 
 A host plugs in through two traits. `RouteAuthenticator` reads the credential of a protected route. `RouteDelivery` serves one delivery request. The cloud implements them in `wamn-runtime` and `wamn-execution-host`, and the edge implements the same two traits.
 
+Issue `wamn-e5in.6` built the edge side, and it moved two more checks into the engine so that both hosts read them once:
+
+- `route_credential` selects the one credential that a request presents: a session cookie, a bearer session, or a PAT by its prefix. `PAT_TOKEN_PREFIX` moved into `wamn-session` so that the engine can read it.
+- `authorize_released_operation` checks the entry's own grant, then every permission that publish folded into it.
+
+On the edge, `EdgeAuthenticator` verifies a session over the key file and maps its roles through `grants.json`, and a PAT route answers 503, as an empty cloud authenticator does. `EdgeDelivery` calls `invoke_operation` for a route target and passes it the SQLite store, which it does not write yet (issue `wamn-e5in.7`). A wiring or registration target fails as `execution-failed`. A read carries no ETag, because the box has no model versions. `EdgePolicy` admits an application that imports `wamn:node/types` only. `serve` starts a plain wash-runtime host with no NATS, and it runs the route guest from the bundle bytes.
+
 ### 4.4 Session verification and grants
 
 The owner ruled in Epic 12 that the edge verifier is a second implementation of the same trait, not a move. No trait exists, and the pure check sits in a crate that links Postgres.
@@ -102,6 +109,8 @@ A session grants operations through permissions that the platform reads from Pos
 The edge trusts the roles of a verified token until the token expires, which is 930 seconds at most. The box keeps no session state and reads no user roles, so a revoked login keeps working on the box until its token expires. For an operator who must cut a login sooner, a revoked-list file can ship with the bundle. It is named here and not built.
 
 Local routes admit sessions only. A PAT needs the identity database. The device loop calls its operation as a fixed local principal that the edge configuration names.
+
+The edge configuration names the key file, the issuer, the organization and the audience (the project-environment identity) that a session must carry.
 
 ### 4.5 Crate layout
 
@@ -124,10 +133,11 @@ Option A has the same trust as a cloud pod. There, the pod template names the ma
 
 The platform signs no release, so one digest binds every file (owner ruling, `wamn-e5in.4`). The bundle directory holds:
 
-- `edge-release.json`: the format and the SHA-256 of the next three files.
+- `edge-release.json`: the format and the SHA-256 of the next four files.
 - The canonical serving manifest.
 - `components.json`: the admitted component facts of the release. The manifest does not carry them, and the cloud host reads them from its catalog.
 - `grants.json`: the permissions of each role.
+- `flow-http.wasm`: the http-route ingress guest (owner ruling, `wamn-e5in.5`). The route guest is part of the release that the box runs.
 - `<sha256>.wasm` for each component.
 
 `EdgeRelease::load` refuses a file whose bytes do not match its digest, a component fact that the release does not carry, and a manifest component with no fact. It runs `validate_component_in_release`, which moved into `wamn-engine` so that the cloud host and the edge share one check. A later release signature signs the bundle digest.

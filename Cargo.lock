@@ -5773,6 +5773,7 @@ dependencies = [
  "wamn-schema-control",
  "wamn-schema-generator",
  "wamn-schema-introspection",
+ "wamn-session",
  "wamn-test-infrastructure",
  "wamn-test-postgres",
  "wash-runtime",
@@ -5856,14 +5857,23 @@ dependencies = [
 name = "wamn-edge"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
+ "async-trait",
+ "base64",
+ "ring",
  "serde",
  "serde_json",
  "sha2 0.11.0",
  "tokio",
+ "tracing",
+ "tracing-subscriber",
  "wamn-catalog",
  "wamn-engine",
  "wamn-run-state",
+ "wamn-run-state-sqlite",
  "wamn-session",
+ "wash-runtime",
+ "wat",
 ]
 
 [[package]]
@@ -5887,6 +5897,7 @@ dependencies = [
  "wamn-execution-contract",
  "wamn-project-state",
  "wamn-run-state",
+ "wamn-session",
  "wash-runtime",
  "wasmparser 0.251.0",
  "wasmtime",
@@ -6438,6 +6449,7 @@ dependencies = [
  "wamn-platform-identity",
  "wamn-runtime",
  "wamn-schema-control",
+ "wamn-session",
  "wamn-test-postgres",
  "wash-runtime",
 ]

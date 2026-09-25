@@ -53,10 +53,11 @@ use wamn_control_provision::{
     system_reader_generation_role,
 };
 use wamn_platform_identity::{
-    IssuedPat, PAT_TOKEN_PREFIX, assign_project_role, create_human, create_service, issue_pat,
-    resolve_subject, revoke_pat,
+    IssuedPat, assign_project_role, create_human, create_service, issue_pat, resolve_subject,
+    revoke_pat,
 };
 use wamn_schema_control::connections::ComponentConnectionRequirement;
+use wamn_session::PAT_TOKEN_PREFIX;
 
 const CURRENT_DATABASE_PUBLIC_CONNECT_SQL: &str =
     include_str!("../../../test-support/fixtures/sql/current-database-public-connect.sql");

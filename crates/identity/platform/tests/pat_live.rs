@@ -6,9 +6,10 @@ use tokio_postgres::error::SqlState;
 use tokio_postgres::{Client, Transaction};
 use wamn_control_provision::{PlatformComponent, SYSTEM_SCHEMA_SQL, bind_platform_principal_sql};
 use wamn_platform_identity::{
-    IdentityErrorKind, PAT_TOKEN_PREFIX, PrincipalId, PrincipalKind, authenticate_pat,
-    create_human, create_service, disable_principal, issue_pat, list_pats, revoke_pat,
+    IdentityErrorKind, PrincipalId, PrincipalKind, authenticate_pat, create_human, create_service,
+    disable_principal, issue_pat, list_pats, revoke_pat,
 };
+use wamn_session::PAT_TOKEN_PREFIX;
 
 const TTL: Duration = Duration::from_secs(3600);
 

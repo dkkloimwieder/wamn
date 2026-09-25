@@ -47,6 +47,7 @@ wamn-event-wire = { workspace = true, optional = true }
 wamn-execution-contract = { workspace = true }
 wamn-pg-core = { workspace = true }
 wamn-platform-identity = { workspace = true }
+wamn-session = { workspace = true }
 wamn-record-history = { workspace = true }
 wamn-run-state = { workspace = true }
 # push_component is the sole production caller of byte admission and shares

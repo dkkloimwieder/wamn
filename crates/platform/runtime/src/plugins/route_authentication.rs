@@ -12,10 +12,10 @@ use std::sync::Arc;
 use tracing::Instrument as _;
 use wamn_engine::flow_http_routing::{
     AuthRejection, AuthenticatedCaller, AuthenticationRequest, CredentialKind, Header,
-    RouteAuthenticator, authentication_unavailable, bearer_token, check_csrf,
-    required_bearer_token, serves_read, session_cookie, unauthorized,
+    RouteAuthenticator, RouteCredential, authentication_unavailable, check_csrf,
+    required_bearer_token, route_credential, unauthorized,
 };
-use wamn_platform_identity::{PAT_TOKEN_PREFIX, PreparedIdentityReads, PrincipalKind};
+use wamn_platform_identity::{PreparedIdentityReads, PrincipalKind};
 use wamn_session::verifier::SessionVerifier;
 
 use crate::session_keys::IssuerKeys;
@@ -256,40 +256,15 @@ impl RouteAuthenticator for PlatformRouteAuthenticator {
         let AuthenticationRequest {
             manifest,
             attachment_id,
-            attachment,
-            policy,
             headers,
+            ..
         } = request;
-        let cookie = session_cookie(headers)?;
-        let has_authorization = headers
-            .iter()
-            .any(|header| header.name.eq_ignore_ascii_case("authorization"));
-        if has_authorization && cookie.is_some() {
-            return Err(unauthorized());
-        }
-        if let Some(token) = cookie.filter(|_| policy.allows_session()) {
+        if let RouteCredential::Session { token, csrf } = route_credential(&request)? {
             return self
                 .authenticate_session(
                     attachment_id,
                     token,
-                    Some((headers, !serves_read(manifest, attachment))),
-                    &manifest.release.tenant_id,
-                    &manifest.release.environment,
-                )
-                .await;
-        }
-        // The wire shape selects one mechanism; failed authentication never
-        // falls back to another credential or repeats an executed operation.
-        let session = policy.allows_session()
-            && (!policy.allows_pat()
-                || bearer_token(headers).is_some_and(|token| !token.starts_with(PAT_TOKEN_PREFIX)));
-        if session {
-            let token = required_bearer_token(headers)?;
-            return self
-                .authenticate_session(
-                    attachment_id,
-                    token,
-                    None,
+                    csrf.map(|required| (headers, required)),
                     &manifest.release.tenant_id,
                     &manifest.release.environment,
                 )
