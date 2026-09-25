@@ -76,6 +76,21 @@ function table(state: Shown, onCapChange = () => {}, onRefresh = () => {}) {
 const MESSAGE = "Full dataset cannot be loaded";
 
 describe("the data table", () => {
+  it("fills its container, with the toolbar outside the one element that scrolls (wamn-xtz2.4)", () => {
+    table({ rows: rows(3), fullyRead: true, busy: false });
+    const section = document.querySelector<HTMLElement>('[data-slot="data-table"]')!;
+    const toolbar = section.querySelector('[data-slot="data-table-toolbar"]')!;
+    const grid = section.querySelector<HTMLElement>('[data-slot="data-grid"]')!;
+    const body = grid.querySelector('[data-slot="scroll-area-viewport"]')!;
+    expect(section.classList).toContain("h-full");
+    // The grid takes the height the toolbar leaves, in place of its fixed one.
+    expect(grid.classList).toContain("flex-1");
+    expect(grid.classList).toContain("min-h-0");
+    expect(grid.classList).not.toContain("h-[32rem]");
+    expect(toolbar.contains(body)).toBe(false);
+    expect(body.contains(screen.getByText("c0000"))).toBe(true);
+  });
+
   it("renders every row at the windowing limit", () => {
     table({ rows: rows(WINDOW_FROM), fullyRead: true, busy: false });
     // One header row and one row for each record.

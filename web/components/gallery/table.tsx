@@ -106,8 +106,10 @@ function pallets(count: number): PalletRow[] {
 }
 
 /** One table over a set of `size` rows generated in memory, loaded up to its cap. */
-function MemoryTable(props: { size: number }): JSX.Element {
-  const [state, setState] = createSignal<LoadState<PalletRow>>(emptyLoad(DEFAULT_CAP));
+function MemoryTable(props: { size: number; cap?: number }): JSX.Element {
+  const [state, setState] = createSignal<LoadState<PalletRow>>(
+    emptyLoad(props.cap ?? DEFAULT_CAP),
+  );
 
   function load(cap: number) {
     const next = startLoad(state(), cap);
@@ -121,7 +123,7 @@ function MemoryTable(props: { size: number }): JSX.Element {
     };
     setState((current) => finishLoad(current, next.generation, outcome, "id"));
   }
-  load(DEFAULT_CAP);
+  load(state().cap);
 
   return <LoadedTable columns={PALLET_COLUMNS} rowId="id" state={state()} load={load} />;
 }
@@ -150,25 +152,59 @@ function LoadedTable<Row extends object>(props: {
   );
 }
 
+/**
+ * One 10,000 row table at the full height of the viewport, under a header:
+ * the shape an app gives a table. The app sizes the box, and the table fills
+ * it, so only the grid body scrolls.
+ */
+export function AppTable(): JSX.Element {
+  return (
+    <div class="flex h-screen flex-col">
+      <header class="flex h-14 shrink-0 items-center border-b px-6">
+        <p class="text-sm font-semibold uppercase">App header</p>
+      </header>
+      <main class="min-h-0 flex-1 p-6">
+        <MemoryTable size={10000} cap={10000} />
+      </main>
+    </div>
+  );
+}
+
+/** The query string that serves the app-shaped table alone, for measurement. */
+export const APP_TABLE_ONLY = "app-table";
+
 export function TableSections(): JSX.Element {
   return (
-    <Section title="Data table" name="DataTable, LoadState">
-      <div class="flex flex-col gap-6">
-        <For each={[3, 100]}>
-          {(size) => (
-            <State name={`${size} rows from WIDGET_QUERY_TABLE through the load state, over the stub transport`}>
-              <SeamTable size={size} />
-            </State>
-          )}
-        </For>
-        <For each={[1000, 10000]}>
-          {(size) => (
-            <State name={`${size} rows generated in memory`}>
-              <MemoryTable size={size} />
-            </State>
-          )}
-        </For>
-      </div>
-    </Section>
+    <>
+      <Section title="Data table" name="DataTable, LoadState">
+        <div class="flex flex-col gap-6">
+          <For each={[3, 100]}>
+            {(size) => (
+              <State
+                name={`${size} rows from WIDGET_QUERY_TABLE through the load state, over the stub transport`}
+              >
+                <div class="h-[32rem]">
+                  <SeamTable size={size} />
+                </div>
+              </State>
+            )}
+          </For>
+          <For each={[1000, 10000]}>
+            {(size) => (
+              <State name={`${size} rows generated in memory`}>
+                <div class="h-[32rem]">
+                  <MemoryTable size={size} />
+                </div>
+              </State>
+            )}
+          </For>
+        </div>
+      </Section>
+      <Section title="Data table in an app" name="DataTable">
+        <State name={`10000 rows at the full viewport height; served alone at ?${APP_TABLE_ONLY}`}>
+          <AppTable />
+        </State>
+      </Section>
+    </>
   );
 }

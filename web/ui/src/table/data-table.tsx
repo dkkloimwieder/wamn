@@ -8,6 +8,10 @@
  * The table declares the one static bundle, `gridFeatures`, and only the core
  * row model. It renders through `WindowedTable`, so a table above
  * `WINDOW_FROM` rows draws only the rows in view.
+ *
+ * The table fills the height of its container, which the app sizes. The
+ * toolbar stays above the grid, and the grid body is the only element that
+ * scrolls, so it is the element the windowing measures against.
  */
 
 import { createTable, type ColumnDef } from "@tanstack/solid-table";
@@ -88,8 +92,11 @@ export function DataTable<TRow extends object>(props: DataTableProps<TRow>): JSX
   });
 
   return (
-    <section data-slot="data-table" class="flex min-w-0 flex-col gap-4">
-      <div data-slot="data-table-toolbar" class="flex flex-wrap items-end justify-between gap-4">
+    <section data-slot="data-table" class="flex h-full min-h-0 min-w-0 flex-col gap-4">
+      <div
+        data-slot="data-table-toolbar"
+        class="flex shrink-0 flex-wrap items-end justify-between gap-4"
+      >
         <div class="flex items-end gap-2">
           <div class="w-32">
             <TextField
@@ -128,7 +135,8 @@ export function DataTable<TRow extends object>(props: DataTableProps<TRow>): JSX
         isLoading={props.busy}
         emptyMessage={props.refusal}
       >
-        <DataGridContainer>
+        {/* The grid takes the height the toolbar leaves, in place of its fixed one. */}
+        <DataGridContainer class="h-auto min-h-0 flex-1">
           <WindowedTable />
         </DataGridContainer>
       </DataGrid>

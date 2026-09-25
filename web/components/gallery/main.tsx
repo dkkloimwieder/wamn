@@ -13,7 +13,7 @@ import { render } from "solid-js/web";
 import { Button, ColorModeProvider, getClientColorMode, Toaster, useColorMode } from "@wamn/ui";
 
 import { ScreenSections } from "./screens.js";
-import { TableSections } from "./table.js";
+import { APP_TABLE_ONLY, AppTable, TableSections } from "./table.js";
 import { UiSections } from "./ui.js";
 
 function Gallery() {
@@ -50,7 +50,8 @@ document.documentElement.classList.add(mode);
 render(
   () => (
     <ColorModeProvider initialColorMode={mode}>
-      <Gallery />
+      {/* The app-shaped table alone, so a measurement reads that shape only. */}
+      {location.search === `?${APP_TABLE_ONLY}` ? <AppTable /> : <Gallery />}
       <Toaster />
     </ColorModeProvider>
   ),
