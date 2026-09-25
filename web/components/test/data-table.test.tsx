@@ -70,6 +70,7 @@ interface Shown {
 function table(state: Shown, onCapChange = () => {}, onRefresh = () => {}) {
   render(() => (
     <DataTable
+      name="rows"
       columns={COLUMNS}
       rowId="id"
       rows={state.rows}

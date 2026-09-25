@@ -61,6 +61,7 @@ interface Shape {
 function table(shape: Shape = {}) {
   render(() => (
     <DataTable
+      name="regions"
       columns={COLUMNS}
       rowId="id"
       rows={shape.rows?.() ?? ROWS}

@@ -104,6 +104,7 @@ function SeamTable(props: { size: number }): JSX.Element {
 
   return (
     <LoadedTable
+      name="widget"
       columns={definition.columns}
       rowId={definition.rowId}
       state={state()}
@@ -170,6 +171,7 @@ function MemoryTable(props: {
   // Two sort fields let a shift click show a sort by more than one field.
   return (
     <LoadedTable
+      name="pallet"
       columns={PALLET_COLUMNS}
       rowId="id"
       state={state()}
@@ -184,6 +186,7 @@ function MemoryTable(props: {
 
 /** The DataTable over one load state. A refresh loads again at the cap in force. */
 function LoadedTable<Row extends object>(props: {
+  name: string;
   columns: readonly DataTableColumn<Row>[];
   rowId: keyof Row & string;
   state: LoadState<Row>;
@@ -195,6 +198,7 @@ function LoadedTable<Row extends object>(props: {
 }): JSX.Element {
   return (
     <DataTable
+      name={props.name}
       columns={props.columns}
       rowId={props.rowId}
       rows={props.state.rows}

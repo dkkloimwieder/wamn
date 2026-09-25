@@ -35,6 +35,11 @@
  * filters and the search keep. Grouping and the footer apply only to a fully
  * read set, as the filters do.
  *
+ * The export button saves the rows the filters and the search keep as CSV, in
+ * the table sort, with the visible columns in their order and each cell's
+ * shown text. Group rows and the footer are not exported. On a set that is
+ * not fully read, the button is disabled and says why.
+ *
  * The table fills the height of its container, which the app sizes. The
  * toolbar stays above the grid, and the grid body is the only element that
  * scrolls, so it is the element the windowing measures against.
@@ -104,6 +109,7 @@ import {
   filterMatches,
   filterText,
 } from "./column-filter";
+import { csvFileName, csvText, downloadCsv, EXPORT_NEEDS_FULL_SET } from "./csv";
 import { type DataTableGroupSort, GroupBar, VALUE_SORT } from "./group-bar";
 
 /** The type of a column, as the frozen `wamn:postgres/types.sql-value` names it. */
@@ -144,6 +150,8 @@ export interface DataTableColumn<TRow extends object> {
 }
 
 export interface DataTableProps<TRow extends object> {
+  /** The table's name, which the file name of a CSV export starts with. */
+  readonly name: string;
   readonly columns: readonly DataTableColumn<TRow>[];
   /** The field that holds the id of each row. */
   readonly rowId: keyof TRow & string;
@@ -562,6 +570,30 @@ export function DataTable<TRow extends object>(props: DataTableProps<TRow>): JSX
     }));
   });
 
+  /**
+   * Saves the kept rows as CSV: the visible columns in their order, and the
+   * data rows in the table sort, without group rows or totals.
+   */
+  function exportCsv() {
+    const visible = table.getVisibleLeafColumns().map((leaf) => column(leaf.id));
+    const sorting = table.atoms.sorting?.get() ?? [];
+    const rows = [...table.getFilteredRowModel().rows].sort((a, b) => {
+      for (const sort of sorting) {
+        const field = column(sort.id).field;
+        const order = compareValues(column(sort.id).type, a.original[field], b.original[field]);
+        if (order !== 0) {
+          return sort.desc ? -order : order;
+        }
+      }
+      return 0;
+    });
+    const text = csvText([
+      visible.map((shown) => shown.label),
+      ...rows.map((row) => visible.map((shown) => shownText(row.original[shown.field]))),
+    ]);
+    downloadCsv(csvFileName(props.name, new Date()), text);
+  }
+
   return (
     <section data-slot="data-table" class="flex h-full min-h-0 min-w-0 flex-col gap-4">
       <div
@@ -586,6 +618,14 @@ export function DataTable<TRow extends object>(props: DataTableProps<TRow>): JSX
           <Button type="button" variant="outline" disabled={props.busy} onClick={() => props.onRefresh()}>
             refresh
           </Button>
+          <Field class="w-auto">
+            <Button type="button" variant="outline" disabled={!props.fullyRead} onClick={exportCsv}>
+              export CSV
+            </Button>
+            <Show when={!props.fullyRead}>
+              <FieldDescription>{EXPORT_NEEDS_FULL_SET}</FieldDescription>
+            </Show>
+          </Field>
           <Field class="w-64">
             <FieldLabel for={searchId}>search</FieldLabel>
             <Input

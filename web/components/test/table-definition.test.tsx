@@ -30,6 +30,7 @@ function loaded(cap: number, ids: string[], cursor: string | null) {
   );
   render(() => (
     <DataTable
+      name="widgets"
       columns={definition.columns}
       rowId={definition.rowId}
       rows={state().rows}

@@ -60,6 +60,7 @@ const ROWS: Row[] = [0, 1, 2, 3].map((index) => ({
 function table(fullyRead: () => boolean = () => true) {
   render(() => (
     <DataTable
+      name="rows"
       columns={COLUMNS}
       rowId="id"
       rows={ROWS}
