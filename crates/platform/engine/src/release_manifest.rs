@@ -68,8 +68,10 @@
 
 use std::path::Path;
 
+use anyhow::Context as _;
 use wamn_catalog::{
-    ManifestDigest, RELEASE_MANIFEST_FILE_NAME, RELEASE_MANIFEST_MOUNT_PATH, ServingManifest,
+    AdmittedComponent, ArtifactHash, ManifestDigest, RELEASE_MANIFEST_FILE_NAME,
+    RELEASE_MANIFEST_MOUNT_PATH, ServingManifest,
 };
 
 /// Stable classification for a refused release load.
@@ -212,13 +214,54 @@ impl LoadedRelease {
     }
 }
 
+/// Refuse an admitted component fact that the loaded release does not carry.
+///
+/// The cloud host reads the facts from the catalog and the edge reads them
+/// from its release bundle. Both run this one check before loading a component.
+pub fn validate_component_in_release(
+    release: &LoadedRelease,
+    component: &AdmittedComponent,
+) -> anyhow::Result<()> {
+    let manifest = release.manifest();
+    let package_version = manifest
+        .release
+        .packages
+        .iter()
+        .find(|package| package.package_id() == component.scope.package_id)
+        .map(wamn_catalog::PackageCoordinate::package_version);
+    anyhow::ensure!(
+        component.scope.tenant_id == manifest.release.tenant_id
+            && package_version == Some(component.scope.package_version.as_str()),
+        "release-component-scope-mismatch"
+    );
+    let digest = ArtifactHash::parse(component.component_digest.clone())
+        .context("component fact carries a non-canonical artifact hash")?;
+    // Publish folds each export's call graph into the root operation, so the
+    // release carries a superset of the admitted fact. The runtime trusts it.
+    let carried = manifest.components.iter().any(|served| {
+        served.package_id == component.scope.package_id
+            && served.component == component.component
+            && served.interface_version == component.interface_version
+            && served.digest == digest
+            && served.operations.len() == component.operations.len()
+            && component.operations.iter().all(|(name, operation)| {
+                served
+                    .operations
+                    .get(name)
+                    .is_some_and(|served| served.carries(operation))
+            })
+    });
+    anyhow::ensure!(carried, "component-not-in-carried-release");
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use std::collections::{BTreeMap, BTreeSet};
     use std::path::PathBuf;
 
     use wamn_catalog::{
-        ArtifactHash, DefinitionHash, EffectiveReleaseId, PackageCoordinate, ServingComponent,
+        DefinitionHash, EffectiveReleaseId, PackageCoordinate, ServingComponent,
         ServingComponentOperation, ServingRelease, ServingWiring,
         UNSUPPORTED_SERVING_MANIFEST_VERSION_REFUSAL,
     };

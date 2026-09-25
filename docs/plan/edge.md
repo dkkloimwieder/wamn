@@ -89,8 +89,10 @@ The owner ruled in Epic 12 that the edge verifier is a second implementation of 
 
 A session grants operations through permissions that the platform reads from Postgres. The edge has no tenant database.
 
-- Ruled: a grants file installed with the release maps each role to its permissions, so authorization at publish holds on the box. The edge reads it once at start. The platform signs no release today. `wamn-e5in.4` binds the file to the release by digest, and its scope names the options.
+- Ruled: `grants.json` in the release bundle maps each role to its permissions, so authorization at publish holds on the box. The edge reads it once at start and refuses a permission that no operation in the release requires. Section 4.6 binds it to the release. Built by `wamn-e5in.4`.
 - Other option: edge tokens carry their permissions as claims. That changes the token profile.
+
+The edge trusts the roles of a verified token until the token expires, which is 930 seconds at most. The box keeps no session state and reads no user roles, so a revoked login keeps working on the box until its token expires. For an operator who must cut a login sooner, a revoked-list file can ship with the bundle. It is named here and not built.
 
 Local routes admit sessions only. A PAT needs the identity database. The device loop calls its operation as a fixed local principal that the edge configuration names.
 
@@ -107,11 +109,21 @@ The owner later placed the SQLite adapter in its own crate, `wamn-run-state-sqli
 
 | Option | Rule | Cost |
 | --- | --- | --- |
-| A (ruled) | The operator copies a release directory: the canonical serving manifest, `<sha256>.wasm` for each component, and the grants file. The edge configuration names the manifest digest. The edge refuses a different digest, and `LocalComponentSource` checks each component. | A manual copy. A `wamn-ctl` verb writes the directory from a published release. |
+| A (ruled) | The operator copies a release bundle directory, and the edge configuration names the digest of its `edge-release.json`. | A manual copy. Publish writes the bundle, and the box never assembles one. |
 | B | The edge pulls the release by digest from the platform over HTTPS. | A new platform endpoint, and the box needs a network path to the platform at start. |
 | C | A signed bundle. | New signing machinery. The platform signs no release today. |
 
-Option A has the same trust as a cloud pod. There, the pod template names the digest and the loader checks the bytes against it. Here, the edge configuration names it.
+Option A has the same trust as a cloud pod. There, the pod template names the manifest digest and the loader checks the bytes against it. Here, the edge configuration names the bundle digest.
+
+The platform signs no release, so one digest binds every file (owner ruling, `wamn-e5in.4`). The bundle directory holds:
+
+- `edge-release.json`: the format and the SHA-256 of the next three files.
+- The canonical serving manifest.
+- `components.json`: the admitted component facts of the release. The manifest does not carry them, and the cloud host reads them from its catalog.
+- `grants.json`: the permissions of each role.
+- `<sha256>.wasm` for each component.
+
+`EdgeRelease::load` refuses a file whose bytes do not match its digest, a component fact that the release does not carry, and a manifest component with no fact. It runs `validate_component_in_release`, which moved into `wamn-engine` so that the cloud host and the edge share one check. A later release signature signs the bundle digest.
 
 ### 4.7 SQLite schema
 

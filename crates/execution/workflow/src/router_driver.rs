@@ -17,13 +17,12 @@ use wamn_engine::operation::native_workload::NativeComponent;
 use wamn_engine::operation::{
     NativeApplication, OperationCall, OperationClosure, invoke_operation, node_types,
 };
-use wamn_engine::release_manifest::LoadedRelease;
+use wamn_engine::release_manifest::{LoadedRelease, validate_component_in_release};
 use wamn_event_wire::Causation;
 use wamn_execution_host::{
     DeadlineAdjustment, InvocationSite, NativeFacts, NativePolicy, NodeAcquisition, OperationHost,
     WiringPreload, authorize_registered_operation, bounded_node_deadline_ms, component_invocation,
     invocation_span, node_trace_context, remote_trace_context, synchronous_request_kind,
-    validate_component_in_release,
 };
 use wamn_project_state::PlatformComponent;
 use wamn_router::{

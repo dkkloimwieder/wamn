@@ -17,13 +17,12 @@ use opentelemetry::trace::TraceContextExt as _;
 use tracing::Instrument as _;
 use tracing_opentelemetry::OpenTelemetrySpanExt as _;
 use wamn_catalog::{
-    AdmittedComponent, ArtifactHash, ComponentSqlField, ComponentSqlValueType,
-    ServingComponentOperation,
+    AdmittedComponent, ComponentSqlField, ComponentSqlValueType, ServingComponentOperation,
 };
 use wamn_control_registry::identifiers::valid_runner;
 use wamn_engine::artifact_source::ArtifactSource;
 use wamn_engine::engine::MAX_HOST_CALL_DURATION;
-use wamn_engine::release_manifest::LoadedRelease;
+use wamn_engine::release_manifest::{LoadedRelease, validate_component_in_release};
 use wamn_event_wire::Causation;
 use wamn_project_state::PlatformComponent;
 use wamn_runtime::plugins::EffectEvidence;
@@ -583,43 +582,6 @@ pub fn component_invocation(
         closure,
         effects,
     }
-}
-
-pub fn validate_component_in_release(
-    release: &LoadedRelease,
-    component: &AdmittedComponent,
-) -> anyhow::Result<()> {
-    let manifest = release.manifest();
-    let package_version = manifest
-        .release
-        .packages
-        .iter()
-        .find(|package| package.package_id() == component.scope.package_id)
-        .map(wamn_catalog::PackageCoordinate::package_version);
-    anyhow::ensure!(
-        component.scope.tenant_id == manifest.release.tenant_id
-            && package_version == Some(component.scope.package_version.as_str()),
-        "release-component-scope-mismatch"
-    );
-    let digest = ArtifactHash::parse(component.component_digest.clone())
-        .context("component fact carries a non-canonical artifact hash")?;
-    // Publish folds each export's call graph into the root operation, so the
-    // release carries a superset of the admitted fact. The runtime trusts it.
-    let carried = manifest.components.iter().any(|served| {
-        served.package_id == component.scope.package_id
-            && served.component == component.component
-            && served.interface_version == component.interface_version
-            && served.digest == digest
-            && served.operations.len() == component.operations.len()
-            && component.operations.iter().all(|(name, operation)| {
-                served
-                    .operations
-                    .get(name)
-                    .is_some_and(|served| served.carries(operation))
-            })
-    });
-    anyhow::ensure!(carried, "component-not-in-carried-release");
-    Ok(())
 }
 
 #[derive(Debug, Clone)]

@@ -15,7 +15,6 @@ pub use operation::{
     InvocationSite, NativeFacts, NativePolicy, NodeAcquisition, OperationHost, OperationRefusal,
     OperationRefusalKind, OperationScope, authorize_registered_operation, bounded_node_deadline_ms,
     component_invocation, invocation_span, node_trace_context, remote_trace_context,
-    validate_component_in_release,
 };
 pub use readiness::{
     RELEASE_READINESS_CHECK_FAILED, RELEASE_READINESS_INVALIDATED, RouterReadinessProbe,

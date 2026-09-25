@@ -1,6 +1,11 @@
 //! One application and one device loop on a small box (docs/plan/edge.md).
 //!
-//! This crate exports nothing yet.
+//! This crate exports:
+//!
+//! - [`release`]: [`EdgeRelease`](release::EdgeRelease), a platform-published
+//!   release loaded from a local directory and pinned by one bundle digest.
+//! - [`grants`]: [`Grants`](grants::Grants), the permissions of each role on
+//!   the box.
 //!
 //! This crate refuses to depend on:
 //!
@@ -19,6 +24,7 @@
 //! wash-runtime and pins that list. If its size costs the Pi too much, the
 //! answer is a wash-runtime fork with those features off.
 
-use wamn_engine as _;
+pub mod grants;
+pub mod release;
+
 use wamn_run_state as _;
-use wamn_session as _;

@@ -7,11 +7,22 @@ license.workspace = true
 
 [dependencies]
 # The edge links the engine and run-state and never wamn-runtime. The
-# dependency test measures what these two bring.
+# dependency test measures what these bring.
 wamn-engine = { workspace = true }
 wamn-run-state = { workspace = true }
-# Local routes verify sessions over a key file.
+# Local routes verify sessions over a key file, and grants name role slugs.
 wamn-session = { workspace = true }
+# The admitted component facts and the serving manifest of a release bundle.
+wamn-catalog = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+sha2 = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt"] }
+# The release tests build a manifest from parts, which wamn-catalog gates
+# behind `test-util`. Never add this feature to the normal dependency.
+wamn-catalog = { workspace = true, features = ["test-util"] }
 
 [lints]
 workspace = true
