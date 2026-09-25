@@ -5,16 +5,17 @@ use wamn_postgres_statements::Connection;
 #[derive(Debug)]
 pub struct WidgetMakerRow {
     pub created_at: wamn_postgres_statements::TimestampTz,
+    pub edit_version: i64,
     pub id: wamn_postgres_statements::Uuid,
     pub name: String,
 }
 
 pub(crate) const GET_DIGEST: &str =
-    "sha256:8758c3a9b62a08bdd9a700fbc1fb373604d4c41982adf6c73e5b6828ff73f652";
+    "sha256:9213a9b4970ebf8253c515242917e72f1018e879ddac78f989ba5ade11c9d9a7";
 pub(crate) const QUERY_0_DIGEST: &str =
-    "sha256:e61b9f01a671b9b6b2a2b37a863ad7b246b42aad3e2fcb0ec055e70fd99e23d3";
+    "sha256:4678a09e1be42d9b1e18e9acfca19e9bf4353c5132b37f3537072a623127abe9";
 pub(crate) const QUERY_1_DIGEST: &str =
-    "sha256:a3390cf3fe289e153cd85e4334304105b93568f5590687bafbd4a55a25fa013b";
+    "sha256:d54912878bf6e51d45b43fdb7f1298baf78763684ae52fd5cc20ef7cb4472b99";
 
 pub(crate) async fn get(
     connection: &mut Connection,
@@ -29,6 +30,7 @@ pub(crate) async fn get(
     wamn_postgres_statements::decode_optional(GET_DIGEST, rows, |row| {
         Ok(WidgetMakerRow {
             created_at: row.decode("created_at")?,
+            edit_version: row.decode("edit_version")?,
             id: row.decode("id")?,
             name: row.decode("name")?,
         })
@@ -56,6 +58,7 @@ pub(crate) async fn query_created_at_ascending(
     wamn_postgres_statements::decode_all(QUERY_0_DIGEST, rows, |row| {
         Ok(WidgetMakerRow {
             created_at: row.decode("created_at")?,
+            edit_version: row.decode("edit_version")?,
             id: row.decode("id")?,
             name: row.decode("name")?,
         })
@@ -83,6 +86,7 @@ pub(crate) async fn query_created_at_descending(
     wamn_postgres_statements::decode_all(QUERY_1_DIGEST, rows, |row| {
         Ok(WidgetMakerRow {
             created_at: row.decode("created_at")?,
+            edit_version: row.decode("edit_version")?,
             id: row.decode("id")?,
             name: row.decode("name")?,
         })

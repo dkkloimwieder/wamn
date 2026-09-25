@@ -1,1 +1,1 @@
-{"class":"one","fields":[{"path":"created_at","type":"timestamptz","nullable":false,"values":[]},{"path":"id","type":"uuid","nullable":false,"values":[]},{"path":"name","type":"text","nullable":false,"values":[]}]}
+{"class":"one","fields":[{"path":"created_at","type":"timestamptz","nullable":false,"values":[]},{"path":"edit_version","type":"int64","nullable":false,"revision":true,"values":[]},{"path":"id","type":"uuid","nullable":false,"values":[]},{"path":"name","type":"text","nullable":false,"values":[]}]}

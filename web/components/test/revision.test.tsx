@@ -1,13 +1,10 @@
 /**
  * The testing method for a selector that supplies a revision, used once.
  *
- * The guarded batch takes the revision of the inspector it names. A row
+ * The fixture batch takes the revision of the inspector it names. A row
  * action can fill the inspector without a pick, so the revision comes from
  * the row that carries the filled key: a listed row, or the record read for a
  * key off the list (wamn-fuda).
- *
- * The subject is the guarded fixture's batch form, which
- * `check_client_components` writes into `fixture/guarded/` before this runs.
  */
 
 import { cleanup, fireEvent, render, screen, waitFor } from "@solidjs/testing-library";
@@ -15,7 +12,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import type { JsonValue, Outcome } from "@wamn/web-runtime";
 
-import { WidgetRecordBatchForm } from "../fixture/guarded/components/widget.js";
+import { WidgetRecordBatchForm } from "../fixture/components/widget.js";
 import { choose, selector } from "./choose.js";
 import { MAKER, SOUTH, batchStub as stub } from "../stubs/index.js";
 

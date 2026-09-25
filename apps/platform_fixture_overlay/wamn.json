@@ -7,7 +7,7 @@
     "base_fixture": {
       "package": "platform_fixture",
       "version": "1.0.0",
-      "digest": "sha256:145b31e06ff36f7879033213b90bade88845111dcaf7875bb76fa42107a4e6b0",
+      "digest": "sha256:459e4e403d270514b2d7c1404108f0aba031240283657f8d8707d0502cd9df5b",
       "operations": [
         "widget.archive"
       ]

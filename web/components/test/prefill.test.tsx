@@ -59,7 +59,7 @@ describe("a row that opens a form", () => {
     expect(screen.queryByRole("button", { name: "record-batch" })).toBeNull();
     expect(batch).toHaveLength(0);
 
-    render(() => <WidgetRecordBatchForm transport={transport} valueExpectedEditVersion="1" />);
+    render(() => <WidgetRecordBatchForm transport={transport} />);
     expect(selector("Maker").value).toBe("");
     expect(selector("Inspector").value).toBe("");
   });

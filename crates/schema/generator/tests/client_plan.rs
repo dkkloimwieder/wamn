@@ -969,7 +969,7 @@ fn the_result_fields_of_an_operation_have_one_owner() {
 /// says whose revision it sends, so the page supplies it.
 #[test]
 fn a_revision_names_the_one_selector_whose_row_supplies_it() {
-    let ir = fixture::guarded_release();
+    let ir = fixture::client_release();
     let plan = ClientPlan::from_ir(&ir);
     let batch = screen(&plan, "record_batch");
     let revision = |input: &str| {
@@ -999,7 +999,18 @@ fn a_revision_names_the_one_selector_whose_row_supplies_it() {
         "the revision stays reserved, so the operator never types it"
     );
 
-    let undeclared = release();
+    let mut undeclared = fixture::manifest();
+    for field in undeclared["custom_operations"]["widget.record_batch"]["input"]["fields"]
+        .as_array_mut()
+        .expect("the batch declares its input")
+    {
+        field
+            .as_object_mut()
+            .expect("a field object")
+            .remove("revision_of");
+    }
+    let undeclared =
+        fixture::client_release_of(&fixture::generate_with(&fixture::catalog(), &undeclared));
     let plan = ClientPlan::from_ir(&undeclared);
     assert!(
         screen(&plan, "record_batch")

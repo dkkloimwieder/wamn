@@ -9,9 +9,7 @@
 //! A component imports SolidJS, TanStack Table, TanStack Form, and zod, so the
 //! check runs inside `web/components`, which installs those libraries once.
 //! The command writes the fixture output into `web/components/fixture`, which
-//! Git ignores, and then runs the package's own check and tests. The guarded
-//! fixture, whose batch revision names its inspector, goes into
-//! `fixture/guarded`, so a test reaches a selector that supplies a revision.
+//! Git ignores, and then runs the package's own check and tests.
 //!
 //! `check_client_ts` keeps its own job, which is the bindings alone in a
 //! temporary directory.
@@ -41,7 +39,6 @@ fn main() -> Result<()> {
             .with_context(|| format!("{} must be replaceable", output.display()))?;
     }
     write_fixture(&fixture::client_release(), &output)?;
-    write_fixture(&fixture::guarded_release(), &output.join("guarded"))?;
 
     run(&harness, "check")?;
     run(&harness, "test")?;

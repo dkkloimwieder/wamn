@@ -207,7 +207,7 @@ export function groupStub(): { transport: Transport; sent: WireRequest[] } {
 }
 
 /**
- * One transport for the guarded batch, whose revision names its inspector.
+ * One transport for the fixture batch, whose revision names its inspector.
  *
  * Each maker carries a revision. Northwind at revision 1 is on the first page
  * of the maker list, and Southwind at revision 3 is off it, so only the maker

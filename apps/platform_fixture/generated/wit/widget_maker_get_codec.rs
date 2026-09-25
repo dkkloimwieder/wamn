@@ -43,6 +43,7 @@ pub(crate) fn encode(output: &[contract::GetOutcome]) -> String {
             Ok(value) => json!({ "value":
             json!({
                                 "created_at": value.value.created_at,
+                                "edit_version": value.value.edit_version.to_string(),
                                 "id": value.value.id,
                                 "name": value.value.name,
                         })
@@ -115,6 +116,7 @@ macro_rules! row {
         let row = $row;
         $target {
             created_at: row.created_at.0,
+            edit_version: row.edit_version,
             id: row.id.0,
             name: row.name,
         }

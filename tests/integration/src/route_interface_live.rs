@@ -359,8 +359,7 @@ async fn a_route_answers_every_operation_kind_as_its_one_node_wiring() -> anyhow
 
     // CONDITIONAL READS. A list answers with a weak ETag from the versions of
     // the relations it reads. The same GET with that tag answers 304 with no
-    // body and runs no read, and a write changes the tag. The fixture get
-    // declares no revision field, so it has no ETag.
+    // body and runs no read, and a write changes the tag.
     let (status, etag, _) = paths.conditional("/widget/query", None).await?;
     let etag = etag
         .filter(|_| status == 200)
@@ -384,20 +383,41 @@ async fn a_route_answers_every_operation_kind_as_its_one_node_wiring() -> anyhow
         status == 200 && changed.is_some() && changed.as_deref() != Some(etag.as_str()),
         "a write changes the list tag: {status} {changed:?} {etag}"
     );
-    let (status, get_tag, _) = paths
-        .conditional(
-            &format!(
-                "/widget/get?{}",
-                wamn_execution_contract::encode_read_query(
-                    json!({"id": other}).as_object().context("an item")?
-                )
-            ),
-            None,
+    // A get answers a strong ETag from the revision of its record. The same
+    // GET with that tag answers 304 with no body, and an update of the record
+    // changes the tag.
+    let get_path = format!(
+        "/widget/get?{}",
+        wamn_execution_contract::encode_read_query(
+            json!({"id": other}).as_object().context("an item")?
         )
-        .await?;
+    );
+    let (status, get_tag, body) = paths.conditional(&get_path, None).await?;
+    let get_tag = get_tag
+        .filter(|tag| status == 200 && tag.starts_with('"'))
+        .with_context(|| format!("a get with a revision answers a strong ETag: {status}"))?;
+    let (status, again, empty) = paths.conditional(&get_path, Some(&get_tag)).await?;
     anyhow::ensure!(
-        status == 200 && get_tag.is_none(),
-        "a get without a revision field has no ETag: {status} {get_tag:?}"
+        status == 304 && again.as_deref() == Some(get_tag.as_str()) && empty.is_empty(),
+        "an unchanged get answers 304 with its tag and no body: {status} {again:?} {empty}"
+    );
+    let other_version = edit_version(&serde_json::from_str(&body)?)?;
+    value(
+        &paths
+            .route(
+                "/widget/update",
+                &json!([{
+                    "request_id": "update-3", "id": other,
+                    "expected_edit_version": other_version.to_string(),
+                    "change": {"note": "tagged"},
+                }]),
+            )
+            .await?,
+    )?;
+    let (status, changed, _) = paths.conditional(&get_path, Some(&get_tag)).await?;
+    anyhow::ensure!(
+        status == 200 && changed.is_some() && changed.as_deref() != Some(get_tag.as_str()),
+        "an update changes the get tag: {status} {changed:?} {get_tag}"
     );
 
     application.shutdown().await?;

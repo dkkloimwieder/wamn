@@ -1239,10 +1239,10 @@ fn a_contract_carries_no_reference_and_no_list_when_nobody_states_one() {
             .as_array_mut()
             .expect("declared fields")
         {
-            field
-                .as_object_mut()
-                .expect("a field object")
-                .remove("references");
+            let field = field.as_object_mut().expect("a field object");
+            field.remove("references");
+            // A revision names a record only through an input that references one.
+            field.remove("revision_of");
         }
     }
     for operation in ["widget.list", "widget_maker.list"] {

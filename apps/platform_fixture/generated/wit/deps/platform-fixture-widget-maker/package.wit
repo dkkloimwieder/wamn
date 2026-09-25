@@ -35,6 +35,7 @@ interface get {
 
   record get-row {
     created-at: string,
+    edit-version: s64,
     id: string,
     name: string,
   }
@@ -87,6 +88,7 @@ interface query {
 
   record query-row {
     created-at: string,
+    edit-version: s64,
     id: string,
     name: string,
   }

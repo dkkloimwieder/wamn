@@ -18,7 +18,7 @@ afterEach(cleanup);
 describe("a repeated group", () => {
   it("stops adding at the declared maximum", async () => {
     const { transport } = stub();
-    render(() => <WidgetRecordBatchForm transport={transport} valueExpectedEditVersion="1" />);
+    render(() => <WidgetRecordBatchForm transport={transport} />);
     const add = screen.getByRole("button", { name: "add" });
     for (let element = 0; element < 10; element += 1) {
       fireEvent.click(add);
@@ -28,7 +28,7 @@ describe("a repeated group", () => {
 
   it("reads no line until the maker that narrows the line list is chosen", async () => {
     const { transport, sent } = stub();
-    render(() => <WidgetRecordBatchForm transport={transport} valueExpectedEditVersion="1" />);
+    render(() => <WidgetRecordBatchForm transport={transport} />);
     fireEvent.click(screen.getByRole("button", { name: "add" }));
     await waitFor(() =>
       expect(sent.some((request) => request.operation.includes("widget-maker"))).toBe(true),
@@ -45,7 +45,7 @@ describe("a repeated group", () => {
 
   it("reads the label its line bound declares", () => {
     const { transport } = stub();
-    render(() => <WidgetRecordBatchForm transport={transport} valueExpectedEditVersion="1" />);
+    render(() => <WidgetRecordBatchForm transport={transport} />);
     expect(screen.getByText("Batch lines")).toBeDefined();
   });
 
@@ -54,7 +54,7 @@ describe("a repeated group", () => {
     render(() => (
       <WidgetRecordBatchForm
         transport={transport}
-        valueExpectedEditVersion="1"
+       
         initial={{ value: { grade: "first" } }}
       />
     ));

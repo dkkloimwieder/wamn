@@ -96,7 +96,7 @@ export function ScreenSections(): JSX.Element {
       </Section>
 
       <Section title={WidgetRecordBatchFormLabel} name="WidgetRecordBatchForm">
-        <WidgetRecordBatchForm transport={groupStub().transport} valueExpectedEditVersion="7" />
+        <WidgetRecordBatchForm transport={groupStub().transport} />
       </Section>
 
       <Section title={WidgetDeleteDeleteLabel} name="WidgetDeleteDelete">

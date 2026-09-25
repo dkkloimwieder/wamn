@@ -76,6 +76,7 @@ pub(crate) fn encode(output: &[contract::QueryOutcome]) -> String {
             Ok(value) => json!({ "value":
             { "item": value.value.iter().map(|row| json!({
                                 "created_at": row.created_at,
+                                "edit_version": row.edit_version.to_string(),
                                 "id": row.id,
                                 "name": row.name,
                         })).collect::<Vec<_>>(), "next_cursor": value.next_cursor }
@@ -151,6 +152,7 @@ macro_rules! row {
         let row = $row;
         $target {
             created_at: row.created_at.0,
+            edit_version: row.edit_version,
             id: row.id.0,
             name: row.name,
         }

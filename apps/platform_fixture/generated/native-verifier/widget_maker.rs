@@ -3,6 +3,7 @@
 #[derive(Debug, sqlx::FromRow)]
 pub struct WidgetMakerRow {
     pub created_at: chrono::DateTime<chrono::Utc>,
+    pub edit_version: i64,
     pub id: uuid::Uuid,
     pub name: String,
 }

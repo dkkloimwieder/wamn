@@ -1283,7 +1283,7 @@ fn a_create_offers_only_the_values_it_declares() {
 /// (wamn-nv87). No page prop carries it.
 #[test]
 fn a_form_sends_the_revision_of_the_record_its_revision_names() {
-    let files = emit(&fixture::guarded_release());
+    let files = emit(&fixture::client_release());
     let widget = widget(&files);
     assert!(
         !widget.contains("readonly valueExpectedEditVersion"),

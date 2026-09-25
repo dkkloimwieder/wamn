@@ -80,33 +80,6 @@ pub(crate) fn client_release() -> ClientContractIr {
     client_release_of(&generate_fixture())
 }
 
-/// The fixture with the batch's revision naming its inspector (wamn-nv87).
-///
-/// The batch names `widget_maker` twice, in `value.maker_id` and
-/// `value.inspector_id`, so only `revision_of` says whose revision it takes.
-/// The maker gains a revision, so each row its list returns carries one.
-#[allow(dead_code, reason = "not every test module reads a guarded revision")]
-pub(crate) fn guarded_release() -> ClientContractIr {
-    let catalog = catalog_with(vec![Column::new(
-        "edit_version",
-        ColumnType::Int64,
-        false,
-        Some(ColumnDefault::int64(1)),
-        None,
-    )]);
-    let mut value = manifest();
-    value["models"]["widget_maker"]["operations"]["query"]["revision_field"] =
-        json!("edit_version");
-    let revision = value["custom_operations"]["widget.record_batch"]["input"]["fields"]
-        .as_array_mut()
-        .expect("the batch declares its input")
-        .iter_mut()
-        .find(|field| field["path"] == "value.expected_edit_version")
-        .expect("the batch takes a revision");
-    revision["revision_of"] = json!("value.inspector_id");
-    client_release_of(&generate_with(&catalog, &value))
-}
-
 /// The release a test's own package publishes, with the fixture's routes.
 pub(crate) fn client_release_of(package: &GeneratedPackage) -> ClientContractIr {
     let contracts = contracts(package);
@@ -269,29 +242,24 @@ pub(crate) fn widget_index(ir: &ClientContractIr) -> usize {
 }
 
 pub(crate) fn catalog() -> CatalogIr {
-    catalog_with(Vec::new())
-}
-
-/// The fixture catalog, with more columns on the second model.
-pub(crate) fn catalog_with(maker_columns: Vec<Column>) -> CatalogIr {
-    catalog_of(true, maker_columns, true)
+    catalog_of(true, true)
 }
 
 /// The fixture catalog with `widget.note` NOT NULL: a schema change that
 /// moves the generated contracts and edits no manifest.
 #[allow(dead_code, reason = "not every test module changes the widget table")]
 pub(crate) fn catalog_with_required_note() -> CatalogIr {
-    catalog_of(false, Vec::new(), true)
+    catalog_of(false, true)
 }
 
 /// The fixture catalog with no foreign key from `widget.maker_id`, so no
 /// column names another model's record.
 #[allow(dead_code, reason = "not every test module drops the maker key")]
 pub(crate) fn catalog_without_maker_key() -> CatalogIr {
-    catalog_of(true, Vec::new(), false)
+    catalog_of(true, false)
 }
 
-fn catalog_of(note_nullable: bool, maker_columns: Vec<Column>, maker_key: bool) -> CatalogIr {
+fn catalog_of(note_nullable: bool, maker_key: bool) -> CatalogIr {
     let widget = Table::new(
         "inventory",
         "widget",
@@ -348,7 +316,9 @@ fn catalog_of(note_nullable: bool, maker_columns: Vec<Column>, maker_key: bool) 
         Vec::new(),
     );
     // The second model. It is as small as the first: an identity, one text
-    // column, and the timestamp its query sorts by. Its name keeps it after
+    // column, a revision, and the timestamp its query sorts by. The batch
+    // names it twice, so its revision declares `revision_of` (wamn-nv87,
+    // wamn-kyak). Its name keeps it after
     // `widget` in contract order, so every model index a test states stays
     // where it was.
     let widget_maker = Table::new(
@@ -364,16 +334,20 @@ fn catalog_of(note_nullable: bool, maker_columns: Vec<Column>, maker_key: bool) 
             ),
             Column::new("name", ColumnType::Text, false, None, None),
             Column::new(
+                "edit_version",
+                ColumnType::Int64,
+                false,
+                Some(ColumnDefault::int64(1)),
+                None,
+            ),
+            Column::new(
                 "created_at",
                 ColumnType::Timestamptz,
                 false,
                 Some(ColumnDefault::CurrentTimestamp),
                 None,
             ),
-        ]
-        .into_iter()
-        .chain(maker_columns)
-        .collect(),
+        ],
         vec![Constraint::primary_key("widget_maker_id_pkey", ["id"]).expect("valid primary key")],
         Vec::new(),
     );

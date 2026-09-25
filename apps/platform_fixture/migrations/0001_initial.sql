@@ -1,6 +1,7 @@
 CREATE TABLE inventory.widget_maker (
     id uuid CONSTRAINT widget_maker_id_pkey PRIMARY KEY DEFAULT gen_random_uuid(),
     name text NOT NULL,
+    edit_version int8 NOT NULL DEFAULT 1,
     created_at timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 

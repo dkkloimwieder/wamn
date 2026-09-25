@@ -54,7 +54,8 @@
         },
         "get": {
           "permission": "widget.get",
-          "result": "one"
+          "result": "one",
+          "revision_field": "edit_version"
         },
         "query": {
           "authored_sql": {
@@ -136,7 +137,8 @@
       "operations": {
         "get": {
           "permission": "widget_maker.get",
-          "result": "one"
+          "result": "one",
+          "revision_field": "edit_version"
         },
         "query": {
           "filters": [
@@ -168,13 +170,15 @@
             "fields": [
               "created_at"
             ]
-          }
+          },
+          "revision_field": "edit_version"
         }
       },
       "owner": "platform_fixture",
       "schema": "inventory",
       "server_owned_fields": [
         "id",
+        "edit_version",
         "created_at"
       ],
       "table": "widget_maker"
@@ -512,7 +516,8 @@
             "nullable": false,
             "path": "value.expected_edit_version",
             "revision": true,
-            "type": "int64"
+            "type": "int64",
+            "revision_of": "value.inspector_id"
           },
           {
             "label": "Grade",
