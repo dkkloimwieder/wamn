@@ -3,9 +3,10 @@
 // `location` components. Each one calls the bindings and the runtime, and
 // nothing else.
 
-import { Show, createSignal } from "solid-js";
+import { Show, createSignal, onCleanup } from "solid-js";
 import { createTable, type ColumnDef } from "@tanstack/solid-table";
 import {
+  afterWrites,
   appendPage,
   cellText,
   emptyPage,
@@ -82,8 +83,10 @@ export const LocationListTableLabel = "Locations";
 export function LocationListTable(props: LocationListTableProps) {
   const controls = (): Partial<LocationListRequest> => ({});
   const [page, setPage] = createSignal<PageState<LocationListRow>>(emptyPage<LocationListRow>());
+  let asked = false;
 
   const read = async (cursor: string | null) => {
+    asked = true;
     setPage(startRead(page()));
     const request = {
       ...controls(),
@@ -100,6 +103,13 @@ export function LocationListTable(props: LocationListTableProps) {
     const rows = outcome.value.rows;
     setPage(cursor === null ? firstPage(rows, null) : appendPage(page(), rows, null));
   };
+  onCleanup(
+    afterWrites(props.transport, () => {
+      if (asked) {
+        void read(null);
+      }
+    }),
+  );
 
   const restart = () => {
     setPage(emptyPage<LocationListRow>());

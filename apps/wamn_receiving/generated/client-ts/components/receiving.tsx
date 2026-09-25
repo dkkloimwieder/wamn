@@ -3,11 +3,12 @@
 // `receiving` components. Each one calls the bindings and the runtime, and
 // nothing else.
 
-import { For, Show, createEffect, createSignal } from "solid-js";
+import { For, Show, createEffect, createSignal, onCleanup } from "solid-js";
 import { createTable, type ColumnDef } from "@tanstack/solid-table";
 import { createForm, useStore } from "@tanstack/solid-form";
 import { z } from "zod";
 import {
+  afterWrites,
   appendPage,
   canAdd,
   canRemove,
@@ -159,8 +160,10 @@ export const ReceivingLoadPurchaseOrderHistoryTableLabel = "Purchase order histo
 export function ReceivingLoadPurchaseOrderHistoryTable(props: ReceivingLoadPurchaseOrderHistoryTableProps) {
   const controls = (): Partial<ReceivingLoadPurchaseOrderHistoryRequest> => ({});
   const [page, setPage] = createSignal<PageState<ReceivingLoadPurchaseOrderHistoryRow>>(emptyPage<ReceivingLoadPurchaseOrderHistoryRow>());
+  let asked = false;
 
   const read = async (cursor: string | null) => {
+    asked = true;
     setPage(startRead(page()));
     const request = {
       ...controls(),
@@ -177,6 +180,13 @@ export function ReceivingLoadPurchaseOrderHistoryTable(props: ReceivingLoadPurch
     const rows = outcome.value.rows;
     setPage(cursor === null ? firstPage(rows, null) : appendPage(page(), rows, null));
   };
+  onCleanup(
+    afterWrites(props.transport, () => {
+      if (asked) {
+        void read(null);
+      }
+    }),
+  );
 
   const restart = () => {
     setPage(emptyPage<ReceivingLoadPurchaseOrderHistoryRow>());
@@ -316,8 +326,10 @@ export const ReceivingLoadReceiptScreenTableLabel = "Receiving screen";
 export function ReceivingLoadReceiptScreenTable(props: ReceivingLoadReceiptScreenTableProps) {
   const controls = (): Partial<ReceivingLoadReceiptScreenRequest> => ({});
   const [page, setPage] = createSignal<PageState<ReceivingLoadReceiptScreenRow>>(emptyPage<ReceivingLoadReceiptScreenRow>());
+  let asked = false;
 
   const read = async (cursor: string | null) => {
+    asked = true;
     setPage(startRead(page()));
     const request = {
       ...controls(),
@@ -334,6 +346,13 @@ export function ReceivingLoadReceiptScreenTable(props: ReceivingLoadReceiptScree
     const rows = outcome.value.rows;
     setPage(cursor === null ? firstPage(rows, null) : appendPage(page(), rows, null));
   };
+  onCleanup(
+    afterWrites(props.transport, () => {
+      if (asked) {
+        void read(null);
+      }
+    }),
+  );
 
   const restart = () => {
     setPage(emptyPage<ReceivingLoadReceiptScreenRow>());
@@ -494,6 +513,7 @@ export function ReceivingRecordReceiptForm(props: ReceivingRecordReceiptFormProp
     );
   };
   void readValueLineLocationIdOptions(null);
+  onCleanup(afterWrites(props.transport, () => void readValueLineLocationIdOptions(null)));
   const [valueLinePurchaseOrderLineIdOptions, setValueLinePurchaseOrderLineIdOptions] = createSignal<PageState<ReceivingLoadReceiptScreenRow>>(emptyPage<ReceivingLoadReceiptScreenRow>());
   const [valueLinePurchaseOrderLineIdNarrowed, setValueLinePurchaseOrderLineIdNarrowed] = createSignal<string | null>(null);
   const readValueLinePurchaseOrderLineIdOptions = async (cursor: string | null) => {
@@ -519,6 +539,7 @@ export function ReceivingRecordReceiptForm(props: ReceivingRecordReceiptFormProp
     setValueLinePurchaseOrderLineIdNarrowed((form.getFieldValue(`value.purchaseOrderId`) as string | null) ?? null);
     void readValueLinePurchaseOrderLineIdOptions(null);
   });
+  onCleanup(afterWrites(props.transport, () => void readValueLinePurchaseOrderLineIdOptions(null)));
   const [valuePurchaseOrderIdOptions, setValuePurchaseOrderIdOptions] = createSignal<PageState<PurchaseOrderQueryRow>>(emptyPage<PurchaseOrderQueryRow>());
   const [valuePurchaseOrderIdSearch, setValuePurchaseOrderIdSearch] = createSignal("");
   const readValuePurchaseOrderIdOptions = async (cursor: string | null) => {
@@ -546,6 +567,7 @@ export function ReceivingRecordReceiptForm(props: ReceivingRecordReceiptFormProp
     return outcome.status === "completed" ? ((outcome.value ?? null) as unknown as PurchaseOrderQueryRow | null) : null;
   };
   void readValuePurchaseOrderIdOptions(null);
+  onCleanup(afterWrites(props.transport, () => void readValuePurchaseOrderIdOptions(null)));
 
   return (
     <form

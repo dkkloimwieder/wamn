@@ -3,11 +3,12 @@
 // `purchase_order` components. Each one calls the bindings and the runtime, and
 // nothing else.
 
-import { Show, createResource, createSignal } from "solid-js";
+import { Show, createResource, createSignal, onCleanup } from "solid-js";
 import { createTable, type ColumnDef } from "@tanstack/solid-table";
 import { createForm } from "@tanstack/solid-form";
 import { z } from "zod";
 import {
+  afterWrites,
   appendPage,
   cellText,
   checkedMember,
@@ -100,7 +101,7 @@ export const PurchaseOrderGetDetailLabel = "Purchase order";
  * input names the record it shows.
  */
 export function PurchaseOrderGetDetail(props: PurchaseOrderGetDetailProps) {
-  const [outcome] = createResource(
+  const [outcome, { refetch: readAgain }] = createResource(
     () => props.input,
     async (input: PurchaseOrderGetDetailInput) => {
       const read = await get(props.transport, [
@@ -113,6 +114,7 @@ export function PurchaseOrderGetDetail(props: PurchaseOrderGetDetailProps) {
       return read;
     },
   );
+  onCleanup(afterWrites(props.transport, () => void readAgain()));
   const record = (): PurchaseOrderGetResult | undefined => {
     const read = outcome();
     return read?.status === "completed" ? read.value : undefined;
@@ -223,8 +225,10 @@ export const PurchaseOrderQueryTableLabel = "Purchase orders";
 export function PurchaseOrderQueryTable(props: PurchaseOrderQueryTableProps) {
   const [controls, setControls] = createSignal<Partial<PurchaseOrderQueryRequest>>({});
   const [page, setPage] = createSignal<PageState<PurchaseOrderQueryRow>>(emptyPage<PurchaseOrderQueryRow>());
+  let asked = false;
 
   const read = async (cursor: string | null) => {
+    asked = true;
     setPage(startRead(page()));
     const request = {
       ...completePair(controls(), ["sort", "field"], ["sort", "direction"]),
@@ -241,6 +245,13 @@ export function PurchaseOrderQueryTable(props: PurchaseOrderQueryTableProps) {
     const rows = outcome.value.item;
     setPage(cursor === null ? firstPage(rows, outcome.value.nextCursor) : appendPage(page(), rows, outcome.value.nextCursor));
   };
+  onCleanup(
+    afterWrites(props.transport, () => {
+      if (asked) {
+        void read(null);
+      }
+    }),
+  );
 
   const restart = () => {
     setPage(emptyPage<PurchaseOrderQueryRow>());
@@ -507,6 +518,7 @@ export function PurchaseOrderUpdateForm(props: PurchaseOrderUpdateFormProps) {
     );
   };
   void readChangeSupplierIdOptions(null);
+  onCleanup(afterWrites(props.transport, () => void readChangeSupplierIdOptions(null)));
 
   return (
     <form

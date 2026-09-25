@@ -3,9 +3,10 @@
 // `receipt` components. Each one calls the bindings and the runtime, and
 // nothing else.
 
-import { Show, createResource, createSignal } from "solid-js";
+import { Show, createResource, createSignal, onCleanup } from "solid-js";
 import { createTable, type ColumnDef } from "@tanstack/solid-table";
 import {
+  afterWrites,
   appendPage,
   cellText,
   emptyPage,
@@ -78,7 +79,7 @@ export const ReceiptGetDetailLabel = "Receipt";
  * input names the record it shows.
  */
 export function ReceiptGetDetail(props: ReceiptGetDetailProps) {
-  const [outcome] = createResource(
+  const [outcome, { refetch: readAgain }] = createResource(
     () => props.input,
     async (input: ReceiptGetDetailInput) => {
       const read = await get(props.transport, [
@@ -91,6 +92,7 @@ export function ReceiptGetDetail(props: ReceiptGetDetailProps) {
       return read;
     },
   );
+  onCleanup(afterWrites(props.transport, () => void readAgain()));
   const record = (): ReceiptGetResult | undefined => {
     const read = outcome();
     return read?.status === "completed" ? read.value : undefined;
@@ -144,8 +146,10 @@ export const ReceiptQueryTableLabel = "Receipts";
 export function ReceiptQueryTable(props: ReceiptQueryTableProps) {
   const [controls, setControls] = createSignal<Partial<ReceiptQueryRequest>>({});
   const [page, setPage] = createSignal<PageState<ReceiptQueryRow>>(emptyPage<ReceiptQueryRow>());
+  let asked = false;
 
   const read = async (cursor: string | null) => {
+    asked = true;
     setPage(startRead(page()));
     const request = {
       ...controls(),
@@ -162,6 +166,13 @@ export function ReceiptQueryTable(props: ReceiptQueryTableProps) {
     const rows = outcome.value.item;
     setPage(cursor === null ? firstPage(rows, outcome.value.nextCursor) : appendPage(page(), rows, outcome.value.nextCursor));
   };
+  onCleanup(
+    afterWrites(props.transport, () => {
+      if (asked) {
+        void read(null);
+      }
+    }),
+  );
 
   const restart = () => {
     setPage(emptyPage<ReceiptQueryRow>());

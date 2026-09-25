@@ -103,7 +103,7 @@ Today `request_id` is a member of every generated operation contract and of the 
 
 Option A is enough, because the browser HTTP cache stores the responses and the ETags make a fresh read cheap. The store only removes duplicate requests and re-reads after a write. It does not need to know which model a write touched: an unchanged model answers 304.
 
-The store landed with `wamn-rst8.5`, and [execution](../architecture/execution.md) describes it. It keeps the replies itself and calls fetch with `cache: "no-store"`, so a 304 always reaches it. By owner ruling of 2026-09-25, any write marks every stored read stale. `wamn-fjdo` narrows this to the models that a write changes. Reading the active reads again after a write is `wamn-rst8.6`.
+The store landed with `wamn-rst8.5`, and [execution](../architecture/execution.md) describes it. It keeps the replies itself and calls fetch with `cache: "no-store"`, so a 304 always reaches it. By owner ruling of 2026-09-25, any write marks every stored read stale. `wamn-fjdo` narrows this to the models that a write changes. Reading the active reads again after a write landed with `wamn-rst8.6`. It needs no fetch cache mode, because a stale stored read revalidates with its tag. A form's own record read keeps the revision that it read when it opened, so it does not read again.
 
 ### 4.6 Headers by kind
 

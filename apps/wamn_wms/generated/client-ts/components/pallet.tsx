@@ -3,11 +3,12 @@
 // `pallet` components. Each one calls the bindings and the runtime, and
 // nothing else.
 
-import { Show, createResource, createSignal } from "solid-js";
+import { Show, createResource, createSignal, onCleanup } from "solid-js";
 import { createTable, type ColumnDef } from "@tanstack/solid-table";
 import { createForm } from "@tanstack/solid-form";
 import { z } from "zod";
 import {
+  afterWrites,
   appendPage,
   cellText,
   checkedMember,
@@ -175,6 +176,7 @@ export function PalletCreateForm(props: PalletCreateFormProps) {
     return outcome.status === "completed" ? ((outcome.value ?? null) as unknown as LocationQueryRow | null) : null;
   };
   void readLocationIdOptions(null);
+  onCleanup(afterWrites(props.transport, () => void readLocationIdOptions(null)));
 
   return (
     <form
@@ -267,7 +269,7 @@ export const PalletGetDetailLabel = "get";
  * input names the record it shows.
  */
 export function PalletGetDetail(props: PalletGetDetailProps) {
-  const [outcome] = createResource(
+  const [outcome, { refetch: readAgain }] = createResource(
     () => props.input,
     async (input: PalletGetDetailInput) => {
       const read = await get(props.transport, [
@@ -280,6 +282,7 @@ export function PalletGetDetail(props: PalletGetDetailProps) {
       return read;
     },
   );
+  onCleanup(afterWrites(props.transport, () => void readAgain()));
   const record = (): PalletGetResult | undefined => {
     const read = outcome();
     return read?.status === "completed" ? read.value : undefined;
@@ -341,8 +344,10 @@ export const PalletQueryTableLabel = "query";
 export function PalletQueryTable(props: PalletQueryTableProps) {
   const [controls, setControls] = createSignal<Partial<PalletQueryRequest>>({});
   const [page, setPage] = createSignal<PageState<PalletQueryRow>>(emptyPage<PalletQueryRow>());
+  let asked = false;
 
   const read = async (cursor: string | null) => {
+    asked = true;
     setPage(startRead(page()));
     const request = {
       ...completePair(controls(), ["sort", "field"], ["sort", "direction"]),
@@ -359,6 +364,13 @@ export function PalletQueryTable(props: PalletQueryTableProps) {
     const rows = outcome.value.item;
     setPage(cursor === null ? firstPage(rows, outcome.value.nextCursor) : appendPage(page(), rows, outcome.value.nextCursor));
   };
+  onCleanup(
+    afterWrites(props.transport, () => {
+      if (asked) {
+        void read(null);
+      }
+    }),
+  );
 
   const restart = () => {
     setPage(emptyPage<PalletQueryRow>());

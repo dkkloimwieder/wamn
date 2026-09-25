@@ -474,6 +474,9 @@ A stale entry with an ETag sends `If-None-Match`, and a 304 reuses the stored re
 The store keeps only a 200 reply that classifies as completed or refused, and it calls fetch with `cache: "no-store"`, so the browser HTTP cache never answers under it.
 Any write marks every stored read stale, because the browser cannot tell which models a write changed.
 A new CSRF cookie empties the store, so one session's reads never answer the next session.
+The transport also calls each `onWrite` listener after a write settles.
+A generated detail, a table that the operator read, and a form's selector list use it to read again, so an unchanged read costs one 304.
+A form's own record read does not read again, because the form sends the revision that it read when it opened.
 
 A package that generates TypeScript also generates [SolidJS components](../../crates/schema/generator/src/client_component.rs), one for each operation the plan gives a role.
 A table renders the plan's columns over TanStack Table, with one control for each page control the plan names.

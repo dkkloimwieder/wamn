@@ -111,6 +111,12 @@ export type OperationRoute = Omit<WireRequest, "items">;
  */
 export interface Transport {
   invoke(request: WireRequest): Promise<Outcome<JsonValue>>;
+  /**
+   * Calls `listener` after each write settles, whatever its outcome, and
+   * returns the function that stops it. A page reads its shown reads again
+   * this way. A transport without it tells nobody about a write.
+   */
+  onWrite?(listener: () => void): () => void;
 }
 
 /**

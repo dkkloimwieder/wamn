@@ -421,6 +421,7 @@ export function createTransport(options: TransportOptions): Transport {
   // The store belongs to this transport and to one session, so one caller's
   // reads never answer another's.
   const reads = createReadStore();
+  const writeListeners = new Set<() => void>();
   const send = async (target: string, init: RequestInit): Promise<ReadReply> => {
     const response = await call(`${options.baseUrl}${target}`, init);
     return {
@@ -484,14 +485,30 @@ export function createTransport(options: TransportOptions): Transport {
         return uncertain(`the request did not complete: ${String(error)}`);
       } finally {
         // Any write can change what a stored read returns, so every stored
-        // read revalidates next (wamn-fjdo narrows this to the write's models).
+        // read revalidates next (wamn-fjdo narrows this to the write's models),
+        // and each listener then reads what its page shows again.
         if (!read) {
           reads.invalidate();
+          for (const listener of [...writeListeners]) {
+            listener();
+          }
         }
       }
       return classify(request.contract, requestId, reply);
     },
+    onWrite(listener: () => void): () => void {
+      writeListeners.add(listener);
+      return () => writeListeners.delete(listener);
+    },
   };
+}
+
+/**
+ * Calls `listener` after each write on `transport`, and returns the function
+ * that stops it. A transport without `onWrite` never calls it.
+ */
+export function afterWrites(transport: Transport, listener: () => void): () => void {
+  return transport.onWrite?.(listener) ?? (() => undefined);
 }
 
 /** Whether an echoed identity matches the submitted one, or is absent for a read. */

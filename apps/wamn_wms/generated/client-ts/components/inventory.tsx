@@ -3,11 +3,12 @@
 // `inventory` components. Each one calls the bindings and the runtime, and
 // nothing else.
 
-import { Show, createSignal } from "solid-js";
+import { Show, createSignal, onCleanup } from "solid-js";
 import { createTable, type ColumnDef } from "@tanstack/solid-table";
 import { createForm } from "@tanstack/solid-form";
 import { z } from "zod";
 import {
+  afterWrites,
   appendPage,
   cellText,
   checkedMember,
@@ -206,6 +207,7 @@ export function InventoryAdjustForm(props: InventoryAdjustFormProps) {
     return outcome.status === "completed" ? ((outcome.value ?? null) as unknown as PalletQueryRow | null) : null;
   };
   void readValuePalletIdOptions(null);
+  onCleanup(afterWrites(props.transport, () => void readValuePalletIdOptions(null)));
   const [valueProductIdOptions, setValueProductIdOptions] = createSignal<PageState<ProductQueryRow>>(emptyPage<ProductQueryRow>());
   const [valueProductIdSearch, setValueProductIdSearch] = createSignal("");
   const readValueProductIdOptions = async (cursor: string | null) => {
@@ -233,6 +235,7 @@ export function InventoryAdjustForm(props: InventoryAdjustFormProps) {
     return outcome.status === "completed" ? ((outcome.value ?? null) as unknown as ProductQueryRow | null) : null;
   };
   void readValueProductIdOptions(null);
+  onCleanup(afterWrites(props.transport, () => void readValueProductIdOptions(null)));
 
   return (
     <form
@@ -391,8 +394,10 @@ export const InventoryAggregateTableLabel = "aggregate";
 export function InventoryAggregateTable(props: InventoryAggregateTableProps) {
   const controls = (): Partial<InventoryAggregateRequest> => ({});
   const [page, setPage] = createSignal<PageState<InventoryAggregateRow>>(emptyPage<InventoryAggregateRow>());
+  let asked = false;
 
   const read = async (cursor: string | null) => {
+    asked = true;
     setPage(startRead(page()));
     const request = {
       ...controls(),
@@ -409,6 +414,13 @@ export function InventoryAggregateTable(props: InventoryAggregateTableProps) {
     const rows = outcome.value.rows;
     setPage(cursor === null ? firstPage(rows, null) : appendPage(page(), rows, null));
   };
+  onCleanup(
+    afterWrites(props.transport, () => {
+      if (asked) {
+        void read(null);
+      }
+    }),
+  );
 
   const restart = () => {
     setPage(emptyPage<InventoryAggregateRow>());
@@ -556,6 +568,7 @@ export function InventoryMergeForm(props: InventoryMergeFormProps) {
     return outcome.status === "completed" ? ((outcome.value ?? null) as unknown as PalletQueryRow | null) : null;
   };
   void readValueSourcePalletIdOptions(null);
+  onCleanup(afterWrites(props.transport, () => void readValueSourcePalletIdOptions(null)));
   const [valueTargetPalletIdOptions, setValueTargetPalletIdOptions] = createSignal<PageState<PalletQueryRow>>(emptyPage<PalletQueryRow>());
   const [valueTargetPalletIdSearch, setValueTargetPalletIdSearch] = createSignal("");
   const [valueTargetPalletIdRevision, setValueTargetPalletIdRevision] = createSignal<PalletQueryRow["rowVersion"] | null>(null);
@@ -584,6 +597,7 @@ export function InventoryMergeForm(props: InventoryMergeFormProps) {
     return outcome.status === "completed" ? ((outcome.value ?? null) as unknown as PalletQueryRow | null) : null;
   };
   void readValueTargetPalletIdOptions(null);
+  onCleanup(afterWrites(props.transport, () => void readValueTargetPalletIdOptions(null)));
 
   return (
     <form
@@ -748,6 +762,7 @@ export function InventoryMoveForm(props: InventoryMoveFormProps) {
     return outcome.status === "completed" ? ((outcome.value ?? null) as unknown as PalletQueryRow | null) : null;
   };
   void readValuePalletIdOptions(null);
+  onCleanup(afterWrites(props.transport, () => void readValuePalletIdOptions(null)));
   const [valueToLocationIdOptions, setValueToLocationIdOptions] = createSignal<PageState<LocationQueryRow>>(emptyPage<LocationQueryRow>());
   const [valueToLocationIdSearch, setValueToLocationIdSearch] = createSignal("");
   const readValueToLocationIdOptions = async (cursor: string | null) => {
@@ -775,6 +790,7 @@ export function InventoryMoveForm(props: InventoryMoveFormProps) {
     return outcome.status === "completed" ? ((outcome.value ?? null) as unknown as LocationQueryRow | null) : null;
   };
   void readValueToLocationIdOptions(null);
+  onCleanup(afterWrites(props.transport, () => void readValueToLocationIdOptions(null)));
 
   return (
     <form
@@ -946,6 +962,7 @@ export function InventorySplitForm(props: InventorySplitFormProps) {
     return outcome.status === "completed" ? ((outcome.value ?? null) as unknown as ProductQueryRow | null) : null;
   };
   void readValueProductIdOptions(null);
+  onCleanup(afterWrites(props.transport, () => void readValueProductIdOptions(null)));
   const [valueSourcePalletIdOptions, setValueSourcePalletIdOptions] = createSignal<PageState<PalletQueryRow>>(emptyPage<PalletQueryRow>());
   const [valueSourcePalletIdSearch, setValueSourcePalletIdSearch] = createSignal("");
   const readValueSourcePalletIdOptions = async (cursor: string | null) => {
@@ -973,6 +990,7 @@ export function InventorySplitForm(props: InventorySplitFormProps) {
     return outcome.status === "completed" ? ((outcome.value ?? null) as unknown as PalletQueryRow | null) : null;
   };
   void readValueSourcePalletIdOptions(null);
+  onCleanup(afterWrites(props.transport, () => void readValueSourcePalletIdOptions(null)));
   const [valueToLocationIdOptions, setValueToLocationIdOptions] = createSignal<PageState<LocationQueryRow>>(emptyPage<LocationQueryRow>());
   const [valueToLocationIdSearch, setValueToLocationIdSearch] = createSignal("");
   const readValueToLocationIdOptions = async (cursor: string | null) => {
@@ -1000,6 +1018,7 @@ export function InventorySplitForm(props: InventorySplitFormProps) {
     return outcome.status === "completed" ? ((outcome.value ?? null) as unknown as LocationQueryRow | null) : null;
   };
   void readValueToLocationIdOptions(null);
+  onCleanup(afterWrites(props.transport, () => void readValueToLocationIdOptions(null)));
 
   return (
     <form

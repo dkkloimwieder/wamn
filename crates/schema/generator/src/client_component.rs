@@ -233,7 +233,7 @@ fn emit_model(model: &ModelPlan<'_>) -> Result<String, ClientComponentError> {
         match screen.role {
             Role::Table => {
                 table = true;
-                solid.insert("createSignal");
+                solid.extend(["createSignal", "onCleanup"]);
                 emit_table(
                     &mut body,
                     screen,
@@ -248,7 +248,7 @@ fn emit_model(model: &ModelPlan<'_>) -> Result<String, ClientComponentError> {
                 }
             }
             Role::Detail => {
-                solid.insert("createResource");
+                solid.extend(["createResource", "onCleanup"]);
                 emit_detail(&mut body, screen, &mut runtime, &mut ui, &mut bindings)?;
             }
             Role::Form => {
@@ -271,6 +271,9 @@ fn emit_model(model: &ModelPlan<'_>) -> Result<String, ClientComponentError> {
                 }
                 if screen.revision.is_some() {
                     solid.insert("createResource");
+                }
+                if !screen.population.is_empty() {
+                    solid.insert("onCleanup");
                 }
                 emit_form(
                     &mut body,
@@ -802,7 +805,12 @@ fn emit_table(
         "  const [page, setPage] = createSignal<PageState<{stem}Row>>(emptyPage<{stem}Row>());"
     )
     .expect("write");
+    // A write can change the rows a table shows, so a table that read reads
+    // its first page again, and drops the pages after it, because a cursor
+    // can move after a write. A table the operator never read stays unread.
+    source.push_str("  let asked = false;\n");
     source.push_str("\n  const read = async (cursor: string | null) => {\n");
+    source.push_str("    asked = true;\n");
     source.push_str("    setPage(startRead(page()));\n");
     // A sort names a field and a direction together, so a read sends neither
     // until the operator chose both. The controls keep each choice.
@@ -862,6 +870,10 @@ fn emit_table(
     )
     .expect("write");
     source.push_str("  };\n");
+    runtime.insert("afterWrites");
+    source.push_str(
+        "  onCleanup(\n    afterWrites(props.transport, () => {\n      if (asked) {\n        void read(null);\n      }\n    }),\n  );\n",
+    );
     source.push_str("\n  const restart = () => {\n");
     writeln!(source, "    setPage(emptyPage<{stem}Row>());").expect("write");
     source.push_str("    void read(null);\n  };\n");
@@ -1102,7 +1114,13 @@ fn emit_detail(
     let function = crate::client_ts::function_name(screen.name).map_err(|error| {
         ClientComponentError::new(ClientComponentErrorKind::UnwrittenRole, error.to_string())
     })?;
-    runtime.extend(["cellText", "readMember", "type Outcome", "type Transport"]);
+    runtime.extend([
+        "afterWrites",
+        "cellText",
+        "readMember",
+        "type Outcome",
+        "type Transport",
+    ]);
     bindings.insert(function.clone());
     bindings.insert(format!("type {stem}Request"));
     bindings.insert(format!("type {stem}Result"));
@@ -1155,9 +1173,11 @@ fn emit_detail(
     .expect("write");
     writeln!(
         source,
-        "  const [outcome] = createResource(\n    () => props.input,\n    async (input: {stem}DetailInput) => {{\n      const read = await {function}(props.transport, [\n        input as {stem}Request,\n      ]);\n      props.onOutcome?.(read);\n      if (read.status !== \"completed\") {{\n        announceOutcome(read, {stem}DetailLabel);\n      }}\n      return read;\n    }},\n  );"
+        "  const [outcome, {{ refetch: readAgain }}] = createResource(\n    () => props.input,\n    async (input: {stem}DetailInput) => {{\n      const read = await {function}(props.transport, [\n        input as {stem}Request,\n      ]);\n      props.onOutcome?.(read);\n      if (read.status !== \"completed\") {{\n        announceOutcome(read, {stem}DetailLabel);\n      }}\n      return read;\n    }},\n  );"
     )
     .expect("write");
+    // A write can change the record a detail shows, so it reads it again.
+    source.push_str("  onCleanup(afterWrites(props.transport, () => void readAgain()));\n");
     writeln!(
         source,
         "  const record = (): {stem}Result | undefined => {{\n    const read = outcome();\n    return read?.status === \"completed\" ? read.value : undefined;\n  }};"
@@ -2022,6 +2042,15 @@ fn emit_selector_state(
     } else {
         writeln!(source, "  void read{state_upper}Options(null);").expect("write");
     }
+    // A write can add or change a record the list offers, so the list reads
+    // its first page again. The chosen row stays chosen, because the selector
+    // keeps it by key, so its revision is still the one the operator chose.
+    runtime.insert("afterWrites");
+    writeln!(
+        source,
+        "  onCleanup(afterWrites(props.transport, () => void read{state_upper}Options(null)));"
+    )
+    .expect("write");
 }
 
 /// One selector: the options are the rows the list returned.

@@ -3,9 +3,10 @@
 // `inventory_movement` components. Each one calls the bindings and the runtime, and
 // nothing else.
 
-import { Show, createResource, createSignal } from "solid-js";
+import { Show, createResource, createSignal, onCleanup } from "solid-js";
 import { createTable, type ColumnDef } from "@tanstack/solid-table";
 import {
+  afterWrites,
   appendPage,
   cellText,
   emptyPage,
@@ -86,7 +87,7 @@ export const InventoryMovementGetDetailLabel = "get";
  * input names the record it shows.
  */
 export function InventoryMovementGetDetail(props: InventoryMovementGetDetailProps) {
-  const [outcome] = createResource(
+  const [outcome, { refetch: readAgain }] = createResource(
     () => props.input,
     async (input: InventoryMovementGetDetailInput) => {
       const read = await get(props.transport, [
@@ -99,6 +100,7 @@ export function InventoryMovementGetDetail(props: InventoryMovementGetDetailProp
       return read;
     },
   );
+  onCleanup(afterWrites(props.transport, () => void readAgain()));
   const record = (): InventoryMovementGetResult | undefined => {
     const read = outcome();
     return read?.status === "completed" ? read.value : undefined;
@@ -157,8 +159,10 @@ export const InventoryMovementQueryTableLabel = "query";
 export function InventoryMovementQueryTable(props: InventoryMovementQueryTableProps) {
   const [controls, setControls] = createSignal<Partial<InventoryMovementQueryRequest>>({});
   const [page, setPage] = createSignal<PageState<InventoryMovementQueryRow>>(emptyPage<InventoryMovementQueryRow>());
+  let asked = false;
 
   const read = async (cursor: string | null) => {
+    asked = true;
     setPage(startRead(page()));
     const request = {
       ...controls(),
@@ -175,6 +179,13 @@ export function InventoryMovementQueryTable(props: InventoryMovementQueryTablePr
     const rows = outcome.value.item;
     setPage(cursor === null ? firstPage(rows, outcome.value.nextCursor) : appendPage(page(), rows, outcome.value.nextCursor));
   };
+  onCleanup(
+    afterWrites(props.transport, () => {
+      if (asked) {
+        void read(null);
+      }
+    }),
+  );
 
   const restart = () => {
     setPage(emptyPage<InventoryMovementQueryRow>());

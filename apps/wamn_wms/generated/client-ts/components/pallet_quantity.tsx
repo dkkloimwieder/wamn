@@ -3,9 +3,10 @@
 // `pallet_quantity` components. Each one calls the bindings and the runtime, and
 // nothing else.
 
-import { Show, createResource, createSignal } from "solid-js";
+import { Show, createResource, createSignal, onCleanup } from "solid-js";
 import { createTable, type ColumnDef } from "@tanstack/solid-table";
 import {
+  afterWrites,
   appendPage,
   cellText,
   emptyPage,
@@ -82,7 +83,7 @@ export const PalletQuantityGetDetailLabel = "get";
  * input names the record it shows.
  */
 export function PalletQuantityGetDetail(props: PalletQuantityGetDetailProps) {
-  const [outcome] = createResource(
+  const [outcome, { refetch: readAgain }] = createResource(
     () => props.input,
     async (input: PalletQuantityGetDetailInput) => {
       const read = await get(props.transport, [
@@ -95,6 +96,7 @@ export function PalletQuantityGetDetail(props: PalletQuantityGetDetailProps) {
       return read;
     },
   );
+  onCleanup(afterWrites(props.transport, () => void readAgain()));
   const record = (): PalletQuantityGetResult | undefined => {
     const read = outcome();
     return read?.status === "completed" ? read.value : undefined;
@@ -147,8 +149,10 @@ export const PalletQuantityQueryTableLabel = "query";
 export function PalletQuantityQueryTable(props: PalletQuantityQueryTableProps) {
   const [controls, setControls] = createSignal<Partial<PalletQuantityQueryRequest>>({});
   const [page, setPage] = createSignal<PageState<PalletQuantityQueryRow>>(emptyPage<PalletQuantityQueryRow>());
+  let asked = false;
 
   const read = async (cursor: string | null) => {
+    asked = true;
     setPage(startRead(page()));
     const request = {
       ...controls(),
@@ -165,6 +169,13 @@ export function PalletQuantityQueryTable(props: PalletQuantityQueryTableProps) {
     const rows = outcome.value.item;
     setPage(cursor === null ? firstPage(rows, outcome.value.nextCursor) : appendPage(page(), rows, outcome.value.nextCursor));
   };
+  onCleanup(
+    afterWrites(props.transport, () => {
+      if (asked) {
+        void read(null);
+      }
+    }),
+  );
 
   const restart = () => {
     setPage(emptyPage<PalletQuantityQueryRow>());

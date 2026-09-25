@@ -3,11 +3,12 @@
 // `supplier` components. Each one calls the bindings and the runtime, and
 // nothing else.
 
-import { Show, createSignal } from "solid-js";
+import { Show, createSignal, onCleanup } from "solid-js";
 import { createTable, type ColumnDef } from "@tanstack/solid-table";
 import { createForm } from "@tanstack/solid-form";
 import { z } from "zod";
 import {
+  afterWrites,
   appendPage,
   cellText,
   checkedMember,
@@ -200,8 +201,10 @@ export const SupplierQueryTableLabel = "Suppliers";
 export function SupplierQueryTable(props: SupplierQueryTableProps) {
   const [controls, setControls] = createSignal<Partial<SupplierQueryRequest>>({});
   const [page, setPage] = createSignal<PageState<SupplierQueryRow>>(emptyPage<SupplierQueryRow>());
+  let asked = false;
 
   const read = async (cursor: string | null) => {
+    asked = true;
     setPage(startRead(page()));
     const request = {
       ...controls(),
@@ -218,6 +221,13 @@ export function SupplierQueryTable(props: SupplierQueryTableProps) {
     const rows = outcome.value.item;
     setPage(cursor === null ? firstPage(rows, outcome.value.nextCursor) : appendPage(page(), rows, outcome.value.nextCursor));
   };
+  onCleanup(
+    afterWrites(props.transport, () => {
+      if (asked) {
+        void read(null);
+      }
+    }),
+  );
 
   const restart = () => {
     setPage(emptyPage<SupplierQueryRow>());

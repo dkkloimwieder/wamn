@@ -8,7 +8,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { createTransport } from "../src/transport.js";
+import { afterWrites, createTransport } from "../src/transport.js";
 import type { ResponseContract, Transport, WireRequest } from "../src/wire.js";
 
 const GET = "private, no-cache";
@@ -249,5 +249,30 @@ describe("the read store", () => {
     replies.push({ status: 200, body: ROWS, cacheControl: LIST, etag: 'W/"v1"' });
     await transport.invoke(list("open"));
     expect(seen.map((call) => call.ifNoneMatch)).toEqual([undefined, undefined]);
+  });
+});
+
+describe("a write listener", () => {
+  it("hears each write once, after it settles, and nothing after it stops", async () => {
+    const { transport, replies } = harness();
+    const heard: number[] = [];
+    let settled = 0;
+    const stop = afterWrites(transport, () => heard.push(settled));
+    replies.push({ status: 200, body: '[{"request_id":"r1","value":{"id":"a"}}]' });
+    await transport.invoke(WRITE).then(() => (settled += 1));
+    replies.push({ status: 503, body: "unavailable" });
+    await transport.invoke(WRITE).then(() => (settled += 1));
+    replies.push({ status: 200, body: ROWS, cacheControl: LIST, etag: 'W/"v1"' });
+    await transport.invoke(list("open"));
+    stop();
+    replies.push({ status: 200, body: '[{"request_id":"r1","value":{"id":"a"}}]' });
+    await transport.invoke(WRITE);
+    // Each write is heard before its caller reads the outcome, and a read is not heard.
+    expect(heard).toEqual([0, 1]);
+  });
+
+  it("is never called by a transport that has no onWrite", () => {
+    const bare: Transport = { invoke: () => Promise.reject(new Error("unused")) };
+    expect(() => afterWrites(bare, () => undefined)()).not.toThrow();
   });
 });
