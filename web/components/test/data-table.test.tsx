@@ -7,6 +7,7 @@
  */
 
 import { cleanup, fireEvent, render, screen } from "@solidjs/testing-library";
+import { createSignal } from "solid-js";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 
 import { DataTable, WINDOW_FROM, type DataTableColumn, type DataTableSort } from "@wamn/ui";
@@ -182,6 +183,23 @@ describe("the data table", () => {
     fireEvent.click(header("rank")!);
     expect(shown()).toEqual(["c0000", "c0001", "c0002"]);
     expect(onSortChange).not.toHaveBeenCalled();
+  });
+
+  it("lets every column sort once a set becomes fully read after the table draws", () => {
+    const [full, setFull] = createSignal(false);
+    table({
+      get rows() {
+        return full() ? rows(3) : [];
+      },
+      get fullyRead() {
+        return full();
+      },
+      busy: false,
+    });
+    expect(header("rank")).toBeNull();
+    setFull(true);
+    fireEvent.click(header("rank")!);
+    expect(shown()).toEqual(["c0002", "c0001", "c0000"]);
   });
 
   it("calls onSortChange with the whole sort on a set that is not fully read, and does not sort", () => {

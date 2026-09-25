@@ -181,6 +181,8 @@ describe("the refine filters", () => {
     expect(shown()).toEqual(["Alpha", "ALPHABET"]);
     setFullyRead(false);
     expect(shown()).toEqual(["Alpha", "beta", "ALPHABET", "gamma"]);
+    // The load that lands closes an open filter.
+    open("code");
     expect(screen.getByLabelText("contains").hasAttribute("disabled")).toBe(true);
     expect(theButton("remove filter code").hasAttribute("disabled")).toBe(
       true,

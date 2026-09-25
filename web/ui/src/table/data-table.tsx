@@ -385,10 +385,14 @@ export function DataTable<TRow extends object>(props: DataTableProps<TRow>): JSX
       scales()[field] ?? 0,
     );
 
-  // The column definitions change only with the columns. A getter that built
-  // them on every read would make the table rebuild its columns on every read.
-  const columns = createMemo(() =>
-    props.columns.map(
+  // The column definitions change only with the columns and with the fully
+  // read state. A getter that built them on every read would make the table
+  // rebuild its columns on every read. TanStack copies each definition once,
+  // so a getter in one would keep its first value.
+  const columns = createMemo(() => {
+    const fullyRead = props.fullyRead;
+    const sortFields = props.sortFields;
+    return props.columns.map(
       (definition): ColumnDef<DataTableFeatures, TRow> => ({
         id: definition.field,
         header: (context) => (
@@ -453,13 +457,11 @@ export function DataTable<TRow extends object>(props: DataTableProps<TRow>): JSX
               context.groupingRow === undefined ? context.rows : dataRows(context.groupingRow),
             ),
         },
-        // Read on each call, so a set that stops being fully read limits the sort.
-        get enableSorting() {
-          return props.fullyRead || props.sortFields.some((sort) => sort.field === definition.field);
-        },
+        // A set that is not fully read sorts only by a declared sort field.
+        enableSorting: fullyRead || sortFields.some((sort) => sort.field === definition.field),
       }),
-    ),
-  );
+    );
+  });
 
   /** The order of the groups of each level, as the group bar sets it. */
   const groupOrder = (): GroupOrder => {
