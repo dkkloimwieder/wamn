@@ -620,8 +620,8 @@ fn verify_executor_platform_grants(
 
 /// THE CALLABLE-HTTP ADMITTER DENIAL MATRIX (`wamn-0h0g.22.37`).
 ///
-/// `USAGE` on `catalog` and `app_system`, the exact catalog and fresh permission
-/// reads, and NOTHING on the run plane — the
+/// `USAGE` on the schemas of `sql::HTTP_ADMITTER_SCHEMAS`, a `SELECT` on each
+/// relation of `sql::http_admitter_relations`, and NOTHING on the run plane — the
 /// disjointness from the executor family is the security property, and it is
 /// asserted by equality for the same reason the two T1 readers' is. A `wamn_run`
 /// schema `USAGE` alone would fail here, which is what stops this credential
@@ -640,46 +640,25 @@ pub(super) fn verify_http_admitter_grants(
         return Ok(());
     }
     let actual = acl_tuples(grants);
-    let mut expected = BTreeSet::from([
+    // The expected set comes from the list that the grant SQL reads, so a
+    // new admitter read changes both at once.
+    let schemas = sql::HTTP_ADMITTER_SCHEMAS.iter().map(|schema| {
         (
             "schema".to_string(),
-            "app_system".to_string(),
-            "app_system".to_string(),
+            schema.to_string(),
+            schema.to_string(),
             "USAGE".to_string(),
-        ),
-        (
-            "schema".to_string(),
-            "catalog".to_string(),
-            "catalog".to_string(),
-            "USAGE".to_string(),
-        ),
+        )
+    });
+    let relations = sql::http_admitter_relations().map(|(schema, relation)| {
         (
             "relation".to_string(),
-            "app_system".to_string(),
-            "permissions".to_string(),
-            "SELECT".to_string(),
-        ),
-        (
-            "relation".to_string(),
-            "app_system".to_string(),
-            "users".to_string(),
-            "SELECT".to_string(),
-        ),
-        (
-            "relation".to_string(),
-            "app_system".to_string(),
-            "user_roles".to_string(),
-            "SELECT".to_string(),
-        ),
-    ]);
-    for relation in sql::HTTP_ADMITTER_CATALOG_RELATIONS {
-        expected.insert((
-            "relation".to_string(),
-            "catalog".to_string(),
+            schema.to_string(),
             relation.to_string(),
             "SELECT".to_string(),
-        ));
-    }
+        )
+    });
+    let expected = schemas.chain(relations).collect::<BTreeSet<_>>();
     anyhow::ensure!(
         actual == expected,
         "stable role {role:?} ACLs in database {database:?} are not the exact callable-HTTP admission grant set"

@@ -540,16 +540,20 @@ fn the_identity_reader_grants_are_exact_and_never_allow_a_write() {
 
 #[test]
 fn the_http_admitter_grants_require_fresh_reads_and_refuse_writes() {
-    let mut exact = vec![
-        role_acl("schema", "app_system", "app_system", "USAGE"),
-        role_acl("schema", "catalog", "catalog", "USAGE"),
-        role_acl("relation", "app_system", "permissions", "SELECT"),
-        role_acl("relation", "app_system", "users", "SELECT"),
-        role_acl("relation", "app_system", "user_roles", "SELECT"),
-    ];
-    for relation in sql::HTTP_ADMITTER_CATALOG_RELATIONS {
-        exact.push(role_acl("relation", "catalog", relation, "SELECT"));
-    }
+    let exact = sql::HTTP_ADMITTER_SCHEMAS
+        .iter()
+        .map(|schema| role_acl("schema", schema, schema, "USAGE"))
+        .chain(
+            sql::http_admitter_relations()
+                .map(|(schema, relation)| role_acl("relation", schema, relation, "SELECT")),
+        )
+        .collect::<Vec<_>>();
+    assert!(
+        exact
+            .iter()
+            .any(|acl| acl.schema_name == "wamn_cache" && acl.object_name == "model_versions"),
+        "the setup check expects the model-version read that a read route's ETag needs"
+    );
     let verify = |grants: &[RoleAcl]| {
         verify_http_admitter_grants(
             WorkloadRoleFamily::HttpAdmitter.acl_role(),

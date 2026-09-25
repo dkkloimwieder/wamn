@@ -155,6 +155,25 @@ pub const HTTP_ADMITTER_CATALOG_RELATIONS: [&str; 7] = [
     "connection_generations",
 ];
 
+/// The schemas that the callable-HTTP admitter uses.
+pub const HTTP_ADMITTER_SCHEMAS: [&str; 3] = ["catalog", "app_system", "wamn_cache"];
+
+/// Every relation that the callable-HTTP admitter reads, as `(schema, relation)`.
+///
+/// [`grant_http_admitter_surface_sql`] grants `SELECT` on each, and the setup
+/// check expects exactly these grants, so the two cannot drift.
+pub fn http_admitter_relations() -> impl Iterator<Item = (&'static str, &'static str)> {
+    HTTP_ADMITTER_CATALOG_RELATIONS
+        .iter()
+        .map(|relation| ("catalog", *relation))
+        .chain([
+            ("app_system", "permissions"),
+            ("app_system", "users"),
+            ("app_system", "user_roles"),
+            ("wamn_cache", "model_versions"),
+        ])
+}
+
 /// Every `catalog.wirings` column written by management `Publish`.
 ///
 /// The document supplies `wiring_id`, `version` and `graph_json`; the command
@@ -431,7 +450,8 @@ fn quoted_column_list(columns: &[&str]) -> String {
 /// (`wamn-0h0g.22.37`).
 ///
 /// The connection-effect snapshot and fresh operation-permission reads use
-/// [`HTTP_ADMITTER_CATALOG_RELATIONS`] and the three app-system relations below.
+/// [`HTTP_ADMITTER_CATALOG_RELATIONS`] and the three app-system relations of
+/// [`http_admitter_relations`].
 /// Human permission reads join the active application user to its role grants;
 /// service permission reads continue to read `app_system.permissions` alone.
 /// A read route's ETag reads `wamn_cache.model_versions`
@@ -458,32 +478,25 @@ fn quoted_column_list(columns: &[&str]) -> String {
 pub fn grant_http_admitter_surface_sql(schema: &str) -> String {
     let role = quote_ident(HTTP_ADMITTER_ROLE);
     let schema = quote_ident(schema);
+    let schemas = HTTP_ADMITTER_SCHEMAS.join(", ");
     let mut sql = format!(
         "{ensure} \
-         REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA catalog, app_system, wamn_cache, {schema} \
+         REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA {schemas}, {schema} \
          FROM {role}; \
-         REVOKE ALL PRIVILEGES ON ALL ROUTINES IN SCHEMA catalog, app_system, wamn_cache, {schema} \
+         REVOKE ALL PRIVILEGES ON ALL ROUTINES IN SCHEMA {schemas}, {schema} \
          FROM {role}; \
-         REVOKE ALL PRIVILEGES ON SCHEMA catalog, app_system, wamn_cache, {schema} FROM {role}; \
-         GRANT USAGE ON SCHEMA catalog, app_system, wamn_cache TO {role};",
+         REVOKE ALL PRIVILEGES ON SCHEMA {schemas}, {schema} FROM {role}; \
+         GRANT USAGE ON SCHEMA {schemas} TO {role};",
         ensure = ensure_workload_acl_role_sql(WorkloadRoleFamily::HttpAdmitter),
     );
-    for relation in HTTP_ADMITTER_CATALOG_RELATIONS {
+    for (schema, relation) in http_admitter_relations() {
         write!(
             sql,
-            " GRANT SELECT ON TABLE catalog.{relation} TO {role};",
+            " GRANT SELECT ON TABLE {schema}.{relation} TO {role};",
             relation = quote_ident(relation),
         )
         .expect("writing to a String cannot fail");
     }
-    write!(
-        sql,
-        " GRANT SELECT ON TABLE app_system.\"permissions\" TO {role}; \
-         GRANT SELECT ON TABLE app_system.\"users\" TO {role}; \
-         GRANT SELECT ON TABLE app_system.\"user_roles\" TO {role}; \
-         GRANT SELECT ON TABLE wamn_cache.\"model_versions\" TO {role};"
-    )
-    .expect("writing to a String cannot fail");
     sql
 }
 
