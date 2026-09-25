@@ -10,13 +10,22 @@
 use std::path::PathBuf;
 
 use anyhow::{Context as _, bail};
+use tracing_subscriber::EnvFilter;
+use tracing_subscriber::filter::LevelFilter;
 use wamn_edge::config::{CONFIG_VARIABLE, EdgeConfig};
 use wamn_edge::serve::serve;
 use wamn_edge::{intents, refusals};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    tracing_subscriber::fmt::init();
+    // Without RUST_LOG, EnvFilter logs errors only; the box logs info.
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            EnvFilter::builder()
+                .with_default_directive(LevelFilter::INFO.into())
+                .from_env_lossy(),
+        )
+        .init();
     let mut args: Vec<String> = std::env::args().skip(1).collect();
     let path = if args.first().map(String::as_str) == Some("--config") {
         let path = args.get(1).context("--config names a file")?;
