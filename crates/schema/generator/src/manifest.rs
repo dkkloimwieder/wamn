@@ -2431,6 +2431,14 @@ impl ModelDeclaration {
             .get(constraint)
             .map_or(self.owner.as_str(), String::as_str)
     }
+
+    /// The model's revision column: the one column its operations name as
+    /// `revision_field`. Validation refuses a model whose operations name two.
+    pub fn revision_field(&self) -> Option<&str> {
+        self.operations
+            .values()
+            .find_map(|operation| operation.revision_field.as_deref())
+    }
 }
 
 /// Closed generated CRUD action vocabulary.

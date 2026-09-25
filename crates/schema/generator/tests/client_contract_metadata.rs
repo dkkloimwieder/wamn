@@ -80,10 +80,11 @@ fn crud_record_links_use_the_declared_relation_and_revision() {
         let mut record = json!({
             "relation": "inventory.stock",
             "key_field": "id",
-            "key_input": "id"
+            "key_input": "id",
+            // The get declares no revision field. It reads the model's.
+            "revision_field": "edit_version"
         });
         if action != "get" {
-            record["revision_field"] = json!("edit_version");
             record["revision_input"] = json!("expected_edit_version");
             let input = artifact(
                 &package,

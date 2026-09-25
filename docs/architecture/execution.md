@@ -41,6 +41,8 @@ Every other response sends `Cache-Control: no-store`: a write, any status other 
 
 A read also carries an ETag, which the host derives and compares.
 A `get` has a strong ETag from the manifest digest of the release and the revision field of the record that it returns.
+The generator writes the revision column of the model into each `get` contract. The model's operations name that one column as `revision_field`.
+A `get` of a model with no revision column has no strong ETag, and the generated client index names that model.
 A `query` or `projection` has a weak ETag from the manifest digest and the [model versions](data-access.md#model-versions) of the relations that it reads.
 Publish writes the relations and the revision field into the serving manifest route from the generated contract, and a history table stands for its model relation.
 The router forwards `If-None-Match` on a GET, and the host compares it with the weak comparison.

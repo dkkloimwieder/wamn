@@ -264,7 +264,31 @@ pub fn emit_ts_client(ir: &ClientContractIr) -> Result<Vec<GeneratedFile>, Clien
     let mut index = String::from("// @generated from the client-contract IR; do not edit.\n//\n");
     index.push_str("// The wire contract lives in `");
     index.push_str(RUNTIME_PACKAGE);
-    index.push_str("`, which this package depends on.\n\n");
+    index.push_str("`, which this package depends on.\n");
+    // A get carries its model's revision column. A model with none has no
+    // strong ETag, so every open of its record reads it again in full.
+    let untagged = models
+        .iter()
+        .filter(|model| {
+            model.operations.iter().any(|operation| {
+                operation.kind == "get"
+                    && operation
+                        .record
+                        .as_ref()
+                        .is_none_or(|record| record.revision_field.is_none())
+            })
+        })
+        .map(|model| model.name.as_str())
+        .collect::<Vec<_>>();
+    if !untagged.is_empty() {
+        writeln!(
+            index,
+            "//\n// These models declare no revision column, so their gets carry no strong ETag: {}.",
+            untagged.join(", ")
+        )
+        .expect("writing to a String cannot fail");
+    }
+    index.push('\n');
     let mut namespaces = BTreeSet::new();
     for model in &models {
         let namespace = ts_name(&model.name)?;

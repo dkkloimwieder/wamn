@@ -238,6 +238,19 @@ fn validate_model(
         }
     }
 
+    // A get reads its revision from the model, so the model has one revision
+    // column, whichever operations name it.
+    let revisions = model
+        .operations
+        .values()
+        .filter_map(|operation| operation.revision_field.as_deref())
+        .collect::<BTreeSet<_>>();
+    if revisions.len() > 1 {
+        return Err(GenerateError::new(
+            GenerateErrorKind::InvalidModel,
+            format!("{model_name} operations name more than one revision field"),
+        ));
+    }
     for (action, operation) in &model.operations {
         validate_operation(
             catalog, manifest, model_name, model, table, *action, operation,

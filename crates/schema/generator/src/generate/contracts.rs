@@ -791,7 +791,13 @@ fn emit_operation_contracts(
     ) {
         record.insert("key_input".to_owned(), json!("id"));
     }
-    if let Some(revision) = operation.revision_field.as_deref() {
+    // A get carries its model's revision column, which gives it a strong ETag.
+    let revision_field = if action == CrudAction::Get {
+        model.revision_field()
+    } else {
+        operation.revision_field.as_deref()
+    };
+    if let Some(revision) = revision_field {
         record.insert("revision_field".to_owned(), json!(revision));
     }
     if matches!(action, CrudAction::Update | CrudAction::Delete) {
@@ -1002,9 +1008,7 @@ fn crud_result_contract(
                 path: column.name.clone(),
                 ty: column.ty,
                 nullable: column.nullable,
-                revision: model.operations.values().any(|operation| {
-                    operation.revision_field.as_deref() == Some(column.name.as_str())
-                }),
+                revision: model.revision_field() == Some(column.name.as_str()),
                 revision_of: None,
                 values: if action == CrudAction::Delete && column.name == "outcome" {
                     vec![sql::OUTCOME_DELETED.to_owned()]
