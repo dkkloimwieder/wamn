@@ -28,6 +28,13 @@ Parameters stand in byte order of their names, and every byte outside the RFC 39
 The router refuses any other spelling, and a request target longer than 8 KiB, with HTTP 400 and the code `invalid-target`.
 The [read query codec](../../apps/platform/execution/contract/src/read_query.rs) owns this encoding, and its fixture vectors bind the TypeScript encoder to it.
 
+The host derives the `Cache-Control` value of each read route from its operation kind and auth policy when it serves the route, and the router only writes it.
+A `get` sends `no-cache`, and a `query` or `projection` sends `max-age=10, stale-while-revalidate=60`.
+Both are `private`, unless the auth policy of the route is `none`, and then they are `public`.
+A successful read also sends `Vary: Authorization, Cookie`.
+Every other response sends `Cache-Control: no-store`: a write, any status other than 200, and any request that carries `x-wamn-csrf`.
+[`read_cache_control`](../../crates/platform/runtime/src/plugins/flow_http_routing.rs) owns the values.
+
 A route input that fails its schema returns HTTP 400 with the code `schema-invalid`.
 The body carries the RFC 6901 pointer of the offending value in `data.pointer`:
 

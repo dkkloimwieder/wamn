@@ -113,6 +113,8 @@ Every read response also sends `Vary: Authorization, Cookie`, so a browser does 
 
 This table uses `private` for every generated read, as section 5 states.
 
+The `Cache-Control` and `Vary` rows landed with `wamn-rst8.2`, and [execution](../architecture/execution.md) describes them. The ETag columns wait for `wamn-rst8.4`.
+
 ## 5. Shared caches
 
 The brief says caller-dependent reads are `private`, and that the grant says which reads those are. Today no grant, route or operation declares that a result depends on the caller. Every read route requires authentication, and the router checks the caller's permission token on each request.

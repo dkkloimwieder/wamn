@@ -37,6 +37,10 @@ interface routing {
     mappings: list<mapping>,
     body-limit: u64,
     mapped-limit: u64,
+    /// The Cache-Control value of a successful response, which the host
+    /// derives from the route's operation kind and auth policy. None for a
+    /// route that is not a read: its responses are not stored.
+    cache-control: option<string>,
   }
 
   record auth-rejection {

@@ -32,7 +32,7 @@ use tracing::Instrument as _;
 #[cfg(test)]
 use wamn_catalog::PAT_AUTHENTICATION_MODE;
 use wamn_catalog::{
-    AttachmentAuthPolicy, AttachmentKind, AttachmentRef, ServingManifest,
+    AttachmentAuthPolicy, AttachmentKind, AttachmentRef, OperationKind, ServingManifest,
     parse_attachment_auth_policy,
 };
 use wamn_platform_identity::{PAT_TOKEN_PREFIX, PreparedIdentityReads, PrincipalKind};
@@ -288,7 +288,7 @@ impl InputSchemaValidators {
         let mut validators = HashMap::new();
         for (attachment_id, attachment) in release.manifest().every_attachment() {
             if !carries_http_route(attachment.kind())
-                || route_definition(attachment_id, attachment).is_none()
+                || route_definition(release.manifest(), attachment_id, attachment).is_none()
             {
                 continue;
             }
@@ -936,7 +936,7 @@ fn route_definitions(
             // Decoded before it is matched, so a malformed attachment is reported
             // whenever this pod serves at all rather than only once some request
             // happens to name its route.
-            let definition = route_definition(attachment_id, attachment);
+            let definition = route_definition(manifest, attachment_id, attachment);
             if definition.is_none() {
                 tracing::warn!(
                     attachment_id,
@@ -963,7 +963,7 @@ pub(crate) fn expected_http_hostnames(manifest: &ServingManifest) -> HashSet<Str
     manifest
         .every_attachment()
         .filter(|(_, attachment)| carries_http_route(attachment.kind()))
-        .filter_map(|(id, attachment)| route_definition(id, attachment))
+        .filter_map(|(id, attachment)| route_definition(manifest, id, attachment))
         .map(|definition| definition.host)
         .filter(|host| !host.is_empty() && host != WILDCARD_HOST)
         .collect()
@@ -979,7 +979,7 @@ pub fn requires_pat_route_authentication(manifest: &ServingManifest) -> bool {
         .every_attachment()
         .filter(|(_, attachment)| carries_http_route(attachment.kind()))
         .any(|(attachment_id, attachment)| {
-            route_definition(attachment_id, attachment).is_some()
+            route_definition(manifest, attachment_id, attachment).is_some()
                 && parse_attachment_auth_policy(attachment.auth_policy())
                     .is_some_and(AttachmentAuthPolicy::allows_pat)
         })
@@ -991,7 +991,7 @@ pub fn requires_session_route_authentication(manifest: &ServingManifest) -> bool
         .every_attachment()
         .filter(|(_, attachment)| carries_http_route(attachment.kind()))
         .any(|(id, attachment)| {
-            route_definition(id, attachment).is_some()
+            route_definition(manifest, id, attachment).is_some()
                 && parse_attachment_auth_policy(attachment.auth_policy())
                     .is_some_and(AttachmentAuthPolicy::allows_session)
         })
@@ -1018,7 +1018,11 @@ fn matches_request(definition: &RouteDefinition, method: &str, authority: &str) 
 /// authoring-side decoder. Keys this host does not serve are ignored rather than
 /// refused: the document's shape is owned by the exposure boundary, and a
 /// producer adding a field must not take a pod's routing offline.
-fn route_definition(attachment_id: &str, attachment: AttachmentRef<'_>) -> Option<RouteDefinition> {
+fn route_definition(
+    manifest: &ServingManifest,
+    attachment_id: &str,
+    attachment: AttachmentRef<'_>,
+) -> Option<RouteDefinition> {
     let route = attachment.definition().get("route")?;
     let body_limit = match attachment.definition().get("raw-body-bytes") {
         Some(raw_body_bytes) => {
@@ -1046,7 +1050,32 @@ fn route_definition(attachment_id: &str, attachment: AttachmentRef<'_>) -> Optio
         // adapter's own mapped-byte limit in charge rather than inventing a
         // second policy here.
         mapped_limit: ADAPTER_GOVERNED_BYTES,
+        cache_control: route_kind(manifest, attachment).and_then(|kind| {
+            read_cache_control(kind, parse_attachment_auth_policy(attachment.auth_policy()))
+        }),
     })
+}
+
+/// The Cache-Control value of a successful read response
+/// (`docs/plan/http-reads.md` section 4.6), or `None` for a kind that is not
+/// a read. A read is private unless its route admits anonymous callers.
+fn read_cache_control(kind: OperationKind, policy: Option<AttachmentAuthPolicy>) -> Option<String> {
+    let scope = if policy == Some(AttachmentAuthPolicy::None) {
+        "public"
+    } else {
+        "private"
+    };
+    match kind {
+        OperationKind::Get => Some(format!("{scope}, no-cache")),
+        OperationKind::Query | OperationKind::Projection => {
+            Some(format!("{scope}, max-age=10, stale-while-revalidate=60"))
+        }
+        OperationKind::Create
+        | OperationKind::Update
+        | OperationKind::Delete
+        | OperationKind::Command
+        | OperationKind::EventHandler => None,
+    }
 }
 
 fn input_mapping(value: &Value) -> Option<Mapping> {
@@ -1124,15 +1153,23 @@ fn session_cookie(headers: &[Header]) -> Result<Option<&str>, AuthRejection> {
 /// one of `OperationKind::READ_KINDS`. A wiring can write, so it never reads
 /// only.
 fn serves_read(manifest: &ServingManifest, attachment: AttachmentRef<'_>) -> bool {
+    route_kind(manifest, attachment).is_some_and(OperationKind::is_read)
+}
+
+/// The operation kind of the route an attachment targets. A wiring has none.
+fn route_kind(manifest: &ServingManifest, attachment: AttachmentRef<'_>) -> Option<OperationKind> {
     let AttachmentRef::Route(attachment) = attachment else {
-        return false;
+        return None;
     };
-    manifest.routes.iter().any(|route| {
-        route.package_id == attachment.package_id
-            && route.component == attachment.component
-            && route.operation == attachment.operation
-            && route.kind.is_read()
-    })
+    manifest
+        .routes
+        .iter()
+        .find(|route| {
+            route.package_id == attachment.package_id
+                && route.component == attachment.component
+                && route.operation == attachment.operation
+        })
+        .map(|route| route.kind)
 }
 
 /// Check the signed double-submit of a cookie session.
@@ -1351,7 +1388,7 @@ mod tests {
     use wamn_catalog::{
         ArtifactHash, DefinitionHash, EffectiveReleaseId, PackageCoordinate,
         RELEASE_MANIFEST_FILE_NAME, ServingAttachment, ServingComponent, ServingComponentOperation,
-        ServingRelease, ServingWiring,
+        ServingRelease, ServingRoute, ServingWiring,
     };
 
     use super::*;
@@ -1426,6 +1463,13 @@ mod tests {
     }
 
     fn release_manifest(attachments: BTreeMap<String, ServingAttachment>) -> ServingManifest {
+        release_manifest_with_routes(BTreeSet::new(), attachments)
+    }
+
+    fn release_manifest_with_routes(
+        routes: BTreeSet<ServingRoute>,
+        attachments: BTreeMap<String, ServingAttachment>,
+    ) -> ServingManifest {
         ServingManifest::new(
             ServingRelease {
                 tenant_id: "tenant-a".into(),
@@ -1434,7 +1478,7 @@ mod tests {
                 packages: BTreeSet::from([PackageCoordinate::new("cat", "1.0.0").unwrap()]),
             },
             components(),
-            BTreeSet::new(),
+            routes,
             wirings(),
             attachments,
             BTreeMap::new(),
@@ -1509,6 +1553,84 @@ mod tests {
         fn drop(&mut self) {
             let _ = std::fs::remove_dir_all(&self.root);
         }
+    }
+
+    /// Each kind's Cache-Control value (docs/plan/http-reads.md section 4.6).
+    /// A read is private unless its route admits anonymous callers, and a
+    /// route that is not a read, or a wiring, carries none.
+    #[test]
+    fn a_read_route_carries_the_cache_control_of_its_kind_and_auth_policy() {
+        const SHORT: &str = "max-age=10, stale-while-revalidate=60";
+        let session = json!({"modes": ["session"]});
+        let both = json!({"modes": ["pat", "session"]});
+        let none = json!({"modes": ["none"]});
+        for (kind, policy, expected) in [
+            (
+                OperationKind::Get,
+                &session,
+                Some("private, no-cache".to_string()),
+            ),
+            (
+                OperationKind::Query,
+                &both,
+                Some(format!("private, {SHORT}")),
+            ),
+            (
+                OperationKind::Projection,
+                &session,
+                Some(format!("private, {SHORT}")),
+            ),
+            (
+                OperationKind::Get,
+                &none,
+                Some("public, no-cache".to_string()),
+            ),
+            (
+                OperationKind::Query,
+                &none,
+                Some(format!("public, {SHORT}")),
+            ),
+            (OperationKind::Command, &session, None),
+            (OperationKind::Create, &none, None),
+        ] {
+            let mut route = attachment(
+                AttachmentKind::Http,
+                json!({
+                    "id": "route",
+                    "kind": "http",
+                    "source-id": "public",
+                    "route": {
+                        "host": "api.example.test",
+                        "path": "/orders",
+                        "method": kind.http_method()
+                    }
+                }),
+            );
+            route.target = wamn_catalog::AttachmentTarget::Route {
+                component: "http-request".into(),
+                operation: "request".into(),
+            };
+            route.auth_policy = policy.clone();
+            let manifest = release_manifest_with_routes(
+                BTreeSet::from([ServingRoute {
+                    package_id: "cat".into(),
+                    component: "http-request".into(),
+                    operation: "request".into(),
+                    kind,
+                }]),
+                BTreeMap::from([("route".to_string(), route)]),
+            );
+
+            let served = route_definitions(&manifest, kind.http_method(), "api.example.test");
+
+            let [definition] = served.as_slice() else {
+                panic!("the {kind:?} route is served");
+            };
+            assert_eq!(definition.cache_control, expected, "{kind:?} {policy}");
+        }
+
+        let wiring = route_definitions(&one_http_route(), "POST", "api.example.test");
+        assert_eq!(wiring[0].cache_control, None, "a wiring can write");
     }
 
     #[test]

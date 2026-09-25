@@ -61,6 +61,9 @@ pub struct RouteDefinition {
     pub mappings: Vec<Mapping>,
     pub body_limit: usize,
     pub mapped_limit: usize,
+    /// The Cache-Control value of a successful response, derived by the host.
+    /// None for a route that is not a read.
+    pub cache_control: Option<String>,
 }
 
 /// Authentication refusal returned by the selected route's policy owner.
@@ -178,6 +181,24 @@ pub struct HttpResponse {
     pub content_type: &'static str,
     pub body: Vec<u8>,
     pub deadline_adjustments: Vec<DeadlineAdjustment>,
+    /// The Cache-Control value of a successful read. None is `no-store`.
+    pub cache_control: Option<String>,
+}
+
+impl HttpResponse {
+    /// The cache headers of this response. A successful read sends the value
+    /// that the host derived for its route and varies on the caller's
+    /// credentials. Every other response is `no-store`.
+    #[must_use]
+    pub fn cache_headers(&self) -> Vec<(&'static str, String)> {
+        match &self.cache_control {
+            Some(value) => vec![
+                ("cache-control", value.clone()),
+                ("vary", "Authorization, Cookie".to_string()),
+            ],
+            None => vec![("cache-control", "no-store".to_string())],
+        }
+    }
 }
 
 #[derive(Serialize)]
@@ -367,6 +388,12 @@ async fn try_handle(
         return Err(error_response(413, "mapped-payload-too-large"));
     }
 
+    // A request that carries the CSRF header is not cached (docs/plan/http-reads.md
+    // section 4.6), and neither is any response but a success.
+    let cache_control = matched
+        .definition
+        .cache_control
+        .filter(|_| header_values(&head.headers, CSRF_HEADER).is_empty());
     let attachment_id = matched.definition.attachment_id;
     let Some(_permit) = backend
         .try_acquire_route(&attachment_id)
@@ -391,8 +418,14 @@ async fn try_handle(
     };
     response.deadline_adjustments = report.deadline_adjustments;
     response.actor_labels = report.actor_labels;
+    if response.status == 200 {
+        response.cache_control = cache_control;
+    }
     Ok(response)
 }
+
+/// The request header that repeats the readable CSRF cookie.
+const CSRF_HEADER: &str = "x-wamn-csrf";
 
 /// The longest request target a read accepts, path and query together.
 const READ_TARGET_BYTES: usize = 8 * 1024;
@@ -731,6 +764,7 @@ fn delivery_response(outcome: DeliveryOutcome) -> HttpResponse {
         DeliveryOutcome::Respond(payload) => HttpResponse {
             deadline_adjustments: Vec::new(),
             actor_labels: Vec::new(),
+            cache_control: None,
             status: 200,
             content_type: "application/json",
             body: payload.into_bytes(),
@@ -785,6 +819,7 @@ fn partial_response(partial: PartialCompletion) -> HttpResponse {
     HttpResponse {
         deadline_adjustments: Vec::new(),
         actor_labels: Vec::new(),
+        cache_control: None,
         status: failure.status,
         content_type: "application/json",
         body: serde_json::to_vec(
@@ -814,6 +849,7 @@ fn operation_refusal_response(code: &str, operation: &str) -> HttpResponse {
     HttpResponse {
         deadline_adjustments: Vec::new(),
         actor_labels: Vec::new(),
+        cache_control: None,
         status: 403,
         content_type: "application/json",
         body: serde_json::to_vec(&json!({
@@ -852,6 +888,7 @@ fn detailed_error_response(
     HttpResponse {
         deadline_adjustments: Vec::new(),
         actor_labels: Vec::new(),
+        cache_control: None,
         status,
         content_type: "application/json",
         body: serde_json::to_vec(&ErrorEnvelope {
@@ -865,6 +902,7 @@ fn error_response(status: u16, code: &str) -> HttpResponse {
     HttpResponse {
         deadline_adjustments: Vec::new(),
         actor_labels: Vec::new(),
+        cache_control: None,
         status,
         content_type: "application/json",
         body: serde_json::to_vec(&json!({"error":{"code":code}})).unwrap_or_default(),
@@ -875,6 +913,7 @@ fn body_too_large_response(limit: usize) -> HttpResponse {
     HttpResponse {
         deadline_adjustments: Vec::new(),
         actor_labels: Vec::new(),
+        cache_control: None,
         status: 413,
         content_type: "text/plain; charset=utf-8",
         body: format!("request body exceeds {limit}-byte limit\n").into_bytes(),

@@ -290,6 +290,7 @@ fn route_definition(
             .collect(),
         body_limit,
         mapped_limit,
+        cache_control: route.cache_control,
     })
 }
 
@@ -376,6 +377,9 @@ fn request_head(request: &Request) -> RequestHead {
 
 fn send_response(response: HttpResponse) -> Response {
     let headers = Fields::new();
+    for (name, value) in response.cache_headers() {
+        let _ = headers.set(name, &[value.into_bytes()]);
+    }
     if !response.actor_labels.is_empty() {
         let labels: std::collections::BTreeMap<_, _> = response.actor_labels.into_iter().collect();
         // Keep optional presentation metadata below common HTTP header limits.

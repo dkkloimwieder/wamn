@@ -227,6 +227,7 @@ fn route() -> RouteDefinition {
         ],
         body_limit: 1024,
         mapped_limit: 1024,
+        cache_control: None,
     }
 }
 
@@ -954,4 +955,63 @@ fn a_read_takes_its_one_item_from_the_canonical_query_and_reads_no_body() {
         assert_eq!(error_code(&output.body), "invalid-target");
         assert!(backend.deliveries.is_empty());
     }
+}
+
+#[test]
+fn only_a_successful_read_without_the_csrf_header_carries_its_cache_control() {
+    const READ: &str = "private, max-age=10, stale-while-revalidate=60";
+    let mut read = route();
+    read.method = "GET".to_string();
+    read.path = "/receipts/list".to_string();
+    read.mappings = Vec::new();
+    read.cache_control = Some(READ.to_string());
+    let mut get = head();
+    get.method = "get".to_string();
+    get.target = "/receipts/list".to_string();
+
+    let mut backend = FakeBackend::new(read.clone());
+    let output = request(&mut backend, &get, b"");
+    assert_eq!(output.status, 200);
+    assert_eq!(
+        output.cache_headers(),
+        [
+            ("cache-control", READ.to_string()),
+            ("vary", "Authorization, Cookie".to_string())
+        ]
+    );
+
+    let no_store = [("cache-control", "no-store".to_string())];
+    let mut with_csrf = get.clone();
+    with_csrf.headers.push(Header {
+        name: "X-Wamn-Csrf".to_string(),
+        value: "token".to_string(),
+    });
+    let mut backend = FakeBackend::new(read.clone());
+    let output = request(&mut backend, &with_csrf, b"");
+    assert_eq!(output.status, 200);
+    assert_eq!(
+        output.cache_headers(),
+        no_store,
+        "a request with the CSRF header"
+    );
+
+    let mut backend = FakeBackend::new(read.clone());
+    backend.delivery = Err(DeliveryError::ExecutionFailed);
+    let output = request(&mut backend, &get, b"");
+    assert_eq!(output.status, 503);
+    assert_eq!(output.cache_headers(), no_store, "a failed read");
+
+    let mut backend = FakeBackend::new(read);
+    backend.auth = Err(AuthRejection {
+        status: 401,
+        code: "unauthorized".to_string(),
+    });
+    let output = request(&mut backend, &get, b"");
+    assert_eq!(output.status, 401);
+    assert_eq!(output.cache_headers(), no_store, "a refused read");
+
+    let mut backend = FakeBackend::new(route());
+    let output = request(&mut backend, &head(), br#"{"amount":1}"#);
+    assert_eq!(output.status, 200);
+    assert_eq!(output.cache_headers(), no_store, "a write");
 }
