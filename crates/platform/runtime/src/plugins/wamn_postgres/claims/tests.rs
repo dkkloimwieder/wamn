@@ -1934,7 +1934,10 @@ async fn live_size_one_guest_and_platform_pools_isolate_sessions_under_interleav
         ),
         guest_pool_max_size: 1,
         platform_pool_max_size: 1,
-        wait_timeout_ms: 250,
+        // The bound also limits connection creation, so it must outlast a
+        // slow connect on a loaded machine. A shared pool still fails: its
+        // only slot stays held, so no wait of any length can succeed.
+        wait_timeout_ms: 30_000,
         statement_timeout_ms: 1_000,
         row_limit: 10,
     })
@@ -1955,7 +1958,7 @@ async fn live_size_one_guest_and_platform_pools_isolate_sessions_under_interleav
     let guest_pid = guest_row.get::<_, i32>(0);
 
     // This checkout happens while the sole guest slot remains held. Sharing
-    // either pool/cache makes it hit the 250 ms wait bound and fail here.
+    // either pool/cache makes it hit the wait bound and fail here.
     let (platform, _) = postgres
         .checkout_platform(DEFAULT_PROJECT, AuthorityClass::ExecutorPlatform)
         .await
