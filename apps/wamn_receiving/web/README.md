@@ -31,3 +31,20 @@ WAMN_ROUTE_URL=<the base URL the loop printed> \
 Open the address that Vite prints, and sign in with an account of that environment.
 
 `pnpm run build` writes the static files to `dist/`. Nothing serves them yet.
+
+## The account and the seed
+
+Sign in with `receiving-demo@wamn.dev`. Its password is the same string, because the identity service requires 15 characters or more.
+The notes of Beads `wamn-78or.6` hold the commands that create the account in a local environment.
+It is a demo credential in a disposable local environment.
+
+Receiving declares no operation that creates an item, a location or a purchase order, so a table shows rows only after you apply a dataset.
+The by-hand checks run at 1000:
+
+```bash
+psql "$TARGET_DATABASE_URL" -v scale=1000 -f ../tests/fixtures/receiving-seed.sql
+```
+
+The large size writes 1000 items, 1000 locations, 1000 purchase orders and about 500000 lines.
+`receiving-seed-small.sql` is the saved small size: 10 items, 10 locations, 10 purchase orders and 55 lines.
+Paging needs more than 100 orders, so only the large size shows it.

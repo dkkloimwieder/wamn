@@ -2,7 +2,6 @@
 
 These pages describe unbuilt work and its limits. Current behavior belongs in [architecture](../architecture/README.md), and Beads records decisions and implementation status.
 
-- [App shell](app-shell.md): Epic 18 scope for the hand-written sign in, layout, navigation and routes of a web application.
 - [Delivery](delivery.md): Deferred CI-provider configuration and conditional delivery extensions.
 - [Identity](identity.md): External login providers within the existing identity authority.
 - [Edge](edge.md): Epic 19 scope for `wamn-edge`, one application and one device loop on a small aarch64 box.

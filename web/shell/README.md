@@ -3,7 +3,7 @@
 `@wamn/shell` is the hand-written part of every web application that the generator does not write.
 It signs in, keeps the session, lays out the page and routes the address to a screen.
 The application gives it a title and its screens, and writes each screen from its generated components.
-The [app shell plan](../../docs/plan/app-shell.md) holds the owner rulings.
+[Execution](../../docs/architecture/execution.md) states the rules that the shell keeps.
 
 ## The address
 
@@ -90,8 +90,9 @@ The layout comes from `AppFrame`, `CardPage` and `ScreenActions` in `@wamn/ui`, 
 `vite.ts` in this package exports `applicationConfig`, which an application's `vite.config.ts` imports by path and spreads beside its own plugins.
 It resolves the shell, the runtime, the UI and the generated client by path, and it maps `solid-js` and the router to one copy.
 The dev server carries `/password` to the identity process, and `/api` to the release without the `/api` prefix.
+The browser needs that proxy to see one origin. The release selects its application by the `Host` header, which a browser cannot set, and the identity process signs its own certificate, which a browser does not trust.
 The edge proxy of a deployment does the same, so one rule holds in both.
-An application runs Vite 7, as `web/demo` does. On Vite 8 the page loaded two builds of `solid-js/store` through Kobalte, and it threw before it rendered.
+An application runs Vite 7. On Vite 8 the page loaded two builds of `solid-js/store` through Kobalte, and it threw before it rendered.
 
 The dev server reads two variables.
 `WAMN_DEV_ENV_DIR` names the environment directory that holds `dev.json`.
