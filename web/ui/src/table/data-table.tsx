@@ -55,6 +55,10 @@
  * scope filter nor a sort field, `onRowChange` puts the row in place. After
  * every other write, a bulk action included, `onReload` starts a new load.
  *
+ * A caller that passes `childTables` gets an expand control on each data row.
+ * The expanded area shows each child table scoped by the row's id, as
+ * `child-tables.tsx` states. That column stays out of the same places too.
+ *
  * Each header has a menu that sorts, hides, pins and unpins its column and
  * chooses its aggregate. The column panel shows and hides columns and orders
  * them, and a header edge drag sets a width. The arrangement works in every
@@ -148,6 +152,7 @@ import {
   SELECT_COLUMN,
   selectColumn,
 } from "./bulk";
+import { createChildAreas, type DataTableChild, EXPAND_COLUMN, expandColumn } from "./child-tables";
 import { csvFileName, csvText, downloadCsv, EXPORT_NEEDS_FULL_SET } from "./csv";
 import { type DataTableEditResult, EditCell, editedValue, editText, type OpenEdit } from "./edit-cell";
 import { ColumnMenu } from "./column-menu";
@@ -287,6 +292,11 @@ export interface DataTableProps<TRow extends object> {
   readonly onRowChange?: ((row: TRow) => void) | undefined;
   /** Called after every other write. The source starts a new load. */
   readonly onReload?: (() => void) | undefined;
+  /**
+   * The child tables of each row, which its expanded area shows, scoped by the
+   * row's id. A table with no row id has none.
+   */
+  readonly childTables?: readonly DataTableChild[] | undefined;
 }
 
 /** The text the search box shows when the set is not fully read. */
@@ -472,6 +482,20 @@ export function DataTable<TRow extends object>(props: DataTableProps<TRow>): JSX
   const [results, setResults] = createSignal<Record<string, DataTableRowResult>>({});
   const bulk = () => (props.bulkActions ?? []).length > 0 && props.onBulk !== undefined;
 
+  // The child tables of a row mount on its first expand and stay while it is loaded.
+  const children = () => (props.rowId === null ? [] : (props.childTables ?? []));
+  const childAreas = createChildAreas(children);
+  createEffect(() => {
+    const rowId = props.rowId;
+    if (rowId !== null) {
+      childAreas.keepOnly(new Set(props.rows.map((row) => String(row[rowId]))));
+    }
+  });
+  const childArea = (row: TRow) => {
+    const id = String(row[props.rowId as keyof TRow & string]);
+    return childAreas.area(id, id);
+  };
+
   /** The one open edit, or null. */
   const [edit, setEdit] = createSignal<OpenEdit | null>(null);
   const editable = (field: string) =>
@@ -546,6 +570,7 @@ export function DataTable<TRow extends object>(props: DataTableProps<TRow>): JSX
     const sortFields = props.sortFields;
     return [
       ...(bulk() ? [selectColumn<TRow>((id) => results()[id])] : []),
+      ...(children().length > 0 ? [expandColumn<TRow>(childArea)] : []),
       ...props.columns.map(
       (definition): ColumnDef<DataTableFeatures, TRow> => ({
         id: definition.field,
@@ -689,6 +714,8 @@ export function DataTable<TRow extends object>(props: DataTableProps<TRow>): JSX
     },
     // A group stays expanded across a new load and a new grouping.
     autoResetExpanded: false,
+    // A data row expands to its child tables, and a group row to its rows.
+    getRowCanExpand: (row) => row.subRows.length > 0 || children().length > 0,
     // TanStack searches hidden columns too, so the table limits it to visible ones.
     // The option types its column over any features, so it names this bundle.
     getColumnCanGlobalFilter: (column) =>
@@ -845,7 +872,7 @@ export function DataTable<TRow extends object>(props: DataTableProps<TRow>): JSX
   function applyView(state: DataTableViewState) {
     const view = declaredView(state, declaration());
     const sortBefore = JSON.stringify(table.atoms.sorting?.get() ?? []);
-    table.setColumnOrder([SELECT_COLUMN, ...view.order]);
+    table.setColumnOrder([...LEADING_COLUMNS, ...view.order]);
     table.setColumnVisibility(
       Object.fromEntries(props.columns.map((shown) => [shown.field, !view.hidden.includes(shown.field)])),
     );
@@ -943,7 +970,7 @@ export function DataTable<TRow extends object>(props: DataTableProps<TRow>): JSX
   const dataColumns = () =>
     table
       .getVisibleLeafColumns()
-      .filter((leaf) => leaf.id !== ACTIONS_COLUMN && leaf.id !== SELECT_COLUMN);
+      .filter((leaf) => !CONTROL_COLUMNS.includes(leaf.id));
 
   /** The selected data rows, in the table's order. */
   const selectedRows = () =>
@@ -1083,11 +1110,13 @@ export function DataTable<TRow extends object>(props: DataTableProps<TRow>): JSX
           <ColumnPanel
             columns={panelColumns()}
             onVisible={(id, visible) => table.getColumn(id)?.toggleVisibility(visible)}
-            onOrder={(order) => table.setColumnOrder([SELECT_COLUMN, ...order])}
+            onOrder={(order) => table.setColumnOrder([...LEADING_COLUMNS, ...order])}
             onShowAll={() =>
               table.setColumnVisibility(Object.fromEntries(props.columns.map((shown) => [shown.field, true])))
             }
-            onReset={() => table.setColumnOrder([SELECT_COLUMN, ...props.columns.map((shown) => shown.field as string)])}
+            onReset={() =>
+              table.setColumnOrder([...LEADING_COLUMNS, ...props.columns.map((shown) => shown.field as string)])
+            }
           />
           <Field class="w-64">
             <FieldLabel for={searchId}>search</FieldLabel>
@@ -1263,6 +1292,12 @@ function DataTableCell<TRow extends object>(props: {
 
 /** The id of the last column, which holds the buttons of each row. */
 const ACTIONS_COLUMN = "rowActions";
+
+/** The columns before the declared ones: row selection, then the child tables' expand. */
+const LEADING_COLUMNS = [SELECT_COLUMN, EXPAND_COLUMN];
+
+/** The columns that hold no field, which the export and the totals leave out. */
+const CONTROL_COLUMNS = [...LEADING_COLUMNS, ACTIONS_COLUMN];
 
 /** The last column: the buttons of each data row, and nothing on a group row. */
 function actionsColumn<TRow extends object>(

@@ -57,6 +57,7 @@ export { type DataTableGroupSort } from "./table/group-bar";
 export { type DataTableScopeFilter } from "./table/scope-bar";
 export { type DataTableAction, type DataTableRowResult } from "./table/bulk";
 export { type DataTableEditResult } from "./table/edit-cell";
+export { type DataTableChild } from "./table/child-tables";
 export {
   createTableLoad,
   DEFAULT_CAP,

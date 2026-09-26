@@ -1179,8 +1179,9 @@ function DataGridTableBodyRowExpandded<TData extends object>(props: {
   // Tree and grouped rows share row.getIsExpanded() with detail expansion.
   // Without a detail column there is nothing to render, and an empty <tr>
   // would break striping parity, rowBorder, and virtual row measurement.
+  // A group row expands to its rows, and has no detail of its own.
   return (
-    <Show when={expandedContent()}>
+    <Show when={(props.row as { getIsGrouped?: () => boolean }).getIsGrouped?.() !== true && expandedContent()}>
       {(content) => (
         <tr class={cn(grid.props.tableLayout?.rowBorder && bodyRowBottomBorderClasses)}>
           <td
