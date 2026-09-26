@@ -32,6 +32,20 @@ pub struct PackageManifest {
     pub custom_operations: BTreeMap<String, CustomOperationDeclaration>,
     pub connections: BTreeSet<String>,
     pub components: BTreeMap<String, ComponentDeclaration>,
+    /// Wirings that an application event starts, off the request path, keyed
+    /// by workflow id (docs/plan/workflow-feature.md 4.2).
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub workflows: BTreeMap<String, WorkflowDeclaration>,
+}
+
+/// One wiring of the package that an application event starts. The wiring can
+/// enter at any node, and the queue runs it with no caller.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct WorkflowDeclaration {
+    /// The wiring id in `publication/wirings`.
+    pub wiring: String,
+    pub registration: EventRegistrationDeclaration,
 }
 
 /// One strict package-local operation backed only by declared static SQL.
@@ -635,6 +649,7 @@ pub fn validate_operation_vocabulary(
     validate_package_identity(&manifest.package)?;
     validate_base_dependencies(manifest)?;
     validate_internal_relation_vocabulary(manifest)?;
+    validate_workflows(manifest)?;
 
     let mut declared = BTreeSet::new();
     let mut component_by_operation = BTreeMap::new();
@@ -1185,7 +1200,11 @@ fn validate_custom_operation_kind(
                     format!("event handler {operation_name} must declare a registration"),
                 )
             })?;
-            validate_registration(manifest, operation_name, registration)?;
+            validate_registration(
+                manifest,
+                &format!("event handler {operation_name}"),
+                registration,
+            )?;
         }
     }
     Ok(())
@@ -1456,9 +1475,26 @@ fn refuse_command_only_fields(
     }
 }
 
+/// Each workflow names a wiring and a registration. Its id is a registration
+/// id of the package beside the operation ids, and it has no dot, so it never
+/// repeats an operation's `module.operation` id.
+fn validate_workflows(manifest: &PackageManifest) -> Result<(), GenerateError> {
+    for (workflow_id, workflow) in &manifest.workflows {
+        validate_identifier(workflow_id, "workflow id")?;
+        validate_identifier(&workflow.wiring, "workflow wiring")?;
+        validate_registration(
+            manifest,
+            &format!("workflow {workflow_id}"),
+            &workflow.registration,
+        )?;
+    }
+    Ok(())
+}
+
+/// `subject` names the declaring handler or workflow in each refusal.
 fn validate_registration(
     manifest: &PackageManifest,
-    operation_name: &str,
+    subject: &str,
     registration: &EventRegistrationDeclaration,
 ) -> Result<(), GenerateError> {
     validate_identifier(&registration.source_package, "event source package")?;
@@ -1466,17 +1502,14 @@ fn validate_registration(
     if registration.ops.is_empty() {
         return Err(GenerateError::new(
             GenerateErrorKind::InvalidOperation,
-            format!("event handler {operation_name} registration must declare at least one op"),
+            format!("{subject} registration must declare at least one op"),
         ));
     }
     for (index, op) in registration.ops.iter().enumerate() {
         if registration.ops[..index].contains(op) {
             return Err(GenerateError::new(
                 GenerateErrorKind::InvalidOperation,
-                format!(
-                    "event handler {operation_name} registration repeats op {:?}",
-                    op.as_str()
-                ),
+                format!("{subject} registration repeats op {:?}", op.as_str()),
             ));
         }
     }
@@ -1491,7 +1524,7 @@ fn validate_registration(
         Err(GenerateError::new(
             GenerateErrorKind::InvalidOperation,
             format!(
-                "event handler {operation_name} source package {} is not installed by the manifest",
+                "{subject} source package {} is not installed by the manifest",
                 registration.source_package
             ),
         ))

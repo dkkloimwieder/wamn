@@ -4,7 +4,7 @@ This page scopes the workflow feature, item 5 of [routes, workflows, and the rou
 
 ## 1. Goal
 
-A workflow is a wiring that runs off the request path. After this epic, an application event starts a registered workflow. The workflow runs through the durable queue, and an operator or a test can start, park, release, and list workflow runs through one interface.
+A workflow is a wiring that runs off the request path. After this epic, an application event starts a registered workflow. An operator or a test can start, park, release, and list queued workflow runs through one interface.
 
 The first real workflow is the WMS label graph. A pallet move commits through the `/inventory/move` route. The move's row event then starts the graph, which renders the pallet label and stores it in the blob store.
 
@@ -66,9 +66,11 @@ An application declares a workflow in `wamn.json`. The declaration names a wirin
 }
 ```
 
-The wiring can enter at any node. Apply-package writes the registration row, as it does for an event handler. Publish derives a `ServingRegistration` that targets the named wiring, and it marks the registration as a workflow start. An existing release keeps its bytes, because the new field is left out when it is not set.
+The wiring can enter at any node. The workflow id is a registration id of the package. It has no dot, so it never repeats an operation id. Apply-package writes the registration row, as it does for an event handler. Publish derives a `ServingRegistration` that targets the named wiring. The serving manifest format does not change.
 
-The materializer and the bridge do not change. When the driver receives a delivery for a workflow registration, it calls `Workflows::start` and does not walk the wiring. The delivery id `<registration>:event:<stream_seq>:<event id>` is the idempotency key, so a redelivered event starts one run only. The run records `trigger_source = 'event'` and the registration id. The queue then runs the wiring like any queued run, as the platform executor.
+The materializer, the bridge, and the driver do not change. The materializer delivers the event, and the driver walks the wiring with no caller, as it walks an event handler's wiring. A node that needs an operation grant refuses, so an event workflow runs palette nodes. JetStream redelivers an event whose delivery failed.
+
+The first draft of this section put the event run through `Workflows::start` and the queue. Only project-admin authority admits a run, and the executor role test records the rule that admission is never the executor's. A queued event run therefore needs an owner ruling on a new admission grant for the host. Until then, an event workflow is not in `list` and cannot be parked.
 
 ### 4.3 The JSONata node
 
@@ -92,7 +94,7 @@ Each issue lands with its tests. The order follows the dependencies.
 
 1. The workflow contract and `PostgresWorkflows`, with the `workflow` verbs. A live test on a disposable database starts a run twice, parks it, makes sure that a claim skips it, releases it, runs it, and lists each state.
 2. The JSONata node, with the crate choice, the declaration, unit cases, and one engine call of the admitted component.
-3. The event trigger: the `workflows` declaration, apply-package, publish, and the driver's start. Unit tests cover the derivation and a repeated delivery.
+3. The event trigger: the `workflows` declaration, its validation, apply-package, and publish. Unit tests cover the validation and both derivations.
 4. The WMS label workflow: the new graph, its declaration, the shape tests, and the cluster and terminal cases. This closes `wamn-g4kj`.
 5. The end-to-end run on a disposable WMS kind cluster, and the documentation of current behavior. A move through the route leaves one stored label, and `workflow list` shows one completed run.
 

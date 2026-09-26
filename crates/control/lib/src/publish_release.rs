@@ -1618,6 +1618,49 @@ fn decode_json<T: DeserializeOwned>(
     })
 }
 
+/// Refuse a registration whose source package is absent from the release or
+/// does not own its entity. `subject` names the handler or workflow.
+fn check_registration_source(
+    package_manifests: &BTreeMap<String, wamn_schema_generator::PackageManifest>,
+    subject: &str,
+    declaration: &wamn_schema_generator::EventRegistrationDeclaration,
+) -> Result<(), MintManifestError> {
+    let source_manifest = package_manifests
+        .get(&declaration.source_package)
+        .ok_or_else(|| {
+            MintManifestError::new(
+                MintManifestErrorKind::Registration,
+                format!(
+                    "{subject} source package {:?} is absent while resolving entity {:?}",
+                    declaration.source_package, declaration.entity
+                ),
+            )
+        })?;
+    if !source_manifest.models.contains_key(&declaration.entity) {
+        return Err(MintManifestError::new(
+            MintManifestErrorKind::Registration,
+            format!(
+                "{subject} source package {:?} does not own entity {:?}",
+                declaration.source_package, declaration.entity
+            ),
+        ));
+    }
+    Ok(())
+}
+
+fn serving_ops(
+    declaration: &wamn_schema_generator::EventRegistrationDeclaration,
+) -> BTreeSet<String> {
+    declaration
+        .ops
+        .iter()
+        .map(|op| op.as_str().to_owned())
+        .collect()
+}
+
+/// The release registrations: one for each event handler, whose wiring enters
+/// at the handler, and one for each declared workflow, whose wiring can enter
+/// at any node. The driver walks either wiring when its event arrives.
 fn derive_serving_registrations(
     package_manifests: &BTreeMap<String, wamn_schema_generator::PackageManifest>,
     entry_targets: &BTreeMap<String, Vec<ReleaseWiringTarget>>,
@@ -1628,26 +1671,11 @@ fn derive_serving_registrations(
             let Some(declaration) = operation.registration() else {
                 continue;
             };
-            let source_manifest = package_manifests
-                .get(&declaration.source_package)
-                .ok_or_else(|| {
-                    MintManifestError::new(
-                        MintManifestErrorKind::Registration,
-                        format!(
-                            "event handler {operation_key:?} source package {:?} is absent while resolving entity {:?}",
-                            declaration.source_package, declaration.entity
-                        ),
-                    )
-                })?;
-            if !source_manifest.models.contains_key(&declaration.entity) {
-                return Err(MintManifestError::new(
-                    MintManifestErrorKind::Registration,
-                    format!(
-                        "event handler {operation_key:?} source package {:?} does not own entity {:?}",
-                        declaration.source_package, declaration.entity
-                    ),
-                ));
-            }
+            check_registration_source(
+                package_manifests,
+                &format!("event handler {operation_key:?}"),
+                declaration,
+            )?;
             let operation_id = wamn_schema_generator::canonical_operation_identity(
                 &manifest.package,
                 operation_key,
@@ -1687,11 +1715,48 @@ fn derive_serving_registrations(
                     wiring_id: target.wiring_id.clone(),
                     wiring_version: target.wiring_version,
                     entity: declaration.entity.clone(),
-                    ops: declaration
-                        .ops
-                        .iter()
-                        .map(|op| op.as_str().to_owned())
-                        .collect(),
+                    ops: serving_ops(declaration),
+                    input: wamn_catalog::ServingRegistrationInput::Event,
+                },
+            );
+        }
+        for (workflow_id, workflow) in &manifest.workflows {
+            let declaration = &workflow.registration;
+            check_registration_source(
+                package_manifests,
+                &format!("workflow {workflow_id:?}"),
+                declaration,
+            )?;
+            // A workflow can enter at any node, so it names its wiring.
+            let targets = entry_targets
+                .values()
+                .flatten()
+                .filter(|target| {
+                    target.package_id == manifest.package.id
+                        && target.package_version == manifest.package.version
+                        && target.wiring_id == workflow.wiring
+                })
+                .collect::<Vec<_>>();
+            if targets.len() != 1 {
+                return Err(MintManifestError::new(
+                    MintManifestErrorKind::Registration,
+                    format!(
+                        "workflow {workflow_id:?} names wiring {:?}, which resolves to {} selected wiring(s); expected exactly one",
+                        workflow.wiring,
+                        targets.len()
+                    ),
+                ));
+            }
+            let target = targets[0];
+            registrations.insert(
+                format!("{}::{workflow_id}", manifest.package.id),
+                ServingRegistration {
+                    package_id: manifest.package.id.clone(),
+                    source_package_id: declaration.source_package.clone(),
+                    wiring_id: target.wiring_id.clone(),
+                    wiring_version: target.wiring_version,
+                    entity: declaration.entity.clone(),
+                    ops: serving_ops(declaration),
                     input: wamn_catalog::ServingRegistrationInput::Event,
                 },
             );
@@ -2932,6 +2997,63 @@ mod tests {
                 "missing refusal fact {fact:?}"
             );
         }
+    }
+
+    #[test]
+    fn a_workflow_registration_names_its_wiring_whatever_node_it_enters_at() {
+        let mut document =
+            serde_json::to_value(handler_manifest()).expect("the handler manifest serializes");
+        document["workflows"] = serde_json::json!({"item_label": {"wiring": "item_label",
+            "registration": {"source_package": "source_fixture", "entity": "item", "ops": ["insert"]}}});
+        let manifests = BTreeMap::from([
+            (
+                "observer_fixture".to_owned(),
+                serde_json::from_value(document).expect("the workflow manifest parses"),
+            ),
+            ("source_fixture".to_owned(), source_manifest()),
+        ]);
+        let handler = ReleaseWiringTarget {
+            package_id: "observer_fixture".to_owned(),
+            package_version: "3.0.0".to_owned(),
+            wiring_id: "audit_observe".to_owned(),
+            wiring_version: 1,
+        };
+        let label = ReleaseWiringTarget {
+            wiring_id: "item_label".to_owned(),
+            wiring_version: 2,
+            ..handler.clone()
+        };
+        // The label wiring enters at a palette node, not at an event handler.
+        let targets = BTreeMap::from([
+            (
+                "observer-fixture:audit/observe@3.0.0".to_owned(),
+                vec![handler],
+            ),
+            ("wamn:node/handler@0.1.0".to_owned(), vec![label]),
+        ]);
+        let registrations = derive_serving_registrations(&manifests, &targets)
+            .expect("the workflow resolves its named wiring");
+        let registration = &registrations["observer_fixture::item_label"];
+        assert_eq!(registration.wiring_id, "item_label");
+        assert_eq!(registration.wiring_version, 2);
+        assert_eq!(registration.source_package_id, "source_fixture");
+        assert_eq!(registration.entity, "item");
+        assert_eq!(registration.ops, BTreeSet::from(["insert".to_owned()]));
+        assert!(registrations.contains_key("observer_fixture::audit.observe"));
+
+        let unselected = BTreeMap::from([(
+            "observer-fixture:audit/observe@3.0.0".to_owned(),
+            vec![ReleaseWiringTarget {
+                package_id: "observer_fixture".to_owned(),
+                package_version: "3.0.0".to_owned(),
+                wiring_id: "audit_observe".to_owned(),
+                wiring_version: 1,
+            }],
+        )]);
+        let error = derive_serving_registrations(&manifests, &unselected)
+            .expect_err("a workflow whose wiring is not selected was accepted");
+        assert_eq!(error.kind(), MintManifestErrorKind::Registration);
+        assert!(error.detail().contains("item_label"));
     }
 
     fn dependency_document() -> WiringDocument {

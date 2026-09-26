@@ -67,7 +67,8 @@ pub use manifest::{
     PolicyContractRequirement, PolicyContractState, RecordHistoryColumn, ResultClass, Revision,
     SortDeclaration, SortKey, StateGuardDeclaration, StaticSqlFetch, StaticSqlRelationDeclaration,
     StaticSqlStatementDeclaration, StaticSqlValueDeclaration, TieBreakerDeclaration,
-    canonical_operation_identity, canonical_operation_prefix, validate_operation_vocabulary,
+    WorkflowDeclaration, canonical_operation_identity, canonical_operation_prefix,
+    validate_operation_vocabulary,
 };
 pub use materialize::{
     MaterializeMode, introspect_package, materialize_package, materialize_package_from_catalog,
