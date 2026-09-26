@@ -157,6 +157,8 @@ Owner rulings of 2026-09-26:
 - The CDC reader and the materializer run as workloads.
 - Tempo and the OpenTelemetry collector are left out. Observability comes with a later epic.
 - CloudNativePG backups come later. The operations page states that they are not configured.
+- The event NATS users and permissions come from a small example program that calls `event_broker::prepare` of `test-support/infrastructure`. A hand-written file would state again what the program derives. If the program cannot run outside the test crate, that is a finding, and the interim is a file that holds the program output verbatim, with its command in the operations page.
+- The host pulls components with a short-lived Artifact Registry token that a CronJob refreshes into the docker config Secret, because the host cannot use Workload Identity for that pull (finding `wamn-i87m`). The CronJob runs as a Kubernetes service account that Workload Identity binds to a Google service account with only `roles/artifactregistry.reader`.
 
 ## 6. Benchmark
 
