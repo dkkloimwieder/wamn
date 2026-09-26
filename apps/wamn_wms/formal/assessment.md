@@ -278,3 +278,100 @@ The owner's answers resolve merge disposition, location ownership, and packaging
 Unpackaged stock, lot/serial identity, multiple products, decimal quantities, and concurrency remain excluded rather than assigned invented semantics.
 Adjustment to zero retains the current refusal rule, and no broader adjustment authorization policy is inferred.
 The prototype does not justify a shared framework or DSL.
+
+## Phase 2 and 3: production relocation kernel
+
+Bead `wamn-s43x.16` extracts relocation decisions into `data/src/packaging_relocate/decision.rs`.
+Production calls this pure module after loading locked business state.
+The module returns typed refusals or explicit packaging updates, inventory updates, and paired inventory snapshots for history.
+It accepts borrowed strings for identities, quantities, dispositions, and lifecycle values.
+Relocation preserves quantities without parsing them, including decimal scale.
+
+The adapter retains locks, membership retries, revisions, claims, timestamps, SQL, result serialization, and commit ownership.
+It writes the returned `from_*` and `to_*` values directly into history.
+It stores the complete result in the same PostgreSQL transaction.
+The existing application tests remain unchanged.
+Co-location remains a rule of admitted locked commands, not a universal database constraint.
+
+The harness in `production-relocation/` imports the actual production module by path.
+Separate assertions count each affected identity and inspect every update and history attribute.
+They require exact quantity preservation, explicit location changes, complete lineage, and no updates for closed or unrelated inventory.
+They also assert empty relocation, refusal precedence, and unchanged input state.
+Bounds remain two inventory identities with representative string values.
+This proof does not establish behavior for unbounded collections or all possible strings.
+
+The extraction exposes representation costs.
+Borrowed strings preserve production values but depend on the loading boundary for identity and quantity validity.
+Allocated vectors and string comparisons increase the work Kani analyzes.
+No replacement decision implementation or proof-only production branch is necessary.
+
+Refusal order crosses the business and concurrency boundary.
+The adapter calls the kernel's lifecycle guard before checking the expected revision and stable membership.
+The final decision calls that same guard again, which preserves the existing refusal order without duplicating its rule.
+The adapter loads destination existence before the final decision, which retains the business refusal priority.
+This changes query timing, but leaves business outcomes unchanged when database reads succeed.
+
+These proofs cover the production decision function, not SQL persistence, replay storage, or concurrency.
+The independent Phase 1 model retains its history and replay obligations.
+The unchanged local application test supplies rollback, stored replay, and concurrent membership evidence for the adapter.
+Phase 4 conformance generation and composition remain outside this increment.
+
+The unchanged `local_business::packaging_relocation` case passes in 72.45 seconds, or 73.63 seconds including command startup.
+It runs the rebuilt WMS component against disposable PostgreSQL.
+The final guest build passes in 24.06 seconds, guest Clippy in 10.62 seconds, and offline SQL compilation in 5.11 seconds.
+Generation takes 7.32 seconds, and SQL metadata preparation takes 6.16 seconds.
+Logs and exact timestamps remain in `/tmp/wamn-phase23/` and the bead.
+
+The deliberate defect retains both location updates but emits only the first inventory history row.
+Kani rejects it at `each affected identity has exactly one history row`.
+The concrete case moves held inventory with quantity `4.50` and available inventory with quantity `2`.
+The second identity lacks history, while both quantities and locations remain correct.
+With the final observer, the defective copy fails one of 670 obligations in 16.18 seconds.
+The restored copy passes all 670 obligations in 16.48 seconds.
+Both native examples pass with Rust 2024 and warnings denied in 0.26 seconds, including compilation.
+These logs remain in `/tmp/wamn-kernel-proof-membership-mutant/` and `/tmp/wamn-kernel-proof-membership-remaining/`.
+
+The initial Kani run uses its default CaDiCaL solver.
+The concrete history proof passes in 49.87 verification seconds, and the refusal proof passes in 19.50 verification seconds with five covers.
+The symbolic transition proof remains unresolved after more than 30 minutes of active CBMC work.
+We stop that process and record the full invocation as interrupted after 2,081.24 seconds, not as a proof failure or success.
+The retry selects Kissat for only the unresolved harness, with unchanged decision code, assertions, and bounds.
+The retry does not launch its external SAT solver during observation.
+A debugger stack sample locates CBMC inside symbolic execution, simplifying pointer relationships through `value_sett::get_value_set` and `goto_symext::do_simplify`.
+This evidence points to formula preparation, not a demonstrated SAT solver failure.
+Borrowed strings, vectors, and the harness's symbolic collection length are possible contributors, not separately established causes.
+The Kissat-configured retry stops after 386.47 seconds without a result.
+
+We partition the symbolic inventory count into fixed counts zero, one, and two.
+Their union retains the original count domain, and every inventory attribute choice remains unchanged.
+Detailed output still shows observer loops expanding beyond two entries, alongside more than 2,500 string-comparison expansion messages.
+This identifies the global loop bound as a source of unnecessary formula construction.
+The count-only experiment stops after 148.41 seconds without a result.
+The next configuration gives the new success harnesses a bound of three and preserves `memcmp.0:12` for strings of up to eleven bytes.
+All unwinding assertions remain enabled, so an insufficient bound fails rather than silently excluding behavior.
+With these bounds, two-row symbolic execution completes in 23.37 seconds and intermediate-form conversion takes 70.65 seconds.
+The run then consumes about 26 GB during propositional reduction, so we stop it to protect the shared host.
+The loop change resolves the observed symbolic-execution bottleneck but does not establish an affordable complete proof.
+
+The final observer requires unchanged borrowed strings to retain their data pointer and length.
+Equal immutable references imply equal contents, so this strengthens value preservation without changing production decisions.
+Per-identity lookups use that stronger identity requirement too. Counts still reject missing, extra, or incorrect rows.
+A future implementation that rebuilds equal text can fail this stronger proof despite preserving business values.
+The observer also receives the exact destination reference from the command, without depending on repeated literal allocation.
+
+Reference assertions alone still leave large formulas when vector membership remains symbolic.
+We therefore partition packaging assignment and lifecycle as well as inventory count.
+One empty case, four one-row cases, and sixteen two-row cases cover the original membership domain exactly.
+Every case retains arbitrary product, quantity, disposition, and location choices from the original bounds.
+The two-assigned-open case passes all 800 checks and its cover in 137.05 seconds, including setup.
+Production source remains unchanged throughout these proof experiments.
+
+All twenty-three final harnesses pass, and all twenty-six cover requirements are reached.
+The retained verification total is 1,279.72 seconds, excluding compilation and the interrupted diagnostic runs.
+The first membership case takes 137.05 wall-clock seconds, and the remaining twenty-one selected harnesses take 1,176.41 seconds.
+The unchanged refusal proof retains its earlier passing result. Its function and input generator remain unchanged.
+Final run details remain in `/tmp/wamn-kernel-proof-handoff.json` and bead `wamn-s43x.16`.
+
+This pilot proves the production decision code without a substitute model or production refactor for the verifier.
+It also shows substantial proof-authoring and execution costs for strings and dynamically populated vectors.
+Complete case partitioning and stronger reference assertions make the bounded proof finish, but this is not yet a cheap general method.

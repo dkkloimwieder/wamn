@@ -3,7 +3,9 @@ use crate::error::{self, AccessError, AccessErrorKind};
 use crate::generated::wamn::packaging_relocate as sql;
 use crate::scalar;
 use serde::{Deserialize, Serialize};
-use wamn_postgres_statements::Connection;
+use wamn_postgres_statements::{Connection, Numeric, Uuid};
+
+mod decision;
 
 #[derive(Debug, Deserialize)]
 pub struct RelocateCommand {
@@ -77,9 +79,13 @@ pub async fn execute(command: &RelocateCommand) -> Result<RelocateResult, Access
         .await
         .map_err(|e| error::from_statement(&e))?
         .ok_or_else(|| missing("value.packaging_id", &packaging_id.0))?;
-    if source.lifecycle != "open" {
-        return Err(invalid("value.packaging_id"));
-    }
+    let packaging = decision::Packaging {
+        id: &source.id.0,
+        location_id: &source.location_id.0,
+        lifecycle: &source.lifecycle,
+    };
+    decision::require_open(packaging)
+        .map_err(|refusal| business_refusal(refusal, &to_location_id.0))?;
     if source.row_version != expected_row_version {
         return Err(AccessError::conflict(
             expected_row_version,
@@ -98,40 +104,71 @@ pub async fn execute(command: &RelocateCommand) -> Result<RelocateResult, Access
     {
         return Err(retry());
     }
-    if source.location_id == to_location_id {
-        return Err(invalid("value.to_location_id"));
-    }
-    if inventory
-        .iter()
-        .any(|row| row.location_id != source.location_id)
-    {
-        return Err(invalid("value.packaging_id"));
-    }
-    sql::validate_location(&mut transaction, to_location_id.clone())
+    let destination_exists = sql::validate_location(&mut transaction, to_location_id.clone())
         .await
         .map_err(|e| error::from_statement(&e))?
-        .ok_or_else(|| missing("value.to_location_id", &to_location_id.0))?;
-    let result_row = sql::apply(&mut transaction, packaging_id, to_location_id.clone())
+        .is_some();
+    let business_inventory: Vec<_> = inventory
+        .iter()
+        .map(|row| decision::Inventory {
+            id: &row.id.0,
+            product_id: &row.product_id.0,
+            packaging_id: &row.packaging_id.0,
+            location_id: &row.location_id.0,
+            quantity: &row.quantity.0,
+            disposition: &row.disposition,
+            lifecycle: &row.lifecycle,
+        })
+        .collect();
+    let transition = decision::decide(
+        decision::State {
+            packaging,
+            inventory: &business_inventory,
+            destination_exists,
+        },
+        decision::Command {
+            to_location_id: &to_location_id.0,
+        },
+    )
+    .map_err(|refusal| business_refusal(refusal, &to_location_id.0))?;
+    let result_row = sql::apply(
+        &mut transaction,
+        Uuid(transition.to_packaging.id.to_owned()),
+        Uuid(transition.to_packaging.location_id.to_owned()),
+    )
+    .await
+    .map_err(|e| error::from_statement(&e))?;
+    for row in &transition.inventory {
+        sql::apply_inventory(
+            &mut transaction,
+            Uuid(row.id.to_owned()),
+            Uuid(row.location_id.to_owned()),
+        )
         .await
         .map_err(|e| error::from_statement(&e))?;
-    for row in inventory {
-        sql::apply_inventory(&mut transaction, row.id.clone(), to_location_id.clone())
-            .await
-            .map_err(|e| error::from_statement(&e))?;
+    }
+    for row in &transition.transactions {
+        let from = row.from_inventory;
         sql::insert_transaction(
             &mut transaction,
             claim.operation_id.clone(),
-            row.id.clone(),
-            row.id.clone(),
-            row.id.clone(),
-            Some(row.product_id),
-            Some(row.packaging_id),
-            Some(row.location_id),
-            row.quantity,
-            Some(row.disposition),
-            Some(row.lifecycle),
+            Uuid(from.id.to_owned()),
+            Uuid(from.id.to_owned()),
+            Uuid(row.to_inventory.id.to_owned()),
+            Some(Uuid(from.product_id.to_owned())),
+            Some(Uuid(from.packaging_id.to_owned())),
+            Some(Uuid(from.location_id.to_owned())),
+            Numeric(from.quantity.to_owned()),
+            Some(from.disposition.to_owned()),
+            Some(from.lifecycle.to_owned()),
             occurred_at.clone(),
             None,
+            Uuid(row.to_inventory.product_id.to_owned()),
+            Uuid(row.to_inventory.packaging_id.to_owned()),
+            Uuid(row.to_inventory.location_id.to_owned()),
+            Numeric(row.to_inventory.quantity.to_owned()),
+            row.to_inventory.disposition.to_owned(),
+            row.to_inventory.lifecycle.to_owned(),
         )
         .await
         .map_err(|e| error::from_statement(&e))?;
@@ -176,4 +213,14 @@ fn missing(field: &str, id: &str) -> AccessError {
 }
 fn invalid(field: &str) -> AccessError {
     AccessError::field(AccessErrorKind::InvalidInput, field)
+}
+
+fn business_refusal(refusal: decision::Refusal, destination: &str) -> AccessError {
+    match refusal.r#type {
+        decision::RefusalType::ClosedPackaging | decision::RefusalType::NotColocated => {
+            invalid("value.packaging_id")
+        }
+        decision::RefusalType::NoOp => invalid("value.to_location_id"),
+        decision::RefusalType::MissingDestination => missing("value.to_location_id", destination),
+    }
 }

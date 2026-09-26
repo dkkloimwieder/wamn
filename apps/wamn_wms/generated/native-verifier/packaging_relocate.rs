@@ -165,6 +165,24 @@ pub(crate) fn insert_transaction_occurred_at_bind_fixture() -> chrono::DateTime<
 pub(crate) fn insert_transaction_reason_bind_fixture() -> Option<String> {
     None
 }
+pub(crate) fn insert_transaction_to_product_id_bind_fixture() -> uuid::Uuid {
+    uuid::Uuid::nil()
+}
+pub(crate) fn insert_transaction_to_packaging_id_bind_fixture() -> uuid::Uuid {
+    uuid::Uuid::nil()
+}
+pub(crate) fn insert_transaction_to_location_id_bind_fixture() -> uuid::Uuid {
+    uuid::Uuid::nil()
+}
+pub(crate) fn insert_transaction_to_quantity_bind_fixture() -> rust_decimal::Decimal {
+    rust_decimal::Decimal::ZERO
+}
+pub(crate) fn insert_transaction_to_disposition_bind_fixture() -> String {
+    String::new()
+}
+pub(crate) fn insert_transaction_to_lifecycle_bind_fixture() -> String {
+    String::new()
+}
 pub(crate) fn lock_inventory_packaging_id_bind_fixture() -> uuid::Uuid {
     uuid::Uuid::nil()
 }

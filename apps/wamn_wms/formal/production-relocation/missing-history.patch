@@ -1,0 +1,19 @@
+--- a/apps/wamn_wms/data/src/packaging_relocate/decision.rs
++++ b/apps/wamn_wms/data/src/packaging_relocate/decision.rs
+@@ -112,10 +112,12 @@
+                 ..*item
+             };
+             transition.inventory.push(relocated);
+-            transition.transactions.push(InventoryTransaction {
+-                from_inventory: *item,
+-                to_inventory: relocated,
+-            });
++            if transition.transactions.is_empty() {
++                transition.transactions.push(InventoryTransaction {
++                    from_inventory: *item,
++                    to_inventory: relocated,
++                });
++            }
+         }
+     }
+     Ok(transition)

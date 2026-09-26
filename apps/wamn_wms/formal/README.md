@@ -4,6 +4,8 @@ This independent Rust model studies inventory transitions, immutable transaction
 Beads task `wamn-s43x.15` owns Phase 1 packaging relocation.
 The owner defines the target business rules below.
 The [assessment](assessment.md) records the former production differences and the replacement implementation mappings.
+Bead `wamn-s43x.16` adds [proofs of the production relocation kernel](production-relocation/README.md) for Phases 2 and 3.
+Those proofs compile the production decision module. This independent model retains the broader history and replay obligations.
 
 ## Business state
 

@@ -87,7 +87,7 @@ pub(crate) const FINALIZE_COMMAND_DIGEST: &str =
 pub(crate) const FIND_REPLAY_DIGEST: &str =
     "sha256:882c515f6b238a0f5c038aebacff0ca8d012cf05466b55994648f02454a1f4d4";
 pub(crate) const INSERT_TRANSACTION_DIGEST: &str =
-    "sha256:6ee935c7d7e32977bf76941da5fab13d3d22e03dadec21df25d0a79b62b76f79";
+    "sha256:a0c2170252c1f5f28f29f3a7e202764a7ee223c208ab6c6ff269f54e0d232960";
 pub(crate) const LOCK_INVENTORY_DIGEST: &str =
     "sha256:00348f64aff290924f3948b98bae386944b82d4b915b04fe356732f075d7b248";
 pub(crate) const LOCK_PACKAGING_DIGEST: &str =
@@ -278,6 +278,12 @@ pub(crate) async fn insert_transaction(
     from_lifecycle: Option<String>,
     occurred_at: wamn_postgres_statements::TimestampTz,
     reason: Option<String>,
+    to_product_id: wamn_postgres_statements::Uuid,
+    to_packaging_id: wamn_postgres_statements::Uuid,
+    to_location_id: wamn_postgres_statements::Uuid,
+    to_quantity: wamn_postgres_statements::Numeric,
+    to_disposition: String,
+    to_lifecycle: String,
 ) -> Result<InsertTransactionRow, wamn_postgres_statements::StatementError> {
     let rows = claim
         .transaction
@@ -296,6 +302,12 @@ pub(crate) async fn insert_transaction(
                 wamn_postgres_statements::into_sql_value(from_lifecycle),
                 wamn_postgres_statements::into_sql_value(occurred_at),
                 wamn_postgres_statements::into_sql_value(reason),
+                wamn_postgres_statements::into_sql_value(to_product_id),
+                wamn_postgres_statements::into_sql_value(to_packaging_id),
+                wamn_postgres_statements::into_sql_value(to_location_id),
+                wamn_postgres_statements::into_sql_value(to_quantity),
+                wamn_postgres_statements::into_sql_value(to_disposition),
+                wamn_postgres_statements::into_sql_value(to_lifecycle),
             ],
         )
         .await?;

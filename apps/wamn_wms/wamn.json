@@ -4153,6 +4153,36 @@
               "name": "reason",
               "type": "text",
               "nullable": true
+            },
+            {
+              "name": "to_product_id",
+              "type": "uuid",
+              "nullable": false
+            },
+            {
+              "name": "to_packaging_id",
+              "type": "uuid",
+              "nullable": false
+            },
+            {
+              "name": "to_location_id",
+              "type": "uuid",
+              "nullable": false
+            },
+            {
+              "name": "to_quantity",
+              "type": "numeric",
+              "nullable": false
+            },
+            {
+              "name": "to_disposition",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "to_lifecycle",
+              "type": "text",
+              "nullable": false
             }
           ],
           "row": [

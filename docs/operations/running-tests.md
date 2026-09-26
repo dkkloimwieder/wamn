@@ -190,6 +190,23 @@ kani "$wms_formal_run/model.rs" --harness proofs::relocation_history_is_complete
 The defective copy must fail at `relocated inventory lacks its transaction`.
 The restored proof must pass.
 
+## WMS production relocation kernel
+
+The [kernel harness](../../apps/wamn_wms/formal/production-relocation/README.md) compiles the same decision module that production calls.
+Use the Kani installation described above. Run these commands from the repository root.
+
+```bash
+kernel_run=$(mktemp -d "${TMPDIR:-/tmp}/wamn-wms-kernel.XXXXXX")
+rustc --edition 2024 --test apps/wamn_wms/formal/production-relocation/harness.rs -o "$kernel_run/examples"
+"$kernel_run/examples"
+kani apps/wamn_wms/formal/production-relocation/harness.rs --target-dir "$kernel_run/target" --output-format terse \
+  --cbmc-args --unwindset memcmp.0:12
+```
+
+The harness README describes the deliberate defect and its restoration.
+The string-comparison override preserves eleven-byte comparisons while the success proofs use tighter bounds for two-item collection loops.
+These proofs cover business decisions. The local application test below covers persistence, rollback, concurrency, and stored replay results.
+
 ## Local application business tests
 
 Receiving command histories and WMS operation/replay assertions use real components, the HTTP shell, production authorization, and disposable PostgreSQL.
