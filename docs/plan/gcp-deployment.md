@@ -124,11 +124,11 @@ Owner rulings of 2026-09-25:
 - The ClusterIssuer is `letsencrypt`. The Certificate and its secret are `wamn-edge-tls`, in namespace `edge`.
 - The issuer first uses the Let's Encrypt staging server, then production, so a mistake does not use the production rate limit of `*.wamn.dev`.
 
-### 5.2 Step 3 procedure, proposed
+### 5.2 Step 3 procedure
 
 The kind cluster cases are not a deployment to repeat on GKE. They run PostgreSQL, the event NATS, the OCI registry and MinIO as local Docker containers, and they provision and publish through library calls inside the test process.
 Step 3 uses the command path of [deployment](../operations/deployment.md) and [repository delivery](../operations/delivery.md) instead, with the standing manifests in `deploy/infra` and `deploy/platform`.
-This is the proposed order. Section 5.3 lists the choices that it needs from the owner.
+This is the order. Section 5.3 gives the owner rulings.
 
 1. Scale `main` to 2.
 2. Build the host and identity images with `tools/journey-image-cache`, and push them to `us-central1-docker.pkg.dev/wamn-dev/wamn`. The nodes pull them as `wamn-nodes`, with `roles/artifactregistry.reader`.
@@ -144,17 +144,19 @@ This is the proposed order. Section 5.3 lists the choices that it needs from the
 
 Each command goes into section 3 of [Google Cloud operations](../operations/gcp.md) as it runs.
 
-### 5.3 Step 3 choices for the owner
+### 5.3 Step 3 rulings
 
-- Publication path: `publish-release` and `print-release-env`, or the qualified path (`prepare-release`, `qualify-release`, `publish-qualified-release`, `select-release`, `deploy-release`). Qualification runs the Receiving kind cases on this machine.
-- Registry credential for the hosts: the wasmCloud host pulls components and releases from Artifact Registry with a docker config Secret. An access token expires after one hour, so a long-lived credential is a service account key.
-- PostgreSQL: one CloudNativePG cluster for the system database and the tenant databases, or two clusters (`wamn-pg` and `wamn-sysdb`) with one instance each.
-- Namespaces, and the organization, project, tenant and environment names.
-- The platform domain for principal rows, for example `wamn.dev`.
-- The identity issuer URL and the source of its TLS certificate: the internal CA of the cluster, or a public name under `*.wamn.dev`.
-- The CDC reader and the materializer: the kind cases run the reader inside the test process. Does step 3 run them as workloads?
-- Tempo and the OpenTelemetry collector: the kind cases install them. Step 2 turned off workload logs and Managed Prometheus.
-- CloudNativePG backups to `wamn-dev-backups` with the barman plugin: in step 3 or later.
+Owner rulings of 2026-09-26:
+
+- Publish with `publish-release` directly. The first cloud deployment is not a release qualification, and the qualified path repeats the kind cases that already ran.
+- No service account key. The host pods run as a Kubernetes service account that Workload Identity binds to a Google service account with `roles/artifactregistry.reader`, and there is no docker config Secret. If the component pull cannot use Workload Identity today, that is a finding, and a CronJob refreshes a short-lived token. A key is never the answer.
+- One CloudNativePG cluster with one instance holds the system database and the tenant databases as separate databases. Two clusters are the production shape, not the test shape.
+- Namespaces: `platform` (operator, NATS, CloudNativePG), `identity`, `hosts` and `edge`. Organization `wamn`, project `receiving`, tenant `dev`, environment `dev`.
+- The platform domain of the principal rows is `wamn.dev`.
+- Identity uses the internal CA of the cluster for its TLS. The public `*.wamn.dev` certificate ends at the edge.
+- The CDC reader and the materializer run as workloads.
+- Tempo and the OpenTelemetry collector are left out. Observability comes with a later epic.
+- CloudNativePG backups come later. The operations page states that they are not configured.
 
 ## 6. Benchmark
 
