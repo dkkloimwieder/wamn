@@ -31,11 +31,16 @@ import {
   boundedPage,
   callOperation,
   fillMember,
+  type FieldMap,
+  fromWire,
   type JsonValue,
+  type LoadEnd,
   type LoadPage,
   type MemberPath,
   type OperationBinding,
   type Outcome,
+  openStream,
+  readLoadLines,
   readMember,
   refusalSentence,
   type RowKey,
@@ -54,7 +59,7 @@ import type { DataTableChild } from "./child-tables";
 import { DataTable, type DataTableColumn } from "./data-table";
 import type { DataTableEditResult } from "./edit-cell";
 import type { DataTableScopeFilter } from "./scope-bar";
-import { createTableLoad } from "./table-load";
+import { createTableLoad, type TableLoadSort, type TableStream } from "./table-load";
 
 /** One column of a definition. A column that names a record names the read of its text. */
 export type QueryTableColumn<TRow extends object> = Omit<DataTableColumn<TRow>, "cell"> & {
@@ -202,6 +207,12 @@ function editResult<TRow>(outcome: Outcome<unknown>, row: TRow): DataTableEditRe
   }
 }
 
+/** The field map of the values inside one member of a result, or none. */
+function nestedFields(fields: FieldMap, member: string): FieldMap {
+  const entry = fields[member];
+  return entry === undefined || typeof entry === "string" ? {} : entry.fields;
+}
+
 export function QueryTable<TRow extends object, TResult = unknown>(
   props: QueryTableProps<TRow, TResult>,
 ): JSX.Element {
@@ -214,7 +225,8 @@ export function QueryTable<TRow extends object, TResult = unknown>(
 
   const fixedBy = (filter: QueryTableFilter) => readMember(props.fixed ?? {}, filter.input) !== undefined;
 
-  const load = createTableLoad<TRow>(definition, async (limit, sort) => {
+  // The request of one load: the fixed and chosen scope, the limit and the sort.
+  const request = (limit: number, sort: TableLoadSort | undefined): object => {
     let request = { ...props.fixed } as object;
     for (const chosen of scope()) {
       const filter = definition.filters.find((declared) => declared.field === chosen.field);
@@ -233,17 +245,55 @@ export function QueryTable<TRow extends object, TResult = unknown>(
         request = writeMember(request, definition.sortDirectionInput, sort.direction);
       }
     }
+    return request;
+  };
+
+  // A page read streams its load, up to the cap, when the transport can.
+  const stream: TableStream<TRow> | undefined =
+    definition.rows === "item" && transport.openStream !== undefined
+      ? async (cap, sort, signal, onRows) => {
+          const opened = await openStream<LoadPage<TRow>>(
+            transport,
+            definition.read,
+            request(cap, sort),
+            signal,
+          );
+          let end: LoadEnd;
+          if (opened instanceof ReadableStream) {
+            const rowFields = nestedFields(definition.read.result, "item");
+            end = await readLoadLines(
+              opened,
+              (row) => fromWire(row, rowFields) as TRow,
+              onRows,
+              definition.read.route.contract.errors,
+            );
+          } else if (opened.status === "completed") {
+            onRows(opened.value.item);
+            end = { status: "completed", value: { more: opened.value.nextCursor !== null } };
+          } else {
+            end = opened as Outcome<never>;
+          }
+          // A streamed load reports only a load that did not complete.
+          if (end.status !== "completed") {
+            props.onOutcome?.(end as Outcome<unknown> as Outcome<TResult>);
+            announceOutcome(end, props.label);
+          }
+          return end;
+        }
+      : undefined;
+
+  const load = createTableLoad<TRow>(definition, async (limit, sort) => {
     const outcome = await callOperation<LoadPage<TRow> & { readonly rows: readonly TRow[] }>(
       transport,
       definition.read,
-      [request],
+      [request(limit, sort)],
     );
     props.onOutcome?.(outcome as Outcome<unknown> as Outcome<TResult>);
     if (outcome.status !== "completed") {
       announceOutcome(outcome, props.label);
     }
     return definition.rows === "rows" ? boundedPage(outcome) : outcome;
-  });
+  }, stream);
   void load.load();
   onCleanup(
     afterWrites(transport, () => {

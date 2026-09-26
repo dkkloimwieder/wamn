@@ -478,6 +478,23 @@ export function createTransport(options: TransportOptions): Transport {
       etag: response.headers.get("etag"),
     };
   };
+  /** Put the session or the credential on one request. */
+  const credentials = (headers: { [name: string]: string }, init: RequestInit, read: boolean) => {
+    if (options.cookie === true) {
+      // The CSRF cookie is read on every request, because a renewal replaces
+      // it. Without it the header stays off, and the router decides. A read
+      // needs no CSRF header, and a request with one is never cached.
+      // A new session or a renewal sets a new cookie, and empties the store.
+      const csrf = cookieValue((options.cookies ?? (() => document.cookie))(), CSRF_COOKIE);
+      reads.belongTo(csrf);
+      if (csrf !== null && !read) {
+        headers[CSRF_HEADER] = csrf;
+      }
+      init.credentials = "include";
+    } else if (options.credential !== undefined) {
+      headers["authorization"] = `Bearer ${options.credential}`;
+    }
+  };
   /** Send one request, and return its reply or the uncertainty of a failed send. */
   const exchange = async (request: WireRequest): Promise<HttpReply | Outcome<JsonValue>> => {
     const read = request.method === "GET";
@@ -496,20 +513,7 @@ export function createTransport(options: TransportOptions): Transport {
       headers["content-type"] = "application/json";
       init.body = JSON.stringify(request.items);
     }
-    if (options.cookie === true) {
-      // The CSRF cookie is read on every request, because a renewal replaces
-      // it. Without it the header stays off, and the router decides. A read
-      // needs no CSRF header, and a request with one is never cached.
-      // A new session or a renewal sets a new cookie, and empties the store.
-      const csrf = cookieValue((options.cookies ?? (() => document.cookie))(), CSRF_COOKIE);
-      reads.belongTo(csrf);
-      if (csrf !== null && !read) {
-        headers[CSRF_HEADER] = csrf;
-      }
-      init.credentials = "include";
-    } else if (options.credential !== undefined) {
-      headers["authorization"] = `Bearer ${options.credential}`;
-    }
+    credentials(headers, init, read);
     let reply: HttpReply;
     try {
       if (read) {
@@ -568,8 +572,51 @@ export function createTransport(options: TransportOptions): Transport {
       writeListeners.add(listener);
       return () => writeListeners.delete(listener);
     },
+    async openStream(
+      request: WireRequest,
+      signal?: AbortSignal,
+    ): Promise<ReadableStream<Uint8Array> | Outcome<JsonValue>> {
+      const [item, ...rest] = request.items;
+      if (rest.length > 0 || item === null || typeof item !== "object" || Array.isArray(item)) {
+        return uncertain("a read sends exactly one request item");
+      }
+      const query = encodeReadQuery({
+        ...(item as { readonly [name: string]: JsonValue }),
+        shape: "stream",
+      });
+      const target = `${request.template}?${query}`;
+      const headers: { [name: string]: string } = {};
+      // The browser revalidates its own copy with the load's ETag, and a 304
+      // saves the body. The read store holds no load: a load holds its rows.
+      const init: RequestInit = { method: "GET", headers, cache: "no-cache" };
+      if (signal !== undefined) {
+        init.signal = signal;
+      }
+      credentials(headers, init, true);
+      let response: Response;
+      try {
+        response = await call(`${options.baseUrl}${target}`, init);
+      } catch (error) {
+        return uncertain(`the request did not complete: ${String(error)}`);
+      }
+      const type = response.headers.get("content-type") ?? "";
+      if (response.status === 200 && type.startsWith(STREAM_CONTENT_TYPE) && response.body !== null) {
+        return response.body;
+      }
+      // A read that ended before its first row answers as a page answers.
+      let body: string;
+      try {
+        body = await response.text();
+      } catch (error) {
+        return uncertain(`the response did not complete: ${String(error)}`);
+      }
+      return classify(request.contract, null, { status: response.status, body });
+    },
   };
 }
+
+/** The content type of a streamed read: one JSON value per line. */
+const STREAM_CONTENT_TYPE = "application/x-ndjson";
 
 /**
  * Calls `listener` after each write on `transport`, and returns the function

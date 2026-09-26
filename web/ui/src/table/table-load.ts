@@ -1,10 +1,12 @@
 /**
  * The load of one DataTable over a table definition.
  *
- * The caller does the one page read, with the limit and the sort this load
- * asks for. A cap change, a sort on a set that is not fully read and a
- * refresh each start a new load, through the load state of
- * `@wamn/web-runtime`. An outcome of an older load is dropped.
+ * A query streams its load: the caller opens the stream with the cap and the
+ * sort this load asks for, and hands its rows over in batches. A bounded list
+ * is one read, with the limit and the sort. A cap change, a sort on a set that
+ * is not fully read and a refresh each start a new load, through the load
+ * state of `@wamn/web-runtime`. A new load aborts the stream of the last one,
+ * and a batch or an outcome of an older load is dropped.
  *
  * While an inline edit is open, the load is held: a new load waits until the
  * edit is saved or dropped, and then the last one asked for runs.
@@ -13,12 +15,15 @@
 import { createSignal, type Accessor } from "solid-js";
 
 import {
+  appendRows,
   emptyLoad,
+  endLoad,
   finishLoad,
   loadLimit,
   replaceRow as replaceLoadedRow,
   type RowKey,
   startLoad,
+  type LoadEnd,
   type LoadPage,
   type LoadState,
   type Outcome,
@@ -45,6 +50,17 @@ export interface TableLoadSort {
   readonly direction: DataTableSortDirection;
 }
 
+/**
+ * Opens the streamed load of `cap` rows in `sort`, hands its rows to `onRows`
+ * in batches, and returns how it ended. `signal` aborts it.
+ */
+export type TableStream<TRow extends object> = (
+  cap: number,
+  sort: TableLoadSort | undefined,
+  signal: AbortSignal,
+  onRows: (rows: readonly TRow[]) => void,
+) => Promise<LoadEnd>;
+
 export interface TableLoad<TRow extends object> {
   /** The load state that the DataTable renders. */
   readonly state: Accessor<LoadState<TRow>>;
@@ -61,12 +77,15 @@ export interface TableLoad<TRow extends object> {
 export function createTableLoad<TRow extends object>(
   definition: TableLoadDefinition<TRow>,
   read: (limit: number, sort: TableLoadSort | undefined) => Promise<Outcome<LoadPage<TRow>>>,
+  stream?: TableStream<TRow>,
 ): TableLoad<TRow> {
   const [state, setState] = createSignal<LoadState<TRow>>(emptyLoad(DEFAULT_CAP));
   let sort: TableLoadSort | undefined;
   let held = false;
   // The cap of the last load asked for while held, or undefined.
   let waiting: number | undefined;
+  // The stream of the load in flight, which a new load aborts.
+  let streaming: AbortController | undefined;
 
   const load = async (cap: number = state().cap) => {
     if (held) {
@@ -75,6 +94,16 @@ export function createTableLoad<TRow extends object>(
     }
     const next = startLoad(state(), cap);
     setState(next);
+    if (stream !== undefined) {
+      streaming?.abort();
+      const controller = new AbortController();
+      streaming = controller;
+      const end = await stream(next.cap, sort, controller.signal, (rows) => {
+        setState((current) => appendRows(current, next.generation, rows));
+      });
+      setState((current) => endLoad(current, next.generation, end, definition.rowId));
+      return;
+    }
     const limit =
       definition.pageMaximum === null ? next.cap : loadLimit(next.cap, definition.pageMaximum);
     const outcome = await read(limit, sort);

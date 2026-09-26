@@ -9,6 +9,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@solidjs/testing-li
 import { afterEach, describe, expect, it } from "vitest";
 
 import { QueryTable, type QueryTableDefinition } from "@wamn/ui";
+import type { Transport } from "@wamn/web-runtime";
 
 import { WIDGET_QUERY_TABLE } from "../fixture/components/widget.js";
 import {
@@ -114,6 +115,43 @@ const rowButton = (index: number, label: string) =>
   ) as HTMLButtonElement;
 
 describe("QueryTable", () => {
+  it("streams its load up to the cap when the transport opens streams (wamn-utci.4)", async () => {
+    // Twenty rows: the table windows more than a hundred, and jsdom lays out no window.
+    const rows = Array.from({ length: 20 }, (_, index) => ({
+      id: id(index),
+      code: "standard",
+      maker_id: null,
+      note: null,
+      edit_version: "1",
+      created_at: "2026-09-21T00:00:00.000000Z",
+    }));
+    const asked: unknown[] = [];
+    const lines = `${rows.map((row) => JSON.stringify({ row })).join("\n")}\n${JSON.stringify({
+      outcome: { value: { more: true }, actor_labels: {} },
+    })}\n`;
+    const transport: Transport = {
+      invoke: async () => ({ status: "uncertain", reason: "a stream reads no page", retryRefusal: null }),
+      openStream: async (request) => {
+        asked.push(request.items[0]);
+        return new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.enqueue(new TextEncoder().encode(lines));
+            controller.close();
+          },
+        });
+      },
+    };
+    render(() => (
+      <div style={{ height: "800px" }}>
+        <QueryTable definition={{ ...WIDGETS, childTables: [] }} transport={transport} label="widgets" />
+      </div>
+    ));
+    await waitFor(() => expect(document.querySelector(`tr[data-row-id="${id(19)}"]`)).not.toBeNull());
+    await waitFor(() => expect(screen.getByText("Full dataset cannot be loaded")).toBeDefined());
+    // The cap, not the page maximum of 100.
+    expect(asked).toEqual([{ limit: 1000 }]);
+  });
+
   it("opens a record from a row, and fills a form with the row's key", async () => {
     const { opened, filled } = await shown();
     fireEvent.click(rowButton(2, "get"));

@@ -127,6 +127,16 @@ export interface Transport {
    * this way. A transport without it tells nobody about a write.
    */
   onWrite?(listener: () => void): () => void;
+  /**
+   * Opens a streamed read of one query, the `stream` shape of its canonical
+   * GET URL. A reply of lines returns its body for `readLoadLines`. A read
+   * that ended before its first row returns its outcome, as `invoke`
+   * classifies it. `signal` aborts the read, which ends the query.
+   */
+  openStream?(
+    request: WireRequest,
+    signal?: AbortSignal,
+  ): Promise<ReadableStream<Uint8Array> | Outcome<JsonValue>>;
 }
 
 /**
@@ -242,6 +252,27 @@ export async function callOperation<T>(
     }),
     binding.result,
   );
+}
+
+/**
+ * Opens a streamed read of one query through its binding. The body carries the
+ * rows in wire spelling. A read that ended before its first row returns its
+ * outcome, with its keys renamed as `callOperation` renames them.
+ */
+export async function openStream<T>(
+  transport: Transport,
+  binding: OperationBinding,
+  item: unknown,
+  signal?: AbortSignal,
+): Promise<ReadableStream<Uint8Array> | Outcome<T>> {
+  if (transport.openStream === undefined) {
+    throw new Error("this transport opens no streamed read");
+  }
+  const opened = await transport.openStream(
+    { ...binding.route, items: [toWire(item, binding.request)] },
+    signal,
+  );
+  return opened instanceof ReadableStream ? opened : reviveOutcome<T>(opened, binding.result);
 }
 
 /**

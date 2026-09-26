@@ -6,13 +6,17 @@
  * its framework keeps state, as with `page.ts`. The caller does the one read
  * and hands its outcome back with the generation that `startLoad` gave it.
  *
- * Until streamed loads exist, a load is one page read with a limit of the cap
- * or the page maximum, whichever is lower. No cursor after it means the set is
- * fully read. A cursor means rows exist beyond the cap, and no loop follows it.
+ * A load of a query streams its rows (`docs/architecture/execution.md`):
+ * `readLoadLines` reads the reply lines and hands the rows over in batches,
+ * `appendRows` puts each batch in the state, and `endLoad` ends the load with
+ * its outcome line. No rows beyond the cap means the set is fully read.
+ *
+ * A load of a bounded list is one read, which `finishLoad` takes whole, and it
+ * is always fully read.
  */
 
 import { refusalSentence } from "./refusal.js";
-import type { Outcome } from "./wire.js";
+import type { ErrorCase, JsonValue, Outcome } from "./wire.js";
 
 /** What one table holds between loads. */
 export interface LoadState<Row> {
@@ -32,6 +36,8 @@ export interface LoadState<Row> {
   readonly cap: number;
   /** The number of the last load. A result of an older one is dropped. */
   readonly generation: number;
+  /** The rows of the load in flight that have arrived so far. */
+  readonly arrived: number;
 }
 
 /** The page a load reads: its rows, and the cursor of rows beyond them. */
@@ -73,6 +79,7 @@ export function emptyLoad<Row>(cap: number): LoadState<Row> {
     endedAt: null,
     cap,
     generation: 0,
+    arrived: 0,
   };
 }
 
@@ -96,6 +103,7 @@ export function startLoad<Row>(
     endedAt: null,
     cap,
     generation: state.generation + 1,
+    arrived: 0,
   };
 }
 
@@ -133,30 +141,12 @@ export function finishLoad<Row>(
   if (generation !== state.generation) {
     return state;
   }
-  const failed = (refusal: string): LoadState<Row> => ({
-    ...state,
-    rows: [],
-    fullyRead: false,
-    busy: false,
-    refusal,
-    endedAt: now,
-  });
   if (outcome.status !== "completed") {
-    return failed(
-      outcome.status === "refused"
-        ? refusalSentence(outcome.code, outcome.text)
-        : outcome.status === "uncertain"
-          ? outcome.reason
-          : outcome.status,
-    );
+    return failedLoad(state, loadFailure(outcome), now);
   }
-  const seen = new Set<string>();
-  for (const row of outcome.value.item) {
-    const id = rowKey(row, rowId);
-    if (seen.has(id)) {
-      return failed(`The load returned the row id ${id} twice.`);
-    }
-    seen.add(id);
+  const duplicate = duplicateRow(outcome.value.item, rowId);
+  if (duplicate !== null) {
+    return failedLoad(state, duplicate, now);
   }
   return {
     ...state,
@@ -166,6 +156,243 @@ export function finishLoad<Row>(
     refusal: null,
     endedAt: now,
   };
+}
+
+/** How a streamed load ended: completed, with whether rows exist past the cap, or not. */
+export type LoadEnd = Outcome<{ readonly more: boolean }>;
+
+/**
+ * Put one batch of a streamed load into the state.
+ *
+ * The first batch replaces the rows of the last load, and each later batch
+ * follows it, so the table shows rows as they arrive. A batch of an older
+ * load is dropped.
+ */
+export function appendRows<Row>(
+  state: LoadState<Row>,
+  generation: number,
+  rows: readonly Row[],
+): LoadState<Row> {
+  if (generation !== state.generation || !state.busy) {
+    return state;
+  }
+  return {
+    ...state,
+    rows: state.arrived === 0 ? [...rows] : [...state.rows, ...rows],
+    arrived: state.arrived + rows.length,
+  };
+}
+
+/**
+ * End the streamed load numbered `generation` with its outcome line.
+ *
+ * An end of an older load is dropped. A duplicate row id fails the load, and
+ * a load that did not complete keeps no rows, as `finishLoad` does.
+ */
+export function endLoad<Row>(
+  state: LoadState<Row>,
+  generation: number,
+  end: LoadEnd,
+  rowId: RowKey<Row>,
+  now: Date = new Date(),
+): LoadState<Row> {
+  if (generation !== state.generation) {
+    return state;
+  }
+  if (end.status !== "completed") {
+    return failedLoad(state, loadFailure(end), now);
+  }
+  const rows = state.arrived === 0 ? [] : state.rows;
+  const duplicate = duplicateRow(rows, rowId);
+  if (duplicate !== null) {
+    return failedLoad(state, duplicate, now);
+  }
+  return {
+    ...state,
+    rows,
+    fullyRead: !end.value.more,
+    busy: false,
+    refusal: null,
+    endedAt: now,
+  };
+}
+
+/** The state of a load that did not complete: no rows, and why. */
+function failedLoad<Row>(state: LoadState<Row>, refusal: string, now: Date): LoadState<Row> {
+  return { ...state, rows: [], fullyRead: false, busy: false, refusal, endedAt: now };
+}
+
+/** Why a load did not complete, as the forms read a refusal. */
+function loadFailure(outcome: Outcome<unknown>): string {
+  return outcome.status === "refused"
+    ? refusalSentence(outcome.code, outcome.text)
+    : outcome.status === "uncertain"
+      ? outcome.reason
+      : outcome.status;
+}
+
+/** The failure of a load that holds one row id twice, which means a broken query. */
+function duplicateRow<Row>(rows: readonly Row[], rowId: RowKey<Row>): string | null {
+  const seen = new Set<string>();
+  for (const row of rows) {
+    const id = rowKey(row, rowId);
+    if (seen.has(id)) {
+      return `The load returned the row id ${id} twice.`;
+    }
+    seen.add(id);
+  }
+  return null;
+}
+
+/** Schedules one hand-over of rows, and returns the function that cancels it. */
+export type BatchTick = (flush: () => void) => () => void;
+
+/**
+ * Rows reach the table once per animation frame in a page, and every 50 ms
+ * where no frames run. A new rows list rebuilds the table's whole row model,
+ * so rows never go over one at a time.
+ */
+export const batchTick: BatchTick = (flush) => {
+  if (typeof requestAnimationFrame === "function") {
+    const frame = requestAnimationFrame(() => flush());
+    return () => cancelAnimationFrame(frame);
+  }
+  const timer = setTimeout(flush, 50);
+  return () => clearTimeout(timer);
+};
+
+/**
+ * Read the reply lines of one streamed load, and return how it ended.
+ *
+ * Each line is one JSON value: `{"row":…}` for each row, then one
+ * `{"outcome":…}`. The body is decoded as a stream, because a chunk can end
+ * inside a character, and lines are buffered, because a chunk can end inside
+ * a line. `revive` turns a row's wire spelling into the table's row, and
+ * `onRows` takes the rows in batches. A malformed line fails the load, and a
+ * body that ends without its outcome line fails it too: neither is skipped.
+ * `errors` names the text of each declared refusal.
+ */
+export async function readLoadLines<Row>(
+  body: ReadableStream<Uint8Array>,
+  revive: (row: JsonValue) => Row,
+  onRows: (rows: readonly Row[]) => void,
+  errors: readonly ErrorCase[] = [],
+  tick: BatchTick = batchTick,
+): Promise<LoadEnd> {
+  // The DOM types declare the decoder's input as BufferSource, which a body's
+  // Uint8Array chunks are.
+  const decoder = new TextDecoderStream() as unknown as ReadableWritablePair<string, Uint8Array>;
+  const reader = body.pipeThrough(decoder).getReader();
+  let pending: Row[] = [];
+  let cancel: (() => void) | null = null;
+  const flush = () => {
+    cancel = null;
+    if (pending.length > 0) {
+      const rows = pending;
+      pending = [];
+      onRows(rows);
+    }
+  };
+  const end = (outcome: LoadEnd): LoadEnd => {
+    cancel?.();
+    flush();
+    reader.cancel().catch(() => undefined);
+    return outcome;
+  };
+  let buffered = "";
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) {
+        return end(uncertainLoad("the load ended without its outcome line"));
+      }
+      buffered += value;
+      let start = 0;
+      for (
+        let newline = buffered.indexOf("\n", start);
+        newline !== -1;
+        newline = buffered.indexOf("\n", start)
+      ) {
+        const line = buffered.slice(start, newline);
+        start = newline + 1;
+        const parsed = parseLine(line);
+        if (parsed === null) {
+          return end(uncertainLoad("the load sent a malformed line"));
+        }
+        if ("row" in parsed) {
+          pending.push(revive(parsed.row));
+          cancel ??= tick(flush);
+        } else {
+          return end(outcomeLine(parsed.outcome, errors));
+        }
+      }
+      buffered = buffered.slice(start);
+    }
+  } catch (error) {
+    return end(uncertainLoad(`the load did not complete: ${String(error)}`));
+  }
+}
+
+function uncertainLoad(reason: string): LoadEnd {
+  return { status: "uncertain", reason, retryRefusal: null };
+}
+
+/** One reply line: a row or the outcome, or null for anything else. */
+function parseLine(
+  line: string,
+): { readonly row: JsonValue } | { readonly outcome: JsonValue } | null {
+  let value: unknown;
+  try {
+    value = JSON.parse(line);
+  } catch {
+    return null;
+  }
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+  const keys = Object.keys(value);
+  if (keys.length !== 1) {
+    return null;
+  }
+  const members = value as { readonly row?: JsonValue; readonly outcome?: JsonValue };
+  if (members.row !== undefined && typeof members.row === "object" && members.row !== null) {
+    return { row: members.row };
+  }
+  return members.outcome === undefined ? null : { outcome: members.outcome };
+}
+
+/** How the outcome line says the load ended. */
+function outcomeLine(outcome: JsonValue, errors: readonly ErrorCase[]): LoadEnd {
+  const members =
+    outcome !== null && typeof outcome === "object" && !Array.isArray(outcome)
+      ? (outcome as { readonly [key: string]: JsonValue })
+      : {};
+  const value = members["value"];
+  const more =
+    value !== null && typeof value === "object" && !Array.isArray(value)
+      ? (value as { readonly more?: JsonValue }).more
+      : undefined;
+  if (typeof more === "boolean") {
+    return { status: "completed", value: { more } };
+  }
+  const error = members["error"];
+  if (error !== null && typeof error === "object" && !Array.isArray(error)) {
+    // The detail is the error without its code, as a page refusal reads.
+    const { code: literal, ...detail } = error as { readonly [key: string]: JsonValue };
+    const code = typeof literal === "string" ? literal : null;
+    const text = errors.find((declared) => declared.literal === code)?.text;
+    return {
+      status: "refused",
+      code,
+      detail,
+      ...(text === undefined || text === null ? {} : { text }),
+    };
+  }
+  return uncertainLoad(
+    "uncertain" in members
+      ? "the release cannot say how the load ended"
+      : "the load sent a malformed outcome line",
+  );
 }
 
 /**
