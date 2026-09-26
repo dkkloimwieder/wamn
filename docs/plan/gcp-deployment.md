@@ -1,9 +1,10 @@
 # Google Cloud deployment
 
 This plan deploys the platform and its first application to Google Cloud for the first time.
-Beads issue `wamn-ghx2` holds the work, and it becomes an epic after the owner review.
-It is a proposal. Nothing is created in the project until the owner accepts it, and each step below waits for its own start.
+Beads epic `wamn-ghx2` holds the work, with one issue for each step of section 5.
+The owner reviewed the plan on 2026-09-25, and each step waits for its own start.
 The rules of the web host come from [web deployment](web-deployment.md).
+The commands of each finished step are in [Google Cloud operations](../operations/gcp.md).
 
 ## 1. What exists
 
@@ -17,6 +18,7 @@ The owner created these on 2026-09-25, and they cost almost nothing while no wor
 | DNS | public Cloud DNS zone `wamn-dev` for `wamn.dev`, delegated by the `.dev` registry since 2026-09-25 21:31 EDT |
 | DNS records | the Namecheap mail forwarding records, copied: five `eforward` MX records and one SPF TXT record |
 | Certificate issuer | Let's Encrypt, contact `dkkloimwieder@gmail.com` |
+| Region | `us-central1`, zone `us-central1-a` |
 
 ## 2. One subdomain per application
 
@@ -40,6 +42,7 @@ flowchart LR
   BB --> GCS[(GCS web bucket)]
   E --> R[route ingress and hosts]
   E --> I[identity]
+  I --> M[Resend mail]
   R --> PG[(PostgreSQL<br/>CloudNativePG)]
   R --> N[NATS]
   R --> AR[(Artifact Registry)]
@@ -51,85 +54,135 @@ The kind edge case already tests the edge rules. Only the load balancer, the buc
 
 | Need | Choice | Why | Rejected alternative |
 | --- | --- | --- | --- |
-| Kubernetes | GKE Standard, one zone | The Config Connector add-on runs only on Standard clusters. The runtime operator and the hosts run as they do in kind, with no Autopilot pod restrictions to test first. One zonal cluster per billing account gets the monthly management credit, which covers its management fee. | Autopilot: needs Config Connector installed by hand, and its pod rules are unmeasured for the hosts. A regional cluster: three times the nodes, and no credit. |
-| Region | `us-east4` (Virginia) | It is the default region of your gcloud configuration, and it is near you. | `us-central1`: about 10 percent cheaper machines, but farther away. Changing the region is one value. |
-| Machines | `e2-standard-4` (4 vCPU, 16 GB) on demand for a full test, `e2-standard-2` Spot for a limited test | Each host requests 2 CPU, and a full test runs two hosts, identity, PostgreSQL, NATS, the operators and the edge. Three 4 vCPU nodes hold that with room, as the 8-core kind machine does. | Larger machines: no measurement asks for them. |
-| Google Cloud resources | Config Connector, rendered by the edge chart | The chart already renders the load balancer, the bucket and the certificate from one values file, and Helm installs and removes them with the rest. | Terraform: not installed here, and a second tool with its own state. |
-| PostgreSQL | CloudNativePG in the cluster, PostgreSQL 18 | The repository already owns its manifests and its [backup and recovery runbook](../operations/backup-and-recovery.md). Provisioning creates a database and roles per project environment, as it does in kind. | Cloud SQL: its limited superuser can refuse the role and ownership work that provisioning does, and no test here covers that. |
+| Kubernetes | GKE Standard, one zone | The runtime operator and the hosts run as they do in kind, with no Autopilot pod restrictions to test first. One zonal cluster per billing account gets the monthly management credit, which covers its management fee. | Autopilot: its pod rules are unmeasured for the hosts. A regional cluster: three times the nodes, and no credit. |
+| Region | `us-central1` (Iowa), zone `us-central1-a` | Owner ruling of 2026-09-25. It is among the cheapest regions for the machines below. | None. |
+| Machines | 2 x `e2-standard-2` Spot, or 1 x `e2-standard-4` Spot | This is the only mode. Section 7 gives its rules. The benchmark of section 6 measures the machines. Only a measured need brings back a larger mode. | 3 x `e2-standard-4` on demand: removed until a measurement asks for it. |
+| Disks | `pd-standard`, for the boot disks and the volumes | It costs less than half of `pd-balanced`. A test deployment has no disk speed target. | `pd-balanced`, the GKE default: 2.5 times the price. |
+| Google Cloud resources | `gcloud` commands in [Google Cloud operations](../operations/gcp.md) | Section 4.1 gives the reasons. | Config Connector. Terraform: not installed here, and a second tool with its own state. |
+| PostgreSQL | CloudNativePG in the cluster, PostgreSQL 18, one instance | The repository already owns its manifests and its [backup and recovery runbook](../operations/backup-and-recovery.md). Provisioning creates a database and roles per project environment, as it does in kind. | Cloud SQL: its limited superuser can refuse the role and ownership work that provisioning does, and no test here covers that. |
 | Backups | CloudNativePG backups to a GCS bucket | The runbook uses an object store, and GCS serves the S3 API. | None for a test deployment. |
 | NATS | In the cluster, from `deploy/infra` | Google Cloud has no managed NATS. | None. |
-| Images and components | Artifact Registry in `us-east4` | It stores container images and OCI artifacts. It replaces the kind registry for the host and identity images and for the component and release artifacts. It uses Google Cloud identity, with no password file. | A registry in the cluster: one more stateful workload to back up. |
+| Images and components | Artifact Registry in `us-central1` | It stores container images and OCI artifacts. It replaces the kind registry for the host and identity images and for the component and release artifacts. It uses Google Cloud identity, with no password file. | A registry in the cluster: one more stateful workload to back up. |
 | Web files | GCS bucket behind a Cloud CDN backend bucket | This is decision 3.1 of web deployment. `wamn web upload` writes to it through the S3 API with an HMAC key. | None. |
 | Load balancer | Global external Application Load Balancer | Its URL map sends paths to the edge or to the bucket, rewrites paths, and serves Cloud CDN. | The classic load balancer: it has no path template rewrite. |
 | Certificate | cert-manager with a Let's Encrypt DNS challenge on the Cloud DNS zone | A wildcard certificate needs the DNS challenge, and cert-manager renews it. It needs a service account that can change records in the zone. | Google-managed certificates: no wildcard without Certificate Manager DNS authorization, and a second renewal system. |
-| Mail | No real mail at first. The first accounts take their invitation from the database, as the kind edge case does. | A real sender needs a Resend key and records for a verified sender on `wamn.dev`. | Resend now: the owner decides on it once real users need invitations. |
+| Mail | Resend, sending from `wamn.dev` | Identity sends real invitations, so the first account signs up by email. The Resend domain records go into the Cloud DNS zone, and the API key goes into a Kubernetes secret. | Invitations from the database: the kind edge case already tests that path. |
+
+### 4.1 Config Connector is replaced
+
+Owner question of 2026-09-25: measure the CPU of Config Connector on the 2-node pool, or replace it with `gcloud` commands.
+This plan replaces it. The edge chart renders no Google Cloud resource, and step 4 removes its Config Connector template.
+These are the reasons:
+
+- Config Connector runs a controller in the cluster, and the pool has about 4 CPU and 12 GB for everything.
+- Config Connector needs a service account with rights to change most resources of the project. The `gcloud` commands run as the owner, one visible command at a time.
+- A cluster deleted before its Config Connector resources leaves them running and billing. The `gcloud` commands have a matching delete list in the operations page.
+
+The endpoint groups stay. GKE creates them from the annotation on the edge Service, without Config Connector.
 
 ## 5. Steps
 
-Each step ends with a test of its result. Unless the next step follows on the same day, each step also ends with the shutdown of section 8.
+Each step ends with a test of its result. Unless the next step follows on the same day, each step also ends with the pause of section 9.2.
+Each step writes its commands into [Google Cloud operations](../operations/gcp.md), so the next deployment repeats them.
 
-1. Enable the APIs: Compute Engine, Kubernetes Engine, Cloud Storage, Artifact Registry, IAM. Create the Artifact Registry repository and the two buckets (web files and backups). Nothing runs yet.
-2. Create the GKE cluster with the Config Connector add-on and Workload Identity. Install cert-manager, the Let's Encrypt `ClusterIssuer` for the DNS challenge, and the `*.wamn.dev` certificate. Make sure that the certificate is ready.
-3. Build and push the host and identity images and the Receiving components to Artifact Registry. Install the runtime operator, NATS and CloudNativePG, then identity and the hosts, with values files for Google Cloud. Provision Receiving and publish its release with `--route-host receiving.wamn.dev`.
-4. Upload the Receiving client with `wamn web upload`. Install the edge chart with the Google Cloud values. Add the DNS record for `receiving.wamn.dev`. In a browser, sign in and complete a supplier change. Measure a CDN hit on an asset and no CDN on `/api`.
-5. Change the edge chart to take a list of applications, each with its host and bucket path, and deploy a second application beside Receiving.
+1. Cost controls and storage, before anything runs. Enable the APIs. Lower the quotas of section 8.1. Create the guard of section 8.2: the Pub/Sub topic, the guard function, the budget and the daily scale-to-zero job. Create the Artifact Registry repository and the two buckets (web files and backups). No machine runs.
+2. Create the GKE cluster with Workload Identity and no Config Connector. Its one node pool `main` has the rules of section 7. Install cert-manager, the Let's Encrypt `ClusterIssuer` for the DNS challenge, and the `*.wamn.dev` certificate. Make sure that the certificate is ready.
+3. Add the Resend domain records to the Cloud DNS zone, and make sure that Resend reports the domain as verified. Build and push the host and identity images and the Receiving components to Artifact Registry. Install the runtime operator, NATS and CloudNativePG, then identity and the hosts, with values files for Google Cloud. The identity values name the Resend key secret and a sender on `wamn.dev`. Provision Receiving and publish its release with `--route-host receiving.wamn.dev`.
+4. Remove the Config Connector template from the edge chart. Upload the Receiving client with `wamn web upload`. Install the edge chart with the Google Cloud values. Create the bucket read access, the backend bucket, the backend service, the URL map, the certificate, the address and the forwarding rule with `gcloud`. Add the DNS record for `receiving.wamn.dev`. Send an invitation by email, then sign up and sign in from the mail in a browser. Complete a supplier change. Measure a CDN hit on an asset and no CDN on `/api`.
+5. Change the edge chart to take a list of applications, each with its host and bucket path. Deploy a second application beside Receiving.
 
-Each step writes its commands into a new operations page, `docs/operations/gcp.md`, so the next deployment repeats them.
+## 6. Benchmark
 
-## 6. Cost
+A separate issue of the epic builds `tools/bench`, a benchmark tool that runs from any machine over HTTPS against a deployed host.
+It drives the Receiving route interface: a read, a write, and a list at the seed of 1000 rows.
+Each run has a stated concurrency and duration.
+Each run writes one JSON file with p50, p95 and p99 latency, throughput and error rate, tagged with the tier.
 
-The prices are approximate on-demand list prices in `us-east4`, from memory.
-Before step 2, make sure that they are current in the Google Cloud pricing calculator.
+| Tier | Nodes |
+| --- | --- |
+| 1 | 1 x `e2-standard-2` Spot |
+| 2 | 2 x `e2-standard-2` Spot |
+| 3 | 1 x `e2-standard-4` Spot |
+| 4 | 2 x `e2-standard-4` on demand |
 
-| Item | Full test | Limited test |
-| --- | --- | --- |
-| Nodes | 3 x `e2-standard-4`, about 0.15 USD an hour each | 2 x `e2-standard-2` Spot, about 0.02 to 0.03 USD an hour each |
-| Cluster management | 0.10 USD an hour, covered by the zonal credit | the same |
-| Load balancer | about 0.025 USD an hour for the forwarding rule, and a small charge per GB | the same, only while it exists |
-| Disks | about 0.04 USD per GB each month (balanced) | the same. The disks stay after the nodes scale to 0. |
-| Cloud DNS | 0.20 USD a month for the zone | the same |
-| GCS, Artifact Registry, CDN egress | cents for a test | the same |
-| Total while running | about 0.50 USD an hour, about 360 USD a month for a cluster that never stops | about 0.10 USD an hour |
+Each tier gets one scale-up, one run and one scale-down, and its result file goes under `tests/bench/`.
+The node choice of section 7 follows the results.
+Tier 4 uses all 8 CPU of the quota, so no other machine runs at the same time.
 
-Two test hours a day on five days cost about 5 USD a week in full mode. In limited mode, they cost about 1 USD.
-While nothing runs, the disks, the buckets, the registry and the DNS zone cost a few USD a month.
+## 7. The only mode
 
-## 7. Limited mode
+A test deployment runs on little, for a short time. There is no other mode until a measured run needs one.
 
-A limited test runs the same platform on less, for a short time.
-
-- Use a node pool of 2 x `e2-standard-2` Spot machines. Google can stop a Spot machine at any time, and a test then repeats.
-- Run one host replica with a request of 0.5 CPU, not two replicas with 2 CPU. The Google Cloud values file sets it. The kind values stay as they are.
-- Run NATS with one replica and stream replicas 1, and CloudNativePG with one instance. The environment configuration declares the stream replicas, so it states 1.
-- Keep boot disks at 30 GB, not the default 100 GB.
+- The node pool `main` has 2 x `e2-standard-2` Spot machines, or 1 x `e2-standard-4` Spot. Google can stop a Spot machine at any time, with a notice of 30 seconds, and a test then repeats.
+- The pool has no autoscaler, because an autoscaler starts nodes again for pending pods after a scale to 0. Its size is at most 2, and you set it by hand.
+- The pool upgrades with a surge of 0 and one unavailable node, so an upgrade does not pass the CPU quota.
+- The boot disks are `pd-standard`, 30 GB, not the default 100 GB `pd-balanced`.
+- The volumes of PostgreSQL and NATS use the GKE storage class `standard`, which is `pd-standard`. The default class `standard-rwo` is `pd-balanced`, and the SSD quota of section 8.1 refuses it.
+- One host replica runs with a request of 0.5 CPU, not two replicas with 2 CPU. The Google Cloud values file sets it. The kind values stay as they are.
+- NATS runs with one replica and stream replicas 1. The environment configuration declares the stream replicas, so it states 1.
 - Scale the node pool to 0 after each session. The cluster and its disks stay, and the next session scales it up again in a few minutes.
-- If the next session is more than a day away, delete the load balancer. Helm installs it again.
-- Set a budget alert on the billing account before step 2. Section 8 gives the command.
+- If the next session is more than a day away, delete the load balancer with the commands of the operations page.
 
-## 8. Shutdown
+### 7.1 One PostgreSQL instance on Spot machines
+
+CloudNativePG runs one instance, and its node can stop at any time.
+This is the result:
+
+- When Google stops the node, PostgreSQL stops without a clean shutdown. It recovers from its write-ahead log at the next start, as after a power loss. A committed transaction survives.
+- The volume is a zonal disk. If the node stops, the disk stays. The pod starts again on a node in the same zone, and the database is down until then.
+- With 2 nodes, the other node can take the pod. With 1 node, the database is down until Google gives the pool a machine again.
+- Nothing fails over. The platform returns errors while the database is down, and a test run in that time fails.
+- The backups in the GCS bucket are the only copy outside the disk. If the disk is lost, the recovery of the backup runbook restores the last archived state.
+
+This is acceptable for test data. It is not acceptable for data that a person needs to keep.
+
+## 8. Cost controls
+
+Each control acts on the project `wamn-dev` only. No control acts on the billing account or on a list of projects.
+Billing data reaches the budget hours late. The quotas are the hard cap, and the guard is the backstop.
+
+### 8.1 Quotas, the hard cap
+
+Step 1 lowers these Compute Engine quotas of `wamn-dev` through the Cloud Quotas API. Google refuses a request that passes a quota, so no bill can grow past them.
+
+| Quota | Scope | Value | Result |
+| --- | --- | --- | --- |
+| CPUs, all regions | project | 8 | At most 2 x `e2-standard-4`, in any region. |
+| CPUs | `us-central1` | 8 | The same, in the region. |
+| Global static IP addresses | project | 1 | One load balancer address. |
+| Standard disk | `us-central1` | 200 GB | Every boot disk and volume together. |
+| SSD disk | `us-central1` | 0 GB | No disk escapes the 200 GB cap through `pd-balanced` or `pd-ssd`. |
+
+The disk quotas are regional. The CPU quota of all regions stops a machine in any other region, so a disk elsewhere has no machine to use it.
+
+### 8.2 The guard
+
+If the budget runs out, the guard stops the machines and then billing. It has four parts, all in `wamn-dev`:
+
+- A Pub/Sub topic `wamn-guard`.
+- One budget of 50 USD a month on billing account `01E392-13CC0D-277806`, filtered to `wamn-dev`. At 50, 90 and 100 percent it mails the billing administrators, and it publishes every update to `wamn-guard`.
+- A Cloud Run function `wamn-guard` on the topic, with its own service account. The project id `wamn-dev` and the cluster name `wamn` are literals in its code. From 50 percent of the budget, it sets every node pool of cluster `wamn` to 0 nodes. From 100 percent, it unlinks the billing account from `wamn-dev`, as section 9.5 does by hand.
+- A Cloud Scheduler job that publishes a scale-to-zero message to `wamn-guard` once a day, at 03:00 America/New_York. A session that you forget stops by the next morning.
+
+The service account of the function has two grants, both on the project `wamn-dev`. A custom role allows it to read the cluster and set a node pool size. Project Billing Manager allows it to unlink billing from this project. It has no grant on the billing account.
+
+## 9. Shutdown
 
 Use the level that fits. Each level lists its commands and a test of the result.
 Run every command against `--project wamn-dev`.
 
-### 8.1 Budget alert, before anything runs
+### 9.1 The guard, before anything runs
 
-Create an alert that mails the billing account owner at 50, 90 and 100 percent of 50 USD a month.
-An alert does not stop anything. It only sends mail.
+Step 1 creates the guard of section 8.2. It stops the machines at 50 percent of the budget, and it unlinks billing at 100 percent.
+The operations page lists its commands.
 
-```bash
-gcloud billing budgets create --billing-account=01E392-13CC0D-277806 \
-  --display-name="wamn-dev" --budget-amount=50USD \
-  --filter-projects=projects/wamn-dev \
-  --threshold-rule=percent=0.5 --threshold-rule=percent=0.9 --threshold-rule=percent=1.0
-```
-
-### 8.2 Pause: stop the machines, keep everything else
+### 9.2 Pause: stop the machines, keep everything else
 
 The cluster, its disks and the load balancer stay. Only the machines stop.
 
 ```bash
-gcloud container clusters resize wamn --project wamn-dev --zone us-east4-a \
-  --node-pool default-pool --num-nodes 0
+gcloud container clusters resize wamn --project wamn-dev --zone us-central1-a \
+  --node-pool main --num-nodes 0
 ```
 
 Make sure that no machine runs:
@@ -138,25 +191,22 @@ Make sure that no machine runs:
 gcloud compute instances list --project wamn-dev
 ```
 
-To resume, run the same resize with the node count of the mode.
+To resume, run the same resize with the node count of section 7.
 
-### 8.3 Stop the load balancer
+### 9.3 Stop the load balancer
 
-Uninstall the edge chart while the cluster runs. Config Connector then deletes the Google Cloud resources that it created.
-Do this before 8.4. If the cluster goes first, nothing deletes those resources, and they keep costing money.
+Delete the load balancer parts with the delete list of the operations page, in its order.
+Then make sure that both lists are empty:
 
 ```bash
-helm uninstall wamn-edge --namespace <namespace>
 gcloud compute forwarding-rules list --project wamn-dev --global
 gcloud compute addresses list --project wamn-dev --global
 ```
 
-Both lists must be empty.
-
-### 8.4 Delete the cluster
+### 9.4 Delete the cluster
 
 ```bash
-gcloud container clusters delete wamn --project wamn-dev --zone us-east4-a
+gcloud container clusters delete wamn --project wamn-dev --zone us-central1-a
 ```
 
 The disks of the PostgreSQL and NATS volumes can outlive the cluster. List them.
@@ -164,10 +214,10 @@ When their data is no longer needed, delete them:
 
 ```bash
 gcloud compute disks list --project wamn-dev
-gcloud compute disks delete <disk> --project wamn-dev --zone us-east4-a
+gcloud compute disks delete <disk> --project wamn-dev --zone us-central1-a
 ```
 
-Then make sure that no load balancer part remains. Delete each part that remains:
+The endpoint groups of the edge can also outlive the cluster. Then make sure that no load balancer part remains. Delete each part that remains:
 
 ```bash
 gcloud compute forwarding-rules list --project wamn-dev --global
@@ -181,7 +231,7 @@ gcloud compute addresses list --project wamn-dev --global
 gcloud compute network-endpoint-groups list --project wamn-dev
 ```
 
-### 8.5 Stop all billing at once
+### 9.5 Stop all billing at once
 
 If costs must stop now, unlink billing.
 Google then stops the billable services of the project, and it can delete their resources.
@@ -199,9 +249,28 @@ gcloud projects delete wamn-dev
 
 The DNS zone goes with the project. Before you delete it, set the Namecheap name servers back to Namecheap, or `wamn.dev` stops resolving, and mail forwarding stops with it.
 
-## 9. Out
+## 10. Cost
 
-- Real invitation mail.
+The prices are approximate list prices in `us-central1`. Step 1 reads the current prices from the Cloud Billing catalog and corrects this table.
+
+| Item | Price | 2 x `e2-standard-2` Spot |
+| --- | --- | --- |
+| Nodes | `e2-standard-2` Spot about 0.02 USD an hour, `e2-standard-4` Spot about 0.04 USD an hour | about 0.04 USD an hour |
+| Node external addresses | about 0.005 USD an hour each | about 0.01 USD an hour |
+| Cluster management | 0.10 USD an hour, covered by the zonal credit | 0 |
+| Load balancer | about 0.025 USD an hour for the forwarding rule, and a small charge per GB | about 0.025 USD an hour, only while it exists |
+| Disks | `pd-standard` about 0.04 USD per GB each month. `pd-balanced` is about 0.10 USD. | 2 x 30 GB boot and about 20 GB of volumes: about 3 USD a month. The disks stay after the nodes scale to 0. |
+| Cloud DNS | 0.20 USD a month for the zone | the same |
+| GCS, Artifact Registry, CDN egress, the guard | cents for a test | the same |
+| Resend | free up to its monthly limit | 0 |
+| Total while running | | about 0.08 USD an hour |
+
+Two test hours a day on five days cost about 1 USD a week.
+While nothing runs, the disks, the buckets, the registry and the DNS zone cost a few USD a month.
+
+## 11. Out
+
 - A second environment, for example staging and production.
 - A regional cluster or more than one PostgreSQL instance.
+- A mode with larger or on-demand machines, until the benchmark measures a need.
 - CI that deploys.

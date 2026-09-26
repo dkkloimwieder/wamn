@@ -8,7 +8,7 @@ The built parts are in the operations pages.
 ## 1. Remaining work
 
 The first real deployment runs Receiving through the public host on Google Cloud, and a person signs in and completes a supplier change in a browser.
-`wamn-ghx2` holds it. It waits until the owner names the cloud project, the domain and the certificate issuer.
+`wamn-ghx2` holds it, and [Google Cloud deployment](gcp-deployment.md) is its plan. The owner named the project, the domain and the certificate issuer on 2026-09-25.
 The Google Cloud part of the edge chart is assumed and not tested. Only a rendering checks it.
 
 ## 2. Fixed rules
