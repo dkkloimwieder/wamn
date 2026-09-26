@@ -573,14 +573,6 @@ function DataGridTableVirtual<TData extends object>(props: DataGridTableVirtualP
     return scrollElement();
   };
 
-  const resolveItemKey = (index: number) => {
-    const row = centerRows()[index];
-
-    if (!row) return index;
-
-    return customGetItemKey()?.(index, row) ?? row.id ?? index;
-  };
-
   const resolveEstimateSize = (index: number) => {
     const row = centerRows()[index];
 
@@ -596,7 +588,17 @@ function DataGridTableVirtual<TData extends object>(props: DataGridTableVirtualP
           return centerRows().length;
         },
         getScrollElement: resolveScrollElement,
-        getItemKey: resolveItemKey,
+        // A new key function whenever the caller's changes. The virtualizer
+        // reads every size again only when its key function changes, so a
+        // caller whose sizes change hands over a new one (wamn-jsct).
+        get getItemKey() {
+          const custom = customGetItemKey();
+          return (index: number) => {
+            const row = centerRows()[index];
+            if (!row) return index;
+            return custom?.(index, row) ?? row.id ?? index;
+          };
+        },
         estimateSize: resolveEstimateSize,
         get overscan() {
           return customOverscan() ?? overscan();

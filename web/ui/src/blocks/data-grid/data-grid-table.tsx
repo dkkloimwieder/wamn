@@ -1183,7 +1183,10 @@ function DataGridTableBodyRowExpandded<TData extends object>(props: {
   return (
     <Show when={(props.row as { getIsGrouped?: () => boolean }).getIsGrouped?.() !== true && expandedContent()}>
       {(content) => (
-        <tr class={cn(grid.props.tableLayout?.rowBorder && bodyRowBottomBorderClasses)}>
+        <tr
+          data-detail-for={props.row.id}
+          class={cn(grid.props.tableLayout?.rowBorder && bodyRowBottomBorderClasses)}
+        >
           <td
             colSpan={
               getDataGridTableOrderedVisibleCells(props.row).length +
