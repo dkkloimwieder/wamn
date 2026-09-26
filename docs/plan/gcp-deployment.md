@@ -159,6 +159,11 @@ Owner rulings of 2026-09-26:
 - CloudNativePG backups come later. The operations page states that they are not configured.
 - The event NATS users and permissions come from a small example program that calls `event_broker::prepare` of `test-support/infrastructure`. A hand-written file would state again what the program derives. If the program cannot run outside the test crate, that is a finding, and the interim is a file that holds the program output verbatim, with its command in the operations page.
 - The host pulls components with a short-lived Artifact Registry token that a CronJob refreshes into the docker config Secret, because the host cannot use Workload Identity for that pull (finding `wamn-i87m`). The CronJob runs as a Kubernetes service account that Workload Identity binds to a Google service account with only `roles/artifactregistry.reader`.
+- The example program adds one user after `prepare()`: `tap-admin`. It can publish only `$JS.API.STREAM.INFO.WAMN_TAP`, `$JS.API.STREAM.CREATE.WAMN_TAP`, `$JS.API.STREAM.UPDATE.WAMN_TAP` and `_INBOX_tap-admin.>`, and subscribe only to `_INBOX_tap-admin.>`. The program writes its nats CLI context as `context.json` for the Secret `evt-nats-bootstrap`.
+- The program writes only the `authorization` block, as `authorization.conf`, for the Secret `evt-nats-authorization`. It holds the users of `prepare()` and `tap-admin`. The manifest supplies `listen`, `http`, `jetstream` and the `include`.
+- The Google Cloud copy of the NATS manifest is `deploy/gcp/nats-jetstream.yaml` in namespace `platform`. It has one replica, no `cluster` block or cluster port, and no anti-affinity spread. It keeps the headless Service and the volume claim. `deploy/infra` does not change.
+- The Secret `wamn-event-nats` in `hosts` holds the `runtime` user with the keys of `cluster/deployment.rs`, and `stream_replicas` is `1`. The Secret `wamn-materializer-nats` in `hosts` holds the binding with the server `nats://evt-nats.platform.svc.cluster.local:4222`. The host values and the CDC reader use the same URL.
+- The `provisioning` user creates the event streams and consumers in the provisioning step only. Its Secret, and the Secrets of `publisher` and `observer`, stay in `platform` and are never mounted into a host.
 
 ## 6. Benchmark
 
