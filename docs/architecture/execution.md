@@ -492,6 +492,10 @@ A header sort of rows that the load did not read in full starts a new load in th
 A read that states no `lists` names no key, so its table numbers the rows by position.
 Each row link and row form is a button in the last column.
 A table that holds more than 100 rows renders only the rows in view of its box.
+The definition also names the served update of the table's relation, with the columns it writes that the plan does not supply.
+The update contract states the column that each writable input writes, so no name is compared.
+It names each operation that a row opens. An operation takes many rows when it accepts more than one outer input and runs each in its own transaction.
+It names each child table: another table whose declared filter narrows a column that names a record of this table's model.
 A detail reads one record and shows its fields.
 A form renders what the operator fills over TanStack Form, and it checks that input with an emitted `zod` schema.
 It writes the reserved inputs from the runtime at submit time.

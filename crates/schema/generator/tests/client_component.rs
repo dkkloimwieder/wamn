@@ -1357,3 +1357,101 @@ fn a_table_with_no_key_numbers_its_rows_and_every_table_has_a_definition() {
     let index = source(&files, "generated/client-ts/components/index.ts");
     assert!(!index.contains("table definition"), "{index}");
 }
+
+/// The table definition named `constant` in one emitted module.
+fn definition<'a>(module: &'a str, constant: &str) -> &'a str {
+    let start = module
+        .find(&format!("export const {constant} = {{"))
+        .unwrap_or_else(|| panic!("{constant} is emitted"));
+    &module[start..start + module[start..].find("} as const;").unwrap()]
+}
+
+fn operation_mut<'a>(
+    ir: &'a mut ClientContractIr,
+    model: &str,
+    name: &str,
+) -> &'a mut wamn_schema_generator::client_ir::OperationIr {
+    ir.models
+        .iter_mut()
+        .filter(|candidate| candidate.name == model)
+        .flat_map(|model| model.operations.iter_mut())
+        .find(|operation| operation.name == name)
+        .unwrap_or_else(|| panic!("the fixture declares {model}/{name}"))
+}
+
+#[test]
+fn a_table_definition_names_its_update_its_actions_and_its_child_tables() {
+    let files = emit(&release());
+    let widgets = definition(widget(&files), "WIDGET_QUERY_TABLE");
+    for line in [
+        // The update writes these columns, and the plan supplies none of them.
+        "  update: { operation: \"platform-fixture:widget/update@1.0.0\", keyInput: [\"id\"], revisionInput: [\"expectedEditVersion\"], revisionField: \"editVersion\", fields: [\n    { field: \"code\", input: [\"change\", \"code\"] },\n    { field: \"makerId\", input: [\"change\", \"makerId\"] },\n    { field: \"note\", input: [\"change\", \"note\"] },\n  ] },\n",
+        // A command that runs each outer input on its own takes many rows.
+        "  actions: [\n    { operation: \"platform-fixture:widget/get@1.0.0\", label: \"get\", many: false },\n    { operation: \"platform-fixture:widget/record-batch@1.0.0\", label: \"record-batch\", many: true },\n  ],\n",
+        "  childTables: [],\n",
+    ] {
+        assert!(widgets.contains(line), "{line} in {widgets}");
+    }
+    let makers = definition(
+        source(&files, "generated/client-ts/components/widget_maker.tsx"),
+        "WIDGET_MAKER_QUERY_TABLE",
+    );
+    assert!(
+        !makers.contains("update:"),
+        "the maker model serves no update: {makers}"
+    );
+    assert!(
+        makers.contains("    { operation: \"platform-fixture:widget/create@1.0.0\", label: \"create\", many: false },\n"),
+        "a create takes one row: {makers}"
+    );
+}
+
+#[test]
+fn a_table_whose_filter_narrows_a_reference_is_a_child_of_that_model() {
+    let mut ir = release();
+    let query = operation_mut(&mut ir, "widget", "query");
+    query
+        .paging
+        .as_mut()
+        .expect("the widget query pages")
+        .filters
+        .push(wamn_schema_generator::client_ir::FilterIr {
+            field: "maker_id".to_owned(),
+            binding: "json_array".to_owned(),
+        });
+    let files = emit(&ir);
+    let makers = definition(
+        source(&files, "generated/client-ts/components/widget_maker.tsx"),
+        "WIDGET_MAKER_QUERY_TABLE",
+    );
+    assert!(
+        makers.contains(
+            "  childTables: [\n    { definition: \"WIDGET_QUERY_TABLE\", scopeFilter: \"makerId\" },\n  ],\n"
+        ),
+        "{makers}"
+    );
+    // A filter on a value names no record, so the widget has no child.
+    assert!(definition(widget(&files), "WIDGET_QUERY_TABLE").contains("  childTables: [],\n"));
+}
+
+#[test]
+fn an_unserved_update_edits_nothing_and_a_shared_transaction_takes_one_row() {
+    let mut ir = release();
+    operation_mut(&mut ir, "widget", "update").route = None;
+    operation_mut(&mut ir, "widget", "record_batch").transaction = None;
+    let files = emit(&ir);
+    let widgets = definition(widget(&files), "WIDGET_QUERY_TABLE");
+    assert!(!widgets.contains("update:"), "{widgets}");
+    assert!(
+        widgets.contains("label: \"record-batch\", many: false }"),
+        "{widgets}"
+    );
+    let makers = definition(
+        source(&files, "generated/client-ts/components/widget_maker.tsx"),
+        "WIDGET_MAKER_QUERY_TABLE",
+    );
+    assert!(
+        !makers.contains("widget/update"),
+        "an unserved update is no action: {makers}"
+    );
+}

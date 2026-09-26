@@ -688,6 +688,7 @@ fn a_published_response_takes_its_text_from_the_terminal() {
         label: None,
         description: None,
         references: None,
+        column: None,
     };
     let routes = BTreeMap::from([(
         identity.to_owned(),

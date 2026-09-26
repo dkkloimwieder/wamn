@@ -229,4 +229,10 @@ export const SUPPLIER_QUERY_TABLE = {
     { field: "id", label: "id", type: "uuid", role: "key" },
     { field: "name", label: "Supplier name", type: "text", role: "value" },
   ],
+  actions: [
+    { operation: "wamn-receiving:purchase-order/update@1.0.0", label: "update", many: false },
+  ],
+  childTables: [
+    { definition: "PURCHASE_ORDER_QUERY_TABLE", scopeFilter: "supplierId" },
+  ],
 } as const;

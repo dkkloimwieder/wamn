@@ -470,4 +470,11 @@ export const PALLET_QUERY_TABLE = {
     { field: "updatedAt", label: "updated at", type: "timestamptz", role: "value" },
     { field: "updatedBy", label: "updated by", type: "uuid", role: "value" },
   ],
+  actions: [
+    { operation: "wamn-wms:pallet/get@1.0.0", label: "get", many: false },
+    { operation: "wamn-wms:inventory/adjust@1.0.0", label: "adjust", many: true },
+    { operation: "wamn-wms:inventory/move@1.0.0", label: "move", many: true },
+    { operation: "wamn-wms:inventory/split@1.0.0", label: "split", many: true },
+  ],
+  childTables: [],
 } as const;

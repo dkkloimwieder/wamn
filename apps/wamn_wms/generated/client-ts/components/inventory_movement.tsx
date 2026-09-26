@@ -251,4 +251,8 @@ export const INVENTORY_MOVEMENT_QUERY_TABLE = {
     { field: "reasonCode", label: "reason code", type: "text", role: "value" },
     { field: "toLocationId", label: "to location id", type: "uuid", role: "reference", displayField: "locationCode" },
   ],
+  actions: [
+    { operation: "wamn-wms:inventory-movement/get@1.0.0", label: "get", many: false },
+  ],
+  childTables: [],
 } as const;

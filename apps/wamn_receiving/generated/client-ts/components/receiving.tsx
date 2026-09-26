@@ -154,6 +154,8 @@ export const RECEIVING_LOAD_PURCHASE_ORDER_HISTORY_TABLE = {
     { field: "kind", label: "Change", type: "text", role: "value" },
     { field: "operation", label: "Operation", type: "text", role: "value" },
   ],
+  actions: [],
+  childTables: [],
 } as const;
 
 /** What the table for `wamn-receiving:receiving/load-receipt-screen@1.0.0` takes. */
@@ -254,6 +256,10 @@ export const RECEIVING_LOAD_RECEIPT_SCREEN_TABLE = {
     { field: "rowVersion", label: "Revision", type: "int32", role: "revision" },
     { field: "supplierId", label: "Supplier", type: "uuid", role: "value" },
   ],
+  actions: [
+    { operation: "wamn-receiving:receiving/record-receipt@1.0.0", label: "record-receipt", many: true },
+  ],
+  childTables: [],
 } as const;
 
 /** What an operator types for `wamn-receiving:receiving/record-receipt@1.0.0`. */

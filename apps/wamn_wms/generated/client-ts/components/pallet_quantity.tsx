@@ -222,4 +222,8 @@ export const PALLET_QUANTITY_QUERY_TABLE = {
     { field: "quantity", label: "quantity", type: "numeric", role: "value" },
     { field: "status", label: "status", type: "text", role: "value" },
   ],
+  actions: [
+    { operation: "wamn-wms:pallet-quantity/get@1.0.0", label: "get", many: false },
+  ],
+  childTables: [],
 } as const;

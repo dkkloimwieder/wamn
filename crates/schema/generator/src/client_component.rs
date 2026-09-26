@@ -100,7 +100,7 @@ pub fn emit_ts_components(
     .expect("writing to a String cannot fail");
     index.push('\n');
     for model in &plan.models {
-        let source = emit_model(model)?;
+        let source = emit_model(model, plan)?;
         if source.is_empty() {
             continue;
         }
@@ -179,7 +179,10 @@ fn written(screen: &ScreenPlan<'_>) -> bool {
     screen.role.is_supported() && screen.contract.route.is_some()
 }
 
-fn emit_model(model: &ModelPlan<'_>) -> Result<String, ClientComponentError> {
+fn emit_model(
+    model: &ModelPlan<'_>,
+    plan: &ClientPlan<'_>,
+) -> Result<String, ClientComponentError> {
     let screens: Vec<&ScreenPlan<'_>> = model
         .screens
         .iter()
@@ -238,7 +241,7 @@ fn emit_model(model: &ModelPlan<'_>) -> Result<String, ClientComponentError> {
                     &mut foreign,
                     &mut sibling,
                 )?;
-                write_table_definition(&mut body, screen)?;
+                write_table_definition(&mut body, screen, plan)?;
             }
             Role::Detail => {
                 solid.extend(["createResource", "onCleanup"]);
@@ -888,9 +891,14 @@ fn emit_definition_table(
 /// A read that states no `lists` names no key, so its row id is null and the
 /// table numbers its rows by position. A read that declares no page limit has
 /// a null page maximum, and a load reads what the release answers.
+///
+/// It also names the update a cell edits through and the columns it writes,
+/// each operation a row opens with whether it takes many rows, and each child
+/// table by its definition name with the column its scope filter narrows.
 fn write_table_definition(
     source: &mut String,
     screen: &ScreenPlan<'_>,
+    plan: &ClientPlan<'_>,
 ) -> Result<(), ClientComponentError> {
     let operation = screen.contract;
     let lists = operation.lists.as_ref();
@@ -983,7 +991,76 @@ fn write_table_definition(
         }
         source.push_str(" },\n");
     }
-    source.push_str("  ],\n} as const;\n");
+    source.push_str("  ],\n");
+    if let Some(update) = &screen.update {
+        write!(
+            source,
+            "  update: {{ operation: {}, keyInput: {}",
+            quote(update.operation),
+            member_literal(update.key_input)
+        )
+        .expect("write");
+        if let (Some(input), Some(field)) = (update.revision_input, update.revision_field) {
+            write!(
+                source,
+                ", revisionInput: {}, revisionField: {}",
+                member_literal(input),
+                quote(&column_member(field, &operation.operation)?)
+            )
+            .expect("write");
+        }
+        source.push_str(", fields: [\n");
+        for field in &update.fields {
+            writeln!(
+                source,
+                "    {{ field: {}, input: {} }},",
+                quote(&column_member(field.column, &operation.operation)?),
+                member_literal(field.input)
+            )
+            .expect("write");
+        }
+        source.push_str("  ] },\n");
+    }
+    let actions: Vec<String> = screen
+        .actions
+        .iter()
+        .map(|action| {
+            format!(
+                "{{ operation: {}, label: {}, many: {} }}",
+                quote(action.operation),
+                quote(&link_label(action.operation)),
+                action.many
+            )
+        })
+        .collect();
+    // A child that gets no component of its own is no child table.
+    let children = screen
+        .child_tables
+        .iter()
+        .filter(|child| {
+            plan.screens().any(|candidate| {
+                candidate.contract.operation == child.operation && written(candidate)
+            })
+        })
+        .map(|child| {
+            column_member(child.field, child.operation).map(|field| {
+                format!(
+                    "{{ definition: \"{}_{}_TABLE\", scopeFilter: {} }}",
+                    child.model.to_uppercase(),
+                    child.name.to_uppercase(),
+                    quote(&field)
+                )
+            })
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    for (name, items) in [("actions", actions), ("childTables", children)] {
+        if items.is_empty() {
+            writeln!(source, "  {name}: [],").expect("write");
+        } else {
+            writeln!(source, "  {name}: [\n    {},\n  ],", items.join(",\n    ")).expect("write");
+        }
+    }
+    source.push_str("} as const;\n");
     Ok(())
 }
 

@@ -39,6 +39,7 @@ pub(super) fn release(composed: bool) -> ClientContractIr {
                     label: None,
                     description: None,
                     references: None,
+                    column: None,
                 })
                 .collect(),
             errors: Vec::new(),

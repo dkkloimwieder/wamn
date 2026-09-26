@@ -209,4 +209,8 @@ export const RECEIPT_QUERY_TABLE = {
     { field: "purchaseOrderId", label: "Purchase order", type: "uuid", role: "reference", displayField: "purchaseOrderNumber" },
     { field: "receiptReference", label: "Receipt reference", type: "text", role: "value" },
   ],
+  actions: [
+    { operation: "wamn-receiving:receipt/get@1.0.0", label: "get", many: false },
+  ],
+  childTables: [],
 } as const;

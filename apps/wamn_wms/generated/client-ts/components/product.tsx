@@ -337,6 +337,15 @@ export const PRODUCT_QUERY_TABLE = {
     { field: "productCode", label: "product code", type: "text", role: "value" },
     { field: "rowVersion", label: "row version", type: "int32", role: "revision" },
   ],
+  update: { operation: "wamn-wms:product/update@1.0.0", keyInput: ["id"], revisionInput: ["expectedRowVersion"], revisionField: "rowVersion", fields: [
+    { field: "productCode", input: ["change", "productCode"] },
+  ] },
+  actions: [
+    { operation: "wamn-wms:product/get@1.0.0", label: "get", many: false },
+    { operation: "wamn-wms:inventory/adjust@1.0.0", label: "adjust", many: true },
+    { operation: "wamn-wms:inventory/split@1.0.0", label: "split", many: true },
+  ],
+  childTables: [],
 } as const;
 
 /** What an operator types for `wamn-wms:product/update@1.0.0`. */

@@ -116,4 +116,8 @@ export const LOCATION_LIST_TABLE = {
     { field: "id", label: "id", type: "uuid", role: "key" },
     { field: "locationCode", label: "Location code", type: "text", role: "value" },
   ],
+  actions: [
+    { operation: "wamn-receiving:receiving/record-receipt@1.0.0", label: "record-receipt", many: true },
+  ],
+  childTables: [],
 } as const;

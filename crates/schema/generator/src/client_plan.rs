@@ -31,6 +31,9 @@ const SUPPLIED_PATHS: [(&str, SuppliedKind); 5] = [
     ("value.occurred_at", SuppliedKind::OccurredAt),
 ];
 
+/// The transaction of a command that runs each outer input on its own.
+const PER_INPUT_TRANSACTION: &str = "explicit_per_input";
+
 /// The operation kind that no operator calls.
 const PRIVATE_KIND: &str = "event_handler";
 
@@ -367,6 +370,70 @@ pub struct RowForm<'a> {
     pub pairs: Vec<(&'a str, &'a str)>,
 }
 
+/// The update that edits one table's rows in place.
+///
+/// It is the served update of the table's own relation, keyed by the table's
+/// row id. Its record states the key input, the revision input and the row
+/// field that carries the revision, so a cell edit sends the row's own values.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TableUpdate<'a> {
+    /// Canonical identity of the update.
+    pub operation: &'a str,
+    /// Model that owns the update, which is the module an emitter imports it
+    /// from.
+    pub model: &'a str,
+    /// Operation name of the update inside its own model.
+    pub name: &'a str,
+    /// Input path of the update that takes the row id.
+    pub key_input: &'a str,
+    /// Input path of the update that takes the expected revision, when the
+    /// update guards one.
+    pub revision_input: Option<&'a str>,
+    /// Table column that carries that revision.
+    pub revision_field: Option<&'a str>,
+    /// The table columns a cell edits, in the update's input order.
+    pub fields: Vec<EditableField<'a>>,
+}
+
+/// One table column that the update writes.
+///
+/// The update states the column each writable input writes, so no name is
+/// compared. The plan supplies none of these inputs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct EditableField<'a> {
+    /// Result field of the table, which is the column the input writes.
+    pub column: &'a str,
+    /// Input path of the update that carries the new value.
+    pub input: &'a str,
+}
+
+/// One served operation that a table row opens, from the row links and the
+/// row forms.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TableAction<'a> {
+    /// Canonical identity of the operation.
+    pub operation: &'a str,
+    /// Whether one call takes many rows: the operation accepts more than one
+    /// outer input and runs each in its own transaction.
+    pub many: bool,
+}
+
+/// Another table that shows the records of one row, scoped by that row.
+///
+/// The child declares a filter on a column that names a record of this
+/// table's model, so the parent row's id is the child's scope value.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ChildTable<'a> {
+    /// Canonical identity of the child's read.
+    pub operation: &'a str,
+    /// Model that owns the child's read.
+    pub model: &'a str,
+    /// Operation name of the child's read inside its own model.
+    pub name: &'a str,
+    /// Result field of the child that its scope filter narrows.
+    pub field: &'a str,
+}
+
 /// One callable operation's screen.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ScreenPlan<'a> {
@@ -415,6 +482,13 @@ pub struct ScreenPlan<'a> {
     /// Columns that name a record, each with the read that shows its text,
     /// in contract order. Only a table states any.
     pub resolved_columns: Vec<ResolvedColumn<'a>>,
+    /// The update a table cell edits through. Only a table states one.
+    pub update: Option<TableUpdate<'a>>,
+    /// Served operations one table row opens, row links first, then row
+    /// forms, each with whether it takes many rows.
+    pub actions: Vec<TableAction<'a>>,
+    /// Tables scoped by one row of this table, in plan order.
+    pub child_tables: Vec<ChildTable<'a>>,
 }
 
 /// One model's screens.
@@ -452,7 +526,31 @@ impl<'a> ClientPlan<'a> {
         plan.populate_inputs();
         plan.link_forms();
         plan.resolve_columns();
+        plan.bind_tables();
         plan
+    }
+
+    /// Bind each table to its update, its actions and its child tables.
+    ///
+    /// It runs last, because the actions read the row links and row forms.
+    fn bind_tables(&mut self) {
+        let bound: Vec<_> = self
+            .screens()
+            .map(|screen| {
+                (
+                    table_update(screen, self),
+                    table_actions(screen, self),
+                    child_tables(screen, self),
+                )
+            })
+            .collect();
+        let mut bound = bound.into_iter();
+        for model in &mut self.models {
+            for screen in &mut model.screens {
+                (screen.update, screen.actions, screen.child_tables) =
+                    bound.next().expect("one binding for each screen");
+            }
+        }
     }
 
     /// Bind each screen's row links once every screen exists.
@@ -737,6 +835,9 @@ impl<'a> ScreenPlan<'a> {
             population: Vec::new(),
             row_forms: Vec::new(),
             resolved_columns: Vec::new(),
+            update: None,
+            actions: Vec::new(),
+            child_tables: Vec::new(),
         }
     }
 
@@ -994,6 +1095,115 @@ fn record_read<'a>(
             name: read.name,
             key_input,
         })
+}
+
+/// The served update of one table's relation, keyed by the table's row id,
+/// with the columns it writes that the table shows.
+fn table_update<'a>(screen: &ScreenPlan<'a>, plan: &ClientPlan<'a>) -> Option<TableUpdate<'a>> {
+    let list = Lister::of(screen)?;
+    let relation = screen.record?.relation;
+    let shows = |path: &str| screen.columns.iter().any(|column| column.path == path);
+    plan.screens().find_map(|update| {
+        let record = update.contract.record.as_ref()?;
+        if update.contract.kind != "update"
+            || update.contract.route.is_none()
+            || record.relation != relation
+            || record.key_field != list.key_field
+        {
+            return None;
+        }
+        let key_input = record.key_input.as_deref()?;
+        // A guarded update needs the revision the row shows.
+        let revision_field = record.revision_field.as_deref();
+        let revision_input = record.revision_input.as_deref();
+        if revision_input.is_some() && !revision_field.is_some_and(shows) {
+            return None;
+        }
+        let fields: Vec<_> = update
+            .inputs
+            .iter()
+            .filter_map(|input| {
+                let column = input.column.as_deref()?;
+                shows(column).then_some(EditableField {
+                    column,
+                    input: input.path.as_str(),
+                })
+            })
+            .collect();
+        (!fields.is_empty()).then_some(TableUpdate {
+            operation: update.contract.operation.as_str(),
+            model: update.model,
+            name: update.name,
+            key_input,
+            revision_input,
+            revision_field: revision_input.and(revision_field),
+            fields,
+        })
+    })
+}
+
+/// The served operations one table row opens, each with whether one call
+/// takes many rows.
+fn table_actions<'a>(screen: &ScreenPlan<'a>, plan: &ClientPlan<'a>) -> Vec<TableAction<'a>> {
+    screen
+        .row_links
+        .iter()
+        .map(|link| link.operation)
+        .chain(screen.row_forms.iter().map(|form| form.operation))
+        .filter_map(|operation| {
+            let target = plan
+                .screens()
+                .find(|candidate| candidate.contract.operation == operation)?;
+            target.contract.route.as_ref()?;
+            let maximum = target
+                .contract
+                .envelope
+                .as_ref()
+                .and_then(|envelope| envelope.get("maximum"))
+                .and_then(serde_json::Value::as_u64);
+            Some(TableAction {
+                operation,
+                many: maximum.is_some_and(|maximum| maximum > 1)
+                    && target.contract.transaction.as_deref() == Some(PER_INPUT_TRANSACTION),
+            })
+        })
+        .collect()
+}
+
+/// The served tables whose declared filter narrows a column that names a
+/// record of this table's model.
+fn child_tables<'a>(screen: &ScreenPlan<'a>, plan: &ClientPlan<'a>) -> Vec<ChildTable<'a>> {
+    let Some(parent) = Lister::of(screen) else {
+        return Vec::new();
+    };
+    plan.screens()
+        .filter(|child| {
+            child.role == Role::Table
+                && child.contract.route.is_some()
+                && child.contract.operation != screen.contract.operation
+        })
+        .flat_map(|child| {
+            let filters = child
+                .paging
+                .as_ref()
+                .map_or(&[][..], |paging| paging.filters);
+            filters.iter().filter_map(move |filter| {
+                let column = child.columns.iter().find(|column| {
+                    column.path == filter.field
+                        && column
+                            .references
+                            .as_ref()
+                            .is_some_and(|reference| reference.model == parent.model)
+                })?;
+                Some(ChildTable {
+                    operation: child.contract.operation.as_str(),
+                    model: child.model,
+                    name: child.name,
+                    field: column.path.as_str(),
+                })
+            })
+        })
+        .collect()
 }
 
 /// Bind one screen's inputs to the lists that offer their records.

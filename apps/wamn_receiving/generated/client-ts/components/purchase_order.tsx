@@ -257,6 +257,14 @@ export const PURCHASE_ORDER_QUERY_TABLE = {
     { field: "updatedAt", label: "Updated", type: "timestamptz", role: "value" },
     { field: "updatedBy", label: "Updated by", type: "uuid", role: "value" },
   ],
+  update: { operation: "wamn-receiving:purchase-order/update@1.0.0", keyInput: ["id"], revisionInput: ["expectedRowVersion"], revisionField: "rowVersion", fields: [
+    { field: "supplierId", input: ["change", "supplierId"] },
+  ] },
+  actions: [
+    { operation: "wamn-receiving:purchase-order/get@1.0.0", label: "get", many: false },
+    { operation: "wamn-receiving:receiving/record-receipt@1.0.0", label: "record-receipt", many: true },
+  ],
+  childTables: [],
 } as const;
 
 /** What an operator types for `wamn-receiving:purchase-order/update@1.0.0`. */

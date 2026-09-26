@@ -399,6 +399,8 @@ export const INVENTORY_AGGREGATE_TABLE = {
     { field: "quantity", label: "quantity", type: "numeric", role: "value" },
     { field: "status", label: "status", type: "text", role: "value" },
   ],
+  actions: [],
+  childTables: [],
 } as const;
 
 /** What an operator types for `wamn-wms:inventory/merge@1.0.0`. */

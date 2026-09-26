@@ -352,6 +352,18 @@ export const LOCATION_QUERY_TABLE = {
     { field: "locationCode", label: "location code", type: "text", role: "value" },
     { field: "rowVersion", label: "row version", type: "int32", role: "revision" },
   ],
+  update: { operation: "wamn-wms:location/update@1.0.0", keyInput: ["id"], revisionInput: ["expectedRowVersion"], revisionField: "rowVersion", fields: [
+    { field: "locationCode", input: ["change", "locationCode"] },
+  ] },
+  actions: [
+    { operation: "wamn-wms:location/get@1.0.0", label: "get", many: false },
+    { operation: "wamn-wms:inventory/move@1.0.0", label: "move", many: true },
+    { operation: "wamn-wms:inventory/split@1.0.0", label: "split", many: true },
+    { operation: "wamn-wms:pallet/create@1.0.0", label: "create", many: false },
+  ],
+  childTables: [
+    { definition: "PALLET_QUERY_TABLE", scopeFilter: "locationId" },
+  ],
 } as const;
 
 /** What an operator types for `wamn-wms:location/update@1.0.0`. */

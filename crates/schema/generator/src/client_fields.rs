@@ -19,6 +19,7 @@ fn field(path: String, type_name: String, required: bool, nullable: bool) -> Fie
         label: None,
         description: None,
         references: None,
+        column: None,
     }
 }
 
@@ -210,6 +211,10 @@ pub(super) fn input_fields_of(contract: &Value) -> Vec<FieldIr> {
         declared.values = values(writable.get("values"));
         (declared.label, declared.description) = text(writable);
         declared.references = reference(writable);
+        declared.column = writable
+            .get("field")
+            .and_then(Value::as_str)
+            .map(str::to_owned);
         insert(
             &mut tree,
             declared,
@@ -387,6 +392,7 @@ fn schema_field(schema: &Value, mut path: String, required: bool, hints: &[&Fiel
                 result.label.clone_from(&hint.label);
                 result.description.clone_from(&hint.description);
                 result.references.clone_from(&hint.references);
+                result.column.clone_from(&hint.column);
                 if !hint.values.is_empty() {
                     if result.values.is_empty() {
                         result.values.clone_from(&hint.values);

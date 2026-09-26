@@ -242,6 +242,10 @@ pub struct FieldIr {
     /// the column's own foreign key, so both arrive here the same way.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub references: Option<ReferenceIr>,
+    /// The model column this input writes, when a generated write states one
+    /// (`writable_fields[].field`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub column: Option<String>,
 }
 
 /// The model whose record one input names.
