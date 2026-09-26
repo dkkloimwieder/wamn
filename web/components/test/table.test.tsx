@@ -135,6 +135,29 @@ describe("the generated table for a page", () => {
     expect(item(sent, 2)["filter"]).toEqual({ code: ["x", "y"] });
   });
 
+  it("sends one request over HTTP for one scope change (wamn-3an8)", async () => {
+    // The real transport, so a second send anywhere below the table counts.
+    const urls: string[] = [];
+    const transport = createTransport({
+      baseUrl: "http://stub",
+      credential: "token",
+      fetch: (input) => {
+        urls.push(String(input));
+        return Promise.resolve(
+          new Response(JSON.stringify([{ value: { item: [], next_cursor: null } }]), { status: 200 }),
+        );
+      },
+    });
+    render(() => <WidgetQueryTable transport={transport} />);
+    await waitFor(() => expect(urls).toHaveLength(1));
+
+    addScope("Widget code", "x");
+    await waitFor(() => expect(urls).toHaveLength(2));
+    await new Promise((settled) => setTimeout(settled, 100));
+    expect(urls).toHaveLength(2);
+    expect(decodeURIComponent(urls[1]!)).toContain('"code":["x"]');
+  });
+
   it("sends no filter member once the operator removes the last value (wamn-oya5)", async () => {
     const { transport, sent } = stub([page(["a"], null)]);
     render(() => <WidgetQueryTable transport={transport} />);
