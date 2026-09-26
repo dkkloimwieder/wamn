@@ -20,6 +20,9 @@ mod business_fixture;
 #[cfg(test)]
 mod local_business;
 
+#[cfg(test)]
+mod differential;
+
 #[test]
 fn committed_sqlx_metadata_compiles_offline() {
     wamn_schema_generator::verify_sqlx_metadata(

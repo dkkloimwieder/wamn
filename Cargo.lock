@@ -6554,6 +6554,7 @@ dependencies = [
  "hex",
  "object_store",
  "pg_walstream",
+ "proptest",
  "ratatui",
  "rcgen",
  "reqwest",

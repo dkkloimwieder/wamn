@@ -3,52 +3,52 @@
 
 #[cfg_attr(kani, derive(kani::Arbitrary))]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum Disposition {
+pub(crate) enum Disposition {
     Available,
     Held,
 }
 
 #[cfg_attr(kani, derive(kani::Arbitrary))]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum Lifecycle {
+pub(crate) enum Lifecycle {
     Open,
     Closed,
 }
 
 #[cfg_attr(kani, derive(kani::Arbitrary))]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum PackagingType {
+pub(crate) enum PackagingType {
     Pallet,
     Tote,
 }
 
 #[cfg_attr(kani, derive(kani::Arbitrary))]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-struct Packaging {
-    id: bool,
-    r#type: PackagingType,
-    code: bool,
-    location_id: bool,
-    lifecycle: Lifecycle,
+pub(crate) struct Packaging {
+    pub(crate) id: bool,
+    pub(crate) r#type: PackagingType,
+    pub(crate) code: bool,
+    pub(crate) location_id: bool,
+    pub(crate) lifecycle: Lifecycle,
 }
 
 #[cfg_attr(kani, derive(kani::Arbitrary))]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-struct Inventory {
-    id: bool,
-    product_id: bool,
-    packaging_id: bool,
-    location_id: bool,
-    quantity: u8,
-    disposition: Disposition,
-    lifecycle: Lifecycle,
+pub(crate) struct Inventory {
+    pub(crate) id: bool,
+    pub(crate) product_id: bool,
+    pub(crate) packaging_id: bool,
+    pub(crate) location_id: bool,
+    pub(crate) quantity: u8,
+    pub(crate) disposition: Disposition,
+    pub(crate) lifecycle: Lifecycle,
 }
 
-type Inventories = [Option<Inventory>; 2];
+pub(crate) type Inventories = [Option<Inventory>; 2];
 
 #[cfg_attr(kani, derive(kani::Arbitrary))]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum Type {
+pub(crate) enum Type {
     Move,
     Adjust,
     Split,
@@ -58,7 +58,7 @@ enum Type {
 
 #[cfg_attr(kani, derive(kani::Arbitrary))]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum Action {
+pub(crate) enum Action {
     Move {
         inventory_id: bool,
         to_packaging_id: bool,
@@ -89,65 +89,65 @@ enum Action {
 
 #[cfg_attr(kani, derive(kani::Arbitrary))]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-struct Command {
-    key: bool,
-    action: Action,
-    occurred_at: bool,
+pub(crate) struct Command {
+    pub(crate) key: bool,
+    pub(crate) action: Action,
+    pub(crate) occurred_at: bool,
     // Two opaque nonempty reason values, or no supplied reason.
-    reason: Option<bool>,
+    pub(crate) reason: Option<bool>,
 }
 
 #[cfg_attr(kani, derive(kani::Arbitrary))]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-struct InventoryTransaction {
-    id: u8,
-    operation_id: bool,
-    r#type: Type,
-    inventory_id: bool,
-    from_inventory_id: bool,
-    to_inventory_id: bool,
-    from_product_id: Option<bool>,
-    to_product_id: bool,
-    from_packaging_id: Option<bool>,
-    to_packaging_id: bool,
-    from_location_id: Option<bool>,
-    to_location_id: bool,
-    from_quantity: u8,
-    to_quantity: u8,
-    from_disposition: Option<Disposition>,
-    to_disposition: Disposition,
-    from_lifecycle: Option<Lifecycle>,
-    to_lifecycle: Lifecycle,
-    occurred_at: bool,
-    reason: Option<bool>,
+pub(crate) struct InventoryTransaction {
+    pub(crate) id: u8,
+    pub(crate) operation_id: bool,
+    pub(crate) r#type: Type,
+    pub(crate) inventory_id: bool,
+    pub(crate) from_inventory_id: bool,
+    pub(crate) to_inventory_id: bool,
+    pub(crate) from_product_id: Option<bool>,
+    pub(crate) to_product_id: bool,
+    pub(crate) from_packaging_id: Option<bool>,
+    pub(crate) to_packaging_id: bool,
+    pub(crate) from_location_id: Option<bool>,
+    pub(crate) to_location_id: bool,
+    pub(crate) from_quantity: u8,
+    pub(crate) to_quantity: u8,
+    pub(crate) from_disposition: Option<Disposition>,
+    pub(crate) to_disposition: Disposition,
+    pub(crate) from_lifecycle: Option<Lifecycle>,
+    pub(crate) to_lifecycle: Lifecycle,
+    pub(crate) occurred_at: bool,
+    pub(crate) reason: Option<bool>,
 }
 
 #[cfg_attr(kani, derive(kani::Arbitrary))]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-struct CommandResult {
-    operation_id: bool,
-    inventory: Inventories,
-    packaging: [Packaging; 2],
+pub(crate) struct CommandResult {
+    pub(crate) operation_id: bool,
+    pub(crate) inventory: Inventories,
+    pub(crate) packaging: [Packaging; 2],
 }
 
 #[cfg_attr(kani, derive(kani::Arbitrary))]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-struct Operation {
-    command: Command,
-    result: CommandResult,
-    transactions: [Option<InventoryTransaction>; 2],
+pub(crate) struct Operation {
+    pub(crate) command: Command,
+    pub(crate) result: CommandResult,
+    pub(crate) transactions: [Option<InventoryTransaction>; 2],
 }
 
 #[cfg_attr(kani, derive(kani::Arbitrary))]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-struct State {
-    inventory: Inventories,
-    packaging: [Packaging; 2],
-    operations: [Option<Operation>; 2],
+pub(crate) struct State {
+    pub(crate) inventory: Inventories,
+    pub(crate) packaging: [Packaging; 2],
+    pub(crate) operations: [Option<Operation>; 2],
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum Refusal {
+pub(crate) enum Refusal {
     InvalidInput,
     IntentConflict,
     Missing,
@@ -160,7 +160,7 @@ enum Refusal {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum Outcome {
+pub(crate) enum Outcome {
     Accepted(CommandResult),
     Replayed(CommandResult),
     Refused(Refusal),
@@ -169,7 +169,7 @@ enum Outcome {
 
 #[cfg_attr(kani, derive(kani::Arbitrary))]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum Failure {
+pub(crate) enum Failure {
     None,
     BusinessState,
     History,
@@ -218,7 +218,7 @@ fn valid_business(state: State) -> bool {
 }
 
 // History correctness is a separate induction over complete appends and unchanged prefixes.
-fn valid(state: State) -> bool {
+pub(crate) fn valid(state: State) -> bool {
     if !valid_business(state)
         || state
             .operations
@@ -240,7 +240,7 @@ fn valid(state: State) -> bool {
     }
 }
 
-fn initial(inventory: Inventories, packaging: [Packaging; 2]) -> State {
+pub(crate) fn initial(inventory: Inventories, packaging: [Packaging; 2]) -> State {
     State {
         inventory,
         packaging,
@@ -249,7 +249,7 @@ fn initial(inventory: Inventories, packaging: [Packaging; 2]) -> State {
 }
 
 // Capacity restrictions bound this experiment, not the target business rules.
-fn command_domain(state: State, command: Command) -> bool {
+pub(crate) fn command_domain(state: State, command: Command) -> bool {
     match command.action {
         Action::Adjust {
             inventory_id,
@@ -470,7 +470,7 @@ fn transactions(
     rows
 }
 
-fn execute(state: &mut State, command: Command) -> Outcome {
+pub(crate) fn execute(state: &mut State, command: Command) -> Outcome {
     execute_with_failure(state, command, Failure::None)
 }
 

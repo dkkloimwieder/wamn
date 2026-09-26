@@ -13,6 +13,7 @@ path = "lib.rs"
 [dev-dependencies]
 wamn-schema-generator = { workspace = true }
 anyhow = { workspace = true }
+proptest = { workspace = true }
 reqwest = { workspace = true, features = ["rustls", "json"] }
 serde_json = { workspace = true }
 serde_yaml = { workspace = true }

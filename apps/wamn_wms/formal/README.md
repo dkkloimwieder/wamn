@@ -136,6 +136,32 @@ The owner rules resolve the three blocking questions for this revision.
 Policies for those excluded domains remain unspecified and need decisions before any later expansion.
 No database, HTTP, Wasm, WIT, deployment state, shared framework, or new DSL belongs to this model.
 
+## Implementation conformance
+
+The [differential harness](../tests/differential.rs) imports this `model.rs` as its executable oracle.
+It sends the same bounded histories through the real WMS HTTP routes over disposable PostgreSQL.
+Proptest generates initial states and command histories, then shrinks discrepancies to smaller examples.
+The fixed corpus includes all six modeled commands, replay, changed intent, lineage, and lifecycle refusals.
+
+After each command, the harness compares acceptance, current inventory, packaging, all modeled transaction fields, and the stored command result.
+It also replays every earlier accepted request and requires the original complete response and unchanged database state.
+Raw transaction and claim rows must remain unchanged after later commands.
+
+Small identities map to stable UUIDs, and whole quantities map to PostgreSQL numeric values.
+Generated split, operation, and transaction UUIDs bind once to their model identities.
+Packaging codes remain unique because the production schema requires uniqueness.
+The model result snapshot projects to the corresponding production response fields.
+The adapter supplies current revisions for fresh commands and retains original revisions for exact replay.
+Revisions and audit metadata remain outside the model comparison, but raw replay and immutability assertions retain them.
+
+Histories contain at most ten commands and retain the model's two-operation capacity.
+The generator uses the model's domain predicates to admit commands within those bounds.
+It retains business refusals instead of filtering them out.
+Each accepted claim key stays with one command type because production separates claims by operation.
+Wire requests carry reasons only for adjustment, and packaging closure has no timestamp field.
+The harness does not expand the model to cover concurrency or infrastructure failures.
+Every discrepancy needs a Beads classification as a model defect, implementation defect, or unresolved business rule.
+
 ## Proof structure
 
 Eleven Kani harnesses cover initialization, local transitions, transaction completeness, command rules, atomic failure, replay, and concrete two-operation histories.

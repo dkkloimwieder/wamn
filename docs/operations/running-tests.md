@@ -236,6 +236,26 @@ WAMN_FLOW_HTTP_COMPONENT="$PWD/apps/target/wasm32-wasip2/debug/http_route.wasm" 
     --lib local_business:: -- --ignored --test-threads=1
 ```
 
+Run the WMS differential histories with the same WMS and HTTP artifacts:
+
+```bash
+WAMN_APPLICATION_COMPONENTS="$PWD/apps/target/virtualized/std-empty-environment" \
+WAMN_FLOW_HTTP_COMPONENT="$PWD/apps/target/wasm32-wasip2/debug/http_route.wasm" \
+  cargo test --locked --offline -p wamn-wms-tests \
+    --lib differential::command_histories -- --exact --ignored --nocapture --test-threads=1
+```
+
+This test compares the independent executable model with the real WMS application over disposable PostgreSQL.
+It covers move, adjust, split, merge, packaging relocation, and packaging closure.
+The default run uses 16 generated histories, seed `43017`, and a fixed example corpus.
+Set `WAMN_WMS_HISTORY_CASES` and `WAMN_WMS_HISTORY_SEED` to change the generated run.
+Proptest shrinks discrepancies and saves regression seeds in `apps/wamn_wms/tests/differential/regressions.txt`.
+Keep saved seeds with their classified findings in Beads.
+A failure reports the command history and the property that differs.
+Infrastructure failures stop the run without a claimed business counterexample.
+The [model bounds](../../apps/wamn_wms/formal/README.md#implementation-conformance) describe the compared state and identity mapping.
+Existing integration tests retain concurrency and locking coverage.
+
 Run the prior-commit fixture admission and exact forwarding assertions.
 The tests compose the fixture with the built Receiving base and its no-op participant.
 
