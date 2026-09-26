@@ -23,6 +23,10 @@ struct JsonRequest {
 struct JsonFilter {
     #[serde(default)]
     code: Option<Vec<String>>,
+    #[serde(default)]
+    note: Option<Vec<String>>,
+    #[serde(default)]
+    maker_id: Option<bool>,
 }
 
 #[derive(Deserialize)]
@@ -45,6 +49,14 @@ pub(crate) fn decode(
                 .filter
                 .as_mut()
                 .and_then(|filter| filter.code.take()),
+            note: request
+                .filter
+                .as_mut()
+                .and_then(|filter| filter.note.take()),
+            maker_id: request
+                .filter
+                .as_mut()
+                .and_then(|filter| filter.maker_id.take()),
             sort_field: request.sort.as_ref().map(|sort| sort.field.clone()),
             sort_direction: request.sort.map(|sort| sort.direction),
             cursor: request.cursor,

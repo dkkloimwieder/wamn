@@ -15,8 +15,8 @@ use wamn_catalog::OperationKind;
 
 use crate::client_ir::{
     CURSOR_INPUT, ClientContractIr, FILTER_PREFIX, FieldIr, FilterIr, LIMIT_INPUT, LimitIr,
-    ModelIr, OperationIr, SORT_DIRECTION_INPUT, SORT_FIELD_INPUT, SortIr, leaf_fields,
-    revision_inputs,
+    ModelIr, OperationIr, SEARCH_INPUT, SORT_DIRECTION_INPUT, SORT_FIELD_INPUT, SortIr,
+    leaf_fields, revision_inputs,
 };
 
 /// The contract type a display field falls back to when nobody states one.
@@ -164,6 +164,10 @@ pub struct Paging<'a> {
     pub filters: &'a [FilterIr],
     /// Input paths that carry the declared filters, in contract order.
     pub filter_inputs: Vec<&'a str>,
+    /// Input path that carries the server search, when the read declares one.
+    pub search_input: Option<&'a str>,
+    /// The text fields the server search reads.
+    pub search_fields: &'a [String],
     /// Sortable fields and the permitted directions.
     pub sort: Option<&'a SortIr>,
     /// Input path that carries the sort field.
@@ -185,6 +189,7 @@ impl<'a> Paging<'a> {
         self.filter_inputs
             .iter()
             .copied()
+            .chain(self.search_input)
             .chain(self.sort_field_input)
             .chain(self.sort_direction_input)
             .chain(self.limit_input)
@@ -800,6 +805,7 @@ impl<'a> ScreenPlan<'a> {
         let sort = declared_paging.and_then(|paging| paging.sort.as_ref());
         let limit = declared_paging.and_then(|paging| paging.limit.as_ref());
         let filters = declared_paging.map_or(&[][..], |paging| paging.filters.as_slice());
+        let search_fields = declared_paging.map_or(&[][..], |paging| paging.search.as_slice());
         let paging = (declared_paging.is_some() || cursor_input.is_some()).then(|| Paging {
             filters,
             filter_inputs: input_leaves
@@ -811,6 +817,9 @@ impl<'a> ScreenPlan<'a> {
                 })
                 .map(|field| field.path.as_str())
                 .collect(),
+            search_input: (!search_fields.is_empty() && declared(SEARCH_INPUT))
+                .then_some(SEARCH_INPUT),
+            search_fields,
             sort,
             sort_field_input: (sort.is_some() && declared(SORT_FIELD_INPUT))
                 .then_some(SORT_FIELD_INPUT),
@@ -1329,11 +1338,17 @@ fn populated_inputs<'a>(
 
 /// Whether one input path carries the named filter.
 ///
-/// The query input contract writes a filter under `filter.<field>`, and an
-/// array filter's leaf keeps the `[]` the IR adds.
+/// The query input contract writes a filter under `filter.<field>`. An
+/// array filter's leaf keeps the `[]` the IR adds, and a range's leaves are
+/// its two bounds.
 pub(crate) fn filter_input(path: &str, field: &str) -> bool {
-    path.strip_prefix(FILTER_PREFIX)
-        .is_some_and(|rest| rest == field || rest.trim_end_matches("[]") == field)
+    path.strip_prefix(FILTER_PREFIX).is_some_and(|rest| {
+        let rest = rest.trim_end_matches("[]");
+        rest == field
+            || rest
+                .strip_prefix(field)
+                .is_some_and(|bound| matches!(bound, ".min" | ".max"))
+    })
 }
 
 /// The result fields one operation serves.

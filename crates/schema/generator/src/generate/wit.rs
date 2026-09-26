@@ -934,7 +934,8 @@ fn emit_crud_normalizer(
         for filter in &operation.filters {
             let column = model_column(table, &filter.field);
             let name = rust_identifier(&filter.field).expect("validated filter has a Rust name");
-            if column.column_type() == ColumnType::Uuid {
+            // Only a list carries uuid values: an is-null filter carries one boolean.
+            if column.column_type() == ColumnType::Uuid && filter.match_mode.takes_list() {
                 writeln!(source, "    if let Some(values) = &mut request.{name} {{ for value in values {{ if !canonical_uuid(value) {{ return Err(invalid({:?})); }} }} }}", format!("filter.{}", filter.field))
                     .expect("writing to a String cannot fail");
             }

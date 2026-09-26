@@ -1,4 +1,4 @@
-use wamn_platform_fixture_data_access::{QueryInput, widget_maker};
+use wamn_platform_fixture_data_access::{Band, QueryInput, widget_maker};
 use wamn_postgres_statements::Connection;
 
 use crate::detail;
@@ -40,7 +40,7 @@ mod get {
 }
 
 mod query {
-    use super::{Connection, QueryInput, detail, widget_maker};
+    use super::{Band, Connection, QueryInput, detail, widget_maker};
     use crate::exports::platform_fixture::widget_maker::query as contract;
     mod codec {
         use super::contract;
@@ -57,6 +57,13 @@ mod query {
     ) -> Result<contract::QueryEnd, contract::QueryError> {
         let input = QueryInput {
             filter: request.name,
+            prefix: None,
+            empty: None,
+            band: request.created_at.map(|band| Band {
+                min: band.min,
+                max: band.max,
+            }),
+            search: request.search,
             sort_field: request.sort_field,
             sort_direction: request.sort_direction,
             cursor: request.cursor,

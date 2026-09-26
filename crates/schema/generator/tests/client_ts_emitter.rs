@@ -174,6 +174,8 @@ fn a_field_map_declares_every_member_and_stops_at_a_json_value() {
             "    member: \"filter\",\n",
             "    fields: {\n",
             "      \"code\": \"code\",\n",
+            "      \"maker_id\": \"makerId\",\n",
+            "      \"note\": \"note\",\n",
             "    },\n",
             "  },\n",
             "  \"limit\": \"limit\",\n",

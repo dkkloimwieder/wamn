@@ -76,6 +76,14 @@
           "filters": [
             {
               "field": "code"
+            },
+            {
+              "field": "note",
+              "match": "prefix"
+            },
+            {
+              "field": "maker_id",
+              "match": "is_null"
             }
           ],
           "label": "Find widgets",
@@ -145,6 +153,14 @@
             {
               "field": "name",
               "match": "contains"
+            },
+            {
+              "default": {
+                "last_days": 30
+              },
+              "field": "created_at",
+              "match": "range",
+              "required": true
             }
           ],
           "limit": {
@@ -163,6 +179,11 @@
           },
           "permission": "widget_maker.query",
           "result": "page",
+          "search": {
+            "fields": [
+              "name"
+            ]
+          },
           "sort": {
             "directions": [
               "ascending",

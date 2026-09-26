@@ -57,6 +57,10 @@ mod query {
     ) -> Result<contract::QueryEnd, contract::QueryError> {
         let input = QueryInput {
             filter: request.code,
+            prefix: request.note,
+            empty: request.maker_id,
+            band: None,
+            search: None,
             sort_field: request.sort_field,
             sort_direction: request.sort_direction,
             cursor: request.cursor,

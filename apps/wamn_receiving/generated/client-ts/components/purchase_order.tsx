@@ -168,7 +168,7 @@ export const PURCHASE_ORDER_QUERY_TABLE = {
   limitInput: ["limit"],
   sortFieldInput: ["sort", "field"],
   sortDirectionInput: ["sort", "direction"],
-  filters: [{ field: "purchaseOrderNumber", input: ["filter", "purchaseOrderNumber"], list: true }, { field: "status", input: ["filter", "status"], list: true }, { field: "supplierId", input: ["filter", "supplierId"], list: true }],
+  filters: [{ field: "purchaseOrderNumber", input: ["filter", "purchaseOrderNumber"], list: true, match: "contains" }, { field: "status", input: ["filter", "status"], list: true }, { field: "supplierId", input: ["filter", "supplierId"], list: true }],
   scopeFilters: ["purchaseOrderNumber", "status", "supplierId"],
   sortFields: [{ field: "createdAt", wire: "created_at" }, { field: "purchaseOrderNumber", wire: "purchase_order_number" }, { field: "status", wire: "status" }],
   sortDirections: ["ascending", "descending"],

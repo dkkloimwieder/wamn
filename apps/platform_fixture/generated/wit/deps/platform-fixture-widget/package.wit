@@ -59,6 +59,8 @@ interface query {
 
   record query-request {
     code: option<list<string>>,
+    note: option<list<string>>,
+    maker-id: option<bool>,
     sort-field: option<string>,
     sort-direction: option<string>,
     cursor: option<string>,

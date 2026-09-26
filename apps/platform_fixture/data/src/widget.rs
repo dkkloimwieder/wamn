@@ -71,7 +71,8 @@ pub async fn get(connection: &mut Connection, id: &str) -> Result<WidgetRow, Acc
         .ok_or_else(|| AccessError::missing(&id.0))
 }
 
-/// Query one bounded page, filtered by `code`.
+/// Query one bounded page, filtered by `code`, by the start of `note`, and by
+/// whether `maker_id` is empty.
 ///
 /// # Errors
 ///
@@ -81,15 +82,19 @@ pub async fn query(
     input: &QueryInput,
 ) -> Result<Page<WidgetRow>, AccessError> {
     let plan = page::plan(input)?;
-    let (filter, key, id) = (
+    let (filter, prefix, empty, key, id) = (
         plan.filter.clone(),
+        plan.prefix.clone(),
+        plan.empty.clone(),
         plan.cursor_key.clone(),
         plan.cursor_id.clone(),
     );
     let rows = if plan.descending {
-        sql::query_created_at_descending(connection, filter, key, id, plan.limit + 1).await
+        sql::query_created_at_descending(connection, filter, prefix, empty, key, id, plan.limit + 1)
+            .await
     } else {
-        sql::query_created_at_ascending(connection, filter, key, id, plan.limit + 1).await
+        sql::query_created_at_ascending(connection, filter, prefix, empty, key, id, plan.limit + 1)
+            .await
     }
     .map_err(|error| AccessError::from_statement(&error, Constraints::NONE))?;
     let descending = plan.descending;

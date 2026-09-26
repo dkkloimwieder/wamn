@@ -22,12 +22,27 @@ const FIELD: &str = "created_at";
 /// codec fills the limit.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct QueryInput {
-    /// Values the one declared filter field must equal, any of them.
+    /// Values the first declared filter field matches, any of them.
     pub filter: Option<Vec<String>>,
+    /// Starts of the widget note, any of them.
+    pub prefix: Option<Vec<String>>,
+    /// Whether the widget maker is empty.
+    pub empty: Option<bool>,
+    /// The band of widget maker creation times. None reads the default band.
+    pub band: Option<Band>,
+    /// Text a widget maker name contains, in any case.
+    pub search: Option<String>,
     pub sort_field: Option<String>,
     pub sort_direction: Option<String>,
     pub cursor: Option<String>,
     pub limit: i64,
+}
+
+/// The bounds of one range filter, each inclusive and optional.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct Band {
+    pub min: Option<String>,
+    pub max: Option<String>,
 }
 
 /// Mints the cursor that starts the next read after one row.
@@ -108,6 +123,10 @@ impl<Row> Page<Row> {
 pub(crate) struct Plan {
     pub(crate) descending: bool,
     pub(crate) filter: Option<Json>,
+    pub(crate) prefix: Option<Json>,
+    pub(crate) empty: Option<Json>,
+    pub(crate) band: Option<Json>,
+    pub(crate) search: Option<String>,
     pub(crate) cursor_key: Option<TimestampTz>,
     pub(crate) cursor_id: Option<Uuid>,
     pub(crate) limit: i64,
@@ -130,13 +149,22 @@ pub(crate) fn plan(input: &QueryInput) -> Result<Plan, AccessError> {
     };
     Ok(Plan {
         descending,
-        filter: input.filter.as_ref().map(|values| {
-            Json(serde_json::to_string(values).expect("a list of strings serializes"))
-        }),
+        filter: input.filter.as_ref().map(list_json),
+        prefix: input.prefix.as_ref().map(list_json),
+        empty: input.empty.map(|empty| Json(empty.to_string())),
+        band: input
+            .band
+            .as_ref()
+            .map(|band| Json(json!({"min": band.min, "max": band.max}).to_string())),
+        search: input.search.clone(),
         cursor_key,
         cursor_id,
         limit: input.limit,
     })
+}
+
+fn list_json(values: &Vec<String>) -> Json {
+    Json(serde_json::to_string(values).expect("a list of strings serializes"))
 }
 
 /// The cursor that starts the next read after the row with this key.

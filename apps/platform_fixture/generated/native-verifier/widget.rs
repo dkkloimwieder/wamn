@@ -59,6 +59,13 @@ pub(crate) fn get_id_bind_fixture() -> uuid::Uuid {
 pub(crate) fn query_created_at_ascending_code_filter_bind_fixture() -> Option<serde_json::Value> {
     None
 }
+pub(crate) fn query_created_at_ascending_note_filter_bind_fixture() -> Option<serde_json::Value> {
+    None
+}
+pub(crate) fn query_created_at_ascending_maker_id_filter_bind_fixture() -> Option<serde_json::Value>
+{
+    None
+}
 pub(crate) fn query_created_at_ascending_cursor_key_bind_fixture()
 -> Option<chrono::DateTime<chrono::Utc>> {
     None
@@ -70,6 +77,13 @@ pub(crate) fn query_created_at_ascending_limit_bind_fixture() -> i64 {
     0_i64
 }
 pub(crate) fn query_created_at_descending_code_filter_bind_fixture() -> Option<serde_json::Value> {
+    None
+}
+pub(crate) fn query_created_at_descending_note_filter_bind_fixture() -> Option<serde_json::Value> {
+    None
+}
+pub(crate) fn query_created_at_descending_maker_id_filter_bind_fixture() -> Option<serde_json::Value>
+{
     None
 }
 pub(crate) fn query_created_at_descending_cursor_key_bind_fixture()

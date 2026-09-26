@@ -1082,6 +1082,10 @@ pub struct WidgetQueryRequest {
 pub struct WidgetQueryRequestFilter {
     /// `array`, omittable
     pub code: Option<Vec<String>>,
+    /// `boolean`, omittable
+    pub maker_id: Option<bool>,
+    /// `array`, omittable
+    pub note: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -1122,6 +1126,18 @@ pub const WIDGET_QUERY_INPUT: &[FieldDescriptor] = &[
         type_name: "text",
         nullable: false,
         values: &["priority", "standard"],
+    },
+    FieldDescriptor {
+        path: "filter.maker_id",
+        type_name: "boolean",
+        nullable: true,
+        values: &[],
+    },
+    FieldDescriptor {
+        path: "filter.note[]",
+        type_name: "text",
+        nullable: false,
+        values: &[],
     },
     FieldDescriptor {
         path: "limit",
@@ -1206,29 +1222,66 @@ pub const WIDGET_QUERY_INPUT_SCHEMA: &[wamn_client::descriptor::FieldSchema] = &
         required: false,
         minimum: None,
         maximum: None,
-        children: &[wamn_client::descriptor::FieldSchema {
-            field: FieldDescriptor {
-                path: "filter.code[]",
-                type_name: "array",
-                nullable: false,
-                values: &[],
-            },
-            required: false,
-            minimum: None,
-            maximum: None,
-            children: &[wamn_client::descriptor::FieldSchema {
+        children: &[
+            wamn_client::descriptor::FieldSchema {
                 field: FieldDescriptor {
                     path: "filter.code[]",
-                    type_name: "text",
+                    type_name: "array",
                     nullable: false,
-                    values: &["priority", "standard"],
+                    values: &[],
                 },
-                required: true,
+                required: false,
+                minimum: None,
+                maximum: None,
+                children: &[wamn_client::descriptor::FieldSchema {
+                    field: FieldDescriptor {
+                        path: "filter.code[]",
+                        type_name: "text",
+                        nullable: false,
+                        values: &["priority", "standard"],
+                    },
+                    required: true,
+                    minimum: None,
+                    maximum: None,
+                    children: &[],
+                }],
+            },
+            wamn_client::descriptor::FieldSchema {
+                field: FieldDescriptor {
+                    path: "filter.maker_id",
+                    type_name: "boolean",
+                    nullable: false,
+                    values: &[],
+                },
+                required: false,
                 minimum: None,
                 maximum: None,
                 children: &[],
-            }],
-        }],
+            },
+            wamn_client::descriptor::FieldSchema {
+                field: FieldDescriptor {
+                    path: "filter.note[]",
+                    type_name: "array",
+                    nullable: false,
+                    values: &[],
+                },
+                required: false,
+                minimum: None,
+                maximum: None,
+                children: &[wamn_client::descriptor::FieldSchema {
+                    field: FieldDescriptor {
+                        path: "filter.note[]",
+                        type_name: "text",
+                        nullable: false,
+                        values: &[],
+                    },
+                    required: true,
+                    minimum: None,
+                    maximum: None,
+                    children: &[],
+                }],
+            },
+        ],
     },
     wamn_client::descriptor::FieldSchema {
         field: FieldDescriptor {

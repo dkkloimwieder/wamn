@@ -66,7 +66,9 @@ export {
   type QueryTableDefinition,
   type QueryTableFill,
   type QueryTableFilter,
+  type QueryTableMatch,
   type QueryTableProps,
+  type QueryTableSearch,
   type QueryTableUpdate,
 } from "./table/query-table";
 export {

@@ -57,6 +57,9 @@ pub const SORT_DIRECTION_INPUT: &str = "sort.direction";
 /// The prefix of every filter input path.
 pub const FILTER_PREFIX: &str = "filter.";
 
+/// The input path that carries a server search.
+pub const SEARCH_INPUT: &str = "search";
+
 /// Why a contract projection could not be read as an IR.
 #[derive(Debug)]
 pub struct ClientIrError {
@@ -456,6 +459,9 @@ pub fn revision_inputs(operation: &OperationIr) -> Vec<&str> {
 pub struct PagingIr {
     /// Declared filters, ordered by field.
     pub filters: Vec<FilterIr>,
+    /// The text fields a server search reads, when the read declares one.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub search: Vec<String>,
     /// Sortable fields and permitted directions.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub sort: Option<SortIr>,
@@ -469,13 +475,25 @@ pub struct PagingIr {
 }
 
 /// One declared filter.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct FilterIr {
     /// The field this filter narrows.
     pub field: String,
     /// How the value binds, e.g. `json_array`.
     pub binding: String,
+    /// How a value matches, when not exactly, e.g. `prefix` or `range`.
+    #[serde(default, rename = "match", skip_serializing_if = "Option::is_none")]
+    pub match_mode: Option<String>,
+    /// The contract type of the field's values.
+    #[serde(default, rename = "type", skip_serializing_if = "Option::is_none")]
+    pub type_name: Option<String>,
+    /// Whether every read applies the filter: a band.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub required: bool,
+    /// The days a band reads when a request leaves it out.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_last_days: Option<u64>,
 }
 
 /// The sort contract: which fields, which directions, how many at once.
@@ -1297,6 +1315,19 @@ fn paging_of(input: &Value) -> Option<PagingIr> {
                     Some(FilterIr {
                         field: filter.get("field")?.as_str()?.to_owned(),
                         binding: filter.get("binding")?.as_str()?.to_owned(),
+                        match_mode: filter
+                            .get("match")
+                            .and_then(Value::as_str)
+                            .map(str::to_owned),
+                        type_name: filter
+                            .get("type")
+                            .and_then(Value::as_str)
+                            .map(str::to_owned),
+                        required: filter.get("required").and_then(Value::as_bool) == Some(true),
+                        default_last_days: filter
+                            .get("default")
+                            .and_then(|default| default.get("last_days"))
+                            .and_then(Value::as_u64),
                     })
                 })
                 .collect()
@@ -1306,6 +1337,10 @@ fn paging_of(input: &Value) -> Option<PagingIr> {
     filters.dedup();
     Some(PagingIr {
         filters,
+        search: input
+            .get("search")
+            .map(|search| string_list(search.get("fields")))
+            .unwrap_or_default(),
         sort: input.get("sort").map(|sort| SortIr {
             fields: string_list(sort.get("fields")),
             directions: string_list(sort.get("directions")),

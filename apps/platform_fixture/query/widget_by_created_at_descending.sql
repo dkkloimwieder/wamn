@@ -15,14 +15,26 @@ WHERE
         )
     )
     AND (
-        $2::timestamptz IS NULL
-        OR widget.created_at < $2::timestamptz
+        $2::jsonb IS NULL
+        OR EXISTS (
+            SELECT 1
+            FROM jsonb_array_elements_text($2::jsonb) AS filter(value)
+            WHERE starts_with(widget.note, filter.value)
+        )
+    )
+    AND (
+        $3::jsonb IS NULL
+        OR (widget.maker_id IS NULL) = ($3::jsonb)::boolean
+    )
+    AND (
+        $4::timestamptz IS NULL
+        OR widget.created_at < $4::timestamptz
         OR (
-            widget.created_at = $2::timestamptz
-            AND widget.id < $3::uuid
+            widget.created_at = $4::timestamptz
+            AND widget.id < $5::uuid
         )
     )
 ORDER BY
     widget.created_at DESC,
     widget.id DESC
-LIMIT $4::int8;
+LIMIT $6::int8;

@@ -11,7 +11,17 @@ WHERE
         WHERE strpos(model.name, filter.value) > 0
     ))
     AND
-    ($2::timestamptz IS NULL OR model.created_at < $2::timestamptz
-        OR (model.created_at = $2::timestamptz AND model.id < $3::uuid))
+    (CASE WHEN $2::jsonb IS NULL
+        THEN model.created_at >= now() - make_interval(days => 30)
+        ELSE (
+        ($2::jsonb->>'min' IS NULL OR model.created_at >= ($2::jsonb->>'min')::timestamptz)
+        AND ($2::jsonb->>'max' IS NULL OR model.created_at <= ($2::jsonb->>'max')::timestamptz)
+    )
+    END)
+    AND
+    ($3::text IS NULL OR strpos(lower(model.name), lower($3::text)) > 0)
+    AND
+    ($4::timestamptz IS NULL OR model.created_at < $4::timestamptz
+        OR (model.created_at = $4::timestamptz AND model.id < $5::uuid))
 ORDER BY model.created_at DESC, model.id DESC
-LIMIT $4::int8;
+LIMIT $6::int8;

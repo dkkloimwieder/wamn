@@ -312,14 +312,26 @@ pub struct WidgetMakerQueryRequest {
     pub filter: Option<WidgetMakerQueryRequestFilter>,
     /// `int32`, omittable
     pub limit: Option<i32>,
+    /// `string`, omittable
+    pub search: Option<String>,
     /// `object`, omittable
     pub sort: Option<WidgetMakerQueryRequestSort>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct WidgetMakerQueryRequestFilter {
+    /// `object`, omittable
+    pub created_at: Option<WidgetMakerQueryRequestFilterCreatedAt>,
     /// `array`, omittable
     pub name: Option<Vec<String>>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct WidgetMakerQueryRequestFilterCreatedAt {
+    /// `timestamptz`, omittable
+    pub max: Option<chrono::DateTime<chrono::Utc>>,
+    /// `timestamptz`
+    pub min: chrono::DateTime<chrono::Utc>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -352,6 +364,18 @@ pub const WIDGET_MAKER_QUERY_INPUT: &[FieldDescriptor] = &[
         values: &[],
     },
     FieldDescriptor {
+        path: "filter.created_at.max",
+        type_name: "timestamptz",
+        nullable: true,
+        values: &[],
+    },
+    FieldDescriptor {
+        path: "filter.created_at.min",
+        type_name: "timestamptz",
+        nullable: false,
+        values: &[],
+    },
+    FieldDescriptor {
         path: "filter.name[]",
         type_name: "text",
         nullable: false,
@@ -360,6 +384,12 @@ pub const WIDGET_MAKER_QUERY_INPUT: &[FieldDescriptor] = &[
     FieldDescriptor {
         path: "limit",
         type_name: "int32",
+        nullable: true,
+        values: &[],
+    },
+    FieldDescriptor {
+        path: "search",
+        type_name: "string",
         nullable: true,
         values: &[],
     },
@@ -428,34 +458,85 @@ pub const WIDGET_MAKER_QUERY_INPUT_SCHEMA: &[wamn_client::descriptor::FieldSchem
         required: false,
         minimum: None,
         maximum: None,
-        children: &[wamn_client::descriptor::FieldSchema {
-            field: FieldDescriptor {
-                path: "filter.name[]",
-                type_name: "array",
-                nullable: false,
-                values: &[],
-            },
-            required: false,
-            minimum: None,
-            maximum: None,
-            children: &[wamn_client::descriptor::FieldSchema {
+        children: &[
+            wamn_client::descriptor::FieldSchema {
                 field: FieldDescriptor {
-                    path: "filter.name[]",
-                    type_name: "text",
+                    path: "filter.created_at",
+                    type_name: "object",
                     nullable: false,
                     values: &[],
                 },
-                required: true,
+                required: false,
                 minimum: None,
                 maximum: None,
-                children: &[],
-            }],
-        }],
+                children: &[
+                    wamn_client::descriptor::FieldSchema {
+                        field: FieldDescriptor {
+                            path: "filter.created_at.max",
+                            type_name: "timestamptz",
+                            nullable: false,
+                            values: &[],
+                        },
+                        required: false,
+                        minimum: None,
+                        maximum: None,
+                        children: &[],
+                    },
+                    wamn_client::descriptor::FieldSchema {
+                        field: FieldDescriptor {
+                            path: "filter.created_at.min",
+                            type_name: "timestamptz",
+                            nullable: false,
+                            values: &[],
+                        },
+                        required: true,
+                        minimum: None,
+                        maximum: None,
+                        children: &[],
+                    },
+                ],
+            },
+            wamn_client::descriptor::FieldSchema {
+                field: FieldDescriptor {
+                    path: "filter.name[]",
+                    type_name: "array",
+                    nullable: false,
+                    values: &[],
+                },
+                required: false,
+                minimum: None,
+                maximum: None,
+                children: &[wamn_client::descriptor::FieldSchema {
+                    field: FieldDescriptor {
+                        path: "filter.name[]",
+                        type_name: "text",
+                        nullable: false,
+                        values: &[],
+                    },
+                    required: true,
+                    minimum: None,
+                    maximum: None,
+                    children: &[],
+                }],
+            },
+        ],
     },
     wamn_client::descriptor::FieldSchema {
         field: FieldDescriptor {
             path: "limit",
             type_name: "int32",
+            nullable: false,
+            values: &[],
+        },
+        required: false,
+        minimum: None,
+        maximum: None,
+        children: &[],
+    },
+    wamn_client::descriptor::FieldSchema {
+        field: FieldDescriptor {
+            path: "search",
+            type_name: "string",
             nullable: false,
             values: &[],
         },

@@ -70,11 +70,29 @@ export type QueryTableColumn<TRow extends object> = Omit<DataTableColumn<TRow>, 
   readonly recordRead?: { readonly read: OperationBinding; readonly keyInput: MemberPath };
 };
 
-/** One declared scope filter: the row member, its input path, and whether it takes a list. */
+/** How a scope filter matches a value: exactly when the definition states none. */
+export type QueryTableMatch = "contains" | "prefix" | "range" | "is_null";
+
+/**
+ * One declared scope filter: the row member, its input path, whether it takes
+ * a list, and how it matches. A range states the contract type of its bounds.
+ * A band is a required range, which reads the last `defaultLastDays` days when
+ * a request leaves it out.
+ */
 export interface QueryTableFilter {
   readonly field: string;
   readonly input: MemberPath;
   readonly list: boolean;
+  readonly match?: QueryTableMatch;
+  readonly type?: string;
+  readonly required?: boolean;
+  readonly defaultLastDays?: number;
+}
+
+/** A read's server search: its input, and the row members it reads. */
+export interface QueryTableSearch {
+  readonly input: MemberPath;
+  readonly fields: readonly string[];
 }
 
 /** A row member and the input it fills. A `"[]"` in the input marks a repeated member. */
@@ -132,6 +150,7 @@ export interface QueryTableDefinition<TRow extends object> {
   readonly sortDirectionInput: MemberPath | null;
   readonly filters: readonly QueryTableFilter[];
   readonly scopeFilters: readonly (keyof TRow & string)[];
+  readonly search?: QueryTableSearch;
   readonly sortFields: readonly { readonly field: keyof TRow & string; readonly wire: string }[];
   readonly sortMaxFields: number;
   readonly columns: readonly QueryTableColumn<TRow>[];

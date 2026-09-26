@@ -254,7 +254,7 @@ export const LOCATION_QUERY_TABLE = {
   limitInput: ["limit"],
   sortFieldInput: null,
   sortDirectionInput: null,
-  filters: [{ field: "locationCode", input: ["filter", "locationCode"], list: true }],
+  filters: [{ field: "locationCode", input: ["filter", "locationCode"], list: true, match: "contains" }],
   scopeFilters: ["locationCode"],
   sortFields: [],
   sortDirections: [],

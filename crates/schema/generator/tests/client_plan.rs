@@ -431,7 +431,7 @@ fn paging_carries_the_declared_filters_sort_and_limit() {
             .iter()
             .map(|f| f.field.as_str())
             .collect::<Vec<_>>(),
-        ["code"]
+        ["code", "maker_id", "note"]
     );
     let sort = paging.sort.expect("the query sorts");
     assert_eq!(sort.fields, ["created_at"]);
@@ -443,7 +443,11 @@ fn paging_carries_the_declared_filters_sort_and_limit() {
         Some("cursor"),
         "the served query publishes a cursor input"
     );
-    assert_eq!(paging.filter_inputs, ["filter.code[]"]);
+    // An is-null filter takes one boolean, and a list filter repeats its value.
+    assert_eq!(
+        paging.filter_inputs,
+        ["filter.code[]", "filter.maker_id", "filter.note[]"]
+    );
     assert_eq!(paging.sort_field_input, Some("sort.field"));
     assert_eq!(paging.sort_direction_input, Some("sort.direction"));
     assert_eq!(paging.limit_input, Some("limit"));
@@ -451,6 +455,8 @@ fn paging_carries_the_declared_filters_sort_and_limit() {
         paging.inputs(),
         [
             "filter.code[]",
+            "filter.maker_id",
+            "filter.note[]",
             "sort.field",
             "sort.direction",
             "limit",
@@ -458,6 +464,23 @@ fn paging_carries_the_declared_filters_sort_and_limit() {
         ],
         "every page control names the input path that carries it"
     );
+    // The maker's band sends its two bounds, and its search is a page control
+    // too, so no form renders either.
+    let maker_paging = plan
+        .screens()
+        .find(|screen| screen.model != "widget" && screen.name == "query")
+        .and_then(|screen| screen.paging.as_ref())
+        .expect("the maker query pages");
+    assert_eq!(
+        maker_paging.filter_inputs,
+        [
+            "filter.created_at.max",
+            "filter.created_at.min",
+            "filter.name[]"
+        ]
+    );
+    assert_eq!(maker_paging.search_input, Some("search"));
+    assert_eq!(maker_paging.search_fields, ["name"]);
     for name in ["archive", "create", "delete", "get", "update"] {
         assert!(screen(&plan, name).paging.is_none(), "{name}");
     }

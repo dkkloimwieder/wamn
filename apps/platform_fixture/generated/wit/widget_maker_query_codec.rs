@@ -11,6 +11,8 @@ struct JsonRequest {
     #[serde(default)]
     filter: Option<JsonFilter>,
     #[serde(default)]
+    search: Option<String>,
+    #[serde(default)]
     sort: Option<JsonSort>,
     #[serde(default)]
     cursor: Option<String>,
@@ -23,6 +25,17 @@ struct JsonRequest {
 struct JsonFilter {
     #[serde(default)]
     name: Option<Vec<String>>,
+    #[serde(default)]
+    created_at: Option<JsonRange<String>>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct JsonRange<T> {
+    #[serde(default)]
+    min: Option<T>,
+    #[serde(default)]
+    max: Option<T>,
 }
 
 #[derive(Deserialize)]
@@ -45,6 +58,15 @@ pub(crate) fn decode(
                 .filter
                 .as_mut()
                 .and_then(|filter| filter.name.take()),
+            created_at: request
+                .filter
+                .as_mut()
+                .and_then(|filter| filter.created_at.take())
+                .map(|range| contract::CreatedAtRange {
+                    min: range.min,
+                    max: range.max,
+                }),
+            search: request.search,
             sort_field: request.sort.as_ref().map(|sort| sort.field.clone()),
             sort_direction: request.sort.map(|sort| sort.direction),
             cursor: request.cursor,

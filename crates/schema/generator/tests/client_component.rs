@@ -108,9 +108,10 @@ fn a_page_table_renders_its_filters_and_sends_the_sort_and_limit_of_each_load() 
     for line in [
         "  read: { route: WIDGET_QUERY_ROUTE, request: WIDGET_QUERY_REQUEST_FIELDS, result: WIDGET_QUERY_RESULT_FIELDS },\n",
         "  rows: \"item\",\n",
-        // A scope filter is sent at its declared input path, as a list.
-        "  filters: [{ field: \"code\", input: [\"filter\", \"code\"], list: true }],\n",
-        "  scopeFilters: [\"code\"],\n",
+        // A scope filter is sent at its declared input path, as a list, and
+        // a filter that does not match exactly states its mode.
+        "  filters: [{ field: \"code\", input: [\"filter\", \"code\"], list: true }, { field: \"makerId\", input: [\"filter\", \"makerId\"], list: false, match: \"is_null\" }, { field: \"note\", input: [\"filter\", \"note\"], list: true, match: \"prefix\" }],\n",
+        "  scopeFilters: [\"code\", \"makerId\", \"note\"],\n",
         "  limitInput: [\"limit\"],\n",
         // A header sort sends its field and its direction together (wamn-2ut3).
         "  sortFieldInput: [\"sort\", \"field\"],\n",
@@ -1309,7 +1310,7 @@ fn a_table_screen_gets_a_table_definition_beside_its_component() {
         "  read: { route: WIDGET_QUERY_ROUTE, request: WIDGET_QUERY_REQUEST_FIELDS, result: WIDGET_QUERY_RESULT_FIELDS },",
         "  rowId: [\"id\"],",
         "  pageMaximum: 100,",
-        "  scopeFilters: [\"code\"],",
+        "  scopeFilters: [\"code\", \"makerId\", \"note\"],",
         "  sortFields: [{ field: \"createdAt\", wire: \"created_at\" }],",
         "  sortDirections: [\"ascending\", \"descending\"],",
         "  sortMaxFields: 1,",
@@ -1422,16 +1423,38 @@ fn a_table_definition_names_its_update_its_actions_and_its_child_tables() {
 #[test]
 fn a_table_whose_filter_narrows_a_reference_is_a_child_of_that_model() {
     let mut ir = release();
+    // The fixture filters maker_id by whether it is empty. A child table needs
+    // a list of keys, so this query takes one instead.
     let query = operation_mut(&mut ir, "widget", "query");
-    query
+    let filters = &mut query
         .paging
         .as_mut()
         .expect("the widget query pages")
-        .filters
-        .push(wamn_schema_generator::client_ir::FilterIr {
-            field: "maker_id".to_owned(),
-            binding: "json_array".to_owned(),
-        });
+        .filters;
+    filters.retain(|filter| filter.field != "maker_id");
+    filters.push(wamn_schema_generator::client_ir::FilterIr {
+        field: "maker_id".to_owned(),
+        binding: "json_array".to_owned(),
+        ..Default::default()
+    });
+    let maker = query
+        .input_fields
+        .iter_mut()
+        .find(|field| field.path == "filter")
+        .and_then(|filter| {
+            filter
+                .children
+                .iter_mut()
+                .find(|field| field.path == "filter.maker_id")
+        })
+        .expect("the fixture sends filter.maker_id");
+    let mut item = maker.clone();
+    item.path = "filter.maker_id[]".to_owned();
+    item.type_name = "uuid".to_owned();
+    item.required = true;
+    maker.path = "filter.maker_id[]".to_owned();
+    maker.type_name = "array".to_owned();
+    maker.children = vec![item];
     let files = emit(&ir);
     let makers = definition(
         source(&files, "generated/client-ts/components/widget_maker.tsx"),

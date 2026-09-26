@@ -251,7 +251,7 @@ export const PRODUCT_QUERY_TABLE = {
   limitInput: ["limit"],
   sortFieldInput: null,
   sortDirectionInput: null,
-  filters: [{ field: "productCode", input: ["filter", "productCode"], list: true }],
+  filters: [{ field: "productCode", input: ["filter", "productCode"], list: true, match: "contains" }],
   scopeFilters: ["productCode"],
   sortFields: [],
   sortDirections: [],

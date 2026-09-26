@@ -714,12 +714,36 @@ fn write_table_definition(
             else {
                 continue;
             };
-            filters.push(format!(
-                "{{ field: {}, input: {}, list: {} }}",
-                quote(&column_member(&filter.field, &operation.operation)?),
-                member_literal(input),
-                input.ends_with("[]")
-            ));
+            // A range's input is the object of its bounds. The definition
+            // states how a value matches when not exactly, the type of a
+            // range's bounds, and a band with its default.
+            let input = input
+                .strip_suffix(".min")
+                .or_else(|| input.strip_suffix(".max"))
+                .unwrap_or(input);
+            let mut members = vec![
+                format!(
+                    "field: {}",
+                    quote(&column_member(&filter.field, &operation.operation)?)
+                ),
+                format!("input: {}", member_literal(input)),
+                format!("list: {}", input.ends_with("[]")),
+            ];
+            if let Some(mode) = &filter.match_mode {
+                members.push(format!("match: {}", quote(mode)));
+            }
+            if filter.match_mode.as_deref() == Some("range")
+                && let Some(ty) = &filter.type_name
+            {
+                members.push(format!("type: {}", quote(ty)));
+            }
+            if filter.required {
+                members.push("required: true".to_owned());
+            }
+            if let Some(days) = filter.default_last_days {
+                members.push(format!("defaultLastDays: {days}"));
+            }
+            filters.push(format!("{{ {} }}", members.join(", ")));
         }
     }
     writeln!(source, "  filters: [{}],", filters.join(", ")).expect("write");
@@ -731,6 +755,23 @@ fn write_table_definition(
         })
         .collect::<Result<Vec<_>, _>>()?;
     writeln!(source, "  scopeFilters: [{}],", scope.join(", ")).expect("write");
+    // A server search names its input and the row members it reads.
+    if let Some(paging) = paging
+        && let Some(input) = paging.search_input
+    {
+        let fields = paging
+            .search_fields
+            .iter()
+            .map(|field| column_member(field, &operation.operation).map(|member| quote(&member)))
+            .collect::<Result<Vec<_>, _>>()?;
+        writeln!(
+            source,
+            "  search: {{ input: {}, fields: [{}] }},",
+            member_literal(input),
+            fields.join(", ")
+        )
+        .expect("write");
+    }
     // A sort field names its row member, which the table matches, and its wire
     // name, which the request sends.
     let fields = sort

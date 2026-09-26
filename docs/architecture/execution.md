@@ -546,6 +546,8 @@ A package that generates TypeScript also generates [SolidJS components](../../cr
 Every table renders the platform `DataTable` over a table definition that the generator derives from the read's contract.
 The emitter writes the definition as data, and each table component is one line: the [`QueryTable`](../../web/ui/src/table/query-table.tsx) of the UI package over that definition.
 The definition names each operation the table calls as a binding, which is its route and its field maps, and the input path of the limit, the sort and each scope filter.
+Each filter states its match mode when it does not match exactly, a range states the type of its bounds, and a band states the days it reads by default.
+A read with a server search names the search input and the fields it reads.
 Its declared filters are the scope bar of the table, and the table owns the sort, the cap and the refresh.
 It loads when it mounts. A load of a query streams its rows up to the cap, when the transport can stream.
 [`load.ts`](../../web/runtime/src/load.ts) reads the reply lines with a stream decoder and a line buffer, and hands the rows to the table in batches, once per animation frame, or every 50 ms where no frames run.

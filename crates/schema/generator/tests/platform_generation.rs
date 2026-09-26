@@ -156,13 +156,13 @@ fn a_whole_row_reference_reads_every_column_of_its_relation() {
 #[test]
 fn a_statement_takes_exactly_the_parameters_its_accessor_binds() {
     // Each case replaces one authored statement. The query accessor binds the
-    // code filter, the two cursor keys, and the limit. The archive accessor
+    // code, note and maker filters, the two cursor keys, and the limit. The archive accessor
     // binds the one declared parameter.
     for (path, sql, expected) in [
         (
             "query/widget.sql",
             "SELECT widget.code, widget.created_at, widget.edit_version, widget.id, widget.maker_id, widget.note FROM widget AS widget;\n",
-            "query/widget.sql takes 0 parameters, but its generated accessor query_created_at_ascending binds 4",
+            "query/widget.sql takes 0 parameters, but its generated accessor query_created_at_ascending binds 6",
         ),
         (
             "command/widget/archive.sql",

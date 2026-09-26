@@ -1,7 +1,8 @@
 /**
  * The DataTable renders from the fixture's emitted table definition, and loads
  * through the load state with the definition's page maximum (wamn-xtz2.3). Its
- * sort fields name the row member and the wire name (wamn-vfvx.1).
+ * sort fields name the row member and the wire name (wamn-vfvx.1). A filter
+ * states its match mode, and a band its default days (wamn-3nsf.4).
  */
 
 import { cleanup, render, screen, waitFor } from "@solidjs/testing-library";
@@ -12,6 +13,7 @@ import { DataTable } from "@wamn/ui";
 import { emptyLoad, finishLoad, loadLimit, startLoad, type LoadState } from "@wamn/web-runtime";
 
 import { WIDGET_QUERY_TABLE } from "../fixture/components/widget.js";
+import { WIDGET_MAKER_QUERY_TABLE } from "../fixture/components/widget_maker.js";
 import { query, type WidgetQueryRow } from "../fixture/widget.js";
 import { page, tableStub } from "../stubs/index.js";
 
@@ -58,7 +60,13 @@ describe("the table definition of the widget query", () => {
     expect(definition.rows).toBe("item");
     expect(definition.rowId).toEqual(["id"]);
     expect(definition.pageMaximum).toBe(100);
-    expect(definition.scopeFilters).toEqual(["code"]);
+    expect(definition.scopeFilters).toEqual(["code", "makerId", "note"]);
+    // Each filter states how it matches when not exactly.
+    expect(definition.filters).toEqual([
+      { field: "code", input: ["filter", "code"], list: true },
+      { field: "makerId", input: ["filter", "makerId"], list: false, match: "is_null" },
+      { field: "note", input: ["filter", "note"], list: true, match: "prefix" },
+    ]);
     expect(definition.sortFields).toEqual([{ field: "createdAt", wire: "created_at" }]);
     expect(definition.sortMaxFields).toBe(1);
     expect(definition.columns.map((column) => column.field)).toEqual([
@@ -89,5 +97,23 @@ describe("the table definition of the widget query", () => {
     await waitFor(() => expect(screen.getByText("w2")).toBeDefined());
     expect(sent[0]?.items[0]).toMatchObject({ limit: 2 });
     expect(screen.getByText("Full dataset cannot be loaded")).toBeDefined();
+  });
+});
+
+describe("the table definition of the widget maker query", () => {
+  it("states its band with the default days, and its server search", () => {
+    expect(WIDGET_MAKER_QUERY_TABLE.filters).toEqual([
+      {
+        field: "createdAt",
+        input: ["filter", "createdAt"],
+        list: false,
+        match: "range",
+        type: "timestamptz",
+        required: true,
+        defaultLastDays: 30,
+      },
+      { field: "name", input: ["filter", "name"], list: true, match: "contains" },
+    ]);
+    expect(WIDGET_MAKER_QUERY_TABLE.search).toEqual({ input: ["search"], fields: ["name"] });
   });
 });

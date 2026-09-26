@@ -55,8 +55,15 @@ interface get {
 interface query {
   use wamn:node/types@0.1.0.{node-context, node-error};
 
+  record created-at-range {
+    min: option<string>,
+    max: option<string>,
+  }
+
   record query-request {
     name: option<list<string>>,
+    created-at: option<created-at-range>,
+    search: option<string>,
     sort-field: option<string>,
     sort-direction: option<string>,
     cursor: option<string>,

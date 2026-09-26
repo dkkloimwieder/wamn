@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT\n    widget.code,\n    widget.created_at,\n    widget.edit_version,\n    widget.id,\n    widget.maker_id,\n    widget.note\nFROM widget AS widget\nWHERE\n    (\n        $1::jsonb IS NULL\n        OR widget.code IN (\n            SELECT filter.value\n            FROM jsonb_array_elements_text($1::jsonb) AS filter(value)\n        )\n    )\n    AND (\n        $2::timestamptz IS NULL\n        OR widget.created_at > $2::timestamptz\n        OR (\n            widget.created_at = $2::timestamptz\n            AND widget.id > $3::uuid\n        )\n    )\nORDER BY\n    widget.created_at ASC,\n    widget.id ASC\nLIMIT $4::int8;\n",
+  "query": "SELECT\n    widget.code,\n    widget.created_at,\n    widget.edit_version,\n    widget.id,\n    widget.maker_id,\n    widget.note\nFROM widget AS widget\nWHERE\n    (\n        $1::jsonb IS NULL\n        OR widget.code IN (\n            SELECT filter.value\n            FROM jsonb_array_elements_text($1::jsonb) AS filter(value)\n        )\n    )\n    AND (\n        $2::jsonb IS NULL\n        OR EXISTS (\n            SELECT 1\n            FROM jsonb_array_elements_text($2::jsonb) AS filter(value)\n            WHERE starts_with(widget.note, filter.value)\n        )\n    )\n    AND (\n        $3::jsonb IS NULL\n        OR (widget.maker_id IS NULL) = ($3::jsonb)::boolean\n    )\n    AND (\n        $4::timestamptz IS NULL\n        OR widget.created_at < $4::timestamptz\n        OR (\n            widget.created_at = $4::timestamptz\n            AND widget.id < $5::uuid\n        )\n    )\nORDER BY\n    widget.created_at DESC,\n    widget.id DESC\nLIMIT $6::int8;\n",
   "describe": {
     "columns": [
       {
@@ -73,6 +73,8 @@
     "parameters": {
       "Left": [
         "Jsonb",
+        "Jsonb",
+        "Jsonb",
         "Timestamptz",
         "Uuid",
         "Int8"
@@ -87,5 +89,5 @@
       true
     ]
   },
-  "hash": "74a348533ed0fd6ebcaada6a221f6d7528dd0f347081963a8296c9c260fb9bdd"
+  "hash": "dfbee8737b4ddca521e79a1d2559d61cd55a3fbe439f0ce46486973844fc0172"
 }

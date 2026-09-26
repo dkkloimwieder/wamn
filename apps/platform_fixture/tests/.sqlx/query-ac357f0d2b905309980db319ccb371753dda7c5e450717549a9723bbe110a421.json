@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT\n    model.created_at,\n    model.edit_version,\n    model.id,\n    model.name\nFROM widget_maker AS model\nWHERE\n    ($1::jsonb IS NULL OR model.name IN (\n        SELECT filter.value::text\n        FROM jsonb_array_elements_text($1::jsonb) AS filter(value)\n    ))\n    AND\n    ($2::timestamptz IS NULL OR model.created_at < $2::timestamptz\n        OR (model.created_at = $2::timestamptz AND model.id < $3::uuid))\nORDER BY model.created_at DESC, model.id DESC\nLIMIT $4::int8;\n",
+  "query": "SELECT\n    model.created_at,\n    model.edit_version,\n    model.id,\n    model.name\nFROM widget_maker AS model\nWHERE\n    ($1::jsonb IS NULL OR EXISTS (\n        SELECT 1\n        FROM jsonb_array_elements_text($1::jsonb) AS filter(value)\n        WHERE strpos(model.name, filter.value) > 0\n    ))\n    AND\n    (CASE WHEN $2::jsonb IS NULL\n        THEN model.created_at >= now() - make_interval(days => 30)\n        ELSE (\n        ($2::jsonb->>'min' IS NULL OR model.created_at >= ($2::jsonb->>'min')::timestamptz)\n        AND ($2::jsonb->>'max' IS NULL OR model.created_at <= ($2::jsonb->>'max')::timestamptz)\n    )\n    END)\n    AND\n    ($3::text IS NULL OR strpos(lower(model.name), lower($3::text)) > 0)\n    AND\n    ($4::timestamptz IS NULL OR model.created_at < $4::timestamptz\n        OR (model.created_at = $4::timestamptz AND model.id < $5::uuid))\nORDER BY model.created_at DESC, model.id DESC\nLIMIT $6::int8;\n",
   "describe": {
     "columns": [
       {
@@ -51,6 +51,8 @@
     "parameters": {
       "Left": [
         "Jsonb",
+        "Jsonb",
+        "Text",
         "Timestamptz",
         "Uuid",
         "Int8"
@@ -63,5 +65,5 @@
       false
     ]
   },
-  "hash": "d54912878bf6e51d45b43fdb7f1298baf78763684ae52fd5cc20ef7cb4472b99"
+  "hash": "ac357f0d2b905309980db319ccb371753dda7c5e450717549a9723bbe110a421"
 }

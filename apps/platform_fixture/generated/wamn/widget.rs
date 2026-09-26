@@ -56,9 +56,9 @@ pub(crate) const DELETE_DIGEST: &str =
 pub(crate) const GET_DIGEST: &str =
     "sha256:9033b3a1caa6ee73ba3aa4a5df84824c1aaf806e3e7c90329e2a9a3324e9b9bf";
 pub(crate) const QUERY_0_DIGEST: &str =
-    "sha256:74a348533ed0fd6ebcaada6a221f6d7528dd0f347081963a8296c9c260fb9bdd";
+    "sha256:dcb9f07cc0496bb54721a3bb9c6df6fd15f1614d2e4ebf6f32ac3513a63b19e1";
 pub(crate) const QUERY_1_DIGEST: &str =
-    "sha256:2a3850fcad949f88f0e2af627786c9da79663bbf0d524145894634bd3909b76e";
+    "sha256:dfbee8737b4ddca521e79a1d2559d61cd55a3fbe439f0ce46486973844fc0172";
 pub(crate) const UPDATE_DIGEST: &str =
     "sha256:a012c26134f98282143795c4c02c39ff6b7db89ef85661c279a275a3125ef540";
 
@@ -135,6 +135,8 @@ pub(crate) async fn get(
 pub(crate) async fn query_created_at_ascending(
     connection: &mut Connection,
     code_filter: Option<wamn_postgres_statements::Json>,
+    note_filter: Option<wamn_postgres_statements::Json>,
+    maker_id_filter: Option<wamn_postgres_statements::Json>,
     cursor_key: Option<wamn_postgres_statements::TimestampTz>,
     cursor_id: Option<wamn_postgres_statements::Uuid>,
     limit: i64,
@@ -145,6 +147,8 @@ pub(crate) async fn query_created_at_ascending(
             QUERY_0_DIGEST,
             vec![
                 wamn_postgres_statements::into_sql_value(code_filter),
+                wamn_postgres_statements::into_sql_value(note_filter),
+                wamn_postgres_statements::into_sql_value(maker_id_filter),
                 wamn_postgres_statements::into_sql_value(cursor_key),
                 wamn_postgres_statements::into_sql_value(cursor_id),
                 wamn_postgres_statements::into_sql_value(limit),
@@ -166,6 +170,8 @@ pub(crate) async fn query_created_at_ascending(
 pub(crate) async fn query_created_at_descending(
     connection: &mut Connection,
     code_filter: Option<wamn_postgres_statements::Json>,
+    note_filter: Option<wamn_postgres_statements::Json>,
+    maker_id_filter: Option<wamn_postgres_statements::Json>,
     cursor_key: Option<wamn_postgres_statements::TimestampTz>,
     cursor_id: Option<wamn_postgres_statements::Uuid>,
     limit: i64,
@@ -176,6 +182,8 @@ pub(crate) async fn query_created_at_descending(
             QUERY_1_DIGEST,
             vec![
                 wamn_postgres_statements::into_sql_value(code_filter),
+                wamn_postgres_statements::into_sql_value(note_filter),
+                wamn_postgres_statements::into_sql_value(maker_id_filter),
                 wamn_postgres_statements::into_sql_value(cursor_key),
                 wamn_postgres_statements::into_sql_value(cursor_id),
                 wamn_postgres_statements::into_sql_value(limit),

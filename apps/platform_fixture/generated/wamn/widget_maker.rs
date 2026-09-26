@@ -13,9 +13,9 @@ pub struct WidgetMakerRow {
 pub(crate) const GET_DIGEST: &str =
     "sha256:9213a9b4970ebf8253c515242917e72f1018e879ddac78f989ba5ade11c9d9a7";
 pub(crate) const QUERY_0_DIGEST: &str =
-    "sha256:4d34a1cf4870d5123afea0e984adfbcad920e70fdbe5e2b2f4a400214c0b769c";
+    "sha256:5340fcb1b850bef90c6d9e99182944c94fbbef695cccae433ad292c90a738d24";
 pub(crate) const QUERY_1_DIGEST: &str =
-    "sha256:76a3fb0f193987bdb9dae482d98da702f41b75c142738c54cfcb4a69565b4d23";
+    "sha256:ac357f0d2b905309980db319ccb371753dda7c5e450717549a9723bbe110a421";
 
 pub(crate) async fn get(
     connection: &mut Connection,
@@ -40,6 +40,8 @@ pub(crate) async fn get(
 pub(crate) async fn query_created_at_ascending(
     connection: &mut Connection,
     name_filter: Option<wamn_postgres_statements::Json>,
+    created_at_filter: Option<wamn_postgres_statements::Json>,
+    search: Option<String>,
     cursor_key: Option<wamn_postgres_statements::TimestampTz>,
     cursor_id: Option<wamn_postgres_statements::Uuid>,
     limit: i64,
@@ -52,6 +54,8 @@ pub(crate) async fn query_created_at_ascending(
             QUERY_0_DIGEST,
             vec![
                 wamn_postgres_statements::into_sql_value(name_filter),
+                wamn_postgres_statements::into_sql_value(created_at_filter),
+                wamn_postgres_statements::into_sql_value(search),
                 wamn_postgres_statements::into_sql_value(cursor_key),
                 wamn_postgres_statements::into_sql_value(cursor_id),
                 wamn_postgres_statements::into_sql_value(limit),
@@ -71,6 +75,8 @@ pub(crate) async fn query_created_at_ascending(
 pub(crate) async fn query_created_at_descending(
     connection: &mut Connection,
     name_filter: Option<wamn_postgres_statements::Json>,
+    created_at_filter: Option<wamn_postgres_statements::Json>,
+    search: Option<String>,
     cursor_key: Option<wamn_postgres_statements::TimestampTz>,
     cursor_id: Option<wamn_postgres_statements::Uuid>,
     limit: i64,
@@ -83,6 +89,8 @@ pub(crate) async fn query_created_at_descending(
             QUERY_1_DIGEST,
             vec![
                 wamn_postgres_statements::into_sql_value(name_filter),
+                wamn_postgres_statements::into_sql_value(created_at_filter),
+                wamn_postgres_statements::into_sql_value(search),
                 wamn_postgres_statements::into_sql_value(cursor_key),
                 wamn_postgres_statements::into_sql_value(cursor_id),
                 wamn_postgres_statements::into_sql_value(limit),

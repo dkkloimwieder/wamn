@@ -134,30 +134,13 @@ pub(crate) fn client_release_of(package: &GeneratedPackage) -> ClientContractIr 
                     })),
                     // The page controls a served query publishes. The release
                     // states no domain for the sort, which the paging contract
-                    // holds instead. Each model publishes the filter it
-                    // declares, so the two queries differ by one property.
+                    // holds instead. Each model publishes the filters it
+                    // declares, and the maker its search.
                     "query" => Some(json!({
                         "type": "array",
                         "items": {
                             "type": "object",
-                            "properties": {
-                                "cursor": {"type": "string"},
-                                "limit": {"type": "integer"},
-                                "filter": {"type": "object", "properties": {
-                                    declared_filter(model): {
-                                        "type": "array",
-                                        "items": {"type": "string"}
-                                    }
-                                }},
-                                "sort": {
-                                    "type": "object",
-                                    "required": ["field", "direction"],
-                                    "properties": {
-                                        "field": {"type": "string"},
-                                        "direction": {"type": "string"}
-                                    }
-                                }
-                            }
+                            "properties": query_controls(model)
                         }
                     })),
                     // A command with lines, published the way a release
@@ -227,6 +210,42 @@ pub(crate) fn client_release_of(package: &GeneratedPackage) -> ClientContractIr 
 /// differ here: the widget filters by its code, and the maker by its name.
 fn declared_filter(model: &str) -> &'static str {
     if model == "widget" { "code" } else { "name" }
+}
+
+/// The page controls one served query publishes: the cursor, the limit, the
+/// sort, each declared filter in its shape, and the maker's server search.
+/// The widget takes a list of note starts and whether its maker is empty. The
+/// maker takes a band of creation times.
+fn query_controls(model: &str) -> Value {
+    let mut filters = json!({
+        declared_filter(model): {"type": "array", "items": {"type": "string"}}
+    });
+    let mut controls = json!({
+        "cursor": {"type": "string"},
+        "limit": {"type": "integer"},
+        "sort": {
+            "type": "object",
+            "required": ["field", "direction"],
+            "properties": {
+                "field": {"type": "string"},
+                "direction": {"type": "string"}
+            }
+        }
+    });
+    if model == "widget" {
+        filters["note"] = json!({"type": "array", "items": {"type": "string"}});
+        filters["maker_id"] = json!({"type": "boolean"});
+    } else {
+        let bound = json!({"type": "string", "format": "date-time"});
+        filters["created_at"] = json!({
+            "type": "object",
+            "required": ["min"],
+            "properties": {"min": bound, "max": bound}
+        });
+        controls["search"] = json!({"type": "string", "minLength": 1});
+    }
+    controls["filter"] = json!({"type": "object", "properties": filters});
+    controls
 }
 
 /// The index of the widget model, which every emitter test reads.

@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT\n    widget.code,\n    widget.created_at,\n    widget.edit_version,\n    widget.id,\n    widget.maker_id,\n    widget.note\nFROM widget AS widget\nWHERE\n    (\n        $1::jsonb IS NULL\n        OR widget.code IN (\n            SELECT filter.value\n            FROM jsonb_array_elements_text($1::jsonb) AS filter(value)\n        )\n    )\n    AND (\n        $2::timestamptz IS NULL\n        OR widget.created_at < $2::timestamptz\n        OR (\n            widget.created_at = $2::timestamptz\n            AND widget.id < $3::uuid\n        )\n    )\nORDER BY\n    widget.created_at DESC,\n    widget.id DESC\nLIMIT $4::int8;\n",
+  "query": "SELECT\n    widget.code,\n    widget.created_at,\n    widget.edit_version,\n    widget.id,\n    widget.maker_id,\n    widget.note\nFROM widget AS widget\nWHERE\n    (\n        $1::jsonb IS NULL\n        OR widget.code IN (\n            SELECT filter.value\n            FROM jsonb_array_elements_text($1::jsonb) AS filter(value)\n        )\n    )\n    AND (\n        $2::jsonb IS NULL\n        OR EXISTS (\n            SELECT 1\n            FROM jsonb_array_elements_text($2::jsonb) AS filter(value)\n            WHERE starts_with(widget.note, filter.value)\n        )\n    )\n    AND (\n        $3::jsonb IS NULL\n        OR (widget.maker_id IS NULL) = ($3::jsonb)::boolean\n    )\n    AND (\n        $4::timestamptz IS NULL\n        OR widget.created_at > $4::timestamptz\n        OR (\n            widget.created_at = $4::timestamptz\n            AND widget.id > $5::uuid\n        )\n    )\nORDER BY\n    widget.created_at ASC,\n    widget.id ASC\nLIMIT $6::int8;\n",
   "describe": {
     "columns": [
       {
@@ -73,6 +73,8 @@
     "parameters": {
       "Left": [
         "Jsonb",
+        "Jsonb",
+        "Jsonb",
         "Timestamptz",
         "Uuid",
         "Int8"
@@ -87,5 +89,5 @@
       true
     ]
   },
-  "hash": "2a3850fcad949f88f0e2af627786c9da79663bbf0d524145894634bd3909b76e"
+  "hash": "dcb9f07cc0496bb54721a3bb9c6df6fd15f1614d2e4ebf6f32ac3513a63b19e1"
 }

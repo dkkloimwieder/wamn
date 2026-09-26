@@ -217,6 +217,7 @@ pub(super) fn input_fields_of(contract: &Value) -> Vec<FieldIr> {
             "",
         );
     }
+    let mut sent_any = false;
     for filter in contract
         .get("filters")
         .and_then(Value::as_array)
@@ -229,23 +230,57 @@ pub(super) fn input_fields_of(contract: &Value) -> Vec<FieldIr> {
         ) else {
             continue;
         };
-        if filter.get("binding").and_then(Value::as_str) != Some("json_array") {
-            continue;
-        }
-        let path = format!("filter.{name}[]");
-        let mut repeated = field(path.clone(), "array".into(), false, false);
-        let mut item = field(path.clone(), type_name.into(), true, false);
-        (item.label, item.description) = text(filter);
-        repeated.children.push(item);
+        // A list is a repeated value, a range an object of two optional
+        // bounds, and an is-null filter one boolean. A band that has no
+        // default is always sent, with its minimum.
+        let required = filter.get("required").and_then(Value::as_bool) == Some(true);
+        let sent = required && filter.get("default").is_none();
+        let (path, declared) = match filter.get("binding").and_then(Value::as_str) {
+            Some("json_array") => {
+                let path = format!("filter.{name}[]");
+                let mut repeated = field(path.clone(), "array".into(), false, false);
+                let mut item = field(path.clone(), type_name.into(), true, false);
+                (item.label, item.description) = text(filter);
+                repeated.children.push(item);
+                (path, repeated)
+            }
+            Some("json_range") => {
+                let path = format!("filter.{name}");
+                let mut range = field(path.clone(), "object".into(), sent, false);
+                (range.label, range.description) = text(filter);
+                for bound in ["max", "min"] {
+                    range.children.push(field(
+                        format!("{path}.{bound}"),
+                        type_name.into(),
+                        required && bound == "min",
+                        false,
+                    ));
+                }
+                (path, range)
+            }
+            Some("json_boolean") => {
+                let path = format!("filter.{name}");
+                let mut empty = field(path.clone(), "boolean".into(), false, false);
+                (empty.label, empty.description) = text(filter);
+                (path, empty)
+            }
+            _ => continue,
+        };
         insert(
             &mut tree,
-            repeated,
+            declared,
             &path.split('.').collect::<Vec<_>>(),
             "",
         );
-        if let Some(filter) = tree.iter_mut().find(|item| item.path == "filter") {
-            filter.required = false;
+        if let Some(group) = tree.iter_mut().find(|item| item.path == "filter") {
+            // The filter group is sent when one of its filters is.
+            sent_any |= sent;
+            group.required = sent_any;
         }
+    }
+    // A server search is one optional string.
+    if contract.get("search").is_some_and(Value::is_object) {
+        tree.push(field("search".into(), "string".into(), false, false));
     }
     tree.sort();
     tree.dedup();

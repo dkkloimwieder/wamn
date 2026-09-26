@@ -338,7 +338,7 @@ export const PALLET_QUERY_TABLE = {
   limitInput: ["limit"],
   sortFieldInput: ["sort", "field"],
   sortDirectionInput: ["sort", "direction"],
-  filters: [{ field: "locationId", input: ["filter", "locationId"], list: true }, { field: "palletCode", input: ["filter", "palletCode"], list: true }, { field: "status", input: ["filter", "status"], list: true }],
+  filters: [{ field: "locationId", input: ["filter", "locationId"], list: true }, { field: "palletCode", input: ["filter", "palletCode"], list: true, match: "contains" }, { field: "status", input: ["filter", "status"], list: true }],
   scopeFilters: ["locationId", "palletCode", "status"],
   sortFields: [{ field: "createdAt", wire: "created_at" }, { field: "locationId", wire: "location_id" }, { field: "palletCode", wire: "pallet_code" }, { field: "updatedAt", wire: "updated_at" }],
   sortDirections: ["ascending", "descending"],

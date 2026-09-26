@@ -13,4 +13,4 @@ pub mod widget_maker;
 pub mod widget_tag;
 
 pub use error::{AccessError, AccessErrorKind};
-pub use page::{Page, QueryInput};
+pub use page::{Band, Page, QueryInput};
