@@ -12,13 +12,19 @@
         { "name": "input", "schema": {} }
       ],
       "output-ports": [
-        { "name": "main", "schema": {} }
+        { "name": "main", "schema": {} },
+        { "name": "items", "schema": { "type": "array" } }
       ],
       "parameters": [
         {
           "name": "expression",
           "schema": { "type": "string", "minLength": 1 },
           "required": true
+        },
+        {
+          "name": "port",
+          "schema": { "type": "string", "enum": ["main", "items"] },
+          "required": false
         }
       ]
     }

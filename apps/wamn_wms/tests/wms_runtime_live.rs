@@ -592,31 +592,23 @@ pub(crate) async fn assert_committed_move_after_label_failure(
         "expected_row_version":revision,
         "occurred_at":OCCURRED_AT
     }}]);
-    // Send this composed command once. Claim replay does not make its label effect safe to repeat.
+    // The move is a plain route. The label workflow runs off the request path,
+    // so a missing label store never reaches this response.
     let (status, text) = route
         .post_response(&client, "/inventory/move", &body)
         .await?;
     let http = json!({"status":status.as_u16(),"body":text});
     anyhow::ensure!(
-        status == reqwest::StatusCode::INTERNAL_SERVER_ERROR,
-        "the failed store returns HTTP500, got {status}: {text}"
+        status == reqwest::StatusCode::OK,
+        "the move answers HTTP200 while the label store is missing, got {status}: {text}"
     );
-    let answer: Value = serde_json::from_str(&text).context("the partial response is JSON")?;
-    let object = answer
-        .as_object()
-        .context("the partial response is an object")?;
-    anyhow::ensure!(
-        object.len() == 2
-            && object.contains_key("committed_result")
-            && object.contains_key("failed_outcome"),
-        "the response carries only the committed result and failed outcome: {answer}"
-    );
-    let committed = item(&answer["committed_result"], &request_id)?;
+    let answer: Value = serde_json::from_str(&text).context("the move response is JSON")?;
+    let committed = item(&answer, &request_id)?;
     anyhow::ensure!(
         committed
             .as_object()
             .is_some_and(|item| item.len() == 2 && item.contains_key("value")),
-        "the committed envelope has only request_id and value: {committed}"
+        "the move envelope has only request_id and value: {committed}"
     );
     let movement_id = uuid(&committed["value"]["movement_id"])?;
     uuid::Uuid::parse_str(&movement_id).context("the committed movement identity is a UUID")?;
@@ -629,36 +621,7 @@ pub(crate) async fn assert_committed_move_after_label_failure(
     });
     anyhow::ensure!(
         committed["value"] == expected,
-        "the response preserves the original movement result without label enrichment: {committed}"
-    );
-    let failure = answer["failed_outcome"]
-        .as_object()
-        .context("the failed outcome is an object")?;
-    anyhow::ensure!(
-        failure.len() == 3
-            && failure
-                .keys()
-                .all(|key| matches!(key.as_str(), "code" | "message" | "effect_outcome")),
-        "the failed outcome carries no unrelated results: {failure:?}"
-    );
-    anyhow::ensure!(
-        failure.get("code") == Some(&json!("write_failed")),
-        "blob-put reports write_failed: {failure:?}"
-    );
-    // The missing bucket answers HTTP404. object_store maps it to NotFound, which the adapter observes as Responded.
-    anyhow::ensure!(
-        failure.get("effect_outcome")
-            == Some(&json!(
-                wamn_execution_contract::EffectOutcome::Responded.label()
-            )),
-        "the store answered after dispatch: {failure:?}"
-    );
-    anyhow::ensure!(
-        failure
-            .get("message")
-            .and_then(Value::as_str)
-            .is_some_and(|message| !message.is_empty()),
-        "the store failure carries its nonempty message: {failure:?}"
+        "the response is the committed movement result: {committed}"
     );
     let after = route
         .get(&client, "/pallet/get", &json!({"id":runtime.pallet_id}))
@@ -676,7 +639,7 @@ pub(crate) async fn assert_committed_move_after_label_failure(
             "request_id":request_id,"idempotency_key":key,"movement_id":movement_id,
             "pallet_id":runtime.pallet_id,"location_id":runtime.to_location_id,
             "row_version":revision+1,"pallet_status":before["status"],
-            "command_requests":1,"effect_outcome":failure["effect_outcome"]
+            "command_requests":1
         }),
     ))
 }

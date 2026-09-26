@@ -259,13 +259,44 @@ pub(super) async fn released_routes(
     let delivery = assert_label_delivery_and_replay(&route, runtime).await?;
     write_result(evidence, "wms-label-delivery-result.json", &delivery)?;
 
+    // The move's row event starts the label workflow off the request path, so
+    // the label lands after the move answers (docs/plan/workflow-feature.md).
+    let mut objects = Vec::new();
+    for _ in 0..LABEL_WAIT_SECONDS {
+        objects = labels(store).await?;
+        if !objects.is_empty() {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+    }
+    // The replayed move committed no second movement, so no second event
+    // arrives. Wait a little longer before counting.
+    tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+    let objects = if objects.is_empty() {
+        objects
+    } else {
+        labels(store).await?
+    };
+    let movement = delivery["movement_id"]
+        .as_str()
+        .context("the label delivery result has a movement id")?;
+    assert_single_label(&objects, movement)?;
+    write_result(evidence, "labels-objects.json", &Value::Array(objects))?;
+    Ok(())
+}
+
+/// How long the label workflow may take to store a label after the move.
+const LABEL_WAIT_SECONDS: u32 = 60;
+
+/// The label objects under `wms/`, by key and size.
+async fn labels(store: &AmazonS3) -> anyhow::Result<Vec<Value>> {
     let prefix = object_store::path::Path::from("wms");
     let objects = store
         .list(Some(&prefix))
         .try_collect::<Vec<_>>()
         .await
-        .context("list labels written by the composed WMS route")?;
-    let objects = objects
+        .context("list labels written by the WMS label workflow")?;
+    Ok(objects
         .iter()
         .map(|object| {
             json!({
@@ -273,13 +304,7 @@ pub(super) async fn released_routes(
                 "size": object.size,
             })
         })
-        .collect::<Vec<_>>();
-    let movement = delivery["movement_id"]
-        .as_str()
-        .context("the label delivery result has a movement id")?;
-    assert_single_label(&objects, movement)?;
-    write_result(evidence, "labels-objects.json", &Value::Array(objects))?;
-    Ok(())
+        .collect())
 }
 
 pub(super) async fn partial_completion(
@@ -300,12 +325,12 @@ pub(super) async fn partial_completion(
     write_result(evidence, "wms-partial-http.json", &http)?;
     write_result(evidence, "wms-partial-result.json", &result)?;
     anyhow::ensure!(
-        http["status"] == 500,
-        "the failed label write must return HTTP 500"
+        http["status"] == 200,
+        "a missing label store must not fail the move, which no label step follows"
     );
     anyhow::ensure!(
-        result["command_requests"] == 1 && result["effect_outcome"] == "responded",
-        "the partial result must retain one command request and the responded outcome"
+        result["command_requests"] == 1,
+        "the result must retain one command request"
     );
     let rows = assert_committed_rows(project, &result).await?;
     write_result(evidence, "wms-partial-database.json", &rows)
@@ -375,30 +400,29 @@ pub(super) async fn generated_terminal(
         "the generated terminal did not complete its scenario and cleanup"
     );
     if mode == "success" {
-        let key = result["stored_key"]
+        // The terminal sees the committed move only. The label workflow stores
+        // the label under the movement id after the move commits.
+        let movement = result["movement_id"]
             .as_str()
-            .context("the generated terminal returns its label key")?;
-        let suffix = key
-            .strip_prefix("wms/")
-            .context("the generated terminal label belongs to WMS")?;
-        anyhow::ensure!(
-            suffix.len() == 36
-                && suffix.bytes().all(|byte| byte.is_ascii_digit()
-                    || (b'a'..=b'f').contains(&byte)
-                    || byte == b'-'),
-            "the generated terminal returned an invalid label key"
-        );
-        let label = store
-            .get(&object_store::path::Path::from(key))
-            .await?
-            .bytes()
-            .await?;
+            .context("the generated terminal returns its movement id")?;
+        uuid::Uuid::parse_str(movement).context("the terminal movement id is a UUID")?;
+        let key = object_store::path::Path::from(format!("wms/{movement}"));
+        let mut label = None;
+        for _ in 0..LABEL_WAIT_SECONDS {
+            if let Ok(object) = store.get(&key).await {
+                label = Some(object.bytes().await?);
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+        }
+        let label = label.context("the label workflow stored no label for the terminal move")?;
         std::fs::write(output.join("label.zpl"), &label)?;
-        let digest = hex::encode(Sha256::digest(&label));
-        anyhow::ensure!(
-            result["label_sha256"] == digest,
-            "the stored label differs from the generated terminal response"
-        );
+        anyhow::ensure!(label.starts_with(b"^XA"), "the stored label is not ZPL");
+        write_result(
+            &output,
+            "label.json",
+            &json!({"key": key.to_string(), "sha256": hex::encode(Sha256::digest(&label))}),
+        )?;
     }
     Ok(())
 }

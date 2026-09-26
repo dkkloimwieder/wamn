@@ -52,7 +52,7 @@ async fn released_wms_routes_retain_committed_work_after_label_failure() -> anyh
 
 #[tokio::test]
 #[ignore = "requires: docker, kind, kubectl, helm, jq, curl, python3"]
-async fn generated_wms_terminal_reports_success_and_partial_completion() -> anyhow::Result<()> {
+async fn generated_wms_terminal_reports_a_committed_move() -> anyhow::Result<()> {
     wamn_test_postgres::require_prerequisites(&[
         "docker", "kind", "kubectl", "helm", "jq", "curl", "python3",
     ]);
@@ -672,26 +672,11 @@ async fn run_created(
                     .arg(work),
             )
             .await?;
-            let result = async {
-                if generated_terminal {
-                    application::generated_terminal(
-                        &document,
-                        &application::TerminalPaths {
-                            repository,
-                            target,
-                            work,
-                            evidence,
-                        },
-                        &loopback_url,
-                        instance,
-                        "partial",
-                        &store,
-                    )
-                    .await?;
-                }
-                application::partial_completion(&mut document, project.as_ref(), evidence).await
-            }
-            .await;
+            // The terminal's partial mode needs a route that answers a
+            // partial result. The WMS move is a plain route now, so only the
+            // terminal preflight exercises that mode.
+            let result =
+                application::partial_completion(&mut document, project.as_ref(), evidence).await;
             let restored = checked(
                 Command::new(lifecycle)
                     .arg("install-labels")

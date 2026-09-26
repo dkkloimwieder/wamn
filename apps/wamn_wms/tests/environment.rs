@@ -365,6 +365,7 @@ pub async fn publish(
     let wms_declaration = evidence.join("wms.declaration.json");
     let label_declaration = evidence.join("label-render.declaration.json");
     let blob_declaration = evidence.join("blob-put.declaration.json");
+    let jsonata_declaration = evidence.join("jsonata.declaration.json");
     component_declaration(
         &root.join("publication/components/wms.json.in"),
         &wms_declaration,
@@ -382,6 +383,12 @@ pub async fn publish(
         &blob_declaration,
         &package,
         "labels",
+    )?;
+    component_declaration(
+        &repository.join("apps/platform/execution/jsonata/declaration.json.in"),
+        &jsonata_declaration,
+        &package,
+        "",
     )?;
     let admit_request = |component_bytes, declaration, admitted: &[&str]| AdmitComponentRequest {
         package: root.clone(),
@@ -424,11 +431,19 @@ pub async fn publish(
         publish_request(),
     )
     .await?;
+    let jsonata_digest = shared::push_component(
+        admit_request(
+            inputs.component_directory.join("jsonata_expression.wasm"),
+            jsonata_declaration,
+            &["wamn:node"],
+        ),
+        publish_request(),
+    )
+    .await?;
     fs::write(
         evidence.join("component-digests.json"),
-        serde_json::to_vec_pretty(
-            &json!({"wms":wms_digest,"label-render":label_digest,"blob-put":blob_digest}),
-        )?,
+        serde_json::to_vec_pretty(&json!({"wms":wms_digest,"label-render":label_digest,
+            "blob-put":blob_digest,"jsonata":jsonata_digest}))?,
     )?;
     let mut wirings = fs::read_dir(root.join("publication/wirings"))?
         .map(|entry| entry.map(|entry| entry.path()))

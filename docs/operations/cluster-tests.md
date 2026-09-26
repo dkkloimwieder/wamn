@@ -125,8 +125,8 @@ For another WMS case, replace the test name:
 
 | Case | Full test name |
 | --- | --- |
-| Committed movement after label failure | `cluster::released_wms_routes_retain_committed_work_after_label_failure` |
-| Generated terminal success and partial completion | `cluster::generated_wms_terminal_reports_success_and_partial_completion` |
+| Committed movement while the label store is missing | `cluster::released_wms_routes_retain_committed_work_after_label_failure` |
+| Generated terminal move, and the label that the workflow stores | `cluster::generated_wms_terminal_reports_a_committed_move` |
 | Cold, restarted, and steady requests with compiled-cache identity | `cluster::restarted_wms_host_retains_compiled_code_and_serves_requests` |
 
 To use the WMS routes from a browser, set `WAMN_JOURNEY_HOLD_SECONDS` on the released routes case.

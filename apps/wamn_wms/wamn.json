@@ -2683,5 +2683,17 @@
         "postgres"
       ]
     }
+  },
+  "workflows": {
+    "movement_label": {
+      "wiring": "inventory_move_and_label",
+      "registration": {
+        "source_package": "wamn_wms",
+        "entity": "inventory_movement",
+        "ops": [
+          "insert"
+        ]
+      }
+    }
   }
 }

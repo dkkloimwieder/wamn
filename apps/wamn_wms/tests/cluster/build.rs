@@ -38,6 +38,7 @@ pub(super) async fn build(
         for relative in [
             "virtualized/std-empty-environment/wms.wasm",
             "virtualized/std-empty-environment/blob_put.wasm",
+            "virtualized/std-empty-environment/jsonata_expression.wasm",
             "wasm32-wasip2/release/label_render.wasm",
             "wasm32-wasip2/release/http_route.wasm",
             "wasm32-wasip2/release/materializer.wasm",

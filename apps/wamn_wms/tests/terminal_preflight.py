@@ -46,8 +46,6 @@ class HttpFixture:
                         value = dict(fixture.movement)
                         envelope = [{"request_id": request[0]["request_id"], "value": value}]
                         if mode == "success":
-                            value.update(zpl="^XA^FO10,10^FDSynthetic WMS preflight^FS^XZ",
-                                         stored={"container": "labels", "key": value["movement_id"]})
                             status, body = 200, envelope
                         else:
                             status, body = 500, {"committed_result": envelope,

@@ -56,21 +56,22 @@ It is a current SQL read rather than an event-maintained rollup.
 The [projection implementation](data/src/inventory_aggregate.rs) owns its result.
 
 `/inventory/move` is a route to `inventory.move`, like every other operation.
-The [label wiring](publication/wirings/inventory_move_and_label.json) stays in the tree, but no attachment names it:
+The move's row event starts the [label workflow](publication/wirings/inventory_move_and_label.json) off the request path.
+`wamn.json` declares it as the workflow `movement_label`, registered on the `inventory_movement` insert:
 
 ```text
-inventory.move → label-render → blob-put
+inventory_movement insert → shape (jsonata) → label-render → blob-put
 ```
 
-Publish registers a wiring on an event only when an event handler is its entry node, and this wiring enters at the move command.
-Epic 2 (wamn-xs9a) decides how the label step runs on the move event, and wamn-g4kj holds that input.
-Until then, no route renders or stores a label.
+The `shape` node turns a move's row into one label item, and any other movement kind into none.
+The label is stored under the movement id, so a redelivered event overwrites the same object.
+The move response carries the committed move only (docs/plan/workflow-feature.md).
 
 ## Application observations
 
-The [cluster cases](tests/cluster.rs) exercise released routes, contention, replay, and label output.
-Separate cases exercise committed work after label failure, terminal output, browser output, and host restart.
-The label cases still expect the label on the move response, and wamn-g4kj updates them.
+The [cluster cases](tests/cluster.rs) exercise released routes, contention, replay, and the stored label.
+Separate cases exercise committed work while the label store is missing, terminal output, browser output, and host restart.
+The label cases read the label from the store after the workflow runs.
 The [terminal example](examples/wms_move.rs) uses generated screens and the common client submission layer.
 These owners replace the original proposal's earlier restriction against a WMS operator interface.
 

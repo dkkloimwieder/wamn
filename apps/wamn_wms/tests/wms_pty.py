@@ -202,14 +202,11 @@ def drive(session, relay, db, evidence, ids, mode):
     committed = {"movement_id": movement_id, "pallet_id": ids.pallet,
                  "location_id": ids.destination, "pallet_status": "available", "row_version": 2}
     if mode == "success":
-        require(move["status"] == 200 and set(value) == set(committed) | {"zpl", "stored"},
-                "successful move did not return the declared enriched result")
-        require(all(value[key] == expected for key, expected in committed.items()), "successful movement result differs")
-        require(value["stored"]["key"] == movement_id and value["stored"]["container"]
-                and value["zpl"], "successful result has no stored label key or label content")
-        session.text("stored.key: " + movement_id)
-        session.text("stored.container: " + value["stored"]["container"])
-        frame("13-stored-label-key")
+        # The move is a plain route; the label workflow stores the label later.
+        require(move["status"] == 200 and value == committed,
+                "successful move did not return the committed movement")
+        session.text("movement_id: " + movement_id)
+        frame("13-committed-move")
     else:
         require(move["status"] == 500 and set(response) == {"committed_result", "failed_outcome"}
                 and value == committed, "partial response does not preserve the exact committed movement")
@@ -253,8 +250,6 @@ def drive(session, relay, db, evidence, ids, mode):
             "movement_id": movement_id, "pallet_id": ids.pallet, "location_id": ids.destination,
             "row_version": 2, "http_requests": 2, "read_requests": 1, "move_requests": 1,
             "committed_claims": 1, "committed_movements": 1, "spent_controls_send_nothing": True,
-            "stored": value.get("stored"), "stored_key": "wms/" + movement_id if mode == "success" else None,
-            "label_sha256": hashlib.sha256(value["zpl"].encode()).hexdigest() if mode == "success" else None,
             "partial_result_and_failure_visible": mode == "partial"}
 
 

@@ -8,6 +8,12 @@
 //! The node emits the expression's result as it is. A result that JSONata
 //! calls undefined, for example a path that matches nothing, emits `null`.
 //!
+//! The result leaves on port `main`, whose schema admits any JSON. With the
+//! optional parameter `port` set to `items`, it leaves on port `items`, whose
+//! schema is the item array that palette nodes such as `label-render` take:
+//! a wiring edge joins two ports only when their schemas are the same, and
+//! the node refuses a result that is not an array there.
+//!
 //! An input that is not JSON is `invalid-input`. An expression that does not
 //! parse is a configuration fault, and an evaluation failure repeats on a
 //! retry, so both are `terminal`.
@@ -91,6 +97,16 @@ impl Guest for Component {
             .get("expression")
             .and_then(serde_json::Value::as_str)
             .ok_or_else(|| terminal("invalid_config", "expression must be a string".to_owned()))?;
+        let port = config
+            .get("port")
+            .map(|port| {
+                port.as_str()
+                    .filter(|port| [MAIN_PORT, ITEMS_PORT].contains(port))
+                    .ok_or_else(|| {
+                        terminal("invalid_config", "port must be main or items".to_owned())
+                    })
+            })
+            .transpose()?;
         let payload = evaluate(expression, &input).map_err(|error| match error.kind() {
             EvaluationErrorKind::Expression => terminal(
                 "invalid_expression",
@@ -100,11 +116,27 @@ impl Guest for Component {
                 terminal("evaluation_failed", error.message().to_owned())
             }
         })?;
+        if port == Some(ITEMS_PORT) && !is_item_array(&payload) {
+            return Err(terminal(
+                "not_an_item_array",
+                "the result on port items must be an array".to_owned(),
+            ));
+        }
         Ok(Emission {
             payload,
-            port: None,
+            port: port.map(str::to_owned),
         })
     }
+}
+
+/// The output port whose schema admits any JSON.
+const MAIN_PORT: &str = "main";
+/// The output port whose schema is an array of items.
+const ITEMS_PORT: &str = "items";
+
+/// Whether an emitted payload fits the `items` port schema.
+fn is_item_array(payload: &str) -> bool {
+    serde_json::from_str::<serde_json::Value>(payload).is_ok_and(|value| value.is_array())
 }
 
 fn terminal(code: &str, message: String) -> NodeError {
@@ -120,7 +152,7 @@ bindings::export!(Component with_types_in bindings);
 mod tests {
     use serde_json::{Value, json};
 
-    use super::{EvaluationErrorKind, evaluate};
+    use super::{EvaluationErrorKind, evaluate, is_item_array};
 
     /// The WMS label workflow's shape expression (docs/plan/workflow-feature.md
     /// 4.4): a move row becomes one label-render item, and any other row none.
@@ -151,6 +183,14 @@ mod tests {
     fn the_shape_expression_gives_no_item_for_another_movement() {
         let row = json!({"event": "insert", "new": {"id": "m-2", "kind": "receive"}});
         assert_eq!(result(SHAPE, &row), json!([]));
+    }
+
+    #[test]
+    fn only_an_array_fits_the_items_port() {
+        let row = json!({"event": "insert", "new": {"id": "m-2", "kind": "receive"}});
+        assert!(is_item_array(&evaluate(SHAPE, &row).unwrap()));
+        assert!(!is_item_array(&evaluate("new", &row).unwrap()));
+        assert!(!is_item_array(&evaluate("absent", &row).unwrap()));
     }
 
     #[test]
