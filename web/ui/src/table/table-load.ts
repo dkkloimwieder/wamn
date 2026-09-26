@@ -19,6 +19,7 @@ import {
   emptyLoad,
   endLoad,
   finishLoad,
+  keepLoad,
   loadLimit,
   replaceRow as replaceLoadedRow,
   type RowKey,
@@ -52,14 +53,15 @@ export interface TableLoadSort {
 
 /**
  * Opens the streamed load of `cap` rows in `sort`, hands its rows to `onRows`
- * in batches, and returns how it ended. `signal` aborts it.
+ * in batches, and returns how it ended. `signal` aborts it. `unchanged` means
+ * the data did not change since the last load, whose rows stay.
  */
 export type TableStream<TRow extends object> = (
   cap: number,
   sort: TableLoadSort | undefined,
   signal: AbortSignal,
   onRows: (rows: readonly TRow[]) => void,
-) => Promise<LoadEnd>;
+) => Promise<LoadEnd | { readonly status: "unchanged" }>;
 
 export interface TableLoad<TRow extends object> {
   /** The load state that the DataTable renders. */
@@ -92,7 +94,8 @@ export function createTableLoad<TRow extends object>(
       waiting = cap;
       return;
     }
-    const next = startLoad(state(), cap);
+    const last = state();
+    const next = startLoad(last, cap);
     setState(next);
     if (stream !== undefined) {
       streaming?.abort();
@@ -105,7 +108,11 @@ export function createTableLoad<TRow extends object>(
         setState((current) => appendRows(current, next.generation, rows));
         performance.measure("wamn:load-render", { start, detail: { rows: rows.length } });
       });
-      setState((current) => endLoad(current, next.generation, end, definition.rowId));
+      setState((current) =>
+        end.status === "unchanged"
+          ? keepLoad(current, next.generation, last.fullyRead)
+          : endLoad(current, next.generation, end, definition.rowId),
+      );
       return;
     }
     const limit =

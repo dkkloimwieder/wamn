@@ -126,19 +126,27 @@ describe("QueryTable", () => {
       created_at: "2026-09-21T00:00:00.000000Z",
     }));
     const asked: unknown[] = [];
+    const revalidated: (string | undefined)[] = [];
     const lines = `${rows.map((row) => JSON.stringify({ row })).join("\n")}\n${JSON.stringify({
       outcome: { value: { more: true }, actor_labels: {} },
     })}\n`;
     const transport: Transport = {
       invoke: async () => ({ status: "uncertain", reason: "a stream reads no page", retryRefusal: null }),
-      openStream: async (request) => {
+      openStream: async (request, _signal, etag) => {
         asked.push(request.items[0]);
-        return new ReadableStream<Uint8Array>({
-          start(controller) {
-            controller.enqueue(new TextEncoder().encode(lines));
-            controller.close();
-          },
-        });
+        revalidated.push(etag);
+        if (etag !== undefined) {
+          return { notModified: true, etag };
+        }
+        return {
+          etag: 'W/"v1"',
+          body: new ReadableStream<Uint8Array>({
+            start(controller) {
+              controller.enqueue(new TextEncoder().encode(lines));
+              controller.close();
+            },
+          }),
+        };
       },
     };
     render(() => (
@@ -150,6 +158,11 @@ describe("QueryTable", () => {
     await waitFor(() => expect(screen.getByText("Full dataset cannot be loaded")).toBeDefined());
     // The cap, not the page maximum of 100.
     expect(asked).toEqual([{ limit: 1000 }]);
+    // A refresh revalidates the load with its ETag, and unchanged data keeps its rows.
+    fireEvent.click(theButton("refresh"));
+    await waitFor(() => expect(revalidated).toEqual([undefined, 'W/"v1"']));
+    await waitFor(() => expect(screen.getByText("Full dataset cannot be loaded")).toBeDefined());
+    expect(document.querySelector(`tr[data-row-id="${id(19)}"]`)).not.toBeNull();
   });
 
   it("opens a record from a row, and fills a form with the row's key", async () => {

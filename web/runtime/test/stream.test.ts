@@ -9,6 +9,7 @@ import {
   type BatchTick,
   emptyLoad,
   endLoad,
+  keepLoad,
   readLoadLines,
   startLoad,
 } from "../src/load.js";
@@ -203,6 +204,23 @@ describe("the load state of a streamed load", () => {
   });
 });
 
+describe("an unchanged load", () => {
+  it("keeps the rows of the last load and whether it read the whole set", () => {
+    const loaded = endLoad(
+      appendRows(startLoad(emptyLoad<Row>(1000)), 1, [{ id: "a", name: "a" }]),
+      1,
+      { status: "completed", value: { more: true } },
+      ["id"],
+    );
+    const again = startLoad(loaded);
+    const kept = keepLoad(again, again.generation, loaded.fullyRead);
+    expect(kept.rows.map((one) => one.id)).toEqual(["a"]);
+    expect(kept.busy).toBe(false);
+    expect(kept.fullyRead).toBe(false);
+    expect(keepLoad(again, loaded.generation, true)).toBe(again);
+  });
+});
+
 describe("the transport's streamed read", () => {
   const request: WireRequest = {
     operation: "wamn-wms:pallet/query@1.0.0",
@@ -230,17 +248,32 @@ describe("the transport's streamed read", () => {
         asked.push({ url: String(url), init: init ?? {} });
         return new Response(row("a") + outcome({ value: { more: false } }), {
           status: 200,
-          headers: { "content-type": "application/x-ndjson" },
+          headers: { "content-type": "application/x-ndjson", etag: 'W/"v1"' },
         });
       },
     });
     const opened = await transport.openStream?.(request);
-    expect(opened).toBeInstanceOf(ReadableStream);
+    expect(opened !== undefined && "body" in opened && opened.body).toBeInstanceOf(ReadableStream);
+    expect(opened !== undefined && "etag" in opened && opened.etag).toBe('W/"v1"');
     expect(asked[0]?.url).toBe("https://wms.test/pallet/query?limit=1000&shape=%22stream%22");
-    expect(asked[0]?.init.cache).toBe("no-cache");
+    expect(asked[0]?.init.cache).toBe("no-store");
     expect((asked[0]?.init.headers as { authorization?: string }).authorization).toBe(
       "Bearer token",
     );
+  });
+
+  it("revalidates the last load with its ETag, and unchanged data answers not modified", async () => {
+    const asked: RequestInit[] = [];
+    const transport = createTransport({
+      baseUrl: "https://wms.test",
+      fetch: async (_url, init) => {
+        asked.push(init ?? {});
+        return new Response(null, { status: 304, headers: { etag: 'W/"v1"' } });
+      },
+    });
+    const opened = await transport.openStream?.(request, undefined, 'W/"v1"');
+    expect(opened).toEqual({ notModified: true, etag: 'W/"v1"' });
+    expect((asked[0]?.headers as { "if-none-match"?: string })["if-none-match"]).toBe('W/"v1"');
   });
 
   it("classifies a read that ended before its first row as a page reply", async () => {

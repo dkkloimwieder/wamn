@@ -33,6 +33,7 @@ import {
   fillMember,
   type FieldMap,
   fromWire,
+  isStreamReply,
   type JsonValue,
   type LoadEnd,
   type LoadPage,
@@ -248,25 +249,39 @@ export function QueryTable<TRow extends object, TResult = unknown>(
     return request;
   };
 
+  // The request and the ETag of the last load that read to its end. The
+  // same request revalidates its rows with that ETag.
+  let lastLoad: { readonly request: string; readonly etag: string } | undefined;
+
   // A page read streams its load, up to the cap, when the transport can.
   const stream: TableStream<TRow> | undefined =
     definition.rows === "item" && transport.openStream !== undefined
       ? async (cap, sort, signal, onRows) => {
+          const item = request(cap, sort);
+          const key = JSON.stringify(item);
           const opened = await openStream<LoadPage<TRow>>(
             transport,
             definition.read,
-            request(cap, sort),
+            item,
             signal,
+            lastLoad?.request === key ? lastLoad.etag : undefined,
           );
+          if (isStreamReply(opened) && "notModified" in opened) {
+            return { status: "unchanged" };
+          }
           let end: LoadEnd;
-          if (opened instanceof ReadableStream) {
+          if (isStreamReply(opened)) {
             const rowFields = nestedFields(definition.read.result, "item");
             end = await readLoadLines(
-              opened,
+              opened.body,
               (row) => fromWire(row, rowFields) as TRow,
               onRows,
               definition.read.route.contract.errors,
             );
+            lastLoad =
+              end.status === "completed" && opened.etag !== null
+                ? { request: key, etag: opened.etag }
+                : undefined;
           } else if (opened.status === "completed") {
             onRows(opened.value.item);
             end = { status: "completed", value: { more: opened.value.nextCursor !== null } };

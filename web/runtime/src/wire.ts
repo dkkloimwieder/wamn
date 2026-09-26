@@ -129,14 +129,27 @@ export interface Transport {
   onWrite?(listener: () => void): () => void;
   /**
    * Opens a streamed read of one query, the `stream` shape of its canonical
-   * GET URL. A reply of lines returns its body for `readLoadLines`. A read
-   * that ended before its first row returns its outcome, as `invoke`
-   * classifies it. `signal` aborts the read, which ends the query.
+   * GET URL. A reply of lines returns its body for `readLoadLines` and its
+   * ETag. With `etag`, the read revalidates the load that carried it, and
+   * unchanged data answers `notModified`. A read that ended before its first
+   * row returns its outcome, as `invoke` classifies it. `signal` aborts the
+   * read, which ends the query.
    */
   openStream?(
     request: WireRequest,
     signal?: AbortSignal,
-  ): Promise<ReadableStream<Uint8Array> | Outcome<JsonValue>>;
+    etag?: string,
+  ): Promise<StreamReply | Outcome<JsonValue>>;
+}
+
+/** A streamed read that started: its lines, or the answer that nothing changed. */
+export type StreamReply =
+  | { readonly body: ReadableStream<Uint8Array>; readonly etag: string | null }
+  | { readonly notModified: true; readonly etag: string };
+
+/** Whether an opened streamed read is a reply rather than an outcome. */
+export function isStreamReply(opened: StreamReply | Outcome<unknown>): opened is StreamReply {
+  return "body" in opened || "notModified" in opened;
 }
 
 /**
@@ -264,15 +277,17 @@ export async function openStream<T>(
   binding: OperationBinding,
   item: unknown,
   signal?: AbortSignal,
-): Promise<ReadableStream<Uint8Array> | Outcome<T>> {
+  etag?: string,
+): Promise<StreamReply | Outcome<T>> {
   if (transport.openStream === undefined) {
     throw new Error("this transport opens no streamed read");
   }
   const opened = await transport.openStream(
     { ...binding.route, items: [toWire(item, binding.request)] },
     signal,
+    etag,
   );
-  return opened instanceof ReadableStream ? opened : reviveOutcome<T>(opened, binding.result);
+  return isStreamReply(opened) ? opened : reviveOutcome<T>(opened, binding.result);
 }
 
 /**

@@ -217,6 +217,23 @@ export function endLoad<Row>(
   };
 }
 
+/**
+ * End the load numbered `generation` whose data did not change since the
+ * last load: the rows of the last load stay, and so does whether it read the
+ * whole set.
+ */
+export function keepLoad<Row>(
+  state: LoadState<Row>,
+  generation: number,
+  fullyRead: boolean,
+  now: Date = new Date(),
+): LoadState<Row> {
+  if (generation !== state.generation || state.arrived !== 0) {
+    return state;
+  }
+  return { ...state, fullyRead, busy: false, refusal: null, endedAt: now };
+}
+
 /** The state of a load that did not complete: no rows, and why. */
 function failedLoad<Row>(state: LoadState<Row>, refusal: string, now: Date): LoadState<Row> {
   return { ...state, rows: [], fullyRead: false, busy: false, refusal, endedAt: now };

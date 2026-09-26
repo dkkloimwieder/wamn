@@ -18,6 +18,7 @@ import { z } from "zod";
 import { encodeReadQuery } from "./readQuery.js";
 import { createReadStore, type ReadReply } from "./readCache.js";
 import type {
+  StreamReply,
   ErrorCase,
   FieldMap,
   JsonValue,
@@ -575,7 +576,8 @@ export function createTransport(options: TransportOptions): Transport {
     async openStream(
       request: WireRequest,
       signal?: AbortSignal,
-    ): Promise<ReadableStream<Uint8Array> | Outcome<JsonValue>> {
+      etag?: string,
+    ): Promise<StreamReply | Outcome<JsonValue>> {
       const [item, ...rest] = request.items;
       if (rest.length > 0 || item === null || typeof item !== "object" || Array.isArray(item)) {
         return uncertain("a read sends exactly one request item");
@@ -585,10 +587,10 @@ export function createTransport(options: TransportOptions): Transport {
         shape: "stream",
       });
       const target = `${request.template}?${query}`;
-      const headers: { [name: string]: string } = {};
-      // The browser revalidates its own copy with the load's ETag, and a 304
-      // saves the body. The read store holds no load: a load holds its rows.
-      const init: RequestInit = { method: "GET", headers, cache: "no-cache" };
+      // The table holds the rows of its last load, so the load revalidates
+      // them itself with their ETag, and no cache keeps a second copy.
+      const headers: { [name: string]: string } = etag === undefined ? {} : { "if-none-match": etag };
+      const init: RequestInit = { method: "GET", headers, cache: "no-store" };
       if (signal !== undefined) {
         init.signal = signal;
       }
@@ -599,9 +601,12 @@ export function createTransport(options: TransportOptions): Transport {
       } catch (error) {
         return uncertain(`the request did not complete: ${String(error)}`);
       }
+      if (response.status === 304 && etag !== undefined) {
+        return { notModified: true, etag: response.headers.get("etag") ?? etag };
+      }
       const type = response.headers.get("content-type") ?? "";
       if (response.status === 200 && type.startsWith(STREAM_CONTENT_TYPE) && response.body !== null) {
-        return response.body;
+        return { body: response.body, etag: response.headers.get("etag") };
       }
       // A read that ended before its first row answers as a page answers.
       let body: string;
