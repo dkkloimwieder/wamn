@@ -17,6 +17,7 @@ import {
   DetailList,
   FieldError,
   QueryTable,
+  TableScreen,
   announceOutcome,
 } from "@wamn/ui";
 import {
@@ -131,9 +132,13 @@ export interface InventoryMovementQueryTableProps {
 /** What an operator calls this screen. The page decides where it goes. */
 export const InventoryMovementQueryTableLabel = "query";
 
-/** The table for `wamn-wms:inventory-movement/query@1.0.0`: the QueryTable over `INVENTORY_MOVEMENT_QUERY_TABLE`. */
+/** The table for `wamn-wms:inventory-movement/query@1.0.0`: the QueryTable over `INVENTORY_MOVEMENT_QUERY_TABLE`, in the table screen. */
 export function InventoryMovementQueryTable(props: InventoryMovementQueryTableProps) {
-  return <QueryTable<InventoryMovementQueryRow, InventoryMovementQueryResult> definition={INVENTORY_MOVEMENT_QUERY_TABLE} label={InventoryMovementQueryTableLabel} {...props} />;
+  return (
+    <TableScreen>
+      <QueryTable<InventoryMovementQueryRow, InventoryMovementQueryResult> definition={INVENTORY_MOVEMENT_QUERY_TABLE} label={InventoryMovementQueryTableLabel} {...props} />
+    </TableScreen>
+  );
 }
 
 /** The table definition of `wamn-wms:inventory-movement/query@1.0.0`. */

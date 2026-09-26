@@ -17,6 +17,7 @@ import {
   DetailList,
   FieldError,
   QueryTable,
+  TableScreen,
   announceOutcome,
 } from "@wamn/ui";
 import {
@@ -120,9 +121,13 @@ export interface PalletQuantityQueryTableProps {
 /** What an operator calls this screen. The page decides where it goes. */
 export const PalletQuantityQueryTableLabel = "query";
 
-/** The table for `wamn-wms:pallet-quantity/query@1.0.0`: the QueryTable over `PALLET_QUANTITY_QUERY_TABLE`. */
+/** The table for `wamn-wms:pallet-quantity/query@1.0.0`: the QueryTable over `PALLET_QUANTITY_QUERY_TABLE`, in the table screen. */
 export function PalletQuantityQueryTable(props: PalletQuantityQueryTableProps) {
-  return <QueryTable<PalletQuantityQueryRow, PalletQuantityQueryResult> definition={PALLET_QUANTITY_QUERY_TABLE} label={PalletQuantityQueryTableLabel} {...props} />;
+  return (
+    <TableScreen>
+      <QueryTable<PalletQuantityQueryRow, PalletQuantityQueryResult> definition={PALLET_QUANTITY_QUERY_TABLE} label={PalletQuantityQueryTableLabel} {...props} />
+    </TableScreen>
+  );
 }
 
 /** The table definition of `wamn-wms:pallet-quantity/query@1.0.0`. */

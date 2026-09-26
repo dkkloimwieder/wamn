@@ -495,7 +495,7 @@ fn emit_definition_table(
         screen.model.to_uppercase(),
         screen.name.to_uppercase()
     );
-    ui.insert("QueryTable");
+    ui.extend(["QueryTable", "TableScreen"]);
     runtime.extend(["type Outcome", "type Transport"]);
     bindings.insert(format!("type {stem}Request"));
     bindings.insert(format!("type {stem}Result"));
@@ -540,7 +540,7 @@ fn emit_definition_table(
     .expect("write");
     writeln!(
         source,
-        "\n/** The table for `{}`: the QueryTable over `{definition}`. */\nexport function {stem}Table(props: {stem}TableProps) {{\n  return <QueryTable<{stem}Row, {stem}Result> definition={{{definition}}} label={{{stem}TableLabel}} {{...props}} />;\n}}",
+        "\n/** The table for `{}`: the QueryTable over `{definition}`, in the table screen. */\nexport function {stem}Table(props: {stem}TableProps) {{\n  return (\n    <TableScreen>\n      <QueryTable<{stem}Row, {stem}Result> definition={{{definition}}} label={{{stem}TableLabel}} {{...props}} />\n    </TableScreen>\n  );\n}}",
         screen.contract.operation
     )
     .expect("write");
@@ -876,10 +876,8 @@ fn write_table_definition(
                     .screens()
                     .find(|candidate| candidate.contract.operation == form.operation);
                 if action.many && target.is_some_and(many_rows) {
-                    let component = format!(
-                        "{}Form",
-                        crate::client_ts::type_stem(form.model, form.name)
-                    );
+                    let component =
+                        format!("{}Form", crate::client_ts::type_stem(form.model, form.name));
                     if form.model != screen.model {
                         sibling
                             .entry(form.model.to_owned())
@@ -1805,7 +1803,11 @@ fn emit_many_submit(
         "          if (!checked.success) {{\n            const issue = checked.error.issues[0];\n            setRefusal({{\n              text: issue?.message ?? \"A value is not valid.\",\n              member: checkedMember(\n                issue?.path as (string | number)[] | undefined,\n                {fields},\n              ),\n            }});\n            return;\n          }}"
     )
     .expect("write");
-    writeln!(source, "          let item = {{ ...each }} as {stem}Request;").expect("write");
+    writeln!(
+        source,
+        "          let item = {{ ...each }} as {stem}Request;"
+    )
+    .expect("write");
     write_supplied(source, screen, "          ");
     for revision in &screen.revision_inputs {
         writeln!(

@@ -1,14 +1,14 @@
 /**
- * The app-shaped table with its actions (wamn-8iul.7).
+ * The app-shaped table with its actions (wamn-8iul.7, wamn-sa7d.3).
  *
- * The fixture's widget query table, through `createTableLoad`, over one stub
+ * The QueryTable over the fixture's emitted widget definition, over one stub
  * transport that answers every call:
  *
- * - The row buttons are the definition's actions that take one row.
- * - The bulk action is record-batch, which takes many rows. One call carries
- *   one outer input for each selected row, and the stub refuses a held
- *   widget, so a refusal marks only its row. The gallery fills the other
- *   inputs of each item with fixed values, which a form would ask for.
+ * - The get button of a row opens its record, which the gallery reports.
+ * - The bulk action is record-batch, which takes many rows. It opens the
+ *   emitted batch form in a sheet, which asks for the grade, the inspector
+ *   and the amount. One call carries one input for each selected row, and
+ *   the stub refuses a held widget, so a refusal marks only its row.
  * - The editable columns are the definition's update fields. The stub
  *   refuses a code outside its domain, which marks the cell, and a stale
  *   revision, which marks the row. The button above the table changes the
@@ -20,36 +20,11 @@
 
 import { createSignal, type JSX, Show } from "solid-js";
 
-import {
-  createTableLoad,
-  DataTable,
-  type DataTableColumn,
-  type DataTableEditResult,
-  type DataTableRowResult,
-  type DataTableScopeFilter,
-} from "@wamn/ui";
-import {
-  newIdempotencyKey,
-  newRequestId,
-  type JsonValue,
-  type LoadPage,
-  type OperationRoute,
-  type Outcome,
-  toWire,
-  type Transport,
-  writeMember,
-} from "@wamn/web-runtime";
+import { QueryTable, type QueryTableDefinition } from "@wamn/ui";
+import { type JsonValue, type OperationRoute, type Outcome, type Transport } from "@wamn/web-runtime";
 
 import { WIDGET_QUERY_TABLE } from "../fixture/components/widget.js";
-import {
-  query,
-  update,
-  WIDGET_RECORD_BATCH_REQUEST_FIELDS,
-  WIDGET_RECORD_BATCH_ROUTE,
-  type WidgetQueryRequest,
-  type WidgetQueryRow,
-  type WidgetUpdateRequest,
-} from "../fixture/widget.js";
+import { WIDGET_RECORD_BATCH_ROUTE, type WidgetQueryRow } from "../fixture/widget.js";
 
 /** One widget as the stub stores it, in wire spelling. */
 interface StoredWidget {
@@ -70,30 +45,6 @@ interface EventRow {
   readonly recordedAt: string;
 }
 
-/**
- * The child table the gallery states, shaped as the emitter writes one. Its
- * one scope filter is the widget it belongs to.
- */
-const WIDGET_EVENT_TABLE = {
-  rowId: ["id"],
-  pageMaximum: 100,
-  scopeFilters: ["widgetId"],
-  sortFields: [],
-  sortMaxFields: 1,
-  columns: [
-    { field: "grade", label: "grade", type: "text", role: "value" },
-    { field: "amount", label: "amount", type: "numeric", role: "value" },
-    { field: "recordedAt", label: "recorded at", type: "timestamptz", role: "value" },
-    { field: "id", label: "id", type: "uuid", role: "key" },
-  ],
-} as const;
-
-/** The widget table with the child the gallery states for it. */
-const WIDGETS = {
-  ...WIDGET_QUERY_TABLE,
-  childTables: [{ definition: "WIDGET_EVENT_TABLE", scopeFilter: "widgetId" }],
-} as const;
-
 /** The route of the gallery's child read, which only the stub answers. */
 export const EVENT_QUERY_ROUTE: OperationRoute = {
   operation: "gallery:widget-event/query@1.0.0",
@@ -109,6 +60,47 @@ export const EVENT_QUERY_ROUTE: OperationRoute = {
     kind: "query",
     transaction: "implicit",
   },
+};
+
+/**
+ * The child table the gallery states, shaped as the emitter writes one. Its
+ * one scope filter is the widget it belongs to.
+ */
+const WIDGET_EVENT_TABLE: QueryTableDefinition<EventRow> = {
+  name: "widget-event",
+  read: { route: EVENT_QUERY_ROUTE, request: {}, result: { next_cursor: "nextCursor" } },
+  rows: "item",
+  rowId: ["id"],
+  pageMaximum: 100,
+  limitInput: ["limit"],
+  sortFieldInput: null,
+  sortDirectionInput: null,
+  filters: [{ field: "widgetId", input: ["filter", "widget_id"], list: true }],
+  scopeFilters: ["widgetId"],
+  sortFields: [],
+  sortMaxFields: 1,
+  columns: [
+    { field: "grade", label: "grade", type: "text", role: "value" },
+    { field: "amount", label: "amount", type: "numeric", role: "value" },
+    { field: "recordedAt", label: "recorded at", type: "timestamptz", role: "value" },
+    { field: "id", label: "id", type: "uuid", role: "key" },
+  ],
+  actions: [],
+  childTables: [],
+};
+
+/** The emitted widget table with the child the gallery states for it. */
+const WIDGETS: QueryTableDefinition<WidgetQueryRow> = {
+  ...WIDGET_QUERY_TABLE,
+  childTables: [{ label: "events", table: () => WIDGET_EVENT_TABLE, scopeFilter: "widgetId" }],
+};
+
+/** The one maker, which the batch form offers as its inspector. */
+const MAKER = {
+  id: "00000009-0000-4000-8000-000000000001",
+  name: "Northwind",
+  edit_version: "4",
+  created_at: "2026-09-20T08:00:00.000000Z",
 };
 
 const uuid = (prefix: number, index: number) =>
@@ -201,6 +193,12 @@ export function actionStub(size: number) {
           }
           return completed({ ...widget });
         }
+        case "platform-fixture:widget-maker/query@1.0.0":
+          return completed({ item: [MAKER], next_cursor: null });
+        case "platform-fixture:widget-maker/get@1.0.0":
+          return completed(MAKER);
+        case "platform-fixture:widget/list@1.0.0":
+          return completed({ rows: [] });
         case EVENT_QUERY_ROUTE.operation: {
           const scope = (item?.["filter"] as { widget_id?: string[] } | undefined)?.widget_id ?? [];
           const kept = events.filter((event) => scope.includes(event.widgetId));
@@ -231,119 +229,10 @@ export function actionStub(size: number) {
   return { transport, changeElsewhere };
 }
 
-/** The events of one widget: the child table, scoped by the widget's id alone. */
-function EventTable(props: { transport: Transport; widgetId: string }): JSX.Element {
-  const load = createTableLoad<EventRow>(WIDGET_EVENT_TABLE, async (limit) => {
-    const outcome = await props.transport.invoke({
-      ...EVENT_QUERY_ROUTE,
-      items: [{ limit, filter: { widget_id: [props.widgetId] } }],
-    });
-    return outcome as Outcome<LoadPage<EventRow>>;
-  });
-  void load.load();
-  return (
-    <DataTable
-      name="widget-event"
-      columns={WIDGET_EVENT_TABLE.columns as readonly DataTableColumn<EventRow>[]}
-      rowId={WIDGET_EVENT_TABLE.rowId}
-      rows={load.state().rows}
-      fullyRead={load.state().fullyRead}
-      busy={load.state().busy}
-      refusal={load.state().refusal}
-      cap={load.state().cap}
-      onCapChange={(cap) => void load.load(cap)}
-      onRefresh={() => void load.load()}
-      startedAt={load.state().startedAt}
-      endedAt={load.state().endedAt}
-      sortFields={[]}
-      sortMaxFields={1}
-      onSortChange={() => {}}
-      // The parent fixes the one scope filter, so the child offers none to change.
-      scopeFilters={[]}
-      onScopeChange={() => {}}
-    />
-  );
-}
-
-/** What one outcome of a many-item write means to its row. */
-function rowResult(outcome: Outcome<JsonValue>): DataTableRowResult {
-  switch (outcome.status) {
-    case "completed":
-      return { status: "completed" };
-    case "refused":
-      return { status: "refused", message: outcome.code ?? "refused" };
-    case "uncertain":
-      return { status: "uncertain", message: outcome.reason };
-    default:
-      return { status: "uncertain", message: "partially completed" };
-  }
-}
-
 /** The widget table with its row buttons, its bulk action, its editable cells and its child. */
 export function ActionTable(props: { size: number }): JSX.Element {
   const stub = actionStub(props.size);
-  const definition = WIDGETS;
-  const [scope, setScope] = createSignal<Partial<WidgetQueryRequest>>({});
   const [opened, setOpened] = createSignal<string | null>(null);
-
-  const load = createTableLoad<WidgetQueryRow>(definition, async (limit) => {
-    const request = writeMember({ ...scope() }, ["limit"], limit) as WidgetQueryRequest;
-    return query(stub.transport, [request]);
-  });
-  void load.load();
-
-  const changeScope = (filters: readonly DataTableScopeFilter[]) => {
-    const codes = filters.find((filter) => filter.field === "code")?.values;
-    setScope(codes === undefined ? {} : { filter: { code: [...codes] as ("priority" | "standard")[] } });
-    void load.load();
-  };
-
-  async function edit(
-    row: WidgetQueryRow,
-    field: string,
-    value: unknown,
-  ): Promise<DataTableEditResult<WidgetQueryRow>> {
-    const target = definition.update.fields.find((editable) => editable.field === field)!;
-    let request = {
-      requestId: newRequestId(),
-      id: row.id,
-      expectedEditVersion: row[definition.update.revisionField],
-    } as WidgetUpdateRequest;
-    request = writeMember(request, target.input, value as JsonValue);
-    const outcome = await update(stub.transport, [request]);
-    switch (outcome.status) {
-      case "completed":
-        return { status: "completed", row: outcome.value };
-      case "refused":
-        return outcome.code === "concurrency_conflict"
-          ? { status: "conflict", message: "The widget changed since it loaded." }
-          : { status: "refused", message: outcome.code ?? "refused" };
-      case "uncertain":
-        return { status: "uncertain", message: outcome.reason };
-      default:
-        return { status: "uncertain", message: "partially completed" };
-    }
-  }
-
-  async function bulk(_operation: string, rows: readonly WidgetQueryRow[]): Promise<readonly DataTableRowResult[]> {
-    const items = rows.map((row) =>
-      toWire(
-        {
-          requestId: newRequestId(),
-          value: {
-            expectedEditVersion: row.editVersion,
-            grade: "first",
-            idempotencyKey: newIdempotencyKey(),
-            line: [{ widgetId: row.id, amount: "1.00" }],
-          },
-        },
-        WIDGET_RECORD_BATCH_REQUEST_FIELDS,
-      ),
-    );
-    const outcomes = await stub.transport.invokeEach!({ ...WIDGET_RECORD_BATCH_ROUTE, items });
-    return outcomes.map(rowResult);
-  }
-
   return (
     <div class="flex h-full min-h-0 flex-col gap-2">
       <div class="flex shrink-0 items-center gap-4 text-sm">
@@ -353,50 +242,11 @@ export function ActionTable(props: { size: number }): JSX.Element {
         <Show when={opened()}>{(text) => <p role="status">{text()}</p>}</Show>
       </div>
       <div class="min-h-0 flex-1">
-        <DataTable
-          name="widget"
-          columns={definition.columns as readonly DataTableColumn<WidgetQueryRow>[]}
-          rowId={definition.rowId}
-          rows={load.state().rows}
-          fullyRead={load.state().fullyRead}
-          busy={load.state().busy}
-          refusal={load.state().refusal}
-          cap={load.state().cap}
-          onCapChange={(cap) => void load.load(cap)}
-          onRefresh={() => void load.load()}
-          startedAt={load.state().startedAt}
-          endedAt={load.state().endedAt}
-          sortFields={definition.sortFields}
-          sortMaxFields={definition.sortMaxFields}
-          onSortChange={load.sortBy}
-          scopeFilters={definition.scopeFilters}
-          onScopeChange={changeScope}
-          rowActions={(row) => (
-            <>
-              {definition.actions
-                .filter((action) => !action.many)
-                .map((action) => (
-                  <button
-                    type="button"
-                    class="underline"
-                    onClick={() => setOpened(`${action.label} opened for ${row.id}`)}
-                  >
-                    {action.label}
-                  </button>
-                ))}
-            </>
-          )}
-          bulkActions={definition.actions.filter((action) => action.many)}
-          onBulk={bulk}
-          editableFields={definition.update.fields.map((editable) => editable.field)}
-          onEdit={edit}
-          onEditing={load.hold}
-          onRowChange={load.replaceRow}
-          onReload={() => void load.load()}
-          childTables={definition.childTables.map(() => ({
-            label: "events",
-            render: (widgetId: string) => <EventTable transport={stub.transport} widgetId={widgetId} />,
-          }))}
+        <QueryTable
+          definition={WIDGETS}
+          transport={stub.transport}
+          label="widgets"
+          onOpen={{ "platform-fixture:widget/get@1.0.0": (row) => setOpened(`get opened for ${row.id}`) }}
         />
       </div>
     </div>

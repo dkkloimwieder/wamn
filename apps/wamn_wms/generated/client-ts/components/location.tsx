@@ -30,6 +30,7 @@ import {
   FormActions,
   FormDone,
   QueryTable,
+  TableScreen,
   TextField,
   announceOutcome,
 } from "@wamn/ui";
@@ -234,9 +235,13 @@ export interface LocationQueryTableProps {
 /** What an operator calls this screen. The page decides where it goes. */
 export const LocationQueryTableLabel = "query";
 
-/** The table for `wamn-wms:location/query@1.0.0`: the QueryTable over `LOCATION_QUERY_TABLE`. */
+/** The table for `wamn-wms:location/query@1.0.0`: the QueryTable over `LOCATION_QUERY_TABLE`, in the table screen. */
 export function LocationQueryTable(props: LocationQueryTableProps) {
-  return <QueryTable<LocationQueryRow, LocationQueryResult> definition={LOCATION_QUERY_TABLE} label={LocationQueryTableLabel} {...props} />;
+  return (
+    <TableScreen>
+      <QueryTable<LocationQueryRow, LocationQueryResult> definition={LOCATION_QUERY_TABLE} label={LocationQueryTableLabel} {...props} />
+    </TableScreen>
+  );
 }
 
 /** The table definition of `wamn-wms:location/query@1.0.0`. */

@@ -37,6 +37,7 @@ import {
   FormDone,
   QueryTable,
   RecordSelect,
+  TableScreen,
   TextField,
   announceOutcome,
 } from "@wamn/ui";
@@ -318,9 +319,13 @@ export interface PalletQueryTableProps {
 /** What an operator calls this screen. The page decides where it goes. */
 export const PalletQueryTableLabel = "query";
 
-/** The table for `wamn-wms:pallet/query@1.0.0`: the QueryTable over `PALLET_QUERY_TABLE`. */
+/** The table for `wamn-wms:pallet/query@1.0.0`: the QueryTable over `PALLET_QUERY_TABLE`, in the table screen. */
 export function PalletQueryTable(props: PalletQueryTableProps) {
-  return <QueryTable<PalletQueryRow, PalletQueryResult> definition={PALLET_QUERY_TABLE} label={PalletQueryTableLabel} {...props} />;
+  return (
+    <TableScreen>
+      <QueryTable<PalletQueryRow, PalletQueryResult> definition={PALLET_QUERY_TABLE} label={PalletQueryTableLabel} {...props} />
+    </TableScreen>
+  );
 }
 
 /** The table definition of `wamn-wms:pallet/query@1.0.0`. */

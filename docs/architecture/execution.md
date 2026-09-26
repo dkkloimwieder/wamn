@@ -502,6 +502,8 @@ A table that holds more than 100 rows renders only the rows in view of its box.
 The definition also names the served update of the table's relation, with the columns it writes that the plan does not supply.
 The update contract states the column that each writable input writes, so no name is compared.
 It names each operation that a row opens. An operation takes many rows when it accepts more than one outer input and runs each in its own transaction.
+An operation that takes many rows is a bulk action of the table. It opens its generated form in a sheet, and the form hides the inputs that the rows fill.
+One submission sends one input for each selected row in one call, and each row shows its own outcome. A row sends its own revision when the form's revision input states `revision_of` the input that the row fills.
 It names each child table: another table whose declared filter narrows a column that names a record of this table's model.
 A cell of a column that the update writes edits in place. The table puts the returned row in place, and loads again after any write it did not send.
 A row expands to its child tables. Each child is a table with its scope filter fixed to the row's key, which its scope bar does not offer.

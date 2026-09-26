@@ -1,13 +1,15 @@
 /**
  * The gallery's app-shaped table with its actions (wamn-8iul.7), over its
- * stub transport: the row buttons, the bulk action, the editable cells, the
- * after-write rules and the child table.
+ * stub transport: the row buttons, the bulk action through the emitted batch
+ * form (wamn-sa7d.3), the editable cells, the after-write rules and the child
+ * table.
  */
 
 import { cleanup, fireEvent, render, screen, waitFor } from "@solidjs/testing-library";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { ActionTable } from "../gallery/table-actions.js";
+import { choose } from "./choose.js";
 import { pickChoice, theButton } from "./dom.js";
 
 afterEach(cleanup);
@@ -48,7 +50,7 @@ describe("the gallery's app-shaped table", () => {
     await editAndSave("Operator note", 1, "checked");
     await waitFor(() => expect(cellText(1, "checked")).toBe(true));
     await editAndSave("Widget code", 2, "urgent");
-    await waitFor(() => expect(screen.getByText("invalid_input")).toBeDefined());
+    await waitFor(() => expect(screen.getByText("A value is not valid.")).toBeDefined());
     fireEvent.click(theButton("drop"));
     fireEvent.click(theButton("change the first widget elsewhere"));
     await editAndSave("Operator note", 0, "late");
@@ -63,6 +65,13 @@ describe("the gallery's app-shaped table", () => {
     fireEvent.click(screen.getByLabelText("select all loaded rows"));
     await pickChoice("bulk action", "record-batch");
     fireEvent.click(theButton("run on 8 selected"));
+    // The batch form asks for what no row fills, and each row fills its widget.
+    await waitFor(() => expect(screen.getByText("record-batch on 8 rows")).toBeDefined());
+    await pickChoice("Grade", "first");
+    await choose("Inspector", "Northwind");
+    fireEvent.click(theButton("add"));
+    fireEvent.input(screen.getByLabelText("Quantity received"), { target: { value: "1.00" } });
+    fireEvent.click(theButton("submit"));
     await waitFor(() =>
       expect(document.querySelectorAll('[data-slot="data-table-row-result"]').length).toBe(8),
     );

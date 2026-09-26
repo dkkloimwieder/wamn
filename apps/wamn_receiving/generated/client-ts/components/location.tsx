@@ -8,6 +8,7 @@ import {
 } from "@wamn/web-runtime";
 import {
   QueryTable,
+  TableScreen,
 } from "@wamn/ui";
 import {
   LOCATION_LIST_REQUEST_FIELDS,
@@ -38,9 +39,13 @@ export interface LocationListTableProps {
 /** What an operator calls this screen. The page decides where it goes. */
 export const LocationListTableLabel = "Locations";
 
-/** The table for `wamn-receiving:location/list@1.0.0`: the QueryTable over `LOCATION_LIST_TABLE`. */
+/** The table for `wamn-receiving:location/list@1.0.0`: the QueryTable over `LOCATION_LIST_TABLE`, in the table screen. */
 export function LocationListTable(props: LocationListTableProps) {
-  return <QueryTable<LocationListRow, LocationListResult> definition={LOCATION_LIST_TABLE} label={LocationListTableLabel} {...props} />;
+  return (
+    <TableScreen>
+      <QueryTable<LocationListRow, LocationListResult> definition={LOCATION_LIST_TABLE} label={LocationListTableLabel} {...props} />
+    </TableScreen>
+  );
 }
 
 /** The table definition of `wamn-receiving:location/list@1.0.0`. */

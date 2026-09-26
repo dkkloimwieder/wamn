@@ -41,6 +41,7 @@ import {
   FormDone,
   QueryTable,
   RecordSelect,
+  TableScreen,
   TextField,
   announceOutcome,
 } from "@wamn/ui";
@@ -101,9 +102,13 @@ export interface ReceivingLoadPurchaseOrderHistoryTableProps {
 /** What an operator calls this screen. The page decides where it goes. */
 export const ReceivingLoadPurchaseOrderHistoryTableLabel = "Purchase order history";
 
-/** The table for `wamn-receiving:receiving/load-purchase-order-history@1.0.0`: the QueryTable over `RECEIVING_LOAD_PURCHASE_ORDER_HISTORY_TABLE`. */
+/** The table for `wamn-receiving:receiving/load-purchase-order-history@1.0.0`: the QueryTable over `RECEIVING_LOAD_PURCHASE_ORDER_HISTORY_TABLE`, in the table screen. */
 export function ReceivingLoadPurchaseOrderHistoryTable(props: ReceivingLoadPurchaseOrderHistoryTableProps) {
-  return <QueryTable<ReceivingLoadPurchaseOrderHistoryRow, ReceivingLoadPurchaseOrderHistoryResult> definition={RECEIVING_LOAD_PURCHASE_ORDER_HISTORY_TABLE} label={ReceivingLoadPurchaseOrderHistoryTableLabel} {...props} />;
+  return (
+    <TableScreen>
+      <QueryTable<ReceivingLoadPurchaseOrderHistoryRow, ReceivingLoadPurchaseOrderHistoryResult> definition={RECEIVING_LOAD_PURCHASE_ORDER_HISTORY_TABLE} label={ReceivingLoadPurchaseOrderHistoryTableLabel} {...props} />
+    </TableScreen>
+  );
 }
 
 /** The table definition of `wamn-receiving:receiving/load-purchase-order-history@1.0.0`. */
@@ -153,9 +158,13 @@ export interface ReceivingLoadReceiptScreenTableProps {
 /** What an operator calls this screen. The page decides where it goes. */
 export const ReceivingLoadReceiptScreenTableLabel = "Receiving screen";
 
-/** The table for `wamn-receiving:receiving/load-receipt-screen@1.0.0`: the QueryTable over `RECEIVING_LOAD_RECEIPT_SCREEN_TABLE`. */
+/** The table for `wamn-receiving:receiving/load-receipt-screen@1.0.0`: the QueryTable over `RECEIVING_LOAD_RECEIPT_SCREEN_TABLE`, in the table screen. */
 export function ReceivingLoadReceiptScreenTable(props: ReceivingLoadReceiptScreenTableProps) {
-  return <QueryTable<ReceivingLoadReceiptScreenRow, ReceivingLoadReceiptScreenResult> definition={RECEIVING_LOAD_RECEIPT_SCREEN_TABLE} label={ReceivingLoadReceiptScreenTableLabel} {...props} />;
+  return (
+    <TableScreen>
+      <QueryTable<ReceivingLoadReceiptScreenRow, ReceivingLoadReceiptScreenResult> definition={RECEIVING_LOAD_RECEIPT_SCREEN_TABLE} label={ReceivingLoadReceiptScreenTableLabel} {...props} />
+    </TableScreen>
+  );
 }
 
 /** The table definition of `wamn-receiving:receiving/load-receipt-screen@1.0.0`. */

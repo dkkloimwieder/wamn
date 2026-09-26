@@ -87,7 +87,7 @@ fn a_page_table_renders_its_filters_and_sends_the_sort_and_limit_of_each_load() 
         .expect("the query table exists");
     assert!(
         query.contains(
-            "  return <QueryTable<WidgetQueryRow, WidgetQueryResult> definition={WIDGET_QUERY_TABLE} label={WidgetQueryTableLabel} {...props} />;\n"
+            "      <QueryTable<WidgetQueryRow, WidgetQueryResult> definition={WIDGET_QUERY_TABLE} label={WidgetQueryTableLabel} {...props} />\n"
         ),
         "the component is the QueryTable over its definition: {query}"
     );
@@ -201,10 +201,12 @@ fn a_table_renders_through_the_ui_package_and_states_no_class() {
         .next()
         .and_then(|head| head.rsplit("import {\n").next())
         .expect("the module imports the UI package");
-    assert!(
-        ui.contains("  QueryTable,\n"),
-        "the tables name QueryTable from the UI package"
-    );
+    for name in ["QueryTable", "TableScreen"] {
+        assert!(
+            ui.contains(&format!("  {name},\n")),
+            "the tables name {name} from the UI package"
+        );
+    }
     for (stem, constant) in [
         ("WidgetQuery", "WIDGET_QUERY_TABLE"),
         ("WidgetList", "WIDGET_LIST_TABLE"),
@@ -1230,8 +1232,8 @@ fn a_form_sends_the_revision_of_the_record_its_revision_names() {
     // The revision follows the row that carries the held key, which a filled
     // key reaches without a pick (wamn-fuda).
     assert!(widget.contains(concat!(
-        "              onChange={(value) => field().handleChange(value ?? \"\")}\n",
-        "              onRow={(row) => setValueInspectorIdRevision(row?.editVersion ?? null)}\n",
+        "                onChange={(value) => field().handleChange(value ?? \"\")}\n",
+        "                onRow={(row) => setValueInspectorIdRevision(row?.editVersion ?? null)}\n",
     )));
     assert!(widget.contains(concat!(
         "      const valueInspectorIdChosen = valueInspectorIdRevision();\n",
@@ -1355,7 +1357,7 @@ fn a_table_definition_names_its_update_its_actions_and_its_child_tables() {
         // The update writes these columns, and the plan supplies none of them.
         "  update: { operation: \"platform-fixture:widget/update@1.0.0\", binding: { route: WIDGET_UPDATE_ROUTE, request: WIDGET_UPDATE_REQUEST_FIELDS, result: WIDGET_UPDATE_RESULT_FIELDS }, keyInput: [\"id\"], revisionInput: [\"expectedEditVersion\"], revisionField: \"editVersion\", supplied: [{ input: [\"requestId\"], kind: \"requestId\" }], fields: [\n    { field: \"code\", input: [\"change\", \"code\"] },\n    { field: \"makerId\", input: [\"change\", \"makerId\"] },\n    { field: \"note\", input: [\"change\", \"note\"] },\n  ] },\n",
         // A command that runs each outer input on its own takes many rows.
-        "  actions: [\n    { operation: \"platform-fixture:widget/get@1.0.0\", label: \"get\", many: false, opens: \"record\", fill: [] },\n    { operation: \"platform-fixture:widget/record-batch@1.0.0\", label: \"record-batch\", many: true, opens: \"form\", fill: [{ field: \"id\", input: [\"value\", \"line\", \"[]\", \"widgetId\"] }] },\n  ],\n",
+        "  actions: [\n    { operation: \"platform-fixture:widget/get@1.0.0\", label: \"get\", many: false, opens: \"record\", fill: [] },\n    { operation: \"platform-fixture:widget/record-batch@1.0.0\", label: \"record-batch\", many: true, opens: \"form\", fill: [{ field: \"id\", input: [\"value\", \"line\", \"[]\", \"widgetId\"] }], form: () => WidgetRecordBatchForm },\n  ],\n",
         "  childTables: [],\n",
     ] {
         assert!(widgets.contains(line), "{line} in {widgets}");
@@ -1427,5 +1429,45 @@ fn an_unserved_update_edits_nothing_and_a_shared_transaction_takes_one_row() {
     assert!(
         !makers.contains("widget/update"),
         "an unserved update is no action: {makers}"
+    );
+}
+
+/// A form whose operation takes many outer inputs runs a bulk action
+/// (wamn-sa7d.3). Given the values of each selected row, one submission
+/// sends one input for each row in one call, and the form hides the inputs
+/// the rows fill. A form bound to one record takes no rows.
+#[test]
+fn a_form_that_takes_many_rows_sends_one_input_for_each_row_in_one_call() {
+    let files = emit(&release());
+    let widget = widget(&files);
+    let props = |form: &str| {
+        widget
+            .split(&format!("export interface {form}FormProps {{"))
+            .nth(1)
+            .and_then(|rest| rest.split("\n}\n").next())
+            .unwrap_or_else(|| panic!("{form} states its props"))
+            .to_owned()
+    };
+    let batch = props("WidgetRecordBatch");
+    assert!(
+        batch.contains("  readonly rows?: readonly object[];")
+            && batch.contains(
+                "  readonly onEach?: (outcomes: readonly Outcome<WidgetRecordBatchResult>[]) => void;"
+            ),
+        "{batch}"
+    );
+    for line in [
+        "          const each = mergeMembers(value, row);\n",
+        // A revision the row carries is the row's own.
+        "          if (readMember(item, [\"value\", \"expectedEditVersion\"]) === undefined) {\n",
+        "          await callEach<WidgetRecordBatchResult>(\n",
+        "        <Show when={!rowsFill([\"value\", \"grade\"])}>\n",
+    ] {
+        assert!(widget.contains(line), "{line}");
+    }
+    let update = props("WidgetUpdate");
+    assert!(
+        !update.contains("rows?"),
+        "a form bound to one record takes no rows: {update}"
     );
 }

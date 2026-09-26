@@ -38,6 +38,7 @@ import {
   FormDone,
   QueryTable,
   RecordSelect,
+  TableScreen,
   TextField,
   announceOutcome,
 } from "@wamn/ui";
@@ -416,9 +417,13 @@ export interface InventoryAggregateTableProps {
 /** What an operator calls this screen. The page decides where it goes. */
 export const InventoryAggregateTableLabel = "aggregate";
 
-/** The table for `wamn-wms:inventory/aggregate@1.0.0`: the QueryTable over `INVENTORY_AGGREGATE_TABLE`. */
+/** The table for `wamn-wms:inventory/aggregate@1.0.0`: the QueryTable over `INVENTORY_AGGREGATE_TABLE`, in the table screen. */
 export function InventoryAggregateTable(props: InventoryAggregateTableProps) {
-  return <QueryTable<InventoryAggregateRow, InventoryAggregateResult> definition={INVENTORY_AGGREGATE_TABLE} label={InventoryAggregateTableLabel} {...props} />;
+  return (
+    <TableScreen>
+      <QueryTable<InventoryAggregateRow, InventoryAggregateResult> definition={INVENTORY_AGGREGATE_TABLE} label={InventoryAggregateTableLabel} {...props} />
+    </TableScreen>
+  );
 }
 
 /** The table definition of `wamn-wms:inventory/aggregate@1.0.0`. */

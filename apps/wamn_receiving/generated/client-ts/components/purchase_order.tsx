@@ -35,6 +35,7 @@ import {
   FormDone,
   QueryTable,
   RecordSelect,
+  TableScreen,
   announceOutcome,
 } from "@wamn/ui";
 import {
@@ -148,9 +149,13 @@ export interface PurchaseOrderQueryTableProps {
 /** What an operator calls this screen. The page decides where it goes. */
 export const PurchaseOrderQueryTableLabel = "Purchase orders";
 
-/** The table for `wamn-receiving:purchase-order/query@1.0.0`: the QueryTable over `PURCHASE_ORDER_QUERY_TABLE`. */
+/** The table for `wamn-receiving:purchase-order/query@1.0.0`: the QueryTable over `PURCHASE_ORDER_QUERY_TABLE`, in the table screen. */
 export function PurchaseOrderQueryTable(props: PurchaseOrderQueryTableProps) {
-  return <QueryTable<PurchaseOrderQueryRow, PurchaseOrderQueryResult> definition={PURCHASE_ORDER_QUERY_TABLE} label={PurchaseOrderQueryTableLabel} {...props} />;
+  return (
+    <TableScreen>
+      <QueryTable<PurchaseOrderQueryRow, PurchaseOrderQueryResult> definition={PURCHASE_ORDER_QUERY_TABLE} label={PurchaseOrderQueryTableLabel} {...props} />
+    </TableScreen>
+  );
 }
 
 /** The table definition of `wamn-receiving:purchase-order/query@1.0.0`. */

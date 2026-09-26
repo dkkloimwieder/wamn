@@ -14,6 +14,9 @@
  * page gives a handler. A child table is this component again, with its scope
  * filter fixed to the parent row's key.
  *
+ * It renders the DataTable alone, so a page places it, and a child fills the
+ * expanded area of its row.
+ *
  * An action that takes many rows and names its form is a bulk action. It
  * opens that form in a sheet, with the values each selected row fills. One
  * submission sends one input for each row in one call, and each row shows
@@ -44,7 +47,6 @@ import {
 
 import { Button } from "../components/ui/button";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "../components/ui/sheet";
-import { TableScreen } from "../actions";
 import { announceOutcome } from "../outcome";
 import { createRecordLabels } from "../record-labels";
 import type { DataTableRowResult } from "./bulk";
@@ -159,7 +161,7 @@ function rowResult(outcome: Outcome<unknown>): DataTableRowResult {
     case "completed":
       return { status: "completed" };
     case "refused":
-      return { status: "refused", message: refusalSentence(outcome.code) };
+      return { status: "refused", message: refusalSentence(outcome.code, outcome.text) };
     case "uncertain":
       return { status: "uncertain", message: outcome.reason };
     default:
@@ -191,7 +193,7 @@ function editResult<TRow>(outcome: Outcome<unknown>, row: TRow): DataTableEditRe
     case "refused":
       return {
         status: outcome.code === "concurrency_conflict" ? "conflict" : "refused",
-        message: refusalSentence(outcome.code),
+        message: refusalSentence(outcome.code, outcome.text),
       };
     case "uncertain":
       return { status: "uncertain", message: outcome.reason };
@@ -368,7 +370,7 @@ export function QueryTable<TRow extends object, TResult = unknown>(
   }));
 
   return (
-    <TableScreen>
+    <>
       <DataTable
         name={definition.name}
         columns={columns}
@@ -425,6 +427,6 @@ export function QueryTable<TRow extends object, TResult = unknown>(
           </Show>
         </SheetContent>
       </Sheet>
-    </TableScreen>
+    </>
   );
 }

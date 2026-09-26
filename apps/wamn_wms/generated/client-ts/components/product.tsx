@@ -30,6 +30,7 @@ import {
   FormActions,
   FormDone,
   QueryTable,
+  TableScreen,
   TextField,
   announceOutcome,
 } from "@wamn/ui";
@@ -231,9 +232,13 @@ export interface ProductQueryTableProps {
 /** What an operator calls this screen. The page decides where it goes. */
 export const ProductQueryTableLabel = "query";
 
-/** The table for `wamn-wms:product/query@1.0.0`: the QueryTable over `PRODUCT_QUERY_TABLE`. */
+/** The table for `wamn-wms:product/query@1.0.0`: the QueryTable over `PRODUCT_QUERY_TABLE`, in the table screen. */
 export function ProductQueryTable(props: ProductQueryTableProps) {
-  return <QueryTable<ProductQueryRow, ProductQueryResult> definition={PRODUCT_QUERY_TABLE} label={ProductQueryTableLabel} {...props} />;
+  return (
+    <TableScreen>
+      <QueryTable<ProductQueryRow, ProductQueryResult> definition={PRODUCT_QUERY_TABLE} label={ProductQueryTableLabel} {...props} />
+    </TableScreen>
+  );
 }
 
 /** The table definition of `wamn-wms:product/query@1.0.0`. */

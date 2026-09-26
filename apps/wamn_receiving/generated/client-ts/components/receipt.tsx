@@ -17,6 +17,7 @@ import {
   DetailList,
   FieldError,
   QueryTable,
+  TableScreen,
   announceOutcome,
 } from "@wamn/ui";
 import {
@@ -116,9 +117,13 @@ export interface ReceiptQueryTableProps {
 /** What an operator calls this screen. The page decides where it goes. */
 export const ReceiptQueryTableLabel = "Receipts";
 
-/** The table for `wamn-receiving:receipt/query@1.0.0`: the QueryTable over `RECEIPT_QUERY_TABLE`. */
+/** The table for `wamn-receiving:receipt/query@1.0.0`: the QueryTable over `RECEIPT_QUERY_TABLE`, in the table screen. */
 export function ReceiptQueryTable(props: ReceiptQueryTableProps) {
-  return <QueryTable<ReceiptQueryRow, ReceiptQueryResult> definition={RECEIPT_QUERY_TABLE} label={ReceiptQueryTableLabel} {...props} />;
+  return (
+    <TableScreen>
+      <QueryTable<ReceiptQueryRow, ReceiptQueryResult> definition={RECEIPT_QUERY_TABLE} label={ReceiptQueryTableLabel} {...props} />
+    </TableScreen>
+  );
 }
 
 /** The table definition of `wamn-receiving:receipt/query@1.0.0`. */

@@ -24,6 +24,7 @@ import {
   FormActions,
   FormDone,
   QueryTable,
+  TableScreen,
   TextField,
   announceOutcome,
 } from "@wamn/ui";
@@ -155,9 +156,13 @@ export interface SupplierQueryTableProps {
 /** What an operator calls this screen. The page decides where it goes. */
 export const SupplierQueryTableLabel = "Suppliers";
 
-/** The table for `wamn-receiving:supplier/query@1.0.0`: the QueryTable over `SUPPLIER_QUERY_TABLE`. */
+/** The table for `wamn-receiving:supplier/query@1.0.0`: the QueryTable over `SUPPLIER_QUERY_TABLE`, in the table screen. */
 export function SupplierQueryTable(props: SupplierQueryTableProps) {
-  return <QueryTable<SupplierQueryRow, SupplierQueryResult> definition={SUPPLIER_QUERY_TABLE} label={SupplierQueryTableLabel} {...props} />;
+  return (
+    <TableScreen>
+      <QueryTable<SupplierQueryRow, SupplierQueryResult> definition={SUPPLIER_QUERY_TABLE} label={SupplierQueryTableLabel} {...props} />
+    </TableScreen>
+  );
 }
 
 /** The table definition of `wamn-receiving:supplier/query@1.0.0`. */
