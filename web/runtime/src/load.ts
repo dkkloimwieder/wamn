@@ -290,6 +290,9 @@ export async function readLoadLines<Row>(
     if (pending.length > 0) {
       const rows = pending;
       pending = [];
+      // Each hand-over leaves the User Timing mark `wamn:load-batch`, so the
+      // batch interval reads from the performance timeline.
+      performance.mark("wamn:load-batch", { detail: { rows: rows.length } });
       onRows(rows);
     }
   };

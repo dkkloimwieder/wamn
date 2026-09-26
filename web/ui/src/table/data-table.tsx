@@ -101,6 +101,7 @@ import { rowKey, type RowKey } from "@wamn/web-runtime";
 import {
   createEffect,
   createMemo,
+  createRenderEffect,
   createSignal,
   createUniqueId,
   For,
@@ -735,6 +736,17 @@ export function DataTable<TRow extends object>(props: DataTableProps<TRow>): JSX
     sortDescFirst: false,
     enableSortingRemoval: false,
   });
+
+  // A new rows list rebuilds the row model. Timing it here, before the grid
+  // reads it, leaves the User Timing entry `wamn:row-model` for DevTools and
+  // for the load measurement (wamn-utci.6).
+  createRenderEffect(
+    on(data, (rows) => {
+      const start = performance.now();
+      const count = table.getRowModel().rows.length;
+      performance.measure("wamn:row-model", { start, detail: { rows: rows.length, shown: count } });
+    }),
+  );
 
   /** After a header or menu sort: a set that is not fully read asks for a new load. */
   function sortChanged() {

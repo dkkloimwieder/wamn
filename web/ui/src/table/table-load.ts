@@ -99,7 +99,11 @@ export function createTableLoad<TRow extends object>(
       const controller = new AbortController();
       streaming = controller;
       const end = await stream(next.cap, sort, controller.signal, (rows) => {
+        // The table renders each batch at once, so the update's time is its
+        // render time: the User Timing entry `wamn:load-render` (wamn-utci.6).
+        const start = performance.now();
         setState((current) => appendRows(current, next.generation, rows));
+        performance.measure("wamn:load-render", { start, detail: { rows: rows.length } });
       });
       setState((current) => endLoad(current, next.generation, end, definition.rowId));
       return;

@@ -107,7 +107,7 @@ async fn run(evidence: &Path) -> anyhow::Result<()> {
         let edge = install_edge(&cluster, &carrier.manifest_digest.to_string()).await?;
         check_edge(&cluster, &edge, &account, &audience).await?;
         if std::env::var_os(BY_HAND).is_some() {
-            hold(&cluster, &edge, &audience).await?;
+            hold(&cluster, &edge, &audience, &route.database_url).await?;
         }
         super::assert_source_unchanged(&cluster.resources).await
     }
@@ -563,7 +563,12 @@ async fn check_edge(
 }
 
 /// Keep the cluster for a browser run, then return to teardown.
-async fn hold(cluster: &ReceivingCluster, edge: &Edge, audience: &str) -> anyhow::Result<()> {
+async fn hold(
+    cluster: &ReceivingCluster,
+    edge: &Edge,
+    audience: &str,
+    project_database_url: &str,
+) -> anyhow::Result<()> {
     let evidence = &cluster.resources.evidence;
     fs::write(
         evidence.join("edge.json"),
@@ -574,6 +579,11 @@ async fn hold(cluster: &ReceivingCluster, edge: &Edge, audience: &str) -> anyhow
             "email": EMAIL,
             "password": PASSWORD,
             "audience": audience,
+            // A browser run can seed rows in the project database and read
+            // the hosts, for example to measure a streamed load (wamn-utci.6).
+            "project_database_url": project_database_url,
+            "cluster": cluster.resources.name,
+            "kubeconfig": cluster.resources.work.join("kubeconfig"),
         }))?,
     )?;
     let done = evidence.join("edge.done");
