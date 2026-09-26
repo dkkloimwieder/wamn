@@ -1,0 +1,32 @@
+# The one PostgreSQL of the GKE test deployment (docs/plan/gcp-deployment.md
+# step 3). It is deploy/infra/cnpg-cluster.yaml in namespace platform on
+# pd-standard: one instance holds the system database and every tenant
+# database. Backups are not configured.
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: wamn-pg
+  namespace: platform
+  labels:
+    app.kubernetes.io/managed-by: wamn
+spec:
+  instances: 1
+  imageName: ghcr.io/cloudnative-pg/postgresql:18
+  enableSuperuserAccess: true
+  primaryUpdateStrategy: unsupervised
+  resources:
+    requests:
+      cpu: "200m"
+      memory: "256Mi"
+  storage:
+    storageClass: standard
+    size: 2Gi
+  postgresql:
+    pg_hba:
+      - host all all all scram-sha-256
+    parameters:
+      max_slot_wal_keep_size: "1GB"
+  bootstrap:
+    initdb:
+      database: app
+      owner: app

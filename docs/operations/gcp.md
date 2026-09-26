@@ -303,3 +303,87 @@ gcloud logging read 'protoPayload.status.code>0' --project wamn-dev --freshness=
   --format="value(timestamp,resource.type,protoPayload.methodName,protoPayload.status.message)"
 ```
 
+## 3. Platform and Receiving
+
+Step 3 started on 2026-09-26. This section grows as each part runs.
+The cluster cases in kind are not a deployment to repeat. They run PostgreSQL, the event NATS and the registry as local Docker containers, and they provision and publish inside the test process. Step 3 uses the commands of [deployment](deployment.md) with the manifests in `deploy/infra`, `deploy/platform` and `deploy/gcp`.
+
+Run `kubectl` and `helm` with your own kubeconfig file, as section 2.1 says.
+
+### 3.1 Namespaces
+
+| Namespace | Holds |
+| --- | --- |
+| `platform` | the runtime operator, its NATS and CA, the event NATS, PostgreSQL |
+| `identity` | identity |
+| `hosts` | the hosts |
+| `edge` | the edge and the public certificate |
+| `cert-manager`, `cnpg-system` | the two operators, in the namespaces that their manifests fix |
+
+```bash
+gcloud container clusters resize wamn --project wamn-dev --zone us-central1-a \
+  --node-pool main --num-nodes 2
+for n in platform identity hosts; do kubectl create namespace $n; done
+```
+
+### 3.2 Runtime operator and internal CA
+
+[deploy/gcp/values-operator.yaml](../../deploy/gcp/values-operator.yaml) moves the watched and host namespaces to `hosts`.
+
+```bash
+helm upgrade --install --namespace platform wamn \
+  oci://ghcr.io/wasmcloud/charts/runtime-operator --version 2.10.0 \
+  -f deploy/infra/values-wamn.yaml -f deploy/gcp/values-operator.yaml --wait --timeout 5m
+sed -e 's/__ENVIRONMENT_NAMESPACE__/hosts/' -e 's/namespace: wamn-system/namespace: platform/' \
+  deploy/platform/runtime-operator-events-rbac.example.yaml | kubectl apply -f -
+```
+
+The operator writes its CA into `platform/wasmcloud-ca`. cert-manager reads a ClusterIssuer CA from its own namespace, so copy the Secret there:
+
+```bash
+kubectl -n platform get secret wasmcloud-ca -o json | python3 -c "
+import json,sys;d=json.load(sys.stdin);m=d['metadata'];d['metadata']={'name':m['name'],'namespace':'cert-manager'};print(json.dumps(d))" \
+  | kubectl apply -f -
+kubectl apply -f deploy/infra/wasmcloud-ca-issuer.yaml
+kubectl wait --for=condition=Ready clusterissuer/wasmcloud-ca --timeout=60s
+sed 's/__ENVIRONMENT_NAMESPACE__/hosts/' deploy/platform/host-environment-certs.example.yaml \
+  | kubectl apply -f -
+kubectl -n hosts wait --for=condition=Ready certificate/wasmcloud-runtime-tls \
+  certificate/wasmcloud-data-tls --timeout=120s
+```
+
+On 2026-09-26 the operator install took 35 seconds, and the CA and certificates took 11 seconds.
+
+### 3.3 PostgreSQL
+
+[deploy/gcp/cnpg-cluster.yaml](../../deploy/gcp/cnpg-cluster.yaml) is `deploy/infra/cnpg-cluster.yaml` in namespace `platform`, with storage class `standard` (`pd-standard`). Its one instance holds the system database and every tenant database.
+
+```bash
+kubectl apply --server-side -f deploy/infra/cnpg-operator.yaml
+kubectl -n cnpg-system rollout status deploy/cnpg-controller-manager --timeout=180s
+kubectl apply -f deploy/gcp/cnpg-cluster.yaml
+kubectl -n platform wait cluster/wamn-pg --for=condition=Ready --timeout=600s
+```
+
+On 2026-09-26 this took 76 seconds.
+
+Backups are not configured. The `wamn-dev-backups` bucket exists, but no ObjectStore or ScheduledBackup uses it yet.
+
+### 3.4 Images
+
+Build the host and identity images by their source identity, with `TMPDIR` on the main disk, because `/tmp` has a per-user quota:
+
+```bash
+TMPDIR=<directory on the main disk> tools/journey-image-cache ensure . host host "$(git rev-parse HEAD)" gcp gcp-wamn
+TMPDIR=<directory on the main disk> tools/journey-image-cache ensure . identity identity "$(git rev-parse HEAD)" gcp gcp-wamn
+```
+
+Push them with a Docker configuration of your own, so the shared `~/.docker/config.json` stays unchanged:
+
+```bash
+export DOCKER_CONFIG=<your directory>
+gcloud auth print-access-token | docker login -u oauth2accesstoken --password-stdin https://us-central1-docker.pkg.dev
+```
+
+The nodes pull these images as `wamn-nodes`, which has `roles/artifactregistry.reader`, so no pull Secret exists.
+
