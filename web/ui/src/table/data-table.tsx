@@ -99,9 +99,9 @@ import {
 import { ArrowDown, ArrowUp, ChevronDown, ChevronRight, X } from "lucide-solid";
 import { rowKey, type RowKey } from "@wamn/web-runtime";
 import {
+  createComputed,
   createEffect,
   createMemo,
-  createRenderEffect,
   createSignal,
   createUniqueId,
   For,
@@ -737,10 +737,10 @@ export function DataTable<TRow extends object>(props: DataTableProps<TRow>): JSX
     enableSortingRemoval: false,
   });
 
-  // A new rows list rebuilds the row model. Timing it here, before the grid
-  // reads it, leaves the User Timing entry `wamn:row-model` for DevTools and
+  // A new rows list rebuilds the row model. Timing it here, as the rows
+  // change and before any render reads it, leaves the User Timing entry `wamn:row-model` for DevTools and
   // for the load measurement (wamn-utci.6).
-  createRenderEffect(
+  createComputed(
     on(data, (rows) => {
       const start = performance.now();
       const count = table.getRowModel().rows.length;

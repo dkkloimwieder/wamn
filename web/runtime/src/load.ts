@@ -326,7 +326,15 @@ export async function readLoadLines<Row>(
           pending.push(revive(parsed.row));
           cancel ??= tick(flush);
         } else {
-          return end(outcomeLine(parsed.outcome, errors));
+          // Reading the body to its end lets the browser keep it, so a
+          // refresh of unchanged data revalidates with its ETag and a 304.
+          const ended = outcomeLine(parsed.outcome, errors);
+          cancel?.();
+          flush();
+          while (!(await reader.read()).done) {
+            // The outcome line is the last line, and nothing follows it.
+          }
+          return ended;
         }
       }
       buffered = buffered.slice(start);
