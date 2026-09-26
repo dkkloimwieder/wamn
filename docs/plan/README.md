@@ -11,3 +11,4 @@ These pages describe unbuilt work and its limits. Current behavior belongs in [a
 - [Upgrades](upgrades.md): Design for changing a schema after installation.
 - [Web deployment](web-deployment.md): Epic 20 rules for the web client host, and its remaining real deployment.
 - [Web operator client](web-operator-client.md): Generated browser UIs from the release contract, scoped one epic at a time.
+- [Workflow feature](workflow-feature.md): Epic 22 scope for the workflow contract, an event trigger, a JSONata node, and the WMS label workflow.
