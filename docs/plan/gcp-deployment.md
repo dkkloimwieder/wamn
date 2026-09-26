@@ -124,6 +124,38 @@ Owner rulings of 2026-09-25:
 - The ClusterIssuer is `letsencrypt`. The Certificate and its secret are `wamn-edge-tls`, in namespace `edge`.
 - The issuer first uses the Let's Encrypt staging server, then production, so a mistake does not use the production rate limit of `*.wamn.dev`.
 
+### 5.2 Step 3 procedure, proposed
+
+The kind cluster cases are not a deployment to repeat on GKE. They run PostgreSQL, the event NATS, the OCI registry and MinIO as local Docker containers, and they provision and publish through library calls inside the test process.
+Step 3 uses the command path of [deployment](../operations/deployment.md) and [repository delivery](../operations/delivery.md) instead, with the standing manifests in `deploy/infra` and `deploy/platform`.
+This is the proposed order. Section 5.3 lists the choices that it needs from the owner.
+
+1. Scale `main` to 2.
+2. Build the host and identity images with `tools/journey-image-cache`, and push them to `us-central1-docker.pkg.dev/wamn-dev/wamn`. The nodes pull them as `wamn-nodes`, with `roles/artifactregistry.reader`.
+3. Build the Receiving components with `tools/build-components`, which applies the path remapping of `tools/guest-rustflags`, so the digests match a local build.
+4. Install the runtime operator chart `2.10.0` with `deploy/infra/values-wamn.yaml`, and the internal CA of `deploy/infra/wasmcloud-ca-issuer.yaml`.
+5. Install the event NATS from `deploy/infra/nats-jetstream.yaml` with one replica, and declare stream replicas 1 in the environment configuration.
+6. Install CloudNativePG from `deploy/infra/cnpg-operator.yaml` and one cluster with one instance on the storage class `standard` (`pd-standard`).
+7. Apply `deploy/sql/system-schema.sql` as `wamn_system`, and set `registry.meta.platform_domain`.
+8. Run the provisioning verbs of [deployment ordering](../operations/deployment.md#deployment-ordering) from this machine, through a port-forward to PostgreSQL: `provision-org`, `provision-project-env`, `provision-identity-issuer`, `apply-package`, `reconcile-package-data-access`, `push-component`, `reconcile-run-plane`.
+9. The owner creates the Resend secret of section 4.2. Then install identity with `deploy/platform/identity`, and the host with one replica at a request of 0.5 CPU.
+10. Publish the Receiving release with `--route-host receiving.wamn.dev`, and point the host at its manifest digest.
+11. Make sure that the host serves the release through a port-forward. Scale `main` to 0.
+
+Each command goes into section 3 of [Google Cloud operations](../operations/gcp.md) as it runs.
+
+### 5.3 Step 3 choices for the owner
+
+- Publication path: `publish-release` and `print-release-env`, or the qualified path (`prepare-release`, `qualify-release`, `publish-qualified-release`, `select-release`, `deploy-release`). Qualification runs the Receiving kind cases on this machine.
+- Registry credential for the hosts: the wasmCloud host pulls components and releases from Artifact Registry with a docker config Secret. An access token expires after one hour, so a long-lived credential is a service account key.
+- PostgreSQL: one CloudNativePG cluster for the system database and the tenant databases, or two clusters (`wamn-pg` and `wamn-sysdb`) with one instance each.
+- Namespaces, and the organization, project, tenant and environment names.
+- The platform domain for principal rows, for example `wamn.dev`.
+- The identity issuer URL and the source of its TLS certificate: the internal CA of the cluster, or a public name under `*.wamn.dev`.
+- The CDC reader and the materializer: the kind cases run the reader inside the test process. Does step 3 run them as workloads?
+- Tempo and the OpenTelemetry collector: the kind cases install them. Step 2 turned off workload logs and Managed Prometheus.
+- CloudNativePG backups to `wamn-dev-backups` with the barman plugin: in step 3 or later.
+
 ## 6. Benchmark
 
 A separate issue of the epic builds `tools/bench`, a benchmark tool that runs from any machine over HTTPS against a deployed host.
