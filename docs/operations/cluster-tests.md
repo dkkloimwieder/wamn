@@ -97,13 +97,16 @@ Pass their full test names to `--name`.
 
 ### `[WMS-CLUSTER-JOURNEY]` WMS application tests
 
-Run the released WMS routes:
+Run the released WMS inventory routes:
 
 ```bash
-tools/test-changes --cluster --name cluster::released_wms_routes
+cargo test --locked --offline -p wamn-wms-tests --lib \
+  cluster::released_wms_routes -- --exact --ignored --nocapture --test-threads=1
 ```
 
-This name also matches the label-failure case, so the command runs both cases.
+This exact filter excludes the separate label-failure case.
+The gate deploys a real session issuer and tests the direct inventory routes, business transactions, refusals, and original-result replay.
+It excludes label components and wiring from the release.
 For another WMS case, replace the test name:
 
 | Case | Full test name |

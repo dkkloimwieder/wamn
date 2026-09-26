@@ -7,6 +7,7 @@ mod delivery_case;
 mod demo;
 mod deployment;
 mod reader;
+mod session;
 mod startup;
 
 use std::fs::{self, DirBuilder};
@@ -452,6 +453,7 @@ async fn run_created(
             label_render: &target.join("wasm32-wasip2/release/label_render.wasm"),
             minio_endpoint: &minio_endpoint,
             mint_only: matches!(case, Case::Delivery),
+            include_labels: matches!(case, Case::PartialCompletion | Case::Delivery),
         },
         evidence,
     )
@@ -560,6 +562,7 @@ async fn run_created(
             &operator_values,
         )
         .await?;
+        let session = session::prepare(case_context, &document).await?;
         let (base, overlay) = application::render_host(
             &document,
             &application::HostBinding {
@@ -572,6 +575,7 @@ async fn run_created(
             },
             work,
         )?;
+        session::configure_host(&overlay, &session)?;
         checked(
             Command::new(lifecycle)
                 .arg("install-host")
@@ -638,7 +642,11 @@ async fn run_created(
         document.runtime = Some(application::runtime_phase(endpoint));
         let store = bootstrap::object_store(files, &minio_endpoint)?;
 
-        application::released_routes(&document, &store, evidence).await?;
+        if partial_completion {
+            application::composed_routes(&document, &store, evidence).await?;
+        } else {
+            application::released_routes(&document, project.as_ref(), evidence).await?;
+        }
         let database: tokio_postgres::Config = route.database_url.parse()?;
         let database_name = database
             .get_dbname()

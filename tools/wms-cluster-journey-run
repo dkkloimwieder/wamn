@@ -111,10 +111,17 @@ case "$action" in
     if [[ -n ${4:-} ]] && docker image inspect "$4" >/dev/null 2>&1; then
       docker image rm --force "$4" || status=$?
     fi
+    if [[ -f $work/session-identity-image ]]; then
+      identity_image=$(cat "$work/session-identity-image")
+      if docker image inspect "$identity_image" >/dev/null 2>&1; then
+        docker image rm "$identity_image" || status=$?
+      fi
+    fi
     # The run's own tag is gone above. The identity image stays for the next
     # run of this context, under the retention bound (wamn-szr0).
     "$cache" release "$cluster" || status=$?
     "$cache" retain host || status=$?
+    "$cache" retain identity || status=$?
     exit "$status"
     ;;
   *) printf 'Unknown lifecycle action: %s\n' "$action" >&2; exit 64 ;;

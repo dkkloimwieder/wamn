@@ -337,13 +337,14 @@ fn component_declaration(
     Ok(())
 }
 
-/// Publish WMS and its label components, author its wirings, then bind and attest.
+/// Publish WMS, with label composition only for its separate composition cases.
 /// The artifacts and endpoint one release publication is minted from.
 pub struct PublicationArtifacts<'a> {
     pub scenario_worker: &'a Path,
     pub label_render_wasm: &'a Path,
     pub minio_endpoint: &'a str,
     pub mint_only: bool,
+    pub include_labels: bool,
 }
 
 pub async fn publish(
@@ -358,6 +359,7 @@ pub async fn publish(
         label_render_wasm,
         minio_endpoint,
         mint_only,
+        include_labels,
     } = *artifacts;
     let package = package_coordinate()?;
     let root = package_root();
@@ -371,18 +373,20 @@ pub async fn publish(
         &package,
         "",
     )?;
-    component_declaration(
-        &repository.join("apps/platform/no-std/label-render/declaration.json.in"),
-        &label_declaration,
-        &package,
-        "",
-    )?;
-    component_declaration(
-        &repository.join("apps/platform/execution/blob-put/declaration.json.in"),
-        &blob_declaration,
-        &package,
-        "labels",
-    )?;
+    if include_labels {
+        component_declaration(
+            &repository.join("apps/platform/no-std/label-render/declaration.json.in"),
+            &label_declaration,
+            &package,
+            "",
+        )?;
+        component_declaration(
+            &repository.join("apps/platform/execution/blob-put/declaration.json.in"),
+            &blob_declaration,
+            &package,
+            "labels",
+        )?;
+    }
     let admit_request = |component_bytes, declaration, admitted: &[&str]| AdmitComponentRequest {
         package: root.clone(),
         component_bytes,
@@ -406,48 +410,55 @@ pub async fn publish(
         publish_request(),
     )
     .await?;
-    let label_digest = shared::push_component(
-        admit_request(
-            label_render_wasm.to_path_buf(),
-            label_declaration,
-            &["wamn:node"],
-        ),
-        publish_request(),
-    )
-    .await?;
-    let blob_digest = shared::push_component(
-        admit_request(
-            inputs.component_directory.join("blob_put.wasm"),
-            blob_declaration,
-            &["wamn:node", "wasmcloud:blobstore"],
-        ),
-        publish_request(),
-    )
-    .await?;
+    let mut digests = json!({"wms":wms_digest});
+    let mut wirings = Vec::new();
+    let blob_digest = if include_labels {
+        let label_digest = shared::push_component(
+            admit_request(
+                label_render_wasm.to_path_buf(),
+                label_declaration,
+                &["wamn:node"],
+            ),
+            publish_request(),
+        )
+        .await?;
+        let blob_digest = shared::push_component(
+            admit_request(
+                inputs.component_directory.join("blob_put.wasm"),
+                blob_declaration,
+                &["wamn:node", "wasmcloud:blobstore"],
+            ),
+            publish_request(),
+        )
+        .await?;
+        digests["label-render"] = json!(label_digest);
+        digests["blob-put"] = json!(blob_digest);
+        wirings = fs::read_dir(root.join("publication/wirings"))?
+            .map(|entry| entry.map(|entry| entry.path()))
+            .collect::<Result<Vec<_>, _>>()?;
+        wirings.retain(|path| {
+            path.extension()
+                .is_some_and(|extension| extension == "json")
+        });
+        wirings.sort();
+        author_wirings(
+            inputs,
+            route,
+            credentials,
+            scenario_worker,
+            &package,
+            &wirings,
+            evidence,
+        )
+        .await?;
+        Some(blob_digest)
+    } else {
+        None
+    };
     fs::write(
         evidence.join("component-digests.json"),
-        serde_json::to_vec_pretty(
-            &json!({"wms":wms_digest,"label-render":label_digest,"blob-put":blob_digest}),
-        )?,
+        serde_json::to_vec_pretty(&digests)?,
     )?;
-    let mut wirings = fs::read_dir(root.join("publication/wirings"))?
-        .map(|entry| entry.map(|entry| entry.path()))
-        .collect::<Result<Vec<_>, _>>()?;
-    wirings.retain(|path| {
-        path.extension()
-            .is_some_and(|extension| extension == "json")
-    });
-    wirings.sort();
-    author_wirings(
-        inputs,
-        route,
-        credentials,
-        scenario_worker,
-        &package,
-        &wirings,
-        evidence,
-    )
-    .await?;
     let targets = wirings
         .iter()
         .map(|path| {
@@ -494,26 +505,28 @@ pub async fn publish(
         let (manifest, _) = wamn_catalog::ServingManifest::from_canonical_bytes(&bytes)?;
         candidate.assert_manifest(&manifest)?;
     }
-    let definition = evidence.join("labels-store.definition.json");
-    fs::write(
-        &definition,
-        serde_json::to_vec_pretty(
-            &json!({"endpoint":minio_endpoint,"container":"labels","prefix":"wms/"}),
-        )?,
-    )?;
-    bind_connection::bind(&BindConnectionRequest {
-        database_url: route.database_url.clone(),
-        tenant: TENANT.into(),
-        environment: ENVIRONMENT.into(),
-        instance_id: "labels-store".into(),
-        requirement_type: RequirementType::Blobstore,
-        definition,
-        credential_handle: "labels-store".into(),
-        effective_release_id: RELEASE_ID,
-        component_digest: blob_digest,
-        store_alias: "labels".into(),
-    })
-    .await?;
+    if let Some(blob_digest) = blob_digest {
+        let definition = evidence.join("labels-store.definition.json");
+        fs::write(
+            &definition,
+            serde_json::to_vec_pretty(
+                &json!({"endpoint":minio_endpoint,"container":"labels","prefix":"wms/"}),
+            )?,
+        )?;
+        bind_connection::bind(&BindConnectionRequest {
+            database_url: route.database_url.clone(),
+            tenant: TENANT.into(),
+            environment: ENVIRONMENT.into(),
+            instance_id: "labels-store".into(),
+            requirement_type: RequirementType::Blobstore,
+            definition,
+            credential_handle: "labels-store".into(),
+            effective_release_id: RELEASE_ID,
+            component_digest: blob_digest,
+            store_alias: "labels".into(),
+        })
+        .await?;
+    }
     if !mint_only {
         push_release_manifest::push_release_manifest(
             &PushReleaseManifestRequest {

@@ -24,6 +24,7 @@ pub(super) struct PublicationInputs<'a> {
     pub(super) label_render: &'a Path,
     pub(super) minio_endpoint: &'a str,
     pub(super) mint_only: bool,
+    pub(super) include_labels: bool,
 }
 
 pub(super) async fn prepare_application(
@@ -66,6 +67,7 @@ pub(super) async fn prepare_application(
             label_render_wasm: publication.label_render,
             minio_endpoint: publication.minio_endpoint,
             mint_only: publication.mint_only,
+            include_labels: publication.include_labels,
         },
         evidence,
     )
@@ -246,7 +248,28 @@ pub(super) fn render_workload(
     Ok(path)
 }
 
+/// Exercise the direct inventory route through the deployed host.
 pub(super) async fn released_routes(
+    document: &JourneyDocument,
+    project: &Client,
+    evidence: &Path,
+) -> anyhow::Result<()> {
+    let runtime = document
+        .runtime
+        .as_ref()
+        .context("the WMS route is ready")?;
+    let route = crate::wms_runtime_live::Route::from_document(document, runtime)?;
+    let movement =
+        crate::wms_runtime_live::assert_contention_and_replay(&route, runtime, 1).await?;
+    write_result(evidence, "wms-direct-move.json", &movement)?;
+    crate::wms_runtime_live::assert_history_failure_rolls_back(&route, runtime, project).await?;
+    let operations = crate::wms_runtime_live::assert_remaining_operations(&route, runtime).await?;
+    crate::wms_runtime_live::assert_inventory_refusals_and_held_split(&route, runtime, project)
+        .await?;
+    write_result(evidence, "wms-direct-business.json", &operations)
+}
+
+pub(super) async fn composed_routes(
     document: &JourneyDocument,
     store: &AmazonS3,
     evidence: &Path,
