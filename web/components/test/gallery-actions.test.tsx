@@ -79,7 +79,8 @@ describe("the gallery's app-shaped table", () => {
       (result) => result.closest("tr")?.getAttribute("data-row-id"),
     );
     expect(refusedRows).toEqual([id(3)]);
-  });
+    // The run fills a whole form, so it takes longer than one click.
+  }, 15_000);
 
   it("shows the events of a widget in its expanded row", async () => {
     await shown();
