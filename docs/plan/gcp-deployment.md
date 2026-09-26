@@ -115,6 +115,7 @@ Each step writes its commands into [Google Cloud operations](../operations/gcp.m
 
 Owner rulings of 2026-09-25:
 
+- The cluster is `wamn-dev`, on the VPC `wamn` with the subnet `wamn-us-central1`. The first attempt on the `default` network failed, and [Google Cloud operations](../operations/gcp.md) records it.
 - gcloud cannot name the first pool of a new cluster. The cluster starts with a temporary `default-pool` of 1 Spot node. Step 2 adds `main` and then deletes `default-pool`.
 - The cluster uses the regular release channel.
 - The nodes run as the service account `wamn-nodes`, with only `roles/logging.logWriter`, `roles/monitoring.metricWriter` and `roles/artifactregistry.reader`. The Compute default account has Editor on the project, so the nodes do not use it.
@@ -194,10 +195,10 @@ If the budget runs out, the guard stops the machines and then billing. It has fo
 
 - A Pub/Sub topic `wamn-guard`.
 - One budget of 150 USD a month on billing account `01E392-13CC0D-277806`, filtered to `wamn-dev`. Section 8.3 gives the amount. Owner ruling of 2026-09-25: it counts cost before credits, so the guard acts on gross spend. At 50, 90 and 100 percent it mails the billing administrators, and it publishes every update to `wamn-guard`.
-- A Cloud Run function `wamn-guard` on the topic, with its own service account. The project id `wamn-dev` and the cluster name `wamn` are literals in its code. From 50 percent of the budget, it sets every node pool of cluster `wamn` to 0 nodes. From 100 percent, it unlinks the billing account from `wamn-dev`, as section 9.5 does by hand.
+- A Cloud Run function `wamn-guard` on the topic, with its own service account. It reads the project id `wamn-dev`, the zone and the cluster name `wamn-dev` from its `config.json`, and a message cannot change them. From 50 percent of the budget, it sets every node pool of cluster `wamn-dev` to 0 nodes. From 100 percent, it unlinks the billing account from `wamn-dev`, as section 9.5 does by hand.
 - A Cloud Scheduler job that publishes a scale-to-zero message to `wamn-guard` once a day, at 03:00 America/New_York. A session that you forget stops by the next morning.
 
-Owner ruling of 2026-09-25: the guard stops every node pool of cluster `wamn`, benchmark pools included, because a guard that spares a pool is not a guard.
+Owner ruling of 2026-09-25: the guard stops every node pool of cluster `wamn-dev`, benchmark pools included, because a guard that spares a pool is not a guard.
 The source of the function is Python in `deploy/gcp/guard`. Its test feeds it a fake budget message for each threshold.
 Step 1 also tests the 100 percent action for real, once, before any workload exists. It publishes a fake 100 percent message, sees billing unlink, links billing again at once, and makes sure that the project serves again.
 
@@ -228,7 +229,7 @@ The operations page lists its commands.
 The cluster, its disks and the load balancer stay. Only the machines stop.
 
 ```bash
-gcloud container clusters resize wamn --project wamn-dev --zone us-central1-a \
+gcloud container clusters resize wamn-dev --project wamn-dev --zone us-central1-a \
   --node-pool main --num-nodes 0
 ```
 
@@ -253,7 +254,7 @@ gcloud compute addresses list --project wamn-dev --global
 ### 9.4 Delete the cluster
 
 ```bash
-gcloud container clusters delete wamn --project wamn-dev --zone us-central1-a
+gcloud container clusters delete wamn-dev --project wamn-dev --zone us-central1-a
 ```
 
 The disks of the PostgreSQL and NATS volumes can outlive the cluster. List them.

@@ -50,7 +50,7 @@ To change a cap, run `gcloud beta quotas preferences update` with the same prefe
 
 ### 1.3 The guard
 
-The source is in [deploy/gcp/guard](../../deploy/gcp/guard). Run its test first:
+The source is in [deploy/gcp/guard](../../deploy/gcp/guard). Its `config.json` names the project, the zone and the cluster. Run its test first:
 
 ```bash
 cd deploy/gcp/guard && python3 -m unittest
@@ -112,7 +112,7 @@ gcloud logging read 'resource.type="cloud_run_revision" AND resource.labels.serv
   --project wamn-dev --freshness=10m --format="value(timestamp,textPayload)"
 ```
 
-Before the cluster exists, the log says `projects/wamn-dev/locations/us-central1-a/clusters/wamn does not exist, so no pool runs`.
+Before the cluster exists, the log says `projects/wamn-dev/locations/us-central1-a/clusters/wamn-dev does not exist, so no pool runs`.
 
 The unlink test stops billing. Run it only before any workload exists, and relink billing at once.
 

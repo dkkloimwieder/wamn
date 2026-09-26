@@ -1,0 +1,39 @@
+# The public certificate of docs/plan/gcp-deployment.md step 2. cert-manager
+# answers the Let's Encrypt DNS-01 challenge in the Cloud DNS zone wamn-dev.
+# Its service account has roles/dns.admin on that zone only, through Workload
+# Identity, so the solver names the zone and never lists zones.
+# docs/operations/gcp.md section 2 applies this file with the staging server
+# first and then as written.
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: letsencrypt
+spec:
+  acme:
+    server: https://acme-v02.api.letsencrypt.org/directory
+    email: dkkloimwieder@gmail.com
+    privateKeySecretRef:
+      name: letsencrypt
+    solvers:
+      - dns01:
+          cloudDNS:
+            project: wamn-dev
+            hostedZoneName: wamn-dev
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: edge
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: wamn-edge-tls
+  namespace: edge
+spec:
+  secretName: wamn-edge-tls
+  dnsNames:
+    - "*.wamn.dev"
+  issuerRef:
+    kind: ClusterIssuer
+    name: letsencrypt
