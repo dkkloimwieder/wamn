@@ -2731,6 +2731,21 @@ pub struct FilterDeclaration {
         skip_serializing_if = "FilterMatch::is_exact"
     )]
     pub match_mode: FilterMatch,
+    /// Whether every read applies the filter: a band. Only a range on a time
+    /// field is one, and a request that sends it states its minimum.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub required: bool,
+    /// The band a read without the filter applies.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default: Option<FilterDefault>,
+}
+
+/// The default band of a required filter, as of the statement that reads it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FilterDefault {
+    /// The band starts this many days before the statement, and has no end.
+    pub last_days: u32,
 }
 
 /// How one filter value matches its column.

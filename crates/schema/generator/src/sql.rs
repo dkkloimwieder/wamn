@@ -249,7 +249,18 @@ pub(crate) fn query(
             FilterMatch::Prefix => format!(
                 "    (${bind}::jsonb IS NULL OR EXISTS (\n        SELECT 1\n        FROM jsonb_array_elements_text(${bind}::jsonb) AS filter(value)\n        WHERE starts_with(model.{field}, filter.value)\n    ))"
             ),
-            FilterMatch::Range => range_predicate(bind, field, postgres_type(column_type(table, field))),
+            FilterMatch::Range => {
+                let bounds = range_bounds(bind, field, postgres_type(column_type(table, field)));
+                match filter.default {
+                    // A read without the band reads the default one, as of
+                    // the statement.
+                    Some(default) => format!(
+                        "    (CASE WHEN ${bind}::jsonb IS NULL\n        THEN model.{field} >= now() - make_interval(days => {})\n        ELSE {bounds}\n    END)",
+                        default.last_days
+                    ),
+                    None => format!("    (${bind}::jsonb IS NULL OR {bounds})"),
+                }
+            }
             FilterMatch::IsNull => format!(
                 "    (${bind}::jsonb IS NULL OR (model.{field} IS NULL) = (${bind}::jsonb)::boolean)"
             ),
@@ -290,10 +301,10 @@ pub(crate) fn query(
     )
 }
 
-/// The predicate of one range filter: each bound the value states, inclusive.
-fn range_predicate(bind: usize, field: &str, ty: &str) -> String {
+/// The bounds of one range filter: each bound the value states, inclusive.
+fn range_bounds(bind: usize, field: &str, ty: &str) -> String {
     format!(
-        "    (${bind}::jsonb IS NULL OR (\n        (${bind}::jsonb->>'min' IS NULL OR model.{field} >= (${bind}::jsonb->>'min')::{ty})\n        AND (${bind}::jsonb->>'max' IS NULL OR model.{field} <= (${bind}::jsonb->>'max')::{ty})\n    ))"
+        "(\n        (${bind}::jsonb->>'min' IS NULL OR model.{field} >= (${bind}::jsonb->>'min')::{ty})\n        AND (${bind}::jsonb->>'max' IS NULL OR model.{field} <= (${bind}::jsonb->>'max')::{ty})\n    )"
     )
 }
 

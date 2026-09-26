@@ -1124,6 +1124,15 @@ fn input_contract(
                         if !filter.match_mode.is_exact() {
                             members.insert("match".to_owned(), json!(filter.match_mode.as_str()));
                         }
+                        if filter.required {
+                            members.insert("required".to_owned(), json!(true));
+                        }
+                        if let Some(default) = filter.default {
+                            members.insert(
+                                "default".to_owned(),
+                                json!({"last_days": default.last_days}),
+                            );
+                        }
                         members.extend(model_text_members(model, &filter.field));
                         if let Some(values) = model.enum_fields.get(&filter.field) {
                             members.insert("values".to_owned(), json!(values));

@@ -905,6 +905,21 @@ fn validate_query(
             )),
             FilterMatch::IsNull => Some((column.nullable(), "only a nullable field takes")),
         };
+        // A band is a required range over time, and only a band has a default.
+        if (filter.required
+            && (filter.match_mode != FilterMatch::Range
+                || column.column_type() != ColumnType::Timestamptz))
+            || (filter.default.is_some() && !filter.required)
+            || filter.default.is_some_and(|default| default.last_days == 0)
+        {
+            return Err(GenerateError::new(
+                GenerateErrorKind::InvalidOperation,
+                format!(
+                    "{context} filter {} is required or has a default, which only a range on a timestamptz field that is required takes, with a default of at least one day",
+                    filter.field
+                ),
+            ));
+        }
         if let Some((false, which)) = takes {
             return Err(GenerateError::new(
                 GenerateErrorKind::InvalidOperation,

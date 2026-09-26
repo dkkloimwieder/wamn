@@ -1262,6 +1262,99 @@ fn a_query_searches_its_declared_text_fields() {
     );
 }
 
+/// A range on a time field can be a required band with a default
+/// (wamn-3nsf.3). A read without the band reads the default one, as of the
+/// statement. A read that sends the band states its minimum, and a band with
+/// no default is always sent.
+#[test]
+fn a_required_band_reads_its_default_and_states_its_minimum() {
+    let ir = catalog(false);
+    let mut band = manifest();
+    let query = &mut band["models"]["gadget"]["operations"]["query"];
+    query.as_object_mut().unwrap().remove("authored_sql");
+    query["filters"] = json!([{
+        "field": "created_at",
+        "match": "range",
+        "required": true,
+        "default": {"last_days": 30}
+    }]);
+    let package = run(&ir, &band, &[]).unwrap();
+    let input = artifact_json(&package, "generated/contracts/gadget/query.input.json");
+    assert_eq!(
+        input["filters"],
+        json!([{
+            "field": "created_at",
+            "binding": "json_range",
+            "type": "timestamptz",
+            "match": "range",
+            "required": true,
+            "default": {"last_days": 30}
+        }])
+    );
+    let route = artifact_json(&package, "generated/routes/gadget/query.json");
+    let item = &route["items"];
+    assert_eq!(
+        item["properties"]["filter"]["properties"]["created_at"]["required"],
+        json!(["min"])
+    );
+    assert!(
+        item.get("required").is_none(),
+        "a band with a default is not sent: {item}"
+    );
+    let sql = std::str::from_utf8(
+        package
+            .file("generated/sql/gadget/query_created_at_ascending.sql")
+            .unwrap()
+            .bytes(),
+    )
+    .unwrap();
+    assert!(
+        sql.contains(concat!(
+            "    (CASE WHEN $1::jsonb IS NULL\n",
+            "        THEN model.created_at >= now() - make_interval(days => 30)\n",
+            "        ELSE (\n",
+            "        ($1::jsonb->>'min' IS NULL OR model.created_at >= ($1::jsonb->>'min')::timestamptz)\n",
+        )),
+        "{sql}"
+    );
+
+    // A band with no default is always sent.
+    let mut always = band.clone();
+    always["models"]["gadget"]["operations"]["query"]["filters"][0]
+        .as_object_mut()
+        .unwrap()
+        .remove("default");
+    let package = run(&ir, &always, &[]).unwrap();
+    let route = artifact_json(&package, "generated/routes/gadget/query.json");
+    assert_eq!(route["items"]["required"], json!(["filter"]));
+    assert_eq!(
+        route["items"]["properties"]["filter"]["required"],
+        json!(["created_at"])
+    );
+
+    // Only a required range over time is a band, and only a band has a
+    // default of at least one day.
+    for filter in [
+        json!({"field": "part_code", "required": true}),
+        json!({"field": "created_at", "required": true}),
+        json!({"field": "created_at", "match": "range", "default": {"last_days": 30}}),
+        json!({"field": "created_at", "match": "range", "required": true, "default": {"last_days": 0}}),
+    ] {
+        let mut refused = band.clone();
+        refused["models"]["gadget"]["operations"]["query"]["filters"] = json!([filter]);
+        let error = run(&ir, &refused, &[]).unwrap_err();
+        assert_eq!(
+            error.kind(),
+            GenerateErrorKind::InvalidOperation,
+            "{filter}"
+        );
+        assert!(
+            error.to_string().contains("is required or has a default"),
+            "{error}"
+        );
+    }
+}
+
 #[test]
 fn duplicate_filters_and_schema_qualified_authored_sql_refuse() {
     let ir = catalog(false);

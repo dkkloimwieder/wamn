@@ -60,7 +60,7 @@ pub use manifest::{
     ComponentDeclaration, ContractFieldDeclaration, CountLimitDeclaration, CrudAction,
     CursorDirection, CustomClaimDeclaration, CustomOperationDeclaration,
     CustomOperationInputDeclaration, CustomOperationKind, CustomOperationResultDeclaration,
-    EventRegistrationDeclaration, FieldText, FilterDeclaration, FilterMatch,
+    EventRegistrationDeclaration, FieldText, FilterDeclaration, FilterDefault, FilterMatch,
     InheritedClaimDeclaration, InternalRelationDeclaration, LimitDeclaration, ModelDeclaration,
     OperationDeclaration, OperationErrorDetailDeclaration, OperationErrorDetailKey,
     OperationVisibility, PackageIdentity, PackageManifest, PaginationDeclaration,
