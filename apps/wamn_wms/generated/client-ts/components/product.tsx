@@ -23,25 +23,26 @@ import {
 } from "@wamn/web-runtime";
 import {
   Button,
-  DataTable,
   DetailItem,
   DetailList,
   FieldError,
   FieldGroup,
   FormActions,
   FormDone,
-  TableScreen,
+  QueryTable,
   TextField,
   announceOutcome,
-  createTableLoad,
-  type DataTableScopeFilter,
 } from "@wamn/ui";
 import {
   PRODUCT_CREATE_REQUEST_FIELDS,
+  PRODUCT_QUERY_REQUEST_FIELDS,
+  PRODUCT_QUERY_RESULT_FIELDS,
+  PRODUCT_QUERY_ROUTE,
   PRODUCT_UPDATE_REQUEST_FIELDS,
+  PRODUCT_UPDATE_RESULT_FIELDS,
+  PRODUCT_UPDATE_ROUTE,
   create,
   get,
-  query,
   type ProductCreateRequest,
   type ProductCreateResult,
   type ProductGetRequest,
@@ -53,10 +54,6 @@ import {
   type ProductUpdateResult,
   update,
 } from "../product.js";
-import {
-  type InventoryAdjustFormInitial,
-  type InventorySplitFormInitial,
-} from "./inventory.js";
 
 /** What an operator types for `wamn-wms:product/create@1.0.0`. */
 const CREATE_INPUT = z.object({
@@ -219,12 +216,10 @@ export interface ProductQueryTableProps {
   readonly transport: Transport;
   /** Input the parent fixes, which the operator does not edit. */
   readonly fixed?: Partial<ProductQueryRequest>;
-  /** Called when the operator opens `wamn-wms:product/get@1.0.0` from one row. */
-  readonly onOpenProductGet?: (row: ProductQueryRow) => void;
-  /** Called with the values one row hands to `wamn-wms:inventory/adjust@1.0.0`. */
-  readonly onFillInventoryAdjust?: (initial: InventoryAdjustFormInitial) => void;
-  /** Called with the values one row hands to `wamn-wms:inventory/split@1.0.0`. */
-  readonly onFillInventorySplit?: (initial: InventorySplitFormInitial) => void;
+  /** For each operation whose record a row opens, what opening it does. A row shows a button only for these. */
+  readonly onOpen?: { readonly [operation: string]: (row: ProductQueryRow) => void };
+  /** For each operation whose form a row fills, what the filled values do. */
+  readonly onFill?: { readonly [operation: string]: (initial: object) => void };
   /** Called with every outcome this screen reads. */
   readonly onOutcome?: (outcome: Outcome<ProductQueryResult>) => void;
 }
@@ -232,101 +227,22 @@ export interface ProductQueryTableProps {
 /** What an operator calls this screen. The page decides where it goes. */
 export const ProductQueryTableLabel = "query";
 
-/**
- * The table for `wamn-wms:product/query@1.0.0`: the DataTable over `PRODUCT_QUERY_TABLE`.
- *
- * It loads when it mounts. A change to a filter, a sort of rows the load did
- * not read in full, a cap change and a refresh each start a new load.
- */
+/** The table for `wamn-wms:product/query@1.0.0`: the QueryTable over `PRODUCT_QUERY_TABLE`. */
 export function ProductQueryTable(props: ProductQueryTableProps) {
-  const [scope, setScope] = createSignal<Partial<ProductQueryRequest>>({});
-  const load = createTableLoad<ProductQueryRow>(PRODUCT_QUERY_TABLE, async (limit) => {
-    let request = { ...scope(), ...props.fixed } as ProductQueryRequest;
-    request = writeMember(request, ["limit"], limit) as ProductQueryRequest;
-    const outcome = await query(props.transport, [request]);
-    props.onOutcome?.(outcome);
-    if (outcome.status !== "completed") {
-      announceOutcome(outcome, ProductQueryTableLabel);
-    }
-    return outcome;
-  });
-  void load.load();
-  onCleanup(afterWrites(props.transport, () => void load.load()));
-
-  const changeScope = (filters: readonly DataTableScopeFilter[]) => {
-    let next: Partial<ProductQueryRequest> = {};
-    for (const filter of filters) {
-      switch (filter.field) {
-        case "productCode":
-          next = writeMember(next, ["filter", "productCode"], [...filter.values]);
-          break;
-      }
-    }
-    setScope(next);
-    void load.load();
-  };
-
-  const actions = (row: ProductQueryRow) => (
-    <>
-      <Show when={props.onOpenProductGet}>
-        <Button type="button" variant="outline" size="sm" onClick={() => props.onOpenProductGet?.(row)}>
-          get
-        </Button>
-      </Show>
-      <Show when={props.onFillInventoryAdjust}>
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          onClick={() => props.onFillInventoryAdjust?.(writeMember({} as InventoryAdjustFormInitial, ["value", "productId"], row.id))}
-        >
-          adjust
-        </Button>
-      </Show>
-      <Show when={props.onFillInventorySplit}>
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          onClick={() => props.onFillInventorySplit?.(writeMember({} as InventorySplitFormInitial, ["value", "productId"], row.id))}
-        >
-          split
-        </Button>
-      </Show>
-    </>
-  );
-
-  return (
-    <TableScreen>
-      <DataTable
-        name="product"
-        columns={PRODUCT_QUERY_TABLE.columns}
-        rowId={PRODUCT_QUERY_TABLE.rowId}
-        rows={load.state().rows}
-        fullyRead={load.state().fullyRead}
-        busy={load.state().busy}
-        refusal={load.state().refusal}
-        cap={load.state().cap}
-        onCapChange={(cap) => void load.load(cap)}
-        onRefresh={() => void load.load()}
-        startedAt={load.state().startedAt}
-        endedAt={load.state().endedAt}
-        sortFields={PRODUCT_QUERY_TABLE.sortFields}
-        sortMaxFields={PRODUCT_QUERY_TABLE.sortMaxFields}
-        onSortChange={load.sortBy}
-        scopeFilters={PRODUCT_QUERY_TABLE.scopeFilters}
-        onScopeChange={changeScope}
-        rowActions={actions}
-      />
-    </TableScreen>
-  );
+  return <QueryTable<ProductQueryRow, ProductQueryResult> definition={PRODUCT_QUERY_TABLE} label={ProductQueryTableLabel} {...props} />;
 }
 
 /** The table definition of `wamn-wms:product/query@1.0.0`. */
 export const PRODUCT_QUERY_TABLE = {
-  read: "query",
+  name: "product",
+  read: { route: PRODUCT_QUERY_ROUTE, request: PRODUCT_QUERY_REQUEST_FIELDS, result: PRODUCT_QUERY_RESULT_FIELDS },
+  rows: "item",
   rowId: ["id"],
   pageMaximum: 100,
+  limitInput: ["limit"],
+  sortFieldInput: null,
+  sortDirectionInput: null,
+  filters: [{ field: "productCode", input: ["filter", "productCode"], list: true }],
   scopeFilters: ["productCode"],
   sortFields: [],
   sortDirections: [],
@@ -337,13 +253,13 @@ export const PRODUCT_QUERY_TABLE = {
     { field: "productCode", label: "product code", type: "text", role: "value" },
     { field: "rowVersion", label: "row version", type: "int32", role: "revision" },
   ],
-  update: { operation: "wamn-wms:product/update@1.0.0", keyInput: ["id"], revisionInput: ["expectedRowVersion"], revisionField: "rowVersion", fields: [
+  update: { operation: "wamn-wms:product/update@1.0.0", binding: { route: PRODUCT_UPDATE_ROUTE, request: PRODUCT_UPDATE_REQUEST_FIELDS, result: PRODUCT_UPDATE_RESULT_FIELDS }, keyInput: ["id"], revisionInput: ["expectedRowVersion"], revisionField: "rowVersion", supplied: [{ input: ["requestId"], kind: "requestId" }], fields: [
     { field: "productCode", input: ["change", "productCode"] },
   ] },
   actions: [
-    { operation: "wamn-wms:product/get@1.0.0", label: "get", many: false },
-    { operation: "wamn-wms:inventory/adjust@1.0.0", label: "adjust", many: true },
-    { operation: "wamn-wms:inventory/split@1.0.0", label: "split", many: true },
+    { operation: "wamn-wms:product/get@1.0.0", label: "get", many: false, opens: "record", fill: [] },
+    { operation: "wamn-wms:inventory/adjust@1.0.0", label: "adjust", many: true, opens: "form", fill: [{ field: "id", input: ["value", "productId"] }] },
+    { operation: "wamn-wms:inventory/split@1.0.0", label: "split", many: true, opens: "form", fill: [{ field: "id", input: ["value", "productId"] }] },
   ],
   childTables: [],
 } as const;

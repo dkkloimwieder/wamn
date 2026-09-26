@@ -10,8 +10,9 @@
  *
  * The table loads when it mounts, and again after every write on the
  * transport that it did not send itself. A filter that the caller fixes is
- * not offered in the scope bar. A child table is this component again, with
- * its scope filter fixed to the parent row's key.
+ * not offered in the scope bar. A row shows a button for each operation the
+ * page gives a handler. A child table is this component again, with its scope
+ * filter fixed to the parent row's key.
  */
 
 import { type JSX, Show, createSignal, onCleanup } from "solid-js";
@@ -20,6 +21,7 @@ import {
   afterWrites,
   boundedPage,
   callOperation,
+  fillMember,
   type JsonValue,
   type LoadPage,
   type MemberPath,
@@ -59,7 +61,7 @@ export interface QueryTableFilter {
   readonly list: boolean;
 }
 
-/** A row member and the input it fills. */
+/** A row member and the input it fills. A `"[]"` in the input marks a repeated member. */
 export interface QueryTableFill {
   readonly field: string;
   readonly input: MemberPath;
@@ -126,10 +128,13 @@ export interface QueryTableProps<TRow extends object, TResult = unknown> {
   readonly label: string;
   /** Input the parent fixes, which the operator does not edit. */
   readonly fixed?: object | undefined;
-  /** Called when the operator opens an operation's record from one row. */
-  readonly onOpen?: ((operation: string, row: TRow) => void) | undefined;
-  /** Called with the values one row hands to an operation's form. */
-  readonly onFill?: ((operation: string, initial: object) => void) | undefined;
+  /**
+   * For each operation whose record a row opens, what opening it does. A row
+   * shows a button only for the operations the page names here.
+   */
+  readonly onOpen?: { readonly [operation: string]: (row: TRow) => void } | undefined;
+  /** For each operation whose form a row fills, what the filled values do. */
+  readonly onFill?: { readonly [operation: string]: (initial: object) => void } | undefined;
   /** Called with every outcome of the read. */
   readonly onOutcome?: ((outcome: Outcome<TResult>) => void) | undefined;
 }
@@ -219,7 +224,7 @@ export function QueryTable<TRow extends object, TResult = unknown>(
     if (recordRead === undefined || displayField === undefined) {
       return shown;
     }
-    const labels = createRecordLabels(async (key) => {
+    const labels = createRecordLabels(transport, async (key) => {
       const outcome = await callOperation<Member>(transport, recordRead.read, [
         writeMember({}, recordRead.keyInput, key),
       ]);
@@ -234,7 +239,7 @@ export function QueryTable<TRow extends object, TResult = unknown>(
 
   const fill = (action: QueryTableAction, row: TRow) =>
     action.fill.reduce<object>(
-      (initial, { field, input }) => writeMember(initial, input, (row as Member)[field] as JsonValue),
+      (initial, { field, input }) => fillMember(initial, input, (row as Member)[field] as JsonValue),
       {},
     );
 
@@ -244,22 +249,22 @@ export function QueryTable<TRow extends object, TResult = unknown>(
       ? undefined
       : (row: TRow) => (
           <>
-            {definition.actions.map((action) => (
-              <Show when={action.opens === "record" ? props.onOpen : props.onFill}>
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  onClick={() =>
-                    action.opens === "record"
-                      ? props.onOpen?.(action.operation, row)
-                      : props.onFill?.(action.operation, fill(action, row))
-                  }
-                >
-                  {action.label}
-                </Button>
-              </Show>
-            ))}
+            {definition.actions.map((action) => {
+              const opened = action.opens === "record" ? props.onOpen?.[action.operation] : undefined;
+              const filled = action.opens === "form" ? props.onFill?.[action.operation] : undefined;
+              return (
+                <Show when={opened ?? filled}>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => (opened !== undefined ? opened(row) : filled?.(fill(action, row)))}
+                  >
+                    {action.label}
+                  </Button>
+                </Show>
+              );
+            })}
           </>
         );
 

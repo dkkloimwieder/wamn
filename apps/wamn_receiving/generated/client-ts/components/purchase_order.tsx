@@ -27,23 +27,24 @@ import {
 } from "@wamn/web-runtime";
 import {
   Button,
-  DataTable,
   DetailItem,
   DetailList,
   FieldError,
   FieldGroup,
   FormActions,
   FormDone,
+  QueryTable,
   RecordSelect,
-  TableScreen,
   announceOutcome,
-  createTableLoad,
-  type DataTableScopeFilter,
 } from "@wamn/ui";
 import {
+  PURCHASE_ORDER_QUERY_REQUEST_FIELDS,
+  PURCHASE_ORDER_QUERY_RESULT_FIELDS,
+  PURCHASE_ORDER_QUERY_ROUTE,
   PURCHASE_ORDER_UPDATE_REQUEST_FIELDS,
+  PURCHASE_ORDER_UPDATE_RESULT_FIELDS,
+  PURCHASE_ORDER_UPDATE_ROUTE,
   get,
-  query,
   type PurchaseOrderGetRequest,
   type PurchaseOrderGetResult,
   type PurchaseOrderQueryRequest,
@@ -53,9 +54,6 @@ import {
   type PurchaseOrderUpdateResult,
   update,
 } from "../purchase_order.js";
-import {
-  type ReceivingRecordReceiptFormInitial,
-} from "./receiving.js";
 import {
   query as supplierQuery,
   type SupplierQueryRequest,
@@ -136,10 +134,10 @@ export interface PurchaseOrderQueryTableProps {
   readonly transport: Transport;
   /** Input the parent fixes, which the operator does not edit. */
   readonly fixed?: Partial<PurchaseOrderQueryRequest>;
-  /** Called when the operator opens `wamn-receiving:purchase-order/get@1.0.0` from one row. */
-  readonly onOpenPurchaseOrderGet?: (row: PurchaseOrderQueryRow) => void;
-  /** Called with the values one row hands to `wamn-receiving:receiving/record-receipt@1.0.0`. */
-  readonly onFillReceivingRecordReceipt?: (initial: ReceivingRecordReceiptFormInitial) => void;
+  /** For each operation whose record a row opens, what opening it does. A row shows a button only for these. */
+  readonly onOpen?: { readonly [operation: string]: (row: PurchaseOrderQueryRow) => void };
+  /** For each operation whose form a row fills, what the filled values do. */
+  readonly onFill?: { readonly [operation: string]: (initial: object) => void };
   /** Called with every outcome this screen reads. */
   readonly onOutcome?: (outcome: Outcome<PurchaseOrderQueryResult>) => void;
 }
@@ -147,101 +145,22 @@ export interface PurchaseOrderQueryTableProps {
 /** What an operator calls this screen. The page decides where it goes. */
 export const PurchaseOrderQueryTableLabel = "Purchase orders";
 
-/**
- * The table for `wamn-receiving:purchase-order/query@1.0.0`: the DataTable over `PURCHASE_ORDER_QUERY_TABLE`.
- *
- * It loads when it mounts. A change to a filter, a sort of rows the load did
- * not read in full, a cap change and a refresh each start a new load.
- */
+/** The table for `wamn-receiving:purchase-order/query@1.0.0`: the QueryTable over `PURCHASE_ORDER_QUERY_TABLE`. */
 export function PurchaseOrderQueryTable(props: PurchaseOrderQueryTableProps) {
-  const [scope, setScope] = createSignal<Partial<PurchaseOrderQueryRequest>>({});
-  const load = createTableLoad<PurchaseOrderQueryRow>(PURCHASE_ORDER_QUERY_TABLE, async (limit, sort) => {
-    let request = { ...scope(), ...props.fixed } as PurchaseOrderQueryRequest;
-    request = writeMember(request, ["limit"], limit) as PurchaseOrderQueryRequest;
-    if (sort !== undefined) {
-      request = writeMember(request, ["sort", "field"], sort.field) as PurchaseOrderQueryRequest;
-      request = writeMember(request, ["sort", "direction"], sort.direction) as PurchaseOrderQueryRequest;
-    }
-    const outcome = await query(props.transport, [request]);
-    props.onOutcome?.(outcome);
-    if (outcome.status !== "completed") {
-      announceOutcome(outcome, PurchaseOrderQueryTableLabel);
-    }
-    return outcome;
-  });
-  void load.load();
-  onCleanup(afterWrites(props.transport, () => void load.load()));
-
-  const changeScope = (filters: readonly DataTableScopeFilter[]) => {
-    let next: Partial<PurchaseOrderQueryRequest> = {};
-    for (const filter of filters) {
-      switch (filter.field) {
-        case "purchaseOrderNumber":
-          next = writeMember(next, ["filter", "purchaseOrderNumber"], [...filter.values]);
-          break;
-        case "status":
-          next = writeMember(next, ["filter", "status"], [...filter.values]);
-          break;
-        case "supplierId":
-          next = writeMember(next, ["filter", "supplierId"], [...filter.values]);
-          break;
-      }
-    }
-    setScope(next);
-    void load.load();
-  };
-
-  const actions = (row: PurchaseOrderQueryRow) => (
-    <>
-      <Show when={props.onOpenPurchaseOrderGet}>
-        <Button type="button" variant="outline" size="sm" onClick={() => props.onOpenPurchaseOrderGet?.(row)}>
-          get
-        </Button>
-      </Show>
-      <Show when={props.onFillReceivingRecordReceipt}>
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          onClick={() => props.onFillReceivingRecordReceipt?.(writeMember({} as ReceivingRecordReceiptFormInitial, ["value", "purchaseOrderId"], row.id))}
-        >
-          record-receipt
-        </Button>
-      </Show>
-    </>
-  );
-
-  return (
-    <TableScreen>
-      <DataTable
-        name="purchase-order"
-        columns={PURCHASE_ORDER_QUERY_TABLE.columns}
-        rowId={PURCHASE_ORDER_QUERY_TABLE.rowId}
-        rows={load.state().rows}
-        fullyRead={load.state().fullyRead}
-        busy={load.state().busy}
-        refusal={load.state().refusal}
-        cap={load.state().cap}
-        onCapChange={(cap) => void load.load(cap)}
-        onRefresh={() => void load.load()}
-        startedAt={load.state().startedAt}
-        endedAt={load.state().endedAt}
-        sortFields={PURCHASE_ORDER_QUERY_TABLE.sortFields}
-        sortMaxFields={PURCHASE_ORDER_QUERY_TABLE.sortMaxFields}
-        onSortChange={load.sortBy}
-        scopeFilters={PURCHASE_ORDER_QUERY_TABLE.scopeFilters}
-        onScopeChange={changeScope}
-        rowActions={actions}
-      />
-    </TableScreen>
-  );
+  return <QueryTable<PurchaseOrderQueryRow, PurchaseOrderQueryResult> definition={PURCHASE_ORDER_QUERY_TABLE} label={PurchaseOrderQueryTableLabel} {...props} />;
 }
 
 /** The table definition of `wamn-receiving:purchase-order/query@1.0.0`. */
 export const PURCHASE_ORDER_QUERY_TABLE = {
-  read: "query",
+  name: "purchase-order",
+  read: { route: PURCHASE_ORDER_QUERY_ROUTE, request: PURCHASE_ORDER_QUERY_REQUEST_FIELDS, result: PURCHASE_ORDER_QUERY_RESULT_FIELDS },
+  rows: "item",
   rowId: ["id"],
   pageMaximum: 100,
+  limitInput: ["limit"],
+  sortFieldInput: ["sort", "field"],
+  sortDirectionInput: ["sort", "direction"],
+  filters: [{ field: "purchaseOrderNumber", input: ["filter", "purchaseOrderNumber"], list: true }, { field: "status", input: ["filter", "status"], list: true }, { field: "supplierId", input: ["filter", "supplierId"], list: true }],
   scopeFilters: ["purchaseOrderNumber", "status", "supplierId"],
   sortFields: [{ field: "createdAt", wire: "created_at" }, { field: "purchaseOrderNumber", wire: "purchase_order_number" }, { field: "status", wire: "status" }],
   sortDirections: ["ascending", "descending"],
@@ -257,12 +176,12 @@ export const PURCHASE_ORDER_QUERY_TABLE = {
     { field: "updatedAt", label: "Updated", type: "timestamptz", role: "value" },
     { field: "updatedBy", label: "Updated by", type: "uuid", role: "value" },
   ],
-  update: { operation: "wamn-receiving:purchase-order/update@1.0.0", keyInput: ["id"], revisionInput: ["expectedRowVersion"], revisionField: "rowVersion", fields: [
+  update: { operation: "wamn-receiving:purchase-order/update@1.0.0", binding: { route: PURCHASE_ORDER_UPDATE_ROUTE, request: PURCHASE_ORDER_UPDATE_REQUEST_FIELDS, result: PURCHASE_ORDER_UPDATE_RESULT_FIELDS }, keyInput: ["id"], revisionInput: ["expectedRowVersion"], revisionField: "rowVersion", supplied: [{ input: ["requestId"], kind: "requestId" }], fields: [
     { field: "supplierId", input: ["change", "supplierId"] },
   ] },
   actions: [
-    { operation: "wamn-receiving:purchase-order/get@1.0.0", label: "get", many: false },
-    { operation: "wamn-receiving:receiving/record-receipt@1.0.0", label: "record-receipt", many: true },
+    { operation: "wamn-receiving:purchase-order/get@1.0.0", label: "get", many: false, opens: "record", fill: [] },
+    { operation: "wamn-receiving:receiving/record-receipt@1.0.0", label: "record-receipt", many: true, opens: "form", fill: [{ field: "id", input: ["value", "purchaseOrderId"] }] },
   ],
   childTables: [],
 } as const;

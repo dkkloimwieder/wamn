@@ -36,7 +36,9 @@ const SECTIONS: readonly ShellSection[] = [
         component: (props) => (
           <PalletQueryTable
             transport={props.transport}
-            onOpenPalletGet={(row) => props.open(`pallets/${encodeURIComponent(row.id)}`)}
+            onOpen={{
+              "wamn-wms:pallet/get@1.0.0": (row) => props.open(`pallets/${encodeURIComponent(row.id)}`),
+            }}
           />
         ),
       },

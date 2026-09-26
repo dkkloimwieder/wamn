@@ -64,6 +64,7 @@ Add an item only when an emitter target, or a page that places the generated com
 | `WindowedTable` | The rows of the `DataTable`, windowed above `WINDOW_FROM` rows inside its box, and in full below it |
 | `TableScreen` | One table screen. A `DataTable` in it takes the height of the viewport, and at least 32rem |
 | `createTableLoad`, `DEFAULT_CAP` | The load of one `DataTable` over a table definition: the cap, the sort, and a new load for each change |
+| `QueryTable` | The `DataTable` of one generated read, wired from its table definition alone: the load, the scope filters, the sort, the record labels, the row buttons, the inline edit and the child tables |
 | `AppFrame` | The signed-in page of an application: the sidebar with its navigation, a header, and the screen |
 | `CardPage` | One card in the middle of an empty page, for signing in and for an address with no page |
 | `ScreenActions` | The row of buttons above a screen |

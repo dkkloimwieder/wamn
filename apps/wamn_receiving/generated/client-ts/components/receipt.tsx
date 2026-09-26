@@ -11,22 +11,19 @@ import {
   type Outcome,
   type Transport,
   type Uuid,
-  writeMember,
 } from "@wamn/web-runtime";
 import {
-  Button,
-  DataTable,
   DetailItem,
   DetailList,
   FieldError,
-  TableScreen,
+  QueryTable,
   announceOutcome,
-  createRecordLabels,
-  createTableLoad,
 } from "@wamn/ui";
 import {
+  RECEIPT_QUERY_REQUEST_FIELDS,
+  RECEIPT_QUERY_RESULT_FIELDS,
+  RECEIPT_QUERY_ROUTE,
   get,
-  query,
   type ReceiptGetRequest,
   type ReceiptGetResult,
   type ReceiptQueryRequest,
@@ -34,8 +31,9 @@ import {
   type ReceiptQueryRow,
 } from "../receipt.js";
 import {
-  get as purchaseOrderGet,
-  type PurchaseOrderGetRequest,
+  PURCHASE_ORDER_GET_REQUEST_FIELDS,
+  PURCHASE_ORDER_GET_RESULT_FIELDS,
+  PURCHASE_ORDER_GET_ROUTE,
 } from "../purchase_order.js";
 
 /** The record that the detail for `wamn-receiving:receipt/get@1.0.0` reads. */
@@ -107,8 +105,10 @@ export interface ReceiptQueryTableProps {
   readonly transport: Transport;
   /** Input the parent fixes, which the operator does not edit. */
   readonly fixed?: Partial<ReceiptQueryRequest>;
-  /** Called when the operator opens `wamn-receiving:receipt/get@1.0.0` from one row. */
-  readonly onOpenReceiptGet?: (row: ReceiptQueryRow) => void;
+  /** For each operation whose record a row opens, what opening it does. A row shows a button only for these. */
+  readonly onOpen?: { readonly [operation: string]: (row: ReceiptQueryRow) => void };
+  /** For each operation whose form a row fills, what the filled values do. */
+  readonly onFill?: { readonly [operation: string]: (initial: object) => void };
   /** Called with every outcome this screen reads. */
   readonly onOutcome?: (outcome: Outcome<ReceiptQueryResult>) => void;
 }
@@ -116,86 +116,22 @@ export interface ReceiptQueryTableProps {
 /** What an operator calls this screen. The page decides where it goes. */
 export const ReceiptQueryTableLabel = "Receipts";
 
-/**
- * The table for `wamn-receiving:receipt/query@1.0.0`: the DataTable over `RECEIPT_QUERY_TABLE`.
- *
- * It loads when it mounts. A change to a filter, a sort of rows the load did
- * not read in full, a cap change and a refresh each start a new load.
- */
+/** The table for `wamn-receiving:receipt/query@1.0.0`: the QueryTable over `RECEIPT_QUERY_TABLE`. */
 export function ReceiptQueryTable(props: ReceiptQueryTableProps) {
-  const load = createTableLoad<ReceiptQueryRow>(RECEIPT_QUERY_TABLE, async (limit) => {
-    let request = { ...props.fixed } as ReceiptQueryRequest;
-    request = writeMember(request, ["limit"], limit) as ReceiptQueryRequest;
-    const outcome = await query(props.transport, [request]);
-    props.onOutcome?.(outcome);
-    if (outcome.status !== "completed") {
-      announceOutcome(outcome, ReceiptQueryTableLabel);
-    }
-    return outcome;
-  });
-  void load.load();
-  onCleanup(afterWrites(props.transport, () => void load.load()));
-
-  const purchaseOrderGetLabels = createRecordLabels(props.transport, async (key) => {
-    const request = writeMember({}, ["id"], key) as PurchaseOrderGetRequest;
-    const outcome = await purchaseOrderGet(props.transport, [request]);
-    if (outcome.status !== "completed") {
-      return null;
-    }
-    const text = outcome.value.purchaseOrderNumber;
-    return text == null ? null : String(text);
-  });
-
-  const columns = RECEIPT_QUERY_TABLE.columns.map((column) => {
-    switch (column.field) {
-      case "purchaseOrderId":
-        return { ...column, cell: (value: unknown) => <>{purchaseOrderGetLabels(value as string | null)}</> };
-      default:
-        return column;
-    }
-  });
-
-  const actions = (row: ReceiptQueryRow) => (
-    <>
-      <Show when={props.onOpenReceiptGet}>
-        <Button type="button" variant="outline" size="sm" onClick={() => props.onOpenReceiptGet?.(row)}>
-          get
-        </Button>
-      </Show>
-    </>
-  );
-
-  return (
-    <TableScreen>
-      <DataTable
-        name="receipt"
-        columns={columns}
-        rowId={RECEIPT_QUERY_TABLE.rowId}
-        rows={load.state().rows}
-        fullyRead={load.state().fullyRead}
-        busy={load.state().busy}
-        refusal={load.state().refusal}
-        cap={load.state().cap}
-        onCapChange={(cap) => void load.load(cap)}
-        onRefresh={() => void load.load()}
-        startedAt={load.state().startedAt}
-        endedAt={load.state().endedAt}
-        sortFields={RECEIPT_QUERY_TABLE.sortFields}
-        sortMaxFields={RECEIPT_QUERY_TABLE.sortMaxFields}
-        onSortChange={load.sortBy}
-        scopeFilters={RECEIPT_QUERY_TABLE.scopeFilters}
-        onScopeChange={() => void load.load()}
-        rowActions={actions}
-      />
-    </TableScreen>
-  );
+  return <QueryTable<ReceiptQueryRow, ReceiptQueryResult> definition={RECEIPT_QUERY_TABLE} label={ReceiptQueryTableLabel} {...props} />;
 }
 
 /** The table definition of `wamn-receiving:receipt/query@1.0.0`. */
 export const RECEIPT_QUERY_TABLE = {
-  read: "query",
+  name: "receipt",
+  read: { route: RECEIPT_QUERY_ROUTE, request: RECEIPT_QUERY_REQUEST_FIELDS, result: RECEIPT_QUERY_RESULT_FIELDS },
+  rows: "item",
   rowId: ["id"],
   pageMaximum: 100,
+  limitInput: ["limit"],
+  sortFieldInput: null,
+  sortDirectionInput: null,
+  filters: [],
   scopeFilters: [],
   sortFields: [],
   sortDirections: [],
@@ -206,11 +142,11 @@ export const RECEIPT_QUERY_TABLE = {
     { field: "id", label: "id", type: "uuid", role: "key" },
     { field: "idempotencyKey", label: "idempotency key", type: "text", role: "value" },
     { field: "occurredAt", label: "Received at", type: "timestamptz", role: "value" },
-    { field: "purchaseOrderId", label: "Purchase order", type: "uuid", role: "reference", displayField: "purchaseOrderNumber" },
+    { field: "purchaseOrderId", label: "Purchase order", type: "uuid", role: "reference", displayField: "purchaseOrderNumber", recordRead: { read: { route: PURCHASE_ORDER_GET_ROUTE, request: PURCHASE_ORDER_GET_REQUEST_FIELDS, result: PURCHASE_ORDER_GET_RESULT_FIELDS }, keyInput: ["id"] } },
     { field: "receiptReference", label: "Receipt reference", type: "text", role: "value" },
   ],
   actions: [
-    { operation: "wamn-receiving:receipt/get@1.0.0", label: "get", many: false },
+    { operation: "wamn-receiving:receipt/get@1.0.0", label: "get", many: false, opens: "record", fill: [] },
   ],
   childTables: [],
 } as const;

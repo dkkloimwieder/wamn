@@ -23,7 +23,7 @@ use std::fmt::Write as _;
 
 use crate::client_ir::FieldIr;
 use crate::client_plan::{
-    ClientPlan, ModelPlan, PopulatedInput, ResolvedColumn, Role, Rows, ScreenPlan, SuppliedKind,
+    ClientPlan, ModelPlan, PopulatedInput, Role, Rows, ScreenPlan, SuppliedKind,
 };
 use crate::client_ts::{RUNTIME_PACKAGE, UI_PACKAGE, ts_type};
 use crate::generate::GeneratedFile;
@@ -223,25 +223,15 @@ fn emit_model(
     for screen in &screens {
         match screen.role {
             Role::Table => {
-                solid.insert("onCleanup");
-                // The filters of a table are the one signal it keeps.
-                if screen
-                    .paging
-                    .as_ref()
-                    .is_some_and(|paging| !paging.filter_inputs.is_empty())
-                {
-                    solid.insert("createSignal");
-                }
-                emit_definition_table(
+                emit_definition_table(&mut body, screen, &mut runtime, &mut ui, &mut bindings);
+                write_table_definition(
                     &mut body,
                     screen,
-                    &mut runtime,
-                    &mut ui,
+                    plan,
                     &mut bindings,
                     &mut foreign,
                     &mut sibling,
                 )?;
-                write_table_definition(&mut body, screen, plan)?;
             }
             Role::Detail => {
                 solid.extend(["createResource", "onCleanup"]);
@@ -310,12 +300,15 @@ fn emit_model(
         model.model.name
     )
     .expect("writing to a String cannot fail");
-    writeln!(
-        source,
-        "\nimport {{ {} }} from \"solid-js\";",
-        solid.iter().copied().collect::<Vec<_>>().join(", ")
-    )
-    .expect("writing to a String cannot fail");
+    // A module of tables alone renders no Solid primitive.
+    if !solid.is_empty() {
+        writeln!(
+            source,
+            "\nimport {{ {} }} from \"solid-js\";",
+            solid.iter().copied().collect::<Vec<_>>().join(", ")
+        )
+        .expect("writing to a String cannot fail");
+    }
     if form {
         // A narrowed selector follows the form's own values, so it reads the
         // store the form owns rather than a second copy of the value.
@@ -420,24 +413,6 @@ fn repeated_ancestor(path: &str) -> Option<&str> {
     Some(&path[..end])
 }
 
-/// One row value written into the initial values of a form, at one input path.
-///
-/// An input inside a repeated group is a member of one element, so the fill
-/// writes a list that holds that one element (wamn-yviq).
-fn fill_member(base: &str, input: &str, value: &str) -> String {
-    let Some(ancestor) = repeated_ancestor(input) else {
-        return format!("writeMember({base}, {}, {value})", member_literal(input));
-    };
-    let element = match input[ancestor.len()..].strip_prefix("[].") {
-        Some(rest) => fill_member("{}", rest, value),
-        None => value.to_owned(),
-    };
-    format!(
-        "writeMember({base}, {}, [{element}])",
-        member_literal(ancestor)
-    )
-}
-
 /// The member path as a TypeScript literal, for a runtime helper.
 fn member_literal(path: &str) -> String {
     format!(
@@ -502,126 +477,30 @@ fn cell_type(field: &FieldIr) -> &str {
     }
 }
 
-/// The name of the labels one table keeps for the records a read returns.
+/// One table screen: the QueryTable over its table definition.
 ///
-/// Two columns can name records of one model, so the labels are named after
-/// the read, never after the column, and both columns share them.
-fn labels_name(resolved: &ResolvedColumn<'_>) -> String {
-    format!(
-        "{}Labels",
-        foreign_alias(resolved.read_model, resolved.read_name)
-    )
-}
-
-/// The labels one table keeps for each read its columns name.
-///
-/// Each read runs once for each key the rows name, and it asks for the key
-/// alone. A reply that is not a record leaves the cell showing the key.
-fn emit_record_labels(
-    source: &mut String,
-    screen: &ScreenPlan<'_>,
-    runtime: &mut BTreeSet<&'static str>,
-    ui: &mut BTreeSet<&'static str>,
-    bindings: &mut BTreeSet<String>,
-    foreign: &mut BTreeMap<String, BTreeSet<String>>,
-) -> Result<(), ClientComponentError> {
-    let mut written = BTreeSet::new();
-    for resolved in &screen.resolved_columns {
-        let name = labels_name(resolved);
-        if !written.insert(name.clone()) {
-            continue;
-        }
-        let function = crate::client_ts::function_name(resolved.read_name).map_err(|error| {
-            ClientComponentError::new(ClientComponentErrorKind::UnwrittenRole, error.to_string())
-        })?;
-        let stem = crate::client_ts::type_stem(resolved.read_model, resolved.read_name);
-        // The table's own model imports its binding by name. Another model's
-        // binding carries the model in its alias, as a selector's list does.
-        let call = if resolved.read_model == screen.model {
-            bindings.insert(function.clone());
-            bindings.insert(format!("type {stem}Request"));
-            function
-        } else {
-            let alias = foreign_alias(resolved.read_model, resolved.read_name);
-            let names = foreign.entry(resolved.read_model.to_owned()).or_default();
-            names.insert(format!("{function} as {alias}"));
-            names.insert(format!("type {stem}Request"));
-            alias
-        };
-        ui.insert("createRecordLabels");
-        runtime.insert("writeMember");
-        writeln!(
-            source,
-            "  const {name} = createRecordLabels(props.transport, async (key) => {{\n    const request = writeMember({{}}, {}, key) as {stem}Request;\n    const outcome = await {call}(props.transport, [request]);\n    if (outcome.status !== \"completed\") {{\n      return null;\n    }}\n    const text = outcome.value.{};\n    return text == null ? null : String(text);\n  }});",
-            member_literal(resolved.key_input),
-            crate::client_ts::to_camel(resolved.display_field)
-        )
-        .expect("write");
-    }
-    Ok(())
-}
-
-/// One table screen: the DataTable over its table definition.
-///
-/// The declared filters are the scope bar of the table, and a change to one
-/// starts a new load that sends it at its declared input path. The table owns
-/// the sort, the cap and the refresh, and a row link or a row form is one
-/// button in the last column. The table loads when it mounts, and again after
-/// every write the transport completes. A load reads one page of a paged list,
-/// or every row of a bounded list.
+/// The component holds no table code. The definition states the read, its
+/// inputs and every operation the table calls, and `QueryTable` in the UI
+/// package wires them.
 fn emit_definition_table(
     source: &mut String,
     screen: &ScreenPlan<'_>,
     runtime: &mut BTreeSet<&'static str>,
     ui: &mut BTreeSet<&'static str>,
     bindings: &mut BTreeSet<String>,
-    foreign: &mut BTreeMap<String, BTreeSet<String>>,
-    sibling: &mut BTreeMap<String, BTreeSet<String>>,
-) -> Result<(), ClientComponentError> {
+) {
     let stem = crate::client_ts::type_stem(screen.model, screen.name);
-    let function = crate::client_ts::function_name(screen.name).map_err(|error| {
-        ClientComponentError::new(ClientComponentErrorKind::UnwrittenRole, error.to_string())
-    })?;
-    let paging = screen.paging.as_ref();
-    // The load state reads the rows of a page as `item` and its cursor as
-    // `nextCursor`, so the outcome of a page read is the outcome of the load.
-    // A bounded list holds every row under `rows`, as one page with no cursor.
-    let bounded = match screen.rows {
-        crate::client_plan::Rows::List { key: "item" }
-            if paging.is_some_and(|paging| paging.cursor_input.is_some()) =>
-        {
-            false
-        }
-        crate::client_plan::Rows::List { key: "rows" } => true,
-        _ => {
-            return Err(ClientComponentError::new(
-                ClientComponentErrorKind::UnwrittenRole,
-                format!(
-                    "{} states the table role, but neither `item` rows with a cursor nor bounded `rows`",
-                    screen.contract.operation
-                ),
-            ));
-        }
-    };
     let definition = format!(
         "{}_{}_TABLE",
         screen.model.to_uppercase(),
         screen.name.to_uppercase()
     );
-    ui.extend([
-        "TableScreen",
-        "DataTable",
-        "createTableLoad",
-        "announceOutcome",
-    ]);
-    runtime.extend(["afterWrites", "type Outcome", "type Transport"]);
-    bindings.insert(function.clone());
+    ui.insert("QueryTable");
+    runtime.extend(["type Outcome", "type Transport"]);
     bindings.insert(format!("type {stem}Request"));
     bindings.insert(format!("type {stem}Result"));
     bindings.insert(format!("type {stem}Row"));
-    let filtered = paging.is_some_and(|paging| !paging.filter_inputs.is_empty());
 
-    // The props.
     writeln!(
         source,
         "\n/** What the table for `{}` takes. */",
@@ -633,40 +512,26 @@ fn emit_definition_table(
     source.push_str("  readonly transport: Transport;\n");
     source.push_str("  /** Input the parent fixes, which the operator does not edit. */\n");
     writeln!(source, "  readonly fixed?: Partial<{stem}Request>;").expect("write");
-    for link in &screen.row_links {
-        let target = crate::client_ts::operation_stem(link.operation);
-        writeln!(
-            source,
-            "  /** Called when the operator opens `{}` from one row. */\n  readonly onOpen{target}?: (row: {stem}Row) => void;",
-            link.operation
-        )
-        .expect("write");
-    }
-    for form in &screen.row_forms {
-        let target = crate::client_ts::operation_stem(form.operation);
-        if form.model != screen.model {
-            // The type is written by that model's component module, beside
-            // the form it belongs to, so a sibling import reads it.
-            sibling
-                .entry(form.model.to_owned())
-                .or_default()
-                .insert(format!("type {target}FormInitial"));
-        }
-        writeln!(
-            source,
-            "  /** Called with the values one row hands to `{}`. */\n  readonly onFill{target}?: (initial: {target}FormInitial) => void;",
-            form.operation
-        )
-        .expect("write");
-    }
+    source.push_str(
+        "  /** For each operation whose record a row opens, what opening it does. A row shows a button only for these. */\n",
+    );
+    writeln!(
+        source,
+        "  readonly onOpen?: {{ readonly [operation: string]: (row: {stem}Row) => void }};"
+    )
+    .expect("write");
+    source.push_str(
+        "  /** For each operation whose form a row fills, what the filled values do. */\n",
+    );
+    source.push_str(
+        "  readonly onFill?: { readonly [operation: string]: (initial: object) => void };\n",
+    );
     source.push_str("  /** Called with every outcome this screen reads. */\n");
     writeln!(
         source,
         "  readonly onOutcome?: (outcome: Outcome<{stem}Result>) => void;\n}}"
     )
     .expect("write");
-
-    // The component.
     writeln!(
         source,
         "\n/** What an operator calls this screen. The page decides where it goes. */\nexport const {stem}TableLabel = {:?};",
@@ -675,230 +540,85 @@ fn emit_definition_table(
     .expect("write");
     writeln!(
         source,
-        "\n/**\n * The table for `{}`: the DataTable over `{definition}`.\n *\n * It loads when it mounts. A change to a filter, a sort of rows the load did\n * not read in full, a cap change and a refresh each start a new load.\n */",
+        "\n/** The table for `{}`: the QueryTable over `{definition}`. */\nexport function {stem}Table(props: {stem}TableProps) {{\n  return <QueryTable<{stem}Row, {stem}Result> definition={{{definition}}} label={{{stem}TableLabel}} {{...props}} />;\n}}",
         screen.contract.operation
     )
     .expect("write");
-    writeln!(
-        source,
-        "export function {stem}Table(props: {stem}TableProps) {{"
-    )
-    .expect("write");
-    if filtered {
-        writeln!(
-            source,
-            "  const [scope, setScope] = createSignal<Partial<{stem}Request>>({{}});"
-        )
-        .expect("write");
-    }
-    let sort = paging.and_then(|paging| {
-        paging
-            .sort
-            .and(paging.sort_field_input.or(paging.sort_direction_input))
-    });
-    let limit_input = paging.and_then(|paging| paging.limit_input);
-    let parameters = match (limit_input.is_some(), sort.is_some()) {
-        (_, true) => "limit, sort",
-        (true, false) => "limit",
-        (false, false) => "",
-    };
-    writeln!(
-        source,
-        "  const load = createTableLoad<{stem}Row>({definition}, async ({parameters}) => {{"
-    )
-    .expect("write");
-    let scope = if filtered {
-        "...scope(), ...props.fixed"
-    } else {
-        "...props.fixed"
-    };
-    let limit = limit_input.map(|path| {
-        runtime.insert("writeMember");
-        format!(
-            "\n    request = writeMember(request, {}, limit) as {stem}Request;",
-            member_literal(path)
-        )
-    });
-    writeln!(
-        source,
-        "    {} request = {{ {scope} }} as {stem}Request;{}",
-        if limit.is_some() || sort.is_some() {
-            "let"
-        } else {
-            "const"
-        },
-        limit.unwrap_or_default()
-    )
-    .expect("write");
-    if let (Some(paging), Some(_)) = (paging, sort) {
-        runtime.insert("writeMember");
-        source.push_str("    if (sort !== undefined) {\n");
-        for (path, member) in [
-            (paging.sort_field_input, "field"),
-            (paging.sort_direction_input, "direction"),
-        ] {
-            if let Some(path) = path {
-                writeln!(
-                    source,
-                    "      request = writeMember(request, {}, sort.{member}) as {stem}Request;",
-                    member_literal(path)
-                )
-                .expect("write");
-            }
-        }
-        source.push_str("    }\n");
-    }
-    let returned = if bounded {
-        runtime.insert("boundedPage");
-        "boundedPage(outcome)"
-    } else {
-        "outcome"
-    };
-    writeln!(
-        source,
-        "    const outcome = await {function}(props.transport, [request]);\n    props.onOutcome?.(outcome);\n    if (outcome.status !== \"completed\") {{\n      announceOutcome(outcome, {stem}TableLabel);\n    }}\n    return {returned};\n  }});"
-    )
-    .expect("write");
-    source.push_str("  void load.load();\n");
-    // A write can change the rows a table shows, so the table loads again.
-    source.push_str("  onCleanup(afterWrites(props.transport, () => void load.load()));\n");
-    if let (true, Some(paging)) = (filtered, paging) {
-        // The scope bar hands over only the filters that hold a value, so an
-        // emptied filter sends no member, never an empty list.
-        runtime.insert("writeMember");
-        ui.insert("type DataTableScopeFilter");
-        writeln!(
-            source,
-            "\n  const changeScope = (filters: readonly DataTableScopeFilter[]) => {{\n    let next: Partial<{stem}Request> = {{}};\n    for (const filter of filters) {{\n      switch (filter.field) {{"
-        )
-        .expect("write");
-        for filter in paging.filters {
-            let Some(path) = paging
-                .filter_inputs
-                .iter()
-                .find(|path| crate::client_plan::filter_input(path, &filter.field))
-            else {
-                continue;
-            };
-            let value = if path.ends_with("[]") {
-                "[...filter.values]"
-            } else {
-                "filter.values[0]!"
-            };
-            writeln!(
-                source,
-                "        case {}:\n          next = writeMember(next, {}, {value});\n          break;",
-                serde_json::Value::String(column_member(&filter.field, &screen.contract.operation)?),
-                member_literal(path)
-            )
-            .expect("write");
-        }
-        source.push_str("      }\n    }\n    setScope(next);\n    void load.load();\n  };\n");
-    }
+}
 
-    // A column that names a record shows the text its record read returns.
-    // The markup holds the text, which Solid tracks, so the cell follows the
-    // read when it answers.
-    let columns = if screen.resolved_columns.is_empty() {
-        format!("{definition}.columns")
+/// The binding of one operation: the route and field maps its bindings
+/// module exports. Another model's module is imported by name, because the
+/// constants carry the model.
+fn binding(
+    model: &str,
+    name: &str,
+    own: &str,
+    bindings: &mut BTreeSet<String>,
+    foreign: &mut BTreeMap<String, BTreeSet<String>>,
+) -> String {
+    let stem = format!("{}_{}", model.to_uppercase(), name.to_uppercase());
+    let names = [
+        format!("{stem}_ROUTE"),
+        format!("{stem}_REQUEST_FIELDS"),
+        format!("{stem}_RESULT_FIELDS"),
+    ];
+    if model == own {
+        bindings.extend(names.iter().cloned());
     } else {
-        source.push('\n');
-        emit_record_labels(source, screen, runtime, ui, bindings, foreign)?;
-        writeln!(
-            source,
-            "\n  const columns = {definition}.columns.map((column) => {{\n    switch (column.field) {{"
-        )
-        .expect("write");
-        for resolved in &screen.resolved_columns {
-            writeln!(
-                source,
-                "      case {}:\n        return {{ ...column, cell: (value: unknown) => <>{{{}(value as string | null)}}</> }};",
-                serde_json::Value::String(column_member(resolved.column, &screen.contract.operation)?),
-                labels_name(resolved)
-            )
-            .expect("write");
-        }
-        source.push_str("      default:\n        return column;\n    }\n  });\n");
-        "columns".to_owned()
-    };
-
-    // The buttons of one row: each row link, then each row form.
-    let actions = !screen.row_links.is_empty() || !screen.row_forms.is_empty();
-    if actions {
-        ui.insert("Button");
-        writeln!(source, "\n  const actions = (row: {stem}Row) => (\n    <>").expect("write");
-        for link in &screen.row_links {
-            let target = crate::client_ts::operation_stem(link.operation);
-            writeln!(
-                source,
-                "      <Show when={{props.onOpen{target}}}>\n        <Button type=\"button\" variant=\"outline\" size=\"sm\" onClick={{() => props.onOpen{target}?.(row)}}>\n          {}\n        </Button>\n      </Show>",
-                link_label(link.operation)
-            )
-            .expect("write");
-        }
-        for form in &screen.row_forms {
-            let target = crate::client_ts::operation_stem(form.operation);
-            let mut initial = format!("{{}} as {target}FormInitial");
-            for (field, input) in &form.pairs {
-                initial = fill_member(
-                    &initial,
-                    input,
-                    &format!("row.{}", crate::client_ts::to_camel(field)),
-                );
-            }
-            runtime.insert("writeMember");
-            writeln!(
-                source,
-                "      <Show when={{props.onFill{target}}}>\n        <Button\n          type=\"button\"\n          variant=\"outline\"\n          size=\"sm\"\n          onClick={{() => props.onFill{target}?.({initial})}}\n        >\n          {}\n        </Button>\n      </Show>",
-                link_label(form.operation)
-            )
-            .expect("write");
-        }
-        source.push_str("    </>\n  );\n");
+        foreign
+            .entry(model.to_owned())
+            .or_default()
+            .extend(names.iter().cloned());
     }
-
-    // The markup.
-    source.push_str("\n  return (\n    <TableScreen>\n");
-    writeln!(
-        source,
-        "      <DataTable\n        name={}\n        columns={{{columns}}}\n        rowId={{{definition}.rowId}}\n        rows={{load.state().rows}}\n        fullyRead={{load.state().fullyRead}}\n        busy={{load.state().busy}}\n        refusal={{load.state().refusal}}\n        cap={{load.state().cap}}\n        onCapChange={{(cap) => void load.load(cap)}}\n        onRefresh={{() => void load.load()}}\n        startedAt={{load.state().startedAt}}\n        endedAt={{load.state().endedAt}}\n        sortFields={{{definition}.sortFields}}\n        sortMaxFields={{{definition}.sortMaxFields}}\n        onSortChange={{load.sortBy}}\n        scopeFilters={{{definition}.scopeFilters}}\n        onScopeChange={{{}}}",
-        // The file name of a CSV export starts with the model.
-        serde_json::Value::String(screen.model.replace('_', "-")),
-        if filtered {
-            "changeScope"
-        } else {
-            "() => void load.load()"
-        }
+    format!(
+        "{{ route: {}, request: {}, result: {} }}",
+        names[0], names[1], names[2]
     )
-    .expect("write");
-    if actions {
-        source.push_str("        rowActions={actions}\n");
+}
+
+/// The member path of one input a row fills, with `"[]"` after each
+/// repeated member, as `fillMember` of the runtime reads it.
+fn fill_literal(path: &str) -> String {
+    let mut segments = Vec::new();
+    for part in path.split('.') {
+        segments.push(format!(
+            "{:?}",
+            crate::client_ts::to_camel(part.trim_end_matches("[]"))
+        ));
+        if part.ends_with("[]") {
+            segments.push("\"[]\"".to_owned());
+        }
     }
-    source.push_str("      />\n    </TableScreen>\n  );\n}\n");
-    Ok(())
+    format!("[{}]", segments.join(", "))
 }
 
 /// The table definition of one table screen, as data, beside its component.
 ///
-/// It names the read, its scope filters, its sort, its row id, its page
-/// maximum and its columns. A column names its row member, its label, the
-/// type the contract states, and its role: the row id is the key, a column that
-/// names a record is a reference, a revision is a revision, and any other
-/// column is a value. A column that names a record also names the field its
-/// record read shows. The definition states no mode and no cap, because no
+/// It names the read as a binding, whether it answers one page (`item`) or
+/// every row (`rows`), the input paths of the limit, the sort and each scope
+/// filter, its scope filters, its sort, its row id, its page maximum and its
+/// columns. A column names its row member, its label, the type the contract
+/// states, and its role: the row id is the key, a column that names a record
+/// is a reference, a revision is a revision, and any other column is a value.
+/// A column that names a record also names the field its record read shows,
+/// and that read. The definition states no mode and no cap, because no
 /// manifest declares either.
 ///
 /// The row id is the list of fields that `lists` keys the rows on. A read that
 /// declares no page limit has a null page maximum, and a load reads what the
 /// release answers.
 ///
-/// It also names the update a cell edits through and the columns it writes,
-/// each operation a row opens with whether it takes many rows, and each child
-/// table by its definition name with the column its scope filter narrows.
+/// It also names the update a cell edits through, with the columns it writes
+/// and the inputs the runtime supplies, each operation a row opens with
+/// whether it takes many rows and the inputs the row fills, and each child
+/// table by its definition with the column its scope filter narrows.
 fn write_table_definition(
     source: &mut String,
     screen: &ScreenPlan<'_>,
     plan: &ClientPlan<'_>,
+    bindings: &mut BTreeSet<String>,
+    foreign: &mut BTreeMap<String, BTreeSet<String>>,
+    sibling: &mut BTreeMap<String, BTreeSet<String>>,
 ) -> Result<(), ClientComponentError> {
     let operation = screen.contract;
     // Generation refuses a table read that states no row key.
@@ -912,10 +632,28 @@ fn write_table_definition(
         )
     })?;
     let paging = screen.paging.as_ref();
+    // The load state reads the rows of a page as `item` and its cursor as
+    // `nextCursor`. A bounded list holds every row under `rows`, as one page
+    // with no cursor.
+    let rows = match screen.rows {
+        crate::client_plan::Rows::List { key: "item" }
+            if paging.is_some_and(|paging| paging.cursor_input.is_some()) =>
+        {
+            "item"
+        }
+        crate::client_plan::Rows::List { key: "rows" } => "rows",
+        _ => {
+            return Err(ClientComponentError::new(
+                ClientComponentErrorKind::UnwrittenRole,
+                format!(
+                    "{} states the table role, but neither `item` rows with a cursor nor bounded `rows`",
+                    operation.operation
+                ),
+            ));
+        }
+    };
     let quote = |text: &str| serde_json::Value::String(text.to_owned()).to_string();
-    let read = crate::client_ts::function_name(&operation.name).map_err(|error| {
-        ClientComponentError::new(ClientComponentErrorKind::UnwrittenRole, error.to_string())
-    })?;
+    let path = |path: Option<&str>| path.map_or_else(|| "null".to_owned(), member_literal);
 
     writeln!(
         source,
@@ -925,7 +663,20 @@ fn write_table_definition(
         screen.name.to_uppercase()
     )
     .expect("write");
-    writeln!(source, "  read: {},", quote(&read)).expect("write");
+    // The file name of a CSV export starts with the model.
+    writeln!(
+        source,
+        "  name: {},",
+        quote(&screen.model.replace('_', "-"))
+    )
+    .expect("write");
+    writeln!(
+        source,
+        "  read: {},",
+        binding(screen.model, screen.name, screen.model, bindings, foreign)
+    )
+    .expect("write");
+    writeln!(source, "  rows: {},", quote(rows)).expect("write");
     let row_id = lists
         .key_field
         .iter()
@@ -936,17 +687,56 @@ fn write_table_definition(
         .and_then(|paging| paging.limit)
         .map_or_else(|| "null".to_owned(), |limit| limit.maximum.to_string());
     writeln!(source, "  pageMaximum: {maximum},").expect("write");
-    let filters = paging
+    let sort = paging.and_then(|paging| paging.sort);
+    writeln!(
+        source,
+        "  limitInput: {},",
+        path(paging.and_then(|paging| paging.limit_input))
+    )
+    .expect("write");
+    writeln!(
+        source,
+        "  sortFieldInput: {},",
+        path(paging.and_then(|paging| sort.and(paging.sort_field_input)))
+    )
+    .expect("write");
+    writeln!(
+        source,
+        "  sortDirectionInput: {},",
+        path(paging.and_then(|paging| sort.and(paging.sort_direction_input)))
+    )
+    .expect("write");
+    // A filter whose input the contract does not declare is no scope filter a
+    // read can send.
+    let mut filters = Vec::new();
+    if let Some(paging) = paging {
+        for filter in paging.filters {
+            let Some(input) = paging
+                .filter_inputs
+                .iter()
+                .find(|path| crate::client_plan::filter_input(path, &filter.field))
+            else {
+                continue;
+            };
+            filters.push(format!(
+                "{{ field: {}, input: {}, list: {} }}",
+                quote(&column_member(&filter.field, &operation.operation)?),
+                member_literal(input),
+                input.ends_with("[]")
+            ));
+        }
+    }
+    writeln!(source, "  filters: [{}],", filters.join(", ")).expect("write");
+    let scope = paging
         .map_or(&[][..], |paging| paging.filters)
         .iter()
         .map(|filter| {
             column_member(&filter.field, &operation.operation).map(|member| quote(&member))
         })
         .collect::<Result<Vec<_>, _>>()?;
-    writeln!(source, "  scopeFilters: [{}],", filters.join(", ")).expect("write");
+    writeln!(source, "  scopeFilters: [{}],", scope.join(", ")).expect("write");
     // A sort field names its row member, which the table matches, and its wire
     // name, which the request sends.
-    let sort = paging.and_then(|paging| paging.sort);
     let fields = sort
         .map_or(&[][..], |sort| &sort.fields[..])
         .iter()
@@ -994,8 +784,16 @@ fn write_table_definition(
         if let Some(resolved) = resolved {
             write!(
                 source,
-                ", displayField: {}",
-                quote(&crate::client_ts::to_camel(resolved.display_field))
+                ", displayField: {}, recordRead: {{ read: {}, keyInput: {} }}",
+                quote(&crate::client_ts::to_camel(resolved.display_field)),
+                binding(
+                    resolved.read_model,
+                    resolved.read_name,
+                    screen.model,
+                    bindings,
+                    foreign
+                ),
+                member_literal(resolved.key_input)
             )
             .expect("write");
         }
@@ -1005,8 +803,9 @@ fn write_table_definition(
     if let Some(update) = &screen.update {
         write!(
             source,
-            "  update: {{ operation: {}, keyInput: {}",
+            "  update: {{ operation: {}, binding: {}, keyInput: {}",
             quote(update.operation),
+            binding(update.model, update.name, screen.model, bindings, foreign),
             member_literal(update.key_input)
         )
         .expect("write");
@@ -1019,6 +818,25 @@ fn write_table_definition(
             )
             .expect("write");
         }
+        let supplied = plan
+            .screens()
+            .find(|candidate| candidate.contract.operation == update.operation)
+            .map_or(&[][..], |candidate| &candidate.supplied[..])
+            .iter()
+            .map(|field| {
+                let kind = match field.kind {
+                    SuppliedKind::RequestId => "requestId",
+                    SuppliedKind::IdempotencyKey => "idempotencyKey",
+                    SuppliedKind::OccurredAt => "occurredAt",
+                };
+                format!(
+                    "{{ input: {}, kind: {} }}",
+                    member_literal(field.path),
+                    quote(kind)
+                )
+            })
+            .collect::<Vec<_>>();
+        write!(source, ", supplied: [{}]", supplied.join(", ")).expect("write");
         source.push_str(", fields: [\n");
         for field in &update.fields {
             writeln!(
@@ -1031,36 +849,72 @@ fn write_table_definition(
         }
         source.push_str("  ] },\n");
     }
-    let actions: Vec<String> = screen
+    // A row opens a record by itself, or fills the inputs of a form.
+    let actions = screen
         .actions
         .iter()
         .map(|action| {
-            format!(
-                "{{ operation: {}, label: {}, many: {} }}",
+            let (opens, fill) = match screen
+                .row_forms
+                .iter()
+                .find(|form| form.operation == action.operation)
+            {
+                Some(form) => (
+                    "form",
+                    form.pairs
+                        .iter()
+                        .map(|(field, input)| {
+                            column_member(field, &operation.operation).map(|member| {
+                                format!(
+                                    "{{ field: {}, input: {} }}",
+                                    quote(&member),
+                                    fill_literal(input)
+                                )
+                            })
+                        })
+                        .collect::<Result<Vec<_>, _>>()?,
+                ),
+                None => ("record", Vec::new()),
+            };
+            Ok(format!(
+                "{{ operation: {}, label: {}, many: {}, opens: {}, fill: [{}] }}",
                 quote(action.operation),
                 quote(&link_label(action.operation)),
-                action.many
-            )
+                action.many,
+                quote(opens),
+                fill.join(", ")
+            ))
         })
-        .collect();
-    // A child that gets no component of its own is no child table.
+        .collect::<Result<Vec<_>, ClientComponentError>>()?;
+    // A child that gets no component of its own is no child table. Its
+    // definition is read when a row expands, so modules that import each
+    // other load.
     let children = screen
         .child_tables
         .iter()
-        .filter(|child| {
-            plan.screens().any(|candidate| {
+        .filter_map(|child| {
+            plan.screens().find(|candidate| {
                 candidate.contract.operation == child.operation && written(candidate)
-            })
-        })
-        .map(|child| {
-            column_member(child.field, child.operation).map(|field| {
-                format!(
-                    "{{ definition: \"{}_{}_TABLE\", scopeFilter: {} }}",
+            })?;
+            Some(column_member(child.field, child.operation).map(|field| {
+                let name = format!(
+                    "{}_{}_TABLE",
                     child.model.to_uppercase(),
-                    child.name.to_uppercase(),
+                    child.name.to_uppercase()
+                );
+                if child.model != screen.model {
+                    sibling
+                        .entry(child.model.to_owned())
+                        .or_default()
+                        .insert(name.clone());
+                }
+                format!(
+                    "{{ label: {}, table: () => {name}, scopeFilter: {} }}",
+                    // The expanded row names the child by the model its rows are.
+                    quote(&child.model.replace('_', " ")),
                     quote(&field)
                 )
-            })
+            }))
         })
         .collect::<Result<Vec<_>, _>>()?;
     for (name, items) in [("actions", actions), ("childTables", children)] {

@@ -23,25 +23,26 @@ import {
 } from "@wamn/web-runtime";
 import {
   Button,
-  DataTable,
   DetailItem,
   DetailList,
   FieldError,
   FieldGroup,
   FormActions,
   FormDone,
-  TableScreen,
+  QueryTable,
   TextField,
   announceOutcome,
-  createTableLoad,
-  type DataTableScopeFilter,
 } from "@wamn/ui";
 import {
   LOCATION_CREATE_REQUEST_FIELDS,
+  LOCATION_QUERY_REQUEST_FIELDS,
+  LOCATION_QUERY_RESULT_FIELDS,
+  LOCATION_QUERY_ROUTE,
   LOCATION_UPDATE_REQUEST_FIELDS,
+  LOCATION_UPDATE_RESULT_FIELDS,
+  LOCATION_UPDATE_ROUTE,
   create,
   get,
-  query,
   type LocationCreateRequest,
   type LocationCreateResult,
   type LocationGetRequest,
@@ -54,11 +55,7 @@ import {
   update,
 } from "../location.js";
 import {
-  type InventoryMoveFormInitial,
-  type InventorySplitFormInitial,
-} from "./inventory.js";
-import {
-  type PalletCreateFormInitial,
+  PALLET_QUERY_TABLE,
 } from "./pallet.js";
 
 /** What an operator types for `wamn-wms:location/create@1.0.0`. */
@@ -222,14 +219,10 @@ export interface LocationQueryTableProps {
   readonly transport: Transport;
   /** Input the parent fixes, which the operator does not edit. */
   readonly fixed?: Partial<LocationQueryRequest>;
-  /** Called when the operator opens `wamn-wms:location/get@1.0.0` from one row. */
-  readonly onOpenLocationGet?: (row: LocationQueryRow) => void;
-  /** Called with the values one row hands to `wamn-wms:inventory/move@1.0.0`. */
-  readonly onFillInventoryMove?: (initial: InventoryMoveFormInitial) => void;
-  /** Called with the values one row hands to `wamn-wms:inventory/split@1.0.0`. */
-  readonly onFillInventorySplit?: (initial: InventorySplitFormInitial) => void;
-  /** Called with the values one row hands to `wamn-wms:pallet/create@1.0.0`. */
-  readonly onFillPalletCreate?: (initial: PalletCreateFormInitial) => void;
+  /** For each operation whose record a row opens, what opening it does. A row shows a button only for these. */
+  readonly onOpen?: { readonly [operation: string]: (row: LocationQueryRow) => void };
+  /** For each operation whose form a row fills, what the filled values do. */
+  readonly onFill?: { readonly [operation: string]: (initial: object) => void };
   /** Called with every outcome this screen reads. */
   readonly onOutcome?: (outcome: Outcome<LocationQueryResult>) => void;
 }
@@ -237,111 +230,22 @@ export interface LocationQueryTableProps {
 /** What an operator calls this screen. The page decides where it goes. */
 export const LocationQueryTableLabel = "query";
 
-/**
- * The table for `wamn-wms:location/query@1.0.0`: the DataTable over `LOCATION_QUERY_TABLE`.
- *
- * It loads when it mounts. A change to a filter, a sort of rows the load did
- * not read in full, a cap change and a refresh each start a new load.
- */
+/** The table for `wamn-wms:location/query@1.0.0`: the QueryTable over `LOCATION_QUERY_TABLE`. */
 export function LocationQueryTable(props: LocationQueryTableProps) {
-  const [scope, setScope] = createSignal<Partial<LocationQueryRequest>>({});
-  const load = createTableLoad<LocationQueryRow>(LOCATION_QUERY_TABLE, async (limit) => {
-    let request = { ...scope(), ...props.fixed } as LocationQueryRequest;
-    request = writeMember(request, ["limit"], limit) as LocationQueryRequest;
-    const outcome = await query(props.transport, [request]);
-    props.onOutcome?.(outcome);
-    if (outcome.status !== "completed") {
-      announceOutcome(outcome, LocationQueryTableLabel);
-    }
-    return outcome;
-  });
-  void load.load();
-  onCleanup(afterWrites(props.transport, () => void load.load()));
-
-  const changeScope = (filters: readonly DataTableScopeFilter[]) => {
-    let next: Partial<LocationQueryRequest> = {};
-    for (const filter of filters) {
-      switch (filter.field) {
-        case "locationCode":
-          next = writeMember(next, ["filter", "locationCode"], [...filter.values]);
-          break;
-      }
-    }
-    setScope(next);
-    void load.load();
-  };
-
-  const actions = (row: LocationQueryRow) => (
-    <>
-      <Show when={props.onOpenLocationGet}>
-        <Button type="button" variant="outline" size="sm" onClick={() => props.onOpenLocationGet?.(row)}>
-          get
-        </Button>
-      </Show>
-      <Show when={props.onFillInventoryMove}>
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          onClick={() => props.onFillInventoryMove?.(writeMember({} as InventoryMoveFormInitial, ["value", "toLocationId"], row.id))}
-        >
-          move
-        </Button>
-      </Show>
-      <Show when={props.onFillInventorySplit}>
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          onClick={() => props.onFillInventorySplit?.(writeMember({} as InventorySplitFormInitial, ["value", "toLocationId"], row.id))}
-        >
-          split
-        </Button>
-      </Show>
-      <Show when={props.onFillPalletCreate}>
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          onClick={() => props.onFillPalletCreate?.(writeMember({} as PalletCreateFormInitial, ["locationId"], row.id))}
-        >
-          create
-        </Button>
-      </Show>
-    </>
-  );
-
-  return (
-    <TableScreen>
-      <DataTable
-        name="location"
-        columns={LOCATION_QUERY_TABLE.columns}
-        rowId={LOCATION_QUERY_TABLE.rowId}
-        rows={load.state().rows}
-        fullyRead={load.state().fullyRead}
-        busy={load.state().busy}
-        refusal={load.state().refusal}
-        cap={load.state().cap}
-        onCapChange={(cap) => void load.load(cap)}
-        onRefresh={() => void load.load()}
-        startedAt={load.state().startedAt}
-        endedAt={load.state().endedAt}
-        sortFields={LOCATION_QUERY_TABLE.sortFields}
-        sortMaxFields={LOCATION_QUERY_TABLE.sortMaxFields}
-        onSortChange={load.sortBy}
-        scopeFilters={LOCATION_QUERY_TABLE.scopeFilters}
-        onScopeChange={changeScope}
-        rowActions={actions}
-      />
-    </TableScreen>
-  );
+  return <QueryTable<LocationQueryRow, LocationQueryResult> definition={LOCATION_QUERY_TABLE} label={LocationQueryTableLabel} {...props} />;
 }
 
 /** The table definition of `wamn-wms:location/query@1.0.0`. */
 export const LOCATION_QUERY_TABLE = {
-  read: "query",
+  name: "location",
+  read: { route: LOCATION_QUERY_ROUTE, request: LOCATION_QUERY_REQUEST_FIELDS, result: LOCATION_QUERY_RESULT_FIELDS },
+  rows: "item",
   rowId: ["id"],
   pageMaximum: 100,
+  limitInput: ["limit"],
+  sortFieldInput: null,
+  sortDirectionInput: null,
+  filters: [{ field: "locationCode", input: ["filter", "locationCode"], list: true }],
   scopeFilters: ["locationCode"],
   sortFields: [],
   sortDirections: [],
@@ -352,17 +256,17 @@ export const LOCATION_QUERY_TABLE = {
     { field: "locationCode", label: "location code", type: "text", role: "value" },
     { field: "rowVersion", label: "row version", type: "int32", role: "revision" },
   ],
-  update: { operation: "wamn-wms:location/update@1.0.0", keyInput: ["id"], revisionInput: ["expectedRowVersion"], revisionField: "rowVersion", fields: [
+  update: { operation: "wamn-wms:location/update@1.0.0", binding: { route: LOCATION_UPDATE_ROUTE, request: LOCATION_UPDATE_REQUEST_FIELDS, result: LOCATION_UPDATE_RESULT_FIELDS }, keyInput: ["id"], revisionInput: ["expectedRowVersion"], revisionField: "rowVersion", supplied: [{ input: ["requestId"], kind: "requestId" }], fields: [
     { field: "locationCode", input: ["change", "locationCode"] },
   ] },
   actions: [
-    { operation: "wamn-wms:location/get@1.0.0", label: "get", many: false },
-    { operation: "wamn-wms:inventory/move@1.0.0", label: "move", many: true },
-    { operation: "wamn-wms:inventory/split@1.0.0", label: "split", many: true },
-    { operation: "wamn-wms:pallet/create@1.0.0", label: "create", many: false },
+    { operation: "wamn-wms:location/get@1.0.0", label: "get", many: false, opens: "record", fill: [] },
+    { operation: "wamn-wms:inventory/move@1.0.0", label: "move", many: true, opens: "form", fill: [{ field: "id", input: ["value", "toLocationId"] }] },
+    { operation: "wamn-wms:inventory/split@1.0.0", label: "split", many: true, opens: "form", fill: [{ field: "id", input: ["value", "toLocationId"] }] },
+    { operation: "wamn-wms:pallet/create@1.0.0", label: "create", many: false, opens: "form", fill: [{ field: "id", input: ["locationId"] }] },
   ],
   childTables: [
-    { definition: "PALLET_QUERY_TABLE", scopeFilter: "locationId" },
+    { label: "pallet", table: () => PALLET_QUERY_TABLE, scopeFilter: "locationId" },
   ],
 } as const;
 

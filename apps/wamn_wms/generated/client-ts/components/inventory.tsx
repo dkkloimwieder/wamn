@@ -9,7 +9,6 @@ import { z } from "zod";
 import {
   afterWrites,
   appendPage,
-  boundedPage,
   checkedMember,
   emptyPage,
   firstPage,
@@ -30,24 +29,24 @@ import {
 import {
   Button,
   ChoiceField,
-  DataTable,
   FieldError,
   FieldGroup,
   FormActions,
   FormDone,
+  QueryTable,
   RecordSelect,
-  TableScreen,
   TextField,
   announceOutcome,
-  createTableLoad,
 } from "@wamn/ui";
 import {
   INVENTORY_ADJUST_REQUEST_FIELDS,
+  INVENTORY_AGGREGATE_REQUEST_FIELDS,
+  INVENTORY_AGGREGATE_RESULT_FIELDS,
+  INVENTORY_AGGREGATE_ROUTE,
   INVENTORY_MERGE_REQUEST_FIELDS,
   INVENTORY_MOVE_REQUEST_FIELDS,
   INVENTORY_SPLIT_REQUEST_FIELDS,
   adjust,
-  aggregate,
   merge,
   move,
   split,
@@ -332,6 +331,10 @@ export interface InventoryAggregateTableProps {
   readonly transport: Transport;
   /** Input the parent fixes, which the operator does not edit. */
   readonly fixed?: Partial<InventoryAggregateRequest>;
+  /** For each operation whose record a row opens, what opening it does. A row shows a button only for these. */
+  readonly onOpen?: { readonly [operation: string]: (row: InventoryAggregateRow) => void };
+  /** For each operation whose form a row fills, what the filled values do. */
+  readonly onFill?: { readonly [operation: string]: (initial: object) => void };
   /** Called with every outcome this screen reads. */
   readonly onOutcome?: (outcome: Outcome<InventoryAggregateResult>) => void;
 }
@@ -339,55 +342,22 @@ export interface InventoryAggregateTableProps {
 /** What an operator calls this screen. The page decides where it goes. */
 export const InventoryAggregateTableLabel = "aggregate";
 
-/**
- * The table for `wamn-wms:inventory/aggregate@1.0.0`: the DataTable over `INVENTORY_AGGREGATE_TABLE`.
- *
- * It loads when it mounts. A change to a filter, a sort of rows the load did
- * not read in full, a cap change and a refresh each start a new load.
- */
+/** The table for `wamn-wms:inventory/aggregate@1.0.0`: the QueryTable over `INVENTORY_AGGREGATE_TABLE`. */
 export function InventoryAggregateTable(props: InventoryAggregateTableProps) {
-  const load = createTableLoad<InventoryAggregateRow>(INVENTORY_AGGREGATE_TABLE, async () => {
-    const request = { ...props.fixed } as InventoryAggregateRequest;
-    const outcome = await aggregate(props.transport, [request]);
-    props.onOutcome?.(outcome);
-    if (outcome.status !== "completed") {
-      announceOutcome(outcome, InventoryAggregateTableLabel);
-    }
-    return boundedPage(outcome);
-  });
-  void load.load();
-  onCleanup(afterWrites(props.transport, () => void load.load()));
-
-  return (
-    <TableScreen>
-      <DataTable
-        name="inventory"
-        columns={INVENTORY_AGGREGATE_TABLE.columns}
-        rowId={INVENTORY_AGGREGATE_TABLE.rowId}
-        rows={load.state().rows}
-        fullyRead={load.state().fullyRead}
-        busy={load.state().busy}
-        refusal={load.state().refusal}
-        cap={load.state().cap}
-        onCapChange={(cap) => void load.load(cap)}
-        onRefresh={() => void load.load()}
-        startedAt={load.state().startedAt}
-        endedAt={load.state().endedAt}
-        sortFields={INVENTORY_AGGREGATE_TABLE.sortFields}
-        sortMaxFields={INVENTORY_AGGREGATE_TABLE.sortMaxFields}
-        onSortChange={load.sortBy}
-        scopeFilters={INVENTORY_AGGREGATE_TABLE.scopeFilters}
-        onScopeChange={() => void load.load()}
-      />
-    </TableScreen>
-  );
+  return <QueryTable<InventoryAggregateRow, InventoryAggregateResult> definition={INVENTORY_AGGREGATE_TABLE} label={InventoryAggregateTableLabel} {...props} />;
 }
 
 /** The table definition of `wamn-wms:inventory/aggregate@1.0.0`. */
 export const INVENTORY_AGGREGATE_TABLE = {
-  read: "aggregate",
+  name: "inventory",
+  read: { route: INVENTORY_AGGREGATE_ROUTE, request: INVENTORY_AGGREGATE_REQUEST_FIELDS, result: INVENTORY_AGGREGATE_RESULT_FIELDS },
+  rows: "rows",
   rowId: ["productId", "locationId", "status"],
   pageMaximum: null,
+  limitInput: null,
+  sortFieldInput: null,
+  sortDirectionInput: null,
+  filters: [],
   scopeFilters: [],
   sortFields: [],
   sortDirections: [],

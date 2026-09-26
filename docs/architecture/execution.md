@@ -488,6 +488,8 @@ A form's own record read does not read again, because the form sends the revisio
 
 A package that generates TypeScript also generates [SolidJS components](../../crates/schema/generator/src/client_component.rs), one for each operation the plan gives a role.
 Every table renders the platform `DataTable` over a table definition that the generator derives from the read's contract.
+The emitter writes the definition as data, and each table component is one line: the [`QueryTable`](../../web/ui/src/table/query-table.tsx) of the UI package over that definition.
+The definition names each operation the table calls as a binding, which is its route and its field maps, and the input path of the limit, the sort and each scope filter.
 Its declared filters are the scope bar of the table, and the table owns the sort, the cap and the refresh.
 It loads when it mounts. A load of a paged read reads one page, with a limit of the cap or the page maximum, whichever is lower, and follows no cursor.
 A load of a bounded list reads every row, so the table is always fully read.
@@ -495,12 +497,14 @@ A header sort of rows that the load did not read in full starts a new load in th
 The row id of the table is the key that the read states in `lists`: one result field, or several whose values together name one row.
 Generation refuses a projection that answers a list of rows and states no `lists` key, because a row position names no row.
 A `lists` that names a model also lets a selector offer the rows as records of that model.
-Each row link and row form is a button in the last column.
+Each row link and row form is a button in the last column, when the page passes a handler for its operation.
 A table that holds more than 100 rows renders only the rows in view of its box.
 The definition also names the served update of the table's relation, with the columns it writes that the plan does not supply.
 The update contract states the column that each writable input writes, so no name is compared.
 It names each operation that a row opens. An operation takes many rows when it accepts more than one outer input and runs each in its own transaction.
 It names each child table: another table whose declared filter narrows a column that names a record of this table's model.
+A cell of a column that the update writes edits in place. The table puts the returned row in place, and loads again after any write it did not send.
+A row expands to its child tables. Each child is a table with its scope filter fixed to the row's key, which its scope bar does not offer.
 A detail reads one record and shows its fields.
 A form renders what the operator fills over TanStack Form, and it checks that input with an emitted `zod` schema.
 It writes the reserved inputs from the runtime at submit time.

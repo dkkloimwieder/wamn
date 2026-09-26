@@ -73,10 +73,9 @@ fn every_table_screen_gets_one_component_and_its_plan_columns() {
     );
 }
 
-/// A page table with a table definition renders the DataTable over it
-/// (wamn-oi59). The declared filters are the table's scope bar, and the table
-/// owns the sort and the cap, so the load writes them at their declared input
-/// paths.
+/// A page table renders the QueryTable over its definition (wamn-sa7d.2).
+/// The declared filters are the table's scope bar, and the table owns the
+/// sort and the cap, so the definition names the input path of each.
 #[test]
 fn a_page_table_renders_its_filters_and_sends_the_sort_and_limit_of_each_load() {
     let files = emit(&release());
@@ -86,62 +85,42 @@ fn a_page_table_renders_its_filters_and_sends_the_sort_and_limit_of_each_load() 
         .nth(1)
         .and_then(|rest| rest.split("\nexport ").next())
         .expect("the query table exists");
-
-    assert!(
-        query.contains(concat!(
-            "      switch (filter.field) {\n",
-            "        case \"code\":\n",
-            "          next = writeMember(next, [\"filter\", \"code\"], [...filter.values]);\n",
-        )),
-        "a scope filter is written at its declared input path, as a list"
-    );
-    assert!(
-        query.contains("    setScope(next);\n    void load.load();\n"),
-        "a scope change starts a new load"
-    );
-    assert!(
-        query.contains(concat!(
-            "        scopeFilters={WIDGET_QUERY_TABLE.scopeFilters}\n",
-            "        onScopeChange={changeScope}\n",
-        )),
-        "the table's scope bar holds the declared filters"
-    );
-    for retired in ["<form", "FieldGroup", "TextField", "writeControl"] {
-        assert!(
-            !query.contains(retired),
-            "the scope bar replaces the filter form: {retired}"
-        );
-    }
     assert!(
         query.contains(
-            "  const load = createTableLoad<WidgetQueryRow>(WIDGET_QUERY_TABLE, async (limit, sort) => {\n"
+            "  return <QueryTable<WidgetQueryRow, WidgetQueryResult> definition={WIDGET_QUERY_TABLE} label={WidgetQueryTableLabel} {...props} />;\n"
         ),
-        "the load reads through the definition"
+        "the component is the QueryTable over its definition: {query}"
     );
-    assert!(
-        query.contains(
-            "    request = writeMember(request, [\"limit\"], limit) as WidgetQueryRequest;\n"
-        ),
-        "the limit of a load is written at its declared path"
-    );
-    assert!(
-        query.contains(concat!(
-            "    if (sort !== undefined) {\n",
-            "      request = writeMember(request, [\"sort\", \"field\"], sort.field) as WidgetQueryRequest;\n",
-            "      request = writeMember(request, [\"sort\", \"direction\"], sort.direction) as WidgetQueryRequest;\n",
-            "    }\n",
-        )),
-        "a header sort sends its field and its direction together, or neither (wamn-2ut3)"
-    );
-    for retired in ["ChoiceField", "change([\"limit\"]", "cursor", "next page"] {
+    for retired in [
+        "createTableLoad",
+        "writeMember",
+        "switch",
+        "afterWrites",
+        "<form",
+        "ChoiceField",
+    ] {
         assert!(
             !query.contains(retired),
-            "the table owns the sort and the cap, and a load follows no cursor: {retired}"
+            "the emitter writes data, not table code: {retired}"
         );
     }
+    let definition = definition(widget, "WIDGET_QUERY_TABLE");
+    for line in [
+        "  read: { route: WIDGET_QUERY_ROUTE, request: WIDGET_QUERY_REQUEST_FIELDS, result: WIDGET_QUERY_RESULT_FIELDS },\n",
+        "  rows: \"item\",\n",
+        // A scope filter is sent at its declared input path, as a list.
+        "  filters: [{ field: \"code\", input: [\"filter\", \"code\"], list: true }],\n",
+        "  scopeFilters: [\"code\"],\n",
+        "  limitInput: [\"limit\"],\n",
+        // A header sort sends its field and its direction together (wamn-2ut3).
+        "  sortFieldInput: [\"sort\", \"field\"],\n",
+        "  sortDirectionInput: [\"sort\", \"direction\"],\n",
+    ] {
+        assert!(definition.contains(line), "{line} in {definition}");
+    }
     assert!(
-        query.contains("  void load.load();\n  onCleanup(afterWrites(props.transport, () => void load.load()));\n"),
-        "the table loads when it mounts, and again after a write"
+        !definition.contains("cursor"),
+        "a load follows no cursor: {definition}"
     );
 }
 
@@ -151,35 +130,18 @@ fn a_page_table_renders_its_filters_and_sends_the_sort_and_limit_of_each_load() 
 fn a_bounded_list_loads_every_row_as_one_page() {
     let files = emit(&release());
     let widget = widget(&files);
-    let list = widget
-        .split("export function WidgetListTable")
-        .nth(1)
-        .expect("the list table exists")
-        .split("\nexport ")
-        .next()
-        .expect("the list table ends");
-    assert!(
-        list.contains(concat!(
-            "  const load = createTableLoad<WidgetListRow>(WIDGET_LIST_TABLE, async () => {\n",
-            "    const request = { ...props.fixed } as WidgetListRequest;\n",
-            "    const outcome = await list(props.transport, [request]);\n",
-        )),
-        "a bounded list sends no limit and no sort"
-    );
-    assert!(
-        list.contains("    return boundedPage(outcome);\n"),
-        "a bounded list carries its rows under rows, as one page with no cursor"
-    );
-    for retired in ["changeScope", "cursor", "next page"] {
-        assert!(
-            !list.contains(retired),
-            "a bounded list has no control and no next page: {retired}"
-        );
+    let list = definition(widget, "WIDGET_LIST_TABLE");
+    for line in [
+        // A bounded list carries its rows under rows, as one page.
+        "  rows: \"rows\",\n",
+        "  rowId: [\"id\"],\n  pageMaximum: null,\n",
+        "  limitInput: null,\n",
+        "  sortFieldInput: null,\n",
+        "  sortDirectionInput: null,\n",
+        "  filters: [],\n",
+    ] {
+        assert!(list.contains(line), "{line} in {list}");
     }
-    assert!(
-        widget.contains("  rowId: [\"id\"],\n  pageMaximum: null,\n"),
-        "a read that declares no page limit has no page maximum"
-    );
 }
 
 /// A detail screen shows one record, so it reads on its own and needs no form
@@ -229,7 +191,7 @@ fn a_detail_screen_reads_its_record_and_shows_every_plan_column() {
 }
 
 /// A table renders through the UI package, which owns how it looks. Every
-/// table renders the DataTable over its definition (wamn-ir48).
+/// table renders the QueryTable over its definition (wamn-sa7d.2).
 #[test]
 fn a_table_renders_through_the_ui_package_and_states_no_class() {
     let files = emit(&release());
@@ -239,62 +201,23 @@ fn a_table_renders_through_the_ui_package_and_states_no_class() {
         .next()
         .and_then(|head| head.rsplit("import {\n").next())
         .expect("the module imports the UI package");
-    for name in ["Button", "DataTable", "TableScreen", "createTableLoad"] {
-        assert!(
-            ui.contains(&format!("  {name},\n")),
-            "the tables name {name} from the UI package"
-        );
-    }
-    let query = widget
-        .split("export function WidgetQueryTable")
-        .nth(1)
-        .and_then(|rest| rest.split("\nexport ").next())
-        .expect("the query table exists");
     assert!(
-        query.contains(concat!(
-            "      <DataTable\n",
-            "        name=\"widget\"\n",
-            "        columns={columns}\n",
-            "        rowId={WIDGET_QUERY_TABLE.rowId}\n",
-            "        rows={load.state().rows}\n",
-        )) && query.contains(concat!(
-            "        sortFields={WIDGET_QUERY_TABLE.sortFields}\n",
-            "        sortMaxFields={WIDGET_QUERY_TABLE.sortMaxFields}\n",
-            "        onSortChange={load.sortBy}\n",
-            "        scopeFilters={WIDGET_QUERY_TABLE.scopeFilters}\n",
-            "        onScopeChange={changeScope}\n",
-            "        rowActions={actions}\n",
-            "      />\n",
-            "    </TableScreen>\n",
-        )),
-        "a table with a definition renders the DataTable over it, in the table screen"
+        ui.contains("  QueryTable,\n"),
+        "the tables name QueryTable from the UI package"
     );
-    let list = widget
-        .split("export function WidgetListTable")
-        .nth(1)
-        .and_then(|rest| rest.split("\nexport ").next())
-        .expect("the list table exists");
-    assert!(
-        list.contains(concat!(
-            "      <DataTable\n",
-            "        name=\"widget\"\n",
-            "        columns={WIDGET_LIST_TABLE.columns}\n",
-            "        rowId={WIDGET_LIST_TABLE.rowId}\n",
-        )),
-        "a bounded list renders the DataTable over its definition"
-    );
-    for module in [
-        widget,
-        source(&files, "generated/client-ts/components/widget_maker.tsx"),
+    for (stem, constant) in [
+        ("WidgetQuery", "WIDGET_QUERY_TABLE"),
+        ("WidgetList", "WIDGET_LIST_TABLE"),
     ] {
-        for retired in ["WindowedTable", "DataGrid", "createTable("] {
-            assert!(
-                !module.contains(retired),
-                "the DataTable owns its rows: {retired}"
-            );
-        }
-    }
-    for table in [query, list] {
+        let table = widget
+            .split(&format!("export function {stem}Table"))
+            .nth(1)
+            .and_then(|rest| rest.split("\nexport ").next())
+            .expect("the table exists");
+        assert!(
+            table.contains(&format!("definition={{{constant}}}")),
+            "{stem} renders the QueryTable over its definition"
+        );
         for markup in [
             "<table",
             "<select",
@@ -306,6 +229,17 @@ fn a_table_renders_through_the_ui_package_and_states_no_class() {
             assert!(!table.contains(markup), "the UI package owns {markup}");
         }
     }
+    for module in [
+        widget,
+        source(&files, "generated/client-ts/components/widget_maker.tsx"),
+    ] {
+        for retired in ["WindowedTable", "DataGrid", "createTable("] {
+            assert!(
+                !module.contains(retired),
+                "the DataTable owns its rows: {retired}"
+            );
+        }
+    }
 }
 
 #[test]
@@ -313,12 +247,16 @@ fn a_row_link_becomes_one_callback_named_from_its_target() {
     let files = emit(&release());
     let widget = widget(&files);
     assert!(
-        widget.contains("readonly onOpenWidgetGet?: (row: WidgetQueryRow) => void;"),
-        "the plan's row link reaches the props"
+        widget.contains(
+            "  readonly onOpen?: { readonly [operation: string]: (row: WidgetQueryRow) => void };"
+        ),
+        "the page names the operations whose record a row opens"
     );
     assert!(
-        widget.contains("onClick={() => props.onOpenWidgetGet?.(row)}"),
-        "the row carries the key, and the parent decides what to open"
+        definition(widget, "WIDGET_QUERY_TABLE").contains(
+            "    { operation: \"platform-fixture:widget/get@1.0.0\", label: \"get\", many: false, opens: \"record\", fill: [] },"
+        ),
+        "the plan's row link is an action that opens a record by the row"
     );
     for absent in ["href=", "navigate", "router", "<a "] {
         assert!(!widget.contains(absent), "a link is a callback: {absent}");
@@ -726,10 +664,16 @@ fn a_component_builds_a_read_request_with_no_request_identity() {
         .iter()
         .map(|file| std::str::from_utf8(file.bytes()).unwrap())
         .collect();
+    // The update of a table is a write, and its definition names the input
+    // the runtime supplies.
     let identities = combined
         .lines()
         .filter(|line| line.contains("requestId"))
         .map(str::trim)
+        .filter(|line| {
+            !(line.starts_with("update: ")
+                && line.contains("supplied: [{ input: [\"requestId\"], kind: \"requestId\" }]"))
+        })
         .collect::<BTreeSet<_>>();
     assert_eq!(
         identities,
@@ -779,7 +723,7 @@ fn initial_values_reach_a_nested_member_and_one_element_of_a_group() {
     );
     assert!(
         widget.contains(
-            "props.onFillWidgetRecordBatch?.(writeMember({} as WidgetRecordBatchFormInitial, [\"value\", \"line\"], [writeMember({}, [\"widgetId\"], row.id)]))"
+            "fill: [{ field: \"id\", input: [\"value\", \"line\", \"[]\", \"widgetId\"] }]"
         ),
         "a row fills one element of the repeated group, as a list"
     );
@@ -912,11 +856,14 @@ fn a_populated_input_renders_a_selector_fed_by_its_list() {
     let widget = widget(&files);
 
     // The list of another model is imported under an alias, because two
-    // models can both declare a `list`. The table's maker column reads the
-    // same model's get, under an alias of the same kind.
+    // models can both declare a `list`. The table's maker column names the
+    // same model's get by its binding, whose constants carry the model.
     assert!(
         widget.contains(concat!(
             "import {\n",
+            "  WIDGET_MAKER_GET_REQUEST_FIELDS,\n",
+            "  WIDGET_MAKER_GET_RESULT_FIELDS,\n",
+            "  WIDGET_MAKER_GET_ROUTE,\n",
             "  get as widgetMakerGet,\n",
             "  query as widgetMakerQuery,\n",
             "  type WidgetMakerGetRequest,\n",
@@ -1006,35 +953,25 @@ fn a_row_hands_its_values_to_the_form_the_plan_named() {
 
     assert!(
         maker.contains(
-            "  readonly onFillWidgetCreate?: (initial: WidgetCreateFormInitial) => void;"
+            "  readonly onFill?: { readonly [operation: string]: (initial: object) => void };"
         ),
-        "the table states one callback for each form its rows open"
+        "the page names the forms its rows open"
+    );
+    let makers = definition(maker, "WIDGET_MAKER_QUERY_TABLE");
+    assert!(
+        makers.contains(
+            "{ operation: \"platform-fixture:widget/create@1.0.0\", label: \"create\", many: false, opens: \"form\", fill: [{ field: \"id\", input: [\"makerId\"] }] }"
+        ),
+        "the row writes its key at the declared input path: {makers}"
     );
     assert!(
-        maker.contains(concat!(
-            "import {\n",
-            "  type WidgetCreateFormInitial,\n",
-            "  type WidgetUpdateFormInitial,\n",
-            "} from \"./widget.js\";\n",
-        )),
-        "a form of another model states its type in that model's module"
-    );
-    assert!(
-        maker.contains(
-            "onClick={() => props.onFillWidgetCreate?.(writeMember({} as WidgetCreateFormInitial, [\"makerId\"], row.id))}"
-        ),
-        "the row writes its key at the declared input path"
-    );
-    assert!(
-        maker.contains(
-            "props.onFillWidgetUpdate?.(writeMember({} as WidgetUpdateFormInitial, [\"change\", \"makerId\"], row.id))"
-        ),
-        "a nested input path is written at its declared members"
+        makers.contains("fill: [{ field: \"id\", input: [\"change\", \"makerId\"] }]"),
+        "a nested input path is written at its declared members: {makers}"
     );
     // The batch form names widget_maker in value.maker_id and
     // value.inspector_id, so a maker row fills neither (wamn-6jcm).
     assert!(
-        !maker.contains("onFillWidgetRecordBatch"),
+        !makers.contains("record-batch"),
         "a row offers no form in which two inputs name its model"
     );
 
@@ -1044,7 +981,9 @@ fn a_row_hands_its_values_to_the_form_the_plan_named() {
         "the form takes those values through the prop Epic 5 shaped"
     );
     assert!(
-        !widget.contains("onFillWidgetGet"),
+        definition(widget, "WIDGET_QUERY_TABLE").contains(
+            "{ operation: \"platform-fixture:widget/get@1.0.0\", label: \"get\", many: false, opens: \"record\", fill: [] }"
+        ),
         "a record read is not a form, so no row fills it"
     );
 }
@@ -1322,7 +1261,7 @@ fn a_table_screen_gets_a_table_definition_beside_its_component() {
     let end = start + widget[start..].find("} as const;").unwrap();
     let definition = &widget[start..end];
     for line in [
-        "  read: \"query\",",
+        "  read: { route: WIDGET_QUERY_ROUTE, request: WIDGET_QUERY_REQUEST_FIELDS, result: WIDGET_QUERY_RESULT_FIELDS },",
         "  rowId: [\"id\"],",
         "  pageMaximum: 100,",
         "  scopeFilters: [\"code\"],",
@@ -1332,7 +1271,7 @@ fn a_table_screen_gets_a_table_definition_beside_its_component() {
         "    { field: \"code\", label: \"Widget code\", type: \"text\", role: \"value\" },",
         "    { field: \"editVersion\", label: \"edit version\", type: \"int64\", role: \"revision\" },",
         "    { field: \"id\", label: \"id\", type: \"uuid\", role: \"key\" },",
-        "    { field: \"makerId\", label: \"maker id\", type: \"uuid\", role: \"reference\", displayField: \"name\" },",
+        "    { field: \"makerId\", label: \"maker id\", type: \"uuid\", role: \"reference\", displayField: \"name\", recordRead: { read: { route: WIDGET_MAKER_GET_ROUTE, request: WIDGET_MAKER_GET_REQUEST_FIELDS, result: WIDGET_MAKER_GET_RESULT_FIELDS }, keyInput: [\"id\"] } },",
     ] {
         assert!(definition.contains(line), "{line} in {definition}");
     }
@@ -1349,7 +1288,9 @@ fn every_table_read_names_its_rows_by_a_key_and_generation_refuses_one_without()
     assert!(
         source(&files, "generated/client-ts/components/widget_maker.tsx").contains(concat!(
             "export const WIDGET_MAKER_LIST_TABLE = {\n",
-            "  read: \"list\",\n",
+            "  name: \"widget-maker\",\n",
+            "  read: { route: WIDGET_MAKER_LIST_ROUTE, request: WIDGET_MAKER_LIST_REQUEST_FIELDS, result: WIDGET_MAKER_LIST_RESULT_FIELDS },\n",
+            "  rows: \"rows\",\n",
             "  rowId: [\"id\"],\n",
             "  pageMaximum: null,\n",
         ))
@@ -1412,9 +1353,9 @@ fn a_table_definition_names_its_update_its_actions_and_its_child_tables() {
     let widgets = definition(widget(&files), "WIDGET_QUERY_TABLE");
     for line in [
         // The update writes these columns, and the plan supplies none of them.
-        "  update: { operation: \"platform-fixture:widget/update@1.0.0\", keyInput: [\"id\"], revisionInput: [\"expectedEditVersion\"], revisionField: \"editVersion\", fields: [\n    { field: \"code\", input: [\"change\", \"code\"] },\n    { field: \"makerId\", input: [\"change\", \"makerId\"] },\n    { field: \"note\", input: [\"change\", \"note\"] },\n  ] },\n",
+        "  update: { operation: \"platform-fixture:widget/update@1.0.0\", binding: { route: WIDGET_UPDATE_ROUTE, request: WIDGET_UPDATE_REQUEST_FIELDS, result: WIDGET_UPDATE_RESULT_FIELDS }, keyInput: [\"id\"], revisionInput: [\"expectedEditVersion\"], revisionField: \"editVersion\", supplied: [{ input: [\"requestId\"], kind: \"requestId\" }], fields: [\n    { field: \"code\", input: [\"change\", \"code\"] },\n    { field: \"makerId\", input: [\"change\", \"makerId\"] },\n    { field: \"note\", input: [\"change\", \"note\"] },\n  ] },\n",
         // A command that runs each outer input on its own takes many rows.
-        "  actions: [\n    { operation: \"platform-fixture:widget/get@1.0.0\", label: \"get\", many: false },\n    { operation: \"platform-fixture:widget/record-batch@1.0.0\", label: \"record-batch\", many: true },\n  ],\n",
+        "  actions: [\n    { operation: \"platform-fixture:widget/get@1.0.0\", label: \"get\", many: false, opens: \"record\", fill: [] },\n    { operation: \"platform-fixture:widget/record-batch@1.0.0\", label: \"record-batch\", many: true, opens: \"form\", fill: [{ field: \"id\", input: [\"value\", \"line\", \"[]\", \"widgetId\"] }] },\n  ],\n",
         "  childTables: [],\n",
     ] {
         assert!(widgets.contains(line), "{line} in {widgets}");
@@ -1428,7 +1369,7 @@ fn a_table_definition_names_its_update_its_actions_and_its_child_tables() {
         "the maker model serves no update: {makers}"
     );
     assert!(
-        makers.contains("    { operation: \"platform-fixture:widget/create@1.0.0\", label: \"create\", many: false },\n"),
+        makers.contains("    { operation: \"platform-fixture:widget/create@1.0.0\", label: \"create\", many: false, opens: \"form\","),
         "a create takes one row: {makers}"
     );
 }
@@ -1453,9 +1394,15 @@ fn a_table_whose_filter_narrows_a_reference_is_a_child_of_that_model() {
     );
     assert!(
         makers.contains(
-            "  childTables: [\n    { definition: \"WIDGET_QUERY_TABLE\", scopeFilter: \"makerId\" },\n  ],\n"
+            "  childTables: [\n    { label: \"widget\", table: () => WIDGET_QUERY_TABLE, scopeFilter: \"makerId\" },\n  ],\n"
         ),
         "{makers}"
+    );
+    // The child's definition lives in its own model's module.
+    assert!(
+        source(&files, "generated/client-ts/components/widget_maker.tsx")
+            .contains("  WIDGET_QUERY_TABLE,\n} from \"./widget.js\";\n"),
+        "the parent imports the child's definition"
     );
     // A filter on a value names no record, so the widget has no child.
     assert!(definition(widget(&files), "WIDGET_QUERY_TABLE").contains("  childTables: [],\n"));
@@ -1470,7 +1417,7 @@ fn an_unserved_update_edits_nothing_and_a_shared_transaction_takes_one_row() {
     let widgets = definition(widget(&files), "WIDGET_QUERY_TABLE");
     assert!(!widgets.contains("update:"), "{widgets}");
     assert!(
-        widgets.contains("label: \"record-batch\", many: false }"),
+        widgets.contains("label: \"record-batch\", many: false, opens: \"form\""),
         "{widgets}"
     );
     let makers = definition(

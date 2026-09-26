@@ -9,7 +9,6 @@ import { z } from "zod";
 import {
   afterWrites,
   appendPage,
-  boundedPage,
   canAdd,
   canRemove,
   checkedMember,
@@ -31,23 +30,25 @@ import {
 } from "@wamn/web-runtime";
 import {
   Button,
-  DataTable,
   FieldError,
   FieldGroup,
   FieldLegend,
   FieldSet,
   FormActions,
   FormDone,
+  QueryTable,
   RecordSelect,
-  TableScreen,
   TextField,
   announceOutcome,
-  createTableLoad,
 } from "@wamn/ui";
 import {
+  RECEIVING_LOAD_PURCHASE_ORDER_HISTORY_REQUEST_FIELDS,
+  RECEIVING_LOAD_PURCHASE_ORDER_HISTORY_RESULT_FIELDS,
+  RECEIVING_LOAD_PURCHASE_ORDER_HISTORY_ROUTE,
+  RECEIVING_LOAD_RECEIPT_SCREEN_REQUEST_FIELDS,
+  RECEIVING_LOAD_RECEIPT_SCREEN_RESULT_FIELDS,
+  RECEIVING_LOAD_RECEIPT_SCREEN_ROUTE,
   RECEIVING_RECORD_RECEIPT_REQUEST_FIELDS,
-  loadPurchaseOrderHistory,
-  loadReceiptScreen,
   loadReceiptScreen as receivingLoadReceiptScreen,
   recordReceipt,
   type ReceivingLoadPurchaseOrderHistoryRequest,
@@ -84,6 +85,10 @@ export interface ReceivingLoadPurchaseOrderHistoryTableProps {
   readonly transport: Transport;
   /** Input the parent fixes, which the operator does not edit. */
   readonly fixed?: Partial<ReceivingLoadPurchaseOrderHistoryRequest>;
+  /** For each operation whose record a row opens, what opening it does. A row shows a button only for these. */
+  readonly onOpen?: { readonly [operation: string]: (row: ReceivingLoadPurchaseOrderHistoryRow) => void };
+  /** For each operation whose form a row fills, what the filled values do. */
+  readonly onFill?: { readonly [operation: string]: (initial: object) => void };
   /** Called with every outcome this screen reads. */
   readonly onOutcome?: (outcome: Outcome<ReceivingLoadPurchaseOrderHistoryResult>) => void;
 }
@@ -91,55 +96,22 @@ export interface ReceivingLoadPurchaseOrderHistoryTableProps {
 /** What an operator calls this screen. The page decides where it goes. */
 export const ReceivingLoadPurchaseOrderHistoryTableLabel = "Purchase order history";
 
-/**
- * The table for `wamn-receiving:receiving/load-purchase-order-history@1.0.0`: the DataTable over `RECEIVING_LOAD_PURCHASE_ORDER_HISTORY_TABLE`.
- *
- * It loads when it mounts. A change to a filter, a sort of rows the load did
- * not read in full, a cap change and a refresh each start a new load.
- */
+/** The table for `wamn-receiving:receiving/load-purchase-order-history@1.0.0`: the QueryTable over `RECEIVING_LOAD_PURCHASE_ORDER_HISTORY_TABLE`. */
 export function ReceivingLoadPurchaseOrderHistoryTable(props: ReceivingLoadPurchaseOrderHistoryTableProps) {
-  const load = createTableLoad<ReceivingLoadPurchaseOrderHistoryRow>(RECEIVING_LOAD_PURCHASE_ORDER_HISTORY_TABLE, async () => {
-    const request = { ...props.fixed } as ReceivingLoadPurchaseOrderHistoryRequest;
-    const outcome = await loadPurchaseOrderHistory(props.transport, [request]);
-    props.onOutcome?.(outcome);
-    if (outcome.status !== "completed") {
-      announceOutcome(outcome, ReceivingLoadPurchaseOrderHistoryTableLabel);
-    }
-    return boundedPage(outcome);
-  });
-  void load.load();
-  onCleanup(afterWrites(props.transport, () => void load.load()));
-
-  return (
-    <TableScreen>
-      <DataTable
-        name="receiving"
-        columns={RECEIVING_LOAD_PURCHASE_ORDER_HISTORY_TABLE.columns}
-        rowId={RECEIVING_LOAD_PURCHASE_ORDER_HISTORY_TABLE.rowId}
-        rows={load.state().rows}
-        fullyRead={load.state().fullyRead}
-        busy={load.state().busy}
-        refusal={load.state().refusal}
-        cap={load.state().cap}
-        onCapChange={(cap) => void load.load(cap)}
-        onRefresh={() => void load.load()}
-        startedAt={load.state().startedAt}
-        endedAt={load.state().endedAt}
-        sortFields={RECEIVING_LOAD_PURCHASE_ORDER_HISTORY_TABLE.sortFields}
-        sortMaxFields={RECEIVING_LOAD_PURCHASE_ORDER_HISTORY_TABLE.sortMaxFields}
-        onSortChange={load.sortBy}
-        scopeFilters={RECEIVING_LOAD_PURCHASE_ORDER_HISTORY_TABLE.scopeFilters}
-        onScopeChange={() => void load.load()}
-      />
-    </TableScreen>
-  );
+  return <QueryTable<ReceivingLoadPurchaseOrderHistoryRow, ReceivingLoadPurchaseOrderHistoryResult> definition={RECEIVING_LOAD_PURCHASE_ORDER_HISTORY_TABLE} label={ReceivingLoadPurchaseOrderHistoryTableLabel} {...props} />;
 }
 
 /** The table definition of `wamn-receiving:receiving/load-purchase-order-history@1.0.0`. */
 export const RECEIVING_LOAD_PURCHASE_ORDER_HISTORY_TABLE = {
-  read: "loadPurchaseOrderHistory",
+  name: "receiving",
+  read: { route: RECEIVING_LOAD_PURCHASE_ORDER_HISTORY_ROUTE, request: RECEIVING_LOAD_PURCHASE_ORDER_HISTORY_REQUEST_FIELDS, result: RECEIVING_LOAD_PURCHASE_ORDER_HISTORY_RESULT_FIELDS },
+  rows: "rows",
   rowId: ["id"],
   pageMaximum: null,
+  limitInput: null,
+  sortFieldInput: null,
+  sortDirectionInput: null,
+  filters: [],
   scopeFilters: [],
   sortFields: [],
   sortDirections: [],
@@ -165,8 +137,10 @@ export interface ReceivingLoadReceiptScreenTableProps {
   readonly transport: Transport;
   /** Input the parent fixes, which the operator does not edit. */
   readonly fixed?: Partial<ReceivingLoadReceiptScreenRequest>;
-  /** Called with the values one row hands to `wamn-receiving:receiving/record-receipt@1.0.0`. */
-  readonly onFillReceivingRecordReceipt?: (initial: ReceivingRecordReceiptFormInitial) => void;
+  /** For each operation whose record a row opens, what opening it does. A row shows a button only for these. */
+  readonly onOpen?: { readonly [operation: string]: (row: ReceivingLoadReceiptScreenRow) => void };
+  /** For each operation whose form a row fills, what the filled values do. */
+  readonly onFill?: { readonly [operation: string]: (initial: object) => void };
   /** Called with every outcome this screen reads. */
   readonly onOutcome?: (outcome: Outcome<ReceivingLoadReceiptScreenResult>) => void;
 }
@@ -174,71 +148,22 @@ export interface ReceivingLoadReceiptScreenTableProps {
 /** What an operator calls this screen. The page decides where it goes. */
 export const ReceivingLoadReceiptScreenTableLabel = "Receiving screen";
 
-/**
- * The table for `wamn-receiving:receiving/load-receipt-screen@1.0.0`: the DataTable over `RECEIVING_LOAD_RECEIPT_SCREEN_TABLE`.
- *
- * It loads when it mounts. A change to a filter, a sort of rows the load did
- * not read in full, a cap change and a refresh each start a new load.
- */
+/** The table for `wamn-receiving:receiving/load-receipt-screen@1.0.0`: the QueryTable over `RECEIVING_LOAD_RECEIPT_SCREEN_TABLE`. */
 export function ReceivingLoadReceiptScreenTable(props: ReceivingLoadReceiptScreenTableProps) {
-  const load = createTableLoad<ReceivingLoadReceiptScreenRow>(RECEIVING_LOAD_RECEIPT_SCREEN_TABLE, async () => {
-    const request = { ...props.fixed } as ReceivingLoadReceiptScreenRequest;
-    const outcome = await loadReceiptScreen(props.transport, [request]);
-    props.onOutcome?.(outcome);
-    if (outcome.status !== "completed") {
-      announceOutcome(outcome, ReceivingLoadReceiptScreenTableLabel);
-    }
-    return boundedPage(outcome);
-  });
-  void load.load();
-  onCleanup(afterWrites(props.transport, () => void load.load()));
-
-  const actions = (row: ReceivingLoadReceiptScreenRow) => (
-    <>
-      <Show when={props.onFillReceivingRecordReceipt}>
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          onClick={() => props.onFillReceivingRecordReceipt?.(writeMember({} as ReceivingRecordReceiptFormInitial, ["value", "line"], [writeMember({}, ["purchaseOrderLineId"], row.lineId)]))}
-        >
-          record-receipt
-        </Button>
-      </Show>
-    </>
-  );
-
-  return (
-    <TableScreen>
-      <DataTable
-        name="receiving"
-        columns={RECEIVING_LOAD_RECEIPT_SCREEN_TABLE.columns}
-        rowId={RECEIVING_LOAD_RECEIPT_SCREEN_TABLE.rowId}
-        rows={load.state().rows}
-        fullyRead={load.state().fullyRead}
-        busy={load.state().busy}
-        refusal={load.state().refusal}
-        cap={load.state().cap}
-        onCapChange={(cap) => void load.load(cap)}
-        onRefresh={() => void load.load()}
-        startedAt={load.state().startedAt}
-        endedAt={load.state().endedAt}
-        sortFields={RECEIVING_LOAD_RECEIPT_SCREEN_TABLE.sortFields}
-        sortMaxFields={RECEIVING_LOAD_RECEIPT_SCREEN_TABLE.sortMaxFields}
-        onSortChange={load.sortBy}
-        scopeFilters={RECEIVING_LOAD_RECEIPT_SCREEN_TABLE.scopeFilters}
-        onScopeChange={() => void load.load()}
-        rowActions={actions}
-      />
-    </TableScreen>
-  );
+  return <QueryTable<ReceivingLoadReceiptScreenRow, ReceivingLoadReceiptScreenResult> definition={RECEIVING_LOAD_RECEIPT_SCREEN_TABLE} label={ReceivingLoadReceiptScreenTableLabel} {...props} />;
 }
 
 /** The table definition of `wamn-receiving:receiving/load-receipt-screen@1.0.0`. */
 export const RECEIVING_LOAD_RECEIPT_SCREEN_TABLE = {
-  read: "loadReceiptScreen",
+  name: "receiving",
+  read: { route: RECEIVING_LOAD_RECEIPT_SCREEN_ROUTE, request: RECEIVING_LOAD_RECEIPT_SCREEN_REQUEST_FIELDS, result: RECEIVING_LOAD_RECEIPT_SCREEN_RESULT_FIELDS },
+  rows: "rows",
   rowId: ["lineId"],
   pageMaximum: null,
+  limitInput: null,
+  sortFieldInput: null,
+  sortDirectionInput: null,
+  filters: [],
   scopeFilters: [],
   sortFields: [],
   sortDirections: [],
@@ -258,7 +183,7 @@ export const RECEIVING_LOAD_RECEIPT_SCREEN_TABLE = {
     { field: "supplierId", label: "Supplier", type: "uuid", role: "value" },
   ],
   actions: [
-    { operation: "wamn-receiving:receiving/record-receipt@1.0.0", label: "record-receipt", many: true },
+    { operation: "wamn-receiving:receiving/record-receipt@1.0.0", label: "record-receipt", many: true, opens: "form", fill: [{ field: "lineId", input: ["value", "line", "[]", "purchaseOrderLineId"] }] },
   ],
   childTables: [],
 } as const;

@@ -11,22 +11,19 @@ import {
   type Outcome,
   type Transport,
   type Uuid,
-  writeMember,
 } from "@wamn/web-runtime";
 import {
-  Button,
-  DataTable,
   DetailItem,
   DetailList,
   FieldError,
-  TableScreen,
+  QueryTable,
   announceOutcome,
-  createRecordLabels,
-  createTableLoad,
 } from "@wamn/ui";
 import {
+  PALLET_QUANTITY_QUERY_REQUEST_FIELDS,
+  PALLET_QUANTITY_QUERY_RESULT_FIELDS,
+  PALLET_QUANTITY_QUERY_ROUTE,
   get,
-  query,
   type PalletQuantityGetRequest,
   type PalletQuantityGetResult,
   type PalletQuantityQueryRequest,
@@ -34,12 +31,14 @@ import {
   type PalletQuantityQueryRow,
 } from "../pallet_quantity.js";
 import {
-  get as palletGet,
-  type PalletGetRequest,
+  PALLET_GET_REQUEST_FIELDS,
+  PALLET_GET_RESULT_FIELDS,
+  PALLET_GET_ROUTE,
 } from "../pallet.js";
 import {
-  get as productGet,
-  type ProductGetRequest,
+  PRODUCT_GET_REQUEST_FIELDS,
+  PRODUCT_GET_RESULT_FIELDS,
+  PRODUCT_GET_ROUTE,
 } from "../product.js";
 
 /** The record that the detail for `wamn-wms:pallet-quantity/get@1.0.0` reads. */
@@ -110,8 +109,10 @@ export interface PalletQuantityQueryTableProps {
   readonly transport: Transport;
   /** Input the parent fixes, which the operator does not edit. */
   readonly fixed?: Partial<PalletQuantityQueryRequest>;
-  /** Called when the operator opens `wamn-wms:pallet-quantity/get@1.0.0` from one row. */
-  readonly onOpenPalletQuantityGet?: (row: PalletQuantityQueryRow) => void;
+  /** For each operation whose record a row opens, what opening it does. A row shows a button only for these. */
+  readonly onOpen?: { readonly [operation: string]: (row: PalletQuantityQueryRow) => void };
+  /** For each operation whose form a row fills, what the filled values do. */
+  readonly onFill?: { readonly [operation: string]: (initial: object) => void };
   /** Called with every outcome this screen reads. */
   readonly onOutcome?: (outcome: Outcome<PalletQuantityQueryResult>) => void;
 }
@@ -119,97 +120,22 @@ export interface PalletQuantityQueryTableProps {
 /** What an operator calls this screen. The page decides where it goes. */
 export const PalletQuantityQueryTableLabel = "query";
 
-/**
- * The table for `wamn-wms:pallet-quantity/query@1.0.0`: the DataTable over `PALLET_QUANTITY_QUERY_TABLE`.
- *
- * It loads when it mounts. A change to a filter, a sort of rows the load did
- * not read in full, a cap change and a refresh each start a new load.
- */
+/** The table for `wamn-wms:pallet-quantity/query@1.0.0`: the QueryTable over `PALLET_QUANTITY_QUERY_TABLE`. */
 export function PalletQuantityQueryTable(props: PalletQuantityQueryTableProps) {
-  const load = createTableLoad<PalletQuantityQueryRow>(PALLET_QUANTITY_QUERY_TABLE, async (limit) => {
-    let request = { ...props.fixed } as PalletQuantityQueryRequest;
-    request = writeMember(request, ["limit"], limit) as PalletQuantityQueryRequest;
-    const outcome = await query(props.transport, [request]);
-    props.onOutcome?.(outcome);
-    if (outcome.status !== "completed") {
-      announceOutcome(outcome, PalletQuantityQueryTableLabel);
-    }
-    return outcome;
-  });
-  void load.load();
-  onCleanup(afterWrites(props.transport, () => void load.load()));
-
-  const palletGetLabels = createRecordLabels(props.transport, async (key) => {
-    const request = writeMember({}, ["id"], key) as PalletGetRequest;
-    const outcome = await palletGet(props.transport, [request]);
-    if (outcome.status !== "completed") {
-      return null;
-    }
-    const text = outcome.value.palletCode;
-    return text == null ? null : String(text);
-  });
-  const productGetLabels = createRecordLabels(props.transport, async (key) => {
-    const request = writeMember({}, ["id"], key) as ProductGetRequest;
-    const outcome = await productGet(props.transport, [request]);
-    if (outcome.status !== "completed") {
-      return null;
-    }
-    const text = outcome.value.productCode;
-    return text == null ? null : String(text);
-  });
-
-  const columns = PALLET_QUANTITY_QUERY_TABLE.columns.map((column) => {
-    switch (column.field) {
-      case "palletId":
-        return { ...column, cell: (value: unknown) => <>{palletGetLabels(value as string | null)}</> };
-      case "productId":
-        return { ...column, cell: (value: unknown) => <>{productGetLabels(value as string | null)}</> };
-      default:
-        return column;
-    }
-  });
-
-  const actions = (row: PalletQuantityQueryRow) => (
-    <>
-      <Show when={props.onOpenPalletQuantityGet}>
-        <Button type="button" variant="outline" size="sm" onClick={() => props.onOpenPalletQuantityGet?.(row)}>
-          get
-        </Button>
-      </Show>
-    </>
-  );
-
-  return (
-    <TableScreen>
-      <DataTable
-        name="pallet-quantity"
-        columns={columns}
-        rowId={PALLET_QUANTITY_QUERY_TABLE.rowId}
-        rows={load.state().rows}
-        fullyRead={load.state().fullyRead}
-        busy={load.state().busy}
-        refusal={load.state().refusal}
-        cap={load.state().cap}
-        onCapChange={(cap) => void load.load(cap)}
-        onRefresh={() => void load.load()}
-        startedAt={load.state().startedAt}
-        endedAt={load.state().endedAt}
-        sortFields={PALLET_QUANTITY_QUERY_TABLE.sortFields}
-        sortMaxFields={PALLET_QUANTITY_QUERY_TABLE.sortMaxFields}
-        onSortChange={load.sortBy}
-        scopeFilters={PALLET_QUANTITY_QUERY_TABLE.scopeFilters}
-        onScopeChange={() => void load.load()}
-        rowActions={actions}
-      />
-    </TableScreen>
-  );
+  return <QueryTable<PalletQuantityQueryRow, PalletQuantityQueryResult> definition={PALLET_QUANTITY_QUERY_TABLE} label={PalletQuantityQueryTableLabel} {...props} />;
 }
 
 /** The table definition of `wamn-wms:pallet-quantity/query@1.0.0`. */
 export const PALLET_QUANTITY_QUERY_TABLE = {
-  read: "query",
+  name: "pallet-quantity",
+  read: { route: PALLET_QUANTITY_QUERY_ROUTE, request: PALLET_QUANTITY_QUERY_REQUEST_FIELDS, result: PALLET_QUANTITY_QUERY_RESULT_FIELDS },
+  rows: "item",
   rowId: ["id"],
   pageMaximum: 100,
+  limitInput: ["limit"],
+  sortFieldInput: null,
+  sortDirectionInput: null,
+  filters: [],
   scopeFilters: [],
   sortFields: [],
   sortDirections: [],
@@ -217,13 +143,13 @@ export const PALLET_QUANTITY_QUERY_TABLE = {
   columns: [
     { field: "createdAt", label: "created at", type: "timestamptz", role: "value" },
     { field: "id", label: "id", type: "uuid", role: "key" },
-    { field: "palletId", label: "pallet id", type: "uuid", role: "reference", displayField: "palletCode" },
-    { field: "productId", label: "product id", type: "uuid", role: "reference", displayField: "productCode" },
+    { field: "palletId", label: "pallet id", type: "uuid", role: "reference", displayField: "palletCode", recordRead: { read: { route: PALLET_GET_ROUTE, request: PALLET_GET_REQUEST_FIELDS, result: PALLET_GET_RESULT_FIELDS }, keyInput: ["id"] } },
+    { field: "productId", label: "product id", type: "uuid", role: "reference", displayField: "productCode", recordRead: { read: { route: PRODUCT_GET_ROUTE, request: PRODUCT_GET_REQUEST_FIELDS, result: PRODUCT_GET_RESULT_FIELDS }, keyInput: ["id"] } },
     { field: "quantity", label: "quantity", type: "numeric", role: "value" },
     { field: "status", label: "status", type: "text", role: "value" },
   ],
   actions: [
-    { operation: "wamn-wms:pallet-quantity/get@1.0.0", label: "get", many: false },
+    { operation: "wamn-wms:pallet-quantity/get@1.0.0", label: "get", many: false, opens: "record", fill: [] },
   ],
   childTables: [],
 } as const;

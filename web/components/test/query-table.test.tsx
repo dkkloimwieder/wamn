@@ -93,8 +93,8 @@ async function shown(fixed?: object) {
         transport={stub.transport}
         label="widgets"
         fixed={fixed}
-        onOpen={(operation, row) => opened.push(`${operation} ${row.id}`)}
-        onFill={(_operation, initial) => filled.push(initial)}
+        onOpen={{ "platform-fixture:widget/get@1.0.0": (row) => opened.push(row.id) }}
+        onFill={{ "platform-fixture:widget/archive@1.0.0": (initial) => filled.push(initial) }}
       />
     </div>
   ));
@@ -118,7 +118,7 @@ describe("QueryTable", () => {
     const { opened, filled } = await shown();
     fireEvent.click(rowButton(2, "get"));
     fireEvent.click(rowButton(3, "archive"));
-    expect(opened).toEqual([`platform-fixture:widget/get@1.0.0 ${id(2)}`]);
+    expect(opened).toEqual([id(2)]);
     expect(filled).toEqual([{ value: { widgetId: id(3) } }]);
   });
 

@@ -29,9 +29,9 @@ describe("a row that opens a form", () => {
     const transport = stub();
     let carried: WidgetCreateFormInitial | undefined;
     render(() => (
-      <WidgetMakerQueryTable transport={transport} onFillWidgetCreate={(initial) => {
+      <WidgetMakerQueryTable transport={transport} onFill={{ "platform-fixture:widget/create@1.0.0": (initial) => {
         carried = initial;
-      }} />
+      } }} />
     ));
     await waitFor(() => expect(screen.getByText("Northwind")).toBeDefined());
 
@@ -58,9 +58,9 @@ describe("a row that opens a form", () => {
     };
     let carried: WidgetRecordBatchFormInitial | undefined;
     render(() => (
-      <WidgetListTable transport={transport} onFillWidgetRecordBatch={(initial) => {
+      <WidgetListTable transport={transport} onFill={{ "platform-fixture:widget/record-batch@1.0.0": (initial) => {
         carried = initial;
-      }} />
+      } }} />
     ));
     await waitFor(() => expect(screen.getByText("standard")).toBeDefined());
 
@@ -76,13 +76,15 @@ describe("a row that opens a form", () => {
   it("fills no form in which two inputs name its model", async () => {
     // The batch form names a maker twice, as its maker and its inspector. No
     // declared path says which one a maker row is, so the row offers no batch
-    // form, and the operator chooses both (wamn-6jcm). The callback is passed
-    // untyped, because the table no longer declares it.
+    // form, and the operator chooses both (wamn-6jcm). A handler for it shows
+    // no button, because the definition names no such action.
     const transport = stub();
     const batch: unknown[] = [];
-    const untyped = { onFillWidgetRecordBatch: (initial: unknown) => batch.push(initial) };
     render(() => (
-      <WidgetMakerQueryTable transport={transport} onFillWidgetCreate={() => {}} {...untyped} />
+      <WidgetMakerQueryTable
+        transport={transport}
+        onFill={{ "platform-fixture:widget/create@1.0.0": () => {}, "platform-fixture:widget/record-batch@1.0.0": (initial) => void batch.push(initial) }}
+      />
     ));
     await waitFor(() => expect(screen.getByText("Northwind")).toBeDefined());
 

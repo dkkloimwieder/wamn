@@ -11,22 +11,19 @@ import {
   type Outcome,
   type Transport,
   type Uuid,
-  writeMember,
 } from "@wamn/web-runtime";
 import {
-  Button,
-  DataTable,
   DetailItem,
   DetailList,
   FieldError,
-  TableScreen,
+  QueryTable,
   announceOutcome,
-  createRecordLabels,
-  createTableLoad,
 } from "@wamn/ui";
 import {
+  INVENTORY_MOVEMENT_QUERY_REQUEST_FIELDS,
+  INVENTORY_MOVEMENT_QUERY_RESULT_FIELDS,
+  INVENTORY_MOVEMENT_QUERY_ROUTE,
   get,
-  query,
   type InventoryMovementGetRequest,
   type InventoryMovementGetResult,
   type InventoryMovementQueryRequest,
@@ -34,16 +31,19 @@ import {
   type InventoryMovementQueryRow,
 } from "../inventory_movement.js";
 import {
-  get as locationGet,
-  type LocationGetRequest,
+  LOCATION_GET_REQUEST_FIELDS,
+  LOCATION_GET_RESULT_FIELDS,
+  LOCATION_GET_ROUTE,
 } from "../location.js";
 import {
-  get as palletGet,
-  type PalletGetRequest,
+  PALLET_GET_REQUEST_FIELDS,
+  PALLET_GET_RESULT_FIELDS,
+  PALLET_GET_ROUTE,
 } from "../pallet.js";
 import {
-  get as productGet,
-  type ProductGetRequest,
+  PRODUCT_GET_REQUEST_FIELDS,
+  PRODUCT_GET_RESULT_FIELDS,
+  PRODUCT_GET_ROUTE,
 } from "../product.js";
 
 /** The record that the detail for `wamn-wms:inventory-movement/get@1.0.0` reads. */
@@ -120,8 +120,10 @@ export interface InventoryMovementQueryTableProps {
   readonly transport: Transport;
   /** Input the parent fixes, which the operator does not edit. */
   readonly fixed?: Partial<InventoryMovementQueryRequest>;
-  /** Called when the operator opens `wamn-wms:inventory-movement/get@1.0.0` from one row. */
-  readonly onOpenInventoryMovementGet?: (row: InventoryMovementQueryRow) => void;
+  /** For each operation whose record a row opens, what opening it does. A row shows a button only for these. */
+  readonly onOpen?: { readonly [operation: string]: (row: InventoryMovementQueryRow) => void };
+  /** For each operation whose form a row fills, what the filled values do. */
+  readonly onFill?: { readonly [operation: string]: (initial: object) => void };
   /** Called with every outcome this screen reads. */
   readonly onOutcome?: (outcome: Outcome<InventoryMovementQueryResult>) => void;
 }
@@ -129,110 +131,22 @@ export interface InventoryMovementQueryTableProps {
 /** What an operator calls this screen. The page decides where it goes. */
 export const InventoryMovementQueryTableLabel = "query";
 
-/**
- * The table for `wamn-wms:inventory-movement/query@1.0.0`: the DataTable over `INVENTORY_MOVEMENT_QUERY_TABLE`.
- *
- * It loads when it mounts. A change to a filter, a sort of rows the load did
- * not read in full, a cap change and a refresh each start a new load.
- */
+/** The table for `wamn-wms:inventory-movement/query@1.0.0`: the QueryTable over `INVENTORY_MOVEMENT_QUERY_TABLE`. */
 export function InventoryMovementQueryTable(props: InventoryMovementQueryTableProps) {
-  const load = createTableLoad<InventoryMovementQueryRow>(INVENTORY_MOVEMENT_QUERY_TABLE, async (limit) => {
-    let request = { ...props.fixed } as InventoryMovementQueryRequest;
-    request = writeMember(request, ["limit"], limit) as InventoryMovementQueryRequest;
-    const outcome = await query(props.transport, [request]);
-    props.onOutcome?.(outcome);
-    if (outcome.status !== "completed") {
-      announceOutcome(outcome, InventoryMovementQueryTableLabel);
-    }
-    return outcome;
-  });
-  void load.load();
-  onCleanup(afterWrites(props.transport, () => void load.load()));
-
-  const locationGetLabels = createRecordLabels(props.transport, async (key) => {
-    const request = writeMember({}, ["id"], key) as LocationGetRequest;
-    const outcome = await locationGet(props.transport, [request]);
-    if (outcome.status !== "completed") {
-      return null;
-    }
-    const text = outcome.value.locationCode;
-    return text == null ? null : String(text);
-  });
-  const palletGetLabels = createRecordLabels(props.transport, async (key) => {
-    const request = writeMember({}, ["id"], key) as PalletGetRequest;
-    const outcome = await palletGet(props.transport, [request]);
-    if (outcome.status !== "completed") {
-      return null;
-    }
-    const text = outcome.value.palletCode;
-    return text == null ? null : String(text);
-  });
-  const productGetLabels = createRecordLabels(props.transport, async (key) => {
-    const request = writeMember({}, ["id"], key) as ProductGetRequest;
-    const outcome = await productGet(props.transport, [request]);
-    if (outcome.status !== "completed") {
-      return null;
-    }
-    const text = outcome.value.productCode;
-    return text == null ? null : String(text);
-  });
-
-  const columns = INVENTORY_MOVEMENT_QUERY_TABLE.columns.map((column) => {
-    switch (column.field) {
-      case "fromLocationId":
-        return { ...column, cell: (value: unknown) => <>{locationGetLabels(value as string | null)}</> };
-      case "palletId":
-        return { ...column, cell: (value: unknown) => <>{palletGetLabels(value as string | null)}</> };
-      case "productId":
-        return { ...column, cell: (value: unknown) => <>{productGetLabels(value as string | null)}</> };
-      case "toLocationId":
-        return { ...column, cell: (value: unknown) => <>{locationGetLabels(value as string | null)}</> };
-      default:
-        return column;
-    }
-  });
-
-  const actions = (row: InventoryMovementQueryRow) => (
-    <>
-      <Show when={props.onOpenInventoryMovementGet}>
-        <Button type="button" variant="outline" size="sm" onClick={() => props.onOpenInventoryMovementGet?.(row)}>
-          get
-        </Button>
-      </Show>
-    </>
-  );
-
-  return (
-    <TableScreen>
-      <DataTable
-        name="inventory-movement"
-        columns={columns}
-        rowId={INVENTORY_MOVEMENT_QUERY_TABLE.rowId}
-        rows={load.state().rows}
-        fullyRead={load.state().fullyRead}
-        busy={load.state().busy}
-        refusal={load.state().refusal}
-        cap={load.state().cap}
-        onCapChange={(cap) => void load.load(cap)}
-        onRefresh={() => void load.load()}
-        startedAt={load.state().startedAt}
-        endedAt={load.state().endedAt}
-        sortFields={INVENTORY_MOVEMENT_QUERY_TABLE.sortFields}
-        sortMaxFields={INVENTORY_MOVEMENT_QUERY_TABLE.sortMaxFields}
-        onSortChange={load.sortBy}
-        scopeFilters={INVENTORY_MOVEMENT_QUERY_TABLE.scopeFilters}
-        onScopeChange={() => void load.load()}
-        rowActions={actions}
-      />
-    </TableScreen>
-  );
+  return <QueryTable<InventoryMovementQueryRow, InventoryMovementQueryResult> definition={INVENTORY_MOVEMENT_QUERY_TABLE} label={InventoryMovementQueryTableLabel} {...props} />;
 }
 
 /** The table definition of `wamn-wms:inventory-movement/query@1.0.0`. */
 export const INVENTORY_MOVEMENT_QUERY_TABLE = {
-  read: "query",
+  name: "inventory-movement",
+  read: { route: INVENTORY_MOVEMENT_QUERY_ROUTE, request: INVENTORY_MOVEMENT_QUERY_REQUEST_FIELDS, result: INVENTORY_MOVEMENT_QUERY_RESULT_FIELDS },
+  rows: "item",
   rowId: ["id"],
   pageMaximum: 100,
+  limitInput: ["limit"],
+  sortFieldInput: null,
+  sortDirectionInput: null,
+  filters: [],
   scopeFilters: [],
   sortFields: [],
   sortDirections: [],
@@ -240,19 +154,19 @@ export const INVENTORY_MOVEMENT_QUERY_TABLE = {
   columns: [
     { field: "createdAt", label: "created at", type: "timestamptz", role: "value" },
     { field: "createdBy", label: "created by", type: "uuid", role: "value" },
-    { field: "fromLocationId", label: "from location id", type: "uuid", role: "reference", displayField: "locationCode" },
+    { field: "fromLocationId", label: "from location id", type: "uuid", role: "reference", displayField: "locationCode", recordRead: { read: { route: LOCATION_GET_ROUTE, request: LOCATION_GET_REQUEST_FIELDS, result: LOCATION_GET_RESULT_FIELDS }, keyInput: ["id"] } },
     { field: "id", label: "id", type: "uuid", role: "key" },
     { field: "idempotencyKey", label: "idempotency key", type: "text", role: "value" },
     { field: "kind", label: "kind", type: "text", role: "value" },
     { field: "occurredAt", label: "occurred at", type: "timestamptz", role: "value" },
-    { field: "palletId", label: "pallet id", type: "uuid", role: "reference", displayField: "palletCode" },
-    { field: "productId", label: "product id", type: "uuid", role: "reference", displayField: "productCode" },
+    { field: "palletId", label: "pallet id", type: "uuid", role: "reference", displayField: "palletCode", recordRead: { read: { route: PALLET_GET_ROUTE, request: PALLET_GET_REQUEST_FIELDS, result: PALLET_GET_RESULT_FIELDS }, keyInput: ["id"] } },
+    { field: "productId", label: "product id", type: "uuid", role: "reference", displayField: "productCode", recordRead: { read: { route: PRODUCT_GET_ROUTE, request: PRODUCT_GET_REQUEST_FIELDS, result: PRODUCT_GET_RESULT_FIELDS }, keyInput: ["id"] } },
     { field: "quantity", label: "quantity", type: "numeric", role: "value" },
     { field: "reasonCode", label: "reason code", type: "text", role: "value" },
-    { field: "toLocationId", label: "to location id", type: "uuid", role: "reference", displayField: "locationCode" },
+    { field: "toLocationId", label: "to location id", type: "uuid", role: "reference", displayField: "locationCode", recordRead: { read: { route: LOCATION_GET_ROUTE, request: LOCATION_GET_REQUEST_FIELDS, result: LOCATION_GET_RESULT_FIELDS }, keyInput: ["id"] } },
   ],
   actions: [
-    { operation: "wamn-wms:inventory-movement/get@1.0.0", label: "get", many: false },
+    { operation: "wamn-wms:inventory-movement/get@1.0.0", label: "get", many: false, opens: "record", fill: [] },
   ],
   childTables: [],
 } as const;

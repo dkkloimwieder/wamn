@@ -44,6 +44,22 @@ export function writeMember<Draft>(draft: Draft, path: MemberPath, value: JsonVa
 }
 
 /**
+ * One draft with a row's value filled in at one input path.
+ *
+ * A `"[]"` in the path marks a repeated member. The fill writes a list that
+ * holds one element, and the rest of the path is a member of that element.
+ */
+export function fillMember<Draft>(draft: Draft, path: MemberPath, value: JsonValue): Draft {
+  const at = path.indexOf("[]");
+  if (at < 0) {
+    return writeMember(draft, path, value);
+  }
+  const rest = path.slice(at + 1);
+  const element = rest.length === 0 ? value : fillMember({}, rest, value);
+  return writeMember(draft, path.slice(0, at), [element as JsonValue]);
+}
+
+/**
  * One draft with a page control's value, or with that member absent when the
  * control is empty.
  *

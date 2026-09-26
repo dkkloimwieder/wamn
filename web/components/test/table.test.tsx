@@ -87,7 +87,10 @@ describe("the generated table for a page", () => {
     const { transport } = stub([page(["a", "b"], null)]);
     const opened: string[] = [];
     render(() => (
-      <WidgetQueryTable transport={transport} onOpenWidgetGet={(row) => opened.push(row.id)} />
+      <WidgetQueryTable
+        transport={transport}
+        onOpen={{ "platform-fixture:widget/get@1.0.0": (row) => void opened.push(row.id) }}
+      />
     ));
     await waitFor(() => expect(screen.getAllByRole("button", { name: "get" })).toHaveLength(2));
     fireEvent.click(screen.getAllByRole("button", { name: "get" })[1]!);
