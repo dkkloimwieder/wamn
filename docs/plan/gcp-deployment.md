@@ -66,7 +66,7 @@ The kind edge case already tests the edge rules. Only the load balancer, the buc
 | Web files | GCS bucket behind a Cloud CDN backend bucket | This is decision 3.1 of web deployment. `wamn web upload` writes to it through the S3 API with an HMAC key. | None. |
 | Load balancer | Global external Application Load Balancer | Its URL map sends paths to the edge or to the bucket, rewrites paths, and serves Cloud CDN. | The classic load balancer: it has no path template rewrite. |
 | Certificate | cert-manager with a Let's Encrypt DNS challenge on the Cloud DNS zone | A wildcard certificate needs the DNS challenge, and cert-manager renews it. It needs a service account that can change records in the zone. | Google-managed certificates: no wildcard without Certificate Manager DNS authorization, and a second renewal system. |
-| Mail | Resend, sending from `wamn.dev` | Identity sends real invitations, so the first account signs up by email. The Resend domain records go into the Cloud DNS zone, and the API key goes into a Kubernetes secret. | Invitations from the database: the kind edge case already tests that path. |
+| Mail | Resend, sending from `noreply@wamn.dev` | Identity sends real invitations, so the first account signs up by email. The Resend domain records go into the Cloud DNS zone, and the API key goes into a Kubernetes secret that the owner creates (section 4.2). | Invitations from the database: the kind edge case already tests that path. |
 
 ### 4.1 Config Connector is replaced
 
@@ -80,14 +80,34 @@ These are the reasons:
 
 The endpoint groups stay. GKE creates them from the annotation on the edge Service, without Config Connector.
 
+### 4.2 The mail secret
+
+Owner ruling of 2026-09-25: the owner creates the Resend API key and puts it into the cluster. Step 3 tells the owner the namespace of identity and the moment that it needs the key.
+The secret has this name and shape:
+
+| Field | Value |
+| --- | --- |
+| Kind | `Secret`, type `Opaque` |
+| Name | `identity-resend` |
+| Namespace | the namespace of the identity release |
+| Key | `api-key`, the Resend API key |
+
+The identity values then set `resendSecret: identity-resend` and `resendFrom: noreply@wamn.dev`.
+To create it without the key in the shell history, write the key to a file first:
+
+```bash
+kubectl create secret generic identity-resend --namespace <identity namespace> \
+  --from-file=api-key=<file that holds the key>
+```
+
 ## 5. Steps
 
 Each step ends with a test of its result. Unless the next step follows on the same day, each step also ends with the pause of section 9.2.
 Each step writes its commands into [Google Cloud operations](../operations/gcp.md), so the next deployment repeats them.
 
-1. Cost controls and storage, before anything runs. Enable the APIs. Lower the quotas of section 8.1. Create the guard of section 8.2: the Pub/Sub topic, the guard function, the budget and the daily scale-to-zero job. Create the Artifact Registry repository and the two buckets (web files and backups). No machine runs.
+1. Cost controls and storage, before anything runs. Enable the APIs. Lower the quotas of section 8.1. Create the guard of section 8.2: the Pub/Sub topic, the guard function, the budget and the daily scale-to-zero job. Test the unlink of billing once for real. Create the Artifact Registry repository and the two buckets (web files and backups). No machine runs.
 2. Create the GKE cluster with Workload Identity and no Config Connector. Its one node pool `main` has the rules of section 7. Install cert-manager, the Let's Encrypt `ClusterIssuer` for the DNS challenge, and the `*.wamn.dev` certificate. Make sure that the certificate is ready.
-3. Add the Resend domain records to the Cloud DNS zone, and make sure that Resend reports the domain as verified. Build and push the host and identity images and the Receiving components to Artifact Registry. Install the runtime operator, NATS and CloudNativePG, then identity and the hosts, with values files for Google Cloud. The identity values name the Resend key secret and a sender on `wamn.dev`. Provision Receiving and publish its release with `--route-host receiving.wamn.dev`.
+3. Add the Resend domain records to the Cloud DNS zone, and make sure that Resend reports the domain as verified. Build and push the host and identity images and the Receiving components to Artifact Registry. Install the runtime operator, NATS and CloudNativePG, then identity and the hosts, with values files for Google Cloud. The owner creates the secret of section 4.2. The identity values name it and the sender `noreply@wamn.dev`. Provision Receiving and publish its release with `--route-host receiving.wamn.dev`.
 4. Remove the Config Connector template from the edge chart. Upload the Receiving client with `wamn web upload`. Install the edge chart with the Google Cloud values. Create the bucket read access, the backend bucket, the backend service, the URL map, the certificate, the address and the forwarding rule with `gcloud`. Add the DNS record for `receiving.wamn.dev`. Send an invitation by email, then sign up and sign in from the mail in a browser. Complete a supplier change. Measure a CDN hit on an asset and no CDN on `/api`.
 5. Change the edge chart to take a list of applications, each with its host and bucket path. Deploy a second application beside Receiving.
 
@@ -153,6 +173,7 @@ Step 1 lowers these Compute Engine quotas of `wamn-dev` through the Cloud Quotas
 | Standard disk | `us-central1` | 200 GB | Every boot disk and volume together. |
 | SSD disk | `us-central1` | 0 GB | No disk escapes the 200 GB cap through `pd-balanced` or `pd-ssd`. |
 
+Owner ruling of 2026-09-25: the SSD quota stays at 0, and every boot disk and volume is `pd-standard` for now. Only a measured run that needs SSD raises the SSD quota.
 The disk quotas are regional. The CPU quota of all regions stops a machine in any other region, so a disk elsewhere has no machine to use it.
 
 ### 8.2 The guard
@@ -163,6 +184,10 @@ If the budget runs out, the guard stops the machines and then billing. It has fo
 - One budget of 50 USD a month on billing account `01E392-13CC0D-277806`, filtered to `wamn-dev`. At 50, 90 and 100 percent it mails the billing administrators, and it publishes every update to `wamn-guard`.
 - A Cloud Run function `wamn-guard` on the topic, with its own service account. The project id `wamn-dev` and the cluster name `wamn` are literals in its code. From 50 percent of the budget, it sets every node pool of cluster `wamn` to 0 nodes. From 100 percent, it unlinks the billing account from `wamn-dev`, as section 9.5 does by hand.
 - A Cloud Scheduler job that publishes a scale-to-zero message to `wamn-guard` once a day, at 03:00 America/New_York. A session that you forget stops by the next morning.
+
+Owner ruling of 2026-09-25: the guard stops every node pool of cluster `wamn`, benchmark pools included, because a guard that spares a pool is not a guard.
+The source of the function is Python in `deploy/gcp/guard`. Its test feeds it a fake budget message for each threshold.
+Step 1 also tests the 100 percent action for real, once, before any workload exists. It publishes a fake 100 percent message, sees billing unlink, links billing again at once, and makes sure that the project serves again.
 
 The service account of the function has two grants, both on the project `wamn-dev`. A custom role allows it to read the cluster and set a node pool size. Project Billing Manager allows it to unlink billing from this project. It has no grant on the billing account.
 
