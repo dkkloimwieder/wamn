@@ -21,3 +21,4 @@ export * from "./product.js";
 // wamn-wms:inventory/split@1.0.0 value.from_inventory_id: wamn-wms:inventory/query@1.0.0
 // wamn-wms:inventory/split@1.0.0 value.to_packaging_id: wamn-wms:packaging/query@1.0.0
 // wamn-wms:packaging/close@1.0.0 value.packaging_id: wamn-wms:packaging/query@1.0.0
+// wamn-wms:packaging/relocate@1.0.0 value.packaging_id: wamn-wms:packaging/query@1.0.0

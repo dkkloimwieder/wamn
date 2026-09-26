@@ -70,6 +70,7 @@ import {
 } from "./inventory.js";
 import {
   type PackagingCreateFormInitial,
+  type PackagingRelocateFormInitial,
 } from "./packaging.js";
 
 /** What an operator types for `wamn-wms:location/create@1.0.0`. */
@@ -266,6 +267,8 @@ export interface LocationQueryTableProps {
   readonly onFillInventorySplit?: (initial: InventorySplitFormInitial) => void;
   /** Called with the values one row hands to `wamn-wms:packaging/create@1.0.0`. */
   readonly onFillPackagingCreate?: (initial: PackagingCreateFormInitial) => void;
+  /** Called with the values one row hands to `wamn-wms:packaging/relocate@1.0.0`. */
+  readonly onFillPackagingRelocate?: (initial: PackagingRelocateFormInitial) => void;
   /** Called with every outcome this screen reads. */
   readonly onOutcome?: (outcome: Outcome<LocationQueryResult>) => void;
 }
@@ -376,6 +379,22 @@ export function LocationQueryTable(props: LocationQueryTableProps) {
             onClick={() => props.onFillPackagingCreate?.(writeMember({} as PackagingCreateFormInitial, ["value", "locationId"], cell.row.original.id))}
           >
             create
+          </Button>
+        </Show>
+      ),
+    },
+    {
+      id: "fillPackagingRelocate",
+      header: "",
+      cell: (cell) => (
+        <Show when={props.onFillPackagingRelocate}>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={() => props.onFillPackagingRelocate?.(writeMember({} as PackagingRelocateFormInitial, ["value", "toLocationId"], cell.row.original.id))}
+          >
+            relocate
           </Button>
         </Show>
       ),

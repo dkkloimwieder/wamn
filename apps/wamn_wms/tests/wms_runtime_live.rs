@@ -16,6 +16,8 @@
 //!
 //! These cases return structured results to the application test caller.
 
+pub(crate) mod relocation;
+
 use std::path::Path;
 
 use anyhow::Context as _;
@@ -777,6 +779,7 @@ async fn business_snapshot(admin: &tokio_postgres::Client) -> anyhow::Result<Val
         'adjust',(SELECT jsonb_agg(to_jsonb(c) ORDER BY idempotency_key) FROM wms.inventory_adjust_command c),
         'split',(SELECT jsonb_agg(to_jsonb(c) ORDER BY idempotency_key) FROM wms.inventory_split_command c),
         'merge',(SELECT jsonb_agg(to_jsonb(c) ORDER BY idempotency_key) FROM wms.inventory_merge_command c),
+        'relocate',(SELECT jsonb_agg(to_jsonb(c) ORDER BY idempotency_key) FROM wms.packaging_relocate_command c),
         'close',(SELECT jsonb_agg(to_jsonb(c) ORDER BY idempotency_key) FROM wms.packaging_close_command c))", &[]).await?.get(0))
 }
 

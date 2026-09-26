@@ -818,6 +818,76 @@
         }
       ],
       "parameters": []
+    },
+    "wamn-wms:packaging/relocate@1.0.0": {
+      "registered-operation": "wamn-wms:packaging/relocate@1.0.0",
+      "input-ports": [
+        {
+          "name": "input",
+          "schema": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 100,
+            "items": {
+              "type": "object",
+              "required": [
+                "request_id",
+                "value"
+              ],
+              "additionalProperties": false,
+              "properties": {
+                "request_id": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "value": {
+                  "type": "object",
+                  "required": [
+                    "idempotency_key",
+                    "packaging_id",
+                    "expected_row_version",
+                    "to_location_id",
+                    "occurred_at"
+                  ],
+                  "additionalProperties": false,
+                  "properties": {
+                    "idempotency_key": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "packaging_id": {
+                      "type": "string",
+                      "format": "uuid",
+                      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+                    },
+                    "expected_row_version": {
+                      "type": "integer"
+                    },
+                    "to_location_id": {
+                      "type": "string",
+                      "format": "uuid",
+                      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+                    },
+                    "occurred_at": {
+                      "type": "string",
+                      "format": "date-time"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      ],
+      "output-ports": [
+        {
+          "name": "main",
+          "schema": {
+            "type": "array"
+          }
+        }
+      ],
+      "parameters": []
     }
   },
   "connections": []

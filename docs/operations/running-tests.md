@@ -145,7 +145,7 @@ The [assessment](../../apps/wamn_receiving/formal/assessment.md) distinguishes m
 
 Use the same Kani 0.68.0 installation described for [Receiving](#receiving-formal-model).
 The [WMS contract](../../apps/wamn_wms/formal/README.md) defines its finite domain and original-result replay rule.
-From the repository root, run its six native examples and eight proofs:
+From the repository root, run its ten native examples and eleven proofs:
 
 ```bash
 wms_formal_run=$(mktemp -d "${TMPDIR:-/tmp}/wamn-wms-formal.XXXXXX")
@@ -155,8 +155,8 @@ rustc --edition 2024 --test "$wms_formal_run/model.rs" -o "$wms_formal_run/examp
 kani "$wms_formal_run/model.rs" --output-format terse
 ```
 
-Require eight successful harnesses and eighteen satisfied cover properties.
-The cover properties include disposition mismatch, packaging closure, closed-packaging refusal, and packaging/location changes.
+Require eleven successful harnesses and twenty-six satisfied cover properties.
+The cover properties include disposition mismatch, packaging lifecycle rules, relocation, staged failures, and packaging/location changes.
 The loop bound is four. Keep unwinding assertions enabled to detect insufficient bounds.
 
 After the correct model passes, run the deliberate missing-transaction defect:
@@ -175,6 +175,20 @@ Restore the temporary copy and require the affected proof to pass:
 patch -R -d "$wms_formal_run" -p1 < apps/wamn_wms/formal/missing-transaction.patch
 kani "$wms_formal_run/model.rs" --harness proofs::split_history_is_complete --exact --output-format terse
 ```
+
+The relocation defect omits the second inventory transaction while both quantities and locations remain correct.
+Use a separate temporary copy and run its affected proof:
+
+```bash
+patch -d "$wms_formal_run" -p1 < apps/wamn_wms/formal/relocation-missing-transaction.patch
+kani "$wms_formal_run/model.rs" --harness proofs::relocation_history_is_complete --exact \
+  --output-format terse -Z concrete-playback --concrete-playback print
+patch -R -d "$wms_formal_run" -p1 < apps/wamn_wms/formal/relocation-missing-transaction.patch
+kani "$wms_formal_run/model.rs" --harness proofs::relocation_history_is_complete --exact --output-format terse
+```
+
+The defective copy must fail at `relocated inventory lacks its transaction`.
+The restored proof must pass.
 
 ## Local application business tests
 

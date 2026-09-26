@@ -6,7 +6,7 @@
          if !affected(from_state.inventory, command.action, id) {
 +            continue;
 +        }
-+        if matches!(command.action, Action::Split { from_inventory_id, .. } if id != from_inventory_id) {
++        if matches!(command.action, Action::RelocatePackaging { .. }) && id {
              continue;
          }
          let from_item = from_state.inventory[usize::from(id)];

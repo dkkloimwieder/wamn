@@ -32,6 +32,7 @@ wit_bindgen::generate!({
           export wamn-wms:location/update@1.0.0;
           export wamn-wms:packaging/create@1.0.0;
           export wamn-wms:packaging/close@1.0.0;
+          export wamn-wms:packaging/relocate@1.0.0;
           export wamn-wms:packaging/get@1.0.0;
           export wamn-wms:packaging/query@1.0.0;
           export wamn-wms:inventory/get@1.0.0;

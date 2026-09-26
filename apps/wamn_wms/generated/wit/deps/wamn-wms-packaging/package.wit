@@ -247,3 +247,74 @@ interface create {
   run: async func(ctx: node-context, input: list<create-item>) -> result<list<create-outcome>, node-error>;
   run-json: async func(ctx: node-context, input: string) -> result<emission, node-error>;
 }
+
+interface relocate {
+  use wamn:node/types@0.1.0.{emission, node-context, node-error};
+
+  record relocate-request {
+    expected-row-version: s32,
+    idempotency-key: string,
+    occurred-at: string,
+    packaging-id: string,
+    to-location-id: string,
+  }
+
+  record concurrency-conflict-detail {
+    expected-row-version: s32,
+    observed-row-version: s32,
+  }
+
+  record idempotency-conflict-detail {
+    field: string,
+  }
+
+  record invalid-input-detail {
+    field: string,
+    minimum: option<s64>,
+    maximum: option<s64>,
+    observed: option<s64>,
+  }
+
+  record not-found-detail {
+    field: string,
+    id: string,
+  }
+
+  record permission-denied-detail {
+    operation: string,
+  }
+
+  variant relocate-error {
+    invalid-input(invalid-input-detail),
+    not-found(not-found-detail),
+    concurrency-conflict(concurrency-conflict-detail),
+    idempotency-conflict(idempotency-conflict-detail),
+    retry,
+    timeout,
+    permission-denied(permission-denied-detail),
+    internal-error,
+  }
+
+  record relocate-item {
+    request-id: string,
+    input: result<relocate-request, invalid-input-detail>,
+  }
+
+  record relocate-result {
+    operation-id: string,
+    packaging-id: string,
+    %type: string,
+    code: string,
+    location-id: string,
+    lifecycle: string,
+    row-version: s32,
+  }
+
+  record relocate-outcome {
+    request-id: string,
+    outcome: result<relocate-result, relocate-error>,
+  }
+
+  run: async func(ctx: node-context, input: list<relocate-item>) -> result<list<relocate-outcome>, node-error>;
+  run-json: async func(ctx: node-context, input: string) -> result<emission, node-error>;
+}

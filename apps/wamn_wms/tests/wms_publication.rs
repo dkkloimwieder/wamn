@@ -28,7 +28,7 @@ struct Operation {
 // table, the declaration and attachments.json widen together --
 // wamn-362o.10 grew the guest from one operation to seven and widened all
 // four in one commit.
-const OPERATIONS: [Operation; 21] = [
+const OPERATIONS: [Operation; 22] = [
     Operation {
         token: "wamn-wms:location/get@1.0.0",
         attachment: "location-get-http",
@@ -128,6 +128,11 @@ const OPERATIONS: [Operation; 21] = [
         token: "wamn-wms:packaging/close@1.0.0",
         attachment: "packaging-close-http",
         route: "/packaging/close",
+    },
+    Operation {
+        token: "wamn-wms:packaging/relocate@1.0.0",
+        attachment: "packaging-relocate-http",
+        route: "/packaging/relocate",
     },
     Operation {
         token: "wamn-wms:inventory/aggregate@1.0.0",

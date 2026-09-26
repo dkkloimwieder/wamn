@@ -397,3 +397,113 @@ export async function query(
     PACKAGING_QUERY_RESULT_FIELDS,
   );
 }
+
+/** Input for `wamn-wms:packaging/relocate@1.0.0`. */
+export interface PackagingRelocateRequest {
+  /** `text` */
+  requestId: string;
+  /** `object` */
+  value: PackagingRelocateRequestValue;
+}
+
+export interface PackagingRelocateRequestValue {
+  /** `int32` */
+  expectedRowVersion: number;
+  /** `text` */
+  idempotencyKey: string;
+  /** `timestamptz` */
+  occurredAt: Timestamptz;
+  /** `uuid` */
+  packagingId: Uuid;
+  /** `uuid` */
+  toLocationId: Uuid;
+}
+
+/** What `wamn-wms:packaging/relocate@1.0.0` calls its input members. */
+export const PACKAGING_RELOCATE_REQUEST_FIELDS: FieldMap = {
+  "request_id": "requestId",
+  "value": {
+    member: "value",
+    fields: {
+      "expected_row_version": "expectedRowVersion",
+      "idempotency_key": "idempotencyKey",
+      "occurred_at": "occurredAt",
+      "packaging_id": "packagingId",
+      "to_location_id": "toLocationId",
+    },
+  },
+};
+
+/** Result of `wamn-wms:packaging/relocate@1.0.0`. */
+export interface PackagingRelocateResult {
+  /** `text` */
+  readonly code: string;
+  /** `text` */
+  readonly lifecycle: string;
+  /** `uuid` */
+  readonly locationId: Uuid;
+  /** `uuid` */
+  readonly operationId: Uuid;
+  /** `uuid` */
+  readonly packagingId: Uuid;
+  /** `int32` */
+  readonly rowVersion: number;
+  /** `text` */
+  readonly type: string;
+}
+
+/** What `wamn-wms:packaging/relocate@1.0.0` calls its result members. */
+export const PACKAGING_RELOCATE_RESULT_FIELDS: FieldMap = {
+  "code": "code",
+  "lifecycle": "lifecycle",
+  "location_id": "locationId",
+  "operation_id": "operationId",
+  "packaging_id": "packagingId",
+  "row_version": "rowVersion",
+  "type": "type",
+};
+
+/**
+ * Where the release publishes `wamn-wms:packaging/relocate@1.0.0`.
+ *
+ * Method and template only. The host and base URL are the application's
+ * deployment configuration, not this release's facts.
+ */
+export const PACKAGING_RELOCATE_ROUTE: OperationRoute = {
+  operation: "wamn-wms:packaging/relocate@1.0.0",
+  method: "POST",
+  template: "/packaging/relocate",
+  freshOnly: false,
+  contract: {
+    resultClass: "one",
+    partialSchema: null,
+    errors: [
+      { literal: "concurrency_conflict", required: ["expected_row_version", "observed_row_version"], sources: ["transaction_invariant"] },
+      { literal: "idempotency_conflict", required: ["field"], sources: ["same_key_different_canonical_command"] },
+      { literal: "internal_error", required: [], sources: ["query_error", "row_limit_exceeded", "undeclared_constraint"] },
+      { literal: "invalid_input", required: ["field"], sources: ["envelope_count", "malformed_input"] },
+      { literal: "not_found", required: ["field", "id"], sources: ["transaction_invariant"] },
+      { literal: "permission_denied", required: ["operation"], sources: ["permission_denied"] },
+      { literal: "retry", required: [], sources: ["connection_unavailable", "serialization_failure"] },
+      { literal: "timeout", required: [], sources: ["statement_timeout"] },
+    ],
+    replay: "claim",
+    direct: true,
+    kind: "command",
+    transaction: "explicit_per_input",
+  },
+};
+
+/** Invoke `wamn-wms:packaging/relocate@1.0.0` through a transport the application supplies. */
+export async function relocate(
+  transport: Transport,
+  items: readonly PackagingRelocateRequest[],
+): Promise<Outcome<PackagingRelocateResult>> {
+  return reviveOutcome<PackagingRelocateResult>(
+    await transport.invoke({
+      ...PACKAGING_RELOCATE_ROUTE,
+      items: items.map((item) => toWire(item, PACKAGING_RELOCATE_REQUEST_FIELDS)),
+    }),
+    PACKAGING_RELOCATE_RESULT_FIELDS,
+  );
+}

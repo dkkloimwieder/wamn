@@ -1,0 +1,39 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO inventory_transaction (operation_id, inventory_id, from_inventory_id, to_inventory_id, from_product_id, from_packaging_id, from_location_id, from_quantity, from_disposition, from_lifecycle, occurred_at, reason, type, to_product_id, to_packaging_id, to_location_id, to_quantity, to_disposition, to_lifecycle) SELECT $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, 'packaging_relocate', product_id, packaging_id, location_id, quantity, disposition, lifecycle FROM inventory WHERE id = $2 RETURNING id;\n",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "inventory_transaction",
+            "name": "id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Uuid",
+        "Uuid",
+        "Uuid",
+        "Uuid",
+        "Uuid",
+        "Numeric",
+        "Text",
+        "Text",
+        "Timestamptz",
+        "Text"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "6ee935c7d7e32977bf76941da5fab13d3d22e03dadec21df25d0a79b62b76f79"
+}

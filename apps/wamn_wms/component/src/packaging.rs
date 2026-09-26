@@ -155,3 +155,47 @@ mod close {
         codec
     );
 }
+
+mod relocate {
+    use crate::detail;
+    use crate::exports::wamn_wms::packaging::relocate as contract;
+    use wamn_wms_data_access::packaging_relocate;
+    mod codec {
+        use super::contract;
+        include!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../generated/wit/packaging_relocate_codec.rs"
+        ));
+    }
+    async fn handle(
+        (): &mut (),
+        request: contract::RelocateRequest,
+    ) -> Result<contract::RelocateResult, contract::RelocateError> {
+        packaging_relocate::execute(&packaging_relocate::RelocateCommand {
+            idempotency_key: request.idempotency_key,
+            packaging_id: request.packaging_id,
+            expected_row_version: request.expected_row_version,
+            to_location_id: request.to_location_id,
+            occurred_at: request.occurred_at,
+        })
+        .await
+        .map(|value| contract::RelocateResult {
+            operation_id: value.operation_id,
+            packaging_id: value.packaging_id,
+            type_: value.r#type,
+            code: value.code,
+            location_id: value.location_id,
+            lifecycle: value.lifecycle,
+            row_version: value.row_version,
+        })
+        .map_err(|error| codec::map_error(error.kind().literal(), |key| detail(&error, key)))
+    }
+    codec::export_operation!(
+        crate::Component,
+        contract,
+        crate::wamn::node::types,
+        (),
+        handle,
+        codec
+    );
+}

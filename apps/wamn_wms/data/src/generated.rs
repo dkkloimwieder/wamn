@@ -60,6 +60,16 @@ pub(crate) mod wamn {
             "/../generated/wamn/packaging_close.rs"
         ));
     }
+    #[expect(
+        dead_code,
+        reason = "generated SQL rows include fields used only by other access paths"
+    )]
+    pub(crate) mod packaging_relocate {
+        include!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../generated/wamn/packaging_relocate.rs"
+        ));
+    }
     pub(crate) mod inventory_aggregate {
         include!(concat!(
             env!("CARGO_MANIFEST_DIR"),

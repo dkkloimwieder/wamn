@@ -1,0 +1,31 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE packaging_relocate_command SET result = $4 WHERE idempotency_key = $1 AND canonical_command = $2 AND operation_id = $3 AND result IS NULL RETURNING result;\n",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "result",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "packaging_relocate_command",
+            "name": "result"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Bytea",
+        "Uuid",
+        "Text"
+      ]
+    },
+    "nullable": [
+      true
+    ]
+  },
+  "hash": "f437d9aa58b6f0eb258e32a004796bad66e36fdbf4b8caf023f78eee9b98296b"
+}

@@ -53,6 +53,7 @@ enum Type {
     Adjust,
     Split,
     Merge,
+    RelocatePackaging,
 }
 
 #[cfg_attr(kani, derive(kani::Arbitrary))]
@@ -76,6 +77,10 @@ enum Action {
     Merge {
         from_inventory_id: bool,
         to_inventory_id: bool,
+    },
+    RelocatePackaging {
+        packaging_id: bool,
+        to_location_id: bool,
     },
     ClosePackaging {
         packaging_id: bool,
@@ -151,6 +156,7 @@ enum Refusal {
     PackagingNotEmpty,
     DispositionMismatch,
     Quantity,
+    NoOp,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -158,6 +164,16 @@ enum Outcome {
     Accepted(CommandResult),
     Replayed(CommandResult),
     Refused(Refusal),
+    Aborted,
+}
+
+#[cfg_attr(kani, derive(kani::Arbitrary))]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum Failure {
+    None,
+    BusinessState,
+    History,
+    StoredResult,
 }
 
 fn total(inventory: Inventories) -> u16 {
@@ -267,6 +283,7 @@ fn operation_type(action: Action) -> Option<Type> {
         Action::Adjust { .. } => Some(Type::Adjust),
         Action::Split { .. } => Some(Type::Split),
         Action::Merge { .. } => Some(Type::Merge),
+        Action::RelocatePackaging { .. } => Some(Type::RelocatePackaging),
         Action::ClosePackaging { .. } => None,
     }
 }
@@ -361,6 +378,21 @@ fn change(state: &mut State, action: Action) -> Result<(), Refusal> {
             state.inventory[usize::from(from_inventory_id)] = Some(source);
             state.inventory[usize::from(to_inventory_id)] = Some(target);
         }
+        Action::RelocatePackaging {
+            packaging_id,
+            to_location_id,
+        } => {
+            open_packaging(state.packaging, packaging_id)?;
+            if state.packaging[usize::from(packaging_id)].location_id == to_location_id {
+                return Err(Refusal::NoOp);
+            }
+            state.packaging[usize::from(packaging_id)].location_id = to_location_id;
+            for item in state.inventory.iter_mut().flatten() {
+                if item.lifecycle == Lifecycle::Open && item.packaging_id == packaging_id {
+                    item.location_id = to_location_id;
+                }
+            }
+        }
         Action::ClosePackaging { packaging_id } => {
             if !empty(state.inventory, packaging_id) {
                 return Err(Refusal::PackagingNotEmpty);
@@ -371,12 +403,17 @@ fn change(state: &mut State, action: Action) -> Result<(), Refusal> {
     Ok(())
 }
 
-fn affected(action: Action, id: bool) -> bool {
+fn affected(inventory: Inventories, action: Action, id: bool) -> bool {
     match action {
         Action::Move { inventory_id, .. } | Action::Adjust { inventory_id, .. } => {
             id == inventory_id
         }
         Action::Split { .. } | Action::Merge { .. } => true,
+        Action::RelocatePackaging { packaging_id, .. } => {
+            inventory[usize::from(id)].is_some_and(|item| {
+                item.lifecycle == Lifecycle::Open && item.packaging_id == packaging_id
+            })
+        }
         Action::ClosePackaging { .. } => false,
     }
 }
@@ -392,7 +429,7 @@ fn transactions(
         return rows;
     };
     for id in [false, true] {
-        if !affected(command.action, id) {
+        if !affected(from_state.inventory, command.action, id) {
             continue;
         }
         let from_item = from_state.inventory[usize::from(id)];
@@ -434,6 +471,11 @@ fn transactions(
 }
 
 fn execute(state: &mut State, command: Command) -> Outcome {
+    execute_with_failure(state, command, Failure::None)
+}
+
+// Staged work is invisible until the final business commit. No persistence mechanism is modeled.
+fn execute_with_failure(state: &mut State, command: Command, failure: Failure) -> Outcome {
     if !prepared(command) {
         return Outcome::Refused(Refusal::InvalidInput);
     }
@@ -451,8 +493,15 @@ fn execute(state: &mut State, command: Command) -> Outcome {
     if let Err(refusal) = change(&mut to_state, command.action) {
         return Outcome::Refused(refusal);
     }
+    if failure == Failure::BusinessState {
+        return Outcome::Aborted;
+    }
     let operation_id = from_state.operations[0].is_some();
     assert!(from_state.operations[usize::from(operation_id)].is_none());
+    let transactions = transactions(from_state, to_state, command, operation_id);
+    if failure == Failure::History {
+        return Outcome::Aborted;
+    }
     let result = CommandResult {
         operation_id,
         inventory: to_state.inventory,
@@ -461,8 +510,11 @@ fn execute(state: &mut State, command: Command) -> Outcome {
     to_state.operations[usize::from(operation_id)] = Some(Operation {
         command,
         result,
-        transactions: transactions(from_state, to_state, command, operation_id),
+        transactions,
     });
+    if failure == Failure::StoredResult {
+        return Outcome::Aborted;
+    }
     *state = to_state;
     Outcome::Accepted(result)
 }

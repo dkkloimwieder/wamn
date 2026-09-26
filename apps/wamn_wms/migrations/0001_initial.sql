@@ -62,7 +62,7 @@ CREATE TABLE wms.inventory (
 CREATE TABLE wms.inventory_transaction (
     id uuid CONSTRAINT inventory_transaction_id_pkey PRIMARY KEY DEFAULT gen_random_uuid(),
     operation_id uuid NOT NULL,
-    type text NOT NULL CONSTRAINT inventory_transaction_type_check CHECK (type IN ('move', 'adjust', 'split', 'merge')),
+    type text NOT NULL CONSTRAINT inventory_transaction_type_check CHECK (type IN ('move', 'adjust', 'split', 'merge', 'packaging_relocate')),
     inventory_id uuid NOT NULL CONSTRAINT inventory_transaction_inventory_id_fkey REFERENCES wms.inventory(id),
     from_inventory_id uuid NOT NULL CONSTRAINT inventory_transaction_from_inventory_id_fkey REFERENCES wms.inventory(id),
     to_inventory_id uuid NOT NULL CONSTRAINT inventory_transaction_to_inventory_id_fkey REFERENCES wms.inventory(id),
@@ -126,5 +126,12 @@ CREATE TABLE wms.packaging_close_command (
     idempotency_key text CONSTRAINT packaging_close_command_idempotency_key_pkey PRIMARY KEY,
     canonical_command bytea NOT NULL CONSTRAINT packaging_close_command_canonical_command_check CHECK (octet_length(canonical_command) > 0),
     operation_id uuid NOT NULL DEFAULT gen_random_uuid() CONSTRAINT packaging_close_command_operation_id_key UNIQUE,
+    result text
+);
+
+CREATE TABLE wms.packaging_relocate_command (
+    idempotency_key text CONSTRAINT packaging_relocate_command_idempotency_key_pkey PRIMARY KEY,
+    canonical_command bytea NOT NULL CONSTRAINT packaging_relocate_command_canonical_command_check CHECK (octet_length(canonical_command) > 0),
+    operation_id uuid NOT NULL DEFAULT gen_random_uuid() CONSTRAINT packaging_relocate_command_operation_id_key UNIQUE,
     result text
 );

@@ -1,7 +1,7 @@
 # WMS inventory model
 
 This independent Rust model studies inventory transitions, immutable transactions, and stored command results.
-Beads task `wamn-s43x.11` owns the explicit-location correction.
+Beads task `wamn-s43x.15` owns Phase 1 packaging relocation.
 The owner defines the target business rules below.
 The [assessment](assessment.md) records the former production differences and the replacement implementation mappings.
 
@@ -58,10 +58,28 @@ These are target properties, not claims that production already implements them.
 | Packaging location | Invariant | Open inventory and its referenced packaging must have equal explicit location values. |
 | Packaging lifecycle | Invariant and refusal | Closed packaging has no open inventory. It cannot receive inventory, and occupied packaging cannot close. |
 
-Disposition changes, packaging relocation, and packaging reopening are outside this experiment.
-Move retains the prototype's existing no-op acceptance.
-Production instead requires distinct locations in its movement-table constraint.
+Disposition changes and packaging reopening remain outside this experiment.
+Inventory move retains its existing no-op acceptance.
+A fresh packaging relocation to its current location refuses.
 Moving between different packaging at the same location is also permitted.
+
+## Packaging relocation
+
+`RelocatePackaging` changes one open packaging identity to a different location.
+It explicitly changes the location of every open inventory identity assigned to that packaging.
+Closed inventory retains its historical location and packaging reference.
+Each affected open inventory produces one immutable transaction with unchanged quantity, disposition, lifecycle, and packaging reference.
+Different dispositions can relocate together because their inventory identities remain separate.
+
+Empty open packaging can relocate successfully without inventory transaction rows.
+The operation still stores its original result for replay.
+Closed packaging and fresh same-location requests refuse without state or history changes.
+Exact replay returns the stored result before current-location validation, including after subsequent relocation.
+
+The model stages business state, history, and the stored result before one final commit.
+Injected failure at each stage leaves the entire original state unchanged.
+This obligation describes atomic business behavior. PostgreSQL tests supply evidence that production provides that behavior.
+The model does not represent row locks, storage writes, revisions, or a transaction manager.
 
 ## Transactions and replay
 
@@ -69,6 +87,7 @@ Each `InventoryTransaction` describes one affected inventory identity.
 Rows include `id`, `operation_id`, `type`, `inventory_id`, source lineage, timestamp, and reason.
 Paired `from_*` and `to_*` fields record product, packaging, inventory location, quantity, disposition, and lifecycle.
 Move and adjustment create one row. Split and merge create two rows under one `operation_id`.
+Packaging relocation creates one row for each assigned open inventory, or none when empty.
 
 For split A to B, the source row records A to A, and the new inventory row records A to B.
 The new inventory has zero `from_quantity` and absent other `from_*` attributes because it did not exist.
@@ -107,8 +126,8 @@ Claims represent resolved identities without production namespace or encoding de
 
 The initial state represents existing stock and starts with empty history.
 The model does not reconstruct stock creation before that point.
-Packaging already exists, and its identity, code, type, and location remain fixed during modeled commands.
-Only its lifecycle can change through closure.
+Packaging already exists, and its identity, code, and type remain fixed during modeled commands.
+Relocation changes its location explicitly. Closure changes its lifecycle.
 
 Unpackaged inventory, lot/serial tracking, multiple products, decimal quantities, and concurrent commands remain outside scope.
 The owner rules resolve the three blocking questions for this revision.
@@ -117,7 +136,7 @@ No database, HTTP, Wasm, WIT, deployment state, shared framework, or new DSL bel
 
 ## Proof structure
 
-Eight Kani harnesses establish initialization, local transitions, transaction completeness, command rules, replay, and concrete two-operation histories.
+Eleven Kani harnesses cover initialization, local transitions, transaction completeness, command rules, atomic failure, replay, and concrete two-operation histories.
 Arbitrary-state proofs require valid business state and a well-formed claim prefix.
 They do not assume that old transaction rows already explain earlier mutations.
 They prove that every new operation is complete and every existing operation remains unchanged.
@@ -126,6 +145,7 @@ A separate inductive argument composes empty initialization, complete appends, a
 No single Kani harness proves arbitrary-length history.
 The experiment retains its two-operation capacity.
 
-The [deliberate defect](missing-transaction.patch) omits the new inventory transaction during split while preserving quantity.
+The [split defect](missing-transaction.patch) omits the new inventory transaction while preserving quantity.
+The [relocation defect](relocation-missing-transaction.patch) omits one relocated inventory transaction while preserving quantity and co-location.
 The [assessment](assessment.md) records results, counterexamples, production discrepancies, and test mappings.
 The [run instructions](../../../docs/operations/running-tests.md#wms-formal-model) reproduce the native examples and Kani proofs.

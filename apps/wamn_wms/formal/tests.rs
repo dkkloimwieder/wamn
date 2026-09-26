@@ -310,3 +310,179 @@ fn inventory_location_is_independent_and_destination_must_be_colocated() {
     assert_eq!(state.packaging, original.packaging);
     assert!(valid_business(state));
 }
+
+#[test]
+fn relocation_records_all_open_stock_and_preserves_prior_results() {
+    let mut state = fixture();
+    state.inventory[1] = Some(Inventory {
+        id: true,
+        disposition: Disposition::Available,
+        quantity: 2,
+        ..state.inventory[0].unwrap()
+    });
+    let from = state;
+    let relocation = command(
+        false,
+        Action::RelocatePackaging {
+            packaging_id: false,
+            to_location_id: true,
+        },
+    );
+    let Outcome::Accepted(result) = execute(&mut state, relocation) else {
+        panic!("relocation refused")
+    };
+    assert!(valid(state));
+    assert_eq!(total(state.inventory), total(from.inventory));
+    for row in state.operations[0].unwrap().transactions {
+        let row = row.unwrap();
+        assert_eq!(row.r#type, Type::RelocatePackaging);
+        assert_eq!(row.from_location_id, Some(false));
+        assert!(row.to_location_id);
+        assert_eq!(row.from_quantity, row.to_quantity);
+        assert_eq!(row.from_inventory_id, row.to_inventory_id);
+        assert_eq!(row.from_packaging_id, Some(row.to_packaging_id));
+    }
+    let original = state.operations[0];
+    let accepted = state;
+    assert_eq!(execute(&mut state, relocation), Outcome::Replayed(result));
+    assert_eq!(
+        execute(
+            &mut state,
+            Command {
+                key: true,
+                ..relocation
+            }
+        ),
+        Outcome::Refused(Refusal::NoOp)
+    );
+    assert_eq!(state, accepted);
+    assert!(matches!(
+        execute(
+            &mut state,
+            command(
+                true,
+                Action::RelocatePackaging {
+                    packaging_id: false,
+                    to_location_id: false,
+                }
+            )
+        ),
+        Outcome::Accepted(_)
+    ));
+    assert_eq!(state.operations[0], original);
+    let later = state;
+    assert_eq!(execute(&mut state, relocation), Outcome::Replayed(result));
+    assert_eq!(state, later);
+    assert!(result.inventory[0].unwrap().location_id);
+    assert!(!state.inventory[0].unwrap().location_id);
+}
+
+#[test]
+fn empty_packaging_relocation_leaves_closed_inventory_historical() {
+    let mut state = fixture();
+    state.inventory[0].as_mut().unwrap().lifecycle = Lifecycle::Closed;
+    state.inventory[0].as_mut().unwrap().quantity = 0;
+    let inventory = state.inventory;
+    let relocation = command(
+        false,
+        Action::RelocatePackaging {
+            packaging_id: false,
+            to_location_id: true,
+        },
+    );
+    let Outcome::Accepted(result) = execute(&mut state, relocation) else {
+        panic!("empty relocation refused")
+    };
+    assert!(state.packaging[0].location_id);
+    assert_eq!(state.inventory, inventory);
+    assert_eq!(state.operations[0].unwrap().transactions, [None; 2]);
+    assert!(valid(state));
+    let accepted = state;
+    assert_eq!(execute(&mut state, relocation), Outcome::Replayed(result));
+    assert_eq!(state, accepted);
+}
+
+#[test]
+fn failed_relocation_preserves_all_state_and_allows_retry() {
+    let mut state = fixture();
+    let adjust = Command {
+        reason: Some(false),
+        ..command(
+            false,
+            Action::Adjust {
+                inventory_id: false,
+                to_quantity: 4,
+            },
+        )
+    };
+    assert!(matches!(execute(&mut state, adjust), Outcome::Accepted(_)));
+    let from = state;
+    let relocation = command(
+        true,
+        Action::RelocatePackaging {
+            packaging_id: false,
+            to_location_id: true,
+        },
+    );
+    for failure in [
+        Failure::BusinessState,
+        Failure::History,
+        Failure::StoredResult,
+    ] {
+        assert_eq!(
+            execute_with_failure(&mut state, relocation, failure),
+            Outcome::Aborted
+        );
+        assert_eq!(state, from);
+    }
+    assert!(matches!(
+        execute(&mut state, relocation),
+        Outcome::Accepted(_)
+    ));
+    assert_eq!(state.operations[0], from.operations[0]);
+    assert!(valid(state));
+}
+
+#[test]
+fn relocation_refuses_closed_packaging_and_changed_intent() {
+    let mut state = fixture();
+    state.packaging[1].lifecycle = Lifecycle::Closed;
+    let from = state;
+    assert_eq!(
+        execute(
+            &mut state,
+            command(
+                false,
+                Action::RelocatePackaging {
+                    packaging_id: true,
+                    to_location_id: false,
+                }
+            )
+        ),
+        Outcome::Refused(Refusal::ClosedPackaging)
+    );
+    assert_eq!(state, from);
+    let relocation = command(
+        false,
+        Action::RelocatePackaging {
+            packaging_id: false,
+            to_location_id: true,
+        },
+    );
+    assert!(matches!(
+        execute(&mut state, relocation),
+        Outcome::Accepted(_)
+    ));
+    let accepted = state;
+    assert_eq!(
+        execute(
+            &mut state,
+            Command {
+                occurred_at: true,
+                ..relocation
+            }
+        ),
+        Outcome::Refused(Refusal::IntentConflict)
+    );
+    assert_eq!(state, accepted);
+}

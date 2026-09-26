@@ -40,6 +40,7 @@ pub fn screens(binding: SessionBinding) -> Vec<Screen> {
         screens::packaging::create(binding.clone()),
         screens::packaging::get(binding.clone()),
         screens::packaging::query(binding.clone()),
+        screens::packaging::relocate(binding.clone()),
         screens::product::create(binding.clone()),
         screens::product::get(binding.clone()),
         screens::product::query(binding.clone()),

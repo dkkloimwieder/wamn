@@ -50,12 +50,27 @@ It preserves the target's packaging and location. It does not close either packa
 `packaging.create` creates empty open packaging with a type, unique code, and existing location.
 `packaging.close` requires that no open inventory references that packaging.
 Closed inventory references do not prevent closure.
-There is no packaging relocation, reopening, or implicit disposition-change command.
+`packaging.relocate` moves one open packaging identity to a different location.
+It explicitly updates the location and revision of every assigned open inventory identity.
+It preserves quantities, dispositions, packaging assignments, and closed inventory records.
+Empty open packaging also relocates and stores its result, without inventory transaction rows.
+A fresh command for the current location refuses without changes or a retained claim.
+Exact replay returns the stored original result before current-state checks.
+There is no reopening or implicit disposition-change command.
+
+Relocation locks open inventory in database ID order, then locks its packaging.
+It reads the open inventory identities again while holding the packaging lock.
+If membership changed, the command returns `retry` and rolls back.
+Other inventory commands use the same inventory-first lock order.
+This prevents a partial relocation when a concurrent command changes packaging membership.
+Runtime resource limits can also refuse the complete operation. No query truncates the affected inventory set.
 
 ## Transactions and replay
 
 Each successful inventory command inserts one immutable transaction row per affected inventory identity.
 Split and merge each insert two rows under one `operation_id`.
+Packaging relocation inserts one row for each assigned open inventory identity under one `operation_id`.
+Each relocation row preserves the inventory identity and records its explicit location change.
 The subject `inventory_id` identifies the row whose attributes change.
 The `from_inventory_id` and `to_inventory_id` preserve lineage.
 Both merge rows name the source and target inventory identities.

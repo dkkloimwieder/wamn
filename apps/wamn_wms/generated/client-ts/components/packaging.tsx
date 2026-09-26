@@ -17,6 +17,7 @@ import {
   hasNextPage,
   newIdempotencyKey,
   newRequestId,
+  occurredAt,
   readMember,
   refusalMarks,
   refusalSentence,
@@ -53,12 +54,14 @@ import {
 import {
   PACKAGING_CLOSE_REQUEST_FIELDS,
   PACKAGING_CREATE_REQUEST_FIELDS,
+  PACKAGING_RELOCATE_REQUEST_FIELDS,
   close,
   create,
   get,
   get as packagingGet,
   query,
   query as packagingQuery,
+  relocate,
   type PackagingCloseRequest,
   type PackagingCloseResult,
   type PackagingCreateRequest,
@@ -68,6 +71,8 @@ import {
   type PackagingQueryRequest,
   type PackagingQueryResult,
   type PackagingQueryRow,
+  type PackagingRelocateRequest,
+  type PackagingRelocateResult,
 } from "../packaging.js";
 import {
   type InventoryMoveFormInitial,
@@ -457,6 +462,8 @@ export interface PackagingQueryTableProps {
   readonly onFillInventorySplit?: (initial: InventorySplitFormInitial) => void;
   /** Called with the values one row hands to `wamn-wms:packaging/close@1.0.0`. */
   readonly onFillPackagingClose?: (initial: PackagingCloseFormInitial) => void;
+  /** Called with the values one row hands to `wamn-wms:packaging/relocate@1.0.0`. */
+  readonly onFillPackagingRelocate?: (initial: PackagingRelocateFormInitial) => void;
   /** Called with every outcome this screen reads. */
   readonly onOutcome?: (outcome: Outcome<PackagingQueryResult>) => void;
 }
@@ -619,6 +626,22 @@ export function PackagingQueryTable(props: PackagingQueryTableProps) {
         </Show>
       ),
     },
+    {
+      id: "fillPackagingRelocate",
+      header: "",
+      cell: (cell) => (
+        <Show when={props.onFillPackagingRelocate}>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={() => props.onFillPackagingRelocate?.(writeMember({} as PackagingRelocateFormInitial, ["value", "packagingId"], cell.row.original.id))}
+          >
+            relocate
+          </Button>
+        </Show>
+      ),
+    },
   ];
 
   const table = createTable({
@@ -674,5 +697,187 @@ export function PackagingQueryTable(props: PackagingQueryTableProps) {
         </Button>
       </FormActions>
     </TableScreen>
+  );
+}
+
+/** What an operator types for `wamn-wms:packaging/relocate@1.0.0`. */
+const RELOCATE_INPUT = z.object({
+  value: z
+    .object({
+      packagingId: z.string().regex(UUID_TEXT, "expected a UUID"),
+      toLocationId: z.string().regex(UUID_TEXT, "expected a UUID"),
+    })
+    .optional(),
+});
+
+/** What the form for `wamn-wms:packaging/relocate@1.0.0` can start with. */
+export interface PackagingRelocateFormInitial {
+  value?: {
+    packagingId?: Uuid;
+    toLocationId?: Uuid;
+  };
+}
+
+/** What the form for `wamn-wms:packaging/relocate@1.0.0` takes. */
+export interface PackagingRelocateFormProps {
+  /** The transport the application supplies. */
+  readonly transport: Transport;
+  /** Values the form starts with. */
+  readonly initial?: PackagingRelocateFormInitial;
+  /** The revision this command sends. The release binds no read that supplies it. */
+  readonly valueExpectedRowVersion: PackagingRelocateRequest["value"]["expectedRowVersion"];
+  /** Called with the outcome of every submission. */
+  readonly onSubmitted?: (outcome: Outcome<PackagingRelocateResult>) => void;
+}
+
+/** What an operator calls this screen. The page decides where it goes. */
+export const PackagingRelocateFormLabel = "relocate";
+
+/**
+ * The form for `wamn-wms:packaging/relocate@1.0.0`.
+ *
+ * It renders what the operator fills and nothing else. The reserved inputs
+ * come from the runtime at submit time, and the operator never sees them.
+ */
+export function PackagingRelocateForm(props: PackagingRelocateFormProps) {
+  const [refusal, setRefusal] = createSignal<{ text: string; member: string | null } | null>(null);
+  const [done, setDone] = createSignal(false);
+
+  const form = createForm(() => ({
+    defaultValues: { ...props.initial } as Partial<PackagingRelocateRequest>,
+    onSubmit: async ({ value }: { value: Partial<PackagingRelocateRequest> }) => {
+      setDone(false);
+      const checked = RELOCATE_INPUT.safeParse(value);
+      if (!checked.success) {
+        const issue = checked.error.issues[0];
+        setRefusal({
+          text: issue?.message ?? "A value is not valid.",
+          member: checkedMember(
+            issue?.path as (string | number)[] | undefined,
+            PACKAGING_RELOCATE_REQUEST_FIELDS,
+          ),
+        });
+        return;
+      }
+      let item = { ...value } as PackagingRelocateRequest;
+      item = writeMember(item, ["requestId"], newRequestId());
+      item = writeMember(item, ["value", "idempotencyKey"], newIdempotencyKey());
+      item = writeMember(item, ["value", "occurredAt"], occurredAt());
+      item = writeMember(item, ["value", "expectedRowVersion"], props.valueExpectedRowVersion);
+      const outcome = await relocate(props.transport, [item]);
+      props.onSubmitted?.(outcome);
+      announceOutcome(outcome, PackagingRelocateFormLabel);
+      setRefusal(
+        outcome.status === "refused"
+          ? { text: refusalSentence(outcome.code), member: refusedMember(outcome.detail) }
+          : null,
+      );
+      setDone(outcome.status === "completed");
+    },
+  }));
+  const [valuePackagingIdOptions, setValuePackagingIdOptions] = createSignal<PageState<PackagingQueryRow>>(emptyPage<PackagingQueryRow>());
+  const readValuePackagingIdOptions = async (cursor: string | null) => {
+    let request = {} as PackagingQueryRequest;
+    if (cursor !== null) {
+      request = writeMember(request, ["cursor"], cursor) as PackagingQueryRequest;
+    }
+    const outcome = await packagingQuery(props.transport, [request]);
+    if (outcome.status !== "completed") {
+      return;
+    }
+    const rows = outcome.value.item as PackagingQueryRow[];
+    setValuePackagingIdOptions(
+      cursor === null
+        ? firstPage(rows, outcome.value.nextCursor)
+        : appendPage(valuePackagingIdOptions(), rows, outcome.value.nextCursor),
+    );
+  };
+  const readValuePackagingIdRecord = async (key: string): Promise<PackagingQueryRow | null> => {
+    const request = writeMember({}, ["id"], key) as PackagingGetRequest;
+    const outcome = await packagingGet(props.transport, [request]);
+    return outcome.status === "completed" ? ((outcome.value ?? null) as unknown as PackagingQueryRow | null) : null;
+  };
+  void readValuePackagingIdOptions(null);
+  const [valueToLocationIdOptions, setValueToLocationIdOptions] = createSignal<PageState<LocationQueryRow>>(emptyPage<LocationQueryRow>());
+  const [valueToLocationIdSearch, setValueToLocationIdSearch] = createSignal("");
+  const readValueToLocationIdOptions = async (cursor: string | null) => {
+    let request = {} as LocationQueryRequest;
+    if (valueToLocationIdSearch() !== "") {
+      request = writeMember(request, ["filter", "locationCode"], [valueToLocationIdSearch()]) as LocationQueryRequest;
+    }
+    if (cursor !== null) {
+      request = writeMember(request, ["cursor"], cursor) as LocationQueryRequest;
+    }
+    const outcome = await locationQuery(props.transport, [request]);
+    if (outcome.status !== "completed") {
+      return;
+    }
+    const rows = outcome.value.item as LocationQueryRow[];
+    setValueToLocationIdOptions(
+      cursor === null
+        ? firstPage(rows, outcome.value.nextCursor)
+        : appendPage(valueToLocationIdOptions(), rows, outcome.value.nextCursor),
+    );
+  };
+  const readValueToLocationIdRecord = async (key: string): Promise<LocationQueryRow | null> => {
+    const request = writeMember({}, ["id"], key) as LocationGetRequest;
+    const outcome = await locationGet(props.transport, [request]);
+    return outcome.status === "completed" ? ((outcome.value ?? null) as unknown as LocationQueryRow | null) : null;
+  };
+  void readValueToLocationIdOptions(null);
+
+  return (
+    <form
+      onSubmit={(event) => {
+        event.preventDefault();
+        void form.handleSubmit();
+      }}
+    >
+      <Show when={refusal()?.member === null ? refusal() : undefined}>
+        <FieldError>{refusal()?.text}</FieldError>
+      </Show>
+      <FieldGroup>
+        <form.Field name={`value.packagingId`}>
+          {(field) => (
+            <RecordSelect
+              label="packaging id"
+              options={valuePackagingIdOptions().rows}
+              optionValue={(row) => String(row.id)}
+              optionLabel={(row) => String(row.code)}
+              value={field().state.value == null ? null : String(field().state.value)}
+              onChange={(value) => field().handleChange(value ?? "")}
+              hasNextPage={hasNextPage(valuePackagingIdOptions())}
+              onNextPage={() => void readValuePackagingIdOptions(valuePackagingIdOptions().cursor)}
+              readRow={readValuePackagingIdRecord}
+              error={refusalMarks(refusal()?.member ?? null, "value.packaging_id") ? (refusal()?.text ?? null) : null}
+            />
+          )}
+        </form.Field>
+        <form.Field name={`value.toLocationId`}>
+          {(field) => (
+            <RecordSelect
+              label="to location id"
+              options={valueToLocationIdOptions().rows}
+              optionValue={(row) => String(row.id)}
+              optionLabel={(row) => String(row.locationCode)}
+              value={field().state.value == null ? null : String(field().state.value)}
+              onChange={(value) => field().handleChange(value ?? "")}
+              onSearch={(text) => {
+                setValueToLocationIdSearch(text);
+                void readValueToLocationIdOptions(null);
+              }}
+              hasNextPage={hasNextPage(valueToLocationIdOptions())}
+              onNextPage={() => void readValueToLocationIdOptions(valueToLocationIdOptions().cursor)}
+              readRow={readValueToLocationIdRecord}
+              error={refusalMarks(refusal()?.member ?? null, "value.to_location_id") ? (refusal()?.text ?? null) : null}
+            />
+          )}
+        </form.Field>
+      </FieldGroup>
+      <FormActions>
+        <FormDone when={done()} />
+        <Button type="submit">submit</Button>
+      </FormActions>
+    </form>
   );
 }

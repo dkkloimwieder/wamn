@@ -9,6 +9,7 @@ These pages describe unbuilt work and its limits. Current behavior belongs in [a
 - [Human identity and login](identity-plan.md): Incremental password login, later account lifecycle, and PAT-free sensitive operations with planning at each epic start.
 - [Operator UI](operator-ui.md): Deferred client and screen capabilities.
 - [Formal business testing](testing-formal.md): Proposed application models and Kani proofs, scoped by Beads and the prototype work order.
+- [Formal testing extension](testing-formal-ext.md): Ordered application, production-kernel, conformance, and composition phases.
 - [Testing strategy proposal](testing-strategy.md): Proposed testing layers and their limits. The [current strategy](../testing/strategy.md) owns existing practice.
 - [Upgrades](upgrades.md): Design for changing a schema after installation.
 - [Web operator client](web-operator-client.md): Generated browser UIs from the release contract, scoped one epic at a time.

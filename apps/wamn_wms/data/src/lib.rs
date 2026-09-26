@@ -13,6 +13,7 @@ pub mod location;
 pub mod packaging;
 pub mod packaging_close;
 pub mod packaging_create;
+pub mod packaging_relocate;
 mod page;
 pub mod product;
 mod scalar;

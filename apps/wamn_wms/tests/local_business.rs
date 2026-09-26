@@ -13,6 +13,16 @@ use wamn_test_infrastructure::scratch::ScratchRoot;
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "requires: WAMN_APPLICATION_COMPONENTS, WAMN_FLOW_HTTP_COMPONENT"]
 async fn operations_and_replay() -> anyhow::Result<()> {
+    run(false).await
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "requires: WAMN_APPLICATION_COMPONENTS, WAMN_FLOW_HTTP_COMPONENT"]
+async fn packaging_relocation() -> anyhow::Result<()> {
+    run(true).await
+}
+
+async fn run(relocation: bool) -> anyhow::Result<()> {
     wamn_test_postgres::require_prerequisites(&[
         "WAMN_APPLICATION_COMPONENTS",
         "WAMN_FLOW_HTTP_COMPONENT",
@@ -70,12 +80,17 @@ async fn operations_and_replay() -> anyhow::Result<()> {
         application.route_host.clone(),
         application.bearer.clone(),
     );
-    crate::wms_runtime_live::assert_contention_and_replay(&route, &runtime, initial_revision)
-        .await?;
-    crate::wms_runtime_live::assert_history_failure_rolls_back(&route, &runtime, &admin).await?;
-    crate::wms_runtime_live::assert_remaining_operations(&route, &runtime).await?;
-    crate::wms_runtime_live::assert_inventory_refusals_and_held_split(&route, &runtime, &admin)
-        .await?;
+    if relocation {
+        crate::wms_runtime_live::relocation::assert_relocation(&route, &runtime, &admin).await?;
+    } else {
+        crate::wms_runtime_live::assert_contention_and_replay(&route, &runtime, initial_revision)
+            .await?;
+        crate::wms_runtime_live::assert_history_failure_rolls_back(&route, &runtime, &admin)
+            .await?;
+        crate::wms_runtime_live::assert_remaining_operations(&route, &runtime).await?;
+        crate::wms_runtime_live::assert_inventory_refusals_and_held_split(&route, &runtime, &admin)
+            .await?;
+    }
     drop(admin);
     connection.abort();
     application.shutdown().await?;

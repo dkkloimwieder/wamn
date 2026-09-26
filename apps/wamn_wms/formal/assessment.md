@@ -4,16 +4,116 @@ The prototype remains useful within its finite domain.
 The revised model separates inventory disposition, inventory lifecycle, and packaging lifecycle.
 It follows the owner's target business rules, including equal-disposition merge and explicit inventory location with a co-location invariant.
 The [contract](README.md) records all thirteen requested properties and the finite domain.
-Task `wamn-s43x.11` owns this correction. Production alignment remains separate in `wamn-s43x.10`.
+Task `wamn-s43x.15` extends this model with Phase 1 packaging relocation.
+The earlier explicit-location correction belongs to `wamn-s43x.11`, and the initial production alignment belongs to `wamn-s43x.10`.
 
-## Evidence and execution
+## Phase 1 packaging relocation
+
+The owner permits empty open packaging relocation and requires fresh same-location requests to refuse.
+Exact replay precedes current-location validation.
+Relocation changes packaging location and every assigned open inventory location explicitly.
+Closed inventory remains historical and does not move.
+The existing two-identity bounds remain unchanged.
+
+The independent history observer requires one row per assigned open inventory identity.
+It reconstructs each inventory location from transaction values, without reading current packaging state.
+The command preserves quantities and keeps separate held and available identities.
+Empty relocation stores a replay result but creates no inventory transaction rows.
+
+The model stages business state, transaction history, and the stored result before publishing the final state.
+Failure injection after each stage establishes full-state preservation, including existing claims and history.
+This is a business atomicity obligation, not a proof of PostgreSQL rollback or lock behavior.
+Production tests must exercise actual failures and concurrent membership changes separately.
+
+`relocation_atomicity_and_refusals` covers arbitrary valid starting states, failures, empty relocation, two affected identities, and closed historical references.
+`relocation_history_is_complete` exercises two identities with different dispositions and independently reconstructs both transitions.
+`later_relocation_preserves_history_and_replay` relocates out and back, then replays the original result.
+The general transition, history, conservation, and changed-intent proofs include relocation as another command.
+
+The local `local_business::packaging_relocation` case passes through the real guest, HTTP route, authorization, and PostgreSQL transaction.
+It checks two open identities with different dispositions, one closed historical identity, empty relocation, no-op refusal, and complete transaction values.
+A forced failure on the second transaction row rolls back packaging, both inventory updates, the first transaction, and the claim.
+Concurrent relocation admits one revision and refuses the other.
+A controlled concurrent split changes membership while relocation waits for a lock.
+Relocation returns `retry` without partial changes, and its next attempt moves all three open identities.
+Later relocation and adjustment preserve prior history and original replay results.
+Empty relocation also replays its original result after packaging closure.
+
+Production returns the packaging snapshot and operation identity.
+The formal result contains the complete bounded state to test preservation independently of later mutations.
+Neither result is reconstructed from current inventory.
+The local case passed in 49.11 seconds, or 64.70 seconds including compilation.
+The initial run exposed timezone-dependent test rendering, which the fixture now fixes to UTC.
+No Phase 1 cluster run, production kernel extraction, conformance generator, or composition work is included.
+
+The following mapping connects the Phase 1 obligations to their test boundaries.
+The PostgreSQL assertions live in `tests/wms_runtime_live/relocation.rs` and run through `local_business::packaging_relocation`.
+
+| Property | Kani obligation | PostgreSQL/local assertion |
+| --- | --- | --- |
+| Explicit co-location and per-identity conservation | `quantities_and_closed_inventory` | Exact locations, revisions, quantities, dispositions, and closed records |
+| Complete immutable history | `complete_transactions`, `relocation_history_is_complete` | Exact `from_*` and `to_*` fields for both open identities |
+| Refusal preservation and atomic failure | `relocation_atomicity_and_refusals` | Whole-state snapshots for no-op, lifecycle, revision, missing identity, and second history-write failure |
+| Prior history and replay preservation | `state_and_history_preservation`, `later_relocation_preserves_history_and_replay` | Replay after relocation and adjustment, unchanged earlier rows, empty replay after closure |
+| Changed intent refuses | `original_result_and_changed_intent` | Same key with a different destination refuses without mutation |
+| Concurrent membership is complete | Outside the infrastructure-free model | A blocked split adds an identity, relocation refuses with `retry`, then relocates all three identities |
+
+## Phase 1 measured results
+
+All eleven Kani harnesses pass, and all twenty-six cover properties are satisfied.
+The run uses Kani 0.68.0, CBMC 6.11.0, loop bound four, and the existing two-identity domain.
+Ten native examples, standalone Clippy, and formatting also pass.
+The following table retains one successful result per harness.
+
+| Harness | Covers satisfied | Solver time |
+| --- | --- | --- |
+| `later_relocation_preserves_history_and_replay` | 0 | 207.30 seconds |
+| `relocation_history_is_complete` | 0 | 32.58 seconds |
+| `relocation_atomicity_and_refusals` | 8 | 331.07 seconds |
+| `packaging_closure_preserves_history_and_replay` | 0 | 99.57 seconds |
+| `later_merge_cannot_change_split_history_or_replay` | 0 | 126.77 seconds |
+| `split_history_is_complete` | 0 | 60.61 seconds |
+| `complete_transactions` | 5 | 336.10 seconds |
+| `initialization` | 1 | 6.62 seconds |
+| `original_result_and_changed_intent` | 1 | 335.24 seconds |
+| `quantities_and_closed_inventory` | 8 | 529.00 seconds |
+| `state_and_history_preservation` | 3 | 372.66 seconds |
+
+The retained solver times total 2,437.52 seconds. This sum is not elapsed wall time because some proofs run in parallel.
+The interrupted session left its original suite running, and recovery started overlapping work before that process was identified.
+Three repeated harnesses also passed. The remaining duplicate process was stopped, and completed results were retained.
+The timing logs retain those repeated and interrupted costs separately.
+Configuration, edition-compatibility, and unreachable-construct warnings remain, as in the earlier experiment.
+No business assertion fails in the correct model.
+
+The measured source hashes are:
+
+- `model.rs`: `921628fa99fad81d55446c81e6c36fb99fa5db6e3bd39a8d73c46658411239d2`
+- `proofs.rs`: `8d0aa8a992c18ead5516f943fe87b3be5f990c40b7bd6eb1af8c8d23159c62a9`
+- `tests.rs`: `529602b60fabc4d6ad993482e50043ae31dd3008576f39e416446db5cb86960f`
+
+The production guest build, guest Clippy, publication tests, offline SQL compilation, test Clippy, and browser TypeScript compilation pass.
+Generation and SQL metadata preparation use fresh disposable PostgreSQL databases.
+The local relocation case exercises the real component and PostgreSQL through the local runtime. It does not establish cluster behavior.
+Raw logs and measured command durations remain in `/tmp/wamn-packaging-formal/` and `/tmp/wamn-phase1/` on this host.
+Bead `wamn-s43x.15` retains the command timings and closure reference.
+
+The [relocation defect](relocation-missing-transaction.patch) removes the transaction for the second relocated identity.
+Its fixed example holds three available units and two held units in one packaging identity.
+Both inventory locations change explicitly, and the total remains five units.
+Kani fails only at `relocated inventory lacks its transaction` and prints a concrete playback test.
+The defective command exits with status one in 86.31 seconds, including 84.14 seconds of solver time.
+After restoration, the same proof passes in 45.61 seconds, including 43.40 seconds of solver time.
+The restored temporary source matches the measured hashes above.
+
+## Earlier explicit-location evidence
 
 The initial production review used revision `1931d925f15e3e33ef2fc4899a8a46e96f0b4125`.
 The scenario, schema, implementations, SQL, and tests at that revision define the former production baseline.
 The owner's latest work order and answers define the new Inventory/Packaging target.
 The explicit-location model revision changed no production code.
 Task `wamn-s43x.10` subsequently replaces production with the target model.
-The formal source and measured proof results remain unchanged by that production work.
+That production alignment did not change the formal source measured in this section.
 
 The toolchain is Kani 0.68.0, CBMC 6.11.0, and nightly Rust dated 2026-08-21.
 The [run instructions](../../../docs/operations/running-tests.md#wms-formal-model) reproduce the experiment.
@@ -118,9 +218,9 @@ The tests supplement the bounded formal model. They do not prove production equi
 | Packaging/location snapshots | `complete_transactions` | Transactions retain explicit location and packaging values. Wrong destination location refuses. |
 | Disposition and packaging lifecycle | `state_and_history_preservation` | Unequal dispositions refuse. Empty packaging closes. Closed packaging refuses inventory. |
 
-The six formal native examples retain their original coverage and source hashes.
+The six earlier formal native examples covered the initial command set.
 They include a packaging-only location edit that leaves inventory location unchanged and violates co-location.
-Production supplies no packaging-location mutation command in this phase.
+Phase 1 now adds explicit packaging relocation.
 
 ## Production test results
 
@@ -142,8 +242,8 @@ Guest, generator, and all-target WMS test Clippy runs passed with warnings denie
 Claim-law, journey-schema, and label-template tests passed.
 The small seed loaded ten products, ten locations, ten packaging records, and nineteen inventory records with platform audit stamps enabled.
 
-The formal Rust source hashes still match the completed Kani and deliberate-defect runs recorded above.
-Production alignment changed no formal Rust source, so those runs were not repeated.
+The earlier production alignment changed no formal Rust source, so it did not repeat the formal runs above.
+Phase 1 changes that source and requires a new measured run.
 The deployed cluster cases did not run during this production correction.
 The subsequent `cluster::released_wms_routes` run at `df64aed84` failed during host startup, before route assertions.
 Its fixture omitted the session issuer required by the published routes. Bead `wamn-s43x.14` records the fixture correction.
@@ -161,7 +261,10 @@ The successful cluster run is retained in `/tmp/wamn-wms-direct-gate/`.
 The model keeps two inventory identities, two claims, two operations, and a six-unit total.
 Two packaging identities make packaging references and lifecycle explicit without modeling infrastructure.
 It remains smaller than the four production command files alone, excluding SQL and generated code.
-The business model contains 473 lines, with 496 lines of proofs and 312 lines of native examples.
+Before Phase 1, the business model contained 473 lines, with 496 lines of proofs and 312 lines of native examples.
+Phase 1 increases the model to 525 lines, with 675 lines of proofs and 488 lines of native examples.
+The retained solver total rises from 1,185.49 to 2,437.52 seconds. Host load and parallel execution prevent a controlled performance comparison.
+The added operation remains small, but a full proof run carries a material development cost.
 The earlier production baseline contained 1,296 lines across its four command files, before SQL and generated dependencies.
 The transaction observer tests history completeness independently of quantity conservation.
 The measured solver cost appears in the execution record above. Routine CI cost remains unmeasured.
