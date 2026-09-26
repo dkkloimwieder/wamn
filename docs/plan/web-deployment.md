@@ -1,13 +1,15 @@
 # Web deployment
 
-Epic 20 serves the generated web clients from one public host: static files from a bucket behind a CDN, and an edge proxy that sends API paths to the platform. It is item 7 of section 7 in the [web operator client](web-operator-client.md) plan. Beads epic `wamn-xyxj` holds the issues and their status. The owner reviewed this scope on 2026-09-25.
+Epic 20, Beads `wamn-xyxj`, served the generated web clients from one public host: static files from a bucket, and an edge proxy that sends API paths to the platform. It was item 7 of section 7 in the [web operator client](web-operator-client.md) plan, and it closed on 2026-09-25.
+The built parts are in the operations pages.
+[Deployment](../operations/deployment.md#web-client-files) describes `wamn web upload` and the edge chart in `deploy/platform/edge`, including its [Google Cloud](../operations/deployment.md#google-cloud-edge) rendering.
+[Cluster tests](../operations/cluster-tests.md) describes the kind edge case.
 
-## 1. Goal
+## 1. Remaining work
 
-1. A production build of a web application is one set of static files, and a command puts it in a bucket.
-2. One public HTTPS host serves the pages, `/password` and `/api` of every application. The edge proxy sends `/password` to the identity service and `/api` to the route ingress, and the bucket serves everything else.
-3. A CDN caches the static files. It caches no authenticated read.
-4. The first real deployment runs Receiving through that host, and a person signs in and completes a supplier change in a browser.
+The first real deployment runs Receiving through the public host on Google Cloud, and a person signs in and completes a supplier change in a browser.
+`wamn-ghx2` holds it. It waits until the owner names the cloud project, the domain and the certificate issuer.
+The Google Cloud part of the edge chart is assumed and not tested. Only a rendering checks it.
 
 ## 2. Fixed rules
 
@@ -19,26 +21,11 @@ These rules come from decisions that are already made.
 - Every authenticated read is `private`, and a shared cache never serves one caller's read to another caller. Only a route whose auth policy is `none` can be `public`.
 - An application never learns a deployment fact at build time. The same static files serve every environment.
 
-## 3. Current state
-
-Measured on main at `f73453046` on 2026-09-25.
-
-| Place | Today |
-| --- | --- |
-| `web/shell/vite.ts:57-79` | The development proxy sends `/password` to the issuer and `/api` to `WAMN_ROUTE_URL` with the route host, and removes `/api`. It runs only under `vite serve`. |
-| `web/shell/src/shell.tsx:64` | `API_BASE = "/api"`. The session calls use the page origin. |
-| `apps/*/web` | `pnpm run build` writes `dist/`. Nothing serves it, and the Dockerfile does not build it. |
-| `services/identity/src/password.rs:40-42, 674-697` | Sets the three cookies. The identity service terminates its own TLS on port 443. |
-| `deploy/platform/http-route-workload.example.yaml` | The `flow-http` Service is ClusterIP port 80, plain HTTP. |
-| `deploy/` | No Ingress, Gateway or LoadBalancer. No public TLS. No cloud configuration. The wasmCloud gateway is disabled. |
-| `crates/platform/engine/src/flow_http_routing.rs:801-819` | A get is `no-cache`. A list is `max-age=10, stale-while-revalidate=60`. The scope is `private` unless the auth policy is `none`. |
-| Receiving, WMS | Every route admits `pat` and `session`. No route uses `none`. |
-
-## 4. Decisions
+## 3. Decisions
 
 Each decision lists the options and the owner ruling of 2026-09-25.
 
-### 4.1 Where the edge runs
+### 3.1 Where the edge runs
 
 | Option | Shape | Cost |
 | --- | --- | --- |
@@ -48,7 +35,7 @@ Each decision lists the options and the owner ruling of 2026-09-25.
 
 Option C gives a tested shape before any cloud cost. The GCP shape is assumed and not tested until the real deployment.
 
-### 4.2 One host per application or one host for all
+### 3.2 One host per application or one host for all
 
 | Option | Shape | Cost |
 | --- | --- | --- |
@@ -57,7 +44,7 @@ Option C gives a tested shape before any cloud cost. The GCP shape is assumed an
 
 The shell already routes under one origin: `/api` for the platform and the environment as the first page segment. A second host is a later choice, when a tenant needs one. Receiving and WMS share no route path today.
 
-### 4.3 A shared cache for authenticated reads
+### 3.3 A shared cache for authenticated reads
 
 | Option | Shape | Cost |
 | --- | --- | --- |
@@ -67,25 +54,15 @@ The shell already routes under one origin: `/api` for the platform and the envir
 
 Option A needs no new code. B or C starts only after a measurement shows the need.
 
-### 4.4 The list cache values
+### 3.4 The list cache values
 
-Ruled: keep `max-age=10, stale-while-revalidate=60`, because no shared cache stores an authenticated list under option 4.3 A. Revisit them with a measurement from the real deployment.
+Ruled: keep `max-age=10, stale-while-revalidate=60`, because no shared cache stores an authenticated list under option 3.3 A. Revisit them with a measurement from the real deployment.
 
-### 4.5 Static file headers
+### 3.5 Static file headers
 
 Ruled: the files under `assets/` carry a content hash in their names, so they are `public, max-age=31536000, immutable`. `index.html` is `no-cache`, so a new release reaches the browser at the next load.
 
-## 5. Owner input
-
-The real deployment needs a cloud project, a domain for the public host, and a certificate issuer. The owner names them when the GCP issue is scoped. The kind issue needs none of them, because it uses the local issuer of the cluster.
-
-## 6. Issues
-
-1. The edge in kind: one HTTPS host serves the built Receiving files from MinIO with a certificate from the local cluster issuer, and forwards `/password` and `/api`. A browser signs in and completes a supplier change through it.
-
-The owner review decides the later issues: the bucket upload command, the GCP configuration and the first real deployment, and the closeout.
-
-## 7. Out
+## 4. Out
 
 - A shared cache for authenticated reads.
 - A second public host.

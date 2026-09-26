@@ -18,8 +18,9 @@ const POLICY_TOKENS: &[&str] = &[
 
 /// Directory names [`text_files`] never descends into, at any depth: build output
 /// (a nested crate's `target/debug/.fingerprint/*` files are extension-less and
-/// BINARY, so scanning them panicked the walker outright) and VCS metadata.
-const SKIPPED_DIRECTORIES: &[&str] = &["target", ".git"];
+/// BINARY, so scanning them panicked the walker outright), installed web
+/// packages, which hold binaries such as esbuild, and VCS metadata.
+const SKIPPED_DIRECTORIES: &[&str] = &["target", "node_modules", ".git"];
 
 static NEXT_DIRECTORY: AtomicU64 = AtomicU64::new(0);
 

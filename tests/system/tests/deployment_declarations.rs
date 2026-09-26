@@ -15,6 +15,8 @@ const PLATFORM: &str = "deploy/platform";
 const HOST_VALUES_FILE: &str = "values-host-default.yaml";
 const IDENTITY_ISSUER: &str = "https://wamn-identity.wamn-system.svc";
 const IDENTITY_TLS_SECRET: &str = "wamn-identity-serving-tls";
+const EDGE_TLS_SECRET: &str = "wamn-edge-tls";
+const EDGE_IDENTITY_CA: &str = "wamn-identity-ca";
 const HELM_VALUES_IMAGE_PARTS: [(&str, &str); 3] = [
     ("registry", "\"\""),
     ("repository", "wamn-host"),
@@ -48,10 +50,14 @@ const RETIRED_IMAGE_MARKERS: [&str; 4] = ["wamn-gates", "node-host", "serve-node
 /// Externally supplied Secrets and ConfigMaps with their provisioning owner.
 /// Mounted names must be declared by a platform manifest or allowed here.
 /// A Certificate declares its `spec.secretName` output, which cert-manager writes.
-const EXTERNAL_PREREQUISITES: [(&str, &str); 6] = [
+const EXTERNAL_PREREQUISITES: [(&str, &str); 7] = [
     (
         IDENTITY_TLS_SECRET,
         "operator-configured serving certificate from the existing issuer/CA",
+    ),
+    (
+        EDGE_IDENTITY_CA,
+        "the CA of the identity serving certificate, which the edge checks",
     ),
     // READ by registry.yaml's namespaced CA Issuer (`spec.ca.secretName`) and
     // minted by the runtime-operator Helm release, not by anything here. The
@@ -260,8 +266,43 @@ fn read(root: &Path, file: &str) -> String {
         );
         return String::from_utf8(output.stdout).expect("Helm output is UTF-8");
     }
+    if file == "edge" {
+        let output = render_edge(root);
+        assert!(
+            output.status.success(),
+            "render edge chart: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        return String::from_utf8(output.stdout).expect("Helm output is UTF-8");
+    }
     let path = root.join(PLATFORM).join(file);
     fs::read_to_string(&path).unwrap_or_else(|error| panic!("read {}: {error}", path.display()))
+}
+
+/// The edge chart as the kind edge installs it, with its certificate issued
+/// in place.
+fn render_edge(root: &Path) -> Output {
+    let mut command = Command::new("helm");
+    command.current_dir(root).args([
+        "template",
+        "wamn-edge",
+        "deploy/platform/edge",
+        "--namespace",
+        "wamn-system",
+    ]);
+    for value in [
+        "host=wamn.example.invalid".to_owned(),
+        format!("tlsSecret={EDGE_TLS_SECRET}"),
+        "issuer=wasmcloud-ca".to_owned(),
+        "api=http://flow-http.wamn-system.svc.cluster.local".to_owned(),
+        format!("identity={IDENTITY_ISSUER}"),
+        format!("identityCaConfigMap={EDGE_IDENTITY_CA}"),
+        "bucket.endpoint=http://object-store.invalid:9000".to_owned(),
+        "bucket.path=web/clients/wamn_receiving/release".to_owned(),
+    ] {
+        command.args(["--set-string", &value]);
+    }
+    command.output().expect("run Helm to render the edge chart")
 }
 
 fn render_identity(
@@ -808,8 +849,10 @@ fn every_mounted_secret_is_declared_here_or_named_a_prerequisite() {
         let source = read(&root, file);
         for document in documents(&source) {
             let declared_object = object(&document, file);
+            // A reference opens a Secret or a ConfigMap block, so a declared
+            // ConfigMap is as declared as a Secret.
             if let Some(Object { kind, name, .. }) = &declared_object
-                && kind == "Secret"
+                && (kind == "Secret" || kind == "ConfigMap")
             {
                 declared.insert(name.clone());
             }

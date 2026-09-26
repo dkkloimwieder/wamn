@@ -28,6 +28,10 @@ pub(super) fn copy_fresh_only_package(source: &Path, destination: &Path) -> anyh
         let entry = entry?;
         let kind = entry.file_type()?;
         let target = destination.join(entry.file_name());
+        // Installed web packages are not package sources, and pnpm links them.
+        if kind.is_dir() && entry.file_name() == "node_modules" {
+            continue;
+        }
         if kind.is_dir() {
             copy_fresh_only_package(&entry.path(), &target)?;
         } else {
