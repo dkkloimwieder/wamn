@@ -95,3 +95,120 @@ The [contract](README.md#questions-and-limits) states the excluded semantics.
 The result supports exploring WMS with another independent model.
 WMS replay status needs an owner ruling in `wamn-s43x.1` before that property is formalized.
 No shared model framework, production refactor, or common generator follows from this result.
+
+## Phase 6: production-kernel suitability
+
+A production kernel is a pure function that decides business transitions.
+Receiving supports this boundary, but its decisions currently span Rust and SQL.
+This phase assesses that boundary without extracting production code.
+The independent model proofs do not prove the production implementation.
+
+The proposed kernel takes loaded order state, all order lines, requested quantities, and location existence.
+It returns a typed refusal or updated quantities, immutable receipt-line facts, and the resulting order status.
+The [command](../data/src/record_receipt.rs) retains input preparation, identity allocation, claims, replay, revisions, participant execution, and persistence.
+Receipt-reference uniqueness remains a database constraint within the same transaction.
+
+The [line validator](../command/record_receipt/validate_receipt_line.sql) defines refusal precedence across the entire item.
+The command first refuses an absent or non-open order.
+Line refusals then rank missing line, wrong order, missing location, and excess quantity.
+Within each category, the lowest offending UUID wins.
+Returning the first failure in request order changes this behavior.
+
+The [quantity update](../command/record_receipt/update_purchase_order_line.sql) adds each accepted quantity.
+The [completion update](../command/record_receipt/finish_purchase_order.sql) compares every order line, including untouched lines.
+A future extraction must persist the kernel's quantities and status rather than repeat those decisions in SQL.
+Exact decimal arithmetic must preserve scale without a fixed machine-integer limit.
+The [schema](../migrations/0001_initial.sql) also admits some special PostgreSQL numeric values.
+Compatibility for those values needs measured evidence outside the finite proof domain.
+
+Order serialization, row locks, location locks, and commit remain outside the kernel.
+The [application tests](../tests/receiving_command_histories_live.rs) retain responsibility for concurrency and rollback evidence.
+Empty orders and external status changes remain outside the stated model boundary.
+
+WMS and Receiving share refusal preservation, exact quantity transitions, immutable facts, and original replay results.
+Both separate business decisions from claims, locks, and commits.
+Both need explicit model bounds and an independent observer to compare model outcomes with production.
+Receiving adds an order-wide completion rule and ranked refusals across multiple requested lines.
+Its receipt records delivered quantities rather than transfer lineage between inventory identities.
+These differences support a receipt-specific kernel experiment, not a shared framework.
+
+
+## Phase 6: independent model evidence
+
+Task `wamn-yhb4` validates Receiving independently after the WMS relocation and split pilots.
+The model's receipt algorithm remains unchanged.
+The application tests import its state and transition functions directly through crate visibility.
+The new assertions require one stored receipt effect and one claim for every newly accepted command.
+Coverage assertions distinguish both-line success, either line alone, cancelled refusal, completed refusal, and valid-first/excess-second refusal.
+Five native examples pass.
+
+All six Kani harnesses pass, and all twenty coverage assertions are reached.
+The complete run takes 129.865 seconds, including compilation.
+The verification time totals 122.707 seconds.
+
+The deliberate defect still compares requested quantity with the original order instead of the remaining amount.
+Kani finds `ordered = 1`, `first = 1`, and `second = 1` on the first line.
+The other line remains unreceived, so the order stays open between those commands.
+The defective model accepts two units against one ordered unit.
+The quantity assertion fails in 32.650 seconds, and Kani prints the concrete input values.
+The restored file matches the source byte-for-byte, and the targeted proof passes in 10.304 seconds.
+The first mutation invocation lacked Kani's required unstable flag and failed before verification.
+That setup error is separate from the deliberate business counterexample.
+
+These proofs cover two lines, two claim keys, ordered quantities of one through three, and requested quantities of zero through four.
+They model whole-item acceptance or refusal, not database failure points or concurrent execution.
+The conformance tests and retained PostgreSQL tests supply separate evidence at those implementation boundaries.
+
+
+## Phase 6: application correspondence
+
+The new adapter imports `formal/model.rs` directly alongside the existing Receiving history tests.
+Seven fixed histories cover every modeled outcome, multi-line acceptance and refusal, completion, and original replay after later receipts.
+Proptest generates histories within the same two-line, two-key quantity domain and shrinks failures against fresh fixtures.
+The adapter maps each model line to a fixture UUID and binds each generated receipt UUID once.
+The intent bit changes the receipt reference while preserving the claim key.
+No receipt decision is copied into the adapter.
+
+After each command, the adapter compares outcomes, order state, line quantities, receipt facts, claims, and stored result fields.
+It requires every earlier receipt, receipt line, and claim row to remain unchanged.
+It also replays every earlier accepted command and requires its complete original result without additional writes.
+Existing direct-route tests retain the database concurrency, authority, rollback, and lost-response assertions.
+The selected runtime loads only Receiving and uses its direct route.
+Participant and composition assertions do not run in this phase.
+
+The first live run exposes a timestamp assumption in the new adapter.
+The observer expects `12:00Z`, but PostgreSQL renders the same instant as `08:00-04:00`.
+Bead `wamn-yhb4.1` classifies this as a model defect in the adapter.
+The stored business instant is correct.
+The correction compares exact parsed instants, including their precision.
+It also fixes the observer session to a non-UTC time zone so the regression remains effective on other hosts.
+Raw historical rows still require exact preservation.
+
+
+The second live run exposes another adapter assumption at the HTTP boundary.
+The route schema refuses an empty line array before the command executes.
+It returns HTTP 400 with `schema-invalid` and the `/0/value/line` pointer.
+Bead `wamn-yhb4.2` classifies the wrong expected response envelope as a model defect in the conformance adapter.
+The [manifest](../wamn.json) requires at least one line.
+The [HTTP shell](../../platform/ingress/http-route/src/lib.rs) maps schema refusal to that response.
+The adapter now requires that exact envelope for empty receipts and retains the command-level refusal checks for other invalid inputs.
+No invalid command is filtered out, and every refusal must preserve the full snapshot.
+Neither adapter correction changes the independent model's receipt decisions or production code.
+
+
+After both adapter corrections, all seven fixed and sixteen generated formal histories pass.
+The retained Receiving history run also passes its sixteen generated cases and seven PostgreSQL boundary cases.
+The complete direct application run takes 51.075 seconds.
+The separate PostgreSQL data-access test passes in 3.739 seconds.
+Twelve native history and adapter tests pass, including the generator's shrinking-domain assertions.
+Clippy and formatting pass.
+No further business-rule mismatch appears within the stated domain.
+The adapter supports shrinking and repeated reproduction, but this run finds no generated business failure that requires either.
+
+The second domain supports the method's use beyond inventory transfers.
+The small model states its rules independently, and executable correspondence exercises those rules through production transactions.
+The observer requires more code than the model because it maps identifiers, response envelopes, and immutable database facts.
+The two adapter findings show that representation and refusal boundaries need explicit treatment even when business decisions agree.
+Receiving is suitable for a separate pure kernel experiment with full order state and exact decimal arithmetic.
+This phase does not extract that kernel or prove production Rust decisions directly.
+Shared formal infrastructure and participant verification remain outside this phase.

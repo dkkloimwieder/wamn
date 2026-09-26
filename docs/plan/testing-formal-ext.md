@@ -183,19 +183,13 @@ PostgreSQL/runtime tests
 
 # Phase 6 — Validate the method on another application
 
-After WMS has exercised a more substantial model and production kernel, apply the same method to a second application/domain with different business rules.
+Use Receiving `record_receipt` as the independent second domain.
+Its [model contract](../../apps/wamn_receiving/formal/README.md) defines the bounded quantity, multi-line, completion, refusal, and replay rules.
+Its [assessment](../../apps/wamn_receiving/formal/assessment.md#phase-6-production-kernel-suitability) owns the production-kernel suitability analysis and recurring concepts.
+Task `wamn-yhb4` owns the evidence and phase closure.
 
-Prefer a domain containing:
-
-- lifecycle transitions;
-- cross-record invariants;
-- refusal conditions;
-- idempotent commands;
-- potential transactional participation.
-
-Only after at least two domains should reusable formal infrastructure be considered.
-
-Do not create a formal DSL based solely on WMS.
+Do not extend WMS abstractions into Receiving.
+Do not create shared formal infrastructure or verify participant composition in this phase.
 
 ---
 
@@ -297,7 +291,7 @@ Persistent state must correspond to the atomic result assumed by the formal comp
 5. Have Kani prove that production kernel.
 6. Add model-vs-production generated history tests.
 7. Repeat for `inventory.split` under `wamn-s43x.19`.
-8. Apply the method to a second application.
+8. Apply the method independently to Receiving `record_receipt`.
 9. Define one real transactional participant contract.
 10. Prove and integration-test one two-application composition.
 

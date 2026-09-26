@@ -2,6 +2,8 @@
 
 #[path = "receiving_history/database.rs"]
 pub(crate) mod database;
+#[path = "receiving_history/formal.rs"]
+mod formal;
 #[path = "receiving_history/model.rs"]
 mod model;
 
@@ -45,6 +47,8 @@ pub(crate) struct Inputs {
     seed: u64,
     cases: u32,
     history: Option<History>,
+    #[serde(default)]
+    formal: bool,
 }
 
 #[derive(Clone)]
@@ -949,15 +953,22 @@ pub(crate) fn assert_histories_with_cancellation(
         metadata["application_sql_corpus_identity"] == inputs.corpus_sha256,
         "Receiving test SQL corpus identity differs from the package contract"
     );
-    let overlay_metadata: Value = serde_json::from_slice(&std::fs::read(
-        repository.join("apps/client_acme_receiving/generated/package-weld.json"),
-    )?)?;
-    let schema_state_ids = json!({
+    let mut schema_state_ids = json!({
         "receiving": metadata["verified_schema_state_id"].as_str()
             .context("Receiving package contract has no verified schema identity")?,
-        "client_acme_receiving": overlay_metadata["verified_schema_state_id"].as_str()
-            .context("Acme package contract has no verified schema identity")?,
     });
+    let mut generation_provenance = json!({"receiving": metadata["provenance"]});
+    if !inputs.formal {
+        let overlay_metadata: Value = serde_json::from_slice(&std::fs::read(
+            repository.join("apps/client_acme_receiving/generated/package-weld.json"),
+        )?)?;
+        schema_state_ids["client_acme_receiving"] = json!(
+            overlay_metadata["verified_schema_state_id"]
+                .as_str()
+                .context("Acme package contract has no verified schema identity")?
+        );
+        generation_provenance["client_acme_receiving"] = overlay_metadata["provenance"].clone();
+    }
     let compiler = std::process::Command::new("rustc")
         .args(["--version", "--verbose"])
         .current_dir(&repository)
@@ -1015,8 +1026,7 @@ pub(crate) fn assert_histories_with_cancellation(
         &json!({"case":"identity","source_commit":inputs.source_commit,
         "component_digests":inputs.component_digests,"corpus_sha256":inputs.corpus_sha256,
         "postgres_server_version_num":version,"schema_state_ids":schema_state_ids,
-        "generation_provenance":{"receiving":metadata["provenance"],
-            "client_acme_receiving":overlay_metadata["provenance"]},
+        "generation_provenance":generation_provenance,
         "test_compiler_version":compiler_version,
         "seed":inputs.seed,"generated_cases":inputs.cases,"max_shrink_iterations":64,
         "invariants":["REC-HISTORY","REC-REFUSAL","REC-REPLAY","REC-CONTENTION",
@@ -1123,6 +1133,22 @@ pub(crate) fn assert_histories_with_cancellation(
         lost_response(&db.client, &route, &mut evidence).await?;
         authority(&db.client, &route, inputs, &mut evidence).await
     })?;
+    if inputs.formal {
+        formal::run(
+            &runtime,
+            &db.client,
+            &route,
+            &mut evidence,
+            Config {
+                cases: inputs.cases,
+                max_shrink_iters: 64,
+                rng_seed: RngSeed::Fixed(inputs.seed),
+                ..Config::default()
+            },
+            cancellation,
+            deadline,
+        )?;
+    }
     record(
         &mut evidence,
         &json!({"case":"summary","result":"pass","generated_cases":inputs.cases,

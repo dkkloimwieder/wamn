@@ -66,6 +66,13 @@ fn new_receipt_effect() {
         assert_eq!(result.status, after.status);
         assert_eq!(result.revision, after.revision);
         assert_eq!(result.receipt, command.key);
+        let key = usize::from(command.key);
+        assert_eq!(after.receipts[key], Some(quantities(command)));
+        assert_eq!(after.claims[key], Some(Claim { command, result }));
+        assert_eq!(
+            after.receipts.iter().flatten().count(),
+            before.receipts.iter().flatten().count() + 1
+        );
         let other = usize::from(!command.key);
         assert_eq!(after.claims[other], before.claims[other]);
         assert_eq!(after.receipts[other], before.receipts[other]);
@@ -77,6 +84,24 @@ fn new_receipt_effect() {
     kani::cover!(
         matches!(outcome, Outcome::Accepted(_)) && after.status == Status::Complete,
         "completing receipt"
+    );
+    kani::cover!(
+        matches!(outcome, Outcome::Accepted(_))
+            && command.lines[0].is_some()
+            && command.lines[1].is_some(),
+        "both requested lines commit in one receipt"
+    );
+    kani::cover!(
+        matches!(outcome, Outcome::Accepted(_))
+            && command.lines[0].is_some()
+            && command.lines[1].is_none(),
+        "first line changes without changing the second"
+    );
+    kani::cover!(
+        matches!(outcome, Outcome::Accepted(_))
+            && command.lines[0].is_none()
+            && command.lines[1].is_some(),
+        "second line changes without changing the first"
     );
 }
 
@@ -117,6 +142,23 @@ fn refusal_preserves_state() {
             && command.lines[0].is_some()
             && command.lines[1].is_some(),
         "atomic multi-line refusal"
+    );
+    kani::cover!(
+        outcome == Outcome::ExcessQuantity
+            && command.lines[0].is_some_and(|quantity| {
+                quantity > 0 && quantity <= before.ordered[0] - before.received[0]
+            })
+            && command.lines[1]
+                .is_some_and(|quantity| { quantity > before.ordered[1] - before.received[1] }),
+        "a valid first line remains unchanged when the second line exceeds its remainder"
+    );
+    kani::cover!(
+        outcome == Outcome::OrderNotOpen && before.status == Status::Cancelled,
+        "cancelled orders refuse fresh receipts"
+    );
+    kani::cover!(
+        outcome == Outcome::OrderNotOpen && before.status == Status::Complete,
+        "complete orders refuse fresh receipts"
     );
 }
 

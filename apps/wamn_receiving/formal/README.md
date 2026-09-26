@@ -3,7 +3,8 @@
 This experiment studies one receipt item as an atomic business transition.
 An invariant is a rule that holds in every modeled valid state.
 The model does not establish that production code implements its rules.
-Beads epic `wamn-ywb0` owns the experiment and unresolved work.
+Beads epic `wamn-ywb0` owns the initial experiment.
+Task `wamn-yhb4` owns Phase 6, the independent Receiving validation after the WMS pilots.
 
 ## Sources
 
@@ -85,6 +86,24 @@ Valid-state assumptions include consistency between claims, receipt effects, and
 Proofs must establish initialization and preservation of those assumptions.
 They must also demonstrate reachable success, refusal, replay, and completion cases.
 An unreachable assertion does not establish a useful business result.
+
+## Phase 6 conformance
+
+The application adapter imports this executable model directly.
+It compares fixed and generated multi-line command histories with the real Receiving application over disposable PostgreSQL.
+Each command compares its outcome, order status, quantities, immutable receipt facts, claims, and stored result.
+Later commands must preserve earlier receipt facts and complete replay results.
+The adapter translates identities and response fields without replacing the model's receipt decisions.
+An empty receipt maps to the route schema's exact HTTP 400 refusal.
+Other modeled invalid inputs map to the command's `invalid_input` result.
+Both must preserve the complete database state.
+Receipt timestamps compare as exact instants.
+Historical rows must retain all stored values in the database snapshots.
+
+The [run instructions](../../../docs/operations/running-tests.md#receiving-formal-conformance) select only the direct Receiving route.
+Existing PostgreSQL history tests retain responsibility for concurrency, authority, and failure rollback.
+The [assessment](assessment.md#phase-6-production-kernel-suitability) identifies the production-kernel boundary and its decimal representation requirements.
+This phase assesses kernel suitability without extracting production code or creating shared infrastructure.
 
 ## Files
 

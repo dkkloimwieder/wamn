@@ -208,6 +208,30 @@ The harness README describes the deliberate defect and its restoration.
 The string-comparison override preserves eleven-byte comparisons while the success proofs use tighter bounds for two-item collection loops.
 These proofs cover business decisions. The local application test below covers persistence, rollback, concurrency, and stored replay results.
 
+## Receiving formal conformance
+
+The Receiving adapter executes its [independent business model](../../apps/wamn_receiving/formal/README.md) alongside the real application.
+It covers two-line receipt histories, whole-item refusal, completion, immutable facts, stored results, and replay.
+The same run retains the existing direct-route PostgreSQL history, concurrency, authority, and rollback assertions.
+It does not load the Acme application or test participants.
+
+Run these commands from the repository root:
+
+```bash
+tools/build-components app apps/wamn_receiving
+cargo build --manifest-path apps/Cargo.toml --locked --offline \
+  --target wasm32-wasip2 -p http-route
+WAMN_APPLICATION_COMPONENTS="$PWD/apps/target/virtualized/std-empty-environment" \
+WAMN_FLOW_HTTP_COMPONENT="$PWD/apps/target/wasm32-wasip2/debug/http_route.wasm" \
+  cargo test --locked --offline -p wamn-receiving-tests --lib \
+    route_authentication_live::local_business::formal_command_histories \
+    -- --exact --ignored --nocapture --test-threads=1
+```
+
+The formal histories use the model's two keys, two lines, and finite quantity bounds.
+Proptest shrinks discrepancies against fresh fixtures and keeps infrastructure failures separate from business mismatches.
+A discrepancy requires classification as a model defect, implementation defect, or unresolved business rule.
+
 ## Local application business tests
 
 Receiving command histories and WMS operation/replay assertions use real components, the HTTP shell, production authorization, and disposable PostgreSQL.

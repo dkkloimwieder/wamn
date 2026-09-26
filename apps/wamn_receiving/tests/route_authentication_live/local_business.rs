@@ -59,6 +59,16 @@ impl Transport for LocalTransport {
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "requires: WAMN_APPLICATION_COMPONENTS, WAMN_FLOW_HTTP_COMPONENT"]
 async fn command_histories() -> anyhow::Result<()> {
+    run_histories(false).await
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "requires: WAMN_APPLICATION_COMPONENTS, WAMN_FLOW_HTTP_COMPONENT"]
+async fn formal_command_histories() -> anyhow::Result<()> {
+    run_histories(true).await
+}
+
+async fn run_histories(formal: bool) -> anyhow::Result<()> {
     wamn_test_postgres::require_prerequisites(&[
         "WAMN_APPLICATION_COMPONENTS",
         "WAMN_FLOW_HTTP_COMPONENT",
@@ -86,16 +96,30 @@ async fn command_histories() -> anyhow::Result<()> {
                 | "wamn-receiving:location/list@1.0.0"
         )
     });
-    let overlay_attachments: std::collections::BTreeMap<String, wamn_catalog::ServingAttachment> =
-        wamn_schema_generator::route_schema::read_package_attachments(&acme)?;
-    for (name, attachment) in overlay_attachments {
-        if matches!(
-            route_operation(&attachment),
-            "client-acme-receiving:receiving/record-receipt@3.0.0"
-                | "client-acme-receiving:quality/load-purchase-order-detail@3.0.0"
-        ) {
-            attachments.insert(name, attachment);
+    let mut packages = vec![LocalPackage {
+        root: &receiving,
+        component: "receiving",
+        wirings: &[],
+    }];
+    if !formal {
+        let overlay_attachments: std::collections::BTreeMap<
+            String,
+            wamn_catalog::ServingAttachment,
+        > = wamn_schema_generator::route_schema::read_package_attachments(&acme)?;
+        for (name, attachment) in overlay_attachments {
+            if matches!(
+                route_operation(&attachment),
+                "client-acme-receiving:receiving/record-receipt@3.0.0"
+                    | "client-acme-receiving:quality/load-purchase-order-detail@3.0.0"
+            ) {
+                attachments.insert(name, attachment);
+            }
         }
+        packages.push(LocalPackage {
+            root: &acme,
+            component: "client_acme_receiving",
+            wirings: &[],
+        });
     }
     let application = LocalApplication::start(LocalApplicationConfig {
         system_database_url: system.url(),
@@ -111,23 +135,22 @@ async fn command_histories() -> anyhow::Result<()> {
         caller_role: "route-caller",
         route_host: "receiving.local.test",
         attachments: &attachments,
-        packages: &[
-            LocalPackage {
-                root: &receiving,
-                component: "receiving",
-                wirings: &[],
-            },
-            LocalPackage {
-                root: &acme,
-                component: "client_acme_receiving",
-                wirings: &[],
-            },
-        ],
+        packages: &packages,
     })
     .await?;
     let result = async {
-        histories(&application, project.url(), &repository, scratch.path()).await?;
-        transactional_participation(&application, project.url()).await
+        histories(
+            &application,
+            project.url(),
+            &repository,
+            scratch.path(),
+            formal,
+        )
+        .await?;
+        if !formal {
+            transactional_participation(&application, project.url()).await?;
+        }
+        Ok(())
     }
     .await;
     application.shutdown().await?;
@@ -419,6 +442,7 @@ async fn histories(
     database_url: &str,
     repository: &std::path::Path,
     evidence: &std::path::Path,
+    formal: bool,
 ) -> anyhow::Result<()> {
     let source = std::process::Command::new("git")
         .current_dir(repository)
@@ -437,7 +461,7 @@ async fn histories(
         "route_host":application.route_host,"route_caller_secret":application.caller_secret_path,
         "tenant":super::TENANT,"caller_role":"route-caller","evidence_file":path,
         "source_commit":std::str::from_utf8(&source.stdout)?.trim(),
-        "component_digests":application.component_digests,
+        "component_digests":application.component_digests,"formal":formal,
         "corpus_sha256":package["application_sql_corpus_identity"],"seed":7701,"cases":16,"history":null,
     }))?;
     let cancellation = pg_walstream::CancellationToken::new();
@@ -447,11 +471,12 @@ async fn histories(
     })
     .await
     .context("join the Receiving command histories")??;
-    let summaries = fs::read_to_string(path)?
+    let evidence_rows = fs::read_to_string(path)?
         .lines()
         .map(serde_json::from_str::<Value>)
-        .collect::<Result<Vec<_>, _>>()?
-        .into_iter()
+        .collect::<Result<Vec<_>, _>>()?;
+    let summaries = evidence_rows
+        .iter()
         .filter(|row| row["case"] == "summary")
         .collect::<Vec<_>>();
     ensure!(
@@ -467,6 +492,21 @@ async fn histories(
                 .is_none_or(|value| value == false),
         "Receiving command history results are absent or incomplete"
     );
+    if formal {
+        let formal_summaries = evidence_rows
+            .iter()
+            .filter(|row| row["case"] == "formal-summary")
+            .collect::<Vec<_>>();
+        ensure!(
+            formal_summaries.len() == 1
+                && formal_summaries[0]["result"] == "pass"
+                && formal_summaries[0]["generated_cases"] == 16
+                && formal_summaries[0]["fixed_histories"]
+                    .as_u64()
+                    .is_some_and(|count| count > 0),
+            "Receiving formal-model conformance results are absent or incomplete"
+        );
+    }
     Ok(())
 }
 

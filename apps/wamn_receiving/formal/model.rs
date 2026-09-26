@@ -3,7 +3,7 @@
 
 #[cfg_attr(kani, derive(kani::Arbitrary))]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum Status {
+pub(crate) enum Status {
     Open,
     Complete,
     Cancelled,
@@ -11,40 +11,40 @@ enum Status {
 
 #[cfg_attr(kani, derive(kani::Arbitrary))]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-struct Command {
-    key: bool,
-    lines: [Option<u8>; 2],
-    intent: bool,
+pub(crate) struct Command {
+    pub(crate) key: bool,
+    pub(crate) lines: [Option<u8>; 2],
+    pub(crate) intent: bool,
 }
 
 #[cfg_attr(kani, derive(kani::Arbitrary))]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-struct ResultSnapshot {
-    receipt: bool,
-    status: Status,
-    revision: u8,
+pub(crate) struct ResultSnapshot {
+    pub(crate) receipt: bool,
+    pub(crate) status: Status,
+    pub(crate) revision: u8,
 }
 
 #[cfg_attr(kani, derive(kani::Arbitrary))]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-struct Claim {
-    command: Command,
-    result: ResultSnapshot,
+pub(crate) struct Claim {
+    pub(crate) command: Command,
+    pub(crate) result: ResultSnapshot,
 }
 
 #[cfg_attr(kani, derive(kani::Arbitrary))]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-struct State {
-    ordered: [u8; 2],
-    received: [u8; 2],
-    status: Status,
-    revision: u8,
-    claims: [Option<Claim>; 2],
-    receipts: [Option<[u8; 2]>; 2],
+pub(crate) struct State {
+    pub(crate) ordered: [u8; 2],
+    pub(crate) received: [u8; 2],
+    pub(crate) status: Status,
+    pub(crate) revision: u8,
+    pub(crate) claims: [Option<Claim>; 2],
+    pub(crate) receipts: [Option<[u8; 2]>; 2],
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum Outcome {
+pub(crate) enum Outcome {
     Accepted(ResultSnapshot),
     Replayed(ResultSnapshot),
     InvalidInput,
@@ -53,7 +53,7 @@ enum Outcome {
     ExcessQuantity,
 }
 
-fn initial(ordered: [u8; 2], cancelled: bool) -> State {
+pub(crate) fn initial(ordered: [u8; 2], cancelled: bool) -> State {
     State {
         ordered,
         received: [0; 2],
@@ -68,23 +68,23 @@ fn initial(ordered: [u8; 2], cancelled: bool) -> State {
     }
 }
 
-fn quantities(command: Command) -> [u8; 2] {
+pub(crate) fn quantities(command: Command) -> [u8; 2] {
     [command.lines[0].unwrap_or(0), command.lines[1].unwrap_or(0)]
 }
 
-fn prepared(command: Command) -> bool {
+pub(crate) fn prepared(command: Command) -> bool {
     command.lines != [None; 2] && command.lines.iter().all(|quantity| *quantity != Some(0))
 }
 
 // A finite input domain, not a new business validation rule.
-fn command_domain(command: Command) -> bool {
+pub(crate) fn command_domain(command: Command) -> bool {
     command
         .lines
         .iter()
         .all(|quantity| quantity.unwrap_or(0) <= 4)
 }
 
-fn valid(state: State) -> bool {
+pub(crate) fn valid(state: State) -> bool {
     if !(1..=3).contains(&state.ordered[0]) || !(1..=3).contains(&state.ordered[1]) {
         return false;
     }
@@ -132,7 +132,7 @@ fn valid(state: State) -> bool {
         && (state.status != Status::Cancelled || count == 0)
 }
 
-fn record_receipt(state: &mut State, command: Command) -> Outcome {
+pub(crate) fn record_receipt(state: &mut State, command: Command) -> Outcome {
     if !prepared(command) {
         return Outcome::InvalidInput;
     }
@@ -257,5 +257,68 @@ mod tests {
             Outcome::InvalidInput
         );
         assert_eq!(state, before);
+    }
+
+    #[test]
+    fn completing_one_line_keeps_the_order_open_until_every_line_is_complete() {
+        let mut state = initial([1, 1], false);
+        let first = Command {
+            key: false,
+            lines: [Some(1), None],
+            intent: false,
+        };
+        assert!(matches!(
+            record_receipt(&mut state, first),
+            Outcome::Accepted(_)
+        ));
+        assert_eq!(state.received, [1, 0]);
+        assert_eq!(state.status, Status::Open);
+        let second = Command {
+            key: true,
+            lines: [None, Some(1)],
+            intent: false,
+        };
+        assert!(matches!(
+            record_receipt(&mut state, second),
+            Outcome::Accepted(_)
+        ));
+        assert_eq!(state.received, [1, 1]);
+        assert_eq!(state.status, Status::Complete);
+        assert_eq!(state.receipts, [Some([1, 0]), Some([0, 1])]);
+        assert!(valid(state));
+    }
+
+    #[test]
+    fn cancelled_and_complete_orders_refuse_fresh_receipts_without_changes() {
+        let command = Command {
+            key: true,
+            lines: [Some(1), None],
+            intent: false,
+        };
+        let mut cancelled = initial([1, 1], true);
+        let original = cancelled;
+        assert_eq!(
+            record_receipt(&mut cancelled, command),
+            Outcome::OrderNotOpen
+        );
+        assert_eq!(cancelled, original);
+
+        let mut completed = initial([1, 1], false);
+        let completing = Command {
+            key: false,
+            lines: [Some(1), Some(1)],
+            intent: false,
+        };
+        assert!(matches!(
+            record_receipt(&mut completed, completing),
+            Outcome::Accepted(_)
+        ));
+        let original = completed;
+        assert_eq!(
+            record_receipt(&mut completed, command),
+            Outcome::OrderNotOpen
+        );
+        assert_eq!(completed, original);
+        assert!(valid(completed));
     }
 }
