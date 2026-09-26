@@ -365,7 +365,7 @@ export function PalletQueryTable(props: PalletQueryTableProps) {
     void load.load();
   };
 
-  const locationGetLabels = createRecordLabels(async (key) => {
+  const locationGetLabels = createRecordLabels(props.transport, async (key) => {
     const request = writeMember({}, ["id"], key) as LocationGetRequest;
     const outcome = await locationGet(props.transport, [request]);
     if (outcome.status !== "completed") {

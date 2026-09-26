@@ -483,7 +483,7 @@ A read that the store does not hold, as after a reload, calls fetch with `cache:
 Any write marks every stored read stale, because the browser cannot tell which models a write changed.
 A new CSRF cookie empties the store, so one session's reads never answer the next session.
 The transport also calls each `onWrite` listener after a write settles.
-A generated detail, a table and a form's selector list use it to read again, so an unchanged read costs one 304.
+A generated detail, a table, the record text in a table's reference column and a form's selector list use it to read again, so an unchanged read costs one 304.
 A form's own record read does not read again, because the form sends the revision that it read when it opened.
 
 A package that generates TypeScript also generates [SolidJS components](../../crates/schema/generator/src/client_component.rs), one for each operation the plan gives a role.

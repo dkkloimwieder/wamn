@@ -136,7 +136,7 @@ export function ReceiptQueryTable(props: ReceiptQueryTableProps) {
   void load.load();
   onCleanup(afterWrites(props.transport, () => void load.load()));
 
-  const purchaseOrderGetLabels = createRecordLabels(async (key) => {
+  const purchaseOrderGetLabels = createRecordLabels(props.transport, async (key) => {
     const request = writeMember({}, ["id"], key) as PurchaseOrderGetRequest;
     const outcome = await purchaseOrderGet(props.transport, [request]);
     if (outcome.status !== "completed") {

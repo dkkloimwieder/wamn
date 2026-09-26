@@ -139,7 +139,7 @@ export function PalletQuantityQueryTable(props: PalletQuantityQueryTableProps) {
   void load.load();
   onCleanup(afterWrites(props.transport, () => void load.load()));
 
-  const palletGetLabels = createRecordLabels(async (key) => {
+  const palletGetLabels = createRecordLabels(props.transport, async (key) => {
     const request = writeMember({}, ["id"], key) as PalletGetRequest;
     const outcome = await palletGet(props.transport, [request]);
     if (outcome.status !== "completed") {
@@ -148,7 +148,7 @@ export function PalletQuantityQueryTable(props: PalletQuantityQueryTableProps) {
     const text = outcome.value.palletCode;
     return text == null ? null : String(text);
   });
-  const productGetLabels = createRecordLabels(async (key) => {
+  const productGetLabels = createRecordLabels(props.transport, async (key) => {
     const request = writeMember({}, ["id"], key) as ProductGetRequest;
     const outcome = await productGet(props.transport, [request]);
     if (outcome.status !== "completed") {

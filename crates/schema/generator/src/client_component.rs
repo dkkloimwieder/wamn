@@ -552,7 +552,7 @@ fn emit_record_labels(
         runtime.insert("writeMember");
         writeln!(
             source,
-            "  const {name} = createRecordLabels(async (key) => {{\n    const request = writeMember({{}}, {}, key) as {stem}Request;\n    const outcome = await {call}(props.transport, [request]);\n    if (outcome.status !== \"completed\") {{\n      return null;\n    }}\n    const text = outcome.value.{};\n    return text == null ? null : String(text);\n  }});",
+            "  const {name} = createRecordLabels(props.transport, async (key) => {{\n    const request = writeMember({{}}, {}, key) as {stem}Request;\n    const outcome = await {call}(props.transport, [request]);\n    if (outcome.status !== \"completed\") {{\n      return null;\n    }}\n    const text = outcome.value.{};\n    return text == null ? null : String(text);\n  }});",
             member_literal(resolved.key_input),
             crate::client_ts::to_camel(resolved.display_field)
         )

@@ -10,9 +10,9 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import type { JsonValue, Outcome, Transport, WireRequest } from "@wamn/web-runtime";
 
-import { WidgetCreateForm } from "../fixture/components/widget.js";
+import { WidgetCreateForm, WidgetQueryTable } from "../fixture/components/widget.js";
 import { WidgetMakerGetDetail, WidgetMakerListTable } from "../fixture/components/widget_maker.js";
-import { MAKER } from "../stubs/index.js";
+import { MAKER, WIDGET } from "../stubs/index.js";
 
 afterEach(cleanup);
 
@@ -28,8 +28,18 @@ function stub() {
     invoke: (request: WireRequest) => {
       sent.push(request);
       const maker = { id: MAKER, name, edit_version: "1", created_at: "2026-09-25T00:00:00Z" };
+      const widget = {
+        id: WIDGET,
+        code: "standard",
+        maker_id: MAKER,
+        note: null,
+        edit_version: "1",
+        created_at: "2026-09-25T00:00:00Z",
+      };
       const reply: Outcome<JsonValue> = request.operation.includes("widget-maker/get")
         ? { status: "completed", value: maker }
+        : request.operation.includes("widget/query")
+          ? { status: "completed", value: { item: [widget], next_cursor: null } }
         : request.operation.includes("widget-maker/list")
           ? { status: "completed", value: { rows: [maker] } }
           : { status: "completed", value: { item: [maker], nextCursor: null } };
@@ -77,5 +87,15 @@ describe("a write on the page's transport", () => {
     await waitFor(() => expect(reads("widget-maker/query")).toBe(2));
     unmount();
     expect(listeners.size).toBe(0);
+  });
+
+  it("makes a table's label cell read the record it names again", async () => {
+    const { transport, write, reads } = stub();
+    render(() => <WidgetQueryTable transport={transport} />);
+    await waitFor(() => expect(screen.getByText("Northwind")).toBeDefined());
+    expect(reads("widget-maker/get")).toBe(1);
+    write("Southwind");
+    await waitFor(() => expect(screen.getByText("Southwind")).toBeDefined());
+    expect(reads("widget-maker/get")).toBe(2);
   });
 });
