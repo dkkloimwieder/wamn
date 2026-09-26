@@ -12,10 +12,12 @@ async-trait = { workspace = true }
 rusqlite = { workspace = true }
 serde_json = { workspace = true }
 # Each trait call runs the blocking SQLite call on tokio's blocking pool.
-tokio = { workspace = true, features = ["rt"] }
+# A watch channel tells the owner when the last clone drops and the file
+# closes.
+tokio = { workspace = true, features = ["rt", "sync"] }
 
 [dev-dependencies]
-tokio = { workspace = true, features = ["macros", "rt"] }
+tokio = { workspace = true, features = ["macros", "rt", "time"] }
 
 [lints]
 workspace = true

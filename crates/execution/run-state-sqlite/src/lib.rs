@@ -4,7 +4,8 @@
 //! the trait, so `wamn-run-state` stays adapter-free and the cloud links no
 //! SQLite. [`SqliteIntentStore::transact`] and [`finish_in`] let the owner of
 //! the file keep its own tables beside the intents, and write them in the
-//! transaction that finishes an intent.
+//! transaction that finishes an intent. [`SqliteIntentStore::closed`] tells the
+//! owner when the last clone drops and the file closes.
 //!
 //! The file runs in WAL mode with `synchronous=FULL`, so a committed `begin` is
 //! on disk before the export runs. `locking_mode=EXCLUSIVE` holds the file for
@@ -52,7 +53,29 @@ CREATE TABLE IF NOT EXISTS intents (
 /// An [`IntentStore`] over one SQLite file.
 #[derive(Clone, Debug)]
 pub struct SqliteIntentStore {
-    connection: Arc<Mutex<Connection>>,
+    writer: Arc<Writer>,
+}
+
+/// The one connection, shared by every clone of the store.
+#[derive(Debug)]
+struct Writer {
+    // Declared first, so the file closes before `closed` drops.
+    connection: Mutex<Connection>,
+    /// Never sent. Its drop tells each [`StoreClosed`] that the file closed.
+    closed: tokio::sync::watch::Sender<()>,
+}
+
+/// Resolves when the last clone of a [`SqliteIntentStore`] drops and its file
+/// closes, so another process can open the file.
+#[derive(Debug)]
+pub struct StoreClosed(tokio::sync::watch::Receiver<()>);
+
+impl StoreClosed {
+    /// Wait until the file closes.
+    pub async fn wait(mut self) {
+        // The sender never sends, so this returns only when it drops.
+        let _ = self.0.changed().await;
+    }
 }
 
 impl SqliteIntentStore {
@@ -89,8 +112,17 @@ impl SqliteIntentStore {
             .execute_batch(&format!("BEGIN EXCLUSIVE; {SCHEMA} COMMIT;"))
             .map_err(&storage)?;
         Ok(Self {
-            connection: Arc::new(Mutex::new(connection)),
+            writer: Arc::new(Writer {
+                connection: Mutex::new(connection),
+                closed: tokio::sync::watch::Sender::new(()),
+            }),
         })
+    }
+
+    /// A handle that resolves when the last clone of this store drops and the
+    /// file closes. It keeps no clone of the store.
+    pub fn closed(&self) -> StoreClosed {
+        StoreClosed(self.writer.closed.subscribe())
     }
 
     /// Run `call` on the writer connection, on tokio's blocking pool.
@@ -99,9 +131,9 @@ impl SqliteIntentStore {
         operation: &'static str,
         call: impl FnOnce(&mut Connection) -> Result<T, StoreError> + Send + 'static,
     ) -> Result<T, StoreError> {
-        let connection = Arc::clone(&self.connection);
+        let writer = Arc::clone(&self.writer);
         tokio::task::spawn_blocking(move || {
-            let mut connection = connection.lock().map_err(|_| {
+            let mut connection = writer.connection.lock().map_err(|_| {
                 StoreError::new(StoreErrorKind::Storage, operation, "writer lock poisoned")
             })?;
             call(&mut connection)

@@ -19,7 +19,7 @@ use wamn_run_state::operator_action::OperatorActionBasis;
 use wamn_run_state_sqlite::SqliteIntentStore;
 
 use support::{
-    HOST, OPERATION, ORG, PACKAGE, PATH, ROLE, bundle, closed, config, key, release, session, start,
+    HOST, OPERATION, ORG, PACKAGE, PATH, ROLE, bundle, config, key, release, session, start,
 };
 
 /// The capture time of every item.
@@ -215,7 +215,6 @@ async fn a_write_logs_one_intent_per_item_and_runs_only_new_items() {
     let conflict: Value = serde_json::from_str(&conflict).expect("a JSON body");
     assert_eq!(conflict[0]["error"]["code"], "idempotency_conflict");
     host.stop().await.expect("the edge stops");
-    closed(&db).await;
 
     let command = |args: &[&str]| args.iter().map(|arg| (*arg).to_owned()).collect::<Vec<_>>();
     let listed = intents::run(&command(&["list"]), &db)

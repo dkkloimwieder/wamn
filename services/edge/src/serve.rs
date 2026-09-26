@@ -17,7 +17,7 @@ use wamn_engine::engine::build_engine;
 use wamn_engine::expected_router::expected_host_router;
 use wamn_engine::flow_http_routing::{FlowHttpRouting, RouteInFlightLimit};
 use wamn_engine::router_delivery::RouterDelivery;
-use wamn_run_state_sqlite::SqliteIntentStore;
+use wamn_run_state_sqlite::{SqliteIntentStore, StoreClosed};
 use wamn_session::file_keys::FileKeys;
 use wamn_session::verifier::SessionVerifier;
 use wash_runtime::host::http::Ingress;
@@ -48,6 +48,8 @@ pub struct EdgeHost {
     device: Option<DeviceLoop>,
     forward: Option<Forward>,
     samples: SampleStore,
+    /// Resolves when the last handle of the run-state file drops.
+    closed: StoreClosed,
 }
 
 impl EdgeHost {
@@ -73,16 +75,31 @@ impl EdgeHost {
 
     /// Refuse new requests and frames, let the device call in flight finish,
     /// drop a forward in flight, then stop the host and its workloads. The
-    /// platform key makes the repeat of a dropped forward harmless.
+    /// platform key makes the repeat of a dropped forward harmless. Returns
+    /// after the run-state file closes, so another process can open it.
     pub async fn stop(self) -> anyhow::Result<()> {
-        let _ = self.stopping.send(true);
-        if let Some(device) = self.device {
+        let Self {
+            host,
+            stopping,
+            device,
+            forward,
+            samples,
+            closed,
+            ..
+        } = self;
+        let _ = stopping.send(true);
+        if let Some(device) = device {
             device.join().await;
         }
-        if let Some(forward) = self.forward {
+        if let Some(forward) = forward {
             forward.join().await;
         }
-        self.host.stop().await
+        let stopped = host.stop().await;
+        // A request task of the stopped host can hold the delivery, and with
+        // it the store, a moment longer.
+        drop(samples);
+        closed.wait().await;
+        stopped
     }
 }
 
@@ -100,6 +117,7 @@ pub async fn serve(config: EdgeConfig) -> anyhow::Result<EdgeHost> {
     let verifier = SessionVerifier::new(keys, &config.session.org, &config.session.audience)
         .context("bind the session scope")?;
     let intents = SqliteIntentStore::open(&config.store.db).context("open the run-state file")?;
+    let closed = intents.closed();
     let samples = SampleStore::open(intents.clone())
         .await
         .context("open the samples table")?;
@@ -193,6 +211,7 @@ pub async fn serve(config: EdgeConfig) -> anyhow::Result<EdgeHost> {
         device,
         forward,
         samples,
+        closed,
     })
 }
 

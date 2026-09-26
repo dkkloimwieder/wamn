@@ -203,6 +203,28 @@ async fn a_finished_intent_does_not_resolve() {
 
 /// The kill test runs this test binary again as a child that begins one intent.
 #[tokio::test]
+async fn closed_resolves_when_the_last_clone_drops() {
+    let path = database("closed");
+    let store = SqliteIntentStore::open(&path).expect("open");
+    let clone = store.clone();
+    let mut closed = Box::pin(store.closed().wait());
+    drop(store);
+    assert!(
+        tokio::time::timeout(std::time::Duration::from_millis(50), &mut closed)
+            .await
+            .is_err(),
+        "a live clone keeps the file open"
+    );
+    assert!(
+        SqliteIntentStore::open(&path).is_err(),
+        "the clone holds the file"
+    );
+    drop(clone);
+    closed.await;
+    SqliteIntentStore::open(&path).expect("the closed file opens at once");
+}
+
+#[tokio::test]
 async fn reopen_after_kill_finds_the_uncertain_intent() {
     let path = database("killed");
     let mut child = Command::new(std::env::current_exe().expect("the test binary"))

@@ -143,18 +143,6 @@ pub fn config(directory: &Path, digest: String) -> EdgeConfig {
     }
 }
 
-/// Wait until the stopped edge closes its run-state file at `db`.
-/// `EdgeHost::stop` can return before the last store handle drops (`wamn-qrsr`).
-pub async fn closed(db: &Path) {
-    for _ in 0..100 {
-        if wamn_run_state_sqlite::SqliteIntentStore::open(db).is_ok() {
-            return;
-        }
-        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-    }
-    panic!("the stopped edge held {} for 10 seconds", db.display());
-}
-
 pub async fn start(config: EdgeConfig) -> EdgeHost {
     Box::pin(serve(config))
         .await
