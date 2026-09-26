@@ -8,6 +8,7 @@ pub mod activation;
 pub mod config;
 #[cfg(target_os = "linux")]
 pub mod coordinator;
+pub mod edge_bundle;
 pub mod environment;
 #[cfg(target_os = "linux")]
 mod native_tui;

@@ -1,0 +1,42 @@
+package edge-device:sample@1.0.0;
+
+interface read {
+  use wamn:node/types@0.1.0.{emission, node-context, node-error};
+
+  record read-request {
+    captured-at: string,
+    frame: string,
+  }
+
+  record invalid-input-detail {
+    field: string,
+  }
+
+  record permission-denied-detail {
+    operation: string,
+  }
+
+  variant read-error {
+    invalid-input(invalid-input-detail),
+    permission-denied(permission-denied-detail),
+    internal-error,
+  }
+
+  record read-item {
+    request-id: string,
+    input: result<read-request, invalid-input-detail>,
+  }
+
+  record read-result {
+    frame: string,
+    captured-at: string,
+  }
+
+  record read-outcome {
+    request-id: string,
+    outcome: result<read-result, read-error>,
+  }
+
+  run: async func(ctx: node-context, input: list<read-item>) -> result<list<read-outcome>, node-error>;
+  run-json: async func(ctx: node-context, input: string) -> result<emission, node-error>;
+}

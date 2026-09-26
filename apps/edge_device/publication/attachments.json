@@ -1,0 +1,62 @@
+{
+  "sample-read-http": {
+    "kind": "http",
+    "package-id": "edge_device",
+    "component": "device",
+    "operation": "edge-device:sample/read@1.0.0",
+    "definition-hash": "sha256:e7f8dfa8f364078553452bf72c235598929b9f429ded0323326ca30a0d1bc55f",
+    "definition": {
+      "id": "sample-read-http",
+      "kind": "http",
+      "route": {
+        "path": "/sample/read"
+      },
+      "raw-body-bytes": {
+        "maximum": 1048576
+      },
+      "input-schema": {
+        "type": "array",
+        "minItems": 1,
+        "maxItems": 100,
+        "items": {
+          "type": "object",
+          "required": [
+            "request_id",
+            "value"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "request_id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "value": {
+              "type": "object",
+              "required": [
+                "frame",
+                "captured_at"
+              ],
+              "additionalProperties": false,
+              "properties": {
+                "frame": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "captured_at": {
+                  "type": "string",
+                  "format": "date-time"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "auth-policy": {
+      "modes": [
+        "session"
+      ]
+    },
+    "registered-operation": "edge-device:sample/read@1.0.0"
+  }
+}

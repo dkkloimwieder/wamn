@@ -5875,7 +5875,6 @@ dependencies = [
  "rustls-native-certs",
  "serde",
  "serde_json",
- "sha2 0.11.0",
  "tokio",
  "tokio-rustls",
  "toml 0.9.12+spec-1.1.0",
@@ -5888,7 +5887,6 @@ dependencies = [
  "wamn-run-state-sqlite",
  "wamn-session",
  "wash-runtime",
- "wat",
 ]
 
 [[package]]
@@ -6033,6 +6031,20 @@ dependencies = [
 
 [[package]]
 name = "wamn-generated-client-acme-receiving-tui"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "rust_decimal",
+ "serde_json",
+ "tokio",
+ "uuid",
+ "wamn-client",
+ "wamn-client-terminal",
+ "wamn-client-tui",
+]
+
+[[package]]
+name = "wamn-generated-device-tui"
 version = "0.1.0"
 dependencies = [
  "chrono",

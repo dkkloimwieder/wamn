@@ -12,6 +12,7 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 
 use anyhow::Context as _;
+use wamn_catalog::edge_bundle::file_digest;
 use wamn_engine::engine::build_engine;
 use wamn_engine::expected_router::expected_host_router;
 use wamn_engine::flow_http_routing::{FlowHttpRouting, RouteInFlightLimit};
@@ -32,7 +33,7 @@ use crate::config::EdgeConfig;
 use crate::delivery::EdgeDelivery;
 use crate::device::{self, DeviceLoop};
 use crate::forward::{self, Forward};
-use crate::release::{EdgeRelease, file_digest};
+use crate::release::EdgeRelease;
 use crate::samples::SampleStore;
 
 /// The workload that runs the route guest.

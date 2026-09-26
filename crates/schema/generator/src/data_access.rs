@@ -159,8 +159,8 @@ impl DataAccessOverlay {
             || !self.package.contains('@')
             || self.manifest_sha256.len() != "sha256:".len() + 64
             || self.contract.is_empty()
-            || self.schemas.is_empty()
-            || self.relations.is_empty()
+            // A package with no SQL has neither.
+            || self.schemas.is_empty() != self.relations.is_empty()
         {
             return Err(GenerateError::new(
                 GenerateErrorKind::InvalidManifest,
@@ -468,9 +468,9 @@ pub fn derive_effective_data_access(
 pub fn render_effective_data_access_sql(
     effective: &EffectiveDataAccess,
 ) -> Result<String, GenerateError> {
+    // Packages with no SQL contribute neither, and render no SQL.
     if effective.role != DATA_ACCESS_ROLE
-        || effective.schemas.is_empty()
-        || effective.relations.is_empty()
+        || effective.schemas.is_empty() != effective.relations.is_empty()
     {
         return Err(GenerateError::new(
             GenerateErrorKind::InvalidManifest,
@@ -829,6 +829,10 @@ pub(crate) fn application_schemas(
         .collect::<BTreeSet<_>>()
         .into_iter()
         .collect::<Vec<_>>();
+    // A package with no SQL owns no schema.
+    if schemas.is_empty() && manifest.declares_no_sql() {
+        return Ok(schemas);
+    }
     if schemas.is_empty() || !schemas.iter().all(|schema| valid_identifier(schema)) {
         return Err(GenerateError::new(
             GenerateErrorKind::InvalidManifest,

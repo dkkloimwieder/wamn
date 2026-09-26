@@ -34,6 +34,16 @@ pub(super) fn validate_migration_policy(
     directory: &PackageDirectory,
     plan: &wamn_schema_control::PackageMigrationPlan,
 ) -> anyhow::Result<MigrationPolicyPlan> {
+    // A package with no SQL owns no relation and ships no migration.
+    if plan.models.is_empty()
+        && plan.cdc_excluded_relations.is_empty()
+        && directory.migrations.is_empty()
+    {
+        return Ok(MigrationPolicyPlan {
+            mutations: Vec::new(),
+            deferred: None,
+        });
+    }
     ensure!(
         !plan.models.is_empty(),
         "package-migration-schema-missing: manifest must map at least one model to an application schema"

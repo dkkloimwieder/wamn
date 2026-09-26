@@ -10,6 +10,7 @@ resolver = "2"
 members = [
     "client_acme_receiving/component",
     "client_acme_receiving/participant",
+    "edge_device/component",
     "edge_samples/component",
     "platform_fixture/component",
     "platform_fixture_overlay/component",
@@ -46,6 +47,7 @@ exclude = [
     "wamn_receiving/generated/receiving-tui",
     "wamn_wms/generated/wms-tui",
     "platform_fixture/generated/fixture-tui",
+    "edge_device/generated/device-tui",
     "edge_samples/generated/samples-tui",
     "platform_fixture_overlay/generated/fixture_overlay-tui",
     "client_acme_receiving/generated/client_acme_receiving-tui",

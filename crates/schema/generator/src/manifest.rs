@@ -563,6 +563,20 @@ impl PackageManifest {
         }
         Ok(manifest)
     }
+
+    /// Whether the package declares no SQL: no model, relation, connection or
+    /// base dependency, and only stateless commands. Such a package needs no
+    /// database, and an edge box can run its component.
+    pub fn declares_no_sql(&self) -> bool {
+        self.models.is_empty()
+            && self.internal_relations.is_empty()
+            && self.connections.is_empty()
+            && self.base_dependencies.is_empty()
+            && self
+                .custom_operations
+                .values()
+                .all(|operation| operation.idempotent_by == Some(CommandIdempotence::Stateless))
+    }
 }
 
 /// Validate and return the manifest's exact package-local operation vocabulary.
@@ -838,7 +852,7 @@ fn validate_component_groups(
             ));
         }
         validate_identifier(name, "component")?;
-        if component.connections.is_empty() {
+        if component.connections.is_empty() && !manifest.declares_no_sql() {
             return Err(GenerateError::new(
                 GenerateErrorKind::InvalidComponent,
                 format!("{name} must declare connections"),

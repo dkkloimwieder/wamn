@@ -12,6 +12,7 @@
 
 mod component_library;
 mod connection;
+pub mod edge_bundle;
 mod package;
 mod serving_manifest;
 mod wiring;

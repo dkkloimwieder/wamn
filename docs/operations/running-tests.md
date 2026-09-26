@@ -118,14 +118,17 @@ WAMN_FLOW_HTTP_COMPONENT="$PWD/apps/target/wasm32-wasip2/debug/http_route.wasm" 
 ```
 
 Run the edge route, device and forward tests.
-They need only the `http-route` guest: they encode their own application component and sign their own sessions.
+They need the edge release bundle of [`apps/edge_device`](../../apps/edge_device/README.md), which carries its component and the `http-route` guest.
+The tests sign their own sessions.
 The device test writes scale frames into a pseudo-terminal pair, which is its virtual serial port.
 The forward test runs the `wamn-edge` binary as a child, kills it with SIGKILL twice, and serves an HTTPS platform with its own certificate authority.
 
+To write the bundle, start a [developer session](development-loop.md) with `--package` and `--overlay-root` set to `apps/edge_device`.
+When the session serves its route, write the bundle into a new directory, then stop the session:
+
 ```bash
-cargo build --manifest-path apps/Cargo.toml --locked --offline \
-  --target wasm32-wasip2 -p http-route
-WAMN_FLOW_HTTP_COMPONENT="$PWD/apps/target/wasm32-wasip2/debug/http_route.wasm" \
+wamn dev edge-bundle --config <environment>/dev.json --out <bundle directory>
+WAMN_EDGE_DEVICE_BUNDLE=<bundle directory> \
   cargo test --locked --offline -p wamn-edge --test route --test device --test forward -- --ignored \
   --skip samples_reach_a_live_platform
 ```
@@ -138,13 +141,14 @@ Write the token of `route-caller-pat.json` in the environment directory to a fil
 Then run the test with the proxy address and the certificate authority of the proxy:
 
 ```bash
-WAMN_FLOW_HTTP_COMPONENT="$PWD/apps/target/wasm32-wasip2/debug/http_route.wasm" \
+WAMN_EDGE_DEVICE_BUNDLE=<bundle directory> \
 WAMN_EDGE_LIVE_URL="https://127.0.0.1:<proxy port>/sample/record" \
 WAMN_EDGE_LIVE_TOKEN_FILE=<token file> WAMN_EDGE_LIVE_CA_FILE=<proxy CA file> \
   cargo test --locked --offline -p wamn-edge --test forward \
   samples_reach_a_live_platform_once_across_kills -- --ignored --exact --nocapture
 ```
 
+The edge runs the `sample.read` command of the `edge_device` bundle on each frame, and forwards the sample.
 The test sends each of its two samples twice, and prints the tag of its frames.
 Count the rows of that tag in `edge_samples.sample` of the session's target database: the count must be 2.
 

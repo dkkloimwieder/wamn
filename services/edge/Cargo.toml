@@ -41,7 +41,6 @@ anyhow = { workspace = true }
 async-trait = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
-sha2 = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "signal", "sync", "time"] }
 tracing = { workspace = true }
 # RUST_LOG selects the log level.
@@ -52,8 +51,7 @@ tokio = { workspace = true, features = ["io-util", "macros", "net", "rt"] }
 # The release tests build a manifest from parts, which wamn-catalog gates
 # behind `test-util`. Never add this feature to the normal dependency.
 wamn-catalog = { workspace = true, features = ["test-util"] }
-# The route test encodes its guest from WAT and signs sessions with a file key.
-wat = "=1.254.0"
+# The route test signs sessions with a file key.
 base64 = { workspace = true }
 ring = { workspace = true }
 # The device test writes frames into a pseudo-terminal pair.

@@ -5,16 +5,15 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU32, Ordering};
 
 use serde_json::json;
+use wamn_catalog::edge_bundle::{
+    BUNDLE_FILE_NAME, COMPONENTS_FILE_NAME, GRANTS_FILE_NAME, INGRESS_FILE_NAME, file_digest,
+};
 use wamn_catalog::{
     AdmittedComponent, AdmittedComponentOperation, ArtifactHash, ComponentPackageScope,
     EffectiveReleaseId, PackageCoordinate, RELEASE_MANIFEST_FILE_NAME, ServingComponent,
     ServingComponentOperation, ServingManifest, ServingRelease,
 };
-use wamn_edge::grants::GRANTS_FILE_NAME;
-use wamn_edge::release::{
-    BUNDLE_FILE_NAME, COMPONENTS_FILE_NAME, EdgeRelease, EdgeReleaseErrorKind, INGRESS_FILE_NAME,
-    file_digest,
-};
+use wamn_edge::release::{EdgeRelease, EdgeReleaseErrorKind};
 
 const TENANT: &str = "t1";
 const PACKAGE: &str = "scale";

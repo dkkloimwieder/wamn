@@ -216,14 +216,16 @@ fn application_role_sql(schemas: &[String], grants: &str) -> String {
     // Plan with the SAME search_path the guest runs under, or an unqualified
     // relation the package owns cannot be resolved and every statement
     // referencing it fails to plan.
+    // A package with no SQL has no schema, and plans nothing under public.
     let search_path = schemas
         .iter()
         .map(|schema| quote(schema))
+        .chain(["public".to_owned()])
         .collect::<Vec<_>>()
         .join(", ");
     writeln!(
         sql,
-        "SET LOCAL search_path TO {search_path}, public;\nSET LOCAL ROLE {role};"
+        "SET LOCAL search_path TO {search_path};\nSET LOCAL ROLE {role};"
     )
     .expect("writing SQL to a String cannot fail");
     sql

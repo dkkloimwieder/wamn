@@ -58,6 +58,8 @@ enum DevEnvironmentCommand {
     Reset(wamn_ctl::dev::target_database::DevResetArgs),
     /// Execute selected correctness cases through the shared owned-fixture runner.
     CleanCheck(wamn_ctl::delivery_verbs::CheckChangesArgs),
+    /// Write the edge release bundle of the release that the loop published.
+    EdgeBundle(wamn_ctl::dev::edge_bundle::DevEdgeBundleArgs),
 }
 
 #[cfg(target_os = "linux")]
@@ -83,6 +85,7 @@ async fn main() -> anyhow::Result<()> {
             Some(DevEnvironmentCommand::CleanCheck(args)) => {
                 wamn_ctl::delivery_verbs::check_changes(args).await
             }
+            Some(DevEnvironmentCommand::EdgeBundle(args)) => wamn_ctl::dev::edge_bundle::run(&args),
             None => {
                 let run = dev
                     .run

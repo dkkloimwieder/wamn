@@ -18,37 +18,20 @@
 //! not match.
 
 use std::collections::BTreeSet;
-use std::fmt::{self, Write as _};
+use std::fmt;
 use std::path::Path;
 use std::sync::Arc;
 
-use serde::Deserialize;
-use sha2::{Digest as _, Sha256};
+use wamn_catalog::edge_bundle::{
+    BUNDLE_FILE_NAME, BUNDLE_FORMAT, COMPONENTS_FILE_NAME, EdgeBundle, GRANTS_FILE_NAME,
+    INGRESS_FILE_NAME, file_digest,
+};
 use wamn_catalog::{AdmittedComponent, RELEASE_MANIFEST_FILE_NAME};
 use wamn_engine::artifact_source::{ArtifactSource as _, LocalComponentSource};
 use wamn_engine::operation::native_workload::NativeComponent;
 use wamn_engine::release_manifest::{LoadedRelease, validate_component_in_release};
 
-use crate::grants::{GRANTS_FILE_NAME, Grants};
-
-/// The bundle file name inside a release bundle directory.
-pub const BUNDLE_FILE_NAME: &str = "edge-release.json";
-/// The component facts file name inside a release bundle directory.
-pub const COMPONENTS_FILE_NAME: &str = "components.json";
-/// The ingress guest file name inside a release bundle directory.
-pub const INGRESS_FILE_NAME: &str = "flow-http.wasm";
-/// The one bundle format this edge reads.
-pub const BUNDLE_FORMAT: u32 = 1;
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct Bundle {
-    format: u32,
-    manifest: String,
-    components: String,
-    grants: String,
-    ingress: String,
-}
+use crate::grants::Grants;
 
 /// A release, its component facts, its grants and its ingress guest, each
 /// checked against the pinned bundle digest.
@@ -85,7 +68,7 @@ impl EdgeRelease {
     /// `bundle_digest`, and read every component body once.
     pub async fn load(directory: &Path, bundle_digest: &str) -> Result<Self, EdgeReleaseError> {
         let bundle_bytes = read_pinned(directory, BUNDLE_FILE_NAME, bundle_digest)?;
-        let bundle: Bundle = serde_json::from_slice(&bundle_bytes)
+        let bundle: EdgeBundle = serde_json::from_slice(&bundle_bytes)
             .map_err(|error| rejected(format!("{BUNDLE_FILE_NAME} is not a bundle: {error}")))?;
         if bundle.format != BUNDLE_FORMAT {
             return Err(rejected(format!(
@@ -223,17 +206,6 @@ fn read_pinned(directory: &Path, name: &str, pinned: &str) -> Result<Vec<u8>, Ed
         ));
     }
     Ok(bytes)
-}
-
-/// The `sha256:<hex>` digest of exact file bytes.
-pub fn file_digest(bytes: &[u8]) -> String {
-    let digest = Sha256::digest(bytes);
-    let mut output = String::with_capacity("sha256:".len() + digest.len() * 2);
-    output.push_str("sha256:");
-    for byte in digest {
-        write!(&mut output, "{byte:02x}").expect("writing to a string is infallible");
-    }
-    output
 }
 
 /// Stable classification for a refused edge release.

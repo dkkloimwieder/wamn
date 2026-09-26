@@ -1,9 +1,9 @@
 //! The device loop reads frames from a pseudo-terminal, the virtual serial
 //! port of spec 4.10, and stores one sample for each frame.
 //!
-//! The test needs the built guest, as the route tests do:
-//! `WAMN_FLOW_HTTP_COMPONENT` names `http-route` built for `wasm32-wasip2`,
-//! because `serve` starts the ingress (docs/operations/running-tests.md).
+//! The test needs the `apps/edge_device` bundle, as the route tests do:
+//! `WAMN_EDGE_DEVICE_BUNDLE` names its directory
+//! (docs/operations/running-tests.md).
 
 mod support;
 
@@ -20,7 +20,7 @@ use wamn_edge::samples::{Sample, SampleStore};
 use wamn_run_state::IntentStore as _;
 use wamn_run_state_sqlite::SqliteIntentStore;
 
-use support::{ATTACHMENT, PRINCIPAL, bundle, config, ingress, key, start};
+use support::{ATTACHMENT, PRINCIPAL, ROLE, bundle, config, key, start};
 
 /// A pseudo-terminal pair: the controller that the test writes, and the path
 /// of the device that the edge reads.
@@ -48,20 +48,21 @@ async fn pending(samples: &SampleStore, count: usize) -> Vec<Sample> {
     panic!("the device loop stored fewer than {count} samples in 30 seconds");
 }
 
-/// Two frames give two calls, two finished intents and two samples. A frame
-/// longer than `max_frame` gives none, and a trailing carriage return is
-/// dropped.
+/// Two frames give two calls, two finished intents and two samples, and the
+/// device component trims each frame. A frame longer than `max_frame` gives
+/// none, a trailing carriage return is dropped, and a blank frame, which the
+/// component refuses, stores no sample.
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "requires: WAMN_FLOW_HTTP_COMPONENT"]
+#[ignore = "requires: WAMN_EDGE_DEVICE_BUNDLE"]
 async fn each_frame_is_one_call_one_intent_and_one_sample() {
     let (_, public) = key("key-one", 1);
-    let (directory, digest) = bundle("device", &ingress(), &public);
+    let (directory, digest) = bundle("device", &public);
     let (mut controller, device) = pseudo_terminal();
     let mut config = config(&directory, digest);
     config.device = Some(DeviceConfig {
         attachment: ATTACHMENT.into(),
         principal: PRINCIPAL.into(),
-        role: "device".into(),
+        role: ROLE.into(),
         serial: SerialConfig {
             path: device,
             baud: 9600,
@@ -70,7 +71,7 @@ async fn each_frame_is_one_call_one_intent_and_one_sample() {
     });
     let host = start(config).await;
     controller
-        .write_all(b"0123456789ABCDEFGHIJ\n12.5 kg\r\n13.0 kg\n")
+        .write_all(b"0123456789ABCDEFGHIJ\n12.5 kg\r\n   \n  13.0 kg\n")
         .expect("send the frames");
     let stored = pending(host.samples(), 2).await;
     assert_eq!(
@@ -92,7 +93,7 @@ async fn each_frame_is_one_call_one_intent_and_one_sample() {
         assert_eq!(
             sample.body,
             json!({"frame": sample.body["frame"], "captured_at": sample.captured_at}),
-            "the echo guest returns its input value as the sample"
+            "the device component returns the frame and its capture time"
         );
         assert_eq!(sample.attempts, 0);
     }
@@ -101,7 +102,7 @@ async fn each_frame_is_one_call_one_intent_and_one_sample() {
         SqliteIntentStore::open(directory.join("edge.db")).expect("open with the edge stopped");
     assert!(
         store.uncertain(10).await.expect("list").is_empty(),
-        "every device intent finished"
+        "every device intent finished, the refused blank frame too"
     );
     let samples = SampleStore::open(store).await.expect("open the samples");
     assert_eq!(

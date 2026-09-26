@@ -270,6 +270,53 @@ fn stateless_idempotence_is_only_for_a_command_without_sql() {
     );
 }
 
+/// A package with no model, relation or connection and only stateless commands
+/// declares no SQL, and it generates with an empty data-access contribution
+/// (`wamn-10nk`). A package that declares a connection still needs a model.
+#[test]
+fn a_package_with_no_sql_generates_without_a_model() {
+    let mut manifest = json!({
+        "package": {"id": "fixture_device", "version": "1.0.0"},
+        "required_platform_policy_contract": {"id": "fixture_device_data_access", "state": "satisfied"},
+        "models": {},
+        "custom_operations": {"widget.inspect": {
+            "kind": "command",
+            "visibility": "public",
+            "permission": "widget.inspect",
+            "idempotent_by": "stateless",
+            "input": {"fields": [
+                {"path": "request_id", "type": "text", "nullable": false},
+                {"path": "value.note", "type": "text", "nullable": false}
+            ]},
+            "result": {"class": "one", "fields": [
+                {"path": "note", "type": "text", "nullable": false}
+            ]},
+            "errors": ["invalid_input", "permission_denied", "internal_error"],
+            "error_details": {}
+        }},
+        "connections": [],
+        "components": {"device": {"connections": []}}
+    });
+    let empty = CatalogIr::new(Vec::new());
+    let package = fixture::try_generate_with_sql(&empty, &manifest, &[])
+        .expect("a package with no SQL generates");
+    let access = artifact(&package, "generated/platform-policy/data-access.json");
+    assert_eq!(access["schemas"], json!([]));
+    assert_eq!(access["relations"], json!([]));
+
+    manifest["connections"] = json!(["postgres"]);
+    manifest["components"]["device"]["connections"] = json!(["postgres"]);
+    let error = fixture::try_generate_with_sql(&empty, &manifest, &[])
+        .expect_err("a package with a connection and no model generated");
+    assert_eq!(error.kind(), GenerateErrorKind::InvalidManifest);
+    assert!(
+        error
+            .to_string()
+            .contains("manifest must declare at least one model"),
+        "{error}"
+    );
+}
+
 #[test]
 fn internal_relations_are_not_models_and_their_vocabulary_is_closed() {
     let package = fixture::generate_fixture();

@@ -7,20 +7,11 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use serde::Deserialize;
 use wamn_catalog::ServingManifest;
+use wamn_catalog::edge_bundle::{EdgeGrants, GRANTS_FILE_NAME};
 use wamn_session::token::is_role_slug;
 
 use crate::release::{EdgeReleaseError, EdgeReleaseErrorKind};
-
-/// The grants file name inside a release bundle directory.
-pub const GRANTS_FILE_NAME: &str = "grants.json";
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct GrantsDocument {
-    roles: BTreeMap<String, BTreeSet<String>>,
-}
 
 /// The permissions of each role, checked against one release.
 #[derive(Clone, Debug)]
@@ -34,7 +25,7 @@ impl Grants {
     /// Refuses a role that is not a canonical slug and a permission that no
     /// operation in the release requires.
     pub fn parse(bytes: &[u8], manifest: &ServingManifest) -> Result<Self, EdgeReleaseError> {
-        let document: GrantsDocument = serde_json::from_slice(bytes).map_err(|error| {
+        let document: EdgeGrants = serde_json::from_slice(bytes).map_err(|error| {
             rejected(format!(
                 "{GRANTS_FILE_NAME} is not a grants document: {error}"
             ))

@@ -849,13 +849,20 @@ pub async fn spawn_journey_management_gate(
 }
 
 /// The identity every run of this environment activates under. Its schema is
-/// the one the package sources declare for their models.
+/// the one the package sources declare for their models, or the id of a
+/// package with no SQL.
 pub fn dev_activation_identity(
     package_sources: &[PathBuf],
 ) -> anyhow::Result<DevActivationIdentity> {
     let mut schemas = std::collections::BTreeSet::new();
     for root in package_sources {
         let manifest = super::config::read_package_manifest(root)?;
+        // A package with no SQL declares no model, and its host still names
+        // one schema: the package's own id.
+        if manifest.declares_no_sql() {
+            schemas.insert(manifest.package.id);
+            continue;
+        }
         schemas.extend(manifest.models.into_values().map(|model| model.schema));
     }
     let mut schemas = schemas.into_iter();

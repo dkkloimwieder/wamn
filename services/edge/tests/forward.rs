@@ -4,9 +4,9 @@
 //!
 //! The test runs the `wamn-edge` binary as a child with a configuration file,
 //! a pseudo-terminal as its device, and an HTTPS platform in the test that
-//! checks the device PAT and applies each key once. It needs the built guest,
-//! as the route tests do: `WAMN_FLOW_HTTP_COMPONENT` names `http-route` built
-//! for `wasm32-wasip2` (docs/operations/running-tests.md). The live test sends
+//! checks the device PAT and applies each key once. It needs the
+//! `apps/edge_device` bundle, as the route tests do: `WAMN_EDGE_DEVICE_BUNDLE`
+//! names its directory (docs/operations/running-tests.md). The live test sends
 //! to a real platform route instead, and needs its address, PAT and authority.
 
 mod support;
@@ -29,7 +29,7 @@ use tokio::sync::Notify;
 use tokio_rustls::TlsAcceptor;
 use wamn_edge::refusals;
 
-use support::{ATTACHMENT, AUDIENCE, HOST, ISSUER, ORG, PRINCIPAL, bundle, ingress, key};
+use support::{ATTACHMENT, AUDIENCE, HOST, ISSUER, ORG, PRINCIPAL, ROLE, bundle, key};
 
 const TOKEN: &str = "wamn_pat_edge_forward_test";
 /// A PAT that the platform does not accept.
@@ -273,7 +273,7 @@ listen = "127.0.0.1:0"
 [device]
 attachment = "{ATTACHMENT}"
 principal = "{PRINCIPAL}"
-role = "device"
+role = "{ROLE}"
 
 [device.serial]
 path = "{device}"
@@ -374,10 +374,10 @@ async fn until(platform: &Platform, what: &str, done: impl Fn(&Received) -> bool
 /// applies each key once, and the export ran once per frame. A frame that the
 /// platform refuses is stored as refused and sent once.
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "requires: WAMN_FLOW_HTTP_COMPONENT"]
+#[ignore = "requires: WAMN_EDGE_DEVICE_BUNDLE"]
 async fn a_sample_is_forwarded_once_across_kills() {
     let (_, public) = key("key-one", 1);
-    let (directory, digest) = bundle("forward", &ingress(), &public);
+    let (directory, digest) = bundle("forward", &public);
     let (mut controller, device) = pseudo_terminal();
     let port = free_port();
     let (ca_file, acceptor) = tls(&directory);
@@ -483,10 +483,10 @@ async fn a_sample_is_forwarded_once_across_kills() {
 /// still stores each frame, no second request reaches the platform after the
 /// first backoff would end, and the samples stay pending, never refused.
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "requires: WAMN_FLOW_HTTP_COMPONENT"]
+#[ignore = "requires: WAMN_EDGE_DEVICE_BUNDLE"]
 async fn a_refused_pat_stops_the_forward_at_the_bound() {
     let (_, public) = key("key-one", 1);
-    let (directory, digest) = bundle("forward-credential", &ingress(), &public);
+    let (directory, digest) = bundle("forward-credential", &public);
     let (mut controller, device) = pseudo_terminal();
     let port = free_port();
     let (ca_file, acceptor) = tls(&directory);
@@ -558,7 +558,7 @@ fn samples_where(directory: &Path, condition: &str) -> i64 {
 /// and the platform must accept each again. The test prints the frame tag, and
 /// the caller counts the platform rows with that tag: one row per frame.
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "requires: WAMN_FLOW_HTTP_COMPONENT, WAMN_EDGE_LIVE_URL, WAMN_EDGE_LIVE_TOKEN_FILE, WAMN_EDGE_LIVE_CA_FILE"]
+#[ignore = "requires: WAMN_EDGE_DEVICE_BUNDLE, WAMN_EDGE_LIVE_URL, WAMN_EDGE_LIVE_TOKEN_FILE, WAMN_EDGE_LIVE_CA_FILE"]
 async fn samples_reach_a_live_platform_once_across_kills() {
     let live = |name: &str| std::env::var(name).unwrap_or_else(|_| panic!("{name} is not set"));
     let url = live("WAMN_EDGE_LIVE_URL");
@@ -568,7 +568,7 @@ async fn samples_reach_a_live_platform_once_across_kills() {
         .to_owned();
     let ca_file = PathBuf::from(live("WAMN_EDGE_LIVE_CA_FILE"));
     let (_, public) = key("key-one", 1);
-    let (directory, digest) = bundle("forward-live", &ingress(), &public);
+    let (directory, digest) = bundle("forward-live", &public);
     let (mut controller, device) = pseudo_terminal();
     let config = configuration(
         &directory,

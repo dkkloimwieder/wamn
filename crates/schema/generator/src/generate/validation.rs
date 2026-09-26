@@ -93,7 +93,7 @@ pub(super) fn validate(
             ));
         }
     }
-    if manifest.models.is_empty() {
+    if manifest.models.is_empty() && !manifest.declares_no_sql() {
         return Err(GenerateError::new(
             GenerateErrorKind::InvalidManifest,
             "manifest must declare at least one model",
@@ -1396,7 +1396,7 @@ fn validate_authored_variants(
 }
 
 fn validate_connections(manifest: &PackageManifest) -> Result<(), GenerateError> {
-    if manifest.connections.is_empty() {
+    if manifest.connections.is_empty() && !manifest.declares_no_sql() {
         return Err(GenerateError::new(
             GenerateErrorKind::InvalidConnection,
             "manifest declares no database connection",

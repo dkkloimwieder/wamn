@@ -13,6 +13,7 @@ Start with the [documentation index](docs/README.md) or the [architecture overvi
 | [apps/wamn_receiving](apps/wamn_receiving/README.md) | Receiving manifest, migrations, guest, generated code, operator UI, and tests |
 | [apps/wamn_wms](apps/wamn_wms/README.md) | WMS manifest, migrations, guest, generated code, example, and tests |
 | [apps/client_acme_receiving](apps/client_acme_receiving/README.md) | Acme Receiving overlay and its tests |
+| [apps/edge_device](apps/edge_device/README.md) | The application with no SQL that an edge box runs on each device frame |
 | [apps/edge_samples](apps/edge_samples/README.md) | The platform application that receives edge samples |
 | [apps/platform](apps/platform/) | Shared platform guests and guest libraries |
 | [services](services/) | Deployable native processes, including the combined HTTP and queue host, and their service tests |

@@ -191,9 +191,19 @@ pub fn read_package_directory(root: &Path) -> anyhow::Result<PackageDirectory> {
     let manifest_bytes = std::fs::read(&manifest_path)
         .with_context(|| format!("read {}", manifest_path.display()))?;
     let migrations_path = root.join("migrations");
+    let mut migrations = Vec::new();
+    // A package with no SQL has no migrations directory.
+    if !migrations_path.exists()
+        && wamn_schema_generator::PackageManifest::from_slice(&manifest_bytes)
+            .is_ok_and(|manifest| manifest.declares_no_sql())
+    {
+        return Ok(PackageDirectory {
+            manifest_bytes,
+            migrations,
+        });
+    }
     let entries = std::fs::read_dir(&migrations_path)
         .with_context(|| format!("read {}", migrations_path.display()))?;
-    let mut migrations = Vec::new();
     for entry in entries {
         let entry = entry.context("read package migration directory entry")?;
         let file_type = entry

@@ -357,7 +357,12 @@ pub fn plan_package_migrations(
         }
     }
 
-    let migrations = normalized_migrations(&directory.migrations)?;
+    // A package with no SQL ships no migration.
+    let migrations = if manifest.declares_no_sql() && directory.migrations.is_empty() {
+        Vec::new()
+    } else {
+        normalized_migrations(&directory.migrations)?
+    };
     let recorded = applied.map_or(&[][..], |state| state.migrations.as_slice());
     validate_recorded_prefix(&coordinate, recorded, &migrations)?;
 
