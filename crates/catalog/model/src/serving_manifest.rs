@@ -754,6 +754,18 @@ pub enum ServingRegistrationInput {
     Batch,
 }
 
+/// What the driver does with a delivery for one registration.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum RegistrationDelivery {
+    /// Walk the wiring inline: the wiring of an event handler.
+    #[default]
+    Walk,
+    /// Start a workflow run through the queue: a declared workflow
+    /// (docs/plan/workflow-feature.md 4.2).
+    Queue,
+}
+
 /// Serde `skip_serializing_if` predicate for a field whose default carries no
 /// information on the wire.
 fn is_default<T: Default + PartialEq>(value: &T) -> bool {
@@ -774,6 +786,10 @@ pub struct ServingRegistration {
     pub ops: BTreeSet<String>,
     #[serde(default, skip_serializing_if = "is_default")]
     pub input: ServingRegistrationInput,
+    /// Left out when it is `walk`, so a release with no workflow keeps its
+    /// bytes and digest.
+    #[serde(default, skip_serializing_if = "is_default")]
+    pub delivery: RegistrationDelivery,
 }
 
 /// The complete release document a serving process mounts.
@@ -1477,6 +1493,7 @@ mod tests {
             entity: "orders".into(),
             ops: BTreeSet::from(["insert".to_string()]),
             input: ServingRegistrationInput::Event,
+            delivery: RegistrationDelivery::Walk,
         }
     }
 
@@ -2150,6 +2167,7 @@ mod tests {
                     entity: "widget".into(),
                     ops: BTreeSet::from(["insert".into()]),
                     input: ServingRegistrationInput::Event,
+                    delivery: RegistrationDelivery::Walk,
                 },
             ),
             ("overlay::widget-created".to_owned(), registration()),

@@ -1659,8 +1659,9 @@ fn serving_ops(
 }
 
 /// The release registrations: one for each event handler, whose wiring enters
-/// at the handler, and one for each declared workflow, whose wiring can enter
-/// at any node. The driver walks either wiring when its event arrives.
+/// at the handler and which the driver walks when its event arrives, and one
+/// for each declared workflow, whose wiring can enter at any node and whose
+/// event the host admits as a queued run.
 fn derive_serving_registrations(
     package_manifests: &BTreeMap<String, wamn_schema_generator::PackageManifest>,
     entry_targets: &BTreeMap<String, Vec<ReleaseWiringTarget>>,
@@ -1717,6 +1718,7 @@ fn derive_serving_registrations(
                     entity: declaration.entity.clone(),
                     ops: serving_ops(declaration),
                     input: wamn_catalog::ServingRegistrationInput::Event,
+                    delivery: wamn_catalog::RegistrationDelivery::Walk,
                 },
             );
         }
@@ -1758,6 +1760,7 @@ fn derive_serving_registrations(
                     entity: declaration.entity.clone(),
                     ops: serving_ops(declaration),
                     input: wamn_catalog::ServingRegistrationInput::Event,
+                    delivery: wamn_catalog::RegistrationDelivery::Queue,
                 },
             );
         }

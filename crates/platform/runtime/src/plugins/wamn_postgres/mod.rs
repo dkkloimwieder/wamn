@@ -59,6 +59,8 @@ use wash_runtime::wit::{WitInterface, WitWorld};
 
 mod claims;
 mod credential_exactness;
+/// Host admission of an event-started workflow run.
+mod event_admission;
 mod pool;
 mod production_claim;
 mod resources;
@@ -84,6 +86,7 @@ pub use credential_exactness::{
     CredentialProbePredicate, ExpectedCredentialIdentity, ExplicitCredentialSource,
     MembershipExpectation, MembershipMode, credential_exactness_probe, explicit_credential_source,
 };
+pub use event_admission::{EventRunAdmission, EventRunAdmitted};
 pub use pool::{
     CheckoutProbe, ClassCredentials, CredentialProvider, K8sSecretProvider, ProjectConfig,
     ResolvedCredential, StaticCredentialProvider, WamnPostgresConfig,

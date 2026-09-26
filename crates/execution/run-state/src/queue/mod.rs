@@ -70,6 +70,7 @@ pub use sql::{
     terminalize_effect_uncertain_claim_sql, terminalize_exhausted_production_sql,
 };
 pub use workflow::{
-    insert_automation_run_sql, insert_run_queue_sql, list_workflow_runs_sql, park_queued_run_sql,
-    release_parked_run_sql, select_automation_run_sql, select_run_queue_state_sql,
+    insert_automation_run_sql, insert_event_run_sql, insert_run_queue_sql, list_workflow_runs_sql,
+    park_queued_run_sql, release_parked_run_sql, select_automation_run_sql, select_event_run_sql,
+    select_run_queue_state_sql,
 };

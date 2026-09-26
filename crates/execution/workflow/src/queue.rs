@@ -25,7 +25,8 @@ use crate::{
     CandidateWiringTarget, RouterDriver, RouterDriverRequest, Verdict,
 };
 
-const QUEUE_CLAIM_SCOPE: &str = "wamn-executor-queue";
+/// The claim scope the queue binds; an event admission runs under it too.
+pub(crate) const QUEUE_CLAIM_SCOPE: &str = "wamn-executor-queue";
 pub const DEFAULT_QUEUE_LEASE_TTL_MS: u64 = 30_000;
 const PRODUCTION_JANITOR_GRACE_MS: i64 = 3_600_000;
 const IDLE_POLL_MS: u64 = 250;

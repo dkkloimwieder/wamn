@@ -169,6 +169,7 @@ fn manifest() -> ServingManifest {
                 entity: "orders".into(),
                 ops: BTreeSet::from(["insert".into(), "update".into()]),
                 input: ServingRegistrationInput::Batch,
+                delivery: wamn_catalog::RegistrationDelivery::Walk,
             },
         )]),
     )

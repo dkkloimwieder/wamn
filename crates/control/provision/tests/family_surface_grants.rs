@@ -394,6 +394,29 @@ fn expected_executor_grants() -> Vec<String> {
     ] {
         rows.push(format!("column|wamn_run|run_queue.{column}|UPDATE"));
     }
+    // The event run grain of `wamn_run_state::queue::insert_event_run_sql`
+    // (owner ruling on wamn-upl3.6): the host admits an event-started run.
+    for column in [
+        "durability_class",
+        "effective_release_id",
+        "environment",
+        "idempotency_key",
+        "input_json",
+        "package_id",
+        "registration_id",
+        "status",
+        "tenant_id",
+        "trigger_source",
+        "wiring_hash",
+        "wiring_id",
+        "wiring_version",
+    ] {
+        rows.push(format!("column|wamn_run|runs.{column}|INSERT"));
+    }
+    for column in ["run_id", "tenant_id"] {
+        rows.push(format!("column|wamn_run|run_queue.{column}|INSERT"));
+    }
+    rows.push("relation|wamn_run|environment_policies|SELECT".to_owned());
     for relation in [
         "component_library",
         "connection_bindings",
@@ -525,7 +548,6 @@ fn the_executor_platform_role_holds_exactly_its_measured_claim_surface() {
         "catalog.wiring_activation",
         "catalog.wiring_tombstones",
         "catalog.event_registrations",
-        "wamn_run.environment_policies",
         "wamn_run.operator_run_actions",
         "wamn_run.effect_attempt_dispatches",
         "wamn_run.effect_attempt_outcomes",
@@ -543,18 +565,48 @@ fn the_executor_platform_role_holds_exactly_its_measured_claim_surface() {
         "  ASSERT has_table_privilege(r, 'wamn_run.runs', 'SELECT'), \
              'the fence locks the run with SELECT r.*'; \
          ASSERT NOT has_table_privilege(r, 'wamn_run.runs', 'INSERT'), \
-           'admission is the management admitter''s, never the executor''s'; \
+           'the executor admits only the event run columns, never a whole row'; \
+         ASSERT has_table_privilege(r, 'wamn_run.environment_policies', 'SELECT'), \
+           'an event admission reads the durability class'; \
+         ASSERT NOT has_table_privilege(r, 'wamn_run.environment_policies', 'UPDATE'), \
+           'the executor never changes a policy'; \
          ASSERT NOT has_table_privilege(r, 'wamn_run.runs', 'DELETE'), \
            'run history pruning is retention''s'; \
          ASSERT has_table_privilege(r, 'wamn_run.run_queue', 'SELECT'), 'no queue read'; \
          ASSERT has_table_privilege(r, 'wamn_run.run_queue', 'DELETE'), 'no dequeue'; \
          ASSERT NOT has_table_privilege(r, 'wamn_run.run_queue', 'INSERT'), \
-           'enqueue is admission''s'; \
+           'an event admission enqueues by tenant and run id only'; \
          ASSERT has_table_privilege(r, 'wamn_run.effect_attempts', 'SELECT'), \
            'the claim asks whether an effect attempt exists'; \
          ASSERT NOT has_table_privilege(r, 'wamn_run.effect_attempts', 'INSERT'), \
            'the executor appends no effect attempt'; \n",
     );
+    for column in sql::EXECUTOR_PLATFORM_RUN_INSERT_COLUMNS {
+        writeln!(
+            probes,
+            "  ASSERT has_column_privilege(r, 'wamn_run.runs', '{column}', 'INSERT'), \
+               'the executor cannot admit an event run: runs.{column}'; "
+        )
+        .expect("writing to a String cannot fail");
+    }
+    for column in [
+        "run_id",
+        "service_principal_id",
+        "binding_world_json",
+        "flow_id",
+        "event_source_run_id",
+        "capture_mode",
+        "invocation_context",
+        "caller_outcome_json",
+        "result_json",
+    ] {
+        writeln!(
+            probes,
+            "  ASSERT NOT has_column_privilege(r, 'wamn_run.runs', '{column}', 'INSERT'), \
+               'the executor can admit runs.{column}, which no event run carries'; "
+        )
+        .expect("writing to a String cannot fail");
+    }
     // COLUMN GRAIN, from the server, both ways. `has_column_privilege` answers
     // TRUE for a column reachable through a TABLE-level grant, so the FALSE arms
     // are what show the UPDATE never became blanket.

@@ -48,6 +48,32 @@ pub fn select_automation_run_sql() -> &'static str {
         AND input_json = $10::text::jsonb"
 }
 
+/// Admit one event run: a registration started a released wiring, and the run
+/// executes with no caller. Binds are those of [`insert_automation_run_sql`],
+/// with the registration id as `$8`.
+pub fn insert_event_run_sql() -> String {
+    format!(
+        "INSERT INTO runs (tenant_id, package_id, effective_release_id, environment, \
+             wiring_id, wiring_version, wiring_hash, trigger_source, registration_id, \
+             idempotency_key, input_json, status, durability_class) \
+         VALUES ($1, $2, $3, $4, $5, $6, $7, 'event', $8, $9, \
+                 $10::text::jsonb, '{dispatched}', $11) \
+         ON CONFLICT (tenant_id, idempotency_key) WHERE idempotency_key IS NOT NULL DO NOTHING \
+         RETURNING run_id",
+        dispatched = RunStatus::Dispatched.as_sql(),
+    )
+}
+
+/// The run a repeated event start admitted first, like
+/// [`select_automation_run_sql`], with the registration id as `$8`.
+pub fn select_event_run_sql() -> &'static str {
+    "SELECT run_id FROM runs WHERE tenant_id = $1 AND package_id = $2 \
+        AND effective_release_id = $3 AND environment = $4 AND wiring_id = $5 \
+        AND wiring_version = $6 AND wiring_hash = $7 AND trigger_source = 'event' \
+        AND registration_id = $8 AND idempotency_key = $9 \
+        AND input_json = $10::text::jsonb"
+}
+
 /// Queue one admitted run. Binds: `$1` tenant, `$2` run id.
 pub fn insert_run_queue_sql() -> &'static str {
     "INSERT INTO run_queue (tenant_id, run_id) VALUES ($1, $2)"

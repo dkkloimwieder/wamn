@@ -1483,6 +1483,7 @@ mod tests {
                         entity: "order".to_owned(),
                         ops: BTreeSet::from(["created".to_owned()]),
                         input: ServingRegistrationInput::Event,
+                        delivery: wamn_catalog::RegistrationDelivery::Walk,
                     },
                 )]),
             },

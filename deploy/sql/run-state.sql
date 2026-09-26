@@ -439,7 +439,8 @@ CREATE TABLE wamn_run.runs (
     -- Exactly one complete historical or component-era execution grain. The
     -- explicit IS NOT NULL arms keep PostgreSQL CHECK's NULL truth value from
     -- admitting a half-record. Existing flow rows stay truthful; they are not
-    -- backfilled with an identity that was never recorded.
+    -- backfilled with an identity that was never recorded. The last arm is an
+    -- event run: a registration started a released wiring with no caller.
     CONSTRAINT runs_execution_grain_check CHECK (
       (flow_id IS NOT NULL AND flow_version IS NOT NULL
        AND flow_id <> '' AND flow_version > 0
@@ -457,6 +458,15 @@ CREATE TABLE wamn_run.runs (
       (flow_id IS NULL AND flow_version IS NULL
        AND trigger_source IS NOT DISTINCT FROM 'automation'
        AND service_principal_id IS NOT NULL
+       AND wiring_id IS NOT NULL AND wiring_id <> ''
+       AND wiring_version IS NOT NULL AND wiring_version > 0
+       AND wiring_hash IS NOT NULL AND wiring_hash ~ '^sha256:[0-9a-f]{64}$'
+       AND binding_world_json IS NULL)
+      OR
+      (flow_id IS NULL AND flow_version IS NULL
+       AND trigger_source IS NOT DISTINCT FROM 'event'
+       AND registration_id IS NOT NULL AND registration_id <> ''
+       AND service_principal_id IS NULL
        AND wiring_id IS NOT NULL AND wiring_id <> ''
        AND wiring_version IS NOT NULL AND wiring_version > 0
        AND wiring_hash IS NOT NULL AND wiring_hash ~ '^sha256:[0-9a-f]{64}$'

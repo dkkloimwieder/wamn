@@ -4,7 +4,7 @@
 use std::borrow::Cow;
 
 use opentelemetry::KeyValue;
-use wamn_catalog::AttachmentTarget;
+use wamn_catalog::{AttachmentTarget, RegistrationDelivery};
 use wamn_engine::router_delivery::{
     DeliveryClass, DeliveryError, DeliveryFailure, DeliveryOutcome, EXECUTION_FAILED,
     EffectOutcome as WireEffectOutcome, Emission, FailedOutcome, FailureKind as WireFailureKind,
@@ -14,6 +14,7 @@ use wamn_event_wire::Causation;
 use wamn_execution_host::{RouterDeliveryBridge, WiringCall, WiringDelivery, WiringPreload};
 use wamn_router::{FailureKind, Outcome, Verdict, WalkStatus};
 use wamn_runtime::plugins::wamn_jetstream::{DerivedPublishRequest, RouterTapPhase};
+use wamn_runtime::plugins::wamn_postgres::{EventRunAdmission, EventRunAdmitted};
 
 use crate::router_response::{InterruptedResponse, PartialEvidence};
 use crate::{RouterDriver, RouterDriverRequest};
@@ -45,6 +46,30 @@ impl WiringDelivery for RouterDriver {
             attributes,
             deadline_adjustments,
         } = call;
+        if let SourceRef::Registration(registration_id) = source
+            && bridge
+                .release()
+                .manifest()
+                .workflow
+                .registrations
+                .get(registration_id)
+                .is_some_and(|registration| registration.delivery == RegistrationDelivery::Queue)
+        {
+            return self
+                .admit_event_run(
+                    bridge,
+                    EventCall {
+                        registration_id,
+                        package_id,
+                        wiring_id,
+                        wiring_version,
+                        delivery_id: &delivery_id,
+                        payload: &payload,
+                        attributes,
+                    },
+                )
+                .await;
+        }
         let release = &bridge.release().manifest().release;
         let request = RouterDriverRequest {
             tenant_id: release.tenant_id.clone(),
@@ -94,6 +119,94 @@ impl WiringDelivery for RouterDriver {
                 lower_with_evidence(delivery.outcome, delivery.partial)
             }
             Err(error) => refuse(bridge, source, &delivery_id, target, attributes, &error).await,
+        }
+    }
+}
+
+/// One delivery of a workflow registration, which the host admits as a run.
+struct EventCall<'a> {
+    registration_id: &'a str,
+    package_id: &'a str,
+    wiring_id: &'a str,
+    wiring_version: u32,
+    delivery_id: &'a str,
+    payload: &'a serde_json::Value,
+    attributes: &'a [KeyValue],
+}
+
+impl RouterDriver {
+    /// Admit a workflow registration's event as a queued run, under the
+    /// authority of the release that declares the workflow (`wamn-upl3.6`).
+    /// The queue runs it with no caller. The delivery id is the idempotency
+    /// key, so a redelivered event admits no second run.
+    async fn admit_event_run(
+        &self,
+        bridge: &RouterDeliveryBridge,
+        call: EventCall<'_>,
+    ) -> Result<DeliveryOutcome, DeliveryError> {
+        let manifest = bridge.release().manifest();
+        let Some(wiring) = manifest.workflow.wirings.iter().find(|wiring| {
+            wiring.package_id == call.package_id
+                && wiring.wiring_id == call.wiring_id
+                && wiring.wiring_version == call.wiring_version
+        }) else {
+            tracing::warn!(
+                registration = call.registration_id,
+                "a workflow registration names a wiring absent from the release"
+            );
+            return Err(DeliveryError::SourceNotFound);
+        };
+        let (Ok(effective_release_id), Ok(wiring_version)) = (
+            i32::try_from(manifest.release.effective_release_id.get()),
+            i32::try_from(call.wiring_version),
+        ) else {
+            return Err(DeliveryError::InvalidRequest);
+        };
+        let admitted = self
+            .operations()
+            .postgres
+            .admit_event_run(
+                crate::queue::QUEUE_CLAIM_SCOPE,
+                &EventRunAdmission {
+                    package_id: call.package_id,
+                    effective_release_id,
+                    environment: &manifest.release.environment,
+                    wiring_id: call.wiring_id,
+                    wiring_version,
+                    wiring_hash: wiring.graph_hash.as_str(),
+                    registration_id: call.registration_id,
+                    idempotency_key: call.delivery_id,
+                    input: call.payload,
+                },
+            )
+            .await;
+        match admitted {
+            Ok(EventRunAdmitted::Queued { run_id }) => {
+                tracing::info!(
+                    registration = call.registration_id,
+                    run_id = %run_id,
+                    "an event started a queued workflow run"
+                );
+                bridge.record(call.attributes, DeliveryClass::Delivered);
+                Ok(DeliveryOutcome::Discard)
+            }
+            Ok(EventRunAdmitted::Conflict) => {
+                tracing::warn!(
+                    registration = call.registration_id,
+                    delivery = call.delivery_id,
+                    "the delivery id belongs to a different run"
+                );
+                Err(DeliveryError::InvalidRequest)
+            }
+            // The event stays unacknowledged, and JetStream redelivers it.
+            Err(error) => {
+                tracing::warn!(
+                    registration = call.registration_id,
+                    error = %error,
+                    "the event run was not admitted"
+                );
+                Err(DeliveryError::ExecutionFailed)
+            }
         }
     }
 }

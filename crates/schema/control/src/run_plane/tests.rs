@@ -2496,6 +2496,39 @@ fn drifted_and_missing_checks_plan_exact_repairs() {
     }));
 }
 
+/// A database that passed the wiring identity cutover before the event grain
+/// (wamn-upl3.6) gains the event arm by one exact check repair, with no second
+/// cutover and its table rewrite.
+#[test]
+fn the_prior_grain_check_gains_the_event_arm_by_one_repair() {
+    let mut obs = observation_at_record();
+    obs.checks.insert(
+        ("runs".to_string(), "runs_execution_grain_check".to_string()),
+        super::declarations::PRIOR_RUNS_EXECUTION_GRAIN_CHECK_DEF.to_string(),
+    );
+
+    let plan = plan_run_plane(&schema("demo"), &obs);
+    let targets: Vec<&str> = plan
+        .actions
+        .iter()
+        .map(|action| action.target.as_str())
+        .collect();
+    assert_eq!(
+        targets,
+        ["runs.runs_execution_grain_check"],
+        "only the grain check changes: {:#?}",
+        plan.actions
+    );
+    let repair = &plan.actions[0];
+    assert_eq!(repair.kind, RunPlaneActionKind::RepairConstraint);
+    assert!(
+        repair
+            .sql
+            .contains("DROP CONSTRAINT \"runs_execution_grain_check\"")
+            && repair.sql.contains("'event'::text")
+    );
+}
+
 // `cancelled_node_error_check_is_repaired` was retired here: its subject was
 // the `node_runs_error_kind_check` spec, which wamn-0h0g.26.3.1 (204220e8)
 // deleted from `CHECK_SPECS` with the projection it constrained.

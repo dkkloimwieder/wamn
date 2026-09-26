@@ -568,7 +568,7 @@ impl RunStore for WamnPostgres {
     }
 }
 
-async fn finish_queue_transaction<T>(
+pub(super) async fn finish_queue_transaction<T>(
     postgres: &WamnPostgres,
     connection: Object,
     result: Result<T, ProductionClaimError>,
@@ -596,7 +596,9 @@ async fn finish_queue_transaction<T>(
     }
 }
 
-async fn require_executor_authority(connection: &Object) -> Result<(), ProductionClaimError> {
+pub(super) async fn require_executor_authority(
+    connection: &Object,
+) -> Result<(), ProductionClaimError> {
     let row = connection
         .query_one(
             CURRENT_USER_ROLE_MEMBERSHIP_SQL,
@@ -1274,9 +1276,9 @@ fn decode_selected_claim(row: &Row) -> Result<SelectedClaim, ProductionClaimErro
     let (wiring_id, wiring_version) = decode_wiring_identity(wiring_id, wiring_version)?;
     let service_principal_id: Option<String> = row_value(row, 15, "service principal")?;
     let candidate = match (flow_id, flow_version, wiring_hash, binding_world) {
-        (None, None, Some(hash), None) if service_principal_id.is_some() && !hash.is_empty() => {
-            None
-        }
+        // A released wiring: an automation run under its service principal,
+        // or an event run with no caller. The grain check tells them apart.
+        (None, None, Some(hash), None) if !hash.is_empty() => None,
         (Some(flow_id), Some(flow_version), None, None)
             if !flow_id.is_empty() && flow_version > 0 =>
         {
@@ -1389,7 +1391,10 @@ where
 
 /// Preserve the database message and constraint, without row-bearing DETAIL or HINT.
 /// Run rows contain application inputs, results, and invocation context.
-fn storage(operation: &'static str, error: &tokio_postgres::Error) -> ProductionClaimError {
+pub(super) fn storage(
+    operation: &'static str,
+    error: &tokio_postgres::Error,
+) -> ProductionClaimError {
     let detail = match error.as_db_error() {
         Some(database) => match database.constraint() {
             Some(constraint) => format!("{} ({constraint})", database.message()),

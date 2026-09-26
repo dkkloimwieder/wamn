@@ -10,8 +10,8 @@ use super::declarations::{
     CHECK_SPECS, EFFECT_ATTEMPTS_DISPATCH_IDENTITY_KEY_DEF, EFFECT_ATTEMPTS_OCCURRENCE_KEY_DEF,
     EFFECT_DISPATCH_ATTEMPT_FK_DEF, EFFECT_DISPATCH_ATTEMPT_FK_NAME,
     EFFECT_DISPATCH_ATTEMPT_FK_SQL, EFFECT_DISPATCHES_OCCURRENCE_KEY_DEF, EFFECT_FRAME_CHECKS,
-    EFFECT_FRAME_COLUMNS, RETIRED_EFFECT_ATTEMPT_COLUMNS, RUNS_EXECUTION_GRAIN_CHECK_DEF,
-    RUNS_ROOT_INDEX_DEF, RUNS_WIRING_IDENTITY_CHECK_DEF,
+    EFFECT_FRAME_COLUMNS, PRIOR_RUNS_EXECUTION_GRAIN_CHECK_DEF, RETIRED_EFFECT_ATTEMPT_COLUMNS,
+    RUNS_EXECUTION_GRAIN_CHECK_DEF, RUNS_ROOT_INDEX_DEF, RUNS_WIRING_IDENTITY_CHECK_DEF,
 };
 
 /// Let `catalog.release_components` bind a route as well as a wiring node.
@@ -1101,7 +1101,12 @@ pub(super) fn run_wiring_identity_contract_complete(obs: &RunPlaneObservation) -
         && obs
             .checks
             .get(&("runs".to_string(), "runs_execution_grain_check".to_string()))
-            .is_some_and(|definition| definition == RUNS_EXECUTION_GRAIN_CHECK_DEF)
+            .is_some_and(|definition| {
+                // The event arm came later; the exact check repair adds it
+                // without a second cutover.
+                definition == RUNS_EXECUTION_GRAIN_CHECK_DEF
+                    || definition == PRIOR_RUNS_EXECUTION_GRAIN_CHECK_DEF
+            })
 }
 
 pub(super) fn wiring_identity_cutover_sql(schema: &BareSchemaName) -> String {
@@ -1159,6 +1164,15 @@ ALTER TABLE {target}.runs
       (flow_id IS NULL AND flow_version IS NULL
        AND trigger_source IS NOT DISTINCT FROM 'automation'
        AND service_principal_id IS NOT NULL
+       AND wiring_id IS NOT NULL AND wiring_id <> ''
+       AND wiring_version IS NOT NULL AND wiring_version > 0
+       AND wiring_hash IS NOT NULL AND wiring_hash ~ '^sha256:[0-9a-f]{{64}}$'
+       AND binding_world_json IS NULL)
+      OR
+      (flow_id IS NULL AND flow_version IS NULL
+       AND trigger_source IS NOT DISTINCT FROM 'event'
+       AND registration_id IS NOT NULL AND registration_id <> ''
+       AND service_principal_id IS NULL
        AND wiring_id IS NOT NULL AND wiring_id <> ''
        AND wiring_version IS NOT NULL AND wiring_version > 0
        AND wiring_hash IS NOT NULL AND wiring_hash ~ '^sha256:[0-9a-f]{{64}}$'

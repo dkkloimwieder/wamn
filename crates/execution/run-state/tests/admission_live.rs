@@ -259,7 +259,8 @@ fn surviving_authority_matrix_live() {
                                      'TRUNCATE','REFERENCES','TRIGGER']) AS p \
             WHERE n.nspname = 'wamn_run' AND c.relkind IN ('r','p','v','m') \
               AND pg_catalog.has_table_privilege('wamn_executor_platform', c.oid, p); \
-           ASSERT actual = 'effect_attempts:SELECT,run_queue:DELETE,run_queue:SELECT,runs:SELECT', \
+           ASSERT actual = 'effect_attempts:SELECT,environment_policies:SELECT,\
+run_queue:DELETE,run_queue:SELECT,runs:SELECT', \
                   'run-plane TABLE grain drifted: ' || coalesce(actual, '<none>'); \
            SELECT string_agg(c.relname || ':' || p, ',' ORDER BY c.relname || ':' || p) \
              INTO actual \
@@ -294,6 +295,24 @@ result_json,state_json,status,terminal_reason,updated_at', \
                     'wamn_executor_platform', a.attrelid, a.attnum, 'UPDATE'); \
            ASSERT actual = 'attempts,lease_expires_at,lease_generation,lease_owner', \
                   'run_queue UPDATE columns drifted: ' || coalesce(actual, '<none>'); \
+           SELECT string_agg(a.attname, ',' ORDER BY a.attname) INTO actual \
+             FROM pg_catalog.pg_attribute AS a \
+            WHERE a.attrelid = 'wamn_run.runs'::regclass AND a.attnum > 0 \
+              AND NOT a.attisdropped \
+              AND pg_catalog.has_column_privilege( \
+                    'wamn_executor_platform', a.attrelid, a.attnum, 'INSERT'); \
+           ASSERT actual = \
+             'durability_class,effective_release_id,environment,idempotency_key,input_json,\
+package_id,registration_id,status,tenant_id,trigger_source,wiring_hash,wiring_id,wiring_version', \
+                  'runs INSERT columns (the event run grain) drifted: ' || coalesce(actual, '<none>'); \
+           SELECT string_agg(a.attname, ',' ORDER BY a.attname) INTO actual \
+             FROM pg_catalog.pg_attribute AS a \
+            WHERE a.attrelid = 'wamn_run.run_queue'::regclass AND a.attnum > 0 \
+              AND NOT a.attisdropped \
+              AND pg_catalog.has_column_privilege( \
+                    'wamn_executor_platform', a.attrelid, a.attnum, 'INSERT'); \
+           ASSERT actual = 'run_id,tenant_id', \
+                  'run_queue INSERT columns drifted: ' || coalesce(actual, '<none>'); \
            ASSERT pg_catalog.has_schema_privilege( \
                     'wamn_executor_platform', 'wamn_run', 'USAGE'); \
            ASSERT pg_catalog.has_schema_privilege( \

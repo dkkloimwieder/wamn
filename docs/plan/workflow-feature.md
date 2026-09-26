@@ -68,9 +68,9 @@ An application declares a workflow in `wamn.json`. The declaration names a wirin
 
 The wiring can enter at any node. The workflow id is a registration id of the package. It has no dot, so it never repeats an operation id. Apply-package writes the registration row, as it does for an event handler. Publish derives a `ServingRegistration` that targets the named wiring. The serving manifest format does not change.
 
-The materializer, the bridge, and the driver do not change. The materializer delivers the event, and the driver walks the wiring with no caller, as it walks an event handler's wiring. A node that needs an operation grant refuses, so an event workflow runs palette nodes. JetStream redelivers an event whose delivery failed.
+The materializer and the bridge do not change. The materializer delivers the event, and the driver admits it as a queued run with the executor credential, under the authority of the release that declares the workflow. The delivery id is the idempotency key. The queue runs the wiring with no caller, so a node that needs an operation grant refuses, and an event workflow runs palette nodes. An event handler's wiring still walks inline.
 
-The first draft of this section put the event run through `Workflows::start` and the queue. Only project-admin authority admits a run, and the executor role test records the rule that admission is never the executor's. A queued event run therefore needs an owner ruling on a new admission grant for the host. Until then, an event workflow is not in `list` and cannot be parked.
+The owner ruled on 2026-09-26 that the host admits event runs (`wamn-upl3.6`). The executor role gains a column-exact INSERT on `runs` and `run_queue` for the event run grain, and the run-plane grain check gains an event arm. `list` shows the run, and `park` and `release` act on it.
 
 ### 4.3 The JSONata node
 

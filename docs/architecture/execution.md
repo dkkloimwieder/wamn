@@ -221,9 +221,11 @@ An application event starts a workflow that the package declares in `wamn.json` 
 The declaration names the wiring and a registration: the source package, the entity, and the row operations.
 Apply-package writes the registration row under the workflow id, and publish derives a `ServingRegistration` for the named wiring.
 The wiring can enter at any node, while an event handler's wiring enters at the handler.
-The materializer delivers the event, and the driver walks the wiring with no caller.
+The materializer delivers the event, and the host admits it as a queued run under the authority of the release that declares the workflow.
+The executor credential inserts only the event run columns, and the delivery id is the idempotency key, so a redelivered event admits one run.
+The queue runs the wiring with no caller, and an event handler's wiring still walks when its event arrives.
 A node that needs an operation grant refuses, so an event workflow runs palette nodes.
-An event workflow is not a queued run: `list` does not show it, and `park` cannot hold it, because only project-admin authority admits a run.
+`list` shows an event run with the trigger `event`, and `park` and `release` act on it.
 
 The [JSONata node](../../apps/platform/execution/jsonata/src/lib.rs) is a palette node compiled to wasm.
 Its parameter `expression` is JSONata text, and the node evaluates it on its input inside the guest.

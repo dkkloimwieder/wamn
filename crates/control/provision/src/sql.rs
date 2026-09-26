@@ -273,6 +273,35 @@ pub const EXECUTOR_PLATFORM_QUEUE_UPDATE_COLUMNS: [&str; 4] = [
     "lease_generation",
     "attempts",
 ];
+
+/// Every `runs` column the executor-platform family INSERTs: the event run
+/// grain, and no other (owner ruling on `wamn-upl3.6`).
+///
+/// The host admits an event-started workflow run under the authority of the
+/// release that declares the workflow (`wamn_run_state::queue::insert_event_run_sql`).
+/// The list reaches no service principal, binding world, legacy flow, event
+/// ancestry, capture or caller-outcome column, so the run-plane grain check
+/// admits only an event run from this family. Automation admission stays with
+/// project-admin authority.
+pub const EXECUTOR_PLATFORM_RUN_INSERT_COLUMNS: [&str; 13] = [
+    "tenant_id",
+    "package_id",
+    "effective_release_id",
+    "environment",
+    "wiring_id",
+    "wiring_version",
+    "wiring_hash",
+    "trigger_source",
+    "registration_id",
+    "idempotency_key",
+    "input_json",
+    "status",
+    "durability_class",
+];
+
+/// The `run_queue` columns an event admission writes. The FIFO position, the
+/// crash budget and the lease take their defaults.
+pub const EXECUTOR_PLATFORM_QUEUE_INSERT_COLUMNS: [&str; 2] = ["tenant_id", "run_id"];
 /// Idempotently create or harden [`PLATFORM_GROUP_ROLE`], the shared NOLOGIN
 /// group every non-guest tenant-floor arm targets (`wamn-0h0g.22.17`).
 ///
@@ -557,6 +586,12 @@ pub fn grant_session_role_reader_surface_sql() -> String {
 ///   `DELETE` (PostgreSQL has no column-grain DELETE), plus COLUMN-grain
 ///   `UPDATE` over [`EXECUTOR_PLATFORM_QUEUE_UPDATE_COLUMNS`] — the lease and
 ///   the crash counter, never the FIFO position.
+/// * `runs` and `run_queue` INSERT, column grain over
+///   [`EXECUTOR_PLATFORM_RUN_INSERT_COLUMNS`] and
+///   [`EXECUTOR_PLATFORM_QUEUE_INSERT_COLUMNS`], plus `SELECT` on
+///   `environment_policies`: the host admits an event-started workflow run
+///   under its release's authority (`wamn-upl3.6`). The grain check admits only
+///   an event run from these columns.
 /// * `effect_attempts`: `SELECT` only. The claim path only asks whether a row
 ///   exists.
 /// * `wamn_authority.tenant_key(text)`: MEASURED, and not optional. `runs`
@@ -596,12 +631,17 @@ pub fn grant_executor_platform_surface_sql(schema: &str) -> String {
     }
     let run_update = quoted_column_list(&EXECUTOR_PLATFORM_RUN_UPDATE_COLUMNS);
     let queue_update = quoted_column_list(&EXECUTOR_PLATFORM_QUEUE_UPDATE_COLUMNS);
+    let run_insert = quoted_column_list(&EXECUTOR_PLATFORM_RUN_INSERT_COLUMNS);
+    let queue_insert = quoted_column_list(&EXECUTOR_PLATFORM_QUEUE_INSERT_COLUMNS);
     write!(
         sql,
         " GRANT SELECT ON TABLE {schema}.\"runs\" TO {role}; \
          GRANT UPDATE ({run_update}) ON TABLE {schema}.\"runs\" TO {role}; \
+         GRANT INSERT ({run_insert}) ON TABLE {schema}.\"runs\" TO {role}; \
          GRANT SELECT, DELETE ON TABLE {schema}.\"run_queue\" TO {role}; \
          GRANT UPDATE ({queue_update}) ON TABLE {schema}.\"run_queue\" TO {role}; \
+         GRANT INSERT ({queue_insert}) ON TABLE {schema}.\"run_queue\" TO {role}; \
+         GRANT SELECT ON TABLE {schema}.\"environment_policies\" TO {role}; \
          GRANT SELECT ON TABLE {schema}.\"effect_attempts\" TO {role};"
     )
     .expect("writing to a String cannot fail");

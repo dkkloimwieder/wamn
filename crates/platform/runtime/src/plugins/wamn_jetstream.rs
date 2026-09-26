@@ -1863,6 +1863,7 @@ mod tests {
             entity: entity.to_string(),
             ops: ops.iter().copied().map(String::from).collect(),
             input: ServingRegistrationInput::Event,
+            delivery: wamn_catalog::RegistrationDelivery::Walk,
         };
         ServingManifest::new(
             ServingRelease {
