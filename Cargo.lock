@@ -6657,6 +6657,7 @@ dependencies = [
  "wamn-control",
  "wamn-control-provision",
  "wamn-control-registry",
+ "wamn-event-wire",
  "wamn-execution-contract",
  "wamn-gate-harness",
  "wamn-generated-wms-tui",

@@ -692,6 +692,57 @@ async fn author_wirings(
 }
 
 /// Enable the same CDC and registry-reader credentials as the WMS script.
+/// The materializer consumer of each WMS registration, as the operator
+/// declares it to provisioning: the workflow `movement_label` today.
+///
+/// The durable name is the one the materializer attaches to
+/// (`mat_<tenant>_<package>_<registration>`), and the filter is the
+/// registration entity's subjects in this environment.
+pub fn declared_consumers() -> anyhow::Result<Vec<async_nats::jetstream::consumer::pull::Config>> {
+    let manifest = wamn_schema_generator::PackageManifest::from_slice(&fs::read(
+        package_root().join("wamn.json"),
+    )?)?;
+    let sanitize = |value: &str| {
+        value
+            .chars()
+            .map(|character| {
+                if character.is_ascii_alphanumeric() || matches!(character, '_' | '-') {
+                    character
+                } else {
+                    '_'
+                }
+            })
+            .collect::<String>()
+    };
+    let handlers = manifest
+        .custom_operations
+        .iter()
+        .filter_map(|(name, operation)| Some((name, operation.registration()?)));
+    let workflows = manifest
+        .workflows
+        .iter()
+        .map(|(name, workflow)| (name, &workflow.registration));
+    Ok(handlers
+        .chain(workflows)
+        .map(|(name, registration)| {
+            wamn_control_provision::events::materializer_consumer_config(
+                &format!(
+                    "mat_{}_{}_{}",
+                    sanitize(TENANT),
+                    sanitize(&manifest.package.id),
+                    sanitize(name)
+                ),
+                &format!(
+                    "evt.{ORG}.{PROJECT}.{ENVIRONMENT}.{}.>",
+                    wamn_event_wire::subject_token(&registration.entity)
+                ),
+                Duration::from_secs(30),
+                5,
+            )
+        })
+        .collect())
+}
+
 pub async fn configure_cdc(
     inputs: &JourneyDocument,
     route: &ProvisionedRoute,
@@ -728,7 +779,10 @@ pub async fn configure_cdc(
         nats_password_file: provisioning.password_file.clone(),
         stream_replicas: source.num_replicas,
         dup_window_secs: source.duplicate_window.as_secs(),
-        consumer_config: Vec::new(),
+        consumer_config: declared_consumers()?
+            .iter()
+            .map(serde_json::to_string)
+            .collect::<Result<_, _>>()?,
         emit_role_sql: Some(role_path),
         emit_cdc_sql: Some(cdc_path),
         emit_secret: Some(secret_path.clone()),

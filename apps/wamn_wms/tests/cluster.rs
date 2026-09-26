@@ -183,7 +183,7 @@ async fn run_case(case: Case) -> anyhow::Result<()> {
                 crate::environment::TENANT,
                 &source,
                 &advisory,
-                &[],
+                &crate::environment::declared_consumers()?,
             )?;
             if matches!(case, Case::Delivery) {
                 checked(
@@ -464,7 +464,7 @@ async fn run_created(
             scope,
             source.num_replicas,
             source.duplicate_window,
-            &[],
+            &crate::environment::declared_consumers()?,
         )
         .await?;
         provisioning.drain().await?;
@@ -491,7 +491,7 @@ async fn run_created(
         &json!({
             "source":source_observed.cached_info().config,
             "advisory":advisory_observed.cached_info().config,
-            "consumers":[],
+            "consumers":crate::environment::declared_consumers()?,
         }),
     )?;
     drop(source_observed);

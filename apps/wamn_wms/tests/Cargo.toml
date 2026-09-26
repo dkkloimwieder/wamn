@@ -16,6 +16,8 @@ cluster = []
 
 [dev-dependencies]
 wamn-schema-generator = { workspace = true }
+# The subject token of a registration entity, as the materializer consumer filters it.
+wamn-event-wire = { workspace = true }
 anyhow = { workspace = true }
 reqwest = { workspace = true, features = ["rustls", "json"] }
 serde_json = { workspace = true }
