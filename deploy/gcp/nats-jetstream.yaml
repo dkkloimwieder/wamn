@@ -1,0 +1,276 @@
+# The event NATS of docs/plan/gcp-deployment.md step 3: the Google Cloud copy
+# of deploy/infra/nats-jetstream.yaml. It runs one server in namespace
+# platform, so it has no cluster block, no cluster port and no anti-affinity
+# spread. The event streams use one replica. The volume is pd-standard.
+# The comments of deploy/infra/nats-jetstream.yaml explain the users and the
+# WAMN_TAP stream. docs/operations/gcp.md section 3 makes the Secrets
+# evt-nats-authorization and evt-nats-bootstrap and applies this file.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: evt-nats-config
+  namespace: platform
+  labels:
+    app.kubernetes.io/name: evt-nats
+    app.kubernetes.io/component: event-plane-nats
+data:
+  nats.conf: |
+    # server_name is expanded from $POD_NAME by nats-server at load time so
+    # each replica advertises a stable, unique identity in the RAFT groups.
+    server_name: $POD_NAME
+    listen: 0.0.0.0:4222
+    http: 127.0.0.1:8222
+    # Preserve the default 1 MiB event ceiling explicitly for bounded native pulls.
+    max_payload: 1048576
+    # nats-server resolves an include relative to this file (finding wamn-lrf1).
+    include ../nats-authorization/authorization.conf
+
+    jetstream {
+      store_dir: /data/jetstream
+      # Memory store is a spill lane only; the EVT_ streams are FILE storage
+      # (one replica here), the durable second domain (§11 on-call: raft, disk, lag).
+      max_memory_store: 256MB
+      max_file_store: 3GB
+    }
+---
+# Headless service: the stable pod DNS name that the StatefulSet requires.
+apiVersion: v1
+kind: Service
+metadata:
+  name: evt-nats-headless
+  namespace: platform
+  labels:
+    app.kubernetes.io/name: evt-nats
+    app.kubernetes.io/component: event-plane-nats
+spec:
+  clusterIP: None
+  publishNotReadyAddresses: true
+  selector:
+    app.kubernetes.io/name: evt-nats
+  ports:
+    - name: client
+      port: 4222
+      targetPort: 4222
+---
+# Client service: what publishers/consumers/the reader connect to.
+# nats://evt-nats.platform.svc.cluster.local:4222
+apiVersion: v1
+kind: Service
+metadata:
+  name: evt-nats
+  namespace: platform
+  labels:
+    app.kubernetes.io/name: evt-nats
+    app.kubernetes.io/component: event-plane-nats
+spec:
+  selector:
+    app.kubernetes.io/name: evt-nats
+  ports:
+    - name: client
+      port: 4222
+      targetPort: 4222
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: evt-nats
+  namespace: platform
+  labels:
+    app.kubernetes.io/name: evt-nats
+    app.kubernetes.io/component: event-plane-nats
+spec:
+  serviceName: evt-nats-headless
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: evt-nats
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: evt-nats
+        app.kubernetes.io/component: event-plane-nats
+    spec:
+      terminationGracePeriodSeconds: 45
+      containers:
+        - name: nats
+          image: nats:2.10-alpine
+          imagePullPolicy: IfNotPresent
+          command:
+            - nats-server
+            - --config
+            - /etc/nats-config/nats.conf
+          env:
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+          ports:
+            - name: client
+              containerPort: 4222
+          volumeMounts:
+            - name: config
+              mountPath: /etc/nats-config
+            - name: authorization
+              mountPath: /etc/nats-authorization
+              readOnly: true
+            - name: data
+              mountPath: /data
+          # Only local administration can read unauthenticated broker metadata.
+          # The image supplies wget for the local health endpoint.
+          readinessProbe:
+            exec:
+              command: [wget, -q, -T, "2", -O, /dev/null, "http://127.0.0.1:8222/healthz"]
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            failureThreshold: 6
+          livenessProbe:
+            exec:
+              command: [wget, -q, -T, "2", -O, /dev/null, "http://127.0.0.1:8222/healthz"]
+            initialDelaySeconds: 15
+            periodSeconds: 15
+            failureThreshold: 6
+          resources:
+            # No CPU limit on purpose (the S2 CFS lesson): a quota throttles the
+            # raft/replication loops and inflates tail latency with scheduler
+            # stalls rather than real work. Memory is capped.
+            requests: { cpu: "200m", memory: "256Mi" }
+            limits: { memory: "1Gi" }
+      volumes:
+        - name: config
+          configMap:
+            name: evt-nats-config
+        - name: authorization
+          secret:
+            secretName: evt-nats-authorization
+            optional: false
+            items:
+              - key: authorization.conf
+                path: authorization.conf
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        storageClassName: standard
+        resources:
+          requests:
+            storage: 1Gi
+---
+# ---------------------------------------------------------------------------
+# WAMN_TAP — the router-edge live view's stream (wamn-0h0g.24.5)
+# ---------------------------------------------------------------------------
+#
+# The RESERVED, HOST-OWNED preview namespace `tap.>`, carrying ephemeral,
+# redacted payload previews published by the router-delivery bridge at each
+# delivery boundary. Its named consumer is the wamn-dggp.10 run screen.
+#
+# `tap` is deliberately NOT `evt`: a preview is an ephemeral debugging tap, and
+# putting one into the durable event grammar would give one subject two origins
+# — a stored fact and a redacted snapshot — which is fabricated provenance. The
+# host refuses `tap.*` to every guest publish in the same commit that minted the
+# namespace (`crates/platform/runtime/src/plugins/wamn_jetstream.rs`,
+# `is_reserved_router_tap_subject`): a diagnostic subject a tenant can write
+# would be a forgeable provenance channel feeding an operator's live view.
+#
+# EVERY LIMIT HERE IS A CEILING, NOT A TARGET. This stream is a small live
+# window, not a record:
+#   * memory storage + 1 replica — a restart drops it, which is what "ephemeral"
+#     means and also keeps redacted-but-still-guest payloads off disk. The EVT_
+#     streams' R3 file storage is for facts; this is not one.
+#   * max_age 5m — a run screen attaching a moment late still sees the delivery
+#     it opened on. Nothing older is a "live" view.
+#   * max_msgs_per_subject 16 — one delivery publishes two previews (accepted,
+#     settled); the headroom is for the per-edge upgrade, which is NOT built.
+#   * max_msg_size 128KiB — above the host's 64KiB redacted-payload ceiling
+#     (wamn_run_state::redaction::OUTPUT_CAPTURE_CEILING_BYTES) plus envelope.
+#     The host drops an over-ceiling payload before publishing, so this is the
+#     backstop, not the policy.
+#   * max_bytes 64MiB — inside the 256MB max_memory_store above, so a burst of
+#     previews cannot starve JetStream's memory spill lane.
+#   * duplicate_window 120s — explicit rather than the ambient NATS default.
+#     Tap publishes carry no Nats-Msg-Id, so duplicate tracking stays inert.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: evt-nats-tap-stream
+  namespace: platform
+  labels:
+    app.kubernetes.io/name: evt-nats
+    app.kubernetes.io/component: router-tap-stream
+data:
+  stream.json: |
+    {
+      "name": "WAMN_TAP",
+      "subjects": ["tap.>"],
+      "retention": "limits",
+      "storage": "memory",
+      "num_replicas": 1,
+      "discard": "old",
+      "max_age": 300000000000,
+      "max_msgs": 200000,
+      "max_msgs_per_subject": 16,
+      "max_bytes": 67108864,
+      "max_msg_size": 131072,
+      "duplicate_window": 120000000000
+    }
+---
+# Install-once provisioning. Idempotent by construction: `stream info` decides
+# between add and edit, so re-applying this manifest reconciles a drifted config
+# instead of failing on "stream already exists".
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: evt-nats-tap-stream
+  namespace: platform
+  labels:
+    app.kubernetes.io/name: evt-nats
+    app.kubernetes.io/component: router-tap-stream
+spec:
+  backoffLimit: 6
+  ttlSecondsAfterFinished: 600
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: evt-nats
+        app.kubernetes.io/component: router-tap-stream
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: provision
+          image: natsio/nats-box:0.14.5
+          imagePullPolicy: IfNotPresent
+          command:
+            - sh
+            - -ce
+            - |
+              URL=nats://evt-nats.platform.svc.cluster.local:4222
+              CONFIG=/etc/tap-stream/stream.json
+              if nats --context bootstrap --server "$URL" stream info WAMN_TAP >/dev/null 2>&1; then
+                nats --context bootstrap --server "$URL" stream edit WAMN_TAP --config "$CONFIG" --force
+              else
+                nats --context bootstrap --server "$URL" stream add WAMN_TAP --config "$CONFIG"
+              fi
+              nats --context bootstrap --server "$URL" stream info WAMN_TAP
+          env:
+            - name: XDG_CONFIG_HOME
+              value: /etc/nats-client
+          volumeMounts:
+            - name: config
+              mountPath: /etc/tap-stream
+            - name: bootstrap
+              mountPath: /etc/nats-client/nats/context
+              readOnly: true
+          resources:
+            requests: { cpu: "50m", memory: "32Mi" }
+            limits: { memory: "128Mi" }
+      volumes:
+        - name: config
+          configMap:
+            name: evt-nats-tap-stream
+        - name: bootstrap
+          secret:
+            secretName: evt-nats-bootstrap
+            optional: false
+            items:
+              - key: context.json
+                path: bootstrap.json

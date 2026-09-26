@@ -6615,6 +6615,7 @@ dependencies = [
  "wamn-catalog",
  "wamn-control-provision",
  "wamn-control-registry",
+ "wamn-event-wire",
  "wamn-schema-generator",
  "wamn-test-postgres",
 ]

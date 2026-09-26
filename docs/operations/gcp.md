@@ -401,3 +401,39 @@ On 2026-09-26 the host image took 419 seconds to build and the identity image 59
 | `wamn-host:src-490a0d098a176e39` | `sha256:b44a6f944a410ca42dccf378c0948226946c54fefa17c4bf3cc246e25dcd9dd2` |
 | `wamn-identity:src-bf477a549dc55932` | `sha256:b0896c8fb3f94920c097762f75019fe68a81254fc49a4fa6768a29db97794827` |
 
+
+### 3.5 Event NATS
+
+Write the users of the environment into a private directory. The example program calls `event_broker::prepare`, the derivation of the cluster tests, and adds the `tap-admin` user that creates the `WAMN_TAP` stream:
+
+```bash
+mkdir -m 700 <private directory>
+cargo run -p wamn-test-infrastructure --example event_broker_files -- \
+  <private directory> nats://evt-nats.platform.svc.cluster.local:4222 \
+  wamn receiving dev dev 1 "$PWD/apps/wamn_receiving/wamn.json"
+E=<private directory>/event-nats
+```
+
+The Receiving manifest declares no event registration, so the program makes no materializer consumer.
+
+Make the two broker Secrets, then install the broker:
+
+```bash
+kubectl -n platform create secret generic evt-nats-authorization --from-file=authorization.conf=$E/authorization.conf
+kubectl -n platform create secret generic evt-nats-bootstrap --from-file=context.json=$E/context.json
+kubectl apply -f deploy/gcp/nats-jetstream.yaml
+kubectl -n platform rollout status statefulset/evt-nats --timeout=300s
+kubectl -n platform wait --for=condition=complete job/evt-nats-tap-stream --timeout=180s
+```
+
+Make the two host Secrets. The host connects as the `runtime` user, and the materializer reads the binding:
+
+```bash
+kubectl -n hosts create secret generic wamn-event-nats \
+  --from-file=username=$E/runtime-username --from-file=password=$E/runtime-password \
+  --from-literal=org=wamn --from-literal=project=receiving --from-literal=environment=dev \
+  --from-literal=stream_replicas=1 --from-literal=dup_window_secs=120
+kubectl -n hosts create secret generic wamn-materializer-nats --from-file=binding.json=$E/binding.json
+```
+
+On 2026-09-26 the first start failed. The broker crash-looped, because `deploy/infra/nats-jetstream.yaml` includes the authorization file by an absolute path, and nats-server resolves an include relative to the configuration file (finding `wamn-lrf1`). The Google Cloud copy uses a relative path. The tap-stream Job reached its backoff limit while the broker was down, so it was deleted and applied again. It then completed in 18 seconds.
