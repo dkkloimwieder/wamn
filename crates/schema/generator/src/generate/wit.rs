@@ -579,11 +579,15 @@ fn emit_query_limit(
         )
         .expect("writing to a String cannot fail");
         if optional.contains(&OperationErrorDetailKey::Minimum) {
-            writeln!(source, "        detail.minimum = Some({});", limit.minimum)
-                .expect("writing to a String cannot fail");
+            writeln!(
+                source,
+                "        detail.minimum = Some(\"{}\".to_owned());",
+                limit.minimum
+            )
+            .expect("writing to a String cannot fail");
         }
         if optional.contains(&OperationErrorDetailKey::Observed) {
-            source.push_str("        detail.observed = Some(limit);\n");
+            source.push_str("        detail.observed = Some(limit.to_string());\n");
         }
         source.push_str("        return Err(detail);\n    }\n");
     }

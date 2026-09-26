@@ -100,8 +100,8 @@ fn limit(request: &mut contract::QueryRequest) -> Result<(), contract::InvalidIn
     if limit < 1 {
         #[allow(unused_mut)]
         let mut detail = invalid("limit");
-        detail.minimum = Some(1);
-        detail.observed = Some(limit);
+        detail.minimum = Some("1".to_owned());
+        detail.observed = Some(limit.to_string());
         return Err(detail);
     }
     Ok(())

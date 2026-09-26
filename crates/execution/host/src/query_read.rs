@@ -72,9 +72,9 @@ pub(crate) fn limit_refusal(payload: &serde_json::Value, maximum: i64) -> Option
                 "code": "invalid_input",
                 "detail": {
                     "field": "limit",
-                    "minimum": 1,
-                    "maximum": maximum,
-                    "observed": limit,
+                    "minimum": "1",
+                    "maximum": maximum.to_string(),
+                    "observed": limit.to_string(),
                 },
             },
         }])
@@ -116,7 +116,7 @@ mod tests {
             .expect("100,001 is above the ceiling");
         assert_eq!(
             serde_json::from_str::<serde_json::Value>(&refusal).unwrap()[0]["error"]["detail"]["observed"],
-            100_001
+            "100001"
         );
         assert!(
             limit_refusal(&serde_json::json!([{ "limit": 100_000 }]), STREAM_CEILING).is_none()

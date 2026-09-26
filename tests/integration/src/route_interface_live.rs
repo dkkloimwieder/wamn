@@ -501,7 +501,7 @@ async fn a_route_answers_every_operation_kind_as_its_one_node_wiring() -> anyhow
         status == 200
             && lines.len() == 1
             && lines[0][0]["error"]["code"] == json!("invalid_input")
-            && lines[0][0]["error"]["detail"]["maximum"] == json!(100_000),
+            && lines[0][0]["error"]["detail"]["maximum"] == json!("100000"),
         "a cap above the ceiling refuses before the first row: {status} {lines:?}"
     );
     let (status, _, lines) = paths
