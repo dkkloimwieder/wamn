@@ -49,6 +49,10 @@
  * selects rows and a bar that runs one action over them, as `bulk.tsx` states.
  * That column stays out of the same places as the row buttons.
  *
+ * A caller that passes `editableFields` and `onEdit` gets cells that edit in
+ * place, as `edit-cell.tsx` states. While an edit is open, `onEditing` tells
+ * the source to run no new load.
+ *
  * Each header has a menu that sorts, hides, pins and unpins its column and
  * chooses its aggregate. The column panel shows and hides columns and orders
  * them, and a header edge drag sets a width. The arrangement works in every
@@ -143,6 +147,7 @@ import {
   selectColumn,
 } from "./bulk";
 import { csvFileName, csvText, downloadCsv, EXPORT_NEEDS_FULL_SET } from "./csv";
+import { type DataTableEditResult, EditCell, editedValue, editText, type OpenEdit } from "./edit-cell";
 import { ColumnMenu } from "./column-menu";
 import { ColumnPanel } from "./column-panel";
 import { type DataTableGroupSort, GroupBar, VALUE_SORT } from "./group-bar";
@@ -258,6 +263,20 @@ export interface DataTableProps<TRow extends object> {
   readonly onBulk?:
     | ((operation: string, rows: readonly TRow[]) => Promise<readonly DataTableRowResult[]>)
     | undefined;
+  /** The fields whose cells edit in place: the columns the update writes. */
+  readonly editableFields?: readonly (keyof TRow & string)[] | undefined;
+  /**
+   * Saves one edited cell. The caller calls the update with the row's key and
+   * revision, and returns what the write came to.
+   */
+  readonly onEdit?:
+    | ((row: TRow, field: keyof TRow & string, value: unknown) => Promise<DataTableEditResult<TRow>>)
+    | undefined;
+  /**
+   * Called with true when an edit opens and with false when it is saved or
+   * dropped. The source runs no new load in between.
+   */
+  readonly onEditing?: ((editing: boolean) => void) | undefined;
 }
 
 /** The text the search box shows when the set is not fully read. */
@@ -443,6 +462,61 @@ export function DataTable<TRow extends object>(props: DataTableProps<TRow>): JSX
   const [results, setResults] = createSignal<Record<string, DataTableRowResult>>({});
   const bulk = () => (props.bulkActions ?? []).length > 0 && props.onBulk !== undefined;
 
+  /** The one open edit, or null. */
+  const [edit, setEdit] = createSignal<OpenEdit | null>(null);
+  const editable = (field: string) =>
+    props.onEdit !== undefined && (props.editableFields ?? []).includes(field as keyof TRow & string);
+  createEffect(
+    on(
+      () => edit() !== null,
+      (editing) => props.onEditing?.(editing),
+      { defer: true },
+    ),
+  );
+
+  function openEdit(row: TRow, field: keyof TRow & string) {
+    if (edit() === null) {
+      setEdit({
+        rowId: String(row[props.rowId]),
+        field,
+        text: editText(row[field]),
+        error: null,
+        conflict: null,
+        saving: false,
+      });
+    }
+  }
+
+  /** Saves the open edit. A refusal or a conflict keeps the editor and its text. */
+  async function saveEdit() {
+    const open = edit();
+    const row = props.rows.find((candidate) => String(candidate[props.rowId]) === open?.rowId);
+    if (open === null || row === undefined || open.saving) {
+      return;
+    }
+    const parsed = editedValue(column(open.field).type, open.text);
+    if ("error" in parsed) {
+      setEdit({ ...open, error: parsed.error });
+      return;
+    }
+    setEdit({ ...open, saving: true });
+    const result = await props.onEdit!(row, open.field as keyof TRow & string, parsed.value);
+    const current = edit();
+    if (current === null) {
+      return;
+    }
+    switch (result.status) {
+      case "completed":
+        setEdit(null);
+        break;
+      case "conflict":
+        setEdit({ ...current, saving: false, error: null, conflict: result.message });
+        break;
+      default:
+        setEdit({ ...current, saving: false, conflict: null, error: result.message });
+    }
+  }
+
   // The column definitions change only with the columns and with the fully
   // read state. A getter that built them on every read would make the table
   // rebuild its columns on every read. TanStack copies each definition once,
@@ -477,17 +551,36 @@ export function DataTable<TRow extends object>(props: DataTableProps<TRow>): JSX
             />
           </div>
         ),
-        cell: (context) => (
-          <DataTableCell
-            cell={context.cell}
-            show={definition.cell}
-            groupLabel={(field, value) =>
-              column(field).type === "timestamptz"
-                ? bucketLabel(String(value), bucketFor(field))
-                : String(value)
-            }
-          />
-        ),
+        cell: (context) => {
+          const shown = () => (
+            <DataTableCell
+              cell={context.cell}
+              show={definition.cell}
+              groupLabel={(field, value) =>
+                column(field).type === "timestamptz"
+                  ? bucketLabel(String(value), bucketFor(field))
+                  : String(value)
+              }
+            />
+          );
+          return (
+            <Show when={editable(definition.field) && !context.row.getIsGrouped()} fallback={shown()}>
+              <EditCell
+                label={definition.label}
+                rowId={context.row.id}
+                shown={shown()}
+                edit={
+                  edit()?.rowId === context.row.id && edit()?.field === definition.field ? edit() : null
+                }
+                blocked={edit() !== null}
+                onOpen={() => openEdit(context.row.original, definition.field)}
+                onText={(text) => setEdit((open) => (open === null ? null : { ...open, text }))}
+                onSave={() => void saveEdit()}
+                onDrop={() => setEdit(null)}
+              />
+            </Show>
+          );
+        },
         accessorFn: (row) => row[definition.field],
         // The starting width, before a drag sets one: a whole id or time fits.
         size: definition.type === "uuid" ? 300 : definition.type === "timestamptz" ? 240 : 150,
@@ -917,7 +1010,12 @@ export function DataTable<TRow extends object>(props: DataTableProps<TRow>): JSX
               }}
             />
           </div>
-          <Button type="button" variant="outline" disabled={props.busy} onClick={() => props.onRefresh()}>
+          <Button
+            type="button"
+            variant="outline"
+            disabled={props.busy || edit() !== null}
+            onClick={() => props.onRefresh()}
+          >
             refresh
           </Button>
           <Field class="w-auto">
@@ -1076,7 +1174,8 @@ export function DataTable<TRow extends object>(props: DataTableProps<TRow>): JSX
         }
       >
         {/* The grid takes the height the toolbar leaves, in place of its fixed one. */}
-        <DataGridContainer class="h-auto min-h-0 flex-1">
+        {/* A revision conflict marks its whole row. */}
+        <DataGridContainer class="h-auto min-h-0 flex-1 [&_tr:has([data-slot=data-table-row-conflict])]:bg-destructive/10">
           <WindowedTable
             footerContent={
               <Show when={props.fullyRead && props.rows.length > 0}>

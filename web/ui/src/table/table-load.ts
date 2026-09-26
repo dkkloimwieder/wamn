@@ -5,6 +5,9 @@
  * asks for. A cap change, a sort on a set that is not fully read and a
  * refresh each start a new load, through the load state of
  * `@wamn/web-runtime`. An outcome of an older load is dropped.
+ *
+ * While an inline edit is open, the load is held: a new load waits until the
+ * edit is saved or dropped, and then the last one asked for runs.
  */
 
 import { createSignal, type Accessor } from "solid-js";
@@ -47,6 +50,8 @@ export interface TableLoad<TRow extends object> {
   readonly load: (cap?: number) => Promise<void>;
   /** Takes the sort of a header click and starts a new load in that order. */
   readonly sortBy: (sort: readonly DataTableSort<TRow>[]) => void;
+  /** Holds every new load while `held` is true, and runs the last one asked for when it ends. */
+  readonly hold: (held: boolean) => void;
 }
 
 export function createTableLoad<TRow extends object>(
@@ -55,8 +60,15 @@ export function createTableLoad<TRow extends object>(
 ): TableLoad<TRow> {
   const [state, setState] = createSignal<LoadState<TRow>>(emptyLoad(DEFAULT_CAP));
   let sort: TableLoadSort | undefined;
+  let held = false;
+  // The cap of the last load asked for while held, or undefined.
+  let waiting: number | undefined;
 
   const load = async (cap: number = state().cap) => {
+    if (held) {
+      waiting = cap;
+      return;
+    }
     const next = startLoad(state(), cap);
     setState(next);
     const limit =
@@ -75,5 +87,14 @@ export function createTableLoad<TRow extends object>(
     }
   };
 
-  return { state, load, sortBy };
+  const hold = (next: boolean) => {
+    held = next;
+    const cap = waiting;
+    if (!held && cap !== undefined) {
+      waiting = undefined;
+      void load(cap);
+    }
+  };
+
+  return { state, load, sortBy, hold };
 }
