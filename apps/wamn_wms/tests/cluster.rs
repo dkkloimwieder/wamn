@@ -638,6 +638,37 @@ async fn run_created(
         document.runtime = Some(application::runtime_phase(endpoint));
         let store = bootstrap::object_store(files, &minio_endpoint)?;
 
+        // The movement_label workflow runs on the materializer's delivery of
+        // the move's row event, so the materializer serves before any move.
+        let materializer_input = MaterializerInput {
+            workload: format!("{}-materializer", crate::environment::PROJECT),
+            namespace: cluster.to_owned(),
+            image: materializer,
+            tenant: crate::environment::TENANT.to_owned(),
+            event: EventIdentity {
+                org: scope.org.clone(),
+                project: scope.project.clone(),
+                environment: scope.env.as_str().to_owned(),
+            },
+            event_stream: source.name.clone(),
+            fetch_ms: 500,
+            sweep_ms: 500,
+        };
+        let materializer_path = work.join("materializer.yaml");
+        fs::write(
+            &materializer_path,
+            render_materializer(
+                &fs::read_to_string(repository.join("deploy/platform/materializer.example.yaml"))?,
+                &materializer_input,
+            )?,
+        )?;
+        checked(
+            kubectl(cluster, work)
+                .args(["apply", "-f"])
+                .arg(&materializer_path),
+        )
+        .await?;
+        workload::materializer_ready(cluster, work, &materializer_input, &hosts, evidence).await?;
         application::released_routes(&document, &store, evidence).await?;
         let database: tokio_postgres::Config = route.database_url.parse()?;
         let database_name = database
@@ -712,35 +743,6 @@ async fn run_created(
             ]))
             .await?;
         }
-        let materializer_input = MaterializerInput {
-            workload: format!("{}-materializer", crate::environment::PROJECT),
-            namespace: cluster.to_owned(),
-            image: materializer,
-            tenant: crate::environment::TENANT.to_owned(),
-            event: EventIdentity {
-                org: scope.org.clone(),
-                project: scope.project.clone(),
-                environment: scope.env.as_str().to_owned(),
-            },
-            event_stream: source.name.clone(),
-            fetch_ms: 500,
-            sweep_ms: 500,
-        };
-        let materializer_path = work.join("materializer.yaml");
-        fs::write(
-            &materializer_path,
-            render_materializer(
-                &fs::read_to_string(repository.join("deploy/platform/materializer.example.yaml"))?,
-                &materializer_input,
-            )?,
-        )?;
-        checked(
-            kubectl(cluster, work)
-                .args(["apply", "-f"])
-                .arg(&materializer_path),
-        )
-        .await?;
-        workload::materializer_ready(cluster, work, &materializer_input, &hosts, evidence).await?;
         workload::materializer_idle(cluster, work, cluster, &hosts, evidence).await?;
         workload::cross_environment_refused(cluster, work, cluster, &http, evidence).await
     };
