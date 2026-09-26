@@ -54,7 +54,8 @@ function loaded(cap: number, ids: string[], cursor: string | null) {
 
 describe("the table definition of the widget query", () => {
   it("names the read, its row id, its page maximum, its scope and its columns", () => {
-    expect(definition.read).toBe("query");
+    expect(definition.read.route.operation).toBe("platform-fixture:widget/query@1.0.0");
+    expect(definition.rows).toBe("item");
     expect(definition.rowId).toEqual(["id"]);
     expect(definition.pageMaximum).toBe(100);
     expect(definition.scopeFilters).toEqual(["code"]);
