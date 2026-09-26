@@ -15,6 +15,7 @@ Inventory stores its current `location_id` explicitly.
 Packaging stores its own `location_id` separately.
 Open inventory references open packaging at the same location.
 Commands check that relationship while they hold locks on the affected rows.
+Admitted command paths enforce co-location. The database schema does not enforce it for arbitrary direct writes.
 Changing packaging metadata never implicitly relocates inventory.
 
 Packaging has an identity, `type`, code, location, lifecycle, and revision.

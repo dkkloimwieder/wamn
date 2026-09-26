@@ -91,6 +91,7 @@ History failure rolls back state changes, earlier history inserts, and the claim
 The package grants only insertion and reading on `InventoryTransaction`.
 No trigger or compatibility path supplies ledger atomicity.
 Application row locks protect business validation and packaging closure.
+Admitted locked command paths enforce co-location, not a universal database constraint.
 Database constraints retain structural identity, reference, quantity, and lifecycle rules.
 Administrative fixture creation is a baseline operation outside the public command model.
 
@@ -142,6 +143,9 @@ The small seed loaded ten products, ten locations, ten packaging records, and ni
 The formal Rust source hashes still match the completed Kani and deliberate-defect runs recorded above.
 Production alignment changed no formal Rust source, so those runs were not repeated.
 The deployed cluster cases did not run during this production correction.
+The subsequent `cluster::released_wms_routes` run at `df64aed84` failed during host startup, before route assertions.
+Its fixture omitted the session issuer required by the published routes. Bead `wamn-s43x.14` tracks this failed gate.
+The command took 1534.52 seconds, including builds, and removed its disposable resources.
 Bead `wamn-g4kj` retains the existing unattached label-workflow finding.
 Raw production logs remain in `/tmp/wamn-production-alignment/` on this host.
 
