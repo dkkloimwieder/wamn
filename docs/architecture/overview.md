@@ -130,7 +130,7 @@ Five layers run a component, and each layer depends only on the layers below it:
 2. [`wamn-engine`](../../crates/platform/engine/src/lib.rs) holds the Wasmtime and wash-runtime host, component admission and artifacts, lifecycle, and `invoke_operation`. It links no Postgres, OCI, or `object_store` crate. A test pins what it links through wash-runtime.
 3. [`wamn-runtime`](../../crates/platform/runtime/src/lib.rs) holds the plugin set: Postgres, JetStream, blobstore, HTTP connections, credentials, logging, route authentication, and the OCI registry source. `WamnPostgres` is the Postgres adapter of `RunStore`.
 4. [`wamn-execution-host`](../../crates/execution/host/src/lib.rs) holds the route path, `OperationHost`, and the delivery bridge.
-5. [`wamn-workflow`](../../crates/execution/workflow/src/lib.rs) holds everything that walks or delivers a wiring: the driver, wiring delivery, the queue, and the lowering of a wiring. It depends on the pure walk, [`wamn-router`](../../crates/execution/workflow/router/src/lib.rs). A route never enters it.
+5. [`wamn-workflow`](../../crates/execution/workflow/src/lib.rs) holds everything that walks or delivers a wiring: the driver, wiring delivery, the queue, the lowering of a wiring, and the workflow contract (start, park, release, list). It depends on the pure walk, [`wamn-router`](../../crates/execution/workflow/router/src/lib.rs). A route never enters it.
 
 The services compose these layers.
 

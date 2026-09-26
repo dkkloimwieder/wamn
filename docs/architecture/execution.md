@@ -179,6 +179,35 @@ A bound principal alone does not move a read out of the autocommit path.
 The [claims owner](../../crates/platform/runtime/src/plugins/wamn_postgres/claims.rs) refuses a transactional statement with no executing principal before it reaches PostgreSQL.
 That refusal carries SQLSTATE `55000` and the message `actor-required`, as the stamp trigger does.
 
+## Workflows
+
+A workflow is a released wiring that runs off the request path.
+The [workflow contract](../../crates/execution/workflow/src/contract.rs) in `wamn-workflow` is the trait `Workflows`, with four operations.
+
+- `start` admits one run of a released wiring under a service principal. It writes the `runs` row and the `run_queue` row in one transaction, and a repeated idempotency key returns the first run.
+- `park` moves the `available_at` of a queued run to `infinity`, so no claim takes it. The run keeps the status `dispatched`, and a running or finished run refuses.
+- `release` returns a parked run to the queue.
+- `list` returns the runs of one environment, newest first, with their status and their queued and parked flags.
+
+`PostgresWorkflows` implements the contract with project-admin authority, and the `wamn-ctl workflow` commands call it ([queued automation](../operations/queued-automation.md)).
+Its SQL lives in `wamn-run-state` beside the claim SQL.
+
+An application event starts a workflow that the package declares in `wamn.json` under `workflows`.
+The declaration names the wiring and a registration: the source package, the entity, and the row operations.
+Apply-package writes the registration row under the workflow id, and publish derives a `ServingRegistration` for the named wiring.
+The wiring can enter at any node, while an event handler's wiring enters at the handler.
+The materializer delivers the event, and the driver walks the wiring with no caller.
+A node that needs an operation grant refuses, so an event workflow runs palette nodes.
+An event workflow is not a queued run: `list` does not show it, and `park` cannot hold it, because only project-admin authority admits a run.
+
+The [JSONata node](../../apps/platform/execution/jsonata/src/lib.rs) is a palette node compiled to wasm.
+Its parameter `expression` is JSONata text, and the node evaluates it on its input inside the guest.
+The result leaves on port `main`, or on port `items`, whose schema is the item array that `label-render` takes.
+The node is a std guest: it imports `wasi:random` at the version that Rust std links, and the virtualizer passes that import through.
+
+The WMS workflow `movement_label` is the first example.
+The `inventory_movement` insert starts it, and it stores one pallet label for each move, keyed by the move's idempotency key.
+
 ## Results and effects
 
 A wiring edge carries the declared route envelope.
