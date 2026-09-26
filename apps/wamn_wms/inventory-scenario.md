@@ -64,7 +64,7 @@ inventory_movement insert → shape (jsonata) → label-render → blob-put
 ```
 
 The `shape` node turns a move's row into one label item, and any other movement kind into none.
-The label is stored under the movement id, so a redelivered event overwrites the same object.
+The label is stored under the move's idempotency key, so a move with several product lines, or a redelivered event, overwrites the same object.
 The move response carries the committed move only (docs/plan/workflow-feature.md).
 
 ## Application observations

@@ -79,9 +79,9 @@ fn the_movement_insert_starts_the_label_workflow() {
 /// The wiring's PARAMS are what make the composition work, so they are pinned.
 ///
 /// `template_id` chooses the label once, at authoring, so a gate case can pin
-/// golden output. `key_field` and `body_field` are where blob-put looks, and
-/// pointing the key at `movement_id` is what makes a redelivery overwrite one
-/// object instead of writing a second.
+/// golden output. `key_field` and `body_field` are where blob-put looks. The
+/// key is the move's idempotency key, which every movement row of one move
+/// carries, so one move stores one label and a redelivery overwrites it.
 #[test]
 fn the_wirings_params_carry_the_mapping() {
     let document = read_json(
@@ -99,10 +99,16 @@ fn the_wirings_params_carry_the_mapping() {
 
     let store = &wiring.nodes["store"].params;
     assert_eq!(store["store_alias"], "labels");
+    assert!(
+        wiring.nodes["shape"].params["expression"]
+            .as_str()
+            .is_some_and(|expression| expression.contains("\"label_key\": new.idempotency_key")),
+        "the shape keys the label by the move's command"
+    );
     assert_eq!(
-        store["key_field"], "/movement_id",
-        "the object key must be the claim-generated movement id, or a \
-         redelivery writes a second label"
+        store["key_field"], "/label_key",
+        "the object key must be the move's idempotency key, or a move with \
+         several product lines or a redelivery writes a second label"
     );
     assert_eq!(store["body_field"], "/zpl");
 }

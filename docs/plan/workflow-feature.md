@@ -86,7 +86,7 @@ The graph keeps its id `inventory_move_and_label`. The move node leaves the grap
 inventory_movement insert -> shape (jsonata) -> label (label-render) -> store (blob-put)
 ```
 
-The `shape` node turns the row event into the item array that `label-render` takes, with `movement_id`, `pallet_id`, and `location_id`. A movement that is not a move gives an empty array. The graph has no `respond` terminal, because no caller waits. The WMS cluster cases read the label from the blob store after the run completes. They no longer read it from the move response.
+The `shape` node turns the row event into the item array that `label-render` takes, with `pallet_id` and `location_id`, and the label key. The label key is the move's idempotency key, because a move can write one movement row for each product line and every row carries the key. One move therefore stores one label, and a redelivered event overwrites it. A movement that is not a move gives an empty array. The graph has no `respond` terminal, because no caller waits. The WMS cluster cases read the label from the blob store after the run completes. They no longer read it from the move response.
 
 ## 5. Issues
 

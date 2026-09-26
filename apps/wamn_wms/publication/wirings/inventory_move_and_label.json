@@ -9,7 +9,7 @@
       "interface-version": "0.1.0",
       "operation": "wamn:node/handler@0.1.0",
       "params": {
-        "expression": "event = \"insert\" and new.kind = \"move\" ? [{\"request_id\": new.id, \"value\": {\"movement_id\": new.id, \"pallet_id\": new.pallet_id, \"location_id\": new.to_location_id}}] : []",
+        "expression": "event = \"insert\" and new.kind = \"move\" ? [{\"request_id\": new.id, \"value\": {\"label_key\": new.idempotency_key, \"movement_id\": new.id, \"pallet_id\": new.pallet_id, \"location_id\": new.to_location_id}}] : []",
         "port": "items"
       }
     },
@@ -27,7 +27,7 @@
       "operation": "wamn:node/async-handler@0.1.0",
       "params": {
         "store_alias": "labels",
-        "key_field": "/movement_id",
+        "key_field": "/label_key",
         "body_field": "/zpl"
       }
     }

@@ -277,10 +277,10 @@ pub(super) async fn released_routes(
     } else {
         labels(store).await?
     };
-    let movement = delivery["movement_id"]
+    let label_key = delivery["label_key"]
         .as_str()
-        .context("the label delivery result has a movement id")?;
-    assert_single_label(&objects, movement)?;
+        .context("the label delivery result has a label key")?;
+    assert_single_label(&objects, label_key)?;
     write_result(evidence, "labels-objects.json", &Value::Array(objects))?;
     Ok(())
 }
@@ -402,11 +402,12 @@ pub(super) async fn generated_terminal(
     if mode == "success" {
         // The terminal sees the committed move only. The label workflow stores
         // the label under the movement id after the move commits.
-        let movement = result["movement_id"]
+        // The workflow keys the label by the move's idempotency key.
+        let command = result["idempotency_key"]
             .as_str()
-            .context("the generated terminal returns its movement id")?;
-        uuid::Uuid::parse_str(movement).context("the terminal movement id is a UUID")?;
-        let key = object_store::path::Path::from(format!("wms/{movement}"));
+            .filter(|key| !key.is_empty())
+            .context("the generated terminal returns its move's idempotency key")?;
+        let key = object_store::path::Path::from(format!("wms/{command}"));
         let mut label = None;
         for _ in 0..LABEL_WAIT_SECONDS {
             if let Ok(object) = store.get(&key).await {

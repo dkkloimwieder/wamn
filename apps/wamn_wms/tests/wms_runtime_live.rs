@@ -284,7 +284,8 @@ pub(crate) async fn assert_label_delivery_and_replay(
         replayed == moved,
         "the composed route replay returns the original move {movement_id}: {replayed}"
     );
-    Ok(json!({"movement_id": movement_id}))
+    // The label workflow keys the label by the move's idempotency key.
+    Ok(json!({"movement_id": movement_id, "label_key": "label-move-key"}))
 }
 
 /// The `value` of the single item answering `request_id`, or the refusal as
@@ -645,15 +646,15 @@ pub(crate) async fn assert_committed_move_after_label_failure(
 }
 
 /// Check the label objects returned by the store's existing client.
-pub(crate) fn assert_single_label(objects: &[Value], movement_id: &str) -> anyhow::Result<()> {
+pub(crate) fn assert_single_label(objects: &[Value], label_key: &str) -> anyhow::Result<()> {
     let label_count = objects.len();
-    let label_key = objects
+    let found = objects
         .first()
         .and_then(|object| object["key"].as_str())
         .unwrap_or("");
     anyhow::ensure!(
-        label_count == 1 && label_key == movement_id,
-        "expected exactly one label object named {movement_id} under wms/, found {label_count}: {label_key}"
+        label_count == 1 && found == label_key,
+        "expected exactly one label object named {label_key} under wms/, found {label_count}: {found}"
     );
     Ok(())
 }

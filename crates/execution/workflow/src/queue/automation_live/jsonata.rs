@@ -19,8 +19,8 @@ const DECLARATION: &str =
 /// The WMS label workflow's shape expression (docs/plan/workflow-feature.md 4.4).
 const SHAPE: &str = r#"event = "insert" and new.kind = "move"
     ? [{"request_id": new.id,
-        "value": {"movement_id": new.id, "pallet_id": new.pallet_id,
-                  "location_id": new.to_location_id}}]
+        "value": {"label_key": new.idempotency_key, "movement_id": new.id,
+                  "pallet_id": new.pallet_id, "location_id": new.to_location_id}}]
     : []"#;
 
 pub(super) fn node(bytes: Vec<u8>) -> Node {
@@ -51,7 +51,7 @@ pub(super) async fn run(
     execution: Execution<'_>,
 ) -> anyhow::Result<()> {
     let row = json!({"event": "insert", "new": {
-        "id": "m-1", "kind": "move", "pallet_id": "p-1",
+        "id": "m-1", "idempotency_key": "k-1", "kind": "move", "pallet_id": "p-1",
         "from_location_id": "l-0", "to_location_id": "l-2", "quantity": "4"}});
     let run = workflows
         .start(&StartRequest {
@@ -87,7 +87,7 @@ pub(super) async fn run(
     assert_eq!(row.get::<_, String>(0), "completed");
     assert_eq!(
         serde_json::from_str::<serde_json::Value>(&row.get::<_, String>(1))?,
-        json!([{"request_id": "m-1", "value": {
+        json!([{"request_id": "m-1", "value": {"label_key": "k-1",
             "movement_id": "m-1", "pallet_id": "p-1", "location_id": "l-2"}}])
     );
     Ok(())

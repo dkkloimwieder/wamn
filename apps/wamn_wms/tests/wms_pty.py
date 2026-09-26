@@ -247,7 +247,8 @@ def drive(session, relay, db, evidence, ids, mode):
     session.finish()
     frame("18-restored-terminal")
     return {"exit_code": session.process.returncode, "terminal_restored": True, "mode": mode,
-            "movement_id": movement_id, "pallet_id": ids.pallet, "location_id": ids.destination,
+            "movement_id": movement_id, "idempotency_key": command["idempotency_key"],
+            "pallet_id": ids.pallet, "location_id": ids.destination,
             "row_version": 2, "http_requests": 2, "read_requests": 1, "move_requests": 1,
             "committed_claims": 1, "committed_movements": 1, "spent_controls_send_nothing": True,
             "partial_result_and_failure_visible": mode == "partial"}
