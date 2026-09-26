@@ -11,7 +11,7 @@
 //! canonicalize the body
 //! → find a replay: same key ⇒ return the ORIGINAL result, unchanged
 //! → claim the key, which pre-generates the movement id
-//! → lock the pallet          (the serialization point)
+//! → lock the pallet          (the serialization point); a consumed one is not found
 //! → compare expected_row_version to observed
 //! → validate the destination
 //! → write one movement per quantity row
@@ -101,6 +101,24 @@ fn canonical_command(command: &MoveCommand, parsed: &Parsed) -> Vec<u8> {
     }))
 }
 
+/// The locked pallet, once it is found and live: a missing one is the
+/// refusal that names it, and a consumed one is not live stock and refuses
+/// the same way.
+fn live_pallet(
+    locked: Option<sql::LockPalletRow>,
+    pallet_id: &str,
+) -> Result<sql::LockPalletRow, AccessError> {
+    locked
+        .filter(|row| row.status != scalar::CONSUMED)
+        .ok_or_else(|| {
+            AccessError::missing(
+                AccessErrorKind::PalletNotFound,
+                "value.pallet_id",
+                pallet_id,
+            )
+        })
+}
+
 async fn run(
     mut transaction: sql::PendingClaim,
     command: &MoveCommand,
@@ -152,16 +170,12 @@ async fn run(
     .ok_or_else(|| AccessError::new(AccessErrorKind::Retry, serde_json::json!({})))?;
 
     // THE SERIALIZATION POINT.
-    let locked = sql::lock_pallet(&mut transaction, parsed.pallet_id.clone())
-        .await
-        .map_err(|e| error::from_statement(&e))?
-        .ok_or_else(|| {
-            AccessError::missing(
-                AccessErrorKind::PalletNotFound,
-                "value.pallet_id",
-                &command.pallet_id,
-            )
-        })?;
+    let locked = live_pallet(
+        sql::lock_pallet(&mut transaction, parsed.pallet_id.clone())
+            .await
+            .map_err(|e| error::from_statement(&e))?,
+        &command.pallet_id,
+    )?;
 
     if locked.row_version != command.expected_row_version {
         return Err(AccessError::conflict(
@@ -253,6 +267,33 @@ mod tests {
             to_location_id: "00000000-0000-0000-0000-000000000201".to_owned(),
             expected_row_version: 1,
             occurred_at: occurred_at.to_owned(),
+        }
+    }
+
+    fn locked(status: &str) -> sql::LockPalletRow {
+        sql::LockPalletRow {
+            location_id: Uuid("00000000-0000-0000-0000-000000000201".to_owned()),
+            row_version: 1,
+            status: status.to_owned(),
+        }
+    }
+
+    /// A consumed pallet is not live stock, so a move refuses it as it
+    /// refuses a missing one, on the pallet it names (wamn-prku).
+    #[test]
+    fn a_consumed_pallet_is_not_found() {
+        const PALLET: &str = "00000000-0000-0000-0000-00000000030a";
+        for status in ["available", "held"] {
+            assert!(
+                live_pallet(Some(locked(status)), PALLET).is_ok(),
+                "{status}"
+            );
+        }
+        for row in [None, Some(locked("consumed"))] {
+            let error = live_pallet(row, PALLET).unwrap_err();
+            assert_eq!(error.kind(), AccessErrorKind::PalletNotFound);
+            assert_eq!(error.detail()["field"], "value.pallet_id");
+            assert_eq!(error.detail()["id"], PALLET);
         }
     }
 
