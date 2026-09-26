@@ -1002,8 +1002,15 @@ export function DataTable<TRow extends object>(props: DataTableProps<TRow>): JSX
     props.onReload?.();
   }
 
-  /** The footer: each visible column's aggregate over every kept row. */
+  /**
+   * The footer: each visible column's aggregate over every kept row. A memo
+   * runs whether or not the footer shows, so a set that is not fully read,
+   * such as a streamed load in flight, computes no totals.
+   */
   const totals = createMemo(() => {
+    if (!props.fullyRead) {
+      return [];
+    }
     const rows = table.getFilteredRowModel().rows;
     return dataColumns().map((visible) => ({
       id: visible.id,

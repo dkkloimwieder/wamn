@@ -55,6 +55,10 @@ export function WindowedTable(props: {
   let viewport!: HTMLDivElement;
   // The height of each row's expanded area, by row id.
   const [areas, setAreas] = createSignal<ReadonlyMap<string, number>>(new Map());
+  // The same heights outside the signal: the virtualizer asks for every row's
+  // size and key, and a signal read for each of 100,000 rows costs a batch of a
+  // streamed load tens of milliseconds.
+  let heights: ReadonlyMap<string, number> = areas();
 
   onMount(() => {
     // A page with no layout, as a DOM test runs, has no observer and no
@@ -72,6 +76,7 @@ export function WindowedTable(props: {
             next.set(row, height);
           }
         }
+        heights = next;
         return next;
       });
     });
@@ -86,8 +91,29 @@ export function WindowedTable(props: {
     });
   });
 
-  const extra = (row: { readonly id: string; getIsExpanded: () => boolean }) =>
-    row.getIsExpanded() ? (areas().get(row.id) ?? 0) : 0;
+  type WindowedRow = { readonly id: string; getIsExpanded: () => boolean };
+  // No measured area means no row has an extra height.
+  const extra = (row: WindowedRow) =>
+    heights.size === 0 || !row.getIsExpanded() ? 0 : (heights.get(row.id) ?? 0);
+
+  // One options object, which the virtual table reads for every row's size.
+  // Written inline in the JSX, Solid builds a new object on each read.
+  const virtualizerOptions = {
+    get enabled() {
+      return grid.props.recordCount > WINDOW_FROM;
+    },
+    estimateSize: (_index: number, row: WindowedRow) => ROW_HEIGHT + extra(row),
+    // The key names the size, so a new area height or an expand reads the
+    // size again.
+    get getItemKey() {
+      areas();
+      grid.table.atoms.expanded?.get();
+      return (_index: number, row: WindowedRow) => {
+        const height = extra(row);
+        return height === 0 ? row.id : `${row.id}:${height}`;
+      };
+    },
+  };
 
   return (
     <div
@@ -98,18 +124,7 @@ export function WindowedTable(props: {
     >
       <DataGridTableVirtual
         estimateSize={ROW_HEIGHT}
-        virtualizerOptions={{
-          enabled: grid.props.recordCount > WINDOW_FROM,
-          estimateSize: (_index, row) => ROW_HEIGHT + extra(row),
-          // The key names the size, so a new area height or an expand reads the
-          // size again.
-          get getItemKey() {
-            areas();
-            grid.table.atoms.expanded?.get();
-            return (_index: number, row: { readonly id: string; getIsExpanded: () => boolean }) =>
-              `${row.id}:${extra(row)}`;
-          },
-        }}
+        virtualizerOptions={virtualizerOptions}
         footerContent={props.footerContent}
       />
     </div>

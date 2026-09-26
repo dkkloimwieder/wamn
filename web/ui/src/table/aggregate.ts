@@ -129,10 +129,26 @@ export function aggregateValues(
     return null;
   }
   if (aggregate === "min" || aggregate === "max") {
+    // Each value is read once: a decimal as its units at the column's scale,
+    // which is at least its own, and a time as its instant.
+    const orderOf = (value: unknown): number | bigint =>
+      type === "numeric"
+        ? unitsAt(parseDecimal(String(value)), scale)
+        : type === "timestamptz"
+          ? Date.parse(String(value))
+          : Number(value);
     const sign = aggregate === "min" ? -1 : 1;
-    const best = present.reduce((a, b) => (sign * compareTyped(type, b, a) > 0 ? b : a));
+    let best = present[0];
+    let bestOrder = orderOf(best);
+    for (const value of present) {
+      const order = orderOf(value);
+      if (sign * (order > bestOrder ? 1 : order < bestOrder ? -1 : 0) > 0) {
+        best = value;
+        bestOrder = order;
+      }
+    }
     return type === "numeric"
-      ? formatDecimal(unitsAt(parseDecimal(String(best)), scale), scale)
+      ? formatDecimal(bestOrder as bigint, scale)
       : (best as number | string);
   }
   if (type === "numeric") {
