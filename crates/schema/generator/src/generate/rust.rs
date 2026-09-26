@@ -365,6 +365,9 @@ pub(super) fn wamn_api(
                             )
                         })
                         .collect::<Vec<_>>();
+                    if operation.search.is_some() {
+                        binds.push(accessor_bind("search", ColumnType::Text, true));
+                    }
                     binds.push(bind_for_column(table, field, "cursor_key", true));
                     let tie_breaker = &operation
                         .pagination

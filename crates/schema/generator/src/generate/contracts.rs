@@ -1108,53 +1108,56 @@ fn input_contract(
         .extend(model_text_members(model, "id"));
     match action {
         CrudAction::Get => merge_json(common, &json!({"id": key})),
-        CrudAction::Query => merge_json(
-            common,
-            &json!({
-                "filters": operation.filters.iter().map(|filter| {
-                    let column = column(table, &filter.field).expect("validated filter column");
-                    let mut declared = json!({
-                        "field": filter.field,
-                        "binding": filter.match_mode.binding(),
-                        "type": column.column_type().as_str(),
-                    });
-                    let members = declared.as_object_mut().expect("a filter object");
-                    if !filter.match_mode.is_exact() {
-                        members.insert("match".to_owned(), json!(filter.match_mode.as_str()));
-                    }
-                    members.extend(model_text_members(model, &filter.field));
-                    if let Some(values) = model.enum_fields.get(&filter.field) {
-                        members.insert("values".to_owned(), json!(values));
-                    }
-                    declared
-                }).collect::<Vec<_>>(),
-                "sort": operation.sort.as_ref().map(|sort| json!({
-                    "fields": sort.fields,
-                    "directions": sort.directions,
-                    "max_fields": 1,
-                })),
-                "pagination": operation.pagination.as_ref().map(|pagination| json!({
-                    "kind": "keyset",
-                    "cursor": {
-                        "version": CURSOR_VERSION,
-                        "payload": "canonical_compact_json",
-                        "encoding": "base64url_unpadded",
-                        "opaque": true,
+        CrudAction::Query => query_search(
+            operation,
+            merge_json(
+                common,
+                &json!({
+                    "filters": operation.filters.iter().map(|filter| {
+                        let column = column(table, &filter.field).expect("validated filter column");
+                        let mut declared = json!({
+                            "field": filter.field,
+                            "binding": filter.match_mode.binding(),
+                            "type": column.column_type().as_str(),
+                        });
+                        let members = declared.as_object_mut().expect("a filter object");
+                        if !filter.match_mode.is_exact() {
+                            members.insert("match".to_owned(), json!(filter.match_mode.as_str()));
+                        }
+                        members.extend(model_text_members(model, &filter.field));
+                        if let Some(values) = model.enum_fields.get(&filter.field) {
+                            members.insert("values".to_owned(), json!(values));
+                        }
+                        declared
+                    }).collect::<Vec<_>>(),
+                    "sort": operation.sort.as_ref().map(|sort| json!({
+                        "fields": sort.fields,
+                        "directions": sort.directions,
+                        "max_fields": 1,
+                    })),
+                    "pagination": operation.pagination.as_ref().map(|pagination| json!({
+                        "kind": "keyset",
+                        "cursor": {
+                            "version": CURSOR_VERSION,
+                            "payload": "canonical_compact_json",
+                            "encoding": "base64url_unpadded",
+                            "opaque": true,
+                            "invalid": "invalid_input",
+                        },
+                        "default_sort": pagination.default_sort,
+                        "tie_breaker": pagination.tie_breaker,
+                    })),
+                    "limit": operation.limit.as_ref().map(|limit| json!({
+                        "default": limit.default,
+                        "minimum": limit.minimum,
+                        "maximum": limit.maximum,
                         "invalid": "invalid_input",
-                    },
-                    "default_sort": pagination.default_sort,
-                    "tie_breaker": pagination.tie_breaker,
-                })),
-                "limit": operation.limit.as_ref().map(|limit| json!({
-                    "default": limit.default,
-                    "minimum": limit.minimum,
-                    "maximum": limit.maximum,
-                    "invalid": "invalid_input",
-                })),
-                "validation_order": ["cursor", "limit", "sql"],
-                "invalid_cursor": "invalid_input",
-                "invalid_limit": "invalid_input",
-            }),
+                    })),
+                    "validation_order": ["cursor", "limit", "sql"],
+                    "invalid_cursor": "invalid_input",
+                    "invalid_limit": "invalid_input",
+                }),
+            ),
         ),
         CrudAction::Create => merge_json(
             common,
@@ -1444,6 +1447,15 @@ pub(super) fn required_schema_contract(
         .collect::<Vec<_>>()
         .into_boxed_slice();
     RequiredSchemaContract { tables }
+}
+
+/// A query's contract with its search, when the query declares one. A query
+/// without one keeps its bytes.
+fn query_search(operation: &OperationDeclaration, mut contract: Value) -> Value {
+    if let Some(search) = &operation.search {
+        contract["search"] = json!({"fields": search.fields, "binding": "text"});
+    }
+    contract
 }
 
 fn merge_json(mut left: Value, right: &Value) -> Value {

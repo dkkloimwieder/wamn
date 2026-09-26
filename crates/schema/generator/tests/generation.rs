@@ -1183,6 +1183,85 @@ fn prefix_range_and_is_null_filters_match_their_fields() {
     }
 }
 
+/// A query can search its declared text fields on the server (wamn-3nsf.2).
+/// The search binds after the filters and before the cursor, and it matches
+/// a part of any field in any case.
+#[test]
+fn a_query_searches_its_declared_text_fields() {
+    let ir = catalog_with_columns(&[("note", ColumnType::Text, true)]);
+    let mut search = manifest();
+    let query = &mut search["models"]["gadget"]["operations"]["query"];
+    query.as_object_mut().unwrap().remove("authored_sql");
+    query["filters"] = json!([{"field": "status"}]);
+    query["search"] = json!({"fields": ["part_code", "note"]});
+    let package = run(&ir, &search, &[]).unwrap();
+    let input = artifact_json(&package, "generated/contracts/gadget/query.input.json");
+    assert_eq!(
+        input["search"],
+        json!({"fields": ["part_code", "note"], "binding": "text"})
+    );
+    let route = artifact_json(&package, "generated/routes/gadget/query.json");
+    assert_eq!(
+        route["items"]["properties"]["search"],
+        json!({"type": "string", "minLength": 1})
+    );
+    let wit = std::str::from_utf8(
+        package
+            .file("generated/wit/deps/platform-gadget-gadget/package.wit")
+            .unwrap()
+            .bytes(),
+    )
+    .unwrap();
+    assert!(
+        wit.contains("    status: option<list<string>>,\n    search: option<string>,\n"),
+        "{wit}"
+    );
+    let sql = std::str::from_utf8(
+        package
+            .file("generated/sql/gadget/query_created_at_ascending.sql")
+            .unwrap()
+            .bytes(),
+    )
+    .unwrap();
+    for predicate in [
+        concat!(
+            "    ($2::text IS NULL OR strpos(lower(model.part_code), lower($2::text)) > 0\n",
+            "        OR strpos(lower(model.note), lower($2::text)) > 0)",
+        ),
+        "    ($3::timestamptz IS NULL OR model.created_at > $3::timestamptz",
+        "LIMIT $5::int8;",
+    ] {
+        assert!(sql.contains(predicate), "{predicate}\n{sql}");
+    }
+    // A query without a search keeps its contract bytes.
+    let plain = run(&ir, &manifest(), &QUERY_SOURCES).unwrap();
+    assert!(
+        artifact_json(&plain, "generated/contracts/gadget/query.input.json")
+            .get("search")
+            .is_none()
+    );
+
+    // A search reads text, names each field once, and names at least one.
+    for fields in [json!(["stock_id"]), json!(["note", "note"]), json!([])] {
+        let mut refused = search.clone();
+        refused["models"]["gadget"]["operations"]["query"]["search"] = json!({"fields": fields});
+        let error = run(&ir, &refused, &[]).unwrap_err();
+        assert_eq!(
+            error.kind(),
+            GenerateErrorKind::InvalidOperation,
+            "{fields}"
+        );
+        assert!(error.to_string().contains("gadget.query search"), "{error}");
+    }
+    // Only a query takes a search.
+    let mut get = search.clone();
+    get["models"]["gadget"]["operations"]["get"]["search"] = json!({"fields": ["part_code"]});
+    assert_eq!(
+        run(&ir, &get, &[]).unwrap_err().kind(),
+        GenerateErrorKind::InvalidOperation
+    );
+}
+
 #[test]
 fn duplicate_filters_and_schema_qualified_authored_sql_refuse() {
     let ir = catalog(false);

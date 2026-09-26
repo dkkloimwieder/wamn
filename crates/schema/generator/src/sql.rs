@@ -255,7 +255,22 @@ pub(crate) fn query(
             ),
         });
     }
-    let cursor_value_bind = operation.filters.len() + 1;
+    // The search, when declared, binds after the filters and before the cursor.
+    let mut next_bind = operation.filters.len() + 1;
+    if let Some(search) = &operation.search {
+        let bind = next_bind;
+        next_bind += 1;
+        predicates.push(format!(
+            "    (${bind}::text IS NULL OR {})",
+            search
+                .fields
+                .iter()
+                .map(|field| format!("strpos(lower(model.{field}), lower(${bind}::text)) > 0"))
+                .collect::<Vec<_>>()
+                .join("\n        OR ")
+        ));
+    }
+    let cursor_value_bind = next_bind;
     let cursor_id_bind = cursor_value_bind + 1;
     let limit_bind = cursor_id_bind + 1;
     let sort_type = postgres_type(column_type(table, sort_field));

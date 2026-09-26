@@ -2639,6 +2639,9 @@ pub struct OperationDeclaration {
     pub revision_field: Option<String>,
     #[serde(default)]
     pub filters: Vec<FilterDeclaration>,
+    /// The text fields a query's server search reads.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub search: Option<SearchDeclaration>,
     #[serde(default)]
     pub sort: Option<SortDeclaration>,
     #[serde(default)]
@@ -2784,6 +2787,14 @@ impl FilterMatch {
             Self::IsNull => "is_null",
         }
     }
+}
+
+/// The server search of one query: one string that any of the fields
+/// contains, in any case.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SearchDeclaration {
+    pub fields: Vec<String>,
 }
 
 /// Finite query sorting vocabulary with at most one requested field.

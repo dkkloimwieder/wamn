@@ -473,6 +473,7 @@ fn require_read_shape(
     if !operation.writable_fields.is_empty()
         || (!allow_query_fields
             && (!operation.filters.is_empty()
+                || operation.search.is_some()
                 || operation.sort.is_some()
                 || operation.pagination.is_some()
                 || operation.limit.is_some()))
@@ -493,6 +494,7 @@ fn require_mutation_shape(
 ) -> Result<(), GenerateError> {
     if operation.authored_sql.is_some()
         || !operation.filters.is_empty()
+        || operation.search.is_some()
         || operation.sort.is_some()
         || operation.pagination.is_some()
         || operation.limit.is_some()
@@ -918,6 +920,29 @@ fn validate_query(
                 GenerateErrorKind::InvalidOperation,
                 format!("{context} repeats filter field {}", filter.field),
             ));
+        }
+    }
+    if let Some(search) = &operation.search {
+        let mut fields = BTreeSet::new();
+        if search.fields.is_empty() {
+            return Err(GenerateError::new(
+                GenerateErrorKind::InvalidOperation,
+                format!("{context} search names no field"),
+            ));
+        }
+        for field in &search.fields {
+            validate_field(table, model_name, field)?;
+            // The search matches a part of the text, as a contains filter does.
+            let text = table
+                .columns()
+                .iter()
+                .any(|column| column.name() == field && column.column_type() == ColumnType::Text);
+            if !text || !fields.insert(field.as_str()) {
+                return Err(GenerateError::new(
+                    GenerateErrorKind::InvalidOperation,
+                    format!("{context} search field {field} must be a text field named once"),
+                ));
+            }
         }
     }
     if let Some(sort) = &operation.sort {

@@ -69,6 +69,10 @@ pub(super) fn route_input_schema(contract: &Value) -> Value {
     if !filter.properties.is_empty() {
         item.insert("filter", filter.into_value(), false);
     }
+    // A search is one string, and an empty one would match every row.
+    if contract.get("search").is_some_and(Value::is_object) {
+        item.insert("search", json!({"type": "string", "minLength": 1}), false);
+    }
     if let Some(sort) = contract.get("sort").filter(|sort| sort.is_object()) {
         item.insert(
             "sort",

@@ -156,6 +156,9 @@ fn emit_crud_interface(
                 writeln!(source, "    {field}: option<{value}>,")
                     .expect("writing to a String cannot fail");
             }
+            if operation.search.is_some() {
+                source.push_str("    search: option<string>,\n");
+            }
             if operation.sort.is_some() {
                 source.push_str(
                     "    sort-field: option<string>,\n    sort-direction: option<string>,\n",
@@ -993,6 +996,9 @@ fn emit_query_json_types(source: &mut String, table: &Table, operation: &Operati
     if !operation.filters.is_empty() {
         source.push_str("    #[serde(default)] filter: Option<JsonFilter>,\n");
     }
+    if operation.search.is_some() {
+        source.push_str("    #[serde(default)] search: Option<String>,\n");
+    }
     if operation.sort.is_some() {
         source.push_str("    #[serde(default)] sort: Option<JsonSort>,\n");
     }
@@ -1111,6 +1117,9 @@ fn emit_crud_request_assignments(
                 };
                 writeln!(source, "            {field}: request.filter.as_mut().and_then(|filter| filter.{field}.take()){conversion},")
                     .expect("writing to a String cannot fail");
+            }
+            if operation.search.is_some() {
+                source.push_str("            search: request.search,\n");
             }
             if operation.sort.is_some() {
                 source.push_str("            sort_field: request.sort.as_ref().map(|sort| sort.field.clone()),\n            sort_direction: request.sort.map(|sort| sort.direction),\n");
