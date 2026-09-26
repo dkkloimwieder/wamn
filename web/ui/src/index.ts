@@ -59,6 +59,17 @@ export { type DataTableAction, type DataTableRowResult } from "./table/bulk";
 export { type DataTableEditResult } from "./table/edit-cell";
 export { type DataTableChild } from "./table/child-tables";
 export {
+  QueryTable,
+  type QueryTableAction,
+  type QueryTableChild,
+  type QueryTableColumn,
+  type QueryTableDefinition,
+  type QueryTableFill,
+  type QueryTableFilter,
+  type QueryTableProps,
+  type QueryTableUpdate,
+} from "./table/query-table";
+export {
   createTableLoad,
   DEFAULT_CAP,
   type TableLoad,

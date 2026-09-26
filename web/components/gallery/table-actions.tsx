@@ -95,7 +95,7 @@ const WIDGETS = {
 } as const;
 
 /** The route of the gallery's child read, which only the stub answers. */
-const EVENT_QUERY_ROUTE: OperationRoute = {
+export const EVENT_QUERY_ROUTE: OperationRoute = {
   operation: "gallery:widget-event/query@1.0.0",
   method: "GET",
   template: "/widget_event/query",

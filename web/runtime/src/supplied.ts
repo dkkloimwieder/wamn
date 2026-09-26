@@ -7,6 +7,8 @@
  * path and takes the value from here.
  */
 
+import { type MemberPath, writeMember } from "./draft.js";
+
 /**
  * One submission attempt's identity.
  *
@@ -35,4 +37,21 @@ export function newIdempotencyKey(): string {
  */
 export function occurredAt(now: Date = new Date()): string {
   return `${now.toISOString().slice(0, -1)}000Z`;
+}
+
+/** One input the operator never types: its path, and the value it takes. */
+export interface SuppliedInput {
+  readonly input: MemberPath;
+  readonly kind: "requestId" | "idempotencyKey" | "occurredAt";
+}
+
+/** Writes a fresh value into each supplied input of one item. */
+export function writeSupplied<Item>(item: Item, supplied: readonly SuppliedInput[]): Item {
+  let next = item;
+  for (const { input, kind } of supplied) {
+    const value =
+      kind === "requestId" ? newRequestId() : kind === "idempotencyKey" ? newIdempotencyKey() : occurredAt();
+    next = writeMember(next, input, value);
+  }
+  return next;
 }

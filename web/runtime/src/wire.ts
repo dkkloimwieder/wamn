@@ -217,3 +217,29 @@ export function reviveOutcome<T>(outcome: Outcome<JsonValue>, fields: FieldMap):
       return outcome;
   }
 }
+
+/**
+ * One operation as data: its route and the field maps of its input and its
+ * result. A table definition names the operations it calls this way, so a
+ * generic table calls them without a generated function for each one.
+ */
+export interface OperationBinding {
+  readonly route: OperationRoute;
+  readonly request: FieldMap;
+  readonly result: FieldMap;
+}
+
+/** Calls one operation through its binding, as its generated function does. */
+export async function callOperation<T>(
+  transport: Transport,
+  binding: OperationBinding,
+  items: readonly unknown[],
+): Promise<Outcome<T>> {
+  return reviveOutcome<T>(
+    await transport.invoke({
+      ...binding.route,
+      items: items.map((item) => toWire(item, binding.request)),
+    }),
+    binding.result,
+  );
+}
