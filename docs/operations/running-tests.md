@@ -126,8 +126,27 @@ The forward test runs the `wamn-edge` binary as a child, kills it with SIGKILL t
 cargo build --manifest-path apps/Cargo.toml --locked --offline \
   --target wasm32-wasip2 -p http-route
 WAMN_FLOW_HTTP_COMPONENT="$PWD/apps/target/wasm32-wasip2/debug/http_route.wasm" \
-  cargo test --locked --offline -p wamn-edge --test route --test device --test forward -- --ignored
+  cargo test --locked --offline -p wamn-edge --test route --test device --test forward -- --ignored \
+  --skip samples_reach_a_live_platform
 ```
+
+The test `samples_reach_a_live_platform_once_across_kills` forwards to a real platform: the `sample.record` route of [`apps/edge_samples`](../../apps/edge_samples/README.md) on a [developer session](development-loop.md).
+Start the session with `--package` and `--overlay-root` set to `apps/edge_samples`.
+The host serves plain HTTP, and the forward accepts only HTTPS, so put a TLS proxy in front of the served route address.
+The proxy must set the `Host` header to the route host that the session prints.
+Write the token of `route-caller-pat.json` in the environment directory to a file with mode 0600.
+Then run the test with the proxy address and the certificate authority of the proxy:
+
+```bash
+WAMN_FLOW_HTTP_COMPONENT="$PWD/apps/target/wasm32-wasip2/debug/http_route.wasm" \
+WAMN_EDGE_LIVE_URL="https://127.0.0.1:<proxy port>/sample/record" \
+WAMN_EDGE_LIVE_TOKEN_FILE=<token file> WAMN_EDGE_LIVE_CA_FILE=<proxy CA file> \
+  cargo test --locked --offline -p wamn-edge --test forward \
+  samples_reach_a_live_platform_once_across_kills -- --ignored --exact --nocapture
+```
+
+The test sends each of its two samples twice, and prints the tag of its frames.
+Count the rows of that tag in `edge_samples.sample` of the session's target database: the count must be 2.
 
 Run the prior-commit fixture admission and exact forwarding assertions.
 The tests compose the fixture with the built Receiving base and its no-op participant.

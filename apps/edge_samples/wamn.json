@@ -1,0 +1,251 @@
+{
+  "package": {
+    "id": "edge_samples",
+    "version": "1.0.0"
+  },
+  "required_platform_policy_contract": {
+    "id": "edge_samples_data_access",
+    "state": "satisfied"
+  },
+  "models": {
+    "sample": {
+      "schema": "edge_samples",
+      "table": "sample",
+      "owner": "edge_samples",
+      "server_owned_fields": [
+        "id",
+        "created_at"
+      ],
+      "enum_fields": {},
+      "audit_log": {
+        "columns": [
+          "created_at"
+        ],
+        "retention": "none"
+      },
+      "operations": {
+        "get": {
+          "permission": "sample.get",
+          "result": "one"
+        }
+      }
+    }
+  },
+  "internal_relations": {
+    "sample_command": {
+      "schema": "edge_samples",
+      "table": "sample_command",
+      "cdc": "excluded"
+    }
+  },
+  "custom_operations": {
+    "sample.record": {
+      "kind": "command",
+      "visibility": "public",
+      "label": "Record a sample",
+      "description": "One reading that an edge box forwards. The edge sample key is the idempotency key.",
+      "permission": "sample.record",
+      "idempotent_by": "claim",
+      "claim": {
+        "table": "sample_command",
+        "identities": {
+          "sample_id": "sample_id"
+        },
+        "claim": "claim_sample",
+        "replay": "find_sample",
+        "finalize": "record_sample"
+      },
+      "canonicalization": {
+        "excluded_fields": [
+          "request_id",
+          "value.idempotency_key"
+        ]
+      },
+      "input": {
+        "envelope": {
+          "minimum": 1,
+          "maximum": 100
+        },
+        "raw_body_maximum": 1048576,
+        "fields": [
+          {
+            "path": "request_id",
+            "type": "text",
+            "nullable": false
+          },
+          {
+            "path": "value.idempotency_key",
+            "type": "text",
+            "nullable": false
+          },
+          {
+            "path": "value.frame",
+            "type": "text",
+            "nullable": false,
+            "label": "Frame",
+            "description": "The frame that the device sent, without its line ending."
+          },
+          {
+            "path": "value.captured_at",
+            "type": "timestamptz",
+            "nullable": false,
+            "label": "Captured at",
+            "description": "When the edge box read the frame."
+          }
+        ]
+      },
+      "result": {
+        "class": "one",
+        "fields": [
+          {
+            "path": "sample_id",
+            "type": "uuid",
+            "nullable": false
+          }
+        ]
+      },
+      "errors": [
+        "invalid_input",
+        "idempotency_conflict",
+        "retry",
+        "timeout",
+        "permission_denied",
+        "internal_error"
+      ],
+      "error_details": {
+        "idempotency_conflict": {
+          "required": [
+            "field"
+          ]
+        }
+      },
+      "constraint_errors": {},
+      "connection": "postgres",
+      "relations": [
+        {
+          "schema": "edge_samples",
+          "table": "sample_command",
+          "insert_fields": [
+            "canonical_command",
+            "idempotency_key"
+          ],
+          "select_fields": [
+            "canonical_command",
+            "idempotency_key",
+            "sample_id"
+          ],
+          "update_fields": [],
+          "constraints": [
+            "sample_command_idempotency_key_pkey"
+          ],
+          "lock": false
+        },
+        {
+          "schema": "edge_samples",
+          "table": "sample",
+          "insert_fields": [
+            "captured_at",
+            "frame",
+            "id"
+          ],
+          "select_fields": [
+            "id"
+          ],
+          "update_fields": [],
+          "constraints": [
+            "sample_id_pkey"
+          ],
+          "lock": false
+        }
+      ],
+      "statements": {
+        "claim_sample": {
+          "path": "command/sample/claim.sql",
+          "fetch": "optional_one",
+          "parameters": [
+            {
+              "name": "canonical_command",
+              "nullable": false,
+              "type": "bytes"
+            },
+            {
+              "name": "idempotency_key",
+              "nullable": false,
+              "type": "text"
+            }
+          ],
+          "row": [
+            {
+              "name": "sample_id",
+              "nullable": false,
+              "type": "uuid"
+            }
+          ]
+        },
+        "find_sample": {
+          "path": "command/sample/replay.sql",
+          "fetch": "optional_one",
+          "parameters": [
+            {
+              "name": "idempotency_key",
+              "nullable": false,
+              "type": "text"
+            }
+          ],
+          "row": [
+            {
+              "name": "canonical_command",
+              "nullable": false,
+              "type": "bytes"
+            },
+            {
+              "name": "sample_id",
+              "nullable": false,
+              "type": "uuid"
+            }
+          ]
+        },
+        "record_sample": {
+          "path": "command/sample/record.sql",
+          "fetch": "one",
+          "parameters": [
+            {
+              "name": "id",
+              "nullable": false,
+              "type": "uuid"
+            },
+            {
+              "name": "frame",
+              "nullable": false,
+              "type": "text"
+            },
+            {
+              "name": "captured_at",
+              "nullable": false,
+              "type": "timestamptz"
+            }
+          ],
+          "row": [
+            {
+              "name": "id",
+              "nullable": false,
+              "type": "uuid"
+            }
+          ]
+        }
+      },
+      "transaction": "explicit_per_input",
+      "automatic_retry": false
+    }
+  },
+  "connections": [
+    "postgres"
+  ],
+  "components": {
+    "samples": {
+      "connections": [
+        "postgres"
+      ]
+    }
+  }
+}

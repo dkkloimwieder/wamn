@@ -1,0 +1,95 @@
+{
+  "sample-get-http": {
+    "kind": "http",
+    "package-id": "edge_samples",
+    "component": "samples",
+    "operation": "edge-samples:sample/get@1.0.0",
+    "definition-hash": "sha256:5087e6b6c517570e1d65df602ab26b562b0ae8ca0179146831157489551426c9",
+    "definition": {
+      "id": "sample-get-http",
+      "kind": "http",
+      "route": {
+        "path": "/sample/get"
+      },
+      "raw-body-bytes": {
+        "maximum": 1048576
+      },
+      "input-schema": {
+        "$ref": "generated/routes/sample/get.json"
+      }
+    },
+    "auth-policy": {
+      "modes": [
+        "pat",
+        "session"
+      ]
+    },
+    "registered-operation": "edge-samples:sample/get@1.0.0"
+  },
+  "sample-record-http": {
+    "kind": "http",
+    "package-id": "edge_samples",
+    "component": "samples",
+    "operation": "edge-samples:sample/record@1.0.0",
+    "definition-hash": "sha256:0d22f61363113777b568f06a22a9440338c98fc13023f0e33e97dcad218adb98",
+    "definition": {
+      "id": "sample-record-http",
+      "kind": "http",
+      "route": {
+        "path": "/sample/record"
+      },
+      "raw-body-bytes": {
+        "maximum": 1048576
+      },
+      "input-schema": {
+        "type": "array",
+        "minItems": 1,
+        "maxItems": 100,
+        "items": {
+          "type": "object",
+          "required": [
+            "request_id",
+            "value"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "request_id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "value": {
+              "type": "object",
+              "required": [
+                "idempotency_key",
+                "frame",
+                "captured_at"
+              ],
+              "additionalProperties": false,
+              "properties": {
+                "idempotency_key": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "frame": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "captured_at": {
+                  "type": "string",
+                  "format": "date-time"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "auth-policy": {
+      "modes": [
+        "pat",
+        "session"
+      ]
+    },
+    "registered-operation": "edge-samples:sample/record@1.0.0"
+  }
+}

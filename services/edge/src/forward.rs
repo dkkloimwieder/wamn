@@ -265,7 +265,16 @@ async fn forward_pending(
         for sample in &pending {
             let key = sample.sample_key.as_str();
             let recorded = match forwarder.send(sample).await {
-                Answer::Accepted => samples.forwarded(key).await,
+                Answer::Accepted => {
+                    let recorded = samples.forwarded(key).await;
+                    if recorded.is_ok() {
+                        tracing::debug!(
+                            sample_key = key,
+                            "the platform accepted a sample; it is stored as forwarded"
+                        );
+                    }
+                    recorded
+                }
                 Answer::Refused(reason) => {
                     let recorded = samples.refused(key, &reason).await;
                     if recorded.is_ok() {

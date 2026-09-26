@@ -1,0 +1,40 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT canonical_command, sample_id FROM sample_command WHERE idempotency_key = $1;\n",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "canonical_command",
+        "type_info": "Bytea",
+        "origin": {
+          "Table": {
+            "table": "sample_command",
+            "name": "canonical_command"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "sample_id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "sample_command",
+            "name": "sample_id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": [
+      false,
+      false
+    ]
+  },
+  "hash": "1990abfe831baae51ce7f8f925109a88c1e9730cf529e282acfde068701ade16"
+}

@@ -1,0 +1,29 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO sample_command (canonical_command, idempotency_key) VALUES ($1, $2) ON CONFLICT DO NOTHING RETURNING sample_id;\n",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "sample_id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "sample_command",
+            "name": "sample_id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Bytea",
+        "Text"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "88ccbe5f6ccb991ba2b26117272b1c96676962cb4439b3d72a5d42d2819338a8"
+}

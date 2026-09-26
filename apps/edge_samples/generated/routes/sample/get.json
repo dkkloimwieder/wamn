@@ -1,0 +1,1 @@
+{"items":{"additionalProperties":false,"properties":{"id":{"pattern":"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$","type":"string"}},"required":["id"],"type":"object"},"maxItems":100,"minItems":1,"type":"array"}

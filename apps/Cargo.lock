@@ -815,6 +815,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cf54715a573b99ac80df0bc206da022bcd442c974952c7b9720069370852e21f"
 
 [[package]]
+name = "samples"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "uuid",
+ "wamn-edge-samples-data-access",
+ "wamn-postgres-statements",
+ "wit-bindgen",
+]
+
+[[package]]
 name = "schemars"
 version = "0.8.22"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1199,6 +1211,17 @@ dependencies = [
  "serde",
  "serde_json",
  "uuid",
+ "wamn-postgres-statements",
+]
+
+[[package]]
+name = "wamn-edge-samples-data-access"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "serde_json",
+ "uuid",
+ "wamn-execution-contract",
  "wamn-postgres-statements",
 ]
 

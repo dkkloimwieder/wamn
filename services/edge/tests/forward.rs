@@ -6,7 +6,8 @@
 //! a pseudo-terminal as its device, and an HTTPS platform in the test that
 //! checks the device PAT and applies each key once. It needs the built guest,
 //! as the route tests do: `WAMN_FLOW_HTTP_COMPONENT` names `http-route` built
-//! for `wasm32-wasip2` (docs/operations/running-tests.md).
+//! for `wasm32-wasip2` (docs/operations/running-tests.md). The live test sends
+//! to a real platform route instead, and needs its address, PAT and authority.
 
 mod support;
 
@@ -237,7 +238,7 @@ fn configuration(
     directory: &Path,
     digest: &str,
     device: &Path,
-    port: u16,
+    url: &str,
     ca_file: &Path,
     token: &str,
     credential_bound: u32,
@@ -280,7 +281,7 @@ baud = 9600
 max_frame = 64
 
 [forward]
-url = "https://127.0.0.1:{port}/samples"
+url = "{url}"
 token_file = "{token}"
 ca_file = "{ca}"
 key_field = "value.idempotency_key"
@@ -380,7 +381,8 @@ async fn a_sample_is_forwarded_once_across_kills() {
     let (mut controller, device) = pseudo_terminal();
     let port = free_port();
     let (ca_file, acceptor) = tls(&directory);
-    let config = configuration(&directory, &digest, &device, port, &ca_file, TOKEN, 5);
+    let url = format!("https://127.0.0.1:{port}/samples");
+    let config = configuration(&directory, &digest, &device, &url, &ca_file, TOKEN, 5);
 
     // The platform is down: the samples are stored and the forward fails.
     let mut edge = Edge::start(&config);
@@ -488,11 +490,12 @@ async fn a_refused_pat_stops_the_forward_at_the_bound() {
     let (mut controller, device) = pseudo_terminal();
     let port = free_port();
     let (ca_file, acceptor) = tls(&directory);
+    let url = format!("https://127.0.0.1:{port}/samples");
     let config = configuration(
         &directory,
         &digest,
         &device,
-        port,
+        &url,
         &ca_file,
         EXPIRED_TOKEN,
         1,
@@ -529,4 +532,89 @@ async fn a_refused_pat_stops_the_forward_at_the_bound() {
         )
         .expect("count");
     assert_eq!(pending, 2, "both samples stay pending");
+}
+
+/// The count of the samples in the stopped edge's file that match `condition`.
+fn samples_where(directory: &Path, condition: &str) -> i64 {
+    rusqlite::Connection::open(directory.join("edge.db"))
+        .and_then(|connection| {
+            connection.query_row(
+                &format!("SELECT COUNT(*) FROM samples WHERE {condition}"),
+                [],
+                |row| row.get(0),
+            )
+        })
+        .expect("count the samples")
+}
+
+/// The forward against a real platform route: the `sample.record` command of
+/// `apps/edge_samples` on a local stack (docs/plan/edge.md 4.8).
+///
+/// Two frames are stored while the platform refuses the PAT, and the edge is
+/// killed before either is forwarded. The restart with the device PAT forwards
+/// both. The edge is stopped and its record of the forward is cleared, as if
+/// the power failed after the platform applied a sample and before the box
+/// stored that. A second restart sends both samples again with the same keys,
+/// and the platform must accept each again. The test prints the frame tag, and
+/// the caller counts the platform rows with that tag: one row per frame.
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "requires: WAMN_FLOW_HTTP_COMPONENT, WAMN_EDGE_LIVE_URL, WAMN_EDGE_LIVE_TOKEN_FILE, WAMN_EDGE_LIVE_CA_FILE"]
+async fn samples_reach_a_live_platform_once_across_kills() {
+    let live = |name: &str| std::env::var(name).unwrap_or_else(|_| panic!("{name} is not set"));
+    let url = live("WAMN_EDGE_LIVE_URL");
+    let token = std::fs::read_to_string(live("WAMN_EDGE_LIVE_TOKEN_FILE"))
+        .expect("read the device PAT")
+        .trim()
+        .to_owned();
+    let ca_file = PathBuf::from(live("WAMN_EDGE_LIVE_CA_FILE"));
+    let (_, public) = key("key-one", 1);
+    let (directory, digest) = bundle("forward-live", &ingress(), &public);
+    let (mut controller, device) = pseudo_terminal();
+    let config = configuration(
+        &directory,
+        &digest,
+        &device,
+        &url,
+        &ca_file,
+        EXPIRED_TOKEN,
+        5,
+    );
+    let tag = uuid::Uuid::new_v4().simple().to_string();
+    println!("frame tag: {tag}");
+
+    // The platform refuses the PAT: both samples are stored, none forwarded.
+    let mut edge = Edge::start(&config);
+    controller
+        .write_all(format!("{tag} 12.5 kg\n{tag} 13.0 kg\n").as_bytes())
+        .expect("send the frames");
+    edge.wait_for("the device call stored its sample", 2);
+    edge.wait_for("the platform refused the forward's PAT", 1);
+    edge.kill();
+    assert_eq!(samples_where(&directory, "forwarded_at IS NOT NULL"), 0);
+
+    // With the device PAT, the restart forwards both.
+    std::fs::write(directory.join("device.pat"), &token).expect("write the device PAT");
+    let mut edge = Edge::start(&config);
+    edge.wait_for("the platform accepted a sample", 2);
+    edge.kill();
+    assert_eq!(samples_where(&directory, "forwarded_at IS NOT NULL"), 2);
+
+    // The box lost its record of the forward, so both are sent again.
+    rusqlite::Connection::open(directory.join("edge.db"))
+        .and_then(|connection| {
+            connection.execute("UPDATE samples SET forwarded_at = NULL, attempts = 0", [])
+        })
+        .expect("clear the record of the forward");
+    let mut edge = Edge::start(&config);
+    edge.wait_for("the platform accepted a sample", 2);
+    edge.kill();
+
+    assert_eq!(samples_where(&directory, "forwarded_at IS NOT NULL"), 2);
+    assert_eq!(samples_where(&directory, "refused_at IS NOT NULL"), 0);
+    let intents: i64 = rusqlite::Connection::open(directory.join("edge.db"))
+        .and_then(|connection| {
+            connection.query_row("SELECT COUNT(*) FROM intents", [], |row| row.get(0))
+        })
+        .expect("count the intents");
+    assert_eq!(intents, 2, "one export call per frame");
 }

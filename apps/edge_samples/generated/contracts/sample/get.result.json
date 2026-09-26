@@ -1,0 +1,1 @@
+{"class":"one","fields":[{"path":"captured_at","type":"timestamptz","nullable":false,"values":[]},{"path":"created_at","type":"timestamptz","nullable":false,"values":[]},{"path":"frame","type":"text","nullable":false,"values":[]},{"path":"id","type":"uuid","nullable":false,"values":[]}]}
