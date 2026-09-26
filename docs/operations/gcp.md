@@ -387,3 +387,17 @@ gcloud auth print-access-token | docker login -u oauth2accesstoken --password-st
 
 The nodes pull these images as `wamn-nodes`, which has `roles/artifactregistry.reader`, so no pull Secret exists.
 
+```bash
+R=us-central1-docker.pkg.dev/wamn-dev/wamn
+for image in wamn-host:src-<identity> wamn-identity:src-<identity>; do
+  docker tag $image $R/$image && docker push $R/$image
+done
+```
+
+On 2026-09-26 the host image took 419 seconds to build and the identity image 59 seconds. The pushed images are:
+
+| Image | Digest |
+| --- | --- |
+| `wamn-host:src-490a0d098a176e39` | `sha256:b44a6f944a410ca42dccf378c0948226946c54fefa17c4bf3cc246e25dcd9dd2` |
+| `wamn-identity:src-bf477a549dc55932` | `sha256:b0896c8fb3f94920c097762f75019fe68a81254fc49a4fa6768a29db97794827` |
+
