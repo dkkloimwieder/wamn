@@ -84,16 +84,17 @@ impl AccessError {
         Self::new(kind, serde_json::json!({ "field": field }))
     }
 
-    /// An out-of-range refusal, carrying the bounds and what was sent.
+    /// An out-of-range refusal, carrying the bounds and what was sent, each a
+    /// decimal string as every bound and observed value is on the wire.
     #[must_use]
     pub fn range(field: &str, minimum: i64, maximum: i64, observed: i64) -> Self {
         Self::new(
             AccessErrorKind::InvalidInput,
             serde_json::json!({
                 "field": field,
-                "minimum": minimum,
-                "maximum": maximum,
-                "observed": observed,
+                "minimum": minimum.to_string(),
+                "maximum": maximum.to_string(),
+                "observed": observed.to_string(),
             }),
         )
     }

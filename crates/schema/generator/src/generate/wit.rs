@@ -1733,7 +1733,9 @@ fn detail_name(key: OperationErrorDetailKey) -> &'static str {
 }
 
 /// A revision detail member carries the width of the revision it reports, and
-/// an operation that reports none keeps the wider member.
+/// an operation that reports none keeps the wider member. A bound or observed
+/// value is a decimal string, spelled as a numeric is, so a fractional
+/// quantity and an integer count share one member.
 fn detail_type(key: OperationErrorDetailKey, revision: Option<ColumnType>) -> &'static str {
     match key {
         OperationErrorDetailKey::ExpectedRowVersion
@@ -1742,12 +1744,12 @@ fn detail_type(key: OperationErrorDetailKey, revision: Option<ColumnType>) -> &'
         {
             "s32"
         }
+        OperationErrorDetailKey::ExpectedRowVersion
+        | OperationErrorDetailKey::ObservedRowVersion => "s64",
         OperationErrorDetailKey::Minimum
         | OperationErrorDetailKey::Maximum
         | OperationErrorDetailKey::Observed
-        | OperationErrorDetailKey::ExpectedRowVersion
-        | OperationErrorDetailKey::ObservedRowVersion => "s64",
-        OperationErrorDetailKey::Field
+        | OperationErrorDetailKey::Field
         | OperationErrorDetailKey::Id
         | OperationErrorDetailKey::Constraint
         | OperationErrorDetailKey::Operation => "string",

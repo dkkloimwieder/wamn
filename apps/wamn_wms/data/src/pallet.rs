@@ -448,8 +448,8 @@ mod tests {
         for limit in [0, 101, -5] {
             let error = page_limit(Some(limit)).unwrap_err();
             assert_eq!(error.kind(), AccessErrorKind::InvalidInput);
-            assert_eq!(error.detail()["observed"], limit);
-            assert_eq!(error.detail()["maximum"], 100);
+            assert_eq!(error.detail()["observed"], limit.to_string());
+            assert_eq!(error.detail()["maximum"], "100");
         }
     }
 

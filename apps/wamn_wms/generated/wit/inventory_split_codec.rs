@@ -249,24 +249,9 @@ pub(crate) fn map_error(
             let Some(field) = detail("field") else {
                 return contract::SplitError::InternalError;
             };
-            let Ok(minimum) = detail("minimum")
-                .map(|value| value.parse::<i64>())
-                .transpose()
-            else {
-                return contract::SplitError::InternalError;
-            };
-            let Ok(maximum) = detail("maximum")
-                .map(|value| value.parse::<i64>())
-                .transpose()
-            else {
-                return contract::SplitError::InternalError;
-            };
-            let Ok(observed) = detail("observed")
-                .map(|value| value.parse::<i64>())
-                .transpose()
-            else {
-                return contract::SplitError::InternalError;
-            };
+            let minimum = detail("minimum");
+            let maximum = detail("maximum");
+            let observed = detail("observed");
             contract::SplitError::InvalidInput(contract::InvalidInputDetail {
                 field,
                 minimum,
@@ -305,18 +290,8 @@ pub(crate) fn map_error(
             let Some(field) = detail("field") else {
                 return contract::SplitError::InternalError;
             };
-            let Ok(maximum) = detail("maximum")
-                .map(|value| value.parse::<i64>())
-                .transpose()
-            else {
-                return contract::SplitError::InternalError;
-            };
-            let Ok(observed) = detail("observed")
-                .map(|value| value.parse::<i64>())
-                .transpose()
-            else {
-                return contract::SplitError::InternalError;
-            };
+            let maximum = detail("maximum");
+            let observed = detail("observed");
             contract::SplitError::InsufficientQuantity(contract::InsufficientQuantityDetail {
                 field,
                 maximum,

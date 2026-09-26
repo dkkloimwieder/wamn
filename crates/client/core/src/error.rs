@@ -322,7 +322,7 @@ mod tests {
     fn a_contract_literal_passes_through_with_its_detail() {
         let error = ClientError::from_item_error(&json!({
             "code": "invalid_input",
-            "detail": { "field": "value.quantity", "minimum": 1 },
+            "detail": { "field": "value.quantity", "minimum": "1" },
         }));
         assert_eq!(error.code(), "invalid_input");
         match error {

@@ -85,9 +85,9 @@ impl AccessError {
             AccessErrorKind::InvalidInput,
             json!({
                 "field": field,
-                "minimum": minimum,
-                "maximum": maximum,
-                "observed": observed,
+                "minimum": minimum.to_string(),
+                "maximum": maximum.to_string(),
+                "observed": observed.to_string(),
             }),
         )
     }

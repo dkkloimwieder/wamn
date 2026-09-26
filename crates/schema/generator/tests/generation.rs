@@ -329,6 +329,19 @@ fn mutation_contract_refuses_server_owned_and_nonnullable_null() {
     .unwrap();
     assert!(codec.contains("json!(JsonInt64(value.expected_row_version))"));
     assert!(codec.contains("value.parse::<i64>().ok()"));
+
+    // A bound or observed value is a decimal string, so a fractional quantity
+    // reaches the caller instead of failing a parse (wamn-owpn).
+    assert!(wit.contains("minimum: option<string>"));
+    assert!(wit.contains("observed: option<string>"));
+    let query_codec = std::str::from_utf8(
+        package
+            .file("generated/wit/gadget_query_codec.rs")
+            .unwrap()
+            .bytes(),
+    )
+    .unwrap();
+    assert!(query_codec.contains("let observed = detail(\"observed\");"));
 }
 
 /// An application integer is int32 by default, and int64 is opt-in, so a

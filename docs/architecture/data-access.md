@@ -113,6 +113,7 @@ Known component calls use typed values.
 HTTP and dynamic entry use the JSON adapter.
 Revision inputs, returned revisions, and conflict revisions use decimal strings in JSON.
 Database and WIT revision values remain numeric.
+The `minimum`, `maximum`, and `observed` refusal details are decimal strings in WIT and JSON, spelled as a numeric value is and never as a float.
 Custom fields declare `revision: true`; CRUD operations use their declared revision field.
 Other integer fields remain JSON numbers.
 The common integer codec preserves exact values above JavaScript’s safe-integer limit.

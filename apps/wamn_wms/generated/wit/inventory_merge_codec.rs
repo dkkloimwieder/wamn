@@ -206,24 +206,9 @@ pub(crate) fn map_error(
             let Some(field) = detail("field") else {
                 return contract::MergeError::InternalError;
             };
-            let Ok(minimum) = detail("minimum")
-                .map(|value| value.parse::<i64>())
-                .transpose()
-            else {
-                return contract::MergeError::InternalError;
-            };
-            let Ok(maximum) = detail("maximum")
-                .map(|value| value.parse::<i64>())
-                .transpose()
-            else {
-                return contract::MergeError::InternalError;
-            };
-            let Ok(observed) = detail("observed")
-                .map(|value| value.parse::<i64>())
-                .transpose()
-            else {
-                return contract::MergeError::InternalError;
-            };
+            let minimum = detail("minimum");
+            let maximum = detail("maximum");
+            let observed = detail("observed");
             contract::MergeError::InvalidInput(contract::InvalidInputDetail {
                 field,
                 minimum,

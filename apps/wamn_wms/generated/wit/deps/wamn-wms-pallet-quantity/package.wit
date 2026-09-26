@@ -64,9 +64,9 @@ interface query {
 
   record invalid-input-detail {
     field: string,
-    minimum: option<s64>,
-    maximum: option<s64>,
-    observed: option<s64>,
+    minimum: option<string>,
+    maximum: option<string>,
+    observed: option<string>,
   }
 
   record permission-denied-detail {

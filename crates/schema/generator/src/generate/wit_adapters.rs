@@ -65,33 +65,23 @@ pub(super) fn emit_error_mapper<'a>(
         {
             let name = detail_name(key);
             let value = format!("detail({name:?})");
+            // Only a revision is a number; a bound or observed value stays
+            // the decimal string its producer wrote.
             let numeric = matches!(
-                key,
-                OperationErrorDetailKey::Minimum
-                    | OperationErrorDetailKey::Maximum
-                    | OperationErrorDetailKey::Observed
-                    | OperationErrorDetailKey::ExpectedRowVersion
-                    | OperationErrorDetailKey::ObservedRowVersion
-            );
-            let parsed = if matches!(
                 key,
                 OperationErrorDetailKey::ExpectedRowVersion
                     | OperationErrorDetailKey::ObservedRowVersion
-            ) {
-                revision_type
-            } else {
-                "i64"
-            };
+            );
             if required {
                 let value = if numeric {
-                    format!("{value}.and_then(|value| value.parse::<{parsed}>().ok())")
+                    format!("{value}.and_then(|value| value.parse::<{revision_type}>().ok())")
                 } else {
                     value
                 };
                 writeln!(source, "            let Some({name}) = {value} else {{ return contract::{error_type}::InternalError; }};")
                     .expect("writing to a String cannot fail");
             } else if numeric {
-                writeln!(source, "            let Ok({name}) = {value}.map(|value| value.parse::<{parsed}>()).transpose() else {{ return contract::{error_type}::InternalError; }};")
+                writeln!(source, "            let Ok({name}) = {value}.map(|value| value.parse::<{revision_type}>()).transpose() else {{ return contract::{error_type}::InternalError; }};")
                     .expect("writing to a String cannot fail");
             } else {
                 writeln!(source, "            let {name} = {value};")

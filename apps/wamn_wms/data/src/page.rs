@@ -121,7 +121,7 @@ mod tests {
         for limit in [0, 101] {
             let error = start(None, Some(limit)).unwrap_err();
             assert_eq!(error.kind(), AccessErrorKind::InvalidInput);
-            assert_eq!(error.detail()["observed"], limit);
+            assert_eq!(error.detail()["observed"], limit.to_string());
         }
         assert!(start(Some("not-a-cursor"), None).is_err());
     }

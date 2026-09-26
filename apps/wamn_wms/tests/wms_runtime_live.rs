@@ -448,7 +448,7 @@ pub(crate) async fn assert_remaining_operations(
         .await?;
     let detail = refusal(&answer, "ops-split-too-much", "insufficient_quantity")?;
     anyhow::ensure!(
-        detail["field"] == "value.quantity" && detail["observed"] == 4,
+        detail["field"] == "value.quantity" && detail["observed"] == "4",
         "the refusal names the field and what the row holds: {detail}"
     );
 

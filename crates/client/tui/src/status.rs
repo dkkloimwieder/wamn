@@ -148,7 +148,7 @@ mod tests {
         let failed = StatusKind::Failed {
             error: ClientError::from_item_error(&serde_json::json!({
                 "code": "invalid_input",
-                "detail": { "field": "value.quantity", "minimum": 1 },
+                "detail": { "field": "value.quantity", "minimum": "1" },
             })),
         };
         let buffer = render_to_buffer(Status::new(&failed), 120, 1);
