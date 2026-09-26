@@ -22,6 +22,7 @@ import {
   refusalMarks,
   refusalSentence,
   refusedMember,
+  type Numeric,
   type Outcome,
   type PageState,
   type Transport,
@@ -196,7 +197,7 @@ export function ReceivingLoadReceiptScreenTable(props: ReceivingLoadReceiptScree
           type="button"
           variant="outline"
           size="sm"
-          onClick={() => props.onFillReceivingRecordReceipt?.(writeMember({} as ReceivingRecordReceiptFormInitial, ["value", "line", "purchaseOrderLineId"], row.lineId))}
+          onClick={() => props.onFillReceivingRecordReceipt?.(writeMember({} as ReceivingRecordReceiptFormInitial, ["value", "line"], [writeMember({}, ["purchaseOrderLineId"], row.lineId)]))}
         >
           record-receipt
         </Button>
@@ -278,6 +279,11 @@ const RECORD_RECEIPT_INPUT = z.object({
 /** What the form for `wamn-receiving:receiving/record-receipt@1.0.0` can start with. */
 export interface ReceivingRecordReceiptFormInitial {
   value?: {
+    line?: {
+      locationId?: Uuid;
+      purchaseOrderLineId?: Uuid;
+      quantity?: Numeric;
+    }[];
     purchaseOrderId?: Uuid;
     receiptReference?: string;
   };

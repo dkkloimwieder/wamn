@@ -69,7 +69,7 @@ export function LocationListTable(props: LocationListTableProps) {
           type="button"
           variant="outline"
           size="sm"
-          onClick={() => props.onFillReceivingRecordReceipt?.(writeMember({} as ReceivingRecordReceiptFormInitial, ["value", "line", "locationId"], row.id))}
+          onClick={() => props.onFillReceivingRecordReceipt?.(writeMember({} as ReceivingRecordReceiptFormInitial, ["value", "line"], [writeMember({}, ["locationId"], row.id)]))}
         >
           record-receipt
         </Button>

@@ -417,6 +417,24 @@ fn repeated_ancestor(path: &str) -> Option<&str> {
     Some(&path[..end])
 }
 
+/// One row value written into the initial values of a form, at one input path.
+///
+/// An input inside a repeated group is a member of one element, so the fill
+/// writes a list that holds that one element (wamn-yviq).
+fn fill_member(base: &str, input: &str, value: &str) -> String {
+    let Some(ancestor) = repeated_ancestor(input) else {
+        return format!("writeMember({base}, {}, {value})", member_literal(input));
+    };
+    let element = match input[ancestor.len()..].strip_prefix("[].") {
+        Some(rest) => fill_member("{}", rest, value),
+        None => value.to_owned(),
+    };
+    format!(
+        "writeMember({base}, {}, [{element}])",
+        member_literal(ancestor)
+    )
+}
+
 /// The member path as a TypeScript literal, for a runtime helper.
 fn member_literal(path: &str) -> String {
     format!(
@@ -819,10 +837,10 @@ fn emit_definition_table(
             let target = crate::client_ts::operation_stem(form.operation);
             let mut initial = format!("{{}} as {target}FormInitial");
             for (field, input) in &form.pairs {
-                initial = format!(
-                    "writeMember({initial}, {}, row.{})",
-                    member_literal(input),
-                    crate::client_ts::to_camel(field),
+                initial = fill_member(
+                    &initial,
+                    input,
+                    &format!("row.{}", crate::client_ts::to_camel(field)),
                 );
             }
             runtime.insert("writeMember");
@@ -1027,7 +1045,7 @@ fn emit_detail(
     )
     .expect("write");
     writeln!(source, "export interface {stem}DetailInput {{").expect("write");
-    alias_imports(&operator_inputs(screen), runtime);
+    alias_imports(&operator_inputs(screen), false, runtime);
     write_record_members(source, &operator_inputs(screen), &[], 1);
     source.push_str("}\n");
     writeln!(
@@ -1270,10 +1288,13 @@ fn write_record_members(source: &mut String, inputs: &[&FieldIr], prefix: &[Stri
 }
 
 /// The wire aliases that one set of inputs names.
-fn alias_imports(inputs: &[&FieldIr], runtime: &mut BTreeSet<&'static str>) {
+///
+/// A record type holds no repeated group, and the initial values of a form do,
+/// so `lists` says whether an input inside a repeated group counts.
+fn alias_imports(inputs: &[&FieldIr], lists: bool, runtime: &mut BTreeSet<&'static str>) {
     for input in inputs
         .iter()
-        .filter(|input| repeated_ancestor(&input.path).is_none())
+        .filter(|input| lists || repeated_ancestor(&input.path).is_none())
     {
         match crate::client_ts::ts_type(&input.type_name).unwrap_or("string") {
             "Int64" => runtime.insert("type Int64"),
@@ -1288,8 +1309,8 @@ fn alias_imports(inputs: &[&FieldIr], runtime: &mut BTreeSet<&'static str>) {
 /// The values one form can start with, as a type of its own.
 ///
 /// The members are the operator inputs alone, and every level is optional, so a
-/// caller can prefill one member of a nested value. A repeated group is not a
-/// member: the form owns the list that the operator adds to.
+/// caller can prefill one member of a nested value. A repeated group is a list
+/// of elements whose members are optional too, so a row can fill one element.
 fn write_initial_members(
     source: &mut String,
     inputs: &[&FieldIr],
@@ -1312,10 +1333,8 @@ fn write_initial_members(
         let repeated = inputs.iter().any(|input| {
             repeated_ancestor(&input.path).is_some_and(|ancestor| member_path(ancestor) == deeper)
         });
-        if repeated {
-            continue;
-        }
         written.push(name.clone());
+        let list = if repeated { "[]" } else { "" };
         if path.len() == prefix.len() + 1 {
             // A declared domain types as its union, as the bindings do.
             let spelling = if input.values.is_empty() {
@@ -1331,12 +1350,17 @@ fn write_initial_members(
                     .join(" | ")
             };
             let nullable = if input.nullable { " | null" } else { "" };
-            writeln!(source, "{indent}{name}?: {spelling}{nullable};").expect("write");
+            let spelling = if repeated {
+                format!("({spelling}{nullable})[]")
+            } else {
+                format!("{spelling}{nullable}")
+            };
+            writeln!(source, "{indent}{name}?: {spelling};").expect("write");
             continue;
         }
         writeln!(source, "{indent}{name}?: {{").expect("write");
         write_initial_members(source, inputs, &deeper, depth + 1);
-        writeln!(source, "{indent}}};").expect("write");
+        writeln!(source, "{indent}}}{list};").expect("write");
     }
 }
 
@@ -1409,7 +1433,7 @@ fn emit_form(
     .expect("write");
     writeln!(source, "export interface {stem}FormInitial {{").expect("write");
     // The initial values name the wire aliases their leaves carry.
-    alias_imports(&operator_inputs(screen), runtime);
+    alias_imports(&operator_inputs(screen), true, runtime);
     write_initial_members(source, &operator_inputs(screen), &[], 1);
     source.push_str("}\n");
     writeln!(
@@ -2229,7 +2253,7 @@ fn emit_delete(
         )
         .expect("write");
         writeln!(source, "export interface {stem}DeleteInput {{").expect("write");
-        alias_imports(&operator_inputs(screen), runtime);
+        alias_imports(&operator_inputs(screen), false, runtime);
         write_record_members(source, &operator_inputs(screen), &[], 1);
         source.push_str("}\n");
     }

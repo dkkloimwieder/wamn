@@ -9,14 +9,18 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@solidjs/testing-library";
 import { afterEach, describe, expect, it } from "vitest";
 
+import type { JsonValue, Outcome, Transport, WireRequest } from "@wamn/web-runtime";
+
 import {
   WidgetCreateForm,
+  WidgetListTable,
   WidgetRecordBatchForm,
   type WidgetCreateFormInitial,
+  type WidgetRecordBatchFormInitial,
 } from "../fixture/components/widget.js";
 import { WidgetMakerQueryTable } from "../fixture/components/widget_maker.js";
 import { selector } from "./choose.js";
-import { MAKER, prefillStub as stub } from "../stubs/index.js";
+import { MAKER, WIDGET, prefillStub as stub } from "../stubs/index.js";
 
 afterEach(cleanup);
 
@@ -38,6 +42,35 @@ describe("a row that opens a form", () => {
     render(() => <WidgetCreateForm transport={transport} initial={initial} />);
     // The selector shows the row whose key the form started with.
     await waitFor(() => expect(selector("maker id").value).toBe("Northwind"));
+  });
+
+  it("fills one element of a repeated group, which the form shows as one line", async () => {
+    // The batch form holds its lines as a list, so a widget row fills the
+    // widget of one line, never an object in place of the list (wamn-yviq).
+    const widget = { id: WIDGET, code: "standard", attributes: null, edit_version: "1" };
+    const transport: Transport = {
+      invoke: (request: WireRequest) => {
+        const reply: Outcome<JsonValue> = request.operation.includes("widget/list")
+          ? { status: "completed", value: { rows: [widget] } }
+          : { status: "completed", value: { item: [], nextCursor: null } };
+        return Promise.resolve(reply);
+      },
+    };
+    let carried: WidgetRecordBatchFormInitial | undefined;
+    render(() => (
+      <WidgetListTable transport={transport} onFillWidgetRecordBatch={(initial) => {
+        carried = initial;
+      }} />
+    ));
+    await waitFor(() => expect(screen.getByText("standard")).toBeDefined());
+
+    fireEvent.click(screen.getByRole("button", { name: "record-batch" }));
+    expect(carried).toEqual({ value: { line: [{ widgetId: WIDGET }] } });
+    cleanup();
+
+    const initial = carried as WidgetRecordBatchFormInitial;
+    render(() => <WidgetRecordBatchForm transport={transport} initial={initial} />);
+    expect(selector("Line")).toBeDefined();
   });
 
   it("fills no form in which two inputs name its model", async () => {

@@ -15,6 +15,14 @@ describe("the filled values of a form", () => {
     expect(filledValues(search)).toEqual(values);
   });
 
+  it("read an element of a list back as a list", () => {
+    const values = { value: { purchaseOrderId: "a", line: [{ purchaseOrderLineId: "b" }] } };
+    const path = fillPath("receipts/new", values);
+    expect(path).toBe("receipts/new?value.purchaseOrderId=a&value.line.0.purchaseOrderLineId=b");
+    const search = Object.fromEntries(new URLSearchParams(path.split("?")[1]));
+    expect(filledValues(search)).toEqual(values);
+  });
+
   it("leave the path alone when a row fills nothing", () => {
     expect(fillPath("receipts/new", {})).toBe("receipts/new");
     expect(filledValues({})).toEqual({});

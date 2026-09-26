@@ -9,12 +9,10 @@
  * table row opens. The purchase order page opens its update form, the receipt
  * form, its receiving screen and its history, each on a route below it. The
  * receipt form also opens from the Receipts table and from a purchase order
- * row, which fills the order in the query. A completed submission returns to
- * the page that opened the form.
- *
- * The receiving screen and location rows can also fill a receipt line, but
- * their generated fill writes the line as one object where the form holds a
- * list (wamn-yviq), so this table leaves those two unwired.
+ * row, which fills the order in the query. A row of the receiving screen
+ * fills the order and one receipt line, and a location row fills the location
+ * of one receipt line. A completed submission returns to the page that opened
+ * the form.
  */
 
 import { fillPath, filledValues, type ScreenProps, type ShellSection } from "@wamn/shell";
@@ -93,7 +91,15 @@ export const SECTIONS: readonly ShellSection[] = [
       {
         path: "purchase-orders/:id/receiving",
         component: (props) => (
-          <ReceivingLoadReceiptScreenTable transport={props.transport} fixed={{ purchaseOrderId: key(props).id }} />
+          <ReceivingLoadReceiptScreenTable
+            transport={props.transport}
+            fixed={{ purchaseOrderId: key(props).id }}
+            onFillReceivingRecordReceipt={(fill) =>
+              props.open(
+                fillPath("receipts/new", { ...fill, value: { ...fill.value, purchaseOrderId: key(props).id } }),
+              )
+            }
+          />
         ),
       },
       {
@@ -168,7 +174,12 @@ export const SECTIONS: readonly ShellSection[] = [
       {
         path: "locations",
         label: LocationListTableLabel,
-        component: (props) => <LocationListTable transport={props.transport} />,
+        component: (props) => (
+          <LocationListTable
+            transport={props.transport}
+            onFillReceivingRecordReceipt={(fill) => props.open(fillPath("receipts/new", fill))}
+          />
+        ),
       },
     ],
   },

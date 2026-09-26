@@ -739,10 +739,11 @@ fn a_component_builds_a_read_request_with_no_request_identity() {
 }
 
 /// A caller prefills one member of a nested value, so the initial values state
-/// every level as optional. A supplied field and a repeated group are not part
-/// of that type: the platform writes the first, and the form owns the second.
+/// every level as optional. A supplied field is not part of that type, because
+/// the platform writes it. A repeated group is a list of optional elements, so
+/// a row can fill one element (wamn-yviq).
 #[test]
-fn initial_values_reach_a_nested_member_and_name_no_group() {
+fn initial_values_reach_a_nested_member_and_one_element_of_a_group() {
     let files = emit(&release());
     let widget = widget(&files);
 
@@ -765,12 +766,22 @@ fn initial_values_reach_a_nested_member_and_name_no_group() {
             "  value?: {\n",
             "    grade?: \"first\" | \"second\";\n",
             "    inspectorId?: Uuid | null;\n",
+            "    line?: {\n",
+            "      amount?: Numeric;\n",
+            "      widgetId?: Uuid;\n",
+            "    }[];\n",
             "    makerId?: Uuid | null;\n",
             "    note?: string | null;\n",
             "  };\n",
             "}\n",
         )),
-        "the repeated group is not a member, and neither is a supplied field"
+        "the repeated group is a list of optional elements, and a supplied field is not a member"
+    );
+    assert!(
+        widget.contains(
+            "props.onFillWidgetRecordBatch?.(writeMember({} as WidgetRecordBatchFormInitial, [\"value\", \"line\"], [writeMember({}, [\"widgetId\"], row.id)]))"
+        ),
+        "a row fills one element of the repeated group, as a list"
     );
     assert!(
         widget.contains("  readonly initial?: WidgetRecordBatchFormInitial;"),

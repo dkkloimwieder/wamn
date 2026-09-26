@@ -30,9 +30,11 @@ export function filledValues<T>(search: Readonly<Record<string, string | undefin
     if (text === undefined || last === undefined) {
       continue;
     }
+    // A number names an element, so its parent is a list, as `fillPath` walked it.
     let inner = values;
-    for (const member of members) {
-      inner = (inner[member] ??= {}) as Record<string, unknown>;
+    for (const [index, member] of members.entries()) {
+      const next = members[index + 1] ?? last;
+      inner = (inner[member] ??= /^\d+$/.test(next) ? [] : {}) as Record<string, unknown>;
     }
     inner[last] = text;
   }
