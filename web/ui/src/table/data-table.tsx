@@ -484,10 +484,10 @@ export function DataTable<TRow extends object>(props: DataTableProps<TRow>): JSX
     ),
   );
 
-  function openEdit(row: TRow, field: keyof TRow & string) {
+  function openEdit(rowId: string, row: TRow, field: keyof TRow & string) {
     if (edit() === null) {
       setEdit({
-        rowId: String(row[props.rowId]),
+        rowId,
         field,
         text: editText(row[field]),
         error: null,
@@ -500,7 +500,7 @@ export function DataTable<TRow extends object>(props: DataTableProps<TRow>): JSX
   /** Saves the open edit. A refusal or a conflict keeps the editor and its text. */
   async function saveEdit() {
     const open = edit();
-    const row = props.rows.find((candidate) => String(candidate[props.rowId]) === open?.rowId);
+    const row = open === null ? undefined : table.getRow(open.rowId, true)?.original;
     if (open === null || row === undefined || open.saving) {
       return;
     }
@@ -593,7 +593,7 @@ export function DataTable<TRow extends object>(props: DataTableProps<TRow>): JSX
                   edit()?.rowId === context.row.id && edit()?.field === definition.field ? edit() : null
                 }
                 blocked={edit() !== null}
-                onOpen={() => openEdit(context.row.original, definition.field)}
+                onOpen={() => openEdit(context.row.id, context.row.original, definition.field)}
                 onText={(text) => setEdit((open) => (open === null ? null : { ...open, text }))}
                 onSave={() => void saveEdit()}
                 onDrop={() => setEdit(null)}
