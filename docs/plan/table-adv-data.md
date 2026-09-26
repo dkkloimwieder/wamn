@@ -210,7 +210,7 @@ Each feature follows the core rule: server work sets scope, client work needs a 
 
 Each increment is one epic, reviewed before the next is scoped. Increment 1 is platform work; the rest are UI work.
 
-1. **Streamed query (platform).** Built by epic `wamn-utci`. [Request execution](../architecture/execution.md) and [data access](../architecture/data-access.md) describe it, and the epic records its measurements. The 100,000-row ceiling stays until the owner sets the measured value.
+1. **Streamed query (platform).** Built by epic `wamn-utci`. [Request execution](../architecture/execution.md) and [data access](../architecture/data-access.md) describe it, and the epic records its measurements. The owner set the ceiling at 100,000 rows on 2026-09-26. It is a browser bound, and it moves to client configuration with the cap.
 2. **Load in the table (UI, after Epic 17 windowing).** Per-table cap control, "Full dataset cannot be loaded", generation guard, load times, refresh.
 3. **Client operations on a fully read set.** Sort, refine filters, search, multi-level grouping and aggregates, totals row, CSV export.
 4. **Column arrangement and views.** Header menu, column panel, views in memory and the URL.
