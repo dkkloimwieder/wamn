@@ -262,6 +262,47 @@ pub struct CountLimitDeclaration {
 }
 
 /// One typed leaf in an input or result contract.
+/// Whether a field is a revision, and the input whose record it guards.
+///
+/// A contract spells a revision `"revision": true`, or `"revision": "<path>"`
+/// when it names the input whose record it guards. A command that takes two
+/// records of one model cannot say which one a revision belongs to by its
+/// path, so the revision states it.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum Revision {
+    /// `false` for a field that is no revision, `true` for one that names no input.
+    Flag(bool),
+    /// The path of the input whose record this revision guards.
+    Guards(String),
+}
+
+impl Default for Revision {
+    fn default() -> Self {
+        Self::Flag(false)
+    }
+}
+
+impl Revision {
+    /// Whether the field is a revision.
+    pub fn is_revision(&self) -> bool {
+        !self.is_absent()
+    }
+
+    /// Whether the field is no revision, which the contract leaves unstated.
+    pub fn is_absent(&self) -> bool {
+        *self == Self::Flag(false)
+    }
+
+    /// The input whose record this revision guards, when it names one.
+    pub fn guards(&self) -> Option<&str> {
+        match self {
+            Self::Guards(path) => Some(path),
+            Self::Flag(_) => None,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ContractFieldDeclaration {
@@ -269,14 +310,8 @@ pub struct ContractFieldDeclaration {
     #[serde(rename = "type")]
     pub ty: wamn_schema_introspection::ir::ColumnType,
     pub nullable: bool,
-    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-    pub revision: bool,
-    /// The input whose record this revision guards, when it names one.
-    ///
-    /// A command that takes two records of one model cannot say which one a
-    /// revision belongs to by its path, so the revision states it here.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub revision_of: Option<String>,
+    #[serde(default, skip_serializing_if = "Revision::is_absent")]
+    pub revision: Revision,
     #[serde(default)]
     pub values: Vec<String>,
     /// Authored screen text. Flattening [`FieldText`] here is not available,
@@ -1535,7 +1570,7 @@ fn validate_contract_fields(
         }
         // An application integer is int32 by default, and int64 is opt-in, so a
         // revision carries either width.
-        if field.revision
+        if field.revision.is_revision()
             && !matches!(
                 field.ty,
                 wamn_schema_introspection::ir::ColumnType::Int32
@@ -1552,16 +1587,15 @@ fn validate_contract_fields(
         }
         // A revision names the record of one sibling input, and that input
         // names its model, so a client knows which chosen row supplies it.
-        if let Some(record) = field.revision_of.as_deref()
-            && (!field.revision
-                || !fields
-                    .iter()
-                    .any(|named| named.path == record && named.references.is_some()))
+        if let Some(record) = field.revision.guards()
+            && !fields
+                .iter()
+                .any(|named| named.path == record && named.references.is_some())
         {
             return Err(GenerateError::new(
                 GenerateErrorKind::InvalidOperation,
                 format!(
-                    "{operation_name} {contract} field {} states revision_of {record}, which only a revision may state, naming an input that references a model",
+                    "{operation_name} {contract} field {} is the revision of {record}, which must name an input that references a model",
                     field.path
                 ),
             ));

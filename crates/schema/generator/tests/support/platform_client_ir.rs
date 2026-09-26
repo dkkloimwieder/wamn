@@ -161,7 +161,7 @@ fn platform_contract_shapes_project_exact_client_fields() {
     let by_path = |path: &str| leaves.iter().find(|field| field.path == path).unwrap();
     assert_eq!(by_path("id").type_name, "uuid");
     assert!(!by_path("id").nullable);
-    assert!(by_path("expected_edit_version").revision);
+    assert!(by_path("expected_edit_version").revision.is_revision());
     assert!(!by_path("change.code").required);
     assert!(!by_path("change.code").nullable);
     assert!(by_path("change.note").nullable);

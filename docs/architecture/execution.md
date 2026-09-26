@@ -503,7 +503,7 @@ The definition also names the served update of the table's relation, with the co
 The update contract states the column that each writable input writes, so no name is compared.
 It names each operation that a row opens. An operation takes many rows when it accepts more than one outer input and runs each in its own transaction.
 An operation that takes many rows is a bulk action of the table. It opens its generated form in a sheet, and the form hides the inputs that the rows fill.
-One submission sends one input for each selected row in one call, and each row shows its own outcome. A row sends its own revision when the form's revision input states `revision_of` the input that the row fills.
+One submission sends one input for each selected row in one call, and each row shows its own outcome. A row sends its own revision when the form's revision input names the input that the row fills.
 It names each child table: another table whose declared filter narrows a column that names a record of this table's model.
 A cell of a column that the update writes edits in place. The table puts the returned row in place, and loads again after any write it did not send.
 A row expands to its child tables. Each child is a table with its scope filter fixed to the row's key, which its scope bar does not offer.
@@ -514,7 +514,7 @@ A delete asks for a confirmation first.
 A form whose plan binds a revision reads the record when it opens and sends the revision of that read.
 It reads nothing at submit, so a change that another writer makes in between refuses as a conflict.
 A delete whose plan binds a revision takes the key and the revision of the record that the page displayed, and it reads nothing.
-A command revision input can state `revision_of`, the input whose record it guards. The form then sends the revision of the row that carries the held key in that selector: the row the operator chose, a listed row that carries a filled key, or the record read for a key off the list. If no row carries the key, the form refuses locally and marks that selector.
+A command revision input can name the input whose record it guards, as `"revision": "value.pallet_id"` in place of `"revision": true`. The form then sends the revision of the row that carries the held key in that selector: the row the operator chose, a listed row that carries a filled key, or the record read for a key off the list. If no row carries the key, the form refuses locally and marks that selector.
 A table row fills a form input only when that input is the one input of the form that names the row's model. If two inputs name it, the row fills neither.
 A table column that names a record shows the record's text, not its key.
 A generated result field states `references` from its column's foreign key, and an authored result field can declare it.

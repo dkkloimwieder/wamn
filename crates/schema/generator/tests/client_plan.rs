@@ -145,7 +145,7 @@ fn revision_inputs_join_the_declared_and_guarded_paths() {
     let mut guarded = release();
     let archive = operation(&mut guarded, "archive");
     for field in &mut archive.input_fields {
-        field.revision = false;
+        field.revision = wamn_schema_generator::Revision::default();
     }
     let plan = ClientPlan::from_ir(&guarded);
     assert_eq!(
@@ -478,7 +478,7 @@ fn a_screen_names_its_page_controls_apart_from_the_operator_fields() {
     query.input_fields.push(FieldIr {
         path: "note".to_owned(),
         children: Vec::new(),
-        revision: false,
+        revision: wamn_schema_generator::Revision::default(),
         ..template
     });
     let plan = ClientPlan::from_ir(&mixed);
@@ -962,7 +962,7 @@ fn the_result_fields_of_an_operation_have_one_owner() {
     );
 }
 
-/// A revision that states `revision_of` is supplied by the row the operator
+/// A revision that names an input is supplied by the row the operator
 /// chooses for that input, and by no other input (wamn-nv87).
 ///
 /// The batch names `widget_maker` twice. Without the declaration no path
@@ -1004,10 +1004,13 @@ fn a_revision_names_the_one_selector_whose_row_supplies_it() {
         .as_array_mut()
         .expect("the batch declares its input")
     {
-        field
-            .as_object_mut()
-            .expect("a field object")
-            .remove("revision_of");
+        let field = field.as_object_mut().expect("a field object");
+        if field
+            .get("revision")
+            .is_some_and(serde_json::Value::is_string)
+        {
+            field.insert("revision".to_owned(), json!(true));
+        }
     }
     let undeclared =
         fixture::client_release_of(&fixture::generate_with(&fixture::catalog(), &undeclared));
@@ -1027,11 +1030,11 @@ fn a_revision_names_the_one_selector_whose_row_supplies_it() {
         .expect("the batch declares its input")
         .iter_mut()
         .find(|field| field["path"] == "value.expected_edit_version")
-        .expect("the batch takes a revision")["revision_of"] = json!("value.note");
+        .expect("the batch takes a revision")["revision"] = json!("value.note");
     let error = fixture::try_generate_with(&fixture::catalog(), &refused)
         .expect_err("a revision of an input that names no model is refused");
     assert!(
-        error.to_string().contains("revision_of value.note"),
+        error.to_string().contains("is the revision of value.note"),
         "{error}"
     );
 }

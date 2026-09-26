@@ -460,8 +460,7 @@
             "path": "value.expected_row_version",
             "type": "int32",
             "nullable": false,
-            "revision": true,
-            "revision_of": "value.pallet_id"
+            "revision": "value.pallet_id"
           },
           {
             "path": "value.occurred_at",
@@ -970,8 +969,7 @@
             "path": "value.expected_row_version",
             "type": "int32",
             "nullable": false,
-            "revision": true,
-            "revision_of": "value.pallet_id"
+            "revision": "value.pallet_id"
           },
           {
             "path": "value.occurred_at",
@@ -1428,8 +1426,7 @@
             "path": "value.expected_row_version",
             "type": "int32",
             "nullable": false,
-            "revision": true,
-            "revision_of": "value.target_pallet_id"
+            "revision": "value.target_pallet_id"
           },
           {
             "path": "value.occurred_at",
@@ -1996,8 +1993,7 @@
             "path": "value.expected_row_version",
             "type": "int32",
             "nullable": false,
-            "revision": true,
-            "revision_of": "value.source_pallet_id"
+            "revision": "value.source_pallet_id"
           },
           {
             "path": "value.occurred_at",

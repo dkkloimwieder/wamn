@@ -257,7 +257,7 @@ pub struct PopulatedInput<'a> {
     /// How one selector narrows another, when the reference states it.
     pub narrowed_by: Option<Narrowing<'a>>,
     /// The revision that the chosen row supplies, when a revision input
-    /// states `revision_of` this input.
+    /// names this input in its `revision`.
     pub revision: Option<ChosenRevision<'a>>,
     /// The read that loads one held record the list did not return, so the
     /// selector shows its text. It is the read the list's rows open, and it
@@ -369,7 +369,7 @@ pub struct RowForm<'a> {
     /// Result field of this screen, and the input path of that form.
     pub pairs: Vec<(&'a str, &'a str)>,
     /// The revision the row carries for the record it fills, when a revision
-    /// input of the form states `revision_of` the filled input and this
+    /// input of the form names the filled input in its `revision` and this
     /// screen shows the field that carries it: the result field of this
     /// screen, and the revision input of that form. A form that sends one
     /// item for each of many rows sends each row's own revision this way.
@@ -1297,12 +1297,11 @@ fn populated_inputs<'a>(
             // the one result field the contract marks as a revision.
             let revision = input_leaves
                 .iter()
-                .find(|field| field.revision_of.as_deref() == Some(input.path.as_str()))
+                .find(|field| field.revision.guards() == Some(input.path.as_str()))
                 .and_then(|revision| {
-                    let field = list
-                        .columns
-                        .iter()
-                        .find(|column| column.revision && column.type_name == revision.type_name)?;
+                    let field = list.columns.iter().find(|column| {
+                        column.revision.is_revision() && column.type_name == revision.type_name
+                    })?;
                     Some(ChosenRevision {
                         input: revision.path.as_str(),
                         field: field.path.as_str(),

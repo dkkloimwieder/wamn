@@ -39,7 +39,7 @@ fn platform_fixture_generates_client_descriptors() {
         .iter()
         .find(|field| field.path == "edit_version")
         .expect("revision descriptor");
-    assert!(revision.revision);
+    assert!(revision.revision.is_revision());
 
     let archive = widget
         .operations

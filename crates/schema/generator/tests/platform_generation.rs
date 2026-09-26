@@ -1326,7 +1326,12 @@ fn a_contract_carries_no_reference_and_no_list_when_nobody_states_one() {
             let field = field.as_object_mut().expect("a field object");
             field.remove("references");
             // A revision names a record only through an input that references one.
-            field.remove("revision_of");
+            if field
+                .get("revision")
+                .is_some_and(serde_json::Value::is_string)
+            {
+                field.insert("revision".to_owned(), serde_json::Value::Bool(true));
+            }
         }
     }
     // A table read still states its row key, and names no model a selector

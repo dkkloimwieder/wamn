@@ -10,8 +10,7 @@ fn field(path: String, type_name: String, required: bool, nullable: bool) -> Fie
         type_name,
         required,
         nullable,
-        revision: false,
-        revision_of: None,
+        revision: crate::manifest::Revision::default(),
         values: Vec::new(),
         children: Vec::new(),
         minimum: None,
@@ -125,12 +124,8 @@ pub(super) fn fields_of(contract: &Value) -> Vec<FieldIr> {
         leaf.values = values(declared.get("values"));
         leaf.revision = declared
             .get("revision")
-            .and_then(Value::as_bool)
-            .unwrap_or(false);
-        leaf.revision_of = declared
-            .get("revision_of")
-            .and_then(Value::as_str)
-            .map(str::to_owned);
+            .and_then(|revision| serde_json::from_value(revision.clone()).ok())
+            .unwrap_or_default();
         (leaf.label, leaf.description) = text(declared);
         leaf.references = reference(declared);
         insert(&mut tree, leaf, &path.split('.').collect::<Vec<_>>(), "");
@@ -177,8 +172,8 @@ pub(super) fn input_fields_of(contract: &Value) -> Vec<FieldIr> {
             declared.values = values(member.get("values"));
             declared.revision = member
                 .get("revision")
-                .and_then(Value::as_bool)
-                .unwrap_or(false);
+                .and_then(|revision| serde_json::from_value(revision.clone()).ok())
+                .unwrap_or_default();
             (declared.label, declared.description) = text(member);
             declared.references = reference(member);
             tree.push(declared);
@@ -387,8 +382,7 @@ fn schema_field(schema: &Value, mut path: String, required: bool, hints: &[&Fiel
             result.values = values(schema.get("enum"));
             if let Some(hint) = hints.iter().find(|hint| hint.path == path) {
                 result.nullable &= hint.nullable;
-                result.revision = hint.revision;
-                result.revision_of.clone_from(&hint.revision_of);
+                result.revision.clone_from(&hint.revision);
                 result.label.clone_from(&hint.label);
                 result.description.clone_from(&hint.description);
                 result.references.clone_from(&hint.references);

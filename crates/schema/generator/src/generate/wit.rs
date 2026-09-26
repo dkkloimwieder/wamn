@@ -1542,7 +1542,12 @@ fn emit_owned_interface(
         .collect::<BTreeMap<_, _>>();
     // A custom operation reports the revision that its own result declares.
     let revision = result
-        .and_then(|result| result.fields.iter().find(|field| field.revision))
+        .and_then(|result| {
+            result
+                .fields
+                .iter()
+                .find(|field| field.revision.is_revision())
+        })
         .map(|field| field.ty);
     for (literal, detail) in &details {
         if !detail.required.is_empty() || !detail.optional.is_empty() {
@@ -1876,7 +1881,12 @@ fn emit_custom_codec(local_name: &str, operation: &CustomOperationDeclaration) -
             operation
                 .result
                 .as_ref()
-                .and_then(|result| result.fields.iter().find(|field| field.revision))
+                .and_then(|result| {
+                    result
+                        .fields
+                        .iter()
+                        .find(|field| field.revision.is_revision())
+                })
                 .map(|field| field.ty),
             &[],
         );
@@ -1908,7 +1918,12 @@ fn emit_custom_codec(local_name: &str, operation: &CustomOperationDeclaration) -
         operation
             .result
             .as_ref()
-            .and_then(|result| result.fields.iter().find(|field| field.revision))
+            .and_then(|result| {
+                result
+                    .fields
+                    .iter()
+                    .find(|field| field.revision.is_revision())
+            })
             .map(|field| field.ty),
     ));
     source.push_str(&emit_export_adapter(

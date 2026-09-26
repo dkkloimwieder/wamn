@@ -516,9 +516,8 @@
             "label": "Expected edit version",
             "nullable": false,
             "path": "value.expected_edit_version",
-            "revision": true,
-            "type": "int64",
-            "revision_of": "value.inspector_id"
+            "revision": "value.inspector_id",
+            "type": "int64"
           },
           {
             "label": "Grade",

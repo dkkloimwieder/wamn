@@ -775,7 +775,7 @@ fn write_table_definition(
             "key"
         } else if resolved.is_some() || column.references.is_some() {
             "reference"
-        } else if column.revision {
+        } else if column.revision.is_revision() {
             "revision"
         } else {
             "value"

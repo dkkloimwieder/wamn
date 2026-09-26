@@ -507,7 +507,7 @@ fn platform_and_revision_inputs_come_only_from_exact_declared_paths() {
         let revision = matches!(path, "expected_row_version" | "value.expected_row_version");
         wamn_schema_generator::client_ir::FieldIr {
             path: path.into(),
-            revision,
+            revision: wamn_schema_generator::Revision::Flag(revision),
             children: Vec::new(),
             ..template.clone()
         }

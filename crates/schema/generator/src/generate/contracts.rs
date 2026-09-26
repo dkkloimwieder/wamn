@@ -1009,8 +1009,9 @@ fn crud_result_contract(
                 path: column.name.clone(),
                 ty: column.ty,
                 nullable: column.nullable,
-                revision: model.revision_field() == Some(column.name.as_str()),
-                revision_of: None,
+                revision: crate::manifest::Revision::Flag(
+                    model.revision_field() == Some(column.name.as_str()),
+                ),
                 values: if action == CrudAction::Delete && column.name == "outcome" {
                     vec![sql::OUTCOME_DELETED.to_owned()]
                 } else {

@@ -64,7 +64,7 @@ pub use manifest::{
     InternalRelationDeclaration, LimitDeclaration, ModelDeclaration, OperationDeclaration,
     OperationErrorDetailDeclaration, OperationErrorDetailKey, OperationVisibility, PackageIdentity,
     PackageManifest, PaginationDeclaration, PolicyContractRequirement, PolicyContractState,
-    RecordHistoryColumn, ResultClass, SortDeclaration, SortKey, StateGuardDeclaration,
+    RecordHistoryColumn, ResultClass, Revision, SortDeclaration, SortKey, StateGuardDeclaration,
     StaticSqlFetch, StaticSqlRelationDeclaration, StaticSqlStatementDeclaration,
     StaticSqlValueDeclaration, TieBreakerDeclaration, canonical_operation_identity,
     canonical_operation_prefix, validate_operation_vocabulary,

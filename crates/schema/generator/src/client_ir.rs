@@ -215,13 +215,11 @@ pub struct FieldIr {
     pub nullable: bool,
     /// Whether the property must be present, independently of its null value.
     pub required: bool,
-    /// Whether this signed integer is a revision serialized as a decimal JSON string.
-    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-    pub revision: bool,
-    /// Input path whose record this revision guards, when the contract names
-    /// one.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub revision_of: Option<String>,
+    /// Whether this signed integer is a revision serialized as a decimal JSON
+    /// string, and the input path whose record it guards when the contract
+    /// names one.
+    #[serde(default, skip_serializing_if = "crate::manifest::Revision::is_absent")]
+    pub revision: crate::manifest::Revision,
     /// Object members or repeated item members, ordered by path.
     pub children: Vec<FieldIr>,
     /// Declared repeated-item bounds.
@@ -440,7 +438,7 @@ pub fn revision_inputs(operation: &OperationIr) -> Vec<&str> {
         paths.extend(guards.values().filter_map(Value::as_str));
     }
     for field in leaf_fields(&operation.input_fields) {
-        if field.revision {
+        if field.revision.is_revision() {
             paths.insert(field.path.as_str());
         }
     }
@@ -1115,7 +1113,7 @@ fn build_operation(
             .is_some_and(|value| value.get("state").is_some())
         || leaf_fields(&input_fields)
             .iter()
-            .any(|field| field.revision);
+            .any(|field| field.revision.is_revision());
     let route = match routes.get(&identity) {
         Some(route) => Some(RouteIr {
             method: route_method(&kind, module, name)?.to_owned(),

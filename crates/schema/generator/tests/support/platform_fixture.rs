@@ -317,7 +317,7 @@ fn catalog_of(note_nullable: bool, maker_key: bool) -> CatalogIr {
     );
     // The second model. It is as small as the first: an identity, one text
     // column, a revision, and the timestamp its query sorts by. The batch
-    // names it twice, so its revision declares `revision_of` (wamn-nv87,
+    // names it twice, so its revision names the inspector input (wamn-nv87,
     // wamn-kyak). Its name keeps it after
     // `widget` in contract order, so every model index a test states stays
     // where it was.
