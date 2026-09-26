@@ -13,8 +13,8 @@ wit_bindgen::generate!({
         package edge-samples:component@0.1.0;
 
         world samples {
-          import wamn:postgres/types@0.1.0;
-          import wamn:postgres/statements@0.1.0;
+          import wamn:postgres/types@0.2.0;
+          import wamn:postgres/statements@0.2.0;
           export edge-samples:sample/get@1.0.0;
           export edge-samples:sample/read@1.0.0;
           export edge-samples:sample/%record@1.0.0;
@@ -22,7 +22,7 @@ wit_bindgen::generate!({
     "#,
     path: [
         "../../../crates/execution/workflow/router/wit",
-        "../../../crates/platform/runtime/wit/deps/wamn-postgres",
+        "../../../crates/platform/runtime/wit/deps/wamn-postgres-0.2",
         "../generated/wit/deps/edge-samples-sample",
     ],
     generate_all,

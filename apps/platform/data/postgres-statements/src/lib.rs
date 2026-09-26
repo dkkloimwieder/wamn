@@ -6,9 +6,9 @@
 )]
 mod bindings {
     wit_bindgen::generate!({
-        world: "wamn:postgres-statements/postgres-statements@0.1.0",
+        world: "wamn:postgres-statements/postgres-statements@0.2.0",
         path: [
-            "../../../../crates/platform/runtime/wit/deps/wamn-postgres",
+            "../../../../crates/platform/runtime/wit/deps/wamn-postgres-0.2",
             "wit",
         ],
         generate_all,
@@ -21,6 +21,7 @@ use std::pin::Pin;
 
 use bindings::wamn::postgres::statements as host;
 use bindings::wamn::postgres::types as wire;
+use wit_bindgen::rt::async_support::{FutureReader, StreamReader, StreamResult};
 
 pub use bindings::wamn::postgres::types::{RowSet, SqlValue};
 
@@ -252,12 +253,84 @@ impl Connection {
             .map_err(StatementError::from_wire)
     }
 
+    /// Run one admitted statement and read its rows as the server sends them.
+    ///
+    /// The host reads the rows in batches from one cursor in one transaction,
+    /// so every row comes from the snapshot the statement started with.
+    /// Dropping the returned stream before its end ends the query.
+    pub async fn run_stream<T>(
+        &mut self,
+        statement_digest: &str,
+        params: Vec<SqlValue>,
+        decode: fn(&mut RowDecoder<'_>) -> Result<T, StatementError>,
+    ) -> Result<RowStream<T>, StatementError> {
+        let (columns, rows, end) = host::run_stream(statement_digest.to_string(), params)
+            .await
+            .map_err(StatementError::from_wire)?;
+        Ok(RowStream {
+            statement_digest: statement_digest.into(),
+            columns,
+            rows,
+            end: Some(end),
+            batch: Vec::new().into_iter(),
+            decode,
+        })
+    }
+
     /// Begin one explicit host-owned transaction.
     pub async fn begin(&mut self) -> Result<Transaction, StatementError> {
         host::begin()
             .await
             .map(|inner| Transaction { inner })
             .map_err(StatementError::from_wire)
+    }
+}
+
+/// Rows the host reads, which the caller decodes one at a time.
+pub struct RowStream<T> {
+    statement_digest: Box<str>,
+    columns: Vec<wire::Column>,
+    rows: StreamReader<Vec<SqlValue>>,
+    end: Option<FutureReader<Result<(), host::StatementError>>>,
+    batch: std::vec::IntoIter<Vec<SqlValue>>,
+    decode: fn(&mut RowDecoder<'_>) -> Result<T, StatementError>,
+}
+
+impl<T> fmt::Debug for RowStream<T> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("RowStream")
+            .field("statement_digest", &self.statement_digest)
+            .finish_non_exhaustive()
+    }
+}
+
+/// Rows one read asks the host for.
+const READ_ROWS: usize = 500;
+
+impl<T> RowStream<T> {
+    /// The next row, or `None` after the last row of a statement that read to
+    /// its end. A statement that failed returns its error instead.
+    pub async fn next(&mut self) -> Result<Option<T>, StatementError> {
+        loop {
+            if let Some(values) = self.batch.next() {
+                return decode_row(&self.statement_digest, &self.columns, values, self.decode)
+                    .map(Some);
+            }
+            let Some(end) = self.end.take() else {
+                return Ok(None);
+            };
+            let (status, batch) = self.rows.read(Vec::with_capacity(READ_ROWS)).await;
+            self.batch = batch.into_iter();
+            match status {
+                StreamResult::Complete(_) => self.end = Some(end),
+                // The host closes the stream after the last row, and the
+                // future says whether the statement read to its end.
+                StreamResult::Dropped | StreamResult::Cancelled => {
+                    end.await.map_err(StatementError::from_wire)?;
+                }
+            }
+        }
     }
 }
 

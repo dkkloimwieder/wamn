@@ -118,9 +118,10 @@ pub(crate) async fn query_created_at_ascending(
     cursor_key: Option<wamn_postgres_statements::TimestampTz>,
     cursor_id: Option<wamn_postgres_statements::Uuid>,
     limit: i64,
-) -> Result<Vec<ProductRow>, wamn_postgres_statements::StatementError> {
-    let rows = connection
-        .run(
+) -> Result<wamn_postgres_statements::RowStream<ProductRow>, wamn_postgres_statements::StatementError>
+{
+    connection
+        .run_stream(
             QUERY_DIGEST,
             vec![
                 wamn_postgres_statements::into_sql_value(product_code_filter),
@@ -128,16 +129,16 @@ pub(crate) async fn query_created_at_ascending(
                 wamn_postgres_statements::into_sql_value(cursor_id),
                 wamn_postgres_statements::into_sql_value(limit),
             ],
+            |row| {
+                Ok(ProductRow {
+                    created_at: row.decode("created_at")?,
+                    id: row.decode("id")?,
+                    product_code: row.decode("product_code")?,
+                    row_version: row.decode("row_version")?,
+                })
+            },
         )
-        .await?;
-    wamn_postgres_statements::decode_all(QUERY_DIGEST, rows, |row| {
-        Ok(ProductRow {
-            created_at: row.decode("created_at")?,
-            id: row.decode("id")?,
-            product_code: row.decode("product_code")?,
-            row_version: row.decode("row_version")?,
-        })
-    })
+        .await
 }
 
 pub(crate) async fn create_claim(

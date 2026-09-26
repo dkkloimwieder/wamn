@@ -11,7 +11,7 @@ serde_json.workspace = true
 uuid.workspace = true
 wamn-receiving-data-access = { workspace = true }
 wamn-postgres-statements = { workspace = true }
-wit-bindgen = { workspace = true }
+wit-bindgen = { workspace = true, features = ["async-spawn"] }
 
 [lib]
 crate-type = ["cdylib"]

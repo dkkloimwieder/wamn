@@ -8,6 +8,13 @@ world postgres-plugin {
   import wamn:postgres/statements@0.1.0;
 }
 
+/// The same plugin at wamn:postgres 0.2.0, which adds `statements.run-stream`.
+world postgres-plugin-v0-2 {
+  import wamn:postgres/types@0.2.0;
+  import wamn:postgres/client@0.2.0;
+  import wamn:postgres/statements@0.2.0;
+}
+
 /// Host-side bindgen world for the trusted typed HTTP connection adapter
 /// (wamn-ko5r.8, landed): the host IMPLEMENTS `wamn:connection/http` with
 /// host-derived authorization, credentials installed only after authorization,

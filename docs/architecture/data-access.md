@@ -122,6 +122,7 @@ Application handlers retain business rules, transaction sequencing, and delibera
 Native SQLx tests compile the exact files that guest execution names.
 Guests send statement identities and arguments through `wamn:postgres`.
 The `statements` interface uses native async calls for execution, transaction creation, commit, and rollback.
+Version 0.2.0 repeats every 0.1.0 declaration and adds `run-stream`, and one host plugin serves both versions.
 The host resolves those identities to admitted SQL bytes and the operation's allowed statements.
 Generation refuses PostgreSQL values that the production `wamn:postgres` type contract cannot represent.
 SQLx metadata is compilation data, not the SQL or package contract.
@@ -214,8 +215,17 @@ This rule matches platform identity errors. Primary messages remain verbatim.
 Commands keep network effects outside transactions that hold database locks.
 Post-commit work uses the [event path](capabilities.md#events).
 
-Generated queries return bounded pages.
-The generated `query` action declares a `limit` that defaults to 100 and accepts 1 to 100, with a keyset cursor.
+A generated query yields its rows as a stream, then one final record with the keyset cursor that continues the read.
+The export takes one request and returns a row stream and a future of the final record.
+Its `run-json` entry returns each row as one JSON object and the outcome as one JSON value.
+The generated `query` action declares a `limit` that defaults to 100 and accepts 1 to 100.
+The query's codec fills the default and refuses a limit below 1.
+The host holds the maximum of each reply shape and refuses a larger limit before the query runs.
+The engine gathers the rows and the cursor into one page outcome for a caller that reads one outcome, such as a route or a wiring node.
+A query reads through `statements.run-stream` of `wamn:postgres` 0.2.0.
+The host begins one transaction with the claims of `run`, declares one cursor over the exact statement, and fetches 500 rows at a time.
+Dropping the stream rolls the transaction back, which ends the query.
+The row limit does not apply to a stream, because the host holds one batch at a time.
 A custom projection declares its result class and typed result fields, and no row or byte limit.
 Its authored SQL decides how many rows it returns.
 A custom projection or command admits the result classes `one`, `optional_one`, and `bounded_list`.

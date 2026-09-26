@@ -1,0 +1,200 @@
+package wamn:postgres@0.2.0;
+
+/// 0.2.0 is 0.1.0 with one added call, `statements.run-stream`, which returns
+/// the rows of one statement as the server sends them (owner ruling on
+/// wamn-utci, 2026-09-26). 0.1.0 stays frozen and unchanged. A component that
+/// streams imports 0.2.0.
+
+/// Host-plugin interface for tenant-scoped Postgres access.
+/// Security invariants (enforced by the HOST, invisible to the guest):
+/// - The guest NEVER holds a socket. It holds resources or scoped views. Connections
+///   live in the plugin's pool.
+/// - RLS claims (tenant/user/role) are derived from the executing
+///   workload's identity and injected by the plugin via SET LOCAL inside
+///   the plugin-managed transaction. There is deliberately NO way for a
+///   guest to set or override its own claims through this interface.
+/// - Statement timeout and row limits are applied host-side per project
+///   policy; guests cannot raise them.
+/// - Abnormal instance death destroys the underlying connection (never
+///   returned to the pool). See plan 2.2.
+/// - No LISTEN/NOTIFY surface (event delivery is outbox + dispatcher).
+/// - Schema selection is host-injected per-workload config (`wamn.schema`),
+///   like the tenant claim: the guest names tables unqualified and cannot
+///   choose its own schema. It is NOT part of this interface (validated in
+///   S6, where a test host swapped in an ephemeral schema with zero guest
+///   change).
+///
+/// STATUS: every declaration of 0.1.0, unchanged, plus `statements.run-stream`.
+/// The host serves both versions from one plugin.
+interface types {
+  /// Typed SQL values. `numeric` and `timestamptz` travel as canonical
+  /// strings to preserve exactness (plan 3.3: material quantities are
+  /// exact-decimal; float coercion is forbidden for them).
+  variant sql-value {
+    null,
+    boolean(bool),
+    int32(s32),
+    int64(s64),
+    float64(f64),
+    text(string),
+    bytes(list<u8>),
+    /// Canonical decimal string, e.g. "12.3400". Maps to pg numeric.
+    numeric(string),
+    /// RFC 3339 with offset. Maps to pg timestamptz.
+    timestamptz(string),
+    /// JSON document string. Maps to pg jsonb.
+    json(string),
+    /// Canonical UUID string.
+    uuid(string),
+  }
+
+  record column {
+    name: string,
+    /// Postgres type name as reported (e.g. "numeric", "timestamptz").
+    type-name: string,
+  }
+
+  record row-set {
+    columns: list<column>,
+    rows: list<list<sql-value>>,
+  }
+
+  /// Error taxonomy mirrors the runner retry semantics so SDKs can
+  /// map mechanically: serialization-failure / connection-unavailable
+  /// -> retryable; timeout -> retryable (bounded); the rest -> terminal
+  /// unless the node decides otherwise.
+  variant pg-error {
+    /// 40001 / 40P01: safe to retry the whole transaction.
+    serialization-failure,
+    /// Pool exhausted or backend unreachable (transient).
+    connection-unavailable,
+    /// Host-enforced statement timeout exceeded.
+    statement-timeout,
+    /// Host-enforced row limit exceeded (value = limit).
+    row-limit-exceeded(u64),
+    /// 23505 with constraint name.
+    unique-violation(string),
+    /// 23503 with constraint name.
+    foreign-key-violation(string),
+    /// 23514 with constraint name.
+    check-violation(string),
+    /// 23P01 with constraint name.
+    exclusion-violation(string),
+    /// RLS or privilege denial. Deliberately carries no detail about
+    /// which policy denied (no cross-tenant reconnaissance).
+    permission-denied,
+    /// Anything else: sqlstate + message.
+    query-error(tuple<string, string>),
+  }
+}
+
+interface client {
+  use types.{sql-value, row-set, pg-error};
+
+  /// Single statement in an implicit transaction (claims injected,
+  /// committed on success). Parameterized ONLY -- there is no string
+  /// interpolation path; $1..$n binding is the sole way to pass data.
+  query: async func(sql: string, params: list<sql-value>) -> result<row-set, pg-error>;
+
+  /// Like query, for statements where only the affected count matters.
+  execute: async func(sql: string, params: list<sql-value>) -> result<u64, pg-error>;
+
+  /// Explicit transaction. Dropping the resource without commit()
+  /// rolls back (host-side guarantee -- guest crash included).
+  resource transaction {
+    query: async func(sql: string, params: list<sql-value>) -> result<row-set, pg-error>;
+    execute: async func(sql: string, params: list<sql-value>) -> result<u64, pg-error>;
+    /// Open a server-side cursor for large result sets; rows stream in
+    /// bounded batches instead of one row-set allocation.
+    open-cursor: async func(sql: string, params: list<sql-value>) -> result<cursor, pg-error>;
+    commit: async func() -> result<_, pg-error>;
+    rollback: async func() -> result<_, pg-error>;
+  }
+
+  begin: async func() -> result<transaction, pg-error>;
+
+  /// Bounded fetch over a server-side cursor. Empty batch = exhausted.
+  resource cursor {
+    fetch: async func(max-rows: u32) -> result<row-set, pg-error>;
+  }
+}
+
+/// Execute only SQL statements admitted for the active operation.
+///
+/// The guest supplies a content digest and values, never SQL bytes. The host
+/// resolves the digest inside the active operation's verified statement set,
+/// validates the value and result shapes, and executes the admitted exact
+/// bytes through the same claim-aware runner as `client`.
+interface statements {
+  use types.{sql-value, column, row-set, pg-error};
+
+  enum contract-part {
+    binds,
+    columns,
+  }
+
+  record value-shape {
+    count: u32,
+    types: list<string>,
+  }
+
+  record contract-mismatch {
+    statement-digest: string,
+    part: contract-part,
+    expected: value-shape,
+    observed: value-shape,
+  }
+
+  variant statement-error {
+    unknown-statement(string),
+    statement-contract-mismatch(contract-mismatch),
+    postgres(pg-error),
+  }
+
+  /// Exact participant selected by the admitted caller for this base invocation.
+  record participation {
+    operation: string,
+    intent: string,
+  }
+
+  selected-participation: async func() -> result<option<participation>, statement-error>;
+
+  /// Local execution-only resource. The host revokes access when participation ends.
+  resource transaction-view {
+    run: async func(statement-digest: string, binds: list<sql-value>) -> result<row-set, statement-error>;
+  }
+
+  resource transaction {
+    select-participant: async func(participant-operation: string) -> result<_, statement-error>;
+    run: async func(statement-digest: string, binds: list<sql-value>) -> result<row-set, statement-error>;
+    commit: async func() -> result<_, statement-error>;
+    rollback: async func() -> result<_, statement-error>;
+  }
+
+  run: async func(statement-digest: string, binds: list<sql-value>) -> result<row-set, statement-error>;
+
+  /// Run one admitted statement and return its rows as the server sends them.
+  ///
+  /// The host opens one transaction with the same claims as `run`, declares
+  /// one server-side cursor over the exact statement, and fetches its rows in
+  /// batches. Every row therefore reads one snapshot: the one the statement
+  /// took when it started. The result names the columns, then carries each row
+  /// on the stream. The future resolves after the last row: ok when the
+  /// statement read to its end, the error otherwise.
+  ///
+  /// Dropping the stream before its end rolls the transaction back, which ends
+  /// the query on the server. The project row limit does not apply, because
+  /// the host holds one batch at a time; the statement bounds its own rows.
+  run-stream: async func(statement-digest: string, binds: list<sql-value>) -> result<tuple<list<column>, stream<list<sql-value>>, future<result<_, statement-error>>>, statement-error>;
+
+  begin: async func() -> result<transaction, statement-error>;
+  participant-view: async func() -> result<transaction-view, statement-error>;
+}
+
+/// Prepared-statement plans are cached HOST-SIDE, keyed on (sql, connection).
+/// P0 verdict (S2): that internal cache reached 20427 qps / p99 1.98 ms with
+/// NO guest-visible prepare surface, so an explicit `prepare` resource stays
+/// OUT of frozen 0.1. Revisit for 0.2 only if a workload needs guest-controlled
+/// plan lifetime (no P0 workload did); such a resource must invalidate plans on
+/// the connection-destroy path (the abnormal-death invariant above), so it is
+/// deliberately not a free addition.

@@ -65,6 +65,7 @@ mod resources;
 mod statements;
 mod transaction_views;
 mod types;
+mod v0_2;
 mod wiring_resolution;
 
 pub use wiring_resolution::{
@@ -178,13 +179,13 @@ impl NamedProject {
 #[cfg(feature = "wasm_component_model_implements")]
 const NAMED_PROJECT_CONFIG_KEY: &str = "project";
 
-use bindings::wamn::postgres::client;
-use bindings::wamn::postgres::statements as statement_wit;
-use bindings::wamn::postgres::types::{Column, PgError, RowSet, SqlValue};
+use bindings::wamn::postgres0_1_0::client;
+use bindings::wamn::postgres0_1_0::statements as statement_wit;
+use bindings::wamn::postgres0_1_0::types::{Column, PgError, RowSet, SqlValue};
 use statement_wit::{ContractMismatch, ContractPart, StatementError, ValueShape};
 
 #[cfg(feature = "wasm_component_model_implements")]
-impl bindings::wamn::postgres::types::Host for wash_runtime::engine::ctx::ActiveCtx<'_> {}
+impl bindings::wamn::postgres0_1_0::types::Host for wash_runtime::engine::ctx::ActiveCtx<'_> {}
 
 pub const WAMN_POSTGRES_ID: &str = "wamn-postgres";
 
@@ -193,7 +194,8 @@ pub const WAMN_POSTGRES_ID: &str = "wamn-postgres";
 /// `pgbench` harness calls it to link the capability into a hand-built store.
 pub fn add_to_linker(linker: &mut Linker<SharedCtx>) -> wash_runtime::wasmtime::Result<()> {
     client::add_to_linker::<_, SharedCtx>(linker, extract_active_ctx)?;
-    statement_wit::add_to_linker::<_, SharedCtx>(linker, extract_active_ctx)
+    statement_wit::add_to_linker::<_, SharedCtx>(linker, extract_active_ctx)?;
+    v0_2::add_to_linker(linker, true, true)
 }
 
 /// Per-workload config key carrying the tenant identity (plumbed end-to-end
@@ -362,6 +364,7 @@ impl WamnPostgres {
             if has_statements {
                 statement_wit::add_to_linker::<_, SharedCtx>(linker, extract_active_ctx)?;
             }
+            v0_2::add_to_linker(linker, has_client, has_statements)?;
         }
 
         #[cfg(feature = "wasm_component_model_implements")]
@@ -379,7 +382,7 @@ impl WamnPostgres {
                     has_unnamed = true;
                 }
             }
-            bindings::wamn::postgres::types::add_to_linker::<_, SharedCtx>(
+            bindings::wamn::postgres0_1_0::types::add_to_linker::<_, SharedCtx>(
                 linker,
                 extract_active_ctx,
             )?;
@@ -389,8 +392,9 @@ impl WamnPostgres {
             if has_statements {
                 statement_wit::add_to_linker::<_, SharedCtx>(linker, extract_active_ctx)?;
             }
+            v0_2::add_to_linker(linker, has_unnamed, has_statements)?;
             if !named.is_empty() {
-                bindings::named_imports::wamn::postgres::client::add_to_linker::<_, SharedCtx>(
+                bindings::named_imports::wamn::postgres0_1_0::client::add_to_linker::<_, SharedCtx>(
                     linker,
                     component,
                     |name| {
@@ -434,6 +438,9 @@ impl HostPlugin for WamnPostgres {
                 WitInterface::from("wamn:postgres/types@0.1.0"),
                 WitInterface::from("wamn:postgres/client@0.1.0"),
                 WitInterface::from("wamn:postgres/statements@0.1.0"),
+                WitInterface::from("wamn:postgres/types@0.2.0"),
+                WitInterface::from("wamn:postgres/client@0.2.0"),
+                WitInterface::from("wamn:postgres/statements@0.2.0"),
             ]),
             exports: HashSet::new(),
         }

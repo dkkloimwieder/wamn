@@ -138,9 +138,10 @@ pub(crate) async fn query_created_at_ascending(
     cursor_key: Option<wamn_postgres_statements::TimestampTz>,
     cursor_id: Option<wamn_postgres_statements::Uuid>,
     limit: i64,
-) -> Result<Vec<WidgetRow>, wamn_postgres_statements::StatementError> {
-    let rows = connection
-        .run(
+) -> Result<wamn_postgres_statements::RowStream<WidgetRow>, wamn_postgres_statements::StatementError>
+{
+    connection
+        .run_stream(
             QUERY_0_DIGEST,
             vec![
                 wamn_postgres_statements::into_sql_value(code_filter),
@@ -148,18 +149,18 @@ pub(crate) async fn query_created_at_ascending(
                 wamn_postgres_statements::into_sql_value(cursor_id),
                 wamn_postgres_statements::into_sql_value(limit),
             ],
+            |row| {
+                Ok(WidgetRow {
+                    code: row.decode("code")?,
+                    created_at: row.decode("created_at")?,
+                    edit_version: row.decode("edit_version")?,
+                    id: row.decode("id")?,
+                    maker_id: row.decode("maker_id")?,
+                    note: row.decode("note")?,
+                })
+            },
         )
-        .await?;
-    wamn_postgres_statements::decode_all(QUERY_0_DIGEST, rows, |row| {
-        Ok(WidgetRow {
-            code: row.decode("code")?,
-            created_at: row.decode("created_at")?,
-            edit_version: row.decode("edit_version")?,
-            id: row.decode("id")?,
-            maker_id: row.decode("maker_id")?,
-            note: row.decode("note")?,
-        })
-    })
+        .await
 }
 
 pub(crate) async fn query_created_at_descending(
@@ -168,9 +169,10 @@ pub(crate) async fn query_created_at_descending(
     cursor_key: Option<wamn_postgres_statements::TimestampTz>,
     cursor_id: Option<wamn_postgres_statements::Uuid>,
     limit: i64,
-) -> Result<Vec<WidgetRow>, wamn_postgres_statements::StatementError> {
-    let rows = connection
-        .run(
+) -> Result<wamn_postgres_statements::RowStream<WidgetRow>, wamn_postgres_statements::StatementError>
+{
+    connection
+        .run_stream(
             QUERY_1_DIGEST,
             vec![
                 wamn_postgres_statements::into_sql_value(code_filter),
@@ -178,18 +180,18 @@ pub(crate) async fn query_created_at_descending(
                 wamn_postgres_statements::into_sql_value(cursor_id),
                 wamn_postgres_statements::into_sql_value(limit),
             ],
+            |row| {
+                Ok(WidgetRow {
+                    code: row.decode("code")?,
+                    created_at: row.decode("created_at")?,
+                    edit_version: row.decode("edit_version")?,
+                    id: row.decode("id")?,
+                    maker_id: row.decode("maker_id")?,
+                    note: row.decode("note")?,
+                })
+            },
         )
-        .await?;
-    wamn_postgres_statements::decode_all(QUERY_1_DIGEST, rows, |row| {
-        Ok(WidgetRow {
-            code: row.decode("code")?,
-            created_at: row.decode("created_at")?,
-            edit_version: row.decode("edit_version")?,
-            id: row.decode("id")?,
-            maker_id: row.decode("maker_id")?,
-            note: row.decode("note")?,
-        })
-    })
+        .await
 }
 
 pub(crate) async fn create_claim(

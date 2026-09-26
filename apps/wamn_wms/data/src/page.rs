@@ -1,34 +1,103 @@
-//! One keyset page in the generated `created_at, id` order.
+//! One keyset read in the generated `created_at, id` order.
 //!
-//! Every model query without authored SQL pages this way: one statement, the
-//! tie-breaker on `id`, and a cursor minted from the last row returned.
+//! Every model query without authored SQL reads this way: one statement, the
+//! tie-breaker on `id`, and a cursor minted from the last row handed out. The
+//! statement reads one row past the limit, and that row says whether a next
+//! read has rows.
 
 use chrono::{DateTime, Utc};
 use serde_json::json;
-use wamn_postgres_statements::{Json, TimestampTz, Uuid};
+use wamn_postgres_statements::{Json, RowStream, TimestampTz, Uuid};
 
 use crate::cursor::{self, CursorDirection};
-use crate::error::{AccessError, AccessErrorKind};
+use crate::error::{self, AccessError, AccessErrorKind};
 
-const MAX_PAGE_SIZE: i64 = 100;
 const FIELD: &str = "created_at";
 
-/// One bounded page and the cursor that continues it, if anything does.
-#[derive(Debug)]
+/// Mints the cursor that starts the next read after one row.
+type CursorFn<Row> = Box<dyn Fn(&Row) -> Result<String, AccessError>>;
+
+/// The rows of one read, handed out one at a time as the host reads them,
+/// and the cursor that continues the read, if anything does.
 pub struct Page<Row> {
-    pub item: Vec<Row>,
-    pub next_cursor: Option<String>,
+    rows: RowStream<Row>,
+    limit: usize,
+    handed: usize,
+    cursor: CursorFn<Row>,
+    next_cursor: Option<String>,
+}
+
+impl<Row> std::fmt::Debug for Page<Row> {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("Page")
+            .field("limit", &self.limit)
+            .field("handed", &self.handed)
+            .finish_non_exhaustive()
+    }
+}
+
+impl<Row> Page<Row> {
+    /// A read of `limit` rows over a statement that reads `limit + 1`.
+    pub(crate) fn new(
+        rows: RowStream<Row>,
+        limit: i64,
+        cursor: impl Fn(&Row) -> Result<String, AccessError> + 'static,
+    ) -> Self {
+        Self {
+            rows,
+            limit: usize::try_from(limit).unwrap_or(0),
+            handed: 0,
+            cursor: Box::new(cursor),
+            next_cursor: None,
+        }
+    }
+
+    /// The next row, or `None` after `limit` rows or the last row.
+    ///
+    /// # Errors
+    ///
+    /// [`AccessError`] when the statement fails or a row cannot mint a cursor.
+    pub async fn next(&mut self) -> Result<Option<Row>, AccessError> {
+        if self.handed == self.limit {
+            return Ok(None);
+        }
+        let Some(row) = self
+            .rows
+            .next()
+            .await
+            .map_err(|e| error::from_statement(&e))?
+        else {
+            self.handed = self.limit;
+            return Ok(None);
+        };
+        self.handed += 1;
+        // The row past the limit says whether a next read has rows.
+        if self.handed == self.limit
+            && self
+                .rows
+                .next()
+                .await
+                .map_err(|e| error::from_statement(&e))?
+                .is_some()
+        {
+            self.next_cursor = Some((self.cursor)(&row)?);
+        }
+        Ok(Some(row))
+    }
+
+    /// The cursor that continues this read, once `next` returned `None`.
+    pub fn next_cursor(&self) -> Option<String> {
+        self.next_cursor.clone()
+    }
 }
 
 /// The cursor's bindings: the `created_at` and the `id` of the last row.
 pub(crate) type Position = (Option<TimestampTz>, Option<Uuid>);
 
-/// Decode the cursor, then check the limit, in the contract's order.
-pub(crate) fn start(
-    encoded: Option<&str>,
-    limit: Option<i64>,
-) -> Result<(Position, i64), AccessError> {
-    let position = match encoded {
+/// Decode the cursor. The operation's codec already checked the limit.
+pub(crate) fn start(encoded: Option<&str>) -> Result<Position, AccessError> {
+    Ok(match encoded {
         None => (None, None),
         Some(encoded) => {
             let cursor =
@@ -38,12 +107,7 @@ pub(crate) fn start(
                 Some(Uuid(cursor.id.hyphenated().to_string())),
             )
         }
-    };
-    let limit = limit.unwrap_or(MAX_PAGE_SIZE);
-    if !(1..=MAX_PAGE_SIZE).contains(&limit) {
-        return Err(AccessError::range("limit", 1, MAX_PAGE_SIZE, limit));
-    }
-    Ok((position, limit))
+    })
 }
 
 /// A filter's values, bound as one JSON array.
@@ -51,35 +115,21 @@ pub(crate) fn text_json(values: &[String]) -> Json {
     Json(serde_json::to_string(values).expect("strings serialize"))
 }
 
-/// Keep `limit` rows. The one row past them tells whether a next page exists.
-pub(crate) fn finish<Row>(
-    mut rows: Vec<Row>,
-    limit: i64,
-    key: impl Fn(&Row) -> (&TimestampTz, &Uuid),
-) -> Result<Page<Row>, AccessError> {
-    let limit = usize::try_from(limit).expect("a validated page limit fits usize");
-    let has_more = rows.len() > limit;
-    rows.truncate(limit);
-    let next_cursor = match rows.last() {
-        Some(last) if has_more => {
-            let (created_at, id) = key(last);
-            let created_at = DateTime::parse_from_rfc3339(&created_at.0)
-                .map_err(|_| internal())?
-                .to_utc();
-            let id = uuid::Uuid::parse_str(&id.0).map_err(|_| internal())?;
-            Some(cursor::encode_cursor(
-                FIELD,
-                CursorDirection::Ascending,
-                &created_at,
-                id,
-            ))
-        }
-        _ => None,
-    };
-    Ok(Page {
-        item: rows,
-        next_cursor,
-    })
+/// The cursor that starts the next read after the row with this key.
+pub(crate) fn created_at_cursor(
+    created_at: &TimestampTz,
+    id: &Uuid,
+) -> Result<String, AccessError> {
+    let created_at = DateTime::parse_from_rfc3339(&created_at.0)
+        .map_err(|_| internal())?
+        .to_utc();
+    let id = uuid::Uuid::parse_str(&id.0).map_err(|_| internal())?;
+    Ok(cursor::encode_cursor(
+        FIELD,
+        CursorDirection::Ascending,
+        &created_at,
+        id,
+    ))
 }
 
 /// A row that cannot mint a cursor is a deployment fault, so it is opaque.
@@ -92,37 +142,21 @@ mod tests {
     use super::*;
 
     const FIRST: &str = "01234567-89ab-cdef-0123-456789abcdef";
-    const SECOND: &str = "11234567-89ab-cdef-0123-456789abcdef";
-
-    fn row(id: &str, created_at: &str) -> (TimestampTz, Uuid) {
-        (TimestampTz(created_at.to_owned()), Uuid(id.to_owned()))
-    }
 
     #[test]
-    fn the_extra_row_mints_the_cursor_that_starts_the_next_page() {
-        let rows = vec![
-            row(FIRST, "2026-09-23T12:00:00.000000Z"),
-            row(SECOND, "2026-09-23T12:01:00.123456Z"),
-        ];
-        let page = finish(rows, 1, |(created_at, id)| (created_at, id)).unwrap();
-        assert_eq!(page.item.len(), 1);
-        let ((created_at, id), limit) = start(page.next_cursor.as_deref(), None).unwrap();
+    fn the_last_row_mints_the_cursor_that_starts_the_next_read() {
+        let cursor = created_at_cursor(
+            &TimestampTz("2026-09-23T12:00:00.000000Z".to_owned()),
+            &Uuid(FIRST.to_owned()),
+        )
+        .unwrap();
+        let (created_at, id) = start(Some(&cursor)).unwrap();
         assert_eq!(created_at.unwrap().0, "2026-09-23T12:00:00.000000Z");
         assert_eq!(id.unwrap().0, FIRST);
-        assert_eq!(limit, 100);
-
-        let rows = vec![row(FIRST, "2026-09-23T12:00:00.000000Z")];
-        let page = finish(rows, 1, |(created_at, id)| (created_at, id)).unwrap();
-        assert!(page.next_cursor.is_none());
     }
 
     #[test]
-    fn a_limit_outside_one_to_one_hundred_refuses_with_its_bounds() {
-        for limit in [0, 101] {
-            let error = start(None, Some(limit)).unwrap_err();
-            assert_eq!(error.kind(), AccessErrorKind::InvalidInput);
-            assert_eq!(error.detail()["observed"], limit.to_string());
-        }
-        assert!(start(Some("not-a-cursor"), None).is_err());
+    fn a_cursor_that_does_not_decode_refuses() {
+        assert!(start(Some("not-a-cursor")).is_err());
     }
 }

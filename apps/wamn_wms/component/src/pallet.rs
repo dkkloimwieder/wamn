@@ -95,19 +95,18 @@ mod query {
     async fn handle(
         connection: &mut wamn_postgres_statements::Connection,
         request: contract::QueryRequest,
-    ) -> Result<contract::QueryResult, contract::QueryError> {
+        rows: &mut codec::Rows,
+    ) -> Result<contract::QueryEnd, contract::QueryError> {
         let query = query_input(request).map_err(|error| map_error(&error))?;
-        pallet::query(connection, &query)
+        let mut page = pallet::query(connection, &query)
             .await
-            .map(|page| contract::QueryResult {
-                value: page
-                    .item
-                    .into_iter()
-                    .map(|row| codec::row!(row, contract::QueryRow))
-                    .collect(),
-                next_cursor: page.next_cursor,
-            })
-            .map_err(|error| map_error(&error))
+            .map_err(|error| map_error(&error))?;
+        while let Some(row) = page.next().await.map_err(|error| map_error(&error))? {
+            rows.push(codec::row!(row, contract::QueryRow)).await?;
+        }
+        Ok(contract::QueryEnd {
+            next_cursor: page.next_cursor(),
+        })
     }
 
     fn map_error(error: &AccessError) -> contract::QueryError {
@@ -162,7 +161,7 @@ mod query {
             filter,
             sort,
             cursor: request.cursor,
-            limit: request.limit,
+            limit: request.limit.expect("the codec fills the default limit"),
         })
     }
 

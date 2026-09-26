@@ -911,7 +911,8 @@ struct StatementValueContract {
 #[serde(rename_all = "snake_case")]
 enum AccessorFetch {
     Optional,
-    All,
+    /// Every row, as the server sends it: a query's page or streamed load.
+    Stream,
     One,
 }
 

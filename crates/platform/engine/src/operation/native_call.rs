@@ -1,17 +1,23 @@
 //! Invoke one admitted node through native dispatch and owned WIT values.
 
 use std::fmt;
+use std::pin::Pin;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::task::{Context, Poll};
 use std::time::Duration;
 
 use crate::invocation_trace::InvocationTrace;
 use anyhow::Context as _;
-use tokio::sync::oneshot;
+use tokio::sync::{mpsc, oneshot};
 use tokio::time::{Instant, timeout_at};
 use wash_runtime::engine::ctx::SharedCtx;
 use wash_runtime::engine::dispatch::{DispatchTarget, GuestCall, GuestCallFuture};
-use wash_runtime::wasmtime::component::{Accessor, Instance, TypedFunc, Val};
+use wash_runtime::wasmtime::StoreContextMut;
+use wash_runtime::wasmtime::component::{
+    Accessor, ComponentExportIndex, FutureConsumer, FutureReader, Instance, Source, StreamConsumer,
+    StreamReader, StreamResult, TypedFunc, Val,
+};
 
 use super::invocation_policy::{InvocationPolicy, InvocationScope};
 use super::native_workload::NativeApplication;
@@ -34,11 +40,21 @@ pub struct NativeInvocation<P: InvocationPolicy> {
     pub application: Arc<NativeApplication<P>>,
 }
 
+/// Each batch of rows a streamed query writes, as one JSON object per row.
+pub type RowBatches = mpsc::Sender<Vec<String>>;
+
 /// JSON exists only at dynamic routing. Nested known calls retain WIT values.
 #[derive(Debug)]
 pub enum NativeInput {
     Json(String),
     Typed(Val),
+    /// A query's JSON request. The call hands each batch of rows to `rows` as
+    /// the component writes it, and stays open until the component writes the
+    /// outcome, so the request's authority covers every row it reads.
+    Stream {
+        input: String,
+        rows: RowBatches,
+    },
 }
 
 impl From<String> for NativeInput {
@@ -57,6 +73,8 @@ impl From<&str> for NativeInput {
 pub enum NativeOutcome {
     Json(Result<node_types::Emission, node_types::NodeError>),
     Typed(Val),
+    /// A streamed query's outcome JSON, written after its last row.
+    Stream(Result<String, node_types::NodeError>),
 }
 
 impl NativeOutcome {
@@ -64,6 +82,7 @@ impl NativeOutcome {
         match self {
             Self::Json(value) => Ok(value),
             Self::Typed(_) => anyhow::bail!("typed operation returned to a JSON-only caller"),
+            Self::Stream(_) => anyhow::bail!("streamed operation returned to a JSON-only caller"),
         }
     }
 }
@@ -171,30 +190,56 @@ impl<P: InvocationPolicy> GuestCall for NativeCall<P> {
             let outcome =
                 match request.input {
                     NativeInput::Json(input) => {
-                        let run: TypedFunc<
-                            (node_types::NodeContext, String),
-                            (Result<node_types::Emission, node_types::NodeError>,),
-                        > = accessor.with(|mut access| {
+                        let (entry, whole) = accessor.with(|mut access| {
                             let handler = instance
                                 .get_export_index(&mut access, None, &request.operation)
                                 .context("component has no admitted operation export")?;
                             // Generated adapters own JSON at the dynamic routing boundary.
-                            let run = instance
+                            let entry = instance
                                 .get_export_index(&mut access, Some(&handler), "run-json")
                                 .or_else(|| {
                                     instance.get_export_index(&mut access, Some(&handler), "run")
                                 })
                                 .context("operation has no dynamic entrypoint")?;
-                            instance
-                                .get_typed_func(&mut access, run)
-                                .map_err(anyhow::Error::from)
+                            let whole: Result<WholeEntry, _> =
+                                instance.get_typed_func(&mut access, entry);
+                            Ok::<_, anyhow::Error>((entry, whole))
                         })?;
-                        let (outcome,) = tokio::select! {
-                        biased;
-                        () = scope.cancelled() => anyhow::bail!("native invocation was cancelled"),
-                        result = run.call_concurrent(accessor, (request.context, input)) => result,
-                    }.map_err(anyhow::Error::from).context("dynamic operation trapped")?;
-                        NativeOutcome::Json(outcome)
+                        if let Ok(run) = whole {
+                            let (outcome,) = tokio::select! {
+                            biased;
+                            () = scope.cancelled() => anyhow::bail!("native invocation was cancelled"),
+                            result = run.call_concurrent(accessor, (request.context, input)) => result,
+                        }.map_err(anyhow::Error::from).context("dynamic operation trapped")?;
+                            NativeOutcome::Json(outcome)
+                        } else {
+                            // A query streams its rows. A caller that reads one
+                            // outcome gets them gathered into one page.
+                            let (rows, mut batches) = mpsc::channel(PAGE_BATCHES_IN_FLIGHT);
+                            let gathered = async {
+                                let mut item = Vec::new();
+                                while let Some(batch) = batches.recv().await {
+                                    item.extend(batch);
+                                }
+                                item
+                            };
+                            let (outcome, item) = tokio::join!(
+                                run_streamed(
+                                    accessor,
+                                    instance,
+                                    entry,
+                                    &scope,
+                                    request.context,
+                                    input,
+                                    rows
+                                ),
+                                gathered
+                            );
+                            NativeOutcome::Json(outcome?.map(|outcome| node_types::Emission {
+                                payload: page_outcome(&outcome, &item),
+                                port: None,
+                            }))
+                        }
                     }
                     NativeInput::Typed(input) => {
                         let run = accessor.with(|mut access| {
@@ -222,10 +267,33 @@ impl<P: InvocationPolicy> GuestCall for NativeCall<P> {
                                 .expect("one typed operation result"),
                         )
                     }
+                    NativeInput::Stream { input, rows } => {
+                        let entry = accessor.with(|mut access| {
+                            let handler = instance
+                                .get_export_index(&mut access, None, &request.operation)
+                                .context("component has no admitted operation export")?;
+                            instance
+                                .get_export_index(&mut access, Some(&handler), "run-json")
+                                .context("streamed operation has no JSON entrypoint")
+                        })?;
+                        NativeOutcome::Stream(
+                            run_streamed(
+                                accessor,
+                                instance,
+                                entry,
+                                &scope,
+                                request.context,
+                                input,
+                                rows,
+                            )
+                            .await?,
+                        )
+                    }
                 };
             let refused = match &outcome {
                 NativeOutcome::Json(value) => value.is_err(),
                 NativeOutcome::Typed(value) => matches!(value, Val::Result(Err(_))),
+                NativeOutcome::Stream(value) => value.is_err(),
             }
             .then_some("handler");
             reply
@@ -244,6 +312,164 @@ impl<P: InvocationPolicy> GuestCall for NativeCall<P> {
             }
             Ok(refused)
         }))
+    }
+}
+
+/// The JSON adapter of an operation that returns one whole outcome.
+type WholeEntry = TypedFunc<
+    (node_types::NodeContext, String),
+    (Result<node_types::Emission, node_types::NodeError>,),
+>;
+
+/// The JSON adapter of a query: its row stream and its outcome future.
+type StreamedEntry = TypedFunc<
+    (node_types::NodeContext, String),
+    (Result<(StreamReader<String>, FutureReader<String>), node_types::NodeError>,),
+>;
+
+/// Batches a gathered page holds between the component and its outcome.
+const PAGE_BATCHES_IN_FLIGHT: usize = 4;
+
+/// Call a query's JSON adapter, hand each batch of its rows to `rows`, and
+/// return the outcome JSON it writes after the last row.
+async fn run_streamed<P: InvocationPolicy>(
+    accessor: &Accessor<SharedCtx>,
+    instance: Instance,
+    entry: ComponentExportIndex,
+    scope: &InvocationScope<P>,
+    context: node_types::NodeContext,
+    input: String,
+    rows: RowBatches,
+) -> anyhow::Result<Result<String, node_types::NodeError>> {
+    let run: StreamedEntry = accessor.with(|mut access| {
+        instance
+            .get_typed_func(&mut access, entry)
+            .map_err(anyhow::Error::from)
+    })?;
+    let (returned,) = tokio::select! {
+        biased;
+        () = scope.cancelled() => anyhow::bail!("native invocation was cancelled"),
+        result = run.call_concurrent(accessor, (context, input)) => result,
+    }
+    .map_err(anyhow::Error::from)
+    .context("streamed operation trapped")?;
+    let (stream, end) = match returned {
+        Ok(returned) => returned,
+        Err(error) => return Ok(Err(error)),
+    };
+    let (ended, outcome) = oneshot::channel();
+    accessor.with(|mut access| {
+        stream.pipe(&mut access, RowForwarder::new(rows))?;
+        end.pipe(&mut access, OutcomeForwarder(Some(ended)))
+    })?;
+    let outcome = tokio::select! {
+        biased;
+        () = scope.cancelled() => anyhow::bail!("native invocation was cancelled"),
+        outcome = outcome => outcome,
+    };
+    Ok(Ok(outcome.context("streamed operation wrote no outcome")?))
+}
+
+/// The page outcome list of a query: its rows and the cursor after them when
+/// the read ended, or the error when it did not.
+pub fn page_outcome(outcome: &str, item: &[String]) -> String {
+    let Ok(serde_json::Value::Object(outcome)) = serde_json::from_str(outcome) else {
+        return serde_json::json!([{ "error": { "code": "internal_error", "detail": {} } }])
+            .to_string();
+    };
+    match outcome.get("value") {
+        Some(value) => format!(
+            "[{{\"value\":{{\"item\":[{}],\"next_cursor\":{}}}}}]",
+            item.join(","),
+            value.get("next_cursor").unwrap_or(&serde_json::Value::Null)
+        ),
+        None => serde_json::Value::Array(vec![serde_json::Value::Object(outcome)]).to_string(),
+    }
+}
+
+/// The host's read end of a query's rows. Each write of the component becomes
+/// one batch. A batch waits for room in the channel, so a slow reader slows
+/// the component, and a reader that left drops the stream.
+struct RowForwarder {
+    rows: Option<RowBatches>,
+    reserve: Option<ReserveFuture>,
+}
+
+type ReserveFuture = Pin<
+    Box<
+        dyn Future<Output = Result<mpsc::OwnedPermit<Vec<String>>, mpsc::error::SendError<()>>>
+            + Send,
+    >,
+>;
+
+impl RowForwarder {
+    fn new(rows: RowBatches) -> Self {
+        Self {
+            rows: Some(rows),
+            reserve: None,
+        }
+    }
+}
+
+impl<D> StreamConsumer<D> for RowForwarder {
+    type Item = String;
+
+    fn poll_consume(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        mut store: StoreContextMut<D>,
+        mut source: Source<'_, Self::Item>,
+        finish: bool,
+    ) -> Poll<wash_runtime::wasmtime::Result<StreamResult>> {
+        let this = self.get_mut();
+        let Some(rows) = this.rows.as_ref() else {
+            return Poll::Ready(Ok(StreamResult::Dropped));
+        };
+        let reserve = this
+            .reserve
+            .get_or_insert_with(|| Box::pin(rows.clone().reserve_owned()));
+        let permit = match reserve.as_mut().poll(cx) {
+            Poll::Ready(Ok(permit)) => permit,
+            Poll::Ready(Err(_)) => {
+                this.reserve = None;
+                this.rows = None;
+                return Poll::Ready(Ok(StreamResult::Dropped));
+            }
+            Poll::Pending if finish => {
+                this.reserve = None;
+                return Poll::Ready(Ok(StreamResult::Cancelled));
+            }
+            Poll::Pending => return Poll::Pending,
+        };
+        this.reserve = None;
+        let mut batch = Vec::with_capacity(source.remaining(&mut store));
+        source.read(&mut store, &mut batch)?;
+        if !batch.is_empty() {
+            permit.send(batch);
+        }
+        Poll::Ready(Ok(StreamResult::Completed))
+    }
+}
+
+/// The host's read end of a query's outcome.
+struct OutcomeForwarder(Option<oneshot::Sender<String>>);
+
+impl<D> FutureConsumer<D> for OutcomeForwarder {
+    type Item = String;
+
+    fn poll_consume(
+        self: Pin<&mut Self>,
+        _cx: &mut Context<'_>,
+        store: StoreContextMut<D>,
+        mut source: Source<'_, Self::Item>,
+        _finish: bool,
+    ) -> Poll<wash_runtime::wasmtime::Result<()>> {
+        let mut outcome = None;
+        source.read(store, &mut outcome)?;
+        if let (Some(outcome), Some(sender)) = (outcome, self.get_mut().0.take()) {
+            let _ = sender.send(outcome);
+        }
+        Poll::Ready(Ok(()))
     }
 }
 
@@ -337,6 +563,18 @@ pub async fn invoke_owned<P: InvocationPolicy>(
     })
     .await
     .context("native node enclosing deadline elapsed")?
+}
+
+/// Invoke a query's JSON adapter and hand its rows to `rows` as they arrive.
+/// The result is the outcome JSON the component wrote after its last row.
+pub async fn invoke_native_stream<P: InvocationPolicy>(
+    target: &DispatchTarget,
+    request: NativeInvocation<P>,
+) -> anyhow::Result<Result<String, node_types::NodeError>> {
+    match invoke_owned(target, request).await? {
+        NativeOutcome::Stream(outcome) => Ok(outcome),
+        _ => anyhow::bail!("a streamed call returned a whole outcome"),
+    }
 }
 
 /// Invoke the JSON adapter at an HTTP or dynamic routing boundary.

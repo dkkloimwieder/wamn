@@ -85,9 +85,12 @@ pub(crate) async fn query_purchase_order_number_ascending(
     cursor_key: Option<String>,
     cursor_id: Option<wamn_postgres_statements::Uuid>,
     limit: i64,
-) -> Result<Vec<PurchaseOrderRow>, wamn_postgres_statements::StatementError> {
-    let rows = connection
-        .run(
+) -> Result<
+    wamn_postgres_statements::RowStream<PurchaseOrderRow>,
+    wamn_postgres_statements::StatementError,
+> {
+    connection
+        .run_stream(
             QUERY_0_DIGEST,
             vec![
                 wamn_postgres_statements::into_sql_value(supplier_id_filter),
@@ -97,21 +100,21 @@ pub(crate) async fn query_purchase_order_number_ascending(
                 wamn_postgres_statements::into_sql_value(cursor_id),
                 wamn_postgres_statements::into_sql_value(limit),
             ],
+            |row| {
+                Ok(PurchaseOrderRow {
+                    created_at: row.decode("created_at")?,
+                    created_by: row.decode("created_by")?,
+                    id: row.decode("id")?,
+                    purchase_order_number: row.decode("purchase_order_number")?,
+                    row_version: row.decode("row_version")?,
+                    status: row.decode("status")?,
+                    supplier_id: row.decode("supplier_id")?,
+                    updated_at: row.decode("updated_at")?,
+                    updated_by: row.decode("updated_by")?,
+                })
+            },
         )
-        .await?;
-    wamn_postgres_statements::decode_all(QUERY_0_DIGEST, rows, |row| {
-        Ok(PurchaseOrderRow {
-            created_at: row.decode("created_at")?,
-            created_by: row.decode("created_by")?,
-            id: row.decode("id")?,
-            purchase_order_number: row.decode("purchase_order_number")?,
-            row_version: row.decode("row_version")?,
-            status: row.decode("status")?,
-            supplier_id: row.decode("supplier_id")?,
-            updated_at: row.decode("updated_at")?,
-            updated_by: row.decode("updated_by")?,
-        })
-    })
+        .await
 }
 
 pub(crate) async fn query_purchase_order_number_descending(
@@ -122,9 +125,12 @@ pub(crate) async fn query_purchase_order_number_descending(
     cursor_key: Option<String>,
     cursor_id: Option<wamn_postgres_statements::Uuid>,
     limit: i64,
-) -> Result<Vec<PurchaseOrderRow>, wamn_postgres_statements::StatementError> {
-    let rows = connection
-        .run(
+) -> Result<
+    wamn_postgres_statements::RowStream<PurchaseOrderRow>,
+    wamn_postgres_statements::StatementError,
+> {
+    connection
+        .run_stream(
             QUERY_1_DIGEST,
             vec![
                 wamn_postgres_statements::into_sql_value(supplier_id_filter),
@@ -134,21 +140,21 @@ pub(crate) async fn query_purchase_order_number_descending(
                 wamn_postgres_statements::into_sql_value(cursor_id),
                 wamn_postgres_statements::into_sql_value(limit),
             ],
+            |row| {
+                Ok(PurchaseOrderRow {
+                    created_at: row.decode("created_at")?,
+                    created_by: row.decode("created_by")?,
+                    id: row.decode("id")?,
+                    purchase_order_number: row.decode("purchase_order_number")?,
+                    row_version: row.decode("row_version")?,
+                    status: row.decode("status")?,
+                    supplier_id: row.decode("supplier_id")?,
+                    updated_at: row.decode("updated_at")?,
+                    updated_by: row.decode("updated_by")?,
+                })
+            },
         )
-        .await?;
-    wamn_postgres_statements::decode_all(QUERY_1_DIGEST, rows, |row| {
-        Ok(PurchaseOrderRow {
-            created_at: row.decode("created_at")?,
-            created_by: row.decode("created_by")?,
-            id: row.decode("id")?,
-            purchase_order_number: row.decode("purchase_order_number")?,
-            row_version: row.decode("row_version")?,
-            status: row.decode("status")?,
-            supplier_id: row.decode("supplier_id")?,
-            updated_at: row.decode("updated_at")?,
-            updated_by: row.decode("updated_by")?,
-        })
-    })
+        .await
 }
 
 pub(crate) async fn query_status_ascending(
@@ -159,9 +165,12 @@ pub(crate) async fn query_status_ascending(
     cursor_key: Option<String>,
     cursor_id: Option<wamn_postgres_statements::Uuid>,
     limit: i64,
-) -> Result<Vec<PurchaseOrderRow>, wamn_postgres_statements::StatementError> {
-    let rows = connection
-        .run(
+) -> Result<
+    wamn_postgres_statements::RowStream<PurchaseOrderRow>,
+    wamn_postgres_statements::StatementError,
+> {
+    connection
+        .run_stream(
             QUERY_2_DIGEST,
             vec![
                 wamn_postgres_statements::into_sql_value(supplier_id_filter),
@@ -171,21 +180,21 @@ pub(crate) async fn query_status_ascending(
                 wamn_postgres_statements::into_sql_value(cursor_id),
                 wamn_postgres_statements::into_sql_value(limit),
             ],
+            |row| {
+                Ok(PurchaseOrderRow {
+                    created_at: row.decode("created_at")?,
+                    created_by: row.decode("created_by")?,
+                    id: row.decode("id")?,
+                    purchase_order_number: row.decode("purchase_order_number")?,
+                    row_version: row.decode("row_version")?,
+                    status: row.decode("status")?,
+                    supplier_id: row.decode("supplier_id")?,
+                    updated_at: row.decode("updated_at")?,
+                    updated_by: row.decode("updated_by")?,
+                })
+            },
         )
-        .await?;
-    wamn_postgres_statements::decode_all(QUERY_2_DIGEST, rows, |row| {
-        Ok(PurchaseOrderRow {
-            created_at: row.decode("created_at")?,
-            created_by: row.decode("created_by")?,
-            id: row.decode("id")?,
-            purchase_order_number: row.decode("purchase_order_number")?,
-            row_version: row.decode("row_version")?,
-            status: row.decode("status")?,
-            supplier_id: row.decode("supplier_id")?,
-            updated_at: row.decode("updated_at")?,
-            updated_by: row.decode("updated_by")?,
-        })
-    })
+        .await
 }
 
 pub(crate) async fn query_status_descending(
@@ -196,9 +205,12 @@ pub(crate) async fn query_status_descending(
     cursor_key: Option<String>,
     cursor_id: Option<wamn_postgres_statements::Uuid>,
     limit: i64,
-) -> Result<Vec<PurchaseOrderRow>, wamn_postgres_statements::StatementError> {
-    let rows = connection
-        .run(
+) -> Result<
+    wamn_postgres_statements::RowStream<PurchaseOrderRow>,
+    wamn_postgres_statements::StatementError,
+> {
+    connection
+        .run_stream(
             QUERY_3_DIGEST,
             vec![
                 wamn_postgres_statements::into_sql_value(supplier_id_filter),
@@ -208,21 +220,21 @@ pub(crate) async fn query_status_descending(
                 wamn_postgres_statements::into_sql_value(cursor_id),
                 wamn_postgres_statements::into_sql_value(limit),
             ],
+            |row| {
+                Ok(PurchaseOrderRow {
+                    created_at: row.decode("created_at")?,
+                    created_by: row.decode("created_by")?,
+                    id: row.decode("id")?,
+                    purchase_order_number: row.decode("purchase_order_number")?,
+                    row_version: row.decode("row_version")?,
+                    status: row.decode("status")?,
+                    supplier_id: row.decode("supplier_id")?,
+                    updated_at: row.decode("updated_at")?,
+                    updated_by: row.decode("updated_by")?,
+                })
+            },
         )
-        .await?;
-    wamn_postgres_statements::decode_all(QUERY_3_DIGEST, rows, |row| {
-        Ok(PurchaseOrderRow {
-            created_at: row.decode("created_at")?,
-            created_by: row.decode("created_by")?,
-            id: row.decode("id")?,
-            purchase_order_number: row.decode("purchase_order_number")?,
-            row_version: row.decode("row_version")?,
-            status: row.decode("status")?,
-            supplier_id: row.decode("supplier_id")?,
-            updated_at: row.decode("updated_at")?,
-            updated_by: row.decode("updated_by")?,
-        })
-    })
+        .await
 }
 
 pub(crate) async fn query_created_at_ascending(
@@ -233,9 +245,12 @@ pub(crate) async fn query_created_at_ascending(
     cursor_key: Option<wamn_postgres_statements::TimestampTz>,
     cursor_id: Option<wamn_postgres_statements::Uuid>,
     limit: i64,
-) -> Result<Vec<PurchaseOrderRow>, wamn_postgres_statements::StatementError> {
-    let rows = connection
-        .run(
+) -> Result<
+    wamn_postgres_statements::RowStream<PurchaseOrderRow>,
+    wamn_postgres_statements::StatementError,
+> {
+    connection
+        .run_stream(
             QUERY_4_DIGEST,
             vec![
                 wamn_postgres_statements::into_sql_value(supplier_id_filter),
@@ -245,21 +260,21 @@ pub(crate) async fn query_created_at_ascending(
                 wamn_postgres_statements::into_sql_value(cursor_id),
                 wamn_postgres_statements::into_sql_value(limit),
             ],
+            |row| {
+                Ok(PurchaseOrderRow {
+                    created_at: row.decode("created_at")?,
+                    created_by: row.decode("created_by")?,
+                    id: row.decode("id")?,
+                    purchase_order_number: row.decode("purchase_order_number")?,
+                    row_version: row.decode("row_version")?,
+                    status: row.decode("status")?,
+                    supplier_id: row.decode("supplier_id")?,
+                    updated_at: row.decode("updated_at")?,
+                    updated_by: row.decode("updated_by")?,
+                })
+            },
         )
-        .await?;
-    wamn_postgres_statements::decode_all(QUERY_4_DIGEST, rows, |row| {
-        Ok(PurchaseOrderRow {
-            created_at: row.decode("created_at")?,
-            created_by: row.decode("created_by")?,
-            id: row.decode("id")?,
-            purchase_order_number: row.decode("purchase_order_number")?,
-            row_version: row.decode("row_version")?,
-            status: row.decode("status")?,
-            supplier_id: row.decode("supplier_id")?,
-            updated_at: row.decode("updated_at")?,
-            updated_by: row.decode("updated_by")?,
-        })
-    })
+        .await
 }
 
 pub(crate) async fn query_created_at_descending(
@@ -270,9 +285,12 @@ pub(crate) async fn query_created_at_descending(
     cursor_key: Option<wamn_postgres_statements::TimestampTz>,
     cursor_id: Option<wamn_postgres_statements::Uuid>,
     limit: i64,
-) -> Result<Vec<PurchaseOrderRow>, wamn_postgres_statements::StatementError> {
-    let rows = connection
-        .run(
+) -> Result<
+    wamn_postgres_statements::RowStream<PurchaseOrderRow>,
+    wamn_postgres_statements::StatementError,
+> {
+    connection
+        .run_stream(
             QUERY_5_DIGEST,
             vec![
                 wamn_postgres_statements::into_sql_value(supplier_id_filter),
@@ -282,21 +300,21 @@ pub(crate) async fn query_created_at_descending(
                 wamn_postgres_statements::into_sql_value(cursor_id),
                 wamn_postgres_statements::into_sql_value(limit),
             ],
+            |row| {
+                Ok(PurchaseOrderRow {
+                    created_at: row.decode("created_at")?,
+                    created_by: row.decode("created_by")?,
+                    id: row.decode("id")?,
+                    purchase_order_number: row.decode("purchase_order_number")?,
+                    row_version: row.decode("row_version")?,
+                    status: row.decode("status")?,
+                    supplier_id: row.decode("supplier_id")?,
+                    updated_at: row.decode("updated_at")?,
+                    updated_by: row.decode("updated_by")?,
+                })
+            },
         )
-        .await?;
-    wamn_postgres_statements::decode_all(QUERY_5_DIGEST, rows, |row| {
-        Ok(PurchaseOrderRow {
-            created_at: row.decode("created_at")?,
-            created_by: row.decode("created_by")?,
-            id: row.decode("id")?,
-            purchase_order_number: row.decode("purchase_order_number")?,
-            row_version: row.decode("row_version")?,
-            status: row.decode("status")?,
-            supplier_id: row.decode("supplier_id")?,
-            updated_at: row.decode("updated_at")?,
-            updated_by: row.decode("updated_by")?,
-        })
-    })
+        .await
 }
 
 pub(crate) async fn update(

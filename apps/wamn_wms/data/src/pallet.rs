@@ -12,11 +12,11 @@ pub use crate::cursor::CursorDirection;
 use crate::cursor::{self, CursorKey, DecodedCursor};
 use crate::error::{self, AccessError, AccessErrorKind};
 use crate::generated::wamn::pallet as sql;
+use crate::page::Page;
 use crate::scalar;
 
 pub use crate::generated::wamn::pallet::PalletRow;
 
-const MAX_PAGE_SIZE: i64 = 100;
 const STATUSES: [&str; 3] = ["available", "held", "consumed"];
 
 /// The query body: every member optional, the manifest's default sort when
@@ -31,7 +31,7 @@ pub struct QueryInput {
     #[serde(default)]
     pub cursor: Option<String>,
     #[serde(default)]
-    pub limit: Option<i64>,
+    pub limit: i64,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -75,13 +75,6 @@ impl SortField {
             Self::CreatedAt => "created_at",
         }
     }
-}
-
-/// One bounded page and the cursor that continues it, if anything does.
-#[derive(Debug)]
-pub struct Page {
-    pub item: Vec<PalletRow>,
-    pub next_cursor: Option<String>,
 }
 
 /// Load one pallet by id.
@@ -225,16 +218,20 @@ enum Cursor {
     Time(Option<TimestampTz>, Option<Uuid>),
 }
 
-/// Query one bounded page.
+/// Query one read.
 ///
 /// # Errors
 ///
 /// [`AccessError`] carrying the literal the operation contract declares.
-pub async fn query(connection: &mut Connection, input: &QueryInput) -> Result<Page, AccessError> {
+pub async fn query(
+    connection: &mut Connection,
+    input: &QueryInput,
+) -> Result<Page<PalletRow>, AccessError> {
     let sort = input.sort.unwrap_or(DEFAULT_SORT);
-    // VALIDATION ORDER IS THE CONTRACT'S: cursor, then limit, then SQL.
+    // VALIDATION ORDER IS THE CONTRACT'S: cursor, then limit, then SQL. The
+    // operation's codec checked the limit.
     let cursor = decode(sort, input.cursor.as_deref())?;
-    let limit = page_limit(input.limit)?;
+    let limit = input.limit;
     let filter = input.filter.as_ref();
     let statuses = status_filter(filter.and_then(|filter| filter.status.as_deref()))?;
     let locations = uuid_filter(filter.and_then(|filter| filter.location_id.as_deref()))?;
@@ -243,7 +240,7 @@ pub async fn query(connection: &mut Connection, input: &QueryInput) -> Result<Pa
         .map(text_json);
     // One row past the page tells whether a next page exists.
     let fetch = limit + 1;
-    let mut rows = match (sort.field, sort.direction, cursor) {
+    let rows = match (sort.field, sort.direction, cursor) {
         (SortField::PalletCode, CursorDirection::Ascending, Cursor::Text(key, id)) => {
             sql::query_pallet_code_ascending(connection, statuses, locations, codes, key, id, fetch)
                 .await
@@ -283,7 +280,7 @@ pub async fn query(connection: &mut Connection, input: &QueryInput) -> Result<Pa
         _ => unreachable!("the cursor was decoded for this sort field"),
     }
     .map_err(|e| error::from_statement(&e))?;
-    finish_page(&mut rows, limit, sort)
+    Ok(Page::new(rows, limit, move |row| row_cursor(row, sort)))
 }
 
 fn decode(sort: Sort, encoded: Option<&str>) -> Result<Cursor, AccessError> {
@@ -323,15 +320,6 @@ fn decode(sort: Sort, encoded: Option<&str>) -> Result<Cursor, AccessError> {
     })
 }
 
-fn page_limit(limit: Option<i64>) -> Result<i64, AccessError> {
-    let limit = limit.unwrap_or(MAX_PAGE_SIZE);
-    if (1..=MAX_PAGE_SIZE).contains(&limit) {
-        Ok(limit)
-    } else {
-        Err(AccessError::range("limit", 1, MAX_PAGE_SIZE, limit))
-    }
-}
-
 fn status_filter(values: Option<&[String]>) -> Result<Option<Json>, AccessError> {
     values
         .map(|values| {
@@ -364,28 +352,6 @@ fn uuid_filter(values: Option<&[String]>) -> Result<Option<Json>, AccessError> {
 
 fn text_json(values: &[String]) -> Json {
     Json(serde_json::to_string(values).expect("strings serialize"))
-}
-
-fn finish_page(
-    rows: &mut Vec<sql::PalletRow>,
-    limit: i64,
-    sort: Sort,
-) -> Result<Page, AccessError> {
-    let limit = usize::try_from(limit).expect("a validated page limit fits usize");
-    let has_more = rows.len() > limit;
-    rows.truncate(limit);
-    let next_cursor = if has_more {
-        Some(row_cursor(
-            rows.last().expect("a positive page limit retained one row"),
-            sort,
-        )?)
-    } else {
-        None
-    };
-    Ok(Page {
-        item: std::mem::take(rows),
-        next_cursor,
-    })
 }
 
 /// A row that cannot mint a cursor is a deployment fault -- the database
@@ -423,7 +389,6 @@ mod tests {
     use super::*;
 
     const FIRST: &str = "01234567-89ab-cdef-0123-456789abcdef";
-    const SECOND: &str = "11234567-89ab-cdef-0123-456789abcdef";
     const LOCATION: &str = "21234567-89ab-cdef-0123-456789abcdef";
     const ACTOR: &str = "31234567-89ab-cdef-0123-456789abcdef";
 
@@ -439,44 +404,6 @@ mod tests {
             updated_at: TimestampTz(created_at.to_owned()),
             updated_by: Uuid(ACTOR.to_owned()),
         }
-    }
-
-    #[test]
-    fn an_omitted_limit_is_one_hundred_and_out_of_range_carries_the_bounds() {
-        assert_eq!(page_limit(None).unwrap(), 100);
-        assert_eq!(page_limit(Some(1)).unwrap(), 1);
-        for limit in [0, 101, -5] {
-            let error = page_limit(Some(limit)).unwrap_err();
-            assert_eq!(error.kind(), AccessErrorKind::InvalidInput);
-            assert_eq!(error.detail()["observed"], limit.to_string());
-            assert_eq!(error.detail()["maximum"], "100");
-        }
-    }
-
-    #[test]
-    fn the_extra_row_mints_the_cursor_from_the_last_row_kept() {
-        let mut rows = vec![
-            row(FIRST, "2026-08-29T12:34:56.123456Z"),
-            row(SECOND, "2026-08-29T12:35:56.123456Z"),
-        ];
-        let page = finish_page(&mut rows, 1, DEFAULT_SORT).unwrap();
-        assert_eq!(page.item.len(), 1);
-        assert_eq!(page.item[0].id.0, FIRST);
-        let Cursor::Time(Some(key), Some(id)) =
-            decode(DEFAULT_SORT, page.next_cursor.as_deref()).unwrap()
-        else {
-            panic!("a created_at cursor binds a timestamp and an id");
-        };
-        assert_eq!(key.0, "2026-08-29T12:34:56.123456Z");
-        assert_eq!(id.0, FIRST);
-
-        let mut rows = vec![row(FIRST, "2026-08-29T12:34:56.123456Z")];
-        assert!(
-            finish_page(&mut rows, 1, DEFAULT_SORT)
-                .unwrap()
-                .next_cursor
-                .is_none()
-        );
     }
 
     #[test]

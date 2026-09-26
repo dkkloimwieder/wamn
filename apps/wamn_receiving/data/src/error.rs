@@ -143,20 +143,6 @@ impl AccessError {
         Self::new(AccessErrorKind::InvalidInput, context).with_field(field)
     }
 
-    pub(crate) fn invalid_range(
-        context: impl Into<Box<str>>,
-        field: &'static str,
-        minimum: i64,
-        maximum: i64,
-        observed: i64,
-    ) -> Self {
-        let mut error = Self::invalid(context, field);
-        error.minimum = Some(minimum);
-        error.maximum = Some(maximum);
-        error.observed = Some(observed);
-        error
-    }
-
     pub(crate) fn not_found(context: impl Into<Box<str>>) -> Self {
         Self::new(AccessErrorKind::NotFound, context)
     }

@@ -612,10 +612,10 @@ impl<T: 'static + Send> client::HostWithStore<T> for SharedCtx {
 }
 
 #[cfg(feature = "wasm_component_model_implements")]
-impl bindings::named_imports::wamn::postgres::client::Host for ActiveCtx<'_> {}
+impl bindings::named_imports::wamn::postgres0_1_0::client::Host for ActiveCtx<'_> {}
 
 #[cfg(feature = "wasm_component_model_implements")]
-impl<T: 'static + Send> bindings::named_imports::wamn::postgres::client::HostWithStore<T>
+impl<T: 'static + Send> bindings::named_imports::wamn::postgres0_1_0::client::HostWithStore<T>
     for SharedCtx
 {
     async fn query(
@@ -958,7 +958,8 @@ fn cursor_drop(
 }
 
 #[cfg(feature = "wasm_component_model_implements")]
-impl<T: 'static + Send> bindings::named_imports::wamn::postgres::client::HostTransactionWithStore<T>
+impl<T: 'static + Send>
+    bindings::named_imports::wamn::postgres0_1_0::client::HostTransactionWithStore<T>
     for SharedCtx
 {
     async fn query(
@@ -1009,7 +1010,7 @@ impl<T: 'static + Send> bindings::named_imports::wamn::postgres::client::HostTra
 }
 
 #[cfg(feature = "wasm_component_model_implements")]
-impl<T: 'static + Send> bindings::named_imports::wamn::postgres::client::HostCursorWithStore<T>
+impl<T: 'static + Send> bindings::named_imports::wamn::postgres0_1_0::client::HostCursorWithStore<T>
     for SharedCtx
 {
     async fn fetch(
@@ -1163,7 +1164,7 @@ impl client::HostCursor for ActiveCtx<'_> {
     clippy::unused_async_trait_impl,
     reason = "the generated transaction destructor is async but only releases local state"
 )]
-impl bindings::named_imports::wamn::postgres::client::HostTransaction for ActiveCtx<'_> {
+impl bindings::named_imports::wamn::postgres0_1_0::client::HostTransaction for ActiveCtx<'_> {
     async fn drop(
         &mut self,
         _id: super::NamedProject,
@@ -1178,7 +1179,7 @@ impl bindings::named_imports::wamn::postgres::client::HostTransaction for Active
     clippy::unused_async_trait_impl,
     reason = "the generated cursor destructor is async but only releases local state"
 )]
-impl bindings::named_imports::wamn::postgres::client::HostCursor for ActiveCtx<'_> {
+impl bindings::named_imports::wamn::postgres0_1_0::client::HostCursor for ActiveCtx<'_> {
     async fn drop(
         &mut self,
         _id: super::NamedProject,

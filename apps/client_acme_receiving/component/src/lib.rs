@@ -32,8 +32,8 @@ wit_bindgen::generate!({
         package client-acme-receiving:component@3.0.0;
 
         world client-acme-receiving {
-          import wamn:postgres/types@0.1.0;
-          import wamn:postgres/statements@0.1.0;
+          import wamn:postgres/types@0.2.0;
+          import wamn:postgres/statements@0.2.0;
           import wamn-receiving:receiving/record-receipt@1.0.0;
           export client-acme-receiving:purchase-order/get@3.0.0;
           export client-acme-receiving:purchase-order/update@3.0.0;
@@ -45,7 +45,7 @@ wit_bindgen::generate!({
     "#,
     path: [
         "../../../crates/execution/workflow/router/wit",
-        "../../../crates/platform/runtime/wit/deps/wamn-postgres",
+        "../../../crates/platform/runtime/wit/deps/wamn-postgres-0.2",
         "../generated/wit/deps/client-acme-receiving-purchase-order",
         "../generated/wit/deps/client-acme-receiving-quality",
         "../../wamn_receiving/generated/wit/deps/wamn-receiving-receiving",

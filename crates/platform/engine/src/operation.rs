@@ -22,7 +22,7 @@ pub mod native_workload;
 
 pub use intent::{IntentContext, logs_intent};
 pub use invocation_policy::{ApplicationHost, InvocationPolicy};
-use native_call::{NativeInvocation, invoke_native};
+use native_call::{NativeInput, NativeInvocation, NativeOutcome, RowBatches, invoke_owned};
 pub use native_workload::NativeApplication;
 
 mod bindings {
@@ -104,11 +104,37 @@ pub async fn invoke_operation<H: ApplicationHost>(
     }
 }
 
+/// Call one query export once, under the call's deadline, and hand its rows
+/// to `rows` as the component writes them. The result is the outcome JSON the
+/// component wrote after its last row. A query logs no intent.
+pub async fn invoke_operation_stream<H: ApplicationHost>(
+    host: &H,
+    call: OperationCall<'_, H::Policy>,
+    rows: RowBatches,
+) -> anyhow::Result<Result<String, node_types::NodeError>> {
+    match call_export(host, call, |input| NativeInput::Stream { input, rows }).await? {
+        NativeOutcome::Stream(outcome) => Ok(outcome),
+        _ => anyhow::bail!("a streamed call returned a whole outcome"),
+    }
+}
+
 /// Run one export under the call's deadline.
 async fn run_export<H: ApplicationHost>(
     host: &H,
     call: OperationCall<'_, H::Policy>,
 ) -> anyhow::Result<Result<node_types::Emission, node_types::NodeError>> {
+    call_export(host, call, NativeInput::Json)
+        .await?
+        .into_json()
+}
+
+/// Run one export under the call's deadline with the input `input` builds from
+/// the call's JSON.
+async fn call_export<H: ApplicationHost>(
+    host: &H,
+    call: OperationCall<'_, H::Policy>,
+    input: impl FnOnce(String) -> NativeInput,
+) -> anyhow::Result<NativeOutcome> {
     let deadline = tokio::time::Instant::now() + Duration::from_millis(call.deadline_ms);
     tokio::time::timeout_at(deadline, async {
         let application = match call.closure {
@@ -125,13 +151,13 @@ async fn run_export<H: ApplicationHost>(
             .workload
             .dispatch_target(id, application.policy.id())
             .await?;
-        let input = serde_json::to_string(call.input).context("encode node input")?;
-        invoke_native(
+        let json = serde_json::to_string(call.input).context("encode node input")?;
+        invoke_owned(
             &target,
             NativeInvocation {
                 operation: call.operation.to_owned(),
                 context: call.context,
-                input: input.into(),
+                input: input(json),
                 deadline,
                 facts: call.facts,
                 application,

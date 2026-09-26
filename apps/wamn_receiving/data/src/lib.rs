@@ -7,6 +7,7 @@
 mod cursor;
 mod error;
 mod generated;
+mod page;
 pub mod purchase_order;
 pub mod read;
 pub mod receipt;
@@ -14,3 +15,4 @@ pub mod record_receipt;
 pub mod supplier;
 
 pub use error::{AccessError, AccessErrorKind};
+pub use page::Page;

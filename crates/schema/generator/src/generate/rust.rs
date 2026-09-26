@@ -385,7 +385,7 @@ pub(super) fn wamn_api(
                         ),
                         sql_path: paths[index].clone(),
                         row: model_row.clone(),
-                        fetch: AccessorFetch::All,
+                        fetch: AccessorFetch::Stream,
                         binds,
                     });
                 }
@@ -1008,6 +1008,10 @@ fn emit_wamn_accessor(source: &mut String, accessor: &WamnAccessor, row: &RustRo
         }
     )
     .expect("writing to a String cannot fail");
+    if matches!(accessor.fetch, AccessorFetch::Stream) {
+        emit_stream_accessor_body(source, accessor, row);
+        return;
+    }
     writeln!(
         source,
         "    let rows = {}.run({}, vec![",
@@ -1030,8 +1034,8 @@ fn emit_wamn_accessor(source: &mut String, accessor: &WamnAccessor, row: &RustRo
     source.push_str("    ]).await?;\n");
     let decode_function = match accessor.fetch {
         AccessorFetch::Optional => "decode_optional",
-        AccessorFetch::All => "decode_all",
         AccessorFetch::One => "decode_one",
+        AccessorFetch::Stream => unreachable!("a stream accessor returned above"),
     };
     emit_decode_result(
         source,
@@ -1045,9 +1049,38 @@ fn emit_wamn_accessor(source: &mut String, accessor: &WamnAccessor, row: &RustRo
 fn accessor_result_type(accessor: &WamnAccessor) -> String {
     match accessor.fetch {
         AccessorFetch::Optional => format!("Option<{}>", accessor.row),
-        AccessorFetch::All => format!("Vec<{}>", accessor.row),
+        AccessorFetch::Stream => format!("wamn_postgres_statements::RowStream<{}>", accessor.row),
         AccessorFetch::One => accessor.row.clone(),
     }
+}
+
+/// A query reads its rows as the host fetches them, in one statement.
+fn emit_stream_accessor_body(source: &mut String, accessor: &WamnAccessor, row: &RustRow) {
+    writeln!(
+        source,
+        "    connection.run_stream({}, vec![",
+        accessor.statement_digest_constant
+    )
+    .expect("writing to a String cannot fail");
+    for bind in &accessor.binds {
+        writeln!(
+            source,
+            "        wamn_postgres_statements::into_sql_value({}),",
+            bind.parameter
+        )
+        .expect("writing to a String cannot fail");
+    }
+    writeln!(source, "    ], |row| {{\n        Ok({} {{", row.name)
+        .expect("writing to a String cannot fail");
+    for field in &row.fields {
+        writeln!(
+            source,
+            "            {}: row.decode({:?})?,",
+            field.name, field.name
+        )
+        .expect("writing to a String cannot fail");
+    }
+    source.push_str("        })\n    }).await\n}\n\n");
 }
 
 fn emit_decode_result(

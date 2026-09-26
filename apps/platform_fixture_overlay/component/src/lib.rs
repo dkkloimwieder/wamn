@@ -19,14 +19,14 @@ wit_bindgen::generate!({
         package platform-fixture-overlay:component@0.1.0;
 
         world fixture-overlay {
-          import wamn:postgres/types@0.1.0;
-          import wamn:postgres/statements@0.1.0;
+          import wamn:postgres/types@0.2.0;
+          import wamn:postgres/statements@0.2.0;
           export platform-fixture-overlay:widget/get@1.0.0;
         }
     "#,
     path: [
         "../../../crates/execution/workflow/router/wit",
-        "../../../crates/platform/runtime/wit/deps/wamn-postgres",
+        "../../../crates/platform/runtime/wit/deps/wamn-postgres-0.2",
         "../generated/wit/deps/platform-fixture-overlay-widget",
     ],
     generate_all,

@@ -1,16 +1,9 @@
 // @generated from operation declarations; do not edit.
 
 include!("operation_codec.rs");
-type Item = contract::QueryItem;
 const MINIMUM: usize = 1;
-const MAXIMUM: usize = 100;
-const COUNT_ERROR: &str = "operation input item count must be 1..=100";
-
-#[allow(dead_code)]
-pub(crate) fn validate(input: &[Item]) -> Result<(), CodecError> {
-    validate_count(input.len())?;
-    Ok(())
-}
+const MAXIMUM: usize = 1;
+const COUNT_ERROR: &str = "a query takes exactly one request";
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -43,33 +36,33 @@ struct JsonSort {
     direction: String,
 }
 
-pub(crate) fn decode(input: &str) -> Result<Vec<contract::QueryItem>, CodecError> {
-    decode_read_envelope(input)?
+pub(crate) fn decode(
+    input: &str,
+) -> Result<Result<contract::QueryRequest, contract::InvalidInputDetail>, CodecError> {
+    let body = decode_read_envelope(input)?
         .into_iter()
-        .map(|body| {
-            let input = serde_json::from_value::<JsonRequest>(body)
-                .map(|mut request| contract::QueryRequest {
-                    status: request
-                        .filter
-                        .as_mut()
-                        .and_then(|filter| filter.status.take()),
-                    location_id: request
-                        .filter
-                        .as_mut()
-                        .and_then(|filter| filter.location_id.take()),
-                    pallet_code: request
-                        .filter
-                        .as_mut()
-                        .and_then(|filter| filter.pallet_code.take()),
-                    sort_field: request.sort.as_ref().map(|sort| sort.field.clone()),
-                    sort_direction: request.sort.map(|sort| sort.direction),
-                    cursor: request.cursor,
-                    limit: request.limit,
-                })
-                .map_err(|_| invalid("input"));
-            Ok(contract::QueryItem { input })
+        .next()
+        .expect("the envelope holds one request");
+    Ok(serde_json::from_value::<JsonRequest>(body)
+        .map(|mut request| contract::QueryRequest {
+            status: request
+                .filter
+                .as_mut()
+                .and_then(|filter| filter.status.take()),
+            location_id: request
+                .filter
+                .as_mut()
+                .and_then(|filter| filter.location_id.take()),
+            pallet_code: request
+                .filter
+                .as_mut()
+                .and_then(|filter| filter.pallet_code.take()),
+            sort_field: request.sort.as_ref().map(|sort| sort.field.clone()),
+            sort_direction: request.sort.map(|sort| sort.direction),
+            cursor: request.cursor,
+            limit: request.limit,
         })
-        .collect()
+        .map_err(|_| invalid("input")))
 }
 
 fn invalid(field: &str) -> contract::InvalidInputDetail {
@@ -81,27 +74,28 @@ fn invalid(field: &str) -> contract::InvalidInputDetail {
     }
 }
 
-pub(crate) fn encode(output: &[contract::QueryOutcome]) -> String {
-    let values = output
-        .iter()
-        .map(|item| match &item.outcome {
-            Ok(value) => json!({ "value":
-            { "item": value.value.iter().map(|row| json!({
-                                "created_at": row.created_at,
-                                "created_by": row.created_by,
-                                "id": row.id,
-                                "location_id": row.location_id,
-                                "pallet_code": row.pallet_code,
-                                "row_version": row.row_version,
-                                "status": row.status,
-                                "updated_at": row.updated_at,
-                                "updated_by": row.updated_by,
-                        })).collect::<Vec<_>>(), "next_cursor": value.next_cursor }
-                    }),
-            Err(error) => json!({ "error": error_value(error) }),
-        })
-        .collect::<Vec<_>>();
-    serde_json::to_string(&values).expect("typed operation outcomes always serialize")
+fn row_json(row: &contract::QueryRow) -> String {
+    json!({
+                    "created_at": row.created_at,
+                    "created_by": row.created_by,
+                    "id": row.id,
+                    "location_id": row.location_id,
+                    "pallet_code": row.pallet_code,
+                    "row_version": row.row_version,
+                    "status": row.status,
+                    "updated_at": row.updated_at,
+                    "updated_by": row.updated_by,
+    })
+    .to_string()
+}
+
+/// The outcome after the last row, as the JSON a read reply carries.
+pub(crate) fn encode_end(end: &Result<contract::QueryEnd, contract::QueryError>) -> String {
+    match end {
+        Ok(end) => json!({ "value": { "next_cursor": end.next_cursor } }),
+        Err(error) => json!({ "error": error_value(error) }),
+    }
+    .to_string()
 }
 
 fn error_value(error: &contract::QueryError) -> Value {
@@ -144,30 +138,107 @@ fn normalize(request: &mut contract::QueryRequest) -> Result<(), contract::Inval
     Ok(())
 }
 
+#[allow(clippy::unnecessary_wraps)]
+fn limit(request: &mut contract::QueryRequest) -> Result<(), contract::InvalidInputDetail> {
+    let _ = &request;
+    let limit = *request.limit.get_or_insert(100);
+    if limit < 1 {
+        #[allow(unused_mut)]
+        let mut detail = invalid("limit");
+        detail.minimum = Some(1);
+        detail.observed = Some(limit);
+        return Err(detail);
+    }
+    Ok(())
+}
+
+/// Rows one write hands to the reader.
+const BATCH: usize = 500;
+
+enum Writer {
+    Typed(wit_bindgen::rt::async_support::StreamWriter<contract::QueryRow>),
+    Json(wit_bindgen::rt::async_support::StreamWriter<String>),
+}
+
+/// The rows of one read, written to its reader in batches.
+pub(crate) struct Rows {
+    writer: Writer,
+    batch: Vec<contract::QueryRow>,
+}
+
+#[allow(dead_code)]
+impl Rows {
+    pub(crate) fn typed(
+        writer: wit_bindgen::rt::async_support::StreamWriter<contract::QueryRow>,
+    ) -> Self {
+        Self {
+            writer: Writer::Typed(writer),
+            batch: Vec::with_capacity(BATCH),
+        }
+    }
+
+    pub(crate) fn json(writer: wit_bindgen::rt::async_support::StreamWriter<String>) -> Self {
+        Self {
+            writer: Writer::Json(writer),
+            batch: Vec::with_capacity(BATCH),
+        }
+    }
+
+    /// Hand one row to the reader. An error means the reader left, so the
+    /// read stops and its outcome reaches no one.
+    pub(crate) async fn push(
+        &mut self,
+        row: contract::QueryRow,
+    ) -> Result<(), contract::QueryError> {
+        self.batch.push(row);
+        if self.batch.len() == BATCH {
+            self.flush().await
+        } else {
+            Ok(())
+        }
+    }
+
+    async fn flush(&mut self) -> Result<(), contract::QueryError> {
+        let batch = std::mem::replace(&mut self.batch, Vec::with_capacity(BATCH));
+        if batch.is_empty() {
+            return Ok(());
+        }
+        let unwritten = match &mut self.writer {
+            Writer::Typed(writer) => writer.write_all(batch).await.len(),
+            Writer::Json(writer) => writer
+                .write_all(batch.iter().map(row_json).collect())
+                .await
+                .len(),
+        };
+        if unwritten == 0 {
+            Ok(())
+        } else {
+            Err(contract::QueryError::InternalError)
+        }
+    }
+}
+
 #[allow(dead_code)]
 pub(crate) async fn run<S, F>(
-    input: Vec<contract::QueryItem>,
+    request: Result<contract::QueryRequest, contract::InvalidInputDetail>,
     state: &mut S,
+    rows: &mut Rows,
     mut handler: F,
-) -> Vec<contract::QueryOutcome>
+) -> Result<contract::QueryEnd, contract::QueryError>
 where
     F: AsyncFnMut(
         &mut S,
         contract::QueryRequest,
-    ) -> Result<contract::QueryResult, contract::QueryError>,
+        &mut Rows,
+    ) -> Result<contract::QueryEnd, contract::QueryError>,
 {
-    let mut output = Vec::with_capacity(input.len());
-    for item in input {
-        let outcome = match item.input {
-            Ok(mut request) => match normalize(&mut request) {
-                Ok(()) => handler(state, request).await,
-                Err(error) => Err(contract::QueryError::InvalidInput(error)),
-            },
-            Err(error) => Err(contract::QueryError::InvalidInput(error)),
-        };
-        output.push(contract::QueryOutcome { outcome });
-    }
-    output
+    let mut request = request.map_err(contract::QueryError::InvalidInput)?;
+    normalize(&mut request)
+        .and_then(|()| limit(&mut request))
+        .map_err(contract::QueryError::InvalidInput)?;
+    let end = handler(state, request, rows).await?;
+    rows.flush().await?;
+    Ok(end)
 }
 
 #[allow(unused_macros)]
@@ -226,6 +297,7 @@ pub(crate) fn map_error(
 macro_rules! export_operation {
     ($component:ty, $contract:path, $node:path, $state:expr, $handler:path, $codec:ident) => {
         const _: () = {
+            use wit_bindgen::rt::async_support::{FutureReader, StreamReader, spawn_local};
             use $codec as __codec;
             use $contract as __contract;
             use $node as __node;
@@ -238,25 +310,51 @@ macro_rules! export_operation {
             }
 
             impl __contract::Guest for $component {
+                #[allow(clippy::unused_async_trait_impl)]
                 async fn run(
                     _context: __node::NodeContext,
-                    input: Vec<__contract::QueryItem>,
-                ) -> Result<Vec<__contract::QueryOutcome>, __node::NodeError> {
-                    let mut state = $state;
-                    __codec::validate(&input).map_err(invalid)?;
-                    Ok(__codec::run(input, &mut state, $handler).await)
+                    input: __contract::QueryRequest,
+                ) -> Result<
+                    (
+                        StreamReader<__contract::QueryRow>,
+                        FutureReader<Result<__contract::QueryEnd, __contract::QueryError>>,
+                    ),
+                    __node::NodeError,
+                > {
+                    let (writer, rows) = crate::wit_stream::new::<__contract::QueryRow>();
+                    let (end, ended) = crate::wit_future::new::<
+                        Result<__contract::QueryEnd, __contract::QueryError>,
+                    >(|| Err(__contract::QueryError::InternalError));
+                    spawn_local(async move {
+                        let mut state = $state;
+                        let mut sink = __codec::Rows::typed(writer);
+                        let outcome =
+                            __codec::run(Ok(input), &mut state, &mut sink, $handler).await;
+                        drop(sink);
+                        let _ = end.write(outcome).await;
+                    });
+                    Ok((rows, ended))
                 }
 
+                #[allow(clippy::unused_async_trait_impl)]
                 async fn run_json(
-                    context: __node::NodeContext,
+                    _context: __node::NodeContext,
                     input: String,
-                ) -> Result<__node::Emission, __node::NodeError> {
-                    let input = __codec::decode(&input).map_err(invalid)?;
-                    let output = <Self as __contract::Guest>::run(context, input).await?;
-                    Ok(__node::Emission {
-                        payload: __codec::encode(&output),
-                        port: None,
-                    })
+                ) -> Result<(StreamReader<String>, FutureReader<String>), __node::NodeError>
+                {
+                    let request = __codec::decode(&input).map_err(invalid)?;
+                    let (writer, rows) = crate::wit_stream::new::<String>();
+                    let (end, ended) = crate::wit_future::new::<String>(|| {
+                        __codec::encode_end(&Err(__contract::QueryError::InternalError))
+                    });
+                    spawn_local(async move {
+                        let mut state = $state;
+                        let mut sink = __codec::Rows::json(writer);
+                        let outcome = __codec::run(request, &mut state, &mut sink, $handler).await;
+                        drop(sink);
+                        let _ = end.write(__codec::encode_end(&outcome)).await;
+                    });
+                    Ok((rows, ended))
                 }
             }
         };

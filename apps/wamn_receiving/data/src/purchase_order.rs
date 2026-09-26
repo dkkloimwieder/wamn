@@ -6,10 +6,10 @@ use wamn_postgres_statements::{Connection, Json, TimestampTz, Uuid as WamnUuid};
 use crate::cursor::{CursorDirection, CursorKey, DecodedCursor, decode_cursor, encode_cursor};
 use crate::error::{AccessError, AllowedConstraints};
 use crate::generated::wamn::purchase_order as generated;
+use crate::page::Page;
 
 pub use crate::generated::wamn::purchase_order::PurchaseOrderRow;
 
-const MAX_PAGE_SIZE: i64 = 100;
 pub(crate) const UPDATE_CONSTRAINTS: AllowedConstraints = AllowedConstraints::new(
     generated::UPDATE_UNIQUE_CONSTRAINTS,
     generated::UPDATE_FOREIGN_KEY_CONSTRAINTS,
@@ -78,14 +78,7 @@ pub struct QueryInput {
     pub purchase_order_numbers: Option<Box<[Box<str>]>>,
     pub sort: PurchaseOrderSort,
     pub cursor: Option<Box<str>>,
-    pub limit: Option<i64>,
-}
-
-/// One bounded query result and its opaque continuation cursor.
-#[derive(Debug)]
-pub struct Page {
-    pub item: Box<[PurchaseOrderRow]>,
-    pub next_cursor: Option<Box<str>>,
+    pub limit: i64,
 }
 
 /// Three-state update input for the sole writable field.
@@ -107,10 +100,13 @@ pub async fn get(connection: &mut Connection, id: &str) -> Result<PurchaseOrderR
         .ok_or_else(|| AccessError::not_found("purchase_order does not exist"))
 }
 
-/// Query one bounded page using a finite generated SQL variant.
-pub async fn query(connection: &mut Connection, input: &QueryInput) -> Result<Page, AccessError> {
+/// Query one read using a finite generated SQL variant.
+pub async fn query(
+    connection: &mut Connection,
+    input: &QueryInput,
+) -> Result<Page<PurchaseOrderRow>, AccessError> {
     let prepared = prepare_query(input)?;
-    let mut rows = match (input.sort, prepared.cursor) {
+    let rows = match (input.sort, prepared.cursor) {
         (PurchaseOrderSort::PurchaseOrderNumberAscending, QueryCursor::Text(cursor)) => {
             let (cursor_key, cursor_id) = text_cursor_bindings(cursor);
             generated::query_purchase_order_number_ascending(
@@ -194,7 +190,13 @@ pub async fn query(connection: &mut Connection, input: &QueryInput) -> Result<Pa
     .map_err(|source| {
         AccessError::from_statement("query purchase_order", &source, AllowedConstraints::NONE)
     })?;
-    finish_page(&mut rows, prepared.page_limit, input.sort)
+    let sort = input.sort;
+    Ok(Page::new(
+        rows,
+        "query purchase_order",
+        input.limit,
+        move |row| encode_row_cursor(row, sort),
+    ))
 }
 
 /// Apply one optimistic update without retrying serialization failures.
@@ -226,7 +228,6 @@ struct PreparedQuery {
     supplier_ids: Option<Json>,
     statuses: Option<Json>,
     purchase_order_numbers: Option<Json>,
-    page_limit: usize,
     fetch_limit: i64,
 }
 
@@ -238,7 +239,8 @@ enum QueryCursor {
 
 fn prepare_query(input: &QueryInput) -> Result<PreparedQuery, AccessError> {
     let cursor = decode_query_cursor(input.sort, input.cursor.as_deref())?;
-    let limit = page_limit(input.limit)?;
+    // The operation's codec checked the limit.
+    let limit = input.limit;
     let supplier_ids = supplier_filter(input.supplier_ids.as_deref())?;
     let statuses = status_filter(input.statuses.as_deref());
     let purchase_order_numbers = number_filter(input.purchase_order_numbers.as_deref())?;
@@ -247,7 +249,6 @@ fn prepare_query(input: &QueryInput) -> Result<PreparedQuery, AccessError> {
         supplier_ids,
         statuses,
         purchase_order_numbers,
-        page_limit: usize::try_from(limit).expect("validated page limit fits usize"),
         fetch_limit: limit + 1,
     })
 }
@@ -285,21 +286,6 @@ fn decode_optional_cursor<Key: CursorKey>(
     encoded
         .map(|encoded| decode_cursor(encoded, field, direction))
         .transpose()
-}
-
-fn page_limit(limit: Option<i64>) -> Result<i64, AccessError> {
-    let limit = limit.unwrap_or(MAX_PAGE_SIZE);
-    if (1..=MAX_PAGE_SIZE).contains(&limit) {
-        Ok(limit)
-    } else {
-        Err(AccessError::invalid_range(
-            "purchase_order limit must be 1..=100",
-            "limit",
-            1,
-            MAX_PAGE_SIZE,
-            limit,
-        ))
-    }
 }
 
 fn text_cursor_bindings(
@@ -390,27 +376,6 @@ fn supplier_update(supplier_id: SupplierIdUpdate) -> Result<(bool, Option<WamnUu
             )?)),
         )),
     }
-}
-
-fn finish_page(
-    rows: &mut Vec<PurchaseOrderRow>,
-    page_limit: usize,
-    sort: PurchaseOrderSort,
-) -> Result<Page, AccessError> {
-    let has_more = rows.len() > page_limit;
-    rows.truncate(page_limit);
-    let next_cursor = if has_more {
-        Some(encode_row_cursor(
-            rows.last().expect("a positive page limit retained one row"),
-            sort,
-        )?)
-    } else {
-        None
-    };
-    Ok(Page {
-        item: std::mem::take(rows).into_boxed_slice(),
-        next_cursor,
-    })
 }
 
 fn encode_row_cursor(
@@ -554,34 +519,17 @@ mod tests {
     const SECOND_ID: &str = "11234567-89ab-cdef-0123-456789abcdef";
 
     #[test]
-    fn omitted_limit_is_one_hundred_and_out_of_range_is_invalid() {
-        assert_eq!(page_limit(None).unwrap(), 100);
-        assert_eq!(page_limit(Some(1)).unwrap(), 1);
-        assert_eq!(page_limit(Some(100)).unwrap(), 100);
-        for limit in [-1, 0, 101] {
-            assert_eq!(
-                page_limit(Some(limit)).unwrap_err().kind(),
-                AccessErrorKind::InvalidInput
-            );
-        }
-    }
-
-    #[test]
-    fn cursor_limit_and_filter_refusals_are_typed() {
+    fn cursor_and_filter_refusals_are_typed() {
         let input = QueryInput {
             supplier_ids: Some(vec!["not-a-uuid".into()].into_boxed_slice()),
             statuses: None,
             purchase_order_numbers: None,
             sort: PurchaseOrderSort::CreatedAtAscending,
             cursor: Some("not-base64".into()),
-            limit: Some(0),
+            limit: 1,
         };
         assert_eq!(
             prepare_query(&input).unwrap_err().kind(),
-            AccessErrorKind::InvalidInput
-        );
-        assert_eq!(
-            page_limit(Some(0)).unwrap_err().kind(),
             AccessErrorKind::InvalidInput
         );
         assert_eq!(
@@ -622,36 +570,19 @@ mod tests {
     }
 
     #[test]
-    fn extra_row_mints_cursor_from_last_returned_row_and_normalizes_utc() {
-        let mut rows = vec![
-            row(FIRST_ID, "2026-08-29T12:34:56.123456Z"),
-            row(SECOND_ID, "2026-08-29T12:35:56.123456Z"),
-        ];
-        let page = finish_page(&mut rows, 1, PurchaseOrderSort::CreatedAtAscending).unwrap();
+    fn the_last_row_mints_the_cursor_and_normalizes_utc() {
+        let row = row(FIRST_ID, "2026-08-29T12:34:56.123456Z");
+        let encoded = encode_row_cursor(&row, PurchaseOrderSort::CreatedAtAscending).unwrap();
 
-        assert_eq!(page.item.len(), 1);
-        assert_eq!(page.item[0].id.0, FIRST_ID);
-        let cursor = decode_cursor::<DateTime<Utc>>(
-            page.next_cursor.as_deref().unwrap(),
-            "created_at",
-            CursorDirection::Ascending,
-        )
-        .unwrap();
+        let cursor =
+            decode_cursor::<DateTime<Utc>>(&encoded, "created_at", CursorDirection::Ascending)
+                .unwrap();
         assert_eq!(cursor.id.hyphenated().to_string(), FIRST_ID);
         assert_eq!(cursor.key.timestamp_subsec_micros(), 123_456);
         assert_eq!(
             canonical_timestamp(&cursor.key),
             "2026-08-29T12:34:56.123456Z"
         );
-    }
-
-    #[test]
-    fn no_extra_row_has_no_next_cursor() {
-        let mut rows = vec![row(FIRST_ID, "2026-08-29T12:34:56.123456Z")];
-        let page = finish_page(&mut rows, 1, PurchaseOrderSort::CreatedAtAscending).unwrap();
-
-        assert_eq!(page.item.len(), 1);
-        assert!(page.next_cursor.is_none());
     }
 
     #[test]

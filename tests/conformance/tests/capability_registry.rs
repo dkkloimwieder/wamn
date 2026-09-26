@@ -168,7 +168,7 @@ fn vendored_wasi_packages_are_registered_or_deliberately_absent() {
 fn registry_is_closed_and_every_row_is_reachable() {
     assert_eq!(
         CAPABILITY_REGISTRY.len(),
-        8,
+        9,
         "the registry is a closed set; changing its size is a ruled expansion"
     );
     let effects: Vec<&str> = CAPABILITY_REGISTRY
@@ -178,7 +178,13 @@ fn registry_is_closed_and_every_row_is_reachable() {
         .collect();
     assert_eq!(
         effects,
-        vec!["wamn:postgres", "wamn:connection", "wasmcloud:blobstore"],
+        // wamn:postgres 0.2.0 is the owner ruling on wamn-utci (2026-09-26).
+        vec![
+            "wamn:postgres",
+            "wamn:postgres",
+            "wamn:connection",
+            "wasmcloud:blobstore"
+        ],
         "the effect set is the security-relevant half; it moves only by ruling"
     );
 }

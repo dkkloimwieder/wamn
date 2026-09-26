@@ -76,24 +76,27 @@ pub(crate) async fn query_created_at_ascending(
     cursor_key: Option<wamn_postgres_statements::TimestampTz>,
     cursor_id: Option<wamn_postgres_statements::Uuid>,
     limit: i64,
-) -> Result<Vec<SupplierRow>, wamn_postgres_statements::StatementError> {
-    let rows = connection
-        .run(
+) -> Result<
+    wamn_postgres_statements::RowStream<SupplierRow>,
+    wamn_postgres_statements::StatementError,
+> {
+    connection
+        .run_stream(
             QUERY_DIGEST,
             vec![
                 wamn_postgres_statements::into_sql_value(cursor_key),
                 wamn_postgres_statements::into_sql_value(cursor_id),
                 wamn_postgres_statements::into_sql_value(limit),
             ],
+            |row| {
+                Ok(SupplierRow {
+                    created_at: row.decode("created_at")?,
+                    id: row.decode("id")?,
+                    name: row.decode("name")?,
+                })
+            },
         )
-        .await?;
-    wamn_postgres_statements::decode_all(QUERY_DIGEST, rows, |row| {
-        Ok(SupplierRow {
-            created_at: row.decode("created_at")?,
-            id: row.decode("id")?,
-            name: row.decode("name")?,
-        })
-    })
+        .await
 }
 
 pub(crate) async fn create_claim(

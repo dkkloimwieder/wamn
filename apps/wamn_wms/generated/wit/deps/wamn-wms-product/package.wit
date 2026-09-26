@@ -53,7 +53,7 @@ interface get {
 }
 
 interface query {
-  use wamn:node/types@0.1.0.{emission, node-context, node-error};
+  use wamn:node/types@0.1.0.{node-context, node-error};
 
   record query-request {
     product-code: option<list<string>>,
@@ -80,10 +80,6 @@ interface query {
     internal-error,
   }
 
-  record query-item {
-    input: result<query-request, invalid-input-detail>,
-  }
-
   record query-row {
     created-at: string,
     id: string,
@@ -91,17 +87,14 @@ interface query {
     row-version: s32,
   }
 
-  record query-result {
-    value: list<query-row>,
+  /// The record after the last row. A cursor means more rows follow.
+  record query-end {
     next-cursor: option<string>,
   }
 
-  record query-outcome {
-    outcome: result<query-result, query-error>,
-  }
-
-  run: async func(ctx: node-context, input: list<query-item>) -> result<list<query-outcome>, node-error>;
-  run-json: async func(ctx: node-context, input: string) -> result<emission, node-error>;
+  run: async func(ctx: node-context, input: query-request) -> result<tuple<stream<query-row>, future<result<query-end, query-error>>>, node-error>;
+  /// Each row as one JSON object, then the outcome as one JSON value.
+  run-json: async func(ctx: node-context, input: string) -> result<tuple<stream<string>, future<string>>, node-error>;
 }
 
 interface create {

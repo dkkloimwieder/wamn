@@ -15,6 +15,7 @@ The platform's own native workloads use their separate publication authority.
 | --- | --- | --- |
 | `wamn:node` | `0.1.0` | Ambient |
 | `wamn:postgres` | `0.1.0` | Effect |
+| `wamn:postgres` | `0.2.0` | Effect |
 | `wamn:connection` | `0.1.0` | Effect |
 | `wasmcloud:blobstore` | `0.1.0` | Effect |
 | `wasi:logging` | `0.1.0-draft` | Ambient |

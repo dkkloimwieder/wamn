@@ -11,15 +11,15 @@ use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use chrono::{DateTime, SecondsFormat};
 use serde_json::{Value, json};
 use wamn_execution_contract::canonical_json_bytes;
-use wamn_postgres_statements::{Json, TimestampTz, Uuid};
+use wamn_postgres_statements::{Json, RowStream, TimestampTz, Uuid};
 
-use crate::error::{AccessError, AccessErrorKind};
+use crate::error::{AccessError, AccessErrorKind, Constraints};
 use crate::scalar;
 
 const FIELD: &str = "created_at";
-const MAX_PAGE_SIZE: i64 = 100;
 
-/// The query body. Every member is optional.
+/// The query body. Every member but the limit is optional; the operation's
+/// codec fills the limit.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct QueryInput {
     /// Values the one declared filter field must equal, any of them.
@@ -27,14 +27,80 @@ pub struct QueryInput {
     pub sort_field: Option<String>,
     pub sort_direction: Option<String>,
     pub cursor: Option<String>,
-    pub limit: Option<i64>,
+    pub limit: i64,
 }
 
-/// One bounded page and the cursor that continues it, if anything does.
-#[derive(Debug)]
+/// Mints the cursor that starts the next read after one row.
+type CursorFn<Row> = Box<dyn Fn(&Row) -> Result<String, AccessError>>;
+
+/// The rows of one read, handed out one at a time as the host reads them,
+/// and the cursor that continues the read, if anything does.
 pub struct Page<Row> {
-    pub item: Vec<Row>,
-    pub next_cursor: Option<String>,
+    rows: RowStream<Row>,
+    limit: usize,
+    handed: usize,
+    cursor: CursorFn<Row>,
+    next_cursor: Option<String>,
+}
+
+impl<Row> std::fmt::Debug for Page<Row> {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("Page")
+            .field("limit", &self.limit)
+            .field("handed", &self.handed)
+            .finish_non_exhaustive()
+    }
+}
+
+impl<Row> Page<Row> {
+    /// A read of `limit` rows over a statement that reads `limit + 1`.
+    pub(crate) fn new(
+        rows: RowStream<Row>,
+        limit: i64,
+        cursor: impl Fn(&Row) -> Result<String, AccessError> + 'static,
+    ) -> Self {
+        Self {
+            rows,
+            limit: usize::try_from(limit).unwrap_or(0),
+            handed: 0,
+            cursor: Box::new(cursor),
+            next_cursor: None,
+        }
+    }
+
+    /// The next row, or `None` after `limit` rows or the last row.
+    ///
+    /// # Errors
+    ///
+    /// [`AccessError`] when the statement fails or a row cannot mint a cursor.
+    pub async fn next(&mut self) -> Result<Option<Row>, AccessError> {
+        if self.handed == self.limit {
+            return Ok(None);
+        }
+        let Some(row) = self.read().await? else {
+            self.handed = self.limit;
+            return Ok(None);
+        };
+        self.handed += 1;
+        // The row past the limit says whether a next read has rows.
+        if self.handed == self.limit && self.read().await?.is_some() {
+            self.next_cursor = Some((self.cursor)(&row)?);
+        }
+        Ok(Some(row))
+    }
+
+    /// The cursor that continues this read, once `next` returned `None`.
+    pub fn next_cursor(&self) -> Option<String> {
+        self.next_cursor.clone()
+    }
+
+    async fn read(&mut self) -> Result<Option<Row>, AccessError> {
+        self.rows
+            .next()
+            .await
+            .map_err(|error| AccessError::from_statement(&error, Constraints::NONE))
+    }
 }
 
 /// The validated bindings of one page request.
@@ -44,11 +110,11 @@ pub(crate) struct Plan {
     pub(crate) filter: Option<Json>,
     pub(crate) cursor_key: Option<TimestampTz>,
     pub(crate) cursor_id: Option<Uuid>,
-    /// One row past the page tells whether a next page exists.
-    pub(crate) fetch: i64,
+    pub(crate) limit: i64,
 }
 
-/// Validate one request in the contract's order: sort, cursor, then limit.
+/// Validate one request in the contract's order: sort, then cursor. The
+/// operation's codec checked the limit.
 pub(crate) fn plan(input: &QueryInput) -> Result<Plan, AccessError> {
     let descending = match (input.sort_field.as_deref(), input.sort_direction.as_deref()) {
         (None, None) | (Some(FIELD), Some("ascending")) => false,
@@ -62,10 +128,6 @@ pub(crate) fn plan(input: &QueryInput) -> Result<Plan, AccessError> {
         }
         None => (None, None),
     };
-    let limit = input.limit.unwrap_or(MAX_PAGE_SIZE);
-    if !(1..=MAX_PAGE_SIZE).contains(&limit) {
-        return Err(AccessError::range("limit", 1, MAX_PAGE_SIZE, limit));
-    }
     Ok(Plan {
         descending,
         filter: input.filter.as_ref().map(|values| {
@@ -73,30 +135,17 @@ pub(crate) fn plan(input: &QueryInput) -> Result<Plan, AccessError> {
         }),
         cursor_key,
         cursor_id,
-        fetch: limit + 1,
+        limit: input.limit,
     })
 }
 
-/// Keep one page of rows and mint the cursor from the last row kept.
-pub(crate) fn finish<Row>(
-    plan: &Plan,
-    mut rows: Vec<Row>,
-    key: impl Fn(&Row) -> (&TimestampTz, &Uuid),
-) -> Result<Page<Row>, AccessError> {
-    let limit = usize::try_from(plan.fetch - 1).expect("a validated page limit fits usize");
-    let more = rows.len() > limit;
-    rows.truncate(limit);
-    let next_cursor = match rows.last().filter(|_| more) {
-        Some(row) => {
-            let (created_at, id) = key(row);
-            Some(encode(plan.descending, &timestamp(&created_at.0)?, &id.0))
-        }
-        None => None,
-    };
-    Ok(Page {
-        item: rows,
-        next_cursor,
-    })
+/// The cursor that starts the next read after the row with this key.
+pub(crate) fn cursor(
+    descending: bool,
+    created_at: &TimestampTz,
+    id: &Uuid,
+) -> Result<String, AccessError> {
+    Ok(encode(descending, &timestamp(&created_at.0)?, &id.0))
 }
 
 fn encode(descending: bool, key: &str, id: &str) -> String {

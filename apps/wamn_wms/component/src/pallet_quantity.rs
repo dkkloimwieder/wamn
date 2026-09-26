@@ -48,18 +48,21 @@ mod query {
     async fn handle(
         connection: &mut wamn_postgres_statements::Connection,
         request: contract::QueryRequest,
-    ) -> Result<contract::QueryResult, contract::QueryError> {
-        pallet_quantity::query(connection, request.cursor.as_deref(), request.limit)
+        rows: &mut codec::Rows,
+    ) -> Result<contract::QueryEnd, contract::QueryError> {
+        let refuse = |error: wamn_wms_data_access::AccessError| {
+            codec::map_error(error.kind().literal(), |key| detail(&error, key))
+        };
+        let limit = request.limit.expect("the codec fills the default limit");
+        let mut page = pallet_quantity::query(connection, request.cursor.as_deref(), limit)
             .await
-            .map(|page| contract::QueryResult {
-                value: page
-                    .item
-                    .into_iter()
-                    .map(|row| codec::row!(row, contract::QueryRow))
-                    .collect(),
-                next_cursor: page.next_cursor,
-            })
-            .map_err(|error| codec::map_error(error.kind().literal(), |key| detail(&error, key)))
+            .map_err(refuse)?;
+        while let Some(row) = page.next().await.map_err(refuse)? {
+            rows.push(codec::row!(row, contract::QueryRow)).await?;
+        }
+        Ok(contract::QueryEnd {
+            next_cursor: page.next_cursor(),
+        })
     }
     codec::export_operation!(
         crate::Component,

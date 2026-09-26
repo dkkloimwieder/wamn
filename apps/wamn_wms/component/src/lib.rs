@@ -18,8 +18,8 @@ wit_bindgen::generate!({
         package wamn:wms-component@0.1.0;
 
         world wms {
-          import wamn:postgres/types@0.1.0;
-          import wamn:postgres/statements@0.1.0;
+          import wamn:postgres/types@0.2.0;
+          import wamn:postgres/statements@0.2.0;
           export wamn-wms:inventory/adjust@1.0.0;
           export wamn-wms:inventory/aggregate@1.0.0;
           export wamn-wms:inventory/merge@1.0.0;
@@ -44,7 +44,7 @@ wit_bindgen::generate!({
     "#,
     path: [
         "../../../crates/execution/workflow/router/wit",
-        "../../../crates/platform/runtime/wit/deps/wamn-postgres",
+        "../../../crates/platform/runtime/wit/deps/wamn-postgres-0.2",
         "../generated/wit/deps/wamn-wms-inventory",
         "../generated/wit/deps/wamn-wms-inventory-movement",
         "../generated/wit/deps/wamn-wms-location",
@@ -54,6 +54,9 @@ wit_bindgen::generate!({
     ],
     generate_all,
     async: true,
+    // Every query ends in the same `result<query-end, query-error>`, and
+    // wit-bindgen emits one future payload for structurally equal types.
+    merge_structurally_equal_types: true,
 });
 
 struct Component;

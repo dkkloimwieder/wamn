@@ -230,6 +230,32 @@ mod tests {
             .iter()
             .find(|entry| entry.0 == "run-json")
             .expect("the exact function-name check found run-json");
+        // A query yields its rows as a stream, then one final record (wamn-utci).
+        if operation.contains("/query@") {
+            let streamed = HANDLER_PARAMETERS_AND_RESULTS.replace(
+                "result<record{payload:string,port:option<string>},",
+                "result<tuple<stream<string>,future<string>>,",
+            );
+            ensure!(
+                run_json.2 == streamed,
+                "Receiving query {operation:?} run-json shape is {:?}, not {streamed:?}",
+                run_json.2
+            );
+            let run = functions
+                .iter()
+                .find(|entry| entry.0 == "run")
+                .expect("the exact function-name check found run");
+            ensure!(
+                run.2.contains(",input:record{")
+                    && run.2.contains(")->(result<tuple<stream<record{")
+                    && run
+                        .2
+                        .contains(",future<result<record{next-cursor:option<string>},"),
+                "Receiving query {operation:?} run does not stream typed rows: {:?}",
+                run.2
+            );
+            return Ok(functions);
+        }
         ensure!(
             run_json.2 == HANDLER_PARAMETERS_AND_RESULTS,
             "Receiving operation {operation:?} run-json shape is {:?}, not {:?}",

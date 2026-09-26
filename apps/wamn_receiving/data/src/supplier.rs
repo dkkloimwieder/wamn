@@ -9,11 +9,11 @@ use wamn_postgres_statements::{Connection, TimestampTz, Uuid as WamnUuid};
 use crate::cursor::{CursorDirection, decode_cursor, encode_cursor};
 use crate::error::{AccessError, AllowedConstraints};
 use crate::generated::wamn::supplier as generated;
+use crate::page::Page;
 
 #[doc(inline)]
 pub use crate::generated::wamn::supplier::SupplierRow;
 
-const MAX_PAGE_SIZE: i64 = 100;
 const CREATE_CONSTRAINTS: AllowedConstraints = AllowedConstraints::new(
     generated::CREATE_UNIQUE_CONSTRAINTS,
     generated::CREATE_FOREIGN_KEY_CONSTRAINTS,
@@ -25,18 +25,14 @@ const CREATE_CONSTRAINTS: AllowedConstraints = AllowedConstraints::new(
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct QueryInput {
     pub cursor: Option<Box<str>>,
-    pub limit: Option<i64>,
+    pub limit: i64,
 }
 
-/// One bounded supplier page and its opaque continuation cursor.
-#[derive(Debug)]
-pub struct Page {
-    pub item: Box<[SupplierRow]>,
-    pub next_cursor: Option<Box<str>>,
-}
-
-/// Query one bounded page in generated `created_at, id` order.
-pub async fn query(connection: &mut Connection, input: &QueryInput) -> Result<Page, AccessError> {
+/// Query one read in generated `created_at, id` order.
+pub async fn query(
+    connection: &mut Connection,
+    input: &QueryInput,
+) -> Result<Page<SupplierRow>, AccessError> {
     let cursor = input
         .cursor
         .as_deref()
@@ -44,8 +40,8 @@ pub async fn query(connection: &mut Connection, input: &QueryInput) -> Result<Pa
             decode_cursor::<DateTime<Utc>>(cursor, "created_at", CursorDirection::Ascending)
         })
         .transpose()?;
-    let limit = validated_limit(input.limit)?;
-    let page_size = usize::try_from(limit).expect("validated supplier page limit fits usize");
+    // The operation's codec checked the limit.
+    let limit = input.limit;
     let (cursor_created_at, cursor_id) = match cursor {
         Some(cursor) => (
             Some(TimestampTz(
@@ -61,7 +57,7 @@ pub async fn query(connection: &mut Connection, input: &QueryInput) -> Result<Pa
             .map_err(|source| {
                 AccessError::from_statement("query supplier", &source, AllowedConstraints::NONE)
             })?;
-    page_from_rows(rows, page_size)
+    Ok(Page::new(rows, "query supplier", limit, cursor_from_row))
 }
 
 /// Create one supplier under the identity its claim row mints.
@@ -163,35 +159,6 @@ fn replay_row(
     })
 }
 
-fn validated_limit(limit: Option<i64>) -> Result<i64, AccessError> {
-    let limit = limit.unwrap_or(MAX_PAGE_SIZE);
-    if (1..=MAX_PAGE_SIZE).contains(&limit) {
-        Ok(limit)
-    } else {
-        Err(AccessError::invalid_range(
-            "supplier limit must be 1..=100",
-            "limit",
-            1,
-            MAX_PAGE_SIZE,
-            limit,
-        ))
-    }
-}
-
-fn page_from_rows(mut rows: Vec<SupplierRow>, page_size: usize) -> Result<Page, AccessError> {
-    let has_next = rows.len() > page_size;
-    rows.truncate(page_size);
-    let next_cursor = if has_next {
-        rows.last().map(cursor_from_row).transpose()?
-    } else {
-        None
-    };
-    Ok(Page {
-        item: rows.into_boxed_slice(),
-        next_cursor,
-    })
-}
-
 fn cursor_from_row(row: &SupplierRow) -> Result<Box<str>, AccessError> {
     let created_at = DateTime::parse_from_rfc3339(&row.created_at.0)
         .map(|timestamp| timestamp.to_utc())
@@ -206,16 +173,14 @@ fn cursor_from_row(row: &SupplierRow) -> Result<Box<str>, AccessError> {
 
 #[cfg(test)]
 mod tests {
-    use super::{AccessError, SupplierRow, page_from_rows, validated_limit, validated_name};
+    use super::{AccessError, SupplierRow, cursor_from_row, validated_name};
     use crate::cursor::{CursorDirection, DecodedCursor, decode_cursor};
     use crate::error::AccessErrorKind;
     use chrono::{DateTime, Utc};
     use uuid::Uuid;
     use wamn_postgres_statements::{TimestampTz, Uuid as WamnUuid};
 
-    const FIRST_ID: &str = "01234567-89ab-cdef-0123-456789abcdef";
     const SECOND_ID: &str = "11234567-89ab-cdef-0123-456789abcdef";
-    const THIRD_ID: &str = "21234567-89ab-cdef-0123-456789abcdef";
 
     #[test]
     fn a_missing_or_blank_name_refuses_on_its_own_field() {
@@ -228,35 +193,11 @@ mod tests {
     }
 
     #[test]
-    fn limit_defaults_and_refuses_outside_the_closed_range() {
-        assert_eq!(validated_limit(None).unwrap(), 100);
-        for limit in [-1, 0, 101] {
-            assert_eq!(
-                validated_limit(Some(limit)).unwrap_err().kind(),
-                AccessErrorKind::InvalidInput
-            );
-        }
-    }
-
-    #[test]
-    fn lookahead_row_yields_cursor_from_last_returned_item() {
-        let page = page_from_rows(
-            vec![
-                row(FIRST_ID, "2026-09-22T12:00:00.000000Z"),
-                row(SECOND_ID, "2026-09-22T12:01:00.123456Z"),
-                row(THIRD_ID, "2026-09-22T12:02:00.000000Z"),
-            ],
-            2,
-        )
-        .unwrap();
-
-        assert_eq!(page.item.len(), 2);
-        let decoded = decode_cursor::<DateTime<Utc>>(
-            page.next_cursor.as_deref().unwrap(),
-            "created_at",
-            CursorDirection::Ascending,
-        )
-        .unwrap();
+    fn the_last_row_mints_the_cursor_that_starts_the_next_read() {
+        let cursor = cursor_from_row(&row(SECOND_ID, "2026-09-22T12:01:00.123456Z")).unwrap();
+        let decoded =
+            decode_cursor::<DateTime<Utc>>(&cursor, "created_at", CursorDirection::Ascending)
+                .unwrap();
         assert_eq!(
             decoded,
             DecodedCursor {

@@ -85,27 +85,24 @@ pub(super) mod receipt_query {
     pub(super) async fn execute(
         connection: &mut Connection,
         request: contract::QueryRequest,
-    ) -> Result<contract::QueryResult, contract::QueryError> {
+        rows: &mut Rows,
+    ) -> Result<contract::QueryEnd, contract::QueryError> {
         let input = receipt::QueryInput {
             cursor: request.cursor.map(Into::into),
-            limit: request.limit,
+            limit: request.limit.expect("the codec fills the default limit"),
         };
-        receipt::query(connection, &input)
-            .await
-            .map(|page| contract::QueryResult {
-                value: page
-                    .item
-                    .into_vec()
-                    .into_iter()
-                    .map(|value| row!(value, contract::QueryRow))
-                    .collect(),
-                next_cursor: page.next_cursor.map(Into::into),
+        let refuse = |error: wamn_receiving_data_access::AccessError| {
+            map_error(error.kind().literal(), |key| {
+                error_detail(&error, key, "receipt.query", None, None)
             })
-            .map_err(|error| {
-                map_error(error.kind().literal(), |key| {
-                    error_detail(&error, key, "receipt.query", None, None)
-                })
-            })
+        };
+        let mut page = receipt::query(connection, &input).await.map_err(refuse)?;
+        while let Some(value) = page.next().await.map_err(refuse)? {
+            rows.push(row!(value, contract::QueryRow)).await?;
+        }
+        Ok(contract::QueryEnd {
+            next_cursor: page.next_cursor().map(Into::into),
+        })
     }
 }
 
@@ -118,7 +115,8 @@ pub(super) mod purchase_order_query {
     pub(super) async fn execute(
         connection: &mut Connection,
         request: contract::QueryRequest,
-    ) -> Result<contract::QueryResult, contract::QueryError> {
+        rows: &mut Rows,
+    ) -> Result<contract::QueryEnd, contract::QueryError> {
         let statuses = request
             .status
             .map(|values| {
@@ -175,24 +173,22 @@ pub(super) mod purchase_order_query {
             }),
             sort,
             cursor: request.cursor.map(Into::into),
-            limit: request.limit,
+            limit: request.limit.expect("the codec fills the default limit"),
         };
-        purchase_order::query(connection, &input)
+        let refuse = |error: wamn_receiving_data_access::AccessError| {
+            map_error(error.kind().literal(), |key| {
+                error_detail(&error, key, "purchase_order.query", None, None)
+            })
+        };
+        let mut page = purchase_order::query(connection, &input)
             .await
-            .map(|page| contract::QueryResult {
-                value: page
-                    .item
-                    .into_vec()
-                    .into_iter()
-                    .map(|value| row!(value, contract::QueryRow))
-                    .collect(),
-                next_cursor: page.next_cursor.map(Into::into),
-            })
-            .map_err(|error| {
-                map_error(error.kind().literal(), |key| {
-                    error_detail(&error, key, "purchase_order.query", None, None)
-                })
-            })
+            .map_err(refuse)?;
+        while let Some(value) = page.next().await.map_err(refuse)? {
+            rows.push(row!(value, contract::QueryRow)).await?;
+        }
+        Ok(contract::QueryEnd {
+            next_cursor: page.next_cursor().map(Into::into),
+        })
     }
 }
 
@@ -205,27 +201,24 @@ pub(super) mod supplier_query {
     pub(super) async fn execute(
         connection: &mut Connection,
         request: contract::QueryRequest,
-    ) -> Result<contract::QueryResult, contract::QueryError> {
+        rows: &mut Rows,
+    ) -> Result<contract::QueryEnd, contract::QueryError> {
         let input = supplier::QueryInput {
             cursor: request.cursor.map(Into::into),
-            limit: request.limit,
+            limit: request.limit.expect("the codec fills the default limit"),
         };
-        supplier::query(connection, &input)
-            .await
-            .map(|page| contract::QueryResult {
-                value: page
-                    .item
-                    .into_vec()
-                    .into_iter()
-                    .map(|value| row!(value, contract::QueryRow))
-                    .collect(),
-                next_cursor: page.next_cursor.map(Into::into),
+        let refuse = |error: wamn_receiving_data_access::AccessError| {
+            map_error(error.kind().literal(), |key| {
+                error_detail(&error, key, "supplier.query", None, None)
             })
-            .map_err(|error| {
-                map_error(error.kind().literal(), |key| {
-                    error_detail(&error, key, "supplier.query", None, None)
-                })
-            })
+        };
+        let mut page = supplier::query(connection, &input).await.map_err(refuse)?;
+        while let Some(value) = page.next().await.map_err(refuse)? {
+            rows.push(row!(value, contract::QueryRow)).await?;
+        }
+        Ok(contract::QueryEnd {
+            next_cursor: page.next_cursor().map(Into::into),
+        })
     }
 }
 

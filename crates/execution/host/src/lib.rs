@@ -7,6 +7,7 @@
 //! neither `wamn-workflow` nor `wamn-router`.
 
 mod operation;
+mod query_read;
 mod read_cache;
 mod readiness;
 mod route;

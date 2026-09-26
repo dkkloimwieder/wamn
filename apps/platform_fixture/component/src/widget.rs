@@ -53,29 +53,27 @@ mod query {
     async fn handle(
         connection: &mut Connection,
         request: contract::QueryRequest,
-    ) -> Result<contract::QueryResult, contract::QueryError> {
+        rows: &mut codec::Rows,
+    ) -> Result<contract::QueryEnd, contract::QueryError> {
         let input = QueryInput {
             filter: request.code,
             sort_field: request.sort_field,
             sort_direction: request.sort_direction,
             cursor: request.cursor,
-            limit: request.limit,
+            limit: request.limit.expect("the codec fills the default limit"),
         };
-        widget::query(connection, &input)
-            .await
-            .map(|page| contract::QueryResult {
-                value: page
-                    .item
-                    .into_iter()
-                    .map(|row| codec::row!(row, contract::QueryRow))
-                    .collect(),
-                next_cursor: page.next_cursor,
+        let refuse = |error: wamn_platform_fixture_data_access::AccessError| {
+            codec::map_error(error.kind().literal(), |key| {
+                detail(&error, "widget.query", key)
             })
-            .map_err(|error| {
-                codec::map_error(error.kind().literal(), |key| {
-                    detail(&error, "widget.query", key)
-                })
-            })
+        };
+        let mut page = widget::query(connection, &input).await.map_err(refuse)?;
+        while let Some(row) = page.next().await.map_err(refuse)? {
+            rows.push(codec::row!(row, contract::QueryRow)).await?;
+        }
+        Ok(contract::QueryEnd {
+            next_cursor: page.next_cursor(),
+        })
     }
     codec::export_operation!(
         crate::Component,

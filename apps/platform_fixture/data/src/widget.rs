@@ -87,12 +87,15 @@ pub async fn query(
         plan.cursor_id.clone(),
     );
     let rows = if plan.descending {
-        sql::query_created_at_descending(connection, filter, key, id, plan.fetch).await
+        sql::query_created_at_descending(connection, filter, key, id, plan.limit + 1).await
     } else {
-        sql::query_created_at_ascending(connection, filter, key, id, plan.fetch).await
+        sql::query_created_at_ascending(connection, filter, key, id, plan.limit + 1).await
     }
     .map_err(|error| AccessError::from_statement(&error, Constraints::NONE))?;
-    page::finish(&plan, rows, |row| (&row.created_at, &row.id))
+    let descending = plan.descending;
+    Ok(Page::new(rows, plan.limit, move |row| {
+        page::cursor(descending, &row.created_at, &row.id)
+    }))
 }
 
 /// Create one widget under the identity its claim row mints.

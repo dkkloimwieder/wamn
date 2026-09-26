@@ -133,7 +133,7 @@ pub struct CapabilityRow {
 /// version Rust std's `wasm32-wasip2` target links: `0.2.9`, measured on the
 /// `jsonata` node, the first guest that imports random (wamn-upl3.2). The host
 /// links it by semver. A toolchain bump moves this row.
-pub const CAPABILITY_REGISTRY: [CapabilityRow; 8] = [
+pub const CAPABILITY_REGISTRY: [CapabilityRow; 9] = [
     // Versions we author.
     CapabilityRow {
         package: "wamn:node",
@@ -143,6 +143,12 @@ pub const CAPABILITY_REGISTRY: [CapabilityRow; 8] = [
     CapabilityRow {
         package: "wamn:postgres",
         version: "0.1.0",
+        posture: Posture::Effect,
+    },
+    // 0.2.0 adds `statements.run-stream` and keeps every 0.1.0 call.
+    CapabilityRow {
+        package: "wamn:postgres",
+        version: "0.2.0",
         posture: Posture::Effect,
     },
     CapabilityRow {

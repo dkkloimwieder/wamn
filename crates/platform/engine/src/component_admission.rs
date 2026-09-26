@@ -10,8 +10,8 @@ use wamn_catalog::{
     ComponentEffectProvenance, normalize_component_fact,
 };
 use wash_runtime::engine::Engine;
-use wash_runtime::wasmtime::component::Component;
 use wash_runtime::wasmtime::component::types::ComponentItem;
+use wash_runtime::wasmtime::component::{Component, FutureReader, StreamReader};
 
 mod node_contract {
     wash_runtime::wasmtime::component::bindgen!({
@@ -141,96 +141,108 @@ pub fn validate_component_admission(
             .ok()
             .map(|()| entry)
     });
-    let validate_handler_signature =
-        |export: &str, item: ComponentItem, dependency: bool| -> anyhow::Result<()> {
-            let ComponentItem::ComponentInstance(instance) = item else {
-                anyhow::bail!("item is not an interface instance");
-            };
-            let Some(run) = instance.get_export(raw, "run") else {
-                anyhow::bail!("interface does not export run");
-            };
-            let ComponentItem::ComponentFunc(run) = run.ty else {
-                anyhow::bail!("interface member run is not a component function");
-            };
-            let adapter = instance.get_export(raw, "run-json");
-            let typed_input = run.params().nth(1).is_some_and(|(_, ty)| {
-                matches!(
-                    ty,
-                    wash_runtime::wasmtime::component::Type::List(_)
-                        | wash_runtime::wasmtime::component::Type::Record(_)
-                )
-            });
-            if adapter.is_some() || (dependency && typed_input) {
-                let adapter = if let Some(adapter) = adapter {
-                    let ComponentItem::ComponentFunc(adapter) = adapter.ty else {
-                        anyhow::bail!("run-json is not a component function");
-                    };
-                    anyhow::ensure!(adapter.async_(), "typed JSON adapters must be async");
-                    adapter
-                } else {
-                    dynamic_signature
-                        .clone()
-                        .context("typed import requires a checked dynamic entry")?
+    let validate_handler_signature = |export: &str,
+                                      item: ComponentItem,
+                                      dependency: bool|
+     -> anyhow::Result<()> {
+        let ComponentItem::ComponentInstance(instance) = item else {
+            anyhow::bail!("item is not an interface instance");
+        };
+        let Some(run) = instance.get_export(raw, "run") else {
+            anyhow::bail!("interface does not export run");
+        };
+        let ComponentItem::ComponentFunc(run) = run.ty else {
+            anyhow::bail!("interface member run is not a component function");
+        };
+        let adapter = instance.get_export(raw, "run-json");
+        if let Some(ComponentItem::ComponentFunc(adapter)) = adapter.as_ref().map(|item| &item.ty)
+                && adapter
+                    .typecheck::<
+                        (&node_types::NodeContext, &str),
+                        (Result<(StreamReader<String>, FutureReader<String>), node_types::NodeError>,),
+                    >(&component_type.instance_type())
+                    .is_ok()
+            {
+                return validate_streamed_query(adapter, &run);
+            }
+        let typed_input = run.params().nth(1).is_some_and(|(_, ty)| {
+            matches!(
+                ty,
+                wash_runtime::wasmtime::component::Type::List(_)
+                    | wash_runtime::wasmtime::component::Type::Record(_)
+            )
+        });
+        if adapter.is_some() || (dependency && typed_input) {
+            let adapter = if let Some(adapter) = adapter {
+                let ComponentItem::ComponentFunc(adapter) = adapter.ty else {
+                    anyhow::bail!("run-json is not a component function");
                 };
-                adapter.typecheck::<
+                anyhow::ensure!(adapter.async_(), "typed JSON adapters must be async");
+                adapter
+            } else {
+                dynamic_signature
+                    .clone()
+                    .context("typed import requires a checked dynamic entry")?
+            };
+            adapter.typecheck::<
                 (&node_types::NodeContext, &str),
                 (Result<node_types::Emission, node_types::NodeError>,),
             >(&component_type.instance_type())?;
-                anyhow::ensure!(run.async_(), "typed operations must be async");
-                let params: Vec<_> = run.params().collect();
-                let adapter_params: Vec<_> = adapter.params().collect();
-                anyhow::ensure!(
-                    params.len() == 2 && params[0].1 == adapter_params[0].1,
-                    "typed operation must accept node-context and one input"
-                );
-                anyhow::ensure!(
-                    matches!(
-                        params[1].1,
+            anyhow::ensure!(run.async_(), "typed operations must be async");
+            let params: Vec<_> = run.params().collect();
+            let adapter_params: Vec<_> = adapter.params().collect();
+            anyhow::ensure!(
+                params.len() == 2 && params[0].1 == adapter_params[0].1,
+                "typed operation must accept node-context and one input"
+            );
+            anyhow::ensure!(
+                matches!(
+                    params[1].1,
+                    wash_runtime::wasmtime::component::Type::List(_)
+                        | wash_runtime::wasmtime::component::Type::Record(_)
+                ),
+                "typed operation input must be an owned list or record"
+            );
+            anyhow::ensure!(
+                owned_operation_value(&params[1].1),
+                "typed operations cannot transfer store-owned resources"
+            );
+            let results: Vec<_> = run.results().collect();
+            let adapter_results: Vec<_> = adapter.results().collect();
+            let [wash_runtime::wasmtime::component::Type::Result(result)] = results.as_slice()
+            else {
+                anyhow::bail!("typed operation must return one result");
+            };
+            let wash_runtime::wasmtime::component::Type::Result(adapter_result) =
+                &adapter_results[0]
+            else {
+                unreachable!("the JSON adapter passed its result type check");
+            };
+            anyhow::ensure!(
+                result.err() == adapter_result.err(),
+                "typed operation must retain node-error"
+            );
+            anyhow::ensure!(
+                matches!(
+                    result.ok(),
+                    Some(
                         wash_runtime::wasmtime::component::Type::List(_)
                             | wash_runtime::wasmtime::component::Type::Record(_)
-                    ),
-                    "typed operation input must be an owned list or record"
-                );
-                anyhow::ensure!(
-                    owned_operation_value(&params[1].1),
-                    "typed operations cannot transfer store-owned resources"
-                );
-                let results: Vec<_> = run.results().collect();
-                let adapter_results: Vec<_> = adapter.results().collect();
-                let [wash_runtime::wasmtime::component::Type::Result(result)] = results.as_slice()
-                else {
-                    anyhow::bail!("typed operation must return one result");
-                };
-                let wash_runtime::wasmtime::component::Type::Result(adapter_result) =
-                    &adapter_results[0]
-                else {
-                    unreachable!("the JSON adapter passed its result type check");
-                };
-                anyhow::ensure!(
-                    result.err() == adapter_result.err(),
-                    "typed operation must retain node-error"
-                );
-                anyhow::ensure!(
-                    matches!(
-                        result.ok(),
-                        Some(
-                            wash_runtime::wasmtime::component::Type::List(_)
-                                | wash_runtime::wasmtime::component::Type::Record(_)
-                        )
-                    ) && result.ok().as_ref().is_some_and(owned_operation_value),
-                    "typed operation must return an owned list or record"
-                );
-                return Ok(());
-            }
-            if run.async_() && export == "wamn:node/handler@0.1.0" {
-                anyhow::bail!("run uses the async ABI without a typed contract and JSON adapter");
-            }
-            run.typecheck::<
+                    )
+                ) && result.ok().as_ref().is_some_and(owned_operation_value),
+                "typed operation must return an owned list or record"
+            );
+            return Ok(());
+        }
+        if run.async_() && export == "wamn:node/handler@0.1.0" {
+            anyhow::bail!("run uses the async ABI without a typed contract and JSON adapter");
+        }
+        run.typecheck::<
             (&node_types::NodeContext, &str),
             (Result<node_types::Emission, node_types::NodeError>,),
         >(&component_type.instance_type())
         .map_err(anyhow::Error::from)
-        };
+    };
     let embedded = embedded_components(component_bytes).map_err(|source| {
         ComponentAdmissionError::new(
             ComponentAdmissionErrorKind::InvalidComponentBytes,
@@ -389,6 +401,50 @@ pub fn validate_component_admission(
 }
 
 // Nested calls use separate stores. Only owned values can cross that boundary.
+/// A query yields its rows as a stream and one final record (`wamn-utci`).
+/// Its JSON adapter already typechecked as a stream of row JSON and a future
+/// of outcome JSON. The typed entry takes the request record and returns a
+/// stream of rows and a future of the final record, with the same node-error.
+fn validate_streamed_query(
+    adapter: &wash_runtime::wasmtime::component::types::ComponentFunc,
+    run: &wash_runtime::wasmtime::component::types::ComponentFunc,
+) -> anyhow::Result<()> {
+    use wash_runtime::wasmtime::component::Type;
+    anyhow::ensure!(
+        adapter.async_() && run.async_(),
+        "streamed queries must be async"
+    );
+    let params: Vec<_> = run.params().collect();
+    let adapter_params: Vec<_> = adapter.params().collect();
+    anyhow::ensure!(
+        params.len() == 2
+            && params[0].1 == adapter_params[0].1
+            && matches!(params[1].1, Type::Record(_))
+            && owned_operation_value(&params[1].1),
+        "a streamed query must accept node-context and one owned request record"
+    );
+    let results: Vec<_> = run.results().collect();
+    let adapter_results: Vec<_> = adapter.results().collect();
+    let ([Type::Result(result)], [Type::Result(adapter_result)]) =
+        (results.as_slice(), adapter_results.as_slice())
+    else {
+        anyhow::bail!("a streamed query must return one result");
+    };
+    anyhow::ensure!(
+        result.err() == adapter_result.err(),
+        "a streamed query must retain node-error"
+    );
+    let Some(Type::Tuple(returned)) = result.ok() else {
+        anyhow::bail!("a streamed query must return its rows and its final record");
+    };
+    let returned: Vec<_> = returned.types().collect();
+    anyhow::ensure!(
+        matches!(returned.as_slice(), [Type::Stream(_), Type::Future(_)]),
+        "a streamed query must return a stream of rows and a future of its final record"
+    );
+    Ok(())
+}
+
 fn owned_operation_value(ty: &wash_runtime::wasmtime::component::Type) -> bool {
     use wash_runtime::wasmtime::component::Type;
     match ty {

@@ -118,9 +118,12 @@ pub(crate) async fn query_created_at_ascending(
     cursor_key: Option<wamn_postgres_statements::TimestampTz>,
     cursor_id: Option<wamn_postgres_statements::Uuid>,
     limit: i64,
-) -> Result<Vec<LocationRow>, wamn_postgres_statements::StatementError> {
-    let rows = connection
-        .run(
+) -> Result<
+    wamn_postgres_statements::RowStream<LocationRow>,
+    wamn_postgres_statements::StatementError,
+> {
+    connection
+        .run_stream(
             QUERY_DIGEST,
             vec![
                 wamn_postgres_statements::into_sql_value(location_code_filter),
@@ -128,16 +131,16 @@ pub(crate) async fn query_created_at_ascending(
                 wamn_postgres_statements::into_sql_value(cursor_id),
                 wamn_postgres_statements::into_sql_value(limit),
             ],
+            |row| {
+                Ok(LocationRow {
+                    created_at: row.decode("created_at")?,
+                    id: row.decode("id")?,
+                    location_code: row.decode("location_code")?,
+                    row_version: row.decode("row_version")?,
+                })
+            },
         )
-        .await?;
-    wamn_postgres_statements::decode_all(QUERY_DIGEST, rows, |row| {
-        Ok(LocationRow {
-            created_at: row.decode("created_at")?,
-            id: row.decode("id")?,
-            location_code: row.decode("location_code")?,
-            row_version: row.decode("row_version")?,
-        })
-    })
+        .await
 }
 
 pub(crate) async fn create_claim(

@@ -19,6 +19,7 @@ use wamn_event_wire::Causation;
 use wamn_runtime::plugins::wamn_jetstream::{RouterTapPhase, RouterTapPreview, WamnJetstream};
 
 use crate::operation::OperationHost;
+use crate::query_read::{PAGE_MAXIMUM, limit_refusal};
 use crate::read_cache::{get_tag, list_tag, matches};
 use crate::route::{RouteCall, authorize_route, invoke_route};
 
@@ -334,7 +335,18 @@ impl RouterDeliveryBridge {
                 }
             }
         }
-        let settled = settle_route(invoke_route(&self.operations, call).await?)?;
+        let returned = if read.is_some_and(|read| read.kind == OperationKind::Query) {
+            match limit_refusal(call.payload, PAGE_MAXIMUM) {
+                Some(payload) => Ok(wamn_engine::operation::node_types::Emission {
+                    payload,
+                    port: None,
+                }),
+                None => invoke_route(&self.operations, call).await?,
+            }
+        } else {
+            invoke_route(&self.operations, call).await?
+        };
+        let settled = settle_route(returned)?;
         if !matches!(settled.outcome, DeliveryOutcome::Respond(_)) {
             return Ok(settled);
         }

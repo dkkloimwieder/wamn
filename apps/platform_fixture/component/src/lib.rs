@@ -17,8 +17,8 @@ wit_bindgen::generate!({
         package platform-fixture:component@0.1.0;
 
         world fixture {
-          import wamn:postgres/types@0.1.0;
-          import wamn:postgres/statements@0.1.0;
+          import wamn:postgres/types@0.2.0;
+          import wamn:postgres/statements@0.2.0;
           export platform-fixture:widget/archive@1.0.0;
           export platform-fixture:widget/create@1.0.0;
           export platform-fixture:widget/delete@1.0.0;
@@ -35,13 +35,16 @@ wit_bindgen::generate!({
     "#,
     path: [
         "../../../crates/execution/workflow/router/wit",
-        "../../../crates/platform/runtime/wit/deps/wamn-postgres",
+        "../../../crates/platform/runtime/wit/deps/wamn-postgres-0.2",
         "../generated/wit/deps/platform-fixture-widget",
         "../generated/wit/deps/platform-fixture-widget-maker",
         "../generated/wit/deps/platform-fixture-widget-tag",
     ],
     generate_all,
     async: true,
+    // Every query ends in the same `result<query-end, query-error>`, and
+    // wit-bindgen emits one future payload for structurally equal types.
+    merge_structurally_equal_types: true,
 });
 
 struct Component;

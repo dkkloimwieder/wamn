@@ -25,7 +25,7 @@ pub async fn get(
         .ok_or_else(|| AccessError::missing(AccessErrorKind::NotFound, "id", &id.0))
 }
 
-/// Query one bounded page.
+/// Query one read.
 ///
 /// # Errors
 ///
@@ -33,11 +33,13 @@ pub async fn get(
 pub async fn query(
     connection: &mut Connection,
     cursor: Option<&str>,
-    limit: Option<i64>,
+    limit: i64,
 ) -> Result<Page<InventoryMovementRow>, AccessError> {
-    let ((key, id), limit) = page::start(cursor, limit)?;
+    let (key, id) = page::start(cursor)?;
     let rows = sql::query_created_at_ascending(connection, key, id, limit + 1)
         .await
         .map_err(|e| error::from_statement(&e))?;
-    page::finish(rows, limit, |row| (&row.created_at, &row.id))
+    Ok(Page::new(rows, limit, |row| {
+        page::created_at_cursor(&row.created_at, &row.id)
+    }))
 }

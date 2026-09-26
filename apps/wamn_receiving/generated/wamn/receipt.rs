@@ -46,26 +46,27 @@ pub(crate) async fn query_created_at_ascending(
     cursor_key: Option<wamn_postgres_statements::TimestampTz>,
     cursor_id: Option<wamn_postgres_statements::Uuid>,
     limit: i64,
-) -> Result<Vec<ReceiptRow>, wamn_postgres_statements::StatementError> {
-    let rows = connection
-        .run(
+) -> Result<wamn_postgres_statements::RowStream<ReceiptRow>, wamn_postgres_statements::StatementError>
+{
+    connection
+        .run_stream(
             QUERY_DIGEST,
             vec![
                 wamn_postgres_statements::into_sql_value(cursor_key),
                 wamn_postgres_statements::into_sql_value(cursor_id),
                 wamn_postgres_statements::into_sql_value(limit),
             ],
+            |row| {
+                Ok(ReceiptRow {
+                    created_at: row.decode("created_at")?,
+                    created_by: row.decode("created_by")?,
+                    id: row.decode("id")?,
+                    idempotency_key: row.decode("idempotency_key")?,
+                    occurred_at: row.decode("occurred_at")?,
+                    purchase_order_id: row.decode("purchase_order_id")?,
+                    receipt_reference: row.decode("receipt_reference")?,
+                })
+            },
         )
-        .await?;
-    wamn_postgres_statements::decode_all(QUERY_DIGEST, rows, |row| {
-        Ok(ReceiptRow {
-            created_at: row.decode("created_at")?,
-            created_by: row.decode("created_by")?,
-            id: row.decode("id")?,
-            idempotency_key: row.decode("idempotency_key")?,
-            occurred_at: row.decode("occurred_at")?,
-            purchase_order_id: row.decode("purchase_order_id")?,
-            receipt_reference: row.decode("receipt_reference")?,
-        })
-    })
+        .await
 }
