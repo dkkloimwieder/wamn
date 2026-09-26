@@ -1,6 +1,6 @@
 # Google Cloud deployment
 
-This plan deploys the platform and its first application to Google Cloud for the first time.
+This plan is Epic 23. It deploys the platform and its first application to Google Cloud for the first time.
 Beads epic `wamn-ghx2` holds the work, with one issue for each step of section 5.
 The owner reviewed the plan on 2026-09-25, and each step waits for its own start.
 The rules of the web host come from [web deployment](web-deployment.md).
