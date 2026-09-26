@@ -11,7 +11,7 @@ use super::{
 };
 use crate::client_fields::input_fields_of;
 use crate::client_ir::FieldIr;
-use crate::manifest::OperationErrorDetailKey;
+use crate::manifest::{FilterMatch, OperationErrorDetailKey};
 
 /// How many items one generated CRUD call carries. The codec refuses any
 /// other count, and the route input schema states the same bounds.
@@ -121,6 +121,20 @@ fn emit_crud_interface(
         "interface {name} {{\n  use wamn:node/types@0.1.0.{{{node_types}}};\n"
     )
     .expect("writing to a String cannot fail");
+    // A range filter's value is a record of its own, which the request names.
+    if action == CrudAction::Query {
+        for filter in &operation.filters {
+            if filter.match_mode == FilterMatch::Range {
+                let ty = wit_type(model_column(table, &filter.field).column_type());
+                writeln!(
+                    source,
+                    "  record {}-range {{\n    min: option<{ty}>,\n    max: option<{ty}>,\n  }}\n",
+                    wit_name(&filter.field)
+                )
+                .expect("writing to a String cannot fail");
+            }
+        }
+    }
     writeln!(source, "  record {name}-request {{").expect("writing to a String cannot fail");
     match action {
         CrudAction::Get | CrudAction::Delete => source.push_str("    id: string,\n"),
@@ -130,14 +144,17 @@ fn emit_crud_interface(
         }
         CrudAction::Query => {
             for filter in &operation.filters {
-                let column = model_column(table, &filter.field);
-                writeln!(
-                    source,
-                    "    {}: option<list<{}>>,",
-                    wit_name(&filter.field),
-                    wit_type(column.column_type())
-                )
-                .expect("writing to a String cannot fail");
+                let field = wit_name(&filter.field);
+                let value = match filter.match_mode {
+                    FilterMatch::Range => format!("{field}-range"),
+                    FilterMatch::IsNull => "bool".to_owned(),
+                    _ => format!(
+                        "list<{}>",
+                        wit_type(model_column(table, &filter.field).column_type())
+                    ),
+                };
+                writeln!(source, "    {field}: option<{value}>,")
+                    .expect("writing to a String cannot fail");
             }
             if operation.sort.is_some() {
                 source.push_str(
@@ -992,17 +1009,28 @@ fn emit_query_json_types(source: &mut String, table: &Table, operation: &Operati
         );
     }
     for filter in &operation.filters {
-        let column = model_column(table, &filter.field);
+        let ty = codec_rust_type(model_column(table, &filter.field).column_type(), false);
+        let value = match filter.match_mode {
+            FilterMatch::Range => format!("JsonRange<{ty}>"),
+            FilterMatch::IsNull => "bool".to_owned(),
+            _ => format!("Vec<{ty}>"),
+        };
         writeln!(
             source,
-            "    #[serde(default)] {}: Option<Vec<{}>> ,",
+            "    #[serde(default)] {}: Option<{value}> ,",
             rust_identifier(&filter.field).expect("validated filter has a Rust name"),
-            codec_rust_type(column.column_type(), false)
         )
         .expect("writing to a String cannot fail");
     }
     if !operation.filters.is_empty() {
         source.push_str("}\n\n");
+    }
+    if operation
+        .filters
+        .iter()
+        .any(|filter| filter.match_mode == FilterMatch::Range)
+    {
+        source.push_str("#[derive(Deserialize)]\n#[serde(deny_unknown_fields)]\nstruct JsonRange<T> {\n    #[serde(default)] min: Option<T>,\n    #[serde(default)] max: Option<T>,\n}\n\n");
     }
     if operation.sort.is_some() {
         source.push_str("#[derive(Deserialize)]\n#[serde(deny_unknown_fields)]\nstruct JsonSort { field: String, direction: String }\n\n");
@@ -1071,6 +1099,15 @@ fn emit_crud_request_assignments(
                         ".map(|values| values.into_iter().map(|value| value.to_string()).collect())"
                     }
                     _ => "",
+                };
+                // A range's bounds go into the request's record of that range.
+                let conversion = match filter.match_mode {
+                    FilterMatch::Range => format!(
+                        ".map(|range| contract::{}Range {{ min: range.min, max: range.max }})",
+                        rust_type_identifier(&filter.field)
+                    ),
+                    FilterMatch::IsNull => String::new(),
+                    _ => conversion.to_owned(),
                 };
                 writeln!(source, "            {field}: request.filter.as_mut().and_then(|filter| filter.{field}.take()){conversion},")
                     .expect("writing to a String cannot fail");

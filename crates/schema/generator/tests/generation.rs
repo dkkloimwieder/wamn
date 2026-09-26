@@ -1039,7 +1039,144 @@ fn a_contains_filter_matches_a_part_of_a_text_field() {
         assert_eq!(error.kind(), GenerateErrorKind::InvalidOperation, "{field}");
         assert!(
             error.to_string().contains(&format!(
-                "gadget.query filter {field} matches by contains, which only a text field with no declared values takes"
+                "gadget.query filter {field} matches by contains, which only a text field with no declared values takes it"
+            )),
+            "{error}"
+        );
+    }
+}
+
+/// A filter can match by prefix, by a range of two inclusive bounds, or by
+/// whether its field is empty (wamn-3nsf.1). The contract states each mode and
+/// its binding, the route admits each value's shape, and the generated SQL
+/// matches it. Each mode refuses a field that cannot hold it.
+#[test]
+fn prefix_range_and_is_null_filters_match_their_fields() {
+    let ir = catalog_with_columns(&[
+        ("note", ColumnType::Text, true),
+        ("weight", ColumnType::Numeric, false),
+    ]);
+    let mut modes = manifest();
+    let query = &mut modes["models"]["gadget"]["operations"]["query"];
+    query.as_object_mut().unwrap().remove("authored_sql");
+    query["filters"] = json!([
+        {"field": "part_code", "match": "prefix"},
+        {"field": "created_at", "match": "range"},
+        {"field": "weight", "match": "range"},
+        {"field": "note", "match": "is_null"}
+    ]);
+    let package = run(&ir, &modes, &[]).unwrap();
+    let input = artifact_json(&package, "generated/contracts/gadget/query.input.json");
+    assert_eq!(
+        input["filters"],
+        json!([
+            {"field": "part_code", "binding": "json_array", "type": "text", "match": "prefix"},
+            {"field": "created_at", "binding": "json_range", "type": "timestamptz", "match": "range"},
+            {"field": "weight", "binding": "json_range", "type": "numeric", "match": "range"},
+            {"field": "note", "binding": "json_boolean", "type": "text", "match": "is_null"}
+        ])
+    );
+    let route = artifact_json(&package, "generated/routes/gadget/query.json");
+    let filter = &route["items"]["properties"]["filter"]["properties"];
+    assert_eq!(
+        filter["part_code"],
+        json!({"type": "array", "items": {"type": "string"}})
+    );
+    assert_eq!(
+        filter["created_at"],
+        json!({
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+                "min": {"type": "string", "format": "date-time"},
+                "max": {"type": "string", "format": "date-time"},
+            },
+        })
+    );
+    assert_eq!(filter["note"], json!({"type": "boolean"}));
+    let wit = std::str::from_utf8(
+        package
+            .file("generated/wit/deps/platform-gadget-gadget/package.wit")
+            .unwrap()
+            .bytes(),
+    )
+    .unwrap();
+    assert!(
+        wit.contains(
+            "  record created-at-range {\n    min: option<string>,\n    max: option<string>,\n  }\n"
+        ),
+        "{wit}"
+    );
+    assert!(
+        wit.contains("    created-at: option<created-at-range>,\n"),
+        "{wit}"
+    );
+    assert!(
+        wit.contains("    part-code: option<list<string>>,\n"),
+        "{wit}"
+    );
+    assert!(wit.contains("    note: option<bool>,\n"), "{wit}");
+    let sql = std::str::from_utf8(
+        package
+            .file("generated/sql/gadget/query_created_at_ascending.sql")
+            .unwrap()
+            .bytes(),
+    )
+    .unwrap();
+    for predicate in [
+        concat!(
+            "    ($1::jsonb IS NULL OR EXISTS (\n",
+            "        SELECT 1\n",
+            "        FROM jsonb_array_elements_text($1::jsonb) AS filter(value)\n",
+            "        WHERE starts_with(model.part_code, filter.value)\n",
+            "    ))",
+        ),
+        concat!(
+            "    ($2::jsonb IS NULL OR (\n",
+            "        ($2::jsonb->>'min' IS NULL OR model.created_at >= ($2::jsonb->>'min')::timestamptz)\n",
+            "        AND ($2::jsonb->>'max' IS NULL OR model.created_at <= ($2::jsonb->>'max')::timestamptz)\n",
+            "    ))",
+        ),
+        "($3::jsonb->>'min' IS NULL OR model.weight >= ($3::jsonb->>'min')::numeric)",
+        "    ($4::jsonb IS NULL OR (model.note IS NULL) = ($4::jsonb)::boolean)",
+        "    ($5::timestamptz IS NULL OR model.created_at > $5::timestamptz",
+    ] {
+        assert!(sql.contains(predicate), "{predicate}\n{sql}");
+    }
+
+    // A uuid holds no prefix, text has no order a range reads, and a column
+    // that is never empty takes no is-null filter.
+    for (field, mode, which) in [
+        (
+            "stock_id",
+            "prefix",
+            "only a text field with no declared values takes it",
+        ),
+        (
+            "status",
+            "prefix",
+            "only a text field with no declared values takes it",
+        ),
+        (
+            "part_code",
+            "range",
+            "only an int32, float64, numeric or timestamptz field takes it",
+        ),
+        (
+            "row_version",
+            "range",
+            "only an int32, float64, numeric or timestamptz field takes it",
+        ),
+        ("part_code", "is_null", "only a nullable field takes it"),
+    ] {
+        let mut refused = modes.clone();
+        refused["models"]["gadget"]["operations"]["query"]["filters"] =
+            json!([{"field": field, "match": mode}]);
+        let error = run(&ir, &refused, &[]).unwrap_err();
+        assert_eq!(error.kind(), GenerateErrorKind::InvalidOperation, "{field}");
+        assert!(
+            error.to_string().contains(&format!(
+                "gadget.query filter {field} matches by {mode}, which {which}"
             )),
             "{error}"
         );

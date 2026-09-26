@@ -877,21 +877,39 @@ fn validate_query(
     let mut filter_fields = BTreeSet::new();
     for filter in &operation.filters {
         validate_field(table, model_name, &filter.field)?;
-        // A value domain is matched whole, and only text holds a part.
-        if filter.match_mode == FilterMatch::Contains
-            && (table
-                .columns()
-                .iter()
-                .find(|column| column.name() == filter.field)
-                .map(Column::column_type)
-                != Some(ColumnType::Text)
-                || model.enum_fields.contains_key(&filter.field))
-        {
+        let column = table
+            .columns()
+            .iter()
+            .find(|column| column.name() == filter.field)
+            .expect("the filter field was validated");
+        // A value domain is matched whole, and only text holds a part. A range
+        // orders numbers and times, and only a nullable column is ever empty.
+        let takes = match filter.match_mode {
+            FilterMatch::Exact => None,
+            FilterMatch::Contains | FilterMatch::Prefix => Some((
+                column.column_type() == ColumnType::Text
+                    && !model.enum_fields.contains_key(&filter.field),
+                "only a text field with no declared values takes",
+            )),
+            FilterMatch::Range => Some((
+                matches!(
+                    column.column_type(),
+                    ColumnType::Int32
+                        | ColumnType::Float64
+                        | ColumnType::Numeric
+                        | ColumnType::Timestamptz
+                ),
+                "only an int32, float64, numeric or timestamptz field takes",
+            )),
+            FilterMatch::IsNull => Some((column.nullable(), "only a nullable field takes")),
+        };
+        if let Some((false, which)) = takes {
             return Err(GenerateError::new(
                 GenerateErrorKind::InvalidOperation,
                 format!(
-                    "{context} filter {} matches by contains, which only a text field with no declared values takes",
-                    filter.field
+                    "{context} filter {} matches by {}, which {which} it",
+                    filter.field,
+                    filter.match_mode.as_str()
                 ),
             ));
         }

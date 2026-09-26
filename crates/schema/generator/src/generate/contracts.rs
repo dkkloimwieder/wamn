@@ -1115,7 +1115,7 @@ fn input_contract(
                     let column = column(table, &filter.field).expect("validated filter column");
                     let mut declared = json!({
                         "field": filter.field,
-                        "binding": "json_array",
+                        "binding": filter.match_mode.binding(),
                         "type": column.column_type().as_str(),
                     });
                     let members = declared.as_object_mut().expect("a filter object");

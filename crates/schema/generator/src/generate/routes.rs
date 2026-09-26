@@ -53,7 +53,18 @@ pub(super) fn route_input_schema(contract: &Value) -> Value {
         if let Some(values) = declared.get("values") {
             value["enum"] = values.clone();
         }
-        filter.insert(name, json!({"type": "array", "items": value}), false);
+        // The binding states the shape of the value: a list, a range of two
+        // optional bounds, or whether the field is empty.
+        let schema = match declared.get("binding").and_then(Value::as_str) {
+            Some("json_range") => json!({
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {"min": value, "max": value},
+            }),
+            Some("json_boolean") => json!({"type": "boolean"}),
+            _ => json!({"type": "array", "items": value}),
+        };
+        filter.insert(name, schema, false);
     }
     if !filter.properties.is_empty() {
         item.insert("filter", filter.into_value(), false);
