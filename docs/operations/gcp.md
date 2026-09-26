@@ -87,7 +87,7 @@ Create the budget. Its `--billing-project` keeps the call on `wamn-dev`.
 
 ```bash
 gcloud billing budgets create --billing-account=01E392-13CC0D-277806 \
-  --billing-project=wamn-dev --display-name="wamn-dev" --budget-amount=50USD \
+  --billing-project=wamn-dev --display-name="wamn-dev" --budget-amount=150USD \
   --filter-projects=projects/wamn-dev \
   --threshold-rule=percent=0.5 --threshold-rule=percent=0.9 --threshold-rule=percent=1.0 \
   --notifications-rule-pubsub-topic=projects/wamn-dev/topics/wamn-guard \
