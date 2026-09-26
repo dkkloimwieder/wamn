@@ -38,7 +38,7 @@ function table(
     <DataTable
       name="rows"
       columns={COLUMNS}
-      rowId="id"
+      rowId={["id"]}
       rows={ROWS}
       fullyRead={fullyRead}
       busy={false}

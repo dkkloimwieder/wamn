@@ -63,7 +63,7 @@ function table(shape: Shape = {}) {
     <DataTable
       name="regions"
       columns={COLUMNS}
-      rowId="id"
+      rowId={["id"]}
       rows={shape.rows?.() ?? ROWS}
       fullyRead={shape.fullyRead?.() ?? true}
       busy={false}

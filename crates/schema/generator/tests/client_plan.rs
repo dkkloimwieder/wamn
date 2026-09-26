@@ -902,8 +902,8 @@ fn a_generated_read_and_an_authored_read_populate_by_the_same_rule() {
             .lists
             .as_ref()
             .unwrap_or_else(|| panic!("{name} states what it lists"));
-        assert_eq!(lists.model, "widget", "{name}");
-        assert_eq!(lists.key_field, "id", "{name}");
+        assert_eq!(lists.model.as_deref(), Some("widget"), "{name}");
+        assert_eq!(lists.key_field, ["id"], "{name}");
     }
     // The generated query authors no display field, so the plan defaults it,
     // and the authored list states one. Both reach an emitter the same way.

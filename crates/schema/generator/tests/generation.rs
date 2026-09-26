@@ -2563,8 +2563,8 @@ fn a_logged_relation_keeps_the_schema_description_and_grants_its_history_insert(
             "schema": "inventory",
             "table": "gadget_history",
             "all_fields": [
-                "after", "before", "changed_at", "changed_by", "kind", "operation", "position",
-                "row_key", "transaction_id"
+                "after", "before", "changed_at", "changed_by", "id", "kind", "operation",
+                "position", "row_key", "transaction_id"
             ],
             "select_fields": [],
             "insert_fields": [

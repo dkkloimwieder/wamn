@@ -453,7 +453,7 @@ export function PalletQueryTable(props: PalletQueryTableProps) {
 /** The table definition of `wamn-wms:pallet/query@1.0.0`. */
 export const PALLET_QUERY_TABLE = {
   read: "query",
-  rowId: "id",
+  rowId: ["id"],
   pageMaximum: 100,
   scopeFilters: ["locationId", "palletCode", "status"],
   sortFields: [{ field: "createdAt", wire: "created_at" }, { field: "locationId", wire: "location_id" }, { field: "palletCode", wire: "pallet_code" }, { field: "updatedAt", wire: "updated_at" }],

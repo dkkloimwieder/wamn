@@ -40,13 +40,17 @@ pub const NO_LOG_RETENTION: &str = "none";
 /// The identity column that orders the entries of one row.
 pub const POSITION_COLUMN: &str = "position";
 
+/// The column that names one entry. PostgreSQL generates a random UUID for it.
+pub const ENTRY_ID_COLUMN: &str = "id";
+
 /// The history table columns in creation order, each with its schema column type.
 ///
 /// The history table of a package relation has no `tenant_id` column. Every
 /// column is `NOT NULL`. The log trigger writes every column except
-/// [`POSITION_COLUMN`], which PostgreSQL generates.
-pub const HISTORY_COLUMNS: [(&str, &str); 9] = [
+/// [`POSITION_COLUMN`] and [`ENTRY_ID_COLUMN`], which PostgreSQL generates.
+pub const HISTORY_COLUMNS: [(&str, &str); 10] = [
     (POSITION_COLUMN, "int64"),
+    (ENTRY_ID_COLUMN, "uuid"),
     ("row_key", "json"),
     ("kind", "text"),
     ("operation", "text"),

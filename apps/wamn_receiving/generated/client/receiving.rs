@@ -43,6 +43,12 @@ pub const RECEIVING_FIELDS: &[FieldDescriptor] = &[
         values: &[],
     },
     FieldDescriptor {
+        path: "id",
+        type_name: "uuid",
+        nullable: false,
+        values: &[],
+    },
+    FieldDescriptor {
         path: "item_id",
         type_name: "uuid",
         nullable: true,
@@ -160,6 +166,8 @@ pub struct ReceivingLoadPurchaseOrderHistoryResult {
     pub current: String,
     /// `text`
     pub cursor: String,
+    /// `uuid`
+    pub id: uuid::Uuid,
     /// `text`
     pub kind: String,
     /// `text`
@@ -223,6 +231,12 @@ pub const RECEIVING_LOAD_PURCHASE_ORDER_HISTORY_RESULT: &[FieldDescriptor] = &[
     FieldDescriptor {
         path: "cursor",
         type_name: "text",
+        nullable: false,
+        values: &[],
+    },
+    FieldDescriptor {
+        path: "id",
+        type_name: "uuid",
         nullable: false,
         values: &[],
     },
@@ -346,6 +360,18 @@ pub const RECEIVING_LOAD_PURCHASE_ORDER_HISTORY_RESULT_SCHEMA:
         field: FieldDescriptor {
             path: "cursor",
             type_name: "text",
+            nullable: false,
+            values: &[],
+        },
+        required: true,
+        minimum: None,
+        maximum: None,
+        children: &[],
+    },
+    wamn_client::descriptor::FieldSchema {
+        field: FieldDescriptor {
+            path: "id",
+            type_name: "uuid",
             nullable: false,
             values: &[],
         },

@@ -38,7 +38,7 @@ function table(onRowChange: (row: Row) => void, onReload: () => void) {
     <DataTable
       name="rows"
       columns={COLUMNS}
-      rowId="id"
+      rowId={["id"]}
       rows={ROWS}
       fullyRead={true}
       busy={false}

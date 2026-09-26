@@ -778,8 +778,8 @@ fn an_input_states_the_record_it_names_and_a_read_states_what_it_lists() {
 
     // What a list serves, authored and defaulted.
     let widget_list = operation("list").lists.as_ref().expect("the widget list");
-    assert_eq!(widget_list.model, "widget");
-    assert_eq!(widget_list.key_field, "id");
+    assert_eq!(widget_list.model.as_deref(), Some("widget"));
+    assert_eq!(widget_list.key_field, ["id"]);
     assert_eq!(widget_list.display_field.as_deref(), Some("code"));
     let maker = |name: &str| {
         ir.models
@@ -794,8 +794,8 @@ fn an_input_states_the_record_it_names_and_a_read_states_what_it_lists() {
     };
     let maker_query = maker("query");
     assert_eq!(
-        maker_query.lists.as_ref().expect("a list").model,
-        "widget_maker",
+        maker_query.lists.as_ref().expect("a list").model.as_deref(),
+        Some("widget_maker"),
         "a generated query states what it lists with no authoring"
     );
     assert_eq!(
@@ -803,10 +803,13 @@ fn an_input_states_the_record_it_names_and_a_read_states_what_it_lists() {
         None,
         "an absent display field takes the plan's default"
     );
+    let maker_list = maker("list")
+        .lists
+        .expect("a table read states its row key");
     assert_eq!(
-        maker("list").lists,
-        None,
-        "a read that offers no rows to a selector declares no list"
+        (maker_list.model, maker_list.key_field),
+        (None, vec!["id".to_owned()]),
+        "a read that offers no rows to a selector states its key and no model"
     );
     assert_eq!(operation("get").lists, None, "a record read lists nothing");
 }

@@ -37,6 +37,7 @@ const PURCHASE_ORDER_HISTORY_COLUMNS: [&str; 9] = [
 /// back the cursor of the last entry it read.
 #[derive(Debug)]
 pub struct PurchaseOrderHistoryValue {
+    pub id: Uuid,
     pub cursor: String,
     pub kind: String,
     pub operation: String,
@@ -59,6 +60,7 @@ fn history_value(
     };
     let record = parse_history_id(id)?;
     Ok(PurchaseOrderHistoryValue {
+        id: row.id,
         cursor: encode_cursor(
             HISTORY_CURSOR_FIELD,
             HISTORY_CURSOR_DIRECTION,
@@ -220,6 +222,7 @@ mod tests {
     fn history_rows_keep_declared_columns_and_carry_an_opaque_cursor() {
         let record = Uuid("00000000-0000-0000-0000-000000000001".to_owned());
         let row = |current: Option<&str>| history_sql::LoadPurchaseOrderHistoryRow {
+            id: Uuid("00000000-0000-0000-0000-00000000000e".to_owned()),
             position: 2,
             kind: "update".to_owned(),
             operation: "client-acme-receiving:purchase-order/update@3.0.0".to_owned(),
@@ -236,6 +239,7 @@ mod tests {
             &record,
         )
         .unwrap();
+        assert_eq!(value.id.0, "00000000-0000-0000-0000-00000000000e");
         assert_eq!(value.kind, "update");
         assert_eq!(
             value.operation,

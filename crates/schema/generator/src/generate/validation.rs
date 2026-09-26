@@ -135,6 +135,63 @@ pub(super) fn validate(
         )?;
         validate_custom_claim(input.catalog, manifest, operation_name, operation)?;
         validate_count_text(operation_name, operation)?;
+        validate_lists(manifest, operation_name, operation)?;
+    }
+    Ok(())
+}
+
+/// Refuse a read that a table shows when it states no row key, and a `lists`
+/// whose key or model the package does not declare.
+///
+/// A table names each row by its key: a load refuses a key it reads twice, and
+/// an edit or a child table finds its row by it. A row position is no key,
+/// because the same row moves when the list changes.
+fn validate_lists(
+    manifest: &PackageManifest,
+    operation_name: &str,
+    operation: &crate::CustomOperationDeclaration,
+) -> Result<(), GenerateError> {
+    let refuse = |message: String| {
+        Err(GenerateError::new(
+            GenerateErrorKind::InvalidOperation,
+            message,
+        ))
+    };
+    let table = operation.kind == crate::CustomOperationKind::Projection
+        && operation.result.as_ref().is_some_and(|result| {
+            matches!(result.class, ResultClass::BoundedList | ResultClass::Page)
+        });
+    let Some(lists) = &operation.lists else {
+        if table {
+            return refuse(format!(
+                "{operation_name} answers a list of rows and states no `lists` key. \
+                 State the result fields that name one row."
+            ));
+        }
+        return Ok(());
+    };
+    if let Some(model) = &lists.model
+        && !manifest.models.contains_key(model)
+    {
+        return refuse(format!(
+            "{operation_name} lists records of {model}, which the package does not declare"
+        ));
+    }
+    let fields = operation
+        .result
+        .as_ref()
+        .map_or(&[][..], |result| &result.fields[..]);
+    if lists.key_field.is_empty() {
+        return refuse(format!(
+            "{operation_name} states a `lists` key with no field"
+        ));
+    }
+    for key in &lists.key_field {
+        if !fields.iter().any(|field| &field.path == key) {
+            return refuse(format!(
+                "{operation_name} keys its rows on {key}, which is not a field of its result"
+            ));
+        }
     }
     Ok(())
 }

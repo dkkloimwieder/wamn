@@ -106,7 +106,7 @@ export function LocationListTable(props: LocationListTableProps) {
 /** The table definition of `wamn-receiving:location/list@1.0.0`. */
 export const LOCATION_LIST_TABLE = {
   read: "list",
-  rowId: "id",
+  rowId: ["id"],
   pageMaximum: null,
   scopeFilters: [],
   sortFields: [],

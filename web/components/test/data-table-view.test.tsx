@@ -69,7 +69,7 @@ function table(
     <DataTable
       name="lots"
       columns={COLUMNS}
-      rowId="id"
+      rowId={["id"]}
       rows={ROWS}
       fullyRead={shape.fullyRead?.() ?? true}
       busy={false}

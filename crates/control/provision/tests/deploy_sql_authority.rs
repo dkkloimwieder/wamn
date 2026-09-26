@@ -1444,13 +1444,13 @@ fn the_history_table_function_creates_one_fixed_shape_on_postgres() {
                  before:jsonb:t:, after:jsonb:t:";
     assert_eq!(
         columns("logged_history"),
-        format!("position:bigint:t:a, {fixed}"),
+        format!("position:bigint:t:a, id:uuid:t:, {fixed}"),
         "a history table without the tenant flag must have the fixed shape and no tenant_id"
     );
     assert_eq!(
         columns("tenanted_history"),
-        format!("position:bigint:t:a, tenant_id:text:t:, {fixed}"),
-        "the tenant flag must add tenant_id NOT NULL after position"
+        format!("position:bigint:t:a, id:uuid:t:, tenant_id:text:t:, {fixed}"),
+        "the tenant flag must add tenant_id NOT NULL after the entry id"
     );
 
     let objects = psql(
@@ -1470,7 +1470,7 @@ fn the_history_table_function_creates_one_fixed_shape_on_postgres() {
         objects,
         "logged_history_after_not_null:n, logged_history_before_not_null:n, \
          logged_history_changed_at_not_null:n, logged_history_changed_by_not_null:n, \
-         logged_history_kind_check:c, logged_history_kind_not_null:n, \
+         logged_history_id_not_null:n, logged_history_kind_check:c, logged_history_kind_not_null:n, \
          logged_history_operation_check:c, logged_history_operation_not_null:n, \
          logged_history_pkey:p, logged_history_position_not_null:n, \
          logged_history_row_key_not_null:n, logged_history_transaction_id_not_null:n \

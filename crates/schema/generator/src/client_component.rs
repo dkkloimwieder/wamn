@@ -888,9 +888,9 @@ fn emit_definition_table(
 /// record read shows. The definition states no mode and no cap, because no
 /// manifest declares either.
 ///
-/// A read that states no `lists` names no key, so its row id is null and the
-/// table numbers its rows by position. A read that declares no page limit has
-/// a null page maximum, and a load reads what the release answers.
+/// The row id is the list of fields that `lists` keys the rows on. A read that
+/// declares no page limit has a null page maximum, and a load reads what the
+/// release answers.
 ///
 /// It also names the update a cell edits through and the columns it writes,
 /// each operation a row opens with whether it takes many rows, and each child
@@ -901,7 +901,16 @@ fn write_table_definition(
     plan: &ClientPlan<'_>,
 ) -> Result<(), ClientComponentError> {
     let operation = screen.contract;
-    let lists = operation.lists.as_ref();
+    // Generation refuses a table read that states no row key.
+    let lists = operation.lists.as_ref().ok_or_else(|| {
+        ClientComponentError::new(
+            ClientComponentErrorKind::UnwrittenRole,
+            format!(
+                "{} is a table read with no `lists` key",
+                operation.operation
+            ),
+        )
+    })?;
     let paging = screen.paging.as_ref();
     let quote = |text: &str| serde_json::Value::String(text.to_owned()).to_string();
     let read = crate::client_ts::function_name(&operation.name).map_err(|error| {
@@ -917,11 +926,12 @@ fn write_table_definition(
     )
     .expect("write");
     writeln!(source, "  read: {},", quote(&read)).expect("write");
-    let row_id = match lists {
-        Some(lists) => quote(&column_member(&lists.key_field, &operation.operation)?),
-        None => "null".to_owned(),
-    };
-    writeln!(source, "  rowId: {row_id},").expect("write");
+    let row_id = lists
+        .key_field
+        .iter()
+        .map(|field| column_member(field, &operation.operation).map(|member| quote(&member)))
+        .collect::<Result<Vec<_>, _>>()?;
+    writeln!(source, "  rowId: [{}],", row_id.join(", ")).expect("write");
     let maximum = paging
         .and_then(|paging| paging.limit)
         .map_or_else(|| "null".to_owned(), |limit| limit.maximum.to_string());
@@ -971,7 +981,7 @@ fn write_table_definition(
             .iter()
             .find(|resolved| resolved.column == column.path);
         // The role decides the column's default aggregate.
-        let role = if lists.is_some_and(|lists| column.path == lists.key_field) {
+        let role = if lists.key_field.contains(&column.path) {
             "key"
         } else if resolved.is_some() || column.references.is_some() {
             "reference"

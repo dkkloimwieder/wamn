@@ -40,6 +40,8 @@ export interface ReceivingLoadPurchaseOrderHistoryRow {
   readonly current: string;
   /** `text` */
   readonly cursor: string;
+  /** `uuid` */
+  readonly id: Uuid;
   /** `text` */
   readonly kind: "delete" | "insert" | "update";
   /** `text` */
@@ -63,6 +65,7 @@ export const RECEIVING_LOAD_PURCHASE_ORDER_HISTORY_RESULT_FIELDS: FieldMap = {
       "changed_by": "changedBy",
       "current": "current",
       "cursor": "cursor",
+      "id": "id",
       "kind": "kind",
       "operation": "operation",
     },

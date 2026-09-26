@@ -208,7 +208,7 @@ export function PalletQuantityQueryTable(props: PalletQuantityQueryTableProps) {
 /** The table definition of `wamn-wms:pallet-quantity/query@1.0.0`. */
 export const PALLET_QUANTITY_QUERY_TABLE = {
   read: "query",
-  rowId: "id",
+  rowId: ["id"],
   pageMaximum: 100,
   scopeFilters: [],
   sortFields: [],

@@ -325,6 +325,7 @@ It writes with the authority of the writer, so the `current_user` tenant floor a
 An entry has these columns:
 
 - `position`: the per-row position, a `bigint` identity value that the function allocates under the row lock. Positions rise for each row, and gaps are allowed.
+- `id`: the id of the entry, a random `uuid` that PostgreSQL generates. A read that shows entries in a table keys its rows on it.
 - `tenant_id`: the tenant of the row, only in a history table under a tenant floor.
 - `row_key`: a JSONB object of the primary key columns.
 - `kind`: `insert`, `update`, or `delete`.

@@ -55,7 +55,7 @@ function loaded(cap: number, ids: string[], cursor: string | null) {
 describe("the table definition of the widget query", () => {
   it("names the read, its row id, its page maximum, its scope and its columns", () => {
     expect(definition.read).toBe("query");
-    expect(definition.rowId).toBe("id");
+    expect(definition.rowId).toEqual(["id"]);
     expect(definition.pageMaximum).toBe(100);
     expect(definition.scopeFilters).toEqual(["code"]);
     expect(definition.sortFields).toEqual([{ field: "createdAt", wire: "created_at" }]);

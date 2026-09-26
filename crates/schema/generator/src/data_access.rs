@@ -6,7 +6,7 @@ use std::fmt::Write as _;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 use wamn_execution_contract::canonical_json_bytes;
-use wamn_record_history::{HISTORY_COLUMNS, POSITION_COLUMN};
+use wamn_record_history::{ENTRY_ID_COLUMN, HISTORY_COLUMNS, POSITION_COLUMN};
 use wamn_schema_introspection::ir::CatalogIr;
 
 use crate::generate::{CLAIM_COMMAND_COLUMN, CLAIM_KEY_COLUMN, logged_history_tables};
@@ -759,7 +759,7 @@ fn derive_data_access_overlay_for_manifest(
             HISTORY_COLUMNS
                 .iter()
                 .map(|(column, _)| *column)
-                .filter(|column| *column != POSITION_COLUMN)
+                .filter(|column| ![POSITION_COLUMN, ENTRY_ID_COLUMN].contains(column))
                 .map(str::to_owned),
         );
     }

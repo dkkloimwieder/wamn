@@ -111,15 +111,16 @@ BEGIN
       FROM (VALUES
             (1, 'position', format('bigint GENERATED ALWAYS AS IDENTITY (SEQUENCE NAME %I.%I)',
                                    schema, history || '_position_seq')),
-            (2, 'tenant_id', 'text'),
-            (3, 'row_key', 'jsonb'),
-            (4, 'kind', 'text'),
-            (5, 'operation', 'text'),
-            (6, 'changed_by', 'uuid'),
-            (7, 'changed_at', 'timestamptz'),
-            (8, 'transaction_id', 'bigint'),
-            (9, 'before', 'jsonb'),
-            (10, 'after', 'jsonb')
+            (2, 'id', 'uuid DEFAULT gen_random_uuid()'),
+            (3, 'tenant_id', 'text'),
+            (4, 'row_key', 'jsonb'),
+            (5, 'kind', 'text'),
+            (6, 'operation', 'text'),
+            (7, 'changed_by', 'uuid'),
+            (8, 'changed_at', 'timestamptz'),
+            (9, 'transaction_id', 'bigint'),
+            (10, 'before', 'jsonb'),
+            (11, 'after', 'jsonb')
            ) AS c (ord, name, definition)
      WHERE tenant OR c.name <> 'tenant_id';
     derived := derived || ARRAY[history || '_pkey', history || '_kind_check',

@@ -1208,6 +1208,9 @@
     "receiving.load_purchase_order_history": {
       "kind": "projection",
       "label": "Purchase order history",
+      "lists": {
+        "key_field": "id"
+      },
       "visibility": "public",
       "permission": "receiving.load_purchase_order_history",
       "connection": "postgres",
@@ -1237,6 +1240,12 @@
       "result": {
         "class": "bounded_list",
         "fields": [
+          {
+            "path": "id",
+            "type": "uuid",
+            "nullable": false,
+            "label": "Entry"
+          },
           {
             "path": "cursor",
             "type": "text",
@@ -1324,6 +1333,7 @@
           "schema": "receiving",
           "table": "purchase_order_history",
           "select_fields": [
+            "id",
             "position",
             "row_key",
             "kind",
@@ -1361,6 +1371,11 @@
             }
           ],
           "row": [
+            {
+              "name": "id",
+              "type": "uuid",
+              "nullable": false
+            },
             {
               "name": "position",
               "type": "int64",

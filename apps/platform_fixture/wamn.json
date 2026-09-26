@@ -679,6 +679,9 @@
         "fields": []
       },
       "kind": "projection",
+      "lists": {
+        "key_field": "id"
+      },
       "permission": "widget_maker.list",
       "relations": [
         {

@@ -1282,11 +1282,10 @@ fn a_contract_carries_no_reference_and_no_list_when_nobody_states_one() {
             field.remove("revision_of");
         }
     }
+    // A table read still states its row key, and names no model a selector
+    // offers.
     for operation in ["widget.list", "widget_maker.list"] {
-        silent["custom_operations"][operation]
-            .as_object_mut()
-            .expect("an authored operation")
-            .remove("lists");
+        silent["custom_operations"][operation]["lists"] = serde_json::json!({"key_field": "id"});
     }
     // The one derived reference leaves with its foreign key, from every
     // input and every result that carries the column.

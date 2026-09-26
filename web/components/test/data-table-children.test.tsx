@@ -34,7 +34,7 @@ function table(rows: () => readonly Row[] = () => ROWS) {
     <DataTable
       name="rows"
       columns={COLUMNS}
-      rowId="id"
+      rowId={["id"]}
       rows={rows()}
       fullyRead={true}
       busy={false}

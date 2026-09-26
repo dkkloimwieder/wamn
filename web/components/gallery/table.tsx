@@ -23,6 +23,7 @@ import {
   type LoadPage,
   type LoadState,
   type Outcome,
+  type RowKey,
   type Transport,
 } from "@wamn/web-runtime";
 
@@ -189,7 +190,7 @@ function MemoryTable(props: {
         nextCursor: props.size > next.cap ? "more" : null,
       },
     };
-    setState((current) => finishLoad(current, next.generation, outcome, "id"));
+    setState((current) => finishLoad(current, next.generation, outcome, ["id"]));
   }
   load(state().cap);
 
@@ -199,7 +200,7 @@ function MemoryTable(props: {
     <LoadedTable
       name="pallet"
       columns={PALLET_COLUMNS}
-      rowId="id"
+      rowId={["id"]}
       state={state()}
       load={load}
       sortFields={[]}
@@ -217,7 +218,7 @@ function MemoryTable(props: {
 function LoadedTable<Row extends object>(props: {
   name: string;
   columns: readonly DataTableColumn<Row>[];
-  rowId: keyof Row & string;
+  rowId: RowKey<Row>;
   state: LoadState<Row>;
   load: (cap: number) => void;
   sortFields: readonly { readonly field: keyof Row & string }[];

@@ -194,7 +194,7 @@ export function ReceiptQueryTable(props: ReceiptQueryTableProps) {
 /** The table definition of `wamn-receiving:receipt/query@1.0.0`. */
 export const RECEIPT_QUERY_TABLE = {
   read: "query",
-  rowId: "id",
+  rowId: ["id"],
   pageMaximum: 100,
   scopeFilters: [],
   sortFields: [],

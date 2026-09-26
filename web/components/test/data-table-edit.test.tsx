@@ -41,7 +41,7 @@ function table(
     <DataTable
       name="rows"
       columns={COLUMNS}
-      rowId="id"
+      rowId={["id"]}
       rows={ROWS}
       fullyRead={true}
       busy={false}
@@ -124,7 +124,7 @@ describe("a held load", () => {
       status: "completed" as const,
       value: { item: [...ROWS], nextCursor: null },
     }));
-    const load = createTableLoad<Row>({ rowId: "id", pageMaximum: 100, sortFields: [] }, read);
+    const load = createTableLoad<Row>({ rowId: ["id"], pageMaximum: 100, sortFields: [] }, read);
     await load.load();
     expect(read).toHaveBeenCalledTimes(1);
     load.hold(true);

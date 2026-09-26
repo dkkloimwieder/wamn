@@ -50,6 +50,7 @@ pub(crate) fn encode(output: &[contract::LoadPurchaseOrderHistoryOutcome]) -> St
         .map(|item| match &item.outcome {
             Ok(value) => json!({
                 "value": { "rows": value.rows.iter().map(|row| json!({
+                    "id": row.id,
                     "cursor": row.cursor,
                     "kind": row.kind,
                     "operation": row.operation,
@@ -134,6 +135,7 @@ macro_rules! row {
     ($row:expr, $target:path) => {{
         let row = $row;
         $target {
+            id: row.id.0,
             cursor: row.cursor,
             kind: row.kind,
             operation: row.operation,

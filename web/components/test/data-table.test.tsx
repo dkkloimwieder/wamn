@@ -73,7 +73,7 @@ function table(state: Shown, onCapChange = () => {}, onRefresh = () => {}) {
     <DataTable
       name="rows"
       columns={COLUMNS}
-      rowId="id"
+      rowId={["id"]}
       rows={state.rows}
       fullyRead={state.fullyRead}
       busy={state.busy}

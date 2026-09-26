@@ -104,6 +104,18 @@ export function loadLimit(cap: number, pageMaximum: number): number {
   return Math.min(cap, pageMaximum);
 }
 
+/** The fields of a row whose values together name it: one field, or several. */
+export type RowKey<Row> = readonly (keyof Row & string)[];
+
+/**
+ * The id of one row: the value of its one key field, or the key values as a
+ * JSON list when several fields name the row.
+ */
+export function rowKey<Row>(row: Row, key: RowKey<Row>): string {
+  const [only] = key;
+  return key.length === 1 && only !== undefined ? String(row[only]) : JSON.stringify(key.map((field) => row[field]));
+}
+
 /**
  * Take the outcome of the load numbered `generation`.
  *
@@ -115,7 +127,7 @@ export function finishLoad<Row>(
   state: LoadState<Row>,
   generation: number,
   outcome: Outcome<LoadPage<Row>>,
-  rowId: (keyof Row & string) | null,
+  rowId: RowKey<Row>,
   now: Date = new Date(),
 ): LoadState<Row> {
   if (generation !== state.generation) {
@@ -138,16 +150,13 @@ export function finishLoad<Row>(
           : outcome.status,
     );
   }
-  // A list that names no key numbers its rows by position, so no id repeats.
-  if (rowId !== null) {
-    const seen = new Set<string>();
-    for (const row of outcome.value.item) {
-      const id = String(row[rowId]);
-      if (seen.has(id)) {
-        return failed(`The load returned the row id ${id} twice.`);
-      }
-      seen.add(id);
+  const seen = new Set<string>();
+  for (const row of outcome.value.item) {
+    const id = rowKey(row, rowId);
+    if (seen.has(id)) {
+      return failed(`The load returned the row id ${id} twice.`);
     }
+    seen.add(id);
   }
   return {
     ...state,
@@ -165,9 +174,9 @@ export function finishLoad<Row>(
  * the order uses it in place of a new load. A row the load does not hold
  * changes nothing.
  */
-export function replaceRow<Row>(state: LoadState<Row>, row: Row, rowId: keyof Row & string): LoadState<Row> {
-  const id = String(row[rowId]);
-  const at = state.rows.findIndex((candidate) => String(candidate[rowId]) === id);
+export function replaceRow<Row>(state: LoadState<Row>, row: Row, rowId: RowKey<Row>): LoadState<Row> {
+  const id = rowKey(row, rowId);
+  const at = state.rows.findIndex((candidate) => rowKey(candidate, rowId) === id);
   if (at === -1) {
     return state;
   }

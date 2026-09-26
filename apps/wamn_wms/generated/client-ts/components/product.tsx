@@ -325,7 +325,7 @@ export function ProductQueryTable(props: ProductQueryTableProps) {
 /** The table definition of `wamn-wms:product/query@1.0.0`. */
 export const PRODUCT_QUERY_TABLE = {
   read: "query",
-  rowId: "id",
+  rowId: ["id"],
   pageMaximum: 100,
   scopeFilters: ["productCode"],
   sortFields: [],

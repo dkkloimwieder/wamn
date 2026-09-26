@@ -7,6 +7,7 @@
 -- A page holds at most 100 entries. The position stays inside this read: the
 -- operation answers with an opaque cursor, and a short page is the last page.
 SELECT
+    history.id,
     history.position,
     history.kind,
     history.operation,

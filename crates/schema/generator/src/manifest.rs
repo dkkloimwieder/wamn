@@ -94,7 +94,7 @@ pub struct CustomOperationDeclaration {
     pub label: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
-    /// What this read lists, when a selector can offer its rows.
+    /// What this read lists. Every read that a table shows states it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub lists: Option<ListDeclaration>,
 }
@@ -309,23 +309,59 @@ pub struct FieldReference {
     pub narrowed_by: Option<String>,
 }
 
-/// What one authored read operation lists, so a selector can offer its rows.
+/// What one authored read operation lists: the key of each row, and the model
+/// whose records the rows are, so a selector can offer them.
 ///
-/// A generated `query` needs none: its `record` already states the relation
-/// and the key field that a row carries.
+/// Every read that a table shows states it. Generation writes the same member
+/// for a generated `query`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ListDeclaration {
-    /// Model whose records the rows are.
-    pub model: String,
-    /// Result field of this operation that carries the record key.
-    pub key_field: String,
+    /// Model whose records a selector offers from these rows. Absent when no
+    /// selector offers them, for example rows of a total or of a history.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    /// Result fields of this operation whose values together name one row.
+    /// One field is spelled as a string, and several as a list.
+    #[serde(with = "row_key")]
+    pub key_field: Vec<String>,
     /// Result field that carries the text a person reads.
     ///
     /// Absent takes the default: the first text field of the model, in the
     /// contract order the IR states.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub display_field: Option<String>,
+}
+
+/// The spelling of a row key: one field as a string, several as a list.
+pub(crate) mod row_key {
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum Spelling {
+        One(String),
+        Many(Vec<String>),
+    }
+
+    pub(crate) fn serialize<S: Serializer>(
+        fields: &[String],
+        serializer: S,
+    ) -> Result<S::Ok, S::Error> {
+        match fields {
+            [field] => field.serialize(serializer),
+            fields => fields.serialize(serializer),
+        }
+    }
+
+    pub(crate) fn deserialize<'de, D: Deserializer<'de>>(
+        deserializer: D,
+    ) -> Result<Vec<String>, D::Error> {
+        Ok(match Spelling::deserialize(deserializer)? {
+            Spelling::One(field) => vec![field],
+            Spelling::Many(fields) => fields,
+        })
+    }
 }
 
 /// Authored text that a screen shows, and that an author reads.

@@ -21,10 +21,11 @@ const CURRENT: &str =
 const CHANGED: &str =
     r#"{"id": "00000000-0000-0000-0000-000000000001", "status": "complete", "row_version": 3}"#;
 
-/// One history entry. The operation states no database position, so an entry
-/// carries the opaque cursor that reads the page after it.
+/// One history entry, named by its own id. The operation states no database
+/// position, so an entry carries the opaque cursor that reads the page after it.
 fn entry(index: i64, kind: &str, before: &str, after: &str, current: &str) -> Value {
     json!({
+        "id": format!("eeeeeeee-0000-0000-0000-{index:012}"),
         "cursor": format!("cursor-{index}"), "kind": kind,
         "operation": "wamn-receiving:receiving/record-receipt@1.0.0",
         "changed_by": "cccccccc-0000-0000-0000-000000000001",

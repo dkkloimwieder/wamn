@@ -262,17 +262,21 @@ pub struct ReferenceIr {
     pub narrowed_by: Option<String>,
 }
 
-/// What one read operation lists, so a selector can offer its rows.
+/// What one read operation lists: the key of each row, and the model whose
+/// records the rows are, so a selector can offer them.
 ///
 /// Read straight from the contract file, so its members keep the spelling
 /// `generate/contracts.rs` writes, exactly as [`RecordIr`] does.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ListIr {
-    /// Model whose records the rows are.
-    pub model: String,
-    /// Result field that carries the record key.
-    pub key_field: String,
+    /// Model whose records a selector offers from these rows, absent when no
+    /// selector offers them.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    /// Result fields whose values together name one row.
+    #[serde(with = "crate::manifest::row_key")]
+    pub key_field: Vec<String>,
     /// Result field that carries the text a person reads, when the author
     /// states one. The plan applies the default.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -337,10 +341,7 @@ pub struct OperationIr {
     /// Authored text for an author, which reaches a comment and no screen.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
-    /// What this read lists, when a selector can offer its rows.
-    ///
-    /// A generated `query` states none: its `record` already names the
-    /// relation and the key field that a row carries.
+    /// What this read lists. Every read that a table shows states it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub lists: Option<ListIr>,
     /// Where this operation is published, when the release exposes it over

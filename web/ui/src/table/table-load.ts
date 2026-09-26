@@ -17,6 +17,7 @@ import {
   finishLoad,
   loadLimit,
   replaceRow as replaceLoadedRow,
+  type RowKey,
   startLoad,
   type LoadPage,
   type LoadState,
@@ -30,8 +31,8 @@ export const DEFAULT_CAP = 1000;
 
 /** The parts of a table definition that a load reads. */
 export interface TableLoadDefinition<TRow extends object> {
-  /** The field that holds the id of each row, or null when rows have no key. */
-  readonly rowId: (keyof TRow & string) | null;
+  /** The fields whose values together name each row. */
+  readonly rowId: RowKey<TRow>;
   /** The most rows one read returns, or null when the read declares no limit. */
   readonly pageMaximum: number | null;
   /** The fields the read can sort by, each with the name its request sends. */
@@ -99,12 +100,8 @@ export function createTableLoad<TRow extends object>(
     }
   };
 
-  // A table with no row id cannot name the row a write left.
   const replaceRow = (row: TRow) => {
-    const rowId = definition.rowId;
-    if (rowId !== null) {
-      setState((current) => replaceLoadedRow(current, row, rowId));
-    }
+    setState((current) => replaceLoadedRow(current, row, definition.rowId));
   };
 
   return { state, load, sortBy, hold, replaceRow };

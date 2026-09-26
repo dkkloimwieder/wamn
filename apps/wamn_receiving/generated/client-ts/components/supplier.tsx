@@ -218,7 +218,7 @@ export function SupplierQueryTable(props: SupplierQueryTableProps) {
 /** The table definition of `wamn-receiving:supplier/query@1.0.0`. */
 export const SUPPLIER_QUERY_TABLE = {
   read: "query",
-  rowId: "id",
+  rowId: ["id"],
   pageMaximum: 100,
   scopeFilters: [],
   sortFields: [],

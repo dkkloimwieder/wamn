@@ -2552,6 +2552,13 @@
     },
     "inventory.aggregate": {
       "kind": "projection",
+      "lists": {
+        "key_field": [
+          "product_id",
+          "location_id",
+          "status"
+        ]
+      },
       "visibility": "public",
       "permission": "inventory.aggregate",
       "connection": "postgres",

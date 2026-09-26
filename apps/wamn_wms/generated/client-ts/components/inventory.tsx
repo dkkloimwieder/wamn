@@ -386,18 +386,18 @@ export function InventoryAggregateTable(props: InventoryAggregateTableProps) {
 /** The table definition of `wamn-wms:inventory/aggregate@1.0.0`. */
 export const INVENTORY_AGGREGATE_TABLE = {
   read: "aggregate",
-  rowId: null,
+  rowId: ["productId", "locationId", "status"],
   pageMaximum: null,
   scopeFilters: [],
   sortFields: [],
   sortDirections: [],
   sortMaxFields: 1,
   columns: [
-    { field: "locationId", label: "location id", type: "uuid", role: "value" },
+    { field: "locationId", label: "location id", type: "uuid", role: "key" },
     { field: "palletCount", label: "pallet count", type: "int32", role: "value" },
-    { field: "productId", label: "product id", type: "uuid", role: "value" },
+    { field: "productId", label: "product id", type: "uuid", role: "key" },
     { field: "quantity", label: "quantity", type: "numeric", role: "value" },
-    { field: "status", label: "status", type: "text", role: "value" },
+    { field: "status", label: "status", type: "text", role: "key" },
   ],
   actions: [],
   childTables: [],

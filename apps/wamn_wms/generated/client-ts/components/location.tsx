@@ -340,7 +340,7 @@ export function LocationQueryTable(props: LocationQueryTableProps) {
 /** The table definition of `wamn-wms:location/query@1.0.0`. */
 export const LOCATION_QUERY_TABLE = {
   read: "query",
-  rowId: "id",
+  rowId: ["id"],
   pageMaximum: 100,
   scopeFilters: ["locationCode"],
   sortFields: [],

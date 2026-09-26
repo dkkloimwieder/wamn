@@ -231,7 +231,7 @@ export function InventoryMovementQueryTable(props: InventoryMovementQueryTablePr
 /** The table definition of `wamn-wms:inventory-movement/query@1.0.0`. */
 export const INVENTORY_MOVEMENT_QUERY_TABLE = {
   read: "query",
-  rowId: "id",
+  rowId: ["id"],
   pageMaximum: 100,
   scopeFilters: [],
   sortFields: [],

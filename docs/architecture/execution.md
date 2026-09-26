@@ -492,7 +492,9 @@ Its declared filters are the scope bar of the table, and the table owns the sort
 It loads when it mounts. A load of a paged read reads one page, with a limit of the cap or the page maximum, whichever is lower, and follows no cursor.
 A load of a bounded list reads every row, so the table is always fully read.
 A header sort of rows that the load did not read in full starts a new load in that order.
-A read that states no `lists` names no key, so its table numbers the rows by position.
+The row id of the table is the key that the read states in `lists`: one result field, or several whose values together name one row.
+Generation refuses a projection that answers a list of rows and states no `lists` key, because a row position names no row.
+A `lists` that names a model also lets a selector offer the rows as records of that model.
 Each row link and row form is a button in the last column.
 A table that holds more than 100 rows renders only the rows in view of its box.
 The definition also names the served update of the table's relation, with the columns it writes that the plan does not supply.

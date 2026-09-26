@@ -971,15 +971,21 @@ impl<'a> Lister<'a> {
         }
         // One member, one rule. Every read that serves rows states `lists`,
         // whether an author wrote it or generation derived it, so nothing
-        // here asks where the fact came from.
+        // here asks where the fact came from. A selector offers a record by
+        // one key, so rows of no model, or rows that several fields name,
+        // offer none.
         let lists = screen.contract.lists.as_ref()?;
+        let model = lists.model.as_deref()?;
+        let [key_field] = lists.key_field.as_slice() else {
+            return None;
+        };
         Some(Self {
             operation: screen.contract.operation.as_str(),
             owner: screen.model,
             name: screen.name,
             rows: screen.rows,
-            model: lists.model.as_str(),
-            key_field: lists.key_field.as_str(),
+            model,
+            key_field: key_field.as_str(),
             display_field: lists.display_field.as_deref(),
             references: leaf_fields(&screen.contract.input_fields)
                 .into_iter()

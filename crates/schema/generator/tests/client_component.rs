@@ -177,7 +177,7 @@ fn a_bounded_list_loads_every_row_as_one_page() {
         );
     }
     assert!(
-        widget.contains("  rowId: \"id\",\n  pageMaximum: null,\n"),
+        widget.contains("  rowId: [\"id\"],\n  pageMaximum: null,\n"),
         "a read that declares no page limit has no page maximum"
     );
 }
@@ -1323,7 +1323,7 @@ fn a_table_screen_gets_a_table_definition_beside_its_component() {
     let definition = &widget[start..end];
     for line in [
         "  read: \"query\",",
-        "  rowId: \"id\",",
+        "  rowId: [\"id\"],",
         "  pageMaximum: 100,",
         "  scopeFilters: [\"code\"],",
         "  sortFields: [{ field: \"createdAt\", wire: \"created_at\" }],",
@@ -1344,18 +1344,45 @@ fn a_table_screen_gets_a_table_definition_beside_its_component() {
 /// (wamn-ir48). A read that states no `lists` names no key, so the table numbers
 /// its rows by position.
 #[test]
-fn a_table_with_no_key_numbers_its_rows_and_every_table_has_a_definition() {
+fn every_table_read_names_its_rows_by_a_key_and_generation_refuses_one_without() {
     let files = emit(&release());
     assert!(
         source(&files, "generated/client-ts/components/widget_maker.tsx").contains(concat!(
             "export const WIDGET_MAKER_LIST_TABLE = {\n",
             "  read: \"list\",\n",
-            "  rowId: null,\n",
+            "  rowId: [\"id\"],\n",
             "  pageMaximum: null,\n",
         ))
     );
     let index = source(&files, "generated/client-ts/components/index.ts");
     assert!(!index.contains("table definition"), "{index}");
+
+    // A bounded list with no key is refused, and so is a key that is not a
+    // field of the result.
+    let mut unkeyed = fixture::manifest();
+    unkeyed["custom_operations"]["widget_maker.list"]
+        .as_object_mut()
+        .expect("the maker list")
+        .remove("lists");
+    let error = fixture::try_generate_with(&fixture::catalog(), &unkeyed)
+        .expect_err("a bounded list with no key is refused");
+    assert!(
+        error
+            .to_string()
+            .contains("widget_maker.list answers a list of rows and states no `lists` key"),
+        "{error}"
+    );
+    let mut stray = fixture::manifest();
+    stray["custom_operations"]["widget_maker.list"]["lists"]["key_field"] =
+        serde_json::json!(["id", "code"]);
+    let error = fixture::try_generate_with(&fixture::catalog(), &stray)
+        .expect_err("a key field outside the result is refused");
+    assert!(
+        error.to_string().contains(
+            "widget_maker.list keys its rows on code, which is not a field of its result"
+        ),
+        "{error}"
+    );
 }
 
 /// The table definition named `constant` in one emitted module.

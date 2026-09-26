@@ -30,6 +30,7 @@ interface load-purchase-order-history {
   }
 
   record load-purchase-order-history-row {
+    id: string,
     cursor: string,
     kind: string,
     operation: string,

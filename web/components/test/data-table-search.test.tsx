@@ -48,7 +48,7 @@ function table(fullyRead: () => boolean = () => true) {
     <DataTable
       name="codes"
       columns={COLUMNS}
-      rowId="id"
+      rowId={["id"]}
       rows={ROWS}
       fullyRead={fullyRead()}
       busy={false}

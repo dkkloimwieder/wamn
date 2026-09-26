@@ -138,7 +138,7 @@ export function ReceivingLoadPurchaseOrderHistoryTable(props: ReceivingLoadPurch
 /** The table definition of `wamn-receiving:receiving/load-purchase-order-history@1.0.0`. */
 export const RECEIVING_LOAD_PURCHASE_ORDER_HISTORY_TABLE = {
   read: "loadPurchaseOrderHistory",
-  rowId: null,
+  rowId: ["id"],
   pageMaximum: null,
   scopeFilters: [],
   sortFields: [],
@@ -151,6 +151,7 @@ export const RECEIVING_LOAD_PURCHASE_ORDER_HISTORY_TABLE = {
     { field: "changedBy", label: "Changed by", type: "uuid", role: "value" },
     { field: "current", label: "Current", type: "text", role: "value" },
     { field: "cursor", label: "Position", type: "text", role: "value" },
+    { field: "id", label: "Entry", type: "uuid", role: "key" },
     { field: "kind", label: "Change", type: "text", role: "value" },
     { field: "operation", label: "Operation", type: "text", role: "value" },
   ],
@@ -236,7 +237,7 @@ export function ReceivingLoadReceiptScreenTable(props: ReceivingLoadReceiptScree
 /** The table definition of `wamn-receiving:receiving/load-receipt-screen@1.0.0`. */
 export const RECEIVING_LOAD_RECEIPT_SCREEN_TABLE = {
   read: "loadReceiptScreen",
-  rowId: "lineId",
+  rowId: ["lineId"],
   pageMaximum: null,
   scopeFilters: [],
   sortFields: [],

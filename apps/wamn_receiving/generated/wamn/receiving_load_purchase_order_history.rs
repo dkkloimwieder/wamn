@@ -4,6 +4,7 @@ use wamn_postgres_statements::Transaction;
 
 #[derive(Debug)]
 pub struct LoadPurchaseOrderHistoryRow {
+    pub id: wamn_postgres_statements::Uuid,
     pub position: i64,
     pub kind: String,
     pub operation: String,
@@ -15,7 +16,7 @@ pub struct LoadPurchaseOrderHistoryRow {
 }
 
 pub(crate) const LOAD_PURCHASE_ORDER_HISTORY_DIGEST: &str =
-    "sha256:8e7fed965506033afe7e2272e54f13c492a466815aa643809a5f616704024a62";
+    "sha256:04951d1d7ac96a73c0a93ec6185a41cbe8aa3ce9de5117ec23b3fb0eded0c8c1";
 
 pub(crate) async fn load_purchase_order_history(
     transaction: &mut Transaction,
@@ -35,6 +36,7 @@ pub(crate) async fn load_purchase_order_history(
         .await?;
     wamn_postgres_statements::decode_all(LOAD_PURCHASE_ORDER_HISTORY_DIGEST, rows, |row| {
         Ok(LoadPurchaseOrderHistoryRow {
+            id: row.decode("id")?,
             position: row.decode("position")?,
             kind: row.decode("kind")?,
             operation: row.decode("operation")?,

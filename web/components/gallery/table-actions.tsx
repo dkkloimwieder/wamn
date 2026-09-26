@@ -75,7 +75,7 @@ interface EventRow {
  * one scope filter is the widget it belongs to.
  */
 const WIDGET_EVENT_TABLE = {
-  rowId: "id",
+  rowId: ["id"],
   pageMaximum: 100,
   scopeFilters: ["widgetId"],
   sortFields: [],

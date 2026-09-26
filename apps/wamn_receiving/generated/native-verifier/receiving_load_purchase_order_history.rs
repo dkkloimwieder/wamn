@@ -2,6 +2,7 @@
 
 #[derive(Debug, sqlx::FromRow)]
 pub struct LoadPurchaseOrderHistoryRow {
+    pub id: uuid::Uuid,
     pub position: i64,
     pub kind: String,
     pub operation: String,

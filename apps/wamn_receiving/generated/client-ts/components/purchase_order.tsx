@@ -240,7 +240,7 @@ export function PurchaseOrderQueryTable(props: PurchaseOrderQueryTableProps) {
 /** The table definition of `wamn-receiving:purchase-order/query@1.0.0`. */
 export const PURCHASE_ORDER_QUERY_TABLE = {
   read: "query",
-  rowId: "id",
+  rowId: ["id"],
   pageMaximum: 100,
   scopeFilters: ["purchaseOrderNumber", "status", "supplierId"],
   sortFields: [{ field: "createdAt", wire: "created_at" }, { field: "purchaseOrderNumber", wire: "purchase_order_number" }, { field: "status", wire: "status" }],

@@ -46,7 +46,7 @@ function table(
     <DataTable
       name="rows"
       columns={COLUMNS}
-      rowId="id"
+      rowId={["id"]}
       rows={shape.rows?.() ?? ROWS}
       fullyRead={true}
       busy={false}

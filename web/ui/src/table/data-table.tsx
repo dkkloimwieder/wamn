@@ -97,6 +97,7 @@ import {
   type Table,
 } from "@tanstack/solid-table";
 import { ArrowDown, ArrowUp, ChevronDown, ChevronRight, X } from "lucide-solid";
+import { rowKey, type RowKey } from "@wamn/web-runtime";
 import {
   createEffect,
   createMemo,
@@ -216,8 +217,8 @@ export interface DataTableProps<TRow extends object> {
   /** The table's name, which the file name of a CSV export starts with. */
   readonly name: string;
   readonly columns: readonly DataTableColumn<TRow>[];
-  /** The field that holds the id of each row, or null to number rows by position. */
-  readonly rowId: (keyof TRow & string) | null;
+  /** The fields whose values together name each row. */
+  readonly rowId: RowKey<TRow>;
   /** The rows loaded so far. */
   readonly rows: readonly TRow[];
   /** True when the load ended and no rows exist beyond the cap. */
@@ -483,16 +484,13 @@ export function DataTable<TRow extends object>(props: DataTableProps<TRow>): JSX
   const bulk = () => (props.bulkActions ?? []).length > 0 && props.onBulk !== undefined;
 
   // The child tables of a row mount on its first expand and stay while it is loaded.
-  const children = () => (props.rowId === null ? [] : (props.childTables ?? []));
+  const children = () => props.childTables ?? [];
   const childAreas = createChildAreas(children);
   createEffect(() => {
-    const rowId = props.rowId;
-    if (rowId !== null) {
-      childAreas.keepOnly(new Set(props.rows.map((row) => String(row[rowId]))));
-    }
+    childAreas.keepOnly(new Set(props.rows.map((row) => rowKey(row, props.rowId))));
   });
   const childArea = (row: TRow) => {
-    const id = String(row[props.rowId as keyof TRow & string]);
+    const id = rowKey(row, props.rowId);
     return childAreas.area(id, id);
   };
 
@@ -699,7 +697,7 @@ export function DataTable<TRow extends object>(props: DataTableProps<TRow>): JSX
     get columns() {
       return columns();
     },
-    getRowId: (row, index) => (props.rowId === null ? String(index) : String(row[props.rowId])),
+    getRowId: (row) => rowKey(row, props.rowId),
     meta: { groupOrder },
     manualPagination: true,
     get manualSorting() {
