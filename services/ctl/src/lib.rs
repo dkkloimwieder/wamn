@@ -22,3 +22,4 @@ pub mod release_verbs;
 #[cfg(target_os = "linux")]
 pub mod ui;
 pub mod web;
+pub mod workflow_verbs;

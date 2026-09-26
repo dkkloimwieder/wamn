@@ -7,11 +7,13 @@
 //! - the wiring arm of the delivery bridge, as the driver's
 //!   [`WiringDelivery`](wamn_execution_host::WiringDelivery) implementation,
 //! - [`QueueService`]: the queued run executor,
+//! - [`Workflows`]: the workflow contract (start, park, release, list), and
+//!   [`PostgresWorkflows`], its implementation over the run plane,
 //! - [`lower_resolved_wiring`]: it lowers a resolved catalog wiring into the
 //!   graph that the router walks.
 //!
-//! The enqueue path stays in `wamn-control`, because it reads the release
-//! snapshot that publish writes there.
+//! A client reads the release snapshot that publish writes, through
+//! `wamn-control`, and binds [`PostgresWorkflows`] to it.
 //!
 //! `docs/architecture/overview.md` places this crate among the runtime owners.
 //! The walk is the crate `wamn-router`, at
@@ -25,6 +27,7 @@
 //! `tests/dependency_boundary.rs` checks that `wamn-engine`, `wamn-runtime`,
 //! and `wamn-execution-host` link neither this crate nor `wamn-router`.
 
+mod contract;
 mod queue;
 mod router_action;
 mod router_driver;
@@ -38,6 +41,10 @@ mod wiring_lowering;
 /// given.
 pub use wamn_router::Verdict;
 
+pub use contract::{
+    PostgresWorkflows, StartRequest, Trigger, WorkflowError, WorkflowErrorKind, WorkflowRun,
+    Workflows,
+};
 pub use queue::{DEFAULT_QUEUE_LEASE_TTL_MS, QueueService, QueueServiceConfig};
 pub use router_driver::{
     CandidateCaseRequest, CandidateExecutionRefusal, CandidateExecutionRefusalKind,

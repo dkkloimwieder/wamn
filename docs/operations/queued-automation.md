@@ -1,7 +1,7 @@
 # Queued automation
 
-`wamn-ctl enqueue-run` queues one released wiring under a service principal.
-The command uses project-admin database authority.
+`wamn-ctl workflow start` queues one released wiring under a service principal.
+The `workflow` commands call the workflow contract in `wamn-workflow`, and they use project-admin database authority.
 The host's queue worker uses its existing database roles to claim and execute the run.
 
 First, provision the service identity and reconcile its tenant user row.
@@ -17,7 +17,7 @@ Set `WAMN_PG_ADMIN_URL` to the project-admin connection URL.
 Then submit an input file:
 
 ```bash
-wamn-ctl enqueue-run \
+wamn-ctl workflow start \
   --tenant acme --environment dev --package-id orders \
   --effective-release-id 1 --wiring-id process-orders --wiring-version 1 \
   --service-principal-id "$SERVICE_PRINCIPAL_ID" \
@@ -36,3 +36,19 @@ The host reads current service permissions before delivery and applies the norma
 Nested calls retain the service principal.
 Operations that require a fresh PAT refuse queued automation.
 The service principal owns application writes, while the `wamn:executor` credential class owns queue maintenance.
+
+## Park, release, and list
+
+Use the same `--tenant` and `--environment` flags for each command.
+
+```bash
+wamn-ctl workflow park --tenant acme --environment dev --run-id "$RUN_ID"
+wamn-ctl workflow release --tenant acme --environment dev --run-id "$RUN_ID"
+wamn-ctl workflow list --tenant acme --environment dev --limit 20
+```
+
+A park holds a queued run that no worker holds, so no worker claims it.
+The run keeps the status `dispatched`, and a park of a parked run changes nothing.
+A running or finished run refuses the park.
+A release returns a parked run to the queue, and a run that is not parked refuses it.
+The list prints one JSON object per run, newest first, with its status and its `queued` and `parked` flags.

@@ -52,6 +52,8 @@ mod janitor;
 mod lease;
 mod model;
 mod sql;
+/// The workflow contract's statements: admit, park, release, and list.
+mod workflow;
 
 pub use claim::{
     ClaimPlan, ClaimState, Claimed, ProductionClaimClass, claim_state, classify_production_claim,
@@ -66,4 +68,8 @@ pub use sql::{
     renew_production_lease_sql, select_claim_effect_attempt_sql, select_exhausted_production_sql,
     select_production_claim_sql, serialize_effect_intent_sql,
     terminalize_effect_uncertain_claim_sql, terminalize_exhausted_production_sql,
+};
+pub use workflow::{
+    insert_automation_run_sql, insert_run_queue_sql, list_workflow_runs_sql, park_queued_run_sql,
+    release_parked_run_sql, select_automation_run_sql, select_run_queue_state_sql,
 };

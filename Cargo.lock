@@ -5850,6 +5850,7 @@ dependencies = [
  "wamn-schema-generator",
  "wamn-test-infrastructure",
  "wamn-test-postgres",
+ "wamn-workflow",
  "wit-component 0.254.0",
  "wit-parser 0.254.0",
 ]

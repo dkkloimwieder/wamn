@@ -27,7 +27,7 @@ Measured on main at `bceff31ad` on 2026-09-25.
 | Place | Today |
 | --- | --- |
 | `wamn-workflow` | Holds the driver (`RouterDriver`), wiring delivery, the queue (`QueueService`), and the lowering. It exposes no workflow contract. `services/host` links it. |
-| Queued runs | `wamn_control::enqueue_run::enqueue` writes one `runs` row and one `run_queue` row under a service principal. The `wamn-ctl-ops enqueue-run` verb is its only caller. `QueueService` claims due rows and runs each wiring through the driver. |
+| Queued runs | `wamn_control::enqueue_run::enqueue` writes one `runs` row and one `run_queue` row under a service principal. The `wamn-ctl enqueue-run` verb is its only caller. `QueueService` claims due rows and runs each wiring through the driver. |
 | Park | The queue has a park: a row whose `available_at` is in the future is not claimable (`run_state::queue::claim`). Backoff uses it. The run-level status `parked` was retired, and a test makes sure that the server refuses it. No verb parks or releases a run. |
 | List | No interface lists workflow runs. |
 | Registrations | An operation of kind `event_handler` declares a `registration` in `wamn.json`. Publish derives a `ServingRegistration` only for the one wiring whose entry node is that handler. Apply-package writes the matching row in `catalog.event_registrations`. |
@@ -51,7 +51,7 @@ Measured on main at `bceff31ad` on 2026-09-25.
 
 Park acts on the queue row only. The run status stays `dispatched`, so the retired run-level `parked` status does not come back. A park inside a walk needs a saved walk and is part of approvals, which are out of scope.
 
-The Postgres implementation `PostgresWorkflows` lives in the workflow crate. The SQL text lives in `wamn-run-state` beside the claim SQL. The admission that `enqueue` does today moves into `start`, and `enqueue-run` becomes a caller of `start`. The verbs `wamn-ctl-ops workflow start`, `park`, `release`, and `list` call the contract.
+The Postgres implementation `PostgresWorkflows` lives in the workflow crate. The SQL text lives in `wamn-run-state` beside the claim SQL. The admission that `enqueue` does today moves into `start`. The verbs `wamn-ctl workflow start`, `park`, `release`, and `list` call the contract, and `workflow start` replaces `enqueue-run`.
 
 ### 4.2 The event trigger
 

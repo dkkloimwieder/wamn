@@ -10,4 +10,4 @@ These pages contain current commands and their prerequisites. Start with the dev
 - [gcp.md](gcp.md): the Google Cloud deployment in project `wamn-dev`, step by step.
 - [backup-and-recovery.md](backup-and-recovery.md): cluster backup, point-in-time recovery, and one-table recovery.
 - [delivery.md](delivery.md): repository change checks, qualification, publication, selection, and deployment.
-- [queued-automation.md](queued-automation.md): admit released work under a service principal.
+- [queued-automation.md](queued-automation.md): start, park, release, and list queued workflow runs.

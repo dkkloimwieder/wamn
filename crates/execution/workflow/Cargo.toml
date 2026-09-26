@@ -27,10 +27,11 @@ tracing = { workspace = true }
 tokio = { workspace = true, features = ["rt", "sync", "time"] }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
+# The workflow contract admits, parks, releases, and lists runs in the run plane.
+tokio-postgres = { workspace = true }
 
 [dev-dependencies]
 wamn-schema-control = { workspace = true }
-tokio-postgres = { workspace = true }
 wamn-control = { workspace = true }
 wamn-test-infrastructure = { workspace = true }
 wamn-runtime = { workspace = true, features = ["test-util"] }

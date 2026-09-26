@@ -5,9 +5,8 @@ use std::time::Duration;
 
 use anyhow::{Context as _, ensure};
 use serde_json::{Value, json};
-use wamn_control::enqueue_run::{EnqueueRun, enqueue};
-use wamn_schema_control::BareSchemaName;
 use wamn_test_infrastructure::workload;
+use wamn_workflow::{PostgresWorkflows, StartRequest, Trigger, Workflows as _};
 
 use super::{
     ReceivingCluster, checked, deployment, install_host, kubectl, provision, route_cases, start,
@@ -86,7 +85,18 @@ async fn exercise(cluster: &ReceivingCluster) -> anyhow::Result<()> {
     let (lock, lock_connection) =
         tokio_postgres::connect(&route.database_url, tokio_postgres::NoTls).await?;
     let lock_connection = tokio::spawn(lock_connection);
-    let result = recover(cluster, &mut client, &lock, principal, name).await;
+    let (workflow_client, workflow_connection) =
+        tokio_postgres::connect(&route.database_url, tokio_postgres::NoTls).await?;
+    let workflow_connection = tokio::spawn(workflow_connection);
+    let workflows = PostgresWorkflows::new(
+        workflow_client,
+        "wamn_run",
+        super::super::TENANT,
+        super::super::ENVIRONMENT,
+    );
+    let result = recover(cluster, &mut client, &lock, &workflows, principal, name).await;
+    drop(workflows);
+    workflow_connection.abort();
     drop(lock);
     lock_connection.abort();
     drop(client);
@@ -122,6 +132,7 @@ async fn recover(
     cluster: &ReceivingCluster,
     client: &mut tokio_postgres::Client,
     lock: &tokio_postgres::Client,
+    workflows: &PostgresWorkflows,
     principal: &str,
     pod: &str,
 ) -> anyhow::Result<()> {
@@ -149,14 +160,14 @@ async fn recover(
         .await?;
     lock.query_one("SELECT id FROM receiving.purchase_order WHERE id='00000000-0000-0000-0000-000000000304' FOR UPDATE", &[]).await?;
     let blocker: i32 = lock.query_one("SELECT pg_backend_pid()", &[]).await?.get(0);
-    let request = EnqueueRun {
-        tenant: tenant.to_owned(),
-        environment: super::super::ENVIRONMENT.to_owned(),
-        package_id: super::super::BASE_PACKAGE_ID.to_owned(),
+    let request = StartRequest {
         effective_release_id: super::super::RELEASE_ID,
+        package_id: super::super::BASE_PACKAGE_ID.to_owned(),
         wiring_id: "receiving_record_receipt".to_owned(),
         wiring_version: 1,
-        service_principal_id: principal.to_owned(),
+        trigger: Trigger::Automation {
+            service_principal_id: principal.to_owned(),
+        },
         idempotency_key: "deployed-queue-recovery".to_owned(),
         input: json!([{"request_id":"queue-recovery","value":{
             "idempotency_key":"deployed-queue-recovery","purchase_order_id":"00000000-0000-0000-0000-000000000304",
@@ -164,7 +175,7 @@ async fn recover(
             "line":[{"purchase_order_line_id":"00000000-0000-0000-0000-000000000504","quantity":"9.0000",
                 "location_id":"00000000-0000-0000-0000-000000000201"}]}}]),
     };
-    let run = enqueue(client, &BareSchemaName::new("wamn_run")?, &request).await?;
+    let run = workflows.start(&request).await?;
     let first = blocked_attempt(client, &run, blocker, 0).await?;
     fs::write(
         cluster
@@ -242,7 +253,7 @@ async fn recover(
         "completed run must leave the durable queue"
     );
     ensure!(
-        enqueue(client, &BareSchemaName::new("wamn_run")?, &request).await? == run,
+        workflows.start(&request).await? == run,
         "admission replay must return the completed run"
     );
     fs::write(

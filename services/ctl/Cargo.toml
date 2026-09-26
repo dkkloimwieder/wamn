@@ -80,6 +80,10 @@ wamn-runtime = { workspace = true }
 # 9.6 prune-run-history: the single-source run-state SQL builder
 # (`prune_terminal_runs_sql`) the retention verb uses.
 wamn-run-state = { workspace = true }
+# The `workflow` verbs call the workflow contract over a project-admin
+# connection.
+wamn-workflow = { workspace = true }
+tokio-postgres = { workspace = true }
 
 [dev-dependencies]
 async-nats = { workspace = true, features = ["jetstream"] }

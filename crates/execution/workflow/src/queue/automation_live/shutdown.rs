@@ -10,9 +10,9 @@ use wash_runtime::engine::Engine;
 use wash_runtime::host::probes::Liveness;
 
 use super::{
-    BareSchemaName, EnqueueRun, NODE_TYPES, OPERATION, QUEUE_CLAIM_SCOPE, QueueScope, RouterDriver,
-    WamnJetstream, enqueue,
+    NODE_TYPES, OPERATION, QUEUE_CLAIM_SCOPE, QueueScope, RouterDriver, WamnJetstream,
 };
+use crate::{PostgresWorkflows, StartRequest, Workflows as _};
 
 pub(super) fn component_bytes() -> Vec<u8> {
     wat::parse_str(format!(r#"(component
@@ -60,11 +60,11 @@ pub(super) struct Execution<'a> {
 
 pub(super) async fn run(
     admin: &mut tokio_postgres::Client,
-    schema: &BareSchemaName,
-    request: &EnqueueRun,
+    workflows: &PostgresWorkflows,
+    request: &StartRequest,
     execution: Execution<'_>,
 ) -> anyhow::Result<()> {
-    let run = enqueue(admin, schema, request).await?;
+    let run = workflows.start(request).await?;
     let liveness = Liveness::new(Duration::from_secs(90));
     let (stop, stopping) = tokio::sync::watch::channel(false);
     let queue = super::super::serve_queue(stopping, &liveness, async || {

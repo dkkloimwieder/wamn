@@ -1,5 +1,5 @@
 //! Arguments and output of the `author-wiring`, `publish-release`, `promote`,
-//! `reconcile-run-plane`, `enqueue-run`, and `terminalize-effect-uncertain` verbs.
+//! `reconcile-run-plane`, and `terminalize-effect-uncertain` verbs.
 
 use std::path::PathBuf;
 
@@ -165,61 +165,6 @@ pub struct ReconcileRunPlaneArgs {
     /// Print the reconcile plan without applying it (strictly read-only).
     #[arg(long)]
     pub dry_run: bool,
-}
-
-/// Project-admin admission of one automation delivery.
-#[derive(Debug, Args)]
-pub struct EnqueueRunArgs {
-    /// Project-admin PostgreSQL URL for the project database.
-    #[arg(long, env = "WAMN_PG_ADMIN_URL")]
-    pub admin_database_url: String,
-    #[arg(long, default_value = "wamn_run")]
-    pub schema: String,
-    #[arg(long)]
-    pub tenant: String,
-    #[arg(long)]
-    pub environment: String,
-    #[arg(long)]
-    pub package_id: String,
-    #[arg(long)]
-    pub effective_release_id: u32,
-    #[arg(long)]
-    pub wiring_id: String,
-    #[arg(long)]
-    pub wiring_version: u32,
-    /// Active projected service principal responsible for application writes.
-    #[arg(long)]
-    pub service_principal_id: String,
-    #[arg(long)]
-    pub idempotency_key: String,
-    /// JSON input file passed to the wiring.
-    #[arg(long)]
-    pub input: PathBuf,
-}
-
-/// Admit one automation delivery and print its stored run id.
-pub async fn enqueue(args: EnqueueRunArgs) -> anyhow::Result<()> {
-    use wamn_control::enqueue_run::{EnqueueRun, enqueue_run};
-    let schema = wamn_schema_control::BareSchemaName::new(&args.schema)?;
-    let input = serde_json::from_slice(&std::fs::read(&args.input)?)?;
-    let run_id = enqueue_run(
-        &args.admin_database_url,
-        &schema,
-        &EnqueueRun {
-            tenant: args.tenant,
-            environment: args.environment,
-            package_id: args.package_id,
-            effective_release_id: args.effective_release_id,
-            wiring_id: args.wiring_id,
-            wiring_version: args.wiring_version,
-            service_principal_id: args.service_principal_id,
-            idempotency_key: args.idempotency_key,
-            input,
-        },
-    )
-    .await?;
-    println!("{run_id}");
-    Ok(())
 }
 
 /// Exact operator input; effect identity and asserted outcome are absent by construction.

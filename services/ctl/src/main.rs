@@ -7,7 +7,7 @@ mod print_platform_principals;
 use clap::{Parser, Subcommand};
 use wamn_ctl::{
     component_verbs, delivery_verbs, identity_verbs, package_verbs, provisioning_verbs,
-    release_verbs,
+    release_verbs, workflow_verbs,
 };
 
 #[derive(Parser)]
@@ -84,8 +84,9 @@ enum Command {
     ReconcileRunPlane(release_verbs::ReconcileRunPlaneArgs),
     /// Terminalize one effect-uncertain run from explicit external evidence.
     TerminalizeEffectUncertain(release_verbs::TerminalizeEffectUncertainArgs),
-    /// Queue one released wiring under a service principal.
-    EnqueueRun(release_verbs::EnqueueRunArgs),
+    /// Start, park, release, and list workflow runs.
+    #[command(subcommand)]
+    Workflow(workflow_verbs::WorkflowCommand),
 }
 
 #[tokio::main]
@@ -133,7 +134,7 @@ async fn main() -> anyhow::Result<()> {
         }
         Command::ReconcileRunPlane(args) => release_verbs::reconcile(args).await,
         Command::TerminalizeEffectUncertain(args) => release_verbs::terminalize(args).await,
-        Command::EnqueueRun(args) => release_verbs::enqueue(args).await,
+        Command::Workflow(command) => workflow_verbs::run(command).await,
     }
 }
 
@@ -180,5 +181,31 @@ mod tests {
             assert_eq!(args.env, "dev");
             assert_eq!(args.principal_id, "00112233-4455-6677-8899-aabbccddeeff");
         }
+    }
+
+    #[test]
+    fn workflow_verbs_parse_their_scope_after_the_verb() {
+        let cli = Cli::try_parse_from([
+            "wamn-ctl",
+            "workflow",
+            "park",
+            "--admin-database-url",
+            "postgres://admin:secret@localhost/project",
+            "--tenant",
+            "acme",
+            "--environment",
+            "dev",
+            "--run-id",
+            "run-1",
+        ])
+        .unwrap();
+        let Command::Workflow(wamn_ctl::workflow_verbs::WorkflowCommand::Park(args)) = cli.command
+        else {
+            panic!("expected workflow park");
+        };
+        assert_eq!(args.scope.tenant, "acme");
+        assert_eq!(args.scope.environment, "dev");
+        assert_eq!(args.scope.schema, "wamn_run");
+        assert_eq!(args.run_id, "run-1");
     }
 }

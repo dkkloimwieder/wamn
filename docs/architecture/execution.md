@@ -620,7 +620,7 @@ The HTTP-stop allowance bounds coordination and does not guarantee native comple
 
 Queue shutdown bounds its current turn and auxiliary cleanup.
 A turn beyond the budget retains the existing durable lease for recovery.
-The [enqueue-run command](../operations/queued-automation.md) admits production automation under an active service principal.
+The [workflow start command](../operations/queued-automation.md) admits production automation under an active service principal.
 The host reads that principal and its current application permissions before each delivery.
 The normal operation checks also apply to the folded grant of each entry.
 The legacy `fresh-only` restriction still refuses queued service callers. Human session support does not widen queued automation.

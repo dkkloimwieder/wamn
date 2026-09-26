@@ -7,7 +7,6 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio_postgres::NoTls;
 use wamn_catalog::{ComponentDeclaration, ServingManifest, WiringDocument};
-use wamn_control::enqueue_run::{EnqueueRun, enqueue};
 use wamn_control_provision::{
     CredentialGeneration, WorkloadRoleFamily, WorkloadRoleScope, sql, workload_generation_role,
 };
@@ -27,7 +26,10 @@ use wamn_runtime::plugins::wamn_postgres::{
 use wamn_schema_control::BareSchemaName;
 use wash_runtime::host::probes::Liveness;
 
-use crate::{RouterDriver, RouterDriverConfig, WiringCacheCapacity};
+use crate::{
+    PostgresWorkflows, RouterDriver, RouterDriverConfig, StartRequest, Trigger, WiringCacheCapacity,
+    WorkflowErrorKind, Workflows as _,
+};
 use wamn_execution_host::{OperationHost, OperationScope};
 use wamn_project_state::PlatformComponent;
 
@@ -306,21 +308,24 @@ async fn run_automation(shutdown_signal: Option<&str>) -> anyhow::Result<()> {
     };
     let jetstream = Arc::new(WamnJetstream::from_env());
     let liveness = Liveness::new(Duration::from_secs(90));
-    let mut request = EnqueueRun {
-        tenant: TENANT.to_owned(),
-        environment: "test".to_owned(),
-        package_id: "automation".to_owned(),
+    let (client, connection) = tokio_postgres::connect(database.url(), NoTls).await?;
+    tokio::spawn(connection);
+    let workflows = PostgresWorkflows::new(client, schema.as_str(), TENANT, "test");
+    let mut request = StartRequest {
         effective_release_id: 1,
+        package_id: "automation".to_owned(),
         wiring_id: "echo".to_owned(),
         wiring_version: 1,
-        service_principal_id: SERVICE.to_owned(),
         idempotency_key: "first".to_owned(),
         input: json!({"queued":true}),
+        trigger: Trigger::Automation {
+            service_principal_id: SERVICE.to_owned(),
+        },
     };
     if shutdown_signal.is_some() {
         return shutdown::run(
             &mut admin,
-            &schema,
+            &workflows,
             &request,
             shutdown::Execution {
                 driver: &driver,
@@ -346,15 +351,39 @@ async fn run_automation(shutdown_signal: Option<&str>) -> anyhow::Result<()> {
         },
     )
     .await?;
-    let run = enqueue(&mut admin, &schema, &request).await?;
+    let run = workflows.start(&request).await?;
     assert!(admin.query_one(
         "SELECT EXISTS (SELECT FROM wamn_run.run_queue WHERE run_id=$1) AND to_regclass('application_data.run_queue') IS NULL",
         &[&run],
     ).await?.get::<_, bool>(0));
-    assert_eq!(enqueue(&mut admin, &schema, &request).await?, run);
+    assert_eq!(workflows.start(&request).await?, run);
     request.input = json!({"different":true});
-    assert!(enqueue(&mut admin, &schema, &request).await.is_err());
+    assert_eq!(
+        workflows.start(&request).await.unwrap_err().kind(),
+        WorkflowErrorKind::Conflict
+    );
     request.input = json!({"queued":true});
+
+    // A parked run keeps its status, and no claim takes it until a release.
+    assert_eq!(
+        workflows.release(&run).await.unwrap_err().kind(),
+        WorkflowErrorKind::NotParked
+    );
+    workflows.park(&run).await?;
+    workflows.park(&run).await?;
+    let listed = workflows.list(10).await?;
+    assert_eq!(listed.len(), 1);
+    assert_eq!(listed[0].run_id, run);
+    assert_eq!(listed[0].status, wamn_run_state::RunStatus::Dispatched);
+    assert_eq!(listed[0].trigger_source.as_deref(), Some("automation"));
+    assert!(listed[0].queued && listed[0].parked);
+    assert!(!drain_one(&driver, &postgres, &jetstream, &scope, 30000, &liveness).await?);
+    workflows.release(&run).await?;
+    assert!(!workflows.list(10).await?[0].parked);
+    assert_eq!(
+        workflows.park("absent").await.unwrap_err().kind(),
+        WorkflowErrorKind::NotFound
+    );
     let (_stop_first, stopped_first) = tokio::sync::watch::channel(true);
     first.serve(stopped_first).await?;
     first.revoke();
@@ -399,6 +428,13 @@ async fn run_automation(shutdown_signal: Option<&str>) -> anyhow::Result<()> {
     tokio::time::timeout(Duration::from_secs(1), &mut serving_second)
         .await
         .expect("restarted queue service drains")?;
+    let listed = workflows.list(10).await?;
+    assert_eq!(listed[0].status, wamn_run_state::RunStatus::Completed);
+    assert!(!listed[0].queued && !listed[0].parked);
+    assert_eq!(
+        workflows.park(&run).await.unwrap_err().kind(),
+        WorkflowErrorKind::NotParkable
+    );
     let row = admin.query_one("SELECT status,result_json::text,service_principal_id::text,deadline_adjustments_json::text FROM wamn_run.runs WHERE run_id=$1",&[&run]).await?;
     assert_eq!(row.get::<_, String>(0), "completed");
     assert_eq!(
@@ -413,7 +449,7 @@ async fn run_automation(shutdown_signal: Option<&str>) -> anyhow::Result<()> {
     assert!(!drain_one(&driver, &postgres, &jetstream, &scope, 30000, &liveness).await?);
     request.idempotency_key = "trap".to_owned();
     request.input = serde_json::Value::Null;
-    let trapped_run = enqueue(&mut admin, &schema, &request).await?;
+    let trapped_run = workflows.start(&request).await?;
     let error = drain_one(&driver, &postgres, &jetstream, &scope, 30000, &liveness)
         .await
         .unwrap_err();
@@ -452,7 +488,7 @@ async fn run_automation(shutdown_signal: Option<&str>) -> anyhow::Result<()> {
     );
     request.input = json!({"queued":true});
     request.idempotency_key = "revoked".to_owned();
-    let denied = enqueue(&mut admin, &schema, &request).await?;
+    let denied = workflows.start(&request).await?;
     admin
         .execute(
             "DELETE FROM app_system.permissions WHERE tenant_id=$1",
@@ -476,7 +512,10 @@ async fn run_automation(shutdown_signal: Option<&str>) -> anyhow::Result<()> {
     assert!(row.get::<_, Option<String>>(1).is_none());
     admin.execute("UPDATE app_system.users SET status='disabled' WHERE tenant_id=$1 AND id=$2::text::uuid",&[&TENANT,&SERVICE]).await?;
     request.idempotency_key = "inactive".to_owned();
-    assert!(enqueue(&mut admin, &schema, &request).await.is_err());
+    assert_eq!(
+        workflows.start(&request).await.unwrap_err().kind(),
+        WorkflowErrorKind::Refused
+    );
     second.revoke();
     Ok(())
 }
