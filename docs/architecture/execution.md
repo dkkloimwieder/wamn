@@ -484,14 +484,14 @@ A generated detail, a table and a form's selector list use it to read again, so 
 A form's own record read does not read again, because the form sends the revision that it read when it opened.
 
 A package that generates TypeScript also generates [SolidJS components](../../crates/schema/generator/src/client_component.rs), one for each operation the plan gives a role.
-A table whose read gets a table definition renders the platform `DataTable` over that definition.
+Every table renders the platform `DataTable` over a table definition that the generator derives from the read's contract.
 Its declared filters are the scope bar of the table, and the table owns the sort, the cap and the refresh.
-It loads when it mounts. A load reads one page, with a limit of the cap or the page maximum, whichever is lower, and follows no cursor.
+It loads when it mounts. A load of a paged read reads one page, with a limit of the cap or the page maximum, whichever is lower, and follows no cursor.
+A load of a bounded list reads every row, so the table is always fully read.
 A header sort of rows that the load did not read in full starts a new load in that order.
+A read that states no `lists` names no key, so its table numbers the rows by position.
 Each row link and row form is a button in the last column.
-A table with no definition renders the plan's columns over TanStack Table, with one control for each page control the plan names.
-It appends the next page while the last reply carried a cursor.
-A table that holds more than 100 rows renders only the rows in view of its fixed-height box.
+A table that holds more than 100 rows renders only the rows in view of its box.
 A detail reads one record and shows its fields.
 A form renders what the operator fills over TanStack Form, and it checks that input with an emitted `zod` schema.
 It writes the reserved inputs from the runtime at submit time.

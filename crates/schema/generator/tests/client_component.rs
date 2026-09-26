@@ -56,20 +56,19 @@ fn every_table_screen_gets_one_component_and_its_plan_columns() {
         8,
         "every screen the plan gives a role has one component"
     );
-    // The columns are the plan's columns, in contract order, with the cell type
+    // The columns are the plan's columns, in contract order, with the type
     // that the release declared.
     assert!(widget.contains(concat!(
-        "const LIST_COLUMNS: ColumnDef<GridFeatures, WidgetListRow>[] = [\n",
-        "  {\n",
-        "    accessorKey: \"attributes\",\n",
-        // The fixture authors this column's label, so the header is the
+        "  columns: [\n",
+        // The fixture authors this column's label, so the label is the
         // authored text rather than the path. `wamn-c2y5.4` states the rule.
-        "    header: \"Attributes\",\n",
-        "    cell: (cell) => cellText(cell.getValue() as JsonValue, \"json\"),\n",
-        "  },\n",
+        "    { field: \"attributes\", label: \"Attributes\", type: \"json\", role: \"value\" },\n",
+        "    { field: \"code\", label: \"code\", type: \"text\", role: \"value\" },\n",
     )));
     assert!(
-        widget.contains("    cell: (cell) => cellText(cell.getValue() as JsonValue, \"int64\"),"),
+        widget.contains(
+            "    { field: \"editVersion\", label: \"edit version\", type: \"int64\", role: \"value\" },"
+        ),
         "a revision keeps its declared type, so the cell states every digit"
     );
 }
@@ -146,33 +145,40 @@ fn a_page_table_renders_its_filters_and_sends_the_sort_and_limit_of_each_load() 
     );
 }
 
+/// A bounded list answers with every row, so its load sends no limit and no
+/// sort, and reads the rows as one page with no cursor (wamn-ir48).
 #[test]
-fn a_bounded_list_has_no_control_and_asks_for_no_next_page() {
+fn a_bounded_list_loads_every_row_as_one_page() {
     let files = emit(&release());
     let widget = widget(&files);
     let list = widget
         .split("export function WidgetListTable")
         .nth(1)
         .expect("the list table exists")
-        .split("export function")
+        .split("\nexport ")
         .next()
         .expect("the list table ends");
     assert!(
-        !list.contains("const change ="),
-        "there is nothing to change"
-    );
-    assert!(!list.contains("<select"), "there is no control");
-    assert!(
-        list.contains("const rows = outcome.value.rows;"),
-        "a bounded list carries its rows under rows"
-    );
-    assert!(
-        list.contains("firstPage(rows, null)"),
-        "a bounded list has no cursor"
+        list.contains(concat!(
+            "  const load = createTableLoad<WidgetListRow>(WIDGET_LIST_TABLE, async () => {\n",
+            "    const request = { ...props.fixed } as WidgetListRequest;\n",
+            "    const outcome = await list(props.transport, [request]);\n",
+        )),
+        "a bounded list sends no limit and no sort"
     );
     assert!(
-        !list.contains("next page"),
-        "a bounded list never pages, so it shows no next page"
+        list.contains("    return boundedPage(outcome);\n"),
+        "a bounded list carries its rows under rows, as one page with no cursor"
+    );
+    for retired in ["changeScope", "cursor", "next page"] {
+        assert!(
+            !list.contains(retired),
+            "a bounded list has no control and no next page: {retired}"
+        );
+    }
+    assert!(
+        widget.contains("  rowId: \"id\",\n  pageMaximum: null,\n"),
+        "a read that declares no page limit has no page maximum"
     );
 }
 
@@ -222,31 +228,8 @@ fn a_detail_screen_reads_its_record_and_shows_every_plan_column() {
     );
 }
 
-/// TanStack Table 9 declares a table's features up front, and a keyset page
-/// has no index and no total for the table to page by.
-#[test]
-fn a_table_declares_its_features_and_leaves_paging_to_the_release() {
-    let files = emit(&release());
-    let widget = widget(&files);
-    assert!(
-        widget.contains("  gridFeatures,\n") && widget.contains("  type GridFeatures,\n"),
-        "every table takes the one bundle the UI package exports"
-    );
-    assert!(
-        widget.contains("  const table = createTable({\n    features: gridFeatures,\n"),
-        "each table is created over that bundle"
-    );
-    assert!(
-        widget.contains("    manualPagination: true,\n  });\n"),
-        "the release pages by cursor, so the table holds every row it read"
-    );
-    for retired in ["createSolidTable", "getCoreRowModel"] {
-        assert!(!widget.contains(retired), "{retired} is the version 8 name");
-    }
-}
-
-/// A table renders through the UI package, which owns how it looks. A table
-/// with a definition renders the DataTable, and one with none the data grid.
+/// A table renders through the UI package, which owns how it looks. Every
+/// table renders the DataTable over its definition (wamn-ir48).
 #[test]
 fn a_table_renders_through_the_ui_package_and_states_no_class() {
     let files = emit(&release());
@@ -256,15 +239,7 @@ fn a_table_renders_through_the_ui_package_and_states_no_class() {
         .next()
         .and_then(|head| head.rsplit("import {\n").next())
         .expect("the module imports the UI package");
-    for name in [
-        "Button",
-        "DataGrid",
-        "DataGridContainer",
-        "DataTable",
-        "TableScreen",
-        "WindowedTable",
-        "createTableLoad",
-    ] {
+    for name in ["Button", "DataTable", "TableScreen", "createTableLoad"] {
         assert!(
             ui.contains(&format!("  {name},\n")),
             "the tables name {name} from the UI package"
@@ -294,41 +269,31 @@ fn a_table_renders_through_the_ui_package_and_states_no_class() {
         )),
         "a table with a definition renders the DataTable over it, in the table screen"
     );
-    assert!(
-        !query.contains("WindowedTable"),
-        "the DataTable owns its rows"
-    );
     let list = widget
         .split("export function WidgetListTable")
         .nth(1)
         .and_then(|rest| rest.split("\nexport ").next())
         .expect("the list table exists");
     assert!(
-        list.contains("      <DataGrid\n        table={table}\n"),
-        "the grid renders the instance the component creates"
-    );
-    // The UI package decides which rows reach the page, so a long table
-    // renders only a window of them (wamn-ly11.1).
-    assert!(
-        list.contains(
-            "        <DataGridContainer>\n          <WindowedTable />\n        </DataGridContainer>\n"
-        ),
-        "the grid renders its rows through the windowed table"
-    );
-    assert!(!ui.contains("  DataGridTable,\n"));
-    assert!(
-        list.contains("onRowClick={(row) => props.onRowSelect?.(row)}"),
-        "picking a row still reaches the page"
-    );
-    assert!(
         list.contains(concat!(
-            "        <FormActions>\n",
-            "          <Button type=\"submit\">read</Button>\n",
-            "        </FormActions>\n",
-            "      </form>\n",
+            "      <DataTable\n",
+            "        name=\"widget\"\n",
+            "        columns={WIDGET_LIST_TABLE.columns}\n",
+            "        rowId={WIDGET_LIST_TABLE.rowId}\n",
         )),
-        "the read button closes the form in the actions row"
+        "a bounded list renders the DataTable over its definition"
     );
+    for module in [
+        widget,
+        source(&files, "generated/client-ts/components/widget_maker.tsx"),
+    ] {
+        for retired in ["WindowedTable", "DataGrid", "createTable("] {
+            assert!(
+                !module.contains(retired),
+                "the DataTable owns its rows: {retired}"
+            );
+        }
+    }
     for table in [query, list] {
         for markup in [
             "<table",
@@ -864,10 +829,10 @@ fn a_component_reads_the_authored_label_everywhere_it_states_text() {
     let files = emit(&release());
     let widget = widget(&files);
 
-    // A table column header and a detail term.
+    // A table column label and a detail term.
     assert!(
-        widget.contains("    header: \"Attributes\","),
-        "a table column header reads the authored label"
+        widget.contains("    { field: \"attributes\", label: \"Attributes\","),
+        "a table column label reads the authored label"
     );
     assert!(
         widget.contains("        <DetailItem term=\"Widget code\">"),
@@ -1364,22 +1329,20 @@ fn a_table_screen_gets_a_table_definition_beside_its_component() {
     assert!(!definition.contains("mode") && !definition.contains("cap"));
 }
 
+/// Every table gets a definition that the generator derives from its contract
+/// (wamn-ir48). A read that states no `lists` names no key, so the table numbers
+/// its rows by position.
 #[test]
-fn a_table_with_no_row_id_or_no_page_limit_gets_no_definition_and_the_index_names_it() {
+fn a_table_with_no_key_numbers_its_rows_and_every_table_has_a_definition() {
     let files = emit(&release());
-    assert!(!widget(&files).contains("WIDGET_LIST_TABLE"));
     assert!(
-        !source(&files, "generated/client-ts/components/widget_maker.tsx")
-            .contains("WIDGET_MAKER_LIST_TABLE")
+        source(&files, "generated/client-ts/components/widget_maker.tsx").contains(concat!(
+            "export const WIDGET_MAKER_LIST_TABLE = {\n",
+            "  read: \"list\",\n",
+            "  rowId: null,\n",
+            "  pageMaximum: null,\n",
+        ))
     );
     let index = source(&files, "generated/client-ts/components/index.ts");
-    assert!(
-        index.contains(concat!(
-            "\n// These tables get no table definition, for the reason beside each:\n",
-            "// platform-fixture:widget/list@1.0.0: it declares no page limit\n",
-            "// platform-fixture:widget-maker/list@1.0.0: it states no `lists`, so its rows",
-            " have no row id\n",
-        )),
-        "{index}"
-    );
+    assert!(!index.contains("table definition"), "{index}");
 }

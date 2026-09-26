@@ -11,6 +11,3 @@ export * from "./pallet_quantity.js";
 export * from "./product.js";
 
 // Every operation of this release has a screen role.
-
-// These tables get no table definition, for the reason beside each:
-// wamn-wms:inventory/aggregate@1.0.0: it states no `lists`, so its rows have no row id

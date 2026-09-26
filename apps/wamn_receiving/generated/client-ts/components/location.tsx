@@ -3,32 +3,20 @@
 // `location` components. Each one calls the bindings and the runtime, and
 // nothing else.
 
-import { Show, createSignal, onCleanup } from "solid-js";
-import { createTable, type ColumnDef } from "@tanstack/solid-table";
+import { Show, onCleanup } from "solid-js";
 import {
   afterWrites,
-  appendPage,
-  cellText,
-  emptyPage,
-  failedRead,
-  firstPage,
-  startRead,
-  type JsonValue,
+  boundedPage,
   type Outcome,
-  type PageState,
   type Transport,
   writeMember,
 } from "@wamn/web-runtime";
 import {
   Button,
-  DataGrid,
-  DataGridContainer,
-  FormActions,
+  DataTable,
   TableScreen,
-  WindowedTable,
   announceOutcome,
-  gridFeatures,
-  type GridFeatures,
+  createTableLoad,
 } from "@wamn/ui";
 import {
   list,
@@ -40,28 +28,12 @@ import {
   type ReceivingRecordReceiptFormInitial,
 } from "./receiving.js";
 
-/** Columns of `wamn-receiving:location/list@1.0.0`, in contract order. */
-const LIST_COLUMNS: ColumnDef<GridFeatures, LocationListRow>[] = [
-  {
-    accessorKey: "id",
-    header: "id",
-    cell: (cell) => cellText(cell.getValue() as JsonValue, "uuid"),
-  },
-  {
-    accessorKey: "locationCode",
-    header: "Location code",
-    cell: (cell) => cellText(cell.getValue() as JsonValue, "text"),
-  },
-];
-
 /** What the table for `wamn-receiving:location/list@1.0.0` takes. */
 export interface LocationListTableProps {
   /** The transport the application supplies. */
   readonly transport: Transport;
   /** Input the parent fixes, which the operator does not edit. */
   readonly fixed?: Partial<LocationListRequest>;
-  /** Called when the operator picks one row. */
-  readonly onRowSelect?: (row: LocationListRow) => void;
   /** Called with the values one row hands to `wamn-receiving:receiving/record-receipt@1.0.0`. */
   readonly onFillReceivingRecordReceipt?: (initial: ReceivingRecordReceiptFormInitial) => void;
   /** Called with every outcome this screen reads. */
@@ -72,102 +44,76 @@ export interface LocationListTableProps {
 export const LocationListTableLabel = "Locations";
 
 /**
- * The table for `wamn-receiving:location/list@1.0.0`.
+ * The table for `wamn-receiving:location/list@1.0.0`: the DataTable over `LOCATION_LIST_TABLE`.
  *
- * It owns its page controls and its rows. A change to a control clears the
- * rows, because a cursor names a position in the list the old input produced.
- *
- * It reads when the operator asks, and not when it mounts, because a read is
- * a request that the operator did not send yet.
+ * It loads when it mounts. A change to a filter, a sort of rows the load did
+ * not read in full, a cap change and a refresh each start a new load.
  */
 export function LocationListTable(props: LocationListTableProps) {
-  const controls = (): Partial<LocationListRequest> => ({});
-  const [page, setPage] = createSignal<PageState<LocationListRow>>(emptyPage<LocationListRow>());
-  let asked = false;
-
-  const read = async (cursor: string | null) => {
-    asked = true;
-    setPage(startRead(page()));
-    const request = {
-      ...controls(),
-      ...props.fixed,
-    } as LocationListRequest;
-    const sent = request;
-    const outcome = await list(props.transport, [sent]);
+  const load = createTableLoad<LocationListRow>(LOCATION_LIST_TABLE, async () => {
+    const request = { ...props.fixed } as LocationListRequest;
+    const outcome = await list(props.transport, [request]);
     props.onOutcome?.(outcome);
     if (outcome.status !== "completed") {
       announceOutcome(outcome, LocationListTableLabel);
-      setPage(failedRead(page(), outcome));
-      return;
     }
-    const rows = outcome.value.rows;
-    setPage(cursor === null ? firstPage(rows, null) : appendPage(page(), rows, null));
-  };
-  onCleanup(
-    afterWrites(props.transport, () => {
-      if (asked) {
-        void read(null);
-      }
-    }),
-  );
-
-  const restart = () => {
-    setPage(emptyPage<LocationListRow>());
-    void read(null);
-  };
-
-  const columns: ColumnDef<GridFeatures, LocationListRow>[] = [
-    ...LIST_COLUMNS,
-    {
-      id: "fillReceivingRecordReceipt",
-      header: "",
-      cell: (cell) => (
-        <Show when={props.onFillReceivingRecordReceipt}>
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            onClick={() => props.onFillReceivingRecordReceipt?.(writeMember({} as ReceivingRecordReceiptFormInitial, ["value", "line", "locationId"], cell.row.original.id))}
-          >
-            record-receipt
-          </Button>
-        </Show>
-      ),
-    },
-  ];
-
-  const table = createTable({
-    features: gridFeatures,
-    get data() {
-      return page().rows as LocationListRow[];
-    },
-    columns: columns,
-    manualPagination: true,
+    return boundedPage(outcome);
   });
+  void load.load();
+  onCleanup(afterWrites(props.transport, () => void load.load()));
+
+  const actions = (row: LocationListRow) => (
+    <>
+      <Show when={props.onFillReceivingRecordReceipt}>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          onClick={() => props.onFillReceivingRecordReceipt?.(writeMember({} as ReceivingRecordReceiptFormInitial, ["value", "line", "locationId"], row.id))}
+        >
+          record-receipt
+        </Button>
+      </Show>
+    </>
+  );
 
   return (
     <TableScreen>
-      <form
-        onSubmit={(event) => {
-          event.preventDefault();
-          restart();
-        }}
-      >
-        <FormActions>
-          <Button type="submit">read</Button>
-        </FormActions>
-      </form>
-      <DataGrid
-        table={table}
-        recordCount={page().rows.length}
-        isLoading={page().busy && page().rows.length === 0}
-        emptyMessage={page().refusal}
-        onRowClick={(row) => props.onRowSelect?.(row)}
-      >
-        <DataGridContainer>
-          <WindowedTable />
-        </DataGridContainer>
-      </DataGrid>
+      <DataTable
+        name="location"
+        columns={LOCATION_LIST_TABLE.columns}
+        rowId={LOCATION_LIST_TABLE.rowId}
+        rows={load.state().rows}
+        fullyRead={load.state().fullyRead}
+        busy={load.state().busy}
+        refusal={load.state().refusal}
+        cap={load.state().cap}
+        onCapChange={(cap) => void load.load(cap)}
+        onRefresh={() => void load.load()}
+        startedAt={load.state().startedAt}
+        endedAt={load.state().endedAt}
+        sortFields={LOCATION_LIST_TABLE.sortFields}
+        sortMaxFields={LOCATION_LIST_TABLE.sortMaxFields}
+        onSortChange={load.sortBy}
+        scopeFilters={LOCATION_LIST_TABLE.scopeFilters}
+        onScopeChange={() => void load.load()}
+        rowActions={actions}
+      />
     </TableScreen>
   );
 }
+
+/** The table definition of `wamn-receiving:location/list@1.0.0`. */
+export const LOCATION_LIST_TABLE = {
+  read: "list",
+  rowId: "id",
+  pageMaximum: null,
+  scopeFilters: [],
+  sortFields: [],
+  sortDirections: [],
+  sortMaxFields: 1,
+  columns: [
+    { field: "id", label: "id", type: "uuid", role: "key" },
+    { field: "locationCode", label: "Location code", type: "text", role: "value" },
+  ],
+} as const;

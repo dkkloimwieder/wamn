@@ -4,7 +4,14 @@
 
 import { describe, expect, it } from "vitest";
 
-import { emptyLoad, finishLoad, loadLimit, startLoad, type LoadPage } from "../src/load.js";
+import {
+  boundedPage,
+  emptyLoad,
+  finishLoad,
+  loadLimit,
+  startLoad,
+  type LoadPage,
+} from "../src/load.js";
 import { refusalSentence } from "../src/refusal.js";
 import type { Outcome } from "../src/wire.js";
 
@@ -58,6 +65,21 @@ describe("the load state", () => {
     expect(done.busy).toBe(false);
     expect(done.refusal).toContain("a");
     expect(done.refusal).toMatch(/twice/);
+  });
+
+  it("keeps repeated rows of a list that names no key, because rows are numbered by position", () => {
+    const started = startLoad(emptyLoad<Row>(1000));
+    const done = finishLoad(started, started.generation, page(rows("a", "a"), null), null);
+    expect(done.rows).toHaveLength(2);
+    expect(done.refusal).toBeNull();
+  });
+
+  it("reads a bounded list as one page with no cursor, so the load is fully read", () => {
+    const started = startLoad(emptyLoad<Row>(1000));
+    const bounded = boundedPage<Row>({ status: "completed", value: { rows: rows("a", "b") } });
+    const done = finishLoad(started, started.generation, bounded, "id");
+    expect(done.rows).toHaveLength(2);
+    expect(done.fullyRead).toBe(true);
   });
 
   it("starts a new generation on a cap change, and keeps the cap otherwise", () => {

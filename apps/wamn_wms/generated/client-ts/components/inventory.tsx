@@ -4,16 +4,14 @@
 // nothing else.
 
 import { Show, createSignal, onCleanup } from "solid-js";
-import { createTable, type ColumnDef } from "@tanstack/solid-table";
 import { createForm } from "@tanstack/solid-form";
 import { z } from "zod";
 import {
   afterWrites,
   appendPage,
-  cellText,
+  boundedPage,
   checkedMember,
   emptyPage,
-  failedRead,
   firstPage,
   hasNextPage,
   newIdempotencyKey,
@@ -22,8 +20,6 @@ import {
   refusalMarks,
   refusalSentence,
   refusedMember,
-  startRead,
-  type JsonValue,
   type Numeric,
   type Outcome,
   type PageState,
@@ -32,11 +28,9 @@ import {
   writeMember,
 } from "@wamn/web-runtime";
 import {
-  Badge,
   Button,
   ChoiceField,
-  DataGrid,
-  DataGridContainer,
+  DataTable,
   FieldError,
   FieldGroup,
   FormActions,
@@ -44,10 +38,8 @@ import {
   RecordSelect,
   TableScreen,
   TextField,
-  WindowedTable,
   announceOutcome,
-  gridFeatures,
-  type GridFeatures,
+  createTableLoad,
 } from "@wamn/ui";
 import {
   INVENTORY_ADJUST_REQUEST_FIELDS,
@@ -334,47 +326,12 @@ export function InventoryAdjustForm(props: InventoryAdjustFormProps) {
   );
 }
 
-/** Columns of `wamn-wms:inventory/aggregate@1.0.0`, in contract order. */
-const AGGREGATE_COLUMNS: ColumnDef<GridFeatures, InventoryAggregateRow>[] = [
-  {
-    accessorKey: "locationId",
-    header: "location id",
-    cell: (cell) => cellText(cell.getValue() as JsonValue, "uuid"),
-  },
-  {
-    accessorKey: "palletCount",
-    header: "pallet count",
-    cell: (cell) => cellText(cell.getValue() as JsonValue, "int32"),
-  },
-  {
-    accessorKey: "productId",
-    header: "product id",
-    cell: (cell) => cellText(cell.getValue() as JsonValue, "uuid"),
-  },
-  {
-    accessorKey: "quantity",
-    header: "quantity",
-    cell: (cell) => cellText(cell.getValue() as JsonValue, "numeric"),
-  },
-  {
-    accessorKey: "status",
-    header: "status",
-    cell: (cell) => (
-      <Show when={cellText(cell.getValue() as JsonValue, "text") !== ""}>
-        <Badge variant="outline">{cellText(cell.getValue() as JsonValue, "text")}</Badge>
-      </Show>
-    ),
-  },
-];
-
 /** What the table for `wamn-wms:inventory/aggregate@1.0.0` takes. */
 export interface InventoryAggregateTableProps {
   /** The transport the application supplies. */
   readonly transport: Transport;
   /** Input the parent fixes, which the operator does not edit. */
   readonly fixed?: Partial<InventoryAggregateRequest>;
-  /** Called when the operator picks one row. */
-  readonly onRowSelect?: (row: InventoryAggregateRow) => void;
   /** Called with every outcome this screen reads. */
   readonly onOutcome?: (outcome: Outcome<InventoryAggregateResult>) => void;
 }
@@ -383,85 +340,66 @@ export interface InventoryAggregateTableProps {
 export const InventoryAggregateTableLabel = "aggregate";
 
 /**
- * The table for `wamn-wms:inventory/aggregate@1.0.0`.
+ * The table for `wamn-wms:inventory/aggregate@1.0.0`: the DataTable over `INVENTORY_AGGREGATE_TABLE`.
  *
- * It owns its page controls and its rows. A change to a control clears the
- * rows, because a cursor names a position in the list the old input produced.
- *
- * It reads when the operator asks, and not when it mounts, because a read is
- * a request that the operator did not send yet.
+ * It loads when it mounts. A change to a filter, a sort of rows the load did
+ * not read in full, a cap change and a refresh each start a new load.
  */
 export function InventoryAggregateTable(props: InventoryAggregateTableProps) {
-  const controls = (): Partial<InventoryAggregateRequest> => ({});
-  const [page, setPage] = createSignal<PageState<InventoryAggregateRow>>(emptyPage<InventoryAggregateRow>());
-  let asked = false;
-
-  const read = async (cursor: string | null) => {
-    asked = true;
-    setPage(startRead(page()));
-    const request = {
-      ...controls(),
-      ...props.fixed,
-    } as InventoryAggregateRequest;
-    const sent = request;
-    const outcome = await aggregate(props.transport, [sent]);
+  const load = createTableLoad<InventoryAggregateRow>(INVENTORY_AGGREGATE_TABLE, async () => {
+    const request = { ...props.fixed } as InventoryAggregateRequest;
+    const outcome = await aggregate(props.transport, [request]);
     props.onOutcome?.(outcome);
     if (outcome.status !== "completed") {
       announceOutcome(outcome, InventoryAggregateTableLabel);
-      setPage(failedRead(page(), outcome));
-      return;
     }
-    const rows = outcome.value.rows;
-    setPage(cursor === null ? firstPage(rows, null) : appendPage(page(), rows, null));
-  };
-  onCleanup(
-    afterWrites(props.transport, () => {
-      if (asked) {
-        void read(null);
-      }
-    }),
-  );
-
-  const restart = () => {
-    setPage(emptyPage<InventoryAggregateRow>());
-    void read(null);
-  };
-
-  const table = createTable({
-    features: gridFeatures,
-    get data() {
-      return page().rows as InventoryAggregateRow[];
-    },
-    columns: AGGREGATE_COLUMNS,
-    manualPagination: true,
+    return boundedPage(outcome);
   });
+  void load.load();
+  onCleanup(afterWrites(props.transport, () => void load.load()));
 
   return (
     <TableScreen>
-      <form
-        onSubmit={(event) => {
-          event.preventDefault();
-          restart();
-        }}
-      >
-        <FormActions>
-          <Button type="submit">read</Button>
-        </FormActions>
-      </form>
-      <DataGrid
-        table={table}
-        recordCount={page().rows.length}
-        isLoading={page().busy && page().rows.length === 0}
-        emptyMessage={page().refusal}
-        onRowClick={(row) => props.onRowSelect?.(row)}
-      >
-        <DataGridContainer>
-          <WindowedTable />
-        </DataGridContainer>
-      </DataGrid>
+      <DataTable
+        name="inventory"
+        columns={INVENTORY_AGGREGATE_TABLE.columns}
+        rowId={INVENTORY_AGGREGATE_TABLE.rowId}
+        rows={load.state().rows}
+        fullyRead={load.state().fullyRead}
+        busy={load.state().busy}
+        refusal={load.state().refusal}
+        cap={load.state().cap}
+        onCapChange={(cap) => void load.load(cap)}
+        onRefresh={() => void load.load()}
+        startedAt={load.state().startedAt}
+        endedAt={load.state().endedAt}
+        sortFields={INVENTORY_AGGREGATE_TABLE.sortFields}
+        sortMaxFields={INVENTORY_AGGREGATE_TABLE.sortMaxFields}
+        onSortChange={load.sortBy}
+        scopeFilters={INVENTORY_AGGREGATE_TABLE.scopeFilters}
+        onScopeChange={() => void load.load()}
+      />
     </TableScreen>
   );
 }
+
+/** The table definition of `wamn-wms:inventory/aggregate@1.0.0`. */
+export const INVENTORY_AGGREGATE_TABLE = {
+  read: "aggregate",
+  rowId: null,
+  pageMaximum: null,
+  scopeFilters: [],
+  sortFields: [],
+  sortDirections: [],
+  sortMaxFields: 1,
+  columns: [
+    { field: "locationId", label: "location id", type: "uuid", role: "value" },
+    { field: "palletCount", label: "pallet count", type: "int32", role: "value" },
+    { field: "productId", label: "product id", type: "uuid", role: "value" },
+    { field: "quantity", label: "quantity", type: "numeric", role: "value" },
+    { field: "status", label: "status", type: "text", role: "value" },
+  ],
+} as const;
 
 /** What an operator types for `wamn-wms:inventory/merge@1.0.0`. */
 const MERGE_INPUT = z.object({

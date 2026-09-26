@@ -21,7 +21,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
 
-use crate::client_ir::{FieldIr, leaf_fields};
+use crate::client_ir::FieldIr;
 use crate::client_plan::{
     ClientPlan, ModelPlan, PopulatedInput, ResolvedColumn, Role, Rows, ScreenPlan, SuppliedKind,
 };
@@ -147,17 +147,6 @@ pub fn emit_ts_components(
             .expect("writing to a String cannot fail");
         }
     }
-    let undefined: Vec<_> = plan
-        .screens()
-        .filter(|screen| screen.role == Role::Table && written(screen))
-        .filter_map(|screen| table_gap(screen).map(|reason| (&screen.contract.operation, reason)))
-        .collect();
-    if !undefined.is_empty() {
-        index.push_str("\n// These tables get no table definition, for the reason beside each:\n");
-        for (operation, reason) in undefined {
-            writeln!(index, "// {operation}: {reason}").expect("writing to a String cannot fail");
-        }
-    }
     // The release gap an author closes: a column that names a record whose
     // model serves no list with a record read beside it shows the key.
     let unresolved = plan.unresolved();
@@ -226,45 +215,30 @@ fn emit_model(model: &ModelPlan<'_>) -> Result<String, ClientComponentError> {
     let mut solid = BTreeSet::new();
     // Exports of `@wamn/ui` this module renders through.
     let mut ui = BTreeSet::new();
-    let mut table = false;
     let mut form = false;
     let mut narrowed = false;
     for screen in &screens {
         match screen.role {
             Role::Table => {
                 solid.insert("onCleanup");
-                if table_gap(screen).is_none() {
-                    // The filters of a table are the one signal it keeps.
-                    if screen
-                        .paging
-                        .as_ref()
-                        .is_some_and(|paging| !paging.filter_inputs.is_empty())
-                    {
-                        solid.insert("createSignal");
-                    }
-                    emit_definition_table(
-                        &mut body,
-                        screen,
-                        &mut runtime,
-                        &mut ui,
-                        &mut bindings,
-                        &mut foreign,
-                        &mut sibling,
-                    )?;
-                    write_table_definition(&mut body, screen)?;
-                } else {
-                    table = true;
+                // The filters of a table are the one signal it keeps.
+                if screen
+                    .paging
+                    .as_ref()
+                    .is_some_and(|paging| !paging.filter_inputs.is_empty())
+                {
                     solid.insert("createSignal");
-                    emit_table(
-                        &mut body,
-                        screen,
-                        &mut runtime,
-                        &mut ui,
-                        &mut bindings,
-                        &mut foreign,
-                        &mut sibling,
-                    )?;
                 }
+                emit_definition_table(
+                    &mut body,
+                    screen,
+                    &mut runtime,
+                    &mut ui,
+                    &mut bindings,
+                    &mut foreign,
+                    &mut sibling,
+                )?;
+                write_table_definition(&mut body, screen)?;
             }
             Role::Detail => {
                 solid.extend(["createResource", "onCleanup"]);
@@ -339,11 +313,6 @@ fn emit_model(model: &ModelPlan<'_>) -> Result<String, ClientComponentError> {
         solid.iter().copied().collect::<Vec<_>>().join(", ")
     )
     .expect("writing to a String cannot fail");
-    // Version 9 declares a table's features up front. Every table takes the
-    // one bundle `@wamn/ui` exports, so each has the type the data grid reads.
-    if table {
-        source.push_str("import { createTable, type ColumnDef } from \"@tanstack/solid-table\";\n");
-    }
     if form {
         // A narrowed selector follows the form's own values, so it reads the
         // store the form owns rather than a second copy of the value.
@@ -411,9 +380,6 @@ fn emit_model(model: &ModelPlan<'_>) -> Result<String, ClientComponentError> {
         )
         .expect("writing to a String cannot fail");
     }
-    // Version 9 declares each table's features up front. A row reads its
-    // cells through the visibility feature, and the pagination feature takes
-    // `manualPagination`, because the release pages by cursor.
     // The spellings this module's schemas name. Only the ones it uses are
     // written, so a module carries no rule it does not apply.
     for (name, pattern, meaning) in WIRE_SPELLINGS {
@@ -463,11 +429,6 @@ fn member_literal(path: &str) -> String {
     )
 }
 
-/// The member path as an accessor, for a table column.
-fn accessor(path: &str) -> String {
-    member_path(path).join(".")
-}
-
 /// The label of one field when the author states none: its name with spaces.
 fn derived_label(path: &str) -> String {
     path.rsplit('.')
@@ -496,14 +457,6 @@ fn screen_label(screen: &ScreenPlan<'_>) -> String {
         .label
         .clone()
         .unwrap_or_else(|| screen.name.replace('_', " "))
-}
-
-/// The label of one page control, which names an input the plan reserves.
-fn control_label(screen: &ScreenPlan<'_>, path: &str) -> String {
-    leaf_fields(&screen.contract.input_fields)
-        .into_iter()
-        .find(|field| field.path == path)
-        .map_or_else(|| derived_label(path), label)
 }
 
 /// The button text of one row link, which is the target operation's own name.
@@ -537,60 +490,6 @@ fn labels_name(resolved: &ResolvedColumn<'_>) -> String {
         "{}Labels",
         foreign_alias(resolved.read_model, resolved.read_name)
     )
-}
-
-/// The column list of one table, one entry for each result leaf, in contract
-/// order.
-///
-/// A column that names a record shows the text its read returns, from the
-/// labels the component keeps. Every other column shows its own value.
-fn write_columns(
-    source: &mut String,
-    screen: &ScreenPlan<'_>,
-    indent: usize,
-    ui: &mut BTreeSet<&'static str>,
-) {
-    let pad = " ".repeat(indent);
-    for column in &screen.columns {
-        writeln!(source, "{pad}{{").expect("write");
-        writeln!(source, "{pad}  accessorKey: {:?},", accessor(&column.path)).expect("write");
-        writeln!(source, "{pad}  header: {:?},", label(column)).expect("write");
-        if let Some(resolved) = screen
-            .resolved_columns
-            .iter()
-            .find(|resolved| resolved.column == column.path)
-        {
-            // The grid calls a cell once, so the text sits in markup, which
-            // Solid tracks, and the cell follows the read when it answers.
-            writeln!(
-                source,
-                "{pad}  cell: (cell) => <>{{{}(cell.getValue() as string | null)}}</>,",
-                labels_name(resolved)
-            )
-            .expect("write");
-        } else if column.values.is_empty() {
-            writeln!(
-                source,
-                "{pad}  cell: (cell) => cellText(cell.getValue() as JsonValue, {:?}),",
-                cell_type(column)
-            )
-            .expect("write");
-        } else {
-            // A declared value domain reads as a badge. An absent value shows
-            // nothing, the same as any other cell.
-            ui.insert("Badge");
-            let cell = format!(
-                "cellText(cell.getValue() as JsonValue, {:?})",
-                cell_type(column)
-            );
-            writeln!(
-                source,
-                "{pad}  cell: (cell) => (\n{pad}    <Show when={{{cell} !== \"\"}}>\n{pad}      <Badge variant=\"outline\">{{{cell}}}</Badge>\n{pad}    </Show>\n{pad}  ),"
-            )
-            .expect("write");
-        }
-        writeln!(source, "{pad}}},").expect("write");
-    }
 }
 
 /// The labels one table keeps for each read its columns name.
@@ -641,360 +540,14 @@ fn emit_record_labels(
     Ok(())
 }
 
-fn emit_table(
-    source: &mut String,
-    screen: &ScreenPlan<'_>,
-    runtime: &mut BTreeSet<&'static str>,
-    ui: &mut BTreeSet<&'static str>,
-    bindings: &mut BTreeSet<String>,
-    foreign: &mut BTreeMap<String, BTreeSet<String>>,
-    sibling: &mut BTreeMap<String, BTreeSet<String>>,
-) -> Result<(), ClientComponentError> {
-    let stem = crate::client_ts::type_stem(screen.model, screen.name);
-    let function = crate::client_ts::function_name(screen.name).map_err(|error| {
-        ClientComponentError::new(ClientComponentErrorKind::UnwrittenRole, error.to_string())
-    })?;
-    ui.extend([
-        "Button",
-        "FormActions",
-        "TableScreen",
-        "DataGrid",
-        "DataGridContainer",
-        "WindowedTable",
-        "gridFeatures",
-        "type GridFeatures",
-    ]);
-    // A bounded list states no paging at all, so it renders no control and
-    // asks for no next page.
-    let paging = screen.paging.as_ref();
-    let controls = paging.map_or(0, |paging| {
-        paging.filter_inputs.len()
-            + usize::from(paging.sort_field_input.is_some())
-            + usize::from(paging.sort_direction_input.is_some())
-            + usize::from(paging.limit_input.is_some())
-    });
-    let cursor_input = paging.and_then(|paging| paging.cursor_input);
-    runtime.extend([
-        "appendPage",
-        "cellText",
-        "emptyPage",
-        "failedRead",
-        "firstPage",
-        "startRead",
-        "type JsonValue",
-        "type Outcome",
-        "type PageState",
-        "type Transport",
-    ]);
-    if cursor_input.is_some() {
-        runtime.insert("hasNextPage");
-    }
-    if controls > 0 || cursor_input.is_some() {
-        runtime.insert("writeMember");
-    }
-    bindings.insert(function.clone());
-    bindings.insert(format!("type {stem}Request"));
-    bindings.insert(format!("type {stem}Result"));
-    bindings.insert(format!("type {stem}Row"));
-
-    let rows_key = match screen.rows {
-        crate::client_plan::Rows::List { key } => key,
-        crate::client_plan::Rows::Single => {
-            return Err(ClientComponentError::new(
-                ClientComponentErrorKind::UnwrittenRole,
-                format!(
-                    "{} states the table role and one row",
-                    screen.contract.operation
-                ),
-            ));
-        }
-    };
-
-    // The columns, in contract order. A column that names a record reads the
-    // labels the component keeps, so that list is written inside it.
-    let resolving = !screen.resolved_columns.is_empty();
-    if !resolving {
-        writeln!(
-            source,
-            "\n/** Columns of `{}`, in contract order. */",
-            screen.contract.operation
-        )
-        .expect("write");
-        writeln!(
-            source,
-            "const {}_COLUMNS: ColumnDef<GridFeatures, {stem}Row>[] = [",
-            screen.name.to_uppercase()
-        )
-        .expect("write");
-        write_columns(source, screen, 2, ui);
-        source.push_str("];\n");
-    }
-
-    // The props.
-    writeln!(
-        source,
-        "\n/** What the table for `{}` takes. */",
-        screen.contract.operation
-    )
-    .expect("write");
-    writeln!(source, "export interface {stem}TableProps {{").expect("write");
-    source.push_str("  /** The transport the application supplies. */\n");
-    source.push_str("  readonly transport: Transport;\n");
-    source.push_str("  /** Input the parent fixes, which the operator does not edit. */\n");
-    writeln!(source, "  readonly fixed?: Partial<{stem}Request>;").expect("write");
-    source.push_str("  /** Called when the operator picks one row. */\n");
-    writeln!(source, "  readonly onRowSelect?: (row: {stem}Row) => void;").expect("write");
-    for link in &screen.row_links {
-        let target = crate::client_ts::operation_stem(link.operation);
-        writeln!(
-            source,
-            "  /** Called when the operator opens `{}` from one row. */",
-            link.operation
-        )
-        .expect("write");
-        writeln!(
-            source,
-            "  readonly onOpen{target}?: (row: {stem}Row) => void;"
-        )
-        .expect("write");
-    }
-    for form in &screen.row_forms {
-        let target = crate::client_ts::operation_stem(form.operation);
-        if form.model != screen.model {
-            // The type is written by that model's component module, beside
-            // the form it belongs to, so a sibling import reads it.
-            sibling
-                .entry(form.model.to_owned())
-                .or_default()
-                .insert(format!("type {target}FormInitial"));
-        }
-        writeln!(
-            source,
-            "  /** Called with the values one row hands to `{}`. */",
-            form.operation
-        )
-        .expect("write");
-        writeln!(
-            source,
-            "  readonly onFill{target}?: (initial: {target}FormInitial) => void;"
-        )
-        .expect("write");
-    }
-    source.push_str("  /** Called with every outcome this screen reads. */\n");
-    writeln!(
-        source,
-        "  readonly onOutcome?: (outcome: Outcome<{stem}Result>) => void;"
-    )
-    .expect("write");
-    source.push_str("}\n");
-
-    // The component.
-    writeln!(
-        source,
-        "\n/** What an operator calls this screen. The page decides where it goes. */\nexport const {stem}TableLabel = {:?};",
-        screen_label(screen)
-    )
-    .expect("write");
-    writeln!(
-        source,
-        "\n/**\n * The table for `{}`.\n *\n * It owns its page controls and its rows. A change to a control clears the\n * rows, because a cursor names a position in the list the old input produced.\n *\n * It reads when the operator asks, and not when it mounts, because a read is\n * a request that the operator did not send yet.\n */",
-        screen.contract.operation
-    )
-    .expect("write");
-    writeln!(
-        source,
-        "export function {stem}Table(props: {stem}TableProps) {{"
-    )
-    .expect("write");
-    if controls > 0 {
-        writeln!(
-            source,
-            "  const [controls, setControls] = createSignal<Partial<{stem}Request>>({{}});"
-        )
-        .expect("write");
-    } else {
-        writeln!(
-            source,
-            "  const controls = (): Partial<{stem}Request> => ({{}});"
-        )
-        .expect("write");
-    }
-    writeln!(
-        source,
-        "  const [page, setPage] = createSignal<PageState<{stem}Row>>(emptyPage<{stem}Row>());"
-    )
-    .expect("write");
-    // A write can change the rows a table shows, so a table that read reads
-    // its first page again, and drops the pages after it, because a cursor
-    // can move after a write. A table the operator never read stays unread.
-    source.push_str("  let asked = false;\n");
-    source.push_str("\n  const read = async (cursor: string | null) => {\n");
-    source.push_str("    asked = true;\n");
-    source.push_str("    setPage(startRead(page()));\n");
-    // A sort names a field and a direction together, so a read sends neither
-    // until the operator chose both. The controls keep each choice.
-    let sent_controls =
-        match paging.map(|paging| (paging.sort_field_input, paging.sort_direction_input)) {
-            Some((Some(field), Some(direction))) => {
-                runtime.insert("completePair");
-                format!(
-                    "completePair(controls(), {}, {})",
-                    member_literal(field),
-                    member_literal(direction)
-                )
-            }
-            _ => "controls()".to_owned(),
-        };
-    writeln!(
-        source,
-        "    const request = {{\n      ...{sent_controls},\n      ...props.fixed,\n    }} as {stem}Request;"
-    )
-    .expect("write");
-    if let Some(path) = cursor_input {
-        writeln!(
-            source,
-            "    const sent = cursor === null ? request : (writeMember(request, {}, cursor) as {stem}Request);",
-            member_literal(path)
-        )
-        .expect("write");
-    } else {
-        source.push_str("    const sent = request;\n");
-    }
-    writeln!(
-        source,
-        "    const outcome = await {function}(props.transport, [sent]);"
-    )
-    .expect("write");
-    source.push_str("    props.onOutcome?.(outcome);\n");
-    // A completed read shows its rows, so only another outcome is announced.
-    ui.insert("announceOutcome");
-    source.push_str("    if (outcome.status !== \"completed\") {\n");
-    writeln!(source, "      announceOutcome(outcome, {stem}TableLabel);").expect("write");
-    // The page keeps why the read failed, so the grid never reads as empty.
-    source.push_str("      setPage(failedRead(page(), outcome));\n      return;\n    }\n");
-    let cursor_of = if rows_key == "item" {
-        "outcome.value.nextCursor"
-    } else {
-        "null"
-    };
-    writeln!(
-        source,
-        "    const rows = outcome.value.{};",
-        crate::client_ts::to_camel(rows_key)
-    )
-    .expect("write");
-    writeln!(
-        source,
-        "    setPage(cursor === null ? firstPage(rows, {cursor_of}) : appendPage(page(), rows, {cursor_of}));"
-    )
-    .expect("write");
-    source.push_str("  };\n");
-    runtime.insert("afterWrites");
-    source.push_str(
-        "  onCleanup(\n    afterWrites(props.transport, () => {\n      if (asked) {\n        void read(null);\n      }\n    }),\n  );\n",
-    );
-    source.push_str("\n  const restart = () => {\n");
-    writeln!(source, "    setPage(emptyPage<{stem}Row>());").expect("write");
-    source.push_str("    void read(null);\n  };\n");
-    if controls > 0 {
-        // An emptied control sends no member, because an empty filter list
-        // would ask for no record at all.
-        runtime.insert("writeControl");
-        source.push_str("\n  const change = (path: readonly string[], value: JsonValue) => {\n");
-        source.push_str("    setControls((current) => writeControl(current, path, value));\n");
-        source.push_str("    restart();\n  };\n");
-    }
-    // The grid renders every cell of a row from the column list, so a row link
-    // and a row form are each one column. Each reads a callback the page
-    // supplied, so these columns are built inside the component.
-    if resolving {
-        source.push('\n');
-        emit_record_labels(source, screen, runtime, ui, bindings, foreign)?;
-    }
-    let columns = if !resolving && screen.row_links.is_empty() && screen.row_forms.is_empty() {
-        format!("{}_COLUMNS", screen.name.to_uppercase())
-    } else {
-        writeln!(
-            source,
-            "\n  const columns: ColumnDef<GridFeatures, {stem}Row>[] = ["
-        )
-        .expect("write");
-        if resolving {
-            write_columns(source, screen, 4, ui);
-        } else {
-            writeln!(source, "    ...{}_COLUMNS,", screen.name.to_uppercase()).expect("write");
-        }
-        for link in &screen.row_links {
-            let target = crate::client_ts::operation_stem(link.operation);
-            writeln!(
-                source,
-                "    {{\n      id: \"open{target}\",\n      header: \"\",\n      cell: (cell) => (\n        <Show when={{props.onOpen{target}}}>\n          <Button\n            type=\"button\"\n            variant=\"outline\"\n            size=\"sm\"\n            onClick={{() => props.onOpen{target}?.(cell.row.original)}}\n          >\n            {}\n          </Button>\n        </Show>\n      ),\n    }},",
-                link_label(link.operation)
-            )
-            .expect("write");
-        }
-        for form in &screen.row_forms {
-            let target = crate::client_ts::operation_stem(form.operation);
-            let mut initial = format!("{{}} as {target}FormInitial");
-            for (field, input) in &form.pairs {
-                initial = format!(
-                    "writeMember({initial}, {}, cell.row.original.{})",
-                    member_literal(input),
-                    crate::client_ts::to_camel(field),
-                );
-            }
-            runtime.insert("writeMember");
-            writeln!(
-                source,
-                "    {{\n      id: \"fill{target}\",\n      header: \"\",\n      cell: (cell) => (\n        <Show when={{props.onFill{target}}}>\n          <Button\n            type=\"button\"\n            variant=\"outline\"\n            size=\"sm\"\n            onClick={{() => props.onFill{target}?.({initial})}}\n          >\n            {}\n          </Button>\n        </Show>\n      ),\n    }},",
-                link_label(form.operation)
-            )
-            .expect("write");
-        }
-        source.push_str("  ];\n");
-        "columns".to_owned()
-    };
-    source.push_str("\n  const table = createTable({\n    features: gridFeatures,\n");
-    source.push_str("    get data() {\n      return page().rows as ");
-    writeln!(source, "{stem}Row[];\n    }},").expect("write");
-    writeln!(source, "    columns: {columns},").expect("write");
-    // A keyset page has no index and no total, so the table never pages the
-    // rows it holds.
-    source.push_str("    manualPagination: true,\n  });\n");
-
-    // The markup.
-    source.push_str("\n  return (\n    <TableScreen>\n      <form\n        onSubmit={(event) => {\n          event.preventDefault();\n          restart();\n        }}\n      >\n");
-    let mut controls = String::new();
-    emit_controls(&mut controls, screen, ui);
-    if !controls.is_empty() {
-        ui.insert("FieldGroup");
-        source.push_str("        <FieldGroup>\n");
-        source.push_str(&deepen(&controls));
-        source.push_str("        </FieldGroup>\n");
-    }
-    source.push_str(
-        "        <FormActions>\n          <Button type=\"submit\">read</Button>\n        </FormActions>\n      </form>\n",
-    );
-    // The skeleton stands in for rows only while the first page is read, so a
-    // next page appends below the rows already shown.
-    source.push_str("      <DataGrid\n        table={table}\n        recordCount={page().rows.length}\n        isLoading={page().busy && page().rows.length === 0}\n        emptyMessage={page().refusal}\n        onRowClick={(row) => props.onRowSelect?.(row)}\n      >\n        <DataGridContainer>\n          <WindowedTable />\n        </DataGridContainer>\n      </DataGrid>\n");
-    // A list that serves pages always shows its next page, disabled while the
-    // release sent no cursor, so nothing below the rows appears or disappears.
-    // A bounded list never pages, so it shows none.
-    if cursor_input.is_some() {
-        source.push_str("      <FormActions>\n        <Button\n          type=\"button\"\n          variant=\"outline\"\n          disabled={!hasNextPage(page())}\n          onClick={() => void read(page().cursor)}\n        >\n          next page\n        </Button>\n      </FormActions>\n");
-    }
-    source.push_str("    </TableScreen>\n  );\n}\n");
-    Ok(())
-}
-
-/// One table screen with a table definition: the DataTable over that
-/// definition.
+/// One table screen: the DataTable over its table definition.
 ///
 /// The declared filters are the scope bar of the table, and a change to one
-/// starts a new load that sends it at its declared input path. The table owns the sort, the cap and the refresh, and a
-/// row link or a row form is one button in the last column. The table loads
-/// when it mounts, and again after every write the transport completes.
+/// starts a new load that sends it at its declared input path. The table owns
+/// the sort, the cap and the refresh, and a row link or a row form is one
+/// button in the last column. The table loads when it mounts, and again after
+/// every write the transport completes. A load reads one page of a paged list,
+/// or every row of a bounded list.
 fn emit_definition_table(
     source: &mut String,
     screen: &ScreenPlan<'_>,
@@ -1008,22 +561,27 @@ fn emit_definition_table(
     let function = crate::client_ts::function_name(screen.name).map_err(|error| {
         ClientComponentError::new(ClientComponentErrorKind::UnwrittenRole, error.to_string())
     })?;
-    let Some(paging) = screen.paging.as_ref() else {
-        unreachable!("table_gap admits only a screen with paging");
-    };
+    let paging = screen.paging.as_ref();
     // The load state reads the rows of a page as `item` and its cursor as
-    // `nextCursor`, so the outcome of the read is the outcome of the load.
-    if !matches!(screen.rows, crate::client_plan::Rows::List { key: "item" })
-        || paging.cursor_input.is_none()
-    {
-        return Err(ClientComponentError::new(
-            ClientComponentErrorKind::UnwrittenRole,
-            format!(
-                "{} has a table definition but no `item` rows with a cursor",
-                screen.contract.operation
-            ),
-        ));
-    }
+    // `nextCursor`, so the outcome of a page read is the outcome of the load.
+    // A bounded list holds every row under `rows`, as one page with no cursor.
+    let bounded = match screen.rows {
+        crate::client_plan::Rows::List { key: "item" }
+            if paging.is_some_and(|paging| paging.cursor_input.is_some()) =>
+        {
+            false
+        }
+        crate::client_plan::Rows::List { key: "rows" } => true,
+        _ => {
+            return Err(ClientComponentError::new(
+                ClientComponentErrorKind::UnwrittenRole,
+                format!(
+                    "{} states the table role, but neither `item` rows with a cursor nor bounded `rows`",
+                    screen.contract.operation
+                ),
+            ));
+        }
+    };
     let definition = format!(
         "{}_{}_TABLE",
         screen.model.to_uppercase(),
@@ -1040,7 +598,7 @@ fn emit_definition_table(
     bindings.insert(format!("type {stem}Request"));
     bindings.insert(format!("type {stem}Result"));
     bindings.insert(format!("type {stem}Row"));
-    let filtered = !paging.filter_inputs.is_empty();
+    let filtered = paging.is_some_and(|paging| !paging.filter_inputs.is_empty());
 
     // The props.
     writeln!(
@@ -1112,10 +670,13 @@ fn emit_definition_table(
         )
         .expect("write");
     }
-    let sort = paging
-        .sort
-        .and(paging.sort_field_input.or(paging.sort_direction_input));
-    let parameters = match (paging.limit_input.is_some(), sort.is_some()) {
+    let sort = paging.and_then(|paging| {
+        paging
+            .sort
+            .and(paging.sort_field_input.or(paging.sort_direction_input))
+    });
+    let limit_input = paging.and_then(|paging| paging.limit_input);
+    let parameters = match (limit_input.is_some(), sort.is_some()) {
         (_, true) => "limit, sort",
         (true, false) => "limit",
         (false, false) => "",
@@ -1130,7 +691,7 @@ fn emit_definition_table(
     } else {
         "...props.fixed"
     };
-    let limit = paging.limit_input.map(|path| {
+    let limit = limit_input.map(|path| {
         runtime.insert("writeMember");
         format!(
             "\n    request = writeMember(request, {}, limit) as {stem}Request;",
@@ -1148,7 +709,7 @@ fn emit_definition_table(
         limit.unwrap_or_default()
     )
     .expect("write");
-    if sort.is_some() {
+    if let (Some(paging), Some(_)) = (paging, sort) {
         runtime.insert("writeMember");
         source.push_str("    if (sort !== undefined) {\n");
         for (path, member) in [
@@ -1166,15 +727,21 @@ fn emit_definition_table(
         }
         source.push_str("    }\n");
     }
+    let returned = if bounded {
+        runtime.insert("boundedPage");
+        "boundedPage(outcome)"
+    } else {
+        "outcome"
+    };
     writeln!(
         source,
-        "    const outcome = await {function}(props.transport, [request]);\n    props.onOutcome?.(outcome);\n    if (outcome.status !== \"completed\") {{\n      announceOutcome(outcome, {stem}TableLabel);\n    }}\n    return outcome;\n  }});"
+        "    const outcome = await {function}(props.transport, [request]);\n    props.onOutcome?.(outcome);\n    if (outcome.status !== \"completed\") {{\n      announceOutcome(outcome, {stem}TableLabel);\n    }}\n    return {returned};\n  }});"
     )
     .expect("write");
     source.push_str("  void load.load();\n");
     // A write can change the rows a table shows, so the table loads again.
     source.push_str("  onCleanup(afterWrites(props.transport, () => void load.load()));\n");
-    if filtered {
+    if let (true, Some(paging)) = (filtered, paging) {
         // The scope bar hands over only the filters that hold a value, so an
         // emptied filter sends no member, never an empty list.
         runtime.insert("writeMember");
@@ -1290,23 +857,6 @@ fn emit_definition_table(
     Ok(())
 }
 
-/// One detail screen: the fields of one record that the release reads.
-/// Why a written table gets no table definition, or nothing when it gets one.
-fn table_gap(screen: &ScreenPlan<'_>) -> Option<&'static str> {
-    if screen.contract.lists.is_none() {
-        Some("it states no `lists`, so its rows have no row id")
-    } else if screen
-        .paging
-        .as_ref()
-        .and_then(|paging| paging.limit)
-        .is_none()
-    {
-        Some("it declares no page limit")
-    } else {
-        None
-    }
-}
-
 /// The table definition of one table screen, as data, beside its component.
 ///
 /// It names the read, its scope filters, its sort, its row id, its page
@@ -1316,17 +866,17 @@ fn table_gap(screen: &ScreenPlan<'_>) -> Option<&'static str> {
 /// column is a value. A column that names a record also names the field its
 /// record read shows. The definition states no mode and no cap, because no
 /// manifest declares either.
+///
+/// A read that states no `lists` names no key, so its row id is null and the
+/// table numbers its rows by position. A read that declares no page limit has
+/// a null page maximum, and a load reads what the release answers.
 fn write_table_definition(
     source: &mut String,
     screen: &ScreenPlan<'_>,
 ) -> Result<(), ClientComponentError> {
     let operation = screen.contract;
-    let (Some(lists), Some(paging)) = (operation.lists.as_ref(), screen.paging.as_ref()) else {
-        unreachable!("table_gap admits only a screen with lists and paging");
-    };
-    let Some(limit) = paging.limit else {
-        unreachable!("table_gap admits only a screen with a page limit");
-    };
+    let lists = operation.lists.as_ref();
+    let paging = screen.paging.as_ref();
     let quote = |text: &str| serde_json::Value::String(text.to_owned()).to_string();
     let read = crate::client_ts::function_name(&operation.name).map_err(|error| {
         ClientComponentError::new(ClientComponentErrorKind::UnwrittenRole, error.to_string())
@@ -1341,15 +891,17 @@ fn write_table_definition(
     )
     .expect("write");
     writeln!(source, "  read: {},", quote(&read)).expect("write");
-    writeln!(
-        source,
-        "  rowId: {},",
-        quote(&column_member(&lists.key_field, &operation.operation)?)
-    )
-    .expect("write");
-    writeln!(source, "  pageMaximum: {},", limit.maximum).expect("write");
+    let row_id = match lists {
+        Some(lists) => quote(&column_member(&lists.key_field, &operation.operation)?),
+        None => "null".to_owned(),
+    };
+    writeln!(source, "  rowId: {row_id},").expect("write");
+    let maximum = paging
+        .and_then(|paging| paging.limit)
+        .map_or_else(|| "null".to_owned(), |limit| limit.maximum.to_string());
+    writeln!(source, "  pageMaximum: {maximum},").expect("write");
     let filters = paging
-        .filters
+        .map_or(&[][..], |paging| paging.filters)
         .iter()
         .map(|filter| {
             column_member(&filter.field, &operation.operation).map(|member| quote(&member))
@@ -1358,8 +910,8 @@ fn write_table_definition(
     writeln!(source, "  scopeFilters: [{}],", filters.join(", ")).expect("write");
     // A sort field names its row member, which the table matches, and its wire
     // name, which the request sends.
-    let fields = paging
-        .sort
+    let sort = paging.and_then(|paging| paging.sort);
+    let fields = sort
         .map_or(&[][..], |sort| &sort.fields[..])
         .iter()
         .map(|field| {
@@ -1367,14 +919,13 @@ fn write_table_definition(
                 .map(|member| format!("{{ field: {}, wire: {} }}", quote(&member), quote(field)))
         })
         .collect::<Result<Vec<_>, _>>()?;
-    let directions = paging
-        .sort
+    let directions = sort
         .map_or(&[][..], |sort| &sort.directions[..])
         .iter()
         .map(|direction| quote(direction))
         .collect::<Vec<_>>();
     // A contract that states no bound sorts by one field.
-    let max_fields = paging.sort.and_then(|sort| sort.max_fields).unwrap_or(1);
+    let max_fields = sort.and_then(|sort| sort.max_fields).unwrap_or(1);
     writeln!(source, "  sortFields: [{}],", fields.join(", ")).expect("write");
     writeln!(source, "  sortDirections: [{}],", directions.join(", ")).expect("write");
     writeln!(source, "  sortMaxFields: {max_fields},").expect("write");
@@ -1394,7 +945,7 @@ fn write_table_definition(
             .iter()
             .find(|resolved| resolved.column == column.path);
         // The role decides the column's default aggregate.
-        let role = if column.path == lists.key_field {
+        let role = if lists.is_some_and(|lists| column.path == lists.key_field) {
             "key"
         } else if resolved.is_some() || column.references.is_some() {
             "reference"
@@ -2821,101 +2372,4 @@ fn deepen(block: &str) -> String {
             }
         })
         .collect()
-}
-
-/// One control for each page control the plan names.
-///
-/// Each one is a field from `@wamn/ui`, which owns the label, the control and
-/// how they look. A control commits its value when the operator leaves it.
-fn emit_controls(source: &mut String, screen: &ScreenPlan<'_>, ui: &mut BTreeSet<&'static str>) {
-    let Some(paging) = screen.paging.as_ref() else {
-        return;
-    };
-    emit_filter_controls(source, screen, ui);
-    if let (Some(path), Some(sort)) = (paging.sort_field_input, paging.sort) {
-        emit_select(source, path, &sort.fields, &control_label(screen, path), ui);
-    }
-    if let (Some(path), Some(sort)) = (paging.sort_direction_input, paging.sort) {
-        emit_select(
-            source,
-            path,
-            &sort.directions,
-            &control_label(screen, path),
-            ui,
-        );
-    }
-    if let (Some(path), Some(limit)) = (paging.limit_input, paging.limit) {
-        ui.insert("TextField");
-        writeln!(
-            source,
-            "        <TextField\n          label={:?}\n          type=\"number\"\n          min={{{}}}\n          max={{{}}}\n          value=\"{}\"\n          onChange={{(value) => change({}, value)}}\n        />",
-            control_label(screen, path),
-            limit.minimum,
-            limit.maximum,
-            limit.default,
-            member_literal(path)
-        )
-        .expect("write");
-    }
-}
-
-/// One text control for each declared filter of a table screen.
-fn emit_filter_controls(
-    source: &mut String,
-    screen: &ScreenPlan<'_>,
-    ui: &mut BTreeSet<&'static str>,
-) {
-    let Some(paging) = screen.paging.as_ref() else {
-        return;
-    };
-    for path in &paging.filter_inputs {
-        let repeated = path.ends_with("[]");
-        let value = if repeated {
-            format!(
-                "change({}, value.split(\",\").filter((part) => part !== \"\"))",
-                member_literal(path)
-            )
-        } else {
-            format!("change({}, value)", member_literal(path))
-        };
-        ui.insert("TextField");
-        writeln!(
-            source,
-            "        <TextField\n          label={:?}\n          type=\"text\"\n          onChange={{(value) => {value}}}\n        />",
-            control_label(screen, path)
-        )
-        .expect("write");
-    }
-}
-
-/// One choice whose values are exactly what the contract permits.
-///
-/// The value is the exact contract literal, and the text shows it with spaces.
-fn emit_select(
-    source: &mut String,
-    path: &str,
-    values: &[String],
-    text: &str,
-    ui: &mut BTreeSet<&'static str>,
-) {
-    ui.insert("ChoiceField");
-    writeln!(
-        source,
-        "        <ChoiceField\n          label={text:?}\n          allowEmpty={{true}}\n          choices={{["
-    )
-    .expect("write");
-    for value in values {
-        writeln!(
-            source,
-            "            {{ value: {value:?}, text: {:?} }},",
-            value.replace('_', " ")
-        )
-        .expect("write");
-    }
-    writeln!(
-        source,
-        "          ]}}\n          onChange={{(value) => change({}, value)}}\n        />",
-        member_literal(path)
-    )
-    .expect("write");
 }

@@ -193,8 +193,8 @@ export interface DataTableProps<TRow extends object> {
   /** The table's name, which the file name of a CSV export starts with. */
   readonly name: string;
   readonly columns: readonly DataTableColumn<TRow>[];
-  /** The field that holds the id of each row. */
-  readonly rowId: keyof TRow & string;
+  /** The field that holds the id of each row, or null to number rows by position. */
+  readonly rowId: (keyof TRow & string) | null;
   /** The rows loaded so far. */
   readonly rows: readonly TRow[];
   /** True when the load ended and no rows exist beyond the cap. */
@@ -536,7 +536,7 @@ export function DataTable<TRow extends object>(props: DataTableProps<TRow>): JSX
     get columns() {
       return columns();
     },
-    getRowId: (row) => String(row[props.rowId]),
+    getRowId: (row, index) => (props.rowId === null ? String(index) : String(row[props.rowId])),
     meta: { groupOrder },
     manualPagination: true,
     get manualSorting() {

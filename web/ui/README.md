@@ -52,7 +52,7 @@ Add an item only when an emitter target, or a page that places the generated com
 
 | Export | Purpose |
 | --- | --- |
-| `gridFeatures`, `GridFeatures` | The TanStack Table features every generated table declares |
+| `gridFeatures`, `GridFeatures` | The TanStack Table features that the `DataTable` builds on |
 | `RecordSelect` | The selector: the rows a list returned, a search after a pause in typing, a next page button, and the one record a stored value names when the list did not return it. It reports the row that carries the stored value, so a form reads that row's revision |
 | `createRecordLabels` | The text of the records a table column names by key, read once for each key |
 | `announceOutcome` | Shows one runtime outcome as a toast |
@@ -61,8 +61,8 @@ Add an item only when an emitter target, or a page that places the generated com
 | `ConfirmAction` | One action the operator confirms first, in an alert dialog |
 | `FormActions` | The buttons that close a form or a table, in one full-width row aligned right |
 | `FormDone` | The line a form shows beside its buttons after its command completes |
-| `WindowedTable` | The rows of a generated table, windowed above `WINDOW_FROM` rows inside the fixed-height box, and in full below it |
-| `TableScreen` | One table screen: its filter form, its rows and its next page, stacked with one gap. A `DataTable` in it takes the height of the viewport, and at least 32rem |
+| `WindowedTable` | The rows of the `DataTable`, windowed above `WINDOW_FROM` rows inside its box, and in full below it |
+| `TableScreen` | One table screen. A `DataTable` in it takes the height of the viewport, and at least 32rem |
 | `createTableLoad`, `DEFAULT_CAP` | The load of one `DataTable` over a table definition: the cap, the sort, and a new load for each change |
 | `AppFrame` | The signed-in page of an application: the sidebar with its navigation, a header, and the screen |
 | `CardPage` | One card in the middle of an empty page, for signing in and for an address with no page |

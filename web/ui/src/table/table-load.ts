@@ -26,8 +26,10 @@ export const DEFAULT_CAP = 1000;
 
 /** The parts of a table definition that a load reads. */
 export interface TableLoadDefinition<TRow extends object> {
-  readonly rowId: keyof TRow & string;
-  readonly pageMaximum: number;
+  /** The field that holds the id of each row, or null when rows have no key. */
+  readonly rowId: (keyof TRow & string) | null;
+  /** The most rows one read returns, or null when the read declares no limit. */
+  readonly pageMaximum: number | null;
   /** The fields the read can sort by, each with the name its request sends. */
   readonly sortFields: readonly { readonly field: keyof TRow & string; readonly wire: string }[];
 }
@@ -57,7 +59,9 @@ export function createTableLoad<TRow extends object>(
   const load = async (cap: number = state().cap) => {
     const next = startLoad(state(), cap);
     setState(next);
-    const outcome = await read(loadLimit(next.cap, definition.pageMaximum), sort);
+    const limit =
+      definition.pageMaximum === null ? next.cap : loadLimit(next.cap, definition.pageMaximum);
+    const outcome = await read(limit, sort);
     setState((current) => finishLoad(current, next.generation, outcome, definition.rowId));
   };
 

@@ -40,6 +40,28 @@ export interface LoadPage<Row> {
   readonly nextCursor: string | null;
 }
 
+/**
+ * The outcome of a bounded list as the one page of a load.
+ *
+ * A bounded list answers with every row and no cursor, so its load is always
+ * fully read.
+ */
+export function boundedPage<Row>(
+  outcome: Outcome<{ readonly rows: readonly Row[] }>,
+): Outcome<LoadPage<Row>> {
+  switch (outcome.status) {
+    case "completed":
+      return { status: "completed", value: { item: outcome.value.rows, nextCursor: null } };
+    case "partiallyCompleted":
+      return {
+        ...outcome,
+        committedResult: { item: outcome.committedResult.rows, nextCursor: null },
+      };
+    default:
+      return outcome;
+  }
+}
+
 /** The state of a table that has loaded nothing. */
 export function emptyLoad<Row>(cap: number): LoadState<Row> {
   return {
@@ -93,7 +115,7 @@ export function finishLoad<Row>(
   state: LoadState<Row>,
   generation: number,
   outcome: Outcome<LoadPage<Row>>,
-  rowId: keyof Row & string,
+  rowId: (keyof Row & string) | null,
   now: Date = new Date(),
 ): LoadState<Row> {
   if (generation !== state.generation) {
@@ -116,13 +138,16 @@ export function finishLoad<Row>(
           : outcome.status,
     );
   }
-  const seen = new Set<string>();
-  for (const row of outcome.value.item) {
-    const id = String(row[rowId]);
-    if (seen.has(id)) {
-      return failed(`The load returned the row id ${id} twice.`);
+  // A list that names no key numbers its rows by position, so no id repeats.
+  if (rowId !== null) {
+    const seen = new Set<string>();
+    for (const row of outcome.value.item) {
+      const id = String(row[rowId]);
+      if (seen.has(id)) {
+        return failed(`The load returned the row id ${id} twice.`);
+      }
+      seen.add(id);
     }
-    seen.add(id);
   }
   return {
     ...state,

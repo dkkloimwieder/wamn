@@ -17,11 +17,6 @@ export * from "./supplier.js";
 // wamn-receiving:receiving/record-receipt@1.0.0 value.line[].location_id: wamn-receiving:location/list@1.0.0
 // wamn-receiving:receiving/record-receipt@1.0.0 value.line[].purchase_order_line_id: wamn-receiving:receiving/load-receipt-screen@1.0.0
 
-// These tables get no table definition, for the reason beside each:
-// wamn-receiving:location/list@1.0.0: it declares no page limit
-// wamn-receiving:receiving/load-purchase-order-history@1.0.0: it states no `lists`, so its rows have no row id
-// wamn-receiving:receiving/load-receipt-screen@1.0.0: it declares no page limit
-
 // These table columns show the record key, because the model they name
 // serves no list whose rows open a record read that returns its text:
 // wamn-receiving:purchase-order/query@1.0.0 supplier_id: supplier

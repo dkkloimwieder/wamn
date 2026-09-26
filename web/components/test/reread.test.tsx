@@ -2,11 +2,10 @@
  * The testing method for a page that reads again after a write, used once.
  *
  * The transport tells each listener when a write settles. A detail and a
- * table that read show what the write changed, and a table the operator
- * never read stays unread (`docs/architecture/execution.md`).
+ * table show what the write changed (`docs/architecture/execution.md`).
  */
 
-import { cleanup, fireEvent, render, screen, waitFor } from "@solidjs/testing-library";
+import { cleanup, render, screen, waitFor } from "@solidjs/testing-library";
 import { afterEach, describe, expect, it } from "vitest";
 
 import type { JsonValue, Outcome, Transport, WireRequest } from "@wamn/web-runtime";
@@ -61,14 +60,10 @@ describe("a write on the page's transport", () => {
     await waitFor(() => expect(screen.getByText("Southwind")).toBeDefined());
   });
 
-  it("makes a table that read read its first page again, and leaves an unread one alone", async () => {
+  it("makes a bounded table load its rows again", async () => {
     const { transport, write, reads } = stub();
     render(() => <WidgetMakerListTable transport={transport} />);
-    write("Eastwind");
-    expect(reads("widget-maker/list")).toBe(0);
-
-    fireEvent.click(screen.getByText("read"));
-    await waitFor(() => expect(screen.getByText("Eastwind")).toBeDefined());
+    await waitFor(() => expect(screen.getByText("Northwind")).toBeDefined());
     write("Southwind");
     await waitFor(() => expect(screen.getByText("Southwind")).toBeDefined());
     expect(reads("widget-maker/list")).toBe(2);
