@@ -580,6 +580,13 @@ fn verify_executor_platform_grants(
             "effect_attempts".to_string(),
             "SELECT".to_string(),
         ),
+        // An event admission reads the durability class (wamn-upl3.6).
+        (
+            "relation".to_string(),
+            "wamn_run".to_string(),
+            "environment_policies".to_string(),
+            "SELECT".to_string(),
+        ),
         (
             "routine".to_string(),
             "wamn_authority".to_string(),
@@ -595,11 +602,27 @@ fn verify_executor_platform_grants(
             "SELECT".to_string(),
         ));
     }
-    for (relation, columns) in [
-        ("runs", &sql::EXECUTOR_PLATFORM_RUN_UPDATE_COLUMNS[..]),
+    for (relation, privilege, columns) in [
+        (
+            "runs",
+            "UPDATE",
+            &sql::EXECUTOR_PLATFORM_RUN_UPDATE_COLUMNS[..],
+        ),
         (
             "run_queue",
+            "UPDATE",
             &sql::EXECUTOR_PLATFORM_QUEUE_UPDATE_COLUMNS[..],
+        ),
+        // The event run grain the host admits (wamn-upl3.6).
+        (
+            "runs",
+            "INSERT",
+            &sql::EXECUTOR_PLATFORM_RUN_INSERT_COLUMNS[..],
+        ),
+        (
+            "run_queue",
+            "INSERT",
+            &sql::EXECUTOR_PLATFORM_QUEUE_INSERT_COLUMNS[..],
         ),
     ] {
         for column in columns {
@@ -607,7 +630,7 @@ fn verify_executor_platform_grants(
                 "column".to_string(),
                 "wamn_run".to_string(),
                 format!("{relation}.{column}"),
-                "UPDATE".to_string(),
+                privilege.to_string(),
             ));
         }
     }
