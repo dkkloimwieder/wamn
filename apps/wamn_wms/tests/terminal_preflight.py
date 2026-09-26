@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Exercise the WMS terminal driver against HTTP and database fixtures.
 
-This preflight drives the actual example binary through both response modes.
+This preflight drives the actual example binary through a successful move.
+The WMS move is a plain route and has no partial result.
 It does not test platform execution, database commits, or object-store writes.
 """
 
@@ -20,7 +21,7 @@ sys.dont_write_bytecode = True
 
 
 class HttpFixture:
-    def __init__(self, ids, mode, partial_failure):
+    def __init__(self, ids):
         self.errors = []
         fixture = self
         self.movement = {"movement_id": "44444444-0000-0000-0000-000000000009",
@@ -31,33 +32,40 @@ class HttpFixture:
             def log_message(self, *_args):
                 pass
 
+            def do_GET(self):
+                # A read is a GET with its one item in the query string, and it
+                # answers one outcome with no request identity (wamn-rst8.1).
+                try:
+                    if self.path.partition("?")[0] != "/pallet/get":
+                        raise ValueError("unexpected fixture read")
+                    value = {"id": ids.pallet, "location_id": ids.source,
+                             "pallet_code": "WMS-TUI-PREFLIGHT", "row_version": 1,
+                             "status": "available", "created_at": "2026-09-10T10:00:00Z",
+                             "created_by": "00000000-0000-4000-8000-0000000000f1",
+                             "updated_at": "2026-09-10T10:00:00Z",
+                             "updated_by": "00000000-0000-4000-8000-0000000000f1"}
+                    self.answer(200, [{"value": value}])
+                except Exception as error:
+                    fixture.errors.append(type(error).__name__)
+                    self.send_error(500, "HTTP fixture failed")
+
+            def answer(self, status, body):
+                payload = json.dumps(body).encode()
+                self.send_response(status)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(payload)))
+                self.end_headers()
+                self.wfile.write(payload)
+
             def do_POST(self):
                 try:
                     request = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
-                    if self.path == "/pallet/get":
-                        value = {"id": ids.pallet, "location_id": ids.source,
-                                 "pallet_code": "WMS-TUI-PREFLIGHT", "row_version": 1,
-                                 "status": "available", "created_at": "2026-09-10T10:00:00Z",
-                                 "created_by": "00000000-0000-4000-8000-0000000000f1",
-                                 "updated_at": "2026-09-10T10:00:00Z",
-                                 "updated_by": "00000000-0000-4000-8000-0000000000f1"}
-                        status, body = 200, [{"request_id": request[0]["request_id"], "value": value}]
-                    elif self.path == "/inventory/move":
+                    if self.path == "/inventory/move":
                         value = dict(fixture.movement)
-                        envelope = [{"request_id": request[0]["request_id"], "value": value}]
-                        if mode == "success":
-                            status, body = 200, envelope
-                        else:
-                            status, body = 500, {"committed_result": envelope,
-                                                 "failed_outcome": partial_failure}
+                        status, body = 200, [{"request_id": request[0]["request_id"], "value": value}]
                     else:
                         raise ValueError("unexpected fixture route")
-                    payload = json.dumps(body).encode()
-                    self.send_response(status)
-                    self.send_header("Content-Type", "application/json")
-                    self.send_header("Content-Length", str(len(payload)))
-                    self.end_headers()
-                    self.wfile.write(payload)
+                    self.answer(status, body)
                 except Exception as error:
                     fixture.errors.append(type(error).__name__)
                     self.send_error(500, "HTTP fixture failed")
@@ -100,7 +108,7 @@ class DatabaseFixture:
         return observation
 
 
-def run_mode(driver, tree, binary, directory, mode, failure, timeout):
+def run_mode(driver, tree, binary, directory, mode, timeout):
     token, host = "wms-preflight-fixture-token", "wms-preflight.localhost"
     evidence = driver.support.Evidence(directory, [token])
     helper, _ = driver.support.load_terminal(tree)
@@ -113,7 +121,7 @@ def run_mode(driver, tree, binary, directory, mode, failure, timeout):
     result = {"passed": False, "mode": mode, "scope": "synthetic terminal preflight", "platform_test": False}
     fixture = relay = session = None
     try:
-        fixture = HttpFixture(ids, mode, failure)
+        fixture = HttpFixture(ids)
         relay = driver.Relay(fixture.url, host, token, timeout)
         database = DatabaseFixture(relay, evidence, ids, fixture.movement)
         session = helper.Session(binary, tree, relay, "synthetic-wms-preflight", host, token)
@@ -156,19 +164,14 @@ def main():
     spec = importlib.util.spec_from_file_location("wms_live_driver", driver_path)
     driver = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(driver)
-    partial_path = tree / "apps/wamn_wms/tests/fixtures/wms-partial-http.json"
-    partial = json.loads(json.loads(partial_path.read_text())["body"])
     evidence = driver.support.Evidence(args.evidence_dir, [])
     evidence.json("inputs.json", {
         "scope": "synthetic terminal preflight", "platform_test": False, "binary": str(binary),
         "binary_sha256": hashlib.sha256(binary.read_bytes()).hexdigest(),
         "driver_sha256": hashlib.sha256(driver_path.read_bytes()).hexdigest(),
         "preflight_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
-        "partial_failure_source": str(partial_path.relative_to(tree)),
-        "partial_failure_source_sha256": hashlib.sha256(partial_path.read_bytes()).hexdigest(),
     })
-    modes = [run_mode(driver, tree, binary, args.evidence_dir / mode, mode, partial["failed_outcome"], args.timeout)
-             for mode in ("success", "partial")]
+    modes = [run_mode(driver, tree, binary, args.evidence_dir / "success", "success", args.timeout)]
     result = {"passed": all(mode["passed"] for mode in modes), "platform_test": False,
               "scope": "synthetic terminal preflight", "modes": modes}
     evidence.json("result.json", result)

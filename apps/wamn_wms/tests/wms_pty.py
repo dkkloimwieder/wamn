@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Drive the composed WMS form against a disposable live route.
 
-Run each mode with its own evidence directory. The caller owns the labels bucket.
-Success requires the bucket. Partial requires the caller to remove that bucket.
+The move is a plain route, so it answers the committed move or an outcome the
+terminal cannot know; it has no partial result. The label workflow stores the
+label after the move commits, and the caller reads it from the store.
 Credentials enter through private files. Evidence omits authorization headers.
 """
 
@@ -42,9 +43,18 @@ class Relay:
             def log_message(self, *_args):
                 pass
 
+            def do_GET(self):
+                # A read is a GET that carries its one item in the query string
+                # (wamn-rst8.1), so the relay forwards it with no body.
+                self.forward("GET")
+
             def do_POST(self):
+                self.forward("POST")
+
+            def forward(self, method):
                 body = self.rfile.read(int(self.headers.get("Content-Length", "0")))
-                record = {"method": "POST", "path": self.path,
+                path, _, query = self.path.partition("?")
+                record = {"method": method, "path": path, "query": query,
                           "host": self.headers.get("Host"),
                           "content_type": self.headers.get("Content-Type"),
                           "request_body": body.decode("utf-8", "replace"),
@@ -56,10 +66,12 @@ class Relay:
                     require(record["authorization_matches"], "operator used the wrong credential")
                     constructor = http.client.HTTPSConnection if upstream.scheme == "https" else http.client.HTTPConnection
                     connection = constructor(upstream.hostname, upstream.port, timeout=timeout)
-                    connection.request("POST", upstream.path.rstrip("/") + self.path, body=body,
-                                       headers={"Host": self.headers["Host"],
-                                                "Authorization": self.headers["Authorization"],
-                                                "Content-Type": self.headers["Content-Type"]})
+                    headers = {"Host": self.headers["Host"],
+                               "Authorization": self.headers["Authorization"]}
+                    if method == "POST":
+                        headers["Content-Type"] = self.headers["Content-Type"]
+                    connection.request(method, upstream.path.rstrip("/") + self.path,
+                                       body=body if method == "POST" else None, headers=headers)
                     response = connection.getresponse()
                     answer = response.read()
                     record.update(status=response.status, response_body=answer.decode("utf-8", "replace"),
@@ -180,12 +192,12 @@ def drive(session, relay, db, evidence, ids, mode):
                 for row in session.display.text().splitlines()), "composition did not bind the read revision")
     frame("11-move-input")
     keys("submit the composed move once", b"\x13")
-    state = "Succeeded. This intent is spent" if mode == "success" else "Partially completed; committed work remains."
-    session.text(state)
+    session.text("Succeeded. This intent is spent")
     frame("12-completion")
     records = relay.snapshot()
-    require([record["path"] for record in records] == ["/pallet/get", "/inventory/move"],
-            "the form did not send exactly one read and one move")
+    require([(record["method"], record["path"]) for record in records]
+            == [("GET", "/pallet/get"), ("POST", "/inventory/move")],
+            "the form did not send exactly one GET read and one POST move")
     move = records[1]
     request = json.loads(move["request_body"])
     require(len(request) == 1, "move request is not a single-item envelope")
@@ -194,32 +206,17 @@ def drive(session, relay, db, evidence, ids, mode):
             and command["pallet_id"] == ids.pallet and command["to_location_id"] == ids.destination
             and command["expected_row_version"] == 1, "move body differs from the bound read and entered destination")
     response = json.loads(move["response_body"])
-    answer = response if mode == "success" else response["committed_result"]
+    answer = response
     require(len(answer) == 1 and answer[0]["request_id"] == request[0]["request_id"],
             "move response does not match the submitted request")
     value = answer[0]["value"]
     movement_id = str(uuid.UUID(value["movement_id"]))
     committed = {"movement_id": movement_id, "pallet_id": ids.pallet,
                  "location_id": ids.destination, "pallet_status": "available", "row_version": 2}
-    if mode == "success":
-        # The move is a plain route; the label workflow stores the label later.
-        require(move["status"] == 200 and value == committed,
-                "successful move did not return the committed movement")
-        session.text("movement_id: " + movement_id)
-        frame("13-committed-move")
-    else:
-        require(move["status"] == 500 and set(response) == {"committed_result", "failed_outcome"}
-                and value == committed, "partial response does not preserve the exact committed movement")
-        failure = response["failed_outcome"]
-        require(set(failure) == {"code", "message", "effect_outcome"}
-                and failure["code"] == "write_failed" and failure["effect_outcome"] == "responded"
-                and failure["message"], "partial response differs from the missing-bucket failure")
-        session.text("Committed result:")
-        session.text(movement_id)
-        session.text("Failed outcome:")
-        session.text("write_failed")
-        session.text("responded")
-        frame("13-partial-result-and-failure")
+    require(move["status"] == 200 and value == committed,
+            "successful move did not return the committed movement")
+    session.text("movement_id: " + movement_id)
+    frame("13-committed-move")
     observed = snapshot(db, "14-committed-db", ids)
     require(observed["claims"] == observed["movements"] == 1, "move did not commit exactly one claim and movement")
     require(observed["command"] == {"idempotency_key": command["idempotency_key"], "movement_id": movement_id,
@@ -250,8 +247,7 @@ def drive(session, relay, db, evidence, ids, mode):
             "movement_id": movement_id, "idempotency_key": command["idempotency_key"],
             "pallet_id": ids.pallet, "location_id": ids.destination,
             "row_version": 2, "http_requests": 2, "read_requests": 1, "move_requests": 1,
-            "committed_claims": 1, "committed_movements": 1, "spent_controls_send_nothing": True,
-            "partial_result_and_failure_visible": mode == "partial"}
+            "committed_claims": 1, "committed_movements": 1, "spent_controls_send_nothing": True}
 
 
 def main():
@@ -260,7 +256,7 @@ def main():
         parser.add_argument("--" + name, required=True, type=Path)
     for name in ("endpoint", "host", "target-instance"):
         parser.add_argument("--" + name, required=True)
-    parser.add_argument("--mode", choices=("success", "partial"), required=True)
+    parser.add_argument("--mode", choices=("success",), required=True)
     parser.add_argument("--timeout", type=float, default=60.0)
     args = parser.parse_args()
     evidence = session = relay = db = ids = helper = None
