@@ -1119,6 +1119,9 @@ fn input_contract(
                         "type": column.column_type().as_str(),
                     });
                     let members = declared.as_object_mut().expect("a filter object");
+                    if !filter.match_mode.is_exact() {
+                        members.insert("match".to_owned(), json!(filter.match_mode.as_str()));
+                    }
                     members.extend(model_text_members(model, &filter.field));
                     if let Some(values) = model.enum_fields.get(&filter.field) {
                         members.insert("values".to_owned(), json!(values));

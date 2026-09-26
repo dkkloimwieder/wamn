@@ -43,7 +43,7 @@ pub(crate) const CREATE_2_DIGEST: &str =
 pub(crate) const GET_DIGEST: &str =
     "sha256:61ac14096e05333a1144902bc75008c04282a56c79f864c6b70c0bdf6d4cfb43";
 pub(crate) const QUERY_DIGEST: &str =
-    "sha256:a6de5ac55dd7ca3338920967d4d96c32c5ce5587678acd25a5118de40cda6bc8";
+    "sha256:ff1b26713e83462dd1f81c48250843c65e88c845b0b8b64042a8eba759229497";
 pub(crate) const UPDATE_DIGEST: &str =
     "sha256:44379e3dce960c2cb46c2e7a359305f33bc830a1ae3b91c56a9382f06bcc4b07";
 

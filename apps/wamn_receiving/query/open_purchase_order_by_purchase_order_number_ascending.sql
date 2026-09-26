@@ -26,9 +26,10 @@ WHERE
     )
     AND (
         $3::jsonb IS NULL
-        OR purchase_order.purchase_order_number IN (
-            SELECT filter.value
+        OR EXISTS (
+            SELECT 1
             FROM jsonb_array_elements_text($3::jsonb) AS filter(value)
+            WHERE strpos(purchase_order.purchase_order_number, filter.value) > 0
         )
     )
     AND (

@@ -1,7 +1,7 @@
 use wamn_schema_introspection::ir::{Column, ColumnType, Table};
 
 use crate::generate::{CLAIM_COMMAND_COLUMN, CLAIM_KEY_COLUMN};
-use crate::manifest::DeleteMode;
+use crate::manifest::{DeleteMode, FilterMatch};
 use crate::{CursorDirection, OperationDeclaration};
 
 /// One create's resolved claim, as the emitters need it.
@@ -235,11 +235,17 @@ pub(crate) fn query(
     }
     for (index, filter) in operation.filters.iter().enumerate() {
         let field = &filter.field;
-        predicates.push(format!(
-            "    (${bind}::jsonb IS NULL OR model.{field} IN (\n        SELECT filter.value::{}\n        FROM jsonb_array_elements_text(${bind}::jsonb) AS filter(value)\n    ))",
-            postgres_type(column_type(table, field)),
-            bind = index + 1,
-        ));
+        let bind = index + 1;
+        predicates.push(match filter.match_mode {
+            FilterMatch::Exact => format!(
+                "    (${bind}::jsonb IS NULL OR model.{field} IN (\n        SELECT filter.value::{}\n        FROM jsonb_array_elements_text(${bind}::jsonb) AS filter(value)\n    ))",
+                postgres_type(column_type(table, field)),
+            ),
+            // strpos reads the value as text, so a % or _ in it matches itself.
+            FilterMatch::Contains => format!(
+                "    (${bind}::jsonb IS NULL OR EXISTS (\n        SELECT 1\n        FROM jsonb_array_elements_text(${bind}::jsonb) AS filter(value)\n        WHERE strpos(model.{field}, filter.value) > 0\n    ))"
+            ),
+        });
     }
     let cursor_value_bind = operation.filters.len() + 1;
     let cursor_id_bind = cursor_value_bind + 1;

@@ -150,7 +150,7 @@ Each feature follows the core rule: server work sets scope, client work needs a 
 ### Search
 
 - Fully read: one search box over the visible columns, in the client. TanStack's global filter checks every column that allows it, hidden ones included, so the table restricts it to visible columns itself.
-- Otherwise: search runs on the server over declared fields. Needs a contains match (`wamn-yxm6`).
+- Otherwise: search runs on the server over declared fields. A filter declares the contains match as `"match": "contains"` (`wamn-yxm6`).
 
 ### Group and aggregates
 

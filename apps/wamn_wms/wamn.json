@@ -76,7 +76,8 @@
           "permission": "location.query",
           "filters": [
             {
-              "field": "location_code"
+              "field": "location_code",
+              "match": "contains"
             }
           ],
           "pagination": {
@@ -206,7 +207,8 @@
               "field": "location_id"
             },
             {
-              "field": "pallet_code"
+              "field": "pallet_code",
+              "match": "contains"
             }
           ],
           "sort": {
@@ -325,7 +327,8 @@
           "permission": "product.query",
           "filters": [
             {
-              "field": "product_code"
+              "field": "product_code",
+              "match": "contains"
             }
           ],
           "pagination": {

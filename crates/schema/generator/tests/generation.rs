@@ -970,6 +970,69 @@ fn ordered_filters_and_query_variants_remain_structural_and_finite() {
     );
 }
 
+/// A filter on a text field can match by contains, and exact stays the
+/// default, which the contract leaves unstated (wamn-yxm6). The contract
+/// states the mode and the generated SQL matches a part of the column.
+#[test]
+fn a_contains_filter_matches_a_part_of_a_text_field() {
+    let ir = catalog(false);
+    let mut contains = manifest();
+    let query = &mut contains["models"]["gadget"]["operations"]["query"];
+    query.as_object_mut().unwrap().remove("authored_sql");
+    query["filters"] = json!([
+        {"field": "stock_id"},
+        {"field": "part_code", "match": "contains"}
+    ]);
+    let package = run(&ir, &contains, &[]).unwrap();
+    let input = artifact_json(&package, "generated/contracts/gadget/query.input.json");
+    assert_eq!(
+        input["filters"],
+        json!([
+            {"field": "stock_id", "binding": "json_array", "type": "uuid"},
+            {"field": "part_code", "binding": "json_array", "type": "text", "match": "contains"}
+        ])
+    );
+    let sql = std::str::from_utf8(
+        package
+            .file("generated/sql/gadget/query_created_at_ascending.sql")
+            .unwrap()
+            .bytes(),
+    )
+    .unwrap();
+    assert!(
+        sql.contains(concat!(
+            "    ($1::jsonb IS NULL OR model.stock_id IN (\n",
+            "        SELECT filter.value::uuid\n",
+        )),
+        "exact stays the default: {sql}"
+    );
+    assert!(
+        sql.contains(concat!(
+            "    ($2::jsonb IS NULL OR EXISTS (\n",
+            "        SELECT 1\n",
+            "        FROM jsonb_array_elements_text($2::jsonb) AS filter(value)\n",
+            "        WHERE strpos(model.part_code, filter.value) > 0\n",
+            "    ))",
+        )),
+        "{sql}"
+    );
+
+    // A uuid holds no part, and a declared value domain is matched whole.
+    for field in ["stock_id", "status"] {
+        let mut refused = contains.clone();
+        refused["models"]["gadget"]["operations"]["query"]["filters"] =
+            json!([{"field": field, "match": "contains"}]);
+        let error = run(&ir, &refused, &[]).unwrap_err();
+        assert_eq!(error.kind(), GenerateErrorKind::InvalidOperation, "{field}");
+        assert!(
+            error.to_string().contains(&format!(
+                "gadget.query filter {field} matches by contains, which only a text field with no declared values takes"
+            )),
+            "{error}"
+        );
+    }
+}
+
 #[test]
 fn duplicate_filters_and_schema_qualified_authored_sql_refuse() {
     let ir = catalog(false);

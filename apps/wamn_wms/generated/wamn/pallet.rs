@@ -43,21 +43,21 @@ pub(crate) const CREATE_2_DIGEST: &str =
 pub(crate) const GET_DIGEST: &str =
     "sha256:59ee1bf6f48b27780e89935e399a45d07383a480caf7975adbee30c6a531255c";
 pub(crate) const QUERY_0_DIGEST: &str =
-    "sha256:ab0f5918c00f290756e66d76b201b6d76ddbed7eb023d11a60759f14aeccbdb3";
+    "sha256:6c09216ae6cc352c08a064aff2ea777d83f0cd2c32c2bd5945358711cd3c2eb6";
 pub(crate) const QUERY_1_DIGEST: &str =
-    "sha256:1a9785556de188d8c6ede5f3cd9d6fad6a2dacf2df6c229877fe0859784a5ffb";
+    "sha256:294dc2dc0d621c9c4effa2fc20d5845ffb98644a51262d9a7c1ce539368115fd";
 pub(crate) const QUERY_2_DIGEST: &str =
-    "sha256:66b4eeabd83bdc28632f8e028c84dfd163c2b466a2451e8b49eedde057be85c6";
+    "sha256:750f01832640d464749147a9853bb6e312e073047f51e9472540dab9f13ca519";
 pub(crate) const QUERY_3_DIGEST: &str =
-    "sha256:3d51f113fe0866ed4fe592a0283ce2b0fb4c57415cdeaf1767ad61db0c31b772";
+    "sha256:7fb851148deaf565984fe5a5438912c90dbec9f0aa8b843fc3a26f10dcc7daab";
 pub(crate) const QUERY_4_DIGEST: &str =
-    "sha256:3dade3da3f0a41604364daee48c15066b318d2175caeacb7c9aed48760bed2dd";
+    "sha256:9a1533fc68a0201abd48b412b7b378580361fee35e695ed4d1d1b867d3b9760e";
 pub(crate) const QUERY_5_DIGEST: &str =
-    "sha256:b9151b34b566ee8077e1b0e9c772d927941edd99653494040636b0445b440d99";
+    "sha256:982384d96025312019e9020fd9d05b1a708beca32fa6d5f952a8192f405c49ec";
 pub(crate) const QUERY_6_DIGEST: &str =
-    "sha256:a626cf7ec2aa2db57149c49c4616025e2c1d0bc44d25c21facb0f660e38ee2dc";
+    "sha256:90d73b5eb52b6d4694a19b9e316f6cebcebb0633c55f14b974ed71f266fafc18";
 pub(crate) const QUERY_7_DIGEST: &str =
-    "sha256:db3edc9b06f2b06e2c1f100132b22ca3c709a0cb1a3866b74fd3e1baec10de81";
+    "sha256:47831f5f22798d66deec5d15ffc54d8c9eb18a664771cb6bbb06abd7d0f52525";
 
 /// One claim and its work, with no commit before finalization.
 #[derive(Debug)]

@@ -26,9 +26,10 @@ WHERE
     )
     AND (
         $3::jsonb IS NULL
-        OR pallet.pallet_code IN (
-            SELECT filter.value
+        OR EXISTS (
+            SELECT 1
             FROM jsonb_array_elements_text($3::jsonb) AS filter(value)
+            WHERE strpos(pallet.pallet_code, filter.value) > 0
         )
     )
     AND (

@@ -5,9 +5,10 @@ SELECT
     model.row_version
 FROM product AS model
 WHERE
-    ($1::jsonb IS NULL OR model.product_code IN (
-        SELECT filter.value::text
+    ($1::jsonb IS NULL OR EXISTS (
+        SELECT 1
         FROM jsonb_array_elements_text($1::jsonb) AS filter(value)
+        WHERE strpos(model.product_code, filter.value) > 0
     ))
     AND
     ($2::timestamptz IS NULL OR model.created_at > $2::timestamptz

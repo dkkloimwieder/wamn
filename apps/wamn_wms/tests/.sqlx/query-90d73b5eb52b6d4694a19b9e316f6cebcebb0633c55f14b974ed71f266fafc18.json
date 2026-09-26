@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT\n    pallet.created_at,\n    pallet.created_by,\n    pallet.id,\n    pallet.location_id,\n    pallet.pallet_code,\n    pallet.row_version,\n    pallet.status,\n    pallet.updated_at,\n    pallet.updated_by\nFROM pallet AS pallet\nWHERE\n    (\n        $1::jsonb IS NULL\n        OR pallet.status IN (\n            SELECT filter.value\n            FROM jsonb_array_elements_text($1::jsonb) AS filter(value)\n        )\n    )\n    AND (\n        $2::jsonb IS NULL\n        OR pallet.location_id::text IN (\n            SELECT filter.value\n            FROM jsonb_array_elements_text($2::jsonb) AS filter(value)\n        )\n    )\n    AND (\n        $3::jsonb IS NULL\n        OR pallet.pallet_code IN (\n            SELECT filter.value\n            FROM jsonb_array_elements_text($3::jsonb) AS filter(value)\n        )\n    )\n    AND (\n        $4::text IS NULL\n        OR pallet.pallet_code > $4::text\n        OR (\n            pallet.pallet_code = $4::text\n            AND pallet.id > $5::uuid\n        )\n    )\nORDER BY\n    pallet.pallet_code ASC,\n    pallet.id ASC\nLIMIT $6::int8;\n",
+  "query": "SELECT\n    pallet.created_at,\n    pallet.created_by,\n    pallet.id,\n    pallet.location_id,\n    pallet.pallet_code,\n    pallet.row_version,\n    pallet.status,\n    pallet.updated_at,\n    pallet.updated_by\nFROM pallet AS pallet\nWHERE\n    (\n        $1::jsonb IS NULL\n        OR pallet.status IN (\n            SELECT filter.value\n            FROM jsonb_array_elements_text($1::jsonb) AS filter(value)\n        )\n    )\n    AND (\n        $2::jsonb IS NULL\n        OR pallet.location_id::text IN (\n            SELECT filter.value\n            FROM jsonb_array_elements_text($2::jsonb) AS filter(value)\n        )\n    )\n    AND (\n        $3::jsonb IS NULL\n        OR EXISTS (\n            SELECT 1\n            FROM jsonb_array_elements_text($3::jsonb) AS filter(value)\n            WHERE strpos(pallet.pallet_code, filter.value) > 0\n        )\n    )\n    AND (\n        $4::timestamptz IS NULL\n        OR pallet.created_at > $4::timestamptz\n        OR (\n            pallet.created_at = $4::timestamptz\n            AND pallet.id > $5::uuid\n        )\n    )\nORDER BY\n    pallet.created_at ASC,\n    pallet.id ASC\nLIMIT $6::int8;\n",
   "describe": {
     "columns": [
       {
@@ -108,7 +108,7 @@
         "Jsonb",
         "Jsonb",
         "Jsonb",
-        "Text",
+        "Timestamptz",
         "Uuid",
         "Int8"
       ]
@@ -125,5 +125,5 @@
       false
     ]
   },
-  "hash": "ab0f5918c00f290756e66d76b201b6d76ddbed7eb023d11a60759f14aeccbdb3"
+  "hash": "90d73b5eb52b6d4694a19b9e316f6cebcebb0633c55f14b974ed71f266fafc18"
 }

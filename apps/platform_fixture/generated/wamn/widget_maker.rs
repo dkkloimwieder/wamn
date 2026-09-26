@@ -13,9 +13,9 @@ pub struct WidgetMakerRow {
 pub(crate) const GET_DIGEST: &str =
     "sha256:9213a9b4970ebf8253c515242917e72f1018e879ddac78f989ba5ade11c9d9a7";
 pub(crate) const QUERY_0_DIGEST: &str =
-    "sha256:4678a09e1be42d9b1e18e9acfca19e9bf4353c5132b37f3537072a623127abe9";
+    "sha256:4d34a1cf4870d5123afea0e984adfbcad920e70fdbe5e2b2f4a400214c0b769c";
 pub(crate) const QUERY_1_DIGEST: &str =
-    "sha256:d54912878bf6e51d45b43fdb7f1298baf78763684ae52fd5cc20ef7cb4472b99";
+    "sha256:76a3fb0f193987bdb9dae482d98da702f41b75c142738c54cfcb4a69565b4d23";
 
 pub(crate) async fn get(
     connection: &mut Connection,

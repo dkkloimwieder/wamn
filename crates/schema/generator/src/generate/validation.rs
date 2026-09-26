@@ -10,6 +10,7 @@ use super::{
     custom_operation_constraint_origin, logged_history_tables, relation, rust_identifier,
     server_owned_fields, sql, validate_identifier, validate_operation_vocabulary,
 };
+use crate::FilterMatch;
 use wamn_record_history::HISTORY_COLUMNS;
 
 /// Refuse a client package name that a package manifest cannot carry.
@@ -424,7 +425,7 @@ fn validate_operation(
                     format!("{context} query cannot declare mutation fields"),
                 ));
             }
-            validate_query(model_name, table, operation)?;
+            validate_query(model, model_name, table, operation)?;
         }
         CrudAction::Create => {
             require_result(&context, operation.result, &[ResultClass::One])?;
@@ -867,6 +868,7 @@ fn validate_tombstone_columns(
 }
 
 fn validate_query(
+    model: &ModelDeclaration,
     model_name: &str,
     table: &Table,
     operation: &OperationDeclaration,
@@ -875,6 +877,24 @@ fn validate_query(
     let mut filter_fields = BTreeSet::new();
     for filter in &operation.filters {
         validate_field(table, model_name, &filter.field)?;
+        // A value domain is matched whole, and only text holds a part.
+        if filter.match_mode == FilterMatch::Contains
+            && (table
+                .columns()
+                .iter()
+                .find(|column| column.name() == filter.field)
+                .map(Column::column_type)
+                != Some(ColumnType::Text)
+                || model.enum_fields.contains_key(&filter.field))
+        {
+            return Err(GenerateError::new(
+                GenerateErrorKind::InvalidOperation,
+                format!(
+                    "{context} filter {} matches by contains, which only a text field with no declared values takes",
+                    filter.field
+                ),
+            ));
+        }
         if !filter_fields.insert(filter.field.as_str()) {
             return Err(GenerateError::new(
                 GenerateErrorKind::InvalidOperation,

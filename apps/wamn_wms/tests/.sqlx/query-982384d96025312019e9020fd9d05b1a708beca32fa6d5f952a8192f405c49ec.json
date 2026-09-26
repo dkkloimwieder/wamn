@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT\n    pallet.created_at,\n    pallet.created_by,\n    pallet.id,\n    pallet.location_id,\n    pallet.pallet_code,\n    pallet.row_version,\n    pallet.status,\n    pallet.updated_at,\n    pallet.updated_by\nFROM pallet AS pallet\nWHERE\n    (\n        $1::jsonb IS NULL\n        OR pallet.status IN (\n            SELECT filter.value\n            FROM jsonb_array_elements_text($1::jsonb) AS filter(value)\n        )\n    )\n    AND (\n        $2::jsonb IS NULL\n        OR pallet.location_id::text IN (\n            SELECT filter.value\n            FROM jsonb_array_elements_text($2::jsonb) AS filter(value)\n        )\n    )\n    AND (\n        $3::jsonb IS NULL\n        OR pallet.pallet_code IN (\n            SELECT filter.value\n            FROM jsonb_array_elements_text($3::jsonb) AS filter(value)\n        )\n    )\n    AND (\n        $4::timestamptz IS NULL\n        OR pallet.updated_at > $4::timestamptz\n        OR (\n            pallet.updated_at = $4::timestamptz\n            AND pallet.id > $5::uuid\n        )\n    )\nORDER BY\n    pallet.updated_at ASC,\n    pallet.id ASC\nLIMIT $6::int8;\n",
+  "query": "SELECT\n    pallet.created_at,\n    pallet.created_by,\n    pallet.id,\n    pallet.location_id,\n    pallet.pallet_code,\n    pallet.row_version,\n    pallet.status,\n    pallet.updated_at,\n    pallet.updated_by\nFROM pallet AS pallet\nWHERE\n    (\n        $1::jsonb IS NULL\n        OR pallet.status IN (\n            SELECT filter.value\n            FROM jsonb_array_elements_text($1::jsonb) AS filter(value)\n        )\n    )\n    AND (\n        $2::jsonb IS NULL\n        OR pallet.location_id::text IN (\n            SELECT filter.value\n            FROM jsonb_array_elements_text($2::jsonb) AS filter(value)\n        )\n    )\n    AND (\n        $3::jsonb IS NULL\n        OR EXISTS (\n            SELECT 1\n            FROM jsonb_array_elements_text($3::jsonb) AS filter(value)\n            WHERE strpos(pallet.pallet_code, filter.value) > 0\n        )\n    )\n    AND (\n        $4::timestamptz IS NULL\n        OR pallet.updated_at < $4::timestamptz\n        OR (\n            pallet.updated_at = $4::timestamptz\n            AND pallet.id > $5::uuid\n        )\n    )\nORDER BY\n    pallet.updated_at DESC,\n    pallet.id ASC\nLIMIT $6::int8;\n",
   "describe": {
     "columns": [
       {
@@ -125,5 +125,5 @@
       false
     ]
   },
-  "hash": "3dade3da3f0a41604364daee48c15066b318d2175caeacb7c9aed48760bed2dd"
+  "hash": "982384d96025312019e9020fd9d05b1a708beca32fa6d5f952a8192f405c49ec"
 }

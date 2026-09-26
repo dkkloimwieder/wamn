@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT\n    model.created_at,\n    model.id,\n    model.location_code,\n    model.row_version\nFROM location AS model\nWHERE\n    ($1::jsonb IS NULL OR model.location_code IN (\n        SELECT filter.value::text\n        FROM jsonb_array_elements_text($1::jsonb) AS filter(value)\n    ))\n    AND\n    ($2::timestamptz IS NULL OR model.created_at > $2::timestamptz\n        OR (model.created_at = $2::timestamptz AND model.id > $3::uuid))\nORDER BY model.created_at ASC, model.id ASC\nLIMIT $4::int8;\n",
+  "query": "SELECT\n    model.created_at,\n    model.id,\n    model.location_code,\n    model.row_version\nFROM location AS model\nWHERE\n    ($1::jsonb IS NULL OR EXISTS (\n        SELECT 1\n        FROM jsonb_array_elements_text($1::jsonb) AS filter(value)\n        WHERE strpos(model.location_code, filter.value) > 0\n    ))\n    AND\n    ($2::timestamptz IS NULL OR model.created_at > $2::timestamptz\n        OR (model.created_at = $2::timestamptz AND model.id > $3::uuid))\nORDER BY model.created_at ASC, model.id ASC\nLIMIT $4::int8;\n",
   "describe": {
     "columns": [
       {
@@ -63,5 +63,5 @@
       false
     ]
   },
-  "hash": "a6de5ac55dd7ca3338920967d4d96c32c5ce5587678acd25a5118de40cda6bc8"
+  "hash": "ff1b26713e83462dd1f81c48250843c65e88c845b0b8b64042a8eba759229497"
 }

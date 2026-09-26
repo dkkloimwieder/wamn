@@ -2687,6 +2687,43 @@ pub enum ResultClass {
 #[serde(deny_unknown_fields)]
 pub struct FilterDeclaration {
     pub field: String,
+    /// How a value matches the column. Exact is the default and is left
+    /// unstated, so a package that declares no mode keeps its bytes.
+    #[serde(
+        default,
+        rename = "match",
+        skip_serializing_if = "FilterMatch::is_exact"
+    )]
+    pub match_mode: FilterMatch,
+}
+
+/// How one filter value matches its column.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FilterMatch {
+    /// The column equals one of the values.
+    #[default]
+    Exact,
+    /// The column contains one of the values. Only a text column that
+    /// declares no value domain takes it.
+    Contains,
+}
+
+impl FilterMatch {
+    /// Whether the mode is the default, which a declaration leaves unstated.
+    #[must_use]
+    pub const fn is_exact(&self) -> bool {
+        matches!(self, Self::Exact)
+    }
+
+    /// Frozen wire literal.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Exact => "exact",
+            Self::Contains => "contains",
+        }
+    }
 }
 
 /// Finite query sorting vocabulary with at most one requested field.

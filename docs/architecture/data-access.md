@@ -71,6 +71,7 @@ The generator compares those choices with the schema and SQL. It does not replac
 | CRUD `error_details` | Generator-owned error vocabulary and details, derived from operation kind and applicable database constraints. Remove from authored input. |
 | `authored_sql.default`, `.variants[].field`, `.direction`, `.path` | Application selection of exact SQL for each supported ordering. SQL files own statement bytes. Retain mappings. |
 | `filters[].field`, `sort.fields`, `.directions`, `pagination.default_sort`, `.tie_breaker`, `limit.default`, `.minimum`, `.maximum` | Application query bounds and selection. Retain within supported generator rules. |
+| `filters[].match` | Application match mode of one filter. `exact` is the default and the contract leaves it unstated. `contains` matches a part of a text field with no `enum_fields` list, and generation refuses it on any other field. The generated query SQL implements the mode, and authored query SQL must implement the mode that its filter declares. Retain. |
 | Filter `binding`, sort `max_fields`, pagination `kind`, `.cursor`, and limit `invalid` | Fixed query protocol, including cursor version, canonical JSON, encoding, opacity, and refusal. Derive in generated contracts. |
 | `internal_relations.*.schema`, `.table`, `.cdc` | Application relation selection and event-publication policy. PostgreSQL owns relation shape. Retain. |
 | Custom operation `kind`, `visibility`, `permission`, `connection` | Application operation exposure and authority selection. Retain. |

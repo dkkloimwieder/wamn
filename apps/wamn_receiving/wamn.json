@@ -155,7 +155,8 @@
               "field": "status"
             },
             {
-              "field": "purchase_order_number"
+              "field": "purchase_order_number",
+              "match": "contains"
             }
           ],
           "sort": {

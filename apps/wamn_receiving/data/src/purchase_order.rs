@@ -355,8 +355,9 @@ fn status_filter(values: Option<&[PurchaseOrderStatus]>) -> Option<Json> {
 }
 
 /// The declared `purchase_order_number` filter, which is the free text an
-/// operator types. An empty value matches no order, so it refuses instead of
-/// returning an empty page that looks like an answer.
+/// operator types and which matches by contains. An empty value is a part of
+/// every order number, so it refuses instead of returning every order as if
+/// it matched.
 fn number_filter(values: Option<&[Box<str>]>) -> Result<Option<Json>, AccessError> {
     values
         .map(|values| {
