@@ -45,6 +45,10 @@
  * not group, total or export, and it stays out of the column panel, the views
  * and the URL, which read the declared columns.
  *
+ * A caller that passes `bulkActions` and `onBulk` gets a first column that
+ * selects rows and a bar that runs one action over them, as `bulk.tsx` states.
+ * That column stays out of the same places as the row buttons.
+ *
  * Each header has a menu that sorts, hides, pins and unpins its column and
  * chooses its aggregate. The column panel shows and hides columns and orders
  * them, and a header edge drag sets a width. The arrangement works in every
@@ -131,6 +135,13 @@ import {
   filterMatches,
   filterText,
 } from "./column-filter";
+import {
+  BulkBar,
+  type DataTableAction,
+  type DataTableRowResult,
+  SELECT_COLUMN,
+  selectColumn,
+} from "./bulk";
 import { csvFileName, csvText, downloadCsv, EXPORT_NEEDS_FULL_SET } from "./csv";
 import { ColumnMenu } from "./column-menu";
 import { ColumnPanel } from "./column-panel";
@@ -238,6 +249,15 @@ export interface DataTableProps<TRow extends object> {
   readonly urlKey?: string | undefined;
   /** The buttons of one row, in a last column that does not sort, filter or search. */
   readonly rowActions?: ((row: TRow) => JSX.Element) | undefined;
+  /** The actions that take many rows, which the bulk bar offers for the selected rows. */
+  readonly bulkActions?: readonly DataTableAction[] | undefined;
+  /**
+   * Runs one action once over the selected rows, in the table's order, and
+   * returns one result for each row, in the same order.
+   */
+  readonly onBulk?:
+    | ((operation: string, rows: readonly TRow[]) => Promise<readonly DataTableRowResult[]>)
+    | undefined;
 }
 
 /** The text the search box shows when the set is not fully read. */
@@ -419,6 +439,10 @@ export function DataTable<TRow extends object>(props: DataTableProps<TRow>): JSX
       scales()[field] ?? 0,
     );
 
+  /** The last result of each row a bulk action ran over, by row id. */
+  const [results, setResults] = createSignal<Record<string, DataTableRowResult>>({});
+  const bulk = () => (props.bulkActions ?? []).length > 0 && props.onBulk !== undefined;
+
   // The column definitions change only with the columns and with the fully
   // read state. A getter that built them on every read would make the table
   // rebuild its columns on every read. TanStack copies each definition once,
@@ -427,6 +451,7 @@ export function DataTable<TRow extends object>(props: DataTableProps<TRow>): JSX
     const fullyRead = props.fullyRead;
     const sortFields = props.sortFields;
     return [
+      ...(bulk() ? [selectColumn<TRow>((id) => results()[id])] : []),
       ...props.columns.map(
       (definition): ColumnDef<DataTableFeatures, TRow> => ({
         id: definition.field,
@@ -707,7 +732,7 @@ export function DataTable<TRow extends object>(props: DataTableProps<TRow>): JSX
   function applyView(state: DataTableViewState) {
     const view = declaredView(state, declaration());
     const sortBefore = JSON.stringify(table.atoms.sorting?.get() ?? []);
-    table.setColumnOrder([...view.order]);
+    table.setColumnOrder([SELECT_COLUMN, ...view.order]);
     table.setColumnVisibility(
       Object.fromEntries(props.columns.map((shown) => [shown.field, !view.hidden.includes(shown.field)])),
     );
@@ -801,9 +826,30 @@ export function DataTable<TRow extends object>(props: DataTableProps<TRow>): JSX
     });
   }
 
-  /** The visible columns that hold a field, which leaves out the row buttons. */
+  /** The visible columns that hold a field, which leaves out the row selection and buttons. */
   const dataColumns = () =>
-    table.getVisibleLeafColumns().filter((leaf) => leaf.id !== ACTIONS_COLUMN);
+    table
+      .getVisibleLeafColumns()
+      .filter((leaf) => leaf.id !== ACTIONS_COLUMN && leaf.id !== SELECT_COLUMN);
+
+  /** The selected data rows, in the table's order. */
+  const selectedRows = () =>
+    table
+      .getRowModel()
+      .flatRows.filter((row) => !row.getIsGrouped() && row.getIsSelected());
+
+  /** Runs one bulk action over the selected rows, and keeps each row's result. */
+  async function runBulk(operation: string) {
+    const rows = untrack(selectedRows);
+    const outcome = await props.onBulk!(
+      operation,
+      rows.map((row) => row.original),
+    );
+    setResults((current) => ({
+      ...current,
+      ...Object.fromEntries(rows.map((row, index) => [row.id, outcome[index]!])),
+    }));
+  }
 
   /** The footer: each visible column's aggregate over every kept row. */
   const totals = createMemo(() => {
@@ -918,11 +964,11 @@ export function DataTable<TRow extends object>(props: DataTableProps<TRow>): JSX
           <ColumnPanel
             columns={panelColumns()}
             onVisible={(id, visible) => table.getColumn(id)?.toggleVisibility(visible)}
-            onOrder={(order) => table.setColumnOrder([...order])}
+            onOrder={(order) => table.setColumnOrder([SELECT_COLUMN, ...order])}
             onShowAll={() =>
               table.setColumnVisibility(Object.fromEntries(props.columns.map((shown) => [shown.field, true])))
             }
-            onReset={() => table.setColumnOrder(props.columns.map((shown) => shown.field as string))}
+            onReset={() => table.setColumnOrder([SELECT_COLUMN, ...props.columns.map((shown) => shown.field as string)])}
           />
           <Field class="w-64">
             <FieldLabel for={searchId}>search</FieldLabel>
@@ -988,6 +1034,14 @@ export function DataTable<TRow extends object>(props: DataTableProps<TRow>): JSX
           </div>
         </Show>
       </div>
+      <Show when={bulk()}>
+        <BulkBar
+          actions={props.bulkActions ?? []}
+          selected={(table.atoms.rowSelection?.get(), selectedRows().length)}
+          fullyRead={props.fullyRead}
+          onRun={runBulk}
+        />
+      </Show>
       <GroupBar
         columns={props.columns.map((candidate) => ({
           field: candidate.field,

@@ -55,6 +55,7 @@ export { DataTable, type DataTableColumn, type DataTableColumnRole, type DataTab
 export { type DataTableAggregate, type DataTableBucket } from "./table/aggregate";
 export { type DataTableGroupSort } from "./table/group-bar";
 export { type DataTableScopeFilter } from "./table/scope-bar";
+export { type DataTableAction, type DataTableRowResult } from "./table/bulk";
 export {
   createTableLoad,
   DEFAULT_CAP,
