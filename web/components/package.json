@@ -6,6 +6,7 @@
   "scripts": {
     "check": "tsc --project tsconfig.json",
     "test": "vitest run",
+    "test:visual": "vitest run --config vitest.visual.config.ts",
     "gallery": "vite --config gallery/vite.config.ts"
   },
   "devDependencies": {
@@ -13,7 +14,9 @@
     "@tailwindcss/vite": "^4.3.3",
     "@tanstack/solid-form": "^1.33.5",
     "@tanstack/solid-table": "^9.2.4",
+    "@vitest/browser-playwright": "5.0.1",
     "jsdom": "^30.1.0",
+    "playwright": "^1.63.0",
     "solid-js": "^1.9.15",
     "tailwindcss": "^4.3.3",
     "typescript": "^5.9.3",

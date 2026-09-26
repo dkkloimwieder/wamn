@@ -21,6 +21,8 @@ node_modules/
 
 # Generated output that the component check writes and reads
 web/components/fixture/
+# The actual and diff images of a failed visual test run
+web/components/.vitest/
 
 # bv (beads viewer) local config and caches
 .bv/

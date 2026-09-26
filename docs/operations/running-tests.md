@@ -695,6 +695,8 @@ The one example component test renders the fixture page table with a stub transp
 To see the components after that command, run `pnpm run gallery` in `web/components`.
 The gallery shows every `@wamn/ui` export and every fixture screen over the test stubs, with no network.
 Its [README](../../web/components/README.md#gallery) names the port option.
+To compare each gallery section with its reference image in light and dark mode, run `pnpm run test:visual` in `web/components`.
+The [visual test](../../web/components/README.md#visual-test) section says how to accept an intended change.
 
 ### App shell
 

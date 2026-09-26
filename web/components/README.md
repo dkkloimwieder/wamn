@@ -37,3 +37,29 @@ The switch at the top of the page changes between light and dark mode.
 
 The gallery leaves out no component or state.
 You see two states by using the control: the open `ConfirmAction` dialog, and a `RecordSelect` search.
+
+## Visual test
+
+The visual test draws each gallery section in light mode and in dark mode, and compares it with its reference image.
+The reference images are in `gallery/__screenshots__/gallery.visual.tsx/`, one PNG file for each section and mode.
+A section fails when one pixel changed. The comparison allows no color difference and counts anti-aliased pixels.
+The test runs in Vitest browser mode, in the installed Chrome, through Playwright, so it downloads no browser.
+It stops the clock, so a load time or a date draws the same on each run.
+The images come from Chrome on Linux, so another browser version or font set can draw a different pixel.
+
+Write the fixture, then run the test:
+
+```bash
+cargo run --locked --offline -p wamn-schema-generator --example check_client_components
+cd web/components && pnpm run test:visual
+```
+
+If a section fails, the test writes the actual image and a diff image under `.vitest/`, which Git ignores.
+Look at both images.
+If the change is intended, accept it:
+
+1. Run `pnpm run test:visual --update` to write new reference images.
+2. Run `pnpm run test:visual` again, and make sure that it passes.
+3. Commit the changed PNG files with the change that caused them.
+
+A new gallery section gets its reference images the same way.
