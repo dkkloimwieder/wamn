@@ -2,7 +2,7 @@ package wamn:flow-http@0.1.0;
 
 world flow-http {
   import wamn:flow-http-routing/routing@0.1.0;
-  import wamn:router-delivery/delivery@0.1.0;
+  import wamn:router-delivery/delivery@0.2.0;
   import wasi:random/random@0.2.12;
   import wasi:http/types@0.3.0;
 

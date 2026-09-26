@@ -1,0 +1,26 @@
+package wamn:router-delivery@0.2.0;
+
+/// 0.2.0 is 0.1.0 with one added call, `deliver-stream`, which answers a
+/// query read as the rows arrive (owner ruling on wamn-utci, 2026-09-26).
+/// 0.1.0 stays unchanged, and 0.2.0 names its types, so a request and a
+/// report mean the same thing in both versions.
+interface delivery {
+  use wamn:router-delivery/delivery@0.1.0.{delivery-request, delivery-report};
+
+  /// A streamed read, known before its first row.
+  record streamed-reply {
+    /// The weak ETag of the list, from the model versions before the query ran.
+    etag: option<string>,
+    /// The reply lines: `{"row":…}` for each row, then one `{"outcome":…}`.
+    /// A stream that ends without the outcome line is a failed read.
+    lines: stream<string>,
+  }
+
+  /// The same delivery as 0.1.0.
+  deliver: async func(request: delivery-request) -> delivery-report;
+
+  /// Deliver a query read as a stream of lines. A refusal, a not-modified
+  /// answer, or a failure before the first row returns the report that
+  /// `deliver` would return.
+  deliver-stream: async func(request: delivery-request) -> result<streamed-reply, delivery-report>;
+}

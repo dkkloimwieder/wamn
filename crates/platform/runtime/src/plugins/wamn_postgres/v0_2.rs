@@ -336,13 +336,21 @@ async fn pump(
 ) -> Result<Pumped, StatementError> {
     let connection: &Object = connection.connection();
     let postgres = |error: tokio_postgres::Error| StatementError::Postgres(map_pg_error(&error));
-    let fetch = format!("FETCH FORWARD {STREAM_BATCH_ROWS} FROM {STREAM_CURSOR}");
+    // The server describes a FETCH by the cursor it names, and each stream's
+    // cursor has its own columns. A cached FETCH would keep the columns of
+    // the first cursor on this pooled connection, so each stream prepares its
+    // own, once.
+    let fetch = connection
+        .prepare(&format!(
+            "FETCH FORWARD {STREAM_BATCH_ROWS} FROM {STREAM_CURSOR}"
+        ))
+        .await
+        .map_err(postgres)?;
     loop {
         let Ok(permit) = rows.reserve().await else {
             return Ok(Pumped::Left);
         };
-        let prepared = connection.prepare_cached(&fetch).await.map_err(postgres)?;
-        let fetched = connection.query(&prepared, &[]).await.map_err(postgres)?;
+        let fetched = connection.query(&fetch, &[]).await.map_err(postgres)?;
         if fetched.is_empty() {
             return Ok(Pumped::Ended);
         }

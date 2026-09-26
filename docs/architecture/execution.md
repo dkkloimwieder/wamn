@@ -53,6 +53,27 @@ A read without a revision field, or with no declared relations, has no ETag, and
 A `get` tag follows `row_version`, so a row that is deleted and created again under the same natural key can match an old tag.
 [`read_cache`](../../crates/execution/host/src/read_cache.rs) owns the tags.
 
+A `query` replies in one of two shapes, and the `shape` parameter of its canonical query string names the shape.
+The value `page` is the default, and the value `stream` asks for a streamed load.
+The router removes `shape` from the request item, so the operation never reads it.
+A page is the outcome list of one item, with the rows under `item` and the cursor under `next_cursor`.
+The route input schema bounds the limit of a page by the contract maximum of 100.
+A streamed load takes a cap up to the host ceiling of 100,000 rows, and the host refuses a larger cap before the query runs.
+The router checks the rest of the item against the input schema.
+
+A streamed load answers with `Content-Type: application/x-ndjson`, one JSON value per line.
+Each row is one line `{"row":…}`, and the last line is `{"outcome":…}`.
+The outcome is `{"value":{"more":…},"actor_labels":{…}}` when the read ended, `{"error":…}` when the query refused, or `{"uncertain":{}}` when the host cannot say how the read ended.
+`more` is true when rows exist past the cap. The actor labels move from the response header into the outcome line, because the header leaves before the rows.
+A body that ends without the outcome line is a failed load.
+The response is `private, no-cache` with the weak list ETag, which the host reads before the query runs, so an unchanged load answers 304.
+It sends `X-Accel-Buffering: no`, and the router writes one body chunk for each batch of lines, so no proxy holds a line back.
+Nothing on the platform path compresses a reply.
+A read that ends before its first row answers as a page answers: a refusal keeps its status and its body, and a match with `If-None-Match` answers 304.
+A failure after the first row becomes the outcome line.
+The router calls `deliver-stream` of [`wamn:router-delivery` 0.2.0](../../crates/execution/host/wit/deps/wamn-router-delivery-0.2/package.wit), which adds that call to 0.1.0 and names the 0.1.0 types.
+[`query_read`](../../crates/execution/host/src/query_read.rs) owns the ceiling and the lines.
+
 `invoke_operation` takes an optional intent context, and with one a write logs one intent for each input item and runs only the new items.
 The cloud route passes none. The edge passes one for each route, and the [edge plan](../plan/edge.md#47-sqlite-schema) states the rules.
 Publish writes the input field of the idempotency key into the serving manifest route (`idempotency`) from the generated input contract.

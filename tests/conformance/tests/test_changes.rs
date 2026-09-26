@@ -406,6 +406,10 @@ fn shared_wit_changes_select_the_workspaces_with_direct_readers() {
             false,
         ),
         (
+            "crates/execution/host/wit/deps/wamn-router-delivery-0.2/package.wit",
+            false,
+        ),
+        (
             "apps/platform/execution/materializer/wit/deps/wasi-cli/package.wit",
             false,
         ),

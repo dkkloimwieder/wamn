@@ -10,6 +10,7 @@ mod bindings {
         path: [
             "../../../../crates/platform/runtime/wit/deps/wamn-flow-http-routing",
             "../../../../crates/execution/host/wit/deps/wamn-router-delivery",
+            "../../../../crates/execution/host/wit/deps/wamn-router-delivery-0.2",
             "../../execution/materializer/wit/deps/wasi-clocks",
             "wit",
         ],
@@ -17,7 +18,8 @@ mod bindings {
         async: [
             "export:wasi:http/handler@0.3.0#handle",
             "wamn:flow-http-routing/routing@0.1.0#authenticate",
-            "wamn:router-delivery/delivery@0.1.0#deliver",
+            "wamn:router-delivery/delivery@0.2.0#deliver",
+            "wamn:router-delivery/delivery@0.2.0#deliver-stream",
         ],
     });
 }
@@ -33,7 +35,7 @@ use super::{
     DeadlineAdjustment, DeliveryError, DeliveryFailure, DeliveryFailureKind, DeliveryOutcome,
     DeliveryReport, DeliveryRequest, Emission, FailedOutcome, Header, HttpResponse, Mapping,
     MappingSource, PartialCompletion, ProviderError, RequestHead, RouteDefinition, SchemaInvalid,
-    handle_request,
+    StreamedHead, handle_request,
 };
 
 struct Component;
@@ -41,7 +43,7 @@ struct Component;
 impl Guest for Component {
     async fn handle(request: Request) -> Result<Response, ErrorCode> {
         let head = request_head(&request);
-        let mut backend = GuestBackend;
+        let mut backend = GuestBackend::default();
         let mut body = WasiBody {
             request: Some(request),
             stream: None,
@@ -51,13 +53,19 @@ impl Guest for Component {
         let response =
             handle_request(&mut backend, &mut body, &head, AdapterLimits::default()).await;
         drop(body);
-        Ok(send_response(response))
+        Ok(send_response(response, backend))
     }
 }
 
 bindings::export!(Component with_types_in bindings);
 
-struct GuestBackend;
+/// The guest's imports, and the reply lines and route permit of a streamed
+/// read, which outlive `handle_request`.
+#[derive(Default)]
+struct GuestBackend {
+    lines: Option<StreamReader<String>>,
+    permit: Option<bindings::wamn::flow_http_routing::routing::RoutePermit>,
+}
 
 impl Backend for GuestBackend {
     type RoutePermit = bindings::wamn::flow_http_routing::routing::RoutePermit;
@@ -119,38 +127,69 @@ impl Backend for GuestBackend {
         &mut self,
         request: DeliveryRequest<Self::AuthenticatedCaller>,
     ) -> DeliveryReport {
-        use bindings::wamn::router_delivery::delivery;
+        delivery_report(
+            bindings::wamn::router_delivery0_2_0::delivery::deliver(wire_request(request)).await,
+        )
+    }
 
-        let request = delivery::DeliveryRequest {
-            source: delivery::Source::Attachment(request.attachment_id),
-            delivery_id: request.delivery_id,
-            payload: request.payload,
-            caller: request.caller,
-            trace: request.trace.map(|trace| delivery::TraceContext {
-                traceparent: trace.traceparent,
-                tracestate: trace.tracestate,
-            }),
-            parent_causation: None,
-            if_none_match: request.if_none_match,
-        };
-        let report = delivery::deliver(request).await;
-        DeliveryReport {
-            actor_labels: report.actor_labels,
-            etag: report.etag,
-            outcome: report
-                .outcome
-                .map(convert_delivery_outcome)
-                .map_err(convert_delivery_error),
-            deadline_adjustments: report
-                .deadline_adjustments
-                .into_iter()
-                .map(|adjustment| DeadlineAdjustment {
-                    node: adjustment.node,
-                    requested_ms: adjustment.requested_ms,
-                    effective_ms: adjustment.effective_ms,
-                })
-                .collect(),
+    async fn deliver_stream(
+        &mut self,
+        request: DeliveryRequest<Self::AuthenticatedCaller>,
+    ) -> Result<StreamedHead, DeliveryReport> {
+        match bindings::wamn::router_delivery0_2_0::delivery::deliver_stream(wire_request(request))
+            .await
+        {
+            Ok(reply) => {
+                self.lines = Some(reply.lines);
+                Ok(StreamedHead { etag: reply.etag })
+            }
+            Err(report) => Err(delivery_report(report)),
         }
+    }
+
+    fn keep_route_permit(&mut self, permit: Self::RoutePermit) {
+        self.permit = Some(permit);
+    }
+}
+
+fn wire_request(
+    request: DeliveryRequest<bindings::wamn::flow_http_routing::routing::AuthenticatedCaller>,
+) -> bindings::wamn::router_delivery0_1_0::delivery::DeliveryRequest {
+    use bindings::wamn::router_delivery0_1_0::delivery;
+
+    delivery::DeliveryRequest {
+        source: delivery::Source::Attachment(request.attachment_id),
+        delivery_id: request.delivery_id,
+        payload: request.payload,
+        caller: request.caller,
+        trace: request.trace.map(|trace| delivery::TraceContext {
+            traceparent: trace.traceparent,
+            tracestate: trace.tracestate,
+        }),
+        parent_causation: None,
+        if_none_match: request.if_none_match,
+    }
+}
+
+fn delivery_report(
+    report: bindings::wamn::router_delivery0_1_0::delivery::DeliveryReport,
+) -> DeliveryReport {
+    DeliveryReport {
+        actor_labels: report.actor_labels,
+        etag: report.etag,
+        outcome: report
+            .outcome
+            .map(convert_delivery_outcome)
+            .map_err(convert_delivery_error),
+        deadline_adjustments: report
+            .deadline_adjustments
+            .into_iter()
+            .map(|adjustment| DeadlineAdjustment {
+                node: adjustment.node,
+                requested_ms: adjustment.requested_ms,
+                effective_ms: adjustment.effective_ms,
+            })
+            .collect(),
     }
 }
 
@@ -166,9 +205,9 @@ fn hex(bytes: &[u8]) -> String {
 }
 
 fn convert_delivery_outcome(
-    outcome: bindings::wamn::router_delivery::delivery::DeliveryOutcome,
+    outcome: bindings::wamn::router_delivery0_1_0::delivery::DeliveryOutcome,
 ) -> DeliveryOutcome {
-    use bindings::wamn::router_delivery::delivery;
+    use bindings::wamn::router_delivery0_1_0::delivery;
 
     match outcome {
         delivery::DeliveryOutcome::Respond(payload) => DeliveryOutcome::Respond(payload),
@@ -220,9 +259,9 @@ fn convert_delivery_outcome(
 }
 
 fn convert_delivery_failure(
-    failure: bindings::wamn::router_delivery::delivery::DeliveryFailure,
+    failure: bindings::wamn::router_delivery0_1_0::delivery::DeliveryFailure,
 ) -> DeliveryFailure {
-    use bindings::wamn::router_delivery::delivery;
+    use bindings::wamn::router_delivery0_1_0::delivery;
     DeliveryFailure {
         kind: match failure.kind {
             delivery::FailureKind::Terminal => DeliveryFailureKind::Terminal,
@@ -242,9 +281,9 @@ fn convert_delivery_failure(
 }
 
 fn convert_delivery_error(
-    error: bindings::wamn::router_delivery::delivery::DeliveryError,
+    error: bindings::wamn::router_delivery0_1_0::delivery::DeliveryError,
 ) -> DeliveryError {
-    use bindings::wamn::router_delivery::delivery::DeliveryError as WireError;
+    use bindings::wamn::router_delivery0_1_0::delivery::DeliveryError as WireError;
 
     match error {
         WireError::SourceNotFound => DeliveryError::SourceNotFound,
@@ -378,8 +417,13 @@ fn request_head(request: &Request) -> RequestHead {
     }
 }
 
-fn send_response(response: HttpResponse) -> Response {
+fn send_response(response: HttpResponse, mut backend: GuestBackend) -> Response {
     let headers = Fields::new();
+    if response.streamed
+        && let Some(lines) = backend.lines.take()
+    {
+        return send_stream(&response, headers, lines, backend.permit.take());
+    }
     for (name, value) in response.cache_headers() {
         let _ = headers.set(name, &[value.into_bytes()]);
     }
@@ -409,6 +453,53 @@ fn send_response(response: HttpResponse) -> Response {
     spawn_local(async move {
         let _ = writer.write_all(response.body).await;
         drop(writer);
+        let _ = trailers.write(Ok(None)).await;
+    });
+    outgoing
+}
+
+/// Lines of reply the body writer asks the host for at once.
+const LINES_PER_READ: usize = 256;
+
+/// Answer a streamed read: its head now, then its body as the host sends the
+/// lines, one write per batch, so no line waits for the next. A client that
+/// leaves drops the lines, which ends the host's read and its query.
+fn send_stream(
+    response: &HttpResponse,
+    headers: Fields,
+    mut lines: StreamReader<String>,
+    permit: Option<bindings::wamn::flow_http_routing::routing::RoutePermit>,
+) -> Response {
+    for (name, value) in response.cache_headers() {
+        let _ = headers.set(name, &[value.into_bytes()]);
+    }
+    let _ = headers.set("content-type", &[response.content_type.as_bytes().to_vec()]);
+    // Proxies such as nginx hold a response body back unless told not to.
+    let _ = headers.set("x-accel-buffering", &[b"no".to_vec()]);
+    let (mut writer, reader) = bindings::wit_stream::new::<u8>();
+    let (trailers, trailer_reader) = bindings::wit_future::new(|| Ok(None));
+    let (outgoing, _sent) = Response::new(headers, Some(reader), trailer_reader);
+    let _ = outgoing.set_status_code(response.status);
+    spawn_local(async move {
+        loop {
+            let (status, batch) = lines.read(Vec::with_capacity(LINES_PER_READ)).await;
+            if !batch.is_empty() {
+                let mut bytes = Vec::new();
+                for line in batch {
+                    bytes.extend_from_slice(line.as_bytes());
+                    bytes.push(b'\n');
+                }
+                if !writer.write_all(bytes).await.is_empty() {
+                    break;
+                }
+            }
+            if !matches!(status, StreamResult::Complete(_)) {
+                break;
+            }
+        }
+        drop(lines);
+        drop(writer);
+        drop(permit);
         let _ = trailers.write(Ok(None)).await;
     });
     outgoing

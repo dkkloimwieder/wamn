@@ -112,6 +112,37 @@ impl Paths {
         Ok((status, etag, response.text().await?))
     }
 
+    /// Send a streamed read to a route, and return the status, the headers
+    /// and the reply lines, each parsed as JSON.
+    async fn streamed(
+        &self,
+        path: &str,
+        item: &Value,
+        if_none_match: Option<&str>,
+    ) -> anyhow::Result<(u16, reqwest::header::HeaderMap, Vec<Value>)> {
+        let query = wamn_execution_contract::encode_read_query(
+            item.as_object().context("a read item is an object")?,
+        );
+        let mut request = self
+            .client
+            .get(format!("{}{ROUTE_PREFIX}{path}?{query}", self.endpoint))
+            .header("Host", &self.host)
+            .bearer_auth(&self.bearer);
+        if let Some(tag) = if_none_match {
+            request = request.header("If-None-Match", tag);
+        }
+        let response = request.send().await.with_context(|| path.to_owned())?;
+        let status = response.status().as_u16();
+        let headers = response.headers().clone();
+        let text = response.text().await?;
+        let lines = text
+            .lines()
+            .map(serde_json::from_str)
+            .collect::<Result<Vec<Value>, _>>()
+            .with_context(|| format!("{path} answered {status} with {text}"))?;
+        Ok((status, headers, lines))
+    }
+
     /// Send one body through the route only.
     async fn route(&self, path: &str, body: &Value) -> anyhow::Result<Value> {
         let (status, value) = self.by_kind(&format!("{ROUTE_PREFIX}{path}"), body).await?;
@@ -383,6 +414,97 @@ async fn a_route_answers_every_operation_kind_as_its_one_node_wiring() -> anyhow
         status == 200 && changed.is_some() && changed.as_deref() != Some(etag.as_str()),
         "a write changes the list tag: {status} {changed:?} {etag}"
     );
+    // STREAMED READS (wamn-utci.2). The same query in the stream shape answers
+    // one line for each row and one outcome line last, with the list's weak
+    // ETag, and an unchanged load answers 304. A cap above the ceiling refuses
+    // before the first row with the refusal a page answers.
+    let page = paths.route("/widget/query", &json!([{}])).await?;
+    let page_ids = value(&page)?["item"]
+        .as_array()
+        .context("a page carries its rows")?
+        .iter()
+        .map(|row| row["id"].clone())
+        .collect::<Vec<_>>();
+    anyhow::ensure!(page_ids.len() > 1, "the fixture holds more than one widget");
+    let (status, headers, lines) = paths
+        .streamed(
+            "/widget/query",
+            &json!({"limit": 1000, "shape": "stream"}),
+            None,
+        )
+        .await?;
+    let header = |name: &str| headers.get(name).and_then(|value| value.to_str().ok());
+    anyhow::ensure!(
+        status == 200
+            && header("content-type") == Some("application/x-ndjson")
+            && header("cache-control") == Some("private, no-cache")
+            && header("x-accel-buffering") == Some("no"),
+        "a load answers 200 as private, unbuffered lines: {status} {headers:?}"
+    );
+    let load_tag = header("etag")
+        .filter(|tag| tag.starts_with("W/\""))
+        .context("a load carries the weak list ETag")?
+        .to_owned();
+    let (outcome, rows) = lines.split_last().context("a load ends in its outcome")?;
+    anyhow::ensure!(
+        rows.iter()
+            .map(|line| line["row"]["id"].clone())
+            .collect::<Vec<_>>()
+            == page_ids
+            && outcome["outcome"]["value"]["more"] == json!(false),
+        "a load reads the page's rows and says no more exist: {lines:?}"
+    );
+    let (status, _, lines) = paths
+        .streamed(
+            "/widget/query",
+            &json!({"limit": 1, "shape": "stream"}),
+            None,
+        )
+        .await?;
+    anyhow::ensure!(
+        status == 200
+            && lines.len() == 2
+            && lines[0]["row"]["id"] == page_ids[0]
+            && lines[1]["outcome"]["value"]["more"] == json!(true),
+        "a load of one row says more exist: {lines:?}"
+    );
+    let (status, headers, lines) = paths
+        .streamed(
+            "/widget/query",
+            &json!({"limit": 1000, "shape": "stream"}),
+            Some(&load_tag),
+        )
+        .await?;
+    anyhow::ensure!(
+        status == 304 && lines.is_empty() && headers.get("etag").is_some(),
+        "an unchanged load answers 304 with no body: {status} {lines:?}"
+    );
+    let (status, _, lines) = paths
+        .streamed(
+            "/widget/query",
+            &json!({"limit": 100_001, "shape": "stream"}),
+            None,
+        )
+        .await?;
+    anyhow::ensure!(
+        status == 200
+            && lines.len() == 1
+            && lines[0][0]["error"]["code"] == json!("invalid_input")
+            && lines[0][0]["error"]["detail"]["maximum"] == json!(100_000),
+        "a cap above the ceiling refuses before the first row: {status} {lines:?}"
+    );
+    let (status, _, lines) = paths
+        .streamed(
+            "/widget/query",
+            &json!({"limit": 101, "shape": "page"}),
+            None,
+        )
+        .await?;
+    anyhow::ensure!(
+        status == 400 && lines[0]["error"]["data"]["pointer"] == json!("/0/limit"),
+        "the input schema refuses a page above its maximum: {status} {lines:?}"
+    );
+
     // A get answers a strong ETag from the revision of its record. The same
     // GET with that tag answers 304 with no body, and an update of the record
     // changes the tag.

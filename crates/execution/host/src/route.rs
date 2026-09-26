@@ -16,7 +16,10 @@ use crate::operation::{
     invocation_span, node_trace_context, remote_trace_context,
 };
 use wamn_engine::flow_http_routing::AuthenticatedCaller;
-use wamn_engine::operation::{OperationCall, OperationClosure, invoke_operation, node_types};
+use wamn_engine::operation::native_call::RowBatches;
+use wamn_engine::operation::{
+    OperationCall, OperationClosure, invoke_operation, invoke_operation_stream, node_types,
+};
 use wamn_engine::router_delivery::{
     authorize_registered_operation, bounded_node_deadline_ms, route_component,
 };
@@ -37,13 +40,43 @@ pub(crate) struct RouteCall<'a> {
 }
 
 /// Call the export of one route once and return what the component returned.
-///
-/// A route has no wiring position, so its node context names the empty
-/// wiring, version 0 and the empty node, and its config is JSON `null`.
 pub(crate) async fn invoke_route(
     host: &OperationHost,
     route: RouteCall<'_>,
 ) -> anyhow::Result<Result<node_types::Emission, node_types::NodeError>> {
+    match call_route(host, route, None).await? {
+        RouteReturn::Whole(returned) => Ok(returned),
+        RouteReturn::Streamed(_) => unreachable!("a whole call returns a whole outcome"),
+    }
+}
+
+/// Call the query of one route once, and hand its rows to `rows` as the
+/// component writes them. The result is the outcome JSON after the last row.
+pub(crate) async fn invoke_route_stream(
+    host: &OperationHost,
+    route: RouteCall<'_>,
+    rows: RowBatches,
+) -> anyhow::Result<Result<String, node_types::NodeError>> {
+    match call_route(host, route, Some(rows)).await? {
+        RouteReturn::Streamed(outcome) => Ok(outcome),
+        RouteReturn::Whole(_) => unreachable!("a streamed call returns its outcome JSON"),
+    }
+}
+
+enum RouteReturn {
+    Whole(Result<node_types::Emission, node_types::NodeError>),
+    Streamed(Result<String, node_types::NodeError>),
+}
+
+/// Call one route's export, streamed when `rows` is given.
+///
+/// A route has no wiring position, so its node context names the empty
+/// wiring, version 0 and the empty node, and its config is JSON `null`.
+async fn call_route(
+    host: &OperationHost,
+    route: RouteCall<'_>,
+    rows: Option<RowBatches>,
+) -> anyhow::Result<RouteReturn> {
     let components = host.release_components().await?;
     let component = authorized_component(&components, &route)?;
     let release = &host.release.manifest().release;
@@ -93,20 +126,19 @@ pub(crate) async fn invoke_route(
             // as its caller.
             platform: None,
         };
-        invoke_operation(
-            host,
-            OperationCall {
-                closure: OperationClosure::Released(&components),
-                component,
-                operation: route.operation,
-                context,
-                input: route.payload,
-                deadline_ms,
-                facts: NativeFacts::entry(acquisition, route.caller),
-            },
-            None,
-        )
-        .await
+        let call = OperationCall {
+            closure: OperationClosure::Released(&components),
+            component,
+            operation: route.operation,
+            context,
+            input: route.payload,
+            deadline_ms,
+            facts: NativeFacts::entry(acquisition, route.caller),
+        };
+        Ok(match rows {
+            Some(rows) => RouteReturn::Streamed(invoke_operation_stream(host, call, rows).await?),
+            None => RouteReturn::Whole(invoke_operation(host, call, None).await?),
+        })
     }
     .instrument(span)
     .await

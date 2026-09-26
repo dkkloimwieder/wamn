@@ -6,6 +6,7 @@ use std::sync::Arc;
 
 use opentelemetry::KeyValue;
 use opentelemetry::metrics::{Counter, Meter};
+use tracing::Instrument as _;
 use wamn_catalog::{AdmittedComponent, AttachmentTarget, OperationKind, ServingRoute};
 use wamn_engine::flow_http_routing::AuthenticatedCaller;
 use wamn_engine::release_manifest::LoadedRelease;
@@ -13,15 +14,16 @@ use wamn_engine::router_delivery::{
     DeliveryClass, DeliveryError, DeliveryOutcome, DeliveryReport, DeliveryRequest,
     EXECUTION_FAILED, FRESH_CREDENTIAL_REQUIRED, OperationRefusal, OperationRefusalKind,
     PERMISSION_DENIED, ROUTER_DELIVERY_ID, RouteDelivery, RouteSettlement, Source, SourceRef,
-    derived_causation, lower_operation_refusal, resolve_authorized_target, settle_route,
+    StreamedDelivery, derived_causation, lower_operation_refusal, resolve_authorized_target,
+    settle_route,
 };
 use wamn_event_wire::Causation;
 use wamn_runtime::plugins::wamn_jetstream::{RouterTapPhase, RouterTapPreview, WamnJetstream};
 
 use crate::operation::OperationHost;
-use crate::query_read::{PAGE_MAXIMUM, limit_refusal};
+use crate::query_read::{STREAM_CEILING, StreamEnd, limit_refusal, row_line};
 use crate::read_cache::{get_tag, list_tag, matches};
-use crate::route::{RouteCall, authorize_route, invoke_route};
+use crate::route::{RouteCall, authorize_route, invoke_route, invoke_route_stream};
 
 // The two series this bridge owns. Both are dashboard contracts that no grep
 // from a chart can find, because the Prometheus exporter turns the dots into
@@ -96,6 +98,7 @@ pub struct DeadlineAdjustment {
 }
 
 /// The one bridge shared by attachment and registration ingress.
+#[derive(Clone)]
 pub struct RouterDeliveryBridge {
     /// `None` on a host with no wiring layer. Such a host refuses a wiring
     /// target.
@@ -335,18 +338,7 @@ impl RouterDeliveryBridge {
                 }
             }
         }
-        let returned = if read.is_some_and(|read| read.kind == OperationKind::Query) {
-            match limit_refusal(call.payload, PAGE_MAXIMUM) {
-                Some(payload) => Ok(wamn_engine::operation::node_types::Emission {
-                    payload,
-                    port: None,
-                }),
-                None => invoke_route(&self.operations, call).await?,
-            }
-        } else {
-            invoke_route(&self.operations, call).await?
-        };
-        let settled = settle_route(returned)?;
+        let settled = settle_route(invoke_route(&self.operations, call).await?)?;
         if !matches!(settled.outcome, DeliveryOutcome::Respond(_)) {
             return Ok(settled);
         }
@@ -523,40 +515,349 @@ impl RouteDelivery for RouterDeliveryBridge {
                 .collect(),
         }
     }
+
+    async fn deliver_stream(
+        &self,
+        request: DeliveryRequest,
+        caller: Option<AuthenticatedCaller>,
+    ) -> Result<StreamedDelivery, DeliveryReport> {
+        self.clone().stream_read(request, caller).await
+    }
+}
+
+/// Batches of reply lines the host holds between the query and the guest.
+const LINE_BATCHES_IN_FLIGHT: usize = 4;
+
+/// Batches of rows the host holds between the component and the reply.
+const ROW_BATCHES_IN_FLIGHT: usize = 4;
+
+/// One query read that streams, resolved and owned, so a task can run it.
+struct StreamRead {
+    attachment_id: String,
+    package_id: String,
+    component: String,
+    operation: String,
+    delivery_id: String,
+    payload: serde_json::Value,
+    causation: Causation,
+    traceparent: Option<String>,
+    tracestate: Option<String>,
+    if_none_match: Option<String>,
+    route: ServingRoute,
+}
+
+impl StreamRead {
+    fn call(&self, caller: Option<AuthenticatedCaller>) -> RouteCall<'_> {
+        RouteCall {
+            attachment_id: &self.attachment_id,
+            package_id: &self.package_id,
+            component: &self.component,
+            operation: &self.operation,
+            delivery_id: &self.delivery_id,
+            payload: &self.payload,
+            caller,
+            traceparent: self.traceparent.as_deref(),
+            tracestate: self.tracestate.as_deref(),
+            causation: self.causation.clone(),
+        }
+    }
+}
+
+/// How a streamed read ended before its first row: its report, not a stream.
+enum EarlyEnd {
+    Refused(serde_json::Value),
+    Failed(wamn_engine::operation::node_types::NodeError),
+    Error(anyhow::Error),
+}
+
+impl RouterDeliveryBridge {
+    /// Serve one query read as reply lines (`docs/architecture/execution.md`).
+    ///
+    /// The host refuses a cap above the ceiling and answers not-modified from
+    /// the model versions, both before the query runs. The query then runs in
+    /// its own task. A read that ends before its first row returns the same
+    /// report as a page would, so a refusal keeps its HTTP status.
+    #[expect(
+        clippy::result_large_err,
+        reason = "the report is the wire record that `RouteDelivery::deliver_stream` returns"
+    )]
+    async fn stream_read(
+        self,
+        request: DeliveryRequest,
+        caller: Option<AuthenticatedCaller>,
+    ) -> Result<StreamedDelivery, DeliveryReport> {
+        let report = |outcome, etag| DeliveryReport {
+            outcome,
+            deadline_adjustments: Vec::new(),
+            actor_labels: Vec::new(),
+            etag,
+        };
+        let read = self
+            .stream_target(request, caller.as_ref())
+            .map_err(|error| report(Err(error), None))?;
+        if let Some(refusal) = limit_refusal(&read.payload, STREAM_CEILING) {
+            return Err(report(Ok(DeliveryOutcome::Respond(refusal)), None));
+        }
+        let call = read.call(caller.clone());
+        if let Err(error) = authorize_route(&self.operations, &call).await {
+            return Err(report(Err(refusal(&error)), None));
+        }
+        let release = self
+            .operations
+            .release_identity()
+            .manifest_digest
+            .to_string();
+        let tag = match self.list_tag(&read.route, &release).await {
+            Ok(tag) => Some(tag),
+            Err(error) => {
+                tracing::warn!(%error, "model versions unavailable; the load has no ETag");
+                None
+            }
+        };
+        if let Some(tag) = &tag
+            && read
+                .if_none_match
+                .as_deref()
+                .is_some_and(|value| matches(value, tag))
+        {
+            return Err(report(Ok(DeliveryOutcome::NotModified), Some(tag.clone())));
+        }
+        let (lines, received) = tokio::sync::mpsc::channel(LINE_BATCHES_IN_FLIGHT);
+        let (first, started) = tokio::sync::oneshot::channel();
+        let span = tracing::Span::current();
+        tokio::spawn(
+            async move { self.stream_lines(read, caller, lines, first).await }.instrument(span),
+        );
+        match started.await {
+            Ok(None) => Ok(StreamedDelivery {
+                etag: tag,
+                lines: received,
+            }),
+            Ok(Some(EarlyEnd::Refused(error))) => Err(report(
+                Ok(DeliveryOutcome::Respond(
+                    serde_json::json!([{ "error": error }]).to_string(),
+                )),
+                None,
+            )),
+            Ok(Some(EarlyEnd::Failed(error))) => Err(report(
+                settle_route(Err(error))
+                    .map(|settled| settled.outcome)
+                    .map_err(|_| DeliveryError::ExecutionFailed),
+                None,
+            )),
+            Ok(Some(EarlyEnd::Error(error))) => Err(report(Err(refusal(&error)), None)),
+            Err(_) => Err(report(Err(DeliveryError::ExecutionFailed), None)),
+        }
+    }
+
+    /// Resolve an attachment that routes to a query, as `deliver` resolves one.
+    fn stream_target(
+        &self,
+        request: DeliveryRequest,
+        caller: Option<&AuthenticatedCaller>,
+    ) -> Result<StreamRead, DeliveryError> {
+        let DeliveryRequest {
+            source,
+            delivery_id,
+            payload,
+            caller: _,
+            trace,
+            parent_causation,
+            if_none_match,
+        } = request;
+        let Source::Attachment(attachment_id) = source else {
+            return Err(DeliveryError::InvalidRequest);
+        };
+        if delivery_id.is_empty() || attachment_id.is_empty() || parent_causation.is_some() {
+            return Err(DeliveryError::InvalidRequest);
+        }
+        let payload = serde_json::from_str(&payload).map_err(|_| DeliveryError::InvalidPayload)?;
+        let causation = derived_causation(&delivery_id, None)?;
+        let target = resolve_authorized_target(
+            self.release.manifest(),
+            SourceRef::Attachment(&attachment_id),
+            caller,
+        )?;
+        let AttachmentTarget::Route {
+            component,
+            operation,
+        } = target.target
+        else {
+            return Err(DeliveryError::InvalidRequest);
+        };
+        let route = self
+            .release
+            .manifest()
+            .routes
+            .iter()
+            .find(|route| {
+                route.package_id == target.package_id
+                    && route.component == component
+                    && route.operation == operation
+                    && route.kind == OperationKind::Query
+            })
+            .cloned()
+            .ok_or(DeliveryError::InvalidRequest)?;
+        let (traceparent, tracestate) = match trace {
+            Some(trace) if trace.traceparent.is_empty() => {
+                return Err(DeliveryError::InvalidRequest);
+            }
+            Some(trace) => (Some(trace.traceparent), trace.tracestate),
+            None => (None, None),
+        };
+        Ok(StreamRead {
+            attachment_id,
+            package_id: target.package_id,
+            component,
+            operation,
+            delivery_id,
+            payload,
+            causation,
+            traceparent,
+            tracestate,
+            if_none_match,
+            route,
+        })
+    }
+
+    /// Run the query and write its reply lines: each row, then the outcome.
+    /// `first` learns that a row arrived, or how the read ended without one.
+    async fn stream_lines(
+        self,
+        read: StreamRead,
+        caller: Option<AuthenticatedCaller>,
+        lines: tokio::sync::mpsc::Sender<Vec<String>>,
+        first: tokio::sync::oneshot::Sender<Option<EarlyEnd>>,
+    ) {
+        let labelled = caller.is_some();
+        let (rows, mut batches) = tokio::sync::mpsc::channel(ROW_BATCHES_IN_FLIGHT);
+        let invocation = invoke_route_stream(&self.operations, read.call(caller), rows);
+        let forward = async move {
+            let mut first = Some(first);
+            let mut actors = std::collections::BTreeSet::new();
+            while let Some(batch) = batches.recv().await {
+                if let Some(first) = first.take() {
+                    let _ = first.send(None);
+                }
+                if labelled {
+                    for row in &batch {
+                        if let Ok(row) = serde_json::from_str(row) {
+                            collect_actors(&row, &mut actors);
+                        }
+                    }
+                }
+                // A reader that left drops its lines, and dropping the rows
+                // ends the query (`wamn-utci.3`).
+                if lines
+                    .send(batch.iter().map(|row| row_line(row)).collect())
+                    .await
+                    .is_err()
+                {
+                    return (first, actors, None);
+                }
+            }
+            (first, actors, Some(lines))
+        };
+        let (outcome, (mut first, actors, lines)) = tokio::join!(invocation, forward);
+        let end = match outcome {
+            Ok(Ok(outcome)) => StreamEnd::of_outcome(&outcome),
+            Ok(Err(error)) => {
+                if let Some(first) = first.take() {
+                    let _ = first.send(Some(EarlyEnd::Failed(error)));
+                    return;
+                }
+                StreamEnd::Uncertain
+            }
+            Err(error) => {
+                if let Some(first) = first.take() {
+                    let _ = first.send(Some(EarlyEnd::Error(error)));
+                    return;
+                }
+                tracing::warn!(
+                    error = format!("{error:#}"),
+                    "streamed read failed after its first row"
+                );
+                StreamEnd::Uncertain
+            }
+        };
+        let end = match (end, first) {
+            (StreamEnd::Refused(error), Some(first)) => {
+                let _ = first.send(Some(EarlyEnd::Refused(error)));
+                return;
+            }
+            (end, Some(first)) => {
+                let _ = first.send(None);
+                end
+            }
+            (end, None) => end,
+        };
+        let Some(lines) = lines else {
+            return;
+        };
+        let mut labels = Vec::new();
+        if matches!(end, StreamEnd::Completed { .. }) && !actors.is_empty() {
+            let actors = actors.into_iter().collect::<Vec<_>>();
+            match self
+                .operations
+                .postgres
+                .record_actor_labels(
+                    &self.operations.project,
+                    &self.release.manifest().release.tenant_id,
+                    &actors,
+                )
+                .await
+            {
+                Ok(found) => labels = found,
+                Err(error) => tracing::warn!(%error, "record actor labels unavailable"),
+            }
+        }
+        let _ = lines.send(vec![end.line(&labels)]).await;
+    }
+}
+
+/// Map a failure of the route path to the bridge's error, as `refuse` does,
+/// without the live view: a stream settles no tap.
+fn refusal(error: &anyhow::Error) -> DeliveryError {
+    match error.downcast_ref::<OperationRefusal>() {
+        Some(denial) => lower_operation_refusal(denial),
+        None => DeliveryError::ExecutionFailed,
+    }
+}
+
+/// Collect the actor IDs a result value names in `created_by` and `updated_by`.
+fn collect_actors(value: &serde_json::Value, actors: &mut std::collections::BTreeSet<String>) {
+    match value {
+        serde_json::Value::Object(fields) => {
+            for (name, value) in fields {
+                if matches!(name.as_str(), "created_by" | "updated_by") {
+                    if let Some(actor) = value.as_str().filter(|actor| {
+                        actor.parse::<wamn_platform_identity::PrincipalId>().is_ok()
+                    }) {
+                        actors.insert(actor.to_owned());
+                    }
+                } else {
+                    collect_actors(value, actors);
+                }
+            }
+        }
+        serde_json::Value::Array(values) => {
+            for value in values {
+                collect_actors(value, actors);
+            }
+        }
+        _ => {}
+    }
 }
 
 /// Only successful result values supply actor IDs. Refusals and input do not.
 fn result_actors(payload: &str) -> Vec<String> {
-    fn collect(value: &serde_json::Value, actors: &mut std::collections::BTreeSet<String>) {
-        match value {
-            serde_json::Value::Object(fields) => {
-                for (name, value) in fields {
-                    if matches!(name.as_str(), "created_by" | "updated_by") {
-                        if let Some(actor) = value.as_str().filter(|actor| {
-                            actor.parse::<wamn_platform_identity::PrincipalId>().is_ok()
-                        }) {
-                            actors.insert(actor.to_owned());
-                        }
-                    } else {
-                        collect(value, actors);
-                    }
-                }
-            }
-            serde_json::Value::Array(values) => {
-                for value in values {
-                    collect(value, actors);
-                }
-            }
-            _ => {}
-        }
-    }
     let mut actors = std::collections::BTreeSet::new();
     if let Ok(serde_json::Value::Array(items)) = serde_json::from_str(payload) {
         for item in items {
             if item.get("error").is_none()
                 && let Some(value) = item.get("value")
             {
-                collect(value, &mut actors);
+                collect_actors(value, &mut actors);
             }
         }
     }
@@ -575,6 +876,7 @@ impl fmt::Debug for RouterDeliveryBridge {
 }
 
 /// The bridge's throughput and error counters.
+#[derive(Clone)]
 struct DeliveryMetrics {
     attempts: Counter<u64>,
     errors: Counter<u64>,
