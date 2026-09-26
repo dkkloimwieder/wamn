@@ -60,6 +60,32 @@ export function fillMember<Draft>(draft: Draft, path: MemberPath, value: JsonVal
 }
 
 /**
+ * One draft with the members of `over` written over `draft`.
+ *
+ * Objects merge member by member, and lists merge element by element, so a
+ * row that fills one member of the first element of a list keeps the other
+ * members the operator typed there. Any other value of `over` wins.
+ */
+export function mergeMembers<Draft>(draft: Draft, over: unknown): Draft {
+  if (Array.isArray(over)) {
+    const base: readonly unknown[] = Array.isArray(draft) ? draft : [];
+    const length = Math.max(base.length, over.length);
+    return Array.from({ length }, (_, index) =>
+      index < over.length ? mergeMembers(base[index], over[index]) : base[index],
+    ) as Draft;
+  }
+  if (over !== null && typeof over === "object") {
+    const merged: { [key: string]: unknown } =
+      draft !== null && typeof draft === "object" && !Array.isArray(draft) ? { ...(draft as object) } : {};
+    for (const [name, value] of Object.entries(over)) {
+      merged[name] = mergeMembers(merged[name], value);
+    }
+    return merged as Draft;
+  }
+  return (over === undefined ? draft : over) as Draft;
+}
+
+/**
  * One draft with a page control's value, or with that member absent when the
  * control is empty.
  *

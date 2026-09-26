@@ -9,15 +9,18 @@ import { z } from "zod";
 import {
   afterWrites,
   appendPage,
+  callEach,
   canAdd,
   canRemove,
   checkedMember,
   emptyPage,
   firstPage,
   hasNextPage,
+  mergeMembers,
   newIdempotencyKey,
   newRequestId,
   occurredAt,
+  readMember,
   refusalMarks,
   refusalSentence,
   refusedMember,
@@ -49,6 +52,8 @@ import {
   RECEIVING_LOAD_RECEIPT_SCREEN_RESULT_FIELDS,
   RECEIVING_LOAD_RECEIPT_SCREEN_ROUTE,
   RECEIVING_RECORD_RECEIPT_REQUEST_FIELDS,
+  RECEIVING_RECORD_RECEIPT_RESULT_FIELDS,
+  RECEIVING_RECORD_RECEIPT_ROUTE,
   loadReceiptScreen as receivingLoadReceiptScreen,
   recordReceipt,
   type ReceivingLoadPurchaseOrderHistoryRequest,
@@ -183,7 +188,7 @@ export const RECEIVING_LOAD_RECEIPT_SCREEN_TABLE = {
     { field: "supplierId", label: "Supplier", type: "uuid", role: "value" },
   ],
   actions: [
-    { operation: "wamn-receiving:receiving/record-receipt@1.0.0", label: "record-receipt", many: true, opens: "form", fill: [{ field: "lineId", input: ["value", "line", "[]", "purchaseOrderLineId"] }] },
+    { operation: "wamn-receiving:receiving/record-receipt@1.0.0", label: "record-receipt", many: true, opens: "form", fill: [{ field: "lineId", input: ["value", "line", "[]", "purchaseOrderLineId"] }], form: () => ReceivingRecordReceiptForm },
   ],
   childTables: [],
 } as const;
@@ -229,6 +234,13 @@ export interface ReceivingRecordReceiptFormProps {
   readonly initial?: ReceivingRecordReceiptFormInitial;
   /** Called with the outcome of every submission. */
   readonly onSubmitted?: (outcome: Outcome<ReceivingRecordReceiptResult>) => void;
+  /**
+   * The values each selected row fills. One submission then sends one input
+   * for each row, in one call, and the form hides the inputs the rows fill.
+   */
+  readonly rows?: readonly object[];
+  /** Called with the outcome of each row's input, in row order. */
+  readonly onEach?: (outcomes: readonly Outcome<ReceivingRecordReceiptResult>[]) => void;
 }
 
 /** What an operator calls this screen. The page decides where it goes. */
@@ -248,6 +260,37 @@ export function ReceivingRecordReceiptForm(props: ReceivingRecordReceiptFormProp
     defaultValues: { ...props.initial } as Partial<ReceivingRecordReceiptRequest>,
     onSubmit: async ({ value }: { value: Partial<ReceivingRecordReceiptRequest> }) => {
       setDone(false);
+      if (props.rows !== undefined) {
+        const items: ReceivingRecordReceiptRequest[] = [];
+        for (const row of props.rows) {
+          const each = mergeMembers(value, row);
+          const checked = RECORD_RECEIPT_INPUT.safeParse(each);
+          if (!checked.success) {
+            const issue = checked.error.issues[0];
+            setRefusal({
+              text: issue?.message ?? "A value is not valid.",
+              member: checkedMember(
+                issue?.path as (string | number)[] | undefined,
+                RECEIVING_RECORD_RECEIPT_REQUEST_FIELDS,
+              ),
+            });
+            return;
+          }
+          let item = { ...each } as ReceivingRecordReceiptRequest;
+          item = writeMember(item, ["requestId"], newRequestId());
+          item = writeMember(item, ["value", "idempotencyKey"], newIdempotencyKey());
+          item = writeMember(item, ["value", "occurredAt"], occurredAt());
+          items.push(item);
+        }
+        props.onEach?.(
+          await callEach<ReceivingRecordReceiptResult>(
+            props.transport,
+            { route: RECEIVING_RECORD_RECEIPT_ROUTE, request: RECEIVING_RECORD_RECEIPT_REQUEST_FIELDS, result: RECEIVING_RECORD_RECEIPT_RESULT_FIELDS },
+            items,
+          ),
+        );
+        return;
+      }
       const checked = RECORD_RECEIPT_INPUT.safeParse(value);
       if (!checked.success) {
         const issue = checked.error.issues[0];
@@ -346,6 +389,8 @@ export function ReceivingRecordReceiptForm(props: ReceivingRecordReceiptFormProp
   };
   void readValuePurchaseOrderIdOptions(null);
   onCleanup(afterWrites(props.transport, () => void readValuePurchaseOrderIdOptions(null)));
+  const rowsFill = (path: readonly string[]) =>
+    props.rows?.some((row) => readMember(row, path) !== undefined) ?? false;
 
   return (
     <form
@@ -425,37 +470,41 @@ export function ReceivingRecordReceiptForm(props: ReceivingRecordReceiptFormProp
             </FieldSet>
           )}
         </form.Field>
-        <form.Field name={`value.purchaseOrderId`}>
-          {(field) => (
-            <RecordSelect
-              label="Purchase order"
-              options={valuePurchaseOrderIdOptions().rows}
-              optionValue={(row) => String(row.id)}
-              optionLabel={(row) => String(row.purchaseOrderNumber)}
-              value={field().state.value == null ? null : String(field().state.value)}
-              onChange={(value) => field().handleChange(value ?? "")}
-              onSearch={(text) => {
-                setValuePurchaseOrderIdSearch(text);
-                void readValuePurchaseOrderIdOptions(null);
-              }}
-              hasNextPage={hasNextPage(valuePurchaseOrderIdOptions())}
-              onNextPage={() => void readValuePurchaseOrderIdOptions(valuePurchaseOrderIdOptions().cursor)}
-              readRow={readValuePurchaseOrderIdRecord}
-              error={refusalMarks(refusal()?.member ?? null, "value.purchase_order_id") ? (refusal()?.text ?? null) : null}
-            />
-          )}
-        </form.Field>
-        <form.Field name={`value.receiptReference`}>
-          {(field) => (
-            <TextField
-              label="Receipt reference"
-              type="text"
-              value={String(field().state.value ?? "")}
-              onInput={(value) => field().handleChange(value)}
-              error={refusalMarks(refusal()?.member ?? null, "value.receipt_reference") ? (refusal()?.text ?? null) : null}
-            />
-          )}
-        </form.Field>
+        <Show when={!rowsFill(["value", "purchaseOrderId"])}>
+          <form.Field name={`value.purchaseOrderId`}>
+            {(field) => (
+              <RecordSelect
+                label="Purchase order"
+                options={valuePurchaseOrderIdOptions().rows}
+                optionValue={(row) => String(row.id)}
+                optionLabel={(row) => String(row.purchaseOrderNumber)}
+                value={field().state.value == null ? null : String(field().state.value)}
+                onChange={(value) => field().handleChange(value ?? "")}
+                onSearch={(text) => {
+                  setValuePurchaseOrderIdSearch(text);
+                  void readValuePurchaseOrderIdOptions(null);
+                }}
+                hasNextPage={hasNextPage(valuePurchaseOrderIdOptions())}
+                onNextPage={() => void readValuePurchaseOrderIdOptions(valuePurchaseOrderIdOptions().cursor)}
+                readRow={readValuePurchaseOrderIdRecord}
+                error={refusalMarks(refusal()?.member ?? null, "value.purchase_order_id") ? (refusal()?.text ?? null) : null}
+              />
+            )}
+          </form.Field>
+        </Show>
+        <Show when={!rowsFill(["value", "receiptReference"])}>
+          <form.Field name={`value.receiptReference`}>
+            {(field) => (
+              <TextField
+                label="Receipt reference"
+                type="text"
+                value={String(field().state.value ?? "")}
+                onInput={(value) => field().handleChange(value)}
+                error={refusalMarks(refusal()?.member ?? null, "value.receipt_reference") ? (refusal()?.text ?? null) : null}
+              />
+            )}
+          </form.Field>
+        </Show>
       </FieldGroup>
       <FormActions>
         <FormDone when={done()} />

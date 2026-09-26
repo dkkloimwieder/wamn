@@ -460,7 +460,8 @@
             "path": "value.expected_row_version",
             "type": "int32",
             "nullable": false,
-            "revision": true
+            "revision": true,
+            "revision_of": "value.pallet_id"
           },
           {
             "path": "value.occurred_at",
@@ -969,7 +970,8 @@
             "path": "value.expected_row_version",
             "type": "int32",
             "nullable": false,
-            "revision": true
+            "revision": true,
+            "revision_of": "value.pallet_id"
           },
           {
             "path": "value.occurred_at",
@@ -1994,7 +1996,8 @@
             "path": "value.expected_row_version",
             "type": "int32",
             "nullable": false,
-            "revision": true
+            "revision": true,
+            "revision_of": "value.source_pallet_id"
           },
           {
             "path": "value.occurred_at",

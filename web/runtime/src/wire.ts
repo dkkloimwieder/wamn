@@ -243,3 +243,22 @@ export async function callOperation<T>(
     binding.result,
   );
 }
+
+/**
+ * Calls one operation with many outer inputs in one request, which the
+ * release runs one by one, and returns one outcome for each input in order.
+ */
+export async function callEach<T>(
+  transport: Transport,
+  binding: OperationBinding,
+  items: readonly unknown[],
+): Promise<readonly Outcome<T>[]> {
+  if (transport.invokeEach === undefined) {
+    throw new Error("this transport sends no call with many outer inputs");
+  }
+  const outcomes = await transport.invokeEach({
+    ...binding.route,
+    items: items.map((item) => toWire(item, binding.request)),
+  });
+  return outcomes.map((outcome) => reviveOutcome<T>(outcome, binding.result));
+}

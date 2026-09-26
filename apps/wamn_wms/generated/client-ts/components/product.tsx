@@ -54,6 +54,10 @@ import {
   type ProductUpdateResult,
   update,
 } from "../product.js";
+import {
+  InventoryAdjustForm,
+  InventorySplitForm,
+} from "./inventory.js";
 
 /** What an operator types for `wamn-wms:product/create@1.0.0`. */
 const CREATE_INPUT = z.object({
@@ -258,8 +262,8 @@ export const PRODUCT_QUERY_TABLE = {
   ] },
   actions: [
     { operation: "wamn-wms:product/get@1.0.0", label: "get", many: false, opens: "record", fill: [] },
-    { operation: "wamn-wms:inventory/adjust@1.0.0", label: "adjust", many: true, opens: "form", fill: [{ field: "id", input: ["value", "productId"] }] },
-    { operation: "wamn-wms:inventory/split@1.0.0", label: "split", many: true, opens: "form", fill: [{ field: "id", input: ["value", "productId"] }] },
+    { operation: "wamn-wms:inventory/adjust@1.0.0", label: "adjust", many: true, opens: "form", fill: [{ field: "id", input: ["value", "productId"] }], form: () => InventoryAdjustForm },
+    { operation: "wamn-wms:inventory/split@1.0.0", label: "split", many: true, opens: "form", fill: [{ field: "id", input: ["value", "productId"] }], form: () => InventorySplitForm },
   ],
   childTables: [],
 } as const;

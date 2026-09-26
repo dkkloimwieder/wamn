@@ -854,11 +854,42 @@ fn write_table_definition(
         .actions
         .iter()
         .map(|action| {
-            let (opens, fill) = match screen
+            let row_form = screen
                 .row_forms
                 .iter()
-                .find(|form| form.operation == action.operation)
-            {
+                .find(|form| form.operation == action.operation);
+            let mut tail = String::new();
+            if let Some(form) = row_form {
+                if let Some((field, input)) = form.revision {
+                    write!(
+                        tail,
+                        ", revision: {{ field: {}, input: {} }}",
+                        quote(&column_member(field, &operation.operation)?),
+                        member_literal(input)
+                    )
+                    .expect("write");
+                }
+                // A form that sends one input for each of many rows runs a
+                // bulk action. Its component is read when the action runs, so
+                // modules that import each other load.
+                let target = plan
+                    .screens()
+                    .find(|candidate| candidate.contract.operation == form.operation);
+                if action.many && target.is_some_and(many_rows) {
+                    let component = format!(
+                        "{}Form",
+                        crate::client_ts::type_stem(form.model, form.name)
+                    );
+                    if form.model != screen.model {
+                        sibling
+                            .entry(form.model.to_owned())
+                            .or_default()
+                            .insert(component.clone());
+                    }
+                    write!(tail, ", form: () => {component}").expect("write");
+                }
+            }
+            let (opens, fill) = match row_form {
                 Some(form) => (
                     "form",
                     form.pairs
@@ -877,7 +908,7 @@ fn write_table_definition(
                 None => ("record", Vec::new()),
             };
             Ok(format!(
-                "{{ operation: {}, label: {}, many: {}, opens: {}, fill: [{}] }}",
+                "{{ operation: {}, label: {}, many: {}, opens: {}, fill: [{}]{tail} }}",
                 quote(action.operation),
                 quote(&link_label(action.operation)),
                 action.many,
@@ -1428,6 +1459,16 @@ fn emit_form(
         "  readonly onSubmitted?: (outcome: Outcome<{stem}Result>) => void;"
     )
     .expect("write");
+    let many = many_rows(screen);
+    if many {
+        source.push_str("  /**\n   * The values each selected row fills. One submission then sends one input\n   * for each row, in one call, and the form hides the inputs the rows fill.\n   */\n");
+        source.push_str("  readonly rows?: readonly object[];\n");
+        writeln!(
+            source,
+            "  /** Called with the outcome of each row's input, in row order. */\n  readonly onEach?: (outcomes: readonly Outcome<{stem}Result>[]) => void;"
+        )
+        .expect("write");
+    }
     source.push_str("}\n");
 
     // The component.
@@ -1488,6 +1529,9 @@ fn emit_form(
     source.push_str("    onSubmit: async ({ value }: { value: Partial<");
     writeln!(source, "{stem}Request> }}) => {{").expect("write");
     source.push_str("      setDone(false);\n");
+    if many {
+        emit_many_submit(source, screen, &stem, &fields, runtime, bindings);
+    }
     writeln!(
         source,
         "      const checked = {}_INPUT.safeParse(value);",
@@ -1500,19 +1544,7 @@ fn emit_form(
     )
     .expect("write");
     writeln!(source, "      let item = {{ ...value }} as {stem}Request;").expect("write");
-    for supplied in &screen.supplied {
-        let value = match supplied.kind {
-            SuppliedKind::RequestId => "newRequestId()",
-            SuppliedKind::IdempotencyKey => "newIdempotencyKey()",
-            SuppliedKind::OccurredAt => "occurredAt()",
-        };
-        writeln!(
-            source,
-            "      item = writeMember(item, {}, {value});",
-            member_literal(supplied.path)
-        )
-        .expect("write");
-    }
+    write_supplied(source, screen, "      ");
     if let Some(binding) = screen.revision {
         source.push_str("      // The revision is the one the form read when it opened, never one read\n      // now, because a change made since then is what the conflict outcome names.\n");
         source.push_str(
@@ -1534,26 +1566,7 @@ fn emit_form(
         .expect("write");
     } else {
         for revision in &screen.revision_inputs {
-            if let Some(populated) = chosen(screen, revision) {
-                // The revision is the one the chosen row carried when the
-                // operator chose it, never one read now.
-                let (state, _) = selector_state(populated.input);
-                writeln!(
-                    source,
-                    "      const {state}Chosen = {state}Revision();\n      if ({state}Chosen === null) {{\n        setRefusal({{ text: \"Choose the record from its list.\", member: {:?} }});\n        return;\n      }}\n      item = writeMember(item, {}, {state}Chosen);",
-                    populated.input,
-                    member_literal(revision)
-                )
-                .expect("write");
-                continue;
-            }
-            writeln!(
-                source,
-                "      item = writeMember(item, {}, props.{});",
-                member_literal(revision),
-                revision_prop(revision)
-            )
-            .expect("write");
+            write_revision(source, screen, revision, "      ");
         }
     }
     writeln!(
@@ -1628,6 +1641,12 @@ fn emit_form(
         emit_selector_state(source, populated, runtime);
     }
 
+    if many {
+        // Whether the rows of a bulk action fill one input, which the form
+        // then hides.
+        source.push_str("  const rowsFill = (path: readonly string[]) =>\n    props.rows?.some((row) => readMember(row, path) !== undefined) ?? false;\n");
+    }
+
     // The markup. A refusal that names no member reads above the controls.
     ui.extend([
         "Button",
@@ -1650,6 +1669,26 @@ fn emit_form(
     let mut fields = String::new();
     for input in &inputs {
         match repeated_ancestor(&input.path) {
+            None if many => {
+                let mut field = String::new();
+                emit_field(
+                    &mut field,
+                    input,
+                    &member_path(&input.path).join("."),
+                    6,
+                    None,
+                    populated(screen, &input.path),
+                    ui,
+                );
+                writeln!(
+                    fields,
+                    "      <Show when={{!rowsFill({})}}>",
+                    member_literal(&input.path)
+                )
+                .expect("write");
+                fields.push_str(&deepen(&field));
+                fields.push_str("      </Show>\n");
+            }
             None => emit_field(
                 &mut fields,
                 input,
@@ -1680,6 +1719,110 @@ fn emit_form(
         "      <FormActions>\n        <FormDone when={done()} />\n        <Button type=\"submit\">submit</Button>\n      </FormActions>\n    </form>\n  );\n}\n",
     );
     Ok(())
+}
+
+/// Whether a form sends one input for each of many rows: its operation
+/// takes many outer inputs, and no read it binds names one record.
+fn many_rows(screen: &ScreenPlan<'_>) -> bool {
+    crate::client_plan::takes_many(screen.contract) && screen.revision.is_none()
+}
+
+/// The writes of the inputs the runtime supplies, at `pad`.
+fn write_supplied(source: &mut String, screen: &ScreenPlan<'_>, pad: &str) {
+    for supplied in &screen.supplied {
+        let value = match supplied.kind {
+            SuppliedKind::RequestId => "newRequestId()",
+            SuppliedKind::IdempotencyKey => "newIdempotencyKey()",
+            SuppliedKind::OccurredAt => "occurredAt()",
+        };
+        writeln!(
+            source,
+            "{pad}item = writeMember(item, {}, {value});",
+            member_literal(supplied.path)
+        )
+        .expect("write");
+    }
+}
+
+/// The write of one revision input that no bound read supplies, at `pad`.
+fn write_revision(source: &mut String, screen: &ScreenPlan<'_>, revision: &str, pad: &str) {
+    if let Some(populated) = chosen(screen, revision) {
+        // The revision is the one the chosen row carried when the operator
+        // chose it, never one read now.
+        let (state, _) = selector_state(populated.input);
+        writeln!(
+            source,
+            "{pad}const {state}Chosen = {state}Revision();\n{pad}if ({state}Chosen === null) {{\n{pad}  setRefusal({{ text: \"Choose the record from its list.\", member: {:?} }});\n{pad}  return;\n{pad}}}\n{pad}item = writeMember(item, {}, {state}Chosen);",
+            populated.input,
+            member_literal(revision)
+        )
+        .expect("write");
+        return;
+    }
+    writeln!(
+        source,
+        "{pad}item = writeMember(item, {}, props.{});",
+        member_literal(revision),
+        revision_prop(revision)
+    )
+    .expect("write");
+}
+
+/// The submission of a bulk action: one input for each row, in one call.
+///
+/// Each input is the typed values with the row's values written over them.
+/// A revision the row carries is the row's own, and any other revision comes
+/// as it does for one input. The outcomes go to the caller, which shows each
+/// on its row.
+fn emit_many_submit(
+    source: &mut String,
+    screen: &ScreenPlan<'_>,
+    stem: &str,
+    fields: &str,
+    runtime: &mut BTreeSet<&'static str>,
+    bindings: &mut BTreeSet<String>,
+) {
+    runtime.extend(["callEach", "mergeMembers", "readMember"]);
+    let constant = format!(
+        "{}_{}",
+        screen.model.to_uppercase(),
+        screen.name.to_uppercase()
+    );
+    bindings.insert(format!("{constant}_ROUTE"));
+    bindings.insert(format!("{constant}_RESULT_FIELDS"));
+    source.push_str("      if (props.rows !== undefined) {\n");
+    writeln!(source, "        const items: {stem}Request[] = [];").expect("write");
+    source.push_str("        for (const row of props.rows) {\n");
+    source.push_str("          const each = mergeMembers(value, row);\n");
+    writeln!(
+        source,
+        "          const checked = {}_INPUT.safeParse(each);",
+        screen.name.to_uppercase()
+    )
+    .expect("write");
+    writeln!(
+        source,
+        "          if (!checked.success) {{\n            const issue = checked.error.issues[0];\n            setRefusal({{\n              text: issue?.message ?? \"A value is not valid.\",\n              member: checkedMember(\n                issue?.path as (string | number)[] | undefined,\n                {fields},\n              ),\n            }});\n            return;\n          }}"
+    )
+    .expect("write");
+    writeln!(source, "          let item = {{ ...each }} as {stem}Request;").expect("write");
+    write_supplied(source, screen, "          ");
+    for revision in &screen.revision_inputs {
+        writeln!(
+            source,
+            "          if (readMember(item, {}) === undefined) {{",
+            member_literal(revision)
+        )
+        .expect("write");
+        write_revision(source, screen, revision, "            ");
+        source.push_str("          }\n");
+    }
+    source.push_str("          items.push(item);\n        }\n");
+    writeln!(
+        source,
+        "        props.onEach?.(\n          await callEach<{stem}Result>(\n            props.transport,\n            {{ route: {constant}_ROUTE, request: {fields}, result: {constant}_RESULT_FIELDS }},\n            items,\n          ),\n        );\n        return;\n      }}"
+    )
+    .expect("write");
 }
 
 /// The element type of one repeated group, read out of the request type.

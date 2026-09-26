@@ -17,10 +17,7 @@
  * the form.
  */
 
-import { createResource, Show, type JSX } from "solid-js";
-
 import { fillPath, filledValues, type ScreenProps, type ShellSection } from "@wamn/shell";
-import type { Transport } from "@wamn/web-runtime";
 import {
   InventoryAdjustForm,
   InventoryAggregateTable,
@@ -55,7 +52,6 @@ import {
   ProductUpdateForm,
   ProductUpdateFormLabel,
 } from "@wamn/wms-client/components/index.js";
-import { get as palletGet } from "@wamn/wms-client/pallet.js";
 
 /** The record page path of one row. */
 const record = (path: string, row: { readonly id: string }) => `${path}/${encodeURIComponent(row.id)}`;
@@ -69,35 +65,6 @@ const done = (props: ScreenProps) => (outcome: { readonly status: string }) => {
     props.close();
   }
 };
-
-/**
- * Reads the pallet a command names, and renders the form with the revision it
- * read. The release binds no read that supplies the revision of these
- * commands, so the form sends the revision of the pallet in the address.
- */
-function PalletRevision(props: {
-  readonly transport: Transport;
-  readonly id: string | undefined;
-  readonly children: (rowVersion: number) => JSX.Element;
-}): JSX.Element {
-  const [read] = createResource(
-    () => props.id,
-    (id) => palletGet(props.transport, [{ id }]),
-  );
-  return (
-    <Show when={props.id} fallback={<p>Open this form from a pallet row. It sends the revision of that pallet.</p>}>
-      <Show when={read()} keyed>
-        {(outcome) =>
-          outcome.status === "completed" ? (
-            props.children(outcome.value.rowVersion)
-          ) : (
-            <p>The pallet could not be read: {outcome.status}.</p>
-          )
-        }
-      </Show>
-    </Show>
-  );
-}
 
 export const SECTIONS: readonly ShellSection[] = [
   {
@@ -168,46 +135,19 @@ export const SECTIONS: readonly ShellSection[] = [
       {
         path: "inventory/move",
         component: (props) => (
-          <PalletRevision transport={props.transport} id={props.search["value.palletId"]}>
-            {(rowVersion) => (
-              <InventoryMoveForm
-                transport={props.transport}
-                initial={filledValues(props.search)}
-                valueExpectedRowVersion={rowVersion}
-                onSubmitted={done(props)}
-              />
-            )}
-          </PalletRevision>
+          <InventoryMoveForm transport={props.transport} initial={filledValues(props.search)} onSubmitted={done(props)} />
         ),
       },
       {
         path: "inventory/adjust",
         component: (props) => (
-          <PalletRevision transport={props.transport} id={props.search["value.palletId"]}>
-            {(rowVersion) => (
-              <InventoryAdjustForm
-                transport={props.transport}
-                initial={filledValues(props.search)}
-                valueExpectedRowVersion={rowVersion}
-                onSubmitted={done(props)}
-              />
-            )}
-          </PalletRevision>
+          <InventoryAdjustForm transport={props.transport} initial={filledValues(props.search)} onSubmitted={done(props)} />
         ),
       },
       {
         path: "inventory/split",
         component: (props) => (
-          <PalletRevision transport={props.transport} id={props.search["value.sourcePalletId"]}>
-            {(rowVersion) => (
-              <InventorySplitForm
-                transport={props.transport}
-                initial={filledValues(props.search)}
-                valueExpectedRowVersion={rowVersion}
-                onSubmitted={done(props)}
-              />
-            )}
-          </PalletRevision>
+          <InventorySplitForm transport={props.transport} initial={filledValues(props.search)} onSubmitted={done(props)} />
         ),
       },
       {

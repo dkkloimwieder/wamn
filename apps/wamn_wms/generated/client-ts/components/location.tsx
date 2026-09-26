@@ -55,6 +55,10 @@ import {
   update,
 } from "../location.js";
 import {
+  InventoryMoveForm,
+  InventorySplitForm,
+} from "./inventory.js";
+import {
   PALLET_QUERY_TABLE,
 } from "./pallet.js";
 
@@ -261,8 +265,8 @@ export const LOCATION_QUERY_TABLE = {
   ] },
   actions: [
     { operation: "wamn-wms:location/get@1.0.0", label: "get", many: false, opens: "record", fill: [] },
-    { operation: "wamn-wms:inventory/move@1.0.0", label: "move", many: true, opens: "form", fill: [{ field: "id", input: ["value", "toLocationId"] }] },
-    { operation: "wamn-wms:inventory/split@1.0.0", label: "split", many: true, opens: "form", fill: [{ field: "id", input: ["value", "toLocationId"] }] },
+    { operation: "wamn-wms:inventory/move@1.0.0", label: "move", many: true, opens: "form", fill: [{ field: "id", input: ["value", "toLocationId"] }], form: () => InventoryMoveForm },
+    { operation: "wamn-wms:inventory/split@1.0.0", label: "split", many: true, opens: "form", fill: [{ field: "id", input: ["value", "toLocationId"] }], form: () => InventorySplitForm },
     { operation: "wamn-wms:pallet/create@1.0.0", label: "create", many: false, opens: "form", fill: [{ field: "id", input: ["locationId"] }] },
   ],
   childTables: [

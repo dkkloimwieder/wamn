@@ -368,6 +368,12 @@ pub struct RowForm<'a> {
     pub name: &'a str,
     /// Result field of this screen, and the input path of that form.
     pub pairs: Vec<(&'a str, &'a str)>,
+    /// The revision the row carries for the record it fills, when a revision
+    /// input of the form states `revision_of` the filled input and this
+    /// screen shows the field that carries it: the result field of this
+    /// screen, and the revision input of that form. A form that sends one
+    /// item for each of many rows sends each row's own revision this way.
+    pub revision: Option<(&'a str, &'a str)>,
 }
 
 /// The update that edits one table's rows in place.
@@ -597,24 +603,32 @@ impl<'a> ClientPlan<'a> {
     /// inputs names a record there, and this pass reads that answer instead
     /// of asking the contract again.
     fn link_forms(&mut self) {
-        let forms: Vec<(Target<'a>, Vec<(&'a str, &'a str)>)> =
-            self.screens()
-                .filter(|screen| matches!(screen.role, Role::Form))
-                .map(|screen| {
-                    (
-                        Target::of(screen),
-                        screen
-                            .inputs
-                            .iter()
-                            .filter_map(|input| {
-                                input.references.as_ref().map(|reference| {
-                                    (reference.model.as_str(), input.path.as_str())
-                                })
-                            })
-                            .collect(),
-                    )
-                })
-                .collect();
+        let forms: Vec<FormTarget<'a>> = self
+            .screens()
+            .filter(|screen| matches!(screen.role, Role::Form))
+            .map(|screen| FormTarget {
+                target: Target::of(screen),
+                references: screen
+                    .inputs
+                    .iter()
+                    .filter_map(|input| {
+                        input
+                            .references
+                            .as_ref()
+                            .map(|reference| (reference.model.as_str(), input.path.as_str()))
+                    })
+                    .collect(),
+                revisions: screen
+                    .population
+                    .iter()
+                    .filter_map(|populated| {
+                        populated
+                            .revision
+                            .map(|revision| (populated.input, revision))
+                    })
+                    .collect(),
+            })
+            .collect();
         let linked: Vec<_> = self
             .screens()
             .map(|screen| row_forms(screen, &forms))
@@ -910,19 +924,26 @@ fn row_links<'a>(from: &Target<'a>, targets: &[Target<'a>]) -> Vec<RowLink<'a>> 
         .collect()
 }
 
+/// One form, as a row that fills it sees it.
+struct FormTarget<'a> {
+    target: Target<'a>,
+    /// Input paths that name a record, each with the model it names.
+    references: Vec<(&'a str, &'a str)>,
+    /// Each input whose chosen record supplies a revision, with that revision.
+    revisions: Vec<(&'a str, ChosenRevision<'a>)>,
+}
+
 /// Select the forms that one screen's result row opens prefilled.
-fn row_forms<'a>(
-    screen: &ScreenPlan<'a>,
-    forms: &[(Target<'a>, Vec<(&'a str, &'a str)>)],
-) -> Vec<RowForm<'a>> {
+fn row_forms<'a>(screen: &ScreenPlan<'a>, forms: &[FormTarget<'a>]) -> Vec<RowForm<'a>> {
     let Some(list) = Lister::of(screen) else {
         return Vec::new();
     };
     forms
         .iter()
-        .filter(|(form, _)| form.operation != screen.contract.operation)
-        .filter_map(|(form, references)| {
-            let pairs: Vec<_> = references
+        .filter(|form| form.target.operation != screen.contract.operation)
+        .filter_map(|form| {
+            let pairs: Vec<_> = form
+                .references
                 .iter()
                 .filter(|(model, _)| *model == list.model)
                 .map(|(_, input)| (list.key_field, *input))
@@ -930,11 +951,26 @@ fn row_forms<'a>(
             // The row fills the one input that names its model. When two
             // inputs name it, no declared path says which one the row is, so
             // the row fills neither and the operator chooses both.
-            (pairs.len() == 1).then_some(RowForm {
-                operation: form.operation,
-                model: form.model,
-                name: form.name,
+            let [(_, filled)] = pairs.as_slice() else {
+                return None;
+            };
+            let revision = form
+                .revisions
+                .iter()
+                .find(|(input, _)| input == filled)
+                .filter(|(_, revision)| {
+                    screen
+                        .columns
+                        .iter()
+                        .any(|column| column.path == revision.field)
+                })
+                .map(|(_, revision)| (revision.field, revision.input));
+            Some(RowForm {
+                operation: form.target.operation,
+                model: form.target.model,
+                name: form.target.name,
                 pairs,
+                revision,
             })
         })
         .collect()
@@ -1161,19 +1197,25 @@ fn table_actions<'a>(screen: &ScreenPlan<'a>, plan: &ClientPlan<'a>) -> Vec<Tabl
                 .screens()
                 .find(|candidate| candidate.contract.operation == operation)?;
             target.contract.route.as_ref()?;
-            let maximum = target
-                .contract
-                .envelope
-                .as_ref()
-                .and_then(|envelope| envelope.get("maximum"))
-                .and_then(serde_json::Value::as_u64);
             Some(TableAction {
                 operation,
-                many: maximum.is_some_and(|maximum| maximum > 1)
-                    && target.contract.transaction.as_deref() == Some(PER_INPUT_TRANSACTION),
+                many: takes_many(target.contract),
             })
         })
         .collect()
+}
+
+/// Whether one call of an operation takes many outer inputs and runs each
+/// in its own transaction, so one call can carry one input for each of many
+/// rows.
+pub fn takes_many(contract: &OperationIr) -> bool {
+    let maximum = contract
+        .envelope
+        .as_ref()
+        .and_then(|envelope| envelope.get("maximum"))
+        .and_then(serde_json::Value::as_u64);
+    maximum.is_some_and(|maximum| maximum > 1)
+        && contract.transaction.as_deref() == Some(PER_INPUT_TRANSACTION)
 }
 
 /// The served tables whose declared filter narrows a column that names a

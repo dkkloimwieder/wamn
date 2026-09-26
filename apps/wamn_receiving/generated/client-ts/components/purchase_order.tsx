@@ -55,6 +55,9 @@ import {
   update,
 } from "../purchase_order.js";
 import {
+  ReceivingRecordReceiptForm,
+} from "./receiving.js";
+import {
   query as supplierQuery,
   type SupplierQueryRequest,
   type SupplierQueryRow,
@@ -181,7 +184,7 @@ export const PURCHASE_ORDER_QUERY_TABLE = {
   ] },
   actions: [
     { operation: "wamn-receiving:purchase-order/get@1.0.0", label: "get", many: false, opens: "record", fill: [] },
-    { operation: "wamn-receiving:receiving/record-receipt@1.0.0", label: "record-receipt", many: true, opens: "form", fill: [{ field: "id", input: ["value", "purchaseOrderId"] }] },
+    { operation: "wamn-receiving:receiving/record-receipt@1.0.0", label: "record-receipt", many: true, opens: "form", fill: [{ field: "id", input: ["value", "purchaseOrderId"] }], form: () => ReceivingRecordReceiptForm },
   ],
   childTables: [],
 } as const;

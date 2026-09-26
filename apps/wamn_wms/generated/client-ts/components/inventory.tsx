@@ -9,13 +9,16 @@ import { z } from "zod";
 import {
   afterWrites,
   appendPage,
+  callEach,
   checkedMember,
   emptyPage,
   firstPage,
   hasNextPage,
+  mergeMembers,
   newIdempotencyKey,
   newRequestId,
   occurredAt,
+  readMember,
   refusalMarks,
   refusalSentence,
   refusedMember,
@@ -40,12 +43,20 @@ import {
 } from "@wamn/ui";
 import {
   INVENTORY_ADJUST_REQUEST_FIELDS,
+  INVENTORY_ADJUST_RESULT_FIELDS,
+  INVENTORY_ADJUST_ROUTE,
   INVENTORY_AGGREGATE_REQUEST_FIELDS,
   INVENTORY_AGGREGATE_RESULT_FIELDS,
   INVENTORY_AGGREGATE_ROUTE,
   INVENTORY_MERGE_REQUEST_FIELDS,
+  INVENTORY_MERGE_RESULT_FIELDS,
+  INVENTORY_MERGE_ROUTE,
   INVENTORY_MOVE_REQUEST_FIELDS,
+  INVENTORY_MOVE_RESULT_FIELDS,
+  INVENTORY_MOVE_ROUTE,
   INVENTORY_SPLIT_REQUEST_FIELDS,
+  INVENTORY_SPLIT_RESULT_FIELDS,
+  INVENTORY_SPLIT_ROUTE,
   adjust,
   merge,
   move,
@@ -120,10 +131,15 @@ export interface InventoryAdjustFormProps {
   readonly transport: Transport;
   /** Values the form starts with. */
   readonly initial?: InventoryAdjustFormInitial;
-  /** The revision this command sends. The release binds no read that supplies it. */
-  readonly valueExpectedRowVersion: InventoryAdjustRequest["value"]["expectedRowVersion"];
   /** Called with the outcome of every submission. */
   readonly onSubmitted?: (outcome: Outcome<InventoryAdjustResult>) => void;
+  /**
+   * The values each selected row fills. One submission then sends one input
+   * for each row, in one call, and the form hides the inputs the rows fill.
+   */
+  readonly rows?: readonly object[];
+  /** Called with the outcome of each row's input, in row order. */
+  readonly onEach?: (outcomes: readonly Outcome<InventoryAdjustResult>[]) => void;
 }
 
 /** What an operator calls this screen. The page decides where it goes. */
@@ -143,6 +159,45 @@ export function InventoryAdjustForm(props: InventoryAdjustFormProps) {
     defaultValues: { ...props.initial } as Partial<InventoryAdjustRequest>,
     onSubmit: async ({ value }: { value: Partial<InventoryAdjustRequest> }) => {
       setDone(false);
+      if (props.rows !== undefined) {
+        const items: InventoryAdjustRequest[] = [];
+        for (const row of props.rows) {
+          const each = mergeMembers(value, row);
+          const checked = ADJUST_INPUT.safeParse(each);
+          if (!checked.success) {
+            const issue = checked.error.issues[0];
+            setRefusal({
+              text: issue?.message ?? "A value is not valid.",
+              member: checkedMember(
+                issue?.path as (string | number)[] | undefined,
+                INVENTORY_ADJUST_REQUEST_FIELDS,
+              ),
+            });
+            return;
+          }
+          let item = { ...each } as InventoryAdjustRequest;
+          item = writeMember(item, ["requestId"], newRequestId());
+          item = writeMember(item, ["value", "idempotencyKey"], newIdempotencyKey());
+          item = writeMember(item, ["value", "occurredAt"], occurredAt());
+          if (readMember(item, ["value", "expectedRowVersion"]) === undefined) {
+            const valuePalletIdChosen = valuePalletIdRevision();
+            if (valuePalletIdChosen === null) {
+              setRefusal({ text: "Choose the record from its list.", member: "value.pallet_id" });
+              return;
+            }
+            item = writeMember(item, ["value", "expectedRowVersion"], valuePalletIdChosen);
+          }
+          items.push(item);
+        }
+        props.onEach?.(
+          await callEach<InventoryAdjustResult>(
+            props.transport,
+            { route: INVENTORY_ADJUST_ROUTE, request: INVENTORY_ADJUST_REQUEST_FIELDS, result: INVENTORY_ADJUST_RESULT_FIELDS },
+            items,
+          ),
+        );
+        return;
+      }
       const checked = ADJUST_INPUT.safeParse(value);
       if (!checked.success) {
         const issue = checked.error.issues[0];
@@ -159,7 +214,12 @@ export function InventoryAdjustForm(props: InventoryAdjustFormProps) {
       item = writeMember(item, ["requestId"], newRequestId());
       item = writeMember(item, ["value", "idempotencyKey"], newIdempotencyKey());
       item = writeMember(item, ["value", "occurredAt"], occurredAt());
-      item = writeMember(item, ["value", "expectedRowVersion"], props.valueExpectedRowVersion);
+      const valuePalletIdChosen = valuePalletIdRevision();
+      if (valuePalletIdChosen === null) {
+        setRefusal({ text: "Choose the record from its list.", member: "value.pallet_id" });
+        return;
+      }
+      item = writeMember(item, ["value", "expectedRowVersion"], valuePalletIdChosen);
       const outcome = await adjust(props.transport, [item]);
       props.onSubmitted?.(outcome);
       announceOutcome(outcome, InventoryAdjustFormLabel);
@@ -173,6 +233,7 @@ export function InventoryAdjustForm(props: InventoryAdjustFormProps) {
   }));
   const [valuePalletIdOptions, setValuePalletIdOptions] = createSignal<PageState<PalletQueryRow>>(emptyPage<PalletQueryRow>());
   const [valuePalletIdSearch, setValuePalletIdSearch] = createSignal("");
+  const [valuePalletIdRevision, setValuePalletIdRevision] = createSignal<PalletQueryRow["rowVersion"] | null>(null);
   const readValuePalletIdOptions = async (cursor: string | null) => {
     let request = {} as PalletQueryRequest;
     if (valuePalletIdSearch() !== "") {
@@ -227,6 +288,8 @@ export function InventoryAdjustForm(props: InventoryAdjustFormProps) {
   };
   void readValueProductIdOptions(null);
   onCleanup(afterWrites(props.transport, () => void readValueProductIdOptions(null)));
+  const rowsFill = (path: readonly string[]) =>
+    props.rows?.some((row) => readMember(row, path) !== undefined) ?? false;
 
   return (
     <form
@@ -239,83 +302,94 @@ export function InventoryAdjustForm(props: InventoryAdjustFormProps) {
         <FieldError>{refusal()?.text}</FieldError>
       </Show>
       <FieldGroup>
-        <form.Field name={`value.palletId`}>
-          {(field) => (
-            <RecordSelect
-              label="pallet id"
-              options={valuePalletIdOptions().rows}
-              optionValue={(row) => String(row.id)}
-              optionLabel={(row) => String(row.palletCode)}
-              value={field().state.value == null ? null : String(field().state.value)}
-              onChange={(value) => field().handleChange(value ?? "")}
-              onSearch={(text) => {
-                setValuePalletIdSearch(text);
-                void readValuePalletIdOptions(null);
-              }}
-              hasNextPage={hasNextPage(valuePalletIdOptions())}
-              onNextPage={() => void readValuePalletIdOptions(valuePalletIdOptions().cursor)}
-              readRow={readValuePalletIdRecord}
-              error={refusalMarks(refusal()?.member ?? null, "value.pallet_id") ? (refusal()?.text ?? null) : null}
-            />
-          )}
-        </form.Field>
-        <form.Field name={`value.productId`}>
-          {(field) => (
-            <RecordSelect
-              label="product id"
-              options={valueProductIdOptions().rows}
-              optionValue={(row) => String(row.id)}
-              optionLabel={(row) => String(row.productCode)}
-              value={field().state.value == null ? null : String(field().state.value)}
-              onChange={(value) => field().handleChange(value ?? "")}
-              onSearch={(text) => {
-                setValueProductIdSearch(text);
-                void readValueProductIdOptions(null);
-              }}
-              hasNextPage={hasNextPage(valueProductIdOptions())}
-              onNextPage={() => void readValueProductIdOptions(valueProductIdOptions().cursor)}
-              readRow={readValueProductIdRecord}
-              error={refusalMarks(refusal()?.member ?? null, "value.product_id") ? (refusal()?.text ?? null) : null}
-            />
-          )}
-        </form.Field>
-        <form.Field name={`value.quantity`}>
-          {(field) => (
-            <TextField
-              label="quantity"
-              type="text"
-              value={String(field().state.value ?? "")}
-              onInput={(value) => field().handleChange(value)}
-              error={refusalMarks(refusal()?.member ?? null, "value.quantity") ? (refusal()?.text ?? null) : null}
-            />
-          )}
-        </form.Field>
-        <form.Field name={`value.reasonCode`}>
-          {(field) => (
-            <TextField
-              label="reason code"
-              type="text"
-              value={String(field().state.value ?? "")}
-              onInput={(value) => field().handleChange(value)}
-              error={refusalMarks(refusal()?.member ?? null, "value.reason_code") ? (refusal()?.text ?? null) : null}
-            />
-          )}
-        </form.Field>
-        <form.Field name={`value.status`}>
-          {(field) => (
-            <ChoiceField
-              label="status"
-              allowEmpty={false}
-              choices={[
-                { value: "available", text: "available" },
-                { value: "held", text: "held" },
-              ]}
-              value={String(field().state.value ?? "")}
-              onChange={(value) => field().handleChange(value as "available" | "held")}
-              error={refusalMarks(refusal()?.member ?? null, "value.status") ? (refusal()?.text ?? null) : null}
-            />
-          )}
-        </form.Field>
+        <Show when={!rowsFill(["value", "palletId"])}>
+          <form.Field name={`value.palletId`}>
+            {(field) => (
+              <RecordSelect
+                label="pallet id"
+                options={valuePalletIdOptions().rows}
+                optionValue={(row) => String(row.id)}
+                optionLabel={(row) => String(row.palletCode)}
+                value={field().state.value == null ? null : String(field().state.value)}
+                onChange={(value) => field().handleChange(value ?? "")}
+                onRow={(row) => setValuePalletIdRevision(row?.rowVersion ?? null)}
+                onSearch={(text) => {
+                  setValuePalletIdSearch(text);
+                  void readValuePalletIdOptions(null);
+                }}
+                hasNextPage={hasNextPage(valuePalletIdOptions())}
+                onNextPage={() => void readValuePalletIdOptions(valuePalletIdOptions().cursor)}
+                readRow={readValuePalletIdRecord}
+                error={refusalMarks(refusal()?.member ?? null, "value.pallet_id") ? (refusal()?.text ?? null) : null}
+              />
+            )}
+          </form.Field>
+        </Show>
+        <Show when={!rowsFill(["value", "productId"])}>
+          <form.Field name={`value.productId`}>
+            {(field) => (
+              <RecordSelect
+                label="product id"
+                options={valueProductIdOptions().rows}
+                optionValue={(row) => String(row.id)}
+                optionLabel={(row) => String(row.productCode)}
+                value={field().state.value == null ? null : String(field().state.value)}
+                onChange={(value) => field().handleChange(value ?? "")}
+                onSearch={(text) => {
+                  setValueProductIdSearch(text);
+                  void readValueProductIdOptions(null);
+                }}
+                hasNextPage={hasNextPage(valueProductIdOptions())}
+                onNextPage={() => void readValueProductIdOptions(valueProductIdOptions().cursor)}
+                readRow={readValueProductIdRecord}
+                error={refusalMarks(refusal()?.member ?? null, "value.product_id") ? (refusal()?.text ?? null) : null}
+              />
+            )}
+          </form.Field>
+        </Show>
+        <Show when={!rowsFill(["value", "quantity"])}>
+          <form.Field name={`value.quantity`}>
+            {(field) => (
+              <TextField
+                label="quantity"
+                type="text"
+                value={String(field().state.value ?? "")}
+                onInput={(value) => field().handleChange(value)}
+                error={refusalMarks(refusal()?.member ?? null, "value.quantity") ? (refusal()?.text ?? null) : null}
+              />
+            )}
+          </form.Field>
+        </Show>
+        <Show when={!rowsFill(["value", "reasonCode"])}>
+          <form.Field name={`value.reasonCode`}>
+            {(field) => (
+              <TextField
+                label="reason code"
+                type="text"
+                value={String(field().state.value ?? "")}
+                onInput={(value) => field().handleChange(value)}
+                error={refusalMarks(refusal()?.member ?? null, "value.reason_code") ? (refusal()?.text ?? null) : null}
+              />
+            )}
+          </form.Field>
+        </Show>
+        <Show when={!rowsFill(["value", "status"])}>
+          <form.Field name={`value.status`}>
+            {(field) => (
+              <ChoiceField
+                label="status"
+                allowEmpty={false}
+                choices={[
+                  { value: "available", text: "available" },
+                  { value: "held", text: "held" },
+                ]}
+                value={String(field().state.value ?? "")}
+                onChange={(value) => field().handleChange(value as "available" | "held")}
+                error={refusalMarks(refusal()?.member ?? null, "value.status") ? (refusal()?.text ?? null) : null}
+              />
+            )}
+          </form.Field>
+        </Show>
       </FieldGroup>
       <FormActions>
         <FormDone when={done()} />
@@ -399,6 +473,13 @@ export interface InventoryMergeFormProps {
   readonly initial?: InventoryMergeFormInitial;
   /** Called with the outcome of every submission. */
   readonly onSubmitted?: (outcome: Outcome<InventoryMergeResult>) => void;
+  /**
+   * The values each selected row fills. One submission then sends one input
+   * for each row, in one call, and the form hides the inputs the rows fill.
+   */
+  readonly rows?: readonly object[];
+  /** Called with the outcome of each row's input, in row order. */
+  readonly onEach?: (outcomes: readonly Outcome<InventoryMergeResult>[]) => void;
 }
 
 /** What an operator calls this screen. The page decides where it goes. */
@@ -418,6 +499,45 @@ export function InventoryMergeForm(props: InventoryMergeFormProps) {
     defaultValues: { ...props.initial } as Partial<InventoryMergeRequest>,
     onSubmit: async ({ value }: { value: Partial<InventoryMergeRequest> }) => {
       setDone(false);
+      if (props.rows !== undefined) {
+        const items: InventoryMergeRequest[] = [];
+        for (const row of props.rows) {
+          const each = mergeMembers(value, row);
+          const checked = MERGE_INPUT.safeParse(each);
+          if (!checked.success) {
+            const issue = checked.error.issues[0];
+            setRefusal({
+              text: issue?.message ?? "A value is not valid.",
+              member: checkedMember(
+                issue?.path as (string | number)[] | undefined,
+                INVENTORY_MERGE_REQUEST_FIELDS,
+              ),
+            });
+            return;
+          }
+          let item = { ...each } as InventoryMergeRequest;
+          item = writeMember(item, ["requestId"], newRequestId());
+          item = writeMember(item, ["value", "idempotencyKey"], newIdempotencyKey());
+          item = writeMember(item, ["value", "occurredAt"], occurredAt());
+          if (readMember(item, ["value", "expectedRowVersion"]) === undefined) {
+            const valueTargetPalletIdChosen = valueTargetPalletIdRevision();
+            if (valueTargetPalletIdChosen === null) {
+              setRefusal({ text: "Choose the record from its list.", member: "value.target_pallet_id" });
+              return;
+            }
+            item = writeMember(item, ["value", "expectedRowVersion"], valueTargetPalletIdChosen);
+          }
+          items.push(item);
+        }
+        props.onEach?.(
+          await callEach<InventoryMergeResult>(
+            props.transport,
+            { route: INVENTORY_MERGE_ROUTE, request: INVENTORY_MERGE_REQUEST_FIELDS, result: INVENTORY_MERGE_RESULT_FIELDS },
+            items,
+          ),
+        );
+        return;
+      }
       const checked = MERGE_INPUT.safeParse(value);
       if (!checked.success) {
         const issue = checked.error.issues[0];
@@ -508,6 +628,8 @@ export function InventoryMergeForm(props: InventoryMergeFormProps) {
   };
   void readValueTargetPalletIdOptions(null);
   onCleanup(afterWrites(props.transport, () => void readValueTargetPalletIdOptions(null)));
+  const rowsFill = (path: readonly string[]) =>
+    props.rows?.some((row) => readMember(row, path) !== undefined) ?? false;
 
   return (
     <form
@@ -520,47 +642,51 @@ export function InventoryMergeForm(props: InventoryMergeFormProps) {
         <FieldError>{refusal()?.text}</FieldError>
       </Show>
       <FieldGroup>
-        <form.Field name={`value.sourcePalletId`}>
-          {(field) => (
-            <RecordSelect
-              label="source pallet id"
-              options={valueSourcePalletIdOptions().rows}
-              optionValue={(row) => String(row.id)}
-              optionLabel={(row) => String(row.palletCode)}
-              value={field().state.value == null ? null : String(field().state.value)}
-              onChange={(value) => field().handleChange(value ?? "")}
-              onSearch={(text) => {
-                setValueSourcePalletIdSearch(text);
-                void readValueSourcePalletIdOptions(null);
-              }}
-              hasNextPage={hasNextPage(valueSourcePalletIdOptions())}
-              onNextPage={() => void readValueSourcePalletIdOptions(valueSourcePalletIdOptions().cursor)}
-              readRow={readValueSourcePalletIdRecord}
-              error={refusalMarks(refusal()?.member ?? null, "value.source_pallet_id") ? (refusal()?.text ?? null) : null}
-            />
-          )}
-        </form.Field>
-        <form.Field name={`value.targetPalletId`}>
-          {(field) => (
-            <RecordSelect
-              label="target pallet id"
-              options={valueTargetPalletIdOptions().rows}
-              optionValue={(row) => String(row.id)}
-              optionLabel={(row) => String(row.palletCode)}
-              value={field().state.value == null ? null : String(field().state.value)}
-              onChange={(value) => field().handleChange(value ?? "")}
-              onRow={(row) => setValueTargetPalletIdRevision(row?.rowVersion ?? null)}
-              onSearch={(text) => {
-                setValueTargetPalletIdSearch(text);
-                void readValueTargetPalletIdOptions(null);
-              }}
-              hasNextPage={hasNextPage(valueTargetPalletIdOptions())}
-              onNextPage={() => void readValueTargetPalletIdOptions(valueTargetPalletIdOptions().cursor)}
-              readRow={readValueTargetPalletIdRecord}
-              error={refusalMarks(refusal()?.member ?? null, "value.target_pallet_id") ? (refusal()?.text ?? null) : null}
-            />
-          )}
-        </form.Field>
+        <Show when={!rowsFill(["value", "sourcePalletId"])}>
+          <form.Field name={`value.sourcePalletId`}>
+            {(field) => (
+              <RecordSelect
+                label="source pallet id"
+                options={valueSourcePalletIdOptions().rows}
+                optionValue={(row) => String(row.id)}
+                optionLabel={(row) => String(row.palletCode)}
+                value={field().state.value == null ? null : String(field().state.value)}
+                onChange={(value) => field().handleChange(value ?? "")}
+                onSearch={(text) => {
+                  setValueSourcePalletIdSearch(text);
+                  void readValueSourcePalletIdOptions(null);
+                }}
+                hasNextPage={hasNextPage(valueSourcePalletIdOptions())}
+                onNextPage={() => void readValueSourcePalletIdOptions(valueSourcePalletIdOptions().cursor)}
+                readRow={readValueSourcePalletIdRecord}
+                error={refusalMarks(refusal()?.member ?? null, "value.source_pallet_id") ? (refusal()?.text ?? null) : null}
+              />
+            )}
+          </form.Field>
+        </Show>
+        <Show when={!rowsFill(["value", "targetPalletId"])}>
+          <form.Field name={`value.targetPalletId`}>
+            {(field) => (
+              <RecordSelect
+                label="target pallet id"
+                options={valueTargetPalletIdOptions().rows}
+                optionValue={(row) => String(row.id)}
+                optionLabel={(row) => String(row.palletCode)}
+                value={field().state.value == null ? null : String(field().state.value)}
+                onChange={(value) => field().handleChange(value ?? "")}
+                onRow={(row) => setValueTargetPalletIdRevision(row?.rowVersion ?? null)}
+                onSearch={(text) => {
+                  setValueTargetPalletIdSearch(text);
+                  void readValueTargetPalletIdOptions(null);
+                }}
+                hasNextPage={hasNextPage(valueTargetPalletIdOptions())}
+                onNextPage={() => void readValueTargetPalletIdOptions(valueTargetPalletIdOptions().cursor)}
+                readRow={readValueTargetPalletIdRecord}
+                error={refusalMarks(refusal()?.member ?? null, "value.target_pallet_id") ? (refusal()?.text ?? null) : null}
+              />
+            )}
+          </form.Field>
+        </Show>
       </FieldGroup>
       <FormActions>
         <FormDone when={done()} />
@@ -594,10 +720,15 @@ export interface InventoryMoveFormProps {
   readonly transport: Transport;
   /** Values the form starts with. */
   readonly initial?: InventoryMoveFormInitial;
-  /** The revision this command sends. The release binds no read that supplies it. */
-  readonly valueExpectedRowVersion: InventoryMoveRequest["value"]["expectedRowVersion"];
   /** Called with the outcome of every submission. */
   readonly onSubmitted?: (outcome: Outcome<InventoryMoveResult>) => void;
+  /**
+   * The values each selected row fills. One submission then sends one input
+   * for each row, in one call, and the form hides the inputs the rows fill.
+   */
+  readonly rows?: readonly object[];
+  /** Called with the outcome of each row's input, in row order. */
+  readonly onEach?: (outcomes: readonly Outcome<InventoryMoveResult>[]) => void;
 }
 
 /** What an operator calls this screen. The page decides where it goes. */
@@ -617,6 +748,45 @@ export function InventoryMoveForm(props: InventoryMoveFormProps) {
     defaultValues: { ...props.initial } as Partial<InventoryMoveRequest>,
     onSubmit: async ({ value }: { value: Partial<InventoryMoveRequest> }) => {
       setDone(false);
+      if (props.rows !== undefined) {
+        const items: InventoryMoveRequest[] = [];
+        for (const row of props.rows) {
+          const each = mergeMembers(value, row);
+          const checked = MOVE_INPUT.safeParse(each);
+          if (!checked.success) {
+            const issue = checked.error.issues[0];
+            setRefusal({
+              text: issue?.message ?? "A value is not valid.",
+              member: checkedMember(
+                issue?.path as (string | number)[] | undefined,
+                INVENTORY_MOVE_REQUEST_FIELDS,
+              ),
+            });
+            return;
+          }
+          let item = { ...each } as InventoryMoveRequest;
+          item = writeMember(item, ["requestId"], newRequestId());
+          item = writeMember(item, ["value", "idempotencyKey"], newIdempotencyKey());
+          item = writeMember(item, ["value", "occurredAt"], occurredAt());
+          if (readMember(item, ["value", "expectedRowVersion"]) === undefined) {
+            const valuePalletIdChosen = valuePalletIdRevision();
+            if (valuePalletIdChosen === null) {
+              setRefusal({ text: "Choose the record from its list.", member: "value.pallet_id" });
+              return;
+            }
+            item = writeMember(item, ["value", "expectedRowVersion"], valuePalletIdChosen);
+          }
+          items.push(item);
+        }
+        props.onEach?.(
+          await callEach<InventoryMoveResult>(
+            props.transport,
+            { route: INVENTORY_MOVE_ROUTE, request: INVENTORY_MOVE_REQUEST_FIELDS, result: INVENTORY_MOVE_RESULT_FIELDS },
+            items,
+          ),
+        );
+        return;
+      }
       const checked = MOVE_INPUT.safeParse(value);
       if (!checked.success) {
         const issue = checked.error.issues[0];
@@ -633,7 +803,12 @@ export function InventoryMoveForm(props: InventoryMoveFormProps) {
       item = writeMember(item, ["requestId"], newRequestId());
       item = writeMember(item, ["value", "idempotencyKey"], newIdempotencyKey());
       item = writeMember(item, ["value", "occurredAt"], occurredAt());
-      item = writeMember(item, ["value", "expectedRowVersion"], props.valueExpectedRowVersion);
+      const valuePalletIdChosen = valuePalletIdRevision();
+      if (valuePalletIdChosen === null) {
+        setRefusal({ text: "Choose the record from its list.", member: "value.pallet_id" });
+        return;
+      }
+      item = writeMember(item, ["value", "expectedRowVersion"], valuePalletIdChosen);
       const outcome = await move(props.transport, [item]);
       props.onSubmitted?.(outcome);
       announceOutcome(outcome, InventoryMoveFormLabel);
@@ -647,6 +822,7 @@ export function InventoryMoveForm(props: InventoryMoveFormProps) {
   }));
   const [valuePalletIdOptions, setValuePalletIdOptions] = createSignal<PageState<PalletQueryRow>>(emptyPage<PalletQueryRow>());
   const [valuePalletIdSearch, setValuePalletIdSearch] = createSignal("");
+  const [valuePalletIdRevision, setValuePalletIdRevision] = createSignal<PalletQueryRow["rowVersion"] | null>(null);
   const readValuePalletIdOptions = async (cursor: string | null) => {
     let request = {} as PalletQueryRequest;
     if (valuePalletIdSearch() !== "") {
@@ -701,6 +877,8 @@ export function InventoryMoveForm(props: InventoryMoveFormProps) {
   };
   void readValueToLocationIdOptions(null);
   onCleanup(afterWrites(props.transport, () => void readValueToLocationIdOptions(null)));
+  const rowsFill = (path: readonly string[]) =>
+    props.rows?.some((row) => readMember(row, path) !== undefined) ?? false;
 
   return (
     <form
@@ -713,46 +891,51 @@ export function InventoryMoveForm(props: InventoryMoveFormProps) {
         <FieldError>{refusal()?.text}</FieldError>
       </Show>
       <FieldGroup>
-        <form.Field name={`value.palletId`}>
-          {(field) => (
-            <RecordSelect
-              label="pallet id"
-              options={valuePalletIdOptions().rows}
-              optionValue={(row) => String(row.id)}
-              optionLabel={(row) => String(row.palletCode)}
-              value={field().state.value == null ? null : String(field().state.value)}
-              onChange={(value) => field().handleChange(value ?? "")}
-              onSearch={(text) => {
-                setValuePalletIdSearch(text);
-                void readValuePalletIdOptions(null);
-              }}
-              hasNextPage={hasNextPage(valuePalletIdOptions())}
-              onNextPage={() => void readValuePalletIdOptions(valuePalletIdOptions().cursor)}
-              readRow={readValuePalletIdRecord}
-              error={refusalMarks(refusal()?.member ?? null, "value.pallet_id") ? (refusal()?.text ?? null) : null}
-            />
-          )}
-        </form.Field>
-        <form.Field name={`value.toLocationId`}>
-          {(field) => (
-            <RecordSelect
-              label="to location id"
-              options={valueToLocationIdOptions().rows}
-              optionValue={(row) => String(row.id)}
-              optionLabel={(row) => String(row.locationCode)}
-              value={field().state.value == null ? null : String(field().state.value)}
-              onChange={(value) => field().handleChange(value ?? "")}
-              onSearch={(text) => {
-                setValueToLocationIdSearch(text);
-                void readValueToLocationIdOptions(null);
-              }}
-              hasNextPage={hasNextPage(valueToLocationIdOptions())}
-              onNextPage={() => void readValueToLocationIdOptions(valueToLocationIdOptions().cursor)}
-              readRow={readValueToLocationIdRecord}
-              error={refusalMarks(refusal()?.member ?? null, "value.to_location_id") ? (refusal()?.text ?? null) : null}
-            />
-          )}
-        </form.Field>
+        <Show when={!rowsFill(["value", "palletId"])}>
+          <form.Field name={`value.palletId`}>
+            {(field) => (
+              <RecordSelect
+                label="pallet id"
+                options={valuePalletIdOptions().rows}
+                optionValue={(row) => String(row.id)}
+                optionLabel={(row) => String(row.palletCode)}
+                value={field().state.value == null ? null : String(field().state.value)}
+                onChange={(value) => field().handleChange(value ?? "")}
+                onRow={(row) => setValuePalletIdRevision(row?.rowVersion ?? null)}
+                onSearch={(text) => {
+                  setValuePalletIdSearch(text);
+                  void readValuePalletIdOptions(null);
+                }}
+                hasNextPage={hasNextPage(valuePalletIdOptions())}
+                onNextPage={() => void readValuePalletIdOptions(valuePalletIdOptions().cursor)}
+                readRow={readValuePalletIdRecord}
+                error={refusalMarks(refusal()?.member ?? null, "value.pallet_id") ? (refusal()?.text ?? null) : null}
+              />
+            )}
+          </form.Field>
+        </Show>
+        <Show when={!rowsFill(["value", "toLocationId"])}>
+          <form.Field name={`value.toLocationId`}>
+            {(field) => (
+              <RecordSelect
+                label="to location id"
+                options={valueToLocationIdOptions().rows}
+                optionValue={(row) => String(row.id)}
+                optionLabel={(row) => String(row.locationCode)}
+                value={field().state.value == null ? null : String(field().state.value)}
+                onChange={(value) => field().handleChange(value ?? "")}
+                onSearch={(text) => {
+                  setValueToLocationIdSearch(text);
+                  void readValueToLocationIdOptions(null);
+                }}
+                hasNextPage={hasNextPage(valueToLocationIdOptions())}
+                onNextPage={() => void readValueToLocationIdOptions(valueToLocationIdOptions().cursor)}
+                readRow={readValueToLocationIdRecord}
+                error={refusalMarks(refusal()?.member ?? null, "value.to_location_id") ? (refusal()?.text ?? null) : null}
+              />
+            )}
+          </form.Field>
+        </Show>
       </FieldGroup>
       <FormActions>
         <FormDone when={done()} />
@@ -794,10 +977,15 @@ export interface InventorySplitFormProps {
   readonly transport: Transport;
   /** Values the form starts with. */
   readonly initial?: InventorySplitFormInitial;
-  /** The revision this command sends. The release binds no read that supplies it. */
-  readonly valueExpectedRowVersion: InventorySplitRequest["value"]["expectedRowVersion"];
   /** Called with the outcome of every submission. */
   readonly onSubmitted?: (outcome: Outcome<InventorySplitResult>) => void;
+  /**
+   * The values each selected row fills. One submission then sends one input
+   * for each row, in one call, and the form hides the inputs the rows fill.
+   */
+  readonly rows?: readonly object[];
+  /** Called with the outcome of each row's input, in row order. */
+  readonly onEach?: (outcomes: readonly Outcome<InventorySplitResult>[]) => void;
 }
 
 /** What an operator calls this screen. The page decides where it goes. */
@@ -817,6 +1005,45 @@ export function InventorySplitForm(props: InventorySplitFormProps) {
     defaultValues: { ...props.initial } as Partial<InventorySplitRequest>,
     onSubmit: async ({ value }: { value: Partial<InventorySplitRequest> }) => {
       setDone(false);
+      if (props.rows !== undefined) {
+        const items: InventorySplitRequest[] = [];
+        for (const row of props.rows) {
+          const each = mergeMembers(value, row);
+          const checked = SPLIT_INPUT.safeParse(each);
+          if (!checked.success) {
+            const issue = checked.error.issues[0];
+            setRefusal({
+              text: issue?.message ?? "A value is not valid.",
+              member: checkedMember(
+                issue?.path as (string | number)[] | undefined,
+                INVENTORY_SPLIT_REQUEST_FIELDS,
+              ),
+            });
+            return;
+          }
+          let item = { ...each } as InventorySplitRequest;
+          item = writeMember(item, ["requestId"], newRequestId());
+          item = writeMember(item, ["value", "idempotencyKey"], newIdempotencyKey());
+          item = writeMember(item, ["value", "occurredAt"], occurredAt());
+          if (readMember(item, ["value", "expectedRowVersion"]) === undefined) {
+            const valueSourcePalletIdChosen = valueSourcePalletIdRevision();
+            if (valueSourcePalletIdChosen === null) {
+              setRefusal({ text: "Choose the record from its list.", member: "value.source_pallet_id" });
+              return;
+            }
+            item = writeMember(item, ["value", "expectedRowVersion"], valueSourcePalletIdChosen);
+          }
+          items.push(item);
+        }
+        props.onEach?.(
+          await callEach<InventorySplitResult>(
+            props.transport,
+            { route: INVENTORY_SPLIT_ROUTE, request: INVENTORY_SPLIT_REQUEST_FIELDS, result: INVENTORY_SPLIT_RESULT_FIELDS },
+            items,
+          ),
+        );
+        return;
+      }
       const checked = SPLIT_INPUT.safeParse(value);
       if (!checked.success) {
         const issue = checked.error.issues[0];
@@ -833,7 +1060,12 @@ export function InventorySplitForm(props: InventorySplitFormProps) {
       item = writeMember(item, ["requestId"], newRequestId());
       item = writeMember(item, ["value", "idempotencyKey"], newIdempotencyKey());
       item = writeMember(item, ["value", "occurredAt"], occurredAt());
-      item = writeMember(item, ["value", "expectedRowVersion"], props.valueExpectedRowVersion);
+      const valueSourcePalletIdChosen = valueSourcePalletIdRevision();
+      if (valueSourcePalletIdChosen === null) {
+        setRefusal({ text: "Choose the record from its list.", member: "value.source_pallet_id" });
+        return;
+      }
+      item = writeMember(item, ["value", "expectedRowVersion"], valueSourcePalletIdChosen);
       const outcome = await split(props.transport, [item]);
       props.onSubmitted?.(outcome);
       announceOutcome(outcome, InventorySplitFormLabel);
@@ -875,6 +1107,7 @@ export function InventorySplitForm(props: InventorySplitFormProps) {
   onCleanup(afterWrites(props.transport, () => void readValueProductIdOptions(null)));
   const [valueSourcePalletIdOptions, setValueSourcePalletIdOptions] = createSignal<PageState<PalletQueryRow>>(emptyPage<PalletQueryRow>());
   const [valueSourcePalletIdSearch, setValueSourcePalletIdSearch] = createSignal("");
+  const [valueSourcePalletIdRevision, setValueSourcePalletIdRevision] = createSignal<PalletQueryRow["rowVersion"] | null>(null);
   const readValueSourcePalletIdOptions = async (cursor: string | null) => {
     let request = {} as PalletQueryRequest;
     if (valueSourcePalletIdSearch() !== "") {
@@ -929,6 +1162,8 @@ export function InventorySplitForm(props: InventorySplitFormProps) {
   };
   void readValueToLocationIdOptions(null);
   onCleanup(afterWrites(props.transport, () => void readValueToLocationIdOptions(null)));
+  const rowsFill = (path: readonly string[]) =>
+    props.rows?.some((row) => readMember(row, path) !== undefined) ?? false;
 
   return (
     <form
@@ -941,103 +1176,116 @@ export function InventorySplitForm(props: InventorySplitFormProps) {
         <FieldError>{refusal()?.text}</FieldError>
       </Show>
       <FieldGroup>
-        <form.Field name={`value.newPalletCode`}>
-          {(field) => (
-            <TextField
-              label="new pallet code"
-              type="text"
-              value={String(field().state.value ?? "")}
-              onInput={(value) => field().handleChange(value)}
-              error={refusalMarks(refusal()?.member ?? null, "value.new_pallet_code") ? (refusal()?.text ?? null) : null}
-            />
-          )}
-        </form.Field>
-        <form.Field name={`value.productId`}>
-          {(field) => (
-            <RecordSelect
-              label="product id"
-              options={valueProductIdOptions().rows}
-              optionValue={(row) => String(row.id)}
-              optionLabel={(row) => String(row.productCode)}
-              value={field().state.value == null ? null : String(field().state.value)}
-              onChange={(value) => field().handleChange(value ?? "")}
-              onSearch={(text) => {
-                setValueProductIdSearch(text);
-                void readValueProductIdOptions(null);
-              }}
-              hasNextPage={hasNextPage(valueProductIdOptions())}
-              onNextPage={() => void readValueProductIdOptions(valueProductIdOptions().cursor)}
-              readRow={readValueProductIdRecord}
-              error={refusalMarks(refusal()?.member ?? null, "value.product_id") ? (refusal()?.text ?? null) : null}
-            />
-          )}
-        </form.Field>
-        <form.Field name={`value.quantity`}>
-          {(field) => (
-            <TextField
-              label="quantity"
-              type="text"
-              value={String(field().state.value ?? "")}
-              onInput={(value) => field().handleChange(value)}
-              error={refusalMarks(refusal()?.member ?? null, "value.quantity") ? (refusal()?.text ?? null) : null}
-            />
-          )}
-        </form.Field>
-        <form.Field name={`value.sourcePalletId`}>
-          {(field) => (
-            <RecordSelect
-              label="source pallet id"
-              options={valueSourcePalletIdOptions().rows}
-              optionValue={(row) => String(row.id)}
-              optionLabel={(row) => String(row.palletCode)}
-              value={field().state.value == null ? null : String(field().state.value)}
-              onChange={(value) => field().handleChange(value ?? "")}
-              onSearch={(text) => {
-                setValueSourcePalletIdSearch(text);
-                void readValueSourcePalletIdOptions(null);
-              }}
-              hasNextPage={hasNextPage(valueSourcePalletIdOptions())}
-              onNextPage={() => void readValueSourcePalletIdOptions(valueSourcePalletIdOptions().cursor)}
-              readRow={readValueSourcePalletIdRecord}
-              error={refusalMarks(refusal()?.member ?? null, "value.source_pallet_id") ? (refusal()?.text ?? null) : null}
-            />
-          )}
-        </form.Field>
-        <form.Field name={`value.status`}>
-          {(field) => (
-            <ChoiceField
-              label="status"
-              allowEmpty={false}
-              choices={[
-                { value: "available", text: "available" },
-                { value: "held", text: "held" },
-              ]}
-              value={String(field().state.value ?? "")}
-              onChange={(value) => field().handleChange(value as "available" | "held")}
-              error={refusalMarks(refusal()?.member ?? null, "value.status") ? (refusal()?.text ?? null) : null}
-            />
-          )}
-        </form.Field>
-        <form.Field name={`value.toLocationId`}>
-          {(field) => (
-            <RecordSelect
-              label="to location id"
-              options={valueToLocationIdOptions().rows}
-              optionValue={(row) => String(row.id)}
-              optionLabel={(row) => String(row.locationCode)}
-              value={field().state.value == null ? null : String(field().state.value)}
-              onChange={(value) => field().handleChange(value ?? "")}
-              onSearch={(text) => {
-                setValueToLocationIdSearch(text);
-                void readValueToLocationIdOptions(null);
-              }}
-              hasNextPage={hasNextPage(valueToLocationIdOptions())}
-              onNextPage={() => void readValueToLocationIdOptions(valueToLocationIdOptions().cursor)}
-              readRow={readValueToLocationIdRecord}
-              error={refusalMarks(refusal()?.member ?? null, "value.to_location_id") ? (refusal()?.text ?? null) : null}
-            />
-          )}
-        </form.Field>
+        <Show when={!rowsFill(["value", "newPalletCode"])}>
+          <form.Field name={`value.newPalletCode`}>
+            {(field) => (
+              <TextField
+                label="new pallet code"
+                type="text"
+                value={String(field().state.value ?? "")}
+                onInput={(value) => field().handleChange(value)}
+                error={refusalMarks(refusal()?.member ?? null, "value.new_pallet_code") ? (refusal()?.text ?? null) : null}
+              />
+            )}
+          </form.Field>
+        </Show>
+        <Show when={!rowsFill(["value", "productId"])}>
+          <form.Field name={`value.productId`}>
+            {(field) => (
+              <RecordSelect
+                label="product id"
+                options={valueProductIdOptions().rows}
+                optionValue={(row) => String(row.id)}
+                optionLabel={(row) => String(row.productCode)}
+                value={field().state.value == null ? null : String(field().state.value)}
+                onChange={(value) => field().handleChange(value ?? "")}
+                onSearch={(text) => {
+                  setValueProductIdSearch(text);
+                  void readValueProductIdOptions(null);
+                }}
+                hasNextPage={hasNextPage(valueProductIdOptions())}
+                onNextPage={() => void readValueProductIdOptions(valueProductIdOptions().cursor)}
+                readRow={readValueProductIdRecord}
+                error={refusalMarks(refusal()?.member ?? null, "value.product_id") ? (refusal()?.text ?? null) : null}
+              />
+            )}
+          </form.Field>
+        </Show>
+        <Show when={!rowsFill(["value", "quantity"])}>
+          <form.Field name={`value.quantity`}>
+            {(field) => (
+              <TextField
+                label="quantity"
+                type="text"
+                value={String(field().state.value ?? "")}
+                onInput={(value) => field().handleChange(value)}
+                error={refusalMarks(refusal()?.member ?? null, "value.quantity") ? (refusal()?.text ?? null) : null}
+              />
+            )}
+          </form.Field>
+        </Show>
+        <Show when={!rowsFill(["value", "sourcePalletId"])}>
+          <form.Field name={`value.sourcePalletId`}>
+            {(field) => (
+              <RecordSelect
+                label="source pallet id"
+                options={valueSourcePalletIdOptions().rows}
+                optionValue={(row) => String(row.id)}
+                optionLabel={(row) => String(row.palletCode)}
+                value={field().state.value == null ? null : String(field().state.value)}
+                onChange={(value) => field().handleChange(value ?? "")}
+                onRow={(row) => setValueSourcePalletIdRevision(row?.rowVersion ?? null)}
+                onSearch={(text) => {
+                  setValueSourcePalletIdSearch(text);
+                  void readValueSourcePalletIdOptions(null);
+                }}
+                hasNextPage={hasNextPage(valueSourcePalletIdOptions())}
+                onNextPage={() => void readValueSourcePalletIdOptions(valueSourcePalletIdOptions().cursor)}
+                readRow={readValueSourcePalletIdRecord}
+                error={refusalMarks(refusal()?.member ?? null, "value.source_pallet_id") ? (refusal()?.text ?? null) : null}
+              />
+            )}
+          </form.Field>
+        </Show>
+        <Show when={!rowsFill(["value", "status"])}>
+          <form.Field name={`value.status`}>
+            {(field) => (
+              <ChoiceField
+                label="status"
+                allowEmpty={false}
+                choices={[
+                  { value: "available", text: "available" },
+                  { value: "held", text: "held" },
+                ]}
+                value={String(field().state.value ?? "")}
+                onChange={(value) => field().handleChange(value as "available" | "held")}
+                error={refusalMarks(refusal()?.member ?? null, "value.status") ? (refusal()?.text ?? null) : null}
+              />
+            )}
+          </form.Field>
+        </Show>
+        <Show when={!rowsFill(["value", "toLocationId"])}>
+          <form.Field name={`value.toLocationId`}>
+            {(field) => (
+              <RecordSelect
+                label="to location id"
+                options={valueToLocationIdOptions().rows}
+                optionValue={(row) => String(row.id)}
+                optionLabel={(row) => String(row.locationCode)}
+                value={field().state.value == null ? null : String(field().state.value)}
+                onChange={(value) => field().handleChange(value ?? "")}
+                onSearch={(text) => {
+                  setValueToLocationIdSearch(text);
+                  void readValueToLocationIdOptions(null);
+                }}
+                hasNextPage={hasNextPage(valueToLocationIdOptions())}
+                onNextPage={() => void readValueToLocationIdOptions(valueToLocationIdOptions().cursor)}
+                readRow={readValueToLocationIdRecord}
+                error={refusalMarks(refusal()?.member ?? null, "value.to_location_id") ? (refusal()?.text ?? null) : null}
+              />
+            )}
+          </form.Field>
+        </Show>
       </FieldGroup>
       <FormActions>
         <FormDone when={done()} />

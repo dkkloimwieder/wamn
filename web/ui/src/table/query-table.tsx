@@ -13,9 +13,15 @@
  * not offered in the scope bar. A row shows a button for each operation the
  * page gives a handler. A child table is this component again, with its scope
  * filter fixed to the parent row's key.
+ *
+ * An action that takes many rows and names its form is a bulk action. It
+ * opens that form in a sheet, with the values each selected row fills. One
+ * submission sends one input for each row in one call, and each row shows
+ * its own outcome.
  */
 
-import { type JSX, Show, createSignal, onCleanup } from "solid-js";
+import { type Component, type JSX, Show, createSignal, onCleanup } from "solid-js";
+import { Dynamic } from "solid-js/web";
 
 import {
   afterWrites,
@@ -37,9 +43,11 @@ import {
 } from "@wamn/web-runtime";
 
 import { Button } from "../components/ui/button";
+import { Sheet, SheetContent, SheetHeader, SheetTitle } from "../components/ui/sheet";
 import { TableScreen } from "../actions";
 import { announceOutcome } from "../outcome";
 import { createRecordLabels } from "../record-labels";
+import type { DataTableRowResult } from "./bulk";
 import type { DataTableChild } from "./child-tables";
 import { DataTable, type DataTableColumn } from "./data-table";
 import type { DataTableEditResult } from "./edit-cell";
@@ -76,6 +84,10 @@ export interface QueryTableAction {
   readonly opens: "record" | "form";
   /** The inputs of the form that the row fills. */
   readonly fill: readonly QueryTableFill[];
+  /** The revision the row carries for the record it fills, and the input that sends it. */
+  readonly revision?: QueryTableFill;
+  /** The form that sends one input for each of many rows, which a bulk action opens. */
+  readonly form?: () => Component<any>;
 }
 
 /** The update a cell edits through. */
@@ -140,6 +152,27 @@ export interface QueryTableProps<TRow extends object, TResult = unknown> {
 }
 
 type Member = { readonly [name: string]: unknown };
+
+/** What one outcome of a row's input in a bulk action means to that row. */
+function rowResult(outcome: Outcome<unknown>): DataTableRowResult {
+  switch (outcome.status) {
+    case "completed":
+      return { status: "completed" };
+    case "refused":
+      return { status: "refused", message: refusalSentence(outcome.code) };
+    case "uncertain":
+      return { status: "uncertain", message: outcome.reason };
+    default:
+      return { status: "uncertain", message: "partially completed" };
+  }
+}
+
+/** One bulk action the operator opened: its action, each row's values, and where its results go. */
+interface BulkRun {
+  readonly action: QueryTableAction;
+  readonly rows: readonly object[];
+  readonly finish: (results: readonly DataTableRowResult[]) => void;
+}
 
 /** What one outcome of an inline edit means to its cell. */
 function editResult<TRow>(outcome: Outcome<unknown>, row: TRow): DataTableEditResult<TRow> {
@@ -243,6 +276,33 @@ export function QueryTable<TRow extends object, TResult = unknown>(
       {},
     );
 
+  // A bulk action needs a transport that sends many outer inputs in one call.
+  const bulkActions =
+    transport.invokeEach === undefined
+      ? []
+      : definition.actions.filter((action) => action.many && action.form !== undefined);
+  const [bulk, setBulk] = createSignal<BulkRun | null>(null);
+  const finishBulk = (results: readonly DataTableRowResult[]) => {
+    const run = bulk();
+    setBulk(null);
+    run?.finish(results);
+  };
+  const runBulk = (operation: string, rows: readonly TRow[]) =>
+    new Promise<readonly DataTableRowResult[]>((finish) => {
+      const action = bulkActions.find((candidate) => candidate.operation === operation)!;
+      const revision = action.revision;
+      setBulk({
+        action,
+        rows: rows.map((row) => {
+          const filled = fill(action, row);
+          return revision === undefined
+            ? filled
+            : writeMember(filled, revision.input, (row as Member)[revision.field] as JsonValue);
+        }),
+        finish,
+      });
+    });
+
   // The buttons of one row: each operation it opens, when the page takes it.
   const rowActions =
     definition.actions.length === 0
@@ -340,7 +400,31 @@ export function QueryTable<TRow extends object, TResult = unknown>(
         onRowChange={load.replaceRow}
         onReload={() => void load.load()}
         childTables={childTables.length === 0 ? undefined : childTables}
+        bulkActions={bulkActions.length === 0 ? undefined : bulkActions}
+        onBulk={bulkActions.length === 0 ? undefined : runBulk}
       />
+      {/* A closed sheet ran nothing, so no row shows a result. */}
+      <Sheet open={bulk() !== null} onOpenChange={(open) => !open && finishBulk([])}>
+        <SheetContent>
+          <Show when={bulk()}>
+            {(run) => (
+              <div class="flex flex-col gap-4 overflow-y-auto p-4">
+                <SheetHeader>
+                  <SheetTitle as="p">
+                    {run().action.label} on {run().rows.length} rows
+                  </SheetTitle>
+                </SheetHeader>
+                <Dynamic
+                  component={run().action.form!()}
+                  transport={transport}
+                  rows={run().rows}
+                  onEach={(outcomes: readonly Outcome<unknown>[]) => finishBulk(outcomes.map(rowResult))}
+                />
+              </div>
+            )}
+          </Show>
+        </SheetContent>
+      </Sheet>
     </TableScreen>
   );
 }
