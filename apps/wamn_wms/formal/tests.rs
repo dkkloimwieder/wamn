@@ -197,6 +197,15 @@ fn packaging_closure_requires_empty_and_refuses_receipt() {
         Outcome::Accepted(_)
     ));
     let closed = state;
+    let close = command(false, Action::ClosePackaging { packaging_id: true });
+    let original = closed.operations[0].unwrap().result;
+    assert_eq!(execute(&mut state, close), Outcome::Replayed(original));
+    assert_eq!(state, closed);
+    assert_eq!(
+        execute(&mut state, Command { key: true, ..close }),
+        Outcome::Refused(Refusal::ClosedPackaging)
+    );
+    assert_eq!(state, closed);
     for action in [
         Action::Move {
             inventory_id: false,

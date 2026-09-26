@@ -29,7 +29,9 @@ They explicitly write inventory location and record its transition.
 Changing packaging metadata alone cannot move inventory.
 
 Closed packaging has no open inventory references and refuses incoming inventory.
-`ClosePackaging` refuses while any open inventory references the packaging.
+`ClosePackaging` requires open packaging, then refuses while any open inventory references it.
+Fresh closure of already closed packaging refuses without state changes or a new stored result.
+Exact replay of the original successful closure returns its stored result.
 Closed inventory has zero current quantity and can retain its historical packaging reference.
 Such references do not prevent packaging closure.
 Closure changes packaging metadata without changing inventory, so it creates no inventory transaction rows.
@@ -164,7 +166,8 @@ Every discrepancy needs a Beads classification as a model defect, implementation
 
 ## Proof structure
 
-Eleven Kani harnesses cover initialization, local transitions, transaction completeness, command rules, atomic failure, replay, and concrete two-operation histories.
+Twelve Kani harnesses cover initialization, local transitions, transaction completeness, command rules, atomic failure, replay, and concrete two-operation histories.
+The closure precedence harness also admits inconsistent contents to establish that closed lifecycle refuses before the empty-packaging test.
 Arbitrary-state proofs require valid business state and a well-formed claim prefix.
 They do not assume that old transaction rows already explain earlier mutations.
 They prove that every new operation is complete and every existing operation remains unchanged.

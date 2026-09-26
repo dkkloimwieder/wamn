@@ -145,36 +145,9 @@ This substantially reduces the model/implementation correspondence problem.
 
 # Phase 4 — Model ↔ implementation conformance
 
-Even with shared business kernels, production retains behavior outside the formal abstraction.
-
-Build a differential test harness that executes generated command histories against:
-
-1. the executable business model/kernel;
-2. the real WMS application over PostgreSQL.
-
-After each command compare:
-
-```text
-model outcome
-==
-production outcome
-
-model state
-==
-abstract(production state)
-
-model history
-==
-abstract(production history)
-
-model replay result
-==
-abstract(production replay result)
-```
-
-Use property-based generation and shrinking so failures produce small reproducible histories.
-
-This becomes the main evidence that the real implementation conforms to the verified semantics.
+The [WMS conformance contract](../../apps/wamn_wms/formal/README.md#implementation-conformance) defines the implemented comparisons, bounded histories, and identity mapping.
+The [run instructions](../operations/running-tests.md#local-application-business-tests) reproduce the PostgreSQL histories and shrinking regressions.
+Beads `wamn-s43x.17` owns validation and closure evidence.
 
 ---
 

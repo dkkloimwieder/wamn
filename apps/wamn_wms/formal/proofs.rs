@@ -12,6 +12,27 @@ fn arbitrary_command(state: State) -> Command {
     command
 }
 
+#[kani::proof]
+#[kani::unwind(4)]
+fn fresh_close_checks_lifecycle_before_contents() {
+    let mut state = initial(kani::any(), kani::any());
+    let packaging_id: bool = kani::any();
+    state.packaging[usize::from(packaging_id)].lifecycle = Lifecycle::Closed;
+    let from = state;
+    // Arbitrary contents include inconsistent open stock to distinguish refusal precedence.
+    let close = command(false, Action::ClosePackaging { packaging_id });
+    assert_eq!(
+        execute(&mut state, close),
+        Outcome::Refused(Refusal::ClosedPackaging)
+    );
+    assert_eq!(state, from);
+    kani::cover!(empty(from.inventory, packaging_id), "closed and empty");
+    kani::cover!(
+        !empty(from.inventory, packaging_id),
+        "closed with open inventory"
+    );
+}
+
 // Read rows by their explicit inventory identity and reconstruct the result.
 fn explains(from: State, operation: Operation) -> bool {
     let mut reconstructed = from.inventory;

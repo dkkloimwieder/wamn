@@ -145,7 +145,7 @@ The [assessment](../../apps/wamn_receiving/formal/assessment.md) distinguishes m
 
 Use the same Kani 0.68.0 installation described for [Receiving](#receiving-formal-model).
 The [WMS contract](../../apps/wamn_wms/formal/README.md) defines its finite domain and original-result replay rule.
-From the repository root, run its ten native examples and eleven proofs:
+From the repository root, run its ten native examples and twelve proofs:
 
 ```bash
 wms_formal_run=$(mktemp -d "${TMPDIR:-/tmp}/wamn-wms-formal.XXXXXX")
@@ -155,7 +155,7 @@ rustc --edition 2024 --test "$wms_formal_run/model.rs" -o "$wms_formal_run/examp
 kani "$wms_formal_run/model.rs" --output-format terse
 ```
 
-Require eleven successful harnesses and twenty-six satisfied cover properties.
+Require twelve successful harnesses and twenty-eight satisfied cover properties.
 The cover properties include disposition mismatch, packaging lifecycle rules, relocation, staged failures, and packaging/location changes.
 The loop bound is four. Keep unwinding assertions enabled to detect insufficient bounds.
 

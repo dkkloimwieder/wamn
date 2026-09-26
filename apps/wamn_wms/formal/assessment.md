@@ -381,21 +381,35 @@ Complete case partitioning and stronger reference assertions make the bounded pr
 The differential harness imports the independent model directly and sends bounded command histories through the real WMS application over PostgreSQL.
 It compares accepted or refused outcomes, inventory, packaging, transaction rows, stored results, and exact replay after each command.
 The adapter supplies production revisions and maps identities without duplicating command decisions.
-The model changes only visibility so the test can import its existing types and functions.
-Earlier Kani evidence remains applicable because the decision and proof bodies remain unchanged.
+The harness imports existing model types and functions through crate visibility.
 
 Proptest found a disagreement and reduced it to one command with no inventory present.
-A fresh close command on already closed packaging succeeds in the model but refuses in production.
-The minimized case reproduces against a fresh database fixture.
-This is an unresolved business rule, tracked in `wamn-s43x.18`, rather than an accepted normalization difference.
-The earlier owner rules require empty packaging for closure but do not explicitly settle a fresh repeated close.
-The harness retains the failing regression until the owner settles that rule.
+The original model accepted a fresh close command on already closed packaging, but production refused it.
+The minimized case reproduced against a fresh database fixture.
+The owner ruling in `wamn-s43x.18` classifies this as a model defect.
+Fresh closure requires an open lifecycle and refuses before the empty-packaging test when the packaging is already closed.
+Refusal changes no state and stores no new result.
+
+The model now applies that rule, and the harness retains the regression seeds.
 Exact replay of a successful closure remains distinct from a fresh closure request.
 
 This result demonstrates value beyond the individual proofs and application tests: executable comparison exposes a difference that both suites previously accepted.
 The harness covers the modeled business domain only.
 Existing PostgreSQL tests retain responsibility for locking, concurrency, and failure atomicity.
 Phase 4 validation and measured durations remain in `wamn-s43x.17`.
-The current run passes nine fixed histories and fails two on the same unresolved closure rule.
-The generated regression reproduces that rule difference after shrinking.
-The generator capacity test and Clippy pass. Full conformance remains open pending the owner decision.
+
+The original run passed nine fixed histories and failed two on the closure rule.
+The generated regression reproduced that rule difference after shrinking.
+After the correction, all eleven fixed histories, sixteen generated histories, and both saved regression seeds pass.
+The ten native model examples and generator capacity test also pass.
+No further semantic mismatch appears in that bounded run.
+This covers all six modeled commands, with full state and history comparison and replay of every earlier accepted request after each command.
+
+Temporarily restoring the old closure defect makes the differential test fail again.
+Proptest reduces it to one fresh close command against empty, already closed packaging.
+The test reproduces the minimized failure, and the corrected model is restored byte-for-byte afterward.
+
+Four targeted Kani harnesses pass after the correction, with all six cover properties reached.
+They cover closure precedence, state and history preservation, exact replay and changed intent, and later closure preserving earlier history and replay.
+The precedence harness includes both empty contents and inconsistent open inventory to distinguish the order of refusals.
+Clippy passes, and production code remains unchanged.

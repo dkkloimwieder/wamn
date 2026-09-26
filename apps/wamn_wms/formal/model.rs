@@ -394,6 +394,7 @@ fn change(state: &mut State, action: Action) -> Result<(), Refusal> {
             }
         }
         Action::ClosePackaging { packaging_id } => {
+            open_packaging(state.packaging, packaging_id)?;
             if !empty(state.inventory, packaging_id) {
                 return Err(Refusal::PackagingNotEmpty);
             }
