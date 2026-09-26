@@ -276,21 +276,23 @@ The DNS zone goes with the project. Before you delete it, set the Namecheap name
 
 ## 10. Cost
 
-The prices are approximate list prices in `us-central1`. Step 1 reads the current prices from the Cloud Billing catalog and corrects this table.
+Step 1 read these list prices in `us-central1` from the Cloud Billing catalog on 2026-09-25. The GKE management fee and the zonal credit come from the GKE price page.
+A machine price is the sum of its CPU price and its memory price.
 
 | Item | Price | 2 x `e2-standard-2` Spot |
 | --- | --- | --- |
-| Nodes | `e2-standard-2` Spot about 0.02 USD an hour, `e2-standard-4` Spot about 0.04 USD an hour | about 0.04 USD an hour |
-| Node external addresses | about 0.005 USD an hour each | about 0.01 USD an hour |
+| Nodes | `e2-standard-2`: 0.040 USD an hour Spot, 0.067 on demand. `e2-standard-4`: 0.080 USD an hour Spot, 0.134 on demand. | 0.080 USD an hour |
+| Node external addresses | 0.0025 USD an hour on a Spot machine, 0.005 on demand | 0.005 USD an hour |
 | Cluster management | 0.10 USD an hour, covered by the zonal credit | 0 |
-| Load balancer | about 0.025 USD an hour for the forwarding rule, and a small charge per GB | about 0.025 USD an hour, only while it exists |
-| Disks | `pd-standard` about 0.04 USD per GB each month. `pd-balanced` is about 0.10 USD. | 2 x 30 GB boot and about 20 GB of volumes: about 3 USD a month. The disks stay after the nodes scale to 0. |
+| Load balancer | 0.025 USD an hour for the first forwarding rule, and a small charge per GB | 0.025 USD an hour, only while it exists |
+| Disks | `pd-standard` 0.04 USD per GB each month, after 30 free GB. `pd-balanced` is 0.10 USD. | 2 x 30 GB boot and about 20 GB of volumes: about 2 USD a month. The disks stay after the nodes scale to 0. |
 | Cloud DNS | 0.20 USD a month for the zone | the same |
 | GCS, Artifact Registry, CDN egress, the guard | cents for a test | the same |
 | Resend | free up to its monthly limit | 0 |
-| Total while running | | about 0.08 USD an hour |
+| Total while running | | about 0.11 USD an hour |
 
-Two test hours a day on five days cost about 1 USD a week.
+Two test hours a day on five days cost about 1.10 USD a week.
+Tier 4 of the benchmark, 2 x `e2-standard-4` on demand, costs about 0.30 USD an hour.
 While nothing runs, the disks, the buckets, the registry and the DNS zone cost a few USD a month.
 
 ## 11. Out
