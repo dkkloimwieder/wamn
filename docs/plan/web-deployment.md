@@ -1,6 +1,6 @@
 # Web deployment
 
-Epic 20, Beads `wamn-xyxj`, served the generated web clients from one public host: static files from a bucket, and an edge proxy that sends API paths to the platform. It was item 7 of section 7 in the [web operator client](web-operator-client.md) plan, and it closed on 2026-09-25.
+Epic 20, Beads `wamn-xyxj`, served the generated web clients from one public host. A bucket holds the static files, and an edge proxy sends API paths to the platform. It was item 7 of section 7 in the [web operator client](web-operator-client.md) plan, and it closed on 2026-09-25.
 The built parts are in the operations pages.
 [Deployment](../operations/deployment.md#web-client-files) describes `wamn web upload` and the edge chart in `deploy/platform/edge`, including its [Google Cloud](../operations/deployment.md#google-cloud-edge) rendering.
 [Cluster tests](../operations/cluster-tests.md) describes the kind edge case.
@@ -42,7 +42,9 @@ Option C gives a tested shape before any cloud cost. The GCP shape is assumed an
 | A | One public host per application, for example `receiving.<domain>`. | One certificate name and one cookie scope per application. |
 | B (ruled) | One public host for every application. | One certificate and one cookie scope. |
 
-The shell already routes under one origin: `/api` for the platform and the environment as the first page segment. A second host is a later choice, when a tenant needs one. Receiving and WMS share no route path today.
+The shell already routes under one origin: `/api` for the platform and the environment as the first page segment. A tenant that needs a second host gets it later. Receiving and WMS share no route path today.
+
+A later owner ruling of 2026-09-25 changes this for Google Cloud testing. There, each application first gets its own subdomain, for example `receiving.wamn.dev`. [Google Cloud deployment](gcp-deployment.md) records it and its consequences.
 
 ### 3.3 A shared cache for authenticated reads
 
