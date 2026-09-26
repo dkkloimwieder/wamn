@@ -1,15 +1,17 @@
 """The cost guard of docs/plan/gcp-deployment.md section 8.2.
 
-It acts on the project wamn-dev and the cluster wamn only. Both are literals,
-so no message can point it at another project or at the billing account.
+It acts on the one project and the one cluster that config.json names, and
+never on the billing account. A message cannot name another project.
 """
 
 import base64
 import json
+from pathlib import Path
 
-PROJECT = "wamn-dev"
-LOCATION = "us-central1-a"
-CLUSTER = "wamn"
+CONFIG = json.loads(Path(__file__).with_name("config.json").read_text())
+PROJECT = CONFIG["project"]
+LOCATION = CONFIG["location"]
+CLUSTER = CONFIG["cluster"]
 
 CLUSTER_PATH = f"projects/{PROJECT}/locations/{LOCATION}/clusters/{CLUSTER}"
 NODE_POOLS = f"https://container.googleapis.com/v1/{CLUSTER_PATH}/nodePools"

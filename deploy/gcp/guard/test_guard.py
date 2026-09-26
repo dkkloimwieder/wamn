@@ -56,7 +56,7 @@ def budget(cost, threshold=None):
     return base64.b64encode(json.dumps(message).encode())
 
 
-POOL = "https://container.googleapis.com/v1/projects/wamn-dev/locations/us-central1-a/clusters/wamn/nodePools"
+POOL = "https://container.googleapis.com/v1/projects/wamn-dev/locations/us-central1-a/clusters/wamn-dev/nodePools"
 SCALED = [
     ("POST", f"{POOL}/main:setSize", {"nodeCount": 0}),
     ("POST", f"{POOL}/bench:setSize", {"nodeCount": 0}),
@@ -74,6 +74,11 @@ def run(data, session=None):
     session = session or Session()
     guard.run(guard.decode(data), session, lambda line: None)
     return [call for call in session.calls if call[0] != "GET"]
+
+
+class Config(unittest.TestCase):
+    def test_the_guard_acts_on_the_configured_project_and_cluster(self):
+        self.assertEqual((guard.PROJECT, guard.LOCATION, guard.CLUSTER), ("wamn-dev", "us-central1-a", "wamn-dev"))
 
 
 class Thresholds(unittest.TestCase):
