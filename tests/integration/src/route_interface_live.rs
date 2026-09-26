@@ -581,6 +581,24 @@ async fn open_load(
     Ok(socket)
 }
 
+/// The record-history actor of this test's own writes.
+const ACTOR: &str =
+    "SELECT set_config('app.user_id', '00000000-0000-4000-8000-000000000001', true)";
+
+/// More widget makers than the sockets between the host and the client hold:
+/// each row is about 1 KiB, and a load of 100,000 rows about 100 MiB.
+async fn makers(database: &tokio_postgres::Client) -> anyhow::Result<()> {
+    database
+        .batch_execute(&format!(
+            "BEGIN; {ACTOR}; \
+             INSERT INTO inventory.widget_maker (name) \
+             SELECT 'maker ' || n || repeat('x', 1000) FROM generate_series(1, 150000) n; \
+             COMMIT"
+        ))
+        .await
+        .map_err(|error| anyhow::anyhow!("insert the widget makers: {error:?}"))
+}
+
 /// Transactions open on the project database, other than this session's.
 const OPEN_TRANSACTIONS: &str = "SELECT count(*) FROM pg_stat_activity \
      WHERE datname = current_database() AND pid <> pg_backend_pid() AND xact_start IS NOT NULL";
@@ -619,18 +637,7 @@ async fn a_streamed_load_that_stops_ends_its_database_query() -> anyhow::Result<
     let (database, connection) =
         tokio_postgres::connect(project.url(), tokio_postgres::NoTls).await?;
     let connection = tokio::spawn(connection);
-    // More rows than the sockets between the host and the client hold: each
-    // row is about 1 KiB, and a load of every row about 100 MiB.
-    database
-        .batch_execute(
-            "BEGIN; \
-             SELECT set_config('app.user_id', '00000000-0000-4000-8000-000000000001', true); \
-             INSERT INTO inventory.widget_maker (name) \
-             SELECT 'maker ' || n || repeat('x', 1000) FROM generate_series(1, 150000) n; \
-             COMMIT",
-        )
-        .await
-        .map_err(|error| anyhow::anyhow!("insert the widget makers: {error:?}"))?;
+    makers(&database).await?;
     let load = json!({"limit": 100_000, "shape": "stream"});
     let query = wamn_execution_contract::encode_read_query(load.as_object().context("an item")?);
     let path = format!("{ROUTE_PREFIX}/widget_maker/query?{query}");
@@ -692,6 +699,112 @@ async fn a_streamed_load_that_stops_ends_its_database_query() -> anyhow::Result<
             && outcome["outcome"]["value"]["more"] == json!(true),
         "a full load reads its cap and says more exist: {status}, {} lines, {outcome}",
         lines.len()
+    );
+
+    drop(database);
+    connection.await??;
+    application.shutdown().await?;
+    Ok(())
+}
+
+/// A streamed load reads one statement as it runs: the client has rows while
+/// the statement's cursor is still open, fetched in batches. Every row comes
+/// from the snapshot the statement started with, so a write that commits
+/// during the load does not show in it (wamn-utci.5).
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "requires: WAMN_APPLICATION_COMPONENTS, WAMN_FLOW_HTTP_COMPONENT"]
+async fn a_streamed_load_reads_one_statement_as_of_its_start() -> anyhow::Result<()> {
+    wamn_test_postgres::require_prerequisites(&[
+        "WAMN_APPLICATION_COMPONENTS",
+        "WAMN_FLOW_HTTP_COMPONENT",
+    ]);
+    let _lock = wamn_test_postgres::lock();
+    let system = wamn_test_postgres::database();
+    let project = wamn_test_postgres::database();
+    let scratch = ScratchRoot::create()?;
+    let (application, paths) = start(system.url(), project.url(), &scratch).await?;
+    let (database, connection) =
+        tokio_postgres::connect(project.url(), tokio_postgres::NoTls).await?;
+    let connection = tokio::spawn(connection);
+    makers(&database).await?;
+    let load = json!({"limit": 100_000, "shape": "stream"});
+    let query = wamn_execution_contract::encode_read_query(load.as_object().context("an item")?);
+
+    // The client reads the first rows while the statement's cursor is open.
+    let mut response = paths
+        .client
+        .get(format!(
+            "{}{ROUTE_PREFIX}/widget_maker/query?{query}",
+            paths.endpoint
+        ))
+        .header("Host", &paths.host)
+        .bearer_auth(&paths.bearer)
+        .send()
+        .await?;
+    anyhow::ensure!(response.status() == 200, "the load answers 200");
+    let mut body = response
+        .chunk()
+        .await?
+        .context("the load sends its first rows")?
+        .to_vec();
+    anyhow::ensure!(body.starts_with(b"{\"row\":"), "the first line is a row");
+    let open = transactions(&database, |open| open >= 1).await?;
+    anyhow::ensure!(
+        open >= 1,
+        "the statement is still open while the client holds rows"
+    );
+    let fetching: i64 = database
+        .query_one(
+            "SELECT count(*) FROM pg_stat_activity WHERE datname = current_database() \
+             AND xact_start IS NOT NULL AND query LIKE 'FETCH FORWARD % FROM wamn_stream'",
+            &[],
+        )
+        .await?
+        .get(0);
+    anyhow::ensure!(
+        fetching == 1,
+        "the load fetches its statement's rows in batches"
+    );
+
+    // A write commits during the load: every maker gets a new name.
+    database
+        .batch_execute(&format!(
+            "BEGIN; {ACTOR}; UPDATE inventory.widget_maker SET name = 'renamed'; COMMIT"
+        ))
+        .await
+        .map_err(|error| anyhow::anyhow!("rename the widget makers: {error:?}"))?;
+
+    // The rest of the load reads the names as they were when it started.
+    while let Some(chunk) = response.chunk().await? {
+        body.extend_from_slice(&chunk);
+    }
+    let lines = std::str::from_utf8(&body)?
+        .lines()
+        .map(serde_json::from_str)
+        .collect::<Result<Vec<Value>, _>>()?;
+    let (outcome, rows) = lines.split_last().context("a load ends in its outcome")?;
+    anyhow::ensure!(
+        rows.len() == 100_000
+            && rows.iter().all(|line| {
+                line["row"]["name"]
+                    .as_str()
+                    .is_some_and(|name| name.starts_with("maker "))
+            })
+            && outcome["outcome"]["value"]["more"] == json!(true),
+        "a load reads one snapshot: {} lines, {outcome}",
+        lines.len()
+    );
+    // A new load reads the committed names.
+    let (_, _, again) = paths
+        .streamed(
+            "/widget_maker/query",
+            &json!({"limit": 10, "shape": "stream"}),
+            None,
+        )
+        .await?;
+    anyhow::ensure!(
+        again[0]["row"]["name"] == json!("renamed"),
+        "a new load reads the write: {again:?}"
     );
 
     drop(database);
