@@ -51,7 +51,9 @@
  *
  * A caller that passes `editableFields` and `onEdit` gets cells that edit in
  * place, as `edit-cell.tsx` states. While an edit is open, `onEditing` tells
- * the source to run no new load.
+ * the source to run no new load. After an edit of a field that is neither a
+ * scope filter nor a sort field, `onRowChange` puts the row in place. After
+ * every other write, a bulk action included, `onReload` starts a new load.
  *
  * Each header has a menu that sorts, hides, pins and unpins its column and
  * chooses its aggregate. The column panel shows and hides columns and orders
@@ -277,6 +279,14 @@ export interface DataTableProps<TRow extends object> {
    * dropped. The source runs no new load in between.
    */
   readonly onEditing?: ((editing: boolean) => void) | undefined;
+  /**
+   * Called with the row an inline edit left, when the edited field is neither
+   * a scope filter nor a sort field, so the row cannot leave the scope or
+   * move. The source puts it in place of the loaded row.
+   */
+  readonly onRowChange?: ((row: TRow) => void) | undefined;
+  /** Called after every other write. The source starts a new load. */
+  readonly onReload?: (() => void) | undefined;
 }
 
 /** The text the search box shows when the set is not fully read. */
@@ -506,9 +516,19 @@ export function DataTable<TRow extends object>(props: DataTableProps<TRow>): JSX
       return;
     }
     switch (result.status) {
-      case "completed":
+      case "completed": {
         setEdit(null);
+        const sorted =
+          props.sortFields.some((sort) => sort.field === open.field) ||
+          (table.atoms.sorting?.get() ?? []).some((sort) => sort.id === open.field);
+        const scoped = props.scopeFilters.includes(open.field as keyof TRow & string);
+        if (result.row !== undefined && !sorted && !scoped && props.onRowChange !== undefined) {
+          props.onRowChange(result.row);
+        } else {
+          props.onReload?.();
+        }
         break;
+      }
       case "conflict":
         setEdit({ ...current, saving: false, error: null, conflict: result.message });
         break;
@@ -942,6 +962,7 @@ export function DataTable<TRow extends object>(props: DataTableProps<TRow>): JSX
       ...current,
       ...Object.fromEntries(rows.map((row, index) => [row.id, outcome[index]!])),
     }));
+    props.onReload?.();
   }
 
   /** The footer: each visible column's aggregate over every kept row. */

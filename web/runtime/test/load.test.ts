@@ -9,6 +9,7 @@ import {
   emptyLoad,
   finishLoad,
   loadLimit,
+  replaceRow,
   startLoad,
   type LoadPage,
 } from "../src/load.js";
@@ -129,5 +130,18 @@ describe("the load state", () => {
       "id",
     );
     expect(uncertain.refusal).toBe("the connection closed");
+  });
+});
+
+describe("a row a write left", () => {
+  it("takes the place of the loaded row with its id, and keeps the rest of the load", () => {
+    const loaded = finishLoad(startLoad(emptyLoad<{ id: string; code: string }>(1000), 1000, START), 1, {
+      status: "completed",
+      value: { item: [{ id: "a", code: "x" }, { id: "b", code: "y" }], nextCursor: null },
+    }, "id", END);
+    const replaced = replaceRow(loaded, { id: "b", code: "z" }, "id");
+    expect(replaced.rows).toEqual([{ id: "a", code: "x" }, { id: "b", code: "z" }]);
+    expect({ ...replaced, rows: loaded.rows }).toEqual(loaded);
+    expect(replaceRow(loaded, { id: "c", code: "z" }, "id")).toBe(loaded);
   });
 });

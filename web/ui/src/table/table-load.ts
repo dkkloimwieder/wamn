@@ -16,6 +16,7 @@ import {
   emptyLoad,
   finishLoad,
   loadLimit,
+  replaceRow as replaceLoadedRow,
   startLoad,
   type LoadPage,
   type LoadState,
@@ -52,6 +53,8 @@ export interface TableLoad<TRow extends object> {
   readonly sortBy: (sort: readonly DataTableSort<TRow>[]) => void;
   /** Holds every new load while `held` is true, and runs the last one asked for when it ends. */
   readonly hold: (held: boolean) => void;
+  /** Puts one row, as a write left it, in place of the loaded row with its id. */
+  readonly replaceRow: (row: TRow) => void;
 }
 
 export function createTableLoad<TRow extends object>(
@@ -96,5 +99,13 @@ export function createTableLoad<TRow extends object>(
     }
   };
 
-  return { state, load, sortBy, hold };
+  // A table with no row id cannot name the row a write left.
+  const replaceRow = (row: TRow) => {
+    const rowId = definition.rowId;
+    if (rowId !== null) {
+      setState((current) => replaceLoadedRow(current, row, rowId));
+    }
+  };
+
+  return { state, load, sortBy, hold, replaceRow };
 }

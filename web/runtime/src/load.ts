@@ -158,3 +158,20 @@ export function finishLoad<Row>(
     endedAt: now,
   };
 }
+
+/**
+ * Put one row in place of the row with the same id, and keep the rest of the
+ * load as it was. An inline edit that cannot move the row out of the scope or
+ * the order uses it in place of a new load. A row the load does not hold
+ * changes nothing.
+ */
+export function replaceRow<Row>(state: LoadState<Row>, row: Row, rowId: keyof Row & string): LoadState<Row> {
+  const id = String(row[rowId]);
+  const at = state.rows.findIndex((candidate) => String(candidate[rowId]) === id);
+  if (at === -1) {
+    return state;
+  }
+  const rows = [...state.rows];
+  rows[at] = row;
+  return { ...state, rows };
+}
