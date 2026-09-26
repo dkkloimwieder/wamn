@@ -455,7 +455,8 @@ pub enum OperationErrorDetailKey {
     Operation,
 }
 
-/// Required and optional keys for one exact error code.
+/// Required and optional keys for one exact error code, and the text a screen
+/// shows for it.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct OperationErrorDetailDeclaration {
@@ -463,6 +464,11 @@ pub struct OperationErrorDetailDeclaration {
     pub required: Vec<OperationErrorDetailKey>,
     #[serde(default)]
     pub optional: Vec<OperationErrorDetailKey>,
+    /// Authored text that a screen shows in place of the code's words, like a
+    /// field label. Only an operation's own business codes have an entry here,
+    /// so a platform code keeps its platform sentence.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub text: Option<String>,
 }
 
 /// Closed generated-operation refusal vocabulary.
@@ -1770,6 +1776,7 @@ pub(crate) fn custom_operation_error_detail(
         return OperationErrorDetailDeclaration {
             required: required.to_vec(),
             optional: optional.to_vec(),
+            text: None,
         };
     }
     operation
@@ -2079,6 +2086,7 @@ pub(crate) fn access_operation_error_detail(
     OperationErrorDetailDeclaration {
         required: required.to_vec(),
         optional: optional.to_vec(),
+        text: None,
     }
 }
 

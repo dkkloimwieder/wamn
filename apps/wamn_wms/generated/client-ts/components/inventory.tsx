@@ -166,7 +166,7 @@ export function InventoryAdjustForm(props: InventoryAdjustFormProps) {
       announceOutcome(outcome, InventoryAdjustFormLabel);
       setRefusal(
         outcome.status === "refused"
-          ? { text: refusalSentence(outcome.code), member: refusedMember(outcome.detail) }
+          ? { text: refusalSentence(outcome.code, outcome.text), member: refusedMember(outcome.detail) }
           : null,
       );
       setDone(outcome.status === "completed");
@@ -475,7 +475,7 @@ export function InventoryMergeForm(props: InventoryMergeFormProps) {
       announceOutcome(outcome, InventoryMergeFormLabel);
       setRefusal(
         outcome.status === "refused"
-          ? { text: refusalSentence(outcome.code), member: refusedMember(outcome.detail) }
+          ? { text: refusalSentence(outcome.code, outcome.text), member: refusedMember(outcome.detail) }
           : null,
       );
       setDone(outcome.status === "completed");
@@ -669,7 +669,7 @@ export function InventoryMoveForm(props: InventoryMoveFormProps) {
       announceOutcome(outcome, InventoryMoveFormLabel);
       setRefusal(
         outcome.status === "refused"
-          ? { text: refusalSentence(outcome.code), member: refusedMember(outcome.detail) }
+          ? { text: refusalSentence(outcome.code, outcome.text), member: refusedMember(outcome.detail) }
           : null,
       );
       setDone(outcome.status === "completed");
@@ -869,7 +869,7 @@ export function InventorySplitForm(props: InventorySplitFormProps) {
       announceOutcome(outcome, InventorySplitFormLabel);
       setRefusal(
         outcome.status === "refused"
-          ? { text: refusalSentence(outcome.code), member: refusedMember(outcome.detail) }
+          ? { text: refusalSentence(outcome.code, outcome.text), member: refusedMember(outcome.detail) }
           : null,
       );
       setDone(outcome.status === "completed");

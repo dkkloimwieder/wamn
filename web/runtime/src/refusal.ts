@@ -3,8 +3,10 @@
  *
  * The platform declares a closed set of codes, and ingress states a few more.
  * Each has its own sentence here. An application declares its own business
- * codes, such as `purchase_order_not_open`, and the sentence for one of those
- * is the code in words. A refusal that states no code reads as a plain refusal.
+ * codes, such as `purchase_order_not_open`. When the operation declares text
+ * for one, the refusal carries it and the sentence is that text. Otherwise the
+ * sentence is the code in words. A refusal that states no code reads as a
+ * plain refusal.
  */
 
 const PLATFORM: { readonly [code: string]: string } = {
@@ -29,8 +31,11 @@ const PLATFORM: { readonly [code: string]: string } = {
   internal_error: "The server could not complete the request.",
 };
 
-/** The sentence for one refusal code. */
-export function refusalSentence(code: string | null): string {
+/** The sentence for one refusal code, or the text its operation declares for it. */
+export function refusalSentence(code: string | null, text?: string): string {
+  if (text !== undefined && text !== "") {
+    return text;
+  }
   if (code === null || code === "") {
     return "The request was refused.";
   }

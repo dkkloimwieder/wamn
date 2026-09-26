@@ -516,7 +516,7 @@ The plan binds that column to the model's served list, which states the display 
 The table reads each key once, shows nothing while the read runs, and shows the key when no record comes back.
 A column whose model serves no such list and read shows the key, and the emitted index names it.
 A selector that holds a key its list did not return, such as one a row action filled from a later page, reads that record through the same read and shows its text.
-A screen shows a refusal as a sentence, never as its code. The runtime holds one sentence for each platform and ingress code, and an application code reads as its words.
+A screen shows a refusal as a sentence, never as its code. The runtime holds one sentence for each platform and ingress code. An application code shows the `text` that its `error_details` entry declares, and a code with no text reads as its words. The text travels like a field label: through the errors contract and the client IR into the generated contract, where the transport puts it on the refused outcome.
 A refusal that names a field marks that control. A unique or foreign key over one field that the operation writes names that field in the refusal detail, beside the constraint.
 A form shows a completed line beside its buttons after its command completes.
 An operation whose shape has no role gets no component, and the emitted index names it with the reason.

@@ -371,8 +371,8 @@ fn a_form_renders_the_plan_inputs_and_supplies_the_reserved_ones() {
         "a refusal that names a member reaches that member"
     );
     assert!(
-        create.contains("text: refusalSentence(outcome.code)"),
-        "a refusal reads as a sentence, not as its code"
+        create.contains("text: refusalSentence(outcome.code, outcome.text)"),
+        "a refusal reads as its authored text or a sentence, not as its code"
     );
     assert!(
         create.contains("setDone(outcome.status === \"completed\");")

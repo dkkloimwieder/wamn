@@ -115,7 +115,7 @@ export function ProductCreateForm(props: ProductCreateFormProps) {
       announceOutcome(outcome, ProductCreateFormLabel);
       setRefusal(
         outcome.status === "refused"
-          ? { text: refusalSentence(outcome.code), member: refusedMember(outcome.detail) }
+          ? { text: refusalSentence(outcome.code, outcome.text), member: refusedMember(outcome.detail) }
           : null,
       );
       setDone(outcome.status === "completed");
@@ -432,7 +432,7 @@ export function ProductUpdateForm(props: ProductUpdateFormProps) {
       announceOutcome(outcome, ProductUpdateFormLabel);
       setRefusal(
         outcome.status === "refused"
-          ? { text: refusalSentence(outcome.code), member: refusedMember(outcome.detail) }
+          ? { text: refusalSentence(outcome.code, outcome.text), member: refusedMember(outcome.detail) }
           : null,
       );
       setDone(outcome.status === "completed");

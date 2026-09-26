@@ -561,7 +561,8 @@
         "purchase_order_not_open": {
           "required": [
             "field"
-          ]
+          ],
+          "text": "This purchase order is not open, so it takes no receipt."
         },
         "purchase_order_line_not_found": {
           "required": [

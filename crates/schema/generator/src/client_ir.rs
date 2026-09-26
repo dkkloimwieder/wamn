@@ -520,6 +520,9 @@ pub struct ErrorCaseIr {
     /// Detail members that may be present.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub detail_optional: Vec<String>,
+    /// Authored text a screen shows in place of the code's words.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub text: Option<String>,
 }
 
 impl ClientContractIr {
@@ -1338,6 +1341,7 @@ fn errors_of(errors: Option<&Value>) -> Vec<ErrorCaseIr> {
                         ),
                         detail_required: string_list(detail.and_then(|d| d.get("required"))),
                         detail_optional: string_list(detail.and_then(|d| d.get("optional"))),
+                        text: case.get("text").and_then(Value::as_str).map(str::to_owned),
                     })
                 })
                 .collect()

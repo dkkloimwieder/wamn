@@ -264,7 +264,11 @@ export function classify(
     return { status: "completed", value: item.value as JsonValue };
   }
   if (item.value === undefined && item.error !== undefined && confirmed(contract, item.error)) {
-    return refused(item.error.code ?? null, withoutCode(item.error));
+    const code = item.error.code ?? null;
+    const detail = withoutCode(item.error);
+    // A declared refusal carries the text its operation declares for the code.
+    const text = contract.errors.find((case_) => case_.literal === code)?.text ?? null;
+    return text === null ? refused(code, detail) : { status: "refused", code, detail, text };
   }
   // Neither member, both members, and an undeclared refusal establish no
   // completion fact. A value beside an error is not a partial contract.

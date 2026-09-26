@@ -351,7 +351,7 @@ export function PurchaseOrderUpdateForm(props: PurchaseOrderUpdateFormProps) {
       announceOutcome(outcome, PurchaseOrderUpdateFormLabel);
       setRefusal(
         outcome.status === "refused"
-          ? { text: refusalSentence(outcome.code), member: refusedMember(outcome.detail) }
+          ? { text: refusalSentence(outcome.code, outcome.text), member: refusedMember(outcome.detail) }
           : null,
       );
       setDone(outcome.status === "completed");

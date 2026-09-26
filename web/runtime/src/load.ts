@@ -144,7 +144,7 @@ export function finishLoad<Row>(
   if (outcome.status !== "completed") {
     return failed(
       outcome.status === "refused"
-        ? refusalSentence(outcome.code)
+        ? refusalSentence(outcome.code, outcome.text)
         : outcome.status === "uncertain"
           ? outcome.reason
           : outcome.status,

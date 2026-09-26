@@ -81,7 +81,7 @@ The generator compares those choices with the schema and SQL. It does not replac
 | Input/result `fields[].path`, `.type`, `.nullable`, `.values`, `.revision`, and result `class` | Application boundary contract. Generated WIT consumes these fields, so it cannot replace their source. Retain. |
 | Canonicalization `excluded_fields`, `line_order` | Application command-identity choices. Retain. |
 | Canonicalization `payload`, `uuid`, `timestamptz`, `numeric`, `duplicate_line` | Fixed platform codecs and duplicate-line refusal. Derive. |
-| Custom `errors`, business `error_details`, `constraint_errors` | Application error choices and constraint mappings. Retain. Derive fixed details for standard platform errors. |
+| Custom `errors`, business `error_details`, `constraint_errors` | Application error choices and constraint mappings. A business error detail can state the `text` that a screen shows. Retain. Derive fixed details for standard platform errors. |
 | `relations[].schema`, `.table`, `.select_fields`, `.insert_fields`, `.update_fields`, `.lock`, `.constraints` | Declared SQL authority. Compare with the SQL corpus and PostgreSQL. Retain the authority boundary. |
 | `statements.*.path`, `.fetch`, `.parameters`, `.row` | Static SQL selection and accessor contract. PostgreSQL checks types, privileges, and transaction requirements. Retain names and declared shape. |
 | Parameter/row `name`, `type`, `nullable` | Accessor names and representation. SQL planning does not determine all application names or nullability contracts. Retain. |

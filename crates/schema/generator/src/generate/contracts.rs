@@ -511,14 +511,15 @@ fn custom_operation_error_contract(
             } else {
                 custom_operation_error_origin(operation, literal)
             };
-            case.as_object_mut()
-                .expect("error contract case is an object")
-                .insert(
-                    "detail".to_owned(),
-                    error_detail_contract(&crate::manifest::custom_operation_error_detail(
-                        operation, literal,
-                    )),
-                );
+            let detail = crate::manifest::custom_operation_error_detail(operation, literal);
+            let case_members = case
+                .as_object_mut()
+                .expect("error contract case is an object");
+            case_members.insert("detail".to_owned(), error_detail_contract(&detail));
+            // Authored text rides on the case, as a label rides on its field.
+            if let Some(text) = detail.text {
+                case_members.insert("text".to_owned(), json!(text));
+            }
             case
         })
         .collect::<Vec<_>>();

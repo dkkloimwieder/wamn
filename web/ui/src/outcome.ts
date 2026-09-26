@@ -20,7 +20,7 @@ export function announceOutcome<T>(outcome: Outcome<T>, screen: string): void {
       toast.warning(`${screen}: partially completed`);
       return;
     case "refused":
-      toast.error(`${screen}: refused`, { description: refusalSentence(outcome.code) });
+      toast.error(`${screen}: refused`, { description: refusalSentence(outcome.code, outcome.text) });
       return;
     case "uncertain":
       toast.warning(`${screen}: uncertain`, { description: outcome.reason });

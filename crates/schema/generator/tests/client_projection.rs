@@ -813,3 +813,38 @@ fn an_input_states_the_record_it_names_and_a_read_states_what_it_lists() {
     );
     assert_eq!(operation("get").lists, None, "a record read lists nothing");
 }
+
+/// An authored refusal text travels like a field label: from `error_details`
+/// in the manifest through the errors contract into the IR, on the operation
+/// and on its served response (wamn-ly11.2). A platform code states none.
+#[test]
+fn authored_refusal_text_reaches_the_client_ir() {
+    let ir = fixture::client_release();
+    let archive = ir
+        .models
+        .iter()
+        .flat_map(|model| &model.operations)
+        .find(|operation| operation.name == "archive")
+        .expect("the fixture declares archive");
+    let text = |errors: &[wamn_schema_generator::client_ir::ErrorCaseIr], literal: &str| {
+        errors
+            .iter()
+            .find(|case| case.literal == literal)
+            .unwrap_or_else(|| panic!("archive declares {literal}"))
+            .text
+            .clone()
+    };
+    let served = &archive
+        .route
+        .as_ref()
+        .expect("archive is served")
+        .response
+        .errors;
+    for errors in [&archive.errors, served] {
+        assert_eq!(
+            text(errors, "already_archived").as_deref(),
+            Some("This widget is already archived.")
+        );
+        assert_eq!(text(errors, "concurrency_conflict"), None);
+    }
+}

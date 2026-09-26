@@ -224,7 +224,8 @@
         "already_archived": {
           "required": [
             "field"
-          ]
+          ],
+          "text": "This widget is already archived."
         }
       },
       "errors": [

@@ -79,7 +79,7 @@ export function stopRead<Row>(state: PageState<Row>): PageState<Row> {
 export function failedRead<Row>(state: PageState<Row>, outcome: Outcome<unknown>): PageState<Row> {
   const refusal =
     outcome.status === "refused"
-      ? refusalSentence(outcome.code)
+      ? refusalSentence(outcome.code, outcome.text)
       : outcome.status === "uncertain"
         ? outcome.reason
         : outcome.status;

@@ -1718,7 +1718,7 @@ fn emit_form(
     // member still marks that member in place.
     writeln!(source, "      announceOutcome(outcome, {stem}FormLabel);").expect("write");
     source.push_str(
-        "      setRefusal(\n        outcome.status === \"refused\"\n          ? { text: refusalSentence(outcome.code), member: refusedMember(outcome.detail) }\n          : null,\n      );\n      setDone(outcome.status === \"completed\");\n",
+        "      setRefusal(\n        outcome.status === \"refused\"\n          ? { text: refusalSentence(outcome.code, outcome.text), member: refusedMember(outcome.detail) }\n          : null,\n      );\n      setDone(outcome.status === \"completed\");\n",
     );
     source.push_str("    },\n  }));\n");
 
@@ -2454,7 +2454,7 @@ fn emit_delete(
     source.push_str("    props.onSubmitted?.(outcome);\n");
     writeln!(source, "    announceOutcome(outcome, {stem}DeleteLabel);").expect("write");
     source.push_str(
-        "    setRefusal(\n      outcome.status === \"refused\"\n        ? { text: refusalSentence(outcome.code), member: refusedMember(outcome.detail) }\n        : null,\n    );\n  };\n",
+        "    setRefusal(\n      outcome.status === \"refused\"\n        ? { text: refusalSentence(outcome.code, outcome.text), member: refusedMember(outcome.detail) }\n        : null,\n    );\n  };\n",
     );
     source.push_str(
         "\n  return (\n    <section>\n      <Show when={refusal()}>\n        <FieldError>{refusal()?.text}</FieldError>\n      </Show>\n      <ConfirmAction\n        trigger=\"delete\"\n        question=\"remove this record?\"\n        confirm=\"confirm\"\n        cancel=\"cancel\"\n        onConfirm={() => void remove()}\n      />\n    </section>\n  );\n}\n",

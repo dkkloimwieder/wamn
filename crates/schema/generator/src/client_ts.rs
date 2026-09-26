@@ -550,10 +550,14 @@ fn emit_operation(
     for error in &route.response.errors {
         writeln!(
             source,
-            "      {{ literal: {:?}, required: [{}], sources: [{}] }},",
+            "      {{ literal: {:?}, required: [{}], sources: [{}], text: {} }},",
             error.literal,
             literals(&error.detail_required),
-            literals(&error.sources)
+            literals(&error.sources),
+            error.text.as_ref().map_or_else(
+                || "null".to_owned(),
+                |text| serde_json::Value::String(text.clone()).to_string()
+            )
         )
         .expect("write");
     }

@@ -10,6 +10,7 @@
 import { describe, expect, it } from "vitest";
 
 import table from "../../../crates/client/tui/tests/data/classification-cases.json" with { type: "json" };
+import { refusalSentence } from "../src/refusal.js";
 import { classify, classifyEach, createTransport } from "../src/transport.js";
 import type { ErrorCase, JsonValue, Outcome, ResponseContract } from "../src/wire.js";
 
@@ -117,6 +118,48 @@ describe("the shared many-item cases", () => {
       expect(outcomes).toEqual(shared.expect.map(stated));
     });
   }
+});
+
+describe("a refusal whose code the operation declares text for", () => {
+  it("carries the text, and the refusal reads as that text", () => {
+    const contract: ResponseContract = {
+      resultClass: "one",
+      partialSchema: null,
+      errors: [
+        {
+          literal: "purchase_order_not_open",
+          required: [],
+          sources: ["transaction_invariant"],
+          text: "The purchase order is not open.",
+        },
+        { literal: "location_not_found", required: [], sources: ["transaction_invariant"], text: null },
+      ],
+      replay: null,
+      direct: true,
+      kind: "command",
+      transaction: "explicit_per_input",
+    };
+    const reply = (code: string) => ({
+      status: 200,
+      body: `[{"request_id":"r1","error":{"code":"${code}"}}]`,
+    });
+    const authored = classify(contract, "r1", reply("purchase_order_not_open"));
+    expect(authored).toEqual({
+      status: "refused",
+      code: "purchase_order_not_open",
+      detail: null,
+      text: "The purchase order is not open.",
+    });
+    if (authored.status === "refused") {
+      expect(refusalSentence(authored.code, authored.text)).toBe("The purchase order is not open.");
+    }
+    // A code with no authored text reads as the code in words.
+    const plain = classify(contract, "r1", reply("location_not_found"));
+    expect(plain).toEqual({ status: "refused", code: "location_not_found", detail: null });
+    if (plain.status === "refused") {
+      expect(refusalSentence(plain.code, plain.text)).toBe("Location not found.");
+    }
+  });
 });
 
 describe("a transport failure", () => {

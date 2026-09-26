@@ -57,6 +57,8 @@ export interface ErrorCase {
   readonly required: readonly string[];
   /** Declared origins of this refusal. */
   readonly sources: readonly string[];
+  /** Authored text a screen shows in place of the code's words, or null. */
+  readonly text: string | null;
 }
 
 /** One request. It carries no host, no base URL and no credential. */
@@ -93,6 +95,8 @@ export type Outcome<T> =
       readonly status: "refused";
       readonly code: string | null;
       readonly detail: JsonValue;
+      /** The text the operation declares for the code, when it declares one. */
+      readonly text?: string;
     }
   | {
       readonly status: "uncertain";
