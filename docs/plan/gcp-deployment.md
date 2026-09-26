@@ -115,7 +115,7 @@ Each step writes its commands into [Google Cloud operations](../operations/gcp.m
 
 Owner rulings of 2026-09-25:
 
-- The cluster is `wamn-dev`, on the VPC `wamn` with the subnet `wamn-us-central1`. The first attempt on the `default` network failed, and [Google Cloud operations](../operations/gcp.md) records it.
+- The cluster `wamn` runs on the VPC `wamn`, subnet `wamn-us-central1`: primary range `10.10.0.0/24`, secondary ranges `pods` `10.20.0.0/16` and `services` `10.30.0.0/20`. The VPC has no firewall rule of ours. GKE adds its own, and step 4 adds the health check rule. There is no SSH rule. The first attempts on the `default` network failed, and [Google Cloud operations](../operations/gcp.md) records them.
 - gcloud cannot name the first pool of a new cluster. The cluster starts with a temporary `default-pool` of 1 Spot node. Step 2 adds `main` and then deletes `default-pool`.
 - The cluster uses the regular release channel.
 - The nodes run as the service account `wamn-nodes`, with only `roles/logging.logWriter`, `roles/monitoring.metricWriter` and `roles/artifactregistry.reader`. The Compute default account has Editor on the project, so the nodes do not use it.
@@ -187,6 +187,7 @@ Step 1 lowers these Compute Engine quotas of `wamn-dev` through the Cloud Quotas
 | SSD disk | `us-central1` | 0 GB | No disk escapes the 200 GB cap through `pd-balanced` or `pd-ssd`. |
 
 Owner ruling of 2026-09-25: the SSD quota stays at 0, and every boot disk and volume is `pd-standard` for now. Only a measured run that needs SSD raises the SSD quota.
+The preemptible CPU quota of `us-central1` is 0 by design. With 0, Spot machines count against the standard CPU quota, so the CPU quota of 8 is the one regional limit for every machine. Owner ruling of 2026-09-26: do not raise it. Once a region has preemptible quota, Spot machines count only against that quota, and the region then allows 8 standard CPUs and the Spot CPUs on top. Source: [Preemptible VM instances](https://docs.cloud.google.com/compute/docs/instances/preemptible).
 The disk quotas are regional. The CPU quota of all regions stops a machine in any other region, so a disk elsewhere has no machine to use it.
 
 ### 8.2 The guard
@@ -195,10 +196,10 @@ If the budget runs out, the guard stops the machines and then billing. It has fo
 
 - A Pub/Sub topic `wamn-guard`.
 - One budget of 150 USD a month on billing account `01E392-13CC0D-277806`, filtered to `wamn-dev`. Section 8.3 gives the amount. Owner ruling of 2026-09-25: it counts cost before credits, so the guard acts on gross spend. At 50, 90 and 100 percent it mails the billing administrators, and it publishes every update to `wamn-guard`.
-- A Cloud Run function `wamn-guard` on the topic, with its own service account. It reads the project id `wamn-dev`, the zone and the cluster name `wamn-dev` from its `config.json`, and a message cannot change them. From 50 percent of the budget, it sets every node pool of cluster `wamn-dev` to 0 nodes. From 100 percent, it unlinks the billing account from `wamn-dev`, as section 9.5 does by hand.
+- A Cloud Run function `wamn-guard` on the topic, with its own service account. It reads the project id `wamn-dev`, the zone and the cluster name `wamn` from its `config.json`, and a message cannot change them. From 50 percent of the budget, it sets every node pool of cluster `wamn` to 0 nodes. From 100 percent, it unlinks the billing account from `wamn-dev`, as section 9.5 does by hand.
 - A Cloud Scheduler job that publishes a scale-to-zero message to `wamn-guard` once a day, at 03:00 America/New_York. A session that you forget stops by the next morning.
 
-Owner ruling of 2026-09-25: the guard stops every node pool of cluster `wamn-dev`, benchmark pools included, because a guard that spares a pool is not a guard.
+Owner ruling of 2026-09-25: the guard stops every node pool of cluster `wamn`, benchmark pools included, because a guard that spares a pool is not a guard.
 The source of the function is Python in `deploy/gcp/guard`. Its test feeds it a fake budget message for each threshold.
 Step 1 also tests the 100 percent action for real, once, before any workload exists. It publishes a fake 100 percent message, sees billing unlink, links billing again at once, and makes sure that the project serves again.
 
@@ -229,7 +230,7 @@ The operations page lists its commands.
 The cluster, its disks and the load balancer stay. Only the machines stop.
 
 ```bash
-gcloud container clusters resize wamn-dev --project wamn-dev --zone us-central1-a \
+gcloud container clusters resize wamn --project wamn-dev --zone us-central1-a \
   --node-pool main --num-nodes 0
 ```
 
@@ -254,7 +255,7 @@ gcloud compute addresses list --project wamn-dev --global
 ### 9.4 Delete the cluster
 
 ```bash
-gcloud container clusters delete wamn-dev --project wamn-dev --zone us-central1-a
+gcloud container clusters delete wamn --project wamn-dev --zone us-central1-a
 ```
 
 The disks of the PostgreSQL and NATS volumes can outlive the cluster. List them.

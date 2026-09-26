@@ -112,7 +112,7 @@ gcloud logging read 'resource.type="cloud_run_revision" AND resource.labels.serv
   --project wamn-dev --freshness=10m --format="value(timestamp,textPayload)"
 ```
 
-Before the cluster exists, the log says `projects/wamn-dev/locations/us-central1-a/clusters/wamn-dev does not exist, so no pool runs`.
+Before the cluster exists, the log says `projects/wamn-dev/locations/us-central1-a/clusters/wamn does not exist, so no pool runs`.
 
 The unlink test stops billing. Run it only before any workload exists, and relink billing at once.
 
@@ -154,3 +154,152 @@ gcloud billing budgets delete <budget id> --billing-account=01E392-13CC0D-277806
 gcloud functions delete wamn-guard --gen2 --project wamn-dev --region us-central1
 gcloud pubsub topics delete wamn-guard --project wamn-dev
 ```
+
+## 2. Cluster and certificate
+
+Step 2 ran on 2026-09-26. The cluster is `wamn` in zone `us-central1-a`, on the regular release channel.
+
+### 2.1 Prerequisite
+
+`kubectl` reaches GKE through `gke-gcloud-auth-plugin`. Install it once on the machine:
+
+```bash
+sudo apt install google-cloud-cli-gke-gcloud-auth-plugin
+```
+
+`gcloud container clusters create` and `get-credentials` write the cluster into `~/.kube/config` and make it the current context. Other sessions on the machine use that file, so write the credentials into a file of your own:
+
+```bash
+KUBECONFIG=<your file> gcloud container clusters get-credentials wamn \
+  --project wamn-dev --zone us-central1-a
+```
+
+On 2026-09-26 the create command changed the shared current context from `kind-wamn` to the GKE cluster for about 5 minutes. The context was set back, and the GKE entry was removed.
+
+### 2.2 Network
+
+The VPC has no firewall rule of ours. GKE adds its own rules, and step 4 adds the health check rule. There is no SSH rule.
+
+```bash
+gcloud compute networks create wamn --project wamn-dev --subnet-mode=custom
+gcloud compute networks subnets create wamn-us-central1 --project wamn-dev \
+  --network wamn --region us-central1 --range 10.10.0.0/24 \
+  --secondary-range pods=10.20.0.0/16,services=10.30.0.0/20
+```
+
+| Range | Name | CIDR |
+| --- | --- | --- |
+| Nodes | primary | `10.10.0.0/24` |
+| Pods | `pods` | `10.20.0.0/16` |
+| Services | `services` | `10.30.0.0/20` |
+
+### 2.3 Node service account
+
+```bash
+gcloud iam service-accounts create wamn-nodes --project wamn-dev --display-name="wamn GKE nodes"
+NSA=wamn-nodes@wamn-dev.iam.gserviceaccount.com
+for role in roles/logging.logWriter roles/monitoring.metricWriter roles/artifactregistry.reader; do
+  gcloud projects add-iam-policy-binding wamn-dev --member=serviceAccount:$NSA --role=$role --condition=None
+done
+```
+
+### 2.4 Cluster and pool
+
+gcloud cannot name the first pool of a new cluster, so the cluster starts with a temporary `default-pool` of one Spot node. The secondary range flags need `--enable-ip-alias`.
+
+```bash
+gcloud container clusters create wamn --project wamn-dev --zone us-central1-a \
+  --release-channel regular --network wamn --subnetwork wamn-us-central1 \
+  --enable-ip-alias --cluster-secondary-range-name pods \
+  --services-secondary-range-name services --workload-pool wamn-dev.svc.id.goog \
+  --logging=SYSTEM --monitoring=SYSTEM --no-enable-managed-prometheus \
+  --service-account $NSA --disk-type pd-standard --disk-size 30 \
+  --num-nodes 1 --machine-type e2-standard-2 --spot
+```
+
+The pool `main` has a fixed size and no autoscaler, so the scale to 0 of the guard holds. Its upgrades use a surge of 0 and one unavailable node, so an upgrade stays inside the CPU quota.
+
+```bash
+gcloud container node-pools create main --cluster wamn --project wamn-dev \
+  --zone us-central1-a --machine-type e2-standard-2 --spot --num-nodes 2 \
+  --disk-type pd-standard --disk-size 30 --service-account $NSA \
+  --max-surge-upgrade 0 --max-unavailable-upgrade 1
+gcloud container node-pools delete default-pool --cluster wamn --project wamn-dev \
+  --zone us-central1-a
+```
+
+### 2.5 cert-manager and the certificate
+
+Install cert-manager from the repository manifest:
+
+```bash
+kubectl apply -f deploy/infra/cert-manager.yaml
+kubectl -n cert-manager rollout status deploy/cert-manager deploy/cert-manager-webhook \
+  deploy/cert-manager-cainjector
+```
+
+Give the cert-manager Kubernetes service account `roles/dns.admin` on the zone `wamn-dev` only. The Workload Identity principal needs no Google service account and no key. gcloud has no zone-level IAM command, so call the Cloud DNS API:
+
+```bash
+M=principal://iam.googleapis.com/projects/540250462877/locations/global/workloadIdentityPools/wamn-dev.svc.id.goog/subject/ns/cert-manager/sa/cert-manager
+U=https://dns.googleapis.com/dns/v1/projects/wamn-dev/managedZones/wamn-dev
+curl -X POST -H "Authorization: Bearer $(gcloud auth print-access-token)" \
+  -H "x-goog-user-project: wamn-dev" -H "Content-Type: application/json" \
+  -d "{\"policy\":{\"bindings\":[{\"role\":\"roles/dns.admin\",\"members\":[\"$M\"]}]}}" \
+  $U:setIamPolicy
+```
+
+That call replaces the whole policy of the zone. Read it first with `$U:getIamPolicy`, and keep its other bindings.
+
+[deploy/gcp/letsencrypt.yaml](../../deploy/gcp/letsencrypt.yaml) holds the ClusterIssuer `letsencrypt` and the Certificate `wamn-edge-tls` in namespace `edge`. Issue from the staging server first:
+
+```bash
+sed -e 's#acme-v02.api#acme-staging-v02.api#' -e 's#^      name: letsencrypt$#      name: letsencrypt-staging#' \
+  deploy/gcp/letsencrypt.yaml | kubectl apply -f -
+kubectl -n edge wait certificate/wamn-edge-tls --for=condition=Ready --timeout=600s
+```
+
+When staging issues, switch to production and issue again:
+
+```bash
+kubectl apply -f deploy/gcp/letsencrypt.yaml
+kubectl wait clusterissuer/letsencrypt --for=condition=Ready --timeout=120s
+kubectl -n edge delete secret wamn-edge-tls
+kubectl -n edge wait certificate/wamn-edge-tls --for=condition=Ready --timeout=600s
+kubectl -n cert-manager delete secret letsencrypt-staging
+```
+
+Make sure that the issuer is Let's Encrypt production, not `(STAGING)`:
+
+```bash
+kubectl -n edge get secret wamn-edge-tls -o jsonpath='{.data.tls\.crt}' | base64 -d \
+  | openssl x509 -noout -issuer -subject -enddate
+```
+
+On 2026-09-26 staging issued in 86 seconds and production in 84 seconds. The production issuer was `CN=YR1`, and the certificate is valid until 2026-12-25.
+
+### 2.6 Pause
+
+```bash
+gcloud container clusters resize wamn --project wamn-dev --zone us-central1-a \
+  --node-pool main --num-nodes 0
+gcloud compute instances list --project wamn-dev
+```
+
+The list must be empty.
+
+### 2.7 The failed first attempts
+
+On 2026-09-25 and 2026-09-26, two cluster creates and several deletes failed before the create above succeeded:
+
+- The first create on the `default` network ran 32 minutes and ended with `Failed to create cluster`. Every patch of the `default` subnet got `The resource 'projects/wamn-dev/global/networks/default' is not ready`. In the same second, GKE created and deleted two Network Connectivity internal ranges. It also failed to grant a role to the Network Connectivity service agent, because that account did not exist yet.
+- Two deletes of that cluster ended with `Failed to delete cluster`. A create of `wamn-dev` on the VPC `wamn` ended with `[INACTIVE_BILLING_STATE]: Project 'wamn-dev' cannot accept requests to 'compute.instanceGroupManagers.insert' while in an inactive billing state.` Its delete ended with `Timed out waiting for Google Compute Engine operation.`
+- These failures started after the unlink test of section 1.4. Nobody found the cause. The owner deleted the clusters from the console, and they were gone at 05:47 UTC on 2026-09-26.
+
+If a create stays in `PROVISIONING` with no machine, read the Compute errors instead of waiting:
+
+```bash
+gcloud logging read 'protoPayload.status.code>0' --project wamn-dev --freshness=30m \
+  --format="value(timestamp,resource.type,protoPayload.methodName,protoPayload.status.message)"
+```
+
