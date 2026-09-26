@@ -16,6 +16,7 @@ wit_bindgen::generate!({
           import wamn:postgres/types@0.1.0;
           import wamn:postgres/statements@0.1.0;
           export edge-samples:sample/get@1.0.0;
+          export edge-samples:sample/read@1.0.0;
           export edge-samples:sample/%record@1.0.0;
         }
     "#,

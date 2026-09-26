@@ -1,0 +1,1 @@
+{"class":"one","fields":[{"path":"frame","type":"text","nullable":false,"values":[]},{"path":"captured_at","type":"timestamptz","nullable":false,"values":[]}]}

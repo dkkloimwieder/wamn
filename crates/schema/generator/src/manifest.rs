@@ -156,7 +156,7 @@ pub enum CommandTransaction {
     Participant,
 }
 
-/// How one command survives a repeat, in exactly three declared shapes.
+/// How one command survives a repeat, in exactly four declared shapes.
 ///
 /// A command declares this. Generation infers none of it, not even for the
 /// composed case, because an inference is what let the pilot command ship with
@@ -166,11 +166,15 @@ pub enum CommandTransaction {
 /// the claim already generated. `State` mints no identity and names the row
 /// versions that guard it, so a repeat after success sees a version moved and
 /// gets a typed conflict. `Inherited` rides the claim of a base operation it
-/// names, so a second claim over that identity never exists.
+/// names, so a second claim over that identity never exists. `Stateless`
+/// declares no connection, relation or statement, so it writes no state that a
+/// repeat could change. The engine's per-item intent is its replay guard
+/// (owner ruling, `wamn-hxow`).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum CommandIdempotence {
     Claim,
+    Stateless,
     State(StateGuardDeclaration),
     Inherited(InheritedClaimDeclaration),
 }
@@ -1162,7 +1166,8 @@ const EXPECTED_REVISION_FIELD: &str = "expected_row_version";
 /// says nothing reruns its work on a repeat. It then returns whatever the rows
 /// hold at that moment, not what the original call returned.
 ///
-/// Three shapes carry that law, and a command names the one it has. Nothing
+/// Three shapes carry that law for a command with SQL, and a command names the
+/// one it has. The fourth, `stateless`, is for a command with no SQL at all. Nothing
 /// here is inferred from the operation's other declarations. An inference is
 /// what let a pilot command ship with no idempotence and no test.
 fn validate_command_idempotence(
@@ -1174,7 +1179,7 @@ fn validate_command_idempotence(
         return Err(GenerateError::new(
             GenerateErrorKind::InvalidOperation,
             format!(
-                "command {operation_name} must declare idempotent_by as exactly one of three. \
+                "command {operation_name} must declare idempotent_by as exactly one of four. \
                  \"claim\": add a CDC-excluded internal relation keyed by idempotency_key text \
                  with a canonical_command bytea beside it and one unique non-null uuid column \
                  defaulting to gen_random_uuid() for each identity the command returns, declare \
@@ -1186,11 +1191,27 @@ fn validate_command_idempotence(
                  the input field carrying its expected version, such as \
                  {EXPECTED_REVISION_FIELD}. {{\"inherited\": {{\"base\", \"operation\"}}}}: for a \
                  command that rides the claim of a base operation, naming the base dependency \
-                 alias and the operation under it"
+                 alias and the operation under it. \"stateless\": for a command that declares \
+                 no connection, relations or statements"
             ),
         ));
     };
     match idempotent_by {
+        CommandIdempotence::Stateless => {
+            if operation.connection.is_some()
+                || !operation.relations.is_empty()
+                || !operation.statements.is_empty()
+                || operation.claim.is_some()
+            {
+                return Err(GenerateError::new(
+                    GenerateErrorKind::InvalidOperation,
+                    format!(
+                        "command {operation_name} is stateless and declares SQL; a command with \
+                         SQL declares idempotent_by as claim, state or inherited"
+                    ),
+                ));
+            }
+        }
         CommandIdempotence::Claim => {
             if operation.claim.is_none() {
                 return Err(GenerateError::new(
@@ -1788,7 +1809,10 @@ fn validate_static_sql_declarations(
         ));
     }
     if !has_connection && !has_relations && !has_statements {
-        if operation.kind == CustomOperationKind::Command && matching_dependencies == 1 {
+        if operation.kind == CustomOperationKind::Command
+            && (matching_dependencies == 1
+                || operation.idempotent_by == Some(CommandIdempotence::Stateless))
+        {
             return Ok(());
         }
         return Err(GenerateError::new(

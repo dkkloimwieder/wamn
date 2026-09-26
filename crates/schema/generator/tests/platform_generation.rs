@@ -233,6 +233,43 @@ fn state_idempotence_requires_its_exact_shape() {
     }
 }
 
+/// `stateless` is for a command with no SQL, whose replay guard is the
+/// engine's per-item intent. A command with SQL still names claim, state or
+/// inherited (owner ruling, `wamn-hxow`).
+#[test]
+fn stateless_idempotence_is_only_for_a_command_without_sql() {
+    let mut manifest = fixture::manifest();
+    manifest["custom_operations"]["widget.inspect"] = json!({
+        "kind": "command",
+        "visibility": "public",
+        "permission": "widget.inspect",
+        "idempotent_by": "stateless",
+        "input": {"fields": [
+            {"path": "request_id", "type": "text", "nullable": false},
+            {"path": "value.note", "type": "text", "nullable": false}
+        ]},
+        "result": {"class": "one", "fields": [
+            {"path": "note", "type": "text", "nullable": false}
+        ]},
+        "errors": ["invalid_input", "permission_denied", "internal_error"],
+        "error_details": {}
+    });
+    validate_operation_vocabulary(&parsed(&manifest))
+        .expect("a stateless command without SQL is accepted");
+
+    let mut with_sql = fixture::manifest();
+    with_sql["custom_operations"]["widget.archive"]["idempotent_by"] = json!("stateless");
+    let error = validate_operation_vocabulary(&parsed(&with_sql))
+        .expect_err("a stateless command with SQL was accepted");
+    assert_eq!(error.kind(), GenerateErrorKind::InvalidOperation);
+    assert!(
+        error
+            .to_string()
+            .contains("widget.archive is stateless and declares SQL"),
+        "{error}"
+    );
+}
+
 #[test]
 fn internal_relations_are_not_models_and_their_vocabulary_is_closed() {
     let package = fixture::generate_fixture();

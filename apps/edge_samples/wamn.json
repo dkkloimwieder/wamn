@@ -236,6 +236,58 @@
       },
       "transaction": "explicit_per_input",
       "automatic_retry": false
+    },
+    "sample.read": {
+      "kind": "command",
+      "visibility": "public",
+      "label": "Read a sample",
+      "description": "The device operation of an edge box. It turns one frame from the serial device into the sample that the box stores and forwards. It declares no SQL.",
+      "permission": "sample.read",
+      "idempotent_by": "stateless",
+      "input": {
+        "fields": [
+          {
+            "path": "request_id",
+            "type": "text",
+            "nullable": false
+          },
+          {
+            "path": "value.frame",
+            "type": "text",
+            "nullable": false,
+            "label": "Frame",
+            "description": "The frame that the device sent, without its line ending."
+          },
+          {
+            "path": "value.captured_at",
+            "type": "timestamptz",
+            "nullable": false,
+            "label": "Captured at",
+            "description": "When the edge box read the frame."
+          }
+        ]
+      },
+      "result": {
+        "class": "one",
+        "fields": [
+          {
+            "path": "frame",
+            "type": "text",
+            "nullable": false
+          },
+          {
+            "path": "captured_at",
+            "type": "timestamptz",
+            "nullable": false
+          }
+        ]
+      },
+      "errors": [
+        "invalid_input",
+        "permission_denied",
+        "internal_error"
+      ],
+      "error_details": {}
     }
   },
   "connections": [

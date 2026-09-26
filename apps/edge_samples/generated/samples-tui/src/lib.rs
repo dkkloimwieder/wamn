@@ -12,6 +12,7 @@ pub mod sample;
 pub fn screens(binding: SessionBinding) -> Vec<Screen> {
     vec![
         screens::sample::get(binding.clone()),
+        screens::sample::read(binding.clone()),
         screens::sample::record(binding),
     ]
 }

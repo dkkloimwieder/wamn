@@ -71,6 +71,57 @@ pub fn get(binding: submission::SessionBinding) -> screen::Screen {
     screen::Screen::new(&GET_SPEC, binding)
 }
 
+pub static READ_SPEC: screen::ScreenSpec = screen::ScreenSpec {
+    model: "sample",
+    name: "read",
+    operation: "edge-samples:sample/read@1.0.0",
+    kind: "command",
+    input: crate::sample::SAMPLE_READ_INPUT_SCHEMA,
+    input_schema: None,
+    response: submission::ResponseContract {
+        schema: None,
+        partial_schema: None,
+        fields: crate::sample::SAMPLE_READ_RESULT_SCHEMA,
+        result_class: Some("one"),
+        errors: &[
+            submission::ErrorCase {
+                literal: "internal_error",
+                required: &[],
+                sources: &["query_error", "row_limit_exceeded", "undeclared_constraint"],
+            },
+            submission::ErrorCase {
+                literal: "invalid_input",
+                required: &["field"],
+                sources: &["malformed_input"],
+            },
+            submission::ErrorCase {
+                literal: "permission_denied",
+                required: &["operation"],
+                sources: &["permission_denied"],
+            },
+        ],
+        kind: "command",
+        transaction: None,
+        direct: false,
+        replay: submission::Replay::Unknown,
+    },
+    route: None,
+    fresh_only: false,
+    record: None,
+    revision: None,
+    revision_inputs: &[],
+    requires_composition: false,
+    supplied: &[screen::SuppliedField {
+        path: "request_id",
+        kind: screen::SuppliedKind::RequestId,
+    }],
+};
+
+#[must_use]
+pub fn read(binding: submission::SessionBinding) -> screen::Screen {
+    screen::Screen::new(&READ_SPEC, binding)
+}
+
 pub static RECORD_SPEC: screen::ScreenSpec = screen::ScreenSpec {
     model: "sample",
     name: "record",
