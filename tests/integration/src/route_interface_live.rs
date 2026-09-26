@@ -243,17 +243,13 @@ fn attachments(
     Ok((attachments, wirings))
 }
 
-#[tokio::test(flavor = "multi_thread")]
-#[ignore = "requires: WAMN_APPLICATION_COMPONENTS, WAMN_FLOW_HTTP_COMPONENT"]
-async fn a_route_answers_every_operation_kind_as_its_one_node_wiring() -> anyhow::Result<()> {
-    wamn_test_postgres::require_prerequisites(&[
-        "WAMN_APPLICATION_COMPONENTS",
-        "WAMN_FLOW_HTTP_COMPONENT",
-    ]);
-    let _lock = wamn_test_postgres::lock();
-    let system = wamn_test_postgres::database();
-    let project = wamn_test_postgres::database();
-    let scratch = ScratchRoot::create()?;
+/// Start the fixture application with every attachment served twice, and
+/// the client that calls it.
+async fn start(
+    system_url: &str,
+    project_url: &str,
+    scratch: &ScratchRoot,
+) -> anyhow::Result<(LocalApplication, Paths)> {
     let app = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("../../apps/platform_fixture")
         .canonicalize()?;
@@ -261,8 +257,8 @@ async fn a_route_answers_every_operation_kind_as_its_one_node_wiring() -> anyhow
     let flow_http = PathBuf::from(std::env::var("WAMN_FLOW_HTTP_COMPONENT")?);
     let (attachments, wirings) = attachments(&app)?;
     let application = LocalApplication::start(LocalApplicationConfig {
-        system_database_url: system.url(),
-        database_url: project.url(),
+        system_database_url: system_url,
+        database_url: project_url,
         scratch: scratch.path(),
         component_directory: &components,
         flow_http_wasm: &flow_http,
@@ -289,6 +285,21 @@ async fn a_route_answers_every_operation_kind_as_its_one_node_wiring() -> anyhow
             .timeout(std::time::Duration::from_secs(60))
             .build()?,
     };
+    Ok((application, paths))
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "requires: WAMN_APPLICATION_COMPONENTS, WAMN_FLOW_HTTP_COMPONENT"]
+async fn a_route_answers_every_operation_kind_as_its_one_node_wiring() -> anyhow::Result<()> {
+    wamn_test_postgres::require_prerequisites(&[
+        "WAMN_APPLICATION_COMPONENTS",
+        "WAMN_FLOW_HTTP_COMPONENT",
+    ]);
+    let _lock = wamn_test_postgres::lock();
+    let system = wamn_test_postgres::database();
+    let project = wamn_test_postgres::database();
+    let scratch = ScratchRoot::create()?;
+    let (application, paths) = start(system.url(), project.url(), &scratch).await?;
 
     // CREATE. The route replays the command the wiring created, from the same
     // claim record: the same id and the same creation time.
@@ -542,6 +553,149 @@ async fn a_route_answers_every_operation_kind_as_its_one_node_wiring() -> anyhow
         "an update changes the get tag: {status} {changed:?} {get_tag}"
     );
 
+    application.shutdown().await?;
+    Ok(())
+}
+
+/// Send a streamed read on a raw connection and read its head and first
+/// rows, and nothing more: a client that holds its socket reads no row the
+/// kernel did not already receive.
+async fn open_load(
+    address: &str,
+    paths: &Paths,
+    path: &str,
+) -> anyhow::Result<tokio::net::TcpStream> {
+    let mut socket = tokio::net::TcpStream::connect(address).await?;
+    let request = format!(
+        "GET {path} HTTP/1.1\r\nHost: {}\r\nAuthorization: Bearer {}\r\n\r\n",
+        paths.host, paths.bearer
+    );
+    tokio::io::AsyncWriteExt::write_all(&mut socket, request.as_bytes()).await?;
+    let mut first = vec![0; 4096];
+    let read = tokio::io::AsyncReadExt::read(&mut socket, &mut first).await?;
+    anyhow::ensure!(
+        first[..read].starts_with(b"HTTP/1.1 200"),
+        "the load answers 200: {}",
+        String::from_utf8_lossy(&first[..read])
+    );
+    Ok(socket)
+}
+
+/// Transactions open on the project database, other than this session's.
+const OPEN_TRANSACTIONS: &str = "SELECT count(*) FROM pg_stat_activity \
+     WHERE datname = current_database() AND pid <> pg_backend_pid() AND xact_start IS NOT NULL";
+
+/// Wait until the number of open transactions satisfies `settled`.
+async fn transactions(
+    database: &tokio_postgres::Client,
+    settled: impl Fn(i64) -> bool,
+) -> anyhow::Result<i64> {
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(10);
+    loop {
+        let open: i64 = database.query_one(OPEN_TRANSACTIONS, &[]).await?.get(0);
+        if settled(open) || tokio::time::Instant::now() > deadline {
+            return Ok(open);
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+}
+
+/// A streamed load ends its database query when it stops: at its cap, when
+/// the client aborts it, and when its connection drops (wamn-utci.3). While a
+/// client reads no more, the load holds one transaction open on the server,
+/// and each stop ends that transaction.
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "requires: WAMN_APPLICATION_COMPONENTS, WAMN_FLOW_HTTP_COMPONENT"]
+async fn a_streamed_load_that_stops_ends_its_database_query() -> anyhow::Result<()> {
+    wamn_test_postgres::require_prerequisites(&[
+        "WAMN_APPLICATION_COMPONENTS",
+        "WAMN_FLOW_HTTP_COMPONENT",
+    ]);
+    let _lock = wamn_test_postgres::lock();
+    let system = wamn_test_postgres::database();
+    let project = wamn_test_postgres::database();
+    let scratch = ScratchRoot::create()?;
+    let (application, paths) = start(system.url(), project.url(), &scratch).await?;
+    let (database, connection) =
+        tokio_postgres::connect(project.url(), tokio_postgres::NoTls).await?;
+    let connection = tokio::spawn(connection);
+    // More rows than the sockets between the host and the client hold: each
+    // row is about 1 KiB, and a load of every row about 100 MiB.
+    database
+        .batch_execute(
+            "BEGIN; \
+             SELECT set_config('app.user_id', '00000000-0000-4000-8000-000000000001', true); \
+             INSERT INTO inventory.widget_maker (name) \
+             SELECT 'maker ' || n || repeat('x', 1000) FROM generate_series(1, 150000) n; \
+             COMMIT",
+        )
+        .await
+        .map_err(|error| anyhow::anyhow!("insert the widget makers: {error:?}"))?;
+    let load = json!({"limit": 100_000, "shape": "stream"});
+    let query = wamn_execution_contract::encode_read_query(load.as_object().context("an item")?);
+    let path = format!("{ROUTE_PREFIX}/widget_maker/query?{query}");
+
+    // CAP STOP. A load of ten rows reads eleven, says more exist, and ends.
+    let (status, _, lines) = paths
+        .streamed(
+            "/widget_maker/query",
+            &json!({"limit": 10, "shape": "stream"}),
+            None,
+        )
+        .await?;
+    anyhow::ensure!(
+        status == 200 && lines.len() == 11 && lines[10]["outcome"]["value"]["more"] == json!(true),
+        "a load of ten rows says more exist: {status} {lines:?}"
+    );
+    let open = transactions(&database, |open| open == 0).await?;
+    anyhow::ensure!(open == 0, "the cap stop ends the query: {open} open");
+
+    // ABORT. The client reads the head and the first rows of a load, then
+    // closes its connection, as a browser does when a page aborts a fetch.
+    let address = paths
+        .endpoint
+        .trim_start_matches("http://")
+        .trim_end_matches('/')
+        .to_owned();
+    let mut socket = open_load(&address, &paths, &path).await?;
+    let open = transactions(&database, |open| open >= 1).await?;
+    anyhow::ensure!(
+        open >= 1,
+        "a load the client does not read holds its transaction"
+    );
+    tokio::io::AsyncWriteExt::shutdown(&mut socket).await?;
+    drop(socket);
+    let open = transactions(&database, |open| open == 0).await?;
+    anyhow::ensure!(open == 0, "an abort ends the query: {open} open");
+
+    // DISCONNECT. The connection resets, as a dropped network does.
+    let socket = open_load(&address, &paths, &path).await?;
+    let open = transactions(&database, |open| open >= 1).await?;
+    anyhow::ensure!(
+        open >= 1,
+        "a load the client does not read holds its transaction"
+    );
+    // A zero linger resets the connection at once, so the drop does not block.
+    #[expect(deprecated, reason = "a zero linger is the reset this case needs")]
+    socket.set_linger(Some(std::time::Duration::ZERO))?;
+    drop(socket);
+    let open = transactions(&database, |open| open == 0).await?;
+    anyhow::ensure!(open == 0, "a disconnect ends the query: {open} open");
+
+    // A client that reads to the end gets every row and the outcome line.
+    let (status, _, lines) = paths.streamed("/widget_maker/query", &load, None).await?;
+    let (outcome, rows) = lines.split_last().context("a load ends in its outcome")?;
+    anyhow::ensure!(
+        status == 200
+            && rows.len() == 100_000
+            && rows.iter().all(|line| line.get("row").is_some())
+            && outcome["outcome"]["value"]["more"] == json!(true),
+        "a full load reads its cap and says more exist: {status}, {} lines, {outcome}",
+        lines.len()
+    );
+
+    drop(database);
+    connection.await??;
     application.shutdown().await?;
     Ok(())
 }

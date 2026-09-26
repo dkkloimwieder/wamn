@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use anyhow::Context as _;
 use bytes::Bytes;
-use http_body_util::{BodyExt as _, Full};
+use http_body_util::BodyExt as _;
 use hyper::server::conn::http1;
 use hyper::service::service_fn;
 use hyper::{Request, Response};
@@ -90,7 +90,8 @@ pub(crate) struct PreparedLocalApplication {
     pub component_digests: HashMap<String, String>,
 }
 
-/// A loopback endpoint backed by a fresh flow-http store for every request.
+/// A loopback endpoint backed by a fresh flow-http store for every request,
+/// which streams each response body as the production host does.
 pub struct LocalApplication {
     pub endpoint: String,
     pub route_host: String,
@@ -152,15 +153,14 @@ impl LocalApplication {
                         async move {
                             let request = request
                                 .map(|body| body.map_err(|_| ErrorCode::ConnectionTerminated));
-                            let invocation = invoke_request(
+                            stream_request(
                                 runtime.engine.as_ref(),
                                 &runtime.flow_http,
                                 Arc::clone(&runtime.routing),
                                 Arc::clone(&runtime.bridge),
                                 request,
                             )
-                            .await?;
-                            Ok::<_, anyhow::Error>(invocation.response.map(Full::new))
+                            .await
                         }
                     });
                     if let Err(error) = http1::Builder::new()
@@ -227,17 +227,13 @@ fn with_host_authority<B>(mut request: Request<B>) -> anyhow::Result<Request<B>>
     Ok(request)
 }
 
-pub async fn invoke_request<B>(
+/// Link, bind and instantiate the shipped flow-http component in a fresh store.
+async fn instantiate(
     engine: &wash_runtime::engine::Engine,
     flow_http: &Component,
     routing: Arc<FlowHttpRouting>,
     bridge: Arc<RouterDeliveryBridge>,
-    request: Request<B>,
-) -> anyhow::Result<LocalInvocation>
-where
-    B: hyper::body::Body<Data = Bytes> + Send + 'static,
-    B::Error: Into<wasmtime_wasi_http::Error>,
-{
+) -> anyhow::Result<(Store<SharedCtx>, Service)> {
     let raw = engine.inner();
     let mut linker = Linker::new(raw);
     wasmtime_wasi::p2::add_to_linker_async(&mut linker)
@@ -288,6 +284,121 @@ where
     let service = Service::instantiate_async(&mut store, &compiled, workload.linker())
         .await
         .map_err(|error| anyhow::anyhow!("instantiate shipped flow-http: {error}"))?;
+    Ok((store, service))
+}
+
+/// A response body that the component writes as the connection reads it.
+#[derive(Debug)]
+pub struct FrameBody {
+    frames: tokio::sync::mpsc::Receiver<Result<hyper::body::Frame<Bytes>, anyhow::Error>>,
+}
+
+impl hyper::body::Body for FrameBody {
+    type Data = Bytes;
+    type Error = anyhow::Error;
+
+    fn poll_frame(
+        self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Option<Result<hyper::body::Frame<Bytes>, Self::Error>>> {
+        self.get_mut().frames.poll_recv(cx)
+    }
+}
+
+/// Frames a response body holds between the component and the connection.
+const FRAMES_IN_FLIGHT: usize = 4;
+
+/// Serve one request as the production host serves it: the response head as
+/// soon as the component returns it, and the body as the component writes it,
+/// through a bounded channel. A connection that stops reading slows the
+/// component, and one that closes drops the body the component writes.
+pub async fn stream_request<B>(
+    engine: &wash_runtime::engine::Engine,
+    flow_http: &Component,
+    routing: Arc<FlowHttpRouting>,
+    bridge: Arc<RouterDeliveryBridge>,
+    request: Request<B>,
+) -> anyhow::Result<Response<FrameBody>>
+where
+    B: hyper::body::Body<Data = Bytes> + Send + 'static,
+    B::Error: Into<wasmtime_wasi_http::Error>,
+{
+    let (mut store, service) = instantiate(engine, flow_http, routing, bridge).await?;
+    let request = with_host_authority(request)?;
+    let (request, request_io) =
+        wasmtime_wasi_http::p3::Request::from_http(wasmtime_wasi_http::default_hooks(), request);
+    let (head_tx, head_rx) = tokio::sync::oneshot::channel();
+    let (frames_tx, frames) = tokio::sync::mpsc::channel(FRAMES_IN_FLIGHT);
+    tokio::spawn(async move {
+        let run = store
+            .run_concurrent(async |accessor| {
+                let handle = async {
+                    let response = service
+                        .handle(accessor, request)
+                        .await
+                        .map_err(|error| anyhow::anyhow!("call flow-http: {error}"))?
+                        .map_err(|error| anyhow::anyhow!("flow-http returned {error:?}"))?;
+                    let (finish_tx, finish_rx) =
+                        tokio::sync::oneshot::channel::<Result<(), wasmtime_wasi_http::Error>>();
+                    let response = accessor
+                        .with(|store| {
+                            response.into_http(store, async move {
+                                finish_rx
+                                    .await
+                                    .unwrap_or(Err(wasmtime_wasi_http::Error::ConnectionTerminated))
+                            })
+                        })
+                        .map_err(|error| anyhow::anyhow!("convert flow-http response: {error}"))?;
+                    let (parts, mut body) = response.into_parts();
+                    if head_tx.send(parts).is_err() {
+                        let _ =
+                            finish_tx.send(Err(wasmtime_wasi_http::Error::ConnectionTerminated));
+                        return Ok(());
+                    }
+                    let mut delivery = Ok(());
+                    while let Some(frame) = body.frame().await {
+                        let frame = frame.map_err(|error| anyhow::anyhow!("{error:?}"));
+                        if frames_tx.send(frame).await.is_err() {
+                            delivery = Err(wasmtime_wasi_http::Error::ConnectionTerminated);
+                            break;
+                        }
+                    }
+                    let _ = finish_tx.send(delivery);
+                    Ok::<_, anyhow::Error>(())
+                };
+                let io = async {
+                    if let Err(error) = request_io.await {
+                        tracing::debug!(?error, "flow-http request body processing ended");
+                    }
+                    Ok::<_, anyhow::Error>(())
+                };
+                tokio::try_join!(handle, io).map(drop)
+            })
+            .await;
+        match run {
+            Ok(Ok(())) => {}
+            Ok(Err(error)) => tracing::debug!(%error, "flow-http response ended"),
+            Err(error) => tracing::debug!(%error, "flow-http store ended"),
+        }
+    });
+    let parts = head_rx
+        .await
+        .context("flow-http ended before its response head")?;
+    Ok(Response::from_parts(parts, FrameBody { frames }))
+}
+
+pub async fn invoke_request<B>(
+    engine: &wash_runtime::engine::Engine,
+    flow_http: &Component,
+    routing: Arc<FlowHttpRouting>,
+    bridge: Arc<RouterDeliveryBridge>,
+    request: Request<B>,
+) -> anyhow::Result<LocalInvocation>
+where
+    B: hyper::body::Body<Data = Bytes> + Send + 'static,
+    B::Error: Into<wasmtime_wasi_http::Error>,
+{
+    let (mut store, service) = instantiate(engine, flow_http, routing, bridge).await?;
     let request = with_host_authority(request)?;
     let (request, request_io) =
         wasmtime_wasi_http::p3::Request::from_http(wasmtime_wasi_http::default_hooks(), request);

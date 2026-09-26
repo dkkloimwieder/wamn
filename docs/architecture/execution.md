@@ -71,6 +71,10 @@ It sends `X-Accel-Buffering: no`, and the router writes one body chunk for each 
 Nothing on the platform path compresses a reply.
 A read that ends before its first row answers as a page answers: a refusal keeps its status and its body, and a match with `If-None-Match` answers 304.
 A failure after the first row becomes the outcome line.
+Every stage between the database and the socket holds a few batches at most, so a client that stops reading stops the query.
+A load that stops ends its database query, whether it reached its cap, the client aborted it, or the connection dropped.
+A closed connection drops the reply lines, the host then drops the rows and the component's stream, and the host rolls the query's transaction back.
+The test `a_streamed_load_that_stops_ends_its_database_query` in [`route_interface_live`](../../tests/integration/src/route_interface_live.rs) watches the server's open transactions for each of the three stops.
 The router calls `deliver-stream` of [`wamn:router-delivery` 0.2.0](../../crates/execution/host/wit/deps/wamn-router-delivery-0.2/package.wit), which adds that call to 0.1.0 and names the 0.1.0 types.
 [`query_read`](../../crates/execution/host/src/query_read.rs) owns the ceiling and the lines.
 
