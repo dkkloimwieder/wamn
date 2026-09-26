@@ -11,7 +11,7 @@
  */
 
 import { cleanup, fireEvent, render, screen, waitFor } from "@solidjs/testing-library";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { JsonValue } from "@wamn/web-runtime";
 
@@ -55,6 +55,21 @@ describe("a selector that holds a record its list did not return", () => {
     await waitFor(() => expect(selector("maker id").value).toBe("Southwind"));
     const reads = sent.filter((request) => request.operation.includes("widget-maker/get@"));
     expect(reads.map((request) => (request.items[0] as { id: string }).id)).toEqual([SOUTH]);
+  });
+
+  it("reads the value inside the owner, so the read leaks no computation (wamn-16ii)", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      const { transport } = paged();
+      render(() => (
+        <WidgetCreateForm transport={transport} initial={{ code: "standard", makerId: SOUTH }} />
+      ));
+      await waitFor(() => expect(selector("maker id").value).toBe("Southwind"));
+      const leaks = warn.mock.calls.filter((call) => String(call[0]).includes("outside a `createRoot`"));
+      expect(leaks).toEqual([]);
+    } finally {
+      warn.mockRestore();
+    }
   });
 });
 

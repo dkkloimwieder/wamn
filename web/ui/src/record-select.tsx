@@ -109,6 +109,10 @@ export function RecordSelect<Row extends object>(props: RecordSelectProps<Row>) 
       : listed;
   };
   const asked = new Set<string>();
+  // The read answers after an await, outside the owner. Reading the value
+  // getter there can create a computation that nothing disposes, so the
+  // answer compares against this memo, which the owner holds (wamn-16ii).
+  const current = createMemo(() => props.value);
   createEffect(() => {
     const value = props.value;
     const read = props.readRow;
@@ -121,7 +125,7 @@ export function RecordSelect<Row extends object>(props: RecordSelectProps<Row>) 
     asked.add(value);
     read(value).then(
       (row) => {
-        if (row !== null && props.value === value) {
+        if (row !== null && current() === value) {
           setLoaded(() => row);
           setChosen(() => row);
         }
