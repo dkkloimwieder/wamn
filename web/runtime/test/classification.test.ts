@@ -10,8 +10,8 @@
 import { describe, expect, it } from "vitest";
 
 import table from "../../../crates/client/tui/tests/data/classification-cases.json" with { type: "json" };
-import { classify, createTransport } from "../src/transport.js";
-import type { ErrorCase, ResponseContract } from "../src/wire.js";
+import { classify, classifyEach, createTransport } from "../src/transport.js";
+import type { ErrorCase, JsonValue, Outcome, ResponseContract } from "../src/wire.js";
 
 interface Expectation {
   readonly outcome: string;
@@ -53,6 +53,30 @@ function contractOf(name: string): ResponseContract {
   };
 }
 
+/** The outcome one expectation of the table states. */
+function stated(expectation: Expectation): Outcome<JsonValue> {
+  switch (expectation.outcome) {
+    case "completed":
+      return { status: "completed", value: expectation.value as JsonValue };
+    case "refused":
+      return {
+        status: "refused",
+        code: expectation.code ?? null,
+        detail: (expectation.detail ?? null) as JsonValue,
+      };
+    case "partially_completed":
+      return {
+        status: "partiallyCompleted",
+        committedResult: expectation.committed_result as JsonValue,
+        failedOutcome: expectation.failed_outcome as JsonValue,
+      };
+    case "uncertain":
+      return { status: "uncertain", reason: expectation.reason ?? "", retryRefusal: null };
+    default:
+      throw new Error(`the table states an unknown outcome: ${expectation.outcome}`);
+  }
+}
+
 describe("the shared classification cases", () => {
   const cases = table.cases as unknown as readonly Case[];
 
@@ -66,35 +90,31 @@ describe("the shared classification cases", () => {
         status: shared.status,
         body: shared.body,
       });
-      const stated = shared.expect;
-      switch (stated.outcome) {
-        case "completed":
-          expect(outcome).toEqual({ status: "completed", value: stated.value });
-          break;
-        case "refused":
-          expect(outcome).toEqual({
-            status: "refused",
-            code: stated.code ?? null,
-            detail: stated.detail ?? null,
-          });
-          break;
-        case "partially_completed":
-          expect(outcome).toEqual({
-            status: "partiallyCompleted",
-            committedResult: stated.committed_result,
-            failedOutcome: stated.failed_outcome,
-          });
-          break;
-        case "uncertain":
-          expect(outcome).toEqual({
-            status: "uncertain",
-            reason: stated.reason,
-            retryRefusal: null,
-          });
-          break;
-        default:
-          throw new Error(`the table states an unknown outcome: ${stated.outcome}`);
-      }
+      expect(outcome).toEqual(stated(shared.expect));
+    });
+  }
+});
+
+/** One reply to a call that carries many items, with one outcome for each. */
+interface ManyCase {
+  readonly name: string;
+  readonly contract: string;
+  readonly request_ids: readonly (string | null)[];
+  readonly status: number;
+  readonly body: string;
+  readonly expect: readonly Expectation[];
+}
+
+describe("the shared many-item cases", () => {
+  const cases = table.many_cases as unknown as readonly ManyCase[];
+
+  for (const shared of cases) {
+    it(shared.name, () => {
+      const outcomes = classifyEach(contractOf(shared.contract), shared.request_ids, {
+        status: shared.status,
+        body: shared.body,
+      });
+      expect(outcomes).toEqual(shared.expect.map(stated));
     });
   }
 });
@@ -131,6 +151,40 @@ describe("a transport failure", () => {
     if (outcome.status === "uncertain") {
       expect(outcome.reason).toContain("connection reset");
     }
+  });
+
+  it("sends many items in one call, and reads one outcome for each", async () => {
+    let body: unknown = null;
+    const transport = createTransport({
+      baseUrl: "https://example.test",
+      fetch: (_url, init) => {
+        body = JSON.parse(String(init?.body));
+        return Promise.resolve(
+          new Response(
+            '[{"request_id":"r1","value":{"id":"a"}},{"request_id":"r2","error":{"code":"x"}}]',
+            { status: 200 },
+          ),
+        );
+      },
+    });
+    const outcomes = await transport.invokeEach?.({
+      ...route,
+      items: [{ request_id: "r1" }, { request_id: "r2" }],
+    });
+    expect(body).toEqual([{ request_id: "r1" }, { request_id: "r2" }]);
+    expect(outcomes?.map((outcome) => outcome.status)).toEqual(["completed", "uncertain"]);
+  });
+
+  it("gives every item the uncertainty of a failed send", async () => {
+    const transport = createTransport({
+      baseUrl: "https://example.test",
+      fetch: () => Promise.reject(new Error("connection reset")),
+    });
+    const outcomes = await transport.invokeEach?.({
+      ...route,
+      items: [{ request_id: "r1" }, { request_id: "r2" }],
+    });
+    expect(outcomes?.map((outcome) => outcome.status)).toEqual(["uncertain", "uncertain"]);
   });
 
   it("sends the credential and the route the bindings state", async () => {

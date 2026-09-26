@@ -272,6 +272,49 @@ export function classify(
 }
 
 /**
+ * Turn one reply to a call that carries many items into one outcome for each.
+ *
+ * The release runs each item on its own. A 200 reply with one outcome for each
+ * item classifies each item by the rule of one item, so a refusal marks only
+ * its own item. Any other reply gives every item the same outcome, because it
+ * names no item: an ingress refusal refuses every item, and a partial
+ * completion or a failure establishes nothing for any of them.
+ * `requestIds` holds the identity each item carries, in the order sent.
+ */
+export function classifyEach(
+  contract: ResponseContract,
+  requestIds: readonly (string | null)[],
+  reply: HttpReply,
+): Outcome<JsonValue>[] {
+  const every = (outcome: Outcome<JsonValue>) => requestIds.map(() => outcome);
+  let document: unknown;
+  try {
+    document = JSON.parse(reply.body);
+  } catch {
+    document = undefined;
+  }
+  const partial = PARTIAL.safeParse(document);
+  if (
+    partial.success &&
+    (partial.data.committed_result !== undefined || partial.data.failed_outcome !== undefined)
+  ) {
+    return every(uncertain("a partial completion does not name the item it belongs to"));
+  }
+  if (reply.status !== 200 || document === undefined) {
+    return every(classify(contract, null, reply));
+  }
+  if (!Array.isArray(document) || document.length !== requestIds.length) {
+    return every(uncertain("the response must contain one outcome for each submitted item"));
+  }
+  return document.map((item, index) =>
+    classify(contract, requestIds[index] ?? null, {
+      status: 200,
+      body: JSON.stringify([item]),
+    }),
+  );
+}
+
+/**
  * Why the completed value does not carry what its result class states, or null.
  *
  * `validate_value` in `submission.rs` states the same shapes. This reads the
@@ -431,76 +474,91 @@ export function createTransport(options: TransportOptions): Transport {
       etag: response.headers.get("etag"),
     };
   };
+  /** Send one request, and return its reply or the uncertainty of a failed send. */
+  const exchange = async (request: WireRequest): Promise<HttpReply | Outcome<JsonValue>> => {
+    const read = request.method === "GET";
+    const headers: { [name: string]: string } = {};
+    const init: RequestInit = { method: request.method, headers };
+    let target = request.template;
+    if (read) {
+      // A read carries its one item in the query string, and has no body.
+      const [item, ...rest] = request.items;
+      if (rest.length > 0 || item === null || typeof item !== "object" || Array.isArray(item)) {
+        return uncertain("a read sends exactly one request item");
+      }
+      const query = encodeReadQuery(item as { readonly [name: string]: JsonValue });
+      target = query === "" ? target : `${target}?${query}`;
+    } else {
+      headers["content-type"] = "application/json";
+      init.body = JSON.stringify(request.items);
+    }
+    if (options.cookie === true) {
+      // The CSRF cookie is read on every request, because a renewal replaces
+      // it. Without it the header stays off, and the router decides. A read
+      // needs no CSRF header, and a request with one is never cached.
+      // A new session or a renewal sets a new cookie, and empties the store.
+      const csrf = cookieValue((options.cookies ?? (() => document.cookie))(), CSRF_COOKIE);
+      reads.belongTo(csrf);
+      if (csrf !== null && !read) {
+        headers[CSRF_HEADER] = csrf;
+      }
+      init.credentials = "include";
+    } else if (options.credential !== undefined) {
+      headers["authorization"] = `Bearer ${options.credential}`;
+    }
+    let reply: HttpReply;
+    try {
+      if (read) {
+        // A read the store holds sends the store's tag with cache
+        // "no-store", so its 304 reaches the store. A read the store does
+        // not hold, as after a reload, uses "no-cache": the browser
+        // revalidates its own copy, and a 304 saves the body.
+        const stored = (outcome: Outcome<JsonValue>) =>
+          outcome.status === "completed" || outcome.status === "refused";
+        reply = await reads.read(
+          `${request.operation} ${target}`,
+          (tag) =>
+            send(
+              target,
+              tag === null
+                ? { ...init, cache: "no-cache" }
+                : { ...init, cache: "no-store", headers: { ...headers, "if-none-match": tag } },
+            ),
+          (candidate) => stored(classify(request.contract, null, candidate)),
+        );
+      } else {
+        reply = await send(target, init);
+      }
+    } catch (error) {
+      return uncertain(`the request did not complete: ${String(error)}`);
+    } finally {
+      // Any write can change what a stored read returns, so every stored
+      // read revalidates next (wamn-fjdo narrows this to the write's models),
+      // and each listener then reads what its page shows again.
+      if (!read) {
+        reads.invalidate();
+        for (const listener of [...writeListeners]) {
+          listener();
+        }
+      }
+    }
+    return reply;
+  };
   return {
     async invoke(request: WireRequest): Promise<Outcome<JsonValue>> {
-      const read = request.method === "GET";
-      const requestId = read ? null : submittedRequestId(request);
-      const headers: { [name: string]: string } = {};
-      const init: RequestInit = { method: request.method, headers };
-      let target = request.template;
-      if (read) {
-        // A read carries its one item in the query string, and has no body.
-        const [item, ...rest] = request.items;
-        if (rest.length > 0 || item === null || typeof item !== "object" || Array.isArray(item)) {
-          return uncertain("a read sends exactly one request item");
-        }
-        const query = encodeReadQuery(item as { readonly [name: string]: JsonValue });
-        target = query === "" ? target : `${target}?${query}`;
-      } else {
-        headers["content-type"] = "application/json";
-        init.body = JSON.stringify(request.items);
+      const requestId = request.method === "GET" ? null : submittedRequestId(request);
+      const reply = await exchange(request);
+      return isReply(reply) ? classify(request.contract, requestId, reply) : reply;
+    },
+    async invokeEach(request: WireRequest): Promise<readonly Outcome<JsonValue>[]> {
+      if (request.method === "GET") {
+        return request.items.map(() => uncertain("a read sends exactly one request item"));
       }
-      if (options.cookie === true) {
-        // The CSRF cookie is read on every request, because a renewal replaces
-        // it. Without it the header stays off, and the router decides. A read
-        // needs no CSRF header, and a request with one is never cached.
-        // A new session or a renewal sets a new cookie, and empties the store.
-        const csrf = cookieValue((options.cookies ?? (() => document.cookie))(), CSRF_COOKIE);
-        reads.belongTo(csrf);
-        if (csrf !== null && !read) {
-          headers[CSRF_HEADER] = csrf;
-        }
-        init.credentials = "include";
-      } else if (options.credential !== undefined) {
-        headers["authorization"] = `Bearer ${options.credential}`;
-      }
-      let reply: HttpReply;
-      try {
-        if (read) {
-          // A read the store holds sends the store's tag with cache
-          // "no-store", so its 304 reaches the store. A read the store does
-          // not hold, as after a reload, uses "no-cache": the browser
-          // revalidates its own copy, and a 304 saves the body.
-          const stored = (outcome: Outcome<JsonValue>) =>
-            outcome.status === "completed" || outcome.status === "refused";
-          reply = await reads.read(
-            `${request.operation} ${target}`,
-            (tag) =>
-              send(
-                target,
-                tag === null
-                  ? { ...init, cache: "no-cache" }
-                  : { ...init, cache: "no-store", headers: { ...headers, "if-none-match": tag } },
-              ),
-            (candidate) => stored(classify(request.contract, null, candidate)),
-          );
-        } else {
-          reply = await send(target, init);
-        }
-      } catch (error) {
-        return uncertain(`the request did not complete: ${String(error)}`);
-      } finally {
-        // Any write can change what a stored read returns, so every stored
-        // read revalidates next (wamn-fjdo narrows this to the write's models),
-        // and each listener then reads what its page shows again.
-        if (!read) {
-          reads.invalidate();
-          for (const listener of [...writeListeners]) {
-            listener();
-          }
-        }
-      }
-      return classify(request.contract, requestId, reply);
+      const requestIds = request.items.map(itemRequestId);
+      const reply = await exchange(request);
+      return isReply(reply)
+        ? classifyEach(request.contract, requestIds, reply)
+        : requestIds.map(() => reply);
     },
     onWrite(listener: () => void): () => void {
       writeListeners.add(listener);
@@ -517,6 +575,11 @@ export function afterWrites(transport: Transport, listener: () => void): () => v
   return transport.onWrite?.(listener) ?? (() => undefined);
 }
 
+/** Whether an exchange returned a reply, rather than the outcome of a failed send. */
+function isReply(result: HttpReply | Outcome<JsonValue>): result is HttpReply {
+  return typeof result.status === "number";
+}
+
 /** Whether an echoed identity matches the submitted one, or is absent for a read. */
 function matchesRequest(requestId: string | null, echoed: string | undefined): boolean {
   return requestId === null ? echoed === undefined : requestId !== "" && echoed === requestId;
@@ -529,11 +592,15 @@ function matchesRequest(requestId: string | null, echoed: string | undefined): b
  * carries no request identity matches nothing, which reads as uncertainty.
  */
 function submittedRequestId(request: WireRequest): string {
-  const first = request.items[0];
-  if (first === undefined || first === null || typeof first !== "object") {
+  return itemRequestId(request.items[0]);
+}
+
+/** The request identity of one submitted item, or "" when it carries none. */
+function itemRequestId(item: JsonValue | undefined): string {
+  if (item === undefined || item === null || typeof item !== "object" || Array.isArray(item)) {
     return "";
   }
-  const value = (first as { [key: string]: JsonValue })["request_id"];
+  const value = (item as { [key: string]: JsonValue })["request_id"];
   return typeof value === "string" ? value : "";
 }
 

@@ -112,6 +112,12 @@ export type OperationRoute = Omit<WireRequest, "items">;
 export interface Transport {
   invoke(request: WireRequest): Promise<Outcome<JsonValue>>;
   /**
+   * Sends one write that carries many items, each with its own request
+   * identity, and returns one outcome for each item, in order. The release
+   * runs each item on its own. A transport without it sends one item a call.
+   */
+  invokeEach?(request: WireRequest): Promise<readonly Outcome<JsonValue>[]>;
+  /**
    * Calls `listener` after each write settles, whatever its outcome, and
    * returns the function that stops it. A page reads its shown reads again
    * this way. A transport without it tells nobody about a write.

@@ -10,7 +10,12 @@
     "turns on the spelling of a value. A malformed uuid reads as completed in the",
     "browser and as uncertain in the terminal, which wamn-lajk.7 records.",
     "A transport failure, such as a dropped connection, is language specific and",
-    "keeps its own test on each side."
+    "keeps its own test on each side.",
+    "Each of many_cases states one reply to a call that carries many items, the",
+    "request identity of each item, and one outcome for each item, in order. A",
+    "200 reply with one outcome for each item classifies each by the rule of one",
+    "case. Any other reply gives every item the same outcome. The browser reads",
+    "them. The terminal reads them once wamn-zsrk lands."
   ],
   "contracts": {
     "record": {
@@ -408,6 +413,96 @@
         "outcome": "uncertain",
         "reason": "the committed result must contain exactly one outcome"
       }
+    }
+  ],
+  "many_cases": [
+    {
+      "name": "each item completes on its own",
+      "contract": "record",
+      "request_ids": ["r1", "r2"],
+      "status": 200,
+      "body": "[{\"request_id\":\"r1\",\"value\":{\"id\":\"a\"}},{\"request_id\":\"r2\",\"value\":{\"id\":\"b\"}}]",
+      "expect": [
+        { "outcome": "completed", "value": { "id": "a" } },
+        { "outcome": "completed", "value": { "id": "b" } }
+      ]
+    },
+    {
+      "name": "a declared refusal marks only its own item",
+      "contract": "record",
+      "request_ids": ["r1", "r2"],
+      "status": 200,
+      "body": "[{\"request_id\":\"r1\",\"value\":{\"id\":\"a\"}},{\"request_id\":\"r2\",\"error\":{\"code\":\"concurrency_conflict\"}}]",
+      "expect": [
+        { "outcome": "completed", "value": { "id": "a" } },
+        { "outcome": "refused", "code": "concurrency_conflict", "detail": null }
+      ]
+    },
+    {
+      "name": "an undeclared refusal makes only its own item uncertain",
+      "contract": "record",
+      "request_ids": ["r1", "r2"],
+      "status": 200,
+      "body": "[{\"request_id\":\"r1\",\"error\":{\"code\":\"surprise\"}},{\"request_id\":\"r2\",\"value\":{\"id\":\"b\"}}]",
+      "expect": [
+        { "outcome": "uncertain", "reason": "the response does not establish the submission outcome; the server reported surprise" },
+        { "outcome": "completed", "value": { "id": "b" } }
+      ]
+    },
+    {
+      "name": "fewer outcomes than items establish nothing",
+      "contract": "record",
+      "request_ids": ["r1", "r2"],
+      "status": 200,
+      "body": "[{\"request_id\":\"r1\",\"value\":{\"id\":\"a\"}}]",
+      "expect": [
+        { "outcome": "uncertain", "reason": "the response must contain one outcome for each submitted item" },
+        { "outcome": "uncertain", "reason": "the response must contain one outcome for each submitted item" }
+      ]
+    },
+    {
+      "name": "outcomes match their items by position and identity",
+      "contract": "record",
+      "request_ids": ["r1", "r2"],
+      "status": 200,
+      "body": "[{\"request_id\":\"r2\",\"value\":{\"id\":\"b\"}},{\"request_id\":\"r1\",\"value\":{\"id\":\"a\"}}]",
+      "expect": [
+        { "outcome": "uncertain", "reason": "the response does not match the submitted request" },
+        { "outcome": "uncertain", "reason": "the response does not match the submitted request" }
+      ]
+    },
+    {
+      "name": "an ingress refusal refuses every item",
+      "contract": "record",
+      "request_ids": ["r1", "r2"],
+      "status": 429,
+      "body": "{\"error\":{\"code\":\"route-capacity-exhausted\"}}",
+      "expect": [
+        { "outcome": "refused", "code": "route-capacity-exhausted", "detail": null },
+        { "outcome": "refused", "code": "route-capacity-exhausted", "detail": null }
+      ]
+    },
+    {
+      "name": "a server failure establishes nothing for any item",
+      "contract": "record",
+      "request_ids": ["r1", "r2"],
+      "status": 500,
+      "body": "{\"error\":{\"code\":\"internal_error\"}}",
+      "expect": [
+        { "outcome": "uncertain", "reason": "the response does not establish completion; the server reported internal_error" },
+        { "outcome": "uncertain", "reason": "the response does not establish completion; the server reported internal_error" }
+      ]
+    },
+    {
+      "name": "a partial completion names no item of many",
+      "contract": "partial",
+      "request_ids": ["r1", "r2"],
+      "status": 500,
+      "body": "{\"committed_result\":[{\"request_id\":\"r1\",\"value\":{\"id\":\"a\"}}],\"failed_outcome\":{\"code\":\"timeout\"}}",
+      "expect": [
+        { "outcome": "uncertain", "reason": "a partial completion does not name the item it belongs to" },
+        { "outcome": "uncertain", "reason": "a partial completion does not name the item it belongs to" }
+      ]
     }
   ]
 }
