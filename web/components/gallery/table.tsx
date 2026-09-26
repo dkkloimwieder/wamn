@@ -34,6 +34,7 @@ import {
   type WidgetQueryRow,
 } from "../fixture/widget.js";
 import { Section, State } from "./section.js";
+import { ActionTable } from "./table-actions.js";
 
 /** The page maximum the fixture contract declares. */
 const PAGE_MAXIMUM = WIDGET_QUERY_TABLE.pageMaximum;
@@ -253,10 +254,10 @@ function LoadedTable<Row extends object>(props: {
 }
 
 /**
- * One 10,000 row table at the full height of the viewport, under a header:
- * the shape an app gives a table. The app sizes the box, and the table fills
- * it, so only the grid body scrolls. It groups by the day of creation, then by
- * quantity.
+ * One table at the full height of the viewport, under a header: the shape an
+ * app gives a table. The app sizes the box, and the table fills it, so only
+ * the grid body scrolls. It is the widget table with its row buttons, its bulk
+ * action, its editable cells and its child table, over one stub transport.
  */
 export function AppTable(): JSX.Element {
   return (
@@ -265,8 +266,7 @@ export function AppTable(): JSX.Element {
         <p class="text-sm font-semibold uppercase">App header</p>
       </header>
       <main class="min-h-0 flex-1 p-6">
-        {/* The one top-level table keeps its state in the URL, so a reload brings it back. */}
-        <MemoryTable size={10000} cap={10000} groupedFields={["createdAt", "quantity"]} urlKey="pallets" />
+        <ActionTable size={60} />
       </main>
     </div>
   );
@@ -299,10 +299,16 @@ export function TableSections(): JSX.Element {
               </State>
             )}
           </For>
+          <State name="10000 rows grouped by the day of creation, then by quantity, with the table state in the URL">
+            <div class="h-[32rem]">
+              {/* The one table that keeps its state in the URL, so a reload brings it back. */}
+              <MemoryTable size={10000} cap={10000} groupedFields={["createdAt", "quantity"]} urlKey="pallets" />
+            </div>
+          </State>
         </div>
       </Section>
       <Section title="Data table in an app" name="DataTable">
-        <State name={`10000 rows at the full viewport height; served alone at ?${APP_TABLE_ONLY}`}>
+        <State name={`the widget table with row buttons, a bulk action, editable cells and a child table; served alone at ?${APP_TABLE_ONLY}`}>
           <AppTable />
         </State>
       </Section>
