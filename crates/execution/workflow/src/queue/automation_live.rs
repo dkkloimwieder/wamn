@@ -27,12 +27,14 @@ use wamn_schema_control::BareSchemaName;
 use wash_runtime::host::probes::Liveness;
 
 use crate::{
-    PostgresWorkflows, RouterDriver, RouterDriverConfig, StartRequest, Trigger, WiringCacheCapacity,
-    WorkflowErrorKind, Workflows as _,
+    PostgresWorkflows, RouterDriver, RouterDriverConfig, StartRequest, Trigger,
+    WiringCacheCapacity, WorkflowErrorKind, Workflows as _,
 };
 use wamn_execution_host::{OperationHost, OperationScope};
 use wamn_project_state::PlatformComponent;
 
+#[path = "automation_live/jsonata.rs"]
+mod jsonata;
 #[path = "automation_live/shutdown.rs"]
 mod shutdown;
 
@@ -102,10 +104,49 @@ fn component_bytes() -> Vec<u8> {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn automation_admission_delivers_with_current_service_permissions() -> anyhow::Result<()> {
-    run_automation(None).await
+    run_automation(Mode::Admission).await
 }
 
-async fn run_automation(shutdown_signal: Option<&str>) -> anyhow::Result<()> {
+/// Which case the fixture runs. The wiring `echo` has one node, and the mode
+/// picks the component it runs.
+enum Mode {
+    /// The echo guest, through admission, park, release, and permission checks.
+    Admission,
+    /// A guest that stays active until the adapter stops.
+    Shutdown,
+    /// The virtualized `jsonata` node with these bytes.
+    Jsonata(Vec<u8>),
+}
+
+/// The one node of the fixture's wiring: its bytes, its declaration, and what
+/// the wiring and the release say about it.
+struct Node {
+    bytes: Vec<u8>,
+    declaration: serde_json::Value,
+    operation: String,
+    params: serde_json::Value,
+    serving: serde_json::Value,
+}
+
+impl Node {
+    fn echo(bytes: Vec<u8>) -> Self {
+        Self {
+            bytes,
+            declaration: json!({
+                "scope": {"tenant-id":TENANT,"package-id":"automation","package-version":"1.0.0"},
+                "component":"echo","interface-version":"0.1.0",
+                "operations":{(OPERATION):{"registered-operation":OPERATION,
+                    "input-ports":[{"name":"input","schema":{}}],
+                    "output-ports":[{"name":"main","schema":{}}], "parameters":[{"name":"deadline-ms","schema":{"type":"integer"},"required":false}]}}, "connections":[]
+            }),
+            operation: OPERATION.to_owned(),
+            params: json!({"deadline-ms":60000}),
+            serving: json!({"registered-operation":OPERATION,"permissions":[OPERATION],"fresh-only":false,"statements":{}}),
+        }
+    }
+}
+
+async fn run_automation(mode: Mode) -> anyhow::Result<()> {
     let _lock = wamn_test_postgres::lock();
     let database = wamn_test_postgres::database();
     let (mut admin, connection) = tokio_postgres::connect(database.url(), NoTls).await?;
@@ -141,21 +182,16 @@ async fn run_automation(shutdown_signal: Option<&str>) -> anyhow::Result<()> {
       INSERT INTO catalog.effective_releases (tenant_id,effective_release_id,environment,verified_publisher_principal) VALUES ('{TENANT}',1,'test','automation-fixture');
       INSERT INTO catalog.effective_release_packages (tenant_id,effective_release_id,package_id,package_version) VALUES ('{TENANT}',1,'automation','1.0.0');")).await?;
     let engine = Arc::new(build_engine(&[])?);
-    let bytes = if shutdown_signal.is_some() {
-        shutdown::component_bytes()
-    } else {
-        component_bytes()
+    let node = match &mode {
+        Mode::Admission => Node::echo(component_bytes()),
+        Mode::Shutdown => Node::echo(shutdown::component_bytes()),
+        Mode::Jsonata(bytes) => jsonata::node(bytes.clone()),
     };
-    let declaration: ComponentDeclaration = serde_json::from_value(json!({
-        "scope": {"tenant-id":TENANT,"package-id":"automation","package-version":"1.0.0"},
-        "component":"echo","interface-version":"0.1.0",
-        "operations":{(OPERATION):{"registered-operation":OPERATION,
-            "input-ports":[{"name":"input","schema":{}}],
-            "output-ports":[{"name":"main","schema":{}}], "parameters":[{"name":"deadline-ms","schema":{"type":"integer"},"required":false}]}}, "connections":[]
-    }))?;
+    let declaration: ComponentDeclaration = serde_json::from_value(node.declaration.clone())?;
+    let component = declaration.component.clone();
     let admitted = validate_component_admission(
         &engine,
-        &bytes,
+        &node.bytes,
         ComponentAdmissionRequest {
             declaration,
             admitted_platform_packages: BTreeSet::from(["wamn:node".to_owned()]),
@@ -165,7 +201,7 @@ async fn run_automation(shutdown_signal: Option<&str>) -> anyhow::Result<()> {
     .component;
     let document = WiringDocument::parse(&json!({
         "format-version":"0.1", "wiring-id":"echo", "version":1,"entry":"echo",
-        "nodes":{"echo":{"component":"echo","interface-version":"0.1.0","operation":OPERATION,"params":{"deadline-ms":60000}}},
+        "nodes":{"echo":{"component":component,"interface-version":"0.1.0","operation":node.operation,"params":node.params}},
         "edges":[],"cases":[]
     }))?;
     let graph_hash = document.wiring_hash();
@@ -183,8 +219,8 @@ async fn run_automation(shutdown_signal: Option<&str>) -> anyhow::Result<()> {
     let manifest: ServingManifest = serde_json::from_value(json!({
         "format-version":wamn_catalog::SERVING_MANIFEST_FORMAT_VERSION,
         "release":{"tenant-id":TENANT,"effective-release-id":1,"environment":"test","packages":[{"package-id":"automation","package-version":"1.0.0"}]},
-        "components":[{"package-id":"automation","component":"echo","interface-version":"0.1.0","digest":admitted.component_digest,
-          "operations":{(OPERATION):{"registered-operation":OPERATION,"permissions":[OPERATION],"fresh-only":false,"statements":{}}}}],
+        "components":[{"package-id":"automation","component":component,"interface-version":"0.1.0","digest":admitted.component_digest,
+          "operations":{(node.operation.clone()):node.serving}}],
         "routes":[],"attachments":{},"workflow":{"wirings":[{"package-id":"automation","wiring-id":"echo","wiring-version":1,"graph-hash":graph_hash.as_str()}]}
     }))?;
     let canonical = manifest.canonical_bytes();
@@ -273,7 +309,7 @@ async fn run_automation(shutdown_signal: Option<&str>) -> anyhow::Result<()> {
     let scratch = wamn_test_infrastructure::scratch::ScratchRoot::create()?;
     std::fs::write(
         local_component_path(scratch.path(), &admitted.component_digest)?,
-        bytes,
+        &node.bytes,
     )?;
     let (logging, capture) = WamnLogging::new_with_capture(
         &wamn_runtime::plugins::wamn_logging::WamnLoggingConfig::default(),
@@ -322,7 +358,21 @@ async fn run_automation(shutdown_signal: Option<&str>) -> anyhow::Result<()> {
             service_principal_id: SERVICE.to_owned(),
         },
     };
-    if shutdown_signal.is_some() {
+    if let Mode::Jsonata(_) = mode {
+        return jsonata::run(
+            &admin,
+            &workflows,
+            jsonata::Execution {
+                driver: &driver,
+                postgres: &postgres,
+                scope: &scope,
+                jetstream: &jetstream,
+                liveness: &liveness,
+            },
+        )
+        .await;
+    }
+    if let Mode::Shutdown = mode {
         return shutdown::run(
             &mut admin,
             &workflows,

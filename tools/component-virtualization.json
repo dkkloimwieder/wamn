@@ -13,6 +13,12 @@
       "output_file": "blob_put.wasm"
     },
     {
+      "package": "jsonata-expression",
+      "workspace_manifest": "apps/Cargo.toml",
+      "raw_file": "jsonata_expression.wasm",
+      "output_file": "jsonata_expression.wasm"
+    },
+    {
       "package": "client-acme-receiving-participant",
       "workspace_manifest": "apps/Cargo.toml",
       "raw_file": "client_acme_receiving_participant.wasm",

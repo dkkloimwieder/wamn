@@ -23,6 +23,7 @@ members = [
     "platform/events/wire",
     "platform/execution/blob-put",
     "platform/execution/contract",
+    "platform/execution/jsonata",
     "platform/execution/materializer",
     "platform/data/postgres-statements",
     "platform/data/postgres-sqlx",

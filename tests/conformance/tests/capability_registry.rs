@@ -118,31 +118,20 @@ fn capability_registry_wasi_rows_match_the_pinned_adapter() {
         "the production adapter profile unexpectedly imports random: {imports:?}"
     );
 
-    // Random is offered by the host but absent from current tenant imports.
-    // Inspect the adapter's real refusal exports to bind that row's vocabulary;
-    // this test-only option does not change the production virtualization policy.
-    virtualizer.random(false);
-    let adapter = virtualizer
-        .finish()
-        .expect("generate the pinned adapter with random refusal exports");
-    let component = Component::new(engine.inner(), &adapter.adapter)
-        .expect("compile the pinned adapter with random refusal exports");
+    // The production profile leaves random unset, so the adapter neither
+    // imports nor exports it: a guest's random import passes through at the
+    // version Rust std links. The registry row carries that version, and the
+    // `jsonata` node's admission test measures it on a real guest.
     let exports: Vec<String> = component
         .component_type()
         .exports(component.engine())
         .map(|(name, _)| name.to_owned())
         .filter(|name| import_pkg(name) == "wasi:random")
         .collect();
-    println!(
-        "random-refusal-adapter={} exports={exports:?}",
-        wamn_engine::component_admission::component_digest(&adapter.adapter)
+    assert!(
+        exports.is_empty(),
+        "the production adapter must pass random through, not serve it: {exports:?}"
     );
-    assert_eq!(
-        exports.len(),
-        3,
-        "the adapter must expose all random interfaces"
-    );
-    assert_registry_version("wasi:random", &exports);
 }
 
 /// Every WASI package the tree vendors and admission can reach must be either

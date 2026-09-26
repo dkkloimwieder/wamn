@@ -93,10 +93,9 @@ async fn workflows(scope: &WorkflowScope) -> anyhow::Result<PostgresWorkflows> {
 pub async fn run(command: WorkflowCommand) -> anyhow::Result<()> {
     match command {
         WorkflowCommand::Start(args) => {
-            let input = serde_json::from_slice(
-                &std::fs::read(&args.input).context("read the input file")?,
-            )
-            .context("parse the input file")?;
+            let input =
+                serde_json::from_slice(&std::fs::read(&args.input).context("read the input file")?)
+                    .context("parse the input file")?;
             let run_id = workflows(&args.scope)
                 .await?
                 .start(&StartRequest {

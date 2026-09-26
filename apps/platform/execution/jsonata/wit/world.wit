@@ -1,0 +1,5 @@
+package wamn:jsonata@0.1.0;
+
+world jsonata {
+  export wamn:node/handler@0.1.0;
+}

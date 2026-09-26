@@ -9,9 +9,7 @@ use wamn_runtime::plugins::wamn_postgres::WamnPostgres;
 use wash_runtime::engine::Engine;
 use wash_runtime::host::probes::Liveness;
 
-use super::{
-    NODE_TYPES, OPERATION, QUEUE_CLAIM_SCOPE, QueueScope, RouterDriver, WamnJetstream,
-};
+use super::{NODE_TYPES, OPERATION, QUEUE_CLAIM_SCOPE, QueueScope, RouterDriver, WamnJetstream};
 use crate::{PostgresWorkflows, StartRequest, Workflows as _};
 
 pub(super) fn component_bytes() -> Vec<u8> {
@@ -201,5 +199,5 @@ pub(super) async fn run(
 
 #[tokio::test(flavor = "multi_thread")]
 async fn active_drain_preserves_recovery_and_revokes_authority() -> anyhow::Result<()> {
-    super::run_automation(Some("adapter-stop")).await
+    super::run_automation(super::Mode::Shutdown).await
 }

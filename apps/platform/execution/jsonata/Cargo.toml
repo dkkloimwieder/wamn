@@ -1,0 +1,19 @@
+[package]
+name = "jsonata-expression"
+version.workspace = true
+edition.workspace = true
+description = "Palette node evaluating one JSONata expression, its configuration, on its input."
+
+[dependencies]
+# The expression engine. `simd` is off: it adds simd-json and gives nothing on
+# wasm. The crate builds for wasm32-wasip2 and passes the reference JSONata
+# suite (wamn-upl3.2 records the measurement).
+jsonata-core = { version = "=2.2.7", default-features = false }
+serde_json = { workspace = true }
+wit-bindgen = { workspace = true }
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[lints]
+workspace = true

@@ -72,7 +72,7 @@ The materializer and the bridge do not change. When the driver receives a delive
 
 ### 4.3 The JSONata node
 
-The node is a std guest at `apps/platform/execution/jsonata`. It exports `wamn:node/handler@0.1.0`, like `label-render`. Its one parameter, `expression`, holds the JSONata text. The node evaluates the expression on the input and emits the result. An expression that does not parse is an `invalid-input` error, and an evaluation error is a `terminal` error.
+The node is a std guest at `apps/platform/execution/jsonata`. It exports `wamn:node/handler@0.1.0`, like `label-render`. Its one parameter, `expression`, holds the JSONata text. The node evaluates the expression on the input and emits the result. An input that is not JSON is an `invalid-input` error. An expression that does not parse, or an evaluation that fails, is a `terminal` error, because a retry gives the same result.
 
 The first issue picks the crate by measurement. The crate must build for `wasm32-wasip2`, its component must pass admission after the release stage virtualizes it, and it must pass the expression cases that the WMS graph uses.
 

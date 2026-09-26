@@ -1,0 +1,27 @@
+{
+  "scope": {
+    "tenant-id": "__TENANT_ID__",
+    "package-id": "__PACKAGE_ID__",
+    "package-version": "__PACKAGE_VERSION__"
+  },
+  "component": "jsonata",
+  "interface-version": "0.1.0",
+  "operations": {
+    "wamn:node/handler@0.1.0": {
+      "input-ports": [
+        { "name": "input", "schema": {} }
+      ],
+      "output-ports": [
+        { "name": "main", "schema": {} }
+      ],
+      "parameters": [
+        {
+          "name": "expression",
+          "schema": { "type": "string", "minLength": 1 },
+          "required": true
+        }
+      ]
+    }
+  },
+  "connections": []
+}

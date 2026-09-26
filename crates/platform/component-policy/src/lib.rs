@@ -127,6 +127,12 @@ pub struct CapabilityRow {
 /// without a matching edit here would silently refuse every std guest.
 /// `capability_registry_wasi_rows_match_the_pinned_adapter` in the conformance
 /// suite is what makes that fail at the gate instead.
+///
+/// `wasi:random` is the exception. The pinned WASI-Virt passes random through
+/// without rewrapping it, so the virtualized artifact imports random at the
+/// version Rust std's `wasm32-wasip2` target links: `0.2.9`, measured on the
+/// `jsonata` node, the first guest that imports random (wamn-upl3.2). The host
+/// links it by semver. A toolchain bump moves this row.
 pub const CAPABILITY_REGISTRY: [CapabilityRow; 8] = [
     // Versions we author.
     CapabilityRow {
@@ -167,7 +173,7 @@ pub const CAPABILITY_REGISTRY: [CapabilityRow; 8] = [
     },
     CapabilityRow {
         package: "wasi:random",
-        version: "0.2.12",
+        version: "0.2.9",
         posture: Posture::Ambient,
     },
 ];
@@ -489,7 +495,7 @@ mod tests {
         let imports = ComponentImports::new([
             "wasi:io/streams@0.2.12".to_string(),
             "wasi:clocks/monotonic-clock@0.2.12".to_string(),
-            "wasi:random/random@0.2.12".to_string(),
+            "wasi:random/random@0.2.9".to_string(),
             "wasi:logging/logging@0.1.0-draft".to_string(),
             "wamn:postgres/client@0.1.0".to_string(),
             "wamn:node/types@0.1.0".to_string(),
