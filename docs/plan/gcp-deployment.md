@@ -181,7 +181,7 @@ The disk quotas are regional. The CPU quota of all regions stops a machine in an
 If the budget runs out, the guard stops the machines and then billing. It has four parts, all in `wamn-dev`:
 
 - A Pub/Sub topic `wamn-guard`.
-- One budget of 50 USD a month on billing account `01E392-13CC0D-277806`, filtered to `wamn-dev`. At 50, 90 and 100 percent it mails the billing administrators, and it publishes every update to `wamn-guard`.
+- One budget of 50 USD a month on billing account `01E392-13CC0D-277806`, filtered to `wamn-dev`. Owner ruling of 2026-09-25: it counts cost before credits, so the guard acts on gross spend. At 50, 90 and 100 percent it mails the billing administrators, and it publishes every update to `wamn-guard`.
 - A Cloud Run function `wamn-guard` on the topic, with its own service account. The project id `wamn-dev` and the cluster name `wamn` are literals in its code. From 50 percent of the budget, it sets every node pool of cluster `wamn` to 0 nodes. From 100 percent, it unlinks the billing account from `wamn-dev`, as section 9.5 does by hand.
 - A Cloud Scheduler job that publishes a scale-to-zero message to `wamn-guard` once a day, at 03:00 America/New_York. A session that you forget stops by the next morning.
 
