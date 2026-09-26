@@ -548,6 +548,7 @@ Its declared filters are the scope bar of the table, and the table owns the sort
 It loads when it mounts. A load of a query streams its rows up to the cap, when the transport can stream.
 [`load.ts`](../../web/runtime/src/load.ts) reads the reply lines with a stream decoder and a line buffer, and hands the rows to the table in batches, once per animation frame, or every 50 ms where no frames run.
 A new load aborts the stream of the last one, and a batch of an older load is dropped. A malformed line, or a body without its outcome line, fails the load.
+The table holds the rows of its last load, so a load of the same request sends that load's ETag with `cache: "no-store"`, and a 304 keeps the rows. No browser cache keeps a second copy of a load.
 A transport that cannot stream reads one page, with a limit of the cap or the page maximum, whichever is lower, and follows no cursor.
 A load of a bounded list reads every row, so the table is always fully read.
 A header sort of rows that the load did not read in full starts a new load in that order.

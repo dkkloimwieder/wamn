@@ -210,14 +210,7 @@ Each feature follows the core rule: server work sets scope, client work needs a 
 
 Each increment is one epic, reviewed before the next is scoped. Increment 1 is platform work; the rest are UI work.
 
-1. **Streamed query (platform).** Query exports yield a stream plus a final record; the host shapes it as a page or a load, picked by `shape` in the canonical GET URL; tagged NDJSON wire; `web/runtime` reads the stream and holds load state; 100,000-row server ceiling. Generated model queries first, then hand-written ones. Done when all seven hold:
-   1. The operation contract for a streamed query is defined and generated.
-   2. One SQL statement yields rows progressively, without collecting them first.
-   3. A load is consistent as of that one statement.
-   4. The cap stop, a browser abort and a disconnect each end the database query.
-   5. A refusal before the first row keeps normal HTTP semantics; a failure after it ends in the outcome line.
-   6. Measured at 1k, 10k and 50k rows at a stated column count: server time, response size, component memory, browser memory, row-model time, render time, including the batch interval. The result replaces the 100,000 ceiling.
-   7. Streaming works through the deployed edge path: no proxy or compression buffering, no idle timeout before the first row, and a 304 on unchanged data.
+1. **Streamed query (platform).** Built by epic `wamn-utci`. [Request execution](../architecture/execution.md) and [data access](../architecture/data-access.md) describe it, and the epic records its measurements. The 100,000-row ceiling stays until the owner sets the measured value.
 2. **Load in the table (UI, after Epic 17 windowing).** Per-table cap control, "Full dataset cannot be loaded", generation guard, load times, refresh.
 3. **Client operations on a fully read set.** Sort, refine filters, search, multi-level grouping and aggregates, totals row, CSV export.
 4. **Column arrangement and views.** Header menu, column panel, views in memory and the URL.
