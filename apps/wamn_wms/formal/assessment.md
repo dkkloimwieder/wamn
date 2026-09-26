@@ -98,6 +98,8 @@ Administrative fixture creation is a baseline operation outside the public comma
 ## Property and test mapping
 
 The [local runner](../tests/local_business.rs) calls the real-route assertions in [wms_runtime_live.rs](../tests/wms_runtime_live.rs).
+The [released-route cluster gate](../tests/cluster/application.rs) also calls these inventory assertions through the deployed HTTP endpoint.
+Its release includes WMS without label components or wiring. A real HTTPS issuer supplies the session configuration required by the published routes.
 The tests supplement the bounded formal model. They do not prove production equivalence.
 
 | Required property | Formal obligation | Application assertion |
@@ -144,10 +146,14 @@ The formal Rust source hashes still match the completed Kani and deliberate-defe
 Production alignment changed no formal Rust source, so those runs were not repeated.
 The deployed cluster cases did not run during this production correction.
 The subsequent `cluster::released_wms_routes` run at `df64aed84` failed during host startup, before route assertions.
-Its fixture omitted the session issuer required by the published routes. Bead `wamn-s43x.14` tracks this failed gate.
+Its fixture omitted the session issuer required by the published routes. Bead `wamn-s43x.14` records the fixture correction.
 The command took 1534.52 seconds, including builds, and removed its disposable resources.
+After the fixture correction at `d8cb113b6`, the exact direct-route gate passed in 479.31 seconds, or 516.61 seconds including test compilation.
+The deployed assertions covered inventory mutations, original-result replay, forced history-insertion rollback, and business refusals.
+Cleanup removed the owned cluster, containers, and private files. This result supplies direct-route deployment evidence, not label-composition evidence.
 Bead `wamn-g4kj` retains the existing unattached label-workflow finding.
 Raw production logs remain in `/tmp/wamn-production-alignment/` on this host.
+The successful cluster run is retained in `/tmp/wamn-wms-direct-gate/`.
 
 
 ## Practicality and limits
