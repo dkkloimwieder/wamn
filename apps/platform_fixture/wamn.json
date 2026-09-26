@@ -249,12 +249,15 @@
           {
             "nullable": false,
             "path": "id",
+            "references": {
+              "model": "widget"
+            },
             "type": "uuid"
           },
           {
             "nullable": false,
             "path": "expected_edit_version",
-            "revision": true,
+            "revision": "id",
             "type": "int64"
           }
         ]
@@ -398,6 +401,7 @@
           {
             "nullable": false,
             "path": "edit_version",
+            "revision": true,
             "type": "int64"
           },
           {

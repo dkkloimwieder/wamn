@@ -703,11 +703,18 @@ fn selectors_whose_list_declares_no_display_filter_are_reported() {
 
     assert_eq!(
         plan.unsearchable(),
-        [UnsearchableSelector {
-            operation: "platform-fixture:widget/record-batch@1.0.0",
-            input: "value.line[].widget_id",
-            list_operation: "platform-fixture:widget/list@1.0.0",
-        }],
+        [
+            UnsearchableSelector {
+                operation: "platform-fixture:widget/archive@1.0.0",
+                input: "id",
+                list_operation: "platform-fixture:widget/list@1.0.0",
+            },
+            UnsearchableSelector {
+                operation: "platform-fixture:widget/record-batch@1.0.0",
+                input: "value.line[].widget_id",
+                list_operation: "platform-fixture:widget/list@1.0.0",
+            },
+        ],
         "the report names the screen, the input and the list"
     );
 }
@@ -959,6 +966,28 @@ fn the_result_fields_of_an_operation_have_one_owner() {
             .map(|field| field.path.as_str())
             .collect::<Vec<_>>(),
         "an operation with no route keeps the fields it declared"
+    );
+}
+
+/// A command keyed by one record sends that record's revision: the widget
+/// the operator chooses carries it, so no page supplies it (wamn-x5q4).
+#[test]
+fn a_keyed_command_sends_the_revision_of_the_record_it_names() {
+    let ir = fixture::client_release();
+    let plan = ClientPlan::from_ir(&ir);
+    let archive = screen(&plan, "archive");
+    let id = archive
+        .population
+        .iter()
+        .find(|populated| populated.input == "id")
+        .unwrap_or_else(|| panic!("the widget is chosen from a list: {:?}", archive.population));
+    assert_eq!(id.list_operation, "platform-fixture:widget/list@1.0.0");
+    assert_eq!(
+        id.revision,
+        Some(ChosenRevision {
+            input: "expected_edit_version",
+            field: "edit_version",
+        })
     );
 }
 

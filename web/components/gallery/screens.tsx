@@ -34,6 +34,7 @@ import {
   WidgetMakerQueryTableLabel,
 } from "../fixture/components/widget_maker.js";
 import {
+  archiveStub,
   deleteStub,
   groupStub,
   MAKER,
@@ -88,11 +89,7 @@ export function ScreenSections(): JSX.Element {
       </Section>
 
       <Section title={WidgetArchiveFormLabel} name="WidgetArchiveForm">
-        <WidgetArchiveForm
-          transport={selectorStub().transport}
-          initial={{ id: WIDGET }}
-          expectedEditVersion="7"
-        />
+        <WidgetArchiveForm transport={archiveStub()} initial={{ id: WIDGET }} />
       </Section>
 
       <Section title={WidgetRecordBatchFormLabel} name="WidgetRecordBatchForm">

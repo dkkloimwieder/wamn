@@ -43,6 +43,9 @@ pub enum ClientComponentErrorKind {
     /// A table column that a table definition cannot state: it is not a member
     /// of its row, or its type is not one of the frozen `sql-value` names.
     UnwrittenColumn,
+    /// A revision input of a form that no declared path supplies: no read is
+    /// bound to it, and it names no reference input whose record it guards.
+    UnsuppliedRevision,
 }
 
 impl ClientComponentErrorKind {
@@ -52,6 +55,7 @@ impl ClientComponentErrorKind {
         match self {
             Self::UnwrittenRole => "unwritten_role",
             Self::UnwrittenColumn => "unwritten_column",
+            Self::UnsuppliedRevision => "unsupplied_revision",
         }
     }
 }
@@ -394,14 +398,6 @@ fn member_path(path: &str) -> Vec<String> {
     path.split('.')
         .map(|part| crate::client_ts::to_camel(part.trim_end_matches("[]")))
         .collect()
-}
-
-/// The prop that carries one revision input no read supplies.
-///
-/// A nested revision such as `value.expected_row_version` is one prop,
-/// `valueExpectedRowVersion`, because a prop name holds no dot.
-fn revision_prop(path: &str) -> String {
-    crate::client_ts::to_camel(&path.replace('.', "_"))
 }
 
 /// The repeated ancestor of one input path, when the contract declares one.
@@ -1348,6 +1344,23 @@ fn emit_form(
     let function = crate::client_ts::function_name(screen.name).map_err(|error| {
         ClientComponentError::new(ClientComponentErrorKind::UnwrittenRole, error.to_string())
     })?;
+    // A form sends a revision read from the record a declared path names:
+    // the record its bound read returns, or the row that fills the input
+    // the revision guards. No page supplies one.
+    if screen.revision.is_none()
+        && let Some(revision) = screen
+            .revision_inputs
+            .iter()
+            .find(|revision| chosen(screen, revision).is_none())
+    {
+        return Err(ClientComponentError::new(
+            ClientComponentErrorKind::UnsuppliedRevision,
+            format!(
+                "{} sends the revision {revision}, and no bound read or chosen record supplies it; state the reference input it guards as its \"revision\"",
+                screen.contract.operation
+            ),
+        ));
+    }
     runtime.extend([
         "checkedMember",
         "newRequestId",
@@ -1430,26 +1443,6 @@ fn emit_form(
         )
         .expect("write");
         writeln!(source, "  readonly key: {key};").expect("write");
-    } else {
-        for revision in &screen.revision_inputs {
-            // The row the operator chooses supplies this one, so no prop does.
-            if chosen(screen, revision).is_some() {
-                continue;
-            }
-            source.push_str(
-                "  /** The revision this command sends. The release binds no read that supplies it. */\n",
-            );
-            write!(
-                source,
-                "  readonly {}: {stem}Request",
-                revision_prop(revision)
-            )
-            .expect("write");
-            for name in member_path(revision) {
-                write!(source, "[{name:?}]").expect("write");
-            }
-            source.push_str(";\n");
-        }
     }
     source.push_str("  /** Called with the outcome of every submission. */\n");
     writeln!(
@@ -1564,7 +1557,9 @@ fn emit_form(
         .expect("write");
     } else {
         for revision in &screen.revision_inputs {
-            write_revision(source, screen, revision, "      ");
+            if let Some(populated) = chosen(screen, revision) {
+                write_revision(source, populated, revision, "      ");
+            }
         }
     }
     writeln!(
@@ -1742,26 +1737,17 @@ fn write_supplied(source: &mut String, screen: &ScreenPlan<'_>, pad: &str) {
     }
 }
 
-/// The write of one revision input that no bound read supplies, at `pad`.
-fn write_revision(source: &mut String, screen: &ScreenPlan<'_>, revision: &str, pad: &str) {
-    if let Some(populated) = chosen(screen, revision) {
-        // The revision is the one the chosen row carried when the operator
-        // chose it, never one read now.
-        let (state, _) = selector_state(populated.input);
-        writeln!(
-            source,
-            "{pad}const {state}Chosen = {state}Revision();\n{pad}if ({state}Chosen === null) {{\n{pad}  setRefusal({{ text: \"Choose the record from its list.\", member: {:?} }});\n{pad}  return;\n{pad}}}\n{pad}item = writeMember(item, {}, {state}Chosen);",
-            populated.input,
-            member_literal(revision)
-        )
-        .expect("write");
-        return;
-    }
+/// The write of one revision input that the chosen row of `populated`
+/// supplies, at `pad`.
+fn write_revision(source: &mut String, populated: &PopulatedInput<'_>, revision: &str, pad: &str) {
+    // The revision is the one the chosen row carried when the operator
+    // chose it, never one read now.
+    let (state, _) = selector_state(populated.input);
     writeln!(
         source,
-        "{pad}item = writeMember(item, {}, props.{});",
-        member_literal(revision),
-        revision_prop(revision)
+        "{pad}const {state}Chosen = {state}Revision();\n{pad}if ({state}Chosen === null) {{\n{pad}  setRefusal({{ text: \"Choose the record from its list.\", member: {:?} }});\n{pad}  return;\n{pad}}}\n{pad}item = writeMember(item, {}, {state}Chosen);",
+        populated.input,
+        member_literal(revision)
     )
     .expect("write");
 }
@@ -1810,13 +1796,16 @@ fn emit_many_submit(
     .expect("write");
     write_supplied(source, screen, "          ");
     for revision in &screen.revision_inputs {
+        let Some(populated) = chosen(screen, revision) else {
+            continue;
+        };
         writeln!(
             source,
             "          if (readMember(item, {}) === undefined) {{",
             member_literal(revision)
         )
         .expect("write");
-        write_revision(source, screen, revision, "            ");
+        write_revision(source, populated, revision, "            ");
         source.push_str("          }\n");
     }
     source.push_str("          items.push(item);\n        }\n");

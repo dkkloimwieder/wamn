@@ -1313,6 +1313,7 @@ fn a_contract_carries_the_authored_text_and_nothing_else() {
 fn a_contract_carries_no_reference_and_no_list_when_nobody_states_one() {
     let mut silent = fixture::manifest();
     for pointer in [
+        "/custom_operations/widget.archive/input/fields",
         "/custom_operations/widget.record_batch/input/fields",
         "/custom_operations/widget.list/input/fields",
         "/custom_operations/widget.list/result/fields",

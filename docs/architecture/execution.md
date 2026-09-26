@@ -515,6 +515,7 @@ A form whose plan binds a revision reads the record when it opens and sends the 
 It reads nothing at submit, so a change that another writer makes in between refuses as a conflict.
 A delete whose plan binds a revision takes the key and the revision of the record that the page displayed, and it reads nothing.
 A command revision input can name the input whose record it guards, as `"revision": "value.pallet_id"` in place of `"revision": true`. The form then sends the revision of the row that carries the held key in that selector: the row the operator chose, a listed row that carries a filled key, or the record read for a key off the list. If no row carries the key, the form refuses locally and marks that selector.
+No page supplies a revision. Generation refuses a form whose revision input has no bound read and names no input, with the code `unsupplied_revision`.
 A table row fills a form input only when that input is the one input of the form that names the row's model. If two inputs name it, the row fills neither.
 A table column that names a record shows the record's text, not its key.
 A generated result field states `references` from its column's foreign key, and an authored result field can declare it.
@@ -537,7 +538,7 @@ A record page carries its key in the address, for example `pallets/<id>`, and a 
 The shell owns the router. A screen gets the address values, the query values, `open(path)` and `close()` as props, beside the transport.
 Each command form has its own route. A create or merge form opens from a button above its table, and an update form from a button above its record page.
 A row that fills a form opens it with the filled values in the query, so a reload keeps them. A completed submission returns to the page that opened the form, and a refusal stays on the form.
-A form whose revision no read supplies, such as `inventory.move`, reads the pallet that the address names and sends the revision that it read.
+A pallet form, such as `inventory.move`, sends the revision of the pallet row that its pallet selector holds, so no route reads the pallet for it.
 The first segment of every address is the environment audience, so a reload renews the cookie session with nothing in browser storage.
 A screen address with no session asks for the password on that address, and it shows the screen after sign in.
 The page calls the release under `/api`, and the proxy in front of it strips that prefix, so no page path meets a route template.

@@ -1,1 +1,1 @@
-{"fields":[{"nullable":false,"path":"id","type":"uuid","values":[]},{"nullable":false,"path":"expected_edit_version","revision":true,"type":"int64","values":[]}]}
+{"fields":[{"nullable":false,"path":"id","references":{"model":"widget"},"type":"uuid","values":[]},{"nullable":false,"path":"expected_edit_version","revision":"id","type":"int64","values":[]}]}

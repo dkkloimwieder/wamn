@@ -1,7 +1,7 @@
 use std::collections::BTreeSet;
 
 use wamn_schema_generator::GeneratedFile;
-use wamn_schema_generator::client_component::emit_ts_components;
+use wamn_schema_generator::client_component::{ClientComponentErrorKind, emit_ts_components};
 use wamn_schema_generator::client_ir::ClientContractIr;
 use wamn_schema_generator::client_plan::ClientPlan;
 
@@ -67,7 +67,7 @@ fn every_table_screen_gets_one_component_and_its_plan_columns() {
     )));
     assert!(
         widget.contains(
-            "    { field: \"editVersion\", label: \"edit version\", type: \"int64\", role: \"value\" },"
+            "    { field: \"editVersion\", label: \"edit version\", type: \"int64\", role: \"revision\" },"
         ),
         "a revision keeps its declared type, so the cell states every digit"
     );
@@ -482,10 +482,52 @@ fn a_revision_bound_form_sends_the_revision_it_read_when_it_opened() {
         "a bound revision is not a prop: {props}"
     );
     assert!(
-        widget.contains(
-            "readonly expectedEditVersion: WidgetArchiveRequest[\"expectedEditVersion\"];"
+        !widget.contains("readonly expectedEditVersion:"),
+        "no form takes a revision as a prop"
+    );
+}
+
+/// A command sends the revision of the record its revision names: the widget
+/// the operator chooses carries it. A revision that names no record has no
+/// source, so generation refuses the form instead of asking the page
+/// (wamn-x5q4).
+#[test]
+fn a_command_sends_the_revision_of_the_record_it_names() {
+    let files = emit(&release());
+    let widget = widget(&files);
+    let form = widget
+        .split("export function WidgetArchiveForm")
+        .nth(1)
+        .expect("the archive form exists")
+        .split("\nexport ")
+        .next()
+        .expect("the form ends");
+    assert!(
+        form.contains("onRow={(row) => setIdRevision(row?.editVersion ?? null)}"),
+        "the chosen widget carries its revision: {form}"
+    );
+    assert!(
+        form.contains("item = writeMember(item, [\"expectedEditVersion\"], idChosen);"),
+        "the form sends that revision"
+    );
+
+    let mut undeclared = fixture::manifest();
+    undeclared["custom_operations"]["widget.archive"]["input"]["fields"]
+        .as_array_mut()
+        .expect("the archive declares its input")
+        .iter_mut()
+        .find(|field| field["path"] == "expected_edit_version")
+        .expect("the archive takes a revision")["revision"] = serde_json::json!(true);
+    let release =
+        fixture::client_release_of(&fixture::generate_with(&fixture::catalog(), &undeclared));
+    let error = emit_ts_components(&ClientPlan::from_ir(&release))
+        .expect_err("a revision that names no record is refused");
+    assert_eq!(error.kind(), ClientComponentErrorKind::UnsuppliedRevision);
+    assert!(
+        error.to_string().contains(
+            "platform-fixture:widget/archive@1.0.0 sends the revision expected_edit_version"
         ),
-        "a revision with no binding stays a prop, because only the caller knows it"
+        "{error}"
     );
 }
 
@@ -1132,6 +1174,7 @@ fn a_selector_searches_by_its_display_field_and_reads_the_next_page() {
         source(&files, "generated/client-ts/components/index.ts").contains(concat!(
             "// These selectors read the first page and render no search, because the\n",
             "// list they read declares no filter on its display field:\n",
+            "// platform-fixture:widget/archive@1.0.0 id: platform-fixture:widget/list@1.0.0\n",
             "// platform-fixture:widget/record-batch@1.0.0 value.line[].widget_id: platform-fixture:widget/list@1.0.0\n",
         )),
         "the generator names the selector, its input and the list it reads"
@@ -1357,7 +1400,7 @@ fn a_table_definition_names_its_update_its_actions_and_its_child_tables() {
         // The update writes these columns, and the plan supplies none of them.
         "  update: { operation: \"platform-fixture:widget/update@1.0.0\", binding: { route: WIDGET_UPDATE_ROUTE, request: WIDGET_UPDATE_REQUEST_FIELDS, result: WIDGET_UPDATE_RESULT_FIELDS }, keyInput: [\"id\"], revisionInput: [\"expectedEditVersion\"], revisionField: \"editVersion\", supplied: [{ input: [\"requestId\"], kind: \"requestId\" }], fields: [\n    { field: \"code\", input: [\"change\", \"code\"] },\n    { field: \"makerId\", input: [\"change\", \"makerId\"] },\n    { field: \"note\", input: [\"change\", \"note\"] },\n  ] },\n",
         // A command that runs each outer input on its own takes many rows.
-        "  actions: [\n    { operation: \"platform-fixture:widget/get@1.0.0\", label: \"get\", many: false, opens: \"record\", fill: [] },\n    { operation: \"platform-fixture:widget/record-batch@1.0.0\", label: \"record-batch\", many: true, opens: \"form\", fill: [{ field: \"id\", input: [\"value\", \"line\", \"[]\", \"widgetId\"] }], form: () => WidgetRecordBatchForm },\n  ],\n",
+        "  actions: [\n    { operation: \"platform-fixture:widget/get@1.0.0\", label: \"get\", many: false, opens: \"record\", fill: [] },\n    { operation: \"platform-fixture:widget/archive@1.0.0\", label: \"archive\", many: false, opens: \"form\", fill: [{ field: \"id\", input: [\"id\"] }], revision: { field: \"editVersion\", input: [\"expectedEditVersion\"] } },\n    { operation: \"platform-fixture:widget/record-batch@1.0.0\", label: \"record-batch\", many: true, opens: \"form\", fill: [{ field: \"id\", input: [\"value\", \"line\", \"[]\", \"widgetId\"] }], form: () => WidgetRecordBatchForm },\n  ],\n",
         "  childTables: [],\n",
     ] {
         assert!(widgets.contains(line), "{line} in {widgets}");

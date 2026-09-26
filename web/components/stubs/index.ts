@@ -25,6 +25,24 @@ export function sampleStub(outcome: Outcome<JsonValue>): Transport {
   };
 }
 
+/**
+ * One transport that lists one widget with its revision and completes every
+ * other call, so an archive sends the revision of the widget it names.
+ */
+export function archiveStub(): Transport {
+  return {
+    invoke: (request: WireRequest) =>
+      Promise.resolve<Outcome<JsonValue>>(
+        request.operation.includes("/list@")
+          ? {
+              status: "completed",
+              value: { rows: [{ id: WIDGET, code: "standard", edit_version: "7", attributes: {} }] },
+            }
+          : { status: "completed", value: { id: WIDGET, edit_version: "8", note: null } },
+      ),
+  };
+}
+
 /** One transport that answers from a list and keeps what it was sent. */
 export function tableStub(replies: readonly Outcome<JsonValue>[]): {
   transport: Transport;
