@@ -3,7 +3,9 @@ use crate::error::{self, AccessError, AccessErrorKind};
 use crate::generated::wamn::inventory_split as sql;
 use crate::scalar;
 use serde::{Deserialize, Serialize};
-use wamn_postgres_statements::{Connection, Numeric};
+use wamn_postgres_statements::{Connection, Numeric, Uuid};
+
+mod decision;
 
 #[derive(Debug, Deserialize)]
 pub struct SplitCommand {
@@ -82,7 +84,23 @@ pub async fn execute(command: &SplitCommand) -> Result<SplitResult, AccessError>
         .await
         .map_err(|e| error::from_statement(&e))?
         .ok_or_else(|| missing("value.from_inventory_id", &from_inventory_id.0))?;
-    require_open(&source, expected_row_version)?;
+    let inventory = decision::Inventory {
+        id: &source.id.0,
+        product_id: &source.product_id.0,
+        packaging_id: &source.packaging_id.0,
+        location_id: &source.location_id.0,
+        quantity: source.quantity.0.clone(),
+        disposition: &source.disposition,
+        lifecycle: &source.lifecycle,
+    };
+    decision::require_open(&inventory)
+        .map_err(|refusal| business_refusal(refusal, &source.id.0, &to_packaging_id.0))?;
+    if source.row_version != expected_row_version {
+        return Err(AccessError::conflict(
+            expected_row_version,
+            source.row_version,
+        ));
+    }
     let packaging = sql::lock_packaging(
         &mut transaction,
         source.packaging_id.clone(),
@@ -90,76 +108,70 @@ pub async fn execute(command: &SplitCommand) -> Result<SplitResult, AccessError>
     )
     .await
     .map_err(|e| error::from_statement(&e))?;
-    let source_packaging = packaging
-        .iter()
-        .find(|row| row.id == source.packaging_id)
-        .ok_or_else(|| missing("value.inventory_id", &source.id.0))?;
-    if source_packaging.lifecycle != "open" || source_packaging.location_id != source.location_id {
-        return Err(invalid("value.inventory_id"));
-    }
-    let destination = packaging
-        .iter()
-        .find(|row| row.id == to_packaging_id)
-        .ok_or_else(|| missing("value.to_packaging_id", &to_packaging_id.0))?;
-    if destination.lifecycle != "open" {
-        return Err(invalid("value.to_packaging_id"));
-    }
-    if destination.location_id != to_location_id {
-        return Err(invalid("value.to_location_id"));
-    }
+    let source_packaging = packaging.iter().find(|row| row.id == source.packaging_id);
+    let destination = packaging.iter().find(|row| row.id == to_packaging_id);
+    let transition = decision::decide(
+        decision::State {
+            source: &inventory,
+            source_packaging: source_packaging.map(business_packaging),
+            destination: destination.map(business_packaging),
+        },
+        decision::Command {
+            new_inventory_id: &claim.new_inventory_id.0,
+            quantity: &quantity.0,
+            to_packaging_id: &to_packaging_id.0,
+            to_location_id: &to_location_id.0,
+        },
+    )
+    .map_err(|refusal| business_refusal(refusal, &source.id.0, &to_packaging_id.0))?;
+    let [remaining, created] = &transition.inventory;
     let result_row = sql::apply(
         &mut transaction,
-        from_inventory_id.clone(),
-        quantity.clone(),
+        Uuid(remaining.id.to_owned()),
+        Numeric(remaining.quantity.clone()),
     )
     .await
     .map_err(|e| error::from_statement(&e))?
-    .ok_or_else(|| AccessError::field(AccessErrorKind::InsufficientQuantity, "value.quantity"))?;
+    .ok_or_else(internal)?;
     sql::create_inventory(
         &mut transaction,
-        claim.new_inventory_id.clone(),
-        source.product_id.clone(),
-        to_packaging_id,
-        to_location_id,
-        quantity,
-        source.disposition.clone(),
+        Uuid(created.id.to_owned()),
+        Uuid(created.product_id.to_owned()),
+        Uuid(created.packaging_id.to_owned()),
+        Uuid(created.location_id.to_owned()),
+        Numeric(created.quantity.clone()),
+        created.disposition.to_owned(),
+        created.lifecycle.to_owned(),
     )
     .await
     .map_err(|e| error::from_statement(&e))?;
-    sql::insert_transaction(
-        &mut transaction,
-        claim.operation_id.clone(),
-        from_inventory_id.clone(),
-        from_inventory_id.clone(),
-        from_inventory_id.clone(),
-        Some(source.product_id.clone()),
-        Some(source.packaging_id.clone()),
-        Some(source.location_id.clone()),
-        source.quantity.clone(),
-        Some(source.disposition.clone()),
-        Some(source.lifecycle.clone()),
-        occurred_at.clone(),
-        None,
-    )
-    .await
-    .map_err(|e| error::from_statement(&e))?;
-    sql::insert_transaction(
-        &mut transaction,
-        claim.operation_id.clone(),
-        claim.new_inventory_id.clone(),
-        from_inventory_id.clone(),
-        claim.new_inventory_id.clone(),
-        None,
-        None,
-        None,
-        Numeric("0".into()),
-        None,
-        None,
-        occurred_at.clone(),
-        None,
-    )
-    .await
-    .map_err(|e| error::from_statement(&e))?;
+    for row in &transition.transactions {
+        let from = row.from_inventory.as_ref();
+        let to = &row.to_inventory;
+        sql::insert_transaction(
+            &mut transaction,
+            claim.operation_id.clone(),
+            Uuid(row.inventory_id.to_owned()),
+            Uuid(row.from_inventory_id.to_owned()),
+            Uuid(row.to_inventory_id.to_owned()),
+            from.map(|item| Uuid(item.product_id.to_owned())),
+            from.map(|item| Uuid(item.packaging_id.to_owned())),
+            from.map(|item| Uuid(item.location_id.to_owned())),
+            Numeric(from.map_or_else(|| "0".to_owned(), |item| item.quantity.clone())),
+            from.map(|item| item.disposition.to_owned()),
+            from.map(|item| item.lifecycle.to_owned()),
+            occurred_at.clone(),
+            None,
+            Uuid(to.product_id.to_owned()),
+            Uuid(to.packaging_id.to_owned()),
+            Uuid(to.location_id.to_owned()),
+            Numeric(to.quantity.clone()),
+            to.disposition.to_owned(),
+            to.lifecycle.to_owned(),
+        )
+        .await
+        .map_err(|e| error::from_statement(&e))?;
+    }
     let result = SplitResult {
         operation_id: claim.operation_id.0.clone(),
         inventory_id: result_row.id.0,
@@ -204,12 +216,31 @@ fn missing(field: &str, id: &str) -> AccessError {
 fn invalid(field: &str) -> AccessError {
     AccessError::field(AccessErrorKind::InvalidInput, field)
 }
-fn require_open(row: &sql::LockInventoryRow, expected: i32) -> Result<(), AccessError> {
-    if row.lifecycle != "open" {
-        return Err(invalid("value.inventory_id"));
+fn business_packaging(row: &sql::LockPackagingRow) -> decision::Packaging<'_> {
+    decision::Packaging {
+        id: &row.id.0,
+        location_id: &row.location_id.0,
+        lifecycle: &row.lifecycle,
     }
-    if row.row_version != expected {
-        return Err(AccessError::conflict(expected, row.row_version));
+}
+
+fn business_refusal(
+    refusal: decision::Refusal,
+    inventory_id: &str,
+    packaging_id: &str,
+) -> AccessError {
+    match refusal.r#type {
+        decision::RefusalType::ClosedInventory | decision::RefusalType::InvalidSourcePackaging => {
+            invalid("value.inventory_id")
+        }
+        decision::RefusalType::MissingSourcePackaging => {
+            missing("value.inventory_id", inventory_id)
+        }
+        decision::RefusalType::MissingDestination => missing("value.to_packaging_id", packaging_id),
+        decision::RefusalType::ClosedDestination => invalid("value.to_packaging_id"),
+        decision::RefusalType::DestinationLocationMismatch => invalid("value.to_location_id"),
+        decision::RefusalType::InsufficientQuantity => {
+            AccessError::field(AccessErrorKind::InsufficientQuantity, "value.quantity")
+        }
     }
-    Ok(())
 }

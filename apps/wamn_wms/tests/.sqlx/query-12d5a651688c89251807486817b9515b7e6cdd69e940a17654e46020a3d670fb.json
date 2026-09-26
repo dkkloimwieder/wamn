@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "INSERT INTO inventory (id, product_id, packaging_id, location_id, quantity, disposition, lifecycle) VALUES ($1, $2, $3, $4, $5, $6, 'open') RETURNING id, product_id, packaging_id, location_id, quantity, disposition, lifecycle, row_version;\n",
+  "query": "INSERT INTO inventory (id, product_id, packaging_id, location_id, quantity, disposition, lifecycle) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id, product_id, packaging_id, location_id, quantity, disposition, lifecycle, row_version;\n",
   "describe": {
     "columns": [
       {
@@ -99,6 +99,7 @@
         "Uuid",
         "Uuid",
         "Numeric",
+        "Text",
         "Text"
       ]
     },
@@ -113,5 +114,5 @@
       false
     ]
   },
-  "hash": "d9e936d60336a0cb473c02a809b476481832ba7f398f86312788eb9464f94202"
+  "hash": "12d5a651688c89251807486817b9515b7e6cdd69e940a17654e46020a3d670fb"
 }

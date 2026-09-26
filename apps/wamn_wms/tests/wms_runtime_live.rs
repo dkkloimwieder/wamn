@@ -17,6 +17,7 @@
 //! These cases return structured results to the application test caller.
 
 pub(crate) mod relocation;
+pub(crate) mod split_kernel;
 
 use std::path::Path;
 

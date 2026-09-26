@@ -90,6 +90,8 @@ async fn run(relocation: bool) -> anyhow::Result<()> {
         crate::wms_runtime_live::assert_remaining_operations(&route, &runtime).await?;
         crate::wms_runtime_live::assert_inventory_refusals_and_held_split(&route, &runtime, &admin)
             .await?;
+        crate::wms_runtime_live::split_kernel::assert_decimal_split(&route, &runtime, &admin)
+            .await?;
     }
     drop(admin);
     connection.abort();

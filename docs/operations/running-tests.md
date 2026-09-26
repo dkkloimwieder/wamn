@@ -193,6 +193,7 @@ The restored proof must pass.
 ## WMS production relocation kernel
 
 The [kernel harness](../../apps/wamn_wms/formal/production-relocation/README.md) compiles the same decision module that production calls.
+The [split harness](../../apps/wamn_wms/formal/production-split/README.md) proves the second production kernel and documents its separate quantity bounds.
 Use the Kani installation described above. Run these commands from the repository root.
 
 ```bash

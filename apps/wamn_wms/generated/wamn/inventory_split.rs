@@ -71,17 +71,17 @@ pub struct LockPackagingRow {
 }
 
 pub(crate) const APPLY_DIGEST: &str =
-    "sha256:1320ff697a976159bfc7c048ce0b1bd184184e600c71bdd9c69483dabe1fece0";
+    "sha256:d7baa70848354f550a74cc3578958fc3d15be18cc857ee4d2dda04d524fa735c";
 pub(crate) const CLAIM_COMMAND_DIGEST: &str =
     "sha256:284545cbbfd286d9d24de92cc6fbd9a824a489800b392ee70f67f4d020583255";
 pub(crate) const CREATE_INVENTORY_DIGEST: &str =
-    "sha256:d9e936d60336a0cb473c02a809b476481832ba7f398f86312788eb9464f94202";
+    "sha256:12d5a651688c89251807486817b9515b7e6cdd69e940a17654e46020a3d670fb";
 pub(crate) const FINALIZE_COMMAND_DIGEST: &str =
     "sha256:5062b0b6425ef75c1aa24b4849725f42f7c9658ac0fb75b047e245e82bc3bbc8";
 pub(crate) const FIND_REPLAY_DIGEST: &str =
     "sha256:577bd6e23d8ebf7e5eb3587215a8ddce70013010beedb910ae91c193a21b1874";
 pub(crate) const INSERT_TRANSACTION_DIGEST: &str =
-    "sha256:7a8a198d17cc8768315adc35a54588e275043dc886eed3f67bdf950c421abd0d";
+    "sha256:16e3f0768ea80f54e7cfa9bd0a1a1c1940cef9a2143b1db7d3f23845fbe4bccd";
 pub(crate) const LOCK_INVENTORY_DIGEST: &str =
     "sha256:fa2fa96abd2b992f7fa50dd2cb2ae5194930f891534f7220c122bb3ce5645351";
 pub(crate) const LOCK_PACKAGING_DIGEST: &str =
@@ -174,6 +174,10 @@ pub(crate) async fn claim_command(
     })
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the parameters are the statement's bind list"
+)]
 pub(crate) async fn create_inventory(
     claim: &mut PendingClaim,
     id: wamn_postgres_statements::Uuid,
@@ -182,6 +186,7 @@ pub(crate) async fn create_inventory(
     location_id: wamn_postgres_statements::Uuid,
     quantity: wamn_postgres_statements::Numeric,
     disposition: String,
+    lifecycle: String,
 ) -> Result<CreateInventoryRow, wamn_postgres_statements::StatementError> {
     let rows = claim
         .transaction
@@ -194,6 +199,7 @@ pub(crate) async fn create_inventory(
                 wamn_postgres_statements::into_sql_value(location_id),
                 wamn_postgres_statements::into_sql_value(quantity),
                 wamn_postgres_statements::into_sql_value(disposition),
+                wamn_postgres_statements::into_sql_value(lifecycle),
             ],
         )
         .await?;
@@ -280,6 +286,12 @@ pub(crate) async fn insert_transaction(
     from_lifecycle: Option<String>,
     occurred_at: wamn_postgres_statements::TimestampTz,
     reason: Option<String>,
+    to_product_id: wamn_postgres_statements::Uuid,
+    to_packaging_id: wamn_postgres_statements::Uuid,
+    to_location_id: wamn_postgres_statements::Uuid,
+    to_quantity: wamn_postgres_statements::Numeric,
+    to_disposition: String,
+    to_lifecycle: String,
 ) -> Result<InsertTransactionRow, wamn_postgres_statements::StatementError> {
     let rows = claim
         .transaction
@@ -298,6 +310,12 @@ pub(crate) async fn insert_transaction(
                 wamn_postgres_statements::into_sql_value(from_lifecycle),
                 wamn_postgres_statements::into_sql_value(occurred_at),
                 wamn_postgres_statements::into_sql_value(reason),
+                wamn_postgres_statements::into_sql_value(to_product_id),
+                wamn_postgres_statements::into_sql_value(to_packaging_id),
+                wamn_postgres_statements::into_sql_value(to_location_id),
+                wamn_postgres_statements::into_sql_value(to_quantity),
+                wamn_postgres_statements::into_sql_value(to_disposition),
+                wamn_postgres_statements::into_sql_value(to_lifecycle),
             ],
         )
         .await?;

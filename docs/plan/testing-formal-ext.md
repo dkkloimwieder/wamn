@@ -153,6 +153,9 @@ Beads `wamn-s43x.17` owns validation and closure evidence.
 
 # Phase 5 — Keep persistence/runtime guarantees separate
 
+The owner accepts this phase as an architectural boundary already evidenced by the PostgreSQL tests.
+It does not require a separate implementation phase.
+
 Kani should not model PostgreSQL unless a database behavior is itself the subject of the proof.
 
 Integration tests establish the assumptions the business model relies on:
@@ -293,7 +296,7 @@ Persistent state must correspond to the atomic result assumed by the formal comp
 4. Extract a suitable WMS operation into a pure production business kernel.
 5. Have Kani prove that production kernel.
 6. Add model-vs-production generated history tests.
-7. Repeat for another significant WMS operation.
+7. Repeat for `inventory.split` under `wamn-s43x.19`.
 8. Apply the method to a second application.
 9. Define one real transactional participant contract.
 10. Prove and integration-test one two-application composition.

@@ -413,3 +413,63 @@ Four targeted Kani harnesses pass after the correction, with all six cover prope
 They cover closure precedence, state and history preservation, exact replay and changed intent, and later closure preserving earlier history and replay.
 The precedence harness includes both empty contents and inconsistent open inventory to distinguish the order of refusals.
 Clippy passes, and production code remains unchanged.
+
+
+## Second production kernel: split
+
+Bead `wamn-s43x.19` owns the split extraction, production proofs, and application conformance evidence.
+The production adapter loads locked inventory and packaging, then calls `inventory_split/decision.rs`.
+The pure decision returns either a typed refusal or two inventory updates with two complete history rows.
+The adapter supplies the allocated identity and persists that transition inside the existing transaction.
+Claims, revisions, locks, SQL, replay results, and commit remain outside the kernel.
+
+Split differs from relocation because it creates an identity and subtracts decimal quantities.
+The kernel preserves PostgreSQL decimal scale without a machine integer bound.
+Native examples compare 62,001 quantity pairs with independent integer arithmetic.
+Application tests compare ten decimal cases directly with PostgreSQL arithmetic.
+That corpus includes mixed scales, decimal borrowing, values beyond `i128`, equal and excess quantities, `NaN`, and `Infinity`.
+The stored special values retain existing behavior but remain outside the finite conservation proof.
+No new numeric restriction or shared decimal framework enters production.
+
+The [production split harness](production-split/README.md) imports the actual decision module.
+An independent observer converts finite quantities to hundredths and checks their sum.
+It identifies the source and created inventory by identity, independent of their array positions.
+It requires preserved product, disposition, lifecycle, packaging, explicit location, and complete history for both identities.
+Both history rows retain the source lineage.
+Separate refusal assertions cover competing guards and unchanged inputs.
+The adapter remains responsible for matched packaging identities and a fresh allocated identity.
+
+The proof domain contains three source quantities and five requested quantities.
+Each pair admits both packaging choices, two products, and two dispositions, for 120 combinations.
+The proofs do not establish arbitrary decimal precision.
+As in relocation, borrowed text uses stronger reference assertions to control proof cost.
+Split uses fixed two-element arrays but owned decimal strings, unlike relocation's unchanged quantity references.
+The first variable-request proof exceeded 12 GB without a result and was stopped after 555.727 seconds.
+Its refusal harness passed before the stop.
+A stack sample reached CaDiCaL clause insertion but did not establish the full cause of the cost.
+Fifteen operand-pair proofs retain the same domain and assertions.
+Each proof fixes its decimal string lengths.
+The first partition passed in 86.443 seconds, including 71.353 seconds for verification.
+All seventeen final harnesses pass, and all twenty-one coverage assertions are reached.
+The retained verification time totals 474.905 seconds, excluding compilation, interrupted work, and the deliberate-defect runs.
+The remaining fourteen operand-pair harnesses pass in 414.433 wall-clock seconds.
+The unchanged refusal and concrete-lineage harnesses retain their earlier passing results.
+
+The deliberate defect changes only the created history row's source identity.
+For a split of `0.50` from `2.50`, the quantities remain `2.00` and `0.50`.
+The created row incorrectly names the new identity as its source.
+Kani rejects its lineage assertion in 42.954 seconds total.
+Reversing the patch restores the production module byte-for-byte, and the same proof passes in 66.140 seconds.
+
+The rebuilt application passes the complete six-command differential histories against the unchanged independent model.
+All eleven fixed histories, sixteen generated histories, and two retained regression seeds pass.
+After every command, the harness compares state, immutable history, stored results, and exact replay.
+The application tests retain concurrency and forced history-write rollback coverage.
+A new decimal split case also changes both resulting identities and then replays the original stored result.
+The two local PostgreSQL/application tests pass in 263.470 seconds.
+The native test crate passes 26 tests, with eight external tests excluded from that run.
+Both the production guest and application test crate pass Clippy with warnings denied.
+The split and relocation proofs cover different input domains, so their durations do not measure a like-for-like speed difference.
+
+The owner accepts Phase 5 as the boundary already evidenced by these PostgreSQL tests.
+The Kani decision proofs do not claim persistence atomicity, claim concurrency, or runtime correctness.

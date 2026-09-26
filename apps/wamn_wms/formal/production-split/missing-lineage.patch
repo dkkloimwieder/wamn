@@ -1,0 +1,11 @@
+--- a/apps/wamn_wms/data/src/inventory_split/decision.rs
++++ b/apps/wamn_wms/data/src/inventory_split/decision.rs
+@@ -132,7 +132,7 @@
+             },
+             InventoryTransaction {
+                 inventory_id: created.id,
+-                from_inventory_id: source.id,
++                from_inventory_id: created.id,
+                 to_inventory_id: created.id,
+                 from_inventory: None,
+                 to_inventory: created.clone(),

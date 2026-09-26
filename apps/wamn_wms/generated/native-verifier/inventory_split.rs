@@ -116,6 +116,9 @@ pub(crate) fn create_inventory_quantity_bind_fixture() -> rust_decimal::Decimal 
 pub(crate) fn create_inventory_disposition_bind_fixture() -> String {
     String::new()
 }
+pub(crate) fn create_inventory_lifecycle_bind_fixture() -> String {
+    String::new()
+}
 pub(crate) fn finalize_command_idempotency_key_bind_fixture() -> String {
     String::new()
 }
@@ -166,6 +169,24 @@ pub(crate) fn insert_transaction_occurred_at_bind_fixture() -> chrono::DateTime<
 }
 pub(crate) fn insert_transaction_reason_bind_fixture() -> Option<String> {
     None
+}
+pub(crate) fn insert_transaction_to_product_id_bind_fixture() -> uuid::Uuid {
+    uuid::Uuid::nil()
+}
+pub(crate) fn insert_transaction_to_packaging_id_bind_fixture() -> uuid::Uuid {
+    uuid::Uuid::nil()
+}
+pub(crate) fn insert_transaction_to_location_id_bind_fixture() -> uuid::Uuid {
+    uuid::Uuid::nil()
+}
+pub(crate) fn insert_transaction_to_quantity_bind_fixture() -> rust_decimal::Decimal {
+    rust_decimal::Decimal::ZERO
+}
+pub(crate) fn insert_transaction_to_disposition_bind_fixture() -> String {
+    String::new()
+}
+pub(crate) fn insert_transaction_to_lifecycle_bind_fixture() -> String {
+    String::new()
 }
 pub(crate) fn lock_inventory_inventory_id_bind_fixture() -> uuid::Uuid {
     uuid::Uuid::nil()
