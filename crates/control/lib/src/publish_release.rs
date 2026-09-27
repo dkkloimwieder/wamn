@@ -986,7 +986,10 @@ async fn read_projected_environment_disposable(
     .await
 }
 
-async fn on_control_plane<F, T>(control_database_url: &str, write: F) -> anyhow::Result<T>
+pub(crate) async fn on_control_plane<F, T>(
+    control_database_url: &str,
+    write: F,
+) -> anyhow::Result<T>
 where
     F: AsyncFnOnce(&mut Client) -> anyhow::Result<T>,
 {
@@ -1077,9 +1080,22 @@ pub async fn attest_deployment(
     manifest_hash: &ManifestDigest,
     source_commit: Option<&str>,
 ) -> anyhow::Result<String> {
+    on_control_plane(control_database_url, async |control| {
+        attest_deployment_on(control, coordinate, manifest_hash, source_commit).await
+    })
+    .await
+}
+
+/// Attest one deployment on an open control database connection.
+pub(crate) async fn attest_deployment_on(
+    control: &mut Client,
+    coordinate: &DeploymentCoordinate,
+    manifest_hash: &ManifestDigest,
+    source_commit: Option<&str>,
+) -> anyhow::Result<String> {
     let effective_release_id = i32::try_from(coordinate.effective_release_id)
         .context("effective-release-id exceeds PostgreSQL integer")?;
-    on_control_plane(control_database_url, async |control| {
+    {
         let proposed_attested_at: String = control
             .query_one("SELECT clock_timestamp()::text", &[])
             .await
@@ -1154,8 +1170,7 @@ pub async fn attest_deployment(
         };
         transaction.commit().await.map_err(storage)?;
         Ok(winner.to_rfc3339_opts(chrono::SecondsFormat::Micros, true))
-    })
-    .await
+    }
 }
 
 fn sha256(bytes: &[u8]) -> String {

@@ -193,6 +193,11 @@ impl PushReleaseManifestRequest {
 
 /// Publish one canonical release manifest, optionally attributed to one clean
 /// source commit, and return its verified identity.
+///
+/// Bytes never sit in the registry without their attestation. The verb opens
+/// the control database first and reads the release it will attest, pushes,
+/// and writes the attestation on that open connection. An unreachable control
+/// database therefore refuses before any push.
 pub async fn push_release_manifest(
     request: &PushReleaseManifestRequest,
     source_commit: Option<&str>,
@@ -203,24 +208,58 @@ pub async fn push_release_manifest(
             "source commit must be one nonempty value"
         );
     }
-    let canonical_bytes = canonical_release_bytes(request).await?;
+    crate::publish_release::on_control_plane(&request.control_database_url, async |control| {
+        let canonical_bytes = canonical_release_bytes(request).await?;
+        publish_and_attest(control, request, &canonical_bytes, source_commit).await
+    })
+    .await
+}
+
+/// Read the control release that `canonical_bytes` names, push the bytes, and
+/// attest the push on `control`. A refused read pushes nothing, and a refused
+/// push writes no attestation.
+pub async fn publish_and_attest(
+    control: &mut PgClient,
+    request: &PushReleaseManifestRequest,
+    canonical_bytes: &[u8],
+    source_commit: Option<&str>,
+) -> anyhow::Result<PublishedReleaseManifest> {
+    let (manifest, _) = ServingManifest::from_canonical_bytes(canonical_bytes)
+        .context("read the release that the minted bytes name")?;
+    let coordinate = request.deployment_coordinate(&manifest.release);
+    let effective_release_id = i32::try_from(coordinate.effective_release_id)
+        .context("effective-release-id exceeds PostgreSQL integer")?;
+    let known = control
+        .query_opt(
+            "SELECT 1 FROM catalog.effective_releases \
+              WHERE tenant_id = $1 AND effective_release_id = $2 AND environment = $3",
+            &[
+                &coordinate.tenant_id,
+                &effective_release_id,
+                &coordinate.triple.env.as_str(),
+            ],
+        )
+        .await
+        .context("read the control release before the push")?;
+    anyhow::ensure!(
+        known.is_some(),
+        "the control database has no release {effective_release_id} of tenant {:?} in environment {}; nothing was pushed",
+        coordinate.tenant_id,
+        coordinate.triple.env.as_str()
+    );
     let published = publish_release_manifest(
-        &canonical_bytes,
+        canonical_bytes,
         &request.artifact_base,
         request.insecure_registry,
         &request.oci_ca_paths,
         &request.registry_auth_file,
     )
     .await?;
-    let coordinate = request.deployment_coordinate(&published.release);
     report_deployment_coordinate(&coordinate, &published.digest);
     // wamn-0h0g.8.27: the OCI push IS the deployment event this attestation
-    // records (wamn-0h0g.8.21's own stated trigger), so the write lands here and
-    // on no other verb. Its foreign key refuses a release whose identity the mint
-    // never projected — bytes that reached a registry without ever being minted
-    // cannot be attested into existence.
-    crate::publish_release::attest_deployment(
-        &request.control_database_url,
+    // records, so the write lands here and on no other verb.
+    crate::publish_release::attest_deployment_on(
+        control,
         &coordinate,
         &published.digest,
         source_commit,
