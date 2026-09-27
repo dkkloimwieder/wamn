@@ -176,6 +176,11 @@ Owner rulings of 2026-09-26:
 - Every credential Secret that a verb emits gets the host `wamn-pg-rw.platform.svc.cluster.local:5432` by `jq`, because the verbs copy the host of the admin URL, which is the port-forward. A finding asks for the `--database-host` flag that the event-reader verb has.
 - `push-component` gets `--declaration-template` with `--tenant`, which renders `publication/components/*.json.in` with `render_declaration_document`, as the dev coordinator does.
 - Components go to `us-central1-docker.pkg.dev/wamn-dev/wamn/components` with `--admit-platform-package wamn:node --admit-platform-package wamn:postgres`. The operator push uses a `.dockerconfigjson` with user `oauth2accesstoken` and a `gcloud auth print-access-token` token, in a mode 0600 file of a private temporary directory, deleted after the push. The token never appears on a command line.
+- Identity TLS comes from `deploy/gcp/identity-certificate.yaml`: the `Certificate` `identity` from `ClusterIssuer wasmcloud-ca`, DNS name `identity.identity.svc.cluster.local`, Secret `identity-tls`. Its `ca.crt` is copied into the ConfigMap `identity-ca` in `hosts` and in `edge`, for the host's `WAMN_IDENTITY_CA_FILE` and the edge's `identityCaConfigMap`.
+- The session target is the `session-role-reader` generation `a` in `identity`, with the host set by `jq`, passed as `sessionTargetSecrets[0]`.
+- The operator CA is a separate CA from `deploy/gcp/identity-operator-ca.yaml`: a `SelfSigned` `Issuer`, the CA `Certificate` `identity-operator-ca`, the CA `Issuer` `identity-operator`, and one client `Certificate` `operator-dkk`. Identity uses `operatorCaSecret: identity-operator-ca`, because step 4 sends an invitation. It is not `wasmcloud-ca`, because a host certificate must not act as an operator. The owner reads `tls.crt` and `tls.key` of `operator-dkk` into mode 0600 files when sending the invitation, and never commits them.
+- `deploy/gcp/values-identity.yaml` names the issuer, `wamn-identity-db`, `identity-tls`, `identity-operator-ca`, `identity-resend`, `noreply@wamn.dev`, the session target and the identity image by digest, never by tag.
+- After the install, a pod in `hosts` makes sure that `GET /.well-known` answers over TLS against `identity-ca`. Then the host installs.
 
 ## 6. Benchmark
 
