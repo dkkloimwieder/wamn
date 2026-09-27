@@ -290,8 +290,8 @@ async fn assert_base_ir(client: &Client, admin: &Client) {
     );
     assert_eq!(
         server_tables.len(),
-        4,
-        "the fixture migration created four tables"
+        3,
+        "the fixture migration created three tables"
     );
     assert!(
         first

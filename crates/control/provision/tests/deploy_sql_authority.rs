@@ -2454,7 +2454,6 @@ const WIDGET_HISTORY_READ: &str = "SELECT \
     AND history.position > $2::bigint \
   ORDER BY history.position ASC \
   LIMIT LEAST($3::int4, 100)";
-const HISTORY_WIDGET: &str = "7a1c0a4e-2b9d-4f3e-8a61-0c5d2e9b4f17";
 /// The maker the history widget references.
 const HISTORY_MAKER: &str = "00000000-0000-4000-8000-000000000501";
 /// The maker the update moves the widget to.
@@ -2649,33 +2648,48 @@ fn the_history_read_reconstructs_a_row_at_retained_positions_on_postgres() {
     // An insert, an update of the code and the revision, an update of a
     // text and a uuid, and a delete, each in its own transaction. After each write, the row image of
     // the row is the state that the fold must reconstruct.
-    let image = || {
+    let image = |widget: &str| {
         psql(
             &db_url,
             None,
             &format!(
                 "SELECT COALESCE((SELECT wamn_history.row_image(w)::text \
-                   FROM inventory.widget w WHERE id = '{HISTORY_WIDGET}'), '{{}}')"
+                   FROM inventory.widget w WHERE id = '{widget}'), '{{}}')"
             ),
         )
     };
-    let mut images = Vec::new();
-    for (actor, operation, write) in [
-        (
-            ACTOR_A,
-            CREATE_OPERATION,
-            format!(
-                "INSERT INTO widget (id, code, note, maker_id) \
-                   VALUES ('{HISTORY_WIDGET}', 'priority', 'history', \
-                           '{HISTORY_MAKER}');"
-            ),
+    // The create names no id: the column default mints it, as in the
+    // generated create.
+    apply(
+        &db_url,
+        &format!(
+            "SELECT pg_sleep(0.01);\n{}",
+            logged_guest_transaction(
+                &guest,
+                ACTOR_A,
+                CREATE_OPERATION,
+                &format!(
+                    "SET LOCAL search_path = inventory;\n\
+                     INSERT INTO widget (code, note, maker_id) \
+                       VALUES ('priority', 'history', '{HISTORY_MAKER}');"
+                ),
+            )
         ),
+    );
+    let widget = psql(
+        &db_url,
+        None,
+        "SELECT id FROM inventory.widget WHERE note = 'history'",
+    );
+    let widget = widget.as_str();
+    let mut images = vec![image(widget)];
+    for (actor, operation, write) in [
         (
             ACTOR_B,
             UPDATE_OPERATION,
             format!(
                 "UPDATE widget SET code = 'standard', edit_version = 2 \
-                   WHERE id = '{HISTORY_WIDGET}';"
+                   WHERE id = '{widget}';"
             ),
         ),
         (
@@ -2684,13 +2698,13 @@ fn the_history_read_reconstructs_a_row_at_retained_positions_on_postgres() {
             format!(
                 "UPDATE widget SET note = 'history-2', \
                    maker_id = '{HISTORY_MAKER_NEXT}' \
-                   WHERE id = '{HISTORY_WIDGET}';"
+                   WHERE id = '{widget}';"
             ),
         ),
         (
             ACTOR_C,
             REPAIR_OPERATION,
-            format!("DELETE FROM widget WHERE id = '{HISTORY_WIDGET}';"),
+            format!("DELETE FROM widget WHERE id = '{widget}';"),
         ),
     ] {
         apply(
@@ -2705,10 +2719,10 @@ fn the_history_read_reconstructs_a_row_at_retained_positions_on_postgres() {
                 )
             ),
         );
-        images.push(image());
+        images.push(image(widget));
     }
 
-    let pages = history_pages(&db_url, &guest, HISTORY_WIDGET);
+    let pages = history_pages(&db_url, &guest, widget);
     // The read answers position, kind, operation, changed_by, changed_at,
     // before, after and current. It states no head position, so the newest
     // position is the last entry of the last page this read took.
