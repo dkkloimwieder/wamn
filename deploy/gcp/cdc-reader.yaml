@@ -6,6 +6,8 @@
 #   WAMN_CDC_URL     the replication Secret of enable-cdc-project-env
 #   WAMN_SYSTEM_URL  generation a of the registry-reader credential
 #   the event NATS in platform, as the publisher user
+# The feedback and slot monitor flags keep their defaults (5 and 30 seconds).
+# The kind values 1 and 0 are test-speed settings.
 # The ServiceAccount is the one of deploy/platform/event-reader-rbac.yaml in
 # namespace platform. It has no grants, and the pod mounts no token.
 apiVersion: v1
@@ -24,6 +26,9 @@ metadata:
   labels: { app: event-reader }
 spec:
   replicas: 1
+  # One replication slot has one reader.
+  strategy:
+    type: Recreate
   selector:
     matchLabels: { app: event-reader }
   template:
@@ -41,10 +46,6 @@ spec:
             - --env=dev
             - --stream-replicas=1
             - --dup-window-secs=120
-            - --feedback-secs=1
-            - --stall-threshold-secs=30
-            - --slot-poll-secs=0
-            - --slot-safe-wal-warn-bytes=268435456
           env:
             - name: WAMN_CDC_URL
               valueFrom:

@@ -818,7 +818,7 @@ TMPDIR=<directory on the main disk> tools/journey-image-cache ensure . cdc-reade
 docker tag wamn-cdc-reader:src-<identity> $R/wamn-cdc-reader:src-<identity> && docker push $R/wamn-cdc-reader:src-<identity>
 ```
 
-Deploy the reader, then restart the host so that it starts after the reader:
+The reader uses its default feedback and slot monitor intervals, 5 and 30 seconds. The kind values 1 and 0 are test-speed settings. The Deployment uses `strategy: Recreate`, because one replication slot has one reader. Deploy the reader, then restart the host so that it starts after the reader:
 
 ```bash
 kubectl apply -f deploy/gcp/cdc-reader.yaml
@@ -830,5 +830,16 @@ kubectl -n hosts rollout status deploy/hostgroup-default --timeout=300s
 
 The reader log shows `registration loaded`, the three `preflight` lines and `walsender session open`. The slot then shows `active` as true in `pg_replication_slots`. On 2026-09-27 the credential took 12 seconds and its apply 2 seconds. The image build took 63 seconds, the push 6 seconds, the reader rollout 6 seconds and the host restart 10 seconds.
 
-The host crash-looped until the source stream existed. It then became Ready by itself at its next restart, before the reader started, so the ruled restart was its second start.
+On 2026-09-27 the change to the defaults and `Recreate` rolled out in 5 seconds, and the reader opened its session again. The host crash-looped until the source stream existed. It then became Ready by itself at its next restart, before the reader started, so the ruled restart was its second start.
 
+
+### 3.20 Serve check
+
+Forward the host Service and call a Receiving route with the release host name:
+
+```bash
+kubectl -n hosts port-forward svc/hostgroup-default 18080:80 &
+curl -s -i -H 'Host: receiving.wamn.dev' http://127.0.0.1:18080/location/list
+```
+
+On 2026-09-27 every path answered `503`, and the host log said `failed to route incoming request err=router is temporarily unavailable`. The host router in `crates/platform/engine/src/expected_router.rs` gives this answer when the release names the host but no workload is bound to it. No `WorkloadDeployment` exists yet. The kind cases apply the `flow-http` workload of `deploy/platform/http-route-workload.example.yaml` and the materializer workload of `deploy/platform/materializer.example.yaml`, and step 3 has not applied them yet.

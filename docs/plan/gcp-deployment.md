@@ -127,22 +127,27 @@ Owner rulings of 2026-09-25:
 ### 5.2 Step 3 procedure
 
 The kind cluster cases are not a deployment to repeat on GKE. They run PostgreSQL, the event NATS, the OCI registry and MinIO as local Docker containers, and they provision and publish through library calls inside the test process.
-Step 3 uses the command path of [deployment](../operations/deployment.md) and [repository delivery](../operations/delivery.md) instead, with the standing manifests in `deploy/infra` and `deploy/platform`.
-This is the order. Section 5.3 gives the owner rulings.
+Step 3 uses the command path of [deployment](../operations/deployment.md) and [repository delivery](../operations/delivery.md) instead, with the standing manifests in `deploy/infra` and `deploy/platform` and the Google Cloud copies in `deploy/gcp`.
+The steps ran in this order. Section 5.3 gives the owner rulings, and section 3 of [Google Cloud operations](../operations/gcp.md) gives each command and its time.
 
 1. Scale `main` to 2.
 2. Build the host and identity images with `tools/journey-image-cache`, and push them to `us-central1-docker.pkg.dev/wamn-dev/wamn`. The nodes pull them as `wamn-nodes`, with `roles/artifactregistry.reader`.
 3. Build the Receiving components with `tools/build-components`, which applies the path remapping of `tools/guest-rustflags`, so the digests match a local build.
 4. Install the runtime operator chart `2.10.0` with `deploy/infra/values-wamn.yaml`, and the internal CA of `deploy/infra/wasmcloud-ca-issuer.yaml`.
-5. Install the event NATS from `deploy/infra/nats-jetstream.yaml` with one replica, and declare stream replicas 1 in the environment configuration.
-6. Install CloudNativePG from `deploy/infra/cnpg-operator.yaml` and one cluster with one instance on the storage class `standard` (`pd-standard`).
+5. Run the example program `event_broker_files`, and make the Secrets `evt-nats-authorization` and `evt-nats-bootstrap`. Install the event NATS from `deploy/gcp/nats-jetstream.yaml` with one replica, and run its tap-stream Job. Make the three user Secrets in `platform` and the two host Secrets in `hosts`.
+6. Install CloudNativePG from `deploy/infra/cnpg-operator.yaml` and the cluster `wamn-pg` with one instance on the storage class `standard`. Its `initdb` makes the database `wamn_system` with the owner `wamn_system`.
 7. Run `wamn-ctl provision-system`, which installs the control store and sets `registry.meta.platform_domain`.
-8. Run the provisioning verbs of [deployment ordering](../operations/deployment.md#deployment-ordering) from this machine, through a port-forward to PostgreSQL: `provision-org`, `provision-project-env`, `provision-identity-issuer`, `reconcile-run-plane`, `apply-package`, `reconcile-package-data-access`, `push-component`.
-9. The owner creates the Resend secret of section 4.2. Then install identity with `deploy/platform/identity`.
-10. Publish the Receiving release with `--route-host receiving.wamn.dev`. Then install the host with one replica at a request of 0.5 CPU, with the manifest digest from `print-release-env`, as the kind case does.
-11. Make sure that the host serves the release through a port-forward. Scale `main` to 0.
+8. Run `provision-org` and `provision-project-env` through a port-forward to PostgreSQL. Apply the role SQL, the `Database`, the privilege SQL and the Secret. Run the NATS program again for org `dkk`, restart the event NATS and run the tap-stream Job again.
+9. Run `provision-identity-issuer`, `reconcile-run-plane`, `apply-package`, `reconcile-package-data-access` and `push-component --declaration-template`.
+10. Apply the identity certificates and the operator CA, copy the ConfigMap `identity-ca` into `hosts` and `edge`, and apply the session target. The owner creates the Resend Secret of section 4.2. Install identity and make sure that it answers from `hosts`.
+11. Prepare generation `a` of the five host credentials. Create the Google service account `wamn-registry-reader` and its bindings, and install the registry token CronJob with a first run by hand.
+12. Publish and activate the session key.
+13. Mint the management-author PAT through the temporary `/etc/hosts` line and a port-forward to identity.
+14. Run `publish-release` with `--route-host receiving.wamn.dev`, `push-release-manifest` and `print-release-env`. Write the host values with the example program `host_values_files`, and install the host with one replica at a request of 0.5 CPU. The host crash-looped until step 15 made the source stream.
+15. Run `enable-cdc-project-env`, and apply its role SQL, CDC SQL and Secret. Prepare generation `a` of the registry-reader credential. Build and push the CDC reader image, deploy `deploy/gcp/cdc-reader.yaml`, and restart the host.
+16. Make sure that the host serves the release through a port-forward. Scale `main` to 0, unless step 4 follows on the same day.
 
-Each command goes into section 3 of [Google Cloud operations](../operations/gcp.md) as it runs.
+On 2026-09-27 the daily guard scaled `main` to 0 during step 3, so step 1 ran again. Two steps are temporary: the `/etc/hosts` line of step 13 (finding `wamn-n5d1`), and the `jq` edits of the namespace and the database host in emitted Secrets (findings `wamn-6b4g` and `wamn-lczu`).
 
 ### 5.3 Step 3 rulings
 
@@ -195,6 +200,12 @@ Owner rulings of 2026-09-26:
 - The event streams come from `enable-cdc-project-env --schema receiving --stream-replicas 1 --dup-window-secs 120 --db-host wamn-pg-rw.platform.svc.cluster.local --namespace platform --secret-namespace platform`, with the `evt-nats-provisioning` user through a port-forward and the source stream name of the NATS program. Its role SQL, CDC SQL and Secret are applied in that order, the Secret to `platform`.
 - The replication password is `openssl rand -hex 32` in a mode 0600 file, passed as `WAMN_REPLICATION_PASSWORD` on that one command, and the file is deleted after the Secret is applied.
 - The CDC reader runs in `platform` from the image `us-central1-docker.pkg.dev/wamn-dev/wamn/wamn-cdc-reader` (Dockerfile target `cdc-reader`), by digest. `deploy/gcp/cdc-reader.yaml` uses the `event-reader` ServiceAccount of `event-reader-rbac.yaml` in `platform`, `automountServiceAccountToken: false`, one replica, the environment that the kind case gives `cdc::start` (`WAMN_CDC_URL`, `WAMN_SYSTEM_URL`, the event NATS URL in `platform` and the `publisher` user), and requests of 50m and 64Mi with no limits. The host restarts after the reader reaches the publication.
+
+Owner rulings of 2026-09-27:
+
+- The CDC reader keeps its default feedback and slot monitor intervals, 5 and 30 seconds. The kind values 1 and 0 are test-speed settings, and the slot monitor stays on in a deployment.
+- The reader Deployment uses `strategy: Recreate`, because one replication slot has one reader.
+
 
 ## 6. Benchmark
 
