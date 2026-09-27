@@ -1,5 +1,5 @@
 # The edge of docs/plan/web-deployment.md. In kind it serves every path. On
-# Google Cloud (gcp.project set) a load balancer sends /api/ and /password/ to
+# Google Cloud (neg set) a load balancer sends /api/ and /password/ to
 # it and serves every other path from a Cloud CDN backend bucket.
 image:
   repository: nginx
@@ -32,17 +32,11 @@ bucket:
   endpoint: ""
   path: ""
 
-# Google Cloud, rendered as Config Connector resources: the bucket, its public
-# read, the backend bucket with Cloud CDN, the backend service over the edge's
-# endpoint groups, the URL map, the certificate, the address and the
-# forwarding rule. host names the domain and issuer the certificate issuer.
-# Assumed, not tested: only a rendering proves this part.
-gcp:
-  # The project. Empty renders no Google Cloud resource.
-  project: ""
-  # The zones of the edge pods. GKE makes one endpoint group in each.
-  zones: []
-  bucketLocation: US
+# Google Cloud: annotate the Service so that GKE makes a network endpoint group
+# for the load balancer. The load balancer then serves the bucket, so
+# bucket.endpoint stays empty. docs/operations/gcp.md creates the load balancer
+# with gcloud.
+neg: false
 
 service:
   type: ClusterIP

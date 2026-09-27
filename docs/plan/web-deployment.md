@@ -2,7 +2,7 @@
 
 Epic 20, Beads `wamn-xyxj`, served the generated web clients from one public host. A bucket holds the static files, and an edge proxy sends API paths to the platform. It was item 7 of section 7 in the [web operator client](web-operator-client.md) plan, and it closed on 2026-09-25.
 The built parts are in the operations pages.
-[Deployment](../operations/deployment.md#web-client-files) describes `wamn web upload` and the edge chart in `deploy/platform/edge`, including its [Google Cloud](../operations/deployment.md#google-cloud-edge) rendering.
+[Deployment](../operations/deployment.md#web-client-files) describes `wamn web upload` and the edge chart in `deploy/platform/edge`, including its [Google Cloud](../operations/deployment.md#google-cloud-edge) values.
 [Cluster tests](../operations/cluster-tests.md) describes the kind edge case.
 
 ## 1. Remaining work

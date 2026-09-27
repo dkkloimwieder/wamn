@@ -2,7 +2,7 @@
 {{- $api := required "Set api to the route ingress URL." .Values.api -}}
 {{- $identity := required "Set identity to the identity service URL." .Values.identity -}}
 {{- $endpoint := .Values.bucket.endpoint -}}
-{{- if not (or $endpoint .Values.gcp.project) -}}
+{{- if not (or $endpoint .Values.neg) -}}
 {{- fail "Set bucket.endpoint to the object store origin." -}}
 {{- end -}}
 {{- $bucket := required "Set bucket.path to the path that wamn web upload wrote." .Values.bucket.path | trimAll "/" -}}
