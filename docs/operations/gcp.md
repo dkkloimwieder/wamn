@@ -1283,3 +1283,28 @@ gcloud dns record-sets create wms.wamn.dev. --project wamn-dev --zone wamn-dev -
 ```
 
 The same certificate `*.wamn.dev` serves both hosts. On 2026-09-27 the upload took 14 seconds, and the upload again with `--org` took 12 seconds. The edge upgrade 12 seconds, the import 17 seconds and the record 1 second. Until the new host rule spreads, `wms.wamn.dev` reaches the default bucket, which answers with a listing of the whole web bucket (finding `wamn-uo2p`).
+
+### 5.7 WMS pallet move and label
+
+The owner signs in at `https://wms.wamn.dev` and moves one pallet from the move form. Read the movement row:
+
+```bash
+kubectl -n platform exec wamn-pg-1 -c postgres -- psql -d wamn-db-dkk--wms--dev--bnarqpnc -Atc \
+  "select * from wms.inventory_movement order by created_at desc limit 3;"
+```
+
+List the label objects and read one. The object name is the movement id:
+
+```bash
+gcloud storage ls -l -r gs://wamn-dev-labels/ --project wamn-dev
+gcloud storage cat gs://wamn-dev-labels/wms/<movement id> --project wamn-dev
+```
+
+Find the workflow run in the host log:
+
+```bash
+kubectl -n hosts logs -l app.kubernetes.io/instance=wamn-host --all-containers --since=30m --max-log-requests 10 \
+  | grep movement_label
+```
+
+On 2026-09-27 the owner moved one pallet. The movement `8743151e-e335-491e-ac80-258072b2503d` was written at 17:35:45.416 UTC. The host started the `wamn_wms::movement_label` run 111 milliseconds later. The label `wms/8743151e-e335-491e-ac80-258072b2503d` is a 276 byte ZPL document, written in the same second. The row action `move` of the Pallets table was out of reach, because the table cuts off its last columns (finding `wamn-po31`).
