@@ -1405,73 +1405,19 @@ fn duplicate_filters_and_schema_qualified_authored_sql_refuse() {
 }
 
 // ---------------------------------------------------------------------------
-// Generated create: command-identity-from-claim.
+// Generated create: the write log (`docs/plan/write-log.md`).
 //
-// The law, ratified 2026-09-03: any identity a command creates comes from the
-// CLAIM, not from the work. A create that let PostgreSQL default its row id
-// would mint a SECOND id on replay -- a duplicate IDENTITY, which is real stock
-// on a row nothing points at, not merely a duplicate row.
-//
-// These tests check the generator. No package declares a create today, so
-// the emitted statements have no in-cluster consumer yet; the executing test
-// is due on the first one.
+// A create claims its key in `app_system.write_log`, inserts its row and
+// stores its result in one transaction that its codec holds. The model's
+// defaults mint the identities, and `RETURNING` hands them back.
 // ---------------------------------------------------------------------------
 
-const CLAIM_TABLE: &str = "gadget_command";
-
-fn claim_columns() -> Vec<Column> {
-    vec![
-        Column::new("canonical_command", ColumnType::Bytes, false, None, None),
-        Column::new("idempotency_key", ColumnType::Text, false, None, None),
-        Column::new(
-            "gadget_id",
-            ColumnType::Uuid,
-            false,
-            Some(ColumnDefault::GenRandomUuid),
-            None,
-        ),
-    ]
-}
-
-fn claim_constraints() -> Vec<Constraint> {
-    vec![
-        Constraint::primary_key("gadget_command_idempotency_key_pkey", ["idempotency_key"])
-            .unwrap(),
-        Constraint::unique("gadget_command_gadget_id_key", ["gadget_id"]).unwrap(),
-    ]
-}
-
-fn claim_catalog_with(model: Table, claim: Table) -> CatalogIr {
-    CatalogIr::new(vec![model, claim])
-}
-
-fn claim_catalog() -> CatalogIr {
-    let model = table(&catalog(false), "gadget").clone();
-    claim_catalog_with(
-        model,
-        Table::new(
-            "inventory",
-            CLAIM_TABLE,
-            claim_columns(),
-            claim_constraints(),
-            Vec::new(),
-        ),
-    )
-}
-
-fn claim_manifest() -> Value {
+fn create_manifest() -> Value {
     let mut manifest = manifest();
     manifest["models"]["gadget"]["operations"]["create"] = json!({
         "permission": "gadget.create",
         "writable_fields": ["stock_id"],
-        "claim": {
-            "table": CLAIM_TABLE,
-            "identities": {"id": "gadget_id"}
-        },
         "result": "one"
-    });
-    manifest["internal_relations"] = json!({
-        CLAIM_TABLE: {"schema": "inventory", "table": CLAIM_TABLE, "cdc": "excluded"}
     });
     manifest
 }
@@ -1517,13 +1463,6 @@ fn inventory_item_fixture() -> (CatalogIr, Value) {
         vec![Constraint::primary_key("inventory_item_id_pkey", ["id"]).unwrap()],
         Vec::new(),
     );
-    let claim = Table::new(
-        "inventory",
-        CLAIM_TABLE,
-        claim_columns(),
-        claim_constraints(),
-        Vec::new(),
-    );
     let manifest = json!({
         "package": {"id": "wamn_inventory", "version": "1.0.0"},
         "required_platform_policy_contract": {
@@ -1542,10 +1481,6 @@ fn inventory_item_fixture() -> (CatalogIr, Value) {
                     "create": {
                         "permission": "inventory_item.create",
                         "writable_fields": ["sku", "note", "priority"],
-                        "claim": {
-                            "table": CLAIM_TABLE,
-                            "identities": {"id": "gadget_id"}
-                        },
                         "result": "one"
                     },
                     "update": {
@@ -1562,13 +1497,10 @@ fn inventory_item_fixture() -> (CatalogIr, Value) {
                 }
             }
         },
-        "internal_relations": {
-            CLAIM_TABLE: {"schema": "inventory", "table": CLAIM_TABLE, "cdc": "excluded"}
-        },
         "connections": ["postgres"],
         "components": {"inventory": {"connections": ["postgres"]}}
     });
-    (CatalogIr::new(vec![model, claim]), manifest)
+    (CatalogIr::new(vec![model]), manifest)
 }
 
 /// Build the generated typed CRUD component and run its codec tests.
@@ -1607,6 +1539,7 @@ fn compile_inventory_item_component(package: &GeneratedPackage) {
             "src/delete_codec.rs",
         ),
         ("generated/wit/operation_codec.rs", "src/operation_codec.rs"),
+        ("generated/wit/write_log_codec.rs", "src/write_log_codec.rs"),
     ] {
         std::fs::write(
             scratch.join(target),
@@ -1618,12 +1551,19 @@ fn compile_inventory_item_component(package: &GeneratedPackage) {
         .unwrap_or_else(|error| panic!("write {target}: {error}"));
     }
 
+    let platform = root.join("apps/platform");
     std::fs::write(
         scratch.join("Cargo.toml"),
-        "[package]\nname = \"typed-crud-fixture\"\nversion = \"0.0.0\"\nedition = \"2024\"\n\
-         \n[dependencies]\nserde = { version = \"1\", features = [\"derive\"] }\nserde_json = \"1\"\n\
-         uuid = \"1\"\nwit-bindgen = { version = \"0.61\", default-features = false, features = [\"async\", \"macros\", \"realloc\"] }\n\
-         \n[lib]\ncrate-type = [\"cdylib\"]\n\n[workspace]\n",
+        format!(
+            "[package]\nname = \"typed-crud-fixture\"\nversion = \"0.0.0\"\nedition = \"2024\"\n\
+             \n[dependencies]\nserde = {{ version = \"1\", features = [\"derive\"] }}\nserde_json = \"1\"\n\
+             uuid = \"1\"\nwit-bindgen = {{ version = \"0.61\", default-features = false, features = [\"async\", \"macros\", \"realloc\"] }}\n\
+             wamn-execution-contract = {{ path = \"{}\" }}\n\
+             wamn-postgres-statements = {{ path = \"{}\" }}\n\
+             \n[lib]\ncrate-type = [\"cdylib\"]\n\n[workspace]\n",
+            platform.join("execution/contract").display(),
+            platform.join("data/postgres-statements").display(),
+        ),
     )
     .expect("write fixture manifest");
     let node = root.join("crates/execution/workflow/router/wit");
@@ -1670,9 +1610,18 @@ macro_rules! operation {{
         "{lib}\noperation!(create_codec, create, create_handler, CreateRequest, CreateResult, CreateError);\n\
          operation!(update_codec, update, update_handler, UpdateRequest, UpdateResult, UpdateError);\n\
          operation!(delete_codec, delete, delete_handler, DeleteRequest, DeleteResult, DeleteError);\n\n\
-         create_codec::export_operation!(Component, crate::exports::wamn_inventory::inventory_item::create, crate::wamn::node::types, (), create_handler, create_codec);\n\
+         create_codec::export_operation!(Component, crate::exports::wamn_inventory::inventory_item::create, crate::wamn::node::types, wamn_postgres_statements::Connection::new(), create_claim_handler, create_codec);\n\
          update_codec::export_operation!(Component, crate::exports::wamn_inventory::inventory_item::update, crate::wamn::node::types, (), update_handler, update_codec);\n\
          delete_codec::export_operation!(Component, crate::exports::wamn_inventory::inventory_item::delete, crate::wamn::node::types, (), delete_handler, delete_codec);\n\n\
+         async fn create_claim_handler(\n\
+             _transaction: &mut wamn_postgres_statements::Transaction,\n\
+             request: exports::wamn_inventory::inventory_item::create::CreateRequest,\n\
+         ) -> Result<\n\
+             exports::wamn_inventory::inventory_item::create::CreateResult,\n\
+             exports::wamn_inventory::inventory_item::create::CreateError,\n\
+         > {{\n\
+             create_handler(&mut (), request).await\n\
+         }}\n\n\
          export!(Component);\n\n{CODEC_TESTS}"
     );
     std::fs::write(scratch.join("src/lib.rs"), lib).expect("write fixture component");
@@ -1696,49 +1645,44 @@ macro_rules! operation {{
 ///
 /// `sku` is NOT NULL with no default, so its contract states
 /// `omitted: invalid_input`, and the codec refuses an omitted or null `sku` on
-/// that path before the handler runs. `note` is nullable and `priority` has a
-/// default, so a create may omit both.
+/// that path before it opens a transaction or claims a key. `note` is nullable
+/// and `priority` has a default, so a create may omit both.
 const CODEC_TESTS: &str = r##"
 #[cfg(test)]
 mod codec_tests {
     use crate::exports::wamn_inventory::inventory_item::create as contract;
 
-    /// The field each item refuses on, and how many items reached the handler.
-    fn create(body: &str) -> (Vec<String>, usize) {
+    /// The field each refused item names. A refused item never reaches the
+    /// connection, so this test needs no database.
+    fn create(body: &str) -> Vec<String> {
         let items = super::create_codec::decode(body).expect("the body decodes");
-        let mut calls = 0_usize;
+        let mut connection = wamn_postgres_statements::Connection::new();
         let outcomes = {
-            let run = super::create_codec::run(items, &mut calls, async |calls: &mut usize, _| {
-                *calls += 1;
-                Err(contract::CreateError::InvalidInput(contract::InvalidInputDetail {
-                    field: "handler".to_owned(),
-                }))
+            let run = super::create_codec::run(items, &mut connection, async |_, _| {
+                unreachable!("a refused item reaches no handler")
             });
             let mut run = std::pin::pin!(run);
             let mut context = std::task::Context::from_waker(std::task::Waker::noop());
             let std::task::Poll::Ready(outcomes) = run.as_mut().poll(&mut context) else {
-                panic!("the codec awaits only the handler, which is ready");
+                panic!("the codec refuses before it awaits anything");
             };
             outcomes
         };
-        let fields = outcomes
+        outcomes
             .into_iter()
             .map(|outcome| match outcome.outcome {
                 Err(contract::CreateError::InvalidInput(detail)) => detail.field,
                 _ => panic!("every item refuses as invalid input"),
             })
-            .collect();
-        (fields, calls)
+            .collect()
     }
 
     #[test]
     fn a_create_refuses_an_omitted_field_that_nothing_would_fill() {
         let omitted = r#"[{"request_id":"r","idempotency_key":"k"}]"#;
-        assert_eq!(create(omitted), (vec!["sku".to_owned()], 0));
+        assert_eq!(create(omitted), ["sku"]);
         let null = r#"[{"request_id":"r","idempotency_key":"k","sku":null}]"#;
-        assert_eq!(create(null), (vec!["sku".to_owned()], 0));
-        let present = r#"[{"request_id":"r","idempotency_key":"k","sku":"A-1"}]"#;
-        assert_eq!(create(present), (vec!["handler".to_owned()], 1));
+        assert_eq!(create(null), ["sku"]);
     }
 }
 "##;
@@ -1834,98 +1778,55 @@ fn generated_create_sql(package: &GeneratedPackage, statement: &str) -> String {
     .unwrap()
 }
 
-/// EXIT GATE: every identity the create hands out is written once, under the
-/// claim's primary key, and bound into the insert rather than defaulted.
-///
-/// Read the three statements together. `create_claim` mints the ids under
-/// `idempotency_key PRIMARY KEY`, so a second call with that key mints nothing.
-/// `create` BINDS them (`$1::uuid`), so it cannot invent a different one.
-/// `create_replay` reads the created row back through the claim. That is
-/// why a replay returns the same id BY CONSTRUCTION and not by an early return.
+/// A create binds only its writable fields. The model's defaults mint the
+/// identities, and `RETURNING` hands them back. The generator writes no claim
+/// or replay statement of its own.
 #[test]
-fn generated_create_takes_every_identity_from_the_claim() {
-    let package = run(&claim_catalog(), &claim_manifest(), &QUERY_SOURCES).unwrap();
-
-    assert_eq!(
-        generated_create_sql(&package, "create_claim"),
-        "INSERT INTO gadget_command (idempotency_key, canonical_command)\n\
-         VALUES ($1::text, $2::bytea)\n\
-         ON CONFLICT ON CONSTRAINT gadget_command_idempotency_key_pkey DO NOTHING\n\
-         RETURNING\n    gadget_id;\n",
-    );
+fn generated_create_binds_no_identity() {
+    let package = run(&catalog(false), &create_manifest(), &QUERY_SOURCES).unwrap();
     assert_eq!(
         generated_create_sql(&package, "create"),
-        "INSERT INTO gadget (id, stock_id)\n\
-         VALUES ($1::uuid, $2::uuid)\n\
+        "INSERT INTO gadget (stock_id)\n\
+         VALUES ($1::uuid)\n\
          RETURNING\n    \
          created_at,\n    id,\n    part_code,\n    row_version,\n    status,\n    stock_id;\n",
     );
-    assert_eq!(
-        generated_create_sql(&package, "create_replay"),
-        "SELECT\n    claim.canonical_command,\n    \
-         model.created_at,\n    model.id,\n    model.part_code,\n    \
-         model.row_version,\n    model.status,\n    model.stock_id\n\
-         FROM gadget_command AS claim\n\
-         JOIN gadget AS model\n    ON model.id = claim.gadget_id\n\
-         WHERE claim.idempotency_key = $1::text;\n",
-    );
-}
-
-/// EXIT GATE: the replay path performs ZERO writes.
-///
-/// A replay that re-ran the insert would be the duplicate the key exists to
-/// prevent, so this reads the emitted text rather than trusting the caller.
-#[test]
-fn generated_create_replay_writes_nothing() {
-    let package = run(&claim_catalog(), &claim_manifest(), &QUERY_SOURCES).unwrap();
-    let replay = generated_create_sql(&package, "create_replay");
-
-    assert!(replay.starts_with("SELECT\n"), "{replay}");
-    for write in [
-        "INSERT",
-        "UPDATE",
-        "DELETE",
-        "MERGE",
-        "FOR UPDATE",
-        "nextval",
-    ] {
-        assert!(!replay.contains(write), "replay must not {write}: {replay}");
+    for gone in ["create_claim", "create_replay"] {
+        assert!(
+            package
+                .file(&format!("generated/sql/gadget/{gone}.sql"))
+                .is_none(),
+            "{gone} is not emitted"
+        );
     }
-    // The insert never defaults an identity: every id is a bind.
-    let create = generated_create_sql(&package, "create");
-    assert!(!create.contains("gen_random_uuid"), "{create}");
-    assert!(!create.contains("DEFAULT"), "{create}");
+    let overlay = artifact_json(&package, DATA_ACCESS_OVERLAY_PATH);
+    let model = object_named(overlay["relations"].as_array().unwrap(), "table", "gadget");
+    assert_eq!(model["insert_fields"], json!(["stock_id"]));
 }
 
-/// EXIT GATE: the create's contracts carry the claim, the replay rule and the
-/// typed refusal for a key rebound to a different request.
+/// The create contract names the write log, its three statements, and the
+/// refusal of a key sent again with another request.
 #[test]
-fn generated_create_contracts_publish_the_claim_and_its_refusal() {
-    let package = run(&claim_catalog(), &claim_manifest(), &QUERY_SOURCES).unwrap();
+fn generated_create_contracts_publish_the_write_log_and_its_refusal() {
+    let package = run(&catalog(false), &create_manifest(), &QUERY_SOURCES).unwrap();
 
     let operation = artifact_json(&package, "generated/contracts/gadget/create.operation.json");
+    assert_eq!(operation["idempotent_by"], "claim");
     assert_eq!(
         operation["idempotency"],
         json!({
             "key": "idempotency_key",
-            "canonical_command": "canonical_command",
-            "claim": {
-                "schema": "inventory",
-                "table": CLAIM_TABLE,
-                "constraint": "gadget_command_idempotency_key_pkey",
-                "identities": {"id": "gadget_id"},
+            "log": {
+                "schema": "app_system",
+                "table": "write_log",
+                "operation": "platform-gadget:gadget/create",
             },
-            "statements": {
-                "claim": "create_claim",
-                "replay": "create_replay",
-                "insert": "create",
-            },
-            "replay": {"writes": "none", "identity_source": "claim"},
-            "conflict": {
-                "on": "changed_canonical_command",
-                "refusal": "idempotency_conflict",
-            },
-            "atomicity": "claim_and_insert_commit_together",
+            "statements": {"claim": "log_claim", "read": "log_read", "finish": "log_finish"},
+            "isolation": "read_committed",
+            "replay": {"writes": "none", "answer": "stored_result"},
+            "conflict": {"on": "changed_request", "refusal": "idempotency_conflict"},
+            "refusal": {"log": "none"},
+            "atomicity": "claim_work_and_result_commit_together",
         })
     );
     assert_eq!(operation["transaction"], "explicit_per_input");
@@ -1935,27 +1836,11 @@ fn generated_create_contracts_publish_the_claim_and_its_refusal() {
             .iter()
             .map(|statement| statement["name"].as_str().unwrap())
             .collect::<Vec<_>>(),
-        ["create_claim", "create_replay", "create"]
-    );
-    // The claim statement returns the minted identity, not the model row.
-    assert_eq!(
-        statements[0]["columns"],
-        json!([{"name": "gadget_id", "type": "uuid", "nullable": false}])
+        ["create", "log_claim", "log_read", "log_finish"]
     );
     assert_eq!(
         statements[0]["binds"],
-        json!([
-            {"name": "idempotency_key", "type": "text", "nullable": false},
-            {"name": "canonical_command", "type": "bytes", "nullable": false},
-        ])
-    );
-    // The insert binds the claim-minted id ahead of the writable fields.
-    assert_eq!(
-        statements[2]["binds"],
-        json!([
-            {"name": "id", "type": "uuid", "nullable": false},
-            {"name": "stock_id", "type": "uuid", "nullable": false},
-        ])
+        json!([{"name": "stock_id", "type": "uuid", "nullable": false}])
     );
 
     let errors = artifact_json(&package, "generated/contracts/gadget/create.errors.json");
@@ -1965,7 +1850,7 @@ fn generated_create_contracts_publish_the_claim_and_its_refusal() {
         .iter()
         .find(|case| case["literal"] == "idempotency_conflict")
         .expect("a changed request for a live key is typed-refused");
-    assert_eq!(conflict["from"], json!("changed_canonical_command"));
+    assert_eq!(conflict["from"], json!("changed_request"));
     assert_eq!(conflict["detail"]["required"], json!(["field"]));
 
     let input = artifact_json(&package, "generated/contracts/gadget/create.input.json");
@@ -1974,7 +1859,7 @@ fn generated_create_contracts_publish_the_claim_and_its_refusal() {
         json!({"type": "text", "required": true})
     );
     assert_eq!(
-        input["canonical_command"],
+        input["request"],
         json!({
             "over": "writable_fields",
             "payload": "canonical_compact_json",
@@ -1983,339 +1868,18 @@ fn generated_create_contracts_publish_the_claim_and_its_refusal() {
     );
 }
 
-/// EXIT GATE: the claim's shape reaches the required-schema contract and the
-/// data-access overlay, so nothing the emitted SQL names is left unpinned.
+/// Validation refuses the `claim` object of a create:
+/// `idempotent_by: claim` is the whole declaration.
 #[test]
-fn generated_create_pins_and_grants_its_claim_relation() {
-    let package = run(&claim_catalog(), &claim_manifest(), &QUERY_SOURCES).unwrap();
-
-    let metadata = artifact_json(&package, "generated/package-weld.json");
-    let claim = object_named(
-        metadata["required_schema_contract"]["tables"]
-            .as_array()
-            .unwrap(),
-        "table",
-        CLAIM_TABLE,
-    );
-    assert_eq!(
-        claim["fields"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .map(|field| field["name"].as_str().unwrap())
-            .collect::<Vec<_>>(),
-        ["canonical_command", "gadget_id", "idempotency_key"]
-    );
-    assert_eq!(
-        claim["constraints"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .map(|constraint| constraint["name"].as_str().unwrap())
-            .collect::<Vec<_>>(),
-        [
-            "gadget_command_gadget_id_key",
-            "gadget_command_idempotency_key_pkey",
-        ]
-    );
-
-    let overlay = artifact_json(&package, DATA_ACCESS_OVERLAY_PATH);
-    let relations = overlay["relations"].as_array().unwrap();
-    let granted = object_named(relations, "table", CLAIM_TABLE);
-    assert_eq!(
-        granted["select_fields"],
-        json!(["canonical_command", "gadget_id", "idempotency_key"])
-    );
-    assert_eq!(
-        granted["insert_fields"],
-        json!(["canonical_command", "idempotency_key"])
-    );
-    // A claim is written once: nothing may update it.
-    assert_eq!(granted["update_fields"], json!([]));
-    assert_eq!(granted["lock"], json!(false));
-    // The model insert writes the claim-minted id, so the grant must allow it.
-    let model = object_named(relations, "table", "gadget");
-    assert_eq!(model["insert_fields"], json!(["id", "stock_id"]));
-}
-
-/// EXIT GATE: every way the claim could stop being the identity source refuses.
-///
-/// The unmutated manifest and catalog run FIRST as the negative control: if
-/// they did not generate, a refusal below would show nothing.
-#[test]
-fn generated_create_refuses_a_claim_that_does_not_pre_generate_identity() {
-    run(&claim_catalog(), &claim_manifest(), &QUERY_SOURCES)
-        .expect("the unmutated claim generates");
-
-    let model = || table(&catalog(false), "gadget").clone();
-    let claim_table = |columns, constraints| {
-        Table::new("inventory", CLAIM_TABLE, columns, constraints, Vec::new())
-    };
-    let without = |name: &str| {
-        claim_columns()
-            .into_iter()
-            .filter(|column| column.name() != name)
-            .collect::<Vec<_>>()
-    };
-    let replacing = |replacement: Column| {
-        claim_columns()
-            .into_iter()
-            .map(|column| {
-                if column.name() == replacement.name() {
-                    replacement.clone()
-                } else {
-                    column
-                }
-            })
-            .collect::<Vec<_>>()
-    };
-
-    let cases: Vec<(&str, CatalogIr, Value, GenerateErrorKind)> = vec![
-        (
-            "no claim declared at all",
-            claim_catalog(),
-            {
-                let mut manifest = claim_manifest();
-                manifest["models"]["gadget"]["operations"]["create"]
-                    .as_object_mut()
-                    .unwrap()
-                    .remove("claim");
-                manifest
-            },
-            GenerateErrorKind::InvalidOperation,
-        ),
-        (
-            "the claim relation does not exist",
-            claim_catalog(),
-            {
-                let mut manifest = claim_manifest();
-                manifest["models"]["gadget"]["operations"]["create"]["claim"]["table"] =
-                    json!("absent_command");
-                manifest["internal_relations"] = json!({
-                    "absent_command": {
-                        "schema": "inventory", "table": "absent_command", "cdc": "excluded"
-                    }
-                });
-                manifest
-            },
-            GenerateErrorKind::UnknownRelation,
-        ),
-        (
-            "the claim is not CDC-excluded, so mechanism state would ship as events",
-            claim_catalog(),
-            {
-                let mut manifest = claim_manifest();
-                manifest["internal_relations"] = json!({});
-                manifest
-            },
-            GenerateErrorKind::InvalidOperation,
-        ),
-        (
-            "the identity column carries no gen_random_uuid default",
-            claim_catalog_with(
-                model(),
-                claim_table(
-                    replacing(Column::new(
-                        "gadget_id",
-                        ColumnType::Uuid,
-                        false,
-                        None,
-                        None,
-                    )),
-                    claim_constraints(),
-                ),
-            ),
-            claim_manifest(),
-            GenerateErrorKind::InvalidOperation,
-        ),
-        (
-            "the identity column is nullable, so the claim may mint nothing",
-            claim_catalog_with(
-                model(),
-                claim_table(
-                    replacing(Column::new(
-                        "gadget_id",
-                        ColumnType::Uuid,
-                        true,
-                        Some(ColumnDefault::GenRandomUuid),
-                        None,
-                    )),
-                    claim_constraints(),
-                ),
-            ),
-            claim_manifest(),
-            GenerateErrorKind::InvalidOperation,
-        ),
-        (
-            "the identity column is not UNIQUE, so two claims could mint one id",
-            claim_catalog_with(
-                model(),
-                claim_table(
-                    claim_columns(),
-                    vec![
-                        Constraint::primary_key(
-                            "gadget_command_idempotency_key_pkey",
-                            ["idempotency_key"],
-                        )
-                        .unwrap(),
-                    ],
-                ),
-            ),
-            claim_manifest(),
-            GenerateErrorKind::InvalidOperation,
-        ),
-        (
-            "the key is not a primary key, so a second call could claim it again",
-            claim_catalog_with(
-                model(),
-                claim_table(
-                    claim_columns(),
-                    vec![
-                        Constraint::unique("gadget_command_gadget_id_key", ["gadget_id"]).unwrap(),
-                    ],
-                ),
-            ),
-            claim_manifest(),
-            GenerateErrorKind::InvalidOperation,
-        ),
-        (
-            "the claim carries no canonical command to compare a replay against",
-            claim_catalog_with(
-                model(),
-                claim_table(without("canonical_command"), claim_constraints()),
-            ),
-            claim_manifest(),
-            GenerateErrorKind::InvalidOperation,
-        ),
-        (
-            "a claim column has no value the generated claim insert can supply",
-            claim_catalog_with(
-                model(),
-                claim_table(
-                    claim_columns()
-                        .into_iter()
-                        .chain([Column::new("actor_id", ColumnType::Uuid, false, None, None)])
-                        .collect(),
-                    claim_constraints(),
-                ),
-            ),
-            claim_manifest(),
-            GenerateErrorKind::InvalidOperation,
-        ),
-        (
-            "the declared identity is not a column of the claim",
-            claim_catalog(),
-            {
-                let mut manifest = claim_manifest();
-                manifest["models"]["gadget"]["operations"]["create"]["claim"]["identities"] =
-                    json!({"id": "absent_id"});
-                manifest
-            },
-            GenerateErrorKind::UnknownColumn,
-        ),
-        (
-            "only a create may carry a claim",
-            claim_catalog(),
-            {
-                let mut manifest = claim_manifest();
-                manifest["models"]["gadget"]["operations"]["update"]["claim"] = json!({
-                    "table": CLAIM_TABLE,
-                    "identities": {"id": "gadget_id"}
-                });
-                manifest
-            },
-            GenerateErrorKind::InvalidOperation,
-        ),
-    ];
-
-    for (label, catalog, manifest, kind) in cases {
-        let refusal = run(&catalog, &manifest, &QUERY_SOURCES).expect_err(label);
-        assert_eq!(refusal.kind(), kind, "{label}");
-    }
-}
-
-/// EXIT GATE: a second identity added to the model breaks the build unless the
-/// claim pre-generates it too.
-///
-/// This is the enumeration the law demands, made mechanical: the generator
-/// derives the minted set from the catalog, so a new `gen_random_uuid()` column
-/// cannot slip through and be re-minted on replay.
-#[test]
-fn a_model_identity_the_claim_does_not_mint_refuses() {
-    let with_second_identity = rebuilt_table(
-        table(&catalog(false), "gadget"),
-        table(&catalog(false), "gadget")
-            .columns()
-            .to_vec()
-            .into_iter()
-            .chain([Column::new(
-                "external_id",
-                ColumnType::Uuid,
-                false,
-                Some(ColumnDefault::GenRandomUuid),
-                None,
-            )])
-            .collect(),
-        table(&catalog(false), "gadget").constraints().to_vec(),
-    );
-    let claim = Table::new(
-        "inventory",
-        CLAIM_TABLE,
-        claim_columns(),
-        claim_constraints(),
-        Vec::new(),
-    );
-    let unmapped = claim_catalog_with(with_second_identity.clone(), claim);
-    let mut manifest = claim_manifest();
-    manifest["models"]["gadget"]["server_owned_fields"] = json!([
-        "id",
-        "external_id",
-        "part_code",
-        "status",
-        "row_version",
-        "created_at"
-    ]);
-
+fn a_create_that_declares_a_claim_refuses() {
+    run(&catalog(false), &create_manifest(), &QUERY_SOURCES)
+        .expect("a create without one generates");
+    let mut manifest = create_manifest();
+    manifest["models"]["gadget"]["operations"]["create"]["claim"] =
+        json!({"table": "gadget_command", "identities": {"id": "gadget_id"}});
     let refusal =
-        run(&unmapped, &manifest, &QUERY_SOURCES).expect_err("an unminted identity refuses");
-    assert_eq!(refusal.kind(), GenerateErrorKind::InvalidOperation);
-
-    // Mapping it to its own pre-generated claim column restores generation.
-    let mapped = claim_catalog_with(
-        with_second_identity,
-        Table::new(
-            "inventory",
-            CLAIM_TABLE,
-            claim_columns()
-                .into_iter()
-                .chain([Column::new(
-                    "external_id",
-                    ColumnType::Uuid,
-                    false,
-                    Some(ColumnDefault::GenRandomUuid),
-                    None,
-                )])
-                .collect(),
-            claim_constraints()
-                .into_iter()
-                .chain([
-                    Constraint::unique("gadget_command_external_id_key", ["external_id"]).unwrap(),
-                ])
-                .collect(),
-            Vec::new(),
-        ),
-    );
-    manifest["models"]["gadget"]["operations"]["create"]["claim"]["identities"] =
-        json!({"external_id": "external_id", "id": "gadget_id"});
-    let package = run(&mapped, &manifest, &QUERY_SOURCES).expect("both identities are claimed");
-    assert_eq!(
-        generated_create_sql(&package, "create"),
-        "INSERT INTO gadget (external_id, id, stock_id)\n\
-         VALUES ($1::uuid, $2::uuid, $3::uuid)\n\
-         RETURNING\n    \
-         created_at,\n    external_id,\n    id,\n    part_code,\n    \
-         row_version,\n    status,\n    stock_id;\n",
-    );
+        run(&catalog(false), &manifest, &QUERY_SOURCES).expect_err("a claim object refuses");
+    assert_eq!(refusal.kind(), GenerateErrorKind::InvalidManifest);
 }
 
 /// wamn-10yt.54. An exclusion violation is SQLSTATE 23P01. The generated

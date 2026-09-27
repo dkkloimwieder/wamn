@@ -18,8 +18,7 @@ use sha2::{Digest as _, Sha256};
 use wamn_execution_contract::canonical_json_bytes;
 use wamn_record_history::history_table_name;
 use wamn_schema_introspection::ir::{
-    CatalogIr, Column, ColumnDefault, ColumnType, Constraint, ConstraintKind, Exclusion,
-    ForeignKeyAction, Table,
+    CatalogIr, Column, ColumnType, Constraint, ConstraintKind, Exclusion, ForeignKeyAction, Table,
 };
 
 use crate::manifest::{
@@ -38,25 +37,10 @@ use crate::{GenerateError, GenerateErrorKind};
 
 const QUERY_LIMIT: u32 = 100;
 const CURSOR_VERSION: u8 = 1;
-/// The claim column carrying the caller's idempotency key, under the claim's
-/// primary key. One spelling, so a replay of one command can never look for
-/// its claim under another name.
-pub(crate) const CLAIM_KEY_COLUMN: &str = "idempotency_key";
-/// The claim column carrying the canonical request bytes the key is bound to.
-/// A second call with the same key and different bytes is refused against it.
-pub(crate) const CLAIM_COMMAND_COLUMN: &str = "canonical_command";
-/// Mint the claim, or yield nothing because the key already has one.
-const CREATE_CLAIM_STATEMENT: &str = "create_claim";
-/// Read the current row the claim for one key created. Writes nothing.
-const CREATE_REPLAY_STATEMENT: &str = "create_replay";
-/// Insert the row under the identities the claim already minted.
+/// The create input field that carries the caller's idempotency key.
+pub(crate) const CREATE_KEY_FIELD: &str = "idempotency_key";
+/// Insert the row. Its defaults mint its identities, and `RETURNING` hands them back.
 const CREATE_STATEMENT: &str = "create";
-/// The three statements of one generated create, in emission order.
-const CREATE_STATEMENTS: [&str; 3] = [
-    CREATE_CLAIM_STATEMENT,
-    CREATE_REPLAY_STATEMENT,
-    CREATE_STATEMENT,
-];
 
 /// One package-owned authored SQL source supplied without filesystem access.
 #[derive(Debug, Clone, Copy)]
@@ -382,6 +366,9 @@ pub fn generate(input: &GenerationInput<'_>) -> Result<GeneratedPackage, Generat
     let mut files = BTreeMap::<String, Vec<u8>>::new();
     let mut sql_corpus = authored_sql_map(input.authored_sql)?;
     emit_cursor_contract(&mut files)?;
+    if manifest.has_claim_operation() {
+        crate::write_log::emit(&mut files, &mut sql_corpus)?;
+    }
 
     for (model_name, model) in &manifest.models {
         let table = relation(input.catalog, model).expect("validation resolved every relation");
@@ -1003,7 +990,7 @@ fn insert_canonical_json(
     )
 }
 
-fn insert_bytes(
+pub(crate) fn insert_bytes(
     files: &mut BTreeMap<String, Vec<u8>>,
     path: &str,
     bytes: Vec<u8>,
@@ -1026,7 +1013,7 @@ fn omission_refused(column: &Column) -> bool {
     !column.nullable() && column.default().is_none() && column.generation().is_none()
 }
 
-fn sha256(bytes: &[u8]) -> String {
+pub(crate) fn sha256(bytes: &[u8]) -> String {
     format!("sha256:{}", hex::encode(Sha256::digest(bytes)))
 }
 

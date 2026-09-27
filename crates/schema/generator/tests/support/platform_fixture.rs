@@ -370,28 +370,6 @@ fn catalog_of(note_nullable: bool, maker_key: bool) -> CatalogIr {
         vec![Constraint::primary_key("widget_maker_id_pkey", ["id"]).expect("valid primary key")],
         Vec::new(),
     );
-    let command = Table::new(
-        "inventory",
-        "widget_command",
-        vec![
-            Column::new("canonical_command", ColumnType::Bytes, false, None, None),
-            Column::new("idempotency_key", ColumnType::Text, false, None, None),
-            Column::new(
-                "widget_id",
-                ColumnType::Uuid,
-                false,
-                Some(ColumnDefault::GenRandomUuid),
-                None,
-            ),
-        ],
-        vec![
-            Constraint::primary_key("widget_command_idempotency_key_pkey", ["idempotency_key"])
-                .expect("valid primary key"),
-            Constraint::unique("widget_command_widget_id_key", ["widget_id"])
-                .expect("valid unique constraint"),
-        ],
-        Vec::new(),
-    );
     // The third model logs its changes and carries no stamp column. Its one
     // operation, an update, gives the App role a write that history records.
     let widget_tag = Table::new(
@@ -417,7 +395,53 @@ fn catalog_of(note_nullable: bool, maker_key: bool) -> CatalogIr {
         vec![Constraint::primary_key("widget_tag_id_pkey", ["id"]).expect("valid primary key")],
         Vec::new(),
     );
-    CatalogIr::new(vec![widget, widget_maker, widget_tag, command])
+    CatalogIr::new(vec![widget, widget_maker, widget_tag])
+}
+
+/// The name of [`unread_table`].
+#[allow(
+    dead_code,
+    reason = "not every test module needs a relation no operation reads"
+)]
+pub(crate) const UNREAD_TABLE: &str = "widget_ledger";
+
+/// A relation in the fixture schema that no fixture operation reads. A test
+/// declares it as an internal relation or an ownership-only model.
+#[allow(
+    dead_code,
+    reason = "not every test module needs a relation no operation reads"
+)]
+pub(crate) fn unread_table() -> Table {
+    Table::new(
+        "inventory",
+        UNREAD_TABLE,
+        vec![
+            Column::new(
+                "entry_id",
+                ColumnType::Uuid,
+                false,
+                Some(ColumnDefault::GenRandomUuid),
+                None,
+            ),
+            Column::new("note", ColumnType::Text, false, None, None),
+        ],
+        vec![
+            Constraint::primary_key("widget_ledger_entry_id_pkey", ["entry_id"])
+                .expect("valid primary key"),
+        ],
+        Vec::new(),
+    )
+}
+
+/// The fixture catalog with [`unread_table`].
+#[allow(
+    dead_code,
+    reason = "not every test module needs a relation no operation reads"
+)]
+pub(crate) fn catalog_with_unread_table() -> CatalogIr {
+    let mut tables = catalog().tables().to_vec();
+    tables.push(unread_table());
+    CatalogIr::new(tables)
 }
 
 /// The fixture manifest, as the fixture application authors it.

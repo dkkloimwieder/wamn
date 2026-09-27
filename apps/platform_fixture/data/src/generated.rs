@@ -3,10 +3,7 @@
 /// Runtime projections carrying only admitted statement digests.
 pub(crate) mod wamn {
     /// Generated `widget` model accessors.
-    #[expect(
-        dead_code,
-        reason = "no fixture operation selects a transaction participant, and delete maps no constraint"
-    )]
+    #[expect(dead_code, reason = "delete maps no constraint")]
     pub(crate) mod widget {
         include!(concat!(
             env!("CARGO_MANIFEST_DIR"),
@@ -30,11 +27,7 @@ pub(crate) mod wamn {
         ));
     }
 
-    /// Generated `widget.record_batch` claim accessors.
-    #[expect(
-        dead_code,
-        reason = "record_batch selects no transaction participant, and it answers with the id that finalize_batch returns, not the one claim_batch returns"
-    )]
+    /// Generated `widget.record_batch` accessor.
     pub(crate) mod widget_record_batch {
         include!(concat!(
             env!("CARGO_MANIFEST_DIR"),

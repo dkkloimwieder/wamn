@@ -1,5 +1,5 @@
-INSERT INTO widget (id, code, maker_id, note)
-VALUES ($1::uuid, $2::text, $3::uuid, $4::text)
+INSERT INTO widget (code, maker_id, note)
+VALUES ($1::text, $2::uuid, $3::text)
 RETURNING
     code,
     created_at,

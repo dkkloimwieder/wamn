@@ -1,14 +1,13 @@
-//! Manifest, claim, query, and authored SQL validation.
+//! Manifest, query, and authored SQL validation.
 
 use super::{
-    AuthoredSql, AuthoredSqlDeclaration, BTreeMap, BTreeSet, CLAIM_COMMAND_COLUMN,
-    CLAIM_KEY_COLUMN, CatalogIr, Column, ColumnDefault, ColumnType, Constraint, ConstraintKind,
-    CrudAction, CursorDirection, CustomOperationDeclaration, DeleteMode, GenerateError,
-    GenerateErrorKind, GenerationInput, ModelDeclaration, OperationDeclaration, PackageManifest,
-    QUERY_LIMIT, RecordHistoryColumn, ResultClass, SortDeclaration, StaticSqlFetch, Table,
-    TombstoneColumn, column, contains_schema_qualified_reference,
+    AuthoredSql, AuthoredSqlDeclaration, BTreeMap, BTreeSet, CatalogIr, Column, ColumnType,
+    Constraint, ConstraintKind, CrudAction, CursorDirection, CustomOperationDeclaration,
+    DeleteMode, GenerateError, GenerateErrorKind, GenerationInput, ModelDeclaration,
+    OperationDeclaration, PackageManifest, QUERY_LIMIT, RecordHistoryColumn, ResultClass,
+    SortDeclaration, Table, TombstoneColumn, column, contains_schema_qualified_reference,
     custom_operation_constraint_origin, logged_history_tables, relation, rust_identifier,
-    server_owned_fields, sql, validate_identifier, validate_operation_vocabulary,
+    server_owned_fields, validate_identifier, validate_operation_vocabulary,
 };
 use crate::FilterMatch;
 use wamn_record_history::HISTORY_COLUMNS;
@@ -134,7 +133,6 @@ pub(super) fn validate(
             operation_name,
             operation,
         )?;
-        validate_custom_claim(input.catalog, manifest, operation_name, operation)?;
         validate_count_text(operation_name, operation)?;
         validate_lists(manifest, operation_name, operation)?;
     }
@@ -310,9 +308,7 @@ fn validate_model(
         ));
     }
     for (action, operation) in &model.operations {
-        validate_operation(
-            catalog, manifest, model_name, model, table, *action, operation,
-        )?;
+        validate_operation(model_name, model, table, *action, operation)?;
     }
     Ok(())
 }
@@ -335,8 +331,6 @@ fn validate_definition_owner(
 }
 
 fn validate_operation(
-    catalog: &CatalogIr,
-    manifest: &PackageManifest,
     model_name: &str,
     model: &ModelDeclaration,
     table: &Table,
@@ -345,12 +339,6 @@ fn validate_operation(
 ) -> Result<(), GenerateError> {
     let context = format!("{model_name}.{}", action.as_str());
     validate_field(table, model_name, "id")?;
-    if operation.claim.is_some() && action != CrudAction::Create {
-        return Err(GenerateError::new(
-            GenerateErrorKind::InvalidOperation,
-            format!("{context} declares a command claim, which only a create carries"),
-        ));
-    }
 
     let server_owned = server_owned_fields(model, table);
     let mut writable = BTreeSet::new();
@@ -430,7 +418,6 @@ fn validate_operation(
         CrudAction::Create => {
             require_result(&context, operation.result, &[ResultClass::One])?;
             require_mutation_shape(&context, operation, false)?;
-            validate_claim(catalog, manifest, &context, model, table, operation)?;
         }
         CrudAction::Update => {
             require_result(&context, operation.result, &[ResultClass::One])?;
@@ -510,232 +497,6 @@ fn require_mutation_shape(
         ));
     }
     Ok(())
-}
-
-fn validate_claim(
-    catalog: &CatalogIr,
-    manifest: &PackageManifest,
-    context: &str,
-    model: &ModelDeclaration,
-    table: &Table,
-    operation: &OperationDeclaration,
-) -> Result<(), GenerateError> {
-    resolve_claim(catalog, manifest, context, model, table, operation).map(|_| ())
-}
-
-/// The identities one generated create would otherwise let PostgreSQL mint.
-///
-/// Exactly these must come from the claim. A column PostgreSQL defaults is
-/// minted fresh on every attempt, so a replay that re-ran the insert would hand
-/// out a SECOND identity for the same command.
-fn minted_identities<'a>(table: &'a Table, operation: &OperationDeclaration) -> Vec<&'a Column> {
-    table
-        .columns()
-        .iter()
-        .filter(|column| {
-            column.column_type() == ColumnType::Uuid
-                && !column.nullable()
-                && column.default() == Some(&ColumnDefault::GenRandomUuid)
-                && column.generation().is_none()
-                && !operation
-                    .writable_fields
-                    .iter()
-                    .any(|field| field == column.name())
-        })
-        .collect()
-}
-
-/// Resolve and verify one create's claim against the catalog.
-///
-/// The claim is checked structurally, never by convention: the key column under
-/// a primary key, and every minted identity under its own `UNIQUE` column that
-/// PostgreSQL defaulted once. That is why a replay returns the same value BY
-/// CONSTRUCTION rather than because some caller took an early return.
-pub(super) fn resolve_claim<'a>(
-    catalog: &'a CatalogIr,
-    manifest: &PackageManifest,
-    context: &str,
-    model: &ModelDeclaration,
-    table: &'a Table,
-    operation: &'a OperationDeclaration,
-) -> Result<sql::Claim<'a>, GenerateError> {
-    let declaration = operation.claim.as_ref().ok_or_else(|| {
-        GenerateError::new(
-            GenerateErrorKind::InvalidOperation,
-            format!("{context} must declare the command claim its identity comes from"),
-        )
-    })?;
-    let (claim, primary_key) = require_claim_relation(
-        catalog,
-        manifest,
-        context,
-        &model.schema,
-        &declaration.table,
-    )?;
-    // The emitted claim INSERT writes the key and the canonical command and
-    // nothing else, so every other column must have a value without one.
-    for column in claim.columns() {
-        if column.name() != CLAIM_KEY_COLUMN
-            && column.name() != CLAIM_COMMAND_COLUMN
-            && !column.nullable()
-            && column.default().is_none()
-            && column.generation().is_none()
-        {
-            return Err(GenerateError::for_object(
-                GenerateErrorKind::InvalidOperation,
-                format!(
-                    "{context} claim column {} has no value the claim can supply",
-                    column.name()
-                ),
-                format!("{}.{}.{}", model.schema, declaration.table, column.name()),
-            ));
-        }
-    }
-
-    let minted = minted_identities(table, operation)
-        .into_iter()
-        .map(Column::name)
-        .collect::<BTreeSet<_>>();
-    let declared = declaration
-        .identities
-        .keys()
-        .map(String::as_str)
-        .collect::<BTreeSet<_>>();
-    if minted != declared || !declared.contains("id") {
-        return Err(GenerateError::new(
-            GenerateErrorKind::InvalidOperation,
-            format!("{context} claim must pre-generate exactly the identities the create mints"),
-        ));
-    }
-    let mut claim_columns = BTreeSet::new();
-    let mut identities = Vec::with_capacity(declaration.identities.len());
-    for (field, claim_column) in &declaration.identities {
-        if !claim_columns.insert(claim_column.as_str()) {
-            return Err(GenerateError::new(
-                GenerateErrorKind::InvalidOperation,
-                format!("{context} claim reuses column {claim_column} for two identities"),
-            ));
-        }
-        require_pre_generated_identity(context, claim, claim_column)?;
-        identities.push((field.as_str(), claim_column.as_str()));
-    }
-    Ok(sql::Claim {
-        table: claim,
-        primary_key,
-        identities,
-    })
-}
-
-/// Find one claim relation and check the shape the law needs from it.
-///
-/// A generated create and an authored command share this check, because the law
-/// is one law. The relation is CDC-excluded, it keys the idempotency key under a
-/// primary key alone, and it stores the canonical command beside that key. The
-/// primary key is what makes a second call with the same key mint nothing.
-fn require_claim_relation<'a>(
-    catalog: &'a CatalogIr,
-    manifest: &PackageManifest,
-    context: &str,
-    schema: &str,
-    table: &str,
-) -> Result<(&'a Table, &'a str), GenerateError> {
-    validate_identifier(table, "claim table")?;
-    let claim = catalog
-        .tables()
-        .iter()
-        .find(|candidate| candidate.schema() == schema && candidate.name() == table)
-        .ok_or_else(|| {
-            GenerateError::for_object(
-                GenerateErrorKind::UnknownRelation,
-                format!("{context} references unknown claim relation"),
-                format!("{schema}.{table}"),
-            )
-        })?;
-    if !manifest
-        .internal_relations
-        .values()
-        .any(|relation| relation.schema == schema && relation.table == table)
-    {
-        return Err(GenerateError::for_object(
-            GenerateErrorKind::InvalidOperation,
-            format!("{context} claim must be a CDC-excluded internal relation"),
-            format!("{schema}.{table}"),
-        ));
-    }
-    let primary_key = claim_primary_key(claim).ok_or_else(|| {
-        GenerateError::for_object(
-            GenerateErrorKind::InvalidOperation,
-            format!("{context} claim must key {CLAIM_KEY_COLUMN} under a primary key alone"),
-            format!("{schema}.{table}"),
-        )
-    })?;
-    let claim_context = format!("{context} claim");
-    for (name, ty) in [
-        (CLAIM_KEY_COLUMN, ColumnType::Text),
-        (CLAIM_COMMAND_COLUMN, ColumnType::Bytes),
-    ] {
-        require_column(
-            GenerateErrorKind::InvalidOperation,
-            &claim_context,
-            claim,
-            name,
-            ty,
-        )?;
-    }
-    Ok((claim, primary_key))
-}
-
-/// Refuse a claim column PostgreSQL can mint a second time.
-///
-/// The column defaults `gen_random_uuid()` once, under its own `UNIQUE`
-/// constraint, so the claim row holds one value for the life of the key. That
-/// is why a replay returns the same identity BY CONSTRUCTION rather than
-/// because some caller took an early return.
-fn require_pre_generated_identity(
-    context: &str,
-    claim: &Table,
-    claim_column: &str,
-) -> Result<(), GenerateError> {
-    let object = format!("{}.{}.{claim_column}", claim.schema(), claim.name());
-    let column = column(claim, claim_column).ok_or_else(|| {
-        GenerateError::for_object(
-            GenerateErrorKind::UnknownColumn,
-            format!("{context} claim has no column {claim_column}"),
-            object.clone(),
-        )
-    })?;
-    let pre_generated = column.column_type() == ColumnType::Uuid
-        && !column.nullable()
-        && column.default() == Some(&ColumnDefault::GenRandomUuid)
-        && claim.constraints().iter().any(|constraint| {
-            matches!(
-                constraint.kind(),
-                ConstraintKind::Unique { columns }
-                    if columns.len() == 1 && columns[0].as_ref() == claim_column
-            )
-        });
-    if pre_generated {
-        Ok(())
-    } else {
-        Err(GenerateError::for_object(
-            GenerateErrorKind::InvalidOperation,
-            format!(
-                "{context} claim column {claim_column} must be a unique non-null uuid defaulting to gen_random_uuid()"
-            ),
-            object,
-        ))
-    }
-}
-
-fn claim_primary_key(claim: &Table) -> Option<&str> {
-    claim.constraints().iter().find_map(|constraint| {
-        matches!(
-            constraint.kind(),
-            ConstraintKind::PrimaryKey { columns }
-                if columns.len() == 1 && columns[0].as_ref() == CLAIM_KEY_COLUMN
-        )
-        .then(|| constraint.name())
-    })
 }
 
 fn require_column(
@@ -1028,135 +789,6 @@ fn validate_query(
         validate_authored_variants(&context, sort, authored)?;
     }
     Ok(())
-}
-
-/// Check one authored command's claim against the catalog it runs on.
-///
-/// The law is the same law a generated create carries. The relation shape and
-/// the pre-generated identity columns go through the same helpers. What differs
-/// is where the ids are named. A generated create mints them in the model
-/// table, and an authored command hands them out in its own result. The
-/// identity map is therefore read against the result fields and against the row
-/// the claim statement returns.
-///
-/// The three statements are named because the emitted contract tests name them.
-/// The claim statement returns exactly the pre-generated columns, and the
-/// replay statement returns the canonical command beside every one of them.
-/// A command missing either cannot return the immutable original on a replay.
-fn validate_custom_claim(
-    catalog: &CatalogIr,
-    manifest: &PackageManifest,
-    operation_name: &str,
-    operation: &CustomOperationDeclaration,
-) -> Result<(), GenerateError> {
-    let Some(declaration) = &operation.claim else {
-        return Ok(());
-    };
-    // The claim relation is one the operation already declares, so the schema
-    // comes from that declaration and the command holds the access it needs.
-    let relation = operation
-        .relations
-        .iter()
-        .find(|relation| relation.table == declaration.table)
-        .ok_or_else(|| {
-            GenerateError::new(
-                GenerateErrorKind::InvalidOperation,
-                format!(
-                    "{operation_name} claim {} must be one of the operation's declared relations",
-                    declaration.table
-                ),
-            )
-        })?;
-    let (claim, _) = require_claim_relation(
-        catalog,
-        manifest,
-        operation_name,
-        &relation.schema,
-        &declaration.table,
-    )?;
-    let result = operation.result.as_ref().ok_or_else(|| {
-        GenerateError::new(
-            GenerateErrorKind::InvalidOperation,
-            format!("{operation_name} claim needs a declared result to hand identities out in"),
-        )
-    })?;
-    if declaration.identities.is_empty() {
-        return Err(GenerateError::new(
-            GenerateErrorKind::InvalidOperation,
-            format!("{operation_name} claim must pre-generate at least one identity"),
-        ));
-    }
-    let mut claim_columns = BTreeSet::new();
-    for (field, claim_column) in &declaration.identities {
-        if !claim_columns.insert(claim_column.as_str()) {
-            return Err(GenerateError::new(
-                GenerateErrorKind::InvalidOperation,
-                format!("{operation_name} claim reuses column {claim_column} for two identities"),
-            ));
-        }
-        if !result
-            .fields
-            .iter()
-            .any(|candidate| candidate.path == *field)
-        {
-            return Err(GenerateError::new(
-                GenerateErrorKind::InvalidOperation,
-                format!("{operation_name} claim identity {field} is not a result field"),
-            ));
-        }
-        require_pre_generated_identity(operation_name, claim, claim_column)?;
-    }
-    let minted = claim_statement_row(operation_name, operation, &declaration.claim, "claim")?;
-    if minted != claim_columns {
-        return Err(GenerateError::new(
-            GenerateErrorKind::InvalidOperation,
-            format!(
-                "{operation_name} statement {} must return exactly the pre-generated identities",
-                declaration.claim
-            ),
-        ));
-    }
-    let replayed = claim_statement_row(operation_name, operation, &declaration.replay, "replay")?;
-    if !replayed.contains(CLAIM_COMMAND_COLUMN) || !claim_columns.is_subset(&replayed) {
-        return Err(GenerateError::new(
-            GenerateErrorKind::InvalidOperation,
-            format!(
-                "{operation_name} statement {} must return {CLAIM_COMMAND_COLUMN} and every pre-generated identity",
-                declaration.replay
-            ),
-        ));
-    }
-    claim_statement_row(operation_name, operation, &declaration.finalize, "finalize")?;
-    if operation.statements[&declaration.finalize].fetch != StaticSqlFetch::One {
-        return Err(GenerateError::new(
-            GenerateErrorKind::InvalidOperation,
-            format!(
-                "{operation_name} claim finalization must return exactly one row; set {} fetch to one",
-                declaration.finalize
-            ),
-        ));
-    }
-    Ok(())
-}
-
-/// The row one named claim statement returns, refusing an undeclared name.
-fn claim_statement_row<'a>(
-    operation_name: &str,
-    operation: &'a CustomOperationDeclaration,
-    statement: &str,
-    role: &str,
-) -> Result<BTreeSet<&'a str>, GenerateError> {
-    let declaration = operation.statements.get(statement).ok_or_else(|| {
-        GenerateError::new(
-            GenerateErrorKind::InvalidOperation,
-            format!("{operation_name} claim names unknown {role} statement {statement}"),
-        )
-    })?;
-    Ok(declaration
-        .row
-        .iter()
-        .map(|value| value.name.as_str())
-        .collect())
 }
 
 fn validate_custom_operation_sql(

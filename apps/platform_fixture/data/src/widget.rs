@@ -1,8 +1,6 @@
 //! The `widget` model operations and the three custom `widget` operations.
 
-use serde_json::json;
-use wamn_execution_contract::canonical_json_bytes;
-use wamn_postgres_statements::{Connection, StatementError};
+use wamn_postgres_statements::{Connection, StatementError, Transaction};
 
 use crate::error::{AccessError, AccessErrorKind, Constraints};
 use crate::generated::wamn::{
@@ -18,7 +16,7 @@ pub use crate::generated::wamn::widget_archive::ArchiveRow;
 #[doc(inline)]
 pub use crate::generated::wamn::widget_list::ListRow;
 #[doc(inline)]
-pub use crate::generated::wamn::widget_record_batch::FinalizeBatchRow;
+pub use crate::generated::wamn::widget_record_batch::FindWidgetRow;
 
 const CREATE: Constraints = Constraints {
     unique: sql::CREATE_UNIQUE_CONSTRAINTS,
@@ -52,7 +50,6 @@ pub struct Line {
 /// The `widget.record_batch` command value.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Batch {
-    pub idempotency_key: String,
     pub note: Option<String>,
     pub maker_id: Option<String>,
     pub line: Vec<Line>,
@@ -103,17 +100,13 @@ pub async fn query(
     }))
 }
 
-/// Create one widget under the identity its claim row mints.
-///
-/// A retry under the same key with the same fields returns the row the first
-/// attempt wrote. The same key with other fields is refused.
+/// Create one widget in the transaction its codec holds for the write log.
 ///
 /// # Errors
 ///
 /// [`AccessError`] carrying the literal the operation contract declares.
 pub async fn create(
-    connection: &mut Connection,
-    idempotency_key: &str,
+    transaction: &mut Transaction,
     code: Option<&str>,
     maker_id: Option<&str>,
     note: Option<&str>,
@@ -123,54 +116,14 @@ pub async fn create(
     let maker_id = maker_id
         .map(|value| scalar::uuid("maker_id", value))
         .transpose()?;
-    let canonical_command = canonical_json_bytes(&json!({
-        "code": code,
-        "maker_id": maker_id.as_ref().map(|value| &value.0),
-        "note": note,
-    }));
-    let statement = |error: StatementError| AccessError::from_statement(&error, CREATE);
-    let mut claim = sql::begin_claim(connection.begin().await.map_err(statement)?);
-    if let Some(replay) = sql::create_replay(&mut claim, idempotency_key.to_owned())
-        .await
-        .map_err(statement)?
-    {
-        return replayed(replay, &canonical_command);
-    }
-    let claimed = sql::create_claim(
-        &mut claim,
-        idempotency_key.to_owned(),
-        canonical_command.clone(),
-    )
-    .await
-    .map_err(statement)?;
-    let Some(claimed) = claimed else {
-        // Another caller took the key between the replay read and the claim.
-        // Its row is committed, so the replay read now answers.
-        let replay = sql::create_replay(&mut claim, idempotency_key.to_owned())
-            .await
-            .map_err(statement)?
-            .ok_or_else(AccessError::internal)?;
-        return replayed(replay, &canonical_command);
-    };
-    let finalized = sql::create(
-        claim,
-        claimed.widget_id,
+    sql::create(
+        transaction,
         code.to_owned(),
         maker_id,
         note.map(str::to_owned),
     )
     .await
-    .map_err(statement)?;
-    let row = WidgetRow {
-        code: finalized.row.code.clone(),
-        created_at: finalized.row.created_at.clone(),
-        edit_version: finalized.row.edit_version,
-        id: finalized.row.id.clone(),
-        maker_id: finalized.row.maker_id.clone(),
-        note: finalized.row.note.clone(),
-    };
-    finalized.commit().await.map_err(statement)?;
-    Ok(row)
+    .map_err(|error| AccessError::from_statement(&error, CREATE))
 }
 
 /// Change one widget at the revision the caller last read.
@@ -305,18 +258,16 @@ pub async fn list(connection: &mut Connection) -> Result<Vec<ListRow>, AccessErr
     Ok(rows)
 }
 
-/// Record one batch of lines under one idempotency key.
-///
-/// The command hashes its canonical form: the key and the request id left
-/// out, and the lines in ascending `widget_id` order with positive amounts.
+/// Record one batch of lines in the transaction its codec holds for the write
+/// log, and answer the widget of its first line in `widget_id` order.
 ///
 /// # Errors
 ///
 /// [`AccessError`] carrying the literal the operation contract declares.
 pub async fn record_batch(
-    connection: &mut Connection,
+    transaction: &mut Transaction,
     batch: &Batch,
-) -> Result<FinalizeBatchRow, AccessError> {
+) -> Result<FindWidgetRow, AccessError> {
     let count = batch.line.len();
     if !(1..=MAX_BATCH_LINES).contains(&count) {
         return Err(AccessError::range(
@@ -343,80 +294,11 @@ pub async fn record_batch(
             "value.line[].widget_id",
         ));
     }
-    let maker_id = batch
-        .maker_id
-        .as_deref()
-        .map(|value| scalar::uuid("value.maker_id", value))
-        .transpose()?;
-    let canonical_command = canonical_json_bytes(&json!({
-        "line": lines
-            .iter()
-            .map(|(widget_id, amount)| json!({ "amount": amount, "widget_id": widget_id }))
-            .collect::<Vec<_>>(),
-        "maker_id": maker_id.map(|value| value.0),
-        "note": batch.note,
-    }));
-
-    let key = &batch.idempotency_key;
-    let statement = |error: StatementError| AccessError::from_statement(&error, Constraints::NONE);
-    let mut claim = batch_sql::begin_claim(connection.begin().await.map_err(statement)?);
-    if let Some(replay) = batch_sql::find_batch(&mut claim, key.clone())
+    if let Some(maker_id) = batch.maker_id.as_deref() {
+        scalar::uuid("value.maker_id", maker_id)?;
+    }
+    let (widget_id, _) = lines.swap_remove(0);
+    batch_sql::find_widget(transaction, wamn_postgres_statements::Uuid(widget_id))
         .await
-        .map_err(statement)?
-    {
-        return batch_replayed(replay, &canonical_command);
-    }
-    let claimed = batch_sql::claim_batch(&mut claim, canonical_command.clone(), key.clone())
-        .await
-        .map_err(statement)?;
-    if claimed.is_none() {
-        let replay = batch_sql::find_batch(&mut claim, key.clone())
-            .await
-            .map_err(statement)?
-            .ok_or_else(AccessError::internal)?;
-        return batch_replayed(replay, &canonical_command);
-    }
-    let finalized = batch_sql::finalize_batch(claim, key.clone())
-        .await
-        .map_err(statement)?;
-    let row = FinalizeBatchRow {
-        widget_id: finalized.row.widget_id.clone(),
-    };
-    finalized.commit().await.map_err(statement)?;
-    Ok(row)
-}
-
-fn replayed(
-    replay: sql::WidgetCreateReplayRow,
-    canonical_command: &[u8],
-) -> Result<WidgetRow, AccessError> {
-    if replay.canonical_command != canonical_command {
-        return Err(AccessError::field(
-            AccessErrorKind::IdempotencyConflict,
-            "idempotency_key",
-        ));
-    }
-    Ok(WidgetRow {
-        code: replay.code,
-        created_at: replay.created_at,
-        edit_version: replay.edit_version,
-        id: replay.id,
-        maker_id: replay.maker_id,
-        note: replay.note,
-    })
-}
-
-fn batch_replayed(
-    replay: batch_sql::FindBatchRow,
-    canonical_command: &[u8],
-) -> Result<FinalizeBatchRow, AccessError> {
-    if replay.canonical_command != canonical_command {
-        return Err(AccessError::field(
-            AccessErrorKind::IdempotencyConflict,
-            "value.idempotency_key",
-        ));
-    }
-    Ok(FinalizeBatchRow {
-        widget_id: replay.widget_id,
-    })
+        .map_err(|error| AccessError::from_statement(&error, Constraints::NONE))
 }

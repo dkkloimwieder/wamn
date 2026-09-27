@@ -603,7 +603,7 @@ fn refusal_is_confirmed(contract: &ResponseContract, error: &Value) -> bool {
                 | "duplicate_line"
                 | "nonpositive_quantity"
                 | "transaction_invariant"
-                | "same_key_different_canonical_command"
+                | "changed_request"
                 | "unique_violation"
                 | "foreign_key_violation"
                 | "check_violation"

@@ -168,15 +168,86 @@ fn normalize(
     Ok(())
 }
 
+include!("write_log_codec.rs");
+
+/// The write log operation of this contract: its operation without the version.
+const OPERATION: &str = "platform-fixture:widget/record-batch";
+/// The input field that carries the key the write log claims.
+const KEY_FIELD: &str = "value.idempotency_key";
+
+/// The bytes the write log keeps for one validated request: its canonical JSON
+/// without the key and the request id.
+fn request_bytes(request: &contract::RecordBatchRequest) -> Vec<u8> {
+    wamn_execution_contract::canonical_json_bytes(&{
+        let mut value = Map::new();
+        value.insert(
+            "expected_edit_version".to_owned(),
+            json!(&request.expected_edit_version),
+        );
+        value.insert("grade".to_owned(), json!(&request.grade));
+        value.insert("inspector_id".to_owned(), json!(&request.inspector_id));
+        value.insert("line".to_owned(), {
+            let mut lines = request
+                .line
+                .iter()
+                .map(|element| {
+                    let mut value = Map::new();
+                    value.insert("amount".to_owned(), json!(&element.amount));
+                    value.insert("widget_id".to_owned(), json!(&element.widget_id));
+                    Value::Object(value)
+                })
+                .collect::<Vec<_>>();
+            lines.sort_by(|left, right| {
+                left["widget_id"]
+                    .to_string()
+                    .cmp(&right["widget_id"].to_string())
+            });
+            Value::Array(lines)
+        });
+        value.insert("maker_id".to_owned(), json!(&request.maker_id));
+        value.insert("note".to_owned(), json!(&request.note));
+        Value::Object(value)
+    })
+}
+
+/// The result the write log stores for one success: its encoded outcome
+/// without the request id.
+fn stored_result(result: &contract::RecordBatchResult) -> String {
+    let encoded = encode(&[contract::RecordBatchOutcome {
+        request_id: String::new(),
+        outcome: Ok(result.clone()),
+    }]);
+    let mut outcomes: Vec<Value> =
+        serde_json::from_str(&encoded).expect("the encoder writes a JSON list");
+    outcomes
+        .pop()
+        .and_then(|mut outcome| outcome.get_mut("value").map(Value::take))
+        .expect("an encoded success carries its value")
+        .to_string()
+}
+
+#[derive(Deserialize)]
+struct JsonResult {
+    widget_id: String,
+}
+
+/// The success that one stored result answers.
+fn stored_success(result: &str) -> Option<contract::RecordBatchResult> {
+    let value: JsonResult = serde_json::from_str(result).ok()?;
+    Some(contract::RecordBatchResult {
+        widget_id: value.widget_id,
+    })
+}
+
 #[allow(dead_code)]
-pub(crate) async fn run<S, F>(
+pub(crate) async fn run<F>(
     input: Vec<contract::RecordBatchItem>,
-    state: &mut S,
+    connection: &mut wamn_postgres_statements::Connection,
     mut handler: F,
 ) -> Vec<contract::RecordBatchOutcome>
 where
     F: AsyncFnMut(
-        &mut S,
+        &mut wamn_postgres_statements::Transaction,
         contract::RecordBatchRequest,
     ) -> Result<contract::RecordBatchResult, contract::RecordBatchError>,
 {
@@ -184,7 +255,7 @@ where
     for item in input {
         let outcome = match item.input {
             Ok(mut request) => match normalize(&mut request) {
-                Ok(()) => handler(state, request).await,
+                Ok(()) => claimed(connection, request, &mut handler).await,
                 Err(error) => Err(contract::RecordBatchError::InvalidInput(error)),
             },
             Err(error) => Err(contract::RecordBatchError::InvalidInput(error)),
@@ -195,6 +266,59 @@ where
         });
     }
     output
+}
+
+/// Claim the key of one request, do its work and store its result in one
+/// transaction, or answer what a committed claim of the key holds.
+async fn claimed<F>(
+    connection: &mut wamn_postgres_statements::Connection,
+    request: contract::RecordBatchRequest,
+    handler: &mut F,
+) -> Result<contract::RecordBatchResult, contract::RecordBatchError>
+where
+    F: AsyncFnMut(
+        &mut wamn_postgres_statements::Transaction,
+        contract::RecordBatchRequest,
+    ) -> Result<contract::RecordBatchResult, contract::RecordBatchError>,
+{
+    let refuse =
+        |error: &wamn_postgres_statements::StatementError| map_error(log_error(error), |_| None);
+    let key = request.idempotency_key.clone();
+    let bytes = request_bytes(&request);
+    let mut transaction = connection.begin().await.map_err(|error| refuse(&error))?;
+    match log_claim(&mut transaction, OPERATION, &key, &bytes).await {
+        Ok(Logged::Claimed) => {}
+        Ok(Logged::Stored(stored, result)) => {
+            let _ = transaction.rollback().await;
+            if stored != bytes {
+                return Err(map_error("idempotency_conflict", |name| {
+                    (name == "field").then(|| KEY_FIELD.to_owned())
+                }));
+            }
+            return result
+                .as_deref()
+                .and_then(stored_success)
+                .ok_or_else(|| map_error("internal_error", |_| None));
+        }
+        Err(error) => {
+            let _ = transaction.rollback().await;
+            return Err(refuse(&error));
+        }
+    }
+    let result = match handler(&mut transaction, request).await {
+        Ok(result) => result,
+        Err(error) => {
+            let _ = transaction.rollback().await;
+            return Err(error);
+        }
+    };
+    if let Err(error) = log_finish(&mut transaction, OPERATION, &key, stored_result(&result)).await
+    {
+        let _ = transaction.rollback().await;
+        return Err(refuse(&error));
+    }
+    transaction.commit().await.map_err(|error| refuse(&error))?;
+    Ok(result)
 }
 
 #[allow(unused_macros)]

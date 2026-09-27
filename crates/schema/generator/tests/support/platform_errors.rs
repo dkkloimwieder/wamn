@@ -219,10 +219,6 @@ fn pre_commit_generation_and_canonical_authority_use_platform_declarations() {
             "generated/wit/widget_archive_codec.rs",
             "$handler(context.clone(), state, request).await",
         ),
-        (
-            "generated/wamn/widget_archive.rs",
-            "async fn select_participant(",
-        ),
     ] {
         assert!(
             std::str::from_utf8(package.file(path).unwrap().bytes())

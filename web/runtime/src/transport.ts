@@ -402,7 +402,7 @@ const KNOWN_SOURCES: readonly string[] = [
   "duplicate_line",
   "nonpositive_quantity",
   "transaction_invariant",
-  "same_key_different_canonical_command",
+  "changed_request",
   "unique_violation",
   "foreign_key_violation",
   "check_violation",

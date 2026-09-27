@@ -94,10 +94,6 @@ pub struct CustomOperationDeclaration {
     /// for every other kind. Nothing about it is inferred.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub idempotent_by: Option<CommandIdempotence>,
-    /// The claim relation this command hands out its identities from.
-    /// Required under `idempotent_by: claim` and refused under the other two.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub claim: Option<CustomClaimDeclaration>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub canonicalization: Option<CommandCanonicalization>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -151,6 +147,31 @@ impl CustomOperationDeclaration {
     pub const fn registration(&self) -> Option<&EventRegistrationDeclaration> {
         self.registration.as_ref()
     }
+
+    /// Whether this command claims its key in the write log.
+    pub const fn claims(&self) -> bool {
+        matches!(self.idempotent_by, Some(CommandIdempotence::Claim))
+    }
+
+    /// The input field of the key a claim command claims in the write log:
+    /// `idempotency_key`, or `value.idempotency_key` under an item value.
+    /// `None` for an operation that does not claim.
+    pub fn idempotency_key_field(&self) -> Option<&str> {
+        if !self.claims() {
+            return None;
+        }
+        self.input
+            .fields
+            .iter()
+            .find(|field| {
+                matches!(
+                    field.path.as_str(),
+                    "idempotency_key" | "value.idempotency_key"
+                ) && field.ty == wamn_schema_introspection::ir::ColumnType::Text
+                    && !field.nullable
+            })
+            .map(|field| field.path.as_str())
+    }
 }
 
 /// One package-emitted entity observed by an event handler.
@@ -176,11 +197,11 @@ pub enum CommandTransaction {
 /// composed case, because an inference is what let the pilot command ship with
 /// no idempotence at all.
 ///
-/// `Claim` mints identity under an idempotency key, so a replay returns the ids
-/// the claim already generated. `State` mints no identity and names the row
-/// versions that guard it, so a repeat after success sees a version moved and
-/// gets a typed conflict. `Inherited` rides the claim of a base operation it
-/// names, so a second claim over that identity never exists. `Stateless`
+/// `Claim` claims the idempotency key in the write log, so a repeat answers the
+/// stored result (`docs/plan/write-log.md`). `State` mints no identity and
+/// names the row versions that guard it, so a repeat after success sees a
+/// version moved and gets a typed conflict. `Inherited` rides the claim of a
+/// base operation it names, so a second claim never exists. `Stateless`
 /// declares no connection, relation or statement, so it writes no state that a
 /// repeat could change. The engine's per-item intent is its replay guard
 /// (owner ruling, `wamn-hxow`).
@@ -217,32 +238,6 @@ pub struct InheritedClaimDeclaration {
     pub base: String,
     /// Operation under that dependency, whose claim mints the identity.
     pub operation: String,
-}
-
-/// The command-claim relation of one authored command.
-///
-/// Ratified platform law, command-identity-from-claim: any identity a command
-/// creates comes from the CLAIM, not from the work. The law was ratified on an
-/// authored command, so an authored command carries it exactly as a generated
-/// create does.
-///
-/// `identities` maps every result field the command hands out as a new id to
-/// the claim column that pre-generated it. Generation refuses the command
-/// unless the `claim` statement returns exactly those claim columns. A replay
-/// then finds the claim row and returns the same ids BY CONSTRUCTION.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct CustomClaimDeclaration {
-    /// Claim relation, named by one of the operation's declared relations.
-    pub table: String,
-    /// Result field to the claim column that pre-generates it.
-    pub identities: BTreeMap<String, String>,
-    /// Statement that mints the claim row and returns every identity.
-    pub claim: String,
-    /// Statement that reads the durable original back through the claim.
-    pub replay: String,
-    /// Statement that finishes the claim in the first call's transaction.
-    pub finalize: String,
 }
 
 /// Typed custom-operation input, with optional command-envelope bounds.
@@ -588,6 +583,18 @@ pub enum StaticSqlFetch {
 }
 
 impl PackageManifest {
+    /// Whether any operation of this package claims its key in the write log:
+    /// a generated create, or a command idempotent by claim.
+    pub fn has_claim_operation(&self) -> bool {
+        self.models
+            .values()
+            .any(|model| model.operations.contains_key(&CrudAction::Create))
+            || self
+                .custom_operations
+                .values()
+                .any(CustomOperationDeclaration::claims)
+    }
+
     /// Parse one complete manifest, refusing unknown fields at every level.
     pub fn from_slice(bytes: &[u8]) -> Result<Self, GenerateError> {
         let manifest: Self = serde_json::from_slice(bytes).map_err(|source| {
@@ -1020,7 +1027,7 @@ fn validate_custom_operation(
     validate_custom_operation_input(operation_name, &operation.input)?;
     if let Some(pre_commit) = &operation.pre_commit {
         if operation.kind != CustomOperationKind::Command
-            || operation.claim.is_none()
+            || !operation.claims()
             || pre_commit.raw_body_maximum.is_some()
             || pre_commit.envelope.is_some()
             || pre_commit.line.is_some()
@@ -1121,8 +1128,7 @@ fn validate_custom_operation_kind(
                 && (!matches!(
                     operation.idempotent_by,
                     Some(CommandIdempotence::Inherited(_))
-                ) || operation.claim.is_some()
-                    || operation.automatic_retry.is_some()
+                ) || operation.automatic_retry.is_some()
                     || operation.visibility != OperationVisibility::Public
                     || operation.input.raw_body_maximum.is_some()
                     || operation.input.envelope.is_some()
@@ -1131,17 +1137,17 @@ fn validate_custom_operation_kind(
                 return Err(GenerateError::new(
                     GenerateErrorKind::InvalidOperation,
                     format!(
-                        "participant command {operation_name} must be public with its own permission, plain typed input, inherited idempotence, and no result, claim or automatic_retry"
+                        "participant command {operation_name} must be public with its own permission, plain typed input, inherited idempotence, and no result or automatic_retry"
                     ),
                 ));
             }
-            if operation.claim.is_some()
+            if operation.claims()
                 && operation.transaction != Some(CommandTransaction::ExplicitPerInput)
             {
                 return Err(GenerateError::new(
                     GenerateErrorKind::InvalidOperation,
                     format!(
-                        "command {operation_name} has a claim; declare transaction: explicit_per_input and automatic_retry: false so the claim and its work commit together"
+                        "command {operation_name} is idempotent by claim; declare transaction: explicit_per_input and automatic_retry: false so the claim and its work commit together"
                     ),
                 ));
             }
@@ -1271,10 +1277,8 @@ const EXPECTED_REVISION_FIELD: &str = "expected_row_version";
 
 /// Refuse a command that never says how it survives a repeat.
 ///
-/// Ratified platform law, command-identity-from-claim: every id a command
-/// returns comes from the claim row its idempotency key pins. A command that
-/// says nothing reruns its work on a repeat. It then returns whatever the rows
-/// hold at that moment, not what the original call returned.
+/// A command that says nothing reruns its work on a repeat. It then returns
+/// whatever the rows hold at that moment, not what the original call returned.
 ///
 /// Three shapes carry that law for a command with SQL, and a command names the
 /// one it has. The fourth, `stateless`, is for a command with no SQL at all. Nothing
@@ -1290,14 +1294,10 @@ fn validate_command_idempotence(
             GenerateErrorKind::InvalidOperation,
             format!(
                 "command {operation_name} must declare idempotent_by as exactly one of four. \
-                 \"claim\": add a CDC-excluded internal relation keyed by idempotency_key text \
-                 with a canonical_command bytea beside it and one unique non-null uuid column \
-                 defaulting to gen_random_uuid() for each identity the command returns, declare \
-                 that relation under the operation, then declare \"claim\": {{\"table\", \
-                 \"identities\", \"claim\", \"replay\", \"finalize\"}} naming it, the result field \
-                 each claim column pre-generates, and the three statements that mint, replay and \
-                 finish the claim. {{\"state\": {{\"guards\"}}}}: for a command that mints no \
-                 identity, so declare no claim, insert no row, and map each guarded relation to \
+                 \"claim\": the generated codec claims the key of a non-null text \
+                 value.idempotency_key input in the write log, and a repeat answers the stored \
+                 result. {{\"state\": {{\"guards\"}}}}: for a command that mints no \
+                 identity, so insert no row, and map each guarded relation to \
                  the input field carrying its expected version, such as \
                  {EXPECTED_REVISION_FIELD}. {{\"inherited\": {{\"base\", \"operation\"}}}}: for a \
                  command that rides the claim of a base operation, naming the base dependency \
@@ -1311,7 +1311,6 @@ fn validate_command_idempotence(
             if operation.connection.is_some()
                 || !operation.relations.is_empty()
                 || !operation.statements.is_empty()
-                || operation.claim.is_some()
             {
                 return Err(GenerateError::new(
                     GenerateErrorKind::InvalidOperation,
@@ -1323,10 +1322,13 @@ fn validate_command_idempotence(
             }
         }
         CommandIdempotence::Claim => {
-            if operation.claim.is_none() {
+            if operation.idempotency_key_field().is_none() {
                 return Err(GenerateError::new(
                     GenerateErrorKind::InvalidOperation,
-                    format!("command {operation_name} is idempotent by claim and declares none"),
+                    format!(
+                        "command {operation_name} is idempotent by claim and declares no non-null \
+                         text idempotency_key or value.idempotency_key input"
+                    ),
                 ));
             }
         }
@@ -1337,11 +1339,6 @@ fn validate_command_idempotence(
         CommandIdempotence::Inherited(inherited) => {
             if operation.transaction != Some(CommandTransaction::Participant) {
                 refuse_minted_identity(operation_name, operation, "inherited")?;
-            } else if operation.claim.is_some() {
-                return Err(GenerateError::new(
-                    GenerateErrorKind::InvalidOperation,
-                    format!("participant command {operation_name} must not declare a claim"),
-                ));
             }
             let dependency = manifest.base_dependencies.get(&inherited.base).ok_or_else(|| {
                 GenerateError::new(
@@ -1412,11 +1409,11 @@ fn validate_state_guards(
     Ok(())
 }
 
-/// Refuse the identity a command outside the claim shape must not mint.
+/// Refuse the row a command outside the claim shape must not insert.
 ///
 /// A command that is idempotent by state or by an inherited claim owns no
-/// claim, so it has nowhere to pre-generate an id. It therefore declares no
-/// claim and inserts no row of its own.
+/// claim in the write log, so a repeat would insert its row again. It therefore
+/// inserts no row of its own.
 ///
 /// The insert rule is not narrowed to the id column. An inherited command
 /// decorates a base result, and the moment it writes its own row it writes
@@ -1428,14 +1425,6 @@ fn refuse_minted_identity(
     operation: &CustomOperationDeclaration,
     declared: &str,
 ) -> Result<(), GenerateError> {
-    if operation.claim.is_some() {
-        return Err(GenerateError::new(
-            GenerateErrorKind::InvalidOperation,
-            format!(
-                "command {operation_name} is idempotent by {declared} and declares a claim. Declare idempotent_by claim, which is the shape that owns one"
-            ),
-        ));
-    }
     if let Some(relation) = operation
         .relations
         .iter()
@@ -1444,7 +1433,7 @@ fn refuse_minted_identity(
         return Err(GenerateError::new(
             GenerateErrorKind::InvalidOperation,
             format!(
-                "command {operation_name} is idempotent by {declared} and inserts into {}.{}. A command that writes its own row writes state under an identity it owns, so declare idempotent_by claim and a claim relation that pre-generates that identity",
+                "command {operation_name} is idempotent by {declared} and inserts into {}.{}. A command that writes its own row writes state under an identity it owns, so declare idempotent_by claim",
                 relation.schema, relation.table
             ),
         ));
@@ -1459,7 +1448,6 @@ fn refuse_command_only_fields(
     if operation.transaction.is_some()
         || operation.automatic_retry.is_some()
         || operation.idempotent_by.is_some()
-        || operation.claim.is_some()
         || operation.canonicalization.is_some()
         || operation.pre_commit.is_some()
         || operation.participant.is_some()
@@ -2648,10 +2636,6 @@ pub struct OperationDeclaration {
     pub pagination: Option<PaginationDeclaration>,
     #[serde(default)]
     pub limit: Option<LimitDeclaration>,
-    /// The claim relation a generated `create` mints its identity from.
-    /// Required for `create` and refused for every other action.
-    #[serde(default)]
-    pub claim: Option<ClaimDeclaration>,
     /// Authored screen text for the operation itself. A component exports the
     /// label, and the page that places the component decides where it goes.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -2659,28 +2643,6 @@ pub struct OperationDeclaration {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
     pub result: ResultClass,
-}
-
-/// The command-claim relation of one generated `create`.
-///
-/// Ratified platform law, command-identity-from-claim: any identity a command
-/// creates comes from the CLAIM, not from the work. A create that minted its
-/// row id during the work would mint a SECOND id on replay, which is a
-/// duplicate identity — real stock on a row nothing points at — and not merely
-/// a duplicate row.
-///
-/// `identities` maps every model field the create would otherwise let
-/// PostgreSQL default to a claim column that pre-generated it. Generation
-/// refuses any create whose minted-identity set and `identities` keys differ,
-/// so a new `gen_random_uuid()` column added to the model breaks the build
-/// rather than silently re-minting on replay.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct ClaimDeclaration {
-    /// Claim relation, in the model's own schema.
-    pub table: String,
-    /// Model field to the claim column that pre-generates it.
-    pub identities: BTreeMap<String, String>,
 }
 
 /// Whether a registered operation may be bound to an external route.

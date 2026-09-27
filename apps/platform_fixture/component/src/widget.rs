@@ -1,5 +1,5 @@
 use wamn_platform_fixture_data_access::{QueryInput, widget};
-use wamn_postgres_statements::Connection;
+use wamn_postgres_statements::{Connection, Transaction};
 
 use crate::detail;
 
@@ -90,7 +90,7 @@ mod query {
 }
 
 mod create {
-    use super::{Connection, detail, widget};
+    use super::{Connection, Transaction, detail, widget};
     use crate::exports::platform_fixture::widget::create as contract;
     mod codec {
         use super::contract;
@@ -101,12 +101,11 @@ mod create {
     }
 
     async fn handle(
-        connection: &mut Connection,
+        transaction: &mut Transaction,
         request: contract::CreateRequest,
     ) -> Result<contract::CreateResult, contract::CreateError> {
         widget::create(
-            connection,
-            &request.idempotency_key,
+            transaction,
             request.code.flatten().as_deref(),
             request.maker_id.flatten().as_deref(),
             request.note.flatten().as_deref(),
@@ -287,7 +286,7 @@ mod list {
 }
 
 mod record_batch {
-    use super::{Connection, detail, widget};
+    use super::{Connection, Transaction, detail, widget};
     use crate::exports::platform_fixture::widget::record_batch as contract;
     mod codec {
         use super::contract;
@@ -298,7 +297,7 @@ mod record_batch {
     }
 
     async fn handle(
-        connection: &mut Connection,
+        transaction: &mut Transaction,
         request: contract::RecordBatchRequest,
     ) -> Result<contract::RecordBatchResult, contract::RecordBatchError> {
         // The contract declares `expected_edit_version`, `grade` and
@@ -306,7 +305,6 @@ mod record_batch {
         // input, an enum input and two selectors that read one list. The batch
         // does not use them.
         let batch = widget::Batch {
-            idempotency_key: request.idempotency_key,
             note: request.note,
             maker_id: request.maker_id,
             line: request
@@ -318,7 +316,7 @@ mod record_batch {
                 })
                 .collect(),
         };
-        widget::record_batch(connection, &batch)
+        widget::record_batch(transaction, &batch)
             .await
             .map(|row| codec::row!(row, contract::RecordBatchResult))
             .map_err(|error| {

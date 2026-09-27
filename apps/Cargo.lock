@@ -350,6 +350,7 @@ dependencies = [
  "serde",
  "serde_json",
  "uuid",
+ "wamn-execution-contract",
  "wamn-platform-fixture-data-access",
  "wamn-postgres-statements",
  "wit-bindgen",

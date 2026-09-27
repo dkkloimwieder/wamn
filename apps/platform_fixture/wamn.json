@@ -33,12 +33,6 @@
       },
       "operations": {
         "create": {
-          "claim": {
-            "identities": {
-              "id": "widget_id"
-            },
-            "table": "widget_command"
-          },
           "permission": "widget.create",
           "result": "one",
           "writable_fields": [
@@ -228,13 +222,6 @@
         "edit_version"
       ],
       "table": "widget_tag"
-    }
-  },
-  "internal_relations": {
-    "widget_command": {
-      "cdc": "excluded",
-      "schema": "inventory",
-      "table": "widget_command"
     }
   },
   "custom_operations": {
@@ -478,15 +465,6 @@
           "positive_member": "amount"
         }
       },
-      "claim": {
-        "claim": "claim_batch",
-        "finalize": "finalize_batch",
-        "identities": {
-          "widget_id": "widget_id"
-        },
-        "replay": "find_batch",
-        "table": "widget_command"
-      },
       "connection": "postgres",
       "constraint_errors": {},
       "description": "One submission that records several lines at once.",
@@ -594,21 +572,14 @@
       "permission": "widget.record_batch",
       "relations": [
         {
-          "constraints": [
-            "widget_command_idempotency_key_pkey"
-          ],
-          "insert_fields": [
-            "canonical_command",
-            "idempotency_key"
-          ],
+          "constraints": [],
+          "insert_fields": [],
           "lock": false,
           "schema": "inventory",
           "select_fields": [
-            "canonical_command",
-            "idempotency_key",
-            "widget_id"
+            "id"
           ],
-          "table": "widget_command",
+          "table": "widget",
           "update_fields": []
         }
       ],
@@ -623,63 +594,17 @@
         ]
       },
       "statements": {
-        "claim_batch": {
-          "fetch": "optional_one",
-          "parameters": [
-            {
-              "name": "canonical_command",
-              "nullable": false,
-              "type": "bytes"
-            },
-            {
-              "name": "idempotency_key",
-              "nullable": false,
-              "type": "text"
-            }
-          ],
-          "path": "command/widget/claim.sql",
-          "row": [
-            {
-              "name": "widget_id",
-              "nullable": false,
-              "type": "uuid"
-            }
-          ]
-        },
-        "finalize_batch": {
+        "find_widget": {
           "fetch": "one",
           "parameters": [
             {
-              "name": "idempotency_key",
-              "nullable": false,
-              "type": "text"
-            }
-          ],
-          "path": "command/widget/finalize.sql",
-          "row": [
-            {
               "name": "widget_id",
               "nullable": false,
               "type": "uuid"
             }
-          ]
-        },
-        "find_batch": {
-          "fetch": "optional_one",
-          "parameters": [
-            {
-              "name": "idempotency_key",
-              "nullable": false,
-              "type": "text"
-            }
           ],
-          "path": "command/widget/replay.sql",
+          "path": "command/widget/record_batch.sql",
           "row": [
-            {
-              "name": "canonical_command",
-              "nullable": false,
-              "type": "bytes"
-            },
             {
               "name": "widget_id",
               "nullable": false,

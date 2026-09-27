@@ -317,21 +317,42 @@ fn a_package_with_no_sql_generates_without_a_model() {
     );
 }
 
+/// The fixture manifest with [`fixture::UNREAD_TABLE`] as an internal relation.
+fn with_internal_relation() -> serde_json::Value {
+    let mut manifest = fixture::manifest();
+    manifest["internal_relations"] = json!({
+        (fixture::UNREAD_TABLE): {
+            "schema": "inventory", "table": fixture::UNREAD_TABLE, "cdc": "excluded"
+        }
+    });
+    manifest
+}
+
 #[test]
 fn internal_relations_are_not_models_and_their_vocabulary_is_closed() {
-    let package = fixture::generate_fixture();
-    assert!(package.file("generated/wamn/widget_command.rs").is_none());
+    let package = fixture::generate_with(
+        &fixture::catalog_with_unread_table(),
+        &with_internal_relation(),
+    );
     assert!(
         package
-            .file("generated/native-verifier/widget_command.rs")
+            .file(&format!("generated/wamn/{}.rs", fixture::UNREAD_TABLE))
+            .is_none()
+    );
+    assert!(
+        package
+            .file(&format!(
+                "generated/native-verifier/{}.rs",
+                fixture::UNREAD_TABLE
+            ))
             .is_none()
     );
 
-    let mut overlap = fixture::manifest();
-    overlap["internal_relations"]["widget_command"]["table"] = json!("widget");
+    let mut overlap = with_internal_relation();
+    overlap["internal_relations"][fixture::UNREAD_TABLE]["table"] = json!("widget");
     let bytes = serde_json::to_vec(&overlap).unwrap();
     let error = wamn_schema_generator::generate(&wamn_schema_generator::GenerationInput::new(
-        &fixture::catalog(),
+        &fixture::catalog_with_unread_table(),
         &bytes,
         &[],
         wamn_schema_generator::GenerationProvenance::new("test", "test"),
@@ -340,21 +361,21 @@ fn internal_relations_are_not_models_and_their_vocabulary_is_closed() {
     .expect_err("model/internal relation overlap was accepted");
     assert_eq!(error.kind(), GenerateErrorKind::InvalidManifest);
 
-    let mut open = fixture::manifest();
-    open["internal_relations"]["widget_command"]["cdc"] = json!("ignored");
+    let mut open = with_internal_relation();
+    open["internal_relations"][fixture::UNREAD_TABLE]["cdc"] = json!("ignored");
     assert!(PackageManifest::from_slice(&serde_json::to_vec(&open).unwrap()).is_err());
 }
 
 #[test]
 fn an_unused_column_changes_verified_state_without_widening_the_contract() {
-    let manifest = fixture::manifest();
-    let catalog = fixture::catalog();
+    let manifest = with_internal_relation();
+    let catalog = fixture::catalog_with_unread_table();
     let baseline = fixture::generate_with(&catalog, &manifest);
     let mut tables = catalog.tables().to_vec();
     let command = tables
         .iter_mut()
-        .find(|table| table.name() == "widget_command")
-        .expect("command relation");
+        .find(|table| table.name() == fixture::UNREAD_TABLE)
+        .expect("internal relation");
     let mut columns = command.columns().to_vec();
     columns.push(Column::new(
         "unused_note",
@@ -461,23 +482,13 @@ fn ownership_only_models_and_exclusion_owners_are_exact() {
     let mut ownership_only = fixture::manifest();
     ownership_only["models"]["command_state"] = json!({
         "schema": "inventory",
-        "table": "widget_command",
+        "table": fixture::UNREAD_TABLE,
         "owner": "platform_fixture",
-        "server_owned_fields": ["widget_id"],
+        "server_owned_fields": ["entry_id"],
         "audit_log": {"columns": [], "retention": "none"},
         "operations": {}
     });
-    ownership_only["internal_relations"] = json!({});
-    ownership_only["models"]["widget"]["operations"]
-        .as_object_mut()
-        .unwrap()
-        .remove("create");
-    // The claim table is a model here, so no operation can claim it.
-    ownership_only["custom_operations"]
-        .as_object_mut()
-        .unwrap()
-        .remove("widget.record_batch");
-    let package = fixture::generate_with(&fixture::catalog(), &ownership_only);
+    let package = fixture::generate_with(&fixture::catalog_with_unread_table(), &ownership_only);
     assert!(package.file("generated/wamn/command_state.rs").is_none());
     assert!(
         package
@@ -490,7 +501,7 @@ fn ownership_only_models_and_exclusion_owners_are_exact() {
             .as_array()
             .unwrap()
             .iter()
-            .any(|table| table["table"] == "widget_command")
+            .any(|table| table["table"] == fixture::UNREAD_TABLE)
     );
     for action in ["get", "query", "create", "update", "delete"] {
         assert!(
@@ -946,86 +957,120 @@ fn a_participant_takes_the_request_record_of_the_base_pre_commit() {
     assert!(!codec.contains("ArchiveParticipantRequest"), "{codec}");
 }
 
+/// The fixture's claim command lists the three write log statements, and its
+/// codec claims the key its contract names. The key is the field that publish
+/// hands the engine's intent rules, so the two stores key one field.
 #[test]
-fn authored_claims_require_exact_finalization() {
-    let manifest = platform_claim::manifest();
-    let package = fixture::generate_with(&fixture::catalog(), &manifest);
+fn a_claim_command_lists_the_write_log_and_its_codec_claims_its_key() {
+    use sha2::Digest as _;
+    use wamn_schema_generator::write_log::{WRITE_LOG_DIRECTORY, WRITE_LOG_STATEMENTS};
+
+    let package = fixture::generate_fixture();
     let operation = artifact(
         &package,
-        "generated/contracts/widget/archive.operation.json",
+        "generated/contracts/widget/record_batch.operation.json",
     );
     assert_eq!(operation["idempotent_by"], "claim");
+    assert_eq!(operation["idempotency"]["key"], "value.idempotency_key");
     assert_eq!(
-        operation["claim"],
-        manifest["custom_operations"]["widget.archive"]["claim"]
+        operation["idempotency"]["log"]["operation"],
+        "platform-fixture:widget/record-batch"
     );
-    for fetch in ["optional_one", "bounded_list"] {
-        let mut invalid = manifest.clone();
-        invalid["custom_operations"]["widget.archive"]["statements"]["finalize"]["fetch"] =
-            json!(fetch);
-        let error = fixture::try_generate_with(&fixture::catalog(), &invalid)
-            .expect_err("claim finalizer did not require one row");
-        assert_eq!(error.kind(), GenerateErrorKind::InvalidOperation);
-        assert!(error.to_string().contains("finalize fetch to one"));
+    let input = artifact(
+        &package,
+        "generated/contracts/widget/record_batch.input.json",
+    );
+    assert_eq!(
+        wamn_schema_generator::client_plan::idempotency_field(&input).as_deref(),
+        Some("value.idempotency_key")
+    );
+    let statements = operation["statements"].as_array().unwrap();
+    for (name, stem, sql) in WRITE_LOG_STATEMENTS {
+        let path = format!("{WRITE_LOG_DIRECTORY}/{stem}.sql");
+        let listed = statements
+            .iter()
+            .find(|statement| statement["name"] == name)
+            .unwrap_or_else(|| panic!("{name} is listed"));
+        assert_eq!(listed["path"], path);
+        assert_eq!(
+            listed["digest"],
+            format!("sha256:{}", hex::encode(sha2::Sha256::digest(sql)))
+        );
+        assert_eq!(package.file(&path).expect(&path).bytes(), sql.as_bytes());
     }
+    // A create lists the same three, with the same digests.
+    let create = artifact(&package, "generated/contracts/widget/create.operation.json");
+    let digests = |operation: &serde_json::Value| {
+        operation["statements"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|statement| {
+                statement["name"]
+                    .as_str()
+                    .is_some_and(|name| name.starts_with("log_"))
+            })
+            .map(|statement| statement["digest"].clone())
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(digests(&create), digests(&operation));
+    assert_eq!(digests(&create).len(), 3);
 
-    for (pointer, value) in [
-        (
-            "/custom_operations/widget.archive/claim/table",
-            json!("missing_command"),
-        ),
-        (
-            "/custom_operations/widget.archive/claim/identities",
-            json!({"id": "canonical_command"}),
-        ),
-        (
-            "/custom_operations/widget.archive/claim/identities",
-            json!({"missing": "widget_id"}),
-        ),
-        (
-            "/custom_operations/widget.archive/statements/claim/row/0/name",
-            json!("canonical_command"),
-        ),
-        (
-            "/custom_operations/widget.archive/statements/replay/row/0/name",
-            json!("other_command"),
-        ),
+    let codec = std::str::from_utf8(
+        package
+            .file("generated/wit/widget_record_batch_codec.rs")
+            .unwrap()
+            .bytes(),
+    )
+    .unwrap()
+    .to_owned();
+    for expected in [
+        "include!(\"write_log_codec.rs\");",
+        "const OPERATION: &str = \"platform-fixture:widget/record-batch\";",
+        "const KEY_FIELD: &str = \"value.idempotency_key\";",
+        "let key = request.idempotency_key.clone();",
+        "F: AsyncFnMut(\n        &mut wamn_postgres_statements::Transaction,",
     ] {
-        let mut invalid = manifest.clone();
-        *invalid.pointer_mut(pointer).unwrap() = value;
-        assert_eq!(
-            fixture::try_generate_with(&fixture::catalog(), &invalid)
-                .expect_err("malformed authored claim was accepted")
-                .kind(),
-            GenerateErrorKind::InvalidOperation
-        );
+        assert!(codec.contains(expected), "{expected}\n{codec}");
     }
-    for (idempotence, keep_claim) in [
-        (json!("claim"), false),
-        (
-            json!({"state": {"guards": {"widget_command": "payload"}}}),
-            true,
-        ),
-        (
-            json!({"state": {"guards": {"widget_command": "payload"}}}),
-            false,
-        ),
-    ] {
-        let mut invalid = manifest.clone();
-        let operation = invalid["custom_operations"]["widget.archive"]
-            .as_object_mut()
-            .unwrap();
-        operation.insert("idempotent_by".into(), idempotence);
-        if !keep_claim {
-            operation.remove("claim");
-        }
-        assert_eq!(
-            validate_operation_vocabulary(&parsed(&invalid))
-                .unwrap_err()
-                .kind(),
-            GenerateErrorKind::InvalidOperation
-        );
-    }
+    // A command that claims nothing keeps the plain handler loop.
+    let archive = std::str::from_utf8(
+        package
+            .file("generated/wit/widget_archive_codec.rs")
+            .unwrap()
+            .bytes(),
+    )
+    .unwrap()
+    .to_owned();
+    assert!(!archive.contains("write_log_codec.rs"), "{archive}");
+}
+
+/// Validation refuses the `claim` object: `idempotent_by: claim` is the whole
+/// declaration. A claim command must carry the key it claims, and it commits
+/// its claim and its work together.
+#[test]
+fn a_claim_command_declares_no_claim_object() {
+    let manifest = platform_claim::manifest();
+    fixture::generate_with(&fixture::catalog(), &manifest);
+
+    let mut claim_object = manifest.clone();
+    claim_object["custom_operations"]["widget.archive"]["claim"] = json!({
+        "table": "widget_command", "identities": {"id": "widget_id"},
+        "claim": "claim", "replay": "replay", "finalize": "finalize"
+    });
+    let error = fixture::try_generate_with(&fixture::catalog(), &claim_object)
+        .expect_err("a claim object refuses");
+    assert_eq!(error.kind(), GenerateErrorKind::InvalidManifest);
+    assert!(names_the_member(&error, "claim"), "{error}");
+
+    let mut keyless = manifest.clone();
+    keyless["custom_operations"]["widget.archive"]["input"]["fields"][0]["path"] = json!("key");
+    keyless["custom_operations"]["widget.archive"]["canonicalization"]["excluded_fields"] =
+        json!(["key"]);
+    let error = validate_operation_vocabulary(&parsed(&keyless)).unwrap_err();
+    assert_eq!(error.kind(), GenerateErrorKind::InvalidOperation);
+    assert!(error.to_string().contains("idempotency_key"), "{error}");
+
     let mut no_transaction = manifest;
     let operation = no_transaction["custom_operations"]["widget.archive"]
         .as_object_mut()

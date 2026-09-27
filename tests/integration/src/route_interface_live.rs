@@ -303,7 +303,7 @@ async fn a_route_answers_every_operation_kind_as_its_one_node_wiring() -> anyhow
     let (application, paths) = start(system.url(), project.url(), &scratch).await?;
 
     // CREATE. The route replays the command the wiring created, from the same
-    // claim record: the same id and the same creation time.
+    // write log record: the same id and the same creation time.
     let create = json!([{
         "request_id": "create", "idempotency_key": "create-1", "code": "standard",
     }]);

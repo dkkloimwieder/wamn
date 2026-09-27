@@ -11,22 +11,6 @@ pub struct WidgetRow {
 }
 
 #[derive(Debug, sqlx::FromRow)]
-pub struct WidgetCreateClaimRow {
-    pub widget_id: uuid::Uuid,
-}
-
-#[derive(Debug, sqlx::FromRow)]
-pub struct WidgetCreateReplayRow {
-    pub canonical_command: Vec<u8>,
-    pub code: String,
-    pub created_at: chrono::DateTime<chrono::Utc>,
-    pub edit_version: i64,
-    pub id: uuid::Uuid,
-    pub maker_id: Option<uuid::Uuid>,
-    pub note: Option<String>,
-}
-
-#[derive(Debug, sqlx::FromRow)]
 pub struct WidgetUpdateRow {
     pub outcome: Option<String>,
     pub observed_edit_version: Option<i64>,
@@ -43,9 +27,7 @@ pub struct WidgetDeleteRow {
     pub outcome: Option<String>,
 }
 
-pub(crate) const CREATE_0_SQL: &str = include_str!("../sql/widget/create_claim.sql");
-pub(crate) const CREATE_1_SQL: &str = include_str!("../sql/widget/create_replay.sql");
-pub(crate) const CREATE_2_SQL: &str = include_str!("../sql/widget/create.sql");
+pub(crate) const CREATE_SQL: &str = include_str!("../sql/widget/create.sql");
 pub(crate) const DELETE_SQL: &str = include_str!("../sql/widget/delete.sql");
 pub(crate) const GET_SQL: &str = include_str!("../sql/widget/get.sql");
 pub(crate) const QUERY_0_SQL: &str = include_str!("../../query/widget.sql");
@@ -95,18 +77,6 @@ pub(crate) fn query_created_at_descending_cursor_id_bind_fixture() -> Option<uui
 }
 pub(crate) fn query_created_at_descending_limit_bind_fixture() -> i64 {
     0_i64
-}
-pub(crate) fn create_claim_idempotency_key_bind_fixture() -> String {
-    String::new()
-}
-pub(crate) fn create_claim_canonical_command_bind_fixture() -> Vec<u8> {
-    Vec::new()
-}
-pub(crate) fn create_replay_idempotency_key_bind_fixture() -> String {
-    String::new()
-}
-pub(crate) fn create_id_bind_fixture() -> uuid::Uuid {
-    uuid::Uuid::nil()
 }
 pub(crate) fn create_code_bind_fixture() -> String {
     String::new()

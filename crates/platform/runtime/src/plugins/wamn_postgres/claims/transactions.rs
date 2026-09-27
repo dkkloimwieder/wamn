@@ -128,6 +128,9 @@ const fn claim_sql(class: AuthorityClass) -> &'static str {
     }
 }
 
+/// The statement that opens every claimed transaction of this plugin.
+const BEGIN_READ_COMMITTED: &str = "BEGIN ISOLATION LEVEL READ COMMITTED";
+
 impl WamnPostgres {
     /// `BEGIN` + claim/limit injection. The claims are injected by ONE fully
     /// bound statement ([`CLAIM_SQL`]) whose every value travels as a bind
@@ -207,9 +210,14 @@ impl WamnPostgres {
         // be the only message this function still had outstanding when a
         // pipelined caller's statement failed -- so an aborted transaction
         // surfaced here as a claim error and misattributed the cause.
+        //
+        // The isolation level is stated, not inherited from a session default:
+        // the write log's retry reads the claim that its insert waited on, and
+        // only a fresh READ COMMITTED snapshot sees it (`docs/plan/write-log.md`
+        // 4.2). A guest has no way to name the level through `begin`.
         let begin_sql = match run {
-            Some(run) => format!("BEGIN;{}", causation_emit_sql(run)),
-            None => "BEGIN".to_string(),
+            Some(run) => format!("{BEGIN_READ_COMMITTED};{}", causation_emit_sql(run)),
+            None => BEGIN_READ_COMMITTED.to_string(),
         };
         // ONE FLIGHT. `batch_execute` and `execute` each enqueue their whole
         // message batch synchronously on their FIRST poll, and `biased;` pins
