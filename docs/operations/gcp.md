@@ -739,3 +739,16 @@ C=$(mktemp -d); chmod 700 $C
  kubectl -n identity get secret operator-dkk -o jsonpath='{.data.tls\.crt}' | base64 -d > $C/client.crt
  kubectl -n identity get secret operator-dkk -o jsonpath='{.data.tls\.key}' | base64 -d > $C/client.key)
 ```
+
+Run `provision-project-env` again with the PAT flags. The verb requires `--emit-secret`, so write that file into `C` too; it repeats the database Secret without a password and is never applied (finding `wamn-6b4g`):
+
+```bash
+(umask 077; target/debug/wamn-ctl provision-project-env --org dkk --project receiving --env dev --tenant dev \
+  --namespace platform --secret-namespace hosts --emit-secret $C/database-secret.json \
+  --pat-issuer https://identity.identity.svc.cluster.local:8443 --pat-server-ca $P/identity-ca.crt \
+  --pat-client-cert $C/client.crt --pat-client-key $C/client.key \
+  --emit-management-author-pat-secret $P/management-author-pat.json)
+rm -rf $C
+```
+
+Then the owner removes the `/etc/hosts` line. On 2026-09-26 the mint took 5 seconds. It made the service principal `wamn-management-author-dkk--receiving--dev` and a PAT with prefix `6922769387dc9a19` that expires on 2026-10-27. The PAT Secret file stays at mode 0600 in the work directory and is not applied.
