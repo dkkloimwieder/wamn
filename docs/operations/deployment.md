@@ -51,6 +51,15 @@ The verb installs the record history, the system schema and the portable store a
 It refuses a database that already has the schema `registry`.
 Then run the verbs in this order: `provision-org`, `provision-project-env`, `provision-identity-issuer`, `reconcile-run-plane`, `apply-package`, `reconcile-package-data-access`, `push-component`.
 
+If a package declares a registration condition that reads the old row, run `reconcile-replica-identity` after `apply-package`.
+The verb sets REPLICA IDENTITY FULL on each table that such a registration names. WMS needs it for `wms.packaging`:
+
+```bash
+wamn-ctl reconcile-replica-identity --admin-database-url "$PG_ADMIN_URL" --package apps/wamn_wms
+```
+
+Without it, the old row carries only the key, so the condition cannot compare the old location.
+
 Provisioning owns database schema, privileges, environment bindings, and broker stream configuration.
 Runtime uses credentials scoped to that environment.
 Declare stream replicas and the duplicate window in the environment configuration.

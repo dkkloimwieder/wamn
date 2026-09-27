@@ -232,7 +232,7 @@ A refused item leaves no row, so its key is free again, and a later different re
 A retry that answers a stored result commits nothing, so no event publishes a second time.
 Update and delete claim nothing: `row_version` is their guard.
 A new id comes from its insert's `RETURNING`, and nothing mints an id before the work.
-No application table implements or references the claim. The stored result names the rows that the work wrote, for example the `movement_ids` of a WMS command.
+No application table implements or references the claim. The stored result names the rows that the work wrote, for example the `transaction_ids` of a WMS command.
 
 The request bytes are `wamn_execution_contract::canonical_json_bytes` of the validated request without the key.
 A uuid is lowercase and hyphenated, a `timestamptz` is UTC with six fractional digits, and a `numeric` keeps its scale.

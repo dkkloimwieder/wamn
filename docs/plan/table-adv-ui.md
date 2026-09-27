@@ -142,7 +142,7 @@ Each feature follows the core rule: server work sets scope, client work needs a 
 - A view is a named table state: columns (order, visible, width, pin), sort, scope filters, refine filters, group, chosen aggregates, cap.
 - A view names only declared fields, so it is checked against the contract.
 - On a set that is not fully read, only the server parts apply.
-- Held in memory and in the URL. Only top-level tables go in the URL, keyed by table definition name (for example `?pallets.sort=created_at:desc&pallets.cap=5000`). Child table state stays in memory.
+- Held in memory and in the URL. Only top-level tables go in the URL, keyed by table definition name (for example `?packagings.sort=created_at:desc&packagings.cap=5000`). Child table state stays in memory.
 
 ### Export
 

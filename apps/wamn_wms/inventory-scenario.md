@@ -11,7 +11,11 @@ The data model contains `product`, `location`, `packaging`, `packaging_quantity`
 Stock status is `available` or `held`.
 The packaging row provides the common lock and `row_version` for competing commands.
 Quantities belong to their product and status rows.
-`inventory_transaction` records the committed movement history.
+`inventory_transaction` records each quantity change as one row with a from side and a to side.
+A side names a packaging and a status. A receipt has no from side, and a removal has no to side.
+`packaging_quantity` is the balance, and [the balance check](tests/inventory_balance.sql) returns each balance that differs from the sum of its transactions.
+A balance row at zero is deleted.
+WMS names the unit packaging. A pallet is a `type` value (`pallet`, `tote`, `bin`, `case`, or `loose`), never a table, a column or an operation.
 The platform stamp trigger records who created and changed each `packaging` row and when, and who created each `inventory_transaction` row and when.
 Command SQL writes no stamp column.
 
@@ -19,20 +23,22 @@ The four commands have distinct authority and effects:
 
 | Operation | Purpose |
 |---|---|
-| `inventory.move` | Move a packaging to another location. |
+| `inventory.move` | Move a packaging to another location. It writes no transaction row. |
 | `inventory.adjust` | Change quantity with a reason. |
-| `inventory.merge` | Move stock between two packagings and retire the source. |
-| `inventory.split` | Transfer quantity into a newly identified packaging. |
+| `inventory.merge` | Move stock between two packagings and retire the source. The two need not share a type. |
+| `inventory.split` | Transfer quantity into a new packaging of a given type. |
 
 The generated codec opens one transaction for each input item and claims the caller's idempotency key in the platform write log.
 The command locks the relevant packaging rows and compares the expected revision.
-It validates quantity and status before committing the movement, quantity changes, and new revision.
+It validates quantity and status before committing the transaction rows, quantity changes, and new revision.
 A refusal reports the declared application error.
 `concurrency_conflict` carries both `expected_row_version` and `observed_row_version`.
 
-The write log stores the result of the move, with its original `movement_ids`.
-The `movement_ids` are the ids of the movement rows that the command wrote, and a move of a packaging with no quantity rows answers an empty list.
-Repeating the same command returns that result without another movement.
+The write log stores the result of each command.
+`adjust`, `merge`, and `split` return `transaction_ids`, the ids of the transaction rows that the command wrote.
+A command that would write no row refuses, so the list is never empty. An adjust to the current count refuses as `invalid_input`.
+A move returns the packaging id, its new location, and its new `row_version`. A move to the current location or of a consumed packaging refuses.
+Repeating the same command returns that result without another write.
 Changing its body under the same key refuses.
 Two competing moves on the same packaging must produce one success and one `concurrency_conflict`.
 
@@ -51,6 +57,7 @@ The `location` and `product` queries filter on their code.
 Each create claims its key in the write log, so a retry of one key returns the first row.
 Each update binds `row_version`. Every WMS revision is an `int4`, and the packaging revision is one too.
 `inventory_transaction` has no write, because it is a log that the commands write.
+`packaging_quantity` has no public write or delete. The commands delete a balance row at zero.
 
 `inventory.aggregate` returns a bounded projection grouped by status, product, and location.
 It is a current SQL read rather than an event-maintained rollup.
@@ -58,16 +65,16 @@ The [projection implementation](data/src/inventory_aggregate.rs) owns its result
 
 `/inventory/move` is a route to `inventory.move`, like every other operation.
 The move's row event starts the [label workflow](publication/wirings/inventory_move_and_label.json) off the request path.
-`wamn.json` declares it as the workflow `movement_label`, registered on the `inventory_transaction` insert:
+`wamn.json` declares it as the workflow `movement_label`, registered on the `packaging` update with the condition `old.location_id != new.location_id`:
 
 ```text
-inventory_transaction insert → shape (jsonata) → label-render → blob-put
+packaging update → shape (jsonata) → label-render → blob-put
 ```
 
-The `shape` node turns a move's row into one label item, and any other movement kind into none.
-The label is stored under the movement id, so a redelivered event overwrites the same object.
-A move with several product lines writes one movement row, and one label, for each line.
-The move response carries the committed move only (docs/plan/workflow-feature.md).
+The condition reads the old row, so the `packaging` table needs REPLICA IDENTITY FULL. The `reconcile-replica-identity` verb sets it.
+The `shape` node turns the update into one `packaging` label item.
+The label key is `{packaging_id}/{row_version}`, and the object path is `wms/{key}`, so a redelivered event overwrites the same object.
+One move stores one label. The move response carries the committed move only.
 
 ## Application observations
 
@@ -82,7 +89,7 @@ They use codes such as `PAL-000000`, `LOC-0000`, and `SKU-00000`.
 The route driver exercises actual operation permissions and commands.
 Traffic generation does not grant direct database mutation authority.
 
-Application assertions require the original movement identity on replay and one label object for that movement.
+Application assertions require the original result on replay and one label object for each move.
 They also require exactly one conflict under two competing moves.
 The [operator methods](../../docs/testing/application-tests.md#operator-outcomes) distinguish partial completion from an unknown outcome.
 

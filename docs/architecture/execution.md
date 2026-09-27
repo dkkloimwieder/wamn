@@ -221,6 +221,7 @@ Its SQL lives in `wamn-run-state` beside the claim SQL.
 
 An application event starts a workflow that the package declares in `wamn.json` under `workflows`.
 The declaration names the wiring and a registration: the source package, the entity, and the row operations.
+The registration can add a JMESPath `condition` over the event, and the materializer delivers only the events for which it holds.
 Apply-package writes the registration row under the workflow id, and publish derives a `ServingRegistration` for the named wiring.
 The wiring can enter at any node, while an event handler's wiring enters at the handler.
 The materializer delivers the event, and the host admits it as a queued run under the authority of the release that declares the workflow.
@@ -235,7 +236,8 @@ The result leaves on port `main`, or on port `items`, whose schema is the item a
 The node is a std guest: it imports `wasi:random` at the version that Rust std links, and the virtualizer passes that import through.
 
 The WMS workflow `movement_label` is the first example.
-The `inventory_movement` insert starts it, and it stores one pallet label for each movement row of a move, keyed by the movement id.
+A `packaging` update starts it when the registration condition `old.location_id != new.location_id` holds, so only a move starts it.
+It stores one packaging label for each move, keyed by `{packaging_id}/{row_version}`, at the object path `wms/{key}`.
 
 ## Results and effects
 
@@ -581,7 +583,7 @@ A delete asks for a confirmation first.
 A form whose plan binds a revision reads the record when it opens and sends the revision of that read.
 It reads nothing at submit, so a change that another writer makes in between refuses as a conflict.
 A delete whose plan binds a revision takes the key and the revision of the record that the page displayed, and it reads nothing.
-A command revision input can name the input whose record it guards, as `"revision": "value.pallet_id"` in place of `"revision": true`. The form then sends the revision of the row that carries the held key in that selector: the row the operator chose, a listed row that carries a filled key, or the record read for a key off the list. If no row carries the key, the form refuses locally and marks that selector.
+A command revision input can name the input whose record it guards, as `"revision": "value.packaging_id"` in place of `"revision": true`. The form then sends the revision of the row that carries the held key in that selector: the row the operator chose, a listed row that carries a filled key, or the record read for a key off the list. If no row carries the key, the form refuses locally and marks that selector.
 No page supplies a revision. Generation refuses a form whose revision input has no bound read and names no input, with the code `unsupplied_revision`.
 A table row fills a form input only when that input is the one input of the form that names the row's model. If two inputs name it, the row fills neither.
 A table column that names a record shows the record's text, not its key.
@@ -601,11 +603,11 @@ The [app shell](../../web/shell/README.md) places the components on routes, and 
 `web/shell` is one platform package that every application shares. The generator emits no navigation list: an application writes its route table by hand from the generated component index.
 An application web page in `apps/<app>/web/` gives the shell a hand-written route table of screens, grouped by model.
 The navigation names a model with one screen by the model alone, and it lists the screen labels only below a model with more than one screen.
-A record page carries its key in the address, for example `pallets/<id>`, and a table row opens it through the row callback.
+A record page carries its key in the address, for example `packagings/<id>`, and a table row opens it through the row callback.
 The shell owns the router. A screen gets the address values, the query values, `open(path)` and `close()` as props, beside the transport.
 Each command form has its own route. A create or merge form opens from a button above its table, and an update form from a button above its record page.
 A row that fills a form opens it with the filled values in the query, so a reload keeps them. A completed submission returns to the page that opened the form, and a refusal stays on the form.
-A pallet form, such as `inventory.move`, sends the revision of the pallet row that its pallet selector holds, so no route reads the pallet for it.
+A packaging form, such as `inventory.move`, sends the revision of the packaging row that its packaging selector holds, so no route reads the packaging for it.
 The first segment of every address is the environment audience, so a reload renews the cookie session with nothing in browser storage.
 A screen address with no session asks for the password on that address, and it shows the screen after sign in.
 The page calls the release under `/api`, and the proxy in front of it strips that prefix, so no page path meets a route template.

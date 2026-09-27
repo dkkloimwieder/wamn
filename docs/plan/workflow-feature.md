@@ -6,7 +6,7 @@ This page scopes the workflow feature, item 5 of [routes, workflows, and the rou
 
 A workflow is a wiring that runs off the request path. After this epic, an application event starts a registered workflow. An operator or a test can start, park, release, and list queued workflow runs through one interface.
 
-The first real workflow is the WMS label graph. A pallet move commits through the `/inventory/move` route. The move's row event then starts the graph, which renders the pallet label and stores it in the blob store.
+The first real workflow is the WMS label graph. A packaging move commits through the `/inventory/move` route. The move's row event then starts the graph, which renders the packaging label and stores it in the blob store.
 
 ## 2. Fixed rules
 
@@ -61,7 +61,8 @@ An application declares a workflow in `wamn.json`. The declaration names a wirin
 "workflows": {
   "movement_label": {
     "wiring": "inventory_move_and_label",
-    "registration": { "source_package": "wamn_wms", "entity": "inventory_movement", "ops": ["insert"] }
+    "registration": { "source_package": "wamn_wms", "entity": "packaging", "ops": ["update"],
+                      "condition": "old.location_id != new.location_id" }
   }
 }
 ```
@@ -83,10 +84,10 @@ The first issue picks the crate by measurement. The crate must build for `wasm32
 The graph keeps its id `inventory_move_and_label`. The move node leaves the graph, because the move is the route that commits the row that starts the graph.
 
 ```text
-inventory_movement insert -> shape (jsonata) -> label (label-render) -> store (blob-put)
+packaging update -> shape (jsonata) -> label (label-render) -> store (blob-put)
 ```
 
-The `shape` node turns the row event into the item array that `label-render` takes, with `pallet_id` and `location_id`, and the label key. The label key is the move's idempotency key, because a move can write one movement row for each product line and every row carries the key. One move therefore stores one label, and a redelivered event overwrites it. A movement that is not a move gives an empty array. The graph has no `respond` terminal, because no caller waits. The WMS cluster cases read the label from the blob store after the run completes. They no longer read it from the move response.
+The `shape` node turns the row event into the item array that `label-render` takes, with `packaging_id` and `location_id`, and the label key `{packaging_id}/{row_version}`. Epic 25 (`docs/plan/wms-inventory.md`) moved the trigger from the movement insert to the packaging update. One move therefore stores one label, and a redelivered event overwrites it. The graph has no `respond` terminal, because no caller waits. The WMS cluster cases read the label from the blob store after the run completes. They no longer read it from the move response.
 
 ## 5. Issues
 

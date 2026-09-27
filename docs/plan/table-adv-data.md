@@ -21,8 +21,8 @@ Today a table reads one keyset page of at most 100 rows at a time, and the clien
 | Component-model streams already work in the runtime: async functions return `stream<u8>` and `stream<object-name>`, drained with a bound. | `crates/platform/runtime/wit/deps/wasmcloud-blobstore/package.wit:98-104`, `plugins/wamn_blobstore/drain.rs` |
 | The server reads `limit + 1` rows and returns a cursor only when more exist. | `apps/wamn_wms/data/src/page.rs:54-64` |
 | The page maximum is 100, hand-written in 6 app files and repeated in the contract. | `MAX_PAGE_SIZE` in fixture, WMS, Receiving; `apps/wamn_wms/wamn.json:48` |
-| Filters are per-field `IN` arrays. Sort is one declared field and direction. | `apps/wamn_wms/generated/client-ts/pallet.ts:205-232` |
-| Sort is a form control above the grid, not a header click. | `apps/wamn_wms/generated/client-ts/components/pallet.tsx:524-533` |
+| Filters are per-field `IN` arrays. Sort is one declared field and direction. | `apps/wamn_wms/generated/client-ts/packaging.ts` |
+| Sort is a form control above the grid, not a header click. | `apps/wamn_wms/generated/client-ts/components/packaging.tsx` |
 | No text match mode; a search matches the whole value. | bead `wamn-yxm6` |
 | Paging state is framework-free in the runtime; `web/ui` renders it. | `web/runtime/src/page.ts` |
 
@@ -200,7 +200,7 @@ Each feature follows the core rule: server work sets scope, client work needs a 
 - A view is a named table state: columns (order, visible, width, pin), sort, scope filters, refine filters, group, chosen aggregates, cap.
 - A view names only declared fields, so it is checked against the contract.
 - On a set that is not fully read, only the server parts apply.
-- Held in memory and in the URL. Only top-level tables go in the URL, keyed by table definition name (for example `?pallets.sort=created_at:desc&pallets.cap=5000`). Child table state stays in memory.
+- Held in memory and in the URL. Only top-level tables go in the URL, keyed by table definition name (for example `?packagings.sort=created_at:desc&packagings.cap=5000`). Child table state stays in memory.
 
 ### Export
 
