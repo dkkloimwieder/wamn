@@ -426,6 +426,43 @@ pub(super) const CHECK_SPECS: &[CheckSpec] = &[
         definition: "CHECK (lease_generation >= 0)",
         origin: CheckOrigin::Inline("lease_generation"),
     },
+    // The route intent record (wamn-an24).
+    CheckSpec {
+        table: "intents",
+        name: "intents_tenant_id_check",
+        definition: "CHECK (tenant_id <> ''::text)",
+        origin: CheckOrigin::Inline("tenant_id"),
+    },
+    CheckSpec {
+        table: "intents",
+        name: "intents_outcome_kind_check",
+        definition: "CHECK (outcome_kind = ANY (ARRAY['completed'::text, 'failed'::text]))",
+        origin: CheckOrigin::Inline("outcome_kind"),
+    },
+    CheckSpec {
+        table: "intents",
+        name: "intents_finished_check",
+        definition: "CHECK ((finished_at IS NULL) = (outcome_kind IS NULL))",
+        origin: CheckOrigin::Table,
+    },
+    CheckSpec {
+        table: "intents",
+        name: "intents_outcome_check",
+        definition: "CHECK ((outcome_kind IS NULL) = (outcome IS NULL))",
+        origin: CheckOrigin::Table,
+    },
+    CheckSpec {
+        table: "intents",
+        name: "intents_resolved_check",
+        definition: "CHECK ((resolved_basis IS NULL) = (resolved_at IS NULL))",
+        origin: CheckOrigin::Table,
+    },
+    CheckSpec {
+        table: "intents",
+        name: "intents_open_check",
+        definition: "CHECK (finished_at IS NULL OR resolved_at IS NULL)",
+        origin: CheckOrigin::Table,
+    },
 ];
 
 const GUARD_EVENT_LINEAGE_DEF: &str = "CREATE OR REPLACE FUNCTION wamn_run.guard_event_lineage_immutable()\n RETURNS trigger\n LANGUAGE plpgsql\nAS $function$\nBEGIN\n    IF NEW.event_source_run_id IS DISTINCT FROM OLD.event_source_run_id\n       OR NEW.event_root_run_id IS DISTINCT FROM OLD.event_root_run_id\n       OR NEW.event_depth IS DISTINCT FROM OLD.event_depth THEN\n        RAISE EXCEPTION 'event causation lineage is immutable';\n    END IF;\n    RETURN NEW;\nEND\n$function$\n";

@@ -1,7 +1,8 @@
 //! The per-call intent record that `invoke_operation` takes, as a storage trait.
 //!
-//! The route path needs no lease and no queue. No adapter implements this trait
-//! yet: a Postgres implementation needs its own table, which is a later epic.
+//! The route path needs no lease and no queue. The edge implements it over
+//! SQLite (`wamn-run-state-sqlite`), and the cloud over `wamn_run.intents`
+//! with the statements of [`crate::intent_sql`].
 
 use std::fmt::{Display, Formatter};
 

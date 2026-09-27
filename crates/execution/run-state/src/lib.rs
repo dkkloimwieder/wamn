@@ -38,6 +38,8 @@ pub mod authority_class;
 mod credential_generation;
 /// The durability class a run was admitted under, and the crash-floor gate.
 pub mod durability;
+/// The Postgres intent record's SQL text builders.
+pub mod intent_sql;
 /// The per-call intent record as a storage trait.
 pub mod intent_store;
 /// RUN-* as plain `fn check(state)` functions, for the pure decision tests to
