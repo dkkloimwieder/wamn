@@ -517,3 +517,21 @@ jq '.metadata.namespace="hosts"' $P/secret.json | kubectl apply -f -
 ```
 
 The instance suffix `zf7o454t` comes from the registry, so a new environment has a different database name. On 2026-09-26 `provision-org` took 2 seconds, `provision-project-env` 3 seconds, and the apply steps 8 seconds.
+
+### 3.8 Identity issuer, run plane and package
+
+Keep the port-forward and `WAMN_SYSTEM_ADMIN_URL` of section 3.6. Set the superuser URL of the tenant database, without printing it:
+
+```bash
+T="postgresql://postgres:${PW}@127.0.0.1:15432/wamn-db-dkk--receiving--dev--zf7o454t"
+target/debug/wamn-ctl provision-identity-issuer --issuer https://identity.identity.svc.cluster.local \
+  --prepare-generation a --namespace identity --emit-secret $P/identity-db.json
+target/debug/wamn-ctl reconcile-run-plane --system-database-url "$WAMN_SYSTEM_ADMIN_URL" --admin-database-url "$T" \
+  --org dkk --project receiving --tenant dev --env dev --schema wamn_run
+target/debug/wamn-ctl apply-package --package apps/wamn_receiving --database-url "$T" --tenant dev
+target/debug/wamn-ctl reconcile-package-data-access --package apps/wamn_receiving --database-url "$T" --tenant dev
+```
+
+`reconcile-run-plane` runs before `apply-package`, because it installs the catalog schema that `apply-package` writes into. On 2026-09-26 the four verbs took 4, 13, 37 and 16 seconds.
+
+The Secret `wamn-identity-db` in `$P/identity-db.json` is not applied yet. Its URL names the host `127.0.0.1:15432` of the port-forward, which identity cannot reach inside the cluster.
