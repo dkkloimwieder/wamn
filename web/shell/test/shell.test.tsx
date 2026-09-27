@@ -203,6 +203,13 @@ describe("the app shell", () => {
     expect(window.location.pathname).toBe(`/${PROD}/pallets`);
   });
 
+  it("refuses an address that names an environment of another project", async () => {
+    const { state, fetch } = identity(false);
+    open("/urn:wamn:project-env:acme:gadgets:dev:k3m9x2p7/pallets", fetch);
+    expect(await screen.findByText("This address names an environment of another application.")).toBeDefined();
+    expect(state.calls).toEqual([]);
+  });
+
   it("asks for the password on a screen address with no session, and shows that screen after it", async () => {
     const { fetch } = identity(false);
     open(`/${AUD}/products`, fetch);

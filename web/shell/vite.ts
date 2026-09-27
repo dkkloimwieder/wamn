@@ -48,26 +48,32 @@ export interface ApplicationOptions {
   readonly client: { readonly name: string; readonly path: string };
   /** The port of the dev server. */
   readonly port: number;
-  /** `serve` for the dev server, `build` for static files. Only `serve` reads the environment. */
+  /** `serve` for the dev server, `build` for static files. Only `serve` reads `dev.json`, and `build` reads `WAMN_ORG` and `WAMN_PROJECT`. */
   readonly command: "serve" | "build";
 }
 
 interface DevConfiguration {
   readonly route_host: string;
   readonly session_identity: { readonly issuer: string };
+  readonly org: string;
+  readonly project: string;
 }
 
-/** The proxy to the local stack, from the variables the dev loop documents. */
-function proxy(): Record<string, Proxy> {
+/** The `dev.json` of the local stack, from the variable the dev loop documents. */
+function devConfiguration(): DevConfiguration {
   const directory = process.env["WAMN_DEV_ENV_DIR"];
   if (directory === undefined) {
     throw new Error("set WAMN_DEV_ENV_DIR to the directory that holds dev.json");
   }
+  return JSON.parse(readFileSync(`${directory}/dev.json`, "utf8")) as DevConfiguration;
+}
+
+/** The proxy to the local stack, from `dev.json` and the base URL the dev loop printed. */
+function proxy(parsed: DevConfiguration): Record<string, Proxy> {
   const route = process.env["WAMN_ROUTE_URL"];
   if (route === undefined) {
     throw new Error("set WAMN_ROUTE_URL to the base URL the dev loop printed");
   }
-  const parsed = JSON.parse(readFileSync(`${directory}/dev.json`, "utf8")) as DevConfiguration;
   return {
     // The issuer signed its own certificate, so this hop does not verify it.
     // Nothing outside the loopback address is reachable here.
@@ -90,6 +96,16 @@ function required(name: string): string {
 }
 
 /**
+ * The org and the project the shell signs in to. The dev server reads them
+ * from `dev.json`. A build reads the variables `wamn web upload` sets.
+ */
+function scope(dev: DevConfiguration | undefined): { org: string; project: string } {
+  return dev === undefined
+    ? { org: required("WAMN_ORG"), project: required("WAMN_PROJECT") }
+    : { org: dev.org, project: dev.project };
+}
+
+/**
  * The resolution and the server of one application. The application adds its
  * own plugins, because it installs them.
  */
@@ -98,10 +114,12 @@ export function applicationConfig(options: ApplicationOptions): ApplicationConfi
   const web = fileURLToPath(new URL("..", import.meta.url));
   const store = fileURLToPath(new URL("../../node_modules", import.meta.url));
   const installed = (name: string) => at(`node_modules/${name}`);
+  const dev = options.command === "serve" ? devConfiguration() : undefined;
+  const { org, project } = scope(dev);
   return {
     define: {
-      "import.meta.env.WAMN_ORG": JSON.stringify(required("WAMN_ORG")),
-      "import.meta.env.WAMN_PROJECT": JSON.stringify(required("WAMN_PROJECT")),
+      "import.meta.env.WAMN_ORG": JSON.stringify(org),
+      "import.meta.env.WAMN_PROJECT": JSON.stringify(project),
     },
     // The shell, the runtime, the UI and the generated client live outside the
     // application, so the names they import resolve here. A bare import from
@@ -125,7 +143,7 @@ export function applicationConfig(options: ApplicationOptions): ApplicationConfi
     },
     server: {
       port: options.port,
-      ...(options.command === "serve" ? { proxy: proxy() } : {}),
+      ...(dev === undefined ? {} : { proxy: proxy(dev) }),
       // The web/ui stylesheet names its font files by path, and a path outside
       // the application is refused unless it is allowed here. pnpm keeps each
       // installed package once, under the repository root's node_modules.
