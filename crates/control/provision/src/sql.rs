@@ -1157,36 +1157,50 @@ mod tests {
              \"caller_outcome_json\", \"caller_http_status\", \"caller_release_node_id\", \
              \"caller_outcome_hash\", \"caller_released_at\", \"updated_at\") \
              ON TABLE \"wamn_run\".\"runs\" TO \"wamn_executor_platform\"; \
+             GRANT INSERT (\"tenant_id\", \"package_id\", \"effective_release_id\", \
+             \"environment\", \"wiring_id\", \"wiring_version\", \"wiring_hash\", \
+             \"trigger_source\", \"registration_id\", \"idempotency_key\", \"input_json\", \
+             \"status\", \"durability_class\") \
+             ON TABLE \"wamn_run\".\"runs\" TO \"wamn_executor_platform\"; \
              GRANT SELECT, DELETE ON TABLE \"wamn_run\".\"run_queue\" \
              TO \"wamn_executor_platform\"; \
              GRANT UPDATE (\"lease_owner\", \"lease_expires_at\", \"lease_generation\", \
              \"attempts\") ON TABLE \"wamn_run\".\"run_queue\" TO \"wamn_executor_platform\"; \
+             GRANT INSERT (\"tenant_id\", \"run_id\") \
+             ON TABLE \"wamn_run\".\"run_queue\" TO \"wamn_executor_platform\"; \
+             GRANT SELECT ON TABLE \"wamn_run\".\"environment_policies\" \
+             TO \"wamn_executor_platform\"; \
+             GRANT INSERT (\"tenant_id\", \"release\", \"package\", \"operation\", \
+             \"idempotency_key\", \"input_hash\", \"deadline_ms\", \"begun_at\"), \
+             SELECT (\"tenant_id\", \"id\", \"release\", \"package\", \"operation\", \
+             \"idempotency_key\", \"input_hash\", \"finished_at\", \"outcome_kind\", \
+             \"outcome\", \"resolved_basis\", \"resolved_at\"), \
+             UPDATE (\"finished_at\", \"outcome_kind\", \"outcome\", \"resolved_basis\", \
+             \"resolved_at\") ON TABLE \"wamn_run\".\"intents\" TO \"wamn_executor_platform\"; \
              GRANT SELECT ON TABLE \"wamn_run\".\"effect_attempts\" \
              TO \"wamn_executor_platform\"; \
              GRANT EXECUTE ON FUNCTION \"wamn_authority\".tenant_key(text) \
              TO \"wamn_executor_platform\";",
             "the executor-platform grant set moved: it is TABLE SELECT where a \
-             fence reads r.*/q.*, COLUMN UPDATE everywhere it writes, DELETE only \
-             on the queue, and only the tenant-key function grant"
+             fence reads r.*/q.*, COLUMN UPDATE and INSERT everywhere it writes, \
+             column SELECT on the intents, DELETE only on the queue, and only the \
+             tenant-key function grant"
         );
-        // The admission pins, the frozen wiring identity and the authoritative
-        // input are UNREACHABLE by this family. Named literally, because they are
-        // absent from a constant and an absence shows nothing by itself.
+        // An event admission inserts the admission pins, the wiring identity and
+        // the input once, and no UPDATE reaches them afterwards. Named literally,
+        // because they are absent from a constant and an absence shows nothing by
+        // itself.
         for forbidden in [
-            "GRANT INSERT",
+            "GRANT INSERT ON TABLE",
             "GRANT TRUNCATE",
             "GRANT REFERENCES",
             "GRANT TRIGGER",
             "GRANT UPDATE ON TABLE",
             "GRANT DELETE ON TABLE \"wamn_run\".\"runs\"",
-            "\"input_json\"",
             "\"binding_world_json\"",
-            "\"durability_class\"",
-            "\"wiring_hash\"",
             "\"available_at\"",
             "\"max_attempts\"",
             "\"stream_seq\"",
-            "environment_policies",
             "current_tenant_key",
             "GRANT USAGE ON SCHEMA \"wamn_authority\"",
         ] {

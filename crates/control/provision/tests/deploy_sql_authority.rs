@@ -73,10 +73,14 @@ fn platform_probe_retention() -> String {
     .expect("Retention takes a tenant scope")
 }
 
-/// The two relations whose claim is HOST-INJECTED, measured from
+/// The relations whose claim is HOST-INJECTED, measured from
 /// `has_table_privilege` rather than assumed: the guest ACL role holds nothing
-/// on either, so re-keying them would be change without a threat.
-const HOST_INJECTED: [&str; 2] = ["wamn_run.operator_run_actions", "wamn_run.run_queue"];
+/// on any of them, so re-keying them would be change without a threat.
+const HOST_INJECTED: [&str; 3] = [
+    "wamn_run.intents",
+    "wamn_run.operator_run_actions",
+    "wamn_run.run_queue",
+];
 
 /// THE PLATFORM-GRAIN FAMILY SET, PINNED AS A VALUE (`wamn-0h0g.15.137.1`).
 ///
@@ -328,7 +332,7 @@ fn the_swept_floor_admits_only_the_connected_guest_on_postgres() {
         "a guest-reachable relation still keys on a claim the session can set"
     );
 
-    // …and the two that keep the claim are exactly the ruled pair, still
+    // …and the three that keep the claim are exactly the ruled set, still
     // holding no guest privilege. Asserted so the sweep cannot pass by having
     // granted the guest access to them instead.
     let kept = psql(
