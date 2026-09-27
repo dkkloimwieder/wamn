@@ -61,6 +61,9 @@ fn record_history_app_grants_sql() -> String {
 ///
 /// A table the model gains later has no adjudicated class, so this panics rather
 /// than silently defaulting it into one.
+/// The write log of `deploy/sql/app-schema.sql`, outside the record history.
+const WRITE_LOG: &str = "write_log";
+
 fn wamn_app_privileges(table: &str) -> &'static str {
     match table {
         "users" | "roles" | "user_roles" | "permissions" | "api_keys" => "SELECT",
@@ -74,6 +77,8 @@ fn wamn_app_privileges(table: &str) -> &'static str {
             "INSERT (tenant_id, row_key, kind, operation, changed_by, changed_at, \
              transaction_id, before, after)"
         }
+        // The write log: a claim, its read, and its result, and nothing else.
+        "write_log" => "SELECT, INSERT, UPDATE (result)",
         other => panic!("table {other} has no adjudicated wamn_app grant (R11)"),
     }
 }
@@ -596,6 +601,10 @@ fn app_system_relations_stamp_provisioning_writes_on_postgres() {
             expected.push(format!("column|{name}|{column}|{column_type}|true"));
         }
     }
+    // The write log has its own created_at, and no actor columns, stamp or log.
+    expected.push(format!(
+        "column|{WRITE_LOG}|created_at|timestamp with time zone|true"
+    ));
     let mut relations = names
         .iter()
         .flat_map(|name| {
@@ -604,6 +613,7 @@ fn app_system_relations_stamp_provisioning_writes_on_postgres() {
                 format!("relation|{name}_history"),
             ]
         })
+        .chain([format!("relation|{WRITE_LOG}")])
         .collect::<Vec<_>>();
     relations.sort_unstable();
     expected.extend(relations);
@@ -763,6 +773,7 @@ fn app_system_relations_log_every_row_change_on_postgres() {
     let mut relations = TABLES
         .iter()
         .flat_map(|table| [table.name.to_owned(), format!("{}_history", table.name)])
+        .chain([WRITE_LOG.to_owned()])
         .collect::<Vec<_>>();
     relations.sort_unstable();
     let mut expected = relations

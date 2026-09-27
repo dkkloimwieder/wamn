@@ -37,6 +37,8 @@ mod rustfmt;
 mod sql;
 mod sql_lex;
 mod sqlx_metadata;
+/// The write log's three fixed statements.
+pub mod write_log;
 
 pub use cursor::{
     CursorError, CursorErrorKind, CursorV1, CursorValue, decode_cursor, encode_cursor,

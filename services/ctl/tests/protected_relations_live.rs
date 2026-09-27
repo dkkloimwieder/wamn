@@ -408,6 +408,9 @@ fn assert_diverges_by_environment_instance(
     }
 }
 
+/// The one author-writable relation outside row security.
+const WRITE_LOG: &str = "app_system.write_log";
+
 async fn assert_author_sql_boundaries(client: &Client, control_database: bool) {
     client
         .batch_execute("BEGIN READ ONLY")
@@ -458,8 +461,11 @@ async fn assert_author_sql_boundaries(client: &Client, control_database: bool) {
         let relation: String = row.get(0);
         let role: String = row.get(1);
         let forced_row_security: bool = row.get(2);
+        // The write log has no tenant column and no row policy: the database
+        // is the tenant (`docs/plan/write-log.md` 4.1). Its grant is the claim
+        // insert and the result column alone.
         assert!(
-            forced_row_security,
+            forced_row_security || relation == WRITE_LOG,
             "{relation} grants author SQL mutation without forced row security"
         );
         if role == "wamn_control_author" {

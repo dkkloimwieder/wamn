@@ -48,7 +48,7 @@
 -- A history table has the same policies and index. It has no such CHECK, and
 -- it copies tenant_id from a row of its base table.
 --
--- WRITE AUTHORITY (R11) splits these tables into three classes. RLS answers
+-- WRITE AUTHORITY (R11) splits these tables into four classes. RLS answers
 -- "which rows"; the GRANT answers "which relations at all", and the two questions
 -- have different answers here:
 --
@@ -68,6 +68,10 @@
 --   Nothing in the trust chain reads it; it is the project's own settings
 --   surface, and narrowing it would protect the platform from data the platform
 --   never consumes.
+--
+--   WRITE LOG — write_log. INSERT, SELECT and UPDATE (result) only. The
+--   generated codec of every create and command claims its key here. It is
+--   outside the tenant floor and the record history: see THE WRITE LOG below.
 --
 --   HISTORY: the six <table>_history tables. No SELECT. The log trigger fires
 --   as the writer, and wamn_app writes configurations only, so wamn_app holds
@@ -538,3 +542,33 @@ CREATE TRIGGER wamn_record_history_log
     AFTER INSERT OR UPDATE OR DELETE ON app_system.api_keys
     FOR EACH ROW
     EXECUTE FUNCTION wamn_history.log_row_change('unlimited');
+
+-- ---------------------------------------------------------------------------
+-- THE WRITE LOG (`docs/plan/write-log.md`, wamn-z7uv). One idempotency record
+-- for every create and command in this database. The generated codec of a
+-- claim operation inserts the claim, does the work and stores the result in
+-- one READ COMMITTED transaction, so a committed row always has a result. A
+-- refused item rolls its claim back, so it leaves no row.
+--
+-- The primary key is the operation and the key. `operation` is the contract
+-- operation without its @version, so a retry across a release answers the
+-- stored result, and two packages in one database do not collide.
+--
+-- The table is outside the tenant floor and the record history on purpose.
+-- The database is the tenant, so it has no tenant_id and no row policy. The
+-- rows that the work writes carry the actor, so it has no user columns and no
+-- stamp or log trigger. wamn_app inserts a claim, reads a claim and writes
+-- the result, and changes no other column. Nothing deletes a row.
+--
+-- IF NOT EXISTS, so that this section runs again on a database that has it.
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS app_system.write_log (
+    operation       text NOT NULL CHECK (operation <> ''),
+    idempotency_key text NOT NULL CHECK (idempotency_key <> ''),
+    request         bytea NOT NULL CHECK (octet_length(request) > 0),
+    result          text,
+    created_at      timestamptz NOT NULL DEFAULT now(),
+    CONSTRAINT write_log_pkey PRIMARY KEY (operation, idempotency_key)
+);
+GRANT SELECT, INSERT ON app_system.write_log TO wamn_app;
+GRANT UPDATE (result) ON app_system.write_log TO wamn_app;
