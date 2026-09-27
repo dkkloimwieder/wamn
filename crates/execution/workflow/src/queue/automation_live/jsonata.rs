@@ -36,7 +36,9 @@ pub(super) fn node(bytes: Vec<u8>) -> Node {
         declaration: serde_json::from_str(&declaration).expect("the declaration template is JSON"),
         operation: "wamn:node/handler@0.1.0".to_owned(),
         params: json!({"expression": SHAPE}),
-        serving: json!({"statements": {}}),
+        operations: json!({"wamn:node/handler@0.1.0": {"statements": {}}}),
+        routes: json!([]),
+        attachments: json!({}),
     }
 }
 

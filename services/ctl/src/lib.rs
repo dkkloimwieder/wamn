@@ -14,6 +14,7 @@ pub mod component_verbs;
 pub mod delivery_verbs;
 pub mod dev;
 pub mod identity_verbs;
+pub mod intent_verbs;
 #[cfg(feature = "ops")]
 pub mod ops_verbs;
 pub mod package_verbs;

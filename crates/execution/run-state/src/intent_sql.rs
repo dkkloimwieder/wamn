@@ -75,6 +75,45 @@ pub fn resolve_intent_sql() -> String {
     )
 }
 
+/// The intents of one environment: those whose release the catalog records
+/// for the tenant of `app.tenant` in environment `$N`.
+fn in_environment(bind: u8) -> String {
+    format!(
+        "tenant_id = current_setting('app.tenant', true) \
+         AND release IN ( \
+             SELECT s.manifest_digest \
+               FROM catalog.release_manifest_v3_snapshots AS s \
+               JOIN catalog.effective_releases AS e \
+                 ON e.tenant_id = s.tenant_id \
+                AND e.effective_release_id = s.effective_release_id \
+              WHERE s.tenant_id = current_setting('app.tenant', true) \
+                AND e.environment = ${bind})"
+    )
+}
+
+/// The uncertain intents of one tenant and environment, oldest first, for
+/// `wamn-ctl intents list`.
+///
+/// Binds: `$1` environment. Columns: those of [`uncertain_intents_sql`].
+pub fn environment_uncertain_intents_sql() -> String {
+    format!(
+        "SELECT id, tenant_id, release, package, operation, idempotency_key \
+           FROM intents WHERE finished_at IS NULL AND resolved_at IS NULL \
+            AND {} \
+          ORDER BY id",
+        in_environment(1)
+    )
+}
+
+/// Close an uncertain intent of one tenant and environment, for
+/// `wamn-ctl intents resolve`. It changes no row when the intent is not
+/// uncertain there.
+///
+/// Binds: `$1` id, `$2` basis, `$3` environment.
+pub fn environment_resolve_intent_sql() -> String {
+    format!("{} AND {}", resolve_intent_sql(), in_environment(3))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

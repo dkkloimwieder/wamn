@@ -35,6 +35,8 @@ use wamn_project_state::PlatformComponent;
 
 #[path = "automation_live/jsonata.rs"]
 mod jsonata;
+#[path = "automation_live/routes.rs"]
+mod routes;
 #[path = "automation_live/shutdown.rs"]
 mod shutdown;
 
@@ -70,6 +72,16 @@ const NODE_TYPES: &str = r#"
 "#;
 
 fn component_bytes() -> Vec<u8> {
+    echo_component(&[OPERATION])
+}
+
+/// The echo guest, with its handler exported under each name in `exports`.
+fn echo_component(exports: &[&str]) -> Vec<u8> {
+    let exports = exports
+        .iter()
+        .map(|name| format!(r#"(export "{name}" (instance $handler))"#))
+        .collect::<Vec<_>>()
+        .join(" ");
     wat::parse_str(format!(
         r#"(component
       {NODE_TYPES}
@@ -97,7 +109,7 @@ fn component_bytes() -> Vec<u8> {
         (export "json" (type $json)) (export "node-context" (type $context))
         (export "node-error" (type $error)) (export "emission" (type $emission))
         (export "run" (func $run)))
-      (export "{OPERATION}" (instance $handler)))"#
+      {exports})"#
     ))
     .unwrap()
 }
@@ -105,6 +117,11 @@ fn component_bytes() -> Vec<u8> {
 #[tokio::test(flavor = "multi_thread")]
 async fn automation_admission_delivers_with_current_service_permissions() -> anyhow::Result<()> {
     run_automation(Mode::Admission).await
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_route_logs_its_intents_in_the_cloud_record() -> anyhow::Result<()> {
+    run_automation(Mode::Routes).await
 }
 
 /// Which case the fixture runs. The wiring `echo` has one node, and the mode
@@ -116,6 +133,8 @@ enum Mode {
     Shutdown,
     /// The virtualized `jsonata` node with these bytes.
     Jsonata(Vec<u8>),
+    /// The echo guest behind a create route and a get route.
+    Routes,
 }
 
 /// The one node of the fixture's wiring: its bytes, its declaration, and what
@@ -125,7 +144,10 @@ struct Node {
     declaration: serde_json::Value,
     operation: String,
     params: serde_json::Value,
-    serving: serde_json::Value,
+    /// The release's operation facts of the component, by operation.
+    operations: serde_json::Value,
+    routes: serde_json::Value,
+    attachments: serde_json::Value,
 }
 
 impl Node {
@@ -141,7 +163,9 @@ impl Node {
             }),
             operation: OPERATION.to_owned(),
             params: json!({"deadline-ms":60000}),
-            serving: json!({"registered-operation":OPERATION,"permissions":[OPERATION],"fresh-only":false,"statements":{}}),
+            operations: json!({(OPERATION):{"registered-operation":OPERATION,"permissions":[OPERATION],"fresh-only":false,"statements":{}}}),
+            routes: json!([]),
+            attachments: json!({}),
         }
     }
 }
@@ -186,6 +210,7 @@ async fn run_automation(mode: Mode) -> anyhow::Result<()> {
         Mode::Admission => Node::echo(component_bytes()),
         Mode::Shutdown => Node::echo(shutdown::component_bytes()),
         Mode::Jsonata(bytes) => jsonata::node(bytes.clone()),
+        Mode::Routes => routes::node(),
     };
     let declaration: ComponentDeclaration = serde_json::from_value(node.declaration.clone())?;
     let component = declaration.component.clone();
@@ -220,8 +245,8 @@ async fn run_automation(mode: Mode) -> anyhow::Result<()> {
         "format-version":wamn_catalog::SERVING_MANIFEST_FORMAT_VERSION,
         "release":{"tenant-id":TENANT,"effective-release-id":1,"environment":"test","packages":[{"package-id":"automation","package-version":"1.0.0"}]},
         "components":[{"package-id":"automation","component":component,"interface-version":"0.1.0","digest":admitted.component_digest,
-          "operations":{(node.operation.clone()):node.serving}}],
-        "routes":[],"attachments":{},"workflow":{"wirings":[{"package-id":"automation","wiring-id":"echo","wiring-version":1,"graph-hash":graph_hash.as_str()}]}
+          "operations":node.operations}],
+        "routes":node.routes,"attachments":node.attachments,"workflow":{"wirings":[{"package-id":"automation","wiring-id":"echo","wiring-version":1,"graph-hash":graph_hash.as_str()}]}
     }))?;
     let canonical = manifest.canonical_bytes();
     let release = Arc::new(LoadedRelease::load_canonical_bytes(
@@ -315,23 +340,26 @@ async fn run_automation(mode: Mode) -> anyhow::Result<()> {
         &wamn_runtime::plugins::wamn_logging::WamnLoggingConfig::default(),
     )?;
     let logging = Arc::new(logging);
+    let host = OperationHost::new(
+        Arc::clone(&engine),
+        Arc::clone(&postgres),
+        Arc::new(HttpTransport::new()?),
+        Arc::new(WamnCredentials::empty()),
+        Arc::clone(&logging),
+        Arc::from([]),
+        Arc::clone(&release),
+        Arc::new(LocalComponentSource::new(scratch.path().to_owned())),
+        OperationScope {
+            project: "default".to_owned(),
+            schema: Some("application_data".to_owned()),
+            owner_prefix: "automation-live".to_owned(),
+            warm_reuse: wamn_engine::warm_reuse::WarmReuse::default(),
+        },
+    )?;
+    let intents = host.route_intent_store().await?;
+    let operations = Arc::new(host.with_intents(intents));
     let driver = Arc::new(RouterDriver::new(
-        Arc::new(OperationHost::new(
-            Arc::clone(&engine),
-            Arc::clone(&postgres),
-            Arc::new(HttpTransport::new()?),
-            Arc::new(WamnCredentials::empty()),
-            Arc::clone(&logging),
-            Arc::from([]),
-            Arc::clone(&release),
-            Arc::new(LocalComponentSource::new(scratch.path().to_owned())),
-            OperationScope {
-                project: "default".to_owned(),
-                schema: Some("application_data".to_owned()),
-                owner_prefix: "automation-live".to_owned(),
-                warm_reuse: wamn_engine::warm_reuse::WarmReuse::default(),
-            },
-        )?),
+        Arc::clone(&operations),
         RouterDriverConfig {
             cache_capacity: WiringCacheCapacity::default(),
         },
@@ -358,6 +386,9 @@ async fn run_automation(mode: Mode) -> anyhow::Result<()> {
             service_principal_id: SERVICE.to_owned(),
         },
     };
+    if let Mode::Routes = mode {
+        return routes::run(&mut admin, &operations, &driver, &jetstream).await;
+    }
     if let Mode::Jsonata(_) = mode {
         return jsonata::run(
             &admin,

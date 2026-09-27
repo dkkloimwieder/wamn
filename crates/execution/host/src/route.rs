@@ -18,7 +18,8 @@ use crate::operation::{
 use wamn_engine::flow_http_routing::AuthenticatedCaller;
 use wamn_engine::operation::native_call::RowBatches;
 use wamn_engine::operation::{
-    OperationCall, OperationClosure, invoke_operation, invoke_operation_stream, node_types,
+    IntentContext, OperationCall, OperationClosure, invoke_operation, invoke_operation_stream,
+    node_types,
 };
 use wamn_engine::router_delivery::{
     authorize_registered_operation, bounded_node_deadline_ms, route_component,
@@ -135,10 +136,29 @@ async fn call_route(
             deadline_ms,
             facts: NativeFacts::entry(acquisition, route.caller),
         };
-        Ok(match rows {
-            Some(rows) => RouteReturn::Streamed(invoke_operation_stream(host, call, rows).await?),
-            None => RouteReturn::Whole(invoke_operation(host, call, None).await?),
-        })
+        // A streamed call is a read, and a read never logs an intent.
+        if let Some(rows) = rows {
+            return Ok(RouteReturn::Streamed(
+                invoke_operation_stream(host, call, rows).await?,
+            ));
+        }
+        let digest = host.release_identity().manifest_digest.to_string();
+        let intent = host.intents().and_then(|store| {
+            host.release
+                .manifest()
+                .route(route.package_id, route.component, route.operation)
+                .map(|serving| IntentContext {
+                    store,
+                    tenant: &release.tenant_id,
+                    release: &digest,
+                    package: route.package_id,
+                    kind: serving.kind,
+                    key_field: serving.idempotency.as_deref(),
+                })
+        });
+        Ok(RouteReturn::Whole(
+            invoke_operation(host, call, intent).await?,
+        ))
     }
     .instrument(span)
     .await
