@@ -1,0 +1,16 @@
+# The serving certificate of identity in docs/plan/gcp-deployment.md step 3.
+# It chains to the internal CA wasmcloud-ca and names the issuer host
+# identity.identity.svc.cluster.local. docs/operations/gcp.md section 3.10
+# copies its ca.crt into the ConfigMap identity-ca in hosts and in edge.
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: identity
+  namespace: identity
+spec:
+  secretName: identity-tls
+  dnsNames:
+    - identity.identity.svc.cluster.local
+  issuerRef:
+    kind: ClusterIssuer
+    name: wasmcloud-ca

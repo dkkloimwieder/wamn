@@ -569,3 +569,37 @@ rm -rf $A
 ```
 
 The printed digest must equal the `sha256sum` of the local `receiving.wasm`. On 2026-09-26 both were `sha256:36b94783af587a75c3054deeb7ab4f721a89a3832b3b2d788e86a60981a36d0e`, and the push took 14 seconds. This credential is for the operator push only. The host pulls with the CronJob token of finding `wamn-i87m`.
+
+### 3.10 Identity
+
+Make the serving certificate and the operator CA. Copy the CA of the serving certificate into `hosts` and `edge`:
+
+```bash
+kubectl apply -f deploy/gcp/identity-certificate.yaml -f deploy/gcp/identity-operator-ca.yaml
+kubectl -n identity wait certificate --all --for=condition=Ready --timeout=120s
+kubectl -n identity get secret identity-tls -o jsonpath='{.data.ca\.crt}' | base64 -d > $P/identity-ca.crt
+for ns in hosts edge; do kubectl -n $ns create configmap identity-ca --from-file=ca.crt=$P/identity-ca.crt; done
+```
+
+To send an invitation, the owner reads `tls.crt` and `tls.key` of the Secret `operator-dkk` into mode 0600 files. Never commit them.
+
+Prepare the session target, set its database host inside `target.json`, and apply it:
+
+```bash
+target/debug/wamn-ctl provision-project-env --org dkk --project receiving --env dev --tenant dev \
+  --namespace identity --target-admin-database-url "$T" \
+  --prepare-session-role-reader-generation a --emit-session-role-reader-secret $P/session-target.json
+jq '.stringData["target.json"] |= (fromjson | .database_url |= sub("@127\\.0\\.0\\.1:15432/"; "@wamn-pg-rw.platform.svc.cluster.local:5432/") | tojson)' \
+  $P/session-target.json > $P/session-target.cluster.json
+kubectl apply -f $P/session-target.cluster.json
+```
+
+The verb prints two PostgreSQL warnings that the `postgres` role did not grant a role membership. The generation still authenticates, as the verb reports. On 2026-09-26 the certificates took 5 seconds and the session target 11 seconds.
+
+The owner creates the Secret `identity-resend` (namespace `identity`, key `api-key`) from a file, as plan section 4.2 states. Then install identity with [values-identity.yaml](../../deploy/gcp/values-identity.yaml), which names the image by digest:
+
+```bash
+kubectl -n identity get secret identity-resend
+helm install identity deploy/platform/identity -n identity -f deploy/gcp/values-identity.yaml
+kubectl -n identity rollout status deploy/identity --timeout=300s
+```

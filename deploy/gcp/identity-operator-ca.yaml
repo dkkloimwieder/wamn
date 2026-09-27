@@ -1,0 +1,49 @@
+# The operator CA of identity in docs/plan/gcp-deployment.md step 3. Identity
+# accepts POST /pats and POST /invitations only from a client certificate of
+# this CA. It is separate from wasmcloud-ca, because every host certificate
+# chains to wasmcloud-ca and a host must not act as an operator.
+# The owner reads tls.crt and tls.key of operator-dkk into mode 0600 files to
+# send an invitation, and never commits them.
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: identity-operator-selfsigned
+  namespace: identity
+spec:
+  selfSigned: {}
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: identity-operator-ca
+  namespace: identity
+spec:
+  isCA: true
+  commonName: identity-operator-ca
+  secretName: identity-operator-ca
+  issuerRef:
+    kind: Issuer
+    name: identity-operator-selfsigned
+---
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: identity-operator
+  namespace: identity
+spec:
+  ca:
+    secretName: identity-operator-ca
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: operator-dkk
+  namespace: identity
+spec:
+  commonName: operator-dkk
+  secretName: operator-dkk
+  usages:
+    - client auth
+  issuerRef:
+    kind: Issuer
+    name: identity-operator
