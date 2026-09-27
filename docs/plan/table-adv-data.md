@@ -215,7 +215,7 @@ Each increment is one epic, reviewed before the next is scoped. Increment 1 is p
 3. **Client operations on a fully read set.** Sort, refine filters, search, multi-level grouping and aggregates, totals row, CSV export.
 4. **Column arrangement and views.** Header menu, column panel, views in memory and the URL.
 5. **Actions and child tables.** Row menu, bulk actions, inline edit, child tables in expanded rows.
-6. **Scope controls.** Server filters and sort in the UI. Filter operators beyond `IN` (`wamn-yxm6`). Required band filter.
+6. **Scope controls.** Built by epic `wamn-3nsf`. [Data access](../architecture/data-access.md) describes the filter modes, the search and the band, and [request execution](../architecture/execution.md) describes the scope bar.
 7. **Report display.** The table over a custom report operation: nesting and totals from its rows, drill-down on mapped dimensions.
 8. **Pivot.** Client-side on a fully read set.
 9. **Saved views.**
