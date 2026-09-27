@@ -21,7 +21,7 @@ export interface InventoryAdjustRequestValue {
   /** `timestamptz` */
   occurredAt: Timestamptz;
   /** `uuid` */
-  palletId: Uuid;
+  packagingId: Uuid;
   /** `uuid` */
   productId: Uuid;
   /** `numeric` */
@@ -41,7 +41,7 @@ export const INVENTORY_ADJUST_REQUEST_FIELDS: FieldMap = {
       "expected_row_version": "expectedRowVersion",
       "idempotency_key": "idempotencyKey",
       "occurred_at": "occurredAt",
-      "pallet_id": "palletId",
+      "packaging_id": "packagingId",
       "product_id": "productId",
       "quantity": "quantity",
       "reason_code": "reasonCode",
@@ -54,23 +54,23 @@ export const INVENTORY_ADJUST_REQUEST_FIELDS: FieldMap = {
 export interface InventoryAdjustResult {
   /** `numeric` */
   readonly adjustedQuantity: Numeric;
-  /** `array` */
-  readonly movementIds: readonly Uuid[];
   /** `uuid` */
-  readonly palletId: Uuid;
+  readonly packagingId: Uuid;
   /** `text` */
-  readonly palletStatus: "available" | "consumed" | "held";
+  readonly packagingStatus: "available" | "consumed" | "held";
   /** `int32` */
   readonly rowVersion: number;
+  /** `array` */
+  readonly transactionIds: readonly Uuid[];
 }
 
 /** What `wamn-wms:inventory/adjust@1.0.0` calls its result members. */
 export const INVENTORY_ADJUST_RESULT_FIELDS: FieldMap = {
   "adjusted_quantity": "adjustedQuantity",
-  "movement_ids": "movementIds",
-  "pallet_id": "palletId",
-  "pallet_status": "palletStatus",
+  "packaging_id": "packagingId",
+  "packaging_status": "packagingStatus",
   "row_version": "rowVersion",
+  "transaction_ids": "transactionIds",
 };
 
 /**
@@ -92,7 +92,7 @@ export const INVENTORY_ADJUST_ROUTE: OperationRoute = {
       { literal: "idempotency_conflict", required: ["field"], sources: ["changed_request"], text: null },
       { literal: "internal_error", required: [], sources: ["query_error", "row_limit_exceeded", "undeclared_constraint"], text: null },
       { literal: "invalid_input", required: ["field"], sources: ["envelope_count", "malformed_input"], text: null },
-      { literal: "pallet_not_found", required: ["field", "id"], sources: ["transaction_invariant"], text: null },
+      { literal: "packaging_not_found", required: ["field", "id"], sources: ["transaction_invariant"], text: null },
       { literal: "permission_denied", required: ["operation"], sources: ["permission_denied"], text: null },
       { literal: "quantity_not_found", required: ["field", "id"], sources: ["transaction_invariant"], text: null },
       { literal: "retry", required: [], sources: ["connection_unavailable", "serialization_failure"], text: null },
@@ -131,7 +131,7 @@ export interface InventoryAggregateRow {
   /** `uuid` */
   readonly locationId: Uuid;
   /** `int32` */
-  readonly palletCount: number;
+  readonly packagingCount: number;
   /** `uuid` */
   readonly productId: Uuid;
   /** `numeric` */
@@ -152,7 +152,7 @@ export const INVENTORY_AGGREGATE_RESULT_FIELDS: FieldMap = {
     member: "rows",
     fields: {
       "location_id": "locationId",
-      "pallet_count": "palletCount",
+      "packaging_count": "packagingCount",
       "product_id": "productId",
       "quantity": "quantity",
       "status": "status",
@@ -218,9 +218,9 @@ export interface InventoryMergeRequestValue {
   /** `timestamptz` */
   occurredAt: Timestamptz;
   /** `uuid` */
-  sourcePalletId: Uuid;
+  sourcePackagingId: Uuid;
   /** `uuid` */
-  targetPalletId: Uuid;
+  targetPackagingId: Uuid;
 }
 
 /** What `wamn-wms:inventory/merge@1.0.0` calls its input members. */
@@ -232,33 +232,33 @@ export const INVENTORY_MERGE_REQUEST_FIELDS: FieldMap = {
       "expected_row_version": "expectedRowVersion",
       "idempotency_key": "idempotencyKey",
       "occurred_at": "occurredAt",
-      "source_pallet_id": "sourcePalletId",
-      "target_pallet_id": "targetPalletId",
+      "source_packaging_id": "sourcePackagingId",
+      "target_packaging_id": "targetPackagingId",
     },
   },
 };
 
 /** Result of `wamn-wms:inventory/merge@1.0.0`. */
 export interface InventoryMergeResult {
-  /** `array` */
-  readonly movementIds: readonly Uuid[];
   /** `int32` */
   readonly rowVersion: number;
   /** `uuid` */
-  readonly sourcePalletId: Uuid;
+  readonly sourcePackagingId: Uuid;
   /** `uuid` */
-  readonly targetPalletId: Uuid;
+  readonly targetPackagingId: Uuid;
   /** `text` */
   readonly targetStatus: "available" | "consumed" | "held";
+  /** `array` */
+  readonly transactionIds: readonly Uuid[];
 }
 
 /** What `wamn-wms:inventory/merge@1.0.0` calls its result members. */
 export const INVENTORY_MERGE_RESULT_FIELDS: FieldMap = {
-  "movement_ids": "movementIds",
   "row_version": "rowVersion",
-  "source_pallet_id": "sourcePalletId",
-  "target_pallet_id": "targetPalletId",
+  "source_packaging_id": "sourcePackagingId",
+  "target_packaging_id": "targetPackagingId",
   "target_status": "targetStatus",
+  "transaction_ids": "transactionIds",
 };
 
 /**
@@ -280,7 +280,7 @@ export const INVENTORY_MERGE_ROUTE: OperationRoute = {
       { literal: "idempotency_conflict", required: ["field"], sources: ["changed_request"], text: null },
       { literal: "internal_error", required: [], sources: ["query_error", "row_limit_exceeded", "undeclared_constraint"], text: null },
       { literal: "invalid_input", required: ["field"], sources: ["envelope_count", "malformed_input"], text: null },
-      { literal: "pallet_not_found", required: ["field", "id"], sources: ["transaction_invariant"], text: null },
+      { literal: "packaging_not_found", required: ["field", "id"], sources: ["transaction_invariant"], text: null },
       { literal: "permission_denied", required: ["operation"], sources: ["permission_denied"], text: null },
       { literal: "retry", required: [], sources: ["connection_unavailable", "serialization_failure"], text: null },
       { literal: "timeout", required: [], sources: ["statement_timeout"], text: null },
@@ -322,7 +322,7 @@ export interface InventoryMoveRequestValue {
   /** `timestamptz` */
   occurredAt: Timestamptz;
   /** `uuid` */
-  palletId: Uuid;
+  packagingId: Uuid;
   /** `uuid` */
   toLocationId: Uuid;
 }
@@ -336,7 +336,7 @@ export const INVENTORY_MOVE_REQUEST_FIELDS: FieldMap = {
       "expected_row_version": "expectedRowVersion",
       "idempotency_key": "idempotencyKey",
       "occurred_at": "occurredAt",
-      "pallet_id": "palletId",
+      "packaging_id": "packagingId",
       "to_location_id": "toLocationId",
     },
   },
@@ -346,12 +346,8 @@ export const INVENTORY_MOVE_REQUEST_FIELDS: FieldMap = {
 export interface InventoryMoveResult {
   /** `uuid` */
   readonly locationId: Uuid;
-  /** `array` */
-  readonly movementIds: readonly Uuid[];
   /** `uuid` */
-  readonly palletId: Uuid;
-  /** `text` */
-  readonly palletStatus: "available" | "consumed" | "held";
+  readonly packagingId: Uuid;
   /** `int32` */
   readonly rowVersion: number;
 }
@@ -359,9 +355,7 @@ export interface InventoryMoveResult {
 /** What `wamn-wms:inventory/move@1.0.0` calls its result members. */
 export const INVENTORY_MOVE_RESULT_FIELDS: FieldMap = {
   "location_id": "locationId",
-  "movement_ids": "movementIds",
-  "pallet_id": "palletId",
-  "pallet_status": "palletStatus",
+  "packaging_id": "packagingId",
   "row_version": "rowVersion",
 };
 
@@ -385,7 +379,7 @@ export const INVENTORY_MOVE_ROUTE: OperationRoute = {
       { literal: "internal_error", required: [], sources: ["query_error", "row_limit_exceeded", "undeclared_constraint"], text: null },
       { literal: "invalid_input", required: ["field"], sources: ["envelope_count", "malformed_input"], text: null },
       { literal: "location_not_found", required: ["field", "id"], sources: ["transaction_invariant"], text: null },
-      { literal: "pallet_not_found", required: ["field", "id"], sources: ["transaction_invariant"], text: null },
+      { literal: "packaging_not_found", required: ["field", "id"], sources: ["transaction_invariant"], text: null },
       { literal: "permission_denied", required: ["operation"], sources: ["permission_denied"], text: null },
       { literal: "retry", required: [], sources: ["connection_unavailable", "serialization_failure"], text: null },
       { literal: "timeout", required: [], sources: ["statement_timeout"], text: null },
@@ -425,7 +419,9 @@ export interface InventorySplitRequestValue {
   /** `text` */
   idempotencyKey: string;
   /** `text` */
-  newPalletCode: string;
+  newPackagingCode: string;
+  /** `text` */
+  newPackagingType: "bin" | "case" | "loose" | "pallet" | "tote";
   /** `timestamptz` */
   occurredAt: Timestamptz;
   /** `uuid` */
@@ -433,7 +429,7 @@ export interface InventorySplitRequestValue {
   /** `numeric` */
   quantity: Numeric;
   /** `uuid` */
-  sourcePalletId: Uuid;
+  sourcePackagingId: Uuid;
   /** `text` */
   status: "available" | "held";
   /** `uuid` */
@@ -448,11 +444,12 @@ export const INVENTORY_SPLIT_REQUEST_FIELDS: FieldMap = {
     fields: {
       "expected_row_version": "expectedRowVersion",
       "idempotency_key": "idempotencyKey",
-      "new_pallet_code": "newPalletCode",
+      "new_packaging_code": "newPackagingCode",
+      "new_packaging_type": "newPackagingType",
       "occurred_at": "occurredAt",
       "product_id": "productId",
       "quantity": "quantity",
-      "source_pallet_id": "sourcePalletId",
+      "source_packaging_id": "sourcePackagingId",
       "status": "status",
       "to_location_id": "toLocationId",
     },
@@ -461,25 +458,25 @@ export const INVENTORY_SPLIT_REQUEST_FIELDS: FieldMap = {
 
 /** Result of `wamn-wms:inventory/split@1.0.0`. */
 export interface InventorySplitResult {
-  /** `array` */
-  readonly movementIds: readonly Uuid[];
   /** `uuid` */
-  readonly newPalletId: Uuid;
+  readonly newPackagingId: Uuid;
   /** `int32` */
   readonly rowVersion: number;
   /** `uuid` */
-  readonly sourcePalletId: Uuid;
+  readonly sourcePackagingId: Uuid;
   /** `text` */
   readonly sourceStatus: "available" | "consumed" | "held";
+  /** `array` */
+  readonly transactionIds: readonly Uuid[];
 }
 
 /** What `wamn-wms:inventory/split@1.0.0` calls its result members. */
 export const INVENTORY_SPLIT_RESULT_FIELDS: FieldMap = {
-  "movement_ids": "movementIds",
-  "new_pallet_id": "newPalletId",
+  "new_packaging_id": "newPackagingId",
   "row_version": "rowVersion",
-  "source_pallet_id": "sourcePalletId",
+  "source_packaging_id": "sourcePackagingId",
   "source_status": "sourceStatus",
+  "transaction_ids": "transactionIds",
 };
 
 /**
@@ -503,7 +500,7 @@ export const INVENTORY_SPLIT_ROUTE: OperationRoute = {
       { literal: "internal_error", required: [], sources: ["query_error", "row_limit_exceeded", "undeclared_constraint"], text: null },
       { literal: "invalid_input", required: ["field"], sources: ["envelope_count", "malformed_input"], text: null },
       { literal: "location_not_found", required: ["field", "id"], sources: ["transaction_invariant"], text: null },
-      { literal: "pallet_not_found", required: ["field", "id"], sources: ["transaction_invariant"], text: null },
+      { literal: "packaging_not_found", required: ["field", "id"], sources: ["transaction_invariant"], text: null },
       { literal: "permission_denied", required: ["operation"], sources: ["permission_denied"], text: null },
       { literal: "quantity_not_found", required: ["field", "id"], sources: ["transaction_invariant"], text: null },
       { literal: "retry", required: [], sources: ["connection_unavailable", "serialization_failure"], text: null },

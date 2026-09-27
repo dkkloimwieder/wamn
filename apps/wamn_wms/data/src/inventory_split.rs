@@ -1,20 +1,20 @@
-//! `inventory.split` -- part of one quantity row moved onto a NEW pallet.
+//! `inventory.split` -- part of one quantity row moved onto a NEW packaging.
 //!
 //! ```text
-//! → lock the source pallet     (the serialization point)
+//! → lock the source packaging     (the serialization point)
 //! → compare expected_row_version to observed
 //! → validate the destination
 //! → read the quantity row, then take from it (it must keep stock)
-//! → create the new pallet, place the quantity on it, write the movement
+//! → create the new packaging, place the quantity on it, write the transaction
 //! → bump the source's revision
 //! ```
 //!
 //! The generated codec claims the key in the write log and holds the
 //! transaction, so a retry answers the stored result and creates no second
-//! pallet. The new pallet's id and the one movement id come from their inserts'
-//! `RETURNING`. The new pallet inherits the source's status -- a split of a
-//! held pallet does not release the hold. The source must keep stock: moving
-//! everything is a move.
+//! packaging. The new packaging's id and the one transaction id come from their
+//! inserts' `RETURNING`. The new packaging takes the type the command names,
+//! which need not be the source's, and inherits the source's status -- a split
+//! of a held packaging does not release the hold. The source must keep stock.
 
 use serde::Deserialize;
 use wamn_postgres_statements::{Numeric, TimestampTz, Transaction, Uuid};
@@ -26,11 +26,12 @@ use crate::scalar;
 /// One envelope item's command body.
 #[derive(Debug, Deserialize)]
 pub struct SplitCommand {
-    pub source_pallet_id: String,
+    pub source_packaging_id: String,
     pub product_id: String,
     pub status: String,
     pub quantity: String,
-    pub new_pallet_code: String,
+    pub new_packaging_code: String,
+    pub new_packaging_type: String,
     pub to_location_id: String,
     pub expected_row_version: i32,
     pub occurred_at: String,
@@ -39,35 +40,43 @@ pub struct SplitCommand {
 /// What one accepted split answers with.
 #[derive(Debug, PartialEq, Eq)]
 pub struct SplitResult {
-    pub movement_ids: Vec<String>,
-    pub source_pallet_id: String,
-    pub new_pallet_id: String,
+    pub transaction_ids: Vec<String>,
+    pub source_packaging_id: String,
+    pub new_packaging_id: String,
     pub source_status: String,
     pub row_version: i32,
 }
 
 #[derive(Debug)]
 struct Parsed {
-    source_pallet_id: Uuid,
+    source_packaging_id: Uuid,
     product_id: Uuid,
     status: String,
     quantity: Numeric,
+    new_packaging_type: String,
     to_location_id: Uuid,
     occurred_at: TimestampTz,
 }
 
 fn parse(command: &SplitCommand) -> Result<Parsed, AccessError> {
-    if command.new_pallet_code.is_empty() {
+    if command.new_packaging_code.is_empty() {
         return Err(AccessError::field(
             AccessErrorKind::InvalidInput,
-            "value.new_pallet_code",
+            "value.new_packaging_code",
         ));
     }
     Ok(Parsed {
-        source_pallet_id: scalar::uuid("value.source_pallet_id", &command.source_pallet_id)?,
+        source_packaging_id: scalar::uuid(
+            "value.source_packaging_id",
+            &command.source_packaging_id,
+        )?,
         product_id: scalar::uuid("value.product_id", &command.product_id)?,
         status: scalar::quantity_status("value.status", &command.status)?,
         quantity: scalar::numeric("value.quantity", &command.quantity)?,
+        new_packaging_type: scalar::packaging_type(
+            "value.new_packaging_type",
+            &command.new_packaging_type,
+        )?,
         to_location_id: scalar::uuid("value.to_location_id", &command.to_location_id)?,
         occurred_at: scalar::timestamp("value.occurred_at", &command.occurred_at)?,
     })
@@ -95,12 +104,12 @@ async fn run(
     // THE SERIALIZATION POINT.
     let not_found = || {
         AccessError::missing(
-            AccessErrorKind::PalletNotFound,
-            "value.source_pallet_id",
-            &parsed.source_pallet_id.0,
+            AccessErrorKind::PackagingNotFound,
+            "value.source_packaging_id",
+            &parsed.source_packaging_id.0,
         )
     };
-    let locked = sql::lock_pallet(transaction, parsed.source_pallet_id.clone())
+    let locked = sql::lock_packaging(transaction, parsed.source_packaging_id.clone())
         .await
         .map_err(|e| error::from_statement(&e))?
         .ok_or_else(not_found)?;
@@ -129,7 +138,7 @@ async fn run(
     // wrong: no such row, or a row that cannot spare what was asked.
     let held = sql::select_quantity(
         transaction,
-        parsed.source_pallet_id.clone(),
+        parsed.source_packaging_id.clone(),
         parsed.product_id.clone(),
         parsed.status.clone(),
     )
@@ -144,7 +153,7 @@ async fn run(
     })?;
     sql::take_from_source(
         transaction,
-        parsed.source_pallet_id.clone(),
+        parsed.source_packaging_id.clone(),
         parsed.product_id.clone(),
         parsed.status.clone(),
         parsed.quantity.clone(),
@@ -153,9 +162,10 @@ async fn run(
     .map_err(|e| error::from_statement(&e))?
     .ok_or_else(|| AccessError::insufficient("value.quantity", &held.quantity.0))?;
 
-    let created = sql::create_pallet(
+    let created = sql::create_packaging(
         transaction,
-        command.new_pallet_code.clone(),
+        command.new_packaging_code.clone(),
+        parsed.new_packaging_type.clone(),
         parsed.to_location_id.clone(),
         locked.status.clone(),
     )
@@ -170,24 +180,26 @@ async fn run(
     )
     .await
     .map_err(|e| error::from_statement(&e))?;
-    let movement = sql::insert_movement(
+    let written = sql::insert_transaction(
         transaction,
-        parsed.source_pallet_id.clone(),
         parsed.product_id.clone(),
         parsed.quantity.clone(),
+        parsed.source_packaging_id.clone(),
+        parsed.status.clone(),
+        created.id.clone(),
         parsed.occurred_at.clone(),
     )
     .await
     .map_err(|e| error::from_statement(&e))?;
 
-    let touched = sql::touch_source(transaction, parsed.source_pallet_id.clone())
+    let touched = sql::touch_source(transaction, parsed.source_packaging_id.clone())
         .await
         .map_err(|e| error::from_statement(&e))?;
 
     Ok(SplitResult {
-        movement_ids: vec![movement.id.0],
-        source_pallet_id: parsed.source_pallet_id.0.clone(),
-        new_pallet_id: created.id.0,
+        transaction_ids: vec![written.id.0],
+        source_packaging_id: parsed.source_packaging_id.0.clone(),
+        new_packaging_id: created.id.0,
         source_status: touched.status,
         row_version: touched.row_version,
     })
@@ -199,11 +211,12 @@ mod tests {
 
     fn command() -> SplitCommand {
         SplitCommand {
-            source_pallet_id: "00000000-0000-0000-0000-000000000301".to_owned(),
+            source_packaging_id: "00000000-0000-0000-0000-000000000301".to_owned(),
             product_id: "00000000-0000-0000-0000-000000000101".to_owned(),
             status: "available".to_owned(),
             quantity: "4".to_owned(),
-            new_pallet_code: "PAL-302".to_owned(),
+            new_packaging_code: "PAL-302".to_owned(),
+            new_packaging_type: "tote".to_owned(),
             to_location_id: "00000000-0000-0000-0000-000000000202".to_owned(),
             expected_row_version: 1,
             occurred_at: "2026-09-05T00:00:00Z".to_owned(),
@@ -211,12 +224,12 @@ mod tests {
     }
 
     #[test]
-    fn a_blank_pallet_code_and_a_zero_quantity_refuse_before_any_statement() {
+    fn a_blank_packaging_code_and_a_zero_quantity_refuse_before_any_statement() {
         let mut blank = command();
-        blank.new_pallet_code.clear();
+        blank.new_packaging_code.clear();
         assert_eq!(
             parse(&blank).unwrap_err().detail()["field"],
-            "value.new_pallet_code"
+            "value.new_packaging_code"
         );
         let mut zero = command();
         zero.quantity = "0.0".to_owned();

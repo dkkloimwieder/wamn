@@ -7,7 +7,8 @@ use super::{
     AccessOperationErrorLiteral, BTreeMap, BTreeSet, Column, ColumnType, ContractFieldDeclaration,
     CrudAction, CustomOperationDeclaration, CustomOperationResultDeclaration, GenerateError,
     GenerateErrorKind, ModelDeclaration, OperationDeclaration, OperationErrorDetailDeclaration,
-    PackageManifest, ResultClass, Table, insert_bytes, rust_identifier, rust_type_identifier,
+    PackageManifest, ResultClass, Table, binding_identifier, insert_bytes, rust_identifier,
+    rust_type_identifier,
 };
 use crate::client_fields::input_fields_of;
 use crate::client_ir::FieldIr;
@@ -446,9 +447,10 @@ fn emit_update_codec(
     );
     for field in &operation.writable_fields {
         let name = rust_identifier(field).expect("validated update field has a Rust name");
+        let member = binding_identifier(field).expect("validated update field has a Rust name");
         writeln!(
             source,
-            "                        {name}: {},",
+            "                        {member}: {},",
             mutation_value(
                 model_column(table, field),
                 &format!("request.change.{name}")
@@ -883,7 +885,7 @@ fn emit_mutation_validation(
 ) {
     for field in &operation.writable_fields {
         let column = model_column(table, field);
-        let name = rust_identifier(field).expect("validated mutation field has a Rust name");
+        let name = binding_identifier(field).expect("validated mutation field has a Rust name");
         let path = format!("{prefix}{field}");
         let access = format!("request.{prefix}{name}");
         // The create contract states `omitted: invalid_input` for this column.
@@ -968,7 +970,7 @@ fn emit_crud_normalizer(
     if action == CrudAction::Query {
         for filter in &operation.filters {
             let column = model_column(table, &filter.field);
-            let name = rust_identifier(&filter.field).expect("validated filter has a Rust name");
+            let name = binding_identifier(&filter.field).expect("validated filter has a Rust name");
             // Only a list carries uuid values: an is-null filter carries one boolean.
             if column.column_type() == ColumnType::Uuid && filter.match_mode.takes_list() {
                 writeln!(source, "    if let Some(values) = &mut request.{name} {{ for value in values {{ if !canonical_uuid(value) {{ return Err(invalid({:?})); }} }} }}", format!("filter.{}", filter.field))
@@ -1121,9 +1123,10 @@ fn emit_crud_request_assignments(
             for field in &operation.writable_fields {
                 let column = model_column(table, field);
                 let name = rust_identifier(field).expect("validated field has a Rust name");
+                let member = binding_identifier(field).expect("validated field has a Rust name");
                 writeln!(
                     source,
-                    "            {name}: {},",
+                    "            {member}: {},",
                     mutation_value(column, &format!("request.{name}"))
                 )
                 .expect("writing to a String cannot fail");
@@ -1133,6 +1136,8 @@ fn emit_crud_request_assignments(
             for filter in &operation.filters {
                 let field =
                     rust_identifier(&filter.field).expect("validated filter has a Rust name");
+                let member =
+                    binding_identifier(&filter.field).expect("validated filter has a Rust name");
                 let conversion = match model_column(table, &filter.field).column_type() {
                     ColumnType::Int64 => {
                         ".map(|values| values.into_iter().map(|value| value.0).collect())"
@@ -1151,7 +1156,7 @@ fn emit_crud_request_assignments(
                     FilterMatch::IsNull => String::new(),
                     _ => conversion.to_owned(),
                 };
-                writeln!(source, "            {field}: request.filter.as_mut().and_then(|filter| filter.{field}.take()){conversion},")
+                writeln!(source, "            {member}: request.filter.as_mut().and_then(|filter| filter.{field}.take()){conversion},")
                     .expect("writing to a String cannot fail");
             }
             if operation.search.is_some() {
@@ -2517,6 +2522,15 @@ fn emit_contract_tree_assignments(
                 .trim_end_matches("[]"),
         )
         .unwrap();
+        let target = binding_identifier(
+            field
+                .path
+                .rsplit('.')
+                .next()
+                .unwrap()
+                .trim_end_matches("[]"),
+        )
+        .unwrap();
         if field.children.is_empty() {
             let conversion = if column_type_of(&field.type_name).is_some_and(int64_is_json_string) {
                 if field.nullable {
@@ -2533,11 +2547,11 @@ fn emit_contract_tree_assignments(
             } else {
                 ""
             };
-            writeln!(source, "{indent}{member}: {access}.{member}{conversion},")
+            writeln!(source, "{indent}{target}: {access}.{member}{conversion},")
                 .expect("writing to a String cannot fail");
         } else if field.type_name == "array" || field.path.ends_with("[]") {
             let nested = rust_type_identifier(&field_type_suffix(&field.path, root));
-            writeln!(source, "{indent}{member}: {access}.{member}.into_iter().map(|value| contract::{type_name}{nested} {{").expect("writing to a String cannot fail");
+            writeln!(source, "{indent}{target}: {access}.{member}.into_iter().map(|value| contract::{type_name}{nested} {{").expect("writing to a String cannot fail");
             emit_contract_tree_assignments(
                 source,
                 type_name,
@@ -2549,7 +2563,7 @@ fn emit_contract_tree_assignments(
             writeln!(source, "{indent}}}).collect(),").expect("writing to a String cannot fail");
         } else {
             let nested = rust_type_identifier(&field_type_suffix(&field.path, root));
-            writeln!(source, "{indent}{member}: contract::{type_name}{nested} {{")
+            writeln!(source, "{indent}{target}: contract::{type_name}{nested} {{")
                 .expect("writing to a String cannot fail");
             emit_contract_tree_assignments(
                 source,
@@ -2590,7 +2604,7 @@ fn emit_custom_normalizer(type_name: &str, operation: &CustomOperationDeclaratio
 fn emit_tree_validation(source: &mut String, fields: &[FieldIr], access: &str, indentation: usize) {
     let indent = " ".repeat(indentation);
     for field in fields {
-        let member = rust_identifier(
+        let member = binding_identifier(
             field
                 .path
                 .rsplit('.')
@@ -2823,7 +2837,7 @@ fn emit_codec_result_list(source: &mut String, member: &str, ty: ColumnType, nul
         .trim_start_matches("\"element\": ")
         .trim_end_matches(',')
         .replace("list.element", "element");
-    let name = rust_identifier(member).expect("validated result field has a Rust name");
+    let name = binding_identifier(member).expect("validated result field has a Rust name");
     writeln!(
         source,
         "                    {member:?}: value.{name}.iter().map(|element| json!({element})).collect::<Vec<_>>(),"
@@ -2838,7 +2852,7 @@ fn emit_codec_result_field_for(
     nullable: bool,
     carrier: &str,
 ) {
-    let name = rust_identifier(field).expect("validated result field has a Rust name");
+    let name = binding_identifier(field).expect("validated result field has a Rust name");
     if ty == ColumnType::Json {
         let value = if nullable {
             format!(
@@ -2916,7 +2930,7 @@ fn emit_claim_run(
     result_fields: &[(&str, ColumnType, bool)],
     success: &str,
 ) -> String {
-    let key_member = rust_identifier(
+    let key_member = binding_identifier(
         claim
             .key_field
             .rsplit('.')
@@ -2930,6 +2944,8 @@ fn emit_claim_run(
         let list = result_list_member(path);
         let member =
             rust_identifier(list.unwrap_or(path)).expect("validated result field has a Rust name");
+        let target = binding_identifier(list.unwrap_or(path))
+            .expect("validated result field has a Rust name");
         let element = codec_rust_type(*ty, *nullable);
         let json_type = if list.is_some() {
             format!("Vec<{element}>")
@@ -2952,7 +2968,7 @@ fn emit_claim_run(
                 format!("value.{member}.into_iter().map(|value| {conversion}).collect()")
             }
         };
-        writeln!(assignments, "{member}: {value},").expect("writing to a String cannot fail");
+        writeln!(assignments, "{target}: {value},").expect("writing to a String cannot fail");
     }
     let success = success.replace("{fields}", &assignments);
     format!(
@@ -3118,7 +3134,7 @@ fn canonical_leaf(access: &str, ty: Option<ColumnType>, nullable: bool) -> Strin
 fn create_request_value(table: &Table, operation: &OperationDeclaration) -> String {
     let mut source = String::from("{\n    let mut value = Map::new();\n");
     for field in &operation.writable_fields {
-        let member = rust_identifier(field).expect("validated field has a Rust name");
+        let member = binding_identifier(field).expect("validated field has a Rust name");
         let leaf = canonical_leaf(
             "field",
             Some(model_column(table, field).column_type()),
@@ -3187,7 +3203,7 @@ fn tree_value(
             .next()
             .expect("declared field has a member")
             .trim_end_matches("[]");
-        let member = rust_identifier(name).expect("validated field has a Rust name");
+        let member = binding_identifier(name).expect("validated field has a Rust name");
         let entry = if field.children.is_empty() {
             canonical_leaf(
                 &format!("{access}.{member}"),

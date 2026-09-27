@@ -1,17 +1,17 @@
 //! `[WMS-RUNTIME-LIVE]` — the two assertions structure cannot make, over the
 //! local business route or released label route.
 //!
-//! ONE. Two moves of the same pallet, in flight together, yield EXACTLY ONE
+//! ONE. Two moves of the same packaging, in flight together, yield EXACTLY ONE
 //! `concurrency_conflict`. Not at least one: two would mean neither moved.
-//! Not zero: that would mean the lock is not the pallet. And the count can
+//! Not zero: that would mean the lock is not the packaging. And the count can
 //! coincide -- a serialized pair gives the same count as a working lock, and
 //! one request never arriving gives one success and zero conflicts -- so the
 //! two are fired behind one barrier and the SURVIVOR is asserted to have
 //! moved the stock from its own response: `location_id` is the target and
 //! `row_version` advanced once, while the loser observed that exact revision.
 //!
-//! TWO. The winner's exact body replayed returns the same `movement_ids`: the
-//! write log stored the result, and the replay answers it.
+//! TWO. The winner's exact body replayed returns the same result: the write
+//! log stored the result, and the replay answers it.
 //!
 //! These cases return structured results to the application test caller.
 
@@ -139,7 +139,7 @@ fn move_body(
         "request_id": request_id,
         "value": {
             "idempotency_key": idempotency_key,
-            "pallet_id": runtime.pallet_id,
+            "packaging_id": runtime.packaging_id,
             "to_location_id": runtime.to_location_id,
             "expected_row_version": expected_revision,
             "occurred_at": OCCURRED_AT,
@@ -214,17 +214,16 @@ pub(crate) async fn assert_contention_and_replay(
     let value = &winner["value"];
     anyhow::ensure!(
         value["location_id"] == runtime.to_location_id.as_str(),
-        "the winner's pallet is at the target location: {value}"
+        "the winner's packaging is at the target location: {value}"
     );
     anyhow::ensure!(
         value["row_version"].as_i64() == Some(next_revision),
-        "the winner advanced the pallet's row_version from {initial_revision}: {value}"
+        "the winner advanced the packaging's row_version from {initial_revision}: {value}"
     );
     anyhow::ensure!(
-        value["pallet_id"] == runtime.pallet_id.as_str(),
-        "the winner moved the fixture pallet: {value}"
+        value["packaging_id"] == runtime.packaging_id.as_str(),
+        "the winner moved the fixture packaging: {value}"
     );
-    let movement_id = one_movement(value).context("the winner wrote one movement")?;
     // And the loser lost to THAT version, not to something else.
     anyhow::ensure!(
         loser["error"]["detail"]["expected_row_version"].as_i64() == Some(expected_revision)
@@ -234,21 +233,17 @@ pub(crate) async fn assert_contention_and_replay(
     );
 
     // TWO. The winner's exact body, again, with a fresh request id: the same
-    // movement id, because the write log answers the stored result.
+    // result, because the write log answers the stored result.
     let mut replay: Value = (**winning_body).clone();
     replay[0]["request_id"] = json!(REQUEST_ID_REPLAY);
     let answer = route.post(&client, "/inventory/move", &replay).await?;
     let replayed = item(&answer, REQUEST_ID_REPLAY)?;
     anyhow::ensure!(
-        replayed["value"]["movement_ids"] == json!([movement_id]),
-        "a replay returns the same movement_ids [{movement_id}]: {replayed}"
-    );
-    anyhow::ensure!(
-        replayed["value"]["row_version"].as_i64() == Some(next_revision),
+        replayed["value"] == *value,
         "a replay returns the original result, not a second move: {replayed}"
     );
 
-    Ok(json!({"movement_id": movement_id}))
+    Ok(json!({"row_version": next_revision}))
 }
 
 /// Exercise the deployed composed move and require replay to return its exact result.
@@ -264,12 +259,16 @@ pub(crate) async fn assert_label_delivery_and_replay(
     let answer = route.post(&client, "/inventory/move", &body).await?;
     let moved = value(&answer, "label-move")?;
     anyhow::ensure!(
-        moved["pallet_id"] == runtime.pallet_id.as_str()
+        moved["packaging_id"] == runtime.packaging_id.as_str()
             && moved["location_id"] == runtime.to_location_id.as_str()
             && moved["row_version"] == 2,
         "the composed route returns the committed move: {moved}"
     );
-    let movement_id = one_movement(moved)?;
+    let label_key = format!(
+        "{}/{}",
+        runtime.packaging_id,
+        revision(&moved["row_version"])?
+    );
 
     let mut replay = body;
     replay[0]["request_id"] = json!("label-replay");
@@ -277,10 +276,11 @@ pub(crate) async fn assert_label_delivery_and_replay(
     let replayed = value(&answer, "label-replay")?;
     anyhow::ensure!(
         replayed == moved,
-        "the composed route replay returns the original move {movement_id}: {replayed}"
+        "the composed route replay returns the original move {label_key}: {replayed}"
     );
-    // The label workflow keys the label by the movement id.
-    Ok(json!({"movement_id": movement_id, "label_key": movement_id}))
+    // The label workflow keys the label by the packaging and the revision the
+    // move gave it.
+    Ok(json!({"label_key": label_key}))
 }
 
 /// The `value` of the single item answering `request_id`, or the refusal as
@@ -333,11 +333,11 @@ fn revision(value: &Value) -> anyhow::Result<i64> {
         .with_context(|| format!("a revision crosses the wire as a JSON integer: {value}"))
 }
 
-/// The one movement id of a result that wrote one movement row.
-fn one_movement(value: &Value) -> anyhow::Result<String> {
-    match value["movement_ids"].as_array().map(Vec::as_slice) {
+/// The one transaction id of a result that wrote one transaction row.
+fn one_transaction(value: &Value) -> anyhow::Result<String> {
+    match value["transaction_ids"].as_array().map(Vec::as_slice) {
         Some([id]) => uuid(id),
-        _ => anyhow::bail!("one movement id: {value}"),
+        _ => anyhow::bail!("one transaction id: {value}"),
     }
 }
 
@@ -357,21 +357,21 @@ pub(crate) async fn assert_remaining_operations(
         .timeout(std::time::Duration::from_secs(60))
         .build()
         .context("build the route client")?;
-    let pallet_id = runtime.pallet_id.as_str();
+    let packaging_id = runtime.packaging_id.as_str();
 
     // WHERE THE FIXTURE STANDS, from the warehouse's own answers rather than
-    // from an assumption about which test ran first: the pallet's revision and
+    // from an assumption about which test ran first: the packaging's revision and
     // location by get, and its product by the live-stock aggregate.
     let answer = route
-        .get(&client, "/pallet/get", &json!({"id": pallet_id}))
+        .get(&client, "/packaging/get", &json!({"id": packaging_id}))
         .await?;
-    let pallet = read_value(&answer)?;
+    let packaging = read_value(&answer)?;
     anyhow::ensure!(
-        pallet["status"] == "available",
-        "the fixture pallet is live: {pallet}"
+        packaging["status"] == "available",
+        "the fixture packaging is live: {packaging}"
     );
-    let version = revision(&pallet["row_version"])?;
-    let location = uuid(&pallet["location_id"])?;
+    let version = revision(&packaging["row_version"])?;
+    let location = uuid(&packaging["location_id"])?;
 
     let answer = route
         .get(&client, "/inventory/aggregate", &json!({}))
@@ -379,21 +379,21 @@ pub(crate) async fn assert_remaining_operations(
     let rows = read_value(&answer)?["rows"].clone();
     let rows = rows.as_array().context("aggregate answers rows")?;
     anyhow::ensure!(
-        rows.len() == 1 && rows[0]["pallet_count"] == 1 && rows[0]["status"] == "available",
-        "one product on one live pallet: {rows:?}"
+        rows.len() == 1 && rows[0]["packaging_count"] == 1 && rows[0]["status"] == "available",
+        "one product on one live packaging: {rows:?}"
     );
     anyhow::ensure!(
         rows[0]["location_id"] == location.as_str(),
-        "at the pallet's location: {rows:?}"
+        "at the packaging's location: {rows:?}"
     );
     let product_id = uuid(&rows[0]["product_id"])?;
     let held = quantity(&rows[0]["quantity"])?;
 
-    // ADJUST: count the row to 7. The movement records what was counted and
-    // the pallet's revision moves.
+    // ADJUST: count the row to 7. The transaction records the stock that left,
+    // and the packaging's revision moves.
     let answer = route
         .post(&client, "/inventory/adjust", &json!([{"request_id": "ops-adjust", "value": {
-            "idempotency_key": "ops-adjust-key", "pallet_id": pallet_id, "product_id": product_id,
+            "idempotency_key": "ops-adjust-key", "packaging_id": packaging_id, "product_id": product_id,
             "status": "available", "quantity": "7", "reason_code": "cycle-count",
             "expected_row_version": version, "occurred_at": OCCURRED_AT,
         }}]))
@@ -403,17 +403,48 @@ pub(crate) async fn assert_remaining_operations(
     anyhow::ensure!(
         (quantity(&adjusted["adjusted_quantity"])? - 7.0).abs() < f64::EPSILON
             && adjusted["row_version"].as_i64() == Some(adjusted_revision)
-            && adjusted["pallet_status"] == "available",
+            && adjusted["packaging_status"] == "available",
         "the adjust counted 7 and advanced the revision from {version} (held {held}): {adjusted}"
     );
-    one_movement(adjusted)?;
+    one_transaction(adjusted)?;
 
-    // SPLIT: 3 units onto a new pallet beside the source. The write log keeps
+    // Nothing to change refuses: a count equal to the balance, and a move to
+    // the location the packaging is at.
+    let answer = route
+        .post(&client, "/inventory/adjust", &json!([{"request_id": "ops-adjust-same", "value": {
+            "idempotency_key": "ops-adjust-same-key", "packaging_id": packaging_id, "product_id": product_id,
+            "status": "available", "quantity": "7.0", "reason_code": "cycle-count",
+            "expected_row_version": adjusted_revision, "occurred_at": OCCURRED_AT,
+        }}]))
+        .await?;
+    let detail = refusal(&answer, "ops-adjust-same", "invalid_input")?;
+    anyhow::ensure!(
+        detail["field"] == "value.quantity",
+        "an adjust to the balance names its field: {detail}"
+    );
+    let answer = route
+        .post(
+            &client,
+            "/inventory/move",
+            &json!([{"request_id": "ops-move-same", "value": {
+                "idempotency_key": "ops-move-same-key", "packaging_id": packaging_id,
+                "to_location_id": location, "expected_row_version": adjusted_revision,
+                "occurred_at": OCCURRED_AT,
+            }}]),
+        )
+        .await?;
+    let detail = refusal(&answer, "ops-move-same", "invalid_input")?;
+    anyhow::ensure!(
+        detail["field"] == "value.to_location_id",
+        "a move to the current location names its field: {detail}"
+    );
+
+    // SPLIT: 3 units onto a new packaging beside the source. The write log keeps
     // the result, so the exact body again yields the SAME id.
     let split = json!([{"request_id": "ops-split", "value": {
-        "idempotency_key": "ops-split-key", "source_pallet_id": pallet_id, "product_id": product_id,
-        "status": "available", "quantity": "3", "new_pallet_code": "PAL-302",
-        "to_location_id": location, "expected_row_version": version + 1, "occurred_at": OCCURRED_AT,
+        "idempotency_key": "ops-split-key", "source_packaging_id": packaging_id, "product_id": product_id,
+        "status": "available", "quantity": "3", "new_packaging_code": "PAL-302",
+        "new_packaging_type": "tote", "to_location_id": location, "expected_row_version": version + 1, "occurred_at": OCCURRED_AT,
     }}]);
     let answer = route.post(&client, "/inventory/split", &split).await?;
     let first = value(&answer, "ops-split")?;
@@ -423,17 +454,17 @@ pub(crate) async fn assert_remaining_operations(
             && first["source_status"] == "available",
         "the split advanced the source: {first}"
     );
-    let new_pallet_id = uuid(&first["new_pallet_id"])?;
-    let split_movement_id = one_movement(first)?;
+    let new_packaging_id = uuid(&first["new_packaging_id"])?;
+    let split_transaction_id = one_transaction(first)?;
     let mut replay = split.clone();
     replay[0]["request_id"] = json!("ops-split-replay");
     let answer = route.post(&client, "/inventory/split", &replay).await?;
     let replayed = value(&answer, "ops-split-replay")?;
     anyhow::ensure!(
-        replayed["new_pallet_id"] == new_pallet_id.as_str()
-            && replayed["movement_ids"] == json!([split_movement_id])
+        replayed["new_packaging_id"] == new_packaging_id.as_str()
+            && replayed["transaction_ids"] == json!([split_transaction_id])
             && replayed["row_version"].as_i64() == Some(split_revision),
-        "a replayed split returns the same new pallet {new_pallet_id}, not a second one: {replayed}"
+        "a replayed split returns the same new packaging {new_packaging_id}, not a second one: {replayed}"
     );
     // And a split asking for more than the row holds is refused with what it
     // holds: 4, after 7 less the 3 that left.
@@ -442,9 +473,10 @@ pub(crate) async fn assert_remaining_operations(
             &client,
             "/inventory/split",
             &json!([{"request_id": "ops-split-too-much", "value": {
-                "idempotency_key": "ops-split-too-much-key", "source_pallet_id": pallet_id,
+                "idempotency_key": "ops-split-too-much-key", "source_packaging_id": packaging_id,
                 "product_id": product_id, "status": "available", "quantity": "100",
-                "new_pallet_code": "PAL-303", "to_location_id": location,
+                "new_packaging_code": "PAL-303", "new_packaging_type": "tote",
+                "to_location_id": location,
                 "expected_row_version": version + 2, "occurred_at": OCCURRED_AT,
             }}]),
         )
@@ -455,15 +487,16 @@ pub(crate) async fn assert_remaining_operations(
         "the refusal names the field and what the row holds: {detail}"
     );
 
-    // MERGE the new pallet back. The source is consumed -- a tombstone, the
-    // platform admits no DELETE -- and the target's revision moves.
+    // MERGE the tote back into the pallet: the two need not share a type. The
+    // source is consumed, its balance rows are deleted, and the target's
+    // revision moves.
     let answer = route
         .post(
             &client,
             "/inventory/merge",
             &json!([{"request_id": "ops-merge", "value": {
-                "idempotency_key": "ops-merge-key", "source_pallet_id": new_pallet_id,
-                "target_pallet_id": pallet_id, "expected_row_version": version + 2,
+                "idempotency_key": "ops-merge-key", "source_packaging_id": new_packaging_id,
+                "target_packaging_id": packaging_id, "expected_row_version": version + 2,
                 "occurred_at": OCCURRED_AT,
             }}]),
         )
@@ -473,37 +506,38 @@ pub(crate) async fn assert_remaining_operations(
     anyhow::ensure!(
         merged["row_version"].as_i64() == Some(merged_revision)
             && merged["target_status"] == "available"
-            && merged["target_pallet_id"] == pallet_id
-            && merged["source_pallet_id"] == new_pallet_id.as_str(),
+            && merged["target_packaging_id"] == packaging_id
+            && merged["source_packaging_id"] == new_packaging_id.as_str(),
         "the merge advanced the target: {merged}"
     );
+    one_transaction(merged)?;
     let answer = route
-        .get(&client, "/pallet/get", &json!({"id": new_pallet_id}))
+        .get(&client, "/packaging/get", &json!({"id": new_packaging_id}))
         .await?;
     let consumed = read_value(&answer)?;
     anyhow::ensure!(
         consumed["status"] == "consumed",
-        "the merged pallet reads consumed: {consumed}"
+        "the merged packaging reads consumed: {consumed}"
     );
     let answer = route
         .post(
             &client,
             "/inventory/merge",
             &json!([{"request_id": "ops-merge-self", "value": {
-                "idempotency_key": "ops-merge-self-key", "source_pallet_id": pallet_id,
-                "target_pallet_id": pallet_id, "expected_row_version": version + 3,
+                "idempotency_key": "ops-merge-self-key", "source_packaging_id": packaging_id,
+                "target_packaging_id": packaging_id, "expected_row_version": version + 3,
                 "occurred_at": OCCURRED_AT,
             }}]),
         )
         .await?;
     let detail = refusal(&answer, "ops-merge-self", "invalid_input")?;
     anyhow::ensure!(
-        detail["field"] == "value.target_pallet_id",
+        detail["field"] == "value.target_packaging_id",
         "a self-merge names its field: {detail}"
     );
 
-    // LIVE STOCK EXCLUDES THE CONSUMED PALLET: 4 left plus the 3 merged back
-    // is 7, on one pallet, though the consumed one still holds its history.
+    // LIVE STOCK: 4 left plus the 3 merged back is 7, on one packaging. The
+    // consumed one holds no balance row.
     let answer = route
         .get(&client, "/inventory/aggregate", &json!({}))
         .await?;
@@ -512,24 +546,28 @@ pub(crate) async fn assert_remaining_operations(
     anyhow::ensure!(
         rows.len() == 1
             && (quantity(&rows[0]["quantity"])? - 7.0).abs() < f64::EPSILON
-            && rows[0]["pallet_count"] == 1,
-        "the aggregate counts 7 on one live pallet and not the consumed one: {rows:?}"
+            && rows[0]["packaging_count"] == 1,
+        "the aggregate counts 7 on one live packaging and not the consumed one: {rows:?}"
     );
 
-    // QUERY: two pallets exist. By pallet code descending, one per page, the
+    // QUERY: two packagings exist. By packaging code descending, one per page, the
     // new one comes first and the cursor continues to the fixture; the
     // consumed filter finds exactly the merged one.
-    let sort = json!({"field": "pallet_code", "direction": "descending"});
+    let sort = json!({"field": "packaging_code", "direction": "descending"});
     let answer = route
-        .get(&client, "/pallet/query", &json!({"sort": sort, "limit": 1}))
+        .get(
+            &client,
+            "/packaging/query",
+            &json!({"sort": sort, "limit": 1}),
+        )
         .await?;
     let page = read_value(&answer)?;
     anyhow::ensure!(
         page["item"]
             .as_array()
             .is_some_and(|items| items.len() == 1)
-            && page["item"][0]["id"] == new_pallet_id.as_str(),
-        "the first page holds the new pallet: {page}"
+            && page["item"][0]["id"] == new_packaging_id.as_str(),
+        "the first page holds the new packaging: {page}"
     );
     let cursor = page["next_cursor"]
         .as_str()
@@ -538,19 +576,19 @@ pub(crate) async fn assert_remaining_operations(
     let answer = route
         .get(
             &client,
-            "/pallet/query",
+            "/packaging/query",
             &json!({"sort": sort, "limit": 1, "cursor": cursor}),
         )
         .await?;
     let page = read_value(&answer)?;
     anyhow::ensure!(
-        page["item"][0]["id"] == pallet_id && page["next_cursor"].is_null(),
-        "the second page holds the fixture pallet and ends: {page}"
+        page["item"][0]["id"] == packaging_id && page["next_cursor"].is_null(),
+        "the second page holds the fixture packaging and ends: {page}"
     );
     let answer = route
         .get(
             &client,
-            "/pallet/query",
+            "/packaging/query",
             &json!({"filter": {"status": ["consumed"]}}),
         )
         .await?;
@@ -559,11 +597,30 @@ pub(crate) async fn assert_remaining_operations(
         page["item"]
             .as_array()
             .is_some_and(|items| items.len() == 1)
-            && page["item"][0]["id"] == new_pallet_id.as_str(),
-        "the consumed filter finds exactly the merged pallet: {page}"
+            && page["item"][0]["id"] == new_packaging_id.as_str(),
+        "the consumed filter finds exactly the merged packaging: {page}"
     );
 
-    Ok(json!({"split_pallet_id": new_pallet_id}))
+    // ADJUST TO ZERO: the stock is gone, so its balance row is deleted.
+    let answer = route
+        .post(&client, "/inventory/adjust", &json!([{"request_id": "ops-adjust-zero", "value": {
+            "idempotency_key": "ops-adjust-zero-key", "packaging_id": packaging_id, "product_id": product_id,
+            "status": "available", "quantity": "0", "reason_code": "cycle-count",
+            "expected_row_version": merged_revision, "occurred_at": OCCURRED_AT,
+        }}]))
+        .await?;
+    let emptied = value(&answer, "ops-adjust-zero")?;
+    one_transaction(emptied)?;
+    let answer = route
+        .get(&client, "/inventory/aggregate", &json!({}))
+        .await?;
+    let rows = read_value(&answer)?["rows"].clone();
+    anyhow::ensure!(
+        rows.as_array().is_some_and(Vec::is_empty),
+        "no stock is left after the count of zero: {rows}"
+    );
+
+    Ok(json!({"split_packaging_id": new_packaging_id}))
 }
 
 pub(crate) async fn assert_committed_move_after_label_failure(
@@ -579,7 +636,11 @@ pub(crate) async fn assert_committed_move_after_label_failure(
         .build()
         .context("build the route client")?;
     let before = route
-        .get(&client, "/pallet/get", &json!({"id":runtime.pallet_id}))
+        .get(
+            &client,
+            "/packaging/get",
+            &json!({"id":runtime.packaging_id}),
+        )
         .await?;
     let before = read_value(&before)?;
     let revision = revision(&before["row_version"])?;
@@ -591,7 +652,7 @@ pub(crate) async fn assert_committed_move_after_label_failure(
     let request_id = format!("partial-{key}");
     let body = json!([{"request_id":request_id,"value":{
         "idempotency_key":key,
-        "pallet_id":runtime.pallet_id,
+        "packaging_id":runtime.packaging_id,
         "to_location_id":runtime.to_location_id,
         "expected_row_version":revision,
         "occurred_at":OCCURRED_AT
@@ -614,35 +675,35 @@ pub(crate) async fn assert_committed_move_after_label_failure(
             .is_some_and(|item| item.len() == 2 && item.contains_key("value")),
         "the move envelope has only request_id and value: {committed}"
     );
-    let movement_id = one_movement(&committed["value"])?;
-    uuid::Uuid::parse_str(&movement_id).context("the committed movement identity is a UUID")?;
     let expected = json!({
-        "movement_ids":[movement_id],
-        "pallet_id":runtime.pallet_id,
+        "packaging_id":runtime.packaging_id,
         "location_id":runtime.to_location_id,
-        "pallet_status":before["status"],
         "row_version":revision+1
     });
     anyhow::ensure!(
         committed["value"] == expected,
-        "the response is the committed movement result: {committed}"
+        "the response is the committed move result: {committed}"
     );
     let after = route
-        .get(&client, "/pallet/get", &json!({"id":runtime.pallet_id}))
+        .get(
+            &client,
+            "/packaging/get",
+            &json!({"id":runtime.packaging_id}),
+        )
         .await?;
     let after = read_value(&after)?;
     anyhow::ensure!(
         after["location_id"] == expected["location_id"]
             && after["row_version"] == expected["row_version"]
-            && after["status"] == expected["pallet_status"],
-        "the later read shows the movement stayed committed: {after}"
+            && after["status"] == before["status"],
+        "the later read shows the move stayed committed: {after}"
     );
     Ok((
         http,
         json!({
-            "request_id":request_id,"idempotency_key":key,"movement_id":movement_id,
-            "pallet_id":runtime.pallet_id,"location_id":runtime.to_location_id,
-            "row_version":revision+1,"pallet_status":before["status"],
+            "request_id":request_id,"idempotency_key":key,
+            "packaging_id":runtime.packaging_id,"location_id":runtime.to_location_id,
+            "row_version":revision+1,"packaging_status":before["status"],
             "command_requests":1
         }),
     ))
@@ -670,31 +731,22 @@ pub(crate) async fn assert_committed_rows(
     let command_key = expected["idempotency_key"]
         .as_str()
         .context("the result has a command key")?;
-    let pallet = expected["pallet_id"]
+    let packaging = expected["packaging_id"]
         .as_str()
-        .context("the result has a pallet id")?;
+        .context("the result has a packaging id")?;
     let row = project
         .query_one(
             r"SELECT json_build_object(
     'command_count', (SELECT count(*) FROM app_system.write_log
         WHERE operation = 'wamn-wms:inventory/move' AND idempotency_key = $1),
-    'movement_count', (SELECT count(*) FROM wms.inventory_movement WHERE id::text IN (
-        SELECT jsonb_array_elements_text(result::jsonb -> 'movement_ids') FROM app_system.write_log
-        WHERE operation = 'wamn-wms:inventory/move' AND idempotency_key = $1)),
-    'quantity_count', (SELECT count(*) FROM wms.pallet_quantity WHERE pallet_id = $2::text::uuid),
+    'quantity_count', (SELECT count(*) FROM wms.packaging_quantity WHERE packaging_id = $2::text::uuid),
     'command', (SELECT result::json FROM app_system.write_log
         WHERE operation = 'wamn-wms:inventory/move' AND idempotency_key = $1),
-    'movement', (SELECT row_to_json(movement) FROM (
-        SELECT id, pallet_id, from_location_id, to_location_id, kind
-        FROM wms.inventory_movement WHERE id::text IN (
-            SELECT jsonb_array_elements_text(result::jsonb -> 'movement_ids') FROM app_system.write_log
-            WHERE operation = 'wamn-wms:inventory/move' AND idempotency_key = $1)
-    ) AS movement),
-    'pallet', (SELECT row_to_json(pallet) FROM (
-        SELECT id, location_id, status, row_version FROM wms.pallet WHERE id = $2::text::uuid
-    ) AS pallet)
+    'packaging', (SELECT row_to_json(packaging) FROM (
+        SELECT id, location_id, status, row_version FROM wms.packaging WHERE id = $2::text::uuid
+    ) AS packaging)
 );",
-            &[&command_key, &pallet],
+            &[&command_key, &packaging],
         )
         .await
         .context("read the committed WMS rows")?;
@@ -702,21 +754,14 @@ pub(crate) async fn assert_committed_rows(
     let expected_row_version = revision(&expected["row_version"])?;
     anyhow::ensure!(
         observed["command_count"] == 1
-            && observed["movement_count"] == 1
             && observed["quantity_count"] == 1
-            && observed["command"]["movement_ids"] == json!([expected["movement_id"]])
-            && observed["command"]["pallet_id"] == expected["pallet_id"]
-            && observed["command"]["pallet_status"] == expected["pallet_status"]
+            && observed["command"]["packaging_id"] == expected["packaging_id"]
+            && observed["command"]["location_id"] == expected["location_id"]
             && observed["command"]["row_version"].as_i64() == Some(expected_row_version)
-            && observed["movement"]["id"] == expected["movement_id"]
-            && observed["movement"]["pallet_id"] == expected["pallet_id"]
-            && observed["movement"]["to_location_id"] == expected["location_id"]
-            && observed["movement"]["from_location_id"] != observed["movement"]["to_location_id"]
-            && observed["movement"]["kind"] == "move"
-            && observed["pallet"]["id"] == expected["pallet_id"]
-            && observed["pallet"]["location_id"] == expected["location_id"]
-            && observed["pallet"]["status"] == expected["pallet_status"]
-            && observed["pallet"]["row_version"].as_i64() == Some(expected_row_version),
+            && observed["packaging"]["id"] == expected["packaging_id"]
+            && observed["packaging"]["location_id"] == expected["location_id"]
+            && observed["packaging"]["status"] == expected["packaging_status"]
+            && observed["packaging"]["row_version"].as_i64() == Some(expected_row_version),
         "the WMS committed rows disagree with the response: {observed}"
     );
     Ok(observed)
@@ -737,7 +782,7 @@ mod shape {
     fn runtime() -> RuntimePhase {
         RuntimePhase {
             route_endpoint: "http://10.0.0.2:30999".to_owned(),
-            pallet_id: "00000000-0000-0000-0000-000000000301".to_owned(),
+            packaging_id: "00000000-0000-0000-0000-000000000301".to_owned(),
             to_location_id: "00000000-0000-0000-0000-000000000202".to_owned(),
         }
     }
@@ -751,7 +796,7 @@ mod shape {
         let value = &items[0]["value"];
         for key in [
             "idempotency_key",
-            "pallet_id",
+            "packaging_id",
             "to_location_id",
             "expected_row_version",
             "occurred_at",

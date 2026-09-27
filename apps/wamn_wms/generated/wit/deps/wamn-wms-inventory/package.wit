@@ -7,7 +7,7 @@ interface adjust {
     expected-row-version: s32,
     idempotency-key: string,
     occurred-at: string,
-    pallet-id: string,
+    packaging-id: string,
     product-id: string,
     quantity: string,
     reason-code: string,
@@ -30,7 +30,7 @@ interface adjust {
     observed: option<string>,
   }
 
-  record pallet-not-found-detail {
+  record packaging-not-found-detail {
     field: string,
     id: string,
   }
@@ -46,7 +46,7 @@ interface adjust {
 
   variant adjust-error {
     invalid-input(invalid-input-detail),
-    pallet-not-found(pallet-not-found-detail),
+    packaging-not-found(packaging-not-found-detail),
     quantity-not-found(quantity-not-found-detail),
     concurrency-conflict(concurrency-conflict-detail),
     idempotency-conflict(idempotency-conflict-detail),
@@ -62,10 +62,10 @@ interface adjust {
   }
 
   record adjust-result {
-    movement-ids: list<string>,
-    pallet-id: string,
+    transaction-ids: list<string>,
+    packaging-id: string,
     adjusted-quantity: string,
-    pallet-status: string,
+    packaging-status: string,
     row-version: s32,
   }
 
@@ -108,7 +108,7 @@ interface aggregate {
     location-id: string,
     status: string,
     quantity: string,
-    pallet-count: s32,
+    packaging-count: s32,
   }
 
   record aggregate-result {
@@ -130,8 +130,8 @@ interface merge {
     expected-row-version: s32,
     idempotency-key: string,
     occurred-at: string,
-    source-pallet-id: string,
-    target-pallet-id: string,
+    source-packaging-id: string,
+    target-packaging-id: string,
   }
 
   record concurrency-conflict-detail {
@@ -150,7 +150,7 @@ interface merge {
     observed: option<string>,
   }
 
-  record pallet-not-found-detail {
+  record packaging-not-found-detail {
     field: string,
     id: string,
   }
@@ -161,7 +161,7 @@ interface merge {
 
   variant merge-error {
     invalid-input(invalid-input-detail),
-    pallet-not-found(pallet-not-found-detail),
+    packaging-not-found(packaging-not-found-detail),
     concurrency-conflict(concurrency-conflict-detail),
     idempotency-conflict(idempotency-conflict-detail),
     retry,
@@ -176,9 +176,9 @@ interface merge {
   }
 
   record merge-result {
-    movement-ids: list<string>,
-    source-pallet-id: string,
-    target-pallet-id: string,
+    transaction-ids: list<string>,
+    source-packaging-id: string,
+    target-packaging-id: string,
     target-status: string,
     row-version: s32,
   }
@@ -199,7 +199,7 @@ interface move {
     expected-row-version: s32,
     idempotency-key: string,
     occurred-at: string,
-    pallet-id: string,
+    packaging-id: string,
     to-location-id: string,
   }
 
@@ -224,7 +224,7 @@ interface move {
     id: string,
   }
 
-  record pallet-not-found-detail {
+  record packaging-not-found-detail {
     field: string,
     id: string,
   }
@@ -235,7 +235,7 @@ interface move {
 
   variant move-error {
     invalid-input(invalid-input-detail),
-    pallet-not-found(pallet-not-found-detail),
+    packaging-not-found(packaging-not-found-detail),
     location-not-found(location-not-found-detail),
     concurrency-conflict(concurrency-conflict-detail),
     idempotency-conflict(idempotency-conflict-detail),
@@ -251,10 +251,8 @@ interface move {
   }
 
   record move-result {
-    movement-ids: list<string>,
-    pallet-id: string,
+    packaging-id: string,
     location-id: string,
-    pallet-status: string,
     row-version: s32,
   }
 
@@ -273,11 +271,12 @@ interface split {
   record split-request {
     expected-row-version: s32,
     idempotency-key: string,
-    new-pallet-code: string,
+    new-packaging-code: string,
+    new-packaging-type: string,
     occurred-at: string,
     product-id: string,
     quantity: string,
-    source-pallet-id: string,
+    source-packaging-id: string,
     status: string,
     to-location-id: string,
   }
@@ -309,7 +308,7 @@ interface split {
     id: string,
   }
 
-  record pallet-not-found-detail {
+  record packaging-not-found-detail {
     field: string,
     id: string,
   }
@@ -325,7 +324,7 @@ interface split {
 
   variant split-error {
     invalid-input(invalid-input-detail),
-    pallet-not-found(pallet-not-found-detail),
+    packaging-not-found(packaging-not-found-detail),
     location-not-found(location-not-found-detail),
     quantity-not-found(quantity-not-found-detail),
     insufficient-quantity(insufficient-quantity-detail),
@@ -343,9 +342,9 @@ interface split {
   }
 
   record split-result {
-    movement-ids: list<string>,
-    source-pallet-id: string,
-    new-pallet-id: string,
+    transaction-ids: list<string>,
+    source-packaging-id: string,
+    new-packaging-id: string,
     source-status: string,
     row-version: s32,
   }

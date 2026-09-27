@@ -47,11 +47,11 @@ try:
         columns = model['audit_log']['columns']
         if columns:
             db.sql('00-trigger-' + model['table'], f"CREATE TRIGGER wamn_record_history_stamp BEFORE INSERT OR UPDATE ON {model['schema']}.{model['table']} FOR EACH ROW EXECUTE FUNCTION wamn_history.stamp_row({', '.join(repr(column) for column in columns)});")
-    ids = SimpleNamespace(**{key: str(uuid.uuid4()) for key in ('pallet','product','source','destination')})
+    ids = SimpleNamespace(**{key: str(uuid.uuid4()) for key in ('packaging','product','source','destination')})
     driver.seed(db, ids, 'PREFLIGHT-' + uuid.uuid4().hex[:8])
     observed = driver.snapshot(db, '03-observation', ids)
-    assert observed['claims'] == observed['movements'] == 0
-    assert observed['pallet'] == {'location_id': ids.source, 'status': 'available', 'row_version': 1}
+    assert observed['claims'] == 0 and observed['transactions'] == 1
+    assert observed['packaging'] == {'location_id': ids.source, 'status': 'available', 'row_version': 1}
     assert observed['quantity'] == [{'product_id': ids.product, 'quantity': '10.0000', 'status': 'available'}]
     driver.cleanup(db, ids)
     result['passed'] = True

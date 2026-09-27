@@ -73,6 +73,24 @@ async fn operations_and_replay() -> anyhow::Result<()> {
     crate::wms_runtime_live::assert_contention_and_replay(&route, &runtime, initial_revision)
         .await?;
     crate::wms_runtime_live::assert_remaining_operations(&route, &runtime).await?;
+    // Every balance equals the sum of its transactions, after the seed and
+    // every command above.
+    let disagreements = admin
+        .query(include_str!("inventory_balance.sql"), &[])
+        .await
+        .context("run the inventory balance query")?;
+    let disagreements = disagreements
+        .iter()
+        .map(|row| {
+            (0..5)
+                .map(|column| row.get::<_, Option<String>>(column).unwrap_or_default())
+                .collect::<Vec<_>>()
+        })
+        .collect::<Vec<_>>();
+    anyhow::ensure!(
+        disagreements.is_empty(),
+        "every balance equals the sum of its transactions: {disagreements:?}"
+    );
     drop(admin);
     connection.abort();
     application.shutdown().await?;

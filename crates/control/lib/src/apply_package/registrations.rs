@@ -23,7 +23,7 @@ pub(super) fn derive_catalog_registrations(
             entity: registration.entity.clone(),
             ops: registration.ops.clone(),
             input: RegistrationInput::Event,
-            condition: None,
+            condition: registration.condition.clone(),
         };
         declarations.insert(operation_key.clone(), declaration);
     }
@@ -41,7 +41,7 @@ pub(super) fn derive_catalog_registrations(
                 entity: registration.entity.clone(),
                 ops: registration.ops.clone(),
                 input: RegistrationInput::Event,
-                condition: None,
+                condition: registration.condition.clone(),
             },
         );
     }

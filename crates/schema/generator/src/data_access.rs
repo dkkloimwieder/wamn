@@ -766,6 +766,7 @@ fn derive_data_access_overlay_for_manifest(
                 .update
                 .extend(declared.update_fields.iter().cloned());
             relation.lock |= declared.lock;
+            relation.delete |= declared.delete;
         }
     }
     let relations = desired

@@ -24,9 +24,7 @@ class HttpFixture:
     def __init__(self, ids):
         self.errors = []
         fixture = self
-        self.movement = {"movement_ids": ["44444444-0000-0000-0000-000000000009"],
-                         "pallet_id": ids.pallet, "location_id": ids.destination,
-                         "pallet_status": "available", "row_version": 2}
+        self.moved = {"packaging_id": ids.packaging, "location_id": ids.destination, "row_version": 2}
 
         class Handler(http.server.BaseHTTPRequestHandler):
             def log_message(self, *_args):
@@ -36,10 +34,10 @@ class HttpFixture:
                 # A read is a GET with its one item in the query string, and it
                 # answers one outcome with no request identity (wamn-rst8.1).
                 try:
-                    if self.path.partition("?")[0] != "/pallet/get":
+                    if self.path.partition("?")[0] != "/packaging/get":
                         raise ValueError("unexpected fixture read")
-                    value = {"id": ids.pallet, "location_id": ids.source,
-                             "pallet_code": "WMS-TUI-PREFLIGHT", "row_version": 1,
+                    value = {"id": ids.packaging, "location_id": ids.source,
+                             "packaging_code": "WMS-TUI-PREFLIGHT", "type": "pallet", "row_version": 1,
                              "status": "available", "created_at": "2026-09-10T10:00:00Z",
                              "created_by": "00000000-0000-4000-8000-0000000000f1",
                              "updated_at": "2026-09-10T10:00:00Z",
@@ -61,7 +59,7 @@ class HttpFixture:
                 try:
                     request = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
                     if self.path == "/inventory/move":
-                        value = dict(fixture.movement)
+                        value = dict(fixture.moved)
                         status, body = 200, [{"request_id": request[0]["request_id"], "value": value}]
                     else:
                         raise ValueError("unexpected fixture route")
@@ -84,8 +82,8 @@ class HttpFixture:
 class DatabaseFixture:
     """Return synthetic observations from the request captured by the relay."""
 
-    def __init__(self, relay, evidence, ids, movement):
-        self.relay, self.evidence, self.ids, self.movement = relay, evidence, ids, movement
+    def __init__(self, relay, evidence, ids, moved):
+        self.relay, self.evidence, self.ids, self.moved = relay, evidence, ids, moved
 
     def sql(self, name, _sql, parse=False):
         if not parse:
@@ -94,13 +92,9 @@ class DatabaseFixture:
         command = json.loads(records[0]["request_body"])[0]["value"]
         ids = self.ids
         observation = {
-            "claims": len(records), "movements": len(records),
-            "command": {"idempotency_key": command["idempotency_key"], "movement_ids": self.movement["movement_ids"],
-                        "pallet_id": command["pallet_id"], "pallet_status": "available", "row_version": 2},
-            "movement": {"id": self.movement["movement_ids"][0], "pallet_id": command["pallet_id"],
-                         "product_id": ids.product, "from_location_id": ids.source,
-                         "to_location_id": command["to_location_id"], "kind": "move", "quantity": "10.0000"},
-            "pallet": {"location_id": command["to_location_id"], "status": "available", "row_version": 2},
+            "claims": len(records), "transactions": 1,
+            "command": {"idempotency_key": command["idempotency_key"], **self.moved},
+            "packaging": {"location_id": command["to_location_id"], "status": "available", "row_version": 2},
             "quantity": [{"product_id": ids.product, "quantity": "10.0000", "status": "available"}],
         }
         self.evidence.json(name + ".synthetic.json", {
@@ -114,7 +108,7 @@ def run_mode(driver, tree, binary, directory, mode, timeout):
     helper, _ = driver.support.load_terminal(tree)
     helper.TIMEOUT = timeout
     helper.ROWS, helper.COLUMNS = 60, 260
-    ids = SimpleNamespace(pallet="44444444-0000-0000-0000-000000000001",
+    ids = SimpleNamespace(packaging="44444444-0000-0000-0000-000000000001",
                           product="44444444-0000-0000-0000-000000000002",
                           source="44444444-0000-0000-0000-000000000003",
                           destination="44444444-0000-0000-0000-000000000004")
@@ -123,7 +117,7 @@ def run_mode(driver, tree, binary, directory, mode, timeout):
     try:
         fixture = HttpFixture(ids)
         relay = driver.Relay(fixture.url, host, token, timeout)
-        database = DatabaseFixture(relay, evidence, ids, fixture.movement)
+        database = DatabaseFixture(relay, evidence, ids, fixture.moved)
         session = helper.Session(binary, tree, relay, "synthetic-wms-preflight", host, token)
         result["driver_assertions"] = driver.drive(session, relay, database, evidence, ids, mode)
         driver.require(not fixture.errors, "the HTTP fixture reported an error")

@@ -33,5 +33,5 @@ A table shows rows only after you apply a dataset. The by-hand checks run at 100
 psql "$TARGET_DATABASE_URL" -v scale=1000 -f ../tests/fixtures/wms-seed.sql
 ```
 
-The large size writes 1000 products, 1000 locations, 1000 pallets with 100 of them held, and 1999 quantity rows.
+The large size writes 1000 products, 1000 locations, 1000 packagings with 100 of them held, and 1999 quantity rows.
 `wms-seed-small.sql` is the saved small size.

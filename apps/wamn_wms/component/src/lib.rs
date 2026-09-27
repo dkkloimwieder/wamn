@@ -6,10 +6,10 @@
 //! One package-grain component exporting every WMS operation.
 
 mod inventory;
-mod inventory_movement;
+mod inventory_transaction;
 mod location;
-mod pallet;
-mod pallet_quantity;
+mod packaging;
+mod packaging_quantity;
 mod product;
 
 wit_bindgen::generate!({
@@ -25,17 +25,17 @@ wit_bindgen::generate!({
           export wamn-wms:inventory/merge@1.0.0;
           export wamn-wms:inventory/move@1.0.0;
           export wamn-wms:inventory/split@1.0.0;
-          export wamn-wms:inventory-movement/get@1.0.0;
-          export wamn-wms:inventory-movement/query@1.0.0;
+          export wamn-wms:inventory-transaction/get@1.0.0;
+          export wamn-wms:inventory-transaction/query@1.0.0;
           export wamn-wms:location/create@1.0.0;
           export wamn-wms:location/get@1.0.0;
           export wamn-wms:location/query@1.0.0;
           export wamn-wms:location/update@1.0.0;
-          export wamn-wms:pallet/create@1.0.0;
-          export wamn-wms:pallet/get@1.0.0;
-          export wamn-wms:pallet/query@1.0.0;
-          export wamn-wms:pallet-quantity/get@1.0.0;
-          export wamn-wms:pallet-quantity/query@1.0.0;
+          export wamn-wms:packaging/create@1.0.0;
+          export wamn-wms:packaging/get@1.0.0;
+          export wamn-wms:packaging/query@1.0.0;
+          export wamn-wms:packaging-quantity/get@1.0.0;
+          export wamn-wms:packaging-quantity/query@1.0.0;
           export wamn-wms:product/create@1.0.0;
           export wamn-wms:product/get@1.0.0;
           export wamn-wms:product/query@1.0.0;
@@ -46,10 +46,10 @@ wit_bindgen::generate!({
         "../../../crates/execution/workflow/router/wit",
         "../../../crates/platform/runtime/wit/deps/wamn-postgres-0.2",
         "../generated/wit/deps/wamn-wms-inventory",
-        "../generated/wit/deps/wamn-wms-inventory-movement",
+        "../generated/wit/deps/wamn-wms-inventory-transaction",
         "../generated/wit/deps/wamn-wms-location",
-        "../generated/wit/deps/wamn-wms-pallet",
-        "../generated/wit/deps/wamn-wms-pallet-quantity",
+        "../generated/wit/deps/wamn-wms-packaging",
+        "../generated/wit/deps/wamn-wms-packaging-quantity",
         "../generated/wit/deps/wamn-wms-product",
     ],
     generate_all,

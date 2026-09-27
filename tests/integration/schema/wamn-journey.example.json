@@ -15,7 +15,7 @@
   "route_caller_secret_output": "/tmp/example/route-caller-pat.json",
   "route_host": "example.localhost",
   "runtime": {
-    "pallet_id": "00000000-0000-0000-0000-000000000301",
+    "packaging_id": "00000000-0000-0000-0000-000000000301",
     "route_endpoint": "http://10.0.0.2:30999",
     "to_location_id": "00000000-0000-0000-0000-000000000202"
   },

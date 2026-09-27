@@ -1,0 +1,28 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "-- The source holds no stock after a merge: its balance rows are deleted, and\n-- the packaging stays as a consumed record that a transaction row can name.\nUPDATE packaging\nSET\n    status = 'consumed',\n    row_version = row_version + 1\nWHERE id = $1\nRETURNING row_version;\n",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "row_version",
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "packaging",
+            "name": "row_version"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "03c5376d3a35d4521796d0d23ba50a2e92b72291a727d88d696b95ed20a971fc"
+}

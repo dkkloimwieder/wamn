@@ -23,7 +23,7 @@ const DECLARATION: &str =
 const SHAPE: &str = r#"event = "insert" and new.kind = "move"
     ? [{"request_id": new.id,
         "value": {"label_key": new.idempotency_key, "movement_id": new.id,
-                  "pallet_id": new.pallet_id, "location_id": new.to_location_id}}]
+                  "packaging_id": new.packaging_id, "location_id": new.to_location_id}}]
     : []"#;
 
 pub(super) fn node(bytes: Vec<u8>) -> Node {
@@ -54,7 +54,7 @@ pub(super) async fn run(
     execution: Execution<'_>,
 ) -> anyhow::Result<()> {
     let row = json!({"event": "insert", "new": {
-        "id": "m-1", "idempotency_key": "k-1", "kind": "move", "pallet_id": "p-1",
+        "id": "m-1", "idempotency_key": "k-1", "kind": "move", "packaging_id": "p-1",
         "from_location_id": "l-0", "to_location_id": "l-2", "quantity": "4"}});
     let run = workflows
         .start(&StartRequest {
@@ -91,7 +91,7 @@ pub(super) async fn run(
     assert_eq!(
         serde_json::from_str::<serde_json::Value>(&row.get::<_, String>(1))?,
         json!([{"request_id": "m-1", "value": {"label_key": "k-1",
-            "movement_id": "m-1", "pallet_id": "p-1", "location_id": "l-2"}}])
+            "movement_id": "m-1", "packaging_id": "p-1", "location_id": "l-2"}}])
     );
     event_run(admin, workflows, &execution).await
 }
@@ -112,7 +112,7 @@ async fn event_run(
         .await?
         .get(0);
     let row = json!({"event": "insert", "new": {
-        "id": "m-2", "idempotency_key": "k-2", "kind": "move", "pallet_id": "p-2",
+        "id": "m-2", "idempotency_key": "k-2", "kind": "move", "packaging_id": "p-2",
         "from_location_id": "l-0", "to_location_id": "l-3", "quantity": "1"}});
     let mut admission = EventRunAdmission {
         package_id: "automation",
@@ -196,7 +196,7 @@ async fn event_run(
     assert_eq!(
         serde_json::from_str::<serde_json::Value>(&stored.get::<_, String>(1))?,
         json!([{"request_id": "m-2", "value": {"label_key": "k-2",
-            "movement_id": "m-2", "pallet_id": "p-2", "location_id": "l-3"}}])
+            "movement_id": "m-2", "packaging_id": "p-2", "location_id": "l-3"}}])
     );
     assert_eq!(stored.get::<_, String>(2), "event");
     assert_eq!(stored.get::<_, String>(3), "automation::movement_label");

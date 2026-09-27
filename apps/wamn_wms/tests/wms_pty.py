@@ -115,47 +115,41 @@ SET LOCAL app.user_id = '{FIXTURE_PRINCIPAL}';
 INSERT INTO wms.product (id, product_code) VALUES ('{ids.product}', '{prefix}-PRODUCT');
 INSERT INTO wms.location (id, location_code) VALUES
   ('{ids.source}', '{prefix}-FROM'), ('{ids.destination}', '{prefix}-TO');
-INSERT INTO wms.pallet (id, pallet_code, location_id, status)
-  VALUES ('{ids.pallet}', '{prefix}-PALLET', '{ids.source}', 'available');
-INSERT INTO wms.pallet_quantity (pallet_id, product_id, quantity, status)
-  VALUES ('{ids.pallet}', '{ids.product}', 10.0000, 'available');
+INSERT INTO wms.packaging (id, packaging_code, type, location_id, status)
+  VALUES ('{ids.packaging}', '{prefix}-PACKAGING', 'pallet', '{ids.source}', 'available');
+INSERT INTO wms.packaging_quantity (packaging_id, product_id, quantity, status)
+  VALUES ('{ids.packaging}', '{ids.product}', 10.0000, 'available');
+INSERT INTO wms.inventory_transaction (product_id, quantity, to_packaging_id, to_status, occurred_at)
+  VALUES ('{ids.product}', 10.0000, '{ids.packaging}', 'available', now());
 COMMIT;""")
 
 
 def snapshot(db, name, ids):
     return db.sql(name, f"""SELECT json_build_object(
   'claims', (SELECT count(*) FROM app_system.write_log AS logged
-    WHERE logged.operation = 'wamn-wms:inventory/move' AND EXISTS
-      (SELECT 1 FROM wms.inventory_movement AS movement WHERE movement.pallet_id = '{ids.pallet}'
-         AND logged.result::jsonb -> 'movement_ids' ? movement.id::text)),
-  'movements', (SELECT count(*) FROM wms.inventory_movement WHERE pallet_id = '{ids.pallet}'),
+    WHERE logged.operation = 'wamn-wms:inventory/move' AND logged.result::jsonb ->> 'packaging_id' = '{ids.packaging}'),
+  'transactions', (SELECT count(*) FROM wms.inventory_transaction
+    WHERE '{ids.packaging}' IN (from_packaging_id, to_packaging_id)),
   'command', (SELECT json_build_object('idempotency_key', logged.idempotency_key)::jsonb
-      || (logged.result::jsonb - 'location_id') FROM app_system.write_log AS logged
-    WHERE logged.operation = 'wamn-wms:inventory/move' AND EXISTS
-      (SELECT 1 FROM wms.inventory_movement AS movement WHERE movement.pallet_id = '{ids.pallet}'
-         AND logged.result::jsonb -> 'movement_ids' ? movement.id::text)),
-  'movement', (SELECT row_to_json(movement) FROM (
-    SELECT id, pallet_id, product_id, from_location_id, to_location_id, kind, quantity::text
-    FROM wms.inventory_movement WHERE pallet_id = '{ids.pallet}') AS movement),
-  'pallet', (SELECT json_build_object('location_id', location_id, 'status', status, 'row_version', row_version)
-    FROM wms.pallet WHERE id = '{ids.pallet}'),
+      || logged.result::jsonb FROM app_system.write_log AS logged
+    WHERE logged.operation = 'wamn-wms:inventory/move' AND logged.result::jsonb ->> 'packaging_id' = '{ids.packaging}'),
+  'packaging', (SELECT json_build_object('location_id', location_id, 'status', status, 'row_version', row_version)
+    FROM wms.packaging WHERE id = '{ids.packaging}'),
   'quantity', (SELECT json_agg(json_build_object('product_id', product_id, 'quantity', quantity::text, 'status', status))
-    FROM wms.pallet_quantity WHERE pallet_id = '{ids.pallet}'));""", parse=True)
+    FROM wms.packaging_quantity WHERE packaging_id = '{ids.packaging}'));""", parse=True)
 
 
 def cleanup(db, ids):
     remaining = db.sql("90-cleanup", f"""BEGIN;
 DELETE FROM app_system.write_log AS logged
-    WHERE logged.operation = 'wamn-wms:inventory/move' AND EXISTS
-      (SELECT 1 FROM wms.inventory_movement AS movement WHERE movement.pallet_id = '{ids.pallet}'
-         AND logged.result::jsonb -> 'movement_ids' ? movement.id::text);
-DELETE FROM wms.inventory_movement WHERE pallet_id = '{ids.pallet}';
-DELETE FROM wms.pallet_quantity WHERE pallet_id = '{ids.pallet}';
-DELETE FROM wms.pallet WHERE id = '{ids.pallet}';
+    WHERE logged.operation = 'wamn-wms:inventory/move' AND logged.result::jsonb ->> 'packaging_id' = '{ids.packaging}';
+DELETE FROM wms.inventory_transaction WHERE '{ids.packaging}' IN (from_packaging_id, to_packaging_id);
+DELETE FROM wms.packaging_quantity WHERE packaging_id = '{ids.packaging}';
+DELETE FROM wms.packaging WHERE id = '{ids.packaging}';
 DELETE FROM wms.location WHERE id IN ('{ids.source}', '{ids.destination}');
 DELETE FROM wms.product WHERE id = '{ids.product}';
 COMMIT;
-SELECT (SELECT count(*) FROM wms.pallet WHERE id = '{ids.pallet}')
+SELECT (SELECT count(*) FROM wms.packaging WHERE id = '{ids.packaging}')
   + (SELECT count(*) FROM wms.location WHERE id IN ('{ids.source}', '{ids.destination}'))
   + (SELECT count(*) FROM wms.product WHERE id = '{ids.product}');""")
     require(remaining == "0", "owned WMS fixture cleanup left rows")
@@ -188,14 +182,14 @@ def drive(session, relay, db, evidence, ids, mode):
         keys("set " + pointer, value.encode() + b"\r")
         session.until(lambda: "Enter saves; Esc cancels" not in session.display.text(), "saved input")
 
-    session.text("pallet / get")
+    session.text("packaging / get")
     require(termios.tcgetattr(session.slave) != session.original, "operator did not enter raw terminal mode")
-    edit("/id", ids.pallet)
+    edit("/id", ids.packaging)
     frame("10-read-input")
-    keys("read the owned pallet", b"\x13")
+    keys("read the owned packaging", b"\x13")
     session.text("inventory / move")
     edit("/value/to_location_id", ids.destination)
-    session.text(ids.pallet)
+    session.text(ids.packaging)
     require(any("/value/expected_row_version" in row and row.rstrip(" │").endswith(": 1")
                 for row in session.display.text().splitlines()), "composition did not bind the read revision")
     frame("11-move-input")
@@ -204,42 +198,35 @@ def drive(session, relay, db, evidence, ids, mode):
     frame("12-completion")
     records = relay.snapshot()
     require([(record["method"], record["path"]) for record in records]
-            == [("GET", "/pallet/get"), ("POST", "/inventory/move")],
+            == [("GET", "/packaging/get"), ("POST", "/inventory/move")],
             "the form did not send exactly one GET read and one POST move")
     move = records[1]
     request = json.loads(move["request_body"])
     require(len(request) == 1, "move request is not a single-item envelope")
     command = request[0]["value"]
-    require(set(command) == {"idempotency_key", "occurred_at", "pallet_id", "to_location_id", "expected_row_version"}
-            and command["pallet_id"] == ids.pallet and command["to_location_id"] == ids.destination
+    require(set(command) == {"idempotency_key", "occurred_at", "packaging_id", "to_location_id", "expected_row_version"}
+            and command["packaging_id"] == ids.packaging and command["to_location_id"] == ids.destination
             and command["expected_row_version"] == 1, "move body differs from the bound read and entered destination")
     response = json.loads(move["response_body"])
     answer = response
     require(len(answer) == 1 and answer[0]["request_id"] == request[0]["request_id"],
             "move response does not match the submitted request")
     value = answer[0]["value"]
-    movement_ids = [str(uuid.UUID(movement_id)) for movement_id in value["movement_ids"]]
-    require(len(movement_ids) == 1, "the move of one quantity row did not write one movement")
-    movement_id = movement_ids[0]
-    committed = {"movement_ids": movement_ids, "pallet_id": ids.pallet,
-                 "location_id": ids.destination, "pallet_status": "available", "row_version": 2}
+    committed = {"packaging_id": ids.packaging, "location_id": ids.destination, "row_version": 2}
     require(move["status"] == 200 and value == committed,
-            "successful move did not return the committed movement")
-    session.text(movement_id)
+            "successful move did not return the committed move")
+    # The label workflow keys the label by the packaging and its new revision.
+    label_key = ids.packaging + "/2"
     frame("13-committed-move")
     observed = snapshot(db, "14-committed-db", ids)
-    require(observed["claims"] == observed["movements"] == 1, "move did not commit exactly one claim and movement")
-    require(observed["command"] == {"idempotency_key": command["idempotency_key"], "movement_ids": movement_ids,
-                                    "pallet_id": ids.pallet, "pallet_status": "available", "row_version": 2},
+    require(observed["claims"] == 1, "move did not commit exactly one claim")
+    require(observed["transactions"] == 1, "a move wrote a transaction row, but it changes no stock")
+    require(observed["command"] == {"idempotency_key": command["idempotency_key"], **committed},
             "database write log result differs from the visible committed result")
-    require(observed["pallet"] == {"location_id": ids.destination, "status": "available", "row_version": 2},
-            "pallet did not retain the committed move")
-    require(observed["movement"] == {"id": movement_id, "pallet_id": ids.pallet,
-                                     "product_id": ids.product, "from_location_id": ids.source,
-                                     "to_location_id": ids.destination, "kind": "move", "quantity": "10.0000"},
-            "movement differs from the seeded quantity and locations")
+    require(observed["packaging"] == {"location_id": ids.destination, "status": "available", "row_version": 2},
+            "packaging did not retain the committed move")
     require(observed["quantity"] == [{"product_id": ids.product, "quantity": "10.0000", "status": "available"}],
-            "move changed the pallet quantity")
+            "move changed the packaging quantity")
     keys("attempt captured retry of the spent move", b"\x1b[18~")  # F7
     session.text("this submission does not permit captured retry")
     frame("15-retry-refused")
@@ -254,10 +241,10 @@ def drive(session, relay, db, evidence, ids, mode):
     session.finish()
     frame("18-restored-terminal")
     return {"exit_code": session.process.returncode, "terminal_restored": True, "mode": mode,
-            "movement_id": movement_id, "idempotency_key": command["idempotency_key"],
-            "pallet_id": ids.pallet, "location_id": ids.destination,
+            "label_key": label_key, "idempotency_key": command["idempotency_key"],
+            "packaging_id": ids.packaging, "location_id": ids.destination,
             "row_version": 2, "http_requests": 2, "read_requests": 1, "move_requests": 1,
-            "committed_claims": 1, "committed_movements": 1, "spent_controls_send_nothing": True}
+            "committed_claims": 1, "committed_transactions": 0, "spent_controls_send_nothing": True}
 
 
 def main():
@@ -287,7 +274,7 @@ def main():
         helper.TIMEOUT = args.timeout
         helper.ROWS, helper.COLUMNS = 60, 260
         evidence = support.Evidence(args.evidence_dir, [token, database_url, unquote(urlsplit(database_url).password or "")])
-        ids = SimpleNamespace(**{key: str(uuid.uuid4()) for key in ("pallet", "product", "source", "destination")})
+        ids = SimpleNamespace(**{key: str(uuid.uuid4()) for key in ("packaging", "product", "source", "destination")})
         prefix = "WMS-TUI-" + uuid.uuid4().hex[:8]
         evidence.json("inputs.json", {"binary": str(binary), "binary_sha256": hashlib.sha256(binary.read_bytes()).hexdigest(),
                       "driver_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
@@ -299,7 +286,7 @@ def main():
         db = support.Database(database_url, evidence)
         seed(db, ids, prefix)
         initial = snapshot(db, "02-initial-db", ids)
-        require(initial["claims"] == initial["movements"] == 0, "fixture already has a move")
+        require(initial["claims"] == 0 and initial["transactions"] == 1, "fixture already has a move")
         relay = Relay(args.endpoint, args.host, token, args.timeout)
         evidence.event("launch", binary=str(binary), credential="private PAT file via WAMN_TOKEN",
                        relay=relay.url, upstream=args.endpoint)

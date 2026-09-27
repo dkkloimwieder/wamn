@@ -29,7 +29,7 @@ struct JsonRoot {
     expected_row_version: i32,
     idempotency_key: String,
     occurred_at: String,
-    pallet_id: String,
+    packaging_id: String,
     to_location_id: String,
 }
 
@@ -42,7 +42,7 @@ pub(crate) fn decode(input: &str) -> Result<Vec<contract::MoveItem>, CodecError>
                     expected_row_version: request.value.expected_row_version,
                     idempotency_key: request.value.idempotency_key,
                     occurred_at: request.value.occurred_at,
-                    pallet_id: request.value.pallet_id,
+                    packaging_id: request.value.packaging_id,
                     to_location_id: request.value.to_location_id,
                 })
                 .map_err(|_| invalid("input"));
@@ -61,15 +61,14 @@ fn invalid(field: &str) -> contract::InvalidInputDetail {
 }
 
 pub(crate) fn encode(output: &[contract::MoveOutcome]) -> String {
-    let values = output.iter().map(|item| {
-        match &item.outcome {
+    let values = output
+        .iter()
+        .map(|item| match &item.outcome {
             Ok(value) => json!({
                 "request_id": item.request_id,
                 "value": {
-                    "movement_ids": value.movement_ids.iter().map(|element| json!(element)).collect::<Vec<_>>(),
-                    "pallet_id": value.pallet_id,
+                    "packaging_id": value.packaging_id,
                     "location_id": value.location_id,
-                    "pallet_status": value.pallet_status,
                     "row_version": value.row_version,
                 }
             }),
@@ -77,8 +76,8 @@ pub(crate) fn encode(output: &[contract::MoveOutcome]) -> String {
                 "request_id": item.request_id,
                 "error": error_value(error),
             }),
-        }
-    }).collect::<Vec<_>>();
+        })
+        .collect::<Vec<_>>();
     serde_json::to_string(&values).expect("typed outcomes always serialize")
 }
 
@@ -98,11 +97,11 @@ fn error_value(error: &contract::MoveError) -> Value {
             }
             ("invalid_input", detail)
         }
-        contract::MoveError::PalletNotFound(value) => {
+        contract::MoveError::PackagingNotFound(value) => {
             let mut detail = Map::new();
             detail.insert("field".to_owned(), json!(value.field));
             detail.insert("id".to_owned(), json!(value.id));
-            ("pallet_not_found", detail)
+            ("packaging_not_found", detail)
         }
         contract::MoveError::LocationNotFound(value) => {
             let mut detail = Map::new();
@@ -142,9 +141,9 @@ fn error_value(error: &contract::MoveError) -> Value {
 fn normalize(request: &mut contract::MoveRequest) -> Result<(), contract::InvalidInputDetail> {
     let _ = &request;
     {
-        let value = &mut request.pallet_id;
+        let value = &mut request.packaging_id;
         if !canonical_uuid(value) {
-            return Err(invalid("value.pallet_id"));
+            return Err(invalid("value.packaging_id"));
         }
     }
     {
@@ -180,7 +179,7 @@ fn request_bytes(request: &contract::MoveRequest, intent: Option<&str>) -> Vec<u
                     .unwrap_or_else(|| request.occurred_at.clone())
             ),
         );
-        value.insert("pallet_id".to_owned(), json!(&request.pallet_id));
+        value.insert("packaging_id".to_owned(), json!(&request.packaging_id));
         value.insert("to_location_id".to_owned(), json!(&request.to_location_id));
         Value::Object(value)
     };
@@ -208,10 +207,8 @@ fn stored_result(result: &contract::MoveResult) -> String {
 
 #[derive(Deserialize)]
 struct JsonResult {
-    movement_ids: Vec<String>,
-    pallet_id: String,
+    packaging_id: String,
     location_id: String,
-    pallet_status: String,
     row_version: i32,
 }
 
@@ -219,10 +216,8 @@ struct JsonResult {
 fn stored_success(result: &str) -> Option<contract::MoveResult> {
     let value: JsonResult = serde_json::from_str(result).ok()?;
     Some(contract::MoveResult {
-        movement_ids: value.movement_ids,
-        pallet_id: value.pallet_id,
+        packaging_id: value.packaging_id,
         location_id: value.location_id,
-        pallet_status: value.pallet_status,
         row_version: value.row_version,
     })
 }
@@ -315,10 +310,8 @@ macro_rules! row {
     ($row:expr, $target:path) => {{
         let row = $row;
         $target {
-            movement_ids: row.movement_ids.into_iter().map(|value| value.0).collect(),
-            pallet_id: row.pallet_id.0,
+            packaging_id: row.packaging_id.0,
             location_id: row.location_id.0,
-            pallet_status: row.pallet_status,
             row_version: row.row_version,
         }
     }};
@@ -346,14 +339,14 @@ pub(crate) fn map_error(
                 observed,
             })
         }
-        "pallet_not_found" => {
+        "packaging_not_found" => {
             let Some(field) = detail("field") else {
                 return contract::MoveError::InternalError;
             };
             let Some(id) = detail("id") else {
                 return contract::MoveError::InternalError;
             };
-            contract::MoveError::PalletNotFound(contract::PalletNotFoundDetail { field, id })
+            contract::MoveError::PackagingNotFound(contract::PackagingNotFoundDetail { field, id })
         }
         "location_not_found" => {
             let Some(field) = detail("field") else {

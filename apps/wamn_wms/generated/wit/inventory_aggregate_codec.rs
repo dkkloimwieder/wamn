@@ -47,7 +47,7 @@ pub(crate) fn encode(output: &[contract::AggregateOutcome]) -> String {
                     "location_id": row.location_id,
                     "status": row.status,
                     "quantity": row.quantity,
-                    "pallet_count": row.pallet_count,
+                    "packaging_count": row.packaging_count,
                 })).collect::<Vec<_>>() }
             }),
             Err(error) => json!({
@@ -117,7 +117,7 @@ macro_rules! row {
             location_id: row.location_id.0,
             status: row.status,
             quantity: row.quantity.0,
-            pallet_count: row.pallet_count,
+            packaging_count: row.packaging_count,
         }
     }};
 }

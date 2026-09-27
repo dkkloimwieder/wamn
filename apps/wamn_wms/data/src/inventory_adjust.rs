@@ -1,17 +1,19 @@
 //! `inventory.adjust` -- a counted correction to one quantity row.
 //!
 //! ```text
-//! → lock the pallet          (the serialization point)
+//! → lock the packaging          (the serialization point)
 //! → compare expected_row_version to observed
-//! → set the (pallet, product, status) row to the counted quantity
-//! → write the movement, with its reason
-//! → bump the pallet's revision
+//! → read the (packaging, product, status) balance
+//! → write the transaction: the difference between the count and the balance
+//! → set the balance to the count, or delete it at zero
+//! → bump the packaging's revision
 //! ```
 //!
-//! The movement records the quantity the row BECAME, not a delta: an adjust
-//! is a count, and the history keeps what was counted. The generated codec
-//! claims the key in the write log and holds the transaction, so a retry
-//! answers the stored result. The one movement id is the id of the movement row.
+//! A higher count is stock that appears and a lower count is stock that
+//! leaves, so the transaction row carries the sign in which side it sets
+//! (`insert_transaction.sql`). A count equal to the balance changes nothing
+//! and refuses. The generated codec claims the key in the write log and holds
+//! the transaction, so a retry answers the stored result.
 
 use serde::Deserialize;
 use wamn_postgres_statements::{Numeric, TimestampTz, Transaction, Uuid};
@@ -23,7 +25,7 @@ use crate::scalar;
 /// One envelope item's command body.
 #[derive(Debug, Deserialize)]
 pub struct AdjustCommand {
-    pub pallet_id: String,
+    pub packaging_id: String,
     pub product_id: String,
     pub status: String,
     pub quantity: String,
@@ -35,17 +37,17 @@ pub struct AdjustCommand {
 /// What one accepted adjust answers with.
 #[derive(Debug, PartialEq, Eq)]
 pub struct AdjustResult {
-    pub movement_ids: Vec<String>,
-    pub pallet_id: String,
+    pub transaction_ids: Vec<String>,
+    pub packaging_id: String,
     pub adjusted_quantity: String,
-    pub pallet_status: String,
+    pub packaging_status: String,
     pub row_version: i32,
 }
 
 /// The command's scalars in their one wire spelling.
 #[derive(Debug)]
 struct Parsed {
-    pallet_id: Uuid,
+    packaging_id: Uuid,
     product_id: Uuid,
     status: String,
     quantity: Numeric,
@@ -60,10 +62,10 @@ fn parse(command: &AdjustCommand) -> Result<Parsed, AccessError> {
         ));
     }
     Ok(Parsed {
-        pallet_id: scalar::uuid("value.pallet_id", &command.pallet_id)?,
+        packaging_id: scalar::uuid("value.packaging_id", &command.packaging_id)?,
         product_id: scalar::uuid("value.product_id", &command.product_id)?,
         status: scalar::quantity_status("value.status", &command.status)?,
-        quantity: scalar::numeric("value.quantity", &command.quantity)?,
+        quantity: scalar::count("value.quantity", &command.quantity)?,
         occurred_at: scalar::timestamp("value.occurred_at", &command.occurred_at)?,
     })
 }
@@ -90,12 +92,12 @@ async fn run(
     // THE SERIALIZATION POINT.
     let not_found = || {
         AccessError::missing(
-            AccessErrorKind::PalletNotFound,
-            "value.pallet_id",
-            &parsed.pallet_id.0,
+            AccessErrorKind::PackagingNotFound,
+            "value.packaging_id",
+            &parsed.packaging_id.0,
         )
     };
-    let locked = sql::lock_pallet(transaction, parsed.pallet_id.clone())
+    let locked = sql::lock_packaging(transaction, parsed.packaging_id.clone())
         .await
         .map_err(|e| error::from_statement(&e))?
         .ok_or_else(not_found)?;
@@ -109,43 +111,71 @@ async fn run(
         ));
     }
 
-    let set = sql::set_quantity(
-        transaction,
-        parsed.pallet_id.clone(),
-        parsed.product_id.clone(),
-        parsed.status.clone(),
-        parsed.quantity.clone(),
-    )
-    .await
-    .map_err(|e| error::from_statement(&e))?
-    .ok_or_else(|| {
+    let quantity_not_found = || {
         AccessError::missing(
             AccessErrorKind::QuantityNotFound,
             "value.product_id",
             &parsed.product_id.0,
         )
-    })?;
-
-    let movement = sql::insert_movement(
+    };
+    sql::select_quantity(
         transaction,
-        parsed.pallet_id.clone(),
+        parsed.packaging_id.clone(),
         parsed.product_id.clone(),
-        set.quantity.clone(),
+        parsed.status.clone(),
+    )
+    .await
+    .map_err(|e| error::from_statement(&e))?
+    .ok_or_else(quantity_not_found)?;
+
+    // A count equal to the balance selects no row: nothing to change.
+    let written = sql::insert_transaction(
+        transaction,
+        parsed.packaging_id.clone(),
+        parsed.product_id.clone(),
+        parsed.status.clone(),
+        parsed.quantity.clone(),
         command.reason_code.clone(),
         parsed.occurred_at.clone(),
     )
     .await
-    .map_err(|e| error::from_statement(&e))?;
+    .map_err(|e| error::from_statement(&e))?
+    .ok_or_else(|| AccessError::field(AccessErrorKind::InvalidInput, "value.quantity"))?;
 
-    let touched = sql::touch_pallet(transaction, parsed.pallet_id.clone())
+    // A balance row means stock is present, so a count of zero deletes it.
+    let adjusted_quantity = if scalar::is_zero(&parsed.quantity) {
+        sql::delete_quantity(
+            transaction,
+            parsed.packaging_id.clone(),
+            parsed.product_id.clone(),
+            parsed.status.clone(),
+        )
+        .await
+        .map_err(|e| error::from_statement(&e))?;
+        parsed.quantity.0.clone()
+    } else {
+        sql::set_quantity(
+            transaction,
+            parsed.packaging_id.clone(),
+            parsed.product_id.clone(),
+            parsed.status.clone(),
+            parsed.quantity.clone(),
+        )
+        .await
+        .map_err(|e| error::from_statement(&e))?
+        .map(|set| set.quantity.0)
+        .ok_or_else(quantity_not_found)?
+    };
+
+    let touched = sql::touch_packaging(transaction, parsed.packaging_id.clone())
         .await
         .map_err(|e| error::from_statement(&e))?;
 
     Ok(AdjustResult {
-        movement_ids: vec![movement.id.0],
-        pallet_id: parsed.pallet_id.0.clone(),
-        adjusted_quantity: set.quantity.0,
-        pallet_status: touched.status,
+        transaction_ids: vec![written.id.0],
+        packaging_id: parsed.packaging_id.0.clone(),
+        adjusted_quantity,
+        packaging_status: touched.status,
         row_version: touched.row_version,
     })
 }
@@ -154,9 +184,9 @@ async fn run(
 mod tests {
     use super::*;
 
-    fn command(pallet_id: &str, occurred_at: &str) -> AdjustCommand {
+    fn command(packaging_id: &str, occurred_at: &str) -> AdjustCommand {
         AdjustCommand {
-            pallet_id: pallet_id.to_owned(),
+            packaging_id: packaging_id.to_owned(),
             product_id: "00000000-0000-0000-0000-000000000101".to_owned(),
             status: "available".to_owned(),
             quantity: "7".to_owned(),

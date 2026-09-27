@@ -79,7 +79,11 @@ pub(super) fn static_sql_native_bind_fixtures(
             accessor.binds.iter().map(|bind| NativeBindFixture {
                 accessor: accessor.name.clone(),
                 parameter: bind.parameter.clone(),
-                function: format!("{}_{}_bind_fixture", accessor.name, bind.parameter),
+                function: format!(
+                    "{}_{}_bind_fixture",
+                    accessor.name,
+                    bind.parameter.trim_start_matches("r#")
+                ),
                 visibility: RustVisibility::Crate,
                 rust_type: bind.native_rust.clone(),
                 value: native_inert_value(bind),
@@ -485,7 +489,11 @@ pub(super) fn native_bind_fixtures(api: &WamnApi) -> Vec<NativeBindFixture> {
             accessor.binds.iter().map(|bind| NativeBindFixture {
                 accessor: accessor.name.clone(),
                 parameter: bind.parameter.clone(),
-                function: format!("{}_{}_bind_fixture", accessor.name, bind.parameter),
+                function: format!(
+                    "{}_{}_bind_fixture",
+                    accessor.name,
+                    bind.parameter.trim_start_matches("r#")
+                ),
                 visibility: RustVisibility::Crate,
                 rust_type: bind.native_rust.clone(),
                 value: native_inert_value(bind),
@@ -889,7 +897,8 @@ fn emit_stream_accessor_body(source: &mut String, accessor: &WamnAccessor, row: 
         writeln!(
             source,
             "            {}: row.decode({:?})?,",
-            field.name, field.name
+            field.name,
+            field.name.trim_start_matches("r#")
         )
         .expect("writing to a String cannot fail");
     }
@@ -913,7 +922,8 @@ fn emit_decode_result(
         writeln!(
             source,
             "            {}: row.decode({:?})?,",
-            field.name, field.name
+            field.name,
+            field.name.trim_start_matches("r#")
         )
         .expect("writing to a String cannot fail");
     }

@@ -181,6 +181,11 @@ pub struct EventRegistrationDeclaration {
     pub source_package: String,
     pub entity: String,
     pub ops: Vec<wamn_event_wire::Op>,
+    /// The JMESPath predicate over `{op, old, new}` that selects the events,
+    /// as the platform registration takes it. A predicate that reads `old`
+    /// makes the reconciler run the entity with `REPLICA IDENTITY FULL`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub condition: Option<String>,
 }
 
 /// Transaction boundary admitted for custom commands in the POC.
@@ -2341,6 +2346,17 @@ pub(crate) fn rust_identifier(value: &str) -> Option<String> {
     }
 }
 
+/// Spell one singular snake_case name as wit-bindgen spells a WIT record
+/// member in Rust: a keyword takes a trailing underscore, as `type_` for
+/// `%type`. Generated code that names a member of a bindgen type uses this
+/// spelling, and every other generated Rust uses [`rust_identifier`].
+pub(crate) fn binding_identifier(value: &str) -> Option<String> {
+    rust_identifier(value).map(|name| match name.strip_prefix("r#") {
+        Some(keyword) => format!("{keyword}_"),
+        None => name,
+    })
+}
+
 pub(crate) fn custom_artifact_stem(operation: &str) -> String {
     operation.replace('.', "_")
 }
@@ -2360,13 +2376,15 @@ pub(crate) fn rust_type_identifier(value: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::rust_identifier;
+    use super::{binding_identifier, rust_identifier};
 
     #[test]
     fn rust_2024_names_have_one_lossless_spelling_authority() {
         for keyword in ["type", "async", "await", "move"] {
             assert_eq!(rust_identifier(keyword), Some(format!("r#{keyword}")));
+            assert_eq!(binding_identifier(keyword), Some(format!("{keyword}_")));
         }
+        assert_eq!(binding_identifier("status"), Some("status".to_owned()));
         for raw_ineligible in ["crate", "self", "super"] {
             assert_eq!(rust_identifier(raw_ineligible), None);
         }

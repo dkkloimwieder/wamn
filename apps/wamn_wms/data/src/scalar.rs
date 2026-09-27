@@ -10,7 +10,7 @@ use wamn_postgres_statements::{Numeric, TimestampTz, Uuid};
 
 use crate::error::{AccessError, AccessErrorKind};
 
-/// The pallet status a command refuses to work on: a consumed pallet is
+/// The packaging status a command refuses to work on: a consumed packaging is
 /// history, not live stock (`inventory_aggregate.sql` says why).
 pub(crate) const CONSUMED: &str = "consumed";
 
@@ -49,8 +49,33 @@ pub(crate) fn numeric(field: &str, value: &str) -> Result<Numeric, AccessError> 
         .ok_or_else(|| AccessError::field(AccessErrorKind::InvalidInput, field))
 }
 
+/// A counted quantity: zero or positive, RE-SPELLED as [`numeric`] does. A
+/// count of zero is how an adjust says that the stock is gone.
+pub(crate) fn count(field: &str, value: &str) -> Result<Numeric, AccessError> {
+    wamn_execution_contract::canonical_numeric(value)
+        .filter(|respelled| !respelled.starts_with('-'))
+        .map(Numeric)
+        .ok_or_else(|| AccessError::field(AccessErrorKind::InvalidInput, field))
+}
+
+/// Whether a re-spelled quantity is zero at any scale.
+pub(crate) fn is_zero(quantity: &Numeric) -> bool {
+    !quantity
+        .0
+        .bytes()
+        .any(|byte| byte.is_ascii_digit() && byte != b'0')
+}
+
+/// The type of a packaging. A pallet is one type of packaging.
+pub(crate) fn packaging_type(field: &str, value: &str) -> Result<String, AccessError> {
+    match value {
+        "pallet" | "tote" | "bin" | "case" | "loose" => Ok(value.to_owned()),
+        _ => Err(AccessError::field(AccessErrorKind::InvalidInput, field)),
+    }
+}
+
 /// The status of a QUANTITY row, which is never `consumed`: consumption is a
-/// pallet's fate, and its rows keep the status they had.
+/// packaging's fate, and its rows keep the status they had.
 pub(crate) fn quantity_status(field: &str, value: &str) -> Result<String, AccessError> {
     match value {
         "available" | "held" => Ok(value.to_owned()),
@@ -88,6 +113,17 @@ mod tests {
         }
         for refused in ["", ".", "0", "0.0", "00.000", "-1", "1e3", " 1", "1,5"] {
             assert!(numeric("f", refused).is_err(), "{refused:?} must refuse");
+        }
+    }
+
+    #[test]
+    fn a_count_admits_zero_and_refuses_a_sign() {
+        for zero in ["0", "0.00"] {
+            assert!(is_zero(&count("f", zero).unwrap()), "{zero}");
+        }
+        assert!(!is_zero(&count("f", "0.5").unwrap()));
+        for refused in ["", "-1", "-0", "1e3"] {
+            assert!(count("f", refused).is_err(), "{refused:?} must refuse");
         }
     }
 

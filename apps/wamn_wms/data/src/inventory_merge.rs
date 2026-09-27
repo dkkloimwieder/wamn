@@ -1,24 +1,26 @@
-//! `inventory.merge` -- one pallet absorbed into another.
+//! `inventory.merge` -- one packaging absorbed into another.
 //!
 //! ```text
-//! → lock BOTH pallets, in id order   (the serialization point)
+//! → lock BOTH packagings, in id order   (the serialization point)
 //! → compare expected_row_version to the target's
 //! → for each source quantity row: add it to the target's matching row,
-//!   or place a new one, and write a movement
-//! → consume the source (a tombstone: the platform admits no DELETE)
+//!   or place a new one, and write a transaction from source to target
+//! → delete the source balance rows, and consume the source
 //! → bump the target's revision
 //! ```
 //!
 //! The generated codec claims the key in the write log and holds the
-//! transaction, so a retry answers the stored result. The movement ids are the
-//! ids of the movement rows; a source with no quantity rows writes none.
+//! transaction, so a retry answers the stored result. The transaction ids are
+//! the ids of the rows it wrote, one for each source quantity row. A source
+//! with no quantity rows has nothing to merge and refuses. The two packagings
+//! need not share a type.
 //!
-//! The revision the caller names is the TARGET's: that is the pallet the
+//! The revision the caller names is the TARGET's: that is the packaging the
 //! command answers with and the one whose stock changes. The source only has
 //! to be live, and once consumed it can never be merged again, so a stale
 //! view of it has nothing to race. Both are locked in id order -- two merges
-//! naming one pair in opposite orders cannot deadlock (`lock_both_pallets.sql`).
-//! Movements are recorded against the source, the pallet the stock left.
+//! naming one pair in opposite orders cannot deadlock (`lock_both_packagings.sql`).
+//! Each transaction row names both packagings.
 
 use serde::Deserialize;
 use wamn_postgres_statements::{TimestampTz, Transaction, Uuid};
@@ -30,8 +32,8 @@ use crate::scalar;
 /// One envelope item's command body.
 #[derive(Debug, Deserialize)]
 pub struct MergeCommand {
-    pub source_pallet_id: String,
-    pub target_pallet_id: String,
+    pub source_packaging_id: String,
+    pub target_packaging_id: String,
     pub expected_row_version: i32,
     pub occurred_at: String,
 }
@@ -39,31 +41,37 @@ pub struct MergeCommand {
 /// What one accepted merge answers with.
 #[derive(Debug, PartialEq, Eq)]
 pub struct MergeResult {
-    pub movement_ids: Vec<String>,
-    pub source_pallet_id: String,
-    pub target_pallet_id: String,
+    pub transaction_ids: Vec<String>,
+    pub source_packaging_id: String,
+    pub target_packaging_id: String,
     pub target_status: String,
     pub row_version: i32,
 }
 
 #[derive(Debug)]
 struct Parsed {
-    source_pallet_id: Uuid,
-    target_pallet_id: Uuid,
+    source_packaging_id: Uuid,
+    target_packaging_id: Uuid,
     occurred_at: TimestampTz,
 }
 
 fn parse(command: &MergeCommand) -> Result<Parsed, AccessError> {
     let parsed = Parsed {
-        source_pallet_id: scalar::uuid("value.source_pallet_id", &command.source_pallet_id)?,
-        target_pallet_id: scalar::uuid("value.target_pallet_id", &command.target_pallet_id)?,
+        source_packaging_id: scalar::uuid(
+            "value.source_packaging_id",
+            &command.source_packaging_id,
+        )?,
+        target_packaging_id: scalar::uuid(
+            "value.target_packaging_id",
+            &command.target_packaging_id,
+        )?,
         occurred_at: scalar::timestamp("value.occurred_at", &command.occurred_at)?,
     };
-    // A pallet merged into itself is refused here, before any statement.
-    if parsed.source_pallet_id.0 == parsed.target_pallet_id.0 {
+    // A packaging merged into itself is refused here, before any statement.
+    if parsed.source_packaging_id.0 == parsed.target_packaging_id.0 {
         return Err(AccessError::field(
             AccessErrorKind::InvalidInput,
-            "value.target_pallet_id",
+            "value.target_packaging_id",
         ));
     }
     Ok(parsed)
@@ -87,24 +95,32 @@ pub async fn execute(
 /// one is the refusal that names it, and a consumed one is not live stock and
 /// refuses the same way.
 fn locked_target(
-    rows: Vec<sql::LockBothPalletsRow>,
+    rows: Vec<sql::LockBothPackagingsRow>,
     parsed: &Parsed,
-) -> Result<sql::LockBothPalletsRow, AccessError> {
+) -> Result<sql::LockBothPackagingsRow, AccessError> {
     let mut source = None;
     let mut target = None;
     for row in rows {
-        if row.id.0 == parsed.source_pallet_id.0 {
+        if row.id.0 == parsed.source_packaging_id.0 {
             source = Some(row);
-        } else if row.id.0 == parsed.target_pallet_id.0 {
+        } else if row.id.0 == parsed.target_packaging_id.0 {
             target = Some(row);
         }
     }
-    let live = |row: Option<sql::LockBothPalletsRow>, field: &str, id: &Uuid| {
+    let live = |row: Option<sql::LockBothPackagingsRow>, field: &str, id: &Uuid| {
         row.filter(|row| row.status != scalar::CONSUMED)
-            .ok_or_else(|| AccessError::missing(AccessErrorKind::PalletNotFound, field, &id.0))
+            .ok_or_else(|| AccessError::missing(AccessErrorKind::PackagingNotFound, field, &id.0))
     };
-    live(source, "value.source_pallet_id", &parsed.source_pallet_id)?;
-    live(target, "value.target_pallet_id", &parsed.target_pallet_id)
+    live(
+        source,
+        "value.source_packaging_id",
+        &parsed.source_packaging_id,
+    )?;
+    live(
+        target,
+        "value.target_packaging_id",
+        &parsed.target_packaging_id,
+    )
 }
 
 async fn run(
@@ -113,10 +129,10 @@ async fn run(
     parsed: &Parsed,
 ) -> Result<MergeResult, AccessError> {
     // THE SERIALIZATION POINT: both rows, in id order.
-    let rows = sql::lock_both_pallets(
+    let rows = sql::lock_both_packagings(
         transaction,
-        parsed.source_pallet_id.clone(),
-        parsed.target_pallet_id.clone(),
+        parsed.source_packaging_id.clone(),
+        parsed.target_packaging_id.clone(),
     )
     .await
     .map_err(|e| error::from_statement(&e))?;
@@ -129,15 +145,21 @@ async fn run(
     }
 
     // EVERY SOURCE ROW LANDS ON THE TARGET, matched by product and status,
-    // and each is a movement of its own.
-    let quantities = sql::select_source_quantity(transaction, parsed.source_pallet_id.clone())
+    // and each is a transaction of its own.
+    let quantities = sql::select_source_quantity(transaction, parsed.source_packaging_id.clone())
         .await
         .map_err(|e| error::from_statement(&e))?;
-    let mut movement_ids = Vec::new();
+    if quantities.is_empty() {
+        return Err(AccessError::field(
+            AccessErrorKind::InvalidInput,
+            "value.source_packaging_id",
+        ));
+    }
+    let mut transaction_ids = Vec::with_capacity(quantities.len());
     for quantity in &quantities {
         let added = sql::add_to_target(
             transaction,
-            parsed.target_pallet_id.clone(),
+            parsed.target_packaging_id.clone(),
             quantity.product_id.clone(),
             quantity.status.clone(),
             quantity.quantity.clone(),
@@ -147,7 +169,7 @@ async fn run(
         if added.is_none() {
             sql::place_on_target(
                 transaction,
-                parsed.target_pallet_id.clone(),
+                parsed.target_packaging_id.clone(),
                 quantity.product_id.clone(),
                 quantity.status.clone(),
                 quantity.quantity.clone(),
@@ -155,29 +177,35 @@ async fn run(
             .await
             .map_err(|e| error::from_statement(&e))?;
         }
-        let movement = sql::insert_movement(
+        let written = sql::insert_transaction(
             transaction,
-            parsed.source_pallet_id.clone(),
             quantity.product_id.clone(),
             quantity.quantity.clone(),
+            parsed.source_packaging_id.clone(),
+            quantity.status.clone(),
+            parsed.target_packaging_id.clone(),
             parsed.occurred_at.clone(),
         )
         .await
         .map_err(|e| error::from_statement(&e))?;
-        movement_ids.push(movement.id.0);
+        transaction_ids.push(written.id.0);
     }
 
-    sql::consume_source(transaction, parsed.source_pallet_id.clone())
+    // The whole source moved, so its balance rows are gone.
+    sql::delete_source_quantity(transaction, parsed.source_packaging_id.clone())
         .await
         .map_err(|e| error::from_statement(&e))?;
-    let touched = sql::touch_target(transaction, parsed.target_pallet_id.clone())
+    sql::consume_source(transaction, parsed.source_packaging_id.clone())
+        .await
+        .map_err(|e| error::from_statement(&e))?;
+    let touched = sql::touch_target(transaction, parsed.target_packaging_id.clone())
         .await
         .map_err(|e| error::from_statement(&e))?;
 
     Ok(MergeResult {
-        movement_ids,
-        source_pallet_id: parsed.source_pallet_id.0.clone(),
-        target_pallet_id: parsed.target_pallet_id.0.clone(),
+        transaction_ids,
+        source_packaging_id: parsed.source_packaging_id.0.clone(),
+        target_packaging_id: parsed.target_packaging_id.0.clone(),
         target_status: touched.status,
         row_version: touched.row_version,
     })
@@ -192,15 +220,15 @@ mod tests {
 
     fn command(source: &str, target: &str) -> MergeCommand {
         MergeCommand {
-            source_pallet_id: source.to_owned(),
-            target_pallet_id: target.to_owned(),
+            source_packaging_id: source.to_owned(),
+            target_packaging_id: target.to_owned(),
             expected_row_version: 1,
             occurred_at: "2026-09-05T00:00:00Z".to_owned(),
         }
     }
 
-    fn row(id: &str, status: &str) -> sql::LockBothPalletsRow {
-        sql::LockBothPalletsRow {
+    fn row(id: &str, status: &str) -> sql::LockBothPackagingsRow {
+        sql::LockBothPackagingsRow {
             id: Uuid(id.to_owned()),
             location_id: Uuid("00000000-0000-0000-0000-000000000201".to_owned()),
             row_version: 1,
@@ -209,15 +237,15 @@ mod tests {
     }
 
     #[test]
-    fn a_pallet_merged_into_itself_is_invalid_input() {
+    fn a_packaging_merged_into_itself_is_invalid_input() {
         let error = parse(&command(SOURCE, SOURCE)).unwrap_err();
         assert_eq!(error.kind(), AccessErrorKind::InvalidInput);
-        assert_eq!(error.detail()["field"], "value.target_pallet_id");
+        assert_eq!(error.detail()["field"], "value.target_packaging_id");
         assert!(parse(&command(SOURCE, TARGET)).is_ok());
     }
 
     /// The lock answers in id order and may answer with fewer rows than
-    /// asked; the pair is found by id, and a consumed pallet is not live.
+    /// asked; the pair is found by id, and a consumed packaging is not live.
     #[test]
     fn the_locked_pair_is_found_by_id_and_must_be_live() {
         let parsed = parse(&command(TARGET, SOURCE)).unwrap();
@@ -227,8 +255,8 @@ mod tests {
 
         let parsed = parse(&command(SOURCE, TARGET)).unwrap();
         let missing = locked_target(vec![row(SOURCE, "available")], &parsed).unwrap_err();
-        assert_eq!(missing.kind(), AccessErrorKind::PalletNotFound);
-        assert_eq!(missing.detail()["field"], "value.target_pallet_id");
+        assert_eq!(missing.kind(), AccessErrorKind::PackagingNotFound);
+        assert_eq!(missing.detail()["field"], "value.target_packaging_id");
         assert_eq!(missing.detail()["id"], TARGET);
 
         let consumed = locked_target(
@@ -236,7 +264,7 @@ mod tests {
             &parsed,
         )
         .unwrap_err();
-        assert_eq!(consumed.kind(), AccessErrorKind::PalletNotFound);
-        assert_eq!(consumed.detail()["field"], "value.source_pallet_id");
+        assert_eq!(consumed.kind(), AccessErrorKind::PackagingNotFound);
+        assert_eq!(consumed.detail()["field"], "value.source_packaging_id");
     }
 }

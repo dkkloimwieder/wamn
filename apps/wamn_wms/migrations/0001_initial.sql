@@ -12,72 +12,78 @@ CREATE TABLE wms.location (
     created_at timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
-CREATE TABLE wms.pallet (
-    id uuid CONSTRAINT pallet_id_pkey PRIMARY KEY DEFAULT gen_random_uuid(),
-    pallet_code text NOT NULL CONSTRAINT pallet_pallet_code_key UNIQUE,
+CREATE TABLE wms.packaging (
+    id uuid CONSTRAINT packaging_id_pkey PRIMARY KEY DEFAULT gen_random_uuid(),
+    packaging_code text NOT NULL CONSTRAINT packaging_packaging_code_key UNIQUE,
     location_id uuid NOT NULL
-        CONSTRAINT pallet_location_id_fkey
+        CONSTRAINT packaging_location_id_fkey
         REFERENCES wms.location (id),
+    type text NOT NULL,
     status text NOT NULL,
     row_version int4 NOT NULL DEFAULT 1,
     created_at timestamptz NOT NULL,
     created_by uuid NOT NULL,
     updated_at timestamptz NOT NULL,
     updated_by uuid NOT NULL,
-    CONSTRAINT pallet_status_check
+    CONSTRAINT packaging_type_check
+        CHECK (type IN ('pallet', 'tote', 'bin', 'case', 'loose')),
+    CONSTRAINT packaging_status_check
         CHECK (status IN ('available', 'held', 'consumed'))
 );
 
-CREATE TABLE wms.pallet_quantity (
-    id uuid CONSTRAINT pallet_quantity_id_pkey PRIMARY KEY DEFAULT gen_random_uuid(),
-    pallet_id uuid NOT NULL
-        CONSTRAINT pallet_quantity_pallet_id_fkey
-        REFERENCES wms.pallet (id),
+CREATE TABLE wms.packaging_quantity (
+    id uuid CONSTRAINT packaging_quantity_id_pkey PRIMARY KEY DEFAULT gen_random_uuid(),
+    packaging_id uuid NOT NULL
+        CONSTRAINT packaging_quantity_packaging_id_fkey
+        REFERENCES wms.packaging (id),
     product_id uuid NOT NULL
-        CONSTRAINT pallet_quantity_product_id_fkey
+        CONSTRAINT packaging_quantity_product_id_fkey
         REFERENCES wms.product (id),
     status text NOT NULL,
     quantity numeric NOT NULL,
     created_at timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    CONSTRAINT pallet_quantity_pallet_id_product_id_status_key
-        UNIQUE (pallet_id, product_id, status),
-    CONSTRAINT pallet_quantity_status_check
+    CONSTRAINT packaging_quantity_packaging_id_product_id_status_key
+        UNIQUE (packaging_id, product_id, status),
+    CONSTRAINT packaging_quantity_status_check
         CHECK (status IN ('available', 'held')),
-    CONSTRAINT pallet_quantity_quantity_check CHECK (quantity > 0)
+    CONSTRAINT packaging_quantity_quantity_check CHECK (quantity > 0)
 );
 
-CREATE TABLE wms.inventory_movement (
-    id uuid CONSTRAINT inventory_movement_id_pkey PRIMARY KEY DEFAULT gen_random_uuid(),
-    pallet_id uuid NOT NULL
-        CONSTRAINT inventory_movement_pallet_id_fkey
-        REFERENCES wms.pallet (id),
+CREATE TABLE wms.inventory_transaction (
+    id uuid CONSTRAINT inventory_transaction_id_pkey PRIMARY KEY DEFAULT gen_random_uuid(),
     product_id uuid NOT NULL
-        CONSTRAINT inventory_movement_product_id_fkey
+        CONSTRAINT inventory_transaction_product_id_fkey
         REFERENCES wms.product (id),
-    kind text NOT NULL,
-    from_location_id uuid
-        CONSTRAINT inventory_movement_from_location_id_fkey
-        REFERENCES wms.location (id),
-    to_location_id uuid
-        CONSTRAINT inventory_movement_to_location_id_fkey
-        REFERENCES wms.location (id),
     quantity numeric NOT NULL,
-    reason_code text,
+    from_packaging_id uuid
+        CONSTRAINT inventory_transaction_from_packaging_id_fkey
+        REFERENCES wms.packaging (id),
+    from_status text,
+    to_packaging_id uuid
+        CONSTRAINT inventory_transaction_to_packaging_id_fkey
+        REFERENCES wms.packaging (id),
+    to_status text,
     occurred_at timestamptz NOT NULL,
+    reason_code text,
     created_at timestamptz NOT NULL,
     created_by uuid NOT NULL,
-    CONSTRAINT inventory_movement_kind_check
-        CHECK (kind IN ('move', 'adjust', 'merge', 'split')),
-    CONSTRAINT inventory_movement_quantity_check CHECK (quantity > 0),
-    CONSTRAINT inventory_movement_kind_from_location_id_to_location_id_check
+    CONSTRAINT inventory_transaction_quantity_check CHECK (quantity > 0),
+    CONSTRAINT inventory_transaction_from_status_check
+        CHECK (from_status IN ('available', 'held')),
+    CONSTRAINT inventory_transaction_to_status_check
+        CHECK (to_status IN ('available', 'held')),
+    CONSTRAINT inventory_transaction_from_packaging_id_from_status_check
+        CHECK ((from_packaging_id IS NULL) = (from_status IS NULL)),
+    CONSTRAINT inventory_transaction_to_packaging_id_to_status_check
+        CHECK ((to_packaging_id IS NULL) = (to_status IS NULL)),
+    CONSTRAINT inventory_transaction_from_packaging_id_to_packaging_id_check
         CHECK (
-            kind <> 'move'
-            OR (
-                from_location_id IS NOT NULL
-                AND to_location_id IS NOT NULL
-                AND from_location_id <> to_location_id
-            )
+            from_packaging_id IS NOT NULL
+            OR to_packaging_id IS NOT NULL
         ),
-    CONSTRAINT inventory_movement_kind_reason_code_check
-        CHECK (kind <> 'adjust' OR reason_code IS NOT NULL)
+    CONSTRAINT inventory_transaction_sides_check
+        CHECK (
+            from_packaging_id IS DISTINCT FROM to_packaging_id
+            OR from_status IS DISTINCT FROM to_status
+        )
 );

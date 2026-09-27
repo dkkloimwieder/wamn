@@ -29,7 +29,7 @@ mod adjust {
         inventory_adjust::execute(
             transaction,
             &inventory_adjust::AdjustCommand {
-                pallet_id: request.pallet_id,
+                packaging_id: request.packaging_id,
                 product_id: request.product_id,
                 status: request.status,
                 quantity: request.quantity,
@@ -40,10 +40,10 @@ mod adjust {
         )
         .await
         .map(|value| contract::AdjustResult {
-            movement_ids: value.movement_ids,
-            pallet_id: value.pallet_id,
+            transaction_ids: value.transaction_ids,
+            packaging_id: value.packaging_id,
             adjusted_quantity: value.adjusted_quantity,
-            pallet_status: value.pallet_status,
+            packaging_status: value.packaging_status,
             row_version: value.row_version,
         })
         .map_err(|error| codec::map_error(error.kind().literal(), |key| detail(&error, key)))
@@ -87,8 +87,8 @@ mod aggregate {
                         .quantity
                         .ok_or(contract::AggregateError::InternalError)?
                         .0,
-                    pallet_count: row
-                        .pallet_count
+                    packaging_count: row
+                        .packaging_count
                         .ok_or(contract::AggregateError::InternalError)?,
                 })
             })
@@ -123,17 +123,17 @@ mod merge {
         inventory_merge::execute(
             transaction,
             &inventory_merge::MergeCommand {
-                source_pallet_id: request.source_pallet_id,
-                target_pallet_id: request.target_pallet_id,
+                source_packaging_id: request.source_packaging_id,
+                target_packaging_id: request.target_packaging_id,
                 expected_row_version: request.expected_row_version,
                 occurred_at: request.occurred_at,
             },
         )
         .await
         .map(|value| contract::MergeResult {
-            movement_ids: value.movement_ids,
-            source_pallet_id: value.source_pallet_id,
-            target_pallet_id: value.target_pallet_id,
+            transaction_ids: value.transaction_ids,
+            source_packaging_id: value.source_packaging_id,
+            target_packaging_id: value.target_packaging_id,
             target_status: value.target_status,
             row_version: value.row_version,
         })
@@ -167,7 +167,7 @@ mod move_ {
         inventory_move::execute(
             transaction,
             &inventory_move::MoveCommand {
-                pallet_id: request.pallet_id,
+                packaging_id: request.packaging_id,
                 to_location_id: request.to_location_id,
                 expected_row_version: request.expected_row_version,
                 occurred_at: request.occurred_at,
@@ -175,10 +175,8 @@ mod move_ {
         )
         .await
         .map(|value| contract::MoveResult {
-            movement_ids: value.movement_ids,
-            pallet_id: value.pallet_id,
+            packaging_id: value.packaging_id,
             location_id: value.location_id,
-            pallet_status: value.pallet_status,
             row_version: value.row_version,
         })
         .map_err(|error| codec::map_error(error.kind().literal(), |key| detail(&error, key)))
@@ -211,11 +209,12 @@ mod split {
         inventory_split::execute(
             transaction,
             &inventory_split::SplitCommand {
-                source_pallet_id: request.source_pallet_id,
+                source_packaging_id: request.source_packaging_id,
                 product_id: request.product_id,
                 status: request.status,
                 quantity: request.quantity,
-                new_pallet_code: request.new_pallet_code,
+                new_packaging_code: request.new_packaging_code,
+                new_packaging_type: request.new_packaging_type,
                 to_location_id: request.to_location_id,
                 expected_row_version: request.expected_row_version,
                 occurred_at: request.occurred_at,
@@ -223,9 +222,9 @@ mod split {
         )
         .await
         .map(|value| contract::SplitResult {
-            movement_ids: value.movement_ids,
-            source_pallet_id: value.source_pallet_id,
-            new_pallet_id: value.new_pallet_id,
+            transaction_ids: value.transaction_ids,
+            source_packaging_id: value.source_packaging_id,
+            new_packaging_id: value.new_packaging_id,
             source_status: value.source_status,
             row_version: value.row_version,
         })

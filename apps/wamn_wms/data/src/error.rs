@@ -12,11 +12,11 @@ pub enum AccessErrorKind {
     InvalidInput,
     /// A model read named a row that does not exist.
     NotFound,
-    /// The named pallet does not exist, or is consumed and so not live stock.
-    PalletNotFound,
+    /// The named packaging does not exist, or is consumed and so not live stock.
+    PackagingNotFound,
     /// The destination location does not exist.
     LocationNotFound,
-    /// The pallet holds no quantity row for that product and status.
+    /// The packaging holds no quantity row for that product and status.
     QuantityNotFound,
     /// The quantity row cannot spare what was asked and still hold stock.
     InsufficientQuantity,
@@ -47,7 +47,7 @@ impl AccessErrorKind {
         match self {
             Self::InvalidInput => "invalid_input",
             Self::NotFound => "not_found",
-            Self::PalletNotFound => "pallet_not_found",
+            Self::PackagingNotFound => "packaging_not_found",
             Self::LocationNotFound => "location_not_found",
             Self::QuantityNotFound => "quantity_not_found",
             Self::InsufficientQuantity => "insufficient_quantity",

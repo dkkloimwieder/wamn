@@ -30,14 +30,14 @@ struct Operation {
 // four in one commit.
 const OPERATIONS: [Operation; 20] = [
     Operation {
-        token: "wamn-wms:pallet/get@1.0.0",
-        attachment: "pallet-get-http",
-        route: "/pallet/get",
+        token: "wamn-wms:packaging/get@1.0.0",
+        attachment: "packaging-get-http",
+        route: "/packaging/get",
     },
     Operation {
-        token: "wamn-wms:pallet/query@1.0.0",
-        attachment: "pallet-query-http",
-        route: "/pallet/query",
+        token: "wamn-wms:packaging/query@1.0.0",
+        attachment: "packaging-query-http",
+        route: "/packaging/query",
     },
     Operation {
         // RULED 2026-09-24 (wamn-nq1b): the move route calls the export like
@@ -67,14 +67,14 @@ const OPERATIONS: [Operation; 20] = [
         route: "/inventory/aggregate",
     },
     Operation {
-        token: "wamn-wms:inventory-movement/get@1.0.0",
-        attachment: "inventory-movement-get-http",
-        route: "/inventory_movement/get",
+        token: "wamn-wms:inventory-transaction/get@1.0.0",
+        attachment: "inventory-transaction-get-http",
+        route: "/inventory_transaction/get",
     },
     Operation {
-        token: "wamn-wms:inventory-movement/query@1.0.0",
-        attachment: "inventory-movement-query-http",
-        route: "/inventory_movement/query",
+        token: "wamn-wms:inventory-transaction/query@1.0.0",
+        attachment: "inventory-transaction-query-http",
+        route: "/inventory_transaction/query",
     },
     Operation {
         token: "wamn-wms:location/create@1.0.0",
@@ -97,19 +97,19 @@ const OPERATIONS: [Operation; 20] = [
         route: "/location/update",
     },
     Operation {
-        token: "wamn-wms:pallet/create@1.0.0",
-        attachment: "pallet-create-http",
-        route: "/pallet/create",
+        token: "wamn-wms:packaging/create@1.0.0",
+        attachment: "packaging-create-http",
+        route: "/packaging/create",
     },
     Operation {
-        token: "wamn-wms:pallet-quantity/get@1.0.0",
-        attachment: "pallet-quantity-get-http",
-        route: "/pallet_quantity/get",
+        token: "wamn-wms:packaging-quantity/get@1.0.0",
+        attachment: "packaging-quantity-get-http",
+        route: "/packaging_quantity/get",
     },
     Operation {
-        token: "wamn-wms:pallet-quantity/query@1.0.0",
-        attachment: "pallet-quantity-query-http",
-        route: "/pallet_quantity/query",
+        token: "wamn-wms:packaging-quantity/query@1.0.0",
+        attachment: "packaging-quantity-query-http",
+        route: "/packaging_quantity/query",
     },
     Operation {
         token: "wamn-wms:product/create@1.0.0",
@@ -236,7 +236,7 @@ fn the_move_route_demands_exactly_what_the_command_requires() {
         required,
         [
             "idempotency_key",
-            "pallet_id",
+            "packaging_id",
             "to_location_id",
             "expected_row_version",
             "occurred_at"

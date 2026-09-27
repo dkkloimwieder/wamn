@@ -1,0 +1,33 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "-- THE COUNT AGAINST THE BALANCE. A higher count is stock that appears, so the\n-- row has only a to side; a lower count is stock that leaves, so the row has\n-- only a from side. A count equal to the balance selects no row, and the\n-- command refuses: an adjust that changes nothing writes nothing.\nINSERT INTO inventory_transaction (\n    product_id,\n    quantity,\n    from_packaging_id,\n    from_status,\n    to_packaging_id,\n    to_status,\n    reason_code,\n    occurred_at\n)\nSELECT\n    packaging_quantity.product_id,\n    abs($4 - packaging_quantity.quantity),\n    CASE WHEN $4 < packaging_quantity.quantity THEN packaging_quantity.packaging_id END,\n    CASE WHEN $4 < packaging_quantity.quantity THEN packaging_quantity.status END,\n    CASE WHEN $4 > packaging_quantity.quantity THEN packaging_quantity.packaging_id END,\n    CASE WHEN $4 > packaging_quantity.quantity THEN packaging_quantity.status END,\n    $5,\n    $6\nFROM packaging_quantity\nWHERE packaging_quantity.packaging_id = $1\n    AND packaging_quantity.product_id = $2\n    AND packaging_quantity.status = $3\n    AND packaging_quantity.quantity <> $4\nRETURNING id;\n",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "inventory_transaction",
+            "name": "id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Text",
+        "Numeric",
+        "Text",
+        "Timestamptz"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "1b4db06a4d995a11f5835a69a27c7d4cf1238d4abcd72510a9d53a976257edd4"
+}

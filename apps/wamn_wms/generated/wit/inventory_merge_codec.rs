@@ -29,8 +29,8 @@ struct JsonRoot {
     expected_row_version: i32,
     idempotency_key: String,
     occurred_at: String,
-    source_pallet_id: String,
-    target_pallet_id: String,
+    source_packaging_id: String,
+    target_packaging_id: String,
 }
 
 pub(crate) fn decode(input: &str) -> Result<Vec<contract::MergeItem>, CodecError> {
@@ -42,8 +42,8 @@ pub(crate) fn decode(input: &str) -> Result<Vec<contract::MergeItem>, CodecError
                     expected_row_version: request.value.expected_row_version,
                     idempotency_key: request.value.idempotency_key,
                     occurred_at: request.value.occurred_at,
-                    source_pallet_id: request.value.source_pallet_id,
-                    target_pallet_id: request.value.target_pallet_id,
+                    source_packaging_id: request.value.source_packaging_id,
+                    target_packaging_id: request.value.target_packaging_id,
                 })
                 .map_err(|_| invalid("input"));
             Ok(contract::MergeItem { request_id, input })
@@ -66,9 +66,9 @@ pub(crate) fn encode(output: &[contract::MergeOutcome]) -> String {
             Ok(value) => json!({
                 "request_id": item.request_id,
                 "value": {
-                    "movement_ids": value.movement_ids.iter().map(|element| json!(element)).collect::<Vec<_>>(),
-                    "source_pallet_id": value.source_pallet_id,
-                    "target_pallet_id": value.target_pallet_id,
+                    "transaction_ids": value.transaction_ids.iter().map(|element| json!(element)).collect::<Vec<_>>(),
+                    "source_packaging_id": value.source_packaging_id,
+                    "target_packaging_id": value.target_packaging_id,
                     "target_status": value.target_status,
                     "row_version": value.row_version,
                 }
@@ -98,11 +98,11 @@ fn error_value(error: &contract::MergeError) -> Value {
             }
             ("invalid_input", detail)
         }
-        contract::MergeError::PalletNotFound(value) => {
+        contract::MergeError::PackagingNotFound(value) => {
             let mut detail = Map::new();
             detail.insert("field".to_owned(), json!(value.field));
             detail.insert("id".to_owned(), json!(value.id));
-            ("pallet_not_found", detail)
+            ("packaging_not_found", detail)
         }
         contract::MergeError::ConcurrencyConflict(value) => {
             let mut detail = Map::new();
@@ -136,15 +136,15 @@ fn error_value(error: &contract::MergeError) -> Value {
 fn normalize(request: &mut contract::MergeRequest) -> Result<(), contract::InvalidInputDetail> {
     let _ = &request;
     {
-        let value = &mut request.source_pallet_id;
+        let value = &mut request.source_packaging_id;
         if !canonical_uuid(value) {
-            return Err(invalid("value.source_pallet_id"));
+            return Err(invalid("value.source_packaging_id"));
         }
     }
     {
-        let value = &mut request.target_pallet_id;
+        let value = &mut request.target_packaging_id;
         if !canonical_uuid(value) {
-            return Err(invalid("value.target_pallet_id"));
+            return Err(invalid("value.target_packaging_id"));
         }
     }
     Ok(())
@@ -175,12 +175,12 @@ fn request_bytes(request: &contract::MergeRequest, intent: Option<&str>) -> Vec<
             ),
         );
         value.insert(
-            "source_pallet_id".to_owned(),
-            json!(&request.source_pallet_id),
+            "source_packaging_id".to_owned(),
+            json!(&request.source_packaging_id),
         );
         value.insert(
-            "target_pallet_id".to_owned(),
-            json!(&request.target_pallet_id),
+            "target_packaging_id".to_owned(),
+            json!(&request.target_packaging_id),
         );
         Value::Object(value)
     };
@@ -208,9 +208,9 @@ fn stored_result(result: &contract::MergeResult) -> String {
 
 #[derive(Deserialize)]
 struct JsonResult {
-    movement_ids: Vec<String>,
-    source_pallet_id: String,
-    target_pallet_id: String,
+    transaction_ids: Vec<String>,
+    source_packaging_id: String,
+    target_packaging_id: String,
     target_status: String,
     row_version: i32,
 }
@@ -219,9 +219,9 @@ struct JsonResult {
 fn stored_success(result: &str) -> Option<contract::MergeResult> {
     let value: JsonResult = serde_json::from_str(result).ok()?;
     Some(contract::MergeResult {
-        movement_ids: value.movement_ids,
-        source_pallet_id: value.source_pallet_id,
-        target_pallet_id: value.target_pallet_id,
+        transaction_ids: value.transaction_ids,
+        source_packaging_id: value.source_packaging_id,
+        target_packaging_id: value.target_packaging_id,
         target_status: value.target_status,
         row_version: value.row_version,
     })
@@ -315,9 +315,13 @@ macro_rules! row {
     ($row:expr, $target:path) => {{
         let row = $row;
         $target {
-            movement_ids: row.movement_ids.into_iter().map(|value| value.0).collect(),
-            source_pallet_id: row.source_pallet_id.0,
-            target_pallet_id: row.target_pallet_id.0,
+            transaction_ids: row
+                .transaction_ids
+                .into_iter()
+                .map(|value| value.0)
+                .collect(),
+            source_packaging_id: row.source_packaging_id.0,
+            target_packaging_id: row.target_packaging_id.0,
             target_status: row.target_status,
             row_version: row.row_version,
         }
@@ -346,14 +350,14 @@ pub(crate) fn map_error(
                 observed,
             })
         }
-        "pallet_not_found" => {
+        "packaging_not_found" => {
             let Some(field) = detail("field") else {
                 return contract::MergeError::InternalError;
             };
             let Some(id) = detail("id") else {
                 return contract::MergeError::InternalError;
             };
-            contract::MergeError::PalletNotFound(contract::PalletNotFoundDetail { field, id })
+            contract::MergeError::PackagingNotFound(contract::PackagingNotFoundDetail { field, id })
         }
         "concurrency_conflict" => {
             let Some(expected_row_version) =

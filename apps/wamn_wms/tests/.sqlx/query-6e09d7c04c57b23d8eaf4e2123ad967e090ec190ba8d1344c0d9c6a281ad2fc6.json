@@ -1,0 +1,40 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE packaging\nSET\n    row_version = row_version + 1\nWHERE id = $1\nRETURNING row_version, status;\n",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "row_version",
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "packaging",
+            "name": "row_version"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "status",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "packaging",
+            "name": "status"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false,
+      false
+    ]
+  },
+  "hash": "6e09d7c04c57b23d8eaf4e2123ad967e090ec190ba8d1344c0d9c6a281ad2fc6"
+}

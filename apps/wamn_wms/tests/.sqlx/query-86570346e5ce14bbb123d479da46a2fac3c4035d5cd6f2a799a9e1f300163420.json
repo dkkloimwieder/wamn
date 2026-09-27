@@ -1,0 +1,30 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "-- A balance row means stock is present, so a count of zero removes it.\nDELETE FROM packaging_quantity\nWHERE packaging_id = $1\n    AND product_id = $2\n    AND status = $3\nRETURNING id;\n",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "packaging_quantity",
+            "name": "id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Text"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "86570346e5ce14bbb123d479da46a2fac3c4035d5cd6f2a799a9e1f300163420"
+}

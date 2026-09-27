@@ -329,16 +329,16 @@ mod tests {
     #[test]
     fn a_read_route_carries_its_relations_and_a_get_its_revision() {
         let wms = app("wamn_wms");
-        let get = package_route(&wms, "wamn_wms", "wms", "wamn-wms:pallet/get@1.0.0")
-            .expect("the pallet get has a contract");
+        let get = package_route(&wms, "wamn_wms", "wms", "wamn-wms:packaging/get@1.0.0")
+            .expect("the packaging get has a contract");
         assert_eq!(get.kind, OperationKind::Get);
         assert_eq!(get.revision.as_deref(), Some("row_version"));
-        assert_eq!(get.reads, relations(&[("wms", "pallet")]));
+        assert_eq!(get.reads, relations(&[("wms", "packaging")]));
 
-        let query = package_route(&wms, "wamn_wms", "wms", "wamn-wms:pallet/query@1.0.0")
-            .expect("the pallet query has a contract");
+        let query = package_route(&wms, "wamn_wms", "wms", "wamn-wms:packaging/query@1.0.0")
+            .expect("the packaging query has a contract");
         assert_eq!((query.kind, query.revision), (OperationKind::Query, None));
-        assert_eq!(query.reads, relations(&[("wms", "pallet")]));
+        assert_eq!(query.reads, relations(&[("wms", "packaging")]));
 
         let aggregate = package_route(
             &wms,
@@ -349,7 +349,7 @@ mod tests {
         .expect("the authored projection has a contract");
         assert_eq!(
             aggregate.reads,
-            relations(&[("wms", "pallet"), ("wms", "pallet_quantity")])
+            relations(&[("wms", "packaging"), ("wms", "packaging_quantity")])
         );
 
         let history = package_route(
@@ -385,10 +385,10 @@ mod tests {
             Some("value.idempotency_key")
         );
         assert_eq!(
-            route("wamn-wms:pallet/create@1.0.0").as_deref(),
+            route("wamn-wms:packaging/create@1.0.0").as_deref(),
             Some("idempotency_key")
         );
-        assert_eq!(route("wamn-wms:pallet/get@1.0.0"), None);
+        assert_eq!(route("wamn-wms:packaging/get@1.0.0"), None);
         let archive = package_route(
             &app("platform_fixture"),
             "platform_fixture",

@@ -28,11 +28,12 @@ struct JsonRequest {
 struct JsonRoot {
     expected_row_version: i32,
     idempotency_key: String,
-    new_pallet_code: String,
+    new_packaging_code: String,
+    new_packaging_type: String,
     occurred_at: String,
     product_id: String,
     quantity: String,
-    source_pallet_id: String,
+    source_packaging_id: String,
     status: String,
     to_location_id: String,
 }
@@ -45,11 +46,12 @@ pub(crate) fn decode(input: &str) -> Result<Vec<contract::SplitItem>, CodecError
                 .map(|request| contract::SplitRequest {
                     expected_row_version: request.value.expected_row_version,
                     idempotency_key: request.value.idempotency_key,
-                    new_pallet_code: request.value.new_pallet_code,
+                    new_packaging_code: request.value.new_packaging_code,
+                    new_packaging_type: request.value.new_packaging_type,
                     occurred_at: request.value.occurred_at,
                     product_id: request.value.product_id,
                     quantity: request.value.quantity,
-                    source_pallet_id: request.value.source_pallet_id,
+                    source_packaging_id: request.value.source_packaging_id,
                     status: request.value.status,
                     to_location_id: request.value.to_location_id,
                 })
@@ -74,9 +76,9 @@ pub(crate) fn encode(output: &[contract::SplitOutcome]) -> String {
             Ok(value) => json!({
                 "request_id": item.request_id,
                 "value": {
-                    "movement_ids": value.movement_ids.iter().map(|element| json!(element)).collect::<Vec<_>>(),
-                    "source_pallet_id": value.source_pallet_id,
-                    "new_pallet_id": value.new_pallet_id,
+                    "transaction_ids": value.transaction_ids.iter().map(|element| json!(element)).collect::<Vec<_>>(),
+                    "source_packaging_id": value.source_packaging_id,
+                    "new_packaging_id": value.new_packaging_id,
                     "source_status": value.source_status,
                     "row_version": value.row_version,
                 }
@@ -106,11 +108,11 @@ fn error_value(error: &contract::SplitError) -> Value {
             }
             ("invalid_input", detail)
         }
-        contract::SplitError::PalletNotFound(value) => {
+        contract::SplitError::PackagingNotFound(value) => {
             let mut detail = Map::new();
             detail.insert("field".to_owned(), json!(value.field));
             detail.insert("id".to_owned(), json!(value.id));
-            ("pallet_not_found", detail)
+            ("packaging_not_found", detail)
         }
         contract::SplitError::LocationNotFound(value) => {
             let mut detail = Map::new();
@@ -167,15 +169,21 @@ fn error_value(error: &contract::SplitError) -> Value {
 fn normalize(request: &mut contract::SplitRequest) -> Result<(), contract::InvalidInputDetail> {
     let _ = &request;
     {
+        let value = &mut request.new_packaging_type;
+        if !["bin", "case", "loose", "pallet", "tote"].contains(&value.as_str()) {
+            return Err(invalid("value.new_packaging_type"));
+        }
+    }
+    {
         let value = &mut request.product_id;
         if !canonical_uuid(value) {
             return Err(invalid("value.product_id"));
         }
     }
     {
-        let value = &mut request.source_pallet_id;
+        let value = &mut request.source_packaging_id;
         if !canonical_uuid(value) {
-            return Err(invalid("value.source_pallet_id"));
+            return Err(invalid("value.source_packaging_id"));
         }
     }
     {
@@ -211,8 +219,12 @@ fn request_bytes(request: &contract::SplitRequest, intent: Option<&str>) -> Vec<
             json!(&request.expected_row_version),
         );
         value.insert(
-            "new_pallet_code".to_owned(),
-            json!(&request.new_pallet_code),
+            "new_packaging_code".to_owned(),
+            json!(&request.new_packaging_code),
+        );
+        value.insert(
+            "new_packaging_type".to_owned(),
+            json!(&request.new_packaging_type),
         );
         value.insert(
             "occurred_at".to_owned(),
@@ -230,8 +242,8 @@ fn request_bytes(request: &contract::SplitRequest, intent: Option<&str>) -> Vec<
             ),
         );
         value.insert(
-            "source_pallet_id".to_owned(),
-            json!(&request.source_pallet_id),
+            "source_packaging_id".to_owned(),
+            json!(&request.source_packaging_id),
         );
         value.insert("status".to_owned(), json!(&request.status));
         value.insert("to_location_id".to_owned(), json!(&request.to_location_id));
@@ -261,9 +273,9 @@ fn stored_result(result: &contract::SplitResult) -> String {
 
 #[derive(Deserialize)]
 struct JsonResult {
-    movement_ids: Vec<String>,
-    source_pallet_id: String,
-    new_pallet_id: String,
+    transaction_ids: Vec<String>,
+    source_packaging_id: String,
+    new_packaging_id: String,
     source_status: String,
     row_version: i32,
 }
@@ -272,9 +284,9 @@ struct JsonResult {
 fn stored_success(result: &str) -> Option<contract::SplitResult> {
     let value: JsonResult = serde_json::from_str(result).ok()?;
     Some(contract::SplitResult {
-        movement_ids: value.movement_ids,
-        source_pallet_id: value.source_pallet_id,
-        new_pallet_id: value.new_pallet_id,
+        transaction_ids: value.transaction_ids,
+        source_packaging_id: value.source_packaging_id,
+        new_packaging_id: value.new_packaging_id,
         source_status: value.source_status,
         row_version: value.row_version,
     })
@@ -368,9 +380,13 @@ macro_rules! row {
     ($row:expr, $target:path) => {{
         let row = $row;
         $target {
-            movement_ids: row.movement_ids.into_iter().map(|value| value.0).collect(),
-            source_pallet_id: row.source_pallet_id.0,
-            new_pallet_id: row.new_pallet_id.0,
+            transaction_ids: row
+                .transaction_ids
+                .into_iter()
+                .map(|value| value.0)
+                .collect(),
+            source_packaging_id: row.source_packaging_id.0,
+            new_packaging_id: row.new_packaging_id.0,
             source_status: row.source_status,
             row_version: row.row_version,
         }
@@ -399,14 +415,14 @@ pub(crate) fn map_error(
                 observed,
             })
         }
-        "pallet_not_found" => {
+        "packaging_not_found" => {
             let Some(field) = detail("field") else {
                 return contract::SplitError::InternalError;
             };
             let Some(id) = detail("id") else {
                 return contract::SplitError::InternalError;
             };
-            contract::SplitError::PalletNotFound(contract::PalletNotFoundDetail { field, id })
+            contract::SplitError::PackagingNotFound(contract::PackagingNotFoundDetail { field, id })
         }
         "location_not_found" => {
             let Some(field) = detail("field") else {

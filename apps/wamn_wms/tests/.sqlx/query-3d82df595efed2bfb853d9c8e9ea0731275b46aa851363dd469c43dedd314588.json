@@ -1,0 +1,141 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT\n    packaging.created_at,\n    packaging.created_by,\n    packaging.id,\n    packaging.location_id,\n    packaging.packaging_code,\n    packaging.row_version,\n    packaging.status,\n    packaging.type,\n    packaging.updated_at,\n    packaging.updated_by\nFROM packaging AS packaging\nWHERE\n    (\n        $1::jsonb IS NULL\n        OR packaging.status IN (\n            SELECT filter.value\n            FROM jsonb_array_elements_text($1::jsonb) AS filter(value)\n        )\n    )\n    AND (\n        $2::jsonb IS NULL\n        OR packaging.location_id::text IN (\n            SELECT filter.value\n            FROM jsonb_array_elements_text($2::jsonb) AS filter(value)\n        )\n    )\n    AND (\n        $3::jsonb IS NULL\n        OR EXISTS (\n            SELECT 1\n            FROM jsonb_array_elements_text($3::jsonb) AS filter(value)\n            WHERE strpos(packaging.packaging_code, filter.value) > 0\n        )\n    )\n    AND (\n        $4::timestamptz IS NULL\n        OR packaging.created_at > $4::timestamptz\n        OR (\n            packaging.created_at = $4::timestamptz\n            AND packaging.id > $5::uuid\n        )\n    )\nORDER BY\n    packaging.created_at ASC,\n    packaging.id ASC\nLIMIT $6::int8;\n",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "created_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "packaging",
+            "name": "created_at"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "created_by",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "packaging",
+            "name": "created_by"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "packaging",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "location_id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "packaging",
+            "name": "location_id"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "packaging_code",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "packaging",
+            "name": "packaging_code"
+          }
+        }
+      },
+      {
+        "ordinal": 5,
+        "name": "row_version",
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "packaging",
+            "name": "row_version"
+          }
+        }
+      },
+      {
+        "ordinal": 6,
+        "name": "status",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "packaging",
+            "name": "status"
+          }
+        }
+      },
+      {
+        "ordinal": 7,
+        "name": "type",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "packaging",
+            "name": "type"
+          }
+        }
+      },
+      {
+        "ordinal": 8,
+        "name": "updated_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "packaging",
+            "name": "updated_at"
+          }
+        }
+      },
+      {
+        "ordinal": 9,
+        "name": "updated_by",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "packaging",
+            "name": "updated_by"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Jsonb",
+        "Jsonb",
+        "Jsonb",
+        "Timestamptz",
+        "Uuid",
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "3d82df595efed2bfb853d9c8e9ea0731275b46aa851363dd469c43dedd314588"
+}

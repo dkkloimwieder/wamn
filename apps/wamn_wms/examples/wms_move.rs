@@ -1,4 +1,4 @@
-//! Bind a generated pallet read to the generated move form.
+//! Bind a generated packaging read to the generated move form.
 
 use crossterm::event::KeyEvent;
 use ratatui::buffer::Buffer;
@@ -9,9 +9,9 @@ use wamn_client_terminal::operator::{
 };
 use wamn_client_tui::screen::IntentValues;
 use wamn_client_tui::submission::{Attempt, SessionBinding, State};
-use wamn_generated_wms_tui::screens::{inventory, pallet};
+use wamn_generated_wms_tui::screens::{inventory, packaging};
 
-const PALLET: usize = 0;
+const PACKAGING: usize = 0;
 const MOVE: usize = 1;
 
 #[derive(Debug)]
@@ -23,39 +23,39 @@ impl MoveApplication {
     fn new(label: &str, binding: SessionBinding) -> Self {
         let mut generated = GeneratedApplication::new(
             label,
-            vec![pallet::get(binding.clone()), inventory::r#move(binding)],
+            vec![packaging::get(binding.clone()), inventory::r#move(binding)],
         );
         generated
-            .edit_field(PALLET, "/id")
-            .expect("the generated pallet read declares an editable ID");
+            .edit_field(PACKAGING, "/id")
+            .expect("the generated packaging read declares an editable ID");
         Self { generated }
     }
 
     fn compose_binding(&mut self) -> Result<(), String> {
-        let read = self.generated.screen(PALLET);
+        let read = self.generated.screen(PACKAGING);
         let command = self.generated.screen(MOVE);
         if !read.submission().available()
             || read.submission().binding() != command.submission().binding()
             || !matches!(read.submission().state(), State::Succeeded { .. })
         {
-            return Err("Load the pallet from the same active target before moving it.".into());
+            return Err("Load the packaging from the same active target before moving it.".into());
         }
         let row = read
             .rows()
             .first()
-            .ok_or("The pallet read returned no row.")?;
+            .ok_or("The packaging read returned no row.")?;
         let requested = read
             .submission()
             .captured()
             .and_then(|request| request.item().get("id"));
         if requested != row.get("id") || requested.is_none() {
-            return Err("The returned pallet does not match the requested pallet.".into());
+            return Err("The returned packaging does not match the requested packaging.".into());
         }
         let id = row["id"].clone();
         let revision = row["row_version"].clone();
         let command = self.generated.screen_mut(MOVE);
         command
-            .bind("/value/pallet_id", id)
+            .bind("/value/packaging_id", id)
             .and_then(|()| command.bind("/value/expected_row_version", revision))
             .and_then(|()| command.mark_composed())
             .map_err(|error| error.to_string())?;
@@ -88,10 +88,10 @@ impl Application for MoveApplication {
     ) {
         let was_pending = self.generated.screen(screen).submission().state() == &State::Pending;
         self.generated.resolve(screen, attempt, response);
-        if screen == PALLET
+        if screen == PACKAGING
             && was_pending
             && matches!(
-                self.generated.screen(PALLET).submission().state(),
+                self.generated.screen(PACKAGING).submission().state(),
                 State::Succeeded { .. }
             )
             && let Err(error) = self.compose_binding()
@@ -130,7 +130,7 @@ mod tests {
 
     use super::*;
 
-    const PALLET_ID: &str = "33333333-0000-0000-0000-000000000002";
+    const PACKAGING_ID: &str = "33333333-0000-0000-0000-000000000002";
     const DESTINATION: &str = "33333333-0000-0000-0000-000000000003";
     const ACTOR: &str = "33333333-0000-0000-0000-000000000004";
 
@@ -166,30 +166,27 @@ mod tests {
         })
     }
 
-    fn pallet_row() -> Value {
+    fn packaging_row() -> Value {
         json!({
-            "id": PALLET_ID, "location_id": "33333333-0000-0000-0000-000000000001",
-            "pallet_code": "P-2", "row_version": 7, "status": "available",
+            "id": PACKAGING_ID, "location_id": "33333333-0000-0000-0000-000000000001",
+            "packaging_code": "P-2", "type": "pallet", "row_version": 7, "status": "available",
             "created_at": "2026-09-10T10:00:00Z", "created_by": ACTOR,
             "updated_at": "2026-09-10T10:00:00Z", "updated_by": ACTOR
         })
     }
 
-    fn movement() -> Value {
-        json!({
-            "movement_ids": ["33333333-0000-0000-0000-000000000009"], "pallet_id": PALLET_ID,
-            "location_id": DESTINATION, "pallet_status": "available", "row_version": 8
-        })
+    fn moved() -> Value {
+        json!({"packaging_id": PACKAGING_ID, "location_id": DESTINATION, "row_version": 8})
     }
 
     fn pending_read() -> (MoveApplication, PreparedRequest) {
         let mut app = MoveApplication::new("WMS move", binding());
-        for character in PALLET_ID.chars() {
+        for character in PACKAGING_ID.chars() {
             app.key(KeyEvent::new(KeyCode::Char(character), KeyModifiers::NONE));
         }
         app.key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
         let request = app
-            .prepare(send(PALLET, false), Some(&intent("read")))
+            .prepare(send(PACKAGING, false), Some(&intent("read")))
             .unwrap();
         (app, request)
     }
@@ -197,9 +194,9 @@ mod tests {
     fn ready() -> MoveApplication {
         let (mut app, request) = pending_read();
         app.resolve(
-            PALLET,
+            PACKAGING,
             request.attempt,
-            response(200, &json!([{"request_id": "read", "value": pallet_row()}])),
+            response(200, &json!([{"value": packaging_row()}])),
         );
         assert_eq!(app.generated.active_screen(), Some(MOVE));
         for character in DESTINATION.chars() {
@@ -238,14 +235,14 @@ mod tests {
     impl Transport for RecordingTransport {
         async fn send(&self, request: HttpRequest) -> Result<HttpResponse, ClientError> {
             self.0.lock().unwrap().push(request);
-            response(200, &json!([{"request_id": "move", "value": movement()}]))
+            response(200, &json!([{"request_id": "move", "value": moved()}]))
         }
     }
 
     #[tokio::test]
-    async fn the_bound_move_sends_exact_bytes_and_displays_the_movement() {
+    async fn the_bound_move_sends_exact_bytes_and_displays_the_result() {
         let mut app = ready();
-        for pointer in ["/value/pallet_id", "/value/expected_row_version"] {
+        for pointer in ["/value/packaging_id", "/value/expected_row_version"] {
             assert!(
                 app.generated
                     .screen_mut(MOVE)
@@ -274,12 +271,12 @@ mod tests {
         app.resolve(MOVE, request.attempt, result);
         let sent = transport.0.lock().unwrap();
         assert_eq!(sent.len(), 1);
-        assert_eq!(sent[0].body, br#"[{"request_id":"move","value":{"expected_row_version":7,"idempotency_key":"idem-move","occurred_at":"2026-09-10T10:00:00.000000Z","pallet_id":"33333333-0000-0000-0000-000000000002","to_location_id":"33333333-0000-0000-0000-000000000003"}}]"#);
+        assert_eq!(sent[0].body, br#"[{"request_id":"move","value":{"expected_row_version":7,"idempotency_key":"idem-move","occurred_at":"2026-09-10T10:00:00.000000Z","packaging_id":"33333333-0000-0000-0000-000000000002","to_location_id":"33333333-0000-0000-0000-000000000003"}}]"#);
         assert!(matches!(
             app.generated.screen(MOVE).submission().state(),
             State::Succeeded { .. }
         ));
-        assert!(render(&app).contains("33333333-0000-0000-0000-000000000009"));
+        assert!(render(&app).contains("│row_version: 8 "));
         assert_spent(&mut app);
     }
 
@@ -291,14 +288,14 @@ mod tests {
             ("other-read", "/row_version", json!("7")),
         ] {
             let (mut app, request) = pending_read();
-            let mut row = pallet_row();
+            let mut row = packaging_row();
             *row.pointer_mut(path).unwrap() = replacement;
             app.resolve(
-                PALLET,
+                PACKAGING,
                 request.attempt,
                 response(200, &json!([{"request_id": request_id, "value": row}])),
             );
-            assert_eq!(app.generated.active_screen(), Some(PALLET));
+            assert_eq!(app.generated.active_screen(), Some(PACKAGING));
             assert_eq!(
                 app.generated.screen(MOVE).availability(),
                 Availability::RequiresComposition
@@ -315,7 +312,7 @@ mod tests {
         for invalidate in [false, true] {
             let (mut app, request) = pending_read();
             if invalidate {
-                app.generated.screen_mut(PALLET).invalidate();
+                app.generated.screen_mut(PACKAGING).invalidate();
                 app.generated.screen_mut(MOVE).invalidate();
             } else {
                 app.generated.screen_mut(MOVE).activate(SessionBinding {
@@ -324,11 +321,11 @@ mod tests {
                 });
             }
             app.resolve(
-                PALLET,
+                PACKAGING,
                 request.attempt,
-                response(200, &json!([{"request_id": "read", "value": pallet_row()}])),
+                response(200, &json!([{"value": packaging_row()}])),
             );
-            assert_eq!(app.generated.active_screen(), Some(PALLET));
+            assert_eq!(app.generated.active_screen(), Some(PACKAGING));
             assert!(
                 app.prepare(send(MOVE, false), Some(&intent("move")))
                     .is_err()

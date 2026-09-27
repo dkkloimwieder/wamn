@@ -1,0 +1,30 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT quantity\nFROM packaging_quantity\nWHERE packaging_id = $1\n    AND product_id = $2\n    AND status = $3;\n",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "quantity",
+        "type_info": "Numeric",
+        "origin": {
+          "Table": {
+            "table": "packaging_quantity",
+            "name": "quantity"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Text"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "7ad85cf1d8dded32d9e488711696067f61ae75356caf16464b0251defdb95b17"
+}

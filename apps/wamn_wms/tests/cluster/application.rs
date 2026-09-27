@@ -16,7 +16,7 @@ use crate::wms_runtime_live::{
 };
 
 use crate::business_fixture::{LOCATION_A_ID, seed_fixture};
-pub(super) use crate::business_fixture::{PALLET_ID, runtime_phase};
+pub(super) use crate::business_fixture::{PACKAGING_ID, runtime_phase};
 
 /// The artifacts and endpoint one application publication is minted from.
 pub(super) struct PublicationInputs<'a> {
@@ -269,7 +269,7 @@ pub(super) async fn released_routes(
         }
         tokio::time::sleep(std::time::Duration::from_secs(1)).await;
     }
-    // The replayed move committed no second movement, so no second event
+    // The replayed move committed no second update, so no second event
     // arrives. Wait a little longer before counting.
     tokio::time::sleep(std::time::Duration::from_secs(3)).await;
     let objects = if objects.is_empty() {
@@ -300,7 +300,7 @@ async fn labels(store: &AmazonS3) -> anyhow::Result<Vec<Value>> {
         .iter()
         .map(|object| {
             json!({
-                "key": object.location.filename().unwrap_or(""),
+                "key": object.location.as_ref().strip_prefix("wms/").unwrap_or(""),
                 "size": object.size,
             })
         })
@@ -316,7 +316,7 @@ pub(super) async fn partial_completion(
     let previous = document.runtime.take().context("the WMS route is ready")?;
     document.runtime = Some(RuntimePhase {
         route_endpoint: previous.route_endpoint.clone(),
-        pallet_id: previous.pallet_id.clone(),
+        packaging_id: previous.packaging_id.clone(),
         to_location_id: LOCATION_A_ID.to_owned(),
     });
     let partial = assert_committed_move_after_label_failure(document).await;
@@ -401,12 +401,13 @@ pub(super) async fn generated_terminal(
     );
     if mode == "success" {
         // The terminal sees the committed move only. The label workflow stores
-        // the label under the movement id after the move commits.
-        let movement = result["movement_id"]
+        // the label under the packaging and its new revision after the move
+        // commits.
+        let label_key = result["label_key"]
             .as_str()
-            .filter(|id| !id.is_empty())
-            .context("the generated terminal returns its move's movement id")?;
-        let key = object_store::path::Path::from(format!("wms/{movement}"));
+            .filter(|key| !key.is_empty())
+            .context("the generated terminal returns its move's label key")?;
+        let key = object_store::path::Path::from(format!("wms/{label_key}"));
         let mut label = None;
         for _ in 0..LABEL_WAIT_SECONDS {
             if let Ok(object) = store.get(&key).await {

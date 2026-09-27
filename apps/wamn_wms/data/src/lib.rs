@@ -17,12 +17,12 @@ pub mod inventory_adjust;
 pub mod inventory_aggregate;
 pub mod inventory_merge;
 pub mod inventory_move;
-pub mod inventory_movement;
 pub mod inventory_split;
+pub mod inventory_transaction;
 pub mod location;
+pub mod packaging;
+pub mod packaging_quantity;
 mod page;
-pub mod pallet;
-pub mod pallet_quantity;
 pub mod product;
 mod scalar;
 

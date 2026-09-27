@@ -1,0 +1,30 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "-- The quantity row the split takes from, read under the packaging lock so the\n-- refusal can say WHICH of two things is wrong: no such row at all\n-- (quantity_not_found) or a row that cannot spare what was asked\n-- (insufficient_quantity, with what it holds). take_from_source alone cannot\n-- tell them apart -- it answers nothing in both cases.\nSELECT quantity\nFROM packaging_quantity\nWHERE packaging_id = $1\n    AND product_id = $2\n    AND status = $3;\n",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "quantity",
+        "type_info": "Numeric",
+        "origin": {
+          "Table": {
+            "table": "packaging_quantity",
+            "name": "quantity"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Text"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "7d7cac58427384ec1b1a9e648bef5a501f0c3a9684de5d1b52067135613f5411"
+}

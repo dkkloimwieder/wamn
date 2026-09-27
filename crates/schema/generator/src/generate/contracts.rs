@@ -776,7 +776,11 @@ fn emit_operation_contracts(
                 sql_corpus,
                 transactional,
                 accessor.binds.iter().map(|bind| {
-                    statement_value_contract(&bind.parameter, bind.statement_type, bind.nullable)
+                    statement_value_contract(
+                        bind.parameter.trim_start_matches("r#"),
+                        bind.statement_type,
+                        bind.nullable,
+                    )
                 }),
                 statement_columns,
             )

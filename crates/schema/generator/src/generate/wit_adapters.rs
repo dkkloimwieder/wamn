@@ -2,7 +2,10 @@
 
 use std::fmt::Write as _;
 
-use super::{ColumnType, OperationErrorDetailDeclaration, rust_identifier, rust_type_identifier};
+use super::{
+    ColumnType, OperationErrorDetailDeclaration, binding_identifier, rust_identifier,
+    rust_type_identifier,
+};
 use crate::manifest::OperationErrorDetailKey;
 
 /// Emit a row conversion without requiring an application crate dependency.
@@ -19,6 +22,8 @@ pub(super) fn emit_row_adapter<'a>(
             .strip_suffix("[]")
             .filter(|member| !member.contains('.') && !member.contains("[]"));
         let field = rust_identifier(list.unwrap_or(name)).expect("validated field has a Rust name");
+        let member =
+            binding_identifier(list.unwrap_or(name)).expect("validated field has a Rust name");
         let value = match ty {
             ColumnType::Uuid | ColumnType::Numeric | ColumnType::Timestamptz | ColumnType::Json => {
                 "value.0"
@@ -43,7 +48,8 @@ pub(super) fn emit_row_adapter<'a>(
         } else {
             value.replace("value", &format!("row.{field}"))
         };
-        writeln!(source, "            {field}: {value},").expect("writing to a String cannot fail");
+        writeln!(source, "            {member}: {value},")
+            .expect("writing to a String cannot fail");
     }
     source.push_str("        }\n    }};\n}\n#[allow(unused_imports)]\npub(crate) use row;\n");
     source

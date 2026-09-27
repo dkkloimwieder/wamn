@@ -1,0 +1,52 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT\n    location_id,\n    row_version,\n    status\nFROM packaging\nWHERE id = $1\nFOR UPDATE;\n",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "location_id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "packaging",
+            "name": "location_id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "row_version",
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "packaging",
+            "name": "row_version"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "status",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "packaging",
+            "name": "status"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "404783208c619d13cc5921442a94d7698cf002213e042b8db230086980a7c84a"
+}

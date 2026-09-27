@@ -27,9 +27,9 @@ use crate::manifest::{
     CustomOperationResultDeclaration, DeleteMode, FieldText, ModelDeclaration,
     OperationDeclaration, OperationErrorDetailDeclaration, PackageManifest,
     PolicyContractRequirement, PolicyContractState, RecordHistoryColumn, ResultClass,
-    SortDeclaration, StaticSqlFetch, TombstoneColumn, canonical_operation_identity,
-    custom_artifact_stem, rust_identifier, rust_type_identifier, validate_identifier,
-    validate_operation_vocabulary,
+    SortDeclaration, StaticSqlFetch, TombstoneColumn, binding_identifier,
+    canonical_operation_identity, custom_artifact_stem, rust_identifier, rust_type_identifier,
+    validate_identifier, validate_operation_vocabulary,
 };
 use crate::sql;
 use crate::sql_lex::contains_schema_qualified_reference;

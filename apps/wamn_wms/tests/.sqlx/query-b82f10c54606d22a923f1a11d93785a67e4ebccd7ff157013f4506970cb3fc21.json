@@ -1,0 +1,28 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "-- The whole source moved to the target, so its balance rows are gone.\nDELETE FROM packaging_quantity\nWHERE packaging_id = $1\nRETURNING id;\n",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "packaging_quantity",
+            "name": "id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "b82f10c54606d22a923f1a11d93785a67e4ebccd7ff157013f4506970cb3fc21"
+}

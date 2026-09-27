@@ -1,0 +1,33 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO inventory_transaction (\n    product_id,\n    quantity,\n    from_packaging_id,\n    from_status,\n    to_packaging_id,\n    to_status,\n    occurred_at\n)\nVALUES ($1, $2, $3, $4, $5, $4, $6)\nRETURNING id;\n",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "inventory_transaction",
+            "name": "id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Numeric",
+        "Uuid",
+        "Text",
+        "Uuid",
+        "Timestamptz"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "210fc0bc3e8fded3c634d68e608a4999f01bd521c5b98c88b7c453d815cfcb43"
+}

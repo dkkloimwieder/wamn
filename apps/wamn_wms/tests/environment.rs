@@ -256,6 +256,16 @@ pub async fn prepare_project(
         tenant: TENANT.into(),
     })
     .await?;
+    // The label workflow's condition reads the old packaging row, so the
+    // operator's replica identity verb runs the table with REPLICA IDENTITY FULL.
+    wamn_control::reconcile_replica_identity::reconcile_package_replica_identity(
+        wamn_control::reconcile_replica_identity::ReconcileReplicaIdentityRequest {
+            admin_database_url: route.database_url.clone(),
+            package: package_root(),
+            dry_run: false,
+        },
+    )
+    .await?;
     Ok(credentials)
 }
 

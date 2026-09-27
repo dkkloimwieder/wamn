@@ -82,12 +82,12 @@ import {
   type LocationQueryRow,
 } from "../location.js";
 import {
-  get as palletGet,
-  query as palletQuery,
-  type PalletGetRequest,
-  type PalletQueryRequest,
-  type PalletQueryRow,
-} from "../pallet.js";
+  get as packagingGet,
+  query as packagingQuery,
+  type PackagingGetRequest,
+  type PackagingQueryRequest,
+  type PackagingQueryRow,
+} from "../packaging.js";
 import {
   get as productGet,
   query as productQuery,
@@ -106,7 +106,7 @@ const NUMERIC_TEXT = /^[+-]?(\d+(\.\d*)?|\.\d+)$/;
 const ADJUST_INPUT = z.object({
   value: z
     .object({
-      palletId: z.string().regex(UUID_TEXT, "expected a UUID"),
+      packagingId: z.string().regex(UUID_TEXT, "expected a UUID"),
       productId: z.string().regex(UUID_TEXT, "expected a UUID"),
       quantity: z.string().regex(NUMERIC_TEXT, "expected decimal text"),
       reasonCode: z.string(),
@@ -118,7 +118,7 @@ const ADJUST_INPUT = z.object({
 /** What the form for `wamn-wms:inventory/adjust@1.0.0` can start with. */
 export interface InventoryAdjustFormInitial {
   value?: {
-    palletId?: Uuid;
+    packagingId?: Uuid;
     productId?: Uuid;
     quantity?: Numeric;
     reasonCode?: string;
@@ -181,12 +181,12 @@ export function InventoryAdjustForm(props: InventoryAdjustFormProps) {
           item = writeMember(item, ["value", "idempotencyKey"], newIdempotencyKey());
           item = writeMember(item, ["value", "occurredAt"], occurredAt());
           if (readMember(item, ["value", "expectedRowVersion"]) === undefined) {
-            const valuePalletIdChosen = valuePalletIdRevision();
-            if (valuePalletIdChosen === null) {
-              setRefusal({ text: "Choose the record from its list.", member: "value.pallet_id" });
+            const valuePackagingIdChosen = valuePackagingIdRevision();
+            if (valuePackagingIdChosen === null) {
+              setRefusal({ text: "Choose the record from its list.", member: "value.packaging_id" });
               return;
             }
-            item = writeMember(item, ["value", "expectedRowVersion"], valuePalletIdChosen);
+            item = writeMember(item, ["value", "expectedRowVersion"], valuePackagingIdChosen);
           }
           items.push(item);
         }
@@ -215,12 +215,12 @@ export function InventoryAdjustForm(props: InventoryAdjustFormProps) {
       item = writeMember(item, ["requestId"], newRequestId());
       item = writeMember(item, ["value", "idempotencyKey"], newIdempotencyKey());
       item = writeMember(item, ["value", "occurredAt"], occurredAt());
-      const valuePalletIdChosen = valuePalletIdRevision();
-      if (valuePalletIdChosen === null) {
-        setRefusal({ text: "Choose the record from its list.", member: "value.pallet_id" });
+      const valuePackagingIdChosen = valuePackagingIdRevision();
+      if (valuePackagingIdChosen === null) {
+        setRefusal({ text: "Choose the record from its list.", member: "value.packaging_id" });
         return;
       }
-      item = writeMember(item, ["value", "expectedRowVersion"], valuePalletIdChosen);
+      item = writeMember(item, ["value", "expectedRowVersion"], valuePackagingIdChosen);
       const outcome = await adjust(props.transport, [item]);
       props.onSubmitted?.(outcome);
       announceOutcome(outcome, InventoryAdjustFormLabel);
@@ -232,35 +232,35 @@ export function InventoryAdjustForm(props: InventoryAdjustFormProps) {
       setDone(outcome.status === "completed");
     },
   }));
-  const [valuePalletIdOptions, setValuePalletIdOptions] = createSignal<PageState<PalletQueryRow>>(emptyPage<PalletQueryRow>());
-  const [valuePalletIdSearch, setValuePalletIdSearch] = createSignal("");
-  const [valuePalletIdRevision, setValuePalletIdRevision] = createSignal<PalletQueryRow["rowVersion"] | null>(null);
-  const readValuePalletIdOptions = async (cursor: string | null) => {
-    let request = {} as PalletQueryRequest;
-    if (valuePalletIdSearch() !== "") {
-      request = writeMember(request, ["filter", "palletCode"], [valuePalletIdSearch()]) as PalletQueryRequest;
+  const [valuePackagingIdOptions, setValuePackagingIdOptions] = createSignal<PageState<PackagingQueryRow>>(emptyPage<PackagingQueryRow>());
+  const [valuePackagingIdSearch, setValuePackagingIdSearch] = createSignal("");
+  const [valuePackagingIdRevision, setValuePackagingIdRevision] = createSignal<PackagingQueryRow["rowVersion"] | null>(null);
+  const readValuePackagingIdOptions = async (cursor: string | null) => {
+    let request = {} as PackagingQueryRequest;
+    if (valuePackagingIdSearch() !== "") {
+      request = writeMember(request, ["filter", "packagingCode"], [valuePackagingIdSearch()]) as PackagingQueryRequest;
     }
     if (cursor !== null) {
-      request = writeMember(request, ["cursor"], cursor) as PalletQueryRequest;
+      request = writeMember(request, ["cursor"], cursor) as PackagingQueryRequest;
     }
-    const outcome = await palletQuery(props.transport, [request]);
+    const outcome = await packagingQuery(props.transport, [request]);
     if (outcome.status !== "completed") {
       return;
     }
-    const rows = outcome.value.item as PalletQueryRow[];
-    setValuePalletIdOptions(
+    const rows = outcome.value.item as PackagingQueryRow[];
+    setValuePackagingIdOptions(
       cursor === null
         ? firstPage(rows, outcome.value.nextCursor)
-        : appendPage(valuePalletIdOptions(), rows, outcome.value.nextCursor),
+        : appendPage(valuePackagingIdOptions(), rows, outcome.value.nextCursor),
     );
   };
-  const readValuePalletIdRecord = async (key: string): Promise<PalletQueryRow | null> => {
-    const request = writeMember({}, ["id"], key) as PalletGetRequest;
-    const outcome = await palletGet(props.transport, [request]);
-    return outcome.status === "completed" ? ((outcome.value ?? null) as unknown as PalletQueryRow | null) : null;
+  const readValuePackagingIdRecord = async (key: string): Promise<PackagingQueryRow | null> => {
+    const request = writeMember({}, ["id"], key) as PackagingGetRequest;
+    const outcome = await packagingGet(props.transport, [request]);
+    return outcome.status === "completed" ? ((outcome.value ?? null) as unknown as PackagingQueryRow | null) : null;
   };
-  void readValuePalletIdOptions(null);
-  onCleanup(afterWrites(props.transport, () => void readValuePalletIdOptions(null)));
+  void readValuePackagingIdOptions(null);
+  onCleanup(afterWrites(props.transport, () => void readValuePackagingIdOptions(null)));
   const [valueProductIdOptions, setValueProductIdOptions] = createSignal<PageState<ProductQueryRow>>(emptyPage<ProductQueryRow>());
   const [valueProductIdSearch, setValueProductIdSearch] = createSignal("");
   const readValueProductIdOptions = async (cursor: string | null) => {
@@ -303,25 +303,25 @@ export function InventoryAdjustForm(props: InventoryAdjustFormProps) {
         <FieldError>{refusal()?.text}</FieldError>
       </Show>
       <FieldGroup>
-        <Show when={!rowsFill(["value", "palletId"])}>
-          <form.Field name={`value.palletId`}>
+        <Show when={!rowsFill(["value", "packagingId"])}>
+          <form.Field name={`value.packagingId`}>
             {(field) => (
               <RecordSelect
-                label="pallet id"
-                options={valuePalletIdOptions().rows}
+                label="packaging id"
+                options={valuePackagingIdOptions().rows}
                 optionValue={(row) => String(row.id)}
-                optionLabel={(row) => String(row.palletCode)}
+                optionLabel={(row) => String(row.packagingCode)}
                 value={field().state.value == null ? null : String(field().state.value)}
                 onChange={(value) => field().handleChange(value ?? "")}
-                onRow={(row) => setValuePalletIdRevision(row?.rowVersion ?? null)}
+                onRow={(row) => setValuePackagingIdRevision(row?.rowVersion ?? null)}
                 onSearch={(text) => {
-                  setValuePalletIdSearch(text);
-                  void readValuePalletIdOptions(null);
+                  setValuePackagingIdSearch(text);
+                  void readValuePackagingIdOptions(null);
                 }}
-                hasNextPage={hasNextPage(valuePalletIdOptions())}
-                onNextPage={() => void readValuePalletIdOptions(valuePalletIdOptions().cursor)}
-                readRow={readValuePalletIdRecord}
-                error={refusalMarks(refusal()?.member ?? null, "value.pallet_id") ? (refusal()?.text ?? null) : null}
+                hasNextPage={hasNextPage(valuePackagingIdOptions())}
+                onNextPage={() => void readValuePackagingIdOptions(valuePackagingIdOptions().cursor)}
+                readRow={readValuePackagingIdRecord}
+                error={refusalMarks(refusal()?.member ?? null, "value.packaging_id") ? (refusal()?.text ?? null) : null}
               />
             )}
           </form.Field>
@@ -443,7 +443,7 @@ export const INVENTORY_AGGREGATE_TABLE = {
   sortMaxFields: 1,
   columns: [
     { field: "locationId", label: "location id", type: "uuid", role: "key" },
-    { field: "palletCount", label: "pallet count", type: "int32", role: "value" },
+    { field: "packagingCount", label: "packaging count", type: "int32", role: "value" },
     { field: "productId", label: "product id", type: "uuid", role: "key" },
     { field: "quantity", label: "quantity", type: "numeric", role: "value" },
     { field: "status", label: "status", type: "text", role: "key" },
@@ -456,8 +456,8 @@ export const INVENTORY_AGGREGATE_TABLE = {
 const MERGE_INPUT = z.object({
   value: z
     .object({
-      sourcePalletId: z.string().regex(UUID_TEXT, "expected a UUID"),
-      targetPalletId: z.string().regex(UUID_TEXT, "expected a UUID"),
+      sourcePackagingId: z.string().regex(UUID_TEXT, "expected a UUID"),
+      targetPackagingId: z.string().regex(UUID_TEXT, "expected a UUID"),
     })
     .optional(),
 });
@@ -465,8 +465,8 @@ const MERGE_INPUT = z.object({
 /** What the form for `wamn-wms:inventory/merge@1.0.0` can start with. */
 export interface InventoryMergeFormInitial {
   value?: {
-    sourcePalletId?: Uuid;
-    targetPalletId?: Uuid;
+    sourcePackagingId?: Uuid;
+    targetPackagingId?: Uuid;
   };
 }
 
@@ -525,12 +525,12 @@ export function InventoryMergeForm(props: InventoryMergeFormProps) {
           item = writeMember(item, ["value", "idempotencyKey"], newIdempotencyKey());
           item = writeMember(item, ["value", "occurredAt"], occurredAt());
           if (readMember(item, ["value", "expectedRowVersion"]) === undefined) {
-            const valueTargetPalletIdChosen = valueTargetPalletIdRevision();
-            if (valueTargetPalletIdChosen === null) {
-              setRefusal({ text: "Choose the record from its list.", member: "value.target_pallet_id" });
+            const valueTargetPackagingIdChosen = valueTargetPackagingIdRevision();
+            if (valueTargetPackagingIdChosen === null) {
+              setRefusal({ text: "Choose the record from its list.", member: "value.target_packaging_id" });
               return;
             }
-            item = writeMember(item, ["value", "expectedRowVersion"], valueTargetPalletIdChosen);
+            item = writeMember(item, ["value", "expectedRowVersion"], valueTargetPackagingIdChosen);
           }
           items.push(item);
         }
@@ -559,12 +559,12 @@ export function InventoryMergeForm(props: InventoryMergeFormProps) {
       item = writeMember(item, ["requestId"], newRequestId());
       item = writeMember(item, ["value", "idempotencyKey"], newIdempotencyKey());
       item = writeMember(item, ["value", "occurredAt"], occurredAt());
-      const valueTargetPalletIdChosen = valueTargetPalletIdRevision();
-      if (valueTargetPalletIdChosen === null) {
-        setRefusal({ text: "Choose the record from its list.", member: "value.target_pallet_id" });
+      const valueTargetPackagingIdChosen = valueTargetPackagingIdRevision();
+      if (valueTargetPackagingIdChosen === null) {
+        setRefusal({ text: "Choose the record from its list.", member: "value.target_packaging_id" });
         return;
       }
-      item = writeMember(item, ["value", "expectedRowVersion"], valueTargetPalletIdChosen);
+      item = writeMember(item, ["value", "expectedRowVersion"], valueTargetPackagingIdChosen);
       const outcome = await merge(props.transport, [item]);
       props.onSubmitted?.(outcome);
       announceOutcome(outcome, InventoryMergeFormLabel);
@@ -576,63 +576,63 @@ export function InventoryMergeForm(props: InventoryMergeFormProps) {
       setDone(outcome.status === "completed");
     },
   }));
-  const [valueSourcePalletIdOptions, setValueSourcePalletIdOptions] = createSignal<PageState<PalletQueryRow>>(emptyPage<PalletQueryRow>());
-  const [valueSourcePalletIdSearch, setValueSourcePalletIdSearch] = createSignal("");
-  const readValueSourcePalletIdOptions = async (cursor: string | null) => {
-    let request = {} as PalletQueryRequest;
-    if (valueSourcePalletIdSearch() !== "") {
-      request = writeMember(request, ["filter", "palletCode"], [valueSourcePalletIdSearch()]) as PalletQueryRequest;
+  const [valueSourcePackagingIdOptions, setValueSourcePackagingIdOptions] = createSignal<PageState<PackagingQueryRow>>(emptyPage<PackagingQueryRow>());
+  const [valueSourcePackagingIdSearch, setValueSourcePackagingIdSearch] = createSignal("");
+  const readValueSourcePackagingIdOptions = async (cursor: string | null) => {
+    let request = {} as PackagingQueryRequest;
+    if (valueSourcePackagingIdSearch() !== "") {
+      request = writeMember(request, ["filter", "packagingCode"], [valueSourcePackagingIdSearch()]) as PackagingQueryRequest;
     }
     if (cursor !== null) {
-      request = writeMember(request, ["cursor"], cursor) as PalletQueryRequest;
+      request = writeMember(request, ["cursor"], cursor) as PackagingQueryRequest;
     }
-    const outcome = await palletQuery(props.transport, [request]);
+    const outcome = await packagingQuery(props.transport, [request]);
     if (outcome.status !== "completed") {
       return;
     }
-    const rows = outcome.value.item as PalletQueryRow[];
-    setValueSourcePalletIdOptions(
+    const rows = outcome.value.item as PackagingQueryRow[];
+    setValueSourcePackagingIdOptions(
       cursor === null
         ? firstPage(rows, outcome.value.nextCursor)
-        : appendPage(valueSourcePalletIdOptions(), rows, outcome.value.nextCursor),
+        : appendPage(valueSourcePackagingIdOptions(), rows, outcome.value.nextCursor),
     );
   };
-  const readValueSourcePalletIdRecord = async (key: string): Promise<PalletQueryRow | null> => {
-    const request = writeMember({}, ["id"], key) as PalletGetRequest;
-    const outcome = await palletGet(props.transport, [request]);
-    return outcome.status === "completed" ? ((outcome.value ?? null) as unknown as PalletQueryRow | null) : null;
+  const readValueSourcePackagingIdRecord = async (key: string): Promise<PackagingQueryRow | null> => {
+    const request = writeMember({}, ["id"], key) as PackagingGetRequest;
+    const outcome = await packagingGet(props.transport, [request]);
+    return outcome.status === "completed" ? ((outcome.value ?? null) as unknown as PackagingQueryRow | null) : null;
   };
-  void readValueSourcePalletIdOptions(null);
-  onCleanup(afterWrites(props.transport, () => void readValueSourcePalletIdOptions(null)));
-  const [valueTargetPalletIdOptions, setValueTargetPalletIdOptions] = createSignal<PageState<PalletQueryRow>>(emptyPage<PalletQueryRow>());
-  const [valueTargetPalletIdSearch, setValueTargetPalletIdSearch] = createSignal("");
-  const [valueTargetPalletIdRevision, setValueTargetPalletIdRevision] = createSignal<PalletQueryRow["rowVersion"] | null>(null);
-  const readValueTargetPalletIdOptions = async (cursor: string | null) => {
-    let request = {} as PalletQueryRequest;
-    if (valueTargetPalletIdSearch() !== "") {
-      request = writeMember(request, ["filter", "palletCode"], [valueTargetPalletIdSearch()]) as PalletQueryRequest;
+  void readValueSourcePackagingIdOptions(null);
+  onCleanup(afterWrites(props.transport, () => void readValueSourcePackagingIdOptions(null)));
+  const [valueTargetPackagingIdOptions, setValueTargetPackagingIdOptions] = createSignal<PageState<PackagingQueryRow>>(emptyPage<PackagingQueryRow>());
+  const [valueTargetPackagingIdSearch, setValueTargetPackagingIdSearch] = createSignal("");
+  const [valueTargetPackagingIdRevision, setValueTargetPackagingIdRevision] = createSignal<PackagingQueryRow["rowVersion"] | null>(null);
+  const readValueTargetPackagingIdOptions = async (cursor: string | null) => {
+    let request = {} as PackagingQueryRequest;
+    if (valueTargetPackagingIdSearch() !== "") {
+      request = writeMember(request, ["filter", "packagingCode"], [valueTargetPackagingIdSearch()]) as PackagingQueryRequest;
     }
     if (cursor !== null) {
-      request = writeMember(request, ["cursor"], cursor) as PalletQueryRequest;
+      request = writeMember(request, ["cursor"], cursor) as PackagingQueryRequest;
     }
-    const outcome = await palletQuery(props.transport, [request]);
+    const outcome = await packagingQuery(props.transport, [request]);
     if (outcome.status !== "completed") {
       return;
     }
-    const rows = outcome.value.item as PalletQueryRow[];
-    setValueTargetPalletIdOptions(
+    const rows = outcome.value.item as PackagingQueryRow[];
+    setValueTargetPackagingIdOptions(
       cursor === null
         ? firstPage(rows, outcome.value.nextCursor)
-        : appendPage(valueTargetPalletIdOptions(), rows, outcome.value.nextCursor),
+        : appendPage(valueTargetPackagingIdOptions(), rows, outcome.value.nextCursor),
     );
   };
-  const readValueTargetPalletIdRecord = async (key: string): Promise<PalletQueryRow | null> => {
-    const request = writeMember({}, ["id"], key) as PalletGetRequest;
-    const outcome = await palletGet(props.transport, [request]);
-    return outcome.status === "completed" ? ((outcome.value ?? null) as unknown as PalletQueryRow | null) : null;
+  const readValueTargetPackagingIdRecord = async (key: string): Promise<PackagingQueryRow | null> => {
+    const request = writeMember({}, ["id"], key) as PackagingGetRequest;
+    const outcome = await packagingGet(props.transport, [request]);
+    return outcome.status === "completed" ? ((outcome.value ?? null) as unknown as PackagingQueryRow | null) : null;
   };
-  void readValueTargetPalletIdOptions(null);
-  onCleanup(afterWrites(props.transport, () => void readValueTargetPalletIdOptions(null)));
+  void readValueTargetPackagingIdOptions(null);
+  onCleanup(afterWrites(props.transport, () => void readValueTargetPackagingIdOptions(null)));
   const rowsFill = (path: readonly string[]) =>
     props.rows?.some((row) => readMember(row, path) !== undefined) ?? false;
 
@@ -647,47 +647,47 @@ export function InventoryMergeForm(props: InventoryMergeFormProps) {
         <FieldError>{refusal()?.text}</FieldError>
       </Show>
       <FieldGroup>
-        <Show when={!rowsFill(["value", "sourcePalletId"])}>
-          <form.Field name={`value.sourcePalletId`}>
+        <Show when={!rowsFill(["value", "sourcePackagingId"])}>
+          <form.Field name={`value.sourcePackagingId`}>
             {(field) => (
               <RecordSelect
-                label="source pallet id"
-                options={valueSourcePalletIdOptions().rows}
+                label="source packaging id"
+                options={valueSourcePackagingIdOptions().rows}
                 optionValue={(row) => String(row.id)}
-                optionLabel={(row) => String(row.palletCode)}
+                optionLabel={(row) => String(row.packagingCode)}
                 value={field().state.value == null ? null : String(field().state.value)}
                 onChange={(value) => field().handleChange(value ?? "")}
                 onSearch={(text) => {
-                  setValueSourcePalletIdSearch(text);
-                  void readValueSourcePalletIdOptions(null);
+                  setValueSourcePackagingIdSearch(text);
+                  void readValueSourcePackagingIdOptions(null);
                 }}
-                hasNextPage={hasNextPage(valueSourcePalletIdOptions())}
-                onNextPage={() => void readValueSourcePalletIdOptions(valueSourcePalletIdOptions().cursor)}
-                readRow={readValueSourcePalletIdRecord}
-                error={refusalMarks(refusal()?.member ?? null, "value.source_pallet_id") ? (refusal()?.text ?? null) : null}
+                hasNextPage={hasNextPage(valueSourcePackagingIdOptions())}
+                onNextPage={() => void readValueSourcePackagingIdOptions(valueSourcePackagingIdOptions().cursor)}
+                readRow={readValueSourcePackagingIdRecord}
+                error={refusalMarks(refusal()?.member ?? null, "value.source_packaging_id") ? (refusal()?.text ?? null) : null}
               />
             )}
           </form.Field>
         </Show>
-        <Show when={!rowsFill(["value", "targetPalletId"])}>
-          <form.Field name={`value.targetPalletId`}>
+        <Show when={!rowsFill(["value", "targetPackagingId"])}>
+          <form.Field name={`value.targetPackagingId`}>
             {(field) => (
               <RecordSelect
-                label="target pallet id"
-                options={valueTargetPalletIdOptions().rows}
+                label="target packaging id"
+                options={valueTargetPackagingIdOptions().rows}
                 optionValue={(row) => String(row.id)}
-                optionLabel={(row) => String(row.palletCode)}
+                optionLabel={(row) => String(row.packagingCode)}
                 value={field().state.value == null ? null : String(field().state.value)}
                 onChange={(value) => field().handleChange(value ?? "")}
-                onRow={(row) => setValueTargetPalletIdRevision(row?.rowVersion ?? null)}
+                onRow={(row) => setValueTargetPackagingIdRevision(row?.rowVersion ?? null)}
                 onSearch={(text) => {
-                  setValueTargetPalletIdSearch(text);
-                  void readValueTargetPalletIdOptions(null);
+                  setValueTargetPackagingIdSearch(text);
+                  void readValueTargetPackagingIdOptions(null);
                 }}
-                hasNextPage={hasNextPage(valueTargetPalletIdOptions())}
-                onNextPage={() => void readValueTargetPalletIdOptions(valueTargetPalletIdOptions().cursor)}
-                readRow={readValueTargetPalletIdRecord}
-                error={refusalMarks(refusal()?.member ?? null, "value.target_pallet_id") ? (refusal()?.text ?? null) : null}
+                hasNextPage={hasNextPage(valueTargetPackagingIdOptions())}
+                onNextPage={() => void readValueTargetPackagingIdOptions(valueTargetPackagingIdOptions().cursor)}
+                readRow={readValueTargetPackagingIdRecord}
+                error={refusalMarks(refusal()?.member ?? null, "value.target_packaging_id") ? (refusal()?.text ?? null) : null}
               />
             )}
           </form.Field>
@@ -705,7 +705,7 @@ export function InventoryMergeForm(props: InventoryMergeFormProps) {
 const MOVE_INPUT = z.object({
   value: z
     .object({
-      palletId: z.string().regex(UUID_TEXT, "expected a UUID"),
+      packagingId: z.string().regex(UUID_TEXT, "expected a UUID"),
       toLocationId: z.string().regex(UUID_TEXT, "expected a UUID"),
     })
     .optional(),
@@ -714,7 +714,7 @@ const MOVE_INPUT = z.object({
 /** What the form for `wamn-wms:inventory/move@1.0.0` can start with. */
 export interface InventoryMoveFormInitial {
   value?: {
-    palletId?: Uuid;
+    packagingId?: Uuid;
     toLocationId?: Uuid;
   };
 }
@@ -774,12 +774,12 @@ export function InventoryMoveForm(props: InventoryMoveFormProps) {
           item = writeMember(item, ["value", "idempotencyKey"], newIdempotencyKey());
           item = writeMember(item, ["value", "occurredAt"], occurredAt());
           if (readMember(item, ["value", "expectedRowVersion"]) === undefined) {
-            const valuePalletIdChosen = valuePalletIdRevision();
-            if (valuePalletIdChosen === null) {
-              setRefusal({ text: "Choose the record from its list.", member: "value.pallet_id" });
+            const valuePackagingIdChosen = valuePackagingIdRevision();
+            if (valuePackagingIdChosen === null) {
+              setRefusal({ text: "Choose the record from its list.", member: "value.packaging_id" });
               return;
             }
-            item = writeMember(item, ["value", "expectedRowVersion"], valuePalletIdChosen);
+            item = writeMember(item, ["value", "expectedRowVersion"], valuePackagingIdChosen);
           }
           items.push(item);
         }
@@ -808,12 +808,12 @@ export function InventoryMoveForm(props: InventoryMoveFormProps) {
       item = writeMember(item, ["requestId"], newRequestId());
       item = writeMember(item, ["value", "idempotencyKey"], newIdempotencyKey());
       item = writeMember(item, ["value", "occurredAt"], occurredAt());
-      const valuePalletIdChosen = valuePalletIdRevision();
-      if (valuePalletIdChosen === null) {
-        setRefusal({ text: "Choose the record from its list.", member: "value.pallet_id" });
+      const valuePackagingIdChosen = valuePackagingIdRevision();
+      if (valuePackagingIdChosen === null) {
+        setRefusal({ text: "Choose the record from its list.", member: "value.packaging_id" });
         return;
       }
-      item = writeMember(item, ["value", "expectedRowVersion"], valuePalletIdChosen);
+      item = writeMember(item, ["value", "expectedRowVersion"], valuePackagingIdChosen);
       const outcome = await move(props.transport, [item]);
       props.onSubmitted?.(outcome);
       announceOutcome(outcome, InventoryMoveFormLabel);
@@ -825,35 +825,35 @@ export function InventoryMoveForm(props: InventoryMoveFormProps) {
       setDone(outcome.status === "completed");
     },
   }));
-  const [valuePalletIdOptions, setValuePalletIdOptions] = createSignal<PageState<PalletQueryRow>>(emptyPage<PalletQueryRow>());
-  const [valuePalletIdSearch, setValuePalletIdSearch] = createSignal("");
-  const [valuePalletIdRevision, setValuePalletIdRevision] = createSignal<PalletQueryRow["rowVersion"] | null>(null);
-  const readValuePalletIdOptions = async (cursor: string | null) => {
-    let request = {} as PalletQueryRequest;
-    if (valuePalletIdSearch() !== "") {
-      request = writeMember(request, ["filter", "palletCode"], [valuePalletIdSearch()]) as PalletQueryRequest;
+  const [valuePackagingIdOptions, setValuePackagingIdOptions] = createSignal<PageState<PackagingQueryRow>>(emptyPage<PackagingQueryRow>());
+  const [valuePackagingIdSearch, setValuePackagingIdSearch] = createSignal("");
+  const [valuePackagingIdRevision, setValuePackagingIdRevision] = createSignal<PackagingQueryRow["rowVersion"] | null>(null);
+  const readValuePackagingIdOptions = async (cursor: string | null) => {
+    let request = {} as PackagingQueryRequest;
+    if (valuePackagingIdSearch() !== "") {
+      request = writeMember(request, ["filter", "packagingCode"], [valuePackagingIdSearch()]) as PackagingQueryRequest;
     }
     if (cursor !== null) {
-      request = writeMember(request, ["cursor"], cursor) as PalletQueryRequest;
+      request = writeMember(request, ["cursor"], cursor) as PackagingQueryRequest;
     }
-    const outcome = await palletQuery(props.transport, [request]);
+    const outcome = await packagingQuery(props.transport, [request]);
     if (outcome.status !== "completed") {
       return;
     }
-    const rows = outcome.value.item as PalletQueryRow[];
-    setValuePalletIdOptions(
+    const rows = outcome.value.item as PackagingQueryRow[];
+    setValuePackagingIdOptions(
       cursor === null
         ? firstPage(rows, outcome.value.nextCursor)
-        : appendPage(valuePalletIdOptions(), rows, outcome.value.nextCursor),
+        : appendPage(valuePackagingIdOptions(), rows, outcome.value.nextCursor),
     );
   };
-  const readValuePalletIdRecord = async (key: string): Promise<PalletQueryRow | null> => {
-    const request = writeMember({}, ["id"], key) as PalletGetRequest;
-    const outcome = await palletGet(props.transport, [request]);
-    return outcome.status === "completed" ? ((outcome.value ?? null) as unknown as PalletQueryRow | null) : null;
+  const readValuePackagingIdRecord = async (key: string): Promise<PackagingQueryRow | null> => {
+    const request = writeMember({}, ["id"], key) as PackagingGetRequest;
+    const outcome = await packagingGet(props.transport, [request]);
+    return outcome.status === "completed" ? ((outcome.value ?? null) as unknown as PackagingQueryRow | null) : null;
   };
-  void readValuePalletIdOptions(null);
-  onCleanup(afterWrites(props.transport, () => void readValuePalletIdOptions(null)));
+  void readValuePackagingIdOptions(null);
+  onCleanup(afterWrites(props.transport, () => void readValuePackagingIdOptions(null)));
   const [valueToLocationIdOptions, setValueToLocationIdOptions] = createSignal<PageState<LocationQueryRow>>(emptyPage<LocationQueryRow>());
   const [valueToLocationIdSearch, setValueToLocationIdSearch] = createSignal("");
   const readValueToLocationIdOptions = async (cursor: string | null) => {
@@ -896,25 +896,25 @@ export function InventoryMoveForm(props: InventoryMoveFormProps) {
         <FieldError>{refusal()?.text}</FieldError>
       </Show>
       <FieldGroup>
-        <Show when={!rowsFill(["value", "palletId"])}>
-          <form.Field name={`value.palletId`}>
+        <Show when={!rowsFill(["value", "packagingId"])}>
+          <form.Field name={`value.packagingId`}>
             {(field) => (
               <RecordSelect
-                label="pallet id"
-                options={valuePalletIdOptions().rows}
+                label="packaging id"
+                options={valuePackagingIdOptions().rows}
                 optionValue={(row) => String(row.id)}
-                optionLabel={(row) => String(row.palletCode)}
+                optionLabel={(row) => String(row.packagingCode)}
                 value={field().state.value == null ? null : String(field().state.value)}
                 onChange={(value) => field().handleChange(value ?? "")}
-                onRow={(row) => setValuePalletIdRevision(row?.rowVersion ?? null)}
+                onRow={(row) => setValuePackagingIdRevision(row?.rowVersion ?? null)}
                 onSearch={(text) => {
-                  setValuePalletIdSearch(text);
-                  void readValuePalletIdOptions(null);
+                  setValuePackagingIdSearch(text);
+                  void readValuePackagingIdOptions(null);
                 }}
-                hasNextPage={hasNextPage(valuePalletIdOptions())}
-                onNextPage={() => void readValuePalletIdOptions(valuePalletIdOptions().cursor)}
-                readRow={readValuePalletIdRecord}
-                error={refusalMarks(refusal()?.member ?? null, "value.pallet_id") ? (refusal()?.text ?? null) : null}
+                hasNextPage={hasNextPage(valuePackagingIdOptions())}
+                onNextPage={() => void readValuePackagingIdOptions(valuePackagingIdOptions().cursor)}
+                readRow={readValuePackagingIdRecord}
+                error={refusalMarks(refusal()?.member ?? null, "value.packaging_id") ? (refusal()?.text ?? null) : null}
               />
             )}
           </form.Field>
@@ -954,10 +954,11 @@ export function InventoryMoveForm(props: InventoryMoveFormProps) {
 const SPLIT_INPUT = z.object({
   value: z
     .object({
-      newPalletCode: z.string(),
+      newPackagingCode: z.string(),
+      newPackagingType: z.enum(["bin", "case", "loose", "pallet", "tote"]),
       productId: z.string().regex(UUID_TEXT, "expected a UUID"),
       quantity: z.string().regex(NUMERIC_TEXT, "expected decimal text"),
-      sourcePalletId: z.string().regex(UUID_TEXT, "expected a UUID"),
+      sourcePackagingId: z.string().regex(UUID_TEXT, "expected a UUID"),
       status: z.enum(["available", "held"]),
       toLocationId: z.string().regex(UUID_TEXT, "expected a UUID"),
     })
@@ -967,10 +968,11 @@ const SPLIT_INPUT = z.object({
 /** What the form for `wamn-wms:inventory/split@1.0.0` can start with. */
 export interface InventorySplitFormInitial {
   value?: {
-    newPalletCode?: string;
+    newPackagingCode?: string;
+    newPackagingType?: "bin" | "case" | "loose" | "pallet" | "tote";
     productId?: Uuid;
     quantity?: Numeric;
-    sourcePalletId?: Uuid;
+    sourcePackagingId?: Uuid;
     status?: "available" | "held";
     toLocationId?: Uuid;
   };
@@ -1031,12 +1033,12 @@ export function InventorySplitForm(props: InventorySplitFormProps) {
           item = writeMember(item, ["value", "idempotencyKey"], newIdempotencyKey());
           item = writeMember(item, ["value", "occurredAt"], occurredAt());
           if (readMember(item, ["value", "expectedRowVersion"]) === undefined) {
-            const valueSourcePalletIdChosen = valueSourcePalletIdRevision();
-            if (valueSourcePalletIdChosen === null) {
-              setRefusal({ text: "Choose the record from its list.", member: "value.source_pallet_id" });
+            const valueSourcePackagingIdChosen = valueSourcePackagingIdRevision();
+            if (valueSourcePackagingIdChosen === null) {
+              setRefusal({ text: "Choose the record from its list.", member: "value.source_packaging_id" });
               return;
             }
-            item = writeMember(item, ["value", "expectedRowVersion"], valueSourcePalletIdChosen);
+            item = writeMember(item, ["value", "expectedRowVersion"], valueSourcePackagingIdChosen);
           }
           items.push(item);
         }
@@ -1065,12 +1067,12 @@ export function InventorySplitForm(props: InventorySplitFormProps) {
       item = writeMember(item, ["requestId"], newRequestId());
       item = writeMember(item, ["value", "idempotencyKey"], newIdempotencyKey());
       item = writeMember(item, ["value", "occurredAt"], occurredAt());
-      const valueSourcePalletIdChosen = valueSourcePalletIdRevision();
-      if (valueSourcePalletIdChosen === null) {
-        setRefusal({ text: "Choose the record from its list.", member: "value.source_pallet_id" });
+      const valueSourcePackagingIdChosen = valueSourcePackagingIdRevision();
+      if (valueSourcePackagingIdChosen === null) {
+        setRefusal({ text: "Choose the record from its list.", member: "value.source_packaging_id" });
         return;
       }
-      item = writeMember(item, ["value", "expectedRowVersion"], valueSourcePalletIdChosen);
+      item = writeMember(item, ["value", "expectedRowVersion"], valueSourcePackagingIdChosen);
       const outcome = await split(props.transport, [item]);
       props.onSubmitted?.(outcome);
       announceOutcome(outcome, InventorySplitFormLabel);
@@ -1110,35 +1112,35 @@ export function InventorySplitForm(props: InventorySplitFormProps) {
   };
   void readValueProductIdOptions(null);
   onCleanup(afterWrites(props.transport, () => void readValueProductIdOptions(null)));
-  const [valueSourcePalletIdOptions, setValueSourcePalletIdOptions] = createSignal<PageState<PalletQueryRow>>(emptyPage<PalletQueryRow>());
-  const [valueSourcePalletIdSearch, setValueSourcePalletIdSearch] = createSignal("");
-  const [valueSourcePalletIdRevision, setValueSourcePalletIdRevision] = createSignal<PalletQueryRow["rowVersion"] | null>(null);
-  const readValueSourcePalletIdOptions = async (cursor: string | null) => {
-    let request = {} as PalletQueryRequest;
-    if (valueSourcePalletIdSearch() !== "") {
-      request = writeMember(request, ["filter", "palletCode"], [valueSourcePalletIdSearch()]) as PalletQueryRequest;
+  const [valueSourcePackagingIdOptions, setValueSourcePackagingIdOptions] = createSignal<PageState<PackagingQueryRow>>(emptyPage<PackagingQueryRow>());
+  const [valueSourcePackagingIdSearch, setValueSourcePackagingIdSearch] = createSignal("");
+  const [valueSourcePackagingIdRevision, setValueSourcePackagingIdRevision] = createSignal<PackagingQueryRow["rowVersion"] | null>(null);
+  const readValueSourcePackagingIdOptions = async (cursor: string | null) => {
+    let request = {} as PackagingQueryRequest;
+    if (valueSourcePackagingIdSearch() !== "") {
+      request = writeMember(request, ["filter", "packagingCode"], [valueSourcePackagingIdSearch()]) as PackagingQueryRequest;
     }
     if (cursor !== null) {
-      request = writeMember(request, ["cursor"], cursor) as PalletQueryRequest;
+      request = writeMember(request, ["cursor"], cursor) as PackagingQueryRequest;
     }
-    const outcome = await palletQuery(props.transport, [request]);
+    const outcome = await packagingQuery(props.transport, [request]);
     if (outcome.status !== "completed") {
       return;
     }
-    const rows = outcome.value.item as PalletQueryRow[];
-    setValueSourcePalletIdOptions(
+    const rows = outcome.value.item as PackagingQueryRow[];
+    setValueSourcePackagingIdOptions(
       cursor === null
         ? firstPage(rows, outcome.value.nextCursor)
-        : appendPage(valueSourcePalletIdOptions(), rows, outcome.value.nextCursor),
+        : appendPage(valueSourcePackagingIdOptions(), rows, outcome.value.nextCursor),
     );
   };
-  const readValueSourcePalletIdRecord = async (key: string): Promise<PalletQueryRow | null> => {
-    const request = writeMember({}, ["id"], key) as PalletGetRequest;
-    const outcome = await palletGet(props.transport, [request]);
-    return outcome.status === "completed" ? ((outcome.value ?? null) as unknown as PalletQueryRow | null) : null;
+  const readValueSourcePackagingIdRecord = async (key: string): Promise<PackagingQueryRow | null> => {
+    const request = writeMember({}, ["id"], key) as PackagingGetRequest;
+    const outcome = await packagingGet(props.transport, [request]);
+    return outcome.status === "completed" ? ((outcome.value ?? null) as unknown as PackagingQueryRow | null) : null;
   };
-  void readValueSourcePalletIdOptions(null);
-  onCleanup(afterWrites(props.transport, () => void readValueSourcePalletIdOptions(null)));
+  void readValueSourcePackagingIdOptions(null);
+  onCleanup(afterWrites(props.transport, () => void readValueSourcePackagingIdOptions(null)));
   const [valueToLocationIdOptions, setValueToLocationIdOptions] = createSignal<PageState<LocationQueryRow>>(emptyPage<LocationQueryRow>());
   const [valueToLocationIdSearch, setValueToLocationIdSearch] = createSignal("");
   const readValueToLocationIdOptions = async (cursor: string | null) => {
@@ -1181,15 +1183,35 @@ export function InventorySplitForm(props: InventorySplitFormProps) {
         <FieldError>{refusal()?.text}</FieldError>
       </Show>
       <FieldGroup>
-        <Show when={!rowsFill(["value", "newPalletCode"])}>
-          <form.Field name={`value.newPalletCode`}>
+        <Show when={!rowsFill(["value", "newPackagingCode"])}>
+          <form.Field name={`value.newPackagingCode`}>
             {(field) => (
               <TextField
-                label="new pallet code"
+                label="new packaging code"
                 type="text"
                 value={String(field().state.value ?? "")}
                 onInput={(value) => field().handleChange(value)}
-                error={refusalMarks(refusal()?.member ?? null, "value.new_pallet_code") ? (refusal()?.text ?? null) : null}
+                error={refusalMarks(refusal()?.member ?? null, "value.new_packaging_code") ? (refusal()?.text ?? null) : null}
+              />
+            )}
+          </form.Field>
+        </Show>
+        <Show when={!rowsFill(["value", "newPackagingType"])}>
+          <form.Field name={`value.newPackagingType`}>
+            {(field) => (
+              <ChoiceField
+                label="new packaging type"
+                allowEmpty={false}
+                choices={[
+                  { value: "bin", text: "bin" },
+                  { value: "case", text: "case" },
+                  { value: "loose", text: "loose" },
+                  { value: "pallet", text: "pallet" },
+                  { value: "tote", text: "tote" },
+                ]}
+                value={String(field().state.value ?? "")}
+                onChange={(value) => field().handleChange(value as "bin" | "case" | "loose" | "pallet" | "tote")}
+                error={refusalMarks(refusal()?.member ?? null, "value.new_packaging_type") ? (refusal()?.text ?? null) : null}
               />
             )}
           </form.Field>
@@ -1229,25 +1251,25 @@ export function InventorySplitForm(props: InventorySplitFormProps) {
             )}
           </form.Field>
         </Show>
-        <Show when={!rowsFill(["value", "sourcePalletId"])}>
-          <form.Field name={`value.sourcePalletId`}>
+        <Show when={!rowsFill(["value", "sourcePackagingId"])}>
+          <form.Field name={`value.sourcePackagingId`}>
             {(field) => (
               <RecordSelect
-                label="source pallet id"
-                options={valueSourcePalletIdOptions().rows}
+                label="source packaging id"
+                options={valueSourcePackagingIdOptions().rows}
                 optionValue={(row) => String(row.id)}
-                optionLabel={(row) => String(row.palletCode)}
+                optionLabel={(row) => String(row.packagingCode)}
                 value={field().state.value == null ? null : String(field().state.value)}
                 onChange={(value) => field().handleChange(value ?? "")}
-                onRow={(row) => setValueSourcePalletIdRevision(row?.rowVersion ?? null)}
+                onRow={(row) => setValueSourcePackagingIdRevision(row?.rowVersion ?? null)}
                 onSearch={(text) => {
-                  setValueSourcePalletIdSearch(text);
-                  void readValueSourcePalletIdOptions(null);
+                  setValueSourcePackagingIdSearch(text);
+                  void readValueSourcePackagingIdOptions(null);
                 }}
-                hasNextPage={hasNextPage(valueSourcePalletIdOptions())}
-                onNextPage={() => void readValueSourcePalletIdOptions(valueSourcePalletIdOptions().cursor)}
-                readRow={readValueSourcePalletIdRecord}
-                error={refusalMarks(refusal()?.member ?? null, "value.source_pallet_id") ? (refusal()?.text ?? null) : null}
+                hasNextPage={hasNextPage(valueSourcePackagingIdOptions())}
+                onNextPage={() => void readValueSourcePackagingIdOptions(valueSourcePackagingIdOptions().cursor)}
+                readRow={readValueSourcePackagingIdRecord}
+                error={refusalMarks(refusal()?.member ?? null, "value.source_packaging_id") ? (refusal()?.text ?? null) : null}
               />
             )}
           </form.Field>

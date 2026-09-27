@@ -538,6 +538,22 @@ fn event_registration_and_line_profiles_are_closed() {
     );
     validate_operation_vocabulary(&parsed(&handler)).expect("valid event registration");
 
+    // A condition selects the events; the apply of the package checks its
+    // JMESPath and the reconciler reads it for the old image.
+    let mut conditioned = handler.clone();
+    conditioned["custom_operations"]["widget.archive"]["registration"] = json!({
+        "source_package": "platform_fixture", "entity": "widget", "ops": ["update"],
+        "condition": "old.code != new.code"
+    });
+    let conditioned = parsed(&conditioned);
+    validate_operation_vocabulary(&conditioned).expect("a registration with a condition");
+    assert_eq!(
+        conditioned.custom_operations["widget.archive"]
+            .registration()
+            .and_then(|registration| registration.condition.as_deref()),
+        Some("old.code != new.code")
+    );
+
     for registration in [
         Value::Null,
         json!({

@@ -160,7 +160,7 @@ mod tests {
     const SHAPE: &str = r#"event = "insert" and new.kind = "move"
         ? [{"request_id": new.id,
             "value": {"label_key": new.idempotency_key, "movement_id": new.id,
-                      "pallet_id": new.pallet_id, "location_id": new.to_location_id}}]
+                      "packaging_id": new.packaging_id, "location_id": new.to_location_id}}]
         : []"#;
 
     fn result(expression: &str, input: &Value) -> Value {
@@ -171,12 +171,12 @@ mod tests {
     #[test]
     fn the_shape_expression_turns_a_move_row_into_one_label_item() {
         let row = json!({"event": "insert", "new": {
-            "id": "m-1", "idempotency_key": "k-1", "kind": "move", "pallet_id": "p-1",
+            "id": "m-1", "idempotency_key": "k-1", "kind": "move", "packaging_id": "p-1",
             "from_location_id": "l-0", "to_location_id": "l-2", "quantity": "4"}});
         assert_eq!(
             result(SHAPE, &row),
             json!([{"request_id": "m-1", "value": {"label_key": "k-1",
-                "movement_id": "m-1", "pallet_id": "p-1", "location_id": "l-2"}}])
+                "movement_id": "m-1", "packaging_id": "p-1", "location_id": "l-2"}}])
         );
     }
 

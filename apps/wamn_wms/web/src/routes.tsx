@@ -25,9 +25,9 @@ import {
   InventoryMergeForm,
   InventoryMergeFormLabel,
   InventoryMoveForm,
-  InventoryMovementGetDetail,
-  InventoryMovementQueryTable,
-  InventoryMovementQueryTableLabel,
+  InventoryTransactionGetDetail,
+  InventoryTransactionQueryTable,
+  InventoryTransactionQueryTableLabel,
   InventorySplitForm,
   LocationCreateForm,
   LocationCreateFormLabel,
@@ -36,14 +36,14 @@ import {
   LocationQueryTableLabel,
   LocationUpdateForm,
   LocationUpdateFormLabel,
-  PalletCreateForm,
-  PalletCreateFormLabel,
-  PalletGetDetail,
-  PalletQuantityGetDetail,
-  PalletQuantityQueryTable,
-  PalletQuantityQueryTableLabel,
-  PalletQueryTable,
-  PalletQueryTableLabel,
+  PackagingCreateForm,
+  PackagingCreateFormLabel,
+  PackagingGetDetail,
+  PackagingQuantityGetDetail,
+  PackagingQuantityQueryTable,
+  PackagingQuantityQueryTableLabel,
+  PackagingQueryTable,
+  PackagingQueryTableLabel,
   ProductCreateForm,
   ProductCreateFormLabel,
   ProductGetDetail,
@@ -68,16 +68,16 @@ const done = (props: ScreenProps) => (outcome: { readonly status: string }) => {
 
 export const SECTIONS: readonly ShellSection[] = [
   {
-    label: "Pallets",
+    label: "Packagings",
     screens: [
       {
-        path: "pallets",
-        label: PalletQueryTableLabel,
-        actions: [{ label: PalletCreateFormLabel, path: "pallets/new" }],
+        path: "packagings",
+        label: PackagingQueryTableLabel,
+        actions: [{ label: PackagingCreateFormLabel, path: "packagings/new" }],
         component: (props) => (
-          <PalletQueryTable
+          <PackagingQueryTable
             transport={props.transport}
-            onOpen={{ "wamn-wms:pallet/get@1.0.0": (row) => props.open(record("pallets", row)) }}
+            onOpen={{ "wamn-wms:packaging/get@1.0.0": (row) => props.open(record("packagings", row)) }}
             onFill={{
               "wamn-wms:inventory/move@1.0.0": (fill) => props.open(fillPath("inventory/move", fill)),
               "wamn-wms:inventory/adjust@1.0.0": (fill) => props.open(fillPath("inventory/adjust", fill)),
@@ -89,35 +89,35 @@ export const SECTIONS: readonly ShellSection[] = [
     ],
     routes: [
       {
-        path: "pallets/new",
+        path: "packagings/new",
         component: (props) => (
-          <PalletCreateForm transport={props.transport} initial={filledValues(props.search)} onSubmitted={done(props)} />
+          <PackagingCreateForm transport={props.transport} initial={filledValues(props.search)} onSubmitted={done(props)} />
         ),
       },
       {
-        path: "pallets/:id",
-        component: (props) => <PalletGetDetail transport={props.transport} input={key(props)} />,
+        path: "packagings/:id",
+        component: (props) => <PackagingGetDetail transport={props.transport} input={key(props)} />,
       },
     ],
   },
   {
-    label: "Pallet quantities",
+    label: "Packaging quantities",
     screens: [
       {
-        path: "pallet-quantities",
-        label: PalletQuantityQueryTableLabel,
+        path: "packaging-quantities",
+        label: PackagingQuantityQueryTableLabel,
         component: (props) => (
-          <PalletQuantityQueryTable
+          <PackagingQuantityQueryTable
             transport={props.transport}
-            onOpen={{ "wamn-wms:pallet-quantity/get@1.0.0": (row) => props.open(record("pallet-quantities", row)) }}
+            onOpen={{ "wamn-wms:packaging-quantity/get@1.0.0": (row) => props.open(record("packaging-quantities", row)) }}
           />
         ),
       },
     ],
     routes: [
       {
-        path: "pallet-quantities/:id",
-        component: (props) => <PalletQuantityGetDetail transport={props.transport} input={key(props)} />,
+        path: "packaging-quantities/:id",
+        component: (props) => <PackagingQuantityGetDetail transport={props.transport} input={key(props)} />,
       },
     ],
   },
@@ -157,16 +157,16 @@ export const SECTIONS: readonly ShellSection[] = [
     ],
   },
   {
-    label: "Inventory movements",
+    label: "Inventory transactions",
     screens: [
       {
-        path: "inventory-movements",
-        label: InventoryMovementQueryTableLabel,
+        path: "inventory-transactions",
+        label: InventoryTransactionQueryTableLabel,
         component: (props) => (
-          <InventoryMovementQueryTable
+          <InventoryTransactionQueryTable
             transport={props.transport}
             onOpen={{
-              "wamn-wms:inventory-movement/get@1.0.0": (row) => props.open(record("inventory-movements", row)),
+              "wamn-wms:inventory-transaction/get@1.0.0": (row) => props.open(record("inventory-transactions", row)),
             }}
           />
         ),
@@ -174,8 +174,8 @@ export const SECTIONS: readonly ShellSection[] = [
     ],
     routes: [
       {
-        path: "inventory-movements/:id",
-        component: (props) => <InventoryMovementGetDetail transport={props.transport} input={key(props)} />,
+        path: "inventory-transactions/:id",
+        component: (props) => <InventoryTransactionGetDetail transport={props.transport} input={key(props)} />,
       },
     ],
   },
@@ -190,7 +190,7 @@ export const SECTIONS: readonly ShellSection[] = [
           <LocationQueryTable
             transport={props.transport}
             onOpen={{ "wamn-wms:location/get@1.0.0": (row) => props.open(record("locations", row)) }}
-            onFill={{ "wamn-wms:pallet/create@1.0.0": (fill) => props.open(fillPath("pallets/new", fill)) }}
+            onFill={{ "wamn-wms:packaging/create@1.0.0": (fill) => props.open(fillPath("packagings/new", fill)) }}
           />
         ),
       },

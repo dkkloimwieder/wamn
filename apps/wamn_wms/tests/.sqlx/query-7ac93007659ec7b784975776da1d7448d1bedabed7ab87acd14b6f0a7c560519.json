@@ -1,0 +1,148 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT\n    model.created_at,\n    model.created_by,\n    model.from_packaging_id,\n    model.from_status,\n    model.id,\n    model.occurred_at,\n    model.product_id,\n    model.quantity,\n    model.reason_code,\n    model.to_packaging_id,\n    model.to_status\nFROM inventory_transaction AS model\nWHERE model.id = $1::uuid;\n",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "created_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "inventory_transaction",
+            "name": "created_at"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "created_by",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "inventory_transaction",
+            "name": "created_by"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "from_packaging_id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "inventory_transaction",
+            "name": "from_packaging_id"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "from_status",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "inventory_transaction",
+            "name": "from_status"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "inventory_transaction",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "ordinal": 5,
+        "name": "occurred_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "inventory_transaction",
+            "name": "occurred_at"
+          }
+        }
+      },
+      {
+        "ordinal": 6,
+        "name": "product_id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "inventory_transaction",
+            "name": "product_id"
+          }
+        }
+      },
+      {
+        "ordinal": 7,
+        "name": "quantity",
+        "type_info": "Numeric",
+        "origin": {
+          "Table": {
+            "table": "inventory_transaction",
+            "name": "quantity"
+          }
+        }
+      },
+      {
+        "ordinal": 8,
+        "name": "reason_code",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "inventory_transaction",
+            "name": "reason_code"
+          }
+        }
+      },
+      {
+        "ordinal": 9,
+        "name": "to_packaging_id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "inventory_transaction",
+            "name": "to_packaging_id"
+          }
+        }
+      },
+      {
+        "ordinal": 10,
+        "name": "to_status",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "inventory_transaction",
+            "name": "to_status"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      true,
+      true,
+      false,
+      false,
+      false,
+      false,
+      true,
+      true,
+      true
+    ]
+  },
+  "hash": "7ac93007659ec7b784975776da1d7448d1bedabed7ab87acd14b6f0a7c560519"
+}

@@ -1,0 +1,90 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT\n    model.created_at,\n    model.id,\n    model.packaging_id,\n    model.product_id,\n    model.quantity,\n    model.status\nFROM packaging_quantity AS model\nWHERE\n    ($1::timestamptz IS NULL OR model.created_at > $1::timestamptz\n        OR (model.created_at = $1::timestamptz AND model.id > $2::uuid))\nORDER BY model.created_at ASC, model.id ASC\nLIMIT $3::int8;\n",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "created_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "packaging_quantity",
+            "name": "created_at"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "packaging_quantity",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "packaging_id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "packaging_quantity",
+            "name": "packaging_id"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "product_id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "packaging_quantity",
+            "name": "product_id"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "quantity",
+        "type_info": "Numeric",
+        "origin": {
+          "Table": {
+            "table": "packaging_quantity",
+            "name": "quantity"
+          }
+        }
+      },
+      {
+        "ordinal": 5,
+        "name": "status",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "packaging_quantity",
+            "name": "status"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Timestamptz",
+        "Uuid",
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "85dd0496864b60c0dd68f8e2c2862a0ea6cb7040747b9aa4c63dfa36fbd06855"
+}

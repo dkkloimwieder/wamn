@@ -1,4 +1,4 @@
-UPDATE pallet
+UPDATE packaging
 SET
     row_version = row_version + 1
 WHERE id = $1

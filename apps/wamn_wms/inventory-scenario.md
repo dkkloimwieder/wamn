@@ -1,56 +1,56 @@
 # WMS inventory scenario
 
-WMS moves stock between pallets and locations.
+WMS moves stock between packagings and locations.
 It owns its [manifest](wamn.json), [migrations](migrations/), command SQL, guest, and application assertions.
 WMS owns its `wms.location` and `wms.product` tables.
 It does not share Receiving's physical tables.
 
 ## Stock and commands
 
-The data model contains `product`, `location`, `pallet`, `pallet_quantity`, and `inventory_movement`.
+The data model contains `product`, `location`, `packaging`, `packaging_quantity`, and `inventory_transaction`.
 Stock status is `available` or `held`.
-The pallet row provides the common lock and `row_version` for competing commands.
+The packaging row provides the common lock and `row_version` for competing commands.
 Quantities belong to their product and status rows.
-`inventory_movement` records the committed movement history.
-The platform stamp trigger records who created and changed each `pallet` row and when, and who created each `inventory_movement` row and when.
+`inventory_transaction` records the committed movement history.
+The platform stamp trigger records who created and changed each `packaging` row and when, and who created each `inventory_transaction` row and when.
 Command SQL writes no stamp column.
 
 The four commands have distinct authority and effects:
 
 | Operation | Purpose |
 |---|---|
-| `inventory.move` | Move a pallet to another location. |
+| `inventory.move` | Move a packaging to another location. |
 | `inventory.adjust` | Change quantity with a reason. |
-| `inventory.merge` | Move stock between two pallets and retire the source. |
-| `inventory.split` | Transfer quantity into a newly identified pallet. |
+| `inventory.merge` | Move stock between two packagings and retire the source. |
+| `inventory.split` | Transfer quantity into a newly identified packaging. |
 
 The generated codec opens one transaction for each input item and claims the caller's idempotency key in the platform write log.
-The command locks the relevant pallet rows and compares the expected revision.
+The command locks the relevant packaging rows and compares the expected revision.
 It validates quantity and status before committing the movement, quantity changes, and new revision.
 A refusal reports the declared application error.
 `concurrency_conflict` carries both `expected_row_version` and `observed_row_version`.
 
 The write log stores the result of the move, with its original `movement_ids`.
-The `movement_ids` are the ids of the movement rows that the command wrote, and a move of a pallet with no quantity rows answers an empty list.
+The `movement_ids` are the ids of the movement rows that the command wrote, and a move of a packaging with no quantity rows answers an empty list.
 Repeating the same command returns that result without another movement.
 Changing its body under the same key refuses.
-Two competing moves on the same pallet must produce one success and one `concurrency_conflict`.
+Two competing moves on the same packaging must produce one success and one `concurrency_conflict`.
 
 ## Reads and labels
 
-`pallet.get` and `pallet.query` provide the declared reads.
-The query filters on `status`, `location_id`, and `pallet_code`.
-It sorts on `pallet_code`, `location_id`, `updated_at`, or `created_at`.
+`packaging.get` and `packaging.query` provide the declared reads.
+The query filters on `status`, `location_id`, and `packaging_code`.
+It sorts on `packaging_code`, `location_id`, `updated_at`, or `created_at`.
 Its default order uses `created_at` with an `id` tie-breaker and an opaque cursor.
-`updated_at` changes only when a command changes the pallet row.
+`updated_at` changes only when a command changes the packaging row.
 Sorting across the quantity join is outside its declared query.
 
 Each other model has a generated `get` and a generated `query` that pages by `created_at`.
 The `location` and `product` queries filter on their code.
-`location` and `product` also have a generated `create` and `update`, and `pallet` has a generated `create`.
+`location` and `product` also have a generated `create` and `update`, and `packaging` has a generated `create`.
 Each create claims its key in the write log, so a retry of one key returns the first row.
-Each update binds `row_version`. Every WMS revision is an `int4`, and the pallet revision is one too.
-`inventory_movement` has no write, because it is a log that the commands write.
+Each update binds `row_version`. Every WMS revision is an `int4`, and the packaging revision is one too.
+`inventory_transaction` has no write, because it is a log that the commands write.
 
 `inventory.aggregate` returns a bounded projection grouped by status, product, and location.
 It is a current SQL read rather than an event-maintained rollup.
@@ -58,10 +58,10 @@ The [projection implementation](data/src/inventory_aggregate.rs) owns its result
 
 `/inventory/move` is a route to `inventory.move`, like every other operation.
 The move's row event starts the [label workflow](publication/wirings/inventory_move_and_label.json) off the request path.
-`wamn.json` declares it as the workflow `movement_label`, registered on the `inventory_movement` insert:
+`wamn.json` declares it as the workflow `movement_label`, registered on the `inventory_transaction` insert:
 
 ```text
-inventory_movement insert → shape (jsonata) → label-render → blob-put
+inventory_transaction insert → shape (jsonata) → label-render → blob-put
 ```
 
 The `shape` node turns a move's row into one label item, and any other movement kind into none.

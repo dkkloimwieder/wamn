@@ -4,10 +4,10 @@
 // and a route.
 
 export * from "./inventory.js";
-export * from "./inventory_movement.js";
+export * from "./inventory_transaction.js";
 export * from "./location.js";
-export * from "./pallet.js";
-export * from "./pallet_quantity.js";
+export * from "./packaging.js";
+export * from "./packaging_quantity.js";
 export * from "./product.js";
 
 // Every operation of this release has a screen role.

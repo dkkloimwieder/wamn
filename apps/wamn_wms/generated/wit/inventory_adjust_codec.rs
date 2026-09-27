@@ -29,7 +29,7 @@ struct JsonRoot {
     expected_row_version: i32,
     idempotency_key: String,
     occurred_at: String,
-    pallet_id: String,
+    packaging_id: String,
     product_id: String,
     quantity: String,
     reason_code: String,
@@ -45,7 +45,7 @@ pub(crate) fn decode(input: &str) -> Result<Vec<contract::AdjustItem>, CodecErro
                     expected_row_version: request.value.expected_row_version,
                     idempotency_key: request.value.idempotency_key,
                     occurred_at: request.value.occurred_at,
-                    pallet_id: request.value.pallet_id,
+                    packaging_id: request.value.packaging_id,
                     product_id: request.value.product_id,
                     quantity: request.value.quantity,
                     reason_code: request.value.reason_code,
@@ -72,10 +72,10 @@ pub(crate) fn encode(output: &[contract::AdjustOutcome]) -> String {
             Ok(value) => json!({
                 "request_id": item.request_id,
                 "value": {
-                    "movement_ids": value.movement_ids.iter().map(|element| json!(element)).collect::<Vec<_>>(),
-                    "pallet_id": value.pallet_id,
+                    "transaction_ids": value.transaction_ids.iter().map(|element| json!(element)).collect::<Vec<_>>(),
+                    "packaging_id": value.packaging_id,
                     "adjusted_quantity": value.adjusted_quantity,
-                    "pallet_status": value.pallet_status,
+                    "packaging_status": value.packaging_status,
                     "row_version": value.row_version,
                 }
             }),
@@ -104,11 +104,11 @@ fn error_value(error: &contract::AdjustError) -> Value {
             }
             ("invalid_input", detail)
         }
-        contract::AdjustError::PalletNotFound(value) => {
+        contract::AdjustError::PackagingNotFound(value) => {
             let mut detail = Map::new();
             detail.insert("field".to_owned(), json!(value.field));
             detail.insert("id".to_owned(), json!(value.id));
-            ("pallet_not_found", detail)
+            ("packaging_not_found", detail)
         }
         contract::AdjustError::QuantityNotFound(value) => {
             let mut detail = Map::new();
@@ -148,9 +148,9 @@ fn error_value(error: &contract::AdjustError) -> Value {
 fn normalize(request: &mut contract::AdjustRequest) -> Result<(), contract::InvalidInputDetail> {
     let _ = &request;
     {
-        let value = &mut request.pallet_id;
+        let value = &mut request.packaging_id;
         if !canonical_uuid(value) {
-            return Err(invalid("value.pallet_id"));
+            return Err(invalid("value.packaging_id"));
         }
     }
     {
@@ -192,7 +192,7 @@ fn request_bytes(request: &contract::AdjustRequest, intent: Option<&str>) -> Vec
                     .unwrap_or_else(|| request.occurred_at.clone())
             ),
         );
-        value.insert("pallet_id".to_owned(), json!(&request.pallet_id));
+        value.insert("packaging_id".to_owned(), json!(&request.packaging_id));
         value.insert("product_id".to_owned(), json!(&request.product_id));
         value.insert(
             "quantity".to_owned(),
@@ -229,10 +229,10 @@ fn stored_result(result: &contract::AdjustResult) -> String {
 
 #[derive(Deserialize)]
 struct JsonResult {
-    movement_ids: Vec<String>,
-    pallet_id: String,
+    transaction_ids: Vec<String>,
+    packaging_id: String,
     adjusted_quantity: String,
-    pallet_status: String,
+    packaging_status: String,
     row_version: i32,
 }
 
@@ -240,10 +240,10 @@ struct JsonResult {
 fn stored_success(result: &str) -> Option<contract::AdjustResult> {
     let value: JsonResult = serde_json::from_str(result).ok()?;
     Some(contract::AdjustResult {
-        movement_ids: value.movement_ids,
-        pallet_id: value.pallet_id,
+        transaction_ids: value.transaction_ids,
+        packaging_id: value.packaging_id,
         adjusted_quantity: value.adjusted_quantity,
-        pallet_status: value.pallet_status,
+        packaging_status: value.packaging_status,
         row_version: value.row_version,
     })
 }
@@ -336,10 +336,14 @@ macro_rules! row {
     ($row:expr, $target:path) => {{
         let row = $row;
         $target {
-            movement_ids: row.movement_ids.into_iter().map(|value| value.0).collect(),
-            pallet_id: row.pallet_id.0,
+            transaction_ids: row
+                .transaction_ids
+                .into_iter()
+                .map(|value| value.0)
+                .collect(),
+            packaging_id: row.packaging_id.0,
             adjusted_quantity: row.adjusted_quantity.0,
-            pallet_status: row.pallet_status,
+            packaging_status: row.packaging_status,
             row_version: row.row_version,
         }
     }};
@@ -367,14 +371,17 @@ pub(crate) fn map_error(
                 observed,
             })
         }
-        "pallet_not_found" => {
+        "packaging_not_found" => {
             let Some(field) = detail("field") else {
                 return contract::AdjustError::InternalError;
             };
             let Some(id) = detail("id") else {
                 return contract::AdjustError::InternalError;
             };
-            contract::AdjustError::PalletNotFound(contract::PalletNotFoundDetail { field, id })
+            contract::AdjustError::PackagingNotFound(contract::PackagingNotFoundDetail {
+                field,
+                id,
+            })
         }
         "quantity_not_found" => {
             let Some(field) = detail("field") else {

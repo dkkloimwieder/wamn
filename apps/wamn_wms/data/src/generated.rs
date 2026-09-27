@@ -17,7 +17,7 @@ pub(crate) mod wamn {
     /// Generated `inventory.adjust` transaction accessors.
     #[expect(
         dead_code,
-        reason = "an adjust changes a quantity in place, so it reads the row_version its finalize returns, the quantity its update returns, and the locked pallet's row_version and status; it leaves the movement insert's RETURNING id, the locked pallet's location_id, which only a move consults, and the updated quantity row's id"
+        reason = "an adjust reads the locked packaging's row_version and status, the transaction id, the quantity its update returns, and the revision its touch returns; it leaves the locked packaging's location_id, which only a move consults, the balance its existence read selects, which the transaction insert compares in SQL, and the ids its update and delete return"
     )]
     pub(crate) mod inventory_adjust {
         include!(concat!(
@@ -37,7 +37,7 @@ pub(crate) mod wamn {
     /// Generated `inventory.merge` transaction accessors.
     #[expect(
         dead_code,
-        reason = "a merge writes four rows whose whole returned payload it leaves: the movement insert's id, the row_version the source pallet's tombstone returns, and the id and quantity of both the target quantity row it updates and the one it inserts. Each statement must return something, and the merge's own confirmation comes from finalize_command. Of the two pallets it locks in id order it reads id, row_version and status, not location_id"
+        reason = "a merge leaves the id and quantity of both the target quantity row it updates and the one it inserts, the ids of the source balance rows it deletes, and the row_version the consumed source returns. Each statement must return something. Of the two packagings it locks in id order it reads id, row_version and status, not location_id"
     )]
     pub(crate) mod inventory_merge {
         include!(concat!(
@@ -49,7 +49,7 @@ pub(crate) mod wamn {
     /// Generated `inventory.move` transaction accessors.
     #[expect(
         dead_code,
-        reason = "validate_location is an existence probe: `SELECT id FROM location WHERE id = $1` must name a column, but the move asks only whether the destination is there and tests the Option, never the id. The move also leaves the movement insert's RETURNING id, the pallet_status its finalize echoes back, the locked pallet's status, and the status of each quantity row it moves"
+        reason = "validate_location is an existence probe: `SELECT id FROM location WHERE id = $1` must name a column, but the move asks only whether the destination is there and tests the Option, never the id. The move also leaves the status its update returns"
     )]
     pub(crate) mod inventory_move {
         include!(concat!(
@@ -61,7 +61,7 @@ pub(crate) mod wamn {
     /// Generated `inventory.split` transaction accessors.
     #[expect(
         dead_code,
-        reason = "of the new pallet the split reads only the id create_pallet returns. It leaves the id and quantity of the quantity row it takes from and the one it places, and the id its own existence probe must select to ask whether the destination location is there. Of the source pallet it locks it reads row_version and status, not location_id"
+        reason = "of the new packaging the split reads only the id create_packaging returns. It leaves the id and quantity of the quantity row it takes from and the one it places, and the id its own existence probe must select to ask whether the destination location is there. Of the source packaging it locks it reads row_version and status, not location_id"
     )]
     pub(crate) mod inventory_split {
         include!(concat!(
@@ -70,11 +70,11 @@ pub(crate) mod wamn {
         ));
     }
 
-    /// Generated `inventory_movement` projection and statement digests.
-    pub(crate) mod inventory_movement {
+    /// Generated `inventory_transaction` projection and statement digests.
+    pub(crate) mod inventory_transaction {
         include!(concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/../generated/wamn/inventory_movement.rs"
+            "/../generated/wamn/inventory_transaction.rs"
         ));
     }
 
@@ -90,20 +90,20 @@ pub(crate) mod wamn {
         ));
     }
 
-    /// Generated `pallet` projection and accessors.
+    /// Generated `packaging` projection and accessors.
     #[expect(dead_code, reason = "the create maps no exclusion constraint")]
-    pub(crate) mod pallet {
+    pub(crate) mod packaging {
         include!(concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/../generated/wamn/pallet.rs"
+            "/../generated/wamn/packaging.rs"
         ));
     }
 
-    /// Generated `pallet_quantity` projection and statement digests.
-    pub(crate) mod pallet_quantity {
+    /// Generated `packaging_quantity` projection and statement digests.
+    pub(crate) mod packaging_quantity {
         include!(concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/../generated/wamn/pallet_quantity.rs"
+            "/../generated/wamn/packaging_quantity.rs"
         ));
     }
 

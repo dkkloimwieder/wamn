@@ -9,7 +9,7 @@ pub static ADJUST_SPEC: screen::ScreenSpec = screen::ScreenSpec {
     kind: "command",
     input: crate::inventory::INVENTORY_ADJUST_INPUT_SCHEMA,
     input_schema: Some(
-        "{\"items\":{\"additionalProperties\":false,\"properties\":{\"request_id\":{\"minLength\":1,\"type\":\"string\"},\"value\":{\"additionalProperties\":false,\"properties\":{\"expected_row_version\":{\"type\":\"integer\"},\"idempotency_key\":{\"minLength\":1,\"type\":\"string\"},\"occurred_at\":{\"format\":\"date-time\",\"type\":\"string\"},\"pallet_id\":{\"pattern\":\"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$\",\"type\":\"string\"},\"product_id\":{\"pattern\":\"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$\",\"type\":\"string\"},\"quantity\":{\"pattern\":\"^[0-9]+(\\\\.[0-9]+)?$\",\"type\":\"string\"},\"reason_code\":{\"minLength\":1,\"type\":\"string\"},\"status\":{\"enum\":[\"available\",\"held\"],\"type\":\"string\"}},\"required\":[\"idempotency_key\",\"pallet_id\",\"product_id\",\"status\",\"quantity\",\"reason_code\",\"expected_row_version\",\"occurred_at\"],\"type\":\"object\"}},\"required\":[\"request_id\",\"value\"],\"type\":\"object\"},\"maxItems\":100,\"minItems\":1,\"type\":\"array\"}",
+        "{\"items\":{\"additionalProperties\":false,\"properties\":{\"request_id\":{\"minLength\":1,\"type\":\"string\"},\"value\":{\"additionalProperties\":false,\"properties\":{\"expected_row_version\":{\"type\":\"integer\"},\"idempotency_key\":{\"minLength\":1,\"type\":\"string\"},\"occurred_at\":{\"format\":\"date-time\",\"type\":\"string\"},\"packaging_id\":{\"pattern\":\"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$\",\"type\":\"string\"},\"product_id\":{\"pattern\":\"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$\",\"type\":\"string\"},\"quantity\":{\"pattern\":\"^[0-9]+(\\\\.[0-9]+)?$\",\"type\":\"string\"},\"reason_code\":{\"minLength\":1,\"type\":\"string\"},\"status\":{\"enum\":[\"available\",\"held\"],\"type\":\"string\"}},\"required\":[\"idempotency_key\",\"packaging_id\",\"product_id\",\"status\",\"quantity\",\"reason_code\",\"expected_row_version\",\"occurred_at\"],\"type\":\"object\"}},\"required\":[\"request_id\",\"value\"],\"type\":\"object\"},\"maxItems\":100,\"minItems\":1,\"type\":\"array\"}",
     ),
     response: submission::ResponseContract {
         schema: Some("{\"type\":\"array\"}"),
@@ -38,7 +38,7 @@ pub static ADJUST_SPEC: screen::ScreenSpec = screen::ScreenSpec {
                 sources: &["envelope_count", "malformed_input"],
             },
             submission::ErrorCase {
-                literal: "pallet_not_found",
+                literal: "packaging_not_found",
                 required: &["field", "id"],
                 sources: &["transaction_invariant"],
             },
@@ -162,7 +162,7 @@ pub static MERGE_SPEC: screen::ScreenSpec = screen::ScreenSpec {
     kind: "command",
     input: crate::inventory::INVENTORY_MERGE_INPUT_SCHEMA,
     input_schema: Some(
-        "{\"items\":{\"additionalProperties\":false,\"properties\":{\"request_id\":{\"minLength\":1,\"type\":\"string\"},\"value\":{\"additionalProperties\":false,\"properties\":{\"expected_row_version\":{\"type\":\"integer\"},\"idempotency_key\":{\"minLength\":1,\"type\":\"string\"},\"occurred_at\":{\"format\":\"date-time\",\"type\":\"string\"},\"source_pallet_id\":{\"pattern\":\"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$\",\"type\":\"string\"},\"target_pallet_id\":{\"pattern\":\"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$\",\"type\":\"string\"}},\"required\":[\"idempotency_key\",\"source_pallet_id\",\"target_pallet_id\",\"expected_row_version\",\"occurred_at\"],\"type\":\"object\"}},\"required\":[\"request_id\",\"value\"],\"type\":\"object\"},\"maxItems\":100,\"minItems\":1,\"type\":\"array\"}",
+        "{\"items\":{\"additionalProperties\":false,\"properties\":{\"request_id\":{\"minLength\":1,\"type\":\"string\"},\"value\":{\"additionalProperties\":false,\"properties\":{\"expected_row_version\":{\"type\":\"integer\"},\"idempotency_key\":{\"minLength\":1,\"type\":\"string\"},\"occurred_at\":{\"format\":\"date-time\",\"type\":\"string\"},\"source_packaging_id\":{\"pattern\":\"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$\",\"type\":\"string\"},\"target_packaging_id\":{\"pattern\":\"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$\",\"type\":\"string\"}},\"required\":[\"idempotency_key\",\"source_packaging_id\",\"target_packaging_id\",\"expected_row_version\",\"occurred_at\"],\"type\":\"object\"}},\"required\":[\"request_id\",\"value\"],\"type\":\"object\"},\"maxItems\":100,\"minItems\":1,\"type\":\"array\"}",
     ),
     response: submission::ResponseContract {
         schema: Some("{\"type\":\"array\"}"),
@@ -191,7 +191,7 @@ pub static MERGE_SPEC: screen::ScreenSpec = screen::ScreenSpec {
                 sources: &["envelope_count", "malformed_input"],
             },
             submission::ErrorCase {
-                literal: "pallet_not_found",
+                literal: "packaging_not_found",
                 required: &["field", "id"],
                 sources: &["transaction_invariant"],
             },
@@ -250,7 +250,7 @@ pub static MOVE_SPEC: screen::ScreenSpec = screen::ScreenSpec {
     kind: "command",
     input: crate::inventory::INVENTORY_MOVE_INPUT_SCHEMA,
     input_schema: Some(
-        "{\"items\":{\"additionalProperties\":false,\"properties\":{\"request_id\":{\"minLength\":1,\"type\":\"string\"},\"value\":{\"additionalProperties\":false,\"properties\":{\"expected_row_version\":{\"type\":\"integer\"},\"idempotency_key\":{\"minLength\":1,\"type\":\"string\"},\"occurred_at\":{\"format\":\"date-time\",\"type\":\"string\"},\"pallet_id\":{\"pattern\":\"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$\",\"type\":\"string\"},\"to_location_id\":{\"pattern\":\"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$\",\"type\":\"string\"}},\"required\":[\"idempotency_key\",\"pallet_id\",\"to_location_id\",\"expected_row_version\",\"occurred_at\"],\"type\":\"object\"}},\"required\":[\"request_id\",\"value\"],\"type\":\"object\"},\"maxItems\":100,\"minItems\":1,\"type\":\"array\"}",
+        "{\"items\":{\"additionalProperties\":false,\"properties\":{\"request_id\":{\"minLength\":1,\"type\":\"string\"},\"value\":{\"additionalProperties\":false,\"properties\":{\"expected_row_version\":{\"type\":\"integer\"},\"idempotency_key\":{\"minLength\":1,\"type\":\"string\"},\"occurred_at\":{\"format\":\"date-time\",\"type\":\"string\"},\"packaging_id\":{\"pattern\":\"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$\",\"type\":\"string\"},\"to_location_id\":{\"pattern\":\"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$\",\"type\":\"string\"}},\"required\":[\"idempotency_key\",\"packaging_id\",\"to_location_id\",\"expected_row_version\",\"occurred_at\"],\"type\":\"object\"}},\"required\":[\"request_id\",\"value\"],\"type\":\"object\"},\"maxItems\":100,\"minItems\":1,\"type\":\"array\"}",
     ),
     response: submission::ResponseContract {
         schema: Some("{\"type\":\"array\"}"),
@@ -284,7 +284,7 @@ pub static MOVE_SPEC: screen::ScreenSpec = screen::ScreenSpec {
                 sources: &["transaction_invariant"],
             },
             submission::ErrorCase {
-                literal: "pallet_not_found",
+                literal: "packaging_not_found",
                 required: &["field", "id"],
                 sources: &["transaction_invariant"],
             },
@@ -343,7 +343,7 @@ pub static SPLIT_SPEC: screen::ScreenSpec = screen::ScreenSpec {
     kind: "command",
     input: crate::inventory::INVENTORY_SPLIT_INPUT_SCHEMA,
     input_schema: Some(
-        "{\"items\":{\"additionalProperties\":false,\"properties\":{\"request_id\":{\"minLength\":1,\"type\":\"string\"},\"value\":{\"additionalProperties\":false,\"properties\":{\"expected_row_version\":{\"type\":\"integer\"},\"idempotency_key\":{\"minLength\":1,\"type\":\"string\"},\"new_pallet_code\":{\"minLength\":1,\"type\":\"string\"},\"occurred_at\":{\"format\":\"date-time\",\"type\":\"string\"},\"product_id\":{\"pattern\":\"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$\",\"type\":\"string\"},\"quantity\":{\"pattern\":\"^[0-9]+(\\\\.[0-9]+)?$\",\"type\":\"string\"},\"source_pallet_id\":{\"pattern\":\"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$\",\"type\":\"string\"},\"status\":{\"enum\":[\"available\",\"held\"],\"type\":\"string\"},\"to_location_id\":{\"pattern\":\"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$\",\"type\":\"string\"}},\"required\":[\"idempotency_key\",\"source_pallet_id\",\"product_id\",\"status\",\"quantity\",\"new_pallet_code\",\"to_location_id\",\"expected_row_version\",\"occurred_at\"],\"type\":\"object\"}},\"required\":[\"request_id\",\"value\"],\"type\":\"object\"},\"maxItems\":100,\"minItems\":1,\"type\":\"array\"}",
+        "{\"items\":{\"additionalProperties\":false,\"properties\":{\"request_id\":{\"minLength\":1,\"type\":\"string\"},\"value\":{\"additionalProperties\":false,\"properties\":{\"expected_row_version\":{\"type\":\"integer\"},\"idempotency_key\":{\"minLength\":1,\"type\":\"string\"},\"new_packaging_code\":{\"minLength\":1,\"type\":\"string\"},\"new_packaging_type\":{\"enum\":[\"pallet\",\"tote\",\"bin\",\"case\",\"loose\"],\"type\":\"string\"},\"occurred_at\":{\"format\":\"date-time\",\"type\":\"string\"},\"product_id\":{\"pattern\":\"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$\",\"type\":\"string\"},\"quantity\":{\"pattern\":\"^[0-9]+(\\\\.[0-9]+)?$\",\"type\":\"string\"},\"source_packaging_id\":{\"pattern\":\"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$\",\"type\":\"string\"},\"status\":{\"enum\":[\"available\",\"held\"],\"type\":\"string\"},\"to_location_id\":{\"pattern\":\"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$\",\"type\":\"string\"}},\"required\":[\"idempotency_key\",\"source_packaging_id\",\"product_id\",\"status\",\"quantity\",\"new_packaging_code\",\"new_packaging_type\",\"to_location_id\",\"expected_row_version\",\"occurred_at\"],\"type\":\"object\"}},\"required\":[\"request_id\",\"value\"],\"type\":\"object\"},\"maxItems\":100,\"minItems\":1,\"type\":\"array\"}",
     ),
     response: submission::ResponseContract {
         schema: Some("{\"type\":\"array\"}"),
@@ -382,7 +382,7 @@ pub static SPLIT_SPEC: screen::ScreenSpec = screen::ScreenSpec {
                 sources: &["transaction_invariant"],
             },
             submission::ErrorCase {
-                literal: "pallet_not_found",
+                literal: "packaging_not_found",
                 required: &["field", "id"],
                 sources: &["transaction_invariant"],
             },
