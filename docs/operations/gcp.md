@@ -604,6 +604,16 @@ helm install identity deploy/platform/identity -n identity -f deploy/gcp/values-
 kubectl -n identity rollout status deploy/identity --timeout=300s
 ```
 
+Make sure that identity answers over TLS from a pod in `hosts`, verified against `identity-ca`:
+
+```bash
+kubectl -n hosts run identity-check --restart=Never --rm -i --quiet \
+  --image=curlimages/curl@sha256:58adaa4e8dca9c988bae2aba4ab3434a0bb2da16bbe3f92dec39ec7785166777 \
+  --overrides='{"spec":{"volumes":[{"name":"ca","configMap":{"name":"identity-ca"}}],"containers":[{"name":"identity-check","image":"curlimages/curl@sha256:58adaa4e8dca9c988bae2aba4ab3434a0bb2da16bbe3f92dec39ec7785166777","command":["curl","-sS","-w","\\nHTTP %{http_code}\\n","--cacert","/ca/ca.crt","https://identity.identity.svc.cluster.local/.well-known/jwks.json"],"volumeMounts":[{"name":"ca","mountPath":"/ca"}]}]}}'
+```
+
+On 2026-09-26 the install took 8 seconds, and the check returned `{"keys":[]}` with `HTTP 200`. The key set is empty until a session key is published.
+
 ### 3.11 Host Secrets and registry token account
 
 Prepare generation `a` of the five host credentials, one family for each run. `identity-reader` addresses the system database, so it takes no `--target-admin-database-url`:
