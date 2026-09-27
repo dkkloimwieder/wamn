@@ -206,6 +206,17 @@ Owner rulings of 2026-09-27:
 - The CDC reader keeps its default feedback and slot monitor intervals, 5 and 30 seconds. The kind values 1 and 0 are test-speed settings, and the slot monitor stays on in a deployment.
 - The reader Deployment uses `strategy: Recreate`, because one replication slot has one reader.
 
+- The `flow-http` and materializer workloads deploy as the kind case deploys them. `tools/build-components all` builds them, and they go to `us-central1-docker.pkg.dev/wamn-dev/wamn/components` with their digests recorded. They render into `hosts` with catalog `default`, environment `hosts`, and project and schema `receiving`. The materializer intervals are deployment values: fetch 1000 ms, sweep 5000 ms. The serve check runs after them, and step 3 then closes.
+
+### 5.4 Step 4 rulings
+
+Owner rulings of 2026-09-27:
+
+- `wamn web upload` uses an HMAC key on the owner's user account, made with `gsutil hmac create`, with no service account. The key lives in `AWS_*` variables for the one upload, and `gsutil hmac delete` removes it in the same session. Nothing is written to disk or committed.
+- The `gcloud` load balancer commands copy the removed Config Connector template exactly: names from the release `wamn-edge`, a health check on port 8443 at `/healthz`, a firewall rule for `35.191.0.0/16` and `130.211.0.0/22`, and the certificate uploaded from `edge/wamn-edge-tls`. The NEG annotation of the edge Service stays behind a `neg` value.
+- The DNS record for `receiving.wamn.dev` is an A record with TTL 300.
+- The load balancer copy of the certificate does not renew with cert-manager. That is a finding, not a procedure. Its fix is a CronJob in `edge`, like the registry token CronJob, that copies the renewed Secret into a new `gcloud compute ssl-certificates` entry and moves the proxy to it.
+- Pool `main` stays at 2 nodes until step 4 ends. If the guard scales it to 0 first, scale it back and continue. The guard does not change.
 
 ## 6. Benchmark
 
