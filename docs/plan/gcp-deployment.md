@@ -151,7 +151,7 @@ Owner rulings of 2026-09-26:
 - Publish with `publish-release` directly. The first cloud deployment is not a release qualification, and the qualified path repeats the kind cases that already ran.
 - No service account key. The host pods run as a Kubernetes service account that Workload Identity binds to a Google service account with `roles/artifactregistry.reader`, and there is no docker config Secret. If the component pull cannot use Workload Identity today, that is a finding, and a CronJob refreshes a short-lived token. A key is never the answer.
 - One CloudNativePG cluster with one instance holds the system database and the tenant databases as separate databases. Two clusters are the production shape, not the test shape.
-- Namespaces: `platform` (operator, NATS, CloudNativePG), `identity`, `hosts` and `edge`. Organization `wamn`, project `receiving`, tenant `dev`, environment `dev`.
+- Namespaces: `platform` (operator, NATS, CloudNativePG), `identity`, `hosts` and `edge`. Organization `dkk`, the owner's handle, because the org id `wamn` is under the reserved `wamn` prefix. Project `receiving`, tenant `dev`, environment `dev`.
 - The platform domain of the principal rows is `wamn.dev`.
 - Identity uses the internal CA of the cluster for its TLS. The public `*.wamn.dev` certificate ends at the edge.
 - The CDC reader and the materializer run as workloads.
@@ -167,6 +167,8 @@ Owner rulings of 2026-09-26:
 - The CloudNativePG cluster `wamn-pg` bootstraps the database `wamn_system` with the owner `wamn_system`, as `deploy/platform/wamn-sysdb.yaml` does. CloudNativePG holds the owner login in the Secret `wamn-pg-app` and the superuser in `wamn-pg-superuser`.
 - A new verb `wamn-ctl provision-system --system-url <superuser URL> --platform-domain wamn.dev` installs the control store from `CONTROL_BOOTSTRAP_SQL` and writes `registry.meta.platform_domain`. It refuses when the schema `registry` exists. It is the first verb of the deployment ordering, and it runs from this machine through a port-forward.
 - `deploy/sql/postgres-init.sql` is a test fixture with seed data and is not applied.
+- `provision-org` uses `--template trials --pool wamn-pg`, the one template that places an org on the shared cluster.
+- `provision-project-env` runs with `--namespace platform --secret-namespace hosts`. The `Database` resource goes to `platform`, the namespace of its `Cluster`. The credential Secret goes to `hosts`, with its `metadata.namespace` set by `jq` until the finding on the one `--namespace` flag is fixed.
 
 ## 6. Benchmark
 

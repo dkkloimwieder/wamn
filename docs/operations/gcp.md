@@ -411,13 +411,13 @@ On 2026-09-26 the host image took 419 seconds to build and the identity image 59
 
 ### 3.5 Event NATS
 
-Write the users of the environment into a private directory. The example program calls `event_broker::prepare`, the derivation of the cluster tests, and adds the `tap-admin` user that creates the `WAMN_TAP` stream:
+Write the users of the environment into a private directory. The org was `wamn` at first and is now `dkk` (section 3.7), so the program ran again and every Secret below was replaced with `kubectl create --dry-run=client -o yaml | kubectl apply -f -`. The example program calls `event_broker::prepare`, the derivation of the cluster tests, and adds the `tap-admin` user that creates the `WAMN_TAP` stream:
 
 ```bash
 mkdir -m 700 <private directory>
 cargo run -p wamn-test-infrastructure --example event_broker_files -- \
   <private directory> nats://evt-nats.platform.svc.cluster.local:4222 \
-  wamn receiving dev dev 1 "$PWD/apps/wamn_receiving/wamn.json"
+  dkk receiving dev dev 1 "$PWD/apps/wamn_receiving/wamn.json"
 E=<private directory>/event-nats
 ```
 
@@ -447,7 +447,7 @@ Make the two host Secrets. The host connects as the `runtime` user, and the mate
 ```bash
 kubectl -n hosts create secret generic wamn-event-nats \
   --from-file=username=$E/runtime-username --from-file=password=$E/runtime-password \
-  --from-literal=org=wamn --from-literal=project=receiving --from-literal=environment=dev \
+  --from-literal=org=dkk --from-literal=project=receiving --from-literal=environment=dev \
   --from-literal=stream_replicas=1 --from-literal=dup_window_secs=120
 kubectl -n hosts create secret generic wamn-materializer-nats --from-file=binding.json=$E/binding.json
 ```
@@ -467,3 +467,32 @@ target/debug/wamn-ctl provision-system --platform-domain wamn.dev
 ```
 
 The verb runs once. A second run refuses, because the schema `registry` exists. On 2026-09-26 it took 2 seconds. `deploy/sql/postgres-init.sql` is a test fixture and is not applied.
+
+### 3.7 Org and project environment
+
+The org id is `dkk`, because the id `wamn` is under the reserved `wamn` prefix. Keep the port-forward and `WAMN_SYSTEM_ADMIN_URL` of section 3.6. Record the org on the shared cluster `wamn-pg`:
+
+```bash
+target/debug/wamn-ctl provision-org --org dkk --template trials --pool wamn-pg
+```
+
+Render the project environment into a private directory `P`. The verb writes files and applies nothing:
+
+```bash
+target/debug/wamn-ctl provision-project-env --org dkk --project receiving --env dev --tenant dev \
+  --namespace platform --secret-namespace hosts \
+  --emit-database $P/database.json --emit-role-sql $P/role.sql \
+  --emit-privilege-sql $P/privilege.sql --emit-secret $P/secret.json
+```
+
+Apply the files in this order. The verb writes the `Database` namespace as `wamn-system` and the Secret namespace from `--namespace`, so `jq` sets both (finding `wamn-6b4g`):
+
+```bash
+kubectl -n platform exec -i wamn-pg-1 -c postgres -- psql -U postgres -d postgres -v ON_ERROR_STOP=1 -q < $P/role.sql
+jq '.metadata.namespace="platform"' $P/database.json | kubectl apply -f -
+kubectl -n platform wait database/wamn-db-dkk--receiving--dev--zf7o454t --for=jsonpath='{.status.applied}'=true --timeout=120s
+kubectl -n platform exec -i wamn-pg-1 -c postgres -- psql -U postgres -d postgres -v ON_ERROR_STOP=1 -q < $P/privilege.sql
+jq '.metadata.namespace="hosts"' $P/secret.json | kubectl apply -f -
+```
+
+The instance suffix `zf7o454t` comes from the registry, so a new environment has a different database name. On 2026-09-26 `provision-org` took 2 seconds, `provision-project-env` 3 seconds, and the apply steps 8 seconds.
