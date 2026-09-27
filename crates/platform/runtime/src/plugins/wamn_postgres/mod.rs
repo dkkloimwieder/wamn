@@ -61,6 +61,8 @@ mod claims;
 mod credential_exactness;
 /// Host admission of an event-started workflow run.
 mod event_admission;
+/// The route intent record in the cloud.
+mod intent;
 mod pool;
 mod production_claim;
 mod resources;
@@ -87,6 +89,7 @@ pub use credential_exactness::{
     MembershipExpectation, MembershipMode, credential_exactness_probe, explicit_credential_source,
 };
 pub use event_admission::{EventRunAdmission, EventRunAdmitted};
+pub use intent::PostgresIntentStore;
 pub use pool::{
     CheckoutProbe, ClassCredentials, CredentialProvider, K8sSecretProvider, ProjectConfig,
     ResolvedCredential, StaticCredentialProvider, WamnPostgresConfig,

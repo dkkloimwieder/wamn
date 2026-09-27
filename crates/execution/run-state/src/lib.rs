@@ -38,6 +38,9 @@ pub mod authority_class;
 mod credential_generation;
 /// The durability class a run was admitted under, and the crash-floor gate.
 pub mod durability;
+/// The intent store case set that every store runs.
+#[cfg(feature = "test-util")]
+pub mod intent_cases;
 /// The Postgres intent record's SQL text builders.
 pub mod intent_sql;
 /// The per-call intent record as a storage trait.

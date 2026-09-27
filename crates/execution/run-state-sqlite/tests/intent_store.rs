@@ -1,14 +1,15 @@
-//! The SQLite intent log on a temporary file, including a process killed after
-//! `begin`.
+//! The SQLite intent log on a temporary file: the shared intent store case
+//! set, a process killed after `begin`, and the close signal.
 
 use std::io::{BufRead as _, BufReader};
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
+use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
 
 use wamn_run_state::IntentStore;
-use wamn_run_state::intent_store::{Begun, Intent, IntentId, StoreErrorKind, StoredOutcome};
-use wamn_run_state::operator_action::OperatorActionBasis;
+use wamn_run_state::intent_cases::{self, CaseStores, IntentStoreFixture};
+use wamn_run_state::intent_store::{Begun, Intent, IntentId, StoreErrorKind};
 use wamn_run_state_sqlite::SqliteIntentStore;
 
 /// The child reads the database path from this variable.
@@ -46,159 +47,62 @@ fn new_id(begun: Begun) -> IntentId {
     }
 }
 
+/// Each case of the shared intent store case set opens a fresh file. One
+/// SQLite file serves every tenant, so both stores of a case are one store.
+struct Files;
+
+#[async_trait::async_trait]
+impl IntentStoreFixture for Files {
+    async fn stores(&self, case: &'static str) -> CaseStores {
+        let store: Arc<dyn IntentStore> =
+            Arc::new(SqliteIntentStore::open(database(case)).expect("open"));
+        CaseStores {
+            store: Arc::clone(&store),
+            tenant: "tenant-a".to_owned(),
+            other: store,
+            other_tenant: "tenant-b".to_owned(),
+        }
+    }
+}
+
 #[tokio::test]
 async fn a_finished_key_returns_its_stored_outcome() {
-    let store = SqliteIntentStore::open(database("finished")).expect("open");
-    for (key, outcome) in [
-        (
-            "k-completed",
-            StoredOutcome::Completed(serde_json::json!({"grams": 1250})),
-        ),
-        (
-            "k-failed",
-            StoredOutcome::Failed(serde_json::json!({"code": "refused"})),
-        ),
-    ] {
-        let id = new_id(store.begin(&intent(key, "h1")).await.expect("begin"));
-        store.finish(&id, &outcome).await.expect("finish");
-        assert_eq!(
-            store.begin(&intent(key, "h1")).await.expect("begin again"),
-            Begun::Finished(outcome)
-        );
-    }
-    assert!(store.uncertain(10).await.expect("uncertain").is_empty());
+    intent_cases::a_finished_key_returns_its_stored_outcome(&Files).await;
 }
 
 #[tokio::test]
 async fn a_begun_key_is_uncertain_and_never_new_again() {
-    let store = SqliteIntentStore::open(database("begun")).expect("open");
-    let id = new_id(store.begin(&intent("k1", "h1")).await.expect("begin"));
-    assert_eq!(
-        store.begin(&intent("k1", "h1")).await.expect("begin again"),
-        Begun::Uncertain(id)
-    );
+    intent_cases::a_begun_key_is_uncertain_and_never_new_again(&Files).await;
 }
 
 #[tokio::test]
 async fn a_repeated_key_with_another_input_conflicts() {
-    let store = SqliteIntentStore::open(database("conflict")).expect("open");
-    let id = new_id(store.begin(&intent("k1", "h1")).await.expect("begin"));
-    assert_eq!(
-        store.begin(&intent("k1", "h2")).await.expect("begin again"),
-        Begun::Conflict(id.clone())
-    );
-    assert_eq!(
-        store
-            .begin(&intent("k1", "h1"))
-            .await
-            .expect("begin a third time"),
-        Begun::Uncertain(id),
-        "a conflict leaves the stored intent unchanged"
-    );
+    intent_cases::a_repeated_key_with_another_input_conflicts(&Files).await;
 }
 
 #[tokio::test]
 async fn keys_belong_to_their_tenant() {
-    let store = SqliteIntentStore::open(database("tenants")).expect("open");
-    store.begin(&intent("k1", "h1")).await.expect("begin");
-    let other = Intent {
-        tenant: "tenant-b",
-        ..intent("k1", "h2")
-    };
-    new_id(
-        store
-            .begin(&other)
-            .await
-            .expect("another tenant's key is new"),
-    );
+    intent_cases::keys_belong_to_their_tenant(&Files).await;
 }
 
 #[tokio::test]
 async fn finish_closes_an_intent_once() {
-    let store = SqliteIntentStore::open(database("finish-twice")).expect("open");
-    let id = new_id(store.begin(&intent("k1", "h1")).await.expect("begin"));
-    let outcome = StoredOutcome::Completed(serde_json::json!(null));
-    store.finish(&id, &outcome).await.expect("finish");
-    let error = store
-        .finish(&id, &outcome)
-        .await
-        .expect_err("a finished intent does not finish again");
-    assert_eq!(error.kind(), StoreErrorKind::Contract);
-    let error = store
-        .finish(&IntentId("999".into()), &outcome)
-        .await
-        .expect_err("an unknown intent does not finish");
-    assert_eq!(error.kind(), StoreErrorKind::Contract);
+    intent_cases::finish_closes_an_intent_once(&Files).await;
 }
 
 #[tokio::test]
 async fn uncertain_lists_open_intents_oldest_first_up_to_the_limit() {
-    let store = SqliteIntentStore::open(database("uncertain")).expect("open");
-    let first = new_id(store.begin(&intent("k1", "h1")).await.expect("begin"));
-    let finished = new_id(store.begin(&intent("k2", "h2")).await.expect("begin"));
-    let third = new_id(store.begin(&intent("k3", "h3")).await.expect("begin"));
-    store
-        .finish(&finished, &StoredOutcome::Completed(serde_json::json!(1)))
-        .await
-        .expect("finish");
-
-    let open: Vec<IntentId> = store
-        .uncertain(10)
-        .await
-        .expect("uncertain")
-        .into_iter()
-        .map(|intent| intent.id)
-        .collect();
-    assert_eq!(open, [first.clone(), third]);
-
-    let limited = store.uncertain(1).await.expect("uncertain");
-    assert_eq!(limited.len(), 1);
-    assert_eq!(limited[0].id, first);
-    assert_eq!(limited[0].idempotency_key, "k1");
-    assert_eq!(limited[0].operation, "record_sample");
+    intent_cases::uncertain_lists_open_intents_oldest_first_up_to_the_limit(&Files).await;
 }
 
 #[tokio::test]
 async fn a_resolved_intent_leaves_the_list_and_answers_its_basis() {
-    let store = SqliteIntentStore::open(database("resolve")).expect("open");
-    let id = new_id(store.begin(&intent("k1", "h1")).await.expect("begin"));
-    store
-        .resolve(&id, OperatorActionBasis::OperatorJudgment)
-        .await
-        .expect("resolve");
-    assert!(store.uncertain(10).await.expect("uncertain").is_empty());
-    assert_eq!(
-        store.begin(&intent("k1", "h1")).await.expect("begin again"),
-        Begun::Resolved {
-            id: id.clone(),
-            basis: OperatorActionBasis::OperatorJudgment
-        }
-    );
-    let error = store
-        .resolve(&id, OperatorActionBasis::OperatorJudgment)
-        .await
-        .expect_err("a resolved intent does not resolve again");
-    assert_eq!(error.kind(), StoreErrorKind::Contract);
-    let error = store
-        .finish(&id, &StoredOutcome::Completed(serde_json::json!(1)))
-        .await
-        .expect_err("a resolved intent does not finish");
-    assert_eq!(error.kind(), StoreErrorKind::Contract);
+    intent_cases::a_resolved_intent_leaves_the_list_and_answers_its_basis(&Files).await;
 }
 
 #[tokio::test]
 async fn a_finished_intent_does_not_resolve() {
-    let store = SqliteIntentStore::open(database("resolve-finished")).expect("open");
-    let id = new_id(store.begin(&intent("k1", "h1")).await.expect("begin"));
-    store
-        .finish(&id, &StoredOutcome::Completed(serde_json::json!(1)))
-        .await
-        .expect("finish");
-    let error = store
-        .resolve(&id, OperatorActionBasis::ExternalEvidence)
-        .await
-        .expect_err("a finished intent is not uncertain");
-    assert_eq!(error.kind(), StoreErrorKind::Contract);
+    intent_cases::a_finished_intent_does_not_resolve(&Files).await;
 }
 
 /// The kill test runs this test binary again as a child that begins one intent.
