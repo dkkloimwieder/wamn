@@ -136,7 +136,7 @@ This is the order. Section 5.3 gives the owner rulings.
 4. Install the runtime operator chart `2.10.0` with `deploy/infra/values-wamn.yaml`, and the internal CA of `deploy/infra/wasmcloud-ca-issuer.yaml`.
 5. Install the event NATS from `deploy/infra/nats-jetstream.yaml` with one replica, and declare stream replicas 1 in the environment configuration.
 6. Install CloudNativePG from `deploy/infra/cnpg-operator.yaml` and one cluster with one instance on the storage class `standard` (`pd-standard`).
-7. Apply `deploy/sql/system-schema.sql` as `wamn_system`, and set `registry.meta.platform_domain`.
+7. Run `wamn-ctl provision-system`, which installs the control store and sets `registry.meta.platform_domain`.
 8. Run the provisioning verbs of [deployment ordering](../operations/deployment.md#deployment-ordering) from this machine, through a port-forward to PostgreSQL: `provision-org`, `provision-project-env`, `provision-identity-issuer`, `apply-package`, `reconcile-package-data-access`, `push-component`, `reconcile-run-plane`.
 9. The owner creates the Resend secret of section 4.2. Then install identity with `deploy/platform/identity`, and the host with one replica at a request of 0.5 CPU.
 10. Publish the Receiving release with `--route-host receiving.wamn.dev`, and point the host at its manifest digest.
@@ -163,7 +163,10 @@ Owner rulings of 2026-09-26:
 - The program writes only the `authorization` block, as `authorization.conf`, for the Secret `evt-nats-authorization`. It holds the users of `prepare()` and `tap-admin`. The manifest supplies `listen`, `http`, `jetstream` and the `include`.
 - The Google Cloud copy of the NATS manifest is `deploy/gcp/nats-jetstream.yaml` in namespace `platform`. It has one replica, no `cluster` block or cluster port, and no anti-affinity spread. It keeps the headless Service and the volume claim. `deploy/infra` does not change.
 - The Secret `wamn-event-nats` in `hosts` holds the `runtime` user with the keys of `cluster/deployment.rs`, and `stream_replicas` is `1`. The Secret `wamn-materializer-nats` in `hosts` holds the binding with the server `nats://evt-nats.platform.svc.cluster.local:4222`. The host values and the CDC reader use the same URL.
-- The `provisioning` user creates the event streams and consumers in the provisioning step only. Its Secret, and the Secrets of `publisher` and `observer`, stay in `platform` and are never mounted into a host.
+- The `provisioning` user creates the event streams and consumers in the provisioning step only. Its Secret, and the Secrets of `publisher` and `observer`, stay in `platform` and are never mounted into a host. Their names are `evt-nats-provisioning`, `evt-nats-publisher` and `evt-nats-observer`, with the keys `username` and `password`.
+- The CloudNativePG cluster `wamn-pg` bootstraps the database `wamn_system` with the owner `wamn_system`, as `deploy/platform/wamn-sysdb.yaml` does. CloudNativePG holds the owner login in the Secret `wamn-pg-app` and the superuser in `wamn-pg-superuser`.
+- A new verb `wamn-ctl provision-system --system-url <superuser URL> --platform-domain wamn.dev` installs the control store from `CONTROL_BOOTSTRAP_SQL` and writes `registry.meta.platform_domain`. It refuses when the schema `registry` exists. It is the first verb of the deployment ordering, and it runs from this machine through a port-forward.
+- `deploy/sql/postgres-init.sql` is a test fixture with seed data and is not applied.
 
 ## 6. Benchmark
 
