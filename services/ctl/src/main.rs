@@ -33,8 +33,9 @@ struct Cli {
 #[derive(Subcommand)]
 enum Command {
     /// Publish only the release that passed required qualification.
-    #[command(alias = "push-release-manifest")]
     PublishQualifiedRelease(delivery_verbs::PublishArgs),
+    /// Push one minted release manifest with no qualification commit and attest it.
+    PushReleaseManifest(delivery_verbs::PushReleaseManifestArgs),
     /// Select one published release for its environment.
     SelectRelease(delivery_verbs::SelectArgs),
     /// Deploy exact qualified artifacts while the selection remains current.
@@ -112,6 +113,7 @@ async fn main() -> anyhow::Result<()> {
 
     match cli.command {
         Command::PublishQualifiedRelease(args) => delivery_verbs::publish(args).await,
+        Command::PushReleaseManifest(args) => delivery_verbs::push_release_manifest(args).await,
         Command::SelectRelease(args) => delivery_verbs::select(args).await,
         Command::DeployRelease(args) => delivery_verbs::deploy(args).await,
         Command::PrepareRelease(args) => delivery_verbs::prepare(args).await,

@@ -710,3 +710,14 @@ The two `wamn-system` values in the base host group have no effect, because the 
 helm install wamn-host oci://ghcr.io/wasmcloud/charts/runtime-operator --version 2.10.0 -n hosts \
   -f deploy/gcp/values-host-base.yaml -f deploy/gcp/values-host.yaml --wait --timeout 5m
 ```
+
+### 3.15 Session key
+
+Publish a session key in the identity pod, and activate it with the printed `kid`:
+
+```bash
+kubectl -n identity exec deploy/identity -- wamn-identity publish
+kubectl -n identity exec deploy/identity -- wamn-identity activate --kid <kid>
+```
+
+Run the check of section 3.10 again. The key set now lists the `kid`. On 2026-09-26 the key was `a24410b7-e7da-423c-944a-27479ed4b0f2`.

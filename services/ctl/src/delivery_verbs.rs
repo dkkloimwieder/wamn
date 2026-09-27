@@ -275,6 +275,17 @@ pub async fn prepare(args: PrepareReleaseArgs) -> anyhow::Result<()> {
     .await
 }
 
+/// Push one minted release manifest with no qualification commit, attest it in
+/// the control database, and print its digest. A deployment that is not a
+/// qualification, such as the first Google Cloud deployment, uses this verb.
+pub async fn push_release_manifest(args: PushReleaseManifestArgs) -> anyhow::Result<()> {
+    let published =
+        wamn_control::push_release_manifest::push_release_manifest(&args.into_request(), None)
+            .await?;
+    println!("{}", published.digest);
+    Ok(())
+}
+
 /// Publish only the release that passed required qualification.
 pub async fn publish(args: PublishArgs) -> anyhow::Result<()> {
     let published =
