@@ -29,6 +29,11 @@ A pallet that changes location is a fact about the pallet, not a change of stock
 - The label workflow triggers on the pallet location change. It writes one label for each move.
 - `inventory_movement` goes. The four commands `inventory.move`, `inventory.adjust`, `inventory.merge` and `inventory.split` write transaction rows and return `transaction_ids[]`.
 - A move with nothing to move refuses.
+- A balance row means that stock is present. A balance that reaches zero is deleted, and `quantity > 0` stays.
+- A command that would write no transaction row refuses. `transaction_ids[]` is never empty.
+- An adjust to the current count refuses, by the same rule as the empty move.
+- The pallet record history keeps its rows with `retention: unlimited`. A retention period is a later decision of the retention verb.
+- The `wamn.json` workflow declaration gains an optional `condition`, the expression that the platform registration condition already takes.
 - Receiving stays in its own schema. No application writes the tables of another application.
 - The write log rules of [write-log.md](write-log.md) stay: the codec owns the transaction, and a retry answers the stored result and runs no post-commit work.
 - A command that locks more than one pallet locks them in id order (`lock_both_pallets.sql`).
@@ -87,35 +92,35 @@ For each (`pallet_id`, `product_id`, `status`), the balance is the sum of `quant
 
 One SQL file states the rule. It returns every (pallet, product, status) where `pallet_quantity.quantity` differs from the sum of its transactions, on both sides of a full outer join. An empty result means that the balance and the transactions agree. The local business test runs it after its command sequence and expects no rows. The seed files write a transaction row with a null from side for every quantity row they insert, so the check holds on seeded data.
 
-A balance that reaches zero cannot stay as a row with `quantity > 0`. Question 1 in section 7 decides what happens to it.
+A balance that reaches zero is deleted in the same transaction. `pallet_quantity` declares `delete_mode: hard`, and the command SQL deletes the row. Question 2 in section 7 asks about the `delete` operation that `delete_mode` requires.
 
 ### 4.3 The four commands
 
-- `inventory.move` changes `pallet.location_id` and bumps `row_version`. It writes no transaction row, because no stock changes pallet or status. It refuses a pallet with no quantity rows. Question 2 in section 7 decides what it returns as `transaction_ids[]`.
-- `inventory.adjust` reads the row under the pallet lock, then sets it to the counted quantity. If the count is higher, it writes one row with a null from side and the pallet and status on the to side, for the difference. If the count is lower, it writes one row with the pallet and status on the from side and a null to side, for the difference. The reason is on the row. Question 3 in section 7 decides the result of a count that equals the balance.
-- `inventory.merge` writes one row for each source quantity row: from (source, status) to (target, status), for the whole quantity. The source pallet becomes `consumed`, as today. The source balance rows follow question 1.
+- `inventory.move` changes `pallet.location_id` and bumps `row_version`. It refuses a pallet with no quantity rows as `quantity_not_found` on `value.pallet_id`. Question 1 in section 7 asks which transaction rows a move writes.
+- `inventory.adjust` reads the row under the pallet lock, then sets it to the counted quantity. If the count is higher, it writes one row with a null from side and the pallet and status on the to side, for the difference. If the count is lower, it writes one row with the pallet and status on the from side and a null to side, for the difference. The reason is on the row. A count equal to the balance refuses as `invalid_input` on `value.quantity`, because the contract has no literal for "nothing to change". The zero refusal in `scalar.rs` goes, and an adjust to zero deletes the row.
+- `inventory.merge` writes one row for each source quantity row: from (source, status) to (target, status), for the whole quantity. It deletes the source balance rows. The source pallet becomes `consumed`, as today.
 - `inventory.split` writes one row: from (source, status) to (new pallet, status). The source keeps stock, as today.
 
 Each command returns `transaction_ids[]` in place of `movement_ids[]`, in the order that it wrote them. The result list shape is the one that Epic 24 built. The codec, the clients and the component pass it through.
 
 ### 4.4 The location change and the label
 
-The pallet location change is on `pallet` and in its record history. The pallet model gets a log retention in place of `none`, so the history keeps each location change. Question 4 in section 7 decides the retention.
+The pallet location change is on `pallet` and in its record history. The pallet model declares `retention: unlimited` in place of `none`, so the history keeps each location change.
 
-The label workflow registers on `pallet` for `update`, with a condition that selects a change of location: `old.location_id != new.location_id`. The `wamn.json` workflow declaration gains an optional `condition`, which publish maps to the existing `EventRegistration.condition`. The reconciler then sets `REPLICA IDENTITY FULL` on `wms.pallet`, because the condition reads `old`. Question 5 in section 7 asks about this manifest change.
+The label workflow registers on `pallet` for `update`, with a condition that selects a change of location: `old.location_id != new.location_id`, in the JMESPath of the registration condition. The `wamn.json` workflow declaration gains an optional `condition`, which publish maps to the existing `EventRegistration.condition`. The reconciler then sets `REPLICA IDENTITY FULL` on `wms.pallet`, because the condition reads `old`. One generator test covers the declaration.
 
 The wiring shapes one item for each event. The label key is the pallet id and its new `row_version`, for example `wms/{pallet_id}/{row_version}`. A move bumps `row_version` once, so each move gets one key. A retry of a move answers the stored result and writes no update, so it writes no second label. The updates that adjust, merge and split make to a pallet do not change its location, so the condition does not select them.
 
 ### 4.5 Readers
 
-The `inventory_movement` model, its routes, the web table and detail routes, the generated TUI screens and clients, the tests that count movement rows, and the example `examples/wms_move.rs` move to `inventory_transaction`. `inventory-scenario.md`, `docs/architecture/data-access.md:234`, `docs/architecture/execution.md:238` and `docs/plan/workflow-feature.md` describe the new table and trigger. The comments in `consume_source.sql` and `inventory_aggregate.sql` follow question 1.
+The `inventory_movement` model, its routes, the web table and detail routes, the generated TUI screens and clients, the tests that count movement rows, and the example `examples/wms_move.rs` move to `inventory_transaction`. `inventory-scenario.md`, `docs/architecture/data-access.md:234`, `docs/architecture/execution.md:238` and `docs/plan/workflow-feature.md` describe the new table and trigger. The out-of-date DELETE comments in `consume_source.sql` and `inventory_aggregate.sql` go, because the source balance rows are deleted.
 
 ## 5. Issues
 
 One branch, one agent (the routes agent). Each issue lands with its tests. No stop between them.
 
 1. The table and the balance check. The migration replaces `inventory_movement` with `inventory_transaction`. The model, its get and query operations, its routes and the web routes follow. The seed files write their transaction rows. The balance check SQL and the local business test that runs it land here. Regenerate every output of the package, and the clients in the same commit.
-2. The four commands. Each command writes transaction rows as section 4.3 states and returns `transaction_ids[]`. A move with nothing to move refuses. The zero balance follows question 1. The existing command tests change to the new rows. The balance check runs after the command tests.
+2. The four commands. Each command writes transaction rows as section 4.3 states and returns `transaction_ids[]`. A move with nothing to move refuses. A balance that reaches zero is deleted. The existing command tests change to the new rows. The balance check runs after the command tests.
 3. The label trigger. The `wamn.json` workflow declaration gains `condition`, and publish maps it. The pallet model gets its retention. The registration moves to `pallet` `update` with the location condition, and the wiring keys the label on the pallet and its `row_version`. Generator and publish tests cover the condition. The WMS terminal and label cluster cases run as a cluster stage.
 4. Closeout. The documents of section 4.5 describe the new model. Workspace test run, log path in the close reason, merge to main.
 
@@ -131,8 +136,7 @@ One branch, one agent (the routes agent). Each issue lands with its tests. No st
 
 ## 7. Open questions
 
-1. A balance that reaches zero, after a merge or an adjust down to zero: delete the `pallet_quantity` row, or keep the row and allow `quantity >= 0`? A delete needs `delete_mode: hard` and a declared `delete` operation on `pallet_quantity`.
-2. A move writes no transaction row. Does `inventory.move` return an empty `transaction_ids[]`, or does it lose the field?
-3. An adjust whose count equals the balance changes nothing. Does it refuse, like a move with nothing to move, or succeed with an empty `transaction_ids[]`?
-4. The retention of the pallet record history: `unlimited`, or `P<n>D` with which number of days?
-5. May the `wamn.json` workflow declaration gain an optional `condition`, so that the label trigger selects the location change and the reconciler sets `REPLICA IDENTITY FULL` on `wms.pallet`?
+The owner answered the first five questions on 2026-09-27. Section 2 records the answers. Two questions remain.
+
+1. A location change is not a transaction row, and a command that writes no row refuses. Together these make every move refuse. Which transaction rows does a move write?
+2. `delete_mode: hard` requires a declared `delete` operation on `pallet_quantity` (`manifest.rs:805-807`). That operation publishes a route that deletes a balance with no transaction row. Does the generator admit `delete_mode` without a public `delete` operation, or does `pallet_quantity` declare the operation?
