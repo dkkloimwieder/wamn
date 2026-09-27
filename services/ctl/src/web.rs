@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context as _, bail, ensure};
 use clap::{Args, Subcommand};
 use object_store::aws::AmazonS3Builder;
+use object_store::gcp::GoogleCloudStorageBuilder;
 use object_store::{Attribute, Attributes, ObjectStore, PutOptions};
 use tokio::process::Command;
 
@@ -34,8 +35,10 @@ pub struct UploadArgs {
     /// lowercase hexadecimal digits.
     #[arg(long)]
     pub release: String,
-    /// The bucket and an optional prefix, `s3://<bucket>[/<prefix>]`. The
-    /// `AWS_*` variables supply the endpoint and the credentials.
+    /// The bucket and an optional prefix, `s3://<bucket>[/<prefix>]` or
+    /// `gs://<bucket>[/<prefix>]`. For `s3://` the `AWS_*` variables supply
+    /// the endpoint and the credentials. For `gs://` the `GOOGLE_*` variables
+    /// and Application Default Credentials do.
     #[arg(long)]
     pub bucket: String,
 }
@@ -75,15 +78,9 @@ async fn upload(args: UploadArgs) -> anyhow::Result<()> {
         .context("run pnpm; the web client builds with Vite through pnpm")?;
     ensure!(status.success(), "the web build failed: {status}");
     let dist = web.join("dist");
-    let (bucket, prefix) = args
-        .bucket
-        .strip_prefix("s3://")
-        .map(|rest| rest.split_once('/').unwrap_or((rest, "")))
-        .context("--bucket must be s3://<bucket>[/<prefix>]")?;
-    let store = AmazonS3Builder::from_env()
-        .with_bucket_name(bucket)
-        .build()
-        .context("configure the bucket from the AWS_* variables")?;
+    let sink = Sink::parse(&args.bucket)?;
+    let store = sink.store()?;
+    let (bucket, prefix) = (sink.bucket, sink.prefix);
     let root = [prefix.trim_matches('/'), package, hex]
         .into_iter()
         .filter(|part| !part.is_empty())
@@ -125,8 +122,77 @@ async fn upload(args: UploadArgs) -> anyhow::Result<()> {
             .await
             .with_context(|| format!("write {key}"))?;
     }
-    println!("s3://{bucket}/{root}/ {} files", files.len());
+    println!(
+        "{}{bucket}/{root}/ {} files",
+        sink.scheme.prefix(),
+        files.len()
+    );
     Ok(())
+}
+
+/// The object store that `--bucket` names.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Scheme {
+    /// `s3://`, an S3 API endpoint, as kind uses.
+    S3,
+    /// `gs://`, Google Cloud Storage with Application Default Credentials.
+    Gcs,
+}
+
+impl Scheme {
+    fn prefix(self) -> &'static str {
+        match self {
+            Self::S3 => "s3://",
+            Self::Gcs => "gs://",
+        }
+    }
+}
+
+/// A parsed `--bucket` value.
+#[derive(Debug, PartialEq, Eq)]
+struct Sink<'a> {
+    scheme: Scheme,
+    bucket: &'a str,
+    prefix: &'a str,
+}
+
+impl<'a> Sink<'a> {
+    fn parse(value: &'a str) -> anyhow::Result<Self> {
+        let (scheme, rest) = [Scheme::S3, Scheme::Gcs]
+            .into_iter()
+            .find_map(|scheme| {
+                value
+                    .strip_prefix(scheme.prefix())
+                    .map(|rest| (scheme, rest))
+            })
+            .context("--bucket must be s3://<bucket>[/<prefix>] or gs://<bucket>[/<prefix>]")?;
+        let (bucket, prefix) = rest.split_once('/').unwrap_or((rest, ""));
+        Ok(Self {
+            scheme,
+            bucket,
+            prefix,
+        })
+    }
+
+    fn store(&self) -> anyhow::Result<Box<dyn ObjectStore>> {
+        Ok(match self.scheme {
+            Scheme::S3 => Box::new(
+                AmazonS3Builder::from_env()
+                    .with_bucket_name(self.bucket)
+                    .build()
+                    .context("configure the bucket from the AWS_* variables")?,
+            ),
+            Scheme::Gcs => Box::new(
+                GoogleCloudStorageBuilder::from_env()
+                    .with_bucket_name(self.bucket)
+                    .build()
+                    .context(
+                        "configure the bucket from the GOOGLE_* variables and \
+                         Application Default Credentials",
+                    )?,
+            ),
+        })
+    }
 }
 
 fn collect(directory: &Path, files: &mut Vec<PathBuf>) -> anyhow::Result<()> {
@@ -160,4 +226,30 @@ fn content_type(name: &str) -> anyhow::Result<&'static str> {
         "woff" => "font/woff",
         _ => bail!("the build wrote {name}, which has no declared content type"),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Scheme, Sink};
+
+    #[test]
+    fn the_sink_scheme_selects_the_builder() {
+        assert_eq!(
+            Sink::parse("gs://wamn-dev-web/clients").unwrap(),
+            Sink {
+                scheme: Scheme::Gcs,
+                bucket: "wamn-dev-web",
+                prefix: "clients",
+            }
+        );
+        assert_eq!(
+            Sink::parse("s3://web").unwrap(),
+            Sink {
+                scheme: Scheme::S3,
+                bucket: "web",
+                prefix: "",
+            }
+        );
+        assert!(Sink::parse("https://web").is_err());
+    }
 }

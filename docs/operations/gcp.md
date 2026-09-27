@@ -899,15 +899,22 @@ The edge refuses to start until the Service `hosts/flow-http` of section 3.20 ex
 
 ### 4.2 Web client
 
-`wamn web upload` needs an HMAC key, which is an access key pair for Cloud Storage. The key lives only for the one upload. It stays in `AWS_*` variables, nothing writes it to disk, and the same session deletes it.
+`wamn web upload` writes to Cloud Storage with a `gs://` sink and Application Default Credentials. No HMAC key exists. The owner runs this once on the machine. It stores a user OAuth token in the gcloud configuration, not a key:
 
-Build the `wamn` binary:
+```bash
+gcloud auth application-default login
+```
+
+Build the `wamn` binary and upload the Receiving client of release 1:
 
 ```bash
 cargo build -p wamn-ctl --bin wamn
+target/debug/wamn web upload apps/wamn_receiving \
+  --release sha256:aeb74968dfe09b113a115863ec8be5475923d9577914332081923052a41c16c4 \
+  --bucket gs://wamn-dev-web/clients
 ```
 
-On 2026-09-27 the upload did not run. `gsutil hmac create` and `gcloud storage hmac create` accept only a service account, and the ruling names the owner's user account.
+The files go to `clients/wamn_receiving/<digest hex>/`, which `deploy/gcp/values-edge.yaml` and `deploy/gcp/url-map.yaml` name. The first ruling asked for an HMAC key on the owner's account. `gsutil hmac create` and `gcloud storage hmac create` accept only a service account, so that ruling was replaced.
 
 ### 4.3 Load balancer
 

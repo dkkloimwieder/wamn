@@ -189,6 +189,12 @@ AWS_ENDPOINT=<object store URL> AWS_ACCESS_KEY_ID=<key> AWS_SECRET_ACCESS_KEY=<s
   wamn web upload apps/wamn_receiving --release sha256:<manifest digest> --bucket s3://<bucket>/<prefix>
 ```
 
+On Google Cloud, pass a `gs://` sink. The command then uses Application Default Credentials, which `gcloud auth application-default login` writes as a user OAuth token. No HMAC key exists:
+
+```bash
+wamn web upload apps/wamn_receiving --release sha256:<manifest digest> --bucket gs://<bucket>/<prefix>
+```
+
 The files go to `<prefix>/<package id>/<digest hex>/`, so each release keeps its own path.
 Each object carries its Cache-Control: `assets/` is `public, max-age=31536000, immutable`, and `index.html` is `no-cache`.
 The command writes `index.html` last. The command refuses a built file that has no declared cache rule or content type.
