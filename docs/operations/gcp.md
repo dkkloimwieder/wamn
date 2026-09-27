@@ -408,8 +408,10 @@ On 2026-09-26 the host image took 419 seconds to build and the identity image 59
 | `wamn-host:src-490a0d098a176e39` | `sha256:b44a6f944a410ca42dccf378c0948226946c54fefa17c4bf3cc246e25dcd9dd2` |
 | `wamn-identity:src-bf477a549dc55932` | `sha256:b0896c8fb3f94920c097762f75019fe68a81254fc49a4fa6768a29db97794827` |
 | `wamn-identity:src-cb10274981e78f44` | `sha256:0fe43f6bc52e98e327cb7abd9898a3e1268f9298e37ec56e12504fe7ffdeab42` |
+| `wamn-identity:src-4d7d761fa53551b2` | `sha256:5ba5e9dc09043d36f6fbc2cf830b09d08dea2f5a63bde2be74dc246411a55164` |
 
 On 2026-09-27 the second identity image, with the invitation link, took 53 seconds to build and 5 seconds to push. Roll it out with `helm upgrade identity deploy/platform/identity -n identity -f deploy/gcp/values-identity.yaml`.
+On 2026-09-27 the third identity image, with the org and project filter of finding `wamn-9a3v`, took 102 seconds to build and 6 seconds to push. The rollout took 9 seconds.
 
 ### 3.5 Event NATS
 
@@ -682,7 +684,7 @@ On 2026-09-26 the first run took 10 seconds, and the email was `wamn-registry-re
 | Image | Digest | Use |
 | --- | --- | --- |
 | `wamn-host:src-b68fac526bdd771b` | `sha256:dc6b737abb8c0efc000489433d529939df015cb54901acf46f58180c2fb0aaa5` | host |
-| `wamn-identity:src-cb10274981e78f44` | `sha256:0fe43f6bc52e98e327cb7abd9898a3e1268f9298e37ec56e12504fe7ffdeab42` | identity |
+| `wamn-identity:src-4d7d761fa53551b2` | `sha256:5ba5e9dc09043d36f6fbc2cf830b09d08dea2f5a63bde2be74dc246411a55164` | identity |
 | `wamn-cdc-reader:src-6bf15eedaa8cb8e8` | `sha256:fa38da50c62ff38679ecdcd3490df8650fb6a4b4d6adda3017fb134dadac797a` | CDC reader |
 | `curlimages/curl:8.22.0` | `sha256:58adaa4e8dca9c988bae2aba4ab3434a0bb2da16bbe3f92dec39ec7785166777` | registry token CronJob |
 
@@ -913,11 +915,12 @@ Build the `wamn` binary and upload the Receiving client of release 1:
 cargo build -p wamn-ctl --bin wamn
 target/debug/wamn web upload apps/wamn_receiving \
   --release sha256:aeb74968dfe09b113a115863ec8be5475923d9577914332081923052a41c16c4 \
-  --bucket gs://wamn-dev-web/clients
+  --bucket gs://wamn-dev-web/clients --org dkk
 ```
 
 On 2026-09-27 the upload wrote 10 files in 17 seconds, after a 54 second build of `wamn`. The files go to `clients/wamn_receiving/<digest hex>/`, which `deploy/gcp/values-edge.yaml` and `deploy/gcp/url-map.yaml` name. The first ruling asked for an HMAC key on the owner's account. `gsutil hmac create` and `gcloud storage hmac create` accept only a service account, so that ruling was replaced.
 The second upload on 2026-09-27 added the `/invite` page and took 10 seconds. Run the same command after each change to the client.
+The `--org` value is a deployment value. The project comes from the client package name `@wamn/<project>-client`. The build receives both as `WAMN_ORG` and `WAMN_PROJECT`, and the shell offers and accepts only environments of that org and project. The third upload on 2026-09-27 added `--org` and took 15 seconds.
 
 ### 4.3 Load balancer
 
@@ -1267,7 +1270,8 @@ Upload the WMS client of release 1, as in section 4.2:
 
 ```bash
 target/debug/wamn web upload apps/wamn_wms \
-  --release sha256:6649148172e83eea8af3c9a5f133cb5f961d634de4f85244909da046475890a3 --bucket gs://wamn-dev-web/clients
+  --release sha256:6649148172e83eea8af3c9a5f133cb5f961d634de4f85244909da046475890a3 --bucket gs://wamn-dev-web/clients \
+  --org dkk
 ```
 
 [values-edge.yaml](../../deploy/gcp/values-edge.yaml) lists WMS with its host, `http://wms-flow-http.hosts.svc.cluster.local` and its bucket path. [url-map.yaml](../../deploy/gcp/url-map.yaml) has the host rule `wms.wamn.dev` and the path matcher `wms`, with the same rules as Receiving. Upgrade the edge, import the URL map and add the record:
@@ -1278,4 +1282,4 @@ gcloud compute url-maps import wamn-edge --global --project wamn-dev --source de
 gcloud dns record-sets create wms.wamn.dev. --project wamn-dev --zone wamn-dev --type A --ttl 300 --rrdatas 8.232.230.139
 ```
 
-The same certificate `*.wamn.dev` serves both hosts. On 2026-09-27 the upload took 14 seconds, the edge upgrade 12 seconds, the import 17 seconds and the record 1 second. Until the new host rule spreads, `wms.wamn.dev` reaches the default bucket, which answers with a listing of the whole web bucket (finding `wamn-uo2p`).
+The same certificate `*.wamn.dev` serves both hosts. On 2026-09-27 the upload took 14 seconds, and the upload again with `--org` took 12 seconds. The edge upgrade 12 seconds, the import 17 seconds and the record 1 second. Until the new host rule spreads, `wms.wamn.dev` reaches the default bucket, which answers with a listing of the whole web bucket (finding `wamn-uo2p`).
