@@ -138,8 +138,8 @@ This is the order. Section 5.3 gives the owner rulings.
 6. Install CloudNativePG from `deploy/infra/cnpg-operator.yaml` and one cluster with one instance on the storage class `standard` (`pd-standard`).
 7. Run `wamn-ctl provision-system`, which installs the control store and sets `registry.meta.platform_domain`.
 8. Run the provisioning verbs of [deployment ordering](../operations/deployment.md#deployment-ordering) from this machine, through a port-forward to PostgreSQL: `provision-org`, `provision-project-env`, `provision-identity-issuer`, `reconcile-run-plane`, `apply-package`, `reconcile-package-data-access`, `push-component`.
-9. The owner creates the Resend secret of section 4.2. Then install identity with `deploy/platform/identity`, and the host with one replica at a request of 0.5 CPU.
-10. Publish the Receiving release with `--route-host receiving.wamn.dev`, and point the host at its manifest digest.
+9. The owner creates the Resend secret of section 4.2. Then install identity with `deploy/platform/identity`.
+10. Publish the Receiving release with `--route-host receiving.wamn.dev`. Then install the host with one replica at a request of 0.5 CPU, with the manifest digest from `print-release-env`, as the kind case does.
 11. Make sure that the host serves the release through a port-forward. Scale `main` to 0.
 
 Each command goes into section 3 of [Google Cloud operations](../operations/gcp.md) as it runs.
@@ -181,6 +181,10 @@ Owner rulings of 2026-09-26:
 - The operator CA is a separate CA from `deploy/gcp/identity-operator-ca.yaml`: a `SelfSigned` `Issuer`, the CA `Certificate` `identity-operator-ca`, the CA `Issuer` `identity-operator`, and one client `Certificate` `operator-dkk`. Identity uses `operatorCaSecret: identity-operator-ca`, because step 4 sends an invitation. It is not `wasmcloud-ca`, because a host certificate must not act as an operator. The owner reads `tls.crt` and `tls.key` of `operator-dkk` into mode 0600 files when sending the invitation, and never commits them.
 - `deploy/gcp/values-identity.yaml` names the issuer, `wamn-identity-db`, `identity-tls`, `identity-operator-ca`, `identity-resend`, `noreply@wamn.dev`, the session target and the identity image by digest, never by tag.
 - After the install, a pod in `hosts` makes sure that `GET /.well-known` answers over TLS against `identity-ca`. Then the host installs.
+- `publish-release` runs before the host installs, because the host refuses a release digest that does not exist.
+- The host Secrets are generation `a` of guest (`wamn-host-db`), `executor-platform`, `identity-reader`, `http-admitter` and `event-materializer`, in `hosts`, with the host set by `jq`.
+- `deploy/gcp/values-host.yaml` is the Receiving overlay with namespace `hosts`, 1 replica, requests of 500m CPU and 256Mi, and limits of 4Gi memory and 2 CPU, the whole node. The event NATS URL and the CDC reader host name `platform`.
+- The registry token CronJob of `deploy/gcp/registry-token.yaml` runs every 30 minutes as the Kubernetes service account `registry-token` in `hosts`. Workload Identity binds it to the Google service account `wamn-registry-reader`, which has `roles/artifactregistry.reader` on repository `wamn` only. The job reads a token from the metadata server and writes the Secret `wamn-registry-pull` with user `oauth2accesstoken` for `us-central1-docker.pkg.dev`. A Role allows `get`, `create` and `update` on that one Secret name. A first run by `kubectl create job --from` comes before the host starts.
 
 ## 6. Benchmark
 
