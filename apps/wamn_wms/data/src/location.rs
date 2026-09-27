@@ -1,6 +1,6 @@
 //! `location` get, query, create and update over the generated statements.
 
-use wamn_postgres_statements::{Connection, StatementError};
+use wamn_postgres_statements::{Connection, StatementError, Transaction};
 
 use crate::error::{self, AccessError, AccessErrorKind};
 use crate::generated::wamn::location as sql;
@@ -51,54 +51,19 @@ pub async fn query(
     }))
 }
 
-/// Create one location under the identity its claim row mints.
-///
-/// A retry of the same key returns the row the first attempt wrote, and the
-/// same key under a different code refuses.
+/// Create one location in the transaction its codec holds for the write log.
 ///
 /// # Errors
 ///
 /// [`AccessError`] carrying the literal the operation contract declares.
 pub async fn create(
-    connection: &mut Connection,
-    idempotency_key: &str,
+    transaction: &mut Transaction,
     location_code: Option<&str>,
 ) -> Result<LocationRow, AccessError> {
     let location_code = scalar::text("location_code", location_code)?;
-    let canonical = wamn_execution_contract::canonical_json_bytes(
-        &serde_json::json!({ "location_code": location_code }),
-    );
-    let transaction = connection.begin().await.map_err(|e| refuse(&e))?;
-    let mut claim = sql::begin_claim(transaction);
-    let replay = sql::create_replay(&mut claim, idempotency_key.to_owned())
+    sql::create(transaction, location_code.to_owned())
         .await
-        .map_err(|e| refuse(&e))?;
-    if let Some(replay) = replay {
-        return replay_row(replay, &canonical);
-    }
-    let claimed = sql::create_claim(&mut claim, idempotency_key.to_owned(), canonical.clone())
-        .await
-        .map_err(|e| refuse(&e))?;
-    let Some(claimed) = claimed else {
-        // Another caller took the key between the replay read and this insert.
-        // Its row is committed, so the replay read now answers.
-        let replay = sql::create_replay(&mut claim, idempotency_key.to_owned())
-            .await
-            .map_err(|e| refuse(&e))?
-            .ok_or_else(|| AccessError::new(AccessErrorKind::Retry, serde_json::json!({})))?;
-        return replay_row(replay, &canonical);
-    };
-    let finalized = sql::create(claim, claimed.location_id, location_code.to_owned())
-        .await
-        .map_err(|e| refuse(&e))?;
-    let row = LocationRow {
-        created_at: finalized.row.created_at.clone(),
-        id: finalized.row.id.clone(),
-        location_code: finalized.row.location_code.clone(),
-        row_version: finalized.row.row_version,
-    };
-    finalized.commit().await.map_err(|e| refuse(&e))?;
-    Ok(row)
+        .map_err(|e| refuse(&e))
 }
 
 /// Change one location at the revision the caller read.
@@ -171,22 +136,4 @@ fn refuse(error: &StatementError) -> AccessError {
         sql::CREATE_FOREIGN_KEY_CONSTRAINTS,
         sql::CREATE_CHECK_CONSTRAINTS,
     )
-}
-
-fn replay_row(
-    replay: sql::LocationCreateReplayRow,
-    canonical: &[u8],
-) -> Result<LocationRow, AccessError> {
-    if replay.canonical_command != canonical {
-        return Err(AccessError::field(
-            AccessErrorKind::IdempotencyConflict,
-            "idempotency_key",
-        ));
-    }
-    Ok(LocationRow {
-        created_at: replay.created_at,
-        id: replay.id,
-        location_code: replay.location_code,
-        row_version: replay.row_version,
-    })
 }

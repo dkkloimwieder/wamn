@@ -52,19 +52,18 @@ mod create {
     }
 
     async fn handle(
-        connection: &mut wamn_postgres_statements::Connection,
+        transaction: &mut wamn_postgres_statements::Transaction,
         request: contract::CreateRequest,
     ) -> Result<contract::CreateResult, contract::CreateError> {
         let pallet_code = request.pallet_code.flatten();
         let location_id = request.location_id.flatten();
         let status = request.status.flatten();
         let command = pallet::CreateCommand {
-            idempotency_key: &request.idempotency_key,
             pallet_code: pallet_code.as_deref(),
             location_id: location_id.as_deref(),
             status: status.as_deref(),
         };
-        pallet::create(connection, &command)
+        pallet::create(transaction, &command)
             .await
             .map(|row| contract::CreateResult {
                 value: codec::row!(row, contract::CreateRow),

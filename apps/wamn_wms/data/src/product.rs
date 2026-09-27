@@ -1,6 +1,6 @@
 //! `product` get, query, create and update over the generated statements.
 
-use wamn_postgres_statements::{Connection, StatementError};
+use wamn_postgres_statements::{Connection, StatementError, Transaction};
 
 use crate::error::{self, AccessError, AccessErrorKind};
 use crate::generated::wamn::product as sql;
@@ -51,54 +51,19 @@ pub async fn query(
     }))
 }
 
-/// Create one product under the identity its claim row mints.
-///
-/// A retry of the same key returns the row the first attempt wrote, and the
-/// same key under a different code refuses.
+/// Create one product in the transaction its codec holds for the write log.
 ///
 /// # Errors
 ///
 /// [`AccessError`] carrying the literal the operation contract declares.
 pub async fn create(
-    connection: &mut Connection,
-    idempotency_key: &str,
+    transaction: &mut Transaction,
     product_code: Option<&str>,
 ) -> Result<ProductRow, AccessError> {
     let product_code = scalar::text("product_code", product_code)?;
-    let canonical = wamn_execution_contract::canonical_json_bytes(
-        &serde_json::json!({ "product_code": product_code }),
-    );
-    let transaction = connection.begin().await.map_err(|e| refuse(&e))?;
-    let mut claim = sql::begin_claim(transaction);
-    let replay = sql::create_replay(&mut claim, idempotency_key.to_owned())
+    sql::create(transaction, product_code.to_owned())
         .await
-        .map_err(|e| refuse(&e))?;
-    if let Some(replay) = replay {
-        return replay_row(replay, &canonical);
-    }
-    let claimed = sql::create_claim(&mut claim, idempotency_key.to_owned(), canonical.clone())
-        .await
-        .map_err(|e| refuse(&e))?;
-    let Some(claimed) = claimed else {
-        // Another caller took the key between the replay read and this insert.
-        // Its row is committed, so the replay read now answers.
-        let replay = sql::create_replay(&mut claim, idempotency_key.to_owned())
-            .await
-            .map_err(|e| refuse(&e))?
-            .ok_or_else(|| AccessError::new(AccessErrorKind::Retry, serde_json::json!({})))?;
-        return replay_row(replay, &canonical);
-    };
-    let finalized = sql::create(claim, claimed.product_id, product_code.to_owned())
-        .await
-        .map_err(|e| refuse(&e))?;
-    let row = ProductRow {
-        created_at: finalized.row.created_at.clone(),
-        id: finalized.row.id.clone(),
-        product_code: finalized.row.product_code.clone(),
-        row_version: finalized.row.row_version,
-    };
-    finalized.commit().await.map_err(|e| refuse(&e))?;
-    Ok(row)
+        .map_err(|e| refuse(&e))
 }
 
 /// Change one product at the revision the caller read.
@@ -167,22 +132,4 @@ fn refuse(error: &StatementError) -> AccessError {
         sql::CREATE_FOREIGN_KEY_CONSTRAINTS,
         sql::CREATE_CHECK_CONSTRAINTS,
     )
-}
-
-fn replay_row(
-    replay: sql::ProductCreateReplayRow,
-    canonical: &[u8],
-) -> Result<ProductRow, AccessError> {
-    if replay.canonical_command != canonical {
-        return Err(AccessError::field(
-            AccessErrorKind::IdempotencyConflict,
-            "idempotency_key",
-        ));
-    }
-    Ok(ProductRow {
-        created_at: replay.created_at,
-        id: replay.id,
-        product_code: replay.product_code,
-        row_version: replay.row_version,
-    })
 }

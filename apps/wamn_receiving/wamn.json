@@ -233,7 +233,6 @@
       "owner": "wamn_receiving",
       "server_owned_fields": [
         "id",
-        "idempotency_key",
         "purchase_order_id",
         "receipt_reference",
         "occurred_at",
@@ -345,12 +344,6 @@
           "writable_fields": [
             "name"
           ],
-          "claim": {
-            "table": "supplier_command",
-            "identities": {
-              "id": "supplier_id"
-            }
-          },
           "label": "Add a supplier",
           "result": "one"
         },
@@ -376,18 +369,6 @@
       }
     }
   },
-  "internal_relations": {
-    "record_receipt_command": {
-      "schema": "receiving",
-      "table": "record_receipt_command",
-      "cdc": "excluded"
-    },
-    "supplier_command": {
-      "schema": "receiving",
-      "table": "supplier_command",
-      "cdc": "excluded"
-    }
-  },
   "custom_operations": {
     "receiving.record_receipt": {
       "kind": "command",
@@ -399,15 +380,6 @@
       "transaction": "explicit_per_input",
       "automatic_retry": false,
       "idempotent_by": "claim",
-      "claim": {
-        "table": "record_receipt_command",
-        "identities": {
-          "receipt_id": "receipt_id"
-        },
-        "claim": "claim_command",
-        "replay": "find_replay",
-        "finalize": "finalize_command"
-      },
       "pre_commit": {
         "fields": [
           {
@@ -649,38 +621,11 @@
         },
         {
           "schema": "receiving",
-          "table": "record_receipt_command",
-          "select_fields": [
-            "idempotency_key",
-            "canonical_command",
-            "receipt_id",
-            "purchase_order_id",
-            "purchase_order_status",
-            "row_version"
-          ],
-          "insert_fields": [
-            "idempotency_key",
-            "canonical_command",
-            "purchase_order_id"
-          ],
-          "update_fields": [
-            "purchase_order_status",
-            "row_version"
-          ],
-          "lock": false,
-          "constraints": [
-            "record_receipt_command_idempotency_key_pkey"
-          ]
-        },
-        {
-          "schema": "receiving",
           "table": "receipt",
           "select_fields": [
             "id"
           ],
           "insert_fields": [
-            "id",
-            "idempotency_key",
             "purchase_order_id",
             "receipt_reference",
             "occurred_at"
@@ -709,72 +654,6 @@
         }
       ],
       "statements": {
-        "find_replay": {
-          "path": "command/record_receipt/find_replay.sql",
-          "fetch": "optional_one",
-          "parameters": [
-            {
-              "name": "idempotency_key",
-              "type": "text",
-              "nullable": false
-            }
-          ],
-          "row": [
-            {
-              "name": "canonical_command",
-              "type": "bytes",
-              "nullable": false
-            },
-            {
-              "name": "receipt_id",
-              "type": "uuid",
-              "nullable": false
-            },
-            {
-              "name": "purchase_order_id",
-              "type": "uuid",
-              "nullable": false
-            },
-            {
-              "name": "purchase_order_status",
-              "type": "text",
-              "nullable": true
-            },
-            {
-              "name": "row_version",
-              "type": "int32",
-              "nullable": true
-            }
-          ]
-        },
-        "claim_command": {
-          "path": "command/record_receipt/claim_command.sql",
-          "fetch": "optional_one",
-          "parameters": [
-            {
-              "name": "idempotency_key",
-              "type": "text",
-              "nullable": false
-            },
-            {
-              "name": "canonical_command",
-              "type": "bytes",
-              "nullable": false
-            },
-            {
-              "name": "purchase_order_id",
-              "type": "uuid",
-              "nullable": false
-            }
-          ],
-          "row": [
-            {
-              "name": "receipt_id",
-              "type": "uuid",
-              "nullable": false
-            }
-          ]
-        },
         "lock_purchase_order": {
           "path": "command/record_receipt/lock_purchase_order.sql",
           "fetch": "optional_one",
@@ -825,16 +704,6 @@
           "path": "command/record_receipt/insert_receipt.sql",
           "fetch": "one",
           "parameters": [
-            {
-              "name": "receipt_id",
-              "type": "uuid",
-              "nullable": false
-            },
-            {
-              "name": "idempotency_key",
-              "type": "text",
-              "nullable": false
-            },
             {
               "name": "purchase_order_id",
               "type": "uuid",
@@ -925,49 +794,6 @@
               "name": "row_version",
               "type": "int32",
               "nullable": false
-            }
-          ]
-        },
-        "finalize_command": {
-          "path": "command/record_receipt/finalize_command.sql",
-          "fetch": "one",
-          "parameters": [
-            {
-              "name": "idempotency_key",
-              "type": "text",
-              "nullable": false
-            },
-            {
-              "name": "canonical_command",
-              "type": "bytes",
-              "nullable": false
-            },
-            {
-              "name": "receipt_id",
-              "type": "uuid",
-              "nullable": false
-            },
-            {
-              "name": "purchase_order_status",
-              "type": "text",
-              "nullable": false
-            },
-            {
-              "name": "row_version",
-              "type": "int32",
-              "nullable": false
-            }
-          ],
-          "row": [
-            {
-              "name": "purchase_order_status",
-              "type": "text",
-              "nullable": true
-            },
-            {
-              "name": "row_version",
-              "type": "int32",
-              "nullable": true
             }
           ]
         }

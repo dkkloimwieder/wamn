@@ -1,26 +1,23 @@
 //! `inventory.split` -- part of one quantity row moved onto a NEW pallet.
 //!
 //! ```text
-//! canonicalize the body
-//! → find a replay: same key ⇒ return the ORIGINAL result, unchanged
-//! → claim the key, which pre-generates the movement id AND the new pallet id
 //! → lock the source pallet     (the serialization point)
 //! → compare expected_row_version to observed
 //! → validate the destination
 //! → read the quantity row, then take from it (it must keep stock)
 //! → create the new pallet, place the quantity on it, write the movement
 //! → bump the source's revision
-//! → finalize the claim with the result
 //! ```
 //!
-//! The new pallet's id comes from the claim, exactly as the movement id does:
-//! a split that minted it during the work would mint a SECOND pallet on
-//! replay and leave real stock on a ghost (`claim_command.sql`). The new
-//! pallet inherits the source's status -- a split of a held pallet does not
-//! release the hold. The source must keep stock: moving everything is a move.
+//! The generated codec claims the key in the write log and holds the
+//! transaction, so a retry answers the stored result and creates no second
+//! pallet. The new pallet's id and the one movement id come from their inserts'
+//! `RETURNING`. The new pallet inherits the source's status -- a split of a
+//! held pallet does not release the hold. The source must keep stock: moving
+//! everything is a move.
 
 use serde::Deserialize;
-use wamn_postgres_statements::{Connection, Numeric, TimestampTz, Uuid};
+use wamn_postgres_statements::{Numeric, TimestampTz, Transaction, Uuid};
 
 use crate::error::{self, AccessError, AccessErrorKind};
 use crate::generated::wamn::inventory_split as sql;
@@ -29,7 +26,6 @@ use crate::scalar;
 /// One envelope item's command body.
 #[derive(Debug, Deserialize)]
 pub struct SplitCommand {
-    pub idempotency_key: String,
     pub source_pallet_id: String,
     pub product_id: String,
     pub status: String,
@@ -43,7 +39,7 @@ pub struct SplitCommand {
 /// What one accepted split answers with.
 #[derive(Debug, PartialEq, Eq)]
 pub struct SplitResult {
-    pub movement_id: String,
+    pub movement_ids: Vec<String>,
     pub source_pallet_id: String,
     pub new_pallet_id: String,
     pub source_status: String,
@@ -77,90 +73,25 @@ fn parse(command: &SplitCommand) -> Result<Parsed, AccessError> {
     })
 }
 
-fn canonical_command(command: &SplitCommand, parsed: &Parsed) -> Vec<u8> {
-    wamn_execution_contract::canonical_json_bytes(&serde_json::json!({
-        "source_pallet_id": parsed.source_pallet_id.0,
-        "product_id": parsed.product_id.0,
-        "status": parsed.status,
-        "quantity": parsed.quantity.0,
-        "new_pallet_code": command.new_pallet_code,
-        "to_location_id": parsed.to_location_id.0,
-        "expected_row_version": command.expected_row_version,
-        "occurred_at": parsed.occurred_at.0,
-    }))
-}
-
-/// Run one command item in exactly one transaction.
+/// Run one command item in the transaction its codec holds for the write log.
 ///
 /// # Errors
 ///
 /// [`AccessError`] carrying the literal and detail the operation contract
 /// declares for that refusal.
-pub async fn execute(command: &SplitCommand) -> Result<SplitResult, AccessError> {
+pub async fn execute(
+    transaction: &mut Transaction,
+    command: &SplitCommand,
+) -> Result<SplitResult, AccessError> {
     let parsed = parse(command)?;
-    let canonical = canonical_command(command, &parsed);
-
-    let mut connection = Connection::new();
-    let transaction = connection
-        .begin()
-        .await
-        .map_err(|e| error::from_statement(&e))?;
-    run(sql::begin_claim(transaction), command, &canonical, &parsed).await
-}
-
-fn retry() -> AccessError {
-    AccessError::new(AccessErrorKind::Retry, serde_json::json!({}))
-}
-
-fn internal() -> AccessError {
-    AccessError::new(AccessErrorKind::InternalError, serde_json::json!({}))
+    run(transaction, command, &parsed).await
 }
 
 async fn run(
-    mut transaction: sql::PendingClaim,
+    transaction: &mut Transaction,
     command: &SplitCommand,
-    canonical: &[u8],
     parsed: &Parsed,
 ) -> Result<SplitResult, AccessError> {
-    let key = command.idempotency_key.clone();
-    if let Some(replay) = sql::find_replay(&mut transaction, key.clone())
-        .await
-        .map_err(|e| error::from_statement(&e))?
-    {
-        if replay.canonical_command != canonical {
-            return Err(AccessError::field(
-                AccessErrorKind::IdempotencyConflict,
-                "value.idempotency_key",
-            ));
-        }
-        let Some(row_version) = replay.row_version else {
-            return Err(retry());
-        };
-        // The source's status was never this command's to change, so the
-        // live row's is the original's.
-        let source = sql::lock_pallet(&mut transaction, replay.source_pallet_id.clone())
-            .await
-            .map_err(|e| error::from_statement(&e))?
-            .ok_or_else(internal)?;
-        return Ok(SplitResult {
-            movement_id: replay.movement_id.0,
-            source_pallet_id: replay.source_pallet_id.0,
-            new_pallet_id: replay.new_pallet_id.0,
-            source_status: source.status,
-            row_version,
-        });
-    }
-
-    let claim = sql::claim_command(
-        &mut transaction,
-        key.clone(),
-        canonical.to_vec(),
-        parsed.source_pallet_id.clone(),
-    )
-    .await
-    .map_err(|e| error::from_statement(&e))?
-    .ok_or_else(retry)?;
-
     // THE SERIALIZATION POINT.
     let not_found = || {
         AccessError::missing(
@@ -169,7 +100,7 @@ async fn run(
             &parsed.source_pallet_id.0,
         )
     };
-    let locked = sql::lock_pallet(&mut transaction, parsed.source_pallet_id.clone())
+    let locked = sql::lock_pallet(transaction, parsed.source_pallet_id.clone())
         .await
         .map_err(|e| error::from_statement(&e))?
         .ok_or_else(not_found)?;
@@ -183,7 +114,7 @@ async fn run(
         ));
     }
 
-    sql::validate_location(&mut transaction, parsed.to_location_id.clone())
+    sql::validate_location(transaction, parsed.to_location_id.clone())
         .await
         .map_err(|e| error::from_statement(&e))?
         .ok_or_else(|| {
@@ -197,7 +128,7 @@ async fn run(
     // Read before taking, so the refusal can say which of two things is
     // wrong: no such row, or a row that cannot spare what was asked.
     let held = sql::select_quantity(
-        &mut transaction,
+        transaction,
         parsed.source_pallet_id.clone(),
         parsed.product_id.clone(),
         parsed.status.clone(),
@@ -212,7 +143,7 @@ async fn run(
         )
     })?;
     sql::take_from_source(
-        &mut transaction,
+        transaction,
         parsed.source_pallet_id.clone(),
         parsed.product_id.clone(),
         parsed.status.clone(),
@@ -222,9 +153,8 @@ async fn run(
     .map_err(|e| error::from_statement(&e))?
     .ok_or_else(|| AccessError::insufficient("value.quantity", &held.quantity.0))?;
 
-    sql::create_pallet(
-        &mut transaction,
-        claim.new_pallet_id.clone(),
+    let created = sql::create_pallet(
+        transaction,
         command.new_pallet_code.clone(),
         parsed.to_location_id.clone(),
         locked.status.clone(),
@@ -232,17 +162,16 @@ async fn run(
     .await
     .map_err(|e| error::from_statement(&e))?;
     sql::place_quantity(
-        &mut transaction,
-        claim.new_pallet_id.clone(),
+        transaction,
+        created.id.clone(),
         parsed.product_id.clone(),
         parsed.status.clone(),
         parsed.quantity.clone(),
     )
     .await
     .map_err(|e| error::from_statement(&e))?;
-    sql::insert_movement(
-        &mut transaction,
-        key.clone(),
+    let movement = sql::insert_movement(
+        transaction,
         parsed.source_pallet_id.clone(),
         parsed.product_id.clone(),
         parsed.quantity.clone(),
@@ -251,31 +180,14 @@ async fn run(
     .await
     .map_err(|e| error::from_statement(&e))?;
 
-    let touched = sql::touch_source(&mut transaction, parsed.source_pallet_id.clone())
+    let touched = sql::touch_source(transaction, parsed.source_pallet_id.clone())
         .await
         .map_err(|e| error::from_statement(&e))?;
 
-    let finalized = sql::finalize_command(
-        transaction,
-        key,
-        canonical.to_vec(),
-        claim.movement_id.clone(),
-        touched.row_version,
-    )
-    .await
-    .map_err(|e| error::from_statement(&e))?;
-    if finalized.row.row_version.is_none() {
-        return Err(retry());
-    }
-
-    finalized
-        .commit()
-        .await
-        .map_err(|e| error::from_statement(&e))?;
     Ok(SplitResult {
-        movement_id: claim.movement_id.0,
+        movement_ids: vec![movement.id.0],
         source_pallet_id: parsed.source_pallet_id.0.clone(),
-        new_pallet_id: claim.new_pallet_id.0,
+        new_pallet_id: created.id.0,
         source_status: touched.status,
         row_version: touched.row_version,
     })
@@ -287,7 +199,6 @@ mod tests {
 
     fn command() -> SplitCommand {
         SplitCommand {
-            idempotency_key: "k".to_owned(),
             source_pallet_id: "00000000-0000-0000-0000-000000000301".to_owned(),
             product_id: "00000000-0000-0000-0000-000000000101".to_owned(),
             status: "available".to_owned(),
@@ -296,26 +207,6 @@ mod tests {
             to_location_id: "00000000-0000-0000-0000-000000000202".to_owned(),
             expected_row_version: 1,
             occurred_at: "2026-09-05T00:00:00Z".to_owned(),
-        }
-    }
-
-    #[test]
-    fn the_canonical_command_excludes_the_key_and_names_every_other_field() {
-        let command = command();
-        let bytes = canonical_command(&command, &parse(&command).unwrap());
-        let text = String::from_utf8(bytes).unwrap();
-        assert!(!text.contains("idempotency_key"));
-        for field in [
-            "source_pallet_id",
-            "product_id",
-            "status",
-            "quantity",
-            "new_pallet_code",
-            "to_location_id",
-            "expected_row_version",
-            "occurred_at",
-        ] {
-            assert!(text.contains(field), "{field} is part of the identity");
         }
     }
 

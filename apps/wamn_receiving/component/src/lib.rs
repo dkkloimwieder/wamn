@@ -86,11 +86,11 @@ async fn record_receipt(
 
 #[cfg(test)]
 async fn record_receipt_execute(
-    connection: &mut wamn_postgres_statements::Connection,
+    transaction: &mut wamn_postgres_statements::Transaction,
     request: contract::RecordReceiptRequest,
 ) -> Result<contract::RecordReceiptResult, contract::RecordReceiptError> {
     let command = record_receipt_command(request);
-    receipt::execute(connection, &command)
+    receipt::execute(transaction, &command)
         .await
         .map(|value| contract::RecordReceiptResult {
             receipt_id: value.receipt_id.into(),
@@ -135,7 +135,7 @@ fn map_record_receipt_error(error: &receipt::RecordReceiptError) -> contract::Re
 
 async fn record_receipt_execute_with_context(
     context: wamn::node::types::NodeContext,
-    connection: &mut wamn_postgres_statements::Connection,
+    transaction: &mut wamn_postgres_statements::Transaction,
     request: contract::RecordReceiptRequest,
 ) -> Result<contract::RecordReceiptResult, contract::RecordReceiptError> {
     let participation = wamn_postgres_statements::participation()
@@ -145,10 +145,9 @@ async fn record_receipt_execute_with_context(
     let command = record_receipt_command(request);
     let result = match participation {
         Some(participation) => receipt::execute_with_pre_commit(
-            connection,
+            transaction,
             &command,
             &participation.operation,
-            &participation.intent,
             |request| async move {
                 let request = wamn_receiving::receiving::record_receipt_pre_commit::RecordReceiptPreCommitRequest {
                     receipt_id: request.receipt_id.into(),
@@ -161,7 +160,7 @@ async fn record_receipt_execute_with_context(
             },
         )
         .await,
-        None => receipt::execute(connection, &command).await,
+        None => receipt::execute(transaction, &command).await,
     };
     result
         .map(|value| contract::RecordReceiptResult {
@@ -240,31 +239,25 @@ mod tests {
     #[test]
     fn arbitrary_request_id_is_preserved_in_each_outcome() {
         let request_id = "submit receipt / café 🧾";
+        // Both items refuse before the codec opens a transaction, so the test
+        // needs no database.
         let input = receipt_codec::decode(&format!(
-            r#"[{{"request_id":{id},"value":{VALID_VALUE}}},{{"request_id":{id},"value":null}}]"#,
+            r#"[{{"request_id":{id},"value":{{"unknown":true}}}},{{"request_id":{id},"value":null}}]"#,
             id = serde_json::to_string(request_id).unwrap(),
         ))
         .unwrap();
-        let mut state = ();
+        let mut connection = wamn_postgres_statements::Connection::new();
         let mut call = std::pin::pin!(receipt_codec::run(
             input,
-            &mut state,
-            async |(), request| {
-                Ok(contract::RecordReceiptResult {
-                    receipt_id: "00000000-0000-0000-0000-000000000006".to_owned(),
-                    purchase_order_id: request.purchase_order_id,
-                    purchase_order_status: "open".to_owned(),
-                    row_version: 1,
-                })
-            }
+            &mut connection,
+            async |_, _| unreachable!("a refused item reaches no handler")
         ));
         let mut context = std::task::Context::from_waker(std::task::Waker::noop());
         let std::task::Poll::Ready(output) = std::future::Future::poll(call.as_mut(), &mut context)
         else {
-            panic!("the test handler performs no I/O");
+            panic!("a refused item performs no I/O");
         };
-        assert!(output[0].outcome.is_ok());
-        assert!(output[1].outcome.is_err());
+        assert!(output.iter().all(|item| item.outcome.is_err()));
         assert!(output.iter().all(|item| item.request_id == request_id));
     }
 

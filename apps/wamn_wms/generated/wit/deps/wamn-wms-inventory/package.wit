@@ -62,7 +62,7 @@ interface adjust {
   }
 
   record adjust-result {
-    movement-id: string,
+    movement-ids: list<string>,
     pallet-id: string,
     adjusted-quantity: string,
     pallet-status: string,
@@ -176,7 +176,7 @@ interface merge {
   }
 
   record merge-result {
-    movement-id: string,
+    movement-ids: list<string>,
     source-pallet-id: string,
     target-pallet-id: string,
     target-status: string,
@@ -251,7 +251,7 @@ interface move {
   }
 
   record move-result {
-    movement-id: string,
+    movement-ids: list<string>,
     pallet-id: string,
     location-id: string,
     pallet-status: string,
@@ -343,7 +343,7 @@ interface split {
   }
 
   record split-result {
-    movement-id: string,
+    movement-ids: list<string>,
     source-pallet-id: string,
     new-pallet-id: string,
     source-status: string,

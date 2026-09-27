@@ -19,6 +19,7 @@
 //! - **read query** — [`encode_read_query`] / [`decode_read_query`], the one
 //!   query-string encoding of a read request item.
 
+mod canonical_scalar;
 mod effect_outcome;
 mod expect;
 pub mod node_contract;
@@ -32,6 +33,7 @@ use std::fmt::Write as _;
 use serde_json::Value;
 use sha2::{Digest as _, Sha256};
 
+pub use canonical_scalar::{canonical_numeric, canonical_timestamptz};
 pub use effect_outcome::EffectOutcome;
 pub use expect::{Expect, ExpectError, ExpectedOutcome};
 pub use node_contract::{

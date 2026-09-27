@@ -10,6 +10,8 @@ serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
 uuid.workspace = true
 wamn-edge-samples-data-access = { workspace = true }
+# The canonical request bytes that the generated codec keeps in the write log.
+wamn-execution-contract = { workspace = true }
 wamn-postgres-statements = { workspace = true }
 wit-bindgen = { workspace = true }
 

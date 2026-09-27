@@ -24,7 +24,7 @@ class HttpFixture:
     def __init__(self, ids):
         self.errors = []
         fixture = self
-        self.movement = {"movement_id": "44444444-0000-0000-0000-000000000009",
+        self.movement = {"movement_ids": ["44444444-0000-0000-0000-000000000009"],
                          "pallet_id": ids.pallet, "location_id": ids.destination,
                          "pallet_status": "available", "row_version": 2}
 
@@ -95,9 +95,9 @@ class DatabaseFixture:
         ids = self.ids
         observation = {
             "claims": len(records), "movements": len(records),
-            "command": {"idempotency_key": command["idempotency_key"], "movement_id": self.movement["movement_id"],
+            "command": {"idempotency_key": command["idempotency_key"], "movement_ids": self.movement["movement_ids"],
                         "pallet_id": command["pallet_id"], "pallet_status": "available", "row_version": 2},
-            "movement": {"idempotency_key": command["idempotency_key"], "pallet_id": command["pallet_id"],
+            "movement": {"id": self.movement["movement_ids"][0], "pallet_id": command["pallet_id"],
                          "product_id": ids.product, "from_location_id": ids.source,
                          "to_location_id": command["to_location_id"], "kind": "move", "quantity": "10.0000"},
             "pallet": {"location_id": command["to_location_id"], "status": "available", "row_version": 2},

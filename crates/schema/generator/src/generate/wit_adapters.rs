@@ -13,7 +13,12 @@ pub(super) fn emit_row_adapter<'a>(
         "\n#[allow(unused_macros)]\nmacro_rules! row {\n    ($row:expr, $target:path) => {{\n        let row = $row;\n        $target {\n",
     );
     for (name, ty, nullable) in fields {
-        let field = rust_identifier(name).expect("validated field has a Rust name");
+        // A list result field takes each element the way a single field of
+        // its type does.
+        let list = name
+            .strip_suffix("[]")
+            .filter(|member| !member.contains('.') && !member.contains("[]"));
+        let field = rust_identifier(list.unwrap_or(name)).expect("validated field has a Rust name");
         let value = match ty {
             ColumnType::Uuid | ColumnType::Numeric | ColumnType::Timestamptz | ColumnType::Json => {
                 "value.0"
@@ -25,7 +30,15 @@ pub(super) fn emit_row_adapter<'a>(
             | ColumnType::Text
             | ColumnType::Bytes => "value",
         };
-        let value = if nullable && value != "value" {
+        let value = if list.is_some() {
+            if value == "value" {
+                format!("row.{field}")
+            } else if nullable {
+                format!("row.{field}.into_iter().map(|value| value.map(|value| {value})).collect()")
+            } else {
+                format!("row.{field}.into_iter().map(|value| {value}).collect()")
+            }
+        } else if nullable && value != "value" {
             format!("row.{field}.map(|value| {value})")
         } else {
             value.replace("value", &format!("row.{field}"))

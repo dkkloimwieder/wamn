@@ -63,6 +63,15 @@ fn insert(tree: &mut Vec<FieldIr>, leaf: FieldIr, segments: &[&str], prefix: &st
         return;
     };
     if rest.is_empty() {
+        // A leaf path ending in `[]` declares repeated scalars: an array
+        // whose one child is the element, at the same path.
+        let leaf = if segment.ends_with("[]") {
+            let mut array = field(leaf.path.clone(), "array".into(), leaf.required, false);
+            array.children.push(leaf);
+            array
+        } else {
+            leaf
+        };
         tree.push(leaf);
         tree.sort_by(|a, b| a.path.cmp(&b.path));
         tree.dedup();

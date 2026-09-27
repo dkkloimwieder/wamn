@@ -5,7 +5,7 @@ The stateless command `sample.read` is the device operation of an edge box: it t
 
 [Manifest](wamn.json): Package identity and declared operations.
 [Migrations](migrations/): Authored application schema.
-[Command SQL](command/): The claim, replay and record statements of `sample.record`.
+[Command SQL](command/): The record statement of `sample.record`. The generated codec claims its key in the platform write log.
 [Data access](data/): SQL-backed operation implementations.
 [Generated output](generated/): Derived contracts, SQL, and client code.
 [Component](component/): Application guest.

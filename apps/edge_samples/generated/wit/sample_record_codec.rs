@@ -113,15 +113,73 @@ fn normalize(request: &mut contract::RecordRequest) -> Result<(), contract::Inva
     Ok(())
 }
 
+include!("write_log_codec.rs");
+
+/// The write log operation of this contract: its operation without the version.
+const OPERATION: &str = "edge-samples:sample/record";
+/// The input field that carries the key the write log claims.
+const KEY_FIELD: &str = "value.idempotency_key";
+
+/// The bytes the write log keeps for one validated request: its canonical JSON
+/// without the key and the request id, and the participation intent when one
+/// is selected.
+fn request_bytes(request: &contract::RecordRequest, intent: Option<&str>) -> Vec<u8> {
+    let mut value = {
+        let mut value = Map::new();
+        value.insert(
+            "captured_at".to_owned(),
+            json!(
+                wamn_execution_contract::canonical_timestamptz(&request.captured_at)
+                    .unwrap_or_else(|| request.captured_at.clone())
+            ),
+        );
+        value.insert("frame".to_owned(), json!(&request.frame));
+        Value::Object(value)
+    };
+    if let (Some(intent), Value::Object(object)) = (intent, &mut value) {
+        object.insert("participation_intent".to_owned(), json!(intent));
+    }
+    wamn_execution_contract::canonical_json_bytes(&value)
+}
+
+/// The result the write log stores for one success: its encoded outcome
+/// without the request id.
+fn stored_result(result: &contract::RecordResult) -> String {
+    let encoded = encode(&[contract::RecordOutcome {
+        request_id: String::new(),
+        outcome: Ok(result.clone()),
+    }]);
+    let mut outcomes: Vec<Value> =
+        serde_json::from_str(&encoded).expect("the encoder writes a JSON list");
+    outcomes
+        .pop()
+        .and_then(|mut outcome| outcome.get_mut("value").map(Value::take))
+        .expect("an encoded success carries its value")
+        .to_string()
+}
+
+#[derive(Deserialize)]
+struct JsonResult {
+    sample_id: String,
+}
+
+/// The success that one stored result answers.
+fn stored_success(result: &str) -> Option<contract::RecordResult> {
+    let value: JsonResult = serde_json::from_str(result).ok()?;
+    Some(contract::RecordResult {
+        sample_id: value.sample_id,
+    })
+}
+
 #[allow(dead_code)]
-pub(crate) async fn run<S, F>(
+pub(crate) async fn run<F>(
     input: Vec<contract::RecordItem>,
-    state: &mut S,
+    connection: &mut wamn_postgres_statements::Connection,
     mut handler: F,
 ) -> Vec<contract::RecordOutcome>
 where
     F: AsyncFnMut(
-        &mut S,
+        &mut wamn_postgres_statements::Transaction,
         contract::RecordRequest,
     ) -> Result<contract::RecordResult, contract::RecordError>,
 {
@@ -129,7 +187,7 @@ where
     for item in input {
         let outcome = match item.input {
             Ok(mut request) => match normalize(&mut request) {
-                Ok(()) => handler(state, request).await,
+                Ok(()) => claimed(connection, request, &mut handler).await,
                 Err(error) => Err(contract::RecordError::InvalidInput(error)),
             },
             Err(error) => Err(contract::RecordError::InvalidInput(error)),
@@ -140,6 +198,60 @@ where
         });
     }
     output
+}
+
+/// Claim the key of one request, do its work and store its result in one
+/// transaction, or answer what a committed claim of the key holds.
+async fn claimed<F>(
+    connection: &mut wamn_postgres_statements::Connection,
+    request: contract::RecordRequest,
+    handler: &mut F,
+) -> Result<contract::RecordResult, contract::RecordError>
+where
+    F: AsyncFnMut(
+        &mut wamn_postgres_statements::Transaction,
+        contract::RecordRequest,
+    ) -> Result<contract::RecordResult, contract::RecordError>,
+{
+    let refuse =
+        |error: &wamn_postgres_statements::StatementError| map_error(log_error(error), |_| None);
+    let key = request.idempotency_key.clone();
+    let intent: Option<String> = None;
+    let bytes = request_bytes(&request, intent.as_deref());
+    let mut transaction = connection.begin().await.map_err(|error| refuse(&error))?;
+    match log_claim(&mut transaction, OPERATION, &key, &bytes).await {
+        Ok(Logged::Claimed) => {}
+        Ok(Logged::Stored(stored, result)) => {
+            let _ = transaction.rollback().await;
+            if stored != bytes {
+                return Err(map_error("idempotency_conflict", |name| {
+                    (name == "field").then(|| KEY_FIELD.to_owned())
+                }));
+            }
+            return result
+                .as_deref()
+                .and_then(stored_success)
+                .ok_or_else(|| map_error("internal_error", |_| None));
+        }
+        Err(error) => {
+            let _ = transaction.rollback().await;
+            return Err(refuse(&error));
+        }
+    }
+    let result = match handler(&mut transaction, request).await {
+        Ok(result) => result,
+        Err(error) => {
+            let _ = transaction.rollback().await;
+            return Err(error);
+        }
+    };
+    if let Err(error) = log_finish(&mut transaction, OPERATION, &key, stored_result(&result)).await
+    {
+        let _ = transaction.rollback().await;
+        return Err(refuse(&error));
+    }
+    transaction.commit().await.map_err(|error| refuse(&error))?;
+    Ok(result)
 }
 
 #[allow(unused_macros)]

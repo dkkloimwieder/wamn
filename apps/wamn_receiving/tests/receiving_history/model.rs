@@ -110,9 +110,9 @@ pub(super) fn apply(model: &mut Model, step: Step) -> Expected {
         receipt.line < model.ordered.len(),
         "history names an absent line"
     );
-    if receipt.quantity == 0 {
-        return Expected::Refused("invalid_input");
-    }
+    // The write log answers a committed key before the command validates its
+    // work, so a changed request under that key is a conflict even when it is
+    // also invalid.
     if let Some((original, status, revision)) = model.committed.get(&receipt.key) {
         return if receipt == *original {
             Expected::Committed {
@@ -123,6 +123,9 @@ pub(super) fn apply(model: &mut Model, step: Step) -> Expected {
         } else {
             Expected::Refused("idempotency_conflict")
         };
+    }
+    if receipt.quantity == 0 {
+        return Expected::Refused("invalid_input");
     }
     if model.status() != "open" {
         return Expected::Refused("purchase_order_not_open");
@@ -334,6 +337,17 @@ mod tests {
                 &mut model,
                 Step::Receive {
                     key: 0,
+                    line: 0,
+                    quantity: 0
+                }
+            ),
+            Expected::Refused("idempotency_conflict"),
+        );
+        assert_eq!(
+            apply(
+                &mut model,
+                Step::Receive {
+                    key: 1,
                     line: 0,
                     quantity: 0
                 }

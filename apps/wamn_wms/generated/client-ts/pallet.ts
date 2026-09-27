@@ -80,7 +80,7 @@ export const PALLET_CREATE_ROUTE: OperationRoute = {
     errors: [
       { literal: "check_violation", required: ["constraint"], sources: ["check_violation"], text: null },
       { literal: "foreign_key_violation", required: ["constraint", "field"], sources: ["foreign_key_violation"], text: null },
-      { literal: "idempotency_conflict", required: ["field"], sources: ["changed_canonical_command"], text: null },
+      { literal: "idempotency_conflict", required: ["field"], sources: ["changed_request"], text: null },
       { literal: "internal_error", required: [], sources: ["query_error", "row_limit_exceeded"], text: null },
       { literal: "invalid_input", required: ["field"], sources: [], text: null },
       { literal: "permission_denied", required: ["operation"], sources: ["permission_denied"], text: null },

@@ -176,9 +176,10 @@ const OPERATION: &str = "platform-fixture:widget/record-batch";
 const KEY_FIELD: &str = "value.idempotency_key";
 
 /// The bytes the write log keeps for one validated request: its canonical JSON
-/// without the key and the request id.
-fn request_bytes(request: &contract::RecordBatchRequest) -> Vec<u8> {
-    wamn_execution_contract::canonical_json_bytes(&{
+/// without the key and the request id, and the participation intent when one
+/// is selected.
+fn request_bytes(request: &contract::RecordBatchRequest, intent: Option<&str>) -> Vec<u8> {
+    let mut value = {
         let mut value = Map::new();
         value.insert(
             "expected_edit_version".to_owned(),
@@ -192,7 +193,13 @@ fn request_bytes(request: &contract::RecordBatchRequest) -> Vec<u8> {
                 .iter()
                 .map(|element| {
                     let mut value = Map::new();
-                    value.insert("amount".to_owned(), json!(&element.amount));
+                    value.insert(
+                        "amount".to_owned(),
+                        json!(
+                            wamn_execution_contract::canonical_numeric(&element.amount)
+                                .unwrap_or_else(|| element.amount.clone())
+                        ),
+                    );
                     value.insert("widget_id".to_owned(), json!(&element.widget_id));
                     Value::Object(value)
                 })
@@ -207,7 +214,11 @@ fn request_bytes(request: &contract::RecordBatchRequest) -> Vec<u8> {
         value.insert("maker_id".to_owned(), json!(&request.maker_id));
         value.insert("note".to_owned(), json!(&request.note));
         Value::Object(value)
-    })
+    };
+    if let (Some(intent), Value::Object(object)) = (intent, &mut value) {
+        object.insert("participation_intent".to_owned(), json!(intent));
+    }
+    wamn_execution_contract::canonical_json_bytes(&value)
 }
 
 /// The result the write log stores for one success: its encoded outcome
@@ -284,7 +295,8 @@ where
     let refuse =
         |error: &wamn_postgres_statements::StatementError| map_error(log_error(error), |_| None);
     let key = request.idempotency_key.clone();
-    let bytes = request_bytes(&request);
+    let intent: Option<String> = None;
+    let bytes = request_bytes(&request, intent.as_deref());
     let mut transaction = connection.begin().await.map_err(|error| refuse(&error))?;
     match log_claim(&mut transaction, OPERATION, &key, &bytes).await {
         Ok(Logged::Claimed) => {}

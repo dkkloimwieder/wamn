@@ -834,17 +834,10 @@ pub(super) async fn seed_preexisting_quality_fixture(project: &Client) -> anyhow
     bind_fixture_principal(project, TENANT).await?;
     project
         .batch_execute(
-            "INSERT INTO receiving.record_receipt_command \
-               (idempotency_key, canonical_command, receipt_id, purchase_order_id, \
-                purchase_order_status, row_version) \
+            "INSERT INTO receiving.receipt \
+               (id, purchase_order_id, receipt_reference, occurred_at) \
              VALUES \
-               ('quality-route-precondition', '\\x01', \
-                '00000000-0000-0000-0000-000000000603', \
-                '00000000-0000-0000-0000-000000000303', 'complete', 2); \
-             INSERT INTO receiving.receipt \
-               (id, idempotency_key, purchase_order_id, receipt_reference, occurred_at) \
-             VALUES \
-               ('00000000-0000-0000-0000-000000000603', 'quality-route-precondition', \
+               ('00000000-0000-0000-0000-000000000603', \
                 '00000000-0000-0000-0000-000000000303', 'QUALITY-PREEXISTING', \
                 '2026-08-31T11:30:00.000000Z'); \
              INSERT INTO receiving.quality_inspection (receipt_id, status, row_version) \

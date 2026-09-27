@@ -117,7 +117,6 @@ mod tests {
             created_at: TimestampTz(created_at.to_owned()),
             created_by: WamnUuid(FIRST_ID.to_owned()),
             id: WamnUuid(id.to_owned()),
-            idempotency_key: "receipt-key".to_owned(),
             occurred_at: TimestampTz("2026-08-29T11:00:00.000000Z".to_owned()),
             purchase_order_id: WamnUuid(FIRST_ID.to_owned()),
             receipt_reference: "receipt-reference".to_owned(),

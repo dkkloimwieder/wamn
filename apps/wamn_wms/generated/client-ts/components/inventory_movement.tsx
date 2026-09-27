@@ -102,7 +102,6 @@ export function InventoryMovementGetDetail(props: InventoryMovementGetDetailProp
         <DetailItem term="created by">{cellText(readMember(record(), ["createdBy"]), "uuid")}</DetailItem>
         <DetailItem term="from location id">{cellText(readMember(record(), ["fromLocationId"]), "uuid")}</DetailItem>
         <DetailItem term="id">{cellText(readMember(record(), ["id"]), "uuid")}</DetailItem>
-        <DetailItem term="idempotency key">{cellText(readMember(record(), ["idempotencyKey"]), "text")}</DetailItem>
         <DetailItem term="kind">{cellText(readMember(record(), ["kind"]), "text")}</DetailItem>
         <DetailItem term="occurred at">{cellText(readMember(record(), ["occurredAt"]), "timestamptz")}</DetailItem>
         <DetailItem term="pallet id">{cellText(readMember(record(), ["palletId"]), "uuid")}</DetailItem>
@@ -161,7 +160,6 @@ export const INVENTORY_MOVEMENT_QUERY_TABLE = {
     { field: "createdBy", label: "created by", type: "uuid", role: "value" },
     { field: "fromLocationId", label: "from location id", type: "uuid", role: "reference", displayField: "locationCode", recordRead: { read: { route: LOCATION_GET_ROUTE, request: LOCATION_GET_REQUEST_FIELDS, result: LOCATION_GET_RESULT_FIELDS }, keyInput: ["id"] } },
     { field: "id", label: "id", type: "uuid", role: "key" },
-    { field: "idempotencyKey", label: "idempotency key", type: "text", role: "value" },
     { field: "kind", label: "kind", type: "text", role: "value" },
     { field: "occurredAt", label: "occurred at", type: "timestamptz", role: "value" },
     { field: "palletId", label: "pallet id", type: "uuid", role: "reference", displayField: "palletCode", recordRead: { read: { route: PALLET_GET_ROUTE, request: PALLET_GET_REQUEST_FIELDS, result: PALLET_GET_RESULT_FIELDS }, keyInput: ["id"] } },

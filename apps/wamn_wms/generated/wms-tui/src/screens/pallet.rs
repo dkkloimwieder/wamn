@@ -30,7 +30,7 @@ pub static CREATE_SPEC: screen::ScreenSpec = screen::ScreenSpec {
             submission::ErrorCase {
                 literal: "idempotency_conflict",
                 required: &["field"],
-                sources: &["changed_canonical_command"],
+                sources: &["changed_request"],
             },
             submission::ErrorCase {
                 literal: "internal_error",

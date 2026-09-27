@@ -145,7 +145,7 @@ pub static RECORD_RECEIPT_SPEC: screen::ScreenSpec = screen::ScreenSpec {
             submission::ErrorCase {
                 literal: "idempotency_conflict",
                 required: &["field"],
-                sources: &["same_key_different_canonical_command"],
+                sources: &["changed_request"],
             },
             submission::ErrorCase {
                 literal: "internal_error",

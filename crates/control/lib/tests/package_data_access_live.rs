@@ -64,7 +64,7 @@ async fn acl_identity(client: &Client) -> Vec<String> {
                  FROM pg_catalog.pg_class AS relation \
                  JOIN pg_catalog.pg_namespace AS namespace ON namespace.oid = relation.relnamespace \
                 WHERE namespace.nspname = 'inventory' AND relation.relname IN ( \
-                    'widget', 'widget_command', 'widget_maker', \
+                    'widget', 'widget_maker', \
                     'unconsumed_relation', 'unconsumed_sequence', 'unconsumed_view') \
                UNION ALL \
                SELECT 'column:' || relation.relname || ':' || attribute.attname || ':' || attribute.xmin::text \
@@ -72,7 +72,7 @@ async fn acl_identity(client: &Client) -> Vec<String> {
                  JOIN pg_catalog.pg_class AS relation ON relation.oid = attribute.attrelid \
                  JOIN pg_catalog.pg_namespace AS namespace ON namespace.oid = relation.relnamespace \
                 WHERE namespace.nspname = 'inventory' AND relation.relname IN ( \
-                    'widget', 'widget_command', 'widget_maker', \
+                    'widget', 'widget_maker', \
                     'unconsumed_relation', 'unconsumed_sequence', 'unconsumed_view') \
                   AND attribute.attnum > 0 AND NOT attribute.attisdropped \
              ) AS observed ORDER BY identity COLLATE \"C\"",

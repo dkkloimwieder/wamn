@@ -1,26 +1,6 @@
 // @generated from migration IR; do not edit.
 
 #[derive(Debug, sqlx::FromRow)]
-pub struct ClaimCommandRow {
-    pub movement_id: uuid::Uuid,
-}
-
-#[derive(Debug, sqlx::FromRow)]
-pub struct FinalizeCommandRow {
-    pub adjusted_quantity: Option<rust_decimal::Decimal>,
-    pub row_version: Option<i32>,
-}
-
-#[derive(Debug, sqlx::FromRow)]
-pub struct FindReplayRow {
-    pub canonical_command: Vec<u8>,
-    pub movement_id: uuid::Uuid,
-    pub pallet_id: uuid::Uuid,
-    pub adjusted_quantity: Option<rust_decimal::Decimal>,
-    pub row_version: Option<i32>,
-}
-
-#[derive(Debug, sqlx::FromRow)]
 pub struct InsertMovementRow {
     pub id: uuid::Uuid,
 }
@@ -44,12 +24,6 @@ pub struct TouchPalletRow {
     pub status: String,
 }
 
-pub(crate) const CLAIM_COMMAND_SQL: &str =
-    include_str!("../../command/inventory_adjust/claim_command.sql");
-pub(crate) const FINALIZE_COMMAND_SQL: &str =
-    include_str!("../../command/inventory_adjust/finalize_command.sql");
-pub(crate) const FIND_REPLAY_SQL: &str =
-    include_str!("../../command/inventory_adjust/find_replay.sql");
 pub(crate) const INSERT_MOVEMENT_SQL: &str =
     include_str!("../../command/inventory_adjust/insert_movement.sql");
 pub(crate) const LOCK_PALLET_SQL: &str =
@@ -59,36 +33,6 @@ pub(crate) const SET_QUANTITY_SQL: &str =
 pub(crate) const TOUCH_PALLET_SQL: &str =
     include_str!("../../command/inventory_adjust/touch_pallet.sql");
 
-pub(crate) fn claim_command_idempotency_key_bind_fixture() -> String {
-    String::new()
-}
-pub(crate) fn claim_command_canonical_command_bind_fixture() -> Vec<u8> {
-    Vec::new()
-}
-pub(crate) fn claim_command_pallet_id_bind_fixture() -> uuid::Uuid {
-    uuid::Uuid::nil()
-}
-pub(crate) fn finalize_command_idempotency_key_bind_fixture() -> String {
-    String::new()
-}
-pub(crate) fn finalize_command_canonical_command_bind_fixture() -> Vec<u8> {
-    Vec::new()
-}
-pub(crate) fn finalize_command_movement_id_bind_fixture() -> uuid::Uuid {
-    uuid::Uuid::nil()
-}
-pub(crate) fn finalize_command_adjusted_quantity_bind_fixture() -> rust_decimal::Decimal {
-    rust_decimal::Decimal::ZERO
-}
-pub(crate) fn finalize_command_row_version_bind_fixture() -> i32 {
-    0_i32
-}
-pub(crate) fn find_replay_idempotency_key_bind_fixture() -> String {
-    String::new()
-}
-pub(crate) fn insert_movement_idempotency_key_bind_fixture() -> String {
-    String::new()
-}
 pub(crate) fn insert_movement_pallet_id_bind_fixture() -> uuid::Uuid {
     uuid::Uuid::nil()
 }

@@ -23,22 +23,24 @@ mod adjust {
     }
 
     async fn handle(
-        (): &mut (),
+        transaction: &mut wamn_postgres_statements::Transaction,
         request: contract::AdjustRequest,
     ) -> Result<contract::AdjustResult, contract::AdjustError> {
-        inventory_adjust::execute(&inventory_adjust::AdjustCommand {
-            idempotency_key: request.idempotency_key,
-            pallet_id: request.pallet_id,
-            product_id: request.product_id,
-            status: request.status,
-            quantity: request.quantity,
-            reason_code: request.reason_code,
-            expected_row_version: request.expected_row_version,
-            occurred_at: request.occurred_at,
-        })
+        inventory_adjust::execute(
+            transaction,
+            &inventory_adjust::AdjustCommand {
+                pallet_id: request.pallet_id,
+                product_id: request.product_id,
+                status: request.status,
+                quantity: request.quantity,
+                reason_code: request.reason_code,
+                expected_row_version: request.expected_row_version,
+                occurred_at: request.occurred_at,
+            },
+        )
         .await
         .map(|value| contract::AdjustResult {
-            movement_id: value.movement_id,
+            movement_ids: value.movement_ids,
             pallet_id: value.pallet_id,
             adjusted_quantity: value.adjusted_quantity,
             pallet_status: value.pallet_status,
@@ -50,7 +52,7 @@ mod adjust {
         crate::Component,
         contract,
         crate::wamn::node::types,
-        (),
+        wamn_postgres_statements::Connection::new(),
         handle,
         codec
     );
@@ -115,19 +117,21 @@ mod merge {
     }
 
     async fn handle(
-        (): &mut (),
+        transaction: &mut wamn_postgres_statements::Transaction,
         request: contract::MergeRequest,
     ) -> Result<contract::MergeResult, contract::MergeError> {
-        inventory_merge::execute(&inventory_merge::MergeCommand {
-            idempotency_key: request.idempotency_key,
-            source_pallet_id: request.source_pallet_id,
-            target_pallet_id: request.target_pallet_id,
-            expected_row_version: request.expected_row_version,
-            occurred_at: request.occurred_at,
-        })
+        inventory_merge::execute(
+            transaction,
+            &inventory_merge::MergeCommand {
+                source_pallet_id: request.source_pallet_id,
+                target_pallet_id: request.target_pallet_id,
+                expected_row_version: request.expected_row_version,
+                occurred_at: request.occurred_at,
+            },
+        )
         .await
         .map(|value| contract::MergeResult {
-            movement_id: value.movement_id,
+            movement_ids: value.movement_ids,
             source_pallet_id: value.source_pallet_id,
             target_pallet_id: value.target_pallet_id,
             target_status: value.target_status,
@@ -139,7 +143,7 @@ mod merge {
         crate::Component,
         contract,
         crate::wamn::node::types,
-        (),
+        wamn_postgres_statements::Connection::new(),
         handle,
         codec
     );
@@ -157,19 +161,21 @@ mod move_ {
     }
 
     async fn handle(
-        (): &mut (),
+        transaction: &mut wamn_postgres_statements::Transaction,
         request: contract::MoveRequest,
     ) -> Result<contract::MoveResult, contract::MoveError> {
-        inventory_move::execute(&inventory_move::MoveCommand {
-            idempotency_key: request.idempotency_key,
-            pallet_id: request.pallet_id,
-            to_location_id: request.to_location_id,
-            expected_row_version: request.expected_row_version,
-            occurred_at: request.occurred_at,
-        })
+        inventory_move::execute(
+            transaction,
+            &inventory_move::MoveCommand {
+                pallet_id: request.pallet_id,
+                to_location_id: request.to_location_id,
+                expected_row_version: request.expected_row_version,
+                occurred_at: request.occurred_at,
+            },
+        )
         .await
         .map(|value| contract::MoveResult {
-            movement_id: value.movement_id,
+            movement_ids: value.movement_ids,
             pallet_id: value.pallet_id,
             location_id: value.location_id,
             pallet_status: value.pallet_status,
@@ -181,7 +187,7 @@ mod move_ {
         crate::Component,
         contract,
         crate::wamn::node::types,
-        (),
+        wamn_postgres_statements::Connection::new(),
         handle,
         codec
     );
@@ -199,23 +205,25 @@ mod split {
     }
 
     async fn handle(
-        (): &mut (),
+        transaction: &mut wamn_postgres_statements::Transaction,
         request: contract::SplitRequest,
     ) -> Result<contract::SplitResult, contract::SplitError> {
-        inventory_split::execute(&inventory_split::SplitCommand {
-            idempotency_key: request.idempotency_key,
-            source_pallet_id: request.source_pallet_id,
-            product_id: request.product_id,
-            status: request.status,
-            quantity: request.quantity,
-            new_pallet_code: request.new_pallet_code,
-            to_location_id: request.to_location_id,
-            expected_row_version: request.expected_row_version,
-            occurred_at: request.occurred_at,
-        })
+        inventory_split::execute(
+            transaction,
+            &inventory_split::SplitCommand {
+                source_pallet_id: request.source_pallet_id,
+                product_id: request.product_id,
+                status: request.status,
+                quantity: request.quantity,
+                new_pallet_code: request.new_pallet_code,
+                to_location_id: request.to_location_id,
+                expected_row_version: request.expected_row_version,
+                occurred_at: request.occurred_at,
+            },
+        )
         .await
         .map(|value| contract::SplitResult {
-            movement_id: value.movement_id,
+            movement_ids: value.movement_ids,
             source_pallet_id: value.source_pallet_id,
             new_pallet_id: value.new_pallet_id,
             source_status: value.source_status,
@@ -227,7 +235,7 @@ mod split {
         crate::Component,
         contract,
         crate::wamn::node::types,
-        (),
+        wamn_postgres_statements::Connection::new(),
         handle,
         codec
     );

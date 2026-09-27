@@ -3,7 +3,6 @@ SELECT
     model.created_by,
     model.from_location_id,
     model.id,
-    model.idempotency_key,
     model.kind,
     model.occurred_at,
     model.pallet_id,

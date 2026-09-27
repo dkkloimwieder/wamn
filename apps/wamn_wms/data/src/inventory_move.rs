@@ -8,23 +8,23 @@
 //! # The shape of one item
 //!
 //! ```text
-//! canonicalize the body
-//! → find a replay: same key ⇒ return the ORIGINAL result, unchanged
-//! → claim the key, which pre-generates the movement id
 //! → lock the pallet          (the serialization point); a consumed one is not found
 //! → compare expected_row_version to observed
 //! → validate the destination
 //! → write one movement per quantity row
 //! → move the pallet and bump its revision
-//! → finalize the claim with the result
 //! ```
+//!
+//! The generated codec claims the key in the write log and holds the
+//! transaction, so a retry answers the stored result. The movement ids are the
+//! ids of the movement rows; a pallet with no quantity rows writes none.
 //!
 //! The lock is on `pallet` and not on `pallet_quantity` deliberately: two
 //! concurrent moves of one pallet must not both succeed by touching different
 //! quantity rows, and the pallet is what makes them serialize.
 
 use serde::Deserialize;
-use wamn_postgres_statements::{Connection, TimestampTz, Uuid};
+use wamn_postgres_statements::{TimestampTz, Transaction, Uuid};
 
 use crate::error::{self, AccessError, AccessErrorKind};
 use crate::generated::wamn::inventory_move as sql;
@@ -33,7 +33,6 @@ use crate::scalar;
 /// One envelope item's command body.
 #[derive(Debug, Deserialize)]
 pub struct MoveCommand {
-    pub idempotency_key: String,
     pub pallet_id: String,
     pub to_location_id: String,
     pub expected_row_version: i32,
@@ -43,7 +42,7 @@ pub struct MoveCommand {
 /// What one accepted move answers with.
 #[derive(Debug, PartialEq, Eq)]
 pub struct MoveResult {
-    pub movement_id: String,
+    pub movement_ids: Vec<String>,
     pub pallet_id: String,
     pub location_id: String,
     pub pallet_status: String,
@@ -66,39 +65,18 @@ fn parse(command: &MoveCommand) -> Result<Parsed, AccessError> {
     })
 }
 
-/// Run one command item in exactly one transaction.
+/// Run one command item in the transaction its codec holds for the write log.
 ///
 /// # Errors
 ///
 /// [`AccessError`] carrying the literal and detail the operation contract
 /// declares for that refusal.
-pub async fn execute(command: &MoveCommand) -> Result<MoveResult, AccessError> {
+pub async fn execute(
+    transaction: &mut Transaction,
+    command: &MoveCommand,
+) -> Result<MoveResult, AccessError> {
     let parsed = parse(command)?;
-    let canonical = canonical_command(command, &parsed);
-
-    let mut connection = Connection::new();
-    let transaction = connection
-        .begin()
-        .await
-        .map_err(|e| error::from_statement(&e))?;
-    run(sql::begin_claim(transaction), command, &canonical, &parsed).await
-}
-
-/// The bytes the idempotency key keys: the RE-SPELLED command, so two
-/// deliveries of one move canonicalize alike whatever case or offset each was
-/// written in.
-///
-/// The key itself and `request_id` are EXCLUDED: two deliveries of one
-/// operator action differ in neither the pallet moved nor its destination,
-/// only in the envelope that carried them. Canonical JSON gives sorted keys,
-/// so the same command produces the same bytes whatever order it arrived in.
-fn canonical_command(command: &MoveCommand, parsed: &Parsed) -> Vec<u8> {
-    wamn_execution_contract::canonical_json_bytes(&serde_json::json!({
-        "pallet_id": parsed.pallet_id.0,
-        "to_location_id": parsed.to_location_id.0,
-        "expected_row_version": command.expected_row_version,
-        "occurred_at": parsed.occurred_at.0,
-    }))
+    run(transaction, command, &parsed).await
 }
 
 /// The locked pallet, once it is found and live: a missing one is the
@@ -120,58 +98,13 @@ fn live_pallet(
 }
 
 async fn run(
-    mut transaction: sql::PendingClaim,
+    transaction: &mut Transaction,
     command: &MoveCommand,
-    canonical: &[u8],
     parsed: &Parsed,
 ) -> Result<MoveResult, AccessError> {
-    // A REPLAY RETURNS THE ORIGINAL RESULT, unchanged. Not a fresh execution
-    // that happens to agree — the claim row holds what the first attempt
-    // decided, including the movement id a downstream label key depends on.
-    if let Some(replay) = sql::find_replay(&mut transaction, command.idempotency_key.clone())
-        .await
-        .map_err(|e| error::from_statement(&e))?
-    {
-        if replay.canonical_command != canonical {
-            // Same key, different command. That is two moves wearing one
-            // identity, and answering either would be wrong.
-            return Err(AccessError::field(
-                AccessErrorKind::IdempotencyConflict,
-                "value.idempotency_key",
-            ));
-        }
-        let (Some(pallet_status), Some(row_version)) = (replay.pallet_status, replay.row_version)
-        else {
-            // Claimed but never finalized: the first attempt died between the
-            // claim and the commit. Retryable, and the retry will re-run the
-            // work under the same claim.
-            return Err(AccessError::new(
-                AccessErrorKind::Retry,
-                serde_json::json!({}),
-            ));
-        };
-        return Ok(MoveResult {
-            movement_id: replay.movement_id.0.clone(),
-            pallet_id: replay.pallet_id.0.clone(),
-            location_id: command.to_location_id.clone(),
-            pallet_status,
-            row_version,
-        });
-    }
-
-    let claim = sql::claim_command(
-        &mut transaction,
-        command.idempotency_key.clone(),
-        canonical.to_vec(),
-        parsed.pallet_id.clone(),
-    )
-    .await
-    .map_err(|e| error::from_statement(&e))?
-    .ok_or_else(|| AccessError::new(AccessErrorKind::Retry, serde_json::json!({})))?;
-
     // THE SERIALIZATION POINT.
     let locked = live_pallet(
-        sql::lock_pallet(&mut transaction, parsed.pallet_id.clone())
+        sql::lock_pallet(transaction, parsed.pallet_id.clone())
             .await
             .map_err(|e| error::from_statement(&e))?,
         &command.pallet_id,
@@ -184,7 +117,7 @@ async fn run(
         ));
     }
 
-    sql::validate_location(&mut transaction, parsed.to_location_id.clone())
+    sql::validate_location(transaction, parsed.to_location_id.clone())
         .await
         .map_err(|e| error::from_statement(&e))?
         .ok_or_else(|| {
@@ -197,13 +130,13 @@ async fn run(
 
     // ONE MOVEMENT PER QUANTITY ROW. The history says WHAT moved, not merely
     // that something did — which is the multi-row half of this command.
-    let quantities = sql::select_pallet_quantity(&mut transaction, parsed.pallet_id.clone())
+    let quantities = sql::select_pallet_quantity(transaction, parsed.pallet_id.clone())
         .await
         .map_err(|e| error::from_statement(&e))?;
+    let mut movement_ids = Vec::with_capacity(quantities.len());
     for quantity in &quantities {
-        sql::insert_movement(
-            &mut transaction,
-            command.idempotency_key.clone(),
+        let movement = sql::insert_movement(
+            transaction,
             parsed.pallet_id.clone(),
             quantity.product_id.clone(),
             locked.location_id.clone(),
@@ -213,42 +146,19 @@ async fn run(
         )
         .await
         .map_err(|e| error::from_statement(&e))?;
+        movement_ids.push(movement.id.0);
     }
 
     let moved = sql::move_pallet(
-        &mut transaction,
+        transaction,
         parsed.pallet_id.clone(),
         parsed.to_location_id.clone(),
     )
     .await
     .map_err(|e| error::from_statement(&e))?;
 
-    let finalized = sql::finalize_command(
-        transaction,
-        command.idempotency_key.clone(),
-        canonical.to_vec(),
-        claim.movement_id.clone(),
-        moved.status.clone(),
-        moved.row_version,
-    )
-    .await
-    .map_err(|e| error::from_statement(&e))?;
-    if finalized.row.row_version.is_none() {
-        // The guarded finalize matched nothing, so this claim was already
-        // finalized by a concurrent attempt. Refusing beats reporting a result
-        // this transaction did not write.
-        return Err(AccessError::new(
-            AccessErrorKind::Retry,
-            serde_json::json!({}),
-        ));
-    }
-
-    finalized
-        .commit()
-        .await
-        .map_err(|e| error::from_statement(&e))?;
     Ok(MoveResult {
-        movement_id: claim.movement_id.0.clone(),
+        movement_ids,
         pallet_id: command.pallet_id.clone(),
         location_id: moved.location_id.0.clone(),
         pallet_status: moved.status,
@@ -262,7 +172,6 @@ mod tests {
 
     fn command(pallet_id: &str, occurred_at: &str) -> MoveCommand {
         MoveCommand {
-            idempotency_key: "k".to_owned(),
             pallet_id: pallet_id.to_owned(),
             to_location_id: "00000000-0000-0000-0000-000000000201".to_owned(),
             expected_row_version: 1,
@@ -295,53 +204,6 @@ mod tests {
             assert_eq!(error.detail()["field"], "value.pallet_id");
             assert_eq!(error.detail()["id"], PALLET);
         }
-    }
-
-    /// Two spellings of one move are ONE command under the key: the canonical
-    /// bytes come from the respelled scalars, not the caller's. The uuid half
-    /// is already refused at the input port, whose released pattern pins a
-    /// lowercase-hyphenated uuid; the OFFSET half reaches this code, because
-    /// the port only asks `occurred_at` for `format: date-time`.
-    #[test]
-    fn the_canonical_command_is_spelling_independent_and_excludes_the_key() {
-        let upper = command(
-            "00000000-0000-0000-0000-00000000030A",
-            "2026-09-05T02:00:00+02:00",
-        );
-        let lower = command(
-            "00000000-0000-0000-0000-00000000030a",
-            "2026-09-05T00:00:00.000000Z",
-        );
-        let mut other_key = command(
-            "00000000-0000-0000-0000-00000000030a",
-            "2026-09-05T00:00:00Z",
-        );
-        other_key.idempotency_key = "different".to_owned();
-        let bytes = |command: &MoveCommand| canonical_command(command, &parse(command).unwrap());
-        assert_eq!(bytes(&upper), bytes(&lower));
-        assert_eq!(bytes(&lower), bytes(&other_key));
-        assert!(
-            !String::from_utf8(bytes(&lower))
-                .unwrap()
-                .contains("idempotency_key")
-        );
-    }
-
-    /// A move that differs in what it MOVES is a different command, so the
-    /// bytes must still separate one from another.
-    #[test]
-    fn a_different_destination_is_a_different_command() {
-        let here = command(
-            "00000000-0000-0000-0000-00000000030a",
-            "2026-09-05T00:00:00Z",
-        );
-        let mut there = command(
-            "00000000-0000-0000-0000-00000000030a",
-            "2026-09-05T00:00:00Z",
-        );
-        there.to_location_id = "00000000-0000-0000-0000-000000000202".to_owned();
-        let bytes = |command: &MoveCommand| canonical_command(command, &parse(command).unwrap());
-        assert_ne!(bytes(&here), bytes(&there));
     }
 
     #[test]

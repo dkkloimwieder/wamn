@@ -19,7 +19,7 @@ pub const INVENTORY_FIELDS: &[FieldDescriptor] = &[
         values: &[],
     },
     FieldDescriptor {
-        path: "movement_id",
+        path: "movement_ids[]",
         type_name: "uuid",
         nullable: false,
         values: &[],
@@ -132,8 +132,8 @@ pub struct InventoryAdjustRequestValue {
 pub struct InventoryAdjustResult {
     /// `numeric`
     pub adjusted_quantity: rust_decimal::Decimal,
-    /// `uuid`
-    pub movement_id: uuid::Uuid,
+    /// `array`
+    pub movement_ids: Vec<uuid::Uuid>,
     /// `uuid`
     pub pallet_id: uuid::Uuid,
     /// `text`
@@ -209,7 +209,7 @@ pub const INVENTORY_ADJUST_RESULT: &[FieldDescriptor] = &[
         values: &[],
     },
     FieldDescriptor {
-        path: "movement_id",
+        path: "movement_ids[]",
         type_name: "uuid",
         nullable: false,
         values: &[],
@@ -373,15 +373,26 @@ pub const INVENTORY_ADJUST_RESULT_SCHEMA: &[wamn_client::descriptor::FieldSchema
     },
     wamn_client::descriptor::FieldSchema {
         field: FieldDescriptor {
-            path: "movement_id",
-            type_name: "uuid",
+            path: "movement_ids[]",
+            type_name: "array",
             nullable: false,
             values: &[],
         },
         required: true,
         minimum: None,
         maximum: None,
-        children: &[],
+        children: &[wamn_client::descriptor::FieldSchema {
+            field: FieldDescriptor {
+                path: "movement_ids[]",
+                type_name: "uuid",
+                nullable: false,
+                values: &[],
+            },
+            required: true,
+            minimum: None,
+            maximum: None,
+            children: &[],
+        }],
     },
     wamn_client::descriptor::FieldSchema {
         field: FieldDescriptor {
@@ -664,8 +675,8 @@ pub struct InventoryMergeRequestValue {
 /// Result of `wamn-wms:inventory/merge@1.0.0`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct InventoryMergeResult {
-    /// `uuid`
-    pub movement_id: uuid::Uuid,
+    /// `array`
+    pub movement_ids: Vec<uuid::Uuid>,
     /// `int32`
     pub row_version: i32,
     /// `uuid`
@@ -719,7 +730,7 @@ pub const INVENTORY_MERGE_INPUT: &[FieldDescriptor] = &[
 /// Result descriptors for `wamn-wms:inventory/merge@1.0.0`.
 pub const INVENTORY_MERGE_RESULT: &[FieldDescriptor] = &[
     FieldDescriptor {
-        path: "movement_id",
+        path: "movement_ids[]",
         type_name: "uuid",
         nullable: false,
         values: &[],
@@ -841,15 +852,26 @@ pub const INVENTORY_MERGE_INPUT_SCHEMA: &[wamn_client::descriptor::FieldSchema] 
 pub const INVENTORY_MERGE_RESULT_SCHEMA: &[wamn_client::descriptor::FieldSchema] = &[
     wamn_client::descriptor::FieldSchema {
         field: FieldDescriptor {
-            path: "movement_id",
-            type_name: "uuid",
+            path: "movement_ids[]",
+            type_name: "array",
             nullable: false,
             values: &[],
         },
         required: true,
         minimum: None,
         maximum: None,
-        children: &[],
+        children: &[wamn_client::descriptor::FieldSchema {
+            field: FieldDescriptor {
+                path: "movement_ids[]",
+                type_name: "uuid",
+                nullable: false,
+                values: &[],
+            },
+            required: true,
+            minimum: None,
+            maximum: None,
+            children: &[],
+        }],
     },
     wamn_client::descriptor::FieldSchema {
         field: FieldDescriptor {
@@ -976,8 +998,8 @@ pub struct InventoryMoveRequestValue {
 pub struct InventoryMoveResult {
     /// `uuid`
     pub location_id: uuid::Uuid,
-    /// `uuid`
-    pub movement_id: uuid::Uuid,
+    /// `array`
+    pub movement_ids: Vec<uuid::Uuid>,
     /// `uuid`
     pub pallet_id: uuid::Uuid,
     /// `text`
@@ -1035,7 +1057,7 @@ pub const INVENTORY_MOVE_RESULT: &[FieldDescriptor] = &[
         values: &[],
     },
     FieldDescriptor {
-        path: "movement_id",
+        path: "movement_ids[]",
         type_name: "uuid",
         nullable: false,
         values: &[],
@@ -1163,15 +1185,26 @@ pub const INVENTORY_MOVE_RESULT_SCHEMA: &[wamn_client::descriptor::FieldSchema] 
     },
     wamn_client::descriptor::FieldSchema {
         field: FieldDescriptor {
-            path: "movement_id",
-            type_name: "uuid",
+            path: "movement_ids[]",
+            type_name: "array",
             nullable: false,
             values: &[],
         },
         required: true,
         minimum: None,
         maximum: None,
-        children: &[],
+        children: &[wamn_client::descriptor::FieldSchema {
+            field: FieldDescriptor {
+                path: "movement_ids[]",
+                type_name: "uuid",
+                nullable: false,
+                values: &[],
+            },
+            required: true,
+            minimum: None,
+            maximum: None,
+            children: &[],
+        }],
     },
     wamn_client::descriptor::FieldSchema {
         field: FieldDescriptor {
@@ -1293,8 +1326,8 @@ pub struct InventorySplitRequestValue {
 /// Result of `wamn-wms:inventory/split@1.0.0`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct InventorySplitResult {
-    /// `uuid`
-    pub movement_id: uuid::Uuid,
+    /// `array`
+    pub movement_ids: Vec<uuid::Uuid>,
     /// `uuid`
     pub new_pallet_id: uuid::Uuid,
     /// `int32`
@@ -1372,7 +1405,7 @@ pub const INVENTORY_SPLIT_INPUT: &[FieldDescriptor] = &[
 /// Result descriptors for `wamn-wms:inventory/split@1.0.0`.
 pub const INVENTORY_SPLIT_RESULT: &[FieldDescriptor] = &[
     FieldDescriptor {
-        path: "movement_id",
+        path: "movement_ids[]",
         type_name: "uuid",
         nullable: false,
         values: &[],
@@ -1542,15 +1575,26 @@ pub const INVENTORY_SPLIT_INPUT_SCHEMA: &[wamn_client::descriptor::FieldSchema] 
 pub const INVENTORY_SPLIT_RESULT_SCHEMA: &[wamn_client::descriptor::FieldSchema] = &[
     wamn_client::descriptor::FieldSchema {
         field: FieldDescriptor {
-            path: "movement_id",
-            type_name: "uuid",
+            path: "movement_ids[]",
+            type_name: "array",
             nullable: false,
             values: &[],
         },
         required: true,
         minimum: None,
         maximum: None,
-        children: &[],
+        children: &[wamn_client::descriptor::FieldSchema {
+            field: FieldDescriptor {
+                path: "movement_ids[]",
+                type_name: "uuid",
+                nullable: false,
+                values: &[],
+            },
+            required: true,
+            minimum: None,
+            maximum: None,
+            children: &[],
+        }],
     },
     wamn_client::descriptor::FieldSchema {
         field: FieldDescriptor {

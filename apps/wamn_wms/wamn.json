@@ -101,12 +101,6 @@
           "writable_fields": [
             "location_code"
           ],
-          "claim": {
-            "table": "location_command",
-            "identities": {
-              "id": "location_id"
-            }
-          },
           "result": "one"
         },
         "update": {
@@ -252,12 +246,6 @@
               "held"
             ]
           },
-          "claim": {
-            "table": "pallet_command",
-            "identities": {
-              "id": "pallet_id"
-            }
-          },
           "result": "one"
         }
       }
@@ -352,12 +340,6 @@
           "writable_fields": [
             "product_code"
           ],
-          "claim": {
-            "table": "product_command",
-            "identities": {
-              "id": "product_id"
-            }
-          },
           "result": "one"
         },
         "update": {
@@ -371,43 +353,6 @@
       }
     }
   },
-  "internal_relations": {
-    "inventory_move_command": {
-      "schema": "wms",
-      "table": "inventory_move_command",
-      "cdc": "excluded"
-    },
-    "inventory_adjust_command": {
-      "schema": "wms",
-      "table": "inventory_adjust_command",
-      "cdc": "excluded"
-    },
-    "inventory_merge_command": {
-      "schema": "wms",
-      "table": "inventory_merge_command",
-      "cdc": "excluded"
-    },
-    "inventory_split_command": {
-      "schema": "wms",
-      "table": "inventory_split_command",
-      "cdc": "excluded"
-    },
-    "location_command": {
-      "schema": "wms",
-      "table": "location_command",
-      "cdc": "excluded"
-    },
-    "product_command": {
-      "schema": "wms",
-      "table": "product_command",
-      "cdc": "excluded"
-    },
-    "pallet_command": {
-      "schema": "wms",
-      "table": "pallet_command",
-      "cdc": "excluded"
-    }
-  },
   "custom_operations": {
     "inventory.move": {
       "kind": "command",
@@ -417,15 +362,6 @@
       "transaction": "explicit_per_input",
       "automatic_retry": false,
       "idempotent_by": "claim",
-      "claim": {
-        "table": "inventory_move_command",
-        "identities": {
-          "movement_id": "movement_id"
-        },
-        "claim": "claim_command",
-        "replay": "find_replay",
-        "finalize": "finalize_command"
-      },
       "input": {
         "raw_body_maximum": 1048576,
         "envelope": {
@@ -476,7 +412,7 @@
         "class": "one",
         "fields": [
           {
-            "path": "movement_id",
+            "path": "movement_ids[]",
             "type": "uuid",
             "nullable": false
           },
@@ -548,36 +484,12 @@
       "relations": [
         {
           "schema": "wms",
-          "table": "inventory_move_command",
-          "select_fields": [
-            "canonical_command",
-            "idempotency_key",
-            "movement_id",
-            "pallet_id",
-            "pallet_status",
-            "row_version"
-          ],
-          "insert_fields": [
-            "canonical_command",
-            "idempotency_key",
-            "pallet_id"
-          ],
-          "update_fields": [
-            "pallet_status",
-            "row_version"
-          ],
-          "lock": false,
-          "constraints": []
-        },
-        {
-          "schema": "wms",
           "table": "inventory_movement",
           "select_fields": [
             "id"
           ],
           "insert_fields": [
             "from_location_id",
-            "idempotency_key",
             "kind",
             "occurred_at",
             "pallet_id",
@@ -633,72 +545,6 @@
         }
       ],
       "statements": {
-        "find_replay": {
-          "path": "command/inventory_move/find_replay.sql",
-          "fetch": "optional_one",
-          "parameters": [
-            {
-              "name": "idempotency_key",
-              "type": "text",
-              "nullable": false
-            }
-          ],
-          "row": [
-            {
-              "name": "canonical_command",
-              "type": "bytes",
-              "nullable": false
-            },
-            {
-              "name": "movement_id",
-              "type": "uuid",
-              "nullable": false
-            },
-            {
-              "name": "pallet_id",
-              "type": "uuid",
-              "nullable": false
-            },
-            {
-              "name": "pallet_status",
-              "type": "text",
-              "nullable": true
-            },
-            {
-              "name": "row_version",
-              "type": "int32",
-              "nullable": true
-            }
-          ]
-        },
-        "claim_command": {
-          "path": "command/inventory_move/claim_command.sql",
-          "fetch": "optional_one",
-          "parameters": [
-            {
-              "name": "idempotency_key",
-              "type": "text",
-              "nullable": false
-            },
-            {
-              "name": "canonical_command",
-              "type": "bytes",
-              "nullable": false
-            },
-            {
-              "name": "pallet_id",
-              "type": "uuid",
-              "nullable": false
-            }
-          ],
-          "row": [
-            {
-              "name": "movement_id",
-              "type": "uuid",
-              "nullable": false
-            }
-          ]
-        },
         "lock_pallet": {
           "path": "command/inventory_move/lock_pallet.sql",
           "fetch": "optional_one",
@@ -778,11 +624,6 @@
           "fetch": "one",
           "parameters": [
             {
-              "name": "idempotency_key",
-              "type": "text",
-              "nullable": false
-            },
-            {
               "name": "pallet_id",
               "type": "uuid",
               "nullable": false
@@ -853,49 +694,6 @@
               "nullable": false
             }
           ]
-        },
-        "finalize_command": {
-          "path": "command/inventory_move/finalize_command.sql",
-          "fetch": "one",
-          "parameters": [
-            {
-              "name": "idempotency_key",
-              "type": "text",
-              "nullable": false
-            },
-            {
-              "name": "canonical_command",
-              "type": "bytes",
-              "nullable": false
-            },
-            {
-              "name": "movement_id",
-              "type": "uuid",
-              "nullable": false
-            },
-            {
-              "name": "pallet_status",
-              "type": "text",
-              "nullable": false
-            },
-            {
-              "name": "row_version",
-              "type": "int32",
-              "nullable": false
-            }
-          ],
-          "row": [
-            {
-              "name": "pallet_status",
-              "type": "text",
-              "nullable": true
-            },
-            {
-              "name": "row_version",
-              "type": "int32",
-              "nullable": true
-            }
-          ]
         }
       }
     },
@@ -907,15 +705,6 @@
       "transaction": "explicit_per_input",
       "automatic_retry": false,
       "idempotent_by": "claim",
-      "claim": {
-        "table": "inventory_adjust_command",
-        "identities": {
-          "movement_id": "movement_id"
-        },
-        "claim": "claim_command",
-        "replay": "find_replay",
-        "finalize": "finalize_command"
-      },
       "input": {
         "raw_body_maximum": 1048576,
         "envelope": {
@@ -985,7 +774,7 @@
         "class": "one",
         "fields": [
           {
-            "path": "movement_id",
+            "path": "movement_ids[]",
             "type": "uuid",
             "nullable": false
           },
@@ -1057,35 +846,11 @@
       "relations": [
         {
           "schema": "wms",
-          "table": "inventory_adjust_command",
-          "select_fields": [
-            "adjusted_quantity",
-            "canonical_command",
-            "idempotency_key",
-            "movement_id",
-            "pallet_id",
-            "row_version"
-          ],
-          "insert_fields": [
-            "canonical_command",
-            "idempotency_key",
-            "pallet_id"
-          ],
-          "update_fields": [
-            "adjusted_quantity",
-            "row_version"
-          ],
-          "lock": false,
-          "constraints": []
-        },
-        {
-          "schema": "wms",
           "table": "inventory_movement",
           "select_fields": [
             "id"
           ],
           "insert_fields": [
-            "idempotency_key",
             "kind",
             "occurred_at",
             "pallet_id",
@@ -1132,72 +897,6 @@
         }
       ],
       "statements": {
-        "find_replay": {
-          "path": "command/inventory_adjust/find_replay.sql",
-          "fetch": "optional_one",
-          "parameters": [
-            {
-              "name": "idempotency_key",
-              "type": "text",
-              "nullable": false
-            }
-          ],
-          "row": [
-            {
-              "name": "canonical_command",
-              "type": "bytes",
-              "nullable": false
-            },
-            {
-              "name": "movement_id",
-              "type": "uuid",
-              "nullable": false
-            },
-            {
-              "name": "pallet_id",
-              "type": "uuid",
-              "nullable": false
-            },
-            {
-              "name": "adjusted_quantity",
-              "type": "numeric",
-              "nullable": true
-            },
-            {
-              "name": "row_version",
-              "type": "int32",
-              "nullable": true
-            }
-          ]
-        },
-        "claim_command": {
-          "path": "command/inventory_adjust/claim_command.sql",
-          "fetch": "optional_one",
-          "parameters": [
-            {
-              "name": "idempotency_key",
-              "type": "text",
-              "nullable": false
-            },
-            {
-              "name": "canonical_command",
-              "type": "bytes",
-              "nullable": false
-            },
-            {
-              "name": "pallet_id",
-              "type": "uuid",
-              "nullable": false
-            }
-          ],
-          "row": [
-            {
-              "name": "movement_id",
-              "type": "uuid",
-              "nullable": false
-            }
-          ]
-        },
         "lock_pallet": {
           "path": "command/inventory_adjust/lock_pallet.sql",
           "fetch": "optional_one",
@@ -1269,11 +968,6 @@
           "fetch": "one",
           "parameters": [
             {
-              "name": "idempotency_key",
-              "type": "text",
-              "nullable": false
-            },
-            {
               "name": "pallet_id",
               "type": "uuid",
               "nullable": false
@@ -1329,49 +1023,6 @@
               "nullable": false
             }
           ]
-        },
-        "finalize_command": {
-          "path": "command/inventory_adjust/finalize_command.sql",
-          "fetch": "one",
-          "parameters": [
-            {
-              "name": "idempotency_key",
-              "type": "text",
-              "nullable": false
-            },
-            {
-              "name": "canonical_command",
-              "type": "bytes",
-              "nullable": false
-            },
-            {
-              "name": "movement_id",
-              "type": "uuid",
-              "nullable": false
-            },
-            {
-              "name": "adjusted_quantity",
-              "type": "numeric",
-              "nullable": false
-            },
-            {
-              "name": "row_version",
-              "type": "int32",
-              "nullable": false
-            }
-          ],
-          "row": [
-            {
-              "name": "adjusted_quantity",
-              "type": "numeric",
-              "nullable": true
-            },
-            {
-              "name": "row_version",
-              "type": "int32",
-              "nullable": true
-            }
-          ]
         }
       }
     },
@@ -1383,15 +1034,6 @@
       "transaction": "explicit_per_input",
       "automatic_retry": false,
       "idempotent_by": "claim",
-      "claim": {
-        "table": "inventory_merge_command",
-        "identities": {
-          "movement_id": "movement_id"
-        },
-        "claim": "claim_command",
-        "replay": "find_replay",
-        "finalize": "finalize_command"
-      },
       "input": {
         "raw_body_maximum": 1048576,
         "envelope": {
@@ -1442,7 +1084,7 @@
         "class": "one",
         "fields": [
           {
-            "path": "movement_id",
+            "path": "movement_ids[]",
             "type": "uuid",
             "nullable": false
           },
@@ -1507,35 +1149,11 @@
       "relations": [
         {
           "schema": "wms",
-          "table": "inventory_merge_command",
-          "select_fields": [
-            "canonical_command",
-            "idempotency_key",
-            "movement_id",
-            "row_version",
-            "source_pallet_id",
-            "target_pallet_id"
-          ],
-          "insert_fields": [
-            "canonical_command",
-            "idempotency_key",
-            "source_pallet_id",
-            "target_pallet_id"
-          ],
-          "update_fields": [
-            "row_version"
-          ],
-          "lock": false,
-          "constraints": []
-        },
-        {
-          "schema": "wms",
           "table": "inventory_movement",
           "select_fields": [
             "id"
           ],
           "insert_fields": [
-            "idempotency_key",
             "kind",
             "occurred_at",
             "pallet_id",
@@ -1587,77 +1205,6 @@
         }
       ],
       "statements": {
-        "find_replay": {
-          "path": "command/inventory_merge/find_replay.sql",
-          "fetch": "optional_one",
-          "parameters": [
-            {
-              "name": "idempotency_key",
-              "type": "text",
-              "nullable": false
-            }
-          ],
-          "row": [
-            {
-              "name": "canonical_command",
-              "type": "bytes",
-              "nullable": false
-            },
-            {
-              "name": "movement_id",
-              "type": "uuid",
-              "nullable": false
-            },
-            {
-              "name": "source_pallet_id",
-              "type": "uuid",
-              "nullable": false
-            },
-            {
-              "name": "target_pallet_id",
-              "type": "uuid",
-              "nullable": false
-            },
-            {
-              "name": "row_version",
-              "type": "int32",
-              "nullable": true
-            }
-          ]
-        },
-        "claim_command": {
-          "path": "command/inventory_merge/claim_command.sql",
-          "fetch": "optional_one",
-          "parameters": [
-            {
-              "name": "idempotency_key",
-              "type": "text",
-              "nullable": false
-            },
-            {
-              "name": "canonical_command",
-              "type": "bytes",
-              "nullable": false
-            },
-            {
-              "name": "source_pallet_id",
-              "type": "uuid",
-              "nullable": false
-            },
-            {
-              "name": "target_pallet_id",
-              "type": "uuid",
-              "nullable": false
-            }
-          ],
-          "row": [
-            {
-              "name": "movement_id",
-              "type": "uuid",
-              "nullable": false
-            }
-          ]
-        },
         "lock_both_pallets": {
           "path": "command/inventory_merge/lock_both_pallets.sql",
           "fetch": "bounded_list",
@@ -1805,11 +1352,6 @@
           "fetch": "one",
           "parameters": [
             {
-              "name": "idempotency_key",
-              "type": "text",
-              "nullable": false
-            },
-            {
               "name": "pallet_id",
               "type": "uuid",
               "nullable": false
@@ -1878,39 +1420,6 @@
               "nullable": false
             }
           ]
-        },
-        "finalize_command": {
-          "path": "command/inventory_merge/finalize_command.sql",
-          "fetch": "one",
-          "parameters": [
-            {
-              "name": "idempotency_key",
-              "type": "text",
-              "nullable": false
-            },
-            {
-              "name": "canonical_command",
-              "type": "bytes",
-              "nullable": false
-            },
-            {
-              "name": "movement_id",
-              "type": "uuid",
-              "nullable": false
-            },
-            {
-              "name": "row_version",
-              "type": "int32",
-              "nullable": false
-            }
-          ],
-          "row": [
-            {
-              "name": "row_version",
-              "type": "int32",
-              "nullable": true
-            }
-          ]
         }
       }
     },
@@ -1922,16 +1431,6 @@
       "transaction": "explicit_per_input",
       "automatic_retry": false,
       "idempotent_by": "claim",
-      "claim": {
-        "table": "inventory_split_command",
-        "identities": {
-          "movement_id": "movement_id",
-          "new_pallet_id": "new_pallet_id"
-        },
-        "claim": "claim_command",
-        "replay": "find_replay",
-        "finalize": "finalize_command"
-      },
       "input": {
         "raw_body_maximum": 1048576,
         "envelope": {
@@ -2009,7 +1508,7 @@
         "class": "one",
         "fields": [
           {
-            "path": "movement_id",
+            "path": "movement_ids[]",
             "type": "uuid",
             "nullable": false
           },
@@ -2098,34 +1597,11 @@
       "relations": [
         {
           "schema": "wms",
-          "table": "inventory_split_command",
-          "select_fields": [
-            "canonical_command",
-            "idempotency_key",
-            "movement_id",
-            "new_pallet_id",
-            "row_version",
-            "source_pallet_id"
-          ],
-          "insert_fields": [
-            "canonical_command",
-            "idempotency_key",
-            "source_pallet_id"
-          ],
-          "update_fields": [
-            "row_version"
-          ],
-          "lock": false,
-          "constraints": []
-        },
-        {
-          "schema": "wms",
           "table": "inventory_movement",
           "select_fields": [
             "id"
           ],
           "insert_fields": [
-            "idempotency_key",
             "kind",
             "occurred_at",
             "pallet_id",
@@ -2157,7 +1633,6 @@
             "status"
           ],
           "insert_fields": [
-            "id",
             "location_id",
             "pallet_code",
             "status"
@@ -2192,77 +1667,6 @@
         }
       ],
       "statements": {
-        "find_replay": {
-          "path": "command/inventory_split/find_replay.sql",
-          "fetch": "optional_one",
-          "parameters": [
-            {
-              "name": "idempotency_key",
-              "type": "text",
-              "nullable": false
-            }
-          ],
-          "row": [
-            {
-              "name": "canonical_command",
-              "type": "bytes",
-              "nullable": false
-            },
-            {
-              "name": "movement_id",
-              "type": "uuid",
-              "nullable": false
-            },
-            {
-              "name": "source_pallet_id",
-              "type": "uuid",
-              "nullable": false
-            },
-            {
-              "name": "new_pallet_id",
-              "type": "uuid",
-              "nullable": false
-            },
-            {
-              "name": "row_version",
-              "type": "int32",
-              "nullable": true
-            }
-          ]
-        },
-        "claim_command": {
-          "path": "command/inventory_split/claim_command.sql",
-          "fetch": "optional_one",
-          "parameters": [
-            {
-              "name": "idempotency_key",
-              "type": "text",
-              "nullable": false
-            },
-            {
-              "name": "canonical_command",
-              "type": "bytes",
-              "nullable": false
-            },
-            {
-              "name": "source_pallet_id",
-              "type": "uuid",
-              "nullable": false
-            }
-          ],
-          "row": [
-            {
-              "name": "movement_id",
-              "type": "uuid",
-              "nullable": false
-            },
-            {
-              "name": "new_pallet_id",
-              "type": "uuid",
-              "nullable": false
-            }
-          ]
-        },
         "lock_pallet": {
           "path": "command/inventory_split/lock_pallet.sql",
           "fetch": "optional_one",
@@ -2380,11 +1784,6 @@
           "fetch": "one",
           "parameters": [
             {
-              "name": "new_pallet_id",
-              "type": "uuid",
-              "nullable": false
-            },
-            {
               "name": "new_pallet_code",
               "type": "text",
               "nullable": false
@@ -2461,11 +1860,6 @@
           "fetch": "one",
           "parameters": [
             {
-              "name": "idempotency_key",
-              "type": "text",
-              "nullable": false
-            },
-            {
               "name": "pallet_id",
               "type": "uuid",
               "nullable": false
@@ -2514,39 +1908,6 @@
               "name": "status",
               "type": "text",
               "nullable": false
-            }
-          ]
-        },
-        "finalize_command": {
-          "path": "command/inventory_split/finalize_command.sql",
-          "fetch": "one",
-          "parameters": [
-            {
-              "name": "idempotency_key",
-              "type": "text",
-              "nullable": false
-            },
-            {
-              "name": "canonical_command",
-              "type": "bytes",
-              "nullable": false
-            },
-            {
-              "name": "movement_id",
-              "type": "uuid",
-              "nullable": false
-            },
-            {
-              "name": "row_version",
-              "type": "int32",
-              "nullable": false
-            }
-          ],
-          "row": [
-            {
-              "name": "row_version",
-              "type": "int32",
-              "nullable": true
             }
           ]
         }

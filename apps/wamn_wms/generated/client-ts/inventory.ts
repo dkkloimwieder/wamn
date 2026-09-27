@@ -54,8 +54,8 @@ export const INVENTORY_ADJUST_REQUEST_FIELDS: FieldMap = {
 export interface InventoryAdjustResult {
   /** `numeric` */
   readonly adjustedQuantity: Numeric;
-  /** `uuid` */
-  readonly movementId: Uuid;
+  /** `array` */
+  readonly movementIds: readonly Uuid[];
   /** `uuid` */
   readonly palletId: Uuid;
   /** `text` */
@@ -67,7 +67,7 @@ export interface InventoryAdjustResult {
 /** What `wamn-wms:inventory/adjust@1.0.0` calls its result members. */
 export const INVENTORY_ADJUST_RESULT_FIELDS: FieldMap = {
   "adjusted_quantity": "adjustedQuantity",
-  "movement_id": "movementId",
+  "movement_ids": "movementIds",
   "pallet_id": "palletId",
   "pallet_status": "palletStatus",
   "row_version": "rowVersion",
@@ -89,7 +89,7 @@ export const INVENTORY_ADJUST_ROUTE: OperationRoute = {
     partialSchema: null,
     errors: [
       { literal: "concurrency_conflict", required: ["expected_row_version", "observed_row_version"], sources: ["transaction_invariant"], text: null },
-      { literal: "idempotency_conflict", required: ["field"], sources: ["same_key_different_canonical_command"], text: null },
+      { literal: "idempotency_conflict", required: ["field"], sources: ["changed_request"], text: null },
       { literal: "internal_error", required: [], sources: ["query_error", "row_limit_exceeded", "undeclared_constraint"], text: null },
       { literal: "invalid_input", required: ["field"], sources: ["envelope_count", "malformed_input"], text: null },
       { literal: "pallet_not_found", required: ["field", "id"], sources: ["transaction_invariant"], text: null },
@@ -240,8 +240,8 @@ export const INVENTORY_MERGE_REQUEST_FIELDS: FieldMap = {
 
 /** Result of `wamn-wms:inventory/merge@1.0.0`. */
 export interface InventoryMergeResult {
-  /** `uuid` */
-  readonly movementId: Uuid;
+  /** `array` */
+  readonly movementIds: readonly Uuid[];
   /** `int32` */
   readonly rowVersion: number;
   /** `uuid` */
@@ -254,7 +254,7 @@ export interface InventoryMergeResult {
 
 /** What `wamn-wms:inventory/merge@1.0.0` calls its result members. */
 export const INVENTORY_MERGE_RESULT_FIELDS: FieldMap = {
-  "movement_id": "movementId",
+  "movement_ids": "movementIds",
   "row_version": "rowVersion",
   "source_pallet_id": "sourcePalletId",
   "target_pallet_id": "targetPalletId",
@@ -277,7 +277,7 @@ export const INVENTORY_MERGE_ROUTE: OperationRoute = {
     partialSchema: null,
     errors: [
       { literal: "concurrency_conflict", required: ["expected_row_version", "observed_row_version"], sources: ["transaction_invariant"], text: null },
-      { literal: "idempotency_conflict", required: ["field"], sources: ["same_key_different_canonical_command"], text: null },
+      { literal: "idempotency_conflict", required: ["field"], sources: ["changed_request"], text: null },
       { literal: "internal_error", required: [], sources: ["query_error", "row_limit_exceeded", "undeclared_constraint"], text: null },
       { literal: "invalid_input", required: ["field"], sources: ["envelope_count", "malformed_input"], text: null },
       { literal: "pallet_not_found", required: ["field", "id"], sources: ["transaction_invariant"], text: null },
@@ -346,8 +346,8 @@ export const INVENTORY_MOVE_REQUEST_FIELDS: FieldMap = {
 export interface InventoryMoveResult {
   /** `uuid` */
   readonly locationId: Uuid;
-  /** `uuid` */
-  readonly movementId: Uuid;
+  /** `array` */
+  readonly movementIds: readonly Uuid[];
   /** `uuid` */
   readonly palletId: Uuid;
   /** `text` */
@@ -359,7 +359,7 @@ export interface InventoryMoveResult {
 /** What `wamn-wms:inventory/move@1.0.0` calls its result members. */
 export const INVENTORY_MOVE_RESULT_FIELDS: FieldMap = {
   "location_id": "locationId",
-  "movement_id": "movementId",
+  "movement_ids": "movementIds",
   "pallet_id": "palletId",
   "pallet_status": "palletStatus",
   "row_version": "rowVersion",
@@ -381,7 +381,7 @@ export const INVENTORY_MOVE_ROUTE: OperationRoute = {
     partialSchema: null,
     errors: [
       { literal: "concurrency_conflict", required: ["expected_row_version", "observed_row_version"], sources: ["transaction_invariant"], text: null },
-      { literal: "idempotency_conflict", required: ["field"], sources: ["same_key_different_canonical_command"], text: null },
+      { literal: "idempotency_conflict", required: ["field"], sources: ["changed_request"], text: null },
       { literal: "internal_error", required: [], sources: ["query_error", "row_limit_exceeded", "undeclared_constraint"], text: null },
       { literal: "invalid_input", required: ["field"], sources: ["envelope_count", "malformed_input"], text: null },
       { literal: "location_not_found", required: ["field", "id"], sources: ["transaction_invariant"], text: null },
@@ -461,8 +461,8 @@ export const INVENTORY_SPLIT_REQUEST_FIELDS: FieldMap = {
 
 /** Result of `wamn-wms:inventory/split@1.0.0`. */
 export interface InventorySplitResult {
-  /** `uuid` */
-  readonly movementId: Uuid;
+  /** `array` */
+  readonly movementIds: readonly Uuid[];
   /** `uuid` */
   readonly newPalletId: Uuid;
   /** `int32` */
@@ -475,7 +475,7 @@ export interface InventorySplitResult {
 
 /** What `wamn-wms:inventory/split@1.0.0` calls its result members. */
 export const INVENTORY_SPLIT_RESULT_FIELDS: FieldMap = {
-  "movement_id": "movementId",
+  "movement_ids": "movementIds",
   "new_pallet_id": "newPalletId",
   "row_version": "rowVersion",
   "source_pallet_id": "sourcePalletId",
@@ -498,7 +498,7 @@ export const INVENTORY_SPLIT_ROUTE: OperationRoute = {
     partialSchema: null,
     errors: [
       { literal: "concurrency_conflict", required: ["expected_row_version", "observed_row_version"], sources: ["transaction_invariant"], text: null },
-      { literal: "idempotency_conflict", required: ["field"], sources: ["same_key_different_canonical_command"], text: null },
+      { literal: "idempotency_conflict", required: ["field"], sources: ["changed_request"], text: null },
       { literal: "insufficient_quantity", required: ["field"], sources: ["transaction_invariant"], text: null },
       { literal: "internal_error", required: [], sources: ["query_error", "row_limit_exceeded", "undeclared_constraint"], text: null },
       { literal: "invalid_input", required: ["field"], sources: ["envelope_count", "malformed_input"], text: null },

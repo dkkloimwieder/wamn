@@ -24,8 +24,6 @@ export interface ReceiptGetResult {
   readonly createdBy: Uuid;
   /** `uuid` */
   readonly id: Uuid;
-  /** `text` */
-  readonly idempotencyKey: string;
   /** `timestamptz` */
   readonly occurredAt: Timestamptz;
   /** `uuid` */
@@ -39,7 +37,6 @@ export const RECEIPT_GET_RESULT_FIELDS: FieldMap = {
   "created_at": "createdAt",
   "created_by": "createdBy",
   "id": "id",
-  "idempotency_key": "idempotencyKey",
   "occurred_at": "occurredAt",
   "purchase_order_id": "purchaseOrderId",
   "receipt_reference": "receiptReference",
@@ -110,8 +107,6 @@ export interface ReceiptQueryRow {
   readonly createdBy: Uuid;
   /** `uuid` */
   readonly id: Uuid;
-  /** `text` */
-  readonly idempotencyKey: string;
   /** `timestamptz` */
   readonly occurredAt: Timestamptz;
   /** `uuid` */
@@ -136,7 +131,6 @@ export const RECEIPT_QUERY_RESULT_FIELDS: FieldMap = {
       "created_at": "createdAt",
       "created_by": "createdBy",
       "id": "id",
-      "idempotency_key": "idempotencyKey",
       "occurred_at": "occurredAt",
       "purchase_order_id": "purchaseOrderId",
       "receipt_reference": "receiptReference",

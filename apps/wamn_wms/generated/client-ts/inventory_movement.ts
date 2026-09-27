@@ -27,8 +27,6 @@ export interface InventoryMovementGetResult {
   /** `uuid` */
   readonly id: Uuid;
   /** `text` */
-  readonly idempotencyKey: string;
-  /** `text` */
   readonly kind: string;
   /** `timestamptz` */
   readonly occurredAt: Timestamptz;
@@ -50,7 +48,6 @@ export const INVENTORY_MOVEMENT_GET_RESULT_FIELDS: FieldMap = {
   "created_by": "createdBy",
   "from_location_id": "fromLocationId",
   "id": "id",
-  "idempotency_key": "idempotencyKey",
   "kind": "kind",
   "occurred_at": "occurredAt",
   "pallet_id": "palletId",
@@ -128,8 +125,6 @@ export interface InventoryMovementQueryRow {
   /** `uuid` */
   readonly id: Uuid;
   /** `text` */
-  readonly idempotencyKey: string;
-  /** `text` */
   readonly kind: string;
   /** `timestamptz` */
   readonly occurredAt: Timestamptz;
@@ -162,7 +157,6 @@ export const INVENTORY_MOVEMENT_QUERY_RESULT_FIELDS: FieldMap = {
       "created_by": "createdBy",
       "from_location_id": "fromLocationId",
       "id": "id",
-      "idempotency_key": "idempotencyKey",
       "kind": "kind",
       "occurred_at": "occurredAt",
       "pallet_id": "palletId",

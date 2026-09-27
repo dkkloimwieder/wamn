@@ -69,6 +69,7 @@ pub(super) fn emit_model_wit(
             .map(|operation_id| ClaimCodec {
                 operation: crate::write_log::log_operation(&operation_id).to_owned(),
                 key_field: super::CREATE_KEY_FIELD.to_owned(),
+                participation: false,
             });
         let codec = emit_crud_codec(
             *action,
@@ -527,7 +528,7 @@ fn emit_crud_codec(
         Some(claim) => source.push_str(&emit_claim_run(
             &type_name,
             claim,
-            &create_request_value(operation),
+            &create_request_value(table, operation),
             &fields
                 .iter()
                 .map(|field| (field.path.as_str(), field.ty, field.nullable))
@@ -1594,6 +1595,7 @@ pub(super) fn emit_custom_operation_wit(
                 |operation_id| ClaimCodec {
                     operation: crate::write_log::log_operation(&operation_id).to_owned(),
                     key_field: key_field.to_owned(),
+                    participation: operation.pre_commit.is_some(),
                 },
             )
         })
@@ -1980,6 +1982,8 @@ fn emit_record_fields(
         let Some(path) = field.path.strip_prefix(prefix) else {
             continue;
         };
+        let list = result_list_member(path);
+        let path = list.unwrap_or(path);
         if path == "request_id"
             || path.contains("[]")
             || path.contains('.')
@@ -1991,8 +1995,19 @@ fn emit_record_fields(
         if field.nullable {
             ty = format!("option<{ty}>");
         }
+        if list.is_some() {
+            ty = format!("list<{ty}>");
+        }
         writeln!(source, "    {}: {ty},", wit_name(path)).expect("writing to a String cannot fail");
     }
+}
+
+/// The member of a result field that is a list of one scalar type, such as
+/// `movement_ids` for `movement_ids[]`. The declared type and nullability
+/// are those of each element.
+fn result_list_member(path: &str) -> Option<&str> {
+    path.strip_suffix("[]")
+        .filter(|member| !member.contains('.') && !member.contains("[]"))
 }
 
 fn emit_nested_wit_records(source: &mut String, interface: &str, fields: &[FieldIr], root: &str) {
@@ -2226,6 +2241,10 @@ fn emit_custom_codec(
     } else {
         source.push_str("{\n");
         for field in &result.fields {
+            if let Some(member) = result_list_member(&field.path) {
+                emit_codec_result_list(&mut source, member, field.ty, field.nullable);
+                continue;
+            }
             if field.path.contains("[]") || field.path.contains('.') {
                 continue;
             }
@@ -2794,6 +2813,24 @@ fn emit_codec_result_field(source: &mut String, field: &str, ty: ColumnType, nul
     emit_codec_result_field_for(source, field, ty, nullable, "value");
 }
 
+/// Encode one list result field: each element takes the spelling of a
+/// single field of its type.
+fn emit_codec_result_list(source: &mut String, member: &str, ty: ColumnType, nullable: bool) {
+    let mut element = String::new();
+    emit_codec_result_field_for(&mut element, "element", ty, nullable, "list");
+    let element = element
+        .trim()
+        .trim_start_matches("\"element\": ")
+        .trim_end_matches(',')
+        .replace("list.element", "element");
+    let name = rust_identifier(member).expect("validated result field has a Rust name");
+    writeln!(
+        source,
+        "                    {member:?}: value.{name}.iter().map(|element| json!({element})).collect::<Vec<_>>(),"
+    )
+    .expect("writing to a String cannot fail");
+}
+
 fn emit_codec_result_field_for(
     source: &mut String,
     field: &str,
@@ -2859,6 +2896,10 @@ pub(super) struct ClaimCodec {
     pub(super) operation: String,
     /// The input field of the key, as the contract names it.
     pub(super) key_field: String,
+    /// Whether the command selects a pre-commit participant. Its request bytes
+    /// then carry the participation intent, so one key under two intents is
+    /// two requests.
+    pub(super) participation: bool,
 }
 
 /// The claim loop of one claim operation, in place of [`emit_handler`].
@@ -2886,22 +2927,32 @@ fn emit_claim_run(
     let mut json_result = String::new();
     let mut assignments = String::new();
     for (path, ty, nullable) in result_fields {
-        let member = rust_identifier(path).expect("validated result field has a Rust name");
-        writeln!(
-            json_result,
-            "    {member}: {},",
-            codec_rust_type(*ty, *nullable)
-        )
-        .expect("writing to a String cannot fail");
-        let conversion = match (ty, nullable) {
-            (ColumnType::Int64, false) => ".0",
-            (ColumnType::Int64, true) => ".map(|value| value.0)",
-            (ColumnType::Json, false) => ".to_string()",
-            (ColumnType::Json, true) => ".map(|value| value.to_string())",
-            _ => "",
+        let list = result_list_member(path);
+        let member =
+            rust_identifier(list.unwrap_or(path)).expect("validated result field has a Rust name");
+        let element = codec_rust_type(*ty, *nullable);
+        let json_type = if list.is_some() {
+            format!("Vec<{element}>")
+        } else {
+            element
         };
-        writeln!(assignments, "{member}: value.{member}{conversion},")
+        writeln!(json_result, "    {member}: {json_type},")
             .expect("writing to a String cannot fail");
+        let conversion = match (ty, nullable) {
+            (ColumnType::Int64, false) => "value.0",
+            (ColumnType::Int64, true) => "value.map(|value| value.0)",
+            (ColumnType::Json, false) => "value.to_string()",
+            (ColumnType::Json, true) => "value.map(|value| value.to_string())",
+            _ => "value",
+        };
+        let value = match (list, conversion) {
+            (_, "value") => format!("value.{member}"),
+            (None, conversion) => conversion.replacen("value", &format!("value.{member}"), 1),
+            (Some(_), conversion) => {
+                format!("value.{member}.into_iter().map(|value| {conversion}).collect()")
+            }
+        };
+        writeln!(assignments, "{member}: {value},").expect("writing to a String cannot fail");
     }
     let success = success.replace("{fields}", &assignments);
     format!(
@@ -2914,9 +2965,14 @@ const OPERATION: &str = {operation:?};
 const KEY_FIELD: &str = {key_field:?};
 
 /// The bytes the write log keeps for one validated request: its canonical JSON
-/// without the key and the request id.
-fn request_bytes(request: &contract::{type_name}Request) -> Vec<u8> {{
-    wamn_execution_contract::canonical_json_bytes(&{request_value})
+/// without the key and the request id, and the participation intent when one
+/// is selected.
+fn request_bytes(request: &contract::{type_name}Request, intent: Option<&str>) -> Vec<u8> {{
+    let mut value = {request_value};
+    if let (Some(intent), Value::Object(object)) = (intent, &mut value) {{
+        object.insert("participation_intent".to_owned(), json!(intent));
+    }}
+    wamn_execution_contract::canonical_json_bytes(&value)
 }}
 
 /// The result the write log stores for one success: its encoded outcome
@@ -2989,7 +3045,7 @@ where
 {{
     let refuse = |error: &wamn_postgres_statements::StatementError| map_error(log_error(error), |_| None);
     let key = request.{key_member}.clone();
-    let bytes = request_bytes(&request);
+{intent}    let bytes = request_bytes(&request, intent.as_deref());
     let mut transaction = connection.begin().await.map_err(|error| refuse(&error))?;
     match log_claim(&mut transaction, OPERATION, &key, &bytes).await {{
         Ok(Logged::Claimed) => {{}}
@@ -3027,18 +3083,50 @@ where
 "#,
         operation = claim.operation,
         key_field = claim.key_field,
+        intent = if claim.participation {
+            "    let intent = wamn_postgres_statements::participation()\n        .await\n        .map_err(|error| refuse(&error))?\n        .map(|selected| selected.intent);\n"
+        } else {
+            "    let intent: Option<String> = None;\n"
+        },
     )
+}
+
+/// The JSON value of one request leaf in its canonical spelling.
+///
+/// A `timestamptz` or a `numeric` is respelled the way the operation contract
+/// states, so two spellings of one request are one request. A value the
+/// respelling refuses keeps its text: the handler refuses it.
+fn canonical_leaf(access: &str, ty: Option<ColumnType>, nullable: bool) -> String {
+    let function = match ty {
+        Some(ColumnType::Timestamptz) => "canonical_timestamptz",
+        Some(ColumnType::Numeric) => "canonical_numeric",
+        _ => return format!("json!(&{access})"),
+    };
+    if nullable {
+        format!(
+            "json!({access}.as_deref().map(|value| wamn_execution_contract::{function}(value).unwrap_or_else(|| value.to_owned())))"
+        )
+    } else {
+        format!(
+            "json!(wamn_execution_contract::{function}(&{access}).unwrap_or_else(|| {access}.clone()))"
+        )
+    }
 }
 
 /// The request value of a generated create: every writable field the request
 /// carries, and no key.
-fn create_request_value(operation: &OperationDeclaration) -> String {
+fn create_request_value(table: &Table, operation: &OperationDeclaration) -> String {
     let mut source = String::from("{\n    let mut value = Map::new();\n");
     for field in &operation.writable_fields {
         let member = rust_identifier(field).expect("validated field has a Rust name");
+        let leaf = canonical_leaf(
+            "field",
+            Some(model_column(table, field).column_type()),
+            true,
+        );
         writeln!(
             source,
-            "    if let Some(field) = &request.{member} {{ value.insert({field:?}.to_owned(), json!(field)); }}"
+            "    if let Some(field) = &request.{member} {{ value.insert({field:?}.to_owned(), {leaf}); }}"
         )
         .expect("writing to a String cannot fail");
     }
@@ -3101,7 +3189,11 @@ fn tree_value(
             .trim_end_matches("[]");
         let member = rust_identifier(name).expect("validated field has a Rust name");
         let entry = if field.children.is_empty() {
-            format!("json!(&{access}.{member})")
+            canonical_leaf(
+                &format!("{access}.{member}"),
+                column_type_of(&field.type_name),
+                field.nullable,
+            )
         } else if field.type_name == "array" || field.path.ends_with("[]") {
             let element = tree_value(&field.children, "element", excluded, None);
             match line_order.filter(|_| name == "line") {

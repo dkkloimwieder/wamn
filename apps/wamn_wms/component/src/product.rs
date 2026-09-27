@@ -91,20 +91,16 @@ mod create {
     }
 
     async fn handle(
-        connection: &mut wamn_postgres_statements::Connection,
+        transaction: &mut wamn_postgres_statements::Transaction,
         request: contract::CreateRequest,
     ) -> Result<contract::CreateResult, contract::CreateError> {
         let product_code = request.product_code.flatten();
-        product::create(
-            connection,
-            &request.idempotency_key,
-            product_code.as_deref(),
-        )
-        .await
-        .map(|row| contract::CreateResult {
-            value: codec::row!(row, contract::CreateRow),
-        })
-        .map_err(|error| codec::map_error(error.kind().literal(), |key| detail(&error, key)))
+        product::create(transaction, product_code.as_deref())
+            .await
+            .map(|row| contract::CreateResult {
+                value: codec::row!(row, contract::CreateRow),
+            })
+            .map_err(|error| codec::map_error(error.kind().literal(), |key| detail(&error, key)))
     }
     codec::export_operation!(
         crate::Component,

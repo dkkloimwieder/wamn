@@ -91,14 +91,16 @@ mod record {
     }
 
     async fn handle(
-        (): &mut (),
+        transaction: &mut wamn_postgres_statements::Transaction,
         request: contract::RecordRequest,
     ) -> Result<contract::RecordResult, contract::RecordError> {
-        sample::record(&sample::RecordCommand {
-            idempotency_key: request.idempotency_key,
-            frame: request.frame,
-            captured_at: request.captured_at,
-        })
+        sample::record(
+            transaction,
+            &sample::RecordCommand {
+                frame: request.frame,
+                captured_at: request.captured_at,
+            },
+        )
         .await
         .map(|sample_id| contract::RecordResult { sample_id })
         .map_err(|error| codec::map_error(error.kind().literal(), |key| detail(&error, key)))
@@ -107,7 +109,7 @@ mod record {
         crate::Component,
         contract,
         crate::wamn::node::types,
-        (),
+        wamn_postgres_statements::Connection::new(),
         handle,
         codec
     );

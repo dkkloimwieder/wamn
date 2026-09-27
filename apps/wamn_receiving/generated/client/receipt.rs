@@ -25,12 +25,6 @@ pub const RECEIPT_FIELDS: &[FieldDescriptor] = &[
         values: &[],
     },
     FieldDescriptor {
-        path: "idempotency_key",
-        type_name: "text",
-        nullable: false,
-        values: &[],
-    },
-    FieldDescriptor {
         path: "occurred_at",
         type_name: "timestamptz",
         nullable: false,
@@ -66,8 +60,6 @@ pub struct ReceiptGetResult {
     pub created_by: uuid::Uuid,
     /// `uuid`
     pub id: uuid::Uuid,
-    /// `text`
-    pub idempotency_key: String,
     /// `timestamptz`
     pub occurred_at: chrono::DateTime<chrono::Utc>,
     /// `uuid`
@@ -101,12 +93,6 @@ pub const RECEIPT_GET_RESULT: &[FieldDescriptor] = &[
     FieldDescriptor {
         path: "id",
         type_name: "uuid",
-        nullable: false,
-        values: &[],
-    },
-    FieldDescriptor {
-        path: "idempotency_key",
-        type_name: "text",
         nullable: false,
         values: &[],
     },
@@ -173,18 +159,6 @@ pub const RECEIPT_GET_RESULT_SCHEMA: &[wamn_client::descriptor::FieldSchema] = &
         field: FieldDescriptor {
             path: "id",
             type_name: "uuid",
-            nullable: false,
-            values: &[],
-        },
-        required: true,
-        minimum: None,
-        maximum: None,
-        children: &[],
-    },
-    wamn_client::descriptor::FieldSchema {
-        field: FieldDescriptor {
-            path: "idempotency_key",
-            type_name: "text",
             nullable: false,
             values: &[],
         },
@@ -294,8 +268,6 @@ pub struct ReceiptQueryResult {
     pub created_by: uuid::Uuid,
     /// `uuid`
     pub id: uuid::Uuid,
-    /// `text`
-    pub idempotency_key: String,
     /// `timestamptz`
     pub occurred_at: chrono::DateTime<chrono::Utc>,
     /// `uuid`
@@ -337,12 +309,6 @@ pub const RECEIPT_QUERY_RESULT: &[FieldDescriptor] = &[
     FieldDescriptor {
         path: "id",
         type_name: "uuid",
-        nullable: false,
-        values: &[],
-    },
-    FieldDescriptor {
-        path: "idempotency_key",
-        type_name: "text",
         nullable: false,
         values: &[],
     },
@@ -422,18 +388,6 @@ pub const RECEIPT_QUERY_RESULT_SCHEMA: &[wamn_client::descriptor::FieldSchema] =
         field: FieldDescriptor {
             path: "id",
             type_name: "uuid",
-            nullable: false,
-            values: &[],
-        },
-        required: true,
-        minimum: None,
-        maximum: None,
-        children: &[],
-    },
-    wamn_client::descriptor::FieldSchema {
-        field: FieldDescriptor {
-            path: "idempotency_key",
-            type_name: "text",
             nullable: false,
             values: &[],
         },

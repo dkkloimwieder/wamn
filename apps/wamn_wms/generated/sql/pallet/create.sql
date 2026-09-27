@@ -1,5 +1,5 @@
-INSERT INTO pallet (id, pallet_code, location_id, status)
-VALUES ($1::uuid, $2::text, $3::uuid, $4::text)
+INSERT INTO pallet (pallet_code, location_id, status)
+VALUES ($1::text, $2::uuid, $3::text)
 RETURNING
     created_at,
     created_by,

@@ -6,9 +6,9 @@
 //! Twenty operations: the four commands (`inventory.move`, the contended one,
 //! then `adjust`, `merge` and `split`), the
 //! `inventory.aggregate` projection, and the generated model operations. Every
-//! command follows the two laws the authored SQL already obeys: identity
-//! comes from the claim, never from the work, and more than one row of a
-//! table is locked in the order the database shares.
+//! command runs in the transaction its generated codec holds for the write
+//! log, takes each new id from its insert's `RETURNING`, and locks more than
+//! one row of a table in the order the database shares.
 
 mod cursor;
 mod error;

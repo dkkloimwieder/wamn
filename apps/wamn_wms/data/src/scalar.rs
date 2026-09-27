@@ -29,53 +29,24 @@ pub(crate) fn text<'a>(field: &str, value: Option<&'a str>) -> Result<&'a str, A
 }
 
 pub(crate) fn timestamp(field: &str, value: &str) -> Result<TimestampTz, AccessError> {
-    chrono::DateTime::parse_from_rfc3339(value)
-        .map(|parsed| TimestampTz(parsed.to_utc().format("%Y-%m-%dT%H:%M:%S%.6fZ").to_string()))
-        .map_err(|_| AccessError::field(AccessErrorKind::InvalidInput, field))
+    wamn_execution_contract::canonical_timestamptz(value)
+        .map(TimestampTz)
+        .ok_or_else(|| AccessError::field(AccessErrorKind::InvalidInput, field))
 }
 
 /// A positive quantity, RE-SPELLED as PostgreSQL's own text for the same
-/// datum. Zero is refused here rather than by the `quantity > 0` check
-/// constraints, whose violation the contract can only report as
-/// `internal_error`.
-///
-/// The respellings are TEXTUAL, and only textual, because a numeric's scale is
-/// part of its value: measured on PostgreSQL 18.6, `12.3400` is scale 4 and
-/// `12.34` is scale 2, so collapsing one to the other would change what the
-/// caller wrote. These three move digits and leave scale alone --- `01.0` ->
-/// `1.0`, `1.` -> `1`, `.1` -> `0.1` --- each matching `(value::numeric)::text`.
-///
-/// An exponent is REFUSED by decision, not by oversight. PostgreSQL DERIVES
-/// scale from an exponent rather than reading it: `1e2` is 100 at scale 0,
-/// `1e-2` is 0.01 at scale 2, `1.5e2` is 150 at scale 0. A branch for it could
-/// not be normalization; it would have to reimplement that derivation by hand,
-/// and this crate carries no decimal dependency to do it with.
-/// `receiving-data`'s `canonical_positive_numeric` refuses exponents, and
-/// respells these same three spellings, for the same reasons.
+/// datum by [`wamn_execution_contract::canonical_numeric`], which keeps the
+/// scale and refuses an exponent. Zero is refused here rather than by the
+/// `quantity > 0` check constraints, whose violation the contract can only
+/// report as `internal_error`. A sign is refused too: a quantity is positive.
 pub(crate) fn numeric(field: &str, value: &str) -> Result<Numeric, AccessError> {
-    let (whole, fraction) = match value.split_once('.') {
-        Some((whole, fraction)) => (whole, Some(fraction)),
-        None => (value, None),
-    };
-    let digits = |part: &str| part.bytes().all(|byte| byte.is_ascii_digit());
-    // Requiring a non-zero digit also refuses the two spellings PostgreSQL
-    // itself rejects, `""` and `"."`, which carry no digit at all.
-    let positive = whole
+    let positive = value
         .bytes()
-        .chain(fraction.unwrap_or_default().bytes())
-        .any(|byte| byte != b'0');
-    if !digits(whole) || !fraction.is_none_or(digits) || !positive {
-        return Err(AccessError::field(AccessErrorKind::InvalidInput, field));
-    }
-    let whole = match whole.trim_start_matches('0') {
-        "" => "0",
-        trimmed => trimmed,
-    };
-    let respelled = match fraction.filter(|fraction| !fraction.is_empty()) {
-        Some(fraction) => format!("{whole}.{fraction}"),
-        None => whole.to_owned(),
-    };
-    Ok(Numeric(respelled))
+        .any(|byte| byte.is_ascii_digit() && byte != b'0');
+    wamn_execution_contract::canonical_numeric(value)
+        .filter(|respelled| positive && !respelled.starts_with('-'))
+        .map(Numeric)
+        .ok_or_else(|| AccessError::field(AccessErrorKind::InvalidInput, field))
 }
 
 /// The status of a QUANTITY row, which is never `consumed`: consumption is a

@@ -402,12 +402,11 @@ pub(super) async fn generated_terminal(
     if mode == "success" {
         // The terminal sees the committed move only. The label workflow stores
         // the label under the movement id after the move commits.
-        // The workflow keys the label by the move's idempotency key.
-        let command = result["idempotency_key"]
+        let movement = result["movement_id"]
             .as_str()
-            .filter(|key| !key.is_empty())
-            .context("the generated terminal returns its move's idempotency key")?;
-        let key = object_store::path::Path::from(format!("wms/{command}"));
+            .filter(|id| !id.is_empty())
+            .context("the generated terminal returns its move's movement id")?;
+        let key = object_store::path::Path::from(format!("wms/{movement}"));
         let mut label = None;
         for _ in 0..LABEL_WAIT_SECONDS {
             if let Ok(object) = store.get(&key).await {

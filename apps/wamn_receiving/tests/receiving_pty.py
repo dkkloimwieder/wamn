@@ -72,7 +72,9 @@ COMMIT;""")
 
 def snapshot(db, name, ids):
     return db.sql(name, f"""SELECT json_build_object(
-  'claims', (SELECT count(*) FROM receiving.record_receipt_command WHERE purchase_order_id = '{ids.order}'),
+  'claims', (SELECT count(*) FROM app_system.write_log AS logged
+    WHERE logged.operation = 'wamn-receiving:receiving/record-receipt' AND (logged.result::jsonb ->> 'receipt_id') IN
+      (SELECT id::text FROM receiving.receipt WHERE purchase_order_id = '{ids.order}')),
   'receipts', (SELECT count(*) FROM receiving.receipt WHERE purchase_order_id = '{ids.order}'),
   'order', (SELECT json_build_object('status', status, 'row_version', row_version)
     FROM receiving.purchase_order WHERE id = '{ids.order}'),
@@ -83,8 +85,10 @@ def snapshot(db, name, ids):
     'location', line.location_id)), '[]'::json)
     FROM receiving.receipt_line AS line JOIN receiving.receipt AS receipt ON receipt.id = line.receipt_id
     WHERE receipt.purchase_order_id = '{ids.order}'),
-  'canonical', (SELECT COALESCE(json_agg(convert_from(canonical_command, 'UTF8')::json), '[]'::json)
-    FROM receiving.record_receipt_command WHERE purchase_order_id = '{ids.order}'));""", parse=True)
+  'canonical', (SELECT COALESCE(json_agg(convert_from(logged.request, 'UTF8')::json), '[]'::json)
+    FROM app_system.write_log AS logged
+    WHERE logged.operation = 'wamn-receiving:receiving/record-receipt' AND (logged.result::jsonb ->> 'receipt_id') IN
+      (SELECT id::text FROM receiving.receipt WHERE purchase_order_id = '{ids.order}')));""", parse=True)
 
 
 def cleanup(db, ids):
@@ -95,7 +99,6 @@ SET LOCAL app.operation = 'admin:remove-receiving-pty-fixture';
 DELETE FROM receiving.receipt_line WHERE receipt_id IN
   (SELECT id FROM receiving.receipt WHERE purchase_order_id = '{ids.order}');
 DELETE FROM receiving.receipt WHERE purchase_order_id = '{ids.order}';
-DELETE FROM receiving.record_receipt_command WHERE purchase_order_id = '{ids.order}';
 DELETE FROM receiving.purchase_order_line WHERE purchase_order_id = '{ids.order}';
 DELETE FROM receiving.purchase_order WHERE id = '{ids.order}';
 DELETE FROM receiving.location WHERE id IN ('{ids.dock1}', '{ids.dock2}');

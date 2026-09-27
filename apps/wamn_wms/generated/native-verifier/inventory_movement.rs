@@ -6,7 +6,6 @@ pub struct InventoryMovementRow {
     pub created_by: uuid::Uuid,
     pub from_location_id: Option<uuid::Uuid>,
     pub id: uuid::Uuid,
-    pub idempotency_key: String,
     pub kind: String,
     pub occurred_at: chrono::DateTime<chrono::Utc>,
     pub pallet_id: uuid::Uuid,

@@ -31,12 +31,6 @@ pub const INVENTORY_MOVEMENT_FIELDS: &[FieldDescriptor] = &[
         values: &[],
     },
     FieldDescriptor {
-        path: "idempotency_key",
-        type_name: "text",
-        nullable: false,
-        values: &[],
-    },
-    FieldDescriptor {
         path: "kind",
         type_name: "text",
         nullable: false,
@@ -99,8 +93,6 @@ pub struct InventoryMovementGetResult {
     /// `uuid`
     pub id: uuid::Uuid,
     /// `text`
-    pub idempotency_key: String,
-    /// `text`
     pub kind: String,
     /// `timestamptz`
     pub occurred_at: chrono::DateTime<chrono::Utc>,
@@ -147,12 +139,6 @@ pub const INVENTORY_MOVEMENT_GET_RESULT: &[FieldDescriptor] = &[
     FieldDescriptor {
         path: "id",
         type_name: "uuid",
-        nullable: false,
-        values: &[],
-    },
-    FieldDescriptor {
-        path: "idempotency_key",
-        type_name: "text",
         nullable: false,
         values: &[],
     },
@@ -255,18 +241,6 @@ pub const INVENTORY_MOVEMENT_GET_RESULT_SCHEMA: &[wamn_client::descriptor::Field
         field: FieldDescriptor {
             path: "id",
             type_name: "uuid",
-            nullable: false,
-            values: &[],
-        },
-        required: true,
-        minimum: None,
-        maximum: None,
-        children: &[],
-    },
-    wamn_client::descriptor::FieldSchema {
-        field: FieldDescriptor {
-            path: "idempotency_key",
-            type_name: "text",
             nullable: false,
             values: &[],
         },
@@ -427,8 +401,6 @@ pub struct InventoryMovementQueryResult {
     /// `uuid`
     pub id: uuid::Uuid,
     /// `text`
-    pub idempotency_key: String,
-    /// `text`
     pub kind: String,
     /// `timestamptz`
     pub occurred_at: chrono::DateTime<chrono::Utc>,
@@ -483,12 +455,6 @@ pub const INVENTORY_MOVEMENT_QUERY_RESULT: &[FieldDescriptor] = &[
     FieldDescriptor {
         path: "id",
         type_name: "uuid",
-        nullable: false,
-        values: &[],
-    },
-    FieldDescriptor {
-        path: "idempotency_key",
-        type_name: "text",
         nullable: false,
         values: &[],
     },
@@ -604,18 +570,6 @@ pub const INVENTORY_MOVEMENT_QUERY_RESULT_SCHEMA: &[wamn_client::descriptor::Fie
         field: FieldDescriptor {
             path: "id",
             type_name: "uuid",
-            nullable: false,
-            values: &[],
-        },
-        required: true,
-        minimum: None,
-        maximum: None,
-        children: &[],
-    },
-    wamn_client::descriptor::FieldSchema {
-        field: FieldDescriptor {
-            path: "idempotency_key",
-            type_name: "text",
             nullable: false,
             values: &[],
         },

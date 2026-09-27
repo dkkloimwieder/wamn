@@ -61,7 +61,7 @@ pub(crate) mod wamn {
     /// Generated `inventory.split` transaction accessors.
     #[expect(
         dead_code,
-        reason = "the claim mints the new pallet's id, so the split already holds every column create_pallet returns and reads none of them. It leaves the movement insert's id, the id and quantity of the quantity row it takes from and the one it places, and the id its own existence probe must select to ask whether the destination location is there. Of the source pallet it locks it reads row_version and status, not location_id"
+        reason = "of the new pallet the split reads only the id create_pallet returns. It leaves the id and quantity of the quantity row it takes from and the one it places, and the id its own existence probe must select to ask whether the destination location is there. Of the source pallet it locks it reads row_version and status, not location_id"
     )]
     pub(crate) mod inventory_split {
         include!(concat!(
@@ -78,13 +78,10 @@ pub(crate) mod wamn {
         ));
     }
 
-    /// Generated `location` projection, claim and update accessors.
-    ///
-    /// A claim carries `select_participant` for a nested operation. No
-    /// operation nests inside `location.create`, so that accessor stays unused.
+    /// Generated `location` projection and accessors.
     #[expect(
         dead_code,
-        reason = "the generated claim offers participation this create does not use"
+        reason = "the create and the update map no exclusion constraint"
     )]
     pub(crate) mod location {
         include!(concat!(
@@ -93,14 +90,8 @@ pub(crate) mod wamn {
         ));
     }
 
-    /// Generated `pallet` projection, claim accessors and statement digests.
-    ///
-    /// A claim carries `select_participant` for a nested operation. No
-    /// operation nests inside `pallet.create`, so that accessor stays unused.
-    #[expect(
-        dead_code,
-        reason = "the generated claim offers participation this create does not use"
-    )]
+    /// Generated `pallet` projection and accessors.
+    #[expect(dead_code, reason = "the create maps no exclusion constraint")]
     pub(crate) mod pallet {
         include!(concat!(
             env!("CARGO_MANIFEST_DIR"),
@@ -116,13 +107,10 @@ pub(crate) mod wamn {
         ));
     }
 
-    /// Generated `product` projection, claim and update accessors.
-    ///
-    /// A claim carries `select_participant` for a nested operation. No
-    /// operation nests inside `product.create`, so that accessor stays unused.
+    /// Generated `product` projection and accessors.
     #[expect(
         dead_code,
-        reason = "the generated claim offers participation this create does not use"
+        reason = "the create and the update map no exclusion constraint"
     )]
     pub(crate) mod product {
         include!(concat!(

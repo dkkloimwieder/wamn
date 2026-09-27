@@ -156,11 +156,6 @@ impl AccessError {
         error
     }
 
-    /// One idempotency key already carries a different canonical command.
-    pub(crate) fn idempotency_conflict(context: impl Into<Box<str>>, field: &'static str) -> Self {
-        Self::new(AccessErrorKind::IdempotencyConflict, context).with_field(field)
-    }
-
     pub(crate) fn internal(context: impl Into<Box<str>>) -> Self {
         Self::new(AccessErrorKind::InternalError, context)
     }

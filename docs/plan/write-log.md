@@ -10,7 +10,7 @@ The change removes one table per model and per command from every application sc
 
 ## 2. Fixed rules
 
-- One idempotency record per database, `app_system.write_log`. No application table carries a key.
+- One idempotency record per database, `app_system.write_log`. No application table implements or references the claim.
 - The claim and the work commit together or not at all. There is no state between them.
 - The key is the field the operation's `idempotency.key` names in its contract (`idempotency_key` for a create, a path such as `value.idempotency_key` for a command). The codec reads it from there. Its scope is the database and the operation.
 - Same key, same request: the stored result, no work. Same key, different request: `idempotency_conflict`, no work.
@@ -50,7 +50,7 @@ Measured on `main` at `b32865103` on 2026-09-26.
 | --- | --- | --- |
 | `operation` | `text` | The contract's `operation` without its `@version`, for example `wamn-wms:location/create`. Package-qualified, so two packages in one database do not collide. Version-free, so a retry across a release with the same bytes answers the stored result. |
 | `idempotency_key` | `text` | The item's key. Primary key with `operation`. |
-| `request` | `bytea` | The canonical bytes of the validated request, without `request_id` and the key. The same bytes the claim tables store today. Not empty. |
+| `request` | `bytea` | The canonical bytes of the validated request, without `request_id` and the key. The same bytes the claim tables store today. For a command with a pre-commit participant, the canonical bytes include the pre-commit participation the route selected. Not empty. |
 | `result` | `text` | The encoded outcome of the one item, without `request_id` or any other per-call field. Null between claim and finish inside the transaction; never null in a committed row. |
 | `created_at` | `timestamptz` | Default `now()`. For retention later. |
 

@@ -102,13 +102,12 @@ fn the_wirings_params_carry_the_mapping() {
     assert!(
         wiring.nodes["shape"].params["expression"]
             .as_str()
-            .is_some_and(|expression| expression.contains("\"label_key\": new.idempotency_key")),
-        "the shape keys the label by the move's command"
+            .is_some_and(|expression| expression.contains("\"label_key\": new.id")),
+        "the shape keys the label by the movement row"
     );
     assert_eq!(
         store["key_field"], "/label_key",
-        "the object key must be the move's idempotency key, or a move with \
-         several product lines or a redelivery writes a second label"
+        "the object key must be the movement id, or a redelivery writes a second label"
     );
     assert_eq!(store["body_field"], "/zpl");
 }

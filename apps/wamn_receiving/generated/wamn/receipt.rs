@@ -7,16 +7,15 @@ pub struct ReceiptRow {
     pub created_at: wamn_postgres_statements::TimestampTz,
     pub created_by: wamn_postgres_statements::Uuid,
     pub id: wamn_postgres_statements::Uuid,
-    pub idempotency_key: String,
     pub occurred_at: wamn_postgres_statements::TimestampTz,
     pub purchase_order_id: wamn_postgres_statements::Uuid,
     pub receipt_reference: String,
 }
 
 pub(crate) const GET_DIGEST: &str =
-    "sha256:0761529775d51c86b2f7a77c646630c0384012476c84d7dc99e027616cf3afd2";
+    "sha256:a62f1b0d738f9f4361bf453d150c3fef82265ba4ab87e8f27247a1f13dc575b0";
 pub(crate) const QUERY_DIGEST: &str =
-    "sha256:2814a03759be697b6ad57b0c484db94dbf0ae628db238c4b32c1ab7cf2718706";
+    "sha256:b209ea2101eb86aab6662c59d2eeb34b8627604c054e3e9dec2f49c04dc888e6";
 
 pub(crate) async fn get(
     connection: &mut Connection,
@@ -33,7 +32,6 @@ pub(crate) async fn get(
             created_at: row.decode("created_at")?,
             created_by: row.decode("created_by")?,
             id: row.decode("id")?,
-            idempotency_key: row.decode("idempotency_key")?,
             occurred_at: row.decode("occurred_at")?,
             purchase_order_id: row.decode("purchase_order_id")?,
             receipt_reference: row.decode("receipt_reference")?,
@@ -61,7 +59,6 @@ pub(crate) async fn query_created_at_ascending(
                     created_at: row.decode("created_at")?,
                     created_by: row.decode("created_by")?,
                     id: row.decode("id")?,
-                    idempotency_key: row.decode("idempotency_key")?,
                     occurred_at: row.decode("occurred_at")?,
                     purchase_order_id: row.decode("purchase_order_id")?,
                     receipt_reference: row.decode("receipt_reference")?,

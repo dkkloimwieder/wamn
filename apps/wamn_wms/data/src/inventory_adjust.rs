@@ -1,25 +1,20 @@
 //! `inventory.adjust` -- a counted correction to one quantity row.
 //!
 //! ```text
-//! canonicalize the body
-//! → find a replay: same key ⇒ return the ORIGINAL result, unchanged
-//! → claim the key, which pre-generates the movement id
 //! → lock the pallet          (the serialization point)
 //! → compare expected_row_version to observed
 //! → set the (pallet, product, status) row to the counted quantity
 //! → write the movement, with its reason
 //! → bump the pallet's revision
-//! → finalize the claim with the result
 //! ```
 //!
 //! The movement records the quantity the row BECAME, not a delta: an adjust
-//! is a count, and the history keeps what was counted. The pallet's status is
-//! not this command's to change, so a replay reads it as the live row carries
-//! it; the claim row keeps what this command decided -- the quantity and the
-//! revision.
+//! is a count, and the history keeps what was counted. The generated codec
+//! claims the key in the write log and holds the transaction, so a retry
+//! answers the stored result. The one movement id is the id of the movement row.
 
 use serde::Deserialize;
-use wamn_postgres_statements::{Connection, Numeric, TimestampTz, Uuid};
+use wamn_postgres_statements::{Numeric, TimestampTz, Transaction, Uuid};
 
 use crate::error::{self, AccessError, AccessErrorKind};
 use crate::generated::wamn::inventory_adjust as sql;
@@ -28,7 +23,6 @@ use crate::scalar;
 /// One envelope item's command body.
 #[derive(Debug, Deserialize)]
 pub struct AdjustCommand {
-    pub idempotency_key: String,
     pub pallet_id: String,
     pub product_id: String,
     pub status: String,
@@ -41,7 +35,7 @@ pub struct AdjustCommand {
 /// What one accepted adjust answers with.
 #[derive(Debug, PartialEq, Eq)]
 pub struct AdjustResult {
-    pub movement_id: String,
+    pub movement_ids: Vec<String>,
     pub pallet_id: String,
     pub adjusted_quantity: String,
     pub pallet_status: String,
@@ -74,92 +68,25 @@ fn parse(command: &AdjustCommand) -> Result<Parsed, AccessError> {
     })
 }
 
-/// The bytes the idempotency key keys: the RE-SPELLED command, so two
-/// deliveries of one count canonicalize alike whatever case or offset each
-/// was written in. The key and `request_id` are excluded.
-fn canonical_command(command: &AdjustCommand, parsed: &Parsed) -> Vec<u8> {
-    wamn_execution_contract::canonical_json_bytes(&serde_json::json!({
-        "pallet_id": parsed.pallet_id.0,
-        "product_id": parsed.product_id.0,
-        "status": parsed.status,
-        "quantity": parsed.quantity.0,
-        "reason_code": command.reason_code,
-        "expected_row_version": command.expected_row_version,
-        "occurred_at": parsed.occurred_at.0,
-    }))
-}
-
-/// Run one command item in exactly one transaction.
+/// Run one command item in the transaction its codec holds for the write log.
 ///
 /// # Errors
 ///
 /// [`AccessError`] carrying the literal and detail the operation contract
 /// declares for that refusal.
-pub async fn execute(command: &AdjustCommand) -> Result<AdjustResult, AccessError> {
+pub async fn execute(
+    transaction: &mut Transaction,
+    command: &AdjustCommand,
+) -> Result<AdjustResult, AccessError> {
     let parsed = parse(command)?;
-    let canonical = canonical_command(command, &parsed);
-
-    let mut connection = Connection::new();
-    let transaction = connection
-        .begin()
-        .await
-        .map_err(|e| error::from_statement(&e))?;
-    run(sql::begin_claim(transaction), command, &canonical, &parsed).await
-}
-
-fn retry() -> AccessError {
-    AccessError::new(AccessErrorKind::Retry, serde_json::json!({}))
+    run(transaction, command, &parsed).await
 }
 
 async fn run(
-    mut transaction: sql::PendingClaim,
+    transaction: &mut Transaction,
     command: &AdjustCommand,
-    canonical: &[u8],
     parsed: &Parsed,
 ) -> Result<AdjustResult, AccessError> {
-    let key = command.idempotency_key.clone();
-    if let Some(replay) = sql::find_replay(&mut transaction, key.clone())
-        .await
-        .map_err(|e| error::from_statement(&e))?
-    {
-        if replay.canonical_command != canonical {
-            return Err(AccessError::field(
-                AccessErrorKind::IdempotencyConflict,
-                "value.idempotency_key",
-            ));
-        }
-        let (Some(adjusted_quantity), Some(row_version)) =
-            (replay.adjusted_quantity, replay.row_version)
-        else {
-            return Err(retry());
-        };
-        // The status was never this command's to change, so the live row's
-        // is the original's. A pallet cannot vanish (nothing deletes one).
-        let pallet = sql::lock_pallet(&mut transaction, replay.pallet_id.clone())
-            .await
-            .map_err(|e| error::from_statement(&e))?
-            .ok_or_else(|| {
-                AccessError::new(AccessErrorKind::InternalError, serde_json::json!({}))
-            })?;
-        return Ok(AdjustResult {
-            movement_id: replay.movement_id.0,
-            pallet_id: replay.pallet_id.0,
-            adjusted_quantity: adjusted_quantity.0,
-            pallet_status: pallet.status,
-            row_version,
-        });
-    }
-
-    let claim = sql::claim_command(
-        &mut transaction,
-        key.clone(),
-        canonical.to_vec(),
-        parsed.pallet_id.clone(),
-    )
-    .await
-    .map_err(|e| error::from_statement(&e))?
-    .ok_or_else(retry)?;
-
     // THE SERIALIZATION POINT.
     let not_found = || {
         AccessError::missing(
@@ -168,7 +95,7 @@ async fn run(
             &parsed.pallet_id.0,
         )
     };
-    let locked = sql::lock_pallet(&mut transaction, parsed.pallet_id.clone())
+    let locked = sql::lock_pallet(transaction, parsed.pallet_id.clone())
         .await
         .map_err(|e| error::from_statement(&e))?
         .ok_or_else(not_found)?;
@@ -183,7 +110,7 @@ async fn run(
     }
 
     let set = sql::set_quantity(
-        &mut transaction,
+        transaction,
         parsed.pallet_id.clone(),
         parsed.product_id.clone(),
         parsed.status.clone(),
@@ -199,9 +126,8 @@ async fn run(
         )
     })?;
 
-    sql::insert_movement(
-        &mut transaction,
-        key.clone(),
+    let movement = sql::insert_movement(
+        transaction,
         parsed.pallet_id.clone(),
         parsed.product_id.clone(),
         set.quantity.clone(),
@@ -211,30 +137,12 @@ async fn run(
     .await
     .map_err(|e| error::from_statement(&e))?;
 
-    let touched = sql::touch_pallet(&mut transaction, parsed.pallet_id.clone())
+    let touched = sql::touch_pallet(transaction, parsed.pallet_id.clone())
         .await
         .map_err(|e| error::from_statement(&e))?;
 
-    let finalized = sql::finalize_command(
-        transaction,
-        key,
-        canonical.to_vec(),
-        claim.movement_id.clone(),
-        set.quantity.clone(),
-        touched.row_version,
-    )
-    .await
-    .map_err(|e| error::from_statement(&e))?;
-    if finalized.row.row_version.is_none() {
-        return Err(retry());
-    }
-
-    finalized
-        .commit()
-        .await
-        .map_err(|e| error::from_statement(&e))?;
     Ok(AdjustResult {
-        movement_id: claim.movement_id.0,
+        movement_ids: vec![movement.id.0],
         pallet_id: parsed.pallet_id.0.clone(),
         adjusted_quantity: set.quantity.0,
         pallet_status: touched.status,
@@ -248,7 +156,6 @@ mod tests {
 
     fn command(pallet_id: &str, occurred_at: &str) -> AdjustCommand {
         AdjustCommand {
-            idempotency_key: "k".to_owned(),
             pallet_id: pallet_id.to_owned(),
             product_id: "00000000-0000-0000-0000-000000000101".to_owned(),
             status: "available".to_owned(),
@@ -257,33 +164,6 @@ mod tests {
             expected_row_version: 1,
             occurred_at: occurred_at.to_owned(),
         }
-    }
-
-    /// Two spellings of one count are ONE command under the key: the
-    /// canonical bytes come from the respelled scalars, not the caller's.
-    #[test]
-    fn the_canonical_command_is_spelling_independent_and_excludes_the_key() {
-        let upper = command(
-            "00000000-0000-0000-0000-00000000030A",
-            "2026-09-05T02:00:00+02:00",
-        );
-        let lower = command(
-            "00000000-0000-0000-0000-00000000030a",
-            "2026-09-05T00:00:00.000000Z",
-        );
-        let mut other_key = command(
-            "00000000-0000-0000-0000-00000000030a",
-            "2026-09-05T00:00:00Z",
-        );
-        other_key.idempotency_key = "different".to_owned();
-        let bytes = |command: &AdjustCommand| canonical_command(command, &parse(command).unwrap());
-        assert_eq!(bytes(&upper), bytes(&lower));
-        assert_eq!(bytes(&lower), bytes(&other_key));
-        assert!(
-            !String::from_utf8(bytes(&lower))
-                .unwrap()
-                .contains("idempotency_key")
-        );
     }
 
     #[test]

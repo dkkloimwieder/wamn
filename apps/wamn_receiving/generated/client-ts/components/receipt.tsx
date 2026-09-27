@@ -91,7 +91,6 @@ export function ReceiptGetDetail(props: ReceiptGetDetailProps) {
         <DetailItem term="Recorded">{cellText(readMember(record(), ["createdAt"]), "timestamptz")}</DetailItem>
         <DetailItem term="Recorded by">{cellText(readMember(record(), ["createdBy"]), "uuid")}</DetailItem>
         <DetailItem term="id">{cellText(readMember(record(), ["id"]), "uuid")}</DetailItem>
-        <DetailItem term="idempotency key">{cellText(readMember(record(), ["idempotencyKey"]), "text")}</DetailItem>
         <DetailItem term="Received at">{cellText(readMember(record(), ["occurredAt"]), "timestamptz")}</DetailItem>
         <DetailItem term="Purchase order">{cellText(readMember(record(), ["purchaseOrderId"]), "uuid")}</DetailItem>
         <DetailItem term="Receipt reference">{cellText(readMember(record(), ["receiptReference"]), "text")}</DetailItem>
@@ -145,7 +144,6 @@ export const RECEIPT_QUERY_TABLE = {
     { field: "createdAt", label: "Recorded", type: "timestamptz", role: "value" },
     { field: "createdBy", label: "Recorded by", type: "uuid", role: "value" },
     { field: "id", label: "id", type: "uuid", role: "key" },
-    { field: "idempotencyKey", label: "idempotency key", type: "text", role: "value" },
     { field: "occurredAt", label: "Received at", type: "timestamptz", role: "value" },
     { field: "purchaseOrderId", label: "Purchase order", type: "uuid", role: "reference", displayField: "purchaseOrderNumber", recordRead: { read: { route: PURCHASE_ORDER_GET_ROUTE, request: PURCHASE_ORDER_GET_REQUEST_FIELDS, result: PURCHASE_ORDER_GET_RESULT_FIELDS }, keyInput: ["id"] } },
     { field: "receiptReference", label: "Receipt reference", type: "text", role: "value" },

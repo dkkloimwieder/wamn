@@ -57,7 +57,7 @@ export const PRODUCT_CREATE_ROUTE: OperationRoute = {
     resultClass: "one",
     partialSchema: null,
     errors: [
-      { literal: "idempotency_conflict", required: ["field"], sources: ["changed_canonical_command"], text: null },
+      { literal: "idempotency_conflict", required: ["field"], sources: ["changed_request"], text: null },
       { literal: "internal_error", required: [], sources: ["query_error", "row_limit_exceeded"], text: null },
       { literal: "invalid_input", required: ["field"], sources: [], text: null },
       { literal: "permission_denied", required: ["operation"], sources: ["permission_denied"], text: null },

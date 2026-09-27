@@ -9,7 +9,6 @@
 //! provisioning uses the existing control library functions.
 
 pub mod ceiling;
-pub mod claim_law;
 pub mod environment;
 pub mod journey;
 

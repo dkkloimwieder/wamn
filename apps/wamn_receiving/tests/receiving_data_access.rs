@@ -30,12 +30,9 @@ mod tests {
         include_str!("../../../apps/wamn_receiving/query/load_purchase_order_history.sql");
     const UPDATE_SQL: &str =
         include_str!("../../../apps/wamn_receiving/generated/sql/purchase_order/update.sql");
-    const CLAIM_COMMAND_SQL: &str =
-        include_str!("../../../apps/wamn_receiving/command/record_receipt/claim_command.sql");
-    const FINALIZE_COMMAND_SQL: &str =
-        include_str!("../../../apps/wamn_receiving/command/record_receipt/finalize_command.sql");
-    const FIND_REPLAY_SQL: &str =
-        include_str!("../../../apps/wamn_receiving/command/record_receipt/find_replay.sql");
+    const APP_SCHEMA_SQL: &str = include_str!("../../../deploy/sql/app-schema.sql");
+    /// The write log operation of `receiving.record_receipt`, without its version.
+    const RECORD_RECEIPT_OPERATION: &str = "wamn-receiving:receiving/record-receipt";
     const FINISH_PURCHASE_ORDER_SQL: &str = include_str!(
         "../../../apps/wamn_receiving/command/record_receipt/finish_purchase_order.sql"
     );
@@ -599,6 +596,7 @@ mod tests {
             .await
             .context("apply the exact Receiving migration")?;
         install_record_history(&client, MANIFEST).await?;
+        install_write_log(&client).await?;
         select_receiving_schema(&client).await?;
 
         assert_status_vocabulary(&client).await?;
@@ -722,6 +720,14 @@ mod tests {
         assert_acme_overlay(&mut client).await?;
 
         Ok(())
+    }
+
+    /// Install `deploy/sql/app-schema.sql`, whose write log the command claims in.
+    async fn install_write_log(client: &Client) -> Result<()> {
+        client
+            .batch_execute(APP_SCHEMA_SQL)
+            .await
+            .context("apply the app schema and its write log")
     }
 
     /// Install the platform record-history functions, and the history tables and
@@ -1488,43 +1494,60 @@ mod tests {
         }
     }
 
+    /// Run the command as its generated codec runs it: claim the key in the
+    /// write log, do the work, and store the result, in one transaction. A key
+    /// that a committed claim holds answers its stored result, or
+    /// `idempotency_conflict` for another request.
     async fn execute_record_receipt_in(
         transaction: &Transaction<'_>,
         command: &ReceiptCommand,
     ) -> std::result::Result<ReceiptCommandResult, CommandAttemptError> {
-        let (canonical_command, line_json) = canonical_receipt_command(command);
-        if let Some(row) = transaction
-            .query_opt(FIND_REPLAY_SQL, &[&command.idempotency_key])
-            .await
-            .map_err(CommandAttemptError::Database)?
-        {
-            return replay_result(&row, &canonical_command);
-        }
-        let claim = transaction
+        let (request, line_json) = canonical_receipt_command(command);
+        let claimed = transaction
             .query_opt(
-                CLAIM_COMMAND_SQL,
+                wamn_schema_generator::write_log::LOG_CLAIM_SQL,
                 &[
+                    &RECORD_RECEIPT_OPERATION,
                     &command.idempotency_key,
-                    &canonical_command,
-                    &command.purchase_order_id,
+                    &request,
                 ],
             )
             .await
             .map_err(CommandAttemptError::Database)?;
-        let Some(claim) = claim else {
-            let replay = transaction
-                .query_opt(FIND_REPLAY_SQL, &[&command.idempotency_key])
+        if claimed.is_none() {
+            let stored = transaction
+                .query_one(
+                    wamn_schema_generator::write_log::LOG_READ_SQL,
+                    &[&RECORD_RECEIPT_OPERATION, &command.idempotency_key],
+                )
                 .await
-                .map_err(CommandAttemptError::Database)?
-                .ok_or_else(|| {
-                    CommandAttemptError::Internal(
-                        "conflicting command claim has no durable result".to_owned(),
-                    )
-                })?;
-            return replay_result(&replay, &canonical_command);
-        };
-        let receipt_id = claim.get::<_, Uuid>("receipt_id");
+                .map_err(CommandAttemptError::Database)?;
+            return replay_result(&stored, &request);
+        }
+        let result = record_receipt_work(transaction, command, &line_json).await?;
+        let stored = json!({
+            "receipt_id": result.receipt_id.to_string(),
+            "purchase_order_id": result.purchase_order_id.to_string(),
+            "purchase_order_status": result.purchase_order_status,
+            "row_version": result.row_version,
+        })
+        .to_string();
+        transaction
+            .query_one(
+                wamn_schema_generator::write_log::LOG_FINISH_SQL,
+                &[&RECORD_RECEIPT_OPERATION, &command.idempotency_key, &stored],
+            )
+            .await
+            .map_err(CommandAttemptError::Database)?;
+        Ok(result)
+    }
 
+    /// The command's work statements, in the order its data access runs them.
+    async fn record_receipt_work(
+        transaction: &Transaction<'_>,
+        command: &ReceiptCommand,
+        line_json: &Value,
+    ) -> std::result::Result<ReceiptCommandResult, CommandAttemptError> {
         let purchase_order = transaction
             .query_opt(LOCK_PURCHASE_ORDER_SQL, &[&command.purchase_order_id])
             .await
@@ -1569,12 +1592,10 @@ mod tests {
         let occurred_at = DateTime::parse_from_rfc3339(&command.occurred_at)
             .map_err(|error| CommandAttemptError::Internal(error.to_string()))?
             .to_utc();
-        if let Err(source) = transaction
+        let receipt_id = match transaction
             .query_one(
                 INSERT_RECEIPT_SQL,
                 &[
-                    &receipt_id,
-                    &command.idempotency_key,
                     &command.purchase_order_id,
                     &command.receipt_reference,
                     &occurred_at,
@@ -1582,18 +1603,21 @@ mod tests {
             )
             .await
         {
-            let database = source.as_db_error();
-            if database.is_some_and(|database| {
-                database.code().code() == "23505"
-                    && database.constraint()
-                        == Some("receipt_purchase_order_id_receipt_reference_key")
-            }) {
-                return Err(CommandAttemptError::Domain(DomainRefusal::new(
-                    "receipt_reference_conflict",
-                )));
+            Ok(row) => row.get::<_, Uuid>("id"),
+            Err(source) => {
+                let database = source.as_db_error();
+                if database.is_some_and(|database| {
+                    database.code().code() == "23505"
+                        && database.constraint()
+                            == Some("receipt_purchase_order_id_receipt_reference_key")
+                }) {
+                    return Err(CommandAttemptError::Domain(DomainRefusal::new(
+                        "receipt_reference_conflict",
+                    )));
+                }
+                return Err(CommandAttemptError::Database(source));
             }
-            return Err(CommandAttemptError::Database(source));
-        }
+        };
         let inserted = transaction
             .query(INSERT_RECEIPT_LINE_SQL, &[&receipt_id, &line_json])
             .await
@@ -1619,29 +1643,6 @@ mod tests {
             .map_err(CommandAttemptError::Database)?;
         let purchase_order_status = finished.get::<_, String>("status");
         let row_version = finished.get::<_, i32>("row_version");
-        let finalized = transaction
-            .query_one(
-                FINALIZE_COMMAND_SQL,
-                &[
-                    &command.idempotency_key,
-                    &canonical_command,
-                    &receipt_id,
-                    &purchase_order_status,
-                    &row_version,
-                ],
-            )
-            .await
-            .map_err(CommandAttemptError::Database)?;
-        if finalized
-            .get::<_, Option<String>>("purchase_order_status")
-            .as_deref()
-            != Some(purchase_order_status.as_str())
-            || finalized.get::<_, Option<i32>>("row_version") != Some(row_version)
-        {
-            return Err(CommandAttemptError::Internal(
-                "stored command result differs from purchase_order result".to_owned(),
-            ));
-        }
         Ok(ReceiptCommandResult {
             receipt_id,
             purchase_order_id: command.purchase_order_id,
@@ -1650,26 +1651,42 @@ mod tests {
         })
     }
 
+    /// What a committed claim answers: its stored result for the same request
+    /// bytes, and `idempotency_conflict` for others.
     fn replay_result(
         row: &Row,
-        canonical_command: &[u8],
+        request: &[u8],
     ) -> std::result::Result<ReceiptCommandResult, CommandAttemptError> {
-        if row.get::<_, Vec<u8>>("canonical_command") != canonical_command {
+        if row.get::<_, Vec<u8>>("request") != request {
             return Err(CommandAttemptError::Domain(DomainRefusal::new(
                 "idempotency_conflict",
             )));
         }
+        let stored = row.get::<_, Option<String>>("result").ok_or_else(|| {
+            CommandAttemptError::Internal("a committed claim has no result".to_owned())
+        })?;
+        let stored: Value = serde_json::from_str(&stored)
+            .map_err(|error| CommandAttemptError::Internal(error.to_string()))?;
+        let text = |name: &str| {
+            stored[name].as_str().map(str::to_owned).ok_or_else(|| {
+                CommandAttemptError::Internal(format!("the stored result has no {name}"))
+            })
+        };
+        let id = |name: &str| {
+            text(name)?
+                .parse::<Uuid>()
+                .map_err(|error| CommandAttemptError::Internal(error.to_string()))
+        };
         Ok(ReceiptCommandResult {
-            receipt_id: row.get("receipt_id"),
-            purchase_order_id: row.get("purchase_order_id"),
-            purchase_order_status: row
-                .get::<_, Option<String>>("purchase_order_status")
+            receipt_id: id("receipt_id")?,
+            purchase_order_id: id("purchase_order_id")?,
+            purchase_order_status: text("purchase_order_status")?,
+            row_version: stored["row_version"]
+                .as_i64()
+                .and_then(|value| i32::try_from(value).ok())
                 .ok_or_else(|| {
-                    CommandAttemptError::Internal("replay status is absent".to_owned())
+                    CommandAttemptError::Internal("the stored result has no row_version".to_owned())
                 })?,
-            row_version: row.get::<_, Option<i32>>("row_version").ok_or_else(|| {
-                CommandAttemptError::Internal("replay row_version is absent".to_owned())
-            })?,
         })
     }
 
@@ -1751,7 +1768,8 @@ mod tests {
         let row = client
             .query_one(
                 "SELECT \
-                 (SELECT count(*) FROM record_receipt_command)::int8 AS command_count, \
+                 (SELECT count(*) FROM app_system.write_log \
+                   WHERE operation = 'wamn-receiving:receiving/record-receipt')::int8 AS command_count, \
                  (SELECT count(*) FROM receipt)::int8 AS receipt_count, \
                  (SELECT count(*) FROM receipt_line)::int8 AS receipt_line_count, \
                  (SELECT received_quantity::text FROM purchase_order_line WHERE id = $1) AS first_received, \
@@ -1866,7 +1884,15 @@ mod tests {
     /// `purchase_order.supplier_id` references `supplier`, so every order and
     /// every update names a supplier that exists. A repeated name keeps the
     /// row the first call wrote.
+    /// Insert a fixture supplier under a chosen id. The table owner writes it:
+    /// the application role holds no INSERT on the id that a supplier's default
+    /// mints. The caller's role is restored afterwards.
     async fn insert_supplier(client: &Client, id: Uuid) -> Result<()> {
+        let role: String = client
+            .query_one("SELECT current_user::text", &[])
+            .await?
+            .get(0);
+        client.batch_execute("RESET ROLE").await?;
         client
             .execute(
                 "INSERT INTO supplier (id, name) VALUES ($1, $2) \
@@ -1875,6 +1901,9 @@ mod tests {
             )
             .await
             .context("insert supplier fixture")?;
+        client
+            .batch_execute(&format!("SET LOCAL ROLE \"{}\"", role.replace('"', "\"\"")))
+            .await?;
         Ok(())
     }
 

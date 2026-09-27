@@ -1,5 +1,5 @@
-INSERT INTO supplier (id, name)
-VALUES ($1::uuid, $2::text)
+INSERT INTO supplier (name)
+VALUES ($1::text)
 RETURNING
     created_at,
     id,

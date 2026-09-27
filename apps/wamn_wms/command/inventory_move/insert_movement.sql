@@ -1,5 +1,4 @@
 INSERT INTO inventory_movement (
-    idempotency_key,
     pallet_id,
     product_id,
     kind,
@@ -8,5 +7,5 @@ INSERT INTO inventory_movement (
     quantity,
     occurred_at
 )
-VALUES ($1, $2, $3, 'move', $4, $5, $6, $7)
+VALUES ($1, $2, 'move', $3, $4, $5, $6)
 RETURNING id;

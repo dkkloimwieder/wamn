@@ -1030,8 +1030,19 @@ fn a_claim_command_lists_the_write_log_and_its_codec_claims_its_key() {
         "const KEY_FIELD: &str = \"value.idempotency_key\";",
         "let key = request.idempotency_key.clone();",
         "F: AsyncFnMut(\n        &mut wamn_postgres_statements::Transaction,",
+        // The request bytes respell a numeric, keep the declared line order,
+        // and leave the key out.
+        "wamn_execution_contract::canonical_numeric(&element.amount)",
+        "left[\"widget_id\"]",
     ] {
         assert!(codec.contains(expected), "{expected}\n{codec}");
+    }
+    let request_bytes = &codec[codec
+        .find("fn request_bytes(")
+        .expect("the codec builds its request bytes")..];
+    let request_bytes = &request_bytes[..request_bytes.find("\n}\n").expect("one function")];
+    for absent in ["idempotency_key", "request_id"] {
+        assert!(!request_bytes.contains(absent), "{absent}\n{request_bytes}");
     }
     // A command that claims nothing keeps the plain handler loop.
     let archive = std::str::from_utf8(

@@ -7,27 +7,8 @@ pub struct AddToTargetRow {
 }
 
 #[derive(Debug, sqlx::FromRow)]
-pub struct ClaimCommandRow {
-    pub movement_id: uuid::Uuid,
-}
-
-#[derive(Debug, sqlx::FromRow)]
 pub struct ConsumeSourceRow {
     pub row_version: i32,
-}
-
-#[derive(Debug, sqlx::FromRow)]
-pub struct FinalizeCommandRow {
-    pub row_version: Option<i32>,
-}
-
-#[derive(Debug, sqlx::FromRow)]
-pub struct FindReplayRow {
-    pub canonical_command: Vec<u8>,
-    pub movement_id: uuid::Uuid,
-    pub source_pallet_id: uuid::Uuid,
-    pub target_pallet_id: uuid::Uuid,
-    pub row_version: Option<i32>,
 }
 
 #[derive(Debug, sqlx::FromRow)]
@@ -64,14 +45,8 @@ pub struct TouchTargetRow {
 
 pub(crate) const ADD_TO_TARGET_SQL: &str =
     include_str!("../../command/inventory_merge/add_to_target.sql");
-pub(crate) const CLAIM_COMMAND_SQL: &str =
-    include_str!("../../command/inventory_merge/claim_command.sql");
 pub(crate) const CONSUME_SOURCE_SQL: &str =
     include_str!("../../command/inventory_merge/consume_source.sql");
-pub(crate) const FINALIZE_COMMAND_SQL: &str =
-    include_str!("../../command/inventory_merge/finalize_command.sql");
-pub(crate) const FIND_REPLAY_SQL: &str =
-    include_str!("../../command/inventory_merge/find_replay.sql");
 pub(crate) const INSERT_MOVEMENT_SQL: &str =
     include_str!("../../command/inventory_merge/insert_movement.sql");
 pub(crate) const LOCK_BOTH_PALLETS_SQL: &str =
@@ -95,38 +70,8 @@ pub(crate) fn add_to_target_status_bind_fixture() -> String {
 pub(crate) fn add_to_target_quantity_bind_fixture() -> rust_decimal::Decimal {
     rust_decimal::Decimal::ZERO
 }
-pub(crate) fn claim_command_idempotency_key_bind_fixture() -> String {
-    String::new()
-}
-pub(crate) fn claim_command_canonical_command_bind_fixture() -> Vec<u8> {
-    Vec::new()
-}
-pub(crate) fn claim_command_source_pallet_id_bind_fixture() -> uuid::Uuid {
-    uuid::Uuid::nil()
-}
-pub(crate) fn claim_command_target_pallet_id_bind_fixture() -> uuid::Uuid {
-    uuid::Uuid::nil()
-}
 pub(crate) fn consume_source_source_pallet_id_bind_fixture() -> uuid::Uuid {
     uuid::Uuid::nil()
-}
-pub(crate) fn finalize_command_idempotency_key_bind_fixture() -> String {
-    String::new()
-}
-pub(crate) fn finalize_command_canonical_command_bind_fixture() -> Vec<u8> {
-    Vec::new()
-}
-pub(crate) fn finalize_command_movement_id_bind_fixture() -> uuid::Uuid {
-    uuid::Uuid::nil()
-}
-pub(crate) fn finalize_command_row_version_bind_fixture() -> i32 {
-    0_i32
-}
-pub(crate) fn find_replay_idempotency_key_bind_fixture() -> String {
-    String::new()
-}
-pub(crate) fn insert_movement_idempotency_key_bind_fixture() -> String {
-    String::new()
 }
 pub(crate) fn insert_movement_pallet_id_bind_fixture() -> uuid::Uuid {
     uuid::Uuid::nil()

@@ -177,7 +177,7 @@ mod tests {
 
     fn movement() -> Value {
         json!({
-            "movement_id": "33333333-0000-0000-0000-000000000009", "pallet_id": PALLET_ID,
+            "movement_ids": ["33333333-0000-0000-0000-000000000009"], "pallet_id": PALLET_ID,
             "location_id": DESTINATION, "pallet_status": "available", "row_version": 8
         })
     }

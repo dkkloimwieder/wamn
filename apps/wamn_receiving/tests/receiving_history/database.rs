@@ -162,11 +162,12 @@ pub async fn snapshot(client: &Client, fixture: &Fixture) -> Result<Snapshot> {
         ), lines AS (
             SELECT * FROM receiving.purchase_order_line WHERE purchase_order_id = $1
         ), claims AS (
-            SELECT * FROM receiving.record_receipt_command
-            WHERE purchase_order_id = $1 OR starts_with(idempotency_key, $2)
+            SELECT * FROM app_system.write_log
+            WHERE operation = 'wamn-receiving:receiving/record-receipt' AND starts_with(idempotency_key, $2)
         ), receipts AS (
             SELECT * FROM receiving.receipt
-            WHERE purchase_order_id = $1 OR starts_with(idempotency_key, $2)
+            WHERE purchase_order_id = $1
+                OR id::text IN (SELECT result::jsonb ->> 'receipt_id' FROM claims)
         ), receipt_lines AS (
             SELECT * FROM receiving.receipt_line
             WHERE receipt_id IN (SELECT id FROM receipts)
@@ -325,7 +326,7 @@ pub async fn wait_for_blocked(
                         a.state = 'active' AND a.wait_event_type = 'Lock'
                             AND NOT r.rolsuper
                             AND pg_has_role(a.usesysid, 'wamn_app', 'MEMBER')
-                            AND a.query ~* '\m(record_receipt_command|purchase_order|purchase_order_line|receipt|receipt_line)\M'
+                            AND a.query ~* '\m(write_log|purchase_order|purchase_order_line|receipt|receipt_line)\M'
                             AS receiving_command
                     FROM pg_stat_activity a JOIN pg_roles r ON r.oid = a.usesysid
                     WHERE a.datname = current_database()

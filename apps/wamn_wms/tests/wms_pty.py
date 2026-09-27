@@ -124,13 +124,18 @@ COMMIT;""")
 
 def snapshot(db, name, ids):
     return db.sql(name, f"""SELECT json_build_object(
-  'claims', (SELECT count(*) FROM wms.inventory_move_command WHERE pallet_id = '{ids.pallet}'),
+  'claims', (SELECT count(*) FROM app_system.write_log AS logged
+    WHERE logged.operation = 'wamn-wms:inventory/move' AND EXISTS
+      (SELECT 1 FROM wms.inventory_movement AS movement WHERE movement.pallet_id = '{ids.pallet}'
+         AND logged.result::jsonb -> 'movement_ids' ? movement.id::text)),
   'movements', (SELECT count(*) FROM wms.inventory_movement WHERE pallet_id = '{ids.pallet}'),
-  'command', (SELECT row_to_json(command) FROM (
-    SELECT idempotency_key, movement_id, pallet_id, pallet_status, row_version
-    FROM wms.inventory_move_command WHERE pallet_id = '{ids.pallet}') AS command),
+  'command', (SELECT json_build_object('idempotency_key', logged.idempotency_key)::jsonb
+      || (logged.result::jsonb - 'location_id') FROM app_system.write_log AS logged
+    WHERE logged.operation = 'wamn-wms:inventory/move' AND EXISTS
+      (SELECT 1 FROM wms.inventory_movement AS movement WHERE movement.pallet_id = '{ids.pallet}'
+         AND logged.result::jsonb -> 'movement_ids' ? movement.id::text)),
   'movement', (SELECT row_to_json(movement) FROM (
-    SELECT idempotency_key, pallet_id, product_id, from_location_id, to_location_id, kind, quantity::text
+    SELECT id, pallet_id, product_id, from_location_id, to_location_id, kind, quantity::text
     FROM wms.inventory_movement WHERE pallet_id = '{ids.pallet}') AS movement),
   'pallet', (SELECT json_build_object('location_id', location_id, 'status', status, 'row_version', row_version)
     FROM wms.pallet WHERE id = '{ids.pallet}'),
@@ -140,8 +145,11 @@ def snapshot(db, name, ids):
 
 def cleanup(db, ids):
     remaining = db.sql("90-cleanup", f"""BEGIN;
+DELETE FROM app_system.write_log AS logged
+    WHERE logged.operation = 'wamn-wms:inventory/move' AND EXISTS
+      (SELECT 1 FROM wms.inventory_movement AS movement WHERE movement.pallet_id = '{ids.pallet}'
+         AND logged.result::jsonb -> 'movement_ids' ? movement.id::text);
 DELETE FROM wms.inventory_movement WHERE pallet_id = '{ids.pallet}';
-DELETE FROM wms.inventory_move_command WHERE pallet_id = '{ids.pallet}';
 DELETE FROM wms.pallet_quantity WHERE pallet_id = '{ids.pallet}';
 DELETE FROM wms.pallet WHERE id = '{ids.pallet}';
 DELETE FROM wms.location WHERE id IN ('{ids.source}', '{ids.destination}');
@@ -210,21 +218,23 @@ def drive(session, relay, db, evidence, ids, mode):
     require(len(answer) == 1 and answer[0]["request_id"] == request[0]["request_id"],
             "move response does not match the submitted request")
     value = answer[0]["value"]
-    movement_id = str(uuid.UUID(value["movement_id"]))
-    committed = {"movement_id": movement_id, "pallet_id": ids.pallet,
+    movement_ids = [str(uuid.UUID(movement_id)) for movement_id in value["movement_ids"]]
+    require(len(movement_ids) == 1, "the move of one quantity row did not write one movement")
+    movement_id = movement_ids[0]
+    committed = {"movement_ids": movement_ids, "pallet_id": ids.pallet,
                  "location_id": ids.destination, "pallet_status": "available", "row_version": 2}
     require(move["status"] == 200 and value == committed,
             "successful move did not return the committed movement")
-    session.text("movement_id: " + movement_id)
+    session.text(movement_id)
     frame("13-committed-move")
     observed = snapshot(db, "14-committed-db", ids)
     require(observed["claims"] == observed["movements"] == 1, "move did not commit exactly one claim and movement")
-    require(observed["command"] == {"idempotency_key": command["idempotency_key"], "movement_id": movement_id,
+    require(observed["command"] == {"idempotency_key": command["idempotency_key"], "movement_ids": movement_ids,
                                     "pallet_id": ids.pallet, "pallet_status": "available", "row_version": 2},
-            "database claim differs from the visible committed result")
+            "database write log result differs from the visible committed result")
     require(observed["pallet"] == {"location_id": ids.destination, "status": "available", "row_version": 2},
             "pallet did not retain the committed move")
-    require(observed["movement"] == {"idempotency_key": command["idempotency_key"], "pallet_id": ids.pallet,
+    require(observed["movement"] == {"id": movement_id, "pallet_id": ids.pallet,
                                      "product_id": ids.product, "from_location_id": ids.source,
                                      "to_location_id": ids.destination, "kind": "move", "quantity": "10.0000"},
             "movement differs from the seeded quantity and locations")

@@ -20,8 +20,8 @@
 --
 --   psql "$TARGET_DATABASE_URL" -v reset=1 -v scale=100 -f wms-seed.sql
 --
--- The reset also removes every movement and every command claim, because a
--- movement names a pallet.
+-- The reset also removes every movement, because a movement names a pallet,
+-- and the write log rows of WMS.
 --
 -- The file writes no inventory_movement row. The commands write them.
 
@@ -40,11 +40,10 @@ SELECT set_config('app.user_id', '770df186-ac15-579e-b46b-c297cae2011b', true),
 
 \if :{?reset}
 TRUNCATE wms.inventory_movement,
-         wms.inventory_move_command, wms.inventory_adjust_command,
-         wms.inventory_merge_command, wms.inventory_split_command,
-         wms.pallet_quantity, wms.pallet, wms.pallet_command,
-         wms.product, wms.product_command,
-         wms.location, wms.location_command;
+         wms.pallet_quantity, wms.pallet,
+         wms.product,
+         wms.location;
+DELETE FROM app_system.write_log WHERE operation LIKE 'wamn-wms:%';
 \endif
 
 INSERT INTO wms.product (id, product_code)

@@ -10,9 +10,8 @@
 //! moved the stock from its own response: `location_id` is the target and
 //! `row_version` advanced once, while the loser observed that exact revision.
 //!
-//! TWO. The winner's exact body replayed returns the same `movement_id` --
-//! by construction (command-identity-from-claim), not by an early-return
-//! path.
+//! TWO. The winner's exact body replayed returns the same `movement_ids`: the
+//! write log stored the result, and the replay answers it.
 //!
 //! These cases return structured results to the application test caller.
 
@@ -225,11 +224,7 @@ pub(crate) async fn assert_contention_and_replay(
         value["pallet_id"] == runtime.pallet_id.as_str(),
         "the winner moved the fixture pallet: {value}"
     );
-    let movement_id = value["movement_id"]
-        .as_str()
-        .filter(|id| id.len() == 36)
-        .context("the winner carries a movement_id")?
-        .to_owned();
+    let movement_id = one_movement(value).context("the winner wrote one movement")?;
     // And the loser lost to THAT version, not to something else.
     anyhow::ensure!(
         loser["error"]["detail"]["expected_row_version"].as_i64() == Some(expected_revision)
@@ -239,14 +234,14 @@ pub(crate) async fn assert_contention_and_replay(
     );
 
     // TWO. The winner's exact body, again, with a fresh request id: the same
-    // movement id, because the claim was written once under a primary key.
+    // movement id, because the write log answers the stored result.
     let mut replay: Value = (**winning_body).clone();
     replay[0]["request_id"] = json!(REQUEST_ID_REPLAY);
     let answer = route.post(&client, "/inventory/move", &replay).await?;
     let replayed = item(&answer, REQUEST_ID_REPLAY)?;
     anyhow::ensure!(
-        replayed["value"]["movement_id"] == movement_id.as_str(),
-        "a replay returns the same movement_id {movement_id}: {replayed}"
+        replayed["value"]["movement_ids"] == json!([movement_id]),
+        "a replay returns the same movement_ids [{movement_id}]: {replayed}"
     );
     anyhow::ensure!(
         replayed["value"]["row_version"].as_i64() == Some(next_revision),
@@ -274,7 +269,7 @@ pub(crate) async fn assert_label_delivery_and_replay(
             && moved["row_version"] == 2,
         "the composed route returns the committed move: {moved}"
     );
-    let movement_id = uuid(&moved["movement_id"])?;
+    let movement_id = one_movement(moved)?;
 
     let mut replay = body;
     replay[0]["request_id"] = json!("label-replay");
@@ -284,8 +279,8 @@ pub(crate) async fn assert_label_delivery_and_replay(
         replayed == moved,
         "the composed route replay returns the original move {movement_id}: {replayed}"
     );
-    // The label workflow keys the label by the move's idempotency key.
-    Ok(json!({"movement_id": movement_id, "label_key": "label-move-key"}))
+    // The label workflow keys the label by the movement id.
+    Ok(json!({"movement_id": movement_id, "label_key": movement_id}))
 }
 
 /// The `value` of the single item answering `request_id`, or the refusal as
@@ -336,6 +331,14 @@ fn revision(value: &Value) -> anyhow::Result<i64> {
     value
         .as_i64()
         .with_context(|| format!("a revision crosses the wire as a JSON integer: {value}"))
+}
+
+/// The one movement id of a result that wrote one movement row.
+fn one_movement(value: &Value) -> anyhow::Result<String> {
+    match value["movement_ids"].as_array().map(Vec::as_slice) {
+        Some([id]) => uuid(id),
+        _ => anyhow::bail!("one movement id: {value}"),
+    }
 }
 
 fn uuid(value: &Value) -> anyhow::Result<String> {
@@ -403,10 +406,10 @@ pub(crate) async fn assert_remaining_operations(
             && adjusted["pallet_status"] == "available",
         "the adjust counted 7 and advanced the revision from {version} (held {held}): {adjusted}"
     );
-    uuid(&adjusted["movement_id"])?;
+    one_movement(adjusted)?;
 
-    // SPLIT: 3 units onto a new pallet beside the source. The new pallet's id
-    // comes from the claim, so the exact body again yields the SAME id.
+    // SPLIT: 3 units onto a new pallet beside the source. The write log keeps
+    // the result, so the exact body again yields the SAME id.
     let split = json!([{"request_id": "ops-split", "value": {
         "idempotency_key": "ops-split-key", "source_pallet_id": pallet_id, "product_id": product_id,
         "status": "available", "quantity": "3", "new_pallet_code": "PAL-302",
@@ -421,14 +424,14 @@ pub(crate) async fn assert_remaining_operations(
         "the split advanced the source: {first}"
     );
     let new_pallet_id = uuid(&first["new_pallet_id"])?;
-    let split_movement_id = uuid(&first["movement_id"])?;
+    let split_movement_id = one_movement(first)?;
     let mut replay = split.clone();
     replay[0]["request_id"] = json!("ops-split-replay");
     let answer = route.post(&client, "/inventory/split", &replay).await?;
     let replayed = value(&answer, "ops-split-replay")?;
     anyhow::ensure!(
         replayed["new_pallet_id"] == new_pallet_id.as_str()
-            && replayed["movement_id"] == split_movement_id.as_str()
+            && replayed["movement_ids"] == json!([split_movement_id])
             && replayed["row_version"].as_i64() == Some(split_revision),
         "a replayed split returns the same new pallet {new_pallet_id}, not a second one: {replayed}"
     );
@@ -611,10 +614,10 @@ pub(crate) async fn assert_committed_move_after_label_failure(
             .is_some_and(|item| item.len() == 2 && item.contains_key("value")),
         "the move envelope has only request_id and value: {committed}"
     );
-    let movement_id = uuid(&committed["value"]["movement_id"])?;
+    let movement_id = one_movement(&committed["value"])?;
     uuid::Uuid::parse_str(&movement_id).context("the committed movement identity is a UUID")?;
     let expected = json!({
-        "movement_id":movement_id,
+        "movement_ids":[movement_id],
         "pallet_id":runtime.pallet_id,
         "location_id":runtime.to_location_id,
         "pallet_status":before["status"],
@@ -673,16 +676,19 @@ pub(crate) async fn assert_committed_rows(
     let row = project
         .query_one(
             r"SELECT json_build_object(
-    'command_count', (SELECT count(*) FROM wms.inventory_move_command WHERE idempotency_key = $1),
-    'movement_count', (SELECT count(*) FROM wms.inventory_movement WHERE idempotency_key = $1),
+    'command_count', (SELECT count(*) FROM app_system.write_log
+        WHERE operation = 'wamn-wms:inventory/move' AND idempotency_key = $1),
+    'movement_count', (SELECT count(*) FROM wms.inventory_movement WHERE id::text IN (
+        SELECT jsonb_array_elements_text(result::jsonb -> 'movement_ids') FROM app_system.write_log
+        WHERE operation = 'wamn-wms:inventory/move' AND idempotency_key = $1)),
     'quantity_count', (SELECT count(*) FROM wms.pallet_quantity WHERE pallet_id = $2::text::uuid),
-    'command', (SELECT row_to_json(command) FROM (
-        SELECT movement_id, pallet_id, pallet_status, row_version
-        FROM wms.inventory_move_command WHERE idempotency_key = $1
-    ) AS command),
+    'command', (SELECT result::json FROM app_system.write_log
+        WHERE operation = 'wamn-wms:inventory/move' AND idempotency_key = $1),
     'movement', (SELECT row_to_json(movement) FROM (
-        SELECT id, idempotency_key, pallet_id, from_location_id, to_location_id, kind
-        FROM wms.inventory_movement WHERE idempotency_key = $1
+        SELECT id, pallet_id, from_location_id, to_location_id, kind
+        FROM wms.inventory_movement WHERE id::text IN (
+            SELECT jsonb_array_elements_text(result::jsonb -> 'movement_ids') FROM app_system.write_log
+            WHERE operation = 'wamn-wms:inventory/move' AND idempotency_key = $1)
     ) AS movement),
     'pallet', (SELECT row_to_json(pallet) FROM (
         SELECT id, location_id, status, row_version FROM wms.pallet WHERE id = $2::text::uuid
@@ -698,11 +704,11 @@ pub(crate) async fn assert_committed_rows(
         observed["command_count"] == 1
             && observed["movement_count"] == 1
             && observed["quantity_count"] == 1
-            && observed["command"]["movement_id"] == expected["movement_id"]
+            && observed["command"]["movement_ids"] == json!([expected["movement_id"]])
             && observed["command"]["pallet_id"] == expected["pallet_id"]
             && observed["command"]["pallet_status"] == expected["pallet_status"]
             && observed["command"]["row_version"].as_i64() == Some(expected_row_version)
-            && observed["movement"]["idempotency_key"] == expected["idempotency_key"]
+            && observed["movement"]["id"] == expected["movement_id"]
             && observed["movement"]["pallet_id"] == expected["pallet_id"]
             && observed["movement"]["to_location_id"] == expected["location_id"]
             && observed["movement"]["from_location_id"] != observed["movement"]["to_location_id"]

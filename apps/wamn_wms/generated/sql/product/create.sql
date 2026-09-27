@@ -1,5 +1,5 @@
-INSERT INTO product (id, product_code)
-VALUES ($1::uuid, $2::text)
+INSERT INTO product (product_code)
+VALUES ($1::text)
 RETURNING
     created_at,
     id,

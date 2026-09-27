@@ -24,13 +24,14 @@ The four commands have distinct authority and effects:
 | `inventory.merge` | Move stock between two pallets and retire the source. |
 | `inventory.split` | Transfer quantity into a newly identified pallet. |
 
-The command owns one explicit transaction for each input item.
-It claims the caller's idempotency key, locks the relevant pallet rows, and compares the expected revision.
+The generated codec opens one transaction for each input item and claims the caller's idempotency key in the platform write log.
+The command locks the relevant pallet rows and compares the expected revision.
 It validates quantity and status before committing the movement, quantity changes, and new revision.
 A refusal reports the declared application error.
 `concurrency_conflict` carries both `expected_row_version` and `observed_row_version`.
 
-The move claim stores the original `movement_id` and result.
+The write log stores the result of the move, with its original `movement_ids`.
+The `movement_ids` are the ids of the movement rows that the command wrote, and a move of a pallet with no quantity rows answers an empty list.
 Repeating the same command returns that result without another movement.
 Changing its body under the same key refuses.
 Two competing moves on the same pallet must produce one success and one `concurrency_conflict`.
@@ -47,7 +48,7 @@ Sorting across the quantity join is outside its declared query.
 Each other model has a generated `get` and a generated `query` that pages by `created_at`.
 The `location` and `product` queries filter on their code.
 `location` and `product` also have a generated `create` and `update`, and `pallet` has a generated `create`.
-Each create takes its identity from its own claim table, so a retry of one key returns the first row.
+Each create claims its key in the write log, so a retry of one key returns the first row.
 Each update binds `row_version`. Every WMS revision is an `int4`, and the pallet revision is one too.
 `inventory_movement` has no write, because it is a log that the commands write.
 
@@ -64,7 +65,8 @@ inventory_movement insert → shape (jsonata) → label-render → blob-put
 ```
 
 The `shape` node turns a move's row into one label item, and any other movement kind into none.
-The label is stored under the move's idempotency key, so a move with several product lines, or a redelivered event, overwrites the same object.
+The label is stored under the movement id, so a redelivered event overwrites the same object.
+A move with several product lines writes one movement row, and one label, for each line.
 The move response carries the committed move only (docs/plan/workflow-feature.md).
 
 ## Application observations

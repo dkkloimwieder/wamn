@@ -549,16 +549,14 @@ pub(super) async fn assert_nested_session(
     // The base replays its stored result unchanged. Read current Acme fields separately.
     let expected_replay = project
         .query_one(
-            "SELECT jsonb_build_object(\
-           'receipt_id', command.receipt_id::text, \
-           'purchase_order_id', command.purchase_order_id::text, \
-           'purchase_order_status', command.purchase_order_status, \
-           'row_version', command.row_version), \
+            "SELECT command.result::jsonb, \
            purchase.row_version, purchase.acme_inspection_required, \
            purchase.acme_quality_status \
-         FROM receiving.record_receipt_command AS command \
-         JOIN receiving.purchase_order AS purchase ON purchase.id = command.purchase_order_id \
-         WHERE command.idempotency_key = 'receipt-command-2' \
+         FROM app_system.write_log AS command \
+         JOIN receiving.purchase_order AS purchase \
+           ON purchase.id = (command.result::jsonb ->> 'purchase_order_id')::uuid \
+         WHERE command.operation = 'wamn-receiving:receiving/record-receipt' \
+           AND command.idempotency_key = 'receipt-command-2' \
            AND purchase.id = '00000000-0000-0000-0000-000000000302'",
             &[],
         )
@@ -1018,7 +1016,7 @@ pub(super) async fn nested_receipt_state(project: &Client) -> anyhow::Result<Val
     Ok(project.query_one(
         "SELECT jsonb_build_object(\
            'commands', (SELECT jsonb_agg(to_jsonb(row) ORDER BY idempotency_key) \
-             FROM receiving.record_receipt_command AS row), \
+             FROM app_system.write_log AS row WHERE row.operation = 'wamn-receiving:receiving/record-receipt'), \
            'receipts', (SELECT jsonb_agg(to_jsonb(row) ORDER BY id) FROM receiving.receipt AS row), \
            'receipt_lines', (SELECT jsonb_agg(to_jsonb(row) ORDER BY id) FROM receiving.receipt_line AS row), \
            'orders', (SELECT jsonb_agg(to_jsonb(row) ORDER BY id) FROM receiving.purchase_order AS row), \

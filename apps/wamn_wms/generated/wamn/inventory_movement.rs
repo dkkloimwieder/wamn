@@ -8,7 +8,6 @@ pub struct InventoryMovementRow {
     pub created_by: wamn_postgres_statements::Uuid,
     pub from_location_id: Option<wamn_postgres_statements::Uuid>,
     pub id: wamn_postgres_statements::Uuid,
-    pub idempotency_key: String,
     pub kind: String,
     pub occurred_at: wamn_postgres_statements::TimestampTz,
     pub pallet_id: wamn_postgres_statements::Uuid,
@@ -19,9 +18,9 @@ pub struct InventoryMovementRow {
 }
 
 pub(crate) const GET_DIGEST: &str =
-    "sha256:06e6b0d81cbaad327ad71bb4b39aa443650f4f021a6927773b7a302c6a21fd78";
+    "sha256:bf9f3519935253b1063192015303a25f8626eca1769f03bda6e4c3acdf6859f8";
 pub(crate) const QUERY_DIGEST: &str =
-    "sha256:75b2fce7ff0d02c9d272b28220d29d10a50f9199c35075531368719885dc3bde";
+    "sha256:b2e0988b36ddd211e98c1f94cfa1b034ecad8f95872ba55d948cbc827350aeee";
 
 pub(crate) async fn get(
     connection: &mut Connection,
@@ -39,7 +38,6 @@ pub(crate) async fn get(
             created_by: row.decode("created_by")?,
             from_location_id: row.decode("from_location_id")?,
             id: row.decode("id")?,
-            idempotency_key: row.decode("idempotency_key")?,
             kind: row.decode("kind")?,
             occurred_at: row.decode("occurred_at")?,
             pallet_id: row.decode("pallet_id")?,
@@ -74,7 +72,6 @@ pub(crate) async fn query_created_at_ascending(
                     created_by: row.decode("created_by")?,
                     from_location_id: row.decode("from_location_id")?,
                     id: row.decode("id")?,
-                    idempotency_key: row.decode("idempotency_key")?,
                     kind: row.decode("kind")?,
                     occurred_at: row.decode("occurred_at")?,
                     pallet_id: row.decode("pallet_id")?,

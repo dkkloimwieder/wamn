@@ -13,7 +13,7 @@ The server owns the authoritative receipt transaction and its resulting identifi
 CSV import remains outside the declared Receiving operations.
 
 The base owns `item`, `location`, `purchase_order`, `purchase_order_line`, `receipt`, and `receipt_line`.
-Its internal `record_receipt_command` table stores replay information and is excluded from CDC.
+The generated codec of `receiving.record_receipt` claims its key in the platform write log, `app_system.write_log`, which stores the result that a retry answers.
 The public operations are declared in the manifest:
 
 | Operation | Purpose |

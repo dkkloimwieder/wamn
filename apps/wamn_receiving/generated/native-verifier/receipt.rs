@@ -5,7 +5,6 @@ pub struct ReceiptRow {
     pub created_at: chrono::DateTime<chrono::Utc>,
     pub created_by: uuid::Uuid,
     pub id: uuid::Uuid,
-    pub idempotency_key: String,
     pub occurred_at: chrono::DateTime<chrono::Utc>,
     pub purchase_order_id: uuid::Uuid,
     pub receipt_reference: String,

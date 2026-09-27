@@ -1,10 +1,8 @@
 //! Runtime-checked `supplier` operations.
 
 use chrono::{DateTime, SecondsFormat, Utc};
-use serde_json::json;
 use uuid::Uuid;
-use wamn_execution_contract::canonical_json_bytes;
-use wamn_postgres_statements::{Connection, TimestampTz, Uuid as WamnUuid};
+use wamn_postgres_statements::{Connection, TimestampTz, Transaction, Uuid as WamnUuid};
 
 use crate::cursor::{CursorDirection, decode_cursor, encode_cursor};
 use crate::error::{AccessError, AllowedConstraints};
@@ -60,76 +58,21 @@ pub async fn query(
     Ok(Page::new(rows, "query supplier", limit, cursor_from_row))
 }
 
-/// Create one supplier under the identity its claim row mints.
+/// Create one supplier in the transaction its codec holds for the write log.
 ///
-/// The key carries the command, so a retry of the same name returns the row the
-/// first attempt wrote, and the same key under a different name refuses.
+/// # Errors
+///
+/// [`AccessError`] carrying the literal the operation contract declares.
 pub async fn create(
-    connection: &mut Connection,
-    idempotency_key: &str,
+    transaction: &mut Transaction,
     name: Option<&str>,
 ) -> Result<SupplierRow, AccessError> {
     let name = validated_name(name)?;
-    let canonical_command = canonical_json_bytes(&json!({"name": name}));
-    let transaction = connection.begin().await.map_err(|source| {
-        AccessError::from_statement("begin supplier creation", &source, CREATE_CONSTRAINTS)
-    })?;
-    let mut claim = generated::begin_claim(transaction);
-
-    if let Some(replay) = generated::create_replay(&mut claim, idempotency_key.to_owned())
-        .await
-        .map_err(|source| {
-            AccessError::from_statement("find supplier replay", &source, CREATE_CONSTRAINTS)
-        })?
-    {
-        return replay_row(replay, &canonical_command);
-    }
-
-    let claimed = generated::create_claim(
-        &mut claim,
-        idempotency_key.to_owned(),
-        canonical_command.clone(),
-    )
-    .await
-    .map_err(|source| {
-        AccessError::from_statement(
-            "claim supplier idempotency key",
-            &source,
-            CREATE_CONSTRAINTS,
-        )
-    })?;
-    let Some(claimed) = claimed else {
-        // Another caller took the key between the replay read and this insert.
-        // Its row is committed, so the replay read now answers.
-        let replay = generated::create_replay(&mut claim, idempotency_key.to_owned())
-            .await
-            .map_err(|source| {
-                AccessError::from_statement(
-                    "load concurrent supplier replay",
-                    &source,
-                    CREATE_CONSTRAINTS,
-                )
-            })?
-            .ok_or_else(|| {
-                AccessError::internal("conflicting supplier claim has no durable row")
-            })?;
-        return replay_row(replay, &canonical_command);
-    };
-
-    let finalized = generated::create(claim, claimed.supplier_id, name.to_owned())
+    generated::create(transaction, name.to_owned())
         .await
         .map_err(|source| {
             AccessError::from_statement("insert supplier", &source, CREATE_CONSTRAINTS)
-        })?;
-    let row = SupplierRow {
-        created_at: finalized.row.created_at.clone(),
-        id: finalized.row.id.clone(),
-        name: finalized.row.name.clone(),
-    };
-    finalized.commit().await.map_err(|source| {
-        AccessError::from_statement("commit supplier creation", &source, CREATE_CONSTRAINTS)
-    })?;
-    Ok(row)
+        })
 }
 
 /// The column is `NOT NULL` and carries no default, so a name the caller left
@@ -140,23 +83,6 @@ fn validated_name(name: Option<&str>) -> Result<&str, AccessError> {
         return Err(AccessError::invalid("supplier name is empty", "name"));
     }
     Ok(name)
-}
-
-fn replay_row(
-    replay: generated::SupplierCreateReplayRow,
-    canonical_command: &[u8],
-) -> Result<SupplierRow, AccessError> {
-    if replay.canonical_command != canonical_command {
-        return Err(AccessError::idempotency_conflict(
-            "idempotency_key is already bound to a different supplier",
-            "idempotency_key",
-        ));
-    }
-    Ok(SupplierRow {
-        created_at: replay.created_at,
-        id: replay.id,
-        name: replay.name,
-    })
 }
 
 fn cursor_from_row(row: &SupplierRow) -> Result<Box<str>, AccessError> {

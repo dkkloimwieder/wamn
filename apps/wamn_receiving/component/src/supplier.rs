@@ -9,14 +9,14 @@ pub(super) mod codec {
 }
 
 pub(super) async fn execute(
-    connection: &mut wamn_postgres_statements::Connection,
+    transaction: &mut wamn_postgres_statements::Transaction,
     request: contract::CreateRequest,
 ) -> Result<contract::CreateResult, contract::CreateError> {
     // The input states three things about a name: a value, an explicit null,
     // and nothing at all. The column is `NOT NULL`, so the last two refuse
     // together on the field the operator filled.
     let name = request.name.flatten();
-    supplier::create(connection, &request.idempotency_key, name.as_deref())
+    supplier::create(transaction, name.as_deref())
         .await
         .map(|row| contract::CreateResult {
             value: codec::row!(row, contract::CreateRow),

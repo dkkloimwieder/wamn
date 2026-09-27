@@ -31,13 +31,6 @@
       }
     }
   },
-  "internal_relations": {
-    "sample_command": {
-      "schema": "edge_samples",
-      "table": "sample_command",
-      "cdc": "excluded"
-    }
-  },
   "custom_operations": {
     "sample.record": {
       "kind": "command",
@@ -46,15 +39,6 @@
       "description": "One reading that an edge box forwards. The edge sample key is the idempotency key.",
       "permission": "sample.record",
       "idempotent_by": "claim",
-      "claim": {
-        "table": "sample_command",
-        "identities": {
-          "sample_id": "sample_id"
-        },
-        "claim": "claim_sample",
-        "replay": "find_sample",
-        "finalize": "record_sample"
-      },
       "canonicalization": {
         "excluded_fields": [
           "request_id",
@@ -124,29 +108,10 @@
       "relations": [
         {
           "schema": "edge_samples",
-          "table": "sample_command",
-          "insert_fields": [
-            "canonical_command",
-            "idempotency_key"
-          ],
-          "select_fields": [
-            "canonical_command",
-            "idempotency_key",
-            "sample_id"
-          ],
-          "update_fields": [],
-          "constraints": [
-            "sample_command_idempotency_key_pkey"
-          ],
-          "lock": false
-        },
-        {
-          "schema": "edge_samples",
           "table": "sample",
           "insert_fields": [
             "captured_at",
-            "frame",
-            "id"
+            "frame"
           ],
           "select_fields": [
             "id"
@@ -159,61 +124,10 @@
         }
       ],
       "statements": {
-        "claim_sample": {
-          "path": "command/sample/claim.sql",
-          "fetch": "optional_one",
-          "parameters": [
-            {
-              "name": "canonical_command",
-              "nullable": false,
-              "type": "bytes"
-            },
-            {
-              "name": "idempotency_key",
-              "nullable": false,
-              "type": "text"
-            }
-          ],
-          "row": [
-            {
-              "name": "sample_id",
-              "nullable": false,
-              "type": "uuid"
-            }
-          ]
-        },
-        "find_sample": {
-          "path": "command/sample/replay.sql",
-          "fetch": "optional_one",
-          "parameters": [
-            {
-              "name": "idempotency_key",
-              "nullable": false,
-              "type": "text"
-            }
-          ],
-          "row": [
-            {
-              "name": "canonical_command",
-              "nullable": false,
-              "type": "bytes"
-            },
-            {
-              "name": "sample_id",
-              "nullable": false,
-              "type": "uuid"
-            }
-          ]
-        },
         "record_sample": {
           "path": "command/sample/record.sql",
           "fetch": "one",
           "parameters": [
-            {
-              "name": "id",
-              "nullable": false,
-              "type": "uuid"
-            },
             {
               "name": "frame",
               "nullable": false,

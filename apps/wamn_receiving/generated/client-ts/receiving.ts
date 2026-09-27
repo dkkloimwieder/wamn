@@ -322,7 +322,7 @@ export const RECEIVING_RECORD_RECEIPT_ROUTE: OperationRoute = {
     resultClass: "one",
     partialSchema: null,
     errors: [
-      { literal: "idempotency_conflict", required: ["field"], sources: ["same_key_different_canonical_command"], text: null },
+      { literal: "idempotency_conflict", required: ["field"], sources: ["changed_request"], text: null },
       { literal: "internal_error", required: [], sources: ["query_error", "row_limit_exceeded", "undeclared_constraint"], text: null },
       { literal: "invalid_input", required: ["field"], sources: ["duplicate_line", "envelope_count", "line_count", "malformed_input", "nonpositive_quantity"], text: null },
       { literal: "location_not_found", required: ["field", "id"], sources: ["transaction_invariant"], text: null },

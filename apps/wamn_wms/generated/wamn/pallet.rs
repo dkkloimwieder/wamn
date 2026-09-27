@@ -15,31 +15,8 @@ pub struct PalletRow {
     pub updated_by: wamn_postgres_statements::Uuid,
 }
 
-#[derive(Debug)]
-pub struct PalletCreateClaimRow {
-    pub pallet_id: wamn_postgres_statements::Uuid,
-}
-
-#[derive(Debug)]
-pub struct PalletCreateReplayRow {
-    pub canonical_command: Vec<u8>,
-    pub created_at: wamn_postgres_statements::TimestampTz,
-    pub created_by: wamn_postgres_statements::Uuid,
-    pub id: wamn_postgres_statements::Uuid,
-    pub location_id: wamn_postgres_statements::Uuid,
-    pub pallet_code: String,
-    pub row_version: i32,
-    pub status: String,
-    pub updated_at: wamn_postgres_statements::TimestampTz,
-    pub updated_by: wamn_postgres_statements::Uuid,
-}
-
-pub(crate) const CREATE_0_DIGEST: &str =
-    "sha256:df9f38d551aadab5328e2eeb26331cdc216d53c0b1407aebed5aba707a1b11cd";
-pub(crate) const CREATE_1_DIGEST: &str =
-    "sha256:0f75a5b84b76452e79013006a1b94d8bb005e0fe93fc7c0916312d2cbcc1099c";
-pub(crate) const CREATE_2_DIGEST: &str =
-    "sha256:c37bb923ba7fe6c65ed0adcb8de672197da7a34c413e1c8f18f0ff77b68cb3ee";
+pub(crate) const CREATE_DIGEST: &str =
+    "sha256:b0725361169ef5ceb261f2331f60147b3b986203ca1945283581738a531ca98e";
 pub(crate) const GET_DIGEST: &str =
     "sha256:59ee1bf6f48b27780e89935e399a45d07383a480caf7975adbee30c6a531255c";
 pub(crate) const QUERY_0_DIGEST: &str =
@@ -58,41 +35,6 @@ pub(crate) const QUERY_6_DIGEST: &str =
     "sha256:90d73b5eb52b6d4694a19b9e316f6cebcebb0633c55f14b974ed71f266fafc18";
 pub(crate) const QUERY_7_DIGEST: &str =
     "sha256:47831f5f22798d66deec5d15ffc54d8c9eb18a664771cb6bbb06abd7d0f52525";
-
-/// One claim and its work, with no commit before finalization.
-#[derive(Debug)]
-pub(crate) struct PendingClaim {
-    transaction: wamn_postgres_statements::Transaction,
-}
-
-/// Transfer the open transaction into this command's claim scope.
-pub(crate) fn begin_claim(transaction: wamn_postgres_statements::Transaction) -> PendingClaim {
-    PendingClaim { transaction }
-}
-
-/// A finalized claim whose transaction can now commit.
-#[derive(Debug)]
-pub(crate) struct FinalizedClaim {
-    transaction: wamn_postgres_statements::Transaction,
-    pub row: PalletRow,
-}
-
-impl FinalizedClaim {
-    /// Commit the claim and its work together.
-    pub(crate) async fn commit(self) -> Result<(), wamn_postgres_statements::StatementError> {
-        self.transaction.commit().await
-    }
-}
-
-impl PendingClaim {
-    /// Select the exact nested operation admitted to use this transaction.
-    pub(crate) async fn select_participant(
-        &mut self,
-        operation: &str,
-    ) -> Result<(), wamn_postgres_statements::StatementError> {
-        self.transaction.select_participant(operation).await
-    }
-}
 
 pub(crate) const CREATE_UNIQUE_CONSTRAINTS: &[&str] = &["pallet_id_pkey", "pallet_pallet_code_key"];
 pub(crate) const CREATE_FOREIGN_KEY_CONSTRAINTS: &[&str] = &["pallet_location_id_fkey"];
@@ -428,75 +370,23 @@ pub(crate) async fn query_created_at_descending(
         .await
 }
 
-pub(crate) async fn create_claim(
-    claim: &mut PendingClaim,
-    idempotency_key: String,
-    canonical_command: Vec<u8>,
-) -> Result<Option<PalletCreateClaimRow>, wamn_postgres_statements::StatementError> {
-    let rows = claim
-        .transaction
-        .run(
-            CREATE_0_DIGEST,
-            vec![
-                wamn_postgres_statements::into_sql_value(idempotency_key),
-                wamn_postgres_statements::into_sql_value(canonical_command),
-            ],
-        )
-        .await?;
-    wamn_postgres_statements::decode_optional(CREATE_0_DIGEST, rows, |row| {
-        Ok(PalletCreateClaimRow {
-            pallet_id: row.decode("pallet_id")?,
-        })
-    })
-}
-
-pub(crate) async fn create_replay(
-    claim: &mut PendingClaim,
-    idempotency_key: String,
-) -> Result<Option<PalletCreateReplayRow>, wamn_postgres_statements::StatementError> {
-    let rows = claim
-        .transaction
-        .run(
-            CREATE_1_DIGEST,
-            vec![wamn_postgres_statements::into_sql_value(idempotency_key)],
-        )
-        .await?;
-    wamn_postgres_statements::decode_optional(CREATE_1_DIGEST, rows, |row| {
-        Ok(PalletCreateReplayRow {
-            canonical_command: row.decode("canonical_command")?,
-            created_at: row.decode("created_at")?,
-            created_by: row.decode("created_by")?,
-            id: row.decode("id")?,
-            location_id: row.decode("location_id")?,
-            pallet_code: row.decode("pallet_code")?,
-            row_version: row.decode("row_version")?,
-            status: row.decode("status")?,
-            updated_at: row.decode("updated_at")?,
-            updated_by: row.decode("updated_by")?,
-        })
-    })
-}
-
 pub(crate) async fn create(
-    mut claim: PendingClaim,
-    id: wamn_postgres_statements::Uuid,
+    transaction: &mut wamn_postgres_statements::Transaction,
     pallet_code: String,
     location_id: wamn_postgres_statements::Uuid,
     status: String,
-) -> Result<FinalizedClaim, wamn_postgres_statements::StatementError> {
-    let rows = claim
-        .transaction
+) -> Result<PalletRow, wamn_postgres_statements::StatementError> {
+    let rows = transaction
         .run(
-            CREATE_2_DIGEST,
+            CREATE_DIGEST,
             vec![
-                wamn_postgres_statements::into_sql_value(id),
                 wamn_postgres_statements::into_sql_value(pallet_code),
                 wamn_postgres_statements::into_sql_value(location_id),
                 wamn_postgres_statements::into_sql_value(status),
             ],
         )
         .await?;
-    let row = wamn_postgres_statements::decode_one(CREATE_2_DIGEST, rows, |row| {
+    wamn_postgres_statements::decode_one(CREATE_DIGEST, rows, |row| {
         Ok(PalletRow {
             created_at: row.decode("created_at")?,
             created_by: row.decode("created_by")?,
@@ -508,9 +398,5 @@ pub(crate) async fn create(
             updated_at: row.decode("updated_at")?,
             updated_by: row.decode("updated_by")?,
         })
-    })?;
-    Ok(FinalizedClaim {
-        transaction: claim.transaction,
-        row,
     })
 }

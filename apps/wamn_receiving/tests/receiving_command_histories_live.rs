@@ -729,14 +729,14 @@ async fn rollback_after_write(
     let controller = connect(&inputs.project_pg_url).await?;
     let lock: i64 = i64::from_be_bytes(Uuid::new_v4().as_bytes()[..8].try_into()?);
     // This disposable trigger reaches the barrier only after the new receipt
-    // and its matching claim are visible inside the real guest transaction.
+    // and its open write log claim (no result yet) are visible inside the real
+    // guest transaction.
     // It changes neither application privileges nor the command implementation.
     let trigger = format!(
         "CREATE FUNCTION receiving.receiving_history_rollback() RETURNS trigger LANGUAGE plpgsql AS $body$ \
          BEGIN IF NEW.purchase_order_id = '{id}'::uuid THEN \
-         IF NOT EXISTS (SELECT 1 FROM receiving.record_receipt_command c \
-                        JOIN receiving.receipt r ON r.idempotency_key=c.idempotency_key \
-                        WHERE r.id=NEW.id AND c.receipt_id=NEW.id) THEN \
+         IF NOT EXISTS (SELECT 1 FROM app_system.write_log c \
+                        WHERE c.operation='wamn-receiving:receiving/record-receipt' AND c.result IS NULL) THEN \
              RAISE EXCEPTION 'receiving history checkpoint has no intermediate write'; END IF; \
          PERFORM pg_advisory_xact_lock({lock}); \
          RAISE EXCEPTION 'receiving history injected failure after receipt write' USING ERRCODE='P0001'; \
@@ -834,19 +834,16 @@ async fn lost_response(db: &Client, route: &Route, evidence: &mut File) -> Resul
     );
     call.await.context("join response suppression")??;
     let value = succeeded(&route.post(RECEIPT_PATH, &body).await?, "lost-response")?;
-    let expected = db
+    let expected: String = db
         .query_one(
-            "SELECT receipt_id::text,purchase_order_id::text,purchase_order_status,row_version \
-         FROM receiving.record_receipt_command WHERE idempotency_key=$1",
+            "SELECT result FROM app_system.write_log \
+         WHERE operation='wamn-receiving:receiving/record-receipt' AND idempotency_key=$1",
             &[&format!("{}-0", fixture.key_prefix)],
         )
-        .await?;
+        .await?
+        .get(0);
     ensure!(
-        value
-            == json!({"receipt_id":expected.get::<_,String>(0),
-        "purchase_order_id":expected.get::<_,String>(1),
-        "purchase_order_status":expected.get::<_,String>(2),
-        "row_version":expected.get::<_,i32>(3)}),
+        value == serde_json::from_str::<Value>(&expected)?,
         "REC-LOST-RESPONSE retry did not return the independently observed original result"
     );
     ensure!(

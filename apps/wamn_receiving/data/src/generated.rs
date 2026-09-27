@@ -18,14 +18,7 @@ pub(crate) mod wamn {
         ));
     }
 
-    /// Generated `supplier` projection and claim accessors.
-    ///
-    /// A claim carries `select_participant` for a nested operation. No
-    /// operation nests inside `supplier.create`, so that accessor stays unused.
-    #[expect(
-        dead_code,
-        reason = "the generated claim offers participation this create does not use"
-    )]
+    /// Generated `supplier` projection and accessors.
     pub(crate) mod supplier {
         include!(concat!(
             env!("CARGO_MANIFEST_DIR"),

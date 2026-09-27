@@ -26,7 +26,7 @@ const FLAT_CREATE: &str = r#"{"fields":[{"path":"request_id","type":"text","null
 
 const CRUD_CREATE: &str = r#"{"request_id":{"type":"string","required":true},
   "idempotency_key":{"type":"text","required":true},
-  "canonical_command":{"over":"writable_fields","payload":"canonical_compact_json","changed":"idempotency_conflict"},
+  "request":{"over":"writable_fields","payload":"canonical_compact_json","changed":"idempotency_conflict"},
   "server_owned_fields":{"fields":["id","row_version"],"if_supplied":"invalid_input"},
   "writable_fields":[{"field":"name","type":"text","omitted":"postgres_default","explicit_null":"invalid_input"}]}"#;
 

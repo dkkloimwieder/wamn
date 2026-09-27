@@ -2,7 +2,6 @@ SELECT
     model.created_at,
     model.created_by,
     model.id,
-    model.idempotency_key,
     model.occurred_at,
     model.purchase_order_id,
     model.receipt_reference

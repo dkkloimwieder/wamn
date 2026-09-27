@@ -1,0 +1,31 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO inventory_movement (\n    pallet_id,\n    product_id,\n    kind,\n    quantity,\n    occurred_at\n)\nVALUES ($1, $2, 'merge', $3, $4)\nRETURNING id;\n",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "inventory_movement",
+            "name": "id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Numeric",
+        "Timestamptz"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "3d79467cf8e530bc2f7293fe0f77ee44e44d416f8128260e840fc052ce32d633"
+}

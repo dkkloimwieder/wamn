@@ -1,4 +1,8 @@
 //! Atomic `receiving.record_receipt` command over generated static accessors.
+//!
+//! The generated codec claims the key in the write log and holds the
+//! transaction. The command inserts the receipt first, takes its id from
+//! `RETURNING`, and binds it into the receipt lines.
 
 use std::collections::BTreeSet;
 use std::error::Error;
@@ -8,7 +12,7 @@ use chrono::{DateTime, SecondsFormat};
 use serde_json::{Value, json};
 use uuid::Uuid;
 use wamn_execution_contract::canonical_json_bytes;
-use wamn_postgres_statements::{Connection, Json, StatementError, TimestampTz, Uuid as WamnUuid};
+use wamn_postgres_statements::{Json, StatementError, TimestampTz, Transaction, Uuid as WamnUuid};
 
 use crate::error::{AccessError, AccessErrorKind, AllowedConstraints};
 use crate::generated::wamn::receiving_record_receipt as generated;
@@ -36,7 +40,7 @@ pub struct RecordReceiptLine {
     pub location_id: Box<str>,
 }
 
-/// Immutable result stored with the canonical command identity.
+/// The result the write log stores for the command's key.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RecordReceiptResult {
     pub receipt_id: Box<str>,
@@ -349,51 +353,29 @@ impl From<StatementError> for RecordReceiptError {
     }
 }
 
-/// Execute one item in exactly one transaction with no automatic retry.
+/// Execute one item in the transaction the codec holds for the write log.
 pub async fn execute(
-    connection: &mut Connection,
+    transaction: &mut Transaction,
     command: &RecordReceiptValue,
 ) -> Result<RecordReceiptResult, RecordReceiptError> {
-    execute_inner(connection, command, None, |_| async { Ok(()) }).await
+    record_receipt_in(transaction, prepare(command)?, None, |_| async { Ok(()) }).await
 }
 
-/// Execute with one exact participant before the base claim is finalized.
+/// Execute with one exact participant before the codec commits.
 pub async fn execute_with_pre_commit<F, Fut>(
-    connection: &mut Connection,
+    transaction: &mut Transaction,
     command: &RecordReceiptValue,
     participant_operation: &str,
-    intent: &str,
     pre_commit: F,
 ) -> Result<RecordReceiptResult, RecordReceiptError>
 where
     F: FnOnce(RecordReceiptPreCommit) -> Fut,
     Fut: Future<Output = Result<(), RecordReceiptError>>,
 {
-    execute_inner(
-        connection,
-        command,
-        Some((participant_operation, intent)),
-        pre_commit,
-    )
-    .await
-}
-
-async fn execute_inner<F, Fut>(
-    connection: &mut Connection,
-    command: &RecordReceiptValue,
-    participation: Option<(&str, &str)>,
-    pre_commit: F,
-) -> Result<RecordReceiptResult, RecordReceiptError>
-where
-    F: FnOnce(RecordReceiptPreCommit) -> Fut,
-    Fut: Future<Output = Result<(), RecordReceiptError>>,
-{
-    let prepared = prepare_with_intent(command, participation.map(|(_, intent)| intent))?;
-    let transaction = connection.begin().await?;
     record_receipt_in(
-        generated::begin_claim(transaction),
-        prepared,
-        participation.map(|(operation, _)| operation),
+        transaction,
+        prepare(command)?,
+        Some(participant_operation),
         pre_commit,
     )
     .await
@@ -401,19 +383,16 @@ where
 
 #[derive(Debug)]
 struct PreparedCommand {
-    idempotency_key: String,
     purchase_order_id: String,
     receipt_reference: String,
     occurred_at: String,
-    canonical_command: Vec<u8>,
     line_json: String,
     line_count: usize,
 }
 
-fn prepare_with_intent(
-    command: &RecordReceiptValue,
-    participation_intent: Option<&str>,
-) -> Result<PreparedCommand, RecordReceiptError> {
+/// Respell the command the way its SQL binds it: canonical ids, times and
+/// quantities, and its lines in `purchase_order_line_id` order.
+fn prepare(command: &RecordReceiptValue) -> Result<PreparedCommand, RecordReceiptError> {
     if command.idempotency_key.is_empty() {
         return Err(RecordReceiptError::invalid(
             "idempotency_key must not be empty",
@@ -463,36 +442,19 @@ fn prepare_with_intent(
             })
         })
         .collect::<Vec<_>>();
-    let line_value = Value::Array(line);
-    let mut canonical_value = json!({
-        "purchase_order_id": purchase_order_id.hyphenated().to_string(),
-        "receipt_reference": command.receipt_reference,
-        "occurred_at": occurred_at,
-        "line": line_value,
-    });
-    if let Some(intent) = participation_intent {
-        canonical_value["participation_intent"] = Value::String(intent.to_owned());
-    }
-    let line_json = String::from_utf8(canonical_json_bytes(&canonical_value["line"]))
+    let line_json = String::from_utf8(canonical_json_bytes(&Value::Array(line)))
         .expect("canonical JSON is UTF-8");
     Ok(PreparedCommand {
-        idempotency_key: command.idempotency_key.to_string(),
         purchase_order_id: purchase_order_id.hyphenated().to_string(),
         receipt_reference: command.receipt_reference.to_string(),
         occurred_at,
-        canonical_command: canonical_json_bytes(&canonical_value),
         line_json,
         line_count: command.line.len(),
     })
 }
 
-#[cfg(test)]
-fn prepare(command: &RecordReceiptValue) -> Result<PreparedCommand, RecordReceiptError> {
-    prepare_with_intent(command, None)
-}
-
 async fn record_receipt_in<F, Fut>(
-    mut transaction: generated::PendingClaim,
+    transaction: &mut Transaction,
     command: PreparedCommand,
     participant_operation: Option<&str>,
     pre_commit: F,
@@ -501,44 +463,17 @@ where
     F: FnOnce(RecordReceiptPreCommit) -> Fut,
     Fut: Future<Output = Result<(), RecordReceiptError>>,
 {
-    if let Some(replay) = generated::find_replay(&mut transaction, command.idempotency_key.clone())
-        .await
-        .map_err(|source| sql_error("find record_receipt replay", source))?
-    {
-        return replay_result(replay, &command.canonical_command);
-    }
-
-    let claim = generated::claim_command(
-        &mut transaction,
-        command.idempotency_key.clone(),
-        command.canonical_command.clone(),
-        WamnUuid(command.purchase_order_id.clone()),
-    )
-    .await
-    .map_err(|source| sql_error("claim record_receipt idempotency key", source))?;
-    let Some(claim) = claim else {
-        let replay = generated::find_replay(&mut transaction, command.idempotency_key.clone())
+    let purchase_order =
+        generated::lock_purchase_order(transaction, WamnUuid(command.purchase_order_id.clone()))
             .await
-            .map_err(|source| sql_error("load concurrent record_receipt replay", source))?
+            .map_err(|source| sql_error("lock purchase_order", source))?
             .ok_or_else(|| {
-                RecordReceiptError::internal("conflicting command claim has no durable result")
+                RecordReceiptError::domain(
+                    RecordReceiptErrorKind::PurchaseOrderNotFound,
+                    "purchase_order does not exist",
+                    "value.purchase_order_id",
+                )
             })?;
-        return replay_result(replay, &command.canonical_command);
-    };
-
-    let purchase_order = generated::lock_purchase_order(
-        &mut transaction,
-        WamnUuid(command.purchase_order_id.clone()),
-    )
-    .await
-    .map_err(|source| sql_error("lock purchase_order", source))?
-    .ok_or_else(|| {
-        RecordReceiptError::domain(
-            RecordReceiptErrorKind::PurchaseOrderNotFound,
-            "purchase_order does not exist",
-            "value.purchase_order_id",
-        )
-    })?;
     if purchase_order.status != "open" {
         return Err(RecordReceiptError::domain(
             RecordReceiptErrorKind::PurchaseOrderNotOpen,
@@ -548,7 +483,7 @@ where
     }
 
     let validation = generated::validate_receipt_line(
-        &mut transaction,
+        transaction,
         WamnUuid(command.purchase_order_id.clone()),
         Json(command.line_json.clone()),
     )
@@ -569,11 +504,8 @@ where
         &[],
         &[],
     );
-    let receipt_id = claim.receipt_id.0;
-    let inserted_receipt = generated::insert_receipt(
-        &mut transaction,
-        WamnUuid(receipt_id.clone()),
-        command.idempotency_key.clone(),
+    let receipt_id = generated::insert_receipt(
+        transaction,
         WamnUuid(command.purchase_order_id.clone()),
         command.receipt_reference,
         TimestampTz(command.occurred_at),
@@ -593,15 +525,12 @@ where
         } else {
             RecordReceiptError::from_classified_statement(error.kind(), "insert receipt", source)
         }
-    })?;
-    if inserted_receipt.id.0 != receipt_id {
-        return Err(RecordReceiptError::internal(
-            "inserted receipt id differs from the command claim",
-        ));
-    }
+    })?
+    .id
+    .0;
 
     let inserted = generated::insert_receipt_line(
-        &mut transaction,
+        transaction,
         WamnUuid(receipt_id.clone()),
         Json(command.line_json.clone()),
     )
@@ -614,7 +543,7 @@ where
     )?;
 
     let updated = generated::update_purchase_order_line(
-        &mut transaction,
+        transaction,
         WamnUuid(command.purchase_order_id.clone()),
         Json(command.line_json),
     )
@@ -626,12 +555,10 @@ where
         command.line_count,
     )?;
 
-    let finished = generated::finish_purchase_order(
-        &mut transaction,
-        WamnUuid(command.purchase_order_id.clone()),
-    )
-    .await
-    .map_err(|source| sql_error("finish purchase_order", source))?;
+    let finished =
+        generated::finish_purchase_order(transaction, WamnUuid(command.purchase_order_id.clone()))
+            .await
+            .map_err(|source| sql_error("finish purchase_order", source))?;
     let status = PurchaseOrderStatus::parse(&finished.status)?;
     if let Some(operation) = participant_operation {
         transaction
@@ -644,56 +571,11 @@ where
         })
         .await?;
     }
-    let finalized = generated::finalize_command(
-        transaction,
-        command.idempotency_key,
-        command.canonical_command,
-        WamnUuid(receipt_id.clone()),
-        status.as_str().to_owned(),
-        finished.row_version,
-    )
-    .await
-    .map_err(|source| sql_error("finalize record_receipt result", source))?;
-    if finalized.row.purchase_order_status.as_deref() != Some(status.as_str())
-        || finalized.row.row_version != Some(finished.row_version)
-    {
-        return Err(RecordReceiptError::internal(
-            "command record did not preserve the committed result",
-        ));
-    }
-    finalized.commit().await?;
     Ok(RecordReceiptResult {
         receipt_id: receipt_id.into_boxed_str(),
         purchase_order_id: command.purchase_order_id.into_boxed_str(),
         purchase_order_status: status,
         row_version: finished.row_version,
-    })
-}
-
-fn replay_result(
-    replay: generated::FindReplayRow,
-    canonical_command: &[u8],
-) -> Result<RecordReceiptResult, RecordReceiptError> {
-    if replay.canonical_command != canonical_command {
-        return Err(RecordReceiptError::domain(
-            RecordReceiptErrorKind::IdempotencyConflict,
-            "idempotency_key is already bound to a different canonical command",
-            "value.idempotency_key",
-        ));
-    }
-    let status = replay
-        .purchase_order_status
-        .as_deref()
-        .ok_or_else(|| RecordReceiptError::internal("replay is missing purchase_order_status"))
-        .and_then(PurchaseOrderStatus::parse)?;
-    let row_version = replay
-        .row_version
-        .ok_or_else(|| RecordReceiptError::internal("replay is missing row_version"))?;
-    Ok(RecordReceiptResult {
-        receipt_id: replay.receipt_id.0.into_boxed_str(),
-        purchase_order_id: replay.purchase_order_id.0.into_boxed_str(),
-        purchase_order_status: status,
-        row_version,
     })
 }
 
@@ -869,7 +751,7 @@ mod tests {
     }
 
     #[test]
-    fn canonical_command_treats_line_order_as_presentation() {
+    fn line_order_is_presentation() {
         let first = prepare(&command(vec![
             line(SECOND_LINE_ID, "12.3400"),
             line(FIRST_LINE_ID, "1.000000"),
@@ -880,28 +762,14 @@ mod tests {
             line(SECOND_LINE_ID, "12.3400"),
         ]))
         .unwrap();
-        assert_eq!(first.canonical_command, reordered.canonical_command);
         assert_eq!(first.line_json, reordered.line_json);
     }
 
     #[test]
-    fn lexical_scale_remains_command_identity() {
+    fn lexical_scale_is_kept() {
         let scaled = prepare(&command(vec![line(FIRST_LINE_ID, "12.3400")])).unwrap();
         let respelled = prepare(&command(vec![line(FIRST_LINE_ID, "12.34")])).unwrap();
-        assert_ne!(scaled.canonical_command, respelled.canonical_command);
-    }
-
-    #[test]
-    fn participation_intent_is_part_of_command_identity() {
-        let input = command(vec![line(FIRST_LINE_ID, "12.3400")]);
-        let direct = prepare_with_intent(&input, None).unwrap();
-        let extended = prepare_with_intent(&input, Some("acme-quality-v1")).unwrap();
-        let replay = prepare_with_intent(&input, Some("acme-quality-v1")).unwrap();
-        let changed = prepare_with_intent(&input, Some("acme-quality-v2")).unwrap();
-
-        assert_ne!(direct.canonical_command, extended.canonical_command);
-        assert_eq!(extended.canonical_command, replay.canonical_command);
-        assert_ne!(extended.canonical_command, changed.canonical_command);
+        assert_ne!(scaled.line_json, respelled.line_json);
     }
 
     /// The spellings PostgreSQL 18.6 respells without touching scale, each
@@ -909,16 +777,16 @@ mod tests {
     /// give. An exponent is deliberately not among them --- see
     /// `canonical_positive_numeric` for the reason it stays refused.
     #[test]
-    fn a_respelled_quantity_makes_the_same_command() {
+    fn a_respelled_quantity_binds_one_value() {
         for (written, respelled) in [("01.0", "1.0"), ("1.", "1"), (".1", "0.1"), ("010", "10")] {
             assert_eq!(canonical_positive_numeric(written).unwrap(), respelled);
             assert_eq!(
                 prepare(&command(vec![line(FIRST_LINE_ID, written)]))
                     .unwrap()
-                    .canonical_command,
+                    .line_json,
                 prepare(&command(vec![line(FIRST_LINE_ID, respelled)]))
                     .unwrap()
-                    .canonical_command
+                    .line_json
             );
         }
         assert_eq!(canonical_positive_numeric("12.3400").unwrap(), "12.3400");
@@ -940,26 +808,25 @@ mod tests {
     }
 
     #[test]
-    fn two_spellings_of_one_instant_make_one_command() {
+    fn two_spellings_of_one_instant_bind_one_value() {
         let canonical = prepare(&command(vec![line(FIRST_LINE_ID, "1.0")])).unwrap();
         let mut respelled = command(vec![line(FIRST_LINE_ID, "1.0")]);
         respelled.occurred_at = "2026-08-29T14:34:56+02:00".into();
         let respelled = prepare(&respelled).unwrap();
-        assert_eq!(canonical.canonical_command, respelled.canonical_command);
+        assert_eq!(canonical.occurred_at, respelled.occurred_at);
     }
 
     #[test]
-    fn two_spellings_of_one_uuid_make_one_command() {
+    fn two_spellings_of_one_uuid_bind_one_value() {
         const LOWER: &str = "0123456a-89ab-cdef-0123-456789abcdef";
         const UPPER: &str = "0123456A-89AB-CDEF-0123-456789ABCDEF";
         let mut lower = command(vec![line(LOWER, "1.0")]);
         lower.purchase_order_id = LOWER.into();
         let mut upper = command(vec![line(UPPER, "1.0")]);
         upper.purchase_order_id = UPPER.into();
-        assert_eq!(
-            prepare(&lower).unwrap().canonical_command,
-            prepare(&upper).unwrap().canonical_command
-        );
+        let (lower, upper) = (prepare(&lower).unwrap(), prepare(&upper).unwrap());
+        assert_eq!(lower.purchase_order_id, upper.purchase_order_id);
+        assert_eq!(lower.line_json, upper.line_json);
     }
 
     #[test]

@@ -10,14 +10,7 @@ pub(crate) mod wamn {
         ));
     }
 
-    /// Generated `sample.record` claim accessors.
-    ///
-    /// A claim carries `select_participant` for a nested operation. No
-    /// operation nests inside `sample.record`, so that accessor stays unused.
-    #[expect(
-        dead_code,
-        reason = "the generated claim offers participation this command does not use, and the record answers with the claimed id, not the inserted row's id"
-    )]
+    /// Generated `sample.record` accessor.
     pub(crate) mod sample_record {
         include!(concat!(
             env!("CARGO_MANIFEST_DIR"),

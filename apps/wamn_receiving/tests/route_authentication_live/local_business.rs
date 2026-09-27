@@ -260,7 +260,8 @@ async fn transactional_participation(
     );
     let no_qc_receipt = project
         .query_one(
-            "SELECT id::text FROM receiving.receipt WHERE idempotency_key = 'part-none'",
+            "SELECT id::text FROM receiving.receipt WHERE id = \
+             (SELECT (result::jsonb ->> 'receipt_id')::uuid FROM app_system.write_log WHERE operation = 'wamn-receiving:receiving/record-receipt' AND idempotency_key = 'part-none')",
             &[],
         )
         .await?
@@ -304,7 +305,8 @@ async fn transactional_participation(
     ensure!(
         project
             .query_one(
-                "SELECT (SELECT count(*) = 1 FROM receiving.receipt WHERE idempotency_key = 'part-approved') \
+                "SELECT (SELECT count(*) = 1 FROM receiving.receipt WHERE id = \
+                         (SELECT (result::jsonb ->> 'receipt_id')::uuid FROM app_system.write_log WHERE operation = 'wamn-receiving:receiving/record-receipt' AND idempotency_key = 'part-approved')) \
                         AND (SELECT count(*) = 1 FROM receiving.quality_inspection WHERE receipt_id = $1::text::uuid)",
                 &[&approved_receipt],
             )

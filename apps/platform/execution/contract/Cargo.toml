@@ -6,6 +6,8 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+# The canonical `timestamptz` spelling that a request is compared by.
+chrono = { workspace = true, features = ["std"] }
 serde = { workspace = true, features = ["derive"] }
 # `canonical_json_bytes` is `serde_json::to_vec`, so its determinism is this
 # feature set: NEVER enable `preserve_order` (it swaps the key-sorted

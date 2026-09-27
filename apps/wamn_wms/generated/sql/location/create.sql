@@ -1,5 +1,5 @@
-INSERT INTO location (id, location_code)
-VALUES ($1::uuid, $2::text)
+INSERT INTO location (location_code)
+VALUES ($1::text)
 RETURNING
     created_at,
     id,

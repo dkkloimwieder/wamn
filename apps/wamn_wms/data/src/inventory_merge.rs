@@ -1,17 +1,17 @@
 //! `inventory.merge` -- one pallet absorbed into another.
 //!
 //! ```text
-//! canonicalize the body
-//! → find a replay: same key ⇒ return the ORIGINAL result, unchanged
-//! → claim the key, which pre-generates the movement id
 //! → lock BOTH pallets, in id order   (the serialization point)
 //! → compare expected_row_version to the target's
 //! → for each source quantity row: add it to the target's matching row,
 //!   or place a new one, and write a movement
 //! → consume the source (a tombstone: the platform admits no DELETE)
 //! → bump the target's revision
-//! → finalize the claim with the result
 //! ```
+//!
+//! The generated codec claims the key in the write log and holds the
+//! transaction, so a retry answers the stored result. The movement ids are the
+//! ids of the movement rows; a source with no quantity rows writes none.
 //!
 //! The revision the caller names is the TARGET's: that is the pallet the
 //! command answers with and the one whose stock changes. The source only has
@@ -21,7 +21,7 @@
 //! Movements are recorded against the source, the pallet the stock left.
 
 use serde::Deserialize;
-use wamn_postgres_statements::{Connection, TimestampTz, Uuid};
+use wamn_postgres_statements::{TimestampTz, Transaction, Uuid};
 
 use crate::error::{self, AccessError, AccessErrorKind};
 use crate::generated::wamn::inventory_merge as sql;
@@ -30,7 +30,6 @@ use crate::scalar;
 /// One envelope item's command body.
 #[derive(Debug, Deserialize)]
 pub struct MergeCommand {
-    pub idempotency_key: String,
     pub source_pallet_id: String,
     pub target_pallet_id: String,
     pub expected_row_version: i32,
@@ -40,7 +39,7 @@ pub struct MergeCommand {
 /// What one accepted merge answers with.
 #[derive(Debug, PartialEq, Eq)]
 pub struct MergeResult {
-    pub movement_id: String,
+    pub movement_ids: Vec<String>,
     pub source_pallet_id: String,
     pub target_pallet_id: String,
     pub target_status: String,
@@ -60,8 +59,7 @@ fn parse(command: &MergeCommand) -> Result<Parsed, AccessError> {
         target_pallet_id: scalar::uuid("value.target_pallet_id", &command.target_pallet_id)?,
         occurred_at: scalar::timestamp("value.occurred_at", &command.occurred_at)?,
     };
-    // A pallet merged into itself is refused here; the claim table's check
-    // constraint would refuse it too, as an opaque internal_error.
+    // A pallet merged into itself is refused here, before any statement.
     if parsed.source_pallet_id.0 == parsed.target_pallet_id.0 {
         return Err(AccessError::field(
             AccessErrorKind::InvalidInput,
@@ -71,39 +69,18 @@ fn parse(command: &MergeCommand) -> Result<Parsed, AccessError> {
     Ok(parsed)
 }
 
-fn canonical_command(command: &MergeCommand, parsed: &Parsed) -> Vec<u8> {
-    wamn_execution_contract::canonical_json_bytes(&serde_json::json!({
-        "source_pallet_id": parsed.source_pallet_id.0,
-        "target_pallet_id": parsed.target_pallet_id.0,
-        "expected_row_version": command.expected_row_version,
-        "occurred_at": parsed.occurred_at.0,
-    }))
-}
-
-/// Run one command item in exactly one transaction.
+/// Run one command item in the transaction its codec holds for the write log.
 ///
 /// # Errors
 ///
 /// [`AccessError`] carrying the literal and detail the operation contract
 /// declares for that refusal.
-pub async fn execute(command: &MergeCommand) -> Result<MergeResult, AccessError> {
+pub async fn execute(
+    transaction: &mut Transaction,
+    command: &MergeCommand,
+) -> Result<MergeResult, AccessError> {
     let parsed = parse(command)?;
-    let canonical = canonical_command(command, &parsed);
-
-    let mut connection = Connection::new();
-    let transaction = connection
-        .begin()
-        .await
-        .map_err(|e| error::from_statement(&e))?;
-    run(sql::begin_claim(transaction), command, &canonical, &parsed).await
-}
-
-fn retry() -> AccessError {
-    AccessError::new(AccessErrorKind::Retry, serde_json::json!({}))
-}
-
-fn internal() -> AccessError {
-    AccessError::new(AccessErrorKind::InternalError, serde_json::json!({}))
+    run(transaction, command, &parsed).await
 }
 
 /// The target row, once BOTH locked rows are found by id and live: a missing
@@ -131,61 +108,13 @@ fn locked_target(
 }
 
 async fn run(
-    mut transaction: sql::PendingClaim,
+    transaction: &mut Transaction,
     command: &MergeCommand,
-    canonical: &[u8],
     parsed: &Parsed,
 ) -> Result<MergeResult, AccessError> {
-    let key = command.idempotency_key.clone();
-    if let Some(replay) = sql::find_replay(&mut transaction, key.clone())
-        .await
-        .map_err(|e| error::from_statement(&e))?
-    {
-        if replay.canonical_command != canonical {
-            return Err(AccessError::field(
-                AccessErrorKind::IdempotencyConflict,
-                "value.idempotency_key",
-            ));
-        }
-        let Some(row_version) = replay.row_version else {
-            return Err(retry());
-        };
-        // The target's status was never this command's to change, so the
-        // live row's is the original's.
-        let rows = sql::lock_both_pallets(
-            &mut transaction,
-            replay.source_pallet_id.clone(),
-            replay.target_pallet_id.clone(),
-        )
-        .await
-        .map_err(|e| error::from_statement(&e))?;
-        let target = rows
-            .into_iter()
-            .find(|row| row.id.0 == replay.target_pallet_id.0)
-            .ok_or_else(internal)?;
-        return Ok(MergeResult {
-            movement_id: replay.movement_id.0,
-            source_pallet_id: replay.source_pallet_id.0,
-            target_pallet_id: replay.target_pallet_id.0,
-            target_status: target.status,
-            row_version,
-        });
-    }
-
-    let claim = sql::claim_command(
-        &mut transaction,
-        key.clone(),
-        canonical.to_vec(),
-        parsed.source_pallet_id.clone(),
-        parsed.target_pallet_id.clone(),
-    )
-    .await
-    .map_err(|e| error::from_statement(&e))?
-    .ok_or_else(retry)?;
-
     // THE SERIALIZATION POINT: both rows, in id order.
     let rows = sql::lock_both_pallets(
-        &mut transaction,
+        transaction,
         parsed.source_pallet_id.clone(),
         parsed.target_pallet_id.clone(),
     )
@@ -201,12 +130,13 @@ async fn run(
 
     // EVERY SOURCE ROW LANDS ON THE TARGET, matched by product and status,
     // and each is a movement of its own.
-    let quantities = sql::select_source_quantity(&mut transaction, parsed.source_pallet_id.clone())
+    let quantities = sql::select_source_quantity(transaction, parsed.source_pallet_id.clone())
         .await
         .map_err(|e| error::from_statement(&e))?;
+    let mut movement_ids = Vec::new();
     for quantity in &quantities {
         let added = sql::add_to_target(
-            &mut transaction,
+            transaction,
             parsed.target_pallet_id.clone(),
             quantity.product_id.clone(),
             quantity.status.clone(),
@@ -216,7 +146,7 @@ async fn run(
         .map_err(|e| error::from_statement(&e))?;
         if added.is_none() {
             sql::place_on_target(
-                &mut transaction,
+                transaction,
                 parsed.target_pallet_id.clone(),
                 quantity.product_id.clone(),
                 quantity.status.clone(),
@@ -225,9 +155,8 @@ async fn run(
             .await
             .map_err(|e| error::from_statement(&e))?;
         }
-        sql::insert_movement(
-            &mut transaction,
-            key.clone(),
+        let movement = sql::insert_movement(
+            transaction,
             parsed.source_pallet_id.clone(),
             quantity.product_id.clone(),
             quantity.quantity.clone(),
@@ -235,34 +164,18 @@ async fn run(
         )
         .await
         .map_err(|e| error::from_statement(&e))?;
+        movement_ids.push(movement.id.0);
     }
 
-    sql::consume_source(&mut transaction, parsed.source_pallet_id.clone())
+    sql::consume_source(transaction, parsed.source_pallet_id.clone())
         .await
         .map_err(|e| error::from_statement(&e))?;
-    let touched = sql::touch_target(&mut transaction, parsed.target_pallet_id.clone())
+    let touched = sql::touch_target(transaction, parsed.target_pallet_id.clone())
         .await
         .map_err(|e| error::from_statement(&e))?;
 
-    let finalized = sql::finalize_command(
-        transaction,
-        key,
-        canonical.to_vec(),
-        claim.movement_id.clone(),
-        touched.row_version,
-    )
-    .await
-    .map_err(|e| error::from_statement(&e))?;
-    if finalized.row.row_version.is_none() {
-        return Err(retry());
-    }
-
-    finalized
-        .commit()
-        .await
-        .map_err(|e| error::from_statement(&e))?;
     Ok(MergeResult {
-        movement_id: claim.movement_id.0,
+        movement_ids,
         source_pallet_id: parsed.source_pallet_id.0.clone(),
         target_pallet_id: parsed.target_pallet_id.0.clone(),
         target_status: touched.status,
@@ -279,7 +192,6 @@ mod tests {
 
     fn command(source: &str, target: &str) -> MergeCommand {
         MergeCommand {
-            idempotency_key: "k".to_owned(),
             source_pallet_id: source.to_owned(),
             target_pallet_id: target.to_owned(),
             expected_row_version: 1,
