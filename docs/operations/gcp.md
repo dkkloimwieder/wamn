@@ -681,7 +681,7 @@ On 2026-09-26 the first run took 10 seconds, and the email was `wamn-registry-re
 
 | Image | Digest | Use |
 | --- | --- | --- |
-| `wamn-host:src-490a0d098a176e39` | `sha256:b44a6f944a410ca42dccf378c0948226946c54fefa17c4bf3cc246e25dcd9dd2` | host |
+| `wamn-host:src-b68fac526bdd771b` | `sha256:dc6b737abb8c0efc000489433d529939df015cb54901acf46f58180c2fb0aaa5` | host |
 | `wamn-identity:src-cb10274981e78f44` | `sha256:0fe43f6bc52e98e327cb7abd9898a3e1268f9298e37ec56e12504fe7ffdeab42` | identity |
 | `wamn-cdc-reader:src-6bf15eedaa8cb8e8` | `sha256:fa38da50c62ff38679ecdcd3490df8650fb6a4b4d6adda3017fb134dadac797a` | CDC reader |
 | `curlimages/curl:8.22.0` | `sha256:58adaa4e8dca9c988bae2aba4ab3434a0bb2da16bbe3f92dec39ec7785166777` | registry token CronJob |
@@ -1109,3 +1109,14 @@ The host values annotate that service account with `iam.gke.io/gcp-service-accou
 ```
 
 On 2026-09-27 the bucket, the account and the two bindings took 6 seconds. The first bucket binding failed because the account was not visible yet, and the second attempt passed.
+
+The host values program writes the annotation into `runtime.serviceAccount` of `deploy/gcp/values-host-base.yaml`. The same run pins the host image `wamn-host:src-b68fac526bdd771b`, `sha256:dc6b737abb8c0efc000489433d529939df015cb54901acf46f58180c2fb0aaa5`, which carries the `gcs` store. Render the values again and upgrade the host:
+
+```bash
+cargo run -p wamn-test-infrastructure --example host_values_files -- \
+  deploy/gcp us-central1-docker.pkg.dev/wamn-dev/wamn/releases <Receiving release manifest digest>
+helm upgrade wamn-host oci://ghcr.io/wasmcloud/charts/runtime-operator --version 2.10.0 -n hosts \
+  -f deploy/gcp/values-host-base.yaml -f deploy/gcp/values-host.yaml --wait --timeout 5m
+```
+
+Make sure that a pod with that service account gets the `wamn-blob` identity from the metadata server, with the check of section 3.12 and `"serviceAccountName":"wamn-host-runtime-operator-runtime"`. On 2026-09-27 the image build took 411 seconds, the push 13 seconds and the upgrade 24 seconds. The check printed `wamn-blob@wamn-dev.iam.gserviceaccount.com`, and Receiving still answered `/api/location/list` with 401.

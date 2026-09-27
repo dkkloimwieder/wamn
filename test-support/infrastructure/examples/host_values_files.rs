@@ -26,7 +26,9 @@ const ENVIRONMENT: &str = "dev";
 /// The org that the checked-in Receiving overlay names.
 const OVERLAY_ORG: &str = "acme";
 const NAMESPACE: &str = "hosts";
-const HOST_IMAGE: &str = "us-central1-docker.pkg.dev/wamn-dev/wamn/wamn-host:src-490a0d098a176e39@sha256:b44a6f944a410ca42dccf378c0948226946c54fefa17c4bf3cc246e25dcd9dd2";
+const HOST_IMAGE: &str = "us-central1-docker.pkg.dev/wamn-dev/wamn/wamn-host:src-b68fac526bdd771b@sha256:dc6b737abb8c0efc000489433d529939df015cb54901acf46f58180c2fb0aaa5";
+/// The Google service account of the label store (docs/operations/gcp.md 5.1).
+const BLOB_ACCOUNT: &str = "wamn-blob@wamn-dev.iam.gserviceaccount.com";
 const COMPONENT_BASE: &str = "us-central1-docker.pkg.dev/wamn-dev/wamn/components";
 const EVENT_NATS: &str = "nats://evt-nats.platform.svc.cluster.local:4222";
 const CONTROL_NATS: &str = "nats://nats.platform.svc.cluster.local:4222";
@@ -133,9 +135,12 @@ fn overlay_for_org(overlay: &str) -> anyhow::Result<String> {
     Ok(serde_yaml::to_string(&document)?)
 }
 
-/// The control NATS runs in namespace `platform`.
+/// The control NATS runs in namespace `platform`, and the host service
+/// account acts as the label store account through Workload Identity.
 fn google_cloud_base(base: &str) -> anyhow::Result<String> {
     let mut document: Value = serde_yaml::from_str(base)?;
+    document["runtime"]["serviceAccount"]["annotations"]["iam.gke.io/gcp-service-account"] =
+        BLOB_ACCOUNT.into();
     let nats = &mut document["global"]["nats"];
     for key in ["schedulerUrl", "dataUrl"] {
         ensure!(

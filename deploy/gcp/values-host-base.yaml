@@ -1,6 +1,6 @@
 runtime:
   image:
-    tag: src-490a0d098a176e39@sha256:b44a6f944a410ca42dccf378c0948226946c54fefa17c4bf3cc246e25dcd9dd2
+    tag: src-b68fac526bdd771b@sha256:dc6b737abb8c0efc000489433d529939df015cb54901acf46f58180c2fb0aaa5
     pull_policy: IfNotPresent
     registry: ''
     repository: us-central1-docker.pkg.dev/wamn-dev/wamn/wamn-host
@@ -128,6 +128,9 @@ runtime:
       port: 8081
       startupFailureThreshold: 60
   terminationGracePeriodSeconds: 70
+  serviceAccount:
+    annotations:
+      iam.gke.io/gcp-service-account: wamn-blob@wamn-dev.iam.gserviceaccount.com
 gateway:
   enabled: false
 global:

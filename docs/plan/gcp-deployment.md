@@ -208,6 +208,8 @@ Owner rulings of 2026-09-27:
 
 - The `flow-http` and materializer workloads deploy as the kind case deploys them. `tools/build-components all` builds them, and they go to `us-central1-docker.pkg.dev/wamn-dev/wamn/components` with their digests recorded. They render into `hosts` with catalog `default`, environment `hosts`, and project and schema `receiving`. The materializer intervals are deployment values: fetch 1000 ms, sweep 5000 ms. The serve check runs after them, and step 3 then closes.
 
+- Tenants (2026-09-27): a tenant is one per project database in this deployment, so it takes the project's name. WMS uses tenant `wms`. Receiving keeps tenant `dev`, as it was provisioned. `provision-project-env` refused tenant `dev` for `dkk/wms/dev` with `tenant-environment-identity-projection-content-conflict`, because `dev` is bound to `dkk/receiving/dev`.
+
 ### 5.4 Step 4 rulings
 
 Owner rulings of 2026-09-27:
@@ -238,6 +240,9 @@ Owner rulings of 2026-09-27:
 - Step 6 (`wamn-ghx2.6`): `tools/bench` as section 6 states it. A read, a write and a list against `receiving.wamn.dev` at the seed of 1000 rows. One JSON file per run with p50, p95, p99, throughput and error rate. The four tier runs, each tier set with `gcloud`, and the pool returns to 2 x `e2-standard-2` Spot after.
 - No stop between the steps. The agent reports at the WMS move and at the tier table.
 - Label store (2026-09-27): Cloud Storage, no MinIO. `wamn_blobstore` gets a binding `provider: gcs` with the bucket and no credential handle. It builds `object_store`'s `GoogleCloudStorageBuilder` (feature `gcp`) with no credentials set, so the crate takes its token from the instance metadata server, which under Workload Identity is the pod's Google service account. `provider: s3` stays for kind. One unit test: the `gcs` binding parses and refuses a credential handle. Bucket `wamn-dev-labels`, uniform access, no public read. Google service account `wamn-blob` with `roles/storage.objectAdmin` on that bucket only. The host's Kubernetes service account in `hosts` gets the Workload Identity binding to it, and nothing else changes on the host. `bind-connection` for the WMS label alias names the `gcs` binding. The kind values keep MinIO. The test is the WMS move with its label stored.
+- WMS names (2026-09-27): org `dkk`, project `wms`, env `dev`, tenant `wms` (section 5.3), host group `wms` in the `wamn-host` release at a 500m request, workloads `wms-flow-http` and `wms-materializer` at fetch 1000 ms and sweep 5000 ms, and data from `wms-seed-small.sql`.
+- Bench sign-in and load: the bench signs in with the PAT of the route-caller service principal, minted like the management-author PAT (`--emit-route-caller-pat-secret`), read from a mode 0600 file and deleted after the runs. No PAT for a person. The calls are purchase-order `get`, purchase-order `update` as a supplier change, and purchase-order `query`. Each worker updates purchase orders from its own slice of the 1000 and cycles the suppliers, so no two workers write one row. A concurrency conflict still counts as an error. Concurrency 4 and 16, 60 seconds each, for each call and each tier: 24 runs.
+- Tiers: a pool `bench-<tier>` for each tier with the machine type and count of section 6, Spot for tiers 1 to 3 and on demand for tier 4. `main` is at 0 while it runs. The pool is deleted after, and `main` returns to 2. Tier 4 fits the 8 CPU quota only with `main` at 0.
 
 
 ## 6. Benchmark
