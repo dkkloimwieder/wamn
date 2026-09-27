@@ -5,7 +5,7 @@
 
 import { Show, createResource, createSignal, onCleanup } from "solid-js";
 import { createForm } from "@tanstack/solid-form";
-import { z } from "zod";
+import * as z from "zod/mini";
 import {
   afterWrites,
   appendPage,
@@ -195,11 +195,11 @@ export const PURCHASE_ORDER_QUERY_TABLE = {
 
 /** What an operator types for `wamn-receiving:purchase-order/update@1.0.0`. */
 const UPDATE_INPUT = z.object({
-  change: z
-    .object({
-      supplierId: z.string().regex(UUID_TEXT, "expected a UUID").optional(),
-    })
-    .optional(),
+  change: z.optional(
+    z.object({
+      supplierId: z.optional(z.string().check(z.regex(UUID_TEXT, "expected a UUID"))),
+    }),
+  ),
 });
 
 /** What the form for `wamn-receiving:purchase-order/update@1.0.0` can start with. */

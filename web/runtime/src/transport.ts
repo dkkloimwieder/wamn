@@ -13,7 +13,8 @@
  * uncertain in the terminal.
  */
 
-import { z } from "zod";
+import { en } from "zod/locales";
+import * as z from "zod/mini";
 
 import { encodeReadQuery } from "./readQuery.js";
 import { createReadStore, type ReadReply } from "./readCache.js";
@@ -88,29 +89,34 @@ function cookieValue(cookies: string, name: string): string | null {
   return null;
 }
 
+// zod/mini carries no messages of its own. The generated forms show a refused
+// value's message to the operator, so every page reads the English ones. Each
+// page loads this module, because every call goes through it.
+z.config(en());
+
 /** One submitted item, as far as the transport reads it. */
 const ITEM = z.looseObject({
-  request_id: z.string().optional(),
-  value: z.unknown().optional(),
-  error: z.looseObject({ code: z.string().optional() }).optional(),
+  request_id: z.optional(z.string()),
+  value: z.optional(z.unknown()),
+  error: z.optional(z.looseObject({ code: z.optional(z.string()) })),
 });
 
 /** The complete envelope: exactly one outcome for one submitted item. */
-const ONE_OUTCOME = z.array(ITEM).length(1);
+const ONE_OUTCOME = z.array(ITEM).check(z.length(1));
 
 /** The partial completion envelope. */
 const PARTIAL = z.looseObject({
-  committed_result: z.array(ITEM).optional(),
-  failed_outcome: z.unknown().optional(),
+  committed_result: z.optional(z.array(ITEM)),
+  failed_outcome: z.optional(z.unknown()),
 });
 
 /** The refusal envelope that ingress returns before any item runs. */
 const ERROR_ENVELOPE = z.looseObject({
   error: z.looseObject({
     code: z.string(),
-    data: z.unknown().optional(),
-    operation: z.string().optional(),
-    detail: z.unknown().optional(),
+    data: z.optional(z.unknown()),
+    operation: z.optional(z.string()),
+    detail: z.optional(z.unknown()),
   }),
 });
 
@@ -155,7 +161,7 @@ function withoutCode(error: { [key: string]: unknown }): JsonValue {
  * operator reads one diagnostic in both clients.
  */
 function reported(reason: string, document: unknown): Outcome<JsonValue> {
-  const items = z.array(z.unknown()).length(1).safeParse(document);
+  const items = z.array(z.unknown()).check(z.length(1)).safeParse(document);
   const outcome = items.success ? items.data[0] : document;
   const parsed = ERROR_ENVELOPE.safeParse(outcome);
   if (!parsed.success) {

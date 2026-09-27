@@ -283,8 +283,8 @@ fn a_form_renders_the_plan_inputs_and_supplies_the_reserved_ones() {
     assert!(widget.contains(concat!(
         "const CREATE_INPUT = z.object({\n",
         "  code: z.enum([\"priority\", \"standard\"]),\n",
-        "  makerId: z.string().regex(UUID_TEXT, \"expected a UUID\").nullable().optional(),\n",
-        "  note: z.string().nullable().optional(),\n",
+        "  makerId: z.optional(z.nullable(z.string().check(z.regex(UUID_TEXT, \"expected a UUID\")))),\n",
+        "  note: z.optional(z.nullable(z.string())),\n",
         "});\n",
     )));
     assert!(
@@ -331,9 +331,9 @@ fn a_form_renders_the_plan_inputs_and_supplies_the_reserved_ones() {
     // A nested input keeps its shape in the schema and in the field name.
     assert!(widget.contains(concat!(
         "const UPDATE_INPUT = z.object({\n",
-        "  change: z\n",
-        "    .object({\n",
-        "      code: z.enum([\"priority\", \"standard\"]).optional(),\n",
+        "  change: z.optional(\n",
+        "    z.object({\n",
+        "      code: z.optional(z.enum([\"priority\", \"standard\"])),\n",
     )));
     assert!(widget.contains("<form.Field name={`change.code`}>"));
     let update = widget
@@ -617,13 +617,13 @@ fn a_bound_key_is_a_prop_and_never_a_control() {
     assert!(
         widget.contains(concat!(
             "const UPDATE_INPUT = z.object({\n",
-            "  change: z\n",
-            "    .object({\n",
-            "      code: z.enum([\"priority\", \"standard\"]).optional(),\n",
-            "      makerId: z.string().regex(UUID_TEXT, \"expected a UUID\").nullable().optional(),\n",
-            "      note: z.string().nullable().optional(),\n",
-            "    })\n",
-            "    .optional(),\n",
+            "  change: z.optional(\n",
+            "    z.object({\n",
+            "      code: z.optional(z.enum([\"priority\", \"standard\"])),\n",
+            "      makerId: z.optional(z.nullable(z.string().check(z.regex(UUID_TEXT, \"expected a UUID\")))),\n",
+            "      note: z.optional(z.nullable(z.string())),\n",
+            "    }),\n",
+            "  ),\n",
             "});\n",
         )),
         "the schema states what the operator fills, and the bound key is absent"
@@ -1057,12 +1057,7 @@ fn a_repeated_group_states_its_label_its_bounds_and_its_spellings() {
     );
 
     // wamn-z5vd: the bounds reach the schema and both controls.
-    assert!(widget.contains(concat!(
-        "        .array()\n",
-        "        .min(1)\n",
-        "        .max(10)\n",
-        "        .optional(),\n",
-    )));
+    assert!(widget.contains("        ).check(z.minLength(1), z.maxLength(10)),\n"));
     assert!(
         widget.contains("disabled={!canAdd(group().state.value ?? [], 10)}"),
         "the add control stops at the declared maximum"
@@ -1079,8 +1074,8 @@ fn a_repeated_group_states_its_label_its_bounds_and_its_spellings() {
         "const UUID_TEXT = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}",
         "-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;\n",
     )));
-    assert!(widget.contains("z.string().regex(UUID_TEXT, \"expected a UUID\")"));
-    assert!(widget.contains("z.string().regex(NUMERIC_TEXT, \"expected decimal text\")"));
+    assert!(widget.contains("z.string().check(z.regex(UUID_TEXT, \"expected a UUID\"))"));
+    assert!(widget.contains("z.string().check(z.regex(NUMERIC_TEXT, \"expected decimal text\"))"));
     assert!(
         !widget.contains("const TIMESTAMP_TEXT"),
         "a module writes no rule it does not apply"

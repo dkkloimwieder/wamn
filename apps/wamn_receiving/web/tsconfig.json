@@ -25,7 +25,8 @@
       "@solidjs/router": ["./node_modules/@solidjs/router"],
       "@tanstack/solid-table": ["./node_modules/@tanstack/solid-table"],
       "@tanstack/solid-form": ["./node_modules/@tanstack/solid-form"],
-      "zod": ["./node_modules/zod"]
+      "zod": ["./node_modules/zod"],
+      "zod/*": ["./node_modules/zod/*"]
     }
   },
   "include": ["src/**/*.ts", "src/**/*.tsx", "vite.config.ts"]

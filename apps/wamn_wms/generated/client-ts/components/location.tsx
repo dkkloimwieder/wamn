@@ -5,7 +5,7 @@
 
 import { Show, createResource, createSignal, onCleanup } from "solid-js";
 import { createForm } from "@tanstack/solid-form";
-import { z } from "zod";
+import * as z from "zod/mini";
 import {
   afterWrites,
   cellText,
@@ -278,11 +278,11 @@ export const LOCATION_QUERY_TABLE = {
 
 /** What an operator types for `wamn-wms:location/update@1.0.0`. */
 const UPDATE_INPUT = z.object({
-  change: z
-    .object({
-      locationCode: z.string().optional(),
-    })
-    .optional(),
+  change: z.optional(
+    z.object({
+      locationCode: z.optional(z.string()),
+    }),
+  ),
 });
 
 /** What the form for `wamn-wms:location/update@1.0.0` can start with. */

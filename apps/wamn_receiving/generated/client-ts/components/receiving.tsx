@@ -5,7 +5,7 @@
 
 import { For, Show, createEffect, createSignal, onCleanup } from "solid-js";
 import { createForm, useStore } from "@tanstack/solid-form";
-import { z } from "zod";
+import * as z from "zod/mini";
 import {
   afterWrites,
   appendPage,
@@ -203,22 +203,21 @@ export const RECEIVING_LOAD_RECEIPT_SCREEN_TABLE = {
 
 /** What an operator types for `wamn-receiving:receiving/record-receipt@1.0.0`. */
 const RECORD_RECEIPT_INPUT = z.object({
-  value: z
-    .object({
-      line: z
-        .object({
-          locationId: z.string().regex(UUID_TEXT, "expected a UUID"),
-          purchaseOrderLineId: z.string().regex(UUID_TEXT, "expected a UUID"),
-          quantity: z.string().regex(NUMERIC_TEXT, "expected decimal text"),
-        })
-        .array()
-        .min(1)
-        .max(100)
-        .optional(),
-      purchaseOrderId: z.string().regex(UUID_TEXT, "expected a UUID"),
+  value: z.optional(
+    z.object({
+      line: z.optional(
+        z.array(
+          z.object({
+            locationId: z.string().check(z.regex(UUID_TEXT, "expected a UUID")),
+            purchaseOrderLineId: z.string().check(z.regex(UUID_TEXT, "expected a UUID")),
+            quantity: z.string().check(z.regex(NUMERIC_TEXT, "expected decimal text")),
+          }),
+        ).check(z.minLength(1), z.maxLength(100)),
+      ),
+      purchaseOrderId: z.string().check(z.regex(UUID_TEXT, "expected a UUID")),
       receiptReference: z.string(),
-    })
-    .optional(),
+    }),
+  ),
 });
 
 /** What the form for `wamn-receiving:receiving/record-receipt@1.0.0` can start with. */

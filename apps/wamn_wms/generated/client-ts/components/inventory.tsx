@@ -5,7 +5,7 @@
 
 import { Show, createSignal, onCleanup } from "solid-js";
 import { createForm } from "@tanstack/solid-form";
-import { z } from "zod";
+import * as z from "zod/mini";
 import {
   afterWrites,
   appendPage,
@@ -111,15 +111,15 @@ const NUMERIC_TEXT = /^[+-]?(\d+(\.\d*)?|\.\d+)$/;
 
 /** What an operator types for `wamn-wms:inventory/adjust@1.0.0`. */
 const ADJUST_INPUT = z.object({
-  value: z
-    .object({
-      packagingId: z.string().regex(UUID_TEXT, "expected a UUID"),
-      productId: z.string().regex(UUID_TEXT, "expected a UUID"),
-      quantity: z.string().regex(NUMERIC_TEXT, "expected decimal text"),
+  value: z.optional(
+    z.object({
+      packagingId: z.string().check(z.regex(UUID_TEXT, "expected a UUID")),
+      productId: z.string().check(z.regex(UUID_TEXT, "expected a UUID")),
+      quantity: z.string().check(z.regex(NUMERIC_TEXT, "expected decimal text")),
       reasonCode: z.string(),
       status: z.enum(["available", "held"]),
-    })
-    .optional(),
+    }),
+  ),
 });
 
 /** What the form for `wamn-wms:inventory/adjust@1.0.0` can start with. */
@@ -455,12 +455,12 @@ export const INVENTORY_AGGREGATE_TABLE = {
 
 /** What an operator types for `wamn-wms:inventory/merge@1.0.0`. */
 const MERGE_INPUT = z.object({
-  value: z
-    .object({
-      sourcePackagingId: z.string().regex(UUID_TEXT, "expected a UUID"),
-      targetPackagingId: z.string().regex(UUID_TEXT, "expected a UUID"),
-    })
-    .optional(),
+  value: z.optional(
+    z.object({
+      sourcePackagingId: z.string().check(z.regex(UUID_TEXT, "expected a UUID")),
+      targetPackagingId: z.string().check(z.regex(UUID_TEXT, "expected a UUID")),
+    }),
+  ),
 });
 
 /** What the form for `wamn-wms:inventory/merge@1.0.0` can start with. */
@@ -701,12 +701,12 @@ export function InventoryMergeForm(props: InventoryMergeFormProps) {
 
 /** What an operator types for `wamn-wms:inventory/move@1.0.0`. */
 const MOVE_INPUT = z.object({
-  value: z
-    .object({
-      packagingId: z.string().regex(UUID_TEXT, "expected a UUID"),
-      toLocationId: z.string().regex(UUID_TEXT, "expected a UUID"),
-    })
-    .optional(),
+  value: z.optional(
+    z.object({
+      packagingId: z.string().check(z.regex(UUID_TEXT, "expected a UUID")),
+      toLocationId: z.string().check(z.regex(UUID_TEXT, "expected a UUID")),
+    }),
+  ),
 });
 
 /** What the form for `wamn-wms:inventory/move@1.0.0` can start with. */
@@ -947,17 +947,17 @@ export function InventoryMoveForm(props: InventoryMoveFormProps) {
 
 /** What an operator types for `wamn-wms:inventory/split@1.0.0`. */
 const SPLIT_INPUT = z.object({
-  value: z
-    .object({
+  value: z.optional(
+    z.object({
       newPackagingCode: z.string(),
       newPackagingType: z.enum(["bin", "case", "loose", "pallet", "tote"]),
-      productId: z.string().regex(UUID_TEXT, "expected a UUID"),
-      quantity: z.string().regex(NUMERIC_TEXT, "expected decimal text"),
-      sourcePackagingId: z.string().regex(UUID_TEXT, "expected a UUID"),
+      productId: z.string().check(z.regex(UUID_TEXT, "expected a UUID")),
+      quantity: z.string().check(z.regex(NUMERIC_TEXT, "expected decimal text")),
+      sourcePackagingId: z.string().check(z.regex(UUID_TEXT, "expected a UUID")),
       status: z.enum(["available", "held"]),
-      toLocationId: z.string().regex(UUID_TEXT, "expected a UUID"),
-    })
-    .optional(),
+      toLocationId: z.string().check(z.regex(UUID_TEXT, "expected a UUID")),
+    }),
+  ),
 });
 
 /** What the form for `wamn-wms:inventory/split@1.0.0` can start with. */

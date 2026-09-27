@@ -5,7 +5,7 @@
 
 import { Show, createSignal } from "solid-js";
 import { createForm } from "@tanstack/solid-form";
-import { z } from "zod";
+import * as z from "zod/mini";
 import {
   checkedMember,
   newIdempotencyKey,

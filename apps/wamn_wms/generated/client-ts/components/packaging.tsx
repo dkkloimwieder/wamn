@@ -5,7 +5,7 @@
 
 import { Show, createResource, createSignal, onCleanup } from "solid-js";
 import { createForm } from "@tanstack/solid-form";
-import { z } from "zod";
+import * as z from "zod/mini";
 import {
   afterWrites,
   appendPage,
@@ -82,7 +82,7 @@ const UUID_TEXT = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-
 
 /** What an operator types for `wamn-wms:packaging/create@1.0.0`. */
 const CREATE_INPUT = z.object({
-  locationId: z.string().regex(UUID_TEXT, "expected a UUID"),
+  locationId: z.string().check(z.regex(UUID_TEXT, "expected a UUID")),
   packagingCode: z.string(),
   status: z.enum(["available", "held"]),
   type: z.enum(["bin", "case", "loose", "pallet", "tote"]),

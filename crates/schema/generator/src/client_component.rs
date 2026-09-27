@@ -342,7 +342,7 @@ fn emit_model(
         } else {
             source.push_str("import { createForm } from \"@tanstack/solid-form\";\n");
         }
-        source.push_str("import { z } from \"zod\";\n");
+        source.push_str("import * as z from \"zod/mini\";\n");
     }
     writeln!(
         source,
@@ -1199,20 +1199,27 @@ fn zod_type(field: &FieldIr) -> String {
         // A type that travels as text states the spelling the request
         // canonicalizer accepts, so the form names the field before the
         // request goes out instead of the release refusing it later.
-        "uuid" => "z.string().regex(UUID_TEXT, \"expected a UUID\")".to_owned(),
+        "uuid" => "z.string().check(z.regex(UUID_TEXT, \"expected a UUID\"))".to_owned(),
         "timestamptz" => {
-            "z.string().regex(TIMESTAMP_TEXT, \"expected an RFC3339 timestamp\")".to_owned()
+            "z.string().check(z.regex(TIMESTAMP_TEXT, \"expected an RFC3339 timestamp\"))"
+                .to_owned()
         }
-        "numeric" => "z.string().regex(NUMERIC_TEXT, \"expected decimal text\")".to_owned(),
-        "int64" => "z.string().regex(INTEGER_TEXT, \"expected a whole number\")".to_owned(),
+        "numeric" => {
+            "z.string().check(z.regex(NUMERIC_TEXT, \"expected decimal text\"))".to_owned()
+        }
+        "int64" => {
+            "z.string().check(z.regex(INTEGER_TEXT, \"expected a whole number\"))".to_owned()
+        }
         _ => "z.string()".to_owned(),
     };
+    // zod/mini wraps a schema in a function rather than chaining a method, so
+    // a bundle carries only the parts a form uses.
     let mut spelling = base;
     if field.nullable {
-        spelling.push_str(".nullable()");
+        spelling = format!("z.nullable({spelling})");
     }
     if !field.required {
-        spelling.push_str(".optional()");
+        spelling = format!("z.optional({spelling})");
     }
     spelling
 }
@@ -1264,24 +1271,39 @@ fn write_input_schema(
         let group = inputs.iter().find(|input| {
             repeated_ancestor(&input.path).is_some_and(|ancestor| member_path(ancestor) == deeper)
         });
-        writeln!(source, "{indent}{name}: z").expect("write");
-        writeln!(source, "{indent}  .object({{").expect("write");
-        write_input_schema(source, screen, inputs, &deeper, depth + 2);
-        writeln!(source, "{indent}  }})").expect("write");
-        if let Some(group) = group {
-            // The declared bounds of the group, so the form refuses a list
-            // that the release would refuse.
-            let declared =
-                repeated_ancestor(&group.path).and_then(|ancestor| leaf_group(screen, ancestor));
-            writeln!(source, "{indent}  .array()").expect("write");
-            if let Some(minimum) = declared.and_then(|group| group.minimum) {
-                writeln!(source, "{indent}  .min({minimum})").expect("write");
-            }
-            if let Some(maximum) = declared.and_then(|group| group.maximum) {
-                writeln!(source, "{indent}  .max({maximum})").expect("write");
-            }
+        writeln!(source, "{indent}{name}: z.optional(").expect("write");
+        let Some(group) = group else {
+            writeln!(source, "{indent}  z.object({{").expect("write");
+            write_input_schema(source, screen, inputs, &deeper, depth + 2);
+            writeln!(source, "{indent}  }}),").expect("write");
+            writeln!(source, "{indent}),").expect("write");
+            continue;
+        };
+        // The declared bounds of the group, so the form refuses a list that
+        // the release would refuse.
+        let declared =
+            repeated_ancestor(&group.path).and_then(|ancestor| leaf_group(screen, ancestor));
+        let bounds: Vec<String> = [
+            declared
+                .and_then(|group| group.minimum)
+                .map(|minimum| format!("z.minLength({minimum})")),
+            declared
+                .and_then(|group| group.maximum)
+                .map(|maximum| format!("z.maxLength({maximum})")),
+        ]
+        .into_iter()
+        .flatten()
+        .collect();
+        writeln!(source, "{indent}  z.array(").expect("write");
+        writeln!(source, "{indent}    z.object({{").expect("write");
+        write_input_schema(source, screen, inputs, &deeper, depth + 3);
+        writeln!(source, "{indent}    }}),").expect("write");
+        if bounds.is_empty() {
+            writeln!(source, "{indent}  ),").expect("write");
+        } else {
+            writeln!(source, "{indent}  ).check({}),", bounds.join(", ")).expect("write");
         }
-        writeln!(source, "{indent}  .optional(),").expect("write");
+        writeln!(source, "{indent}),").expect("write");
     }
 }
 

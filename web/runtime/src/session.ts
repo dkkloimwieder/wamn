@@ -9,7 +9,7 @@
  * it expires, so a reload does not ask for the password.
  */
 
-import { z } from "zod";
+import * as z from "zod/mini";
 
 /** One project environment the account can reach. */
 export interface Environment {
