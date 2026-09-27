@@ -1,0 +1,15 @@
+# Prettier formats the hand-written web code only. It also skips what
+# .gitignore lists.
+/*
+!/web/
+!/apps/
+/apps/*
+!/apps/wamn_wms/
+!/apps/wamn_receiving/
+/apps/*/*
+!/apps/*/web/
+**/*.md
+**/dist/
+**/__screenshots__/
+# An owner's local files, never committed.
+/web/demo/
