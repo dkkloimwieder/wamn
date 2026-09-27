@@ -137,7 +137,7 @@ This is the order. Section 5.3 gives the owner rulings.
 5. Install the event NATS from `deploy/infra/nats-jetstream.yaml` with one replica, and declare stream replicas 1 in the environment configuration.
 6. Install CloudNativePG from `deploy/infra/cnpg-operator.yaml` and one cluster with one instance on the storage class `standard` (`pd-standard`).
 7. Run `wamn-ctl provision-system`, which installs the control store and sets `registry.meta.platform_domain`.
-8. Run the provisioning verbs of [deployment ordering](../operations/deployment.md#deployment-ordering) from this machine, through a port-forward to PostgreSQL: `provision-org`, `provision-project-env`, `provision-identity-issuer`, `apply-package`, `reconcile-package-data-access`, `push-component`, `reconcile-run-plane`.
+8. Run the provisioning verbs of [deployment ordering](../operations/deployment.md#deployment-ordering) from this machine, through a port-forward to PostgreSQL: `provision-org`, `provision-project-env`, `provision-identity-issuer`, `reconcile-run-plane`, `apply-package`, `reconcile-package-data-access`, `push-component`.
 9. The owner creates the Resend secret of section 4.2. Then install identity with `deploy/platform/identity`, and the host with one replica at a request of 0.5 CPU.
 10. Publish the Receiving release with `--route-host receiving.wamn.dev`, and point the host at its manifest digest.
 11. Make sure that the host serves the release through a port-forward. Scale `main` to 0.
@@ -169,6 +169,9 @@ Owner rulings of 2026-09-26:
 - `deploy/sql/postgres-init.sql` is a test fixture with seed data and is not applied.
 - `provision-org` uses `--template trials --pool wamn-pg`, the one template that places an org on the shared cluster.
 - `provision-project-env` runs with `--namespace platform --secret-namespace hosts`. The `Database` resource goes to `platform`, the namespace of its `Cluster`. The credential Secret goes to `hosts`, with its `metadata.namespace` set by `jq` until the finding on the one `--namespace` flag is fixed.
+- The identity issuer is `https://identity.identity.svc.cluster.local`: release `identity` in namespace `identity`, the form of the kind cases. Its certificate comes from the internal CA and carries that DNS name. The edge sends `/password` there and checks the CA through `identityCaConfigMap`. Identity has no public host.
+- `reconcile-run-plane --schema wamn_run` runs after `provision-identity-issuer` and before `apply-package`, because it installs the catalog schema that `apply-package` writes into.
+- The event NATS pod restarts now to load the `dkk` users. The operations page records a check that `WAMN_TAP` exists and that the `dkk` provisioning user connects.
 
 ## 6. Benchmark
 

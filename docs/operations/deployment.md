@@ -49,6 +49,7 @@ wamn-ctl provision-system --system-url "$SYSTEM_ADMIN_URL" --platform-domain "$P
 
 The verb installs the record history, the system schema and the portable store as `wamn_system`, and closes the PUBLIC `CONNECT` and `TEMPORARY` floors.
 It refuses a database that already has the schema `registry`.
+Then run the verbs in this order: `provision-org`, `provision-project-env`, `provision-identity-issuer`, `reconcile-run-plane`, `apply-package`, `reconcile-package-data-access`, `push-component`.
 
 Provisioning owns database schema, privileges, environment bindings, and broker stream configuration.
 Runtime uses credentials scoped to that environment.
@@ -65,6 +66,23 @@ If the value is unset, `reconcile-run-plane` refuses with `platform-domain-unset
 `wamn-ctl print-platform-principals --tenant "$TENANT" --platform-domain "$PLATFORM_DOMAIN"` prints the same SQL for an operator who applies it by hand.
 Person rows are not written yet, as the [record history limits](../architecture/data-access.md#limits) state.
 
+After `provision-project-env` and `provision-identity-issuer`, and before any package step, reconcile the target run schema and its environment policy:
+
+```bash
+wamn-ctl reconcile-run-plane \
+  --system-database-url "$SYSTEM_ADMIN_URL" \
+  --admin-database-url "$TARGET_ADMIN_URL" \
+  --org "$ORG" --project "$PROJECT" --tenant "$TENANT" \
+  --env "$ENVIRONMENT" --schema "$RUN_SCHEMA"
+```
+
+`publish-release` refuses an absent or mismatched environment policy.
+The reconciler requires the registry-derived target and administrative database authority.
+Its `--dry-run` form prints the proposed changes without applying them.
+The same run installs the catalog schema, which `apply-package` writes into, and then `app-schema.sql` and the tenant identity rows, whose triggers call the record-history functions of the catalog schema.
+Existing reconciliation code does not establish support for post-install application schema upgrades.
+That design remains in [upgrades](../plan/upgrades.md).
+
 Apply the selected package migrations to a fresh target with `wamn-ctl apply-package`.
 apply-package owns the grants of the `wamn_audit_retention` role on history tables.
 It grants and revokes them in the transaction that writes the log triggers.
@@ -80,23 +98,6 @@ The command reports “configuration valid; connectivity and credentials not tes
 It does not contact the external service or read its credentials.
 
 Read each command's current required arguments with `--help`.
-
-Before release publication, reconcile the target run schema and its environment policy:
-
-```bash
-wamn-ctl reconcile-run-plane \
-  --system-database-url "$SYSTEM_ADMIN_URL" \
-  --admin-database-url "$TARGET_ADMIN_URL" \
-  --org "$ORG" --project "$PROJECT" --tenant "$TENANT" \
-  --env "$ENVIRONMENT" --schema "$RUN_SCHEMA"
-```
-
-`publish-release` refuses an absent or mismatched environment policy.
-The reconciler requires the registry-derived target and administrative database authority.
-Its `--dry-run` form prints the proposed changes without applying them.
-The same run installs `app-schema.sql` and the tenant identity rows, after the catalog schema that carries the record-history functions their triggers call.
-Existing reconciliation code does not establish support for post-install application schema upgrades.
-That design remains in [upgrades](../plan/upgrades.md).
 
 Schedule record history retention for each tenant database that has a relation with a `"P<n>D"` retention.
 Prepare an audit retention credential generation with `wamn-ctl provision-project-env --prepare-audit-retention-generation`.
