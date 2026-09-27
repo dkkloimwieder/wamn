@@ -208,7 +208,7 @@ The files go to `<prefix>/<package id>/<digest hex>/`, so each release keeps its
 Each object carries its Cache-Control: `assets/` is `public, max-age=31536000, immutable`, and `index.html` is `no-cache`.
 The command writes `index.html` last. The command refuses a built file that has no declared cache rule or content type.
 The bucket must allow reads without credentials.
-The edge chart in `deploy/platform/edge` serves one such path with `bucket.path`, and passes each object's headers on.
+The edge chart in `deploy/platform/edge` serves a list of `applications`. Each entry names its public `host`, the route ingress `api` of its host group, and its upload path `bucketPath`. The edge passes the headers of each object on.
 In kind, the Receiving edge case uses the command. [Cluster tests](cluster-tests.md) describes that case.
 
 ## Google Cloud edge

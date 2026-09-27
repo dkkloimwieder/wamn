@@ -7,30 +7,32 @@ image:
   digest: sha256:65645c7bb6a0661892a8b03b89d0743208a18dd2f3f17a54ef4b76fb8e2f2a10
   pullPolicy: IfNotPresent
 
-# The public host. Every application release publishes with this --route-host,
-# so the edge passes the Host header to the router unchanged.
-host: ""
+# The applications the edge serves, one server each. host is the public host,
+# which the release of the application publishes as its --route-host, so the
+# edge passes the Host header to the router unchanged. api is the route
+# ingress of its host group, plain HTTP; the edge removes /api before it
+# forwards. bucketPath is the path that `wamn web upload` wrote, readable
+# without credentials: <bucket>/<prefix>/<package>/<release digest hex>.
+applications: []
+#  - host: receiving.example.com
+#    api: http://flow-http.hosts.svc.cluster.local
+#    bucketPath: web/clients/wamn_receiving/<release digest hex>
 
 # The serving certificate. With issuer set, the chart requests it from that
 # cert-manager ClusterIssuer into tlsSecret. Without it, tlsSecret must exist.
 tlsSecret: ""
 issuer: ""
 
-# The route ingress, plain HTTP. The edge removes /api before it forwards.
-api: ""
-
 # The identity service, HTTPS. The edge checks its certificate against ca.crt
 # in identityCaConfigMap, for the DNS name in the identity URL.
 identity: ""
 identityCaConfigMap: ""
 
-# The bucket path that `wamn web upload` wrote, readable without credentials:
-# <bucket>/<prefix>/<package>/<release digest hex>. endpoint is the object store
-# origin that the edge reads, which Google Cloud does not use. Each object
-# carries its own Cache-Control, which the edge and the CDN pass on.
+# endpoint is the object store origin that the edge reads for every
+# application's bucketPath, which Google Cloud does not use. Each object carries
+# its own Cache-Control, which the edge and the CDN pass on.
 bucket:
   endpoint: ""
-  path: ""
 
 # Google Cloud: annotate the Service so that GKE makes a network endpoint group
 # for the load balancer. The load balancer then serves the bucket, so

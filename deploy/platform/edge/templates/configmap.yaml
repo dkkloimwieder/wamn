@@ -1,11 +1,9 @@
-{{- $host := required "Set host to the public host name." .Values.host -}}
-{{- $api := required "Set api to the route ingress URL." .Values.api -}}
+{{- $applications := required "Set applications to the list of applications the edge serves." .Values.applications -}}
 {{- $identity := required "Set identity to the identity service URL." .Values.identity -}}
 {{- $endpoint := .Values.bucket.endpoint -}}
 {{- if not (or $endpoint .Values.neg) -}}
 {{- fail "Set bucket.endpoint to the object store origin." -}}
 {{- end -}}
-{{- $bucket := required "Set bucket.path to the path that wamn web upload wrote." .Values.bucket.path | trimAll "/" -}}
 {{- if not (hasPrefix "https://" $identity) -}}
 {{- fail "identity must use HTTPS." -}}
 {{- end -}}
@@ -32,6 +30,10 @@ data:
       server_tokens off;
       access_log /dev/stdout;
       error_log /dev/stderr;
+{{- range $applications }}
+{{- $host := required "Set host of each application to its public host name." .host }}
+{{- $api := required "Set api of each application to its route ingress URL." .api }}
+{{- $bucket := required "Set bucketPath of each application to the path that wamn web upload wrote." .bucketPath | trimAll "/" }}
       server {
         listen 8443 ssl;
         server_name {{ $host }};
@@ -79,4 +81,5 @@ data:
         }
 {{- end }}
       }
+{{- end }}
     }

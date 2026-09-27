@@ -291,14 +291,14 @@ fn render_edge(root: &Path) -> Output {
         "wamn-system",
     ]);
     for value in [
-        "host=wamn.example.invalid".to_owned(),
+        "applications[0].host=wamn.example.invalid".to_owned(),
         format!("tlsSecret={EDGE_TLS_SECRET}"),
         "issuer=wasmcloud-ca".to_owned(),
-        "api=http://flow-http.wamn-system.svc.cluster.local".to_owned(),
+        "applications[0].api=http://flow-http.wamn-system.svc.cluster.local".to_owned(),
         format!("identity={IDENTITY_ISSUER}"),
         format!("identityCaConfigMap={EDGE_IDENTITY_CA}"),
         "bucket.endpoint=http://object-store.invalid:9000".to_owned(),
-        "bucket.path=web/clients/wamn_receiving/release".to_owned(),
+        "applications[0].bucketPath=web/clients/wamn_receiving/release".to_owned(),
     ] {
         command.args(["--set-string", &value]);
     }

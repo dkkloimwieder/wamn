@@ -229,6 +229,15 @@ Owner rulings of 2026-09-27:
 - Then a new invitation with `wamn-ctl invite`. The owner signs up from the mail in the browser, signs in, and says so. Then the supplier change, and step 4 closes with the four measurements plus the sign-up and the sign-in. `wamn-ch2w` closes with this. The DKIM records wait for the Resend values and do not block the mail.
 - Role (2026-09-27): after sign-up, sign-in listed no environment, because the owner held no role. For tonight only, the owner gets `route-caller`, the one role that exists, by one SQL insert into `app_system.user_roles` through the port-forward. The operations page records it as temporary. The missing user roles are a P1 finding with their own epic: `operator` and `admin` written by publish, `wamn-ctl grant-role` and `revoke-role`, and the system role renamed `platform`, which no person holds.
 
+### 5.5 Step 5 and step 6 rulings
+
+Owner rulings of 2026-09-27:
+
+- `wamn-v50u` (table editing) is P1, because it blocks an operator's daily work. It belongs to the web table owner. `wamn-w5fu` closes with the commit that made the mail one link.
+- Step 5 (`wamn-ghx2.5`): the edge chart takes a list of applications, each with its host and bucket path. WMS deploys beside Receiving along the same path as Receiving: `wms.wamn.dev` on the same certificate and load balancer, with its own publish, host group, client upload and DNS record. The one measurement: the owner signs in at `wms.wamn.dev` and completes one pallet move in the browser. The owner's WMS role tonight is the same temporary insert, recorded.
+- Step 6 (`wamn-ghx2.6`): `tools/bench` as section 6 states it. A read, a write and a list against `receiving.wamn.dev` at the seed of 1000 rows. One JSON file per run with p50, p95, p99, throughput and error rate. The four tier runs, each tier set with `gcloud`, and the pool returns to 2 x `e2-standard-2` Spot after.
+- No stop between the steps. The agent reports at the WMS move and at the tier table.
+
 
 ## 6. Benchmark
 

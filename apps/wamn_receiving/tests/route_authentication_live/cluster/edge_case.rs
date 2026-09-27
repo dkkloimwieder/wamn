@@ -317,14 +317,14 @@ async fn install_edge(cluster: &ReceivingCluster, release: &str) -> anyhow::Resu
         .context("the release is a sha256 digest")?;
     let namespace = &resources.name;
     let values = [
-        format!("host={}", cluster.inputs.route_host),
+        format!("applications[0].host={}", cluster.inputs.route_host),
         "tlsSecret=wamn-edge-tls".to_owned(),
         "issuer=wasmcloud-ca".to_owned(),
-        format!("api=http://flow-http.{namespace}.svc.cluster.local"),
+        format!("applications[0].api=http://flow-http.{namespace}.svc.cluster.local"),
         format!("identity=https://{IDENTITY}.{namespace}.svc.cluster.local"),
         "identityCaConfigMap=host-session-public-ca".to_owned(),
         format!("bucket.endpoint=http://{minio}:9000"),
-        format!("bucket.path=web/clients/wamn_receiving/{digest}"),
+        format!("applications[0].bucketPath=web/clients/wamn_receiving/{digest}"),
         "service.type=NodePort".to_owned(),
     ];
     let mut command = Command::new("helm");
