@@ -147,6 +147,31 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe("the app shell", () => {
+  it("posts the invitation code of the address and the password to enroll, then opens sign in", async () => {
+    const seen: { url: string; body: unknown }[] = [];
+    const fetch = (url: string | URL | Request, init?: RequestInit) => {
+      seen.push({ url: String(url), body: JSON.parse(String(init?.body)) });
+      return Promise.resolve(new Response(null, { status: 204 }));
+    };
+    open("/invite#ccc4533d-a81a-465d-8a44-1414369ae2fd:wamn_inv_0f", fetch as typeof globalThis.fetch);
+    fireEvent.input(await screen.findByLabelText("email"), { target: { value: "someone@wamn.dev" } });
+    fireEvent.input(screen.getByLabelText("password"), { target: { value: "a long password string" } });
+    fireEvent.input(screen.getByLabelText("password again"), { target: { value: "a long password string" } });
+    fireEvent.click(screen.getByText("set password"));
+    expect(await screen.findByText("sign in")).toBeDefined();
+    expect(window.location.pathname).toBe("/");
+    expect(seen).toEqual([
+      {
+        url: "/password/enroll",
+        body: {
+          principal_id: "ccc4533d-a81a-465d-8a44-1414369ae2fd",
+          invitation: "wamn_inv_0f",
+          password: "a long password string",
+        },
+      },
+    ]);
+  });
+
   it("signs in at the root, and the chosen environment opens the first screen", async () => {
     const { fetch } = identity(false);
     open("/", fetch);

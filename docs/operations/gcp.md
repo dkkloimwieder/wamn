@@ -407,7 +407,9 @@ On 2026-09-26 the host image took 419 seconds to build and the identity image 59
 | --- | --- |
 | `wamn-host:src-490a0d098a176e39` | `sha256:b44a6f944a410ca42dccf378c0948226946c54fefa17c4bf3cc246e25dcd9dd2` |
 | `wamn-identity:src-bf477a549dc55932` | `sha256:b0896c8fb3f94920c097762f75019fe68a81254fc49a4fa6768a29db97794827` |
+| `wamn-identity:src-cb10274981e78f44` | `sha256:0fe43f6bc52e98e327cb7abd9898a3e1268f9298e37ec56e12504fe7ffdeab42` |
 
+On 2026-09-27 the second identity image, with the invitation link, took 53 seconds to build and 5 seconds to push. Roll it out with `helm upgrade identity deploy/platform/identity -n identity -f deploy/gcp/values-identity.yaml`.
 
 ### 3.5 Event NATS
 
@@ -680,7 +682,7 @@ On 2026-09-26 the first run took 10 seconds, and the email was `wamn-registry-re
 | Image | Digest | Use |
 | --- | --- | --- |
 | `wamn-host:src-490a0d098a176e39` | `sha256:b44a6f944a410ca42dccf378c0948226946c54fefa17c4bf3cc246e25dcd9dd2` | host |
-| `wamn-identity:src-bf477a549dc55932` | `sha256:b0896c8fb3f94920c097762f75019fe68a81254fc49a4fa6768a29db97794827` | identity |
+| `wamn-identity:src-cb10274981e78f44` | `sha256:0fe43f6bc52e98e327cb7abd9898a3e1268f9298e37ec56e12504fe7ffdeab42` | identity |
 | `wamn-cdc-reader:src-6bf15eedaa8cb8e8` | `sha256:fa38da50c62ff38679ecdcd3490df8650fb6a4b4d6adda3017fb134dadac797a` | CDC reader |
 | `curlimages/curl:8.22.0` | `sha256:58adaa4e8dca9c988bae2aba4ab3434a0bb2da16bbe3f92dec39ec7785166777` | registry token CronJob |
 
@@ -915,6 +917,7 @@ target/debug/wamn web upload apps/wamn_receiving \
 ```
 
 On 2026-09-27 the upload wrote 10 files in 17 seconds, after a 54 second build of `wamn`. The files go to `clients/wamn_receiving/<digest hex>/`, which `deploy/gcp/values-edge.yaml` and `deploy/gcp/url-map.yaml` name. The first ruling asked for an HMAC key on the owner's account. `gsutil hmac create` and `gcloud storage hmac create` accept only a service account, so that ruling was replaced.
+The second upload on 2026-09-27 added the `/invite` page and took 10 seconds. Run the same command after each change to the client.
 
 ### 4.3 Load balancer
 
@@ -1012,6 +1015,11 @@ rm -rf $C
 ```
 
 On 2026-09-27 the principal was `ccc4533d-a81a-465d-8a44-1414369ae2fd`. The three verbs took 2, 1 and 25 seconds, and identity answered `201 {"status":"accepted_for_delivery"}` in 1 second.
+The first invitation showed a code for the terminal client, and the web client had no page to accept it (`wamn-ch2w`). With `inviteUrl` set in `deploy/gcp/values-identity.yaml`, the mail carries one link to `https://receiving.wamn.dev/invite#<code>`. The second invitation went out the same way and took 1 second. Restart the identity port-forward after identity rolls, because the forward ends with the old pod:
+
+```bash
+kubectl -n identity port-forward svc/identity 8443:443
+```
 
 ### 4.6 Delete the public edge
 

@@ -48,6 +48,7 @@ import {
 } from "@wamn/ui";
 import {
   createTransport,
+  enroll,
   environments,
   keepSession,
   signIn,
@@ -203,6 +204,7 @@ export function Shell(props: ShellProps): JSX.Element {
   return (
     <Router>
       <Route path="/" component={() => <ChooseEnvironment title={props.title} options={options} />} />
+      <Route path="/invite" component={() => <AcceptInvitation title={props.title} options={options} />} />
       <Route
         path="/:aud"
         component={(section: RouteSectionProps) => (
@@ -268,6 +270,80 @@ function SignInForm(props: {
 
 function signInFailed(error: unknown): string {
   return `Sign in failed: ${error instanceof Error ? error.message : String(error)}.`;
+}
+
+/**
+ * The page at `/invite#<code>`, which the invitation mail links to. The code,
+ * `<principal id>:<secret>`, is in the fragment, so it never reaches a server
+ * log. The page sets the first password and goes to the sign in page.
+ */
+function AcceptInvitation(props: { readonly title: string; readonly options: SessionOptions }): JSX.Element {
+  const navigate = useNavigate();
+  const code = window.location.hash.slice(1);
+  const split = code.indexOf(":");
+  const [email, setEmail] = createSignal("");
+  const [password, setPassword] = createSignal("");
+  const [again, setAgain] = createSignal("");
+  const [refused, setRefused] = createSignal<string | null>(
+    split > 0 ? null : "This address holds no invitation code. Open the link in the invitation mail.",
+  );
+  return (
+    <CardPage title={props.title}>
+      <form
+        onSubmit={(event) => {
+          event.preventDefault();
+          if (split <= 0) {
+            return;
+          }
+          if (password() !== again()) {
+            setRefused("The two passwords differ.");
+            return;
+          }
+          setRefused(null);
+          enroll(code.slice(0, split), code.slice(split + 1), password(), props.options)
+            .then(() => navigate("/", { replace: true }))
+            .catch((error: unknown) =>
+              setRefused(`Sign up failed: ${error instanceof Error ? error.message : String(error)}.`),
+            );
+        }}
+      >
+        <FieldGroup>
+          <Field>
+            <FieldLabel for="invite-email">email</FieldLabel>
+            <Input
+              id="invite-email"
+              type="email"
+              autocomplete="username"
+              value={email()}
+              onInput={(event) => setEmail(event.currentTarget.value)}
+            />
+          </Field>
+          <Field>
+            <FieldLabel for="invite-password">password</FieldLabel>
+            <Input
+              id="invite-password"
+              type="password"
+              autocomplete="new-password"
+              value={password()}
+              onInput={(event) => setPassword(event.currentTarget.value)}
+            />
+          </Field>
+          <Field>
+            <FieldLabel for="invite-again">password again</FieldLabel>
+            <Input
+              id="invite-again"
+              type="password"
+              autocomplete="new-password"
+              value={again()}
+              onInput={(event) => setAgain(event.currentTarget.value)}
+            />
+          </Field>
+          <Show when={refused()}>{(text) => <FieldError>{text()}</FieldError>}</Show>
+          <Button type="submit">set password</Button>
+        </FieldGroup>
+      </form>
+    </CardPage>
+  );
 }
 
 /**

@@ -72,6 +72,27 @@ export async function environments(
   return document.environments ?? [];
 }
 
+/**
+ * Set the first password of the account that an emailed invitation names.
+ * A refusal throws with the text the identity service answered.
+ */
+export async function enroll(
+  principalId: string,
+  invitation: string,
+  password: string,
+  options: SessionOptions = {},
+): Promise<void> {
+  const response = await post(
+    "/password/enroll",
+    { principal_id: principalId, invitation, password },
+    options,
+  );
+  if (!response.ok) {
+    const answer = (await response.json().catch(() => null)) as { error?: unknown } | null;
+    throw new Error(typeof answer?.error === "string" ? answer.error : `/password/enroll answered ${response.status}`);
+  }
+}
+
 /** Sign in to one environment. The identity service sets the cookies. */
 export async function signIn(
   email: string,
