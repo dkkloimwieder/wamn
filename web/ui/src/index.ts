@@ -35,16 +35,13 @@ export {
 } from "./fields";
 export {
   AppFrame,
-  CardPage,
-  ScreenActions,
   type AppFrameProps,
-  type CardPageProps,
   type FrameEntry,
   type FrameItem,
   type FrameLink,
   type FrameSection,
-  type ScreenActionsProps,
 } from "./frame";
+export { CardPage, ScreenActions, type CardPageProps, type ScreenActionsProps } from "./page";
 export { gridFeatures, type GridFeatures } from "./grid";
 export { announceOutcome } from "./outcome";
 export { createRecordLabels } from "./record-labels";

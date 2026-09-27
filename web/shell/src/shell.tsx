@@ -23,6 +23,7 @@ import {
   createContext,
   createSignal,
   For,
+  lazy,
   Match,
   onCleanup,
   Show,
@@ -32,20 +33,7 @@ import {
   type JSX,
 } from "solid-js";
 
-import {
-  AppFrame,
-  Button,
-  CardPage,
-  Field,
-  FieldError,
-  FieldGroup,
-  FieldLabel,
-  Input,
-  ScreenActions,
-  useColorMode,
-  type FrameEntry,
-  type FrameItem,
-} from "@wamn/ui";
+import { Button, CardPage, Field, FieldError, FieldGroup, FieldLabel, Input, ScreenActions } from "@wamn/ui";
 import {
   createTransport,
   enroll,
@@ -135,6 +123,9 @@ export interface ShellProps {
 
 const TransportContext = createContext<Transport>();
 
+/** The page of a signed-in session. It loads after sign in, so the sign in page stays small. */
+const Layout = lazy(() => import("./layout"));
+
 /** The state a page opened by `open` carries, so that `close` can go back to it. */
 interface Opened {
   readonly opened: true;
@@ -192,6 +183,18 @@ function single(query: Readonly<Record<string, string | string[] | undefined>>):
   return Object.fromEntries(
     Object.entries(query).map(([name, value]) => [name, Array.isArray(value) ? value[0] : value]),
   );
+}
+
+/**
+ * A screen whose component loads with its module. The route table names the
+ * module and picks the component from it, so a screen loads its generated
+ * component, and the table or form code it renders, only when it opens.
+ */
+export function screen<M>(
+  load: () => Promise<M>,
+  pick: (module: M) => Component<ScreenProps>,
+): Component<ScreenProps> {
+  return lazy(async () => ({ default: pick(await load()) }));
 }
 
 export function Shell(props: ShellProps): JSX.Element {
@@ -440,51 +443,6 @@ function Session(props: {
 
 function failure(state: SessionState | null): string | null {
   return state?.status === "failed" ? `The session could not be renewed: ${state.reason}.` : null;
-}
-
-function Layout(props: {
-  readonly title: string;
-  readonly sections: readonly ShellSection[];
-  readonly aud: string;
-  readonly signOut: () => Promise<void>;
-  readonly children?: JSX.Element;
-}): JSX.Element {
-  const location = useLocation();
-  const { colorMode, toggleColorMode } = useColorMode();
-  const item = (label: string, screen: ShellScreen): FrameItem => ({
-    label,
-    href: screen.path,
-    active: () => {
-      const own = `/${props.aud}/${screen.path}`;
-      return location.pathname === own || location.pathname.startsWith(`${own}/`);
-    },
-  });
-  const navigation: FrameEntry[] = props.sections.map((section) => {
-    const only = section.screens.length === 1 ? section.screens[0] : undefined;
-    return only === undefined
-      ? { label: section.label, items: section.screens.map((screen) => item(screen.label, screen)) }
-      : item(section.label, only);
-  });
-  return (
-    <AppFrame
-      title={props.title}
-      navigation={navigation}
-      link={A}
-      context={props.aud}
-      actions={
-        <>
-          <Button variant="outline" size="sm" onClick={toggleColorMode}>
-            {colorMode() === "dark" ? "light mode" : "dark mode"}
-          </Button>
-          <Button variant="outline" size="sm" onClick={() => void props.signOut()}>
-            sign out
-          </Button>
-        </>
-      }
-    >
-      {props.children}
-    </AppFrame>
-  );
 }
 
 function NotFound(): JSX.Element {

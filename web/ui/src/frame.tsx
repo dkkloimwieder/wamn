@@ -1,16 +1,15 @@
 /**
- * The two page frames of an application, so that the shell states no class.
+ * The signed-in page frame of an application, so that the shell states no class.
  *
  * AppFrame is the signed-in page: a sidebar with the navigation, a header with
  * the context and the actions, and the screen below it. The navigation is a list
- * of entries, and an entry is one link or a labeled group of links. CardPage is one card in
- * the middle of an empty page, for signing in and for an address with no page.
- * ScreenActions is the row of buttons above a screen.
+ * of entries, and an entry is one link or a labeled group of links. The sign in
+ * page does not load this module, because the sidebar is heavy. `page.tsx` holds
+ * the light page parts.
  */
 
 import { For, type Component, type JSX } from "solid-js";
 
-import { Card, CardContent, CardHeader, CardTitle } from "./components/ui/card";
 import {
   Sidebar,
   SidebarContent,
@@ -110,33 +109,5 @@ export function AppFrame(props: AppFrameProps): JSX.Element {
         <div class="min-w-0 p-6">{props.children}</div>
       </SidebarInset>
     </SidebarProvider>
-  );
-}
-
-export interface ScreenActionsProps {
-  readonly children: JSX.Element;
-}
-
-export function ScreenActions(props: ScreenActionsProps): JSX.Element {
-  return <div class="mb-4 flex flex-wrap gap-2">{props.children}</div>;
-}
-
-export interface CardPageProps {
-  readonly title: string;
-  readonly children: JSX.Element;
-}
-
-export function CardPage(props: CardPageProps): JSX.Element {
-  return (
-    <div class="flex min-h-screen items-center justify-center p-4">
-      <Card class="w-full max-w-sm">
-        <CardHeader>
-          <CardTitle>
-            <h1>{props.title}</h1>
-          </CardTitle>
-        </CardHeader>
-        <CardContent class="flex flex-col gap-6">{props.children}</CardContent>
-      </Card>
-    </div>
   );
 }

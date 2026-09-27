@@ -3,7 +3,7 @@ import "@wamn/ui/styles.css";
 import { render } from "solid-js/web";
 
 import { Shell } from "@wamn/shell";
-import { ColorModeProvider, getClientColorMode, Toaster } from "@wamn/ui";
+import { ColorModeProvider, getClientColorMode } from "@wamn/ui";
 
 import { SECTIONS } from "./routes.js";
 
@@ -19,7 +19,6 @@ render(
   () => (
     <ColorModeProvider initialColorMode={mode}>
       <Shell title="Receiving" sections={SECTIONS} />
-      <Toaster />
     </ColorModeProvider>
   ),
   root,
