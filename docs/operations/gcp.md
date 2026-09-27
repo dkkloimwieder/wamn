@@ -1034,6 +1034,15 @@ COMMIT;
 
 Run it in database `wamn-db-dkk--receiving--dev--zf7o454t`. On 2026-09-27 it took 1 second. When `wamn-wq26` lands, remove this row and use `wamn-ctl grant-role`.
 
+Load the small Receiving dataset through the same port-forward, as the superuser. It writes 10 items, 10 locations, 5 suppliers, 10 purchase orders and 55 lines:
+
+```bash
+psql -h 127.0.0.1 -p 15432 -U postgres -d wamn-db-dkk--receiving--dev--zf7o454t \
+  -v ON_ERROR_STOP=1 -f apps/wamn_receiving/tests/fixtures/receiving-seed-small.sql
+```
+
+On 2026-09-27 the load took 3 seconds.
+
 ### 4.6 Delete the public edge
 
 Delete in the reverse order. The forwarding rule and the address bill while they exist:
