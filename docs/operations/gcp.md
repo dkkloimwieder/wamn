@@ -1120,3 +1120,69 @@ helm upgrade wamn-host oci://ghcr.io/wasmcloud/charts/runtime-operator --version
 ```
 
 Make sure that a pod with that service account gets the `wamn-blob` identity from the metadata server, with the check of section 3.12 and `"serviceAccountName":"wamn-host-runtime-operator-runtime"`. On 2026-09-27 the image build took 411 seconds, the push 13 seconds and the upgrade 24 seconds. The check printed `wamn-blob@wamn-dev.iam.gserviceaccount.com`, and Receiving still answered `/api/location/list` with 401.
+
+### 5.2 WMS project environment
+
+WMS uses org `dkk`, project `wms`, env `dev` and tenant `wms`. A tenant is one per project database, so tenant `dev` stays with Receiving. With tenant `dev`, `provision-project-env` refused with `tenant-environment-identity-projection-content-conflict`, after it had already recorded the registry row `dkk/wms/dev`. The run with tenant `wms` then reused that row.
+
+Run the commands of sections 3.7, 3.8 and 3.11 with `--project wms --tenant wms` and the WMS database `wamn-db-dkk--wms--dev--bnarqpnc`. Name the guest Secret `wamn-host-db-wms`, because `wamn-host-db` belongs to Receiving in the same namespace. Prepare the session target of section 3.10 with `--project wms --tenant wms`, and apply it in `identity`.
+
+On 2026-09-27 the project environment took 3 seconds and its apply 9 seconds. `reconcile-run-plane`, `apply-package` and `reconcile-package-data-access` took 12, 37 and 9 seconds. The session target took 21 seconds and the five host credentials 108 seconds.
+
+### 5.3 WMS components, wiring and release
+
+Build every component with `tools/build-components all`. The WMS components land in `apps/target/virtualized/std-empty-environment`, and `label_render.wasm` lands in `apps/platform/no-std/target/wasm32-wasip2/release`. Render the four declarations with tenant `wms`, package `wamn_wms` `1.0.0`, and the store alias `labels` for `blob-put`, as the WMS cluster case does:
+
+```bash
+for pair in wms:apps/wamn_wms/publication/components/wms.json.in \
+  label-render:apps/platform/no-std/label-render/declaration.json.in \
+  blob-put:apps/platform/execution/blob-put/declaration.json.in \
+  jsonata:apps/platform/execution/jsonata/declaration.json.in; do
+  sed -e 's/__TENANT_ID__/wms/g; s/__PACKAGE_ID__/wamn_wms/g; s/__PACKAGE_VERSION__/1.0.0/g; s/__STORE_ALIAS__/labels/g' \
+    ${pair#*:} > $P/${pair%%:*}.declaration.json
+done
+```
+
+Push each component with the credential file of section 3.9, `--package apps/wamn_wms --tenant wms --declaration $P/<name>.declaration.json`, and these admitted packages:
+
+| Component | Bytes | `--admit-platform-package` | Digest on 2026-09-27 |
+| --- | --- | --- | --- |
+| `wms` | `wms.wasm` | `wamn:node`, `wamn:postgres` | `sha256:db401f0d89c1059e3d396b0643f26277c611f2dc65279b7f2ace64f18df91c87` |
+| `label-render` | `label_render.wasm` | `wamn:node` | `sha256:57852602eddef0be442587ba7cc14eddfc4c73b049d3e9c8d85bf3ebc321b4c1` |
+| `blob-put` | `blob_put.wasm` | `wamn:node`, `wasmcloud:blobstore` | `sha256:d93e0c6662ac885d1793b29dfe7a390e79cc494ca7653d58b990a74d6dcd2f8c` |
+| `jsonata` | `jsonata_expression.wasm` | `wamn:node` | `sha256:4da6d8c78df00e81ea29a02b931ab553abc31ae86556749359294f7fbfa4b64c` |
+
+Each printed digest equals the `sha256sum` of the local file.
+
+The wiring `inventory_move_and_label` passes the authoring gate before `author-wiring` records it. Prepare the gate credentials `control-author` and `management-admitter` with `--prepare-<family>-generation a` into a private directory, and do not apply them. Mint the WMS management-author PAT as in section 3.16, with `--project wms --tenant wms`. Run the gate service on this machine, with the URLs of the identity-reader, control-author and management-admitter files:
+
+```bash
+cargo build -p wamn-scenario-worker
+WAMN_SYSTEM_URL=<identity-reader url> WAMN_CONTROL_AUTHORING_PG_URL=<control-author url> \
+WAMN_MANAGEMENT_ADMISSION_PG_URL=<management-admitter url> WAMN_MANAGEMENT_ORG=dkk \
+WAMN_MANAGEMENT_PROJECT=wms WAMN_MANAGEMENT_ENVIRONMENT=dev WAMN_MANAGEMENT_TENANT=wms \
+  target/debug/wamn-scenario-worker serve --bind 127.0.0.1:18090 &
+cargo run -p wamn-test-infrastructure --example gate_request -- wamn_wms 1.0.0 wms dev \
+  apps/wamn_wms/publication/wirings/inventory_move_and_label.json > $P/gate-request.json
+```
+
+Post `gate-request.json` to `http://127.0.0.1:18090/authoring` with the PAT as a bearer token, read from its file through a pipe. The reply has `body.outcome.status` `completed` and a `report-id`. Stop the service, then record the wiring, publish, bind the label store and push the manifest:
+
+```bash
+target/debug/wamn-ctl author-wiring --database-url "$T" --control-database-url "$SYS" --tenant wms \
+  --package-id wamn_wms --package-version 1.0.0 --wiring-document apps/wamn_wms/publication/wirings/inventory_move_and_label.json
+target/debug/wamn-ctl publish-release --database-url "$T" --control-database-url "$SYS" --org dkk --project wms \
+  --tenant wms --effective-release-id 1 --environment dev --verified-publisher-principal wamn-management-author-dkk--wms--dev \
+  --run-schema wamn_run --package wamn_wms@1.0.0 --wiring "wamn_wms@1.0.0::inventory_move_and_label=2" \
+  --attachments apps/wamn_wms/publication/attachments.json --route-host wms.wamn.dev --package-manifest apps/wamn_wms/wamn.json
+echo '{"provider":"gcs","container":"wamn-dev-labels","prefix":"wms/"}' > $P/labels-store.definition.json
+target/debug/wamn-ctl bind-connection --database-url "$T" --tenant wms --environment dev --instance-id labels-store \
+  --requirement-type blobstore --definition $P/labels-store.definition.json --effective-release-id 1 \
+  --component-digest <blob-put digest> --store-alias labels
+target/debug/wamn-ctl push-release-manifest --database-url "$T" --control-database-url "$SYS" --org dkk --project wms \
+  --tenant wms --effective-release-id 1 --artifact-base us-central1-docker.pkg.dev/wamn-dev/wamn/releases --registry-auth-file $A/config.json
+```
+
+Receiving ran the same `publish-release`, `push-release-manifest` and `print-release-env` commands with `--project receiving --tenant dev`, no `--wiring`, and its own attachments and manifest.
+
+On 2026-09-27 the pushes took 17, 11, 10 and 20 seconds, the gate 3 seconds, `author-wiring` 2 seconds, `publish-release` 10 seconds, `bind-connection` 2 seconds and the manifest push 6 seconds. The WMS release manifest is `sha256:6649148172e83eea8af3c9a5f133cb5f961d634de4f85244909da046475890a3`. The first PAT mint was refused before it reached identity, because a short Kubernetes API timeout left the password read empty. Stop when a credential read returns nothing.
