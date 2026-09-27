@@ -560,7 +560,7 @@ pub async fn publish(
         instance_id: "labels-store".into(),
         requirement_type: RequirementType::Blobstore,
         definition,
-        credential_handle: "labels-store".into(),
+        credential_handle: Some("labels-store".into()),
         effective_release_id: RELEASE_ID,
         component_digest: blob_digest,
         store_alias: "labels".into(),

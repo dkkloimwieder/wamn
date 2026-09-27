@@ -318,7 +318,8 @@ pub struct CandidateConnectionBinding {
     pub validation_hash: String,
     pub generation: i64,
     pub definition_hash: String,
-    pub credential_set_handle: String,
+    /// None for a `gcs` blobstore, which signs with the host pod's service account.
+    pub credential_set_handle: Option<String>,
 }
 
 impl CandidateConnectionBinding {
@@ -333,7 +334,10 @@ impl CandidateConnectionBinding {
             && !self.validation_hash.is_empty()
             && self.generation > 0
             && !self.definition_hash.is_empty()
-            && !self.credential_set_handle.is_empty()
+            && self
+                .credential_set_handle
+                .as_deref()
+                .is_none_or(|handle| !handle.is_empty())
     }
 
     pub(crate) fn matches_snapshot(&self, snapshot: &ConnectionEffectSnapshot) -> bool {
@@ -348,7 +352,7 @@ impl CandidateConnectionBinding {
             && snapshot.pinned_generation == Some(self.generation)
             && snapshot.generation == Some(self.generation)
             && snapshot.definition_hash.as_deref() == Some(self.definition_hash.as_str())
-            && snapshot.credential_handle.as_deref() == Some(self.credential_set_handle.as_str())
+            && snapshot.credential_handle == self.credential_set_handle
     }
 }
 

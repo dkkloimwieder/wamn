@@ -38,6 +38,11 @@ pub enum BindingError {
     },
     /// The generation named no host-held credential.
     NoCredential,
+    /// A `gcs` generation named a credential handle. Its token comes from the
+    /// pod's Google service account, so a handle has nothing to name.
+    UnexpectedCredential,
+    /// The generation named a provider that the plugin does not build.
+    UnknownProvider,
 }
 
 impl BindingError {
@@ -49,6 +54,8 @@ impl BindingError {
             Self::NoDefinition => "binding_no_definition",
             Self::MissingCoordinate { .. } => "binding_missing_coordinate",
             Self::NoCredential => "binding_no_credential",
+            Self::UnexpectedCredential => "binding_unexpected_credential",
+            Self::UnknownProvider => "binding_unknown_provider",
         }
     }
 }
@@ -70,25 +77,46 @@ impl core::fmt::Display for BindingError {
             Self::NoCredential => {
                 formatter.write_str("connection generation names no host-held credential")
             }
+            Self::UnexpectedCredential => formatter.write_str(
+                "a gcs connection generation names a credential handle; its token comes from \
+                 the pod's service account",
+            ),
+            Self::UnknownProvider => {
+                formatter.write_str("connection generation names an unknown provider")
+            }
         }
     }
 }
 
 impl std::error::Error for BindingError {}
 
+/// The object store behind one binding, chosen by the definition's
+/// `provider`. A definition with no `provider` is `s3`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum BlobstoreProvider {
+    /// An S3 endpoint, signed with the host-held credential of the handle.
+    S3 {
+        /// Object-store endpoint.
+        endpoint: String,
+        /// Host-held credential reference. Resolved by the vault, not here.
+        credential_handle: String,
+    },
+    /// Google Cloud Storage. The token comes from the instance metadata
+    /// server, which under Workload Identity is the pod's service account.
+    Gcs,
+}
+
 /// The coordinates of one bound object-store connection.
 ///
 /// Carries a credential HANDLE, never a credential.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BlobstoreBinding {
-    /// Object-store endpoint.
-    pub endpoint: String,
+    /// Which store, and how it signs.
+    pub provider: BlobstoreProvider,
     /// The one container this component may reach.
     pub container: String,
     /// The key prefix confining it within that container.
     pub prefix: String,
-    /// Host-held credential reference. Resolved by the vault, not here.
-    pub credential_handle: String,
 }
 
 /// Resolve an authorized snapshot into binding coordinates.
@@ -111,15 +139,27 @@ pub fn resolve(snapshot: &ConnectionEffectSnapshot) -> Result<BlobstoreBinding, 
         .definition
         .as_ref()
         .ok_or(BindingError::NoDefinition)?;
+    let handle = snapshot
+        .credential_handle
+        .clone()
+        .filter(|handle| !handle.is_empty());
+    let provider = match definition.get("provider").map(serde_json::Value::as_str) {
+        None | Some(Some("s3")) => BlobstoreProvider::S3 {
+            endpoint: coordinate(definition, "endpoint")?,
+            credential_handle: handle.ok_or(BindingError::NoCredential)?,
+        },
+        Some(Some("gcs")) => {
+            if handle.is_some() {
+                return Err(BindingError::UnexpectedCredential);
+            }
+            BlobstoreProvider::Gcs
+        }
+        Some(_) => return Err(BindingError::UnknownProvider),
+    };
     Ok(BlobstoreBinding {
-        endpoint: coordinate(definition, "endpoint")?,
+        provider,
         container: coordinate(definition, "container")?,
         prefix: coordinate(definition, "prefix")?,
-        credential_handle: snapshot
-            .credential_handle
-            .clone()
-            .filter(|handle| !handle.is_empty())
-            .ok_or(BindingError::NoCredential)?,
     })
 }
 
@@ -179,8 +219,31 @@ mod tests {
         let binding = resolve(&authorized_snapshot()).expect("authorized snapshot binds");
         assert_eq!(binding.container, "wamn-labels");
         assert_eq!(binding.prefix, "acme/labels");
-        assert_eq!(binding.endpoint, "http://minio.wamn-system.svc:9000");
-        assert_eq!(binding.credential_handle, "vault://wamn-object-store");
+        assert_eq!(
+            binding.provider,
+            BlobstoreProvider::S3 {
+                endpoint: "http://minio.wamn-system.svc:9000".to_owned(),
+                credential_handle: "vault://wamn-object-store".to_owned(),
+            }
+        );
+    }
+
+    /// A `gcs` generation needs no endpoint and takes its token from the pod,
+    /// so it binds without a handle and refuses one.
+    #[test]
+    fn a_gcs_binding_parses_and_refuses_a_credential_handle() {
+        let mut snapshot = authorized_snapshot();
+        snapshot.definition = Some(serde_json::json!({
+            "provider": "gcs",
+            "container": "wamn-dev-labels",
+            "prefix": "wms/",
+        }));
+        assert_eq!(resolve(&snapshot), Err(BindingError::UnexpectedCredential));
+        snapshot.credential_handle = None;
+        let binding = resolve(&snapshot).expect("a gcs snapshot binds");
+        assert_eq!(binding.provider, BlobstoreProvider::Gcs);
+        assert_eq!(binding.container, "wamn-dev-labels");
+        assert_eq!(binding.prefix, "wms/");
     }
 
     /// The whole point of the walls: an absent prefix must NOT mean the whole

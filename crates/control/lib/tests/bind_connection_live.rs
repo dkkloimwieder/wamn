@@ -303,7 +303,7 @@ fn args(
         instance_id: "labels-store".to_owned(),
         requirement_type: RequirementType::Blobstore,
         definition,
-        credential_handle: "labels-store".to_owned(),
+        credential_handle: Some("labels-store".to_owned()),
         effective_release_id: RELEASE_ID as u32,
         component_digest: digest.to_owned(),
         store_alias: store_alias.to_owned(),
@@ -411,7 +411,10 @@ async fn assert_nested_effect_snapshot(
     assert_eq!(snapshot.component.as_deref(), Some("blob-put"));
     assert_eq!(snapshot.operation.as_deref(), Some(direct.operation));
     let resolved = binding::resolve(&snapshot).expect("resolve the executor's bound alias");
-    assert_eq!(resolved.credential_handle, "labels-rotated");
+    assert!(matches!(
+        &resolved.provider,
+        binding::BlobstoreProvider::S3 { credential_handle, .. } if credential_handle == "labels-rotated"
+    ));
 
     for (changed, refused) in [
         (
@@ -631,10 +634,15 @@ async fn bind_connection_round_trips_through_the_plugins_own_resolution() {
     // wrote and the blobstore resolver accepts it, returning what was bound.
     let after = snapshot_of().await;
     let resolved = binding::resolve(&after).expect("the plugin resolves the bound connection");
-    assert_eq!(resolved.endpoint, "http://10.0.0.7:9000");
+    assert_eq!(
+        resolved.provider,
+        binding::BlobstoreProvider::S3 {
+            endpoint: "http://10.0.0.7:9000".to_owned(),
+            credential_handle: "labels-store".to_owned(),
+        }
+    );
     assert_eq!(resolved.container, "labels");
     assert_eq!(resolved.prefix, "fixture/");
-    assert_eq!(resolved.credential_handle, "labels-store");
     assert_eq!(
         after.definition_hash.as_deref(),
         Some(bound.definition_hash.as_str())
@@ -780,7 +788,7 @@ async fn bind_connection_round_trips_through_the_plugins_own_resolution() {
         validation_hash: after.validation_hash.clone().unwrap(),
         generation: 1,
         definition_hash: after.definition_hash.clone().unwrap(),
-        credential_set_handle: after.credential_handle.clone().unwrap(),
+        credential_set_handle: after.credential_handle.clone(),
     };
     let changed = definition_file(
         scratch,
@@ -788,7 +796,7 @@ async fn bind_connection_round_trips_through_the_plugins_own_resolution() {
         r#"{"endpoint":"http://10.0.0.8:9000","container":"labels","prefix":"new/"}"#,
     );
     let mut changed_args = args(&project_url, changed.clone(), "labels", BLOB_PUT);
-    changed_args.credential_handle = "labels-rotated".to_owned();
+    changed_args.credential_handle = Some("labels-rotated".to_owned());
     let rotated = bind_connection::bind(&changed_args)
         .await
         .expect("rotate the instance");
@@ -797,8 +805,13 @@ async fn bind_connection_round_trips_through_the_plugins_own_resolution() {
     assert_eq!(rows(&project).await, (1, 2, 1));
     let new_snapshot = snapshot_of().await;
     let new_binding = binding::resolve(&new_snapshot).expect("new selection resolves");
-    assert_eq!(new_binding.endpoint, "http://10.0.0.8:9000");
-    assert_eq!(new_binding.credential_handle, "labels-rotated");
+    assert_eq!(
+        new_binding.provider,
+        binding::BlobstoreProvider::S3 {
+            endpoint: "http://10.0.0.8:9000".to_owned(),
+            credential_handle: "labels-rotated".to_owned(),
+        }
+    );
     let old_snapshot = postgres
         .connection_effect_snapshot(
             COMPONENT_ID,
@@ -816,8 +829,13 @@ async fn bind_connection_round_trips_through_the_plugins_own_resolution() {
     assert_eq!(old_snapshot.generation, Some(1));
     let old_binding =
         binding::resolve(&old_snapshot).expect("the pinned generation remains usable");
-    assert_eq!(old_binding.endpoint, "http://10.0.0.7:9000");
-    assert_eq!(old_binding.credential_handle, "labels-store");
+    assert_eq!(
+        old_binding.provider,
+        binding::BlobstoreProvider::S3 {
+            endpoint: "http://10.0.0.7:9000".to_owned(),
+            credential_handle: "labels-store".to_owned(),
+        }
+    );
 
     // Hold the row after the competing bind reads it, then advance its revision.
     let (mut blocker, blocker_task) = connect(&project_url).await;

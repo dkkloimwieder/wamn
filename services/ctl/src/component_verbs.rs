@@ -201,9 +201,10 @@ pub struct BindConnectionArgs {
     #[arg(long, value_name = "PATH")]
     pub definition: PathBuf,
 
-    /// The host-held credential's handle. Never the credential.
+    /// The host-held credential's handle. Never the credential. Omit it for a
+    /// `gcs` definition, which signs with the host pod's service account.
     #[arg(long)]
-    pub credential_handle: String,
+    pub credential_handle: Option<String>,
 
     /// The release whose component is being bound.
     #[arg(long)]

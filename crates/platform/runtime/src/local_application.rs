@@ -194,7 +194,7 @@ impl LocalApplication {
                 generation: Some(current.generation),
                 definition: Some(definition),
                 definition_hash: Some(current.definition_hash),
-                credential_handle: Some(current.credential_set_handle),
+                credential_handle: current.credential_set_handle,
             },
         ))
     }
@@ -319,7 +319,7 @@ async fn read_binding(
             validation_hash,
             generation: row.try_get(3)?,
             definition_hash,
-            credential_set_handle,
+            credential_set_handle: Some(credential_set_handle),
         },
         definition,
         row.try_get(7)?,
@@ -807,7 +807,7 @@ mod tests {
                 validation_hash: "fixture-validation".to_owned(),
                 generation: 1,
                 definition_hash: "fixture-definition".to_owned(),
-                credential_set_handle: "fixture-handle".to_owned(),
+                credential_set_handle: Some("fixture-handle".to_owned()),
             },
         });
         facts.requirements.push(requirement);

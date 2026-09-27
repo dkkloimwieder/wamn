@@ -15,7 +15,7 @@ wasm_component_model_implements = [
 [dependencies]
 # Activation compares the native broker declarations from this library.
 wamn-control-provision = { workspace = true }
-object_store = { workspace = true }
+object_store = { workspace = true, features = ["gcp"] }
 # `oci`: the registry artifact source loads components through wash-runtime's
 # OCI client. wamn-engine links wash-runtime without it.
 wash-runtime = { workspace = true, features = ["oci"] }

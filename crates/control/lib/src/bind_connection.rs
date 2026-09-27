@@ -78,13 +78,25 @@ impl RequirementType {
     }
 
     /// The coordinates the type's plugin reads from a generation definition.
-    /// For blobstore these are the three `wamn_blobstore::binding::resolve`
-    /// demands, and nothing else: a key nobody reads is a key nobody validates.
-    fn coordinates(self) -> &'static [&'static str] {
-        match self {
-            Self::Blobstore => &["endpoint", "container", "prefix"],
+    /// For blobstore these are the ones `wamn_blobstore::binding::resolve`
+    /// demands for the definition's `provider`, and nothing else: a key nobody
+    /// reads is a key nobody validates. An `s3` definition may omit `provider`.
+    fn coordinates(self, provider: Option<&str>) -> anyhow::Result<&'static [&'static str]> {
+        match (self, provider) {
+            (Self::Blobstore, None) => Ok(&["endpoint", "container", "prefix"]),
+            (Self::Blobstore, Some("s3")) => Ok(&["provider", "endpoint", "container", "prefix"]),
+            (Self::Blobstore, Some("gcs")) => Ok(&["provider", "container", "prefix"]),
+            (Self::Blobstore, Some(other)) => {
+                bail!("the generation definition's provider {other:?} is neither s3 nor gcs")
+            }
         }
     }
+}
+
+/// Whether a definition names the `gcs` provider, which signs with the pod's
+/// service account and so takes no credential handle.
+fn is_gcs(definition: &Value) -> bool {
+    definition.get("provider").and_then(Value::as_str) == Some("gcs")
 }
 
 #[derive(Debug)]
@@ -106,8 +118,9 @@ pub struct BindConnectionRequest {
     /// coordinates the requirement type's plugin reads.
     pub definition: PathBuf,
 
-    /// The host-held credential's handle. Never the credential.
-    pub credential_handle: String,
+    /// The host-held credential's handle. Never the credential. A `gcs`
+    /// definition takes none, and every other definition needs one.
+    pub credential_handle: Option<String>,
 
     /// The release whose component is being bound.
     pub effective_release_id: u32,
@@ -139,7 +152,13 @@ pub fn validate_definition(
     let Some(object) = definition.as_object() else {
         bail!("the generation definition must be a JSON object");
     };
-    for coordinate in requirement_type.coordinates() {
+    let provider = match object.get("provider") {
+        None => None,
+        Some(Value::String(provider)) => Some(provider.as_str()),
+        Some(_) => bail!("the generation definition's provider must be a string"),
+    };
+    let coordinates = requirement_type.coordinates(provider)?;
+    for coordinate in coordinates {
         match object.get(*coordinate) {
             Some(Value::String(value)) if !value.is_empty() => {}
             Some(Value::String(_)) => bail!(
@@ -157,7 +176,7 @@ pub fn validate_definition(
     }
     for key in object.keys() {
         ensure!(
-            requirement_type.coordinates().contains(&key.as_str()),
+            coordinates.contains(&key.as_str()),
             "the generation definition carries {key}, which {requirement_type:?} never reads; \
              a coordinate nobody reads is a coordinate nobody validates"
         );
@@ -180,10 +199,19 @@ pub async fn bind(args: &BindConnectionRequest) -> anyhow::Result<BoundConnectio
         .with_context(|| format!("{} is not JSON", args.definition.display()))?;
     validate_definition(args.requirement_type, &definition)?;
     let descriptor = args.requirement_type.descriptor();
-    ensure!(
-        !args.credential_handle.is_empty(),
-        "the credential handle must not be empty; the host resolves it by name"
-    );
+    if is_gcs(&definition) {
+        ensure!(
+            args.credential_handle.is_none(),
+            "a gcs definition takes no credential handle; the host signs with its pod's service account"
+        );
+    } else {
+        ensure!(
+            args.credential_handle
+                .as_deref()
+                .is_some_and(|handle| !handle.is_empty()),
+            "the credential handle must not be empty; the host resolves it by name"
+        );
+    }
 
     let (mut client, connection) = tokio_postgres::connect(&args.database_url, NoTls)
         .await
@@ -352,7 +380,7 @@ async fn bind_generation(
             &args.instance_id,
             descriptor,
             definition,
-            &args.credential_handle,
+            args.credential_handle.as_deref(),
         )
         .await?;
         return Ok((None, FIRST_GENERATION));
@@ -370,7 +398,7 @@ async fn bind_generation(
     if let Some(active) = previous
         && existing.as_ref() == Some(definition)
         && current.get::<_, Option<String>>(6).as_deref() == Some(definition_digest)
-        && current.get::<_, Option<String>>(7).as_deref() == Some(args.credential_handle.as_str())
+        && current.get::<_, Option<String>>(7) == args.credential_handle
     {
         ensure!(
             transaction
@@ -425,7 +453,7 @@ async fn bind_generation(
                 &generation,
                 &definition_text,
                 &definition_digest,
-                &args.credential_handle,
+                &args.credential_handle.as_deref(),
             ],
         )
         .await?;
@@ -602,7 +630,7 @@ pub async fn prepare_local_instance(
         instance_id,
         &descriptor,
         definition,
-        &input.credential_handle,
+        Some(input.credential_handle.as_str()),
     )
     .await
 }
@@ -614,7 +642,7 @@ async fn insert_instance_generation(
     instance_id: &str,
     descriptor: &ConnectionTypeDescriptor,
     definition: &Value,
-    credential_handle: &str,
+    credential_handle: Option<&str>,
 ) -> anyhow::Result<()> {
     let definition_digest = definition_hash(definition);
     let definition_text =

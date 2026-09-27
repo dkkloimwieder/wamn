@@ -249,7 +249,8 @@ CREATE TABLE catalog.connection_generations (
     generation           bigint      NOT NULL CHECK (generation > 0),
     definition_json      jsonb       NOT NULL,
     definition_hash      text        NOT NULL CHECK (definition_hash ~ '^sha256:[0-9a-f]{64}$'),
-    credential_set_handle text       NOT NULL CHECK (credential_set_handle <> ''),
+    -- NULL for a gcs blobstore, which signs with the host pod's service account.
+    credential_set_handle text       CHECK (credential_set_handle <> ''),
     created_at           timestamptz NOT NULL DEFAULT now(),
     CONSTRAINT connection_generations_pkey
         PRIMARY KEY (tenant_id, environment, instance_id, generation),

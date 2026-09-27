@@ -14,6 +14,7 @@ use std::sync::{Arc, RwLock};
 
 use object_store::ObjectStore;
 use object_store::aws::AmazonS3Builder;
+use object_store::gcp::GoogleCloudStorageBuilder;
 use wash_runtime::engine::ctx::{SharedCtx, extract_active_ctx};
 use wash_runtime::plugin::HostPlugin;
 use wash_runtime::wasmtime::component::Linker;
@@ -324,20 +325,29 @@ impl WamnBlobstore {
             tracing::warn!(store_alias, component_id, error = %error, "blobstore binding refused: the binding does not resolve");
             error
         })?;
-        let secret = self
-            .vault
-            .lookup(&self.project, &bound.credential_handle)
-            .ok_or_else(|| {
-                tracing::warn!(
-                    store_alias,
-                    component_id,
-                    credential_handle = %bound.credential_handle,
-                    project = %self.project,
-                    "blobstore binding refused: no credential under this project for the handle"
-                );
-                BindingError::NoCredential
-            })?;
-        let store = build_store(&bound, &secret).map_err(|error| {
+        let store = match &bound.provider {
+            binding::BlobstoreProvider::S3 {
+                endpoint,
+                credential_handle,
+            } => {
+                let secret = self
+                    .vault
+                    .lookup(&self.project, credential_handle)
+                    .ok_or_else(|| {
+                        tracing::warn!(
+                            store_alias,
+                            component_id,
+                            credential_handle = %credential_handle,
+                            project = %self.project,
+                            "blobstore binding refused: no credential under this project for the handle"
+                        );
+                        BindingError::NoCredential
+                    })?;
+                build_s3_store(endpoint, &bound.container, &secret)
+            }
+            binding::BlobstoreProvider::Gcs => build_gcs_store(&bound.container),
+        }
+        .map_err(|error| {
             tracing::warn!(error = %error, "blobstore client construction failed");
             BindingError::Unauthorized
         })?;
@@ -350,8 +360,9 @@ impl WamnBlobstore {
 /// The secret enters HERE and nowhere else: it is handed straight to the
 /// signer and is never stored on [`BoundContainer`], never logged, and never
 /// reachable from a guest-visible structure.
-fn build_store(
-    bound: &binding::BlobstoreBinding,
+fn build_s3_store(
+    endpoint: &str,
+    container: &str,
     secret: &str,
 ) -> anyhow::Result<Arc<dyn ObjectStore>> {
     let credential: serde_json::Value = serde_json::from_str(secret)
@@ -366,13 +377,23 @@ fn build_store(
         .ok_or_else(|| anyhow::anyhow!("object-store credential lacks ACCESS_SECRET_KEY"))?;
 
     let store = AmazonS3Builder::new()
-        .with_endpoint(&bound.endpoint)
-        .with_bucket_name(&bound.container)
+        .with_endpoint(endpoint)
+        .with_bucket_name(container)
         .with_access_key_id(access_key)
         .with_secret_access_key(secret_key)
         .with_region("us-east-1")
-        .with_allow_http(bound.endpoint.starts_with("http://"))
+        .with_allow_http(endpoint.starts_with("http://"))
         .with_virtual_hosted_style_request(false)
+        .build()?;
+    Ok(Arc::new(store))
+}
+
+/// Build the Cloud Storage client for one binding. No credential is set, so
+/// the crate takes its token from the instance metadata server, which under
+/// Workload Identity answers for the pod's Google service account.
+fn build_gcs_store(container: &str) -> anyhow::Result<Arc<dyn ObjectStore>> {
+    let store = GoogleCloudStorageBuilder::new()
+        .with_bucket_name(container)
         .build()?;
     Ok(Arc::new(store))
 }
@@ -653,7 +674,7 @@ mod tests {
             generation: Some(binding.generation),
             definition: None,
             definition_hash: Some(binding.definition_hash.clone()),
-            credential_handle: Some(binding.credential_set_handle.clone()),
+            credential_handle: binding.credential_set_handle.clone(),
         }
     }
 
