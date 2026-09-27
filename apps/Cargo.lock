@@ -914,6 +914,8 @@ dependencies = [
  "serde",
  "serde_json",
  "uuid",
+ "wamn-execution-contract",
+ "wamn-postgres-statements",
  "wit-bindgen",
 ]
 
