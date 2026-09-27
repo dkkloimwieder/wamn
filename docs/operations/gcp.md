@@ -672,3 +672,31 @@ On 2026-09-26 the first run took 10 seconds, and the email was `wamn-registry-re
 | `wamn-host:src-490a0d098a176e39` | `sha256:b44a6f944a410ca42dccf378c0948226946c54fefa17c4bf3cc246e25dcd9dd2` | host |
 | `wamn-identity:src-bf477a549dc55932` | `sha256:b0896c8fb3f94920c097762f75019fe68a81254fc49a4fa6768a29db97794827` | identity |
 | `curlimages/curl:8.22.0` | `sha256:58adaa4e8dca9c988bae2aba4ab3434a0bb2da16bbe3f92dec39ec7785166777` | registry token CronJob |
+
+### 3.14 Host values
+
+Run the host values program after `publish-release`, with the release artifact base and the manifest digest that `print-release-env` prints. The program calls `render_host_values`, the derivation of the kind cases, and writes both files:
+
+```bash
+cargo run -p wamn-test-infrastructure --example host_values_files -- \
+  deploy/gcp <release artifact base> <release manifest digest>
+```
+
+The program makes these differences from kind:
+
+| Difference | Reason |
+| --- | --- |
+| `WAMN_ORG` and the four role Secret names say `dkk`, not `acme`. | The org id is `dkk`, and the checked-in overlay names `acme`. |
+| No `--allow-insecure-registries`. | The flag switches every registry to plain HTTP. Artifact Registry uses HTTPS with public roots. |
+| No `OTEL_*` entries. | No collector runs on Google Cloud. |
+| `global.nats.schedulerUrl` and `dataUrl` are `nats://nats.platform.svc.cluster.local:4222`. | The control NATS runs in `platform`. |
+| The event NATS URL is in `platform`, and the images come from Artifact Registry by digest. | The event NATS runs in `platform`. |
+| Requests are 500m CPU and 256Mi, and limits are 2 CPU and 4Gi. | One replica runs on an `e2-standard-2` node. |
+| `WAMN_SESSION_ISSUER`, `WAMN_SESSION_INSTANCE_SUFFIX` and `WAMN_SESSION_JWKS_CA`, with the ConfigMap `identity-ca` at `/etc/identity-ca`. | The session routes need the identity issuer, as in `session_cluster::adjust_host` of the kind cases. |
+
+The two `wamn-system` values in the base host group have no effect, because the overlay replaces the whole `hostGroups` list. Install the host as release `wamn-host`, with the base file first:
+
+```bash
+helm install wamn-host oci://ghcr.io/wasmcloud/charts/runtime-operator --version 2.10.0 -n hosts \
+  -f deploy/gcp/values-host-base.yaml -f deploy/gcp/values-host.yaml --wait --timeout 5m
+```
