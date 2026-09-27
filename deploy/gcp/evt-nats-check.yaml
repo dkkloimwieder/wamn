@@ -1,0 +1,38 @@
+# A one-shot check of the event NATS of docs/operations/gcp.md section 3.5.
+# It asks for WAMN_TAP as tap-admin and for the source stream as the
+# provisioning user, by a direct STREAM.INFO request. The nats CLI command
+# "stream info" also lists stream names when a stream is missing, which no
+# user may do. Apply it, read its log, then delete it.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: evt-nats-check
+  namespace: platform
+spec:
+  restartPolicy: Never
+  containers:
+    - name: check
+      image: natsio/nats-box:0.14.5
+      command:
+        - sh
+        - -c
+        - |
+          URL=nats://evt-nats.platform.svc.cluster.local:4222
+          echo "== WAMN_TAP with the tap-admin context"
+          nats --context bootstrap --server "$URL" req '$JS.API.STREAM.INFO.WAMN_TAP' '' 2>&1 | grep -o '"config":{"name":"[A-Z_]*"[^,]*\|"error":{[^}]*}' 
+          echo "== EVT stream info as the provisioning user"
+          U=$(cat /etc/prov/username)
+          nats --server "$URL" --user "$U" --password "$(cat /etc/prov/password)" \
+            --inbox-prefix "_INBOX_$U" req '$JS.API.STREAM.INFO.EVT_3_dkk_9_receiving_3_dev' '' 2>&1 | grep -o '"error":{[^}]*}\|"config":{"name":"[A-Za-z0-9_]*"' 
+      env:
+        - { name: XDG_CONFIG_HOME, value: /etc/nats-client }
+      volumeMounts:
+        - { name: bootstrap, mountPath: /etc/nats-client/nats/context, readOnly: true }
+        - { name: prov, mountPath: /etc/prov, readOnly: true }
+  volumes:
+    - name: bootstrap
+      secret:
+        secretName: evt-nats-bootstrap
+        items: [{ key: context.json, path: bootstrap.json }]
+    - name: prov
+      secret: { secretName: evt-nats-provisioning }

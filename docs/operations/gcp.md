@@ -454,6 +454,27 @@ kubectl -n hosts create secret generic wamn-materializer-nats --from-file=bindin
 
 On 2026-09-26 the first start failed. The broker crash-looped, because `deploy/infra/nats-jetstream.yaml` includes the authorization file by an absolute path, and nats-server resolves an include relative to the configuration file (finding `wamn-lrf1`). The Google Cloud copy uses a relative path. The tap-stream Job reached its backoff limit while the broker was down, so it was deleted and applied again. It then completed in 18 seconds.
 
+After the Secrets change, restart the broker so that it reads the new users. `WAMN_TAP` uses memory storage, so the restart drops it, and the tap-stream Job must run again:
+
+```bash
+kubectl -n platform delete pod evt-nats-0
+kubectl -n platform rollout status statefulset/evt-nats --timeout=180s
+kubectl -n platform delete job evt-nats-tap-stream
+kubectl apply -f deploy/gcp/nats-jetstream.yaml
+kubectl -n platform wait --for=condition=complete job/evt-nats-tap-stream --timeout=120s
+```
+
+Make sure that `WAMN_TAP` exists and that the provisioning user connects:
+
+```bash
+kubectl apply -f deploy/gcp/evt-nats-check.yaml
+kubectl -n platform wait pod/evt-nats-check --for=jsonpath='{.status.phase}'=Succeeded --timeout=90s
+kubectl -n platform logs evt-nats-check
+kubectl -n platform delete pod evt-nats-check
+```
+
+The log shows `"config":{"name":"WAMN_TAP"` for tap-admin. For the provisioning user it shows `"err_code":10059,"description":"stream not found"`, because the source stream does not exist yet. A wrong password or permission gives an authorization or permissions error instead. On 2026-09-26 the restart took 23 seconds, the Job 24 seconds and the check 7 seconds.
+
 ### 3.6 System database
 
 Install the control store and set the platform domain with `wamn-ctl provision-system`. Run it from this machine through a port-forward. Read the superuser password from its Secret into a variable, and do not print it:
