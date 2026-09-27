@@ -47,6 +47,15 @@ fn main() -> anyhow::Result<()> {
     let advisory = advisory_stream_config(&scope, replicas);
     let consumers = declared_consumers(&scope, tenant, &arguments[7..])?;
     let broker = event_broker::prepare(&work, &scope, tenant, &source, &advisory, &consumers)?;
+    // One --consumer-config argument of enable-cdc-project-env per line.
+    fs::write(
+        work.join("consumers.jsonl"),
+        consumers
+            .iter()
+            .map(serde_json::to_string)
+            .collect::<Result<Vec<_>, _>>()?
+            .join("\n"),
+    )?;
     event_broker::write_binding(&broker, server, &source)?;
 
     let directory = work.join("event-nats");
@@ -118,8 +127,18 @@ fn declared_consumers(
         let manifest = wamn_schema_generator::PackageManifest::from_slice(
             &fs::read(path).with_context(|| format!("read {path}"))?,
         )?;
-        for (name, operation) in &manifest.custom_operations {
-            if let Some(registration) = &operation.registration {
+        // Handlers and workflows both register, as the WMS cluster case
+        // derives them (apps/wamn_wms/tests/environment.rs).
+        let handlers = manifest
+            .custom_operations
+            .iter()
+            .filter_map(|(name, operation)| Some((name, operation.registration.as_ref()?)));
+        let workflows = manifest
+            .workflows
+            .iter()
+            .map(|(name, workflow)| (name, &workflow.registration));
+        for (name, registration) in handlers.chain(workflows) {
+            {
                 let durable = format!(
                     "mat_{}_{}_{}",
                     sanitize(tenant),

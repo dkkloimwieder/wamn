@@ -1,0 +1,62 @@
+# The CDC event reader of WMS, docs/operations/gcp.md section 5. It is the
+# Receiving reader of cdc-reader.yaml with the WMS names: project wms, the
+# replication Secret of enable-cdc-project-env, generation a of the WMS
+# registry-reader credential and the WMS publisher user. It runs as the
+# ServiceAccount event-reader of cdc-reader.yaml.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cdc-reader-wms
+  namespace: platform
+  labels: { app: event-reader-wms }
+spec:
+  replicas: 1
+  # One replication slot has one reader.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels: { app: event-reader-wms }
+  template:
+    metadata:
+      labels: { app: event-reader-wms }
+    spec:
+      serviceAccountName: event-reader
+      automountServiceAccountToken: false
+      containers:
+        - name: cdc-reader
+          image: us-central1-docker.pkg.dev/wamn-dev/wamn/wamn-cdc-reader@sha256:fa38da50c62ff38679ecdcd3490df8650fb6a4b4d6adda3017fb134dadac797a
+          args:
+            - --org=dkk
+            - --project=wms
+            - --env=dev
+            - --stream-replicas=1
+            - --dup-window-secs=120
+          env:
+            - name: WAMN_CDC_URL
+              valueFrom:
+                secretKeyRef: { name: wamn-cdc-dkk--wms--dev, key: url }
+            - name: WAMN_SYSTEM_URL
+              valueFrom:
+                secretKeyRef: { name: wamn-registry-reader-dkk--wms--dev, key: url }
+            - name: WAMN_EVT_NATS_URL
+              value: nats://evt-nats.platform.svc.cluster.local:4222
+            - name: WAMN_EVT_NATS_USERNAME
+              valueFrom:
+                secretKeyRef: { name: evt-nats-wms-publisher, key: username }
+            - name: WAMN_EVT_NATS_PASSWORD_FILE
+              value: /etc/evt-nats/password
+          volumeMounts:
+            - name: evt-nats-wms-publisher
+              mountPath: /etc/evt-nats
+              readOnly: true
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+      volumes:
+        - name: evt-nats-wms-publisher
+          secret:
+            secretName: evt-nats-wms-publisher
+            items:
+              - key: password
+                path: password

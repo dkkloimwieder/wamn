@@ -140,3 +140,143 @@ runtime:
     - name: identity-ca
       mountPath: /etc/identity-ca
       readOnly: true
+  - namespace: hosts
+    replicas: 1
+    env:
+    - name: WAMN_PG_URL
+      valueFrom:
+        secretKeyRef:
+          name: wamn-host-db-wms
+          key: url
+    - name: WAMN_PG_GUEST_POOL_MAX
+      value: '14'
+    - name: WAMN_PG_PLATFORM_POOL_MAX
+      value: '2'
+    - name: WAMN_HTTP_ROUTE_IN_FLIGHT_LIMIT
+      value: '64'
+    - name: WAMN_WASMTIME_CACHE_DIR
+      value: /tmp/wamn-wasmtime-cache
+    - name: DOCKER_CONFIG
+      value: /etc/wamn/registry
+    - name: WAMN_REGISTRY_AUTH_FILE
+      value: /etc/wamn/registry/config.json
+    - name: WAMN_COMPONENT_ARTIFACT_BASE
+      value: us-central1-docker.pkg.dev/wamn-dev/wamn/components
+    - name: WAMN_EVT_NATS_URL
+      value: nats://evt-nats.platform.svc.cluster.local:4222
+    - name: WAMN_EVT_NATS_USERNAME
+      valueFrom:
+        secretKeyRef:
+          name: wamn-event-nats-wms
+          key: username
+          optional: false
+    - name: WAMN_EVT_NATS_PASSWORD_FILE
+      value: /etc/wamn/event-nats/password
+    - name: WAMN_MAT_NATS_BINDING_FILE
+      value: /etc/wamn/materializer-nats/binding.json
+    - name: WAMN_EVT_ORG
+      value: dkk
+    - name: WAMN_EVT_PROJECT
+      value: wms
+    - name: WAMN_EVT_ENV
+      value: dev
+    - name: WAMN_EVT_STREAM_REPLICAS
+      value: '1'
+    - name: WAMN_EVT_DUP_WINDOW_SECS
+      value: '120'
+    - name: WAMN_ORG
+      value: dkk
+    - name: WAMN_PROJECT
+      value: wms
+    - name: WAMN_SCHEMA
+      value: wms
+    - name: WAMN_SYSTEM_URL
+      valueFrom:
+        secretKeyRef:
+          name: wamn-identity-reader-dkk--wms--dev
+          key: url
+          optional: false
+    - name: WAMN_EXECUTOR_PLATFORM_PG_URL
+      valueFrom:
+        secretKeyRef:
+          name: wamn-executor-platform-dkk--wms--dev
+          key: url
+          optional: false
+    - name: WAMN_HTTP_ADMITTER_PG_URL
+      valueFrom:
+        secretKeyRef:
+          name: wamn-http-admitter-dkk--wms--dev
+          key: url
+          optional: false
+    - name: WAMN_EVENT_MATERIALIZER_PG_URL
+      valueFrom:
+        secretKeyRef:
+          name: wamn-event-materializer-dkk--wms--dev
+          key: url
+          optional: false
+    - name: WAMN_SESSION_ISSUER
+      value: https://identity.identity.svc.cluster.local
+    - name: WAMN_SESSION_INSTANCE_SUFFIX
+      value: bnarqpnc
+    - name: WAMN_SESSION_JWKS_CA
+      value: /etc/identity-ca/ca.crt
+    volumes:
+    - name: event-nats
+      secret:
+        secretName: wamn-event-nats-wms
+        optional: false
+        items:
+        - key: password
+          path: password
+    - name: materializer-nats
+      secret:
+        secretName: wamn-materializer-nats-wms
+        optional: false
+        items:
+        - key: binding.json
+          path: binding.json
+    - name: registry-pull
+      secret:
+        secretName: wamn-registry-pull
+        optional: false
+        items:
+        - key: .dockerconfigjson
+          path: config.json
+    - name: identity-ca
+      configMap:
+        name: identity-ca
+    extraArgs:
+    - --release-artifact-base=us-central1-docker.pkg.dev/wamn-dev/wamn/releases
+    - --release-manifest-digest=sha256:6649148172e83eea8af3c9a5f133cb5f961d634de4f85244909da046475890a3
+    http:
+      enabled: true
+      port: 80
+    name: wms
+    ociCaPaths:
+    - /runtime-cert/ca.crt
+    resources:
+      requests:
+        memory: 256Mi
+        cpu: 500m
+      limits:
+        memory: 4Gi
+        cpu: '2'
+      defaultHeapMemory: 256MiB
+      coreInstances: 512
+      guestMemoryMode: count
+      maxConcurrentStarts: 1
+    service:
+      type: ClusterIP
+    volumeMounts:
+    - name: event-nats
+      mountPath: /etc/wamn/event-nats
+      readOnly: true
+    - name: materializer-nats
+      mountPath: /etc/wamn/materializer-nats
+      readOnly: true
+    - name: registry-pull
+      mountPath: /etc/wamn/registry
+      readOnly: true
+    - name: identity-ca
+      mountPath: /etc/identity-ca
+      readOnly: true

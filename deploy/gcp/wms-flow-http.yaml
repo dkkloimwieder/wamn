@@ -1,0 +1,60 @@
+kind: Service
+apiVersion: v1
+metadata:
+  name: wms-flow-http
+  namespace: hosts
+  labels:
+    app: wms-flow-http
+spec:
+  type: ClusterIP
+  ports:
+  - name: http
+    port: 80
+    targetPort: 80
+    protocol: TCP
+---
+kind: WorkloadDeployment
+apiVersion: runtime.wasmcloud.dev/v1alpha1
+metadata:
+  name: wms-flow-http
+  namespace: hosts
+spec:
+  replicas: 1
+  template:
+    spec:
+      environment: hosts
+      hostInterfaces:
+      - namespace: wasi
+        package: http
+        version: 0.3.0
+        interfaces:
+        - handler
+        config:
+          host: wms.wamn.dev
+      - namespace: wamn
+        package: flow-http-routing
+        version: 0.1.0
+        interfaces:
+        - routing
+      - namespace: wamn
+        package: router-delivery
+        version: 0.1.0
+        interfaces:
+        - delivery
+      components:
+      - image: us-central1-docker.pkg.dev/wamn-dev/wamn/components@sha256:923f270bb7425cad48e46a12fa3bb5843f9b1bd174851298ee68485cc8deea7e
+        localResources:
+          config:
+            wamn.tenant: wms
+            wamn.catalog: default
+            wamn.environment: hosts
+            wamn.project: wms
+            wamn.schema: wms
+          allowedIpNameLookups: []
+        imagePullPolicy: Always
+        name: flow-http
+      hostSelector:
+        hostgroup: wms
+      kubernetes:
+        service:
+          name: wms-flow-http
