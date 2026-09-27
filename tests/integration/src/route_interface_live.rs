@@ -7,7 +7,8 @@
 //! body to both paths and compares the two answers. The two widget-maker
 //! projections are served by a route only: no wiring for them exists in the
 //! release or the catalog, so their answers prove that a route runs no graph
-//! walk. The last section shows the conditional read of a list route.
+//! walk. The later sections show the conditional read of a list route, the
+//! streamed load, and each scope filter mode, the search and the band.
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -806,6 +807,115 @@ async fn a_streamed_load_reads_one_statement_as_of_its_start() -> anyhow::Result
         again[0]["row"]["name"] == json!("renamed"),
         "a new load reads the write: {again:?}"
     );
+
+    drop(database);
+    connection.await??;
+    application.shutdown().await?;
+    Ok(())
+}
+
+/// The names of a page's rows under one member, sorted.
+fn names(answer: &Value, member: &str) -> anyhow::Result<Vec<String>> {
+    let mut names = value(answer)?["item"]
+        .as_array()
+        .with_context(|| format!("a page of rows: {answer}"))?
+        .iter()
+        .map(|row| row[member].as_str().map(ToOwned::to_owned))
+        .collect::<Option<Vec<_>>>()
+        .with_context(|| format!("each row names its {member}: {answer}"))?;
+    names.sort();
+    Ok(names)
+}
+
+/// Each new filter mode, the server search and the band read the right rows
+/// from Postgres (wamn-3nsf.6). A widget matches its note by prefix and its
+/// maker by whether it is empty. A maker read applies its band of the last 30
+/// days until the request sends one, and its search finds a part of the name
+/// in any case.
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "requires: WAMN_APPLICATION_COMPONENTS, WAMN_FLOW_HTTP_COMPONENT"]
+async fn each_filter_mode_the_search_and_the_band_read_their_rows() -> anyhow::Result<()> {
+    wamn_test_postgres::require_prerequisites(&[
+        "WAMN_APPLICATION_COMPONENTS",
+        "WAMN_FLOW_HTTP_COMPONENT",
+    ]);
+    let _lock = wamn_test_postgres::lock();
+    let system = wamn_test_postgres::database();
+    let project = wamn_test_postgres::database();
+    let scratch = ScratchRoot::create()?;
+    let (application, paths) = start(system.url(), project.url(), &scratch).await?;
+    let (database, connection) =
+        tokio_postgres::connect(project.url(), tokio_postgres::NoTls).await?;
+    let connection = tokio::spawn(connection);
+    // The seed states each creation time, which the stamp trigger would
+    // replace, so it runs without triggers.
+    database
+        .batch_execute(
+            "BEGIN; SET LOCAL session_replication_role = replica; \
+             INSERT INTO inventory.widget_maker (name, created_at) VALUES \
+               ('Acme Old', now() - interval '40 days'), \
+               ('Acme New', now() - interval '1 day'), \
+               ('Globex', now() - interval '2 days'); \
+             INSERT INTO inventory.widget (code, note, maker_id) VALUES \
+               ('priority', 'N-1', (SELECT id FROM inventory.widget_maker WHERE name = 'Acme New')), \
+               ('standard', 'M-2', NULL); \
+             COMMIT"
+        )
+        .await
+        .map_err(|error| anyhow::anyhow!("insert the makers and widgets: {error:?}"))?;
+    let makers = "/widget_maker/query";
+    let widgets = "/widget/query";
+    let since = (chrono::Utc::now() - chrono::Duration::days(60)).to_rfc3339();
+
+    // The band reads the last 30 days until the request states its start.
+    let default = paths.route(makers, &json!([{}])).await?;
+    anyhow::ensure!(
+        names(&default, "name")? == ["Acme New", "Globex"],
+        "{default}"
+    );
+    let wide = paths
+        .route(makers, &json!([{"filter": {"created_at": {"min": since}}}]))
+        .await?;
+    anyhow::ensure!(
+        names(&wide, "name")? == ["Acme New", "Acme Old", "Globex"],
+        "{wide}"
+    );
+    let (status, answer) = paths
+        .get(
+            &format!("{ROUTE_PREFIX}{makers}"),
+            &json!([{"filter": {"created_at": {"max": since}}}]),
+        )
+        .await?;
+    anyhow::ensure!(
+        status != 200,
+        "a band without its start is refused: {answer}"
+    );
+
+    // The search finds a part of the name in any case, inside the band.
+    let found = paths
+        .route(
+            makers,
+            &json!([{"search": "acme", "filter": {"created_at": {"min": since}}}]),
+        )
+        .await?;
+    anyhow::ensure!(
+        names(&found, "name")? == ["Acme New", "Acme Old"],
+        "{found}"
+    );
+
+    // A prefix matches the start of the note, and is-null the empty maker.
+    // The fixture holds two widget codes, so two widgets carry the cases.
+    for (filter, expected) in [
+        (json!({"note": ["N-"]}), vec!["priority"]),
+        (json!({"note": ["-1"]}), vec![]),
+        (json!({"maker_id": true}), vec!["standard"]),
+        (json!({"maker_id": false}), vec!["priority"]),
+        (json!({"note": ["M-"], "maker_id": true}), vec!["standard"]),
+        (json!({"note": ["N-"], "maker_id": true}), vec![]),
+    ] {
+        let answer = paths.route(widgets, &json!([{"filter": filter}])).await?;
+        anyhow::ensure!(names(&answer, "code")? == expected, "{filter}: {answer}");
+    }
 
     drop(database);
     connection.await??;
