@@ -1098,6 +1098,37 @@ fn a_claim_command_declares_no_claim_object() {
     assert!(error.to_string().contains("automatic_retry: false"));
 }
 
+/// A model can say how its rows leave without publishing a route that removes
+/// them: only its command SQL deletes. A delete action still needs its mode.
+#[test]
+fn a_delete_mode_needs_no_delete_route() {
+    let mut manifest = fixture::manifest();
+    manifest["models"]["widget"]["operations"]
+        .as_object_mut()
+        .unwrap()
+        .remove("delete");
+    let package = fixture::generate_with(&fixture::catalog(), &manifest);
+    assert!(
+        package
+            .file("generated/contracts/widget/delete.operation.json")
+            .is_none()
+    );
+
+    let mut action_without_mode = fixture::manifest();
+    action_without_mode["models"]["widget"]
+        .as_object_mut()
+        .unwrap()
+        .remove("delete_mode");
+    let error = validate_operation_vocabulary(&parsed(&action_without_mode)).unwrap_err();
+    assert_eq!(error.kind(), GenerateErrorKind::InvalidModel);
+    assert!(
+        error
+            .to_string()
+            .contains("declares delete without delete_mode"),
+        "{error}"
+    );
+}
+
 /// Whether a refusal names the member that caused it. The top line states the
 /// closed vocabulary, and the parser's own message underneath names the key.
 fn names_the_member(error: &wamn_schema_generator::GenerateError, member: &str) -> bool {

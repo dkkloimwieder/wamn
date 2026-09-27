@@ -2195,16 +2195,7 @@ fn authored_sql_deletes_only_from_a_hard_delete_model() {
 }
 
 #[test]
-fn a_delete_mode_travels_with_its_delete_and_its_marker_columns() {
-    let mut mode_without_delete = manifest();
-    mode_without_delete["models"]["gadget"]["delete_mode"] = json!("hard");
-    assert_eq!(
-        validate_operation_vocabulary(&parsed_manifest(&mode_without_delete))
-            .expect_err("a delete_mode with no delete action")
-            .kind(),
-        GenerateErrorKind::InvalidModel,
-    );
-
+fn a_delete_mode_travels_with_its_owner_and_its_marker_columns() {
     let mut overlay = overlay_manifest();
     overlay["models"]["gadget"]["delete_mode"] = json!("tombstone");
     assert_eq!(

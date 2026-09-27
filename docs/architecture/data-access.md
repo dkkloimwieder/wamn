@@ -130,6 +130,7 @@ Generation refuses PostgreSQL values that the production `wamn:postgres` type co
 SQLx metadata is compilation data, not the SQL or package contract.
 
 A model that removes rows declares `delete_mode`, and only the package that owns the relation declares it.
+The `delete` operation is a route, and it needs `delete_mode`. A model can declare `delete_mode` with no `delete` operation, when only its command SQL deletes rows.
 A `hard` delete removes the row, and the record history keeps its contents in the `before` image of the delete entry.
 A `tombstone` delete keeps the row and sets `deleted_at` and `deleted_by`.
 Every generated read, every generated update, and a second delete then hide that row, so it behaves as `not_found`.

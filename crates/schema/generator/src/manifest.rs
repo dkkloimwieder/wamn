@@ -777,8 +777,10 @@ fn validate_audit_log(
 
 /// Refuse a delete declaration whose shape is invalid without a catalog.
 ///
-/// The mode and the action travel together, and only the relation owner
-/// declares either one. An overlay package cannot delete a base row.
+/// A delete action needs its mode. The mode says how rows leave the model,
+/// and a model can declare it with no delete action, when only its command
+/// SQL deletes rows. Only the relation owner declares either one. An overlay
+/// package cannot delete a base row.
 fn validate_delete_mode(
     manifest: &PackageManifest,
     model_name: &str,
@@ -802,11 +804,10 @@ fn validate_delete_mode(
         }
         return Ok(());
     }
-    match (declares_delete, model.delete_mode) {
-        (true, None) => refuse(format!("{model_name} declares delete without delete_mode")),
-        (false, Some(_)) => refuse(format!("{model_name} declares delete_mode without delete")),
-        _ => Ok(()),
+    if declares_delete && model.delete_mode.is_none() {
+        return refuse(format!("{model_name} declares delete without delete_mode"));
     }
+    Ok(())
 }
 
 fn validate_internal_relation_vocabulary(manifest: &PackageManifest) -> Result<(), GenerateError> {
