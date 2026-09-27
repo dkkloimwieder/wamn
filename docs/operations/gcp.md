@@ -1043,6 +1043,15 @@ psql -h 127.0.0.1 -p 15432 -U postgres -d wamn-db-dkk--receiving--dev--zf7o454t 
 
 On 2026-09-27 the load took 3 seconds.
 
+On 2026-09-27 the owner completed step 4 in a browser. The owner signed up from the mail link, signed in at `https://receiving.wamn.dev`, and changed the supplier of `PO-0006` to `SUPPLIER-0005`. Make sure that the change landed with this query in the Receiving database:
+
+```sql
+SELECT position, kind, operation, changed_by, after->>'supplier_id', after->>'row_version'
+FROM receiving.purchase_order_history ORDER BY position DESC LIMIT 1;
+```
+
+The result was history row 11, kind `update`, operation `wamn-receiving:purchase-order/update@1.0.0`, by the owner's principal, at `row_version` 2.
+
 ### 4.6 Delete the public edge
 
 Delete in the reverse order. The forwarding rule and the address bill while they exist:
