@@ -721,3 +721,21 @@ kubectl -n identity exec deploy/identity -- wamn-identity activate --kid <kid>
 ```
 
 Run the check of section 3.10 again. The key set now lists the `kid`. On 2026-09-26 the key was `a24410b7-e7da-423c-944a-27479ed4b0f2`.
+
+### 3.16 Management-author PAT (temporary procedure)
+
+This procedure is temporary (finding `wamn-n5d1`). No in-cluster run path exists yet for the verbs that call identity. The owner adds this line to `/etc/hosts` before the mint and removes it after the mint:
+
+```text
+127.0.0.1 identity.identity.svc.cluster.local
+```
+
+Forward identity to port 8443. Read the `operator-dkk` certificate into mode 0600 files of a private directory `C`, and delete the directory after the mint:
+
+```bash
+kubectl -n identity port-forward svc/identity 8443:443 &
+C=$(mktemp -d); chmod 700 $C
+(umask 077
+ kubectl -n identity get secret operator-dkk -o jsonpath='{.data.tls\.crt}' | base64 -d > $C/client.crt
+ kubectl -n identity get secret operator-dkk -o jsonpath='{.data.tls\.key}' | base64 -d > $C/client.key)
+```
