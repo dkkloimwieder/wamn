@@ -681,6 +681,7 @@ On 2026-09-26 the first run took 10 seconds, and the email was `wamn-registry-re
 | --- | --- | --- |
 | `wamn-host:src-490a0d098a176e39` | `sha256:b44a6f944a410ca42dccf378c0948226946c54fefa17c4bf3cc246e25dcd9dd2` | host |
 | `wamn-identity:src-bf477a549dc55932` | `sha256:b0896c8fb3f94920c097762f75019fe68a81254fc49a4fa6768a29db97794827` | identity |
+| `wamn-cdc-reader:src-6bf15eedaa8cb8e8` | `sha256:fa38da50c62ff38679ecdcd3490df8650fb6a4b4d6adda3017fb134dadac797a` | CDC reader |
 | `curlimages/curl:8.22.0` | `sha256:58adaa4e8dca9c988bae2aba4ab3434a0bb2da16bbe3f92dec39ec7785166777` | registry token CronJob |
 
 ### 3.14 Host values
@@ -752,3 +753,82 @@ rm -rf $C
 ```
 
 Then the owner removes the `/etc/hosts` line. On 2026-09-26 the mint took 5 seconds. It made the service principal `wamn-management-author-dkk--receiving--dev` and a PAT with prefix `6922769387dc9a19` that expires on 2026-10-27. The PAT Secret file stays at mode 0600 in the work directory and is not applied.
+
+### 3.17 Pool after the daily guard
+
+The guard job of section 1.3 sets pool `main` to 0 nodes every day at 03:00 New York time. On 2026-09-27 it removed both nodes, and every pod waited in `Pending`. Scale the pool back to 2 nodes for the work:
+
+```bash
+gcloud container clusters resize wamn --node-pool main --num-nodes 2 --zone us-central1-a --project wamn-dev --quiet
+```
+
+The event NATS starts again without `WAMN_TAP`, so run the tap-stream Job and the check of section 3.5 again. On 2026-09-27 the resize took 69 seconds, the pods were running 34 seconds later, the Job took 35 seconds and the check 6 seconds.
+
+### 3.18 Event streams and CDC
+
+Keep the port-forward and `WAMN_SYSTEM_ADMIN_URL` of section 3.6. Forward the event NATS, and write the replication password into a mode 0600 file of a private directory `C`:
+
+```bash
+kubectl -n platform port-forward svc/evt-nats 14222:4222 &
+(umask 077; openssl rand -hex 32 > $C/replication-password)
+```
+
+Run `enable-cdc-project-env` as the provisioning user of section 3.5. It makes the source stream, records the reader registration and writes three files:
+
+```bash
+WAMN_REPLICATION_PASSWORD="$(cat $C/replication-password)" target/debug/wamn-ctl enable-cdc-project-env \
+  --org dkk --project receiving --env dev --schema receiving \
+  --stream-replicas 1 --dup-window-secs 120 \
+  --db-host wamn-pg-rw.platform.svc.cluster.local --namespace platform --secret-namespace platform \
+  --stream EVT_3_dkk_9_receiving_3_dev \
+  --nats-url nats://127.0.0.1:14222 --nats-username "$(cat $E/provisioning-username)" \
+  --nats-password-file $E/provisioning-password \
+  --emit-role-sql $C/role.sql --emit-cdc-sql $C/cdc.sql --emit-secret $C/secret.json
+```
+
+Apply the role SQL, then the CDC SQL, then the Secret. Then delete the files that hold the password:
+
+```bash
+kubectl -n platform exec -i wamn-pg-1 -c postgres -- psql -U postgres -d postgres -v ON_ERROR_STOP=1 -q < $C/role.sql
+kubectl -n platform exec -i wamn-pg-1 -c postgres -- \
+  psql -U postgres -d wamn-db-dkk--receiving--dev--zf7o454t -v ON_ERROR_STOP=1 -q < $C/cdc.sql
+kubectl apply -f $C/secret.json
+rm -f $C/replication-password $C/role.sql $C/secret.json
+```
+
+The verb writes `role.sql` with mode 0664, so keep `C` at mode 0700. The `--db-host` flag puts the cluster host into the Secret URL, so no `jq` step is necessary here. On 2026-09-27 the verb took 3 seconds and the apply 5 seconds. The publication and the slot are `wamn_cdc_dkk__receiving__dev__zf7o454t`, and the Secret is `platform/wamn-cdc-dkk--receiving--dev`.
+
+### 3.19 CDC reader
+
+The reader reads the registration with generation `a` of the registry-reader credential, as the Receiving cluster tests do. Prepare it, set the cluster host (finding `wamn-lczu`), and apply it:
+
+```bash
+(umask 077; target/debug/wamn-ctl provision-project-env --org dkk --project receiving --env dev --tenant dev \
+  --namespace platform --prepare-registry-reader-generation a --emit-registry-reader-secret $C/registry-reader.json)
+(umask 077; jq '.stringData.url |= sub("@127\\.0\\.0\\.1:15432/"; "@wamn-pg-rw.platform.svc.cluster.local:5432/")' \
+  $C/registry-reader.json > $C/registry-reader.cluster.json)
+kubectl apply -f $C/registry-reader.cluster.json
+rm -f $C/registry-reader.json $C/registry-reader.cluster.json
+```
+
+Build the image by its source identity and push it as in section 3.4:
+
+```bash
+TMPDIR=<directory on the main disk> tools/journey-image-cache ensure . cdc-reader cdc-reader "$(git rev-parse HEAD)" gcp gcp-wamn
+docker tag wamn-cdc-reader:src-<identity> $R/wamn-cdc-reader:src-<identity> && docker push $R/wamn-cdc-reader:src-<identity>
+```
+
+Deploy the reader, then restart the host so that it starts after the reader:
+
+```bash
+kubectl apply -f deploy/gcp/cdc-reader.yaml
+kubectl -n platform rollout status deploy/cdc-reader --timeout=180s
+kubectl -n platform logs deploy/cdc-reader
+kubectl -n hosts rollout restart deploy/hostgroup-default
+kubectl -n hosts rollout status deploy/hostgroup-default --timeout=300s
+```
+
+The reader log shows `registration loaded`, the three `preflight` lines and `walsender session open`. The slot then shows `active` as true in `pg_replication_slots`. On 2026-09-27 the credential took 12 seconds and its apply 2 seconds. The image build took 63 seconds, the push 6 seconds, the reader rollout 6 seconds and the host restart 10 seconds.
+
+The host crash-looped until the source stream existed. It then became Ready by itself at its next restart, before the reader started, so the ruled restart was its second start.
+

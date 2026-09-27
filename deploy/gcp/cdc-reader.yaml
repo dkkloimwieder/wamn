@@ -1,0 +1,76 @@
+# The CDC event reader of docs/plan/gcp-deployment.md step 3.
+# It reads the replication slot of dkk/receiving/dev and publishes to
+# EVT_3_dkk_9_receiving_3_dev on the event NATS. The inputs are the ones that
+# the Receiving cluster tests give cdc::start
+# (apps/wamn_receiving/tests/route_authentication_live/cluster/cdc.rs):
+#   WAMN_CDC_URL     the replication Secret of enable-cdc-project-env
+#   WAMN_SYSTEM_URL  generation a of the registry-reader credential
+#   the event NATS in platform, as the publisher user
+# The ServiceAccount is the one of deploy/platform/event-reader-rbac.yaml in
+# namespace platform. It has no grants, and the pod mounts no token.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: event-reader
+  namespace: platform
+  labels: { app: event-reader }
+automountServiceAccountToken: false
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cdc-reader
+  namespace: platform
+  labels: { app: event-reader }
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: event-reader }
+  template:
+    metadata:
+      labels: { app: event-reader }
+    spec:
+      serviceAccountName: event-reader
+      automountServiceAccountToken: false
+      containers:
+        - name: cdc-reader
+          image: us-central1-docker.pkg.dev/wamn-dev/wamn/wamn-cdc-reader@sha256:fa38da50c62ff38679ecdcd3490df8650fb6a4b4d6adda3017fb134dadac797a
+          args:
+            - --org=dkk
+            - --project=receiving
+            - --env=dev
+            - --stream-replicas=1
+            - --dup-window-secs=120
+            - --feedback-secs=1
+            - --stall-threshold-secs=30
+            - --slot-poll-secs=0
+            - --slot-safe-wal-warn-bytes=268435456
+          env:
+            - name: WAMN_CDC_URL
+              valueFrom:
+                secretKeyRef: { name: wamn-cdc-dkk--receiving--dev, key: url }
+            - name: WAMN_SYSTEM_URL
+              valueFrom:
+                secretKeyRef: { name: wamn-registry-reader-dkk--receiving--dev, key: url }
+            - name: WAMN_EVT_NATS_URL
+              value: nats://evt-nats.platform.svc.cluster.local:4222
+            - name: WAMN_EVT_NATS_USERNAME
+              valueFrom:
+                secretKeyRef: { name: evt-nats-publisher, key: username }
+            - name: WAMN_EVT_NATS_PASSWORD_FILE
+              value: /etc/evt-nats/password
+          volumeMounts:
+            - name: evt-nats-publisher
+              mountPath: /etc/evt-nats
+              readOnly: true
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+      volumes:
+        - name: evt-nats-publisher
+          secret:
+            secretName: evt-nats-publisher
+            items:
+              - key: password
+                path: password
