@@ -914,7 +914,7 @@ target/debug/wamn web upload apps/wamn_receiving \
   --bucket gs://wamn-dev-web/clients
 ```
 
-The files go to `clients/wamn_receiving/<digest hex>/`, which `deploy/gcp/values-edge.yaml` and `deploy/gcp/url-map.yaml` name. The first ruling asked for an HMAC key on the owner's account. `gsutil hmac create` and `gcloud storage hmac create` accept only a service account, so that ruling was replaced.
+On 2026-09-27 the upload wrote 10 files in 17 seconds, after a 54 second build of `wamn`. The files go to `clients/wamn_receiving/<digest hex>/`, which `deploy/gcp/values-edge.yaml` and `deploy/gcp/url-map.yaml` name. The first ruling asked for an HMAC key on the owner's account. `gsutil hmac create` and `gcloud storage hmac create` accept only a service account, so that ruling was replaced.
 
 ### 4.3 Load balancer
 
@@ -966,7 +966,54 @@ gcloud dns record-sets create receiving.wamn.dev. $P --zone wamn-dev --type A --
 
 On 2026-09-27 the address was `8.232.230.139`. The first six commands took 45 seconds, the backend service 97 seconds, the URL map 6 seconds, and the proxy, rule and record 29 seconds.
 
-### 4.4 Delete the public edge
+### 4.4 Measurements
+
+Run these from outside the cluster:
+
+```bash
+curl -s -D - -o index.html https://receiving.wamn.dev/
+A=$(grep -o '/assets/[^"]*\.js' index.html | head -1)
+curl -s -D - -o /dev/null https://receiving.wamn.dev$A
+curl -s -D - -o /dev/null https://receiving.wamn.dev$A
+curl -s -D - -o /dev/null https://receiving.wamn.dev/api/location/list
+curl -s -D - https://receiving.wamn.dev/password/session
+```
+
+On 2026-09-27 the results were these:
+
+| Request | Result |
+| --- | --- |
+| `/` | 200, `cache-control: no-cache`, `text/html` |
+| `/assets/index-CLU_h-Iu.js`, first | 200, `cache-control: public, max-age=31536000, immutable`, no `age` |
+| the same asset, second | the same headers and `age: 3`, a Cloud CDN hit |
+| `/api/location/list` | 401 `unauthorized`, `cache-control: no-store`, no `age` on two requests |
+| `GET /password/session` | 404 `text/plain` `not found`, the answer of identity (`services/identity/src/lib.rs`), because the password routes take only POST. The bucket answers a missing key with XML `NoSuchKey`. |
+
+### 4.5 Invitation
+
+Make the owner's human principal, admit it to the environment, and write its tenant person row. Keep the port-forward and `WAMN_SYSTEM_ADMIN_URL` of section 3.6 and `T` of section 3.8:
+
+```bash
+cargo build -p wamn-ctl --features ops --bin wamn-ctl-ops
+target/debug/wamn-ctl-ops create-human --subject dkkloimwieder@gmail.com --email dkkloimwieder@gmail.com --display-name dkk
+target/debug/wamn-ctl grant-project-env-membership --org dkk --project receiving --env dev \
+  --principal-id <principal id> --system-database-url "$WAMN_SYSTEM_ADMIN_URL"
+target/debug/wamn-ctl reconcile-run-plane --system-database-url "$WAMN_SYSTEM_ADMIN_URL" --admin-database-url "$T" \
+  --org dkk --project receiving --tenant dev --env dev --schema wamn_run
+```
+
+Send the invitation through the identity port-forward and the temporary `/etc/hosts` line of section 3.16. Read the `operator-dkk` certificate into mode 0600 files of a private directory `C`, and delete the directory after the request:
+
+```bash
+target/debug/wamn-ctl invite --principal <principal id> \
+  --pat-issuer https://identity.identity.svc.cluster.local:8443 --pat-server-ca $P/identity-ca.crt \
+  --pat-client-cert $C/client.crt --pat-client-key $C/client.key
+rm -rf $C
+```
+
+On 2026-09-27 the principal was `ccc4533d-a81a-465d-8a44-1414369ae2fd`. The three verbs took 2, 1 and 25 seconds, and identity answered `201 {"status":"accepted_for_delivery"}` in 1 second.
+
+### 4.6 Delete the public edge
 
 Delete in the reverse order. The forwarding rule and the address bill while they exist:
 
