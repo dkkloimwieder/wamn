@@ -1,0 +1,63 @@
+apiVersion: runtime.wasmcloud.dev/v1alpha1
+kind: WorkloadDeployment
+metadata:
+  name: receiving-materializer
+  namespace: hosts
+spec:
+  replicas: 1
+  template:
+    spec:
+      environment: hosts
+      hostInterfaces:
+      - namespace: wamn
+        package: postgres
+        version: 0.1.0
+        interfaces:
+        - types
+        - client
+      - namespace: wamn
+        package: jetstream
+        version: 0.1.0
+        interfaces:
+        - types
+        - registration
+      - namespace: wasmcloud
+        package: nats
+        version: 0.1.0
+        interfaces:
+        - types
+        - jetstream
+        name: events
+      - namespace: wamn
+        package: flow-http-routing
+        version: 0.1.0
+        interfaces:
+        - routing
+      - namespace: wamn
+        package: router-delivery
+        version: 0.1.0
+        interfaces:
+        - delivery
+      service:
+        image: us-central1-docker.pkg.dev/wamn-dev/wamn/components@sha256:5c310006273e00f8d24cbdd5604207162b723f4fbb7c545fb77d9ebcfe696db0
+        localResources:
+          config:
+            wamn.tenant: dev
+            wamn.project: receiving
+            wamn.environment: dev
+            wamn.postgres.authority: event-materializer
+          environment:
+            config:
+              WAMN_MAT_STREAM: EVT_3_dkk_9_receiving_3_dev
+              WAMN_MAT_ORG: dkk
+              WAMN_MAT_PROJECT: receiving
+              WAMN_MAT_ENV: dev
+              WAMN_MAT_TENANT: dev
+              WAMN_MAT_MAX_DELIVER: '5'
+              WAMN_MAT_FETCH_MS: '1000'
+              WAMN_MAT_SWEEP_MS: '5000'
+          allowedIpNameLookups: []
+        imagePullPolicy: Always
+        maxRestarts: 5
+      hostSelector:
+        hostgroup: default

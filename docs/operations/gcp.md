@@ -833,13 +833,51 @@ The reader log shows `registration loaded`, the three `preflight` lines and `wal
 On 2026-09-27 the change to the defaults and `Recreate` rolled out in 5 seconds, and the reader opened its session again. The host crash-looped until the source stream existed. It then became Ready by itself at its next restart, before the reader started, so the ruled restart was its second start.
 
 
-### 3.20 Serve check
+### 3.20 HTTP and materializer workloads
 
-Forward the host Service and call a Receiving route with the release host name:
+Build every component. The HTTP ingress and the materializer land in `apps/target/wasm32-wasip2/release`:
+
+```bash
+tools/build-components all
+```
+
+Push both with `wash`, as the kind cases do. Write the push credential into a mode 0600 file of a private directory `D`, and delete the directory after the push:
+
+```bash
+W=$(tools/install-wash)
+R=us-central1-docker.pkg.dev/wamn-dev/wamn/components
+(umask 077; gcloud auth print-access-token | python3 -c 'import sys,json,base64; t=sys.stdin.read().strip(); print(json.dumps({"auths":{"us-central1-docker.pkg.dev":{"username":"oauth2accesstoken","password":t,"auth":base64.b64encode(("oauth2accesstoken:"+t).encode()).decode()}}}))' > $D/config.json)
+DOCKER_CONFIG=$D $W -o json oci push $R:flow-http apps/target/wasm32-wasip2/release/http_route.wasm
+DOCKER_CONFIG=$D $W -o json oci push $R:materializer apps/target/wasm32-wasip2/release/materializer.wasm
+rm -rf $D
+```
+
+Render both workloads with the example program, which calls `render_http_workload` and `render_materializer` of the kind cases, and apply them:
+
+```bash
+cargo run -p wamn-test-infrastructure --example workload_files -- deploy/gcp $R@<flow-http digest> $R@<materializer digest>
+kubectl apply -f deploy/gcp/flow-http.yaml -f deploy/gcp/materializer.yaml
+kubectl -n hosts wait --for=condition=Ready workloaddeployment/flow-http workloaddeployment/receiving-materializer --timeout=240s
+```
+
+The HTTP claims are catalog `default`, environment `hosts`, and project and schema `receiving`. The materializer fetches every 1000 ms and sweeps every 5000 ms. These are deployment values, and the kind cases use 500 ms for both.
+
+| Component | File SHA-256 | Pushed digest |
+| --- | --- | --- |
+| `flow-http` (`http_route.wasm`) | `ad1124555cfaeb7f342d4596b5848c0675edefa1725c770c35fb94699d8130f4` | `sha256:f3d8d1bea0e3d9dd69dc2e30c004663a95ef234ed36a80faf4e8bcc35dc42fb4` |
+| `materializer` | `7d78a4ad93a2484a3964e5d631e857f439316663f8227f4c08676659bf8f8153` | `sha256:5c310006273e00f8d24cbdd5604207162b723f4fbb7c545fb77d9ebcfe696db0` |
+
+On 2026-09-27 the build took 353 seconds, the push 5 seconds, and the two workloads were Ready 8 seconds after the apply.
+
+### 3.21 Serve check
+
+Forward the host Service and call Receiving routes with the release host name:
 
 ```bash
 kubectl -n hosts port-forward svc/hostgroup-default 18080:80 &
 curl -s -i -H 'Host: receiving.wamn.dev' http://127.0.0.1:18080/location/list
+curl -s -i -H 'Host: receiving.wamn.dev' http://127.0.0.1:18080/nope
 ```
 
-On 2026-09-27 every path answered `503`, and the host log said `failed to route incoming request err=router is temporarily unavailable`. The host router in `crates/platform/engine/src/expected_router.rs` gives this answer when the release names the host but no workload is bound to it. No `WorkloadDeployment` exists yet. The kind cases apply the `flow-http` workload of `deploy/platform/http-route-workload.example.yaml` and the materializer workload of `deploy/platform/materializer.example.yaml`, and step 3 has not applied them yet.
+A released route answers `401` with `{"error":{"code":"unauthorized"}}`, because the call has no session. An unknown path answers `404` with `route-not-found`.
+Before the workloads existed, every path answered `503`, and the host log said `router is temporarily unavailable`. The host router in `crates/platform/engine/src/expected_router.rs` gives this answer when the release names the host but no workload is bound to it.
