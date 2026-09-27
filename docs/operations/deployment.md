@@ -226,6 +226,13 @@ The CLI also accepts `--resend-api-key` and `--resend-from`; prefer environment 
 For Kubernetes, create a Secret with the `api-key` entry in the identity namespace.
 Set the identity chart's `resendSecret` to that Secret and `resendFrom` to the verified sender.
 Set `operatorCaSecret` to permit operator invitation requests.
+An operator sends an invitation with `wamn-ctl invite`, which uses the operator certificate flags of the PAT mint. Identity mails the invitation, and the command prints only identity's reply:
+
+```bash
+wamn-ctl invite --principal <human principal id> --pat-issuer <identity URL> \
+  --pat-server-ca <identity CA> --pat-client-cert <operator certificate> --pat-client-key <operator key>
+```
+
 Restart the Deployment after changing the credential, sender, or operator CA.
 The issuer credential needs the current grants from `provision-identity-issuer --prepare-generation`.
 Use the current system schema on a fresh database, following the repository's schema installation contract.

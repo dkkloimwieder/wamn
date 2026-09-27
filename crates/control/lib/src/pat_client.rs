@@ -66,10 +66,16 @@ impl fmt::Debug for PatClient {
 
 impl PatClient {
     pub(crate) fn new(args: &PatIssuerConfig) -> anyhow::Result<Self> {
-        let endpoint = pat_endpoint(
+        Self::for_route(args, "pats")
+    }
+
+    /// The operator client for one route of the identity service.
+    fn for_route(args: &PatIssuerConfig, route: &str) -> anyhow::Result<Self> {
+        let endpoint = service_endpoint(
             args.endpoint
                 .as_deref()
                 .context("PAT issuance requires --pat-issuer")?,
+            route,
         )?;
         let cert_path = args
             .client_cert
@@ -176,7 +182,7 @@ impl fmt::Debug for PatResponse {
     }
 }
 
-fn pat_endpoint(value: &str) -> anyhow::Result<Url> {
+fn service_endpoint(value: &str, route: &str) -> anyhow::Result<Url> {
     let mut endpoint = Url::parse(value).map_err(|_| {
         anyhow::anyhow!("PAT issuer must be an HTTPS URL without credentials, query, or fragment")
     })?;
@@ -189,7 +195,7 @@ fn pat_endpoint(value: &str) -> anyhow::Result<Url> {
             && endpoint.fragment().is_none(),
         "PAT issuer must be an HTTPS URL without credentials, query, or fragment"
     );
-    let path = format!("{}/pats", endpoint.path().trim_end_matches('/'));
+    let path = format!("{}/{route}", endpoint.path().trim_end_matches('/'));
     endpoint.set_path(&path);
     Ok(endpoint)
 }
@@ -233,6 +239,52 @@ fn decode_response(
     Ok(response)
 }
 
+/// Identity's reply to one operator invitation. Identity mails the
+/// invitation secret, so the reply carries no token.
+#[derive(Debug)]
+pub struct InvitationReply {
+    /// The HTTP status: 201 when identity accepted the mail for delivery.
+    pub status: u16,
+    /// The reply body, for example `{"status":"accepted_for_delivery"}`.
+    pub body: String,
+}
+
+/// The invitation request body for one human principal.
+fn invitation_body(principal_id: &PrincipalId) -> anyhow::Result<Vec<u8>> {
+    serde_json::to_vec(&serde_json::json!({ "principal_id": principal_id.as_str() }))
+        .map_err(|_| anyhow::anyhow!("invitation request encoding failed"))
+}
+
+/// Ask identity to mail an invitation to one human principal, as the operator
+/// of `config`. The request is not retried.
+pub async fn send_invitation(
+    config: &PatIssuerConfig,
+    principal_id: &PrincipalId,
+) -> anyhow::Result<InvitationReply> {
+    let client = PatClient::for_route(config, "invitations")?;
+    let response = client
+        .http
+        .post(client.endpoint.clone())
+        .header(reqwest::header::CONTENT_TYPE, "application/json")
+        .body(invitation_body(principal_id)?)
+        .send()
+        .await
+        .map_err(|_| anyhow::anyhow!("invitation transport failed; the request was not retried"))?;
+    let status = response.status().as_u16();
+    let bytes = response
+        .bytes()
+        .await
+        .map_err(|_| anyhow::anyhow!("invitation reply read failed"))?;
+    anyhow::ensure!(
+        bytes.len() <= MAX_RESPONSE_BYTES,
+        "invitation reply exceeds the size limit"
+    );
+    Ok(InvitationReply {
+        status,
+        body: String::from_utf8_lossy(&bytes).into_owned(),
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -273,8 +325,24 @@ mod tests {
                 "https://identity.example/authority/pats",
             ),
         ] {
-            assert_eq!(pat_endpoint(base).unwrap().as_str(), expected);
+            assert_eq!(service_endpoint(base, "pats").unwrap().as_str(), expected);
         }
+    }
+
+    #[test]
+    fn an_invitation_posts_the_principal_to_the_invitations_route() {
+        let principal: PrincipalId = PRINCIPAL.parse().unwrap();
+        assert_eq!(
+            service_endpoint("https://identity.example/authority/", "invitations")
+                .unwrap()
+                .as_str(),
+            "https://identity.example/authority/invitations"
+        );
+        assert_eq!(
+            serde_json::from_slice::<serde_json::Value>(&invitation_body(&principal).unwrap())
+                .unwrap(),
+            serde_json::json!({ "principal_id": PRINCIPAL })
+        );
     }
 
     #[test]
@@ -287,7 +355,7 @@ mod tests {
             "https://identity.example#private-marker",
             "private-marker",
         ] {
-            let error = pat_endpoint(input).unwrap_err();
+            let error = service_endpoint(input, "pats").unwrap_err();
             assert!(!format!("{error:#} {error:?}").contains("private-marker"));
         }
     }

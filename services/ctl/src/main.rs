@@ -58,6 +58,8 @@ enum Command {
     GrantProjectEnvMembership(identity_verbs::ProjectEnvMembershipArgs),
     /// Revoke one human's access to one project environment.
     RevokeProjectEnvMembership(identity_verbs::ProjectEnvMembershipArgs),
+    /// Ask identity to mail an invitation to one human principal.
+    Invite(identity_verbs::InviteArgs),
     /// Overlay CDC capture onto a provisioned project-env: publication + failover slot + replication role/Secret + reader registration (wamn-l5i9.9, D19 v3)
     EnableCdcProjectEnv(provisioning_verbs::EnableCdcProjectEnvArgs),
     /// Apply one exact package-owned migration stream to a project database.
@@ -122,6 +124,7 @@ async fn main() -> anyhow::Result<()> {
         Command::ProvisionIdentityIssuer(args) => identity_verbs::provision_issuer(args).await,
         Command::GrantProjectEnvMembership(args) => identity_verbs::grant(args).await,
         Command::RevokeProjectEnvMembership(args) => identity_verbs::revoke(args).await,
+        Command::Invite(args) => identity_verbs::invite(args).await,
         Command::EnableCdcProjectEnv(args) => provisioning_verbs::enable_cdc(args).await,
         Command::ApplyPackage(args) => package_verbs::apply(args).await,
         Command::BindConnection(args) => component_verbs::bind(args).await,

@@ -218,6 +218,10 @@ Owner rulings of 2026-09-27:
 - The DNS record for `receiving.wamn.dev` is an A record with TTL 300.
 - The load balancer copy of the certificate does not renew with cert-manager. That is a finding, not a procedure. Its fix is a CronJob in `edge`, like the registry token CronJob, that copies the renewed Secret into a new `gcloud compute ssl-certificates` entry and moves the proxy to it.
 - Pool `main` stays at 2 nodes until step 4 ends. If the guard scales it to 0 first, scale it back and continue. The guard does not change.
+- A new verb `wamn-ctl invite --principal <id>` sends the invitation. It uses the identity client and the operator certificate flags of the PAT mint (`--pat-issuer`, `--pat-client-cert`, `--pat-client-key`, `--pat-server-ca`), posts `/invitations`, and prints identity's reply without the token. One unit test covers the request shape, and the enrollment section of `docs/operations/deployment.md` names the verb.
+- The owner's principal comes from `create-human --subject dkkloimwieder@gmail.com --display-name dkk`, then `grant-project-env-membership` for `dkk/receiving/dev`, then `reconcile-run-plane`. The invitation goes to that address.
+- Order: the upload, the `index.html` and asset measurements, then the three verbs and the invitation through the port-forward.
+
 
 ## 6. Benchmark
 

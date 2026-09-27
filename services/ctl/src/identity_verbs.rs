@@ -1,5 +1,6 @@
 //! Arguments and output of the `provision-identity-issuer`,
-//! `grant-project-env-membership`, and `revoke-project-env-membership` verbs.
+//! `grant-project-env-membership`, `revoke-project-env-membership`, and
+//! `invite` verbs.
 
 use std::fmt;
 use std::path::PathBuf;
@@ -8,9 +9,12 @@ use clap::{ArgGroup, Args};
 use wamn_control::identity_issuer::{
     IdentityIssuerAction, IdentityIssuerRequest, provision_identity_issuer,
 };
+use wamn_control::pat_client;
 use wamn_control::project_env_membership::{self, ProjectEnvMembershipRequest};
 use wamn_control_provision::CredentialGeneration;
 use wamn_platform_identity::PrincipalId;
+
+use crate::provisioning_verbs::PatIssuerArgs;
 
 /// Provisioning inputs for one identity authority, not a project environment.
 #[derive(Args)]
@@ -79,6 +83,17 @@ pub struct ProjectEnvMembershipArgs {
     pub system_database_url: String,
 }
 
+/// Arguments that name one human principal and the operator identity client.
+#[derive(Debug, Args)]
+pub struct InviteArgs {
+    /// Existing human principal UUID that receives the invitation mail.
+    #[arg(long)]
+    pub principal: String,
+
+    #[command(flatten)]
+    pub pat_issuer: PatIssuerArgs,
+}
+
 /// Run one identity credential generation action and print what it did.
 pub async fn provision_issuer(args: IdentityIssuerArgs) -> anyhow::Result<()> {
     let outcome = provision_identity_issuer(IdentityIssuerRequest {
@@ -119,6 +134,27 @@ fn print_membership(state: &str, args: &ProjectEnvMembershipArgs, principal_id: 
         "membership {state} principal_id={principal_id} org={} project={} env={}",
         args.org, args.project, args.env
     );
+}
+
+/// Ask identity to mail an invitation and print identity's reply. The reply
+/// carries no token, because identity mails the invitation secret.
+pub async fn invite(args: InviteArgs) -> anyhow::Result<()> {
+    let principal: PrincipalId = args
+        .principal
+        .parse()
+        .map_err(|_| anyhow::anyhow!("--principal must be a principal UUID"))?;
+    let reply = pat_client::send_invitation(&args.pat_issuer.into(), &principal).await?;
+    println!(
+        "invitation for {}: {} {}",
+        principal.as_str(),
+        reply.status,
+        reply.body.trim()
+    );
+    anyhow::ensure!(
+        reply.status == 201,
+        "identity did not accept the invitation for delivery"
+    );
+    Ok(())
 }
 
 /// Grant one human's project environment membership and print the new state.
