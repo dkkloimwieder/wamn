@@ -32,8 +32,7 @@ use anyhow::Context as _;
 use reqwest::Url;
 use tokio_postgres::{Client, Config as PostgresConfig, NoTls};
 use wamn_control_provision::{
-    CONTROL_PORTABLE_STORE_SQL, CredentialGeneration, SYSTEM_SCHEMA_SQL, WorkloadRoleFamily,
-    platform_principals_sql, sql as provision_sql,
+    CredentialGeneration, WorkloadRoleFamily, platform_principals_sql, sql as provision_sql,
 };
 use wamn_pg_core::Identifier;
 
@@ -289,48 +288,11 @@ pub async fn reset_control_store(admin: &Client) -> anyhow::Result<()> {
                  CREATE ROLE wamn_system NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE \
                    NOREPLICATION NOBYPASSRLS; \
                END IF; \
-             END $$; \
-             DO $$ BEGIN EXECUTE format('GRANT CREATE ON DATABASE %I TO wamn_system', \
-                                        current_database()); END $$;",
+             END $$;",
         )
         .await
         .context("prepare the production control owner")?;
-    admin
-        .batch_execute(&provision_sql::ensure_control_author_acl_role_sql())
-        .await
-        .context("ensure the portable store's control-author ACL role")?;
-    admin
-        .batch_execute(provision_sql::ensure_db_owner_role_sql())
-        .await
-        .context("ensure the database-owner role that the record history grants name")?;
-    admin
-        .batch_execute("SET ROLE wamn_system")
-        .await
-        .context("assume the production control owner")?;
-    admin
-        .batch_execute(SYSTEM_SCHEMA_SQL)
-        .await
-        .context("install deploy/sql/system-schema.sql")?;
-    admin
-        .batch_execute(CONTROL_PORTABLE_STORE_SQL)
-        .await
-        .context("install the control portable store")?;
-    admin
-        .batch_execute("RESET ROLE")
-        .await
-        .context("release the production control owner before cluster ACL convergence")?;
-    admin
-        .batch_execute(provision_sql::revoke_public_connect_floor_sql())
-        .await
-        .context("converge the cluster PUBLIC CONNECT floor")?;
-    admin
-        .batch_execute(
-            "DO $$ BEGIN EXECUTE format(\
-               'REVOKE TEMPORARY ON DATABASE %I FROM PUBLIC', current_database()); END $$;",
-        )
-        .await
-        .context("converge the control database PUBLIC TEMPORARY floor")?;
-    Ok(())
+    crate::provision_system::install_control_store(admin).await
 }
 
 pub async fn provision_route(

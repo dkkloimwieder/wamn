@@ -1,5 +1,5 @@
-//! Arguments and output of the `provision-org`, `provision-project-env`, and
-//! `enable-cdc-project-env` verbs.
+//! Arguments and output of the `provision-system`, `provision-org`,
+//! `provision-project-env`, and `enable-cdc-project-env` verbs.
 
 use std::fmt;
 use std::path::{Path, PathBuf};
@@ -17,8 +17,33 @@ use wamn_control::provision_project_env::{
     WorkloadActionRequest, WorkloadActionVerb, WorkloadGenerationAction, ensure_secret_path,
     parse_pat_prefix, workload_action_flag, workload_secret_flag,
 };
+use wamn_control::provision_system::{self, ProvisionSystemRequest};
 use wamn_control_provision::{CredentialGeneration, DB_OWNER_ROLE, WorkloadRoleFamily};
 use wamn_control_registry::{Template, Triple};
+
+#[derive(Debug, Args)]
+pub struct ProvisionSystemArgs {
+    /// Superuser Postgres URL to the empty system database (`wamn_system`),
+    /// whose owner role `wamn_system` already exists.
+    #[arg(long, env = "WAMN_SYSTEM_ADMIN_URL")]
+    pub system_url: String,
+
+    /// Email domain of the platform principal rows, written to
+    /// `registry.meta.platform_domain`.
+    #[arg(long)]
+    pub platform_domain: String,
+}
+
+/// Install the control store into an empty system database, once.
+pub async fn provision_system(args: ProvisionSystemArgs) -> anyhow::Result<()> {
+    provision_system::provision_system(&ProvisionSystemRequest {
+        system_database_url: args.system_url,
+        platform_domain: args.platform_domain,
+    })
+    .await?;
+    println!("provision-system: control store installed");
+    Ok(())
+}
 
 #[derive(Debug, Args)]
 pub struct ProvisionProjectEnvArgs {

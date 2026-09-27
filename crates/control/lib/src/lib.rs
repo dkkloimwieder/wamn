@@ -34,6 +34,7 @@ pub mod project_env_membership;
 pub mod promote;
 pub mod provision_org;
 pub mod provision_project_env;
+pub mod provision_system;
 #[cfg(feature = "ops")]
 pub mod prune_record_history;
 #[cfg(feature = "ops")]

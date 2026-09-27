@@ -45,6 +45,8 @@ enum Command {
     CheckChanges(delivery_verbs::CheckChangesArgs),
     /// Qualify the exact release artifacts from a clean selected revision.
     QualifyRelease(delivery_verbs::QualifyReleaseArgs),
+    /// Install the control store into an empty system database and record its platform domain
+    ProvisionSystem(provisioning_verbs::ProvisionSystemArgs),
     /// Render a dedicated org's CNPG Cluster set (one per recovery domain, sized by env policy) + record it in the T1 registry (wamn-q3n.6 / D18)
     ProvisionOrg(provisioning_verbs::ProvisionOrgArgs),
     /// Render a per-project-env database (CNPG Database CRD) + privilege step + record it in the T1 registry (wamn-q3n.7)
@@ -115,6 +117,7 @@ async fn main() -> anyhow::Result<()> {
         Command::PrepareRelease(args) => delivery_verbs::prepare(args).await,
         Command::CheckChanges(args) => delivery_verbs::check_changes(args).await,
         Command::QualifyRelease(args) => delivery_verbs::qualify(args).await,
+        Command::ProvisionSystem(args) => provisioning_verbs::provision_system(args).await,
         Command::ProvisionOrg(args) => provisioning_verbs::provision_org(args).await,
         Command::ProvisionProjectEnv(args) => provisioning_verbs::provision(args).await,
         Command::ProvisionIdentityIssuer(args) => identity_verbs::provision_issuer(args).await,

@@ -40,6 +40,16 @@ Compilation and a successful upload do not establish deployed behavior.
 Select the relevant tests from [running tests](running-tests.md) and interpret them through [test results](../testing/evidence.md).
 
 Provision the target before publishing its release.
+First install the control store into the empty system database, once per deployment.
+The database and its owner role `wamn_system` must exist, for example from the CloudNativePG `initdb` bootstrap:
+
+```bash
+wamn-ctl provision-system --system-url "$SYSTEM_ADMIN_URL" --platform-domain "$PLATFORM_DOMAIN"
+```
+
+The verb installs the record history, the system schema and the portable store as `wamn_system`, and closes the PUBLIC `CONNECT` and `TEMPORARY` floors.
+It refuses a database that already has the schema `registry`.
+
 Provisioning owns database schema, privileges, environment bindings, and broker stream configuration.
 Runtime uses credentials scoped to that environment.
 Declare stream replicas and the duplicate window in the environment configuration.
@@ -49,11 +59,7 @@ It does not grant runtime credentials permission to reconfigure streams.
 Every tenant database needs its platform principal rows before any stamped write.
 `wamn-ctl reconcile-run-plane` writes them, together with `app-schema.sql` and a service row for each service principal of the project.
 It takes the email domain of those rows from `registry.meta.platform_domain` in the system database.
-Set that value once per deployment, in the same step that applies `deploy/sql/system-schema.sql`:
-
-```sql
-UPDATE registry.meta SET platform_domain = 'example.invalid';
-```
+`provision-system` sets that value once per deployment.
 
 If the value is unset, `reconcile-run-plane` refuses with `platform-domain-unset`.
 `wamn-ctl print-platform-principals --tenant "$TENANT" --platform-domain "$PLATFORM_DOMAIN"` prints the same SQL for an operator who applies it by hand.

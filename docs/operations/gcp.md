@@ -356,7 +356,7 @@ On 2026-09-26 the operator install took 35 seconds, and the CA and certificates 
 
 ### 3.3 PostgreSQL
 
-[deploy/gcp/cnpg-cluster.yaml](../../deploy/gcp/cnpg-cluster.yaml) is `deploy/infra/cnpg-cluster.yaml` in namespace `platform`, with storage class `standard` (`pd-standard`). Its one instance holds the system database and every tenant database.
+[deploy/gcp/cnpg-cluster.yaml](../../deploy/gcp/cnpg-cluster.yaml) is `deploy/infra/cnpg-cluster.yaml` in namespace `platform`, with storage class `standard` (`pd-standard`). Its one instance holds the system database and every tenant database. Its `initdb` bootstrap creates the database `wamn_system` with the owner `wamn_system`, as `deploy/platform/wamn-sysdb.yaml` does. CloudNativePG keeps the owner login in the Secret `wamn-pg-app` and the superuser login in `wamn-pg-superuser`.
 
 ```bash
 kubectl apply --server-side -f deploy/infra/cnpg-operator.yaml
@@ -365,7 +365,14 @@ kubectl apply -f deploy/gcp/cnpg-cluster.yaml
 kubectl -n platform wait cluster/wamn-pg --for=condition=Ready --timeout=600s
 ```
 
-On 2026-09-26 this took 76 seconds.
+On 2026-09-26 this took 76 seconds. The first cluster used the database `app`. It was empty, so it was deleted and applied again with `wamn_system`, in 43 seconds:
+
+```bash
+kubectl -n platform delete cluster wamn-pg --wait=true
+kubectl -n platform wait pvc/wamn-pg-1 --for=delete --timeout=120s
+kubectl apply -f deploy/gcp/cnpg-cluster.yaml
+kubectl -n platform wait cluster/wamn-pg --for=condition=Ready --timeout=600s
+```
 
 Backups are not configured. The `wamn-dev-backups` bucket exists, but no ObjectStore or ScheduledBackup uses it yet.
 
@@ -426,6 +433,15 @@ kubectl -n platform rollout status statefulset/evt-nats --timeout=300s
 kubectl -n platform wait --for=condition=complete job/evt-nats-tap-stream --timeout=180s
 ```
 
+Keep the other three users in `platform`. The provisioning step uses `evt-nats-provisioning`, and no host mounts these Secrets:
+
+```bash
+for role in provisioning publisher observer; do
+  kubectl -n platform create secret generic evt-nats-$role \
+    --from-file=username=$E/$role-username --from-file=password=$E/$role-password
+done
+```
+
 Make the two host Secrets. The host connects as the `runtime` user, and the materializer reads the binding:
 
 ```bash
@@ -437,3 +453,17 @@ kubectl -n hosts create secret generic wamn-materializer-nats --from-file=bindin
 ```
 
 On 2026-09-26 the first start failed. The broker crash-looped, because `deploy/infra/nats-jetstream.yaml` includes the authorization file by an absolute path, and nats-server resolves an include relative to the configuration file (finding `wamn-lrf1`). The Google Cloud copy uses a relative path. The tap-stream Job reached its backoff limit while the broker was down, so it was deleted and applied again. It then completed in 18 seconds.
+
+### 3.6 System database
+
+Install the control store and set the platform domain with `wamn-ctl provision-system`. Run it from this machine through a port-forward. Read the superuser password from its Secret into a variable, and do not print it:
+
+```bash
+kubectl -n platform port-forward svc/wamn-pg-rw 15432:5432 &
+PW=$(kubectl -n platform get secret wamn-pg-superuser -o jsonpath='{.data.password}' | base64 -d)
+export WAMN_SYSTEM_ADMIN_URL="postgresql://postgres:${PW}@127.0.0.1:15432/wamn_system"
+cargo build -p wamn-ctl
+target/debug/wamn-ctl provision-system --platform-domain wamn.dev
+```
+
+The verb runs once. A second run refuses, because the schema `registry` exists. On 2026-09-26 it took 2 seconds. `deploy/sql/postgres-init.sql` is a test fixture and is not applied.

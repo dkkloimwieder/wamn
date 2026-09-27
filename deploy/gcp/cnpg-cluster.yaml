@@ -28,5 +28,5 @@ spec:
       max_slot_wal_keep_size: "1GB"
   bootstrap:
     initdb:
-      database: app
-      owner: app
+      database: wamn_system
+      owner: wamn_system
