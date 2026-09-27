@@ -58,6 +58,10 @@ spec:
                   optional: false
             - name: RESEND_FROM
               value: {{ required "Set resendFrom when resendSecret is enabled." .Values.resendFrom | quote }}
+            {{- if .Values.inviteUrl }}
+            - name: WAMN_IDENTITY_INVITE_URL
+              value: {{ .Values.inviteUrl | quote }}
+            {{- end }}
             {{- end }}
             - name: WAMN_IDENTITY_TLS_CERT
               value: /var/run/wamn-identity/tls/tls.crt

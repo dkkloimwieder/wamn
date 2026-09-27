@@ -12,5 +12,6 @@ tlsSecret: identity-tls
 operatorCaSecret: identity-operator-ca
 resendSecret: identity-resend
 resendFrom: noreply@wamn.dev
+inviteUrl: https://receiving.wamn.dev
 sessionTargetSecrets:
   - wamn-session-role-reader-dkk--receiving--dev

@@ -13,6 +13,9 @@ tlsSecret: ""
 # Supply the verified sender. Restart after changing the key or sender.
 resendSecret: ""
 resendFrom: ""
+# Base URL of the web invitation page. The mail then carries one link to
+# <inviteUrl>/invite#<code>. Empty keeps the code to paste into the terminal.
+inviteUrl: ""
 
 # Dedicated operator CA Secret with ca.crt. Empty refuses POST /pats and POST /invitations.
 # Restart the service after a CA change to close existing TLS connections.

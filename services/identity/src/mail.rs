@@ -13,6 +13,7 @@ use crate::IdentityServiceError;
 pub struct ResendConfig {
     key: Zeroizing<String>,
     from: String,
+    invite_url: Option<String>,
 }
 
 impl fmt::Debug for ResendConfig {
@@ -20,6 +21,7 @@ impl fmt::Debug for ResendConfig {
         f.debug_struct("ResendConfig")
             .field("key", &"[REDACTED]")
             .field("from", &self.from)
+            .field("invite_url", &self.invite_url)
             .finish()
     }
 }
@@ -38,7 +40,26 @@ impl ResendConfig {
         {
             return Err(IdentityServiceError::new("Resend configuration refused"));
         }
-        Ok(Self { key, from })
+        Ok(Self {
+            key,
+            from,
+            invite_url: None,
+        })
+    }
+
+    /// Send the invitation as one link to `<base>/invite#<code>`. Without a
+    /// base, the mail shows the code to paste into the terminal prompt.
+    pub fn with_invite_url(mut self, base: &str) -> Result<Self, IdentityServiceError> {
+        if !base.starts_with("https://")
+            || base.len() > 2048
+            || base
+                .chars()
+                .any(|c| c.is_whitespace() || c.is_control() || c == '#')
+        {
+            return Err(IdentityServiceError::new("invitation URL refused"));
+        }
+        self.invite_url = Some(base.trim_end_matches('/').to_owned());
+        Ok(self)
     }
 }
 
@@ -119,8 +140,10 @@ impl Mailer {
         principal: &str,
         secret: &str,
     ) -> Result<(), IdentityServiceError> {
-        let text = Zeroizing::new(format!(
-            "You have been invited to WAMN.\n\nInvitation code: {principal}:{secret}\n\nPaste this complete code into the invitation prompt. No PAT is needed. It expires after 24 hours and can be used once. If you did not expect this invitation, ignore this email."
+        let text = Zeroizing::new(invitation_text(
+            self.config.invite_url.as_deref(),
+            principal,
+            secret,
         ));
         let endpoint = "https://api.resend.com/emails";
         #[cfg(any(test, feature = "test-util"))]
@@ -185,10 +208,34 @@ impl Mailer {
     }
 }
 
+fn invitation_text(invite_url: Option<&str>, principal: &str, secret: &str) -> String {
+    match invite_url {
+        Some(base) => format!(
+            "Open this link to set your WAMN password.\n{base}/invite#{principal}:{secret}\n"
+        ),
+        None => format!(
+            "You have been invited to WAMN.\n\nInvitation code: {principal}:{secret}\n\nPaste this complete code into the invitation prompt. No PAT is needed. It expires after 24 hours and can be used once. If you did not expect this invitation, ignore this email."
+        ),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+
+    #[test]
+    fn an_invite_url_makes_the_mail_one_line_and_one_link() {
+        let config = ResendConfig::new("key".into(), "WAMN <fixture@example.invalid>".into())
+            .unwrap()
+            .with_invite_url("https://receiving.example.invalid/")
+            .unwrap();
+        assert_eq!(
+            invitation_text(config.invite_url.as_deref(), "p", "wamn_inv_s"),
+            "Open this link to set your WAMN password.\nhttps://receiving.example.invalid/invite#p:wamn_inv_s\n"
+        );
+        assert!(invitation_text(None, "p", "wamn_inv_s").contains("Invitation code: p:wamn_inv_s"));
+    }
 
     #[tokio::test]
     async fn resend_payload_is_bounded_and_provider_failure_is_redacted() {

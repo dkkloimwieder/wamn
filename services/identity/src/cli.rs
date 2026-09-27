@@ -60,12 +60,16 @@ struct MailArgs {
     resend_api_key: Option<String>,
     #[arg(long, env = "RESEND_FROM", requires = "resend_api_key")]
     resend_from: Option<String>,
+    /// Base URL of the web invitation page. The mail links to `<base>/invite#<code>`.
+    #[arg(long, env = "WAMN_IDENTITY_INVITE_URL", requires = "resend_api_key")]
+    invite_url: Option<String>,
 }
 impl fmt::Debug for MailArgs {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("MailArgs")
             .field("resend_api_key", &"[REDACTED]")
             .field("resend_from", &self.resend_from)
+            .field("invite_url", &self.invite_url)
             .finish()
     }
 }
@@ -126,7 +130,11 @@ pub async fn run(cli: Cli) -> Result<(), IdentityServiceError> {
     {
         let config = match (mail.resend_api_key, mail.resend_from) {
             (Some(key), Some(from)) => {
-                config.with_resend(crate::mail::ResendConfig::new(key, from)?)
+                let resend = crate::mail::ResendConfig::new(key, from)?;
+                config.with_resend(match mail.invite_url {
+                    Some(base) => resend.with_invite_url(&base)?,
+                    None => resend,
+                })
             }
             (None, None) => config,
             _ => {
