@@ -192,6 +192,9 @@ Owner rulings of 2026-09-26:
 - A new verb `push-release-manifest` pushes the release manifest with no qualification commit, because this deployment is not a qualification. The alias of that name leaves `publish-qualified-release`.
 - The release is `--effective-release-id 1`, pushed to `us-central1-docker.pkg.dev/wamn-dev/wamn/releases` with the push credential of `push-component`.
 - The session key is published and activated with `wamn-identity publish` and `wamn-identity activate <kid>` in the identity pod. The key set at `/.well-known/jwks.json` then shows the key.
+- The event streams come from `enable-cdc-project-env --schema receiving --stream-replicas 1 --dup-window-secs 120 --db-host wamn-pg-rw.platform.svc.cluster.local --namespace platform --secret-namespace platform`, with the `evt-nats-provisioning` user through a port-forward and the source stream name of the NATS program. Its role SQL, CDC SQL and Secret are applied in that order, the Secret to `platform`.
+- The replication password is `openssl rand -hex 32` in a mode 0600 file, passed as `WAMN_REPLICATION_PASSWORD` on that one command, and the file is deleted after the Secret is applied.
+- The CDC reader runs in `platform` from the image `us-central1-docker.pkg.dev/wamn-dev/wamn/wamn-cdc-reader` (Dockerfile target `cdc-reader`), by digest. `deploy/gcp/cdc-reader.yaml` uses the `event-reader` ServiceAccount of `event-reader-rbac.yaml` in `platform`, `automountServiceAccountToken: false`, one replica, the environment that the kind case gives `cdc::start` (`WAMN_CDC_URL`, `WAMN_SYSTEM_URL`, the event NATS URL in `platform` and the `publisher` user), and requests of 50m and 64Mi with no limits. The host restarts after the reader reaches the publication.
 
 ## 6. Benchmark
 
