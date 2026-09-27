@@ -84,25 +84,23 @@ const SECTIONS: readonly ShellSection[] = [
   },
 ];
 
-/** The identity service, holding one session cookie or none. */
-function identity(signedIn: boolean) {
-  const state = { signedIn, calls: [] as string[] };
+const ONE = [{ aud: AUD, org: "acme", project: "widgets", env: "dev" }];
+
+/** The identity service, holding one session cookie or none, with the environments it lists. */
+function identity(signedIn: boolean, listed: readonly unknown[] = ONE) {
+  const state = { signedIn, calls: [] as string[], bodies: [] as unknown[] };
   const times = () =>
     new Response(
       JSON.stringify({ expires_at: Date.now() / 1000 + 3600, login_expires_at: Date.now() / 1000 + 86400 }),
       { status: 200 },
     );
-  const fetch = (url: string | URL | Request) => {
+  const fetch = (url: string | URL | Request, init?: RequestInit) => {
     const path = String(url);
     state.calls.push(path);
+    state.bodies.push(init?.body === undefined ? undefined : JSON.parse(String(init.body)));
     switch (path) {
       case "/password/environments":
-        return Promise.resolve(
-          new Response(
-            JSON.stringify({ environments: [{ aud: AUD, org: "acme", project: "widgets", env: "dev" }] }),
-            { status: 200 },
-          ),
-        );
+        return Promise.resolve(new Response(JSON.stringify({ environments: listed }), { status: 200 }));
       case "/password/session":
         state.signedIn = true;
         return Promise.resolve(times());
@@ -122,7 +120,7 @@ function open(path: string, fetch: typeof globalThis.fetch) {
   window.history.pushState({}, "", path);
   render(() => (
     <ColorModeProvider initialColorMode="light">
-      <Shell title="Stub app" sections={SECTIONS} fetch={fetch} />
+      <Shell title="Stub app" org="acme" project="widgets" sections={SECTIONS} fetch={fetch} />
     </ColorModeProvider>
   ));
 }
@@ -172,13 +170,37 @@ describe("the app shell", () => {
     ]);
   });
 
-  it("signs in at the root, and the chosen environment opens the first screen", async () => {
+  it("signs in at the root, and the one environment of the project opens the first screen", async () => {
     const { fetch } = identity(false);
     open("/", fetch);
     await signIn();
-    fireEvent.click(await screen.findByText("acme/widgets/dev"));
     expect(await screen.findByText("pallets screen")).toBeDefined();
     expect(window.location.pathname).toBe(`/${AUD}/pallets`);
+  });
+
+  it("asks identity for the environments of its org and project, and offers only the reply", async () => {
+    const PROD = "urn:wamn:project-env:acme:widgets:prod:q8w4e2r6";
+    const { state, fetch } = identity(false, [
+      ...ONE,
+      { aud: PROD, org: "acme", project: "widgets", env: "prod" },
+    ]);
+    open("/", fetch);
+    await signIn();
+    expect(await screen.findByText("acme/widgets/prod")).toBeDefined();
+    expect(screen.getAllByRole("button").map((button) => button.textContent)).toEqual([
+      "sign in",
+      "acme/widgets/dev",
+      "acme/widgets/prod",
+    ]);
+    expect(state.bodies[state.calls.indexOf("/password/environments")]).toEqual({
+      email: "someone@wamn.dev",
+      password: "a long password string",
+      org: "acme",
+      project: "widgets",
+    });
+    fireEvent.click(screen.getByText("acme/widgets/prod"));
+    expect(await screen.findByText("pallets screen")).toBeDefined();
+    expect(window.location.pathname).toBe(`/${PROD}/pallets`);
   });
 
   it("asks for the password on a screen address with no session, and shows that screen after it", async () => {

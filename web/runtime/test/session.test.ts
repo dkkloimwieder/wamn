@@ -173,10 +173,10 @@ describe("the session calls", () => {
           status: 200,
         }),
     ]);
-    const found = await environments("me@example.test", "pw", { fetch: stub.fetch });
+    const found = await environments("me@example.test", "pw", { org: "o", project: "p" }, { fetch: stub.fetch });
     expect(found).toEqual([{ aud: "a", org: "o", project: "p", env: "e" }]);
     expect(stub.seen[0]?.url).toBe("/password/environments");
-    expect(bodyOf(stub.seen[0])).toEqual({ email: "me@example.test", password: "pw" });
+    expect(bodyOf(stub.seen[0])).toEqual({ email: "me@example.test", password: "pw", org: "o", project: "p" });
   });
 
   it("signs in, renews and signs out with the cookie carrier", async () => {

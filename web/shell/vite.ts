@@ -27,6 +27,8 @@ interface Proxy {
  * itself, because the shell and each application install their own Vite.
  */
 export interface ApplicationConfig {
+  /** The org and the project the shell signs in to, as `import.meta.env` values. */
+  readonly define: Record<string, string>;
   readonly resolve: {
     readonly alias: { find: string | RegExp; replacement: string }[];
     readonly dedupe: string[];
@@ -78,6 +80,15 @@ function proxy(): Record<string, Proxy> {
   };
 }
 
+/** A variable the build needs. */
+function required(name: string): string {
+  const value = process.env[name];
+  if (value === undefined || value === "") {
+    throw new Error(`set ${name}; wamn web upload sets it from --org and the client package`);
+  }
+  return value;
+}
+
 /**
  * The resolution and the server of one application. The application adds its
  * own plugins, because it installs them.
@@ -88,6 +99,10 @@ export function applicationConfig(options: ApplicationOptions): ApplicationConfi
   const store = fileURLToPath(new URL("../../node_modules", import.meta.url));
   const installed = (name: string) => at(`node_modules/${name}`);
   return {
+    define: {
+      "import.meta.env.WAMN_ORG": JSON.stringify(required("WAMN_ORG")),
+      "import.meta.env.WAMN_PROJECT": JSON.stringify(required("WAMN_PROJECT")),
+    },
     // The shell, the runtime, the UI and the generated client live outside the
     // application, so the names they import resolve here. A bare import from
     // one of them would otherwise walk up a directory tree that installs nothing.

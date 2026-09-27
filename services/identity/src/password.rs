@@ -79,6 +79,25 @@ struct EnrollmentRequest {
 struct EnvironmentsRequest {
     email: String,
     password: String,
+    #[serde(default)]
+    org: Option<String>,
+    #[serde(default)]
+    project: Option<String>,
+}
+
+/// The org and project that `/password/environments` lists. A missing value
+/// matches every org or project.
+#[derive(Default)]
+struct Scope {
+    org: Option<String>,
+    project: Option<String>,
+}
+
+impl Scope {
+    fn holds(&self, org: &str, project: &str) -> bool {
+        self.org.as_deref().is_none_or(|wanted| wanted == org)
+            && self.project.as_deref().is_none_or(|wanted| wanted == project)
+    }
 }
 
 #[derive(Serialize)]
@@ -299,12 +318,16 @@ async fn handle(
             }
         }
         "/password/session" | "/password/environments" => {
-            let (email, password, audience, carrier) =
+            let (email, password, audience, carrier, scope) =
                 if parts.uri.path() == "/password/environments" {
                     let Ok(request) = serde_json::from_slice::<EnvironmentsRequest>(&bytes) else {
                         return invalid();
                     };
-                    (request.email, request.password, None, Carrier::Bearer)
+                    let scope = Scope {
+                        org: request.org,
+                        project: request.project,
+                    };
+                    (request.email, request.password, None, Carrier::Bearer, scope)
                 } else {
                     let Ok(request) = serde_json::from_slice::<LoginRequest>(&bytes) else {
                         return invalid();
@@ -314,6 +337,7 @@ async fn handle(
                         request.password,
                         Some(request.aud),
                         request.carrier,
+                        Scope::default(),
                     )
                 };
             let Ok(password) = Password::new(password) else {
@@ -357,10 +381,13 @@ async fn handle(
             let Some(audience) = audience else {
                 let mut environments = Vec::new();
                 for configured in inner.targets.values() {
+                    let target = &configured.binding;
+                    let triple = target.triple();
+                    if !scope.holds(&triple.org, &triple.project) {
+                        continue;
+                    }
                     match session::authorized_roles(inner, &principal, configured).await {
                         Ok(_) => {
-                            let target = &configured.binding;
-                            let triple = target.triple();
                             environments.push(Environment {
                                 aud: target.audience(),
                                 org: &triple.org,
@@ -780,6 +807,18 @@ mod tests {
     use wamn_control_provision::identity_issuer::{
         identity_issuer_generation_role, prepare_identity_issuer_generation_sql,
     };
+
+    #[test]
+    fn a_scope_lists_only_its_org_and_project() {
+        let scope = Scope {
+            org: Some("dkk".to_owned()),
+            project: Some("wms".to_owned()),
+        };
+        assert!(scope.holds("dkk", "wms"));
+        assert!(!scope.holds("dkk", "receiving"));
+        assert!(!scope.holds("other", "wms"));
+        assert!(Scope::default().holds("dkk", "receiving"));
+    }
 
     #[tokio::test]
     async fn operator_invitation_delivery_failure_and_shared_admission() {

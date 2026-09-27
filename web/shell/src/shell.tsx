@@ -116,6 +116,9 @@ export interface ShellSection {
 export interface ShellProps {
   /** The application name, in the sidebar and on the sign in card. */
   readonly title: string;
+  /** The org and the project the application signs in to. No other environment is offered or accepted. */
+  readonly org: string;
+  readonly project: string;
   readonly sections: readonly ShellSection[];
   /** The fetch every call uses. The global one is the default. */
   readonly fetch?: typeof globalThis.fetch;
@@ -206,12 +209,15 @@ export function Shell(props: ShellProps): JSX.Element {
   const first = screens[0];
   return (
     <Router>
-      <Route path="/" component={() => <ChooseEnvironment title={props.title} options={options} />} />
+      <Route
+        path="/"
+        component={() => <ChooseEnvironment title={props.title} scope={props} options={options} />}
+      />
       <Route path="/invite" component={() => <AcceptInvitation title={props.title} options={options} />} />
       <Route
         path="/:aud"
         component={(section: RouteSectionProps) => (
-          <Session title={props.title} sections={props.sections} options={options}>
+          <Session title={props.title} scope={props} sections={props.sections} options={options}>
             {section.children}
           </Session>
         )}
@@ -349,41 +355,61 @@ function AcceptInvitation(props: { readonly title: string; readonly options: Ses
   );
 }
 
+/** The org and the project of the application. */
+interface Scope {
+  readonly org: string;
+  readonly project: string;
+}
+
+/** Whether an audience, `urn:wamn:project-env:<org>:<project>:<env>:<instance>`, is one of the project. */
+function ofProject(aud: string, scope: Scope): boolean {
+  return aud.startsWith(`urn:wamn:project-env:${scope.org}:${scope.project}:`);
+}
+
 /**
- * The page at `/`: an account lists the environments it can reach, and the
- * one it chooses signs it in and becomes the first segment of the address.
+ * The page at `/`: identity lists the environments of the application's
+ * project that the account can reach. With one, the account signs in to it at
+ * once. With more, the one it chooses signs it in. The environment becomes
+ * the first segment of the address.
  */
-function ChooseEnvironment(props: { readonly title: string; readonly options: SessionOptions }): JSX.Element {
+function ChooseEnvironment(props: {
+  readonly title: string;
+  readonly scope: Scope;
+  readonly options: SessionOptions;
+}): JSX.Element {
   const navigate = useNavigate();
   const [credentials, setCredentials] = createSignal<{ email: string; password: string } | null>(null);
   const [reachable, setReachable] = createSignal<readonly Environment[]>([]);
   const [trouble, setTrouble] = createSignal<string | null>(null);
+  const enter = (email: string, password: string, aud: string) => {
+    setTrouble(null);
+    signIn(email, password, aud, props.options)
+      .then(() => navigate(`/${aud}`))
+      .catch((error: unknown) => setTrouble(signInFailed(error)));
+  };
   return (
     <CardPage title={props.title}>
       <SignInForm
         trouble={null}
         submit={async (email, password) => {
-          setReachable(await environments(email, password, props.options));
+          const found = await environments(email, password, props.scope, props.options);
+          setReachable(found);
           setCredentials({ email, password });
+          const only = found.length === 1 ? found[0] : undefined;
+          if (only !== undefined) {
+            enter(email, password, only.aud);
+          }
         }}
       />
       <Show when={credentials()}>
         {(held) => (
           <FieldGroup>
             <Show when={reachable().length === 0}>
-              <FieldError>This account reaches no environment.</FieldError>
+              <FieldError>This account reaches no environment of this application.</FieldError>
             </Show>
-            <For each={reachable()}>
+            <For each={reachable().length > 1 ? reachable() : []}>
               {(environment) => (
-                <Button
-                  variant="outline"
-                  onClick={() => {
-                    setTrouble(null);
-                    signIn(held().email, held().password, environment.aud, props.options)
-                      .then(() => navigate(`/${environment.aud}`))
-                      .catch((error: unknown) => setTrouble(signInFailed(error)));
-                  }}
-                >
+                <Button variant="outline" onClick={() => enter(held().email, held().password, environment.aud)}>
                   {environment.org}/{environment.project}/{environment.env}
                 </Button>
               )}
@@ -404,13 +430,23 @@ function ChooseEnvironment(props: { readonly title: string; readonly options: Se
  */
 function Session(props: {
   readonly title: string;
+  readonly scope: Scope;
   readonly sections: readonly ShellSection[];
   readonly options: SessionOptions;
   readonly children?: JSX.Element;
 }): JSX.Element {
   const params = useParams<{ aud: string }>();
   return (
-    <Show when={params.aud} keyed>
+    <Show
+      when={ofProject(params.aud ?? "", props.scope) ? params.aud : undefined}
+      keyed
+      fallback={
+        <CardPage title={props.title}>
+          <FieldError>This address names an environment of another application.</FieldError>
+          <A href="/">sign in</A>
+        </CardPage>
+      }
+    >
       {(aud) => {
         const [state, setState] = createSignal<SessionState | null>(null);
         const keeper = keepSession({ ...props.options, aud, onState: setState });

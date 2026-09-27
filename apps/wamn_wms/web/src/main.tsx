@@ -18,7 +18,12 @@ document.documentElement.classList.add(mode);
 render(
   () => (
     <ColorModeProvider initialColorMode={mode}>
-      <Shell title="WMS" sections={SECTIONS} />
+      <Shell
+        title="WMS"
+        org={import.meta.env.WAMN_ORG}
+        project={import.meta.env.WAMN_PROJECT}
+        sections={SECTIONS}
+      />
     </ColorModeProvider>
   ),
   root,

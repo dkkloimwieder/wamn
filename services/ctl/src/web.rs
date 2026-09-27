@@ -41,6 +41,10 @@ pub struct UploadArgs {
     /// and Application Default Credentials do.
     #[arg(long)]
     pub bucket: String,
+    /// The org the client signs in to. The project comes from the client
+    /// package name, `@wamn/<project>-client`.
+    #[arg(long)]
+    pub org: String,
 }
 
 pub async fn run(args: WebArgs) -> anyhow::Result<()> {
@@ -68,11 +72,18 @@ async fn upload(args: UploadArgs) -> anyhow::Result<()> {
         .pointer("/package/id")
         .and_then(serde_json::Value::as_str)
         .context("wamn.json names its package id")?;
+    let client = manifest
+        .pointer("/client_package/name")
+        .and_then(serde_json::Value::as_str)
+        .context("wamn.json names its client package")?;
+    let project = client_project(client)?;
     let web = args.app.join("web");
     let status = Command::new("pnpm")
         .arg("--dir")
         .arg(&web)
         .args(["run", "build"])
+        .env("WAMN_ORG", &args.org)
+        .env("WAMN_PROJECT", project)
         .status()
         .await
         .context("run pnpm; the web client builds with Vite through pnpm")?;
@@ -128,6 +139,15 @@ async fn upload(args: UploadArgs) -> anyhow::Result<()> {
         files.len()
     );
     Ok(())
+}
+
+/// The project that a client package `@wamn/<project>-client` names.
+fn client_project(client: &str) -> anyhow::Result<&str> {
+    client
+        .strip_prefix("@wamn/")
+        .and_then(|rest| rest.strip_suffix("-client"))
+        .filter(|project| !project.is_empty())
+        .with_context(|| format!("the client package {client} is not @wamn/<project>-client"))
 }
 
 /// The object store that `--bucket` names.

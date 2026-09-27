@@ -58,13 +58,18 @@ async function times(response: Response): Promise<SessionTimes> {
   return { expiresAt: document.expires_at, loginExpiresAt: document.login_expires_at };
 }
 
-/** Every environment this account can sign in to. */
+/** The environments of one project that this account can sign in to. */
 export async function environments(
   email: string,
   password: string,
+  scope: { readonly org: string; readonly project: string },
   options: SessionOptions = {},
 ): Promise<Environment[]> {
-  const response = await post("/password/environments", { email, password }, options);
+  const response = await post(
+    "/password/environments",
+    { email, password, org: scope.org, project: scope.project },
+    options,
+  );
   if (!response.ok) {
     throw refusedBy("/password/environments", response);
   }
