@@ -222,7 +222,7 @@ pub(super) async fn two_plane_residency_leg(su: &Client) {
         .await
         .expect("read-only third reconcile");
     assert!(dry.is_noop(), "dry-run drift: {:#?}", dry.actions);
-    // …and the post-check names the PROJECT record exactly: the six run-state
+    // …and the post-check names the PROJECT record exactly: the seven run-state
     // tables plus run_queue, with the co-resident control relation excluded.
     let mut at_target = dry.at_target.clone();
     at_target.sort();
@@ -233,6 +233,7 @@ pub(super) async fn two_plane_residency_leg(su: &Client) {
             "effect_attempt_outcomes",
             "effect_attempts",
             "environment_policies",
+            "intents",
             "operator_run_actions",
             "run_queue",
             "runs",
