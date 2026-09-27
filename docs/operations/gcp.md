@@ -1021,6 +1021,19 @@ The first invitation showed a code for the terminal client, and the web client h
 kubectl -n identity port-forward svc/identity 8443:443
 ```
 
+Temporary step (`wamn-wq26`): no user role exists, so after sign-up the sign-in lists no environment. Give the owner the system role `route-caller` with one insert through the database port-forward, as the superuser, with the provisioning principal as the actor:
+
+```sql
+BEGIN;
+SELECT set_config('app.user_id', '770df186-ac15-579e-b46b-c297cae2011b', true),
+       set_config('app.operation', 'admin:temporary-route-caller-grant', true);
+INSERT INTO app_system.user_roles (tenant_id, user_id, role_name)
+  VALUES ('dev', 'ccc4533d-a81a-465d-8a44-1414369ae2fd', 'route-caller');
+COMMIT;
+```
+
+Run it in database `wamn-db-dkk--receiving--dev--zf7o454t`. On 2026-09-27 it took 1 second. When `wamn-wq26` lands, remove this row and use `wamn-ctl grant-role`.
+
 ### 4.6 Delete the public edge
 
 Delete in the reverse order. The forwarding rule and the address bill while they exist:
