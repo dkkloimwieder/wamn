@@ -603,3 +603,40 @@ kubectl -n identity get secret identity-resend
 helm install identity deploy/platform/identity -n identity -f deploy/gcp/values-identity.yaml
 kubectl -n identity rollout status deploy/identity --timeout=300s
 ```
+
+### 3.11 Host Secrets and registry token account
+
+Prepare generation `a` of the five host credentials, one family for each run. `identity-reader` addresses the system database, so it takes no `--target-admin-database-url`:
+
+```bash
+for f in guest executor-platform http-admitter event-materializer; do
+  target/debug/wamn-ctl provision-project-env --org dkk --project receiving --env dev --tenant dev \
+    --namespace hosts --target-admin-database-url "$T" --prepare-$f-generation a --emit-$f-secret $P/$f.json
+done
+target/debug/wamn-ctl provision-project-env --org dkk --project receiving --env dev --tenant dev \
+  --namespace hosts --prepare-identity-reader-generation a --emit-identity-reader-secret $P/identity-reader.json
+```
+
+Set the database host in each Secret, name the guest Secret `wamn-host-db`, and apply them:
+
+```bash
+for f in guest executor-platform identity-reader http-admitter event-materializer; do
+  filter='.stringData.url |= sub("@127\\.0\\.0\\.1:15432/"; "@wamn-pg-rw.platform.svc.cluster.local:5432/")'
+  [ $f = guest ] && filter="$filter | .metadata.name = \"wamn-host-db\""
+  (umask 077; jq "$filter" $P/$f.json > $P/$f.cluster.out) && kubectl apply -f - < $P/$f.cluster.out
+done
+```
+
+On 2026-09-26 the five generations took 107 seconds and the apply 13 seconds.
+
+Create the Google service account of the registry token CronJob. Give it read access to repository `wamn` only, and bind it to the Kubernetes service account `hosts/registry-token`:
+
+```bash
+gcloud iam service-accounts create wamn-registry-reader --project wamn-dev --display-name "wamn registry token CronJob"
+gcloud artifacts repositories add-iam-policy-binding wamn --project wamn-dev --location us-central1 \
+  --member serviceAccount:wamn-registry-reader@wamn-dev.iam.gserviceaccount.com --role roles/artifactregistry.reader
+gcloud iam service-accounts add-iam-policy-binding wamn-registry-reader@wamn-dev.iam.gserviceaccount.com --project wamn-dev \
+  --role roles/iam.workloadIdentityUser --member "serviceAccount:wamn-dev.svc.id.goog[hosts/registry-token]"
+```
+
+If the repository binding fails with "Service account ... does not exist", the new account is not visible yet. Make sure that `gcloud iam service-accounts describe` shows it, wait a short time, and run the binding again. On 2026-09-26 the first binding failed this way, and the second one succeeded.
