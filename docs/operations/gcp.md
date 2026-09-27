@@ -881,3 +881,99 @@ curl -s -i -H 'Host: receiving.wamn.dev' http://127.0.0.1:18080/nope
 
 A released route answers `401` with `{"error":{"code":"unauthorized"}}`, because the call has no session. An unknown path answers `404` with `route-not-found`.
 Before the workloads existed, every path answered `503`, and the host log said `router is temporarily unavailable`. The host router in `crates/platform/engine/src/expected_router.rs` gives this answer when the release names the host but no workload is bound to it.
+
+## 4. Public edge
+
+Step 4 ran on 2026-09-27. Pool `main` stays at 2 nodes until step 4 ends. If the guard scales it to 0 first, scale it back as in section 3.17.
+
+### 4.1 Edge
+
+The edge chart renders no Google Cloud resource. Its `neg: true` value annotates the Service, so GKE creates the network endpoint group `wamn-edge` in the zone of the edge pod. The wildcard certificate of section 2.5 is already in `edge/wamn-edge-tls`, so the values set no issuer. Install the release `wamn-edge`:
+
+```bash
+helm install wamn-edge deploy/platform/edge -n edge -f deploy/gcp/values-edge.yaml --wait --timeout 3m
+gcloud compute network-endpoint-groups list --project wamn-dev
+```
+
+The edge refuses to start until the Service `hosts/flow-http` of section 3.20 exists, because nginx resolves its upstream at start. On 2026-09-27 the first install timed out for this reason, and `helm upgrade` with the same values then took 43 seconds.
+
+### 4.2 Web client
+
+`wamn web upload` needs an HMAC key, which is an access key pair for Cloud Storage. The key lives only for the one upload. It stays in `AWS_*` variables, nothing writes it to disk, and the same session deletes it.
+
+Build the `wamn` binary:
+
+```bash
+cargo build -p wamn-ctl --bin wamn
+```
+
+On 2026-09-27 the upload did not run. `gsutil hmac create` and `gcloud storage hmac create` accept only a service account, and the ruling names the owner's user account.
+
+### 4.3 Load balancer
+
+Create the resources in this order. The names come from the release `wamn-edge`, as in the removed Config Connector template:
+
+```bash
+P="--project wamn-dev"
+gcloud compute firewall-rules create wamn-edge-health-check $P --network wamn --direction INGRESS \
+  --allow tcp:8443 --source-ranges 35.191.0.0/16,130.211.0.0/22
+gcloud compute health-checks create https wamn-edge $P --global --port 8443 --request-path /healthz
+gcloud compute addresses create wamn-edge $P --global --ip-version IPV4
+gcloud storage buckets add-iam-policy-binding gs://wamn-dev-web $P --member allUsers --role roles/storage.objectViewer
+gcloud compute backend-buckets create wamn-edge-files $P --gcs-bucket-name wamn-dev-web \
+  --enable-cdn --cache-mode USE_ORIGIN_HEADERS
+```
+
+Upload the certificate from its Secret through mode 0600 files of a private directory `C`, and delete the directory after the upload:
+
+```bash
+(umask 077
+ kubectl -n edge get secret wamn-edge-tls -o jsonpath='{.data.tls\.crt}' | base64 -d > $C/tls.crt
+ kubectl -n edge get secret wamn-edge-tls -o jsonpath='{.data.tls\.key}' | base64 -d > $C/tls.key)
+gcloud compute ssl-certificates create wamn-edge $P --global --certificate $C/tls.crt --private-key $C/tls.key
+rm -rf $C
+```
+
+The load balancer keeps this copy when cert-manager renews the Secret. The copy expires on 2026-12-25. Finding `wamn-ghx2.7` names the fix.
+
+Create the backend service over the endpoint group, then the URL map, the proxy and the forwarding rule. `deploy/gcp/url-map.yaml` holds the rules of the removed template and the release path in the bucket:
+
+```bash
+gcloud compute backend-services create wamn-edge-platform $P --global \
+  --load-balancing-scheme EXTERNAL_MANAGED --protocol HTTPS --health-checks wamn-edge
+gcloud compute backend-services add-backend wamn-edge-platform $P --global \
+  --network-endpoint-group wamn-edge --network-endpoint-group-zone us-central1-a \
+  --balancing-mode RATE --max-rate-per-endpoint 100
+gcloud compute url-maps import wamn-edge $P --global --source deploy/gcp/url-map.yaml --quiet
+gcloud compute target-https-proxies create wamn-edge $P --global --url-map wamn-edge --ssl-certificates wamn-edge
+gcloud compute forwarding-rules create wamn-edge $P --global --load-balancing-scheme EXTERNAL_MANAGED \
+  --address wamn-edge --target-https-proxy wamn-edge --ports 443
+```
+
+Add the DNS record with the address:
+
+```bash
+gcloud dns record-sets create receiving.wamn.dev. $P --zone wamn-dev --type A --ttl 300 \
+  --rrdatas "$(gcloud compute addresses describe wamn-edge $P --global --format='value(address)')"
+```
+
+On 2026-09-27 the address was `8.232.230.139`. The first six commands took 45 seconds, the backend service 97 seconds, the URL map 6 seconds, and the proxy, rule and record 29 seconds.
+
+### 4.4 Delete the public edge
+
+Delete in the reverse order. The forwarding rule and the address bill while they exist:
+
+```bash
+gcloud dns record-sets delete receiving.wamn.dev. $P --zone wamn-dev --type A
+gcloud compute forwarding-rules delete wamn-edge $P --global --quiet
+gcloud compute target-https-proxies delete wamn-edge $P --global --quiet
+gcloud compute url-maps delete wamn-edge $P --global --quiet
+gcloud compute backend-services delete wamn-edge-platform $P --global --quiet
+gcloud compute ssl-certificates delete wamn-edge $P --global --quiet
+gcloud compute backend-buckets delete wamn-edge-files $P --quiet
+gcloud storage buckets remove-iam-policy-binding gs://wamn-dev-web $P --member allUsers --role roles/storage.objectViewer
+gcloud compute addresses delete wamn-edge $P --global --quiet
+gcloud compute health-checks delete wamn-edge $P --global --quiet
+gcloud compute firewall-rules delete wamn-edge-health-check $P --quiet
+helm uninstall wamn-edge -n edge
+```

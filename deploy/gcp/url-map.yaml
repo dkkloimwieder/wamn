@@ -1,0 +1,44 @@
+# The URL map wamn-edge of docs/plan/gcp-deployment.md step 4. It copies the
+# rules of the removed Config Connector template of deploy/platform/edge:
+# /api/ and /password/ go to the edge, /assets/ to the release path in the
+# bucket, and every other path to its index.html, which the client routes.
+# Import it with: gcloud compute url-maps import wamn-edge --global --source <this file>
+name: wamn-edge
+defaultService: https://www.googleapis.com/compute/v1/projects/wamn-dev/global/backendBuckets/wamn-edge-files
+hostRules:
+  - hosts:
+      - receiving.wamn.dev
+    pathMatcher: edge
+pathMatchers:
+  - name: edge
+    defaultService: https://www.googleapis.com/compute/v1/projects/wamn-dev/global/backendBuckets/wamn-edge-files
+    routeRules:
+      - priority: 1
+        matchRules:
+          - prefixMatch: /api/
+        service: https://www.googleapis.com/compute/v1/projects/wamn-dev/global/backendServices/wamn-edge-platform
+      - priority: 2
+        matchRules:
+          - prefixMatch: /password/
+        service: https://www.googleapis.com/compute/v1/projects/wamn-dev/global/backendServices/wamn-edge-platform
+      - priority: 3
+        matchRules:
+          - prefixMatch: /assets/
+        service: https://www.googleapis.com/compute/v1/projects/wamn-dev/global/backendBuckets/wamn-edge-files
+        routeAction:
+          urlRewrite:
+            pathPrefixRewrite: /clients/wamn_receiving/aeb74968dfe09b113a115863ec8be5475923d9577914332081923052a41c16c4/assets/
+      - priority: 4
+        matchRules:
+          - fullPathMatch: /
+        service: https://www.googleapis.com/compute/v1/projects/wamn-dev/global/backendBuckets/wamn-edge-files
+        routeAction:
+          urlRewrite:
+            pathPrefixRewrite: /clients/wamn_receiving/aeb74968dfe09b113a115863ec8be5475923d9577914332081923052a41c16c4/index.html
+      - priority: 5
+        matchRules:
+          - pathTemplateMatch: /{page=**}
+        service: https://www.googleapis.com/compute/v1/projects/wamn-dev/global/backendBuckets/wamn-edge-files
+        routeAction:
+          urlRewrite:
+            pathTemplateRewrite: /clients/wamn_receiving/aeb74968dfe09b113a115863ec8be5475923d9577914332081923052a41c16c4/index.html
