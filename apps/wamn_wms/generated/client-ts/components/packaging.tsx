@@ -57,6 +57,11 @@ import {
   type PackagingQueryRow,
 } from "../packaging.js";
 import {
+  PackagingCreateFormLabel,
+  PackagingGetDetailLabel,
+  PackagingQueryTableLabel,
+} from "./labels.js";
+import {
   InventoryAdjustForm,
   InventoryMoveForm,
   InventorySplitForm,
@@ -100,9 +105,6 @@ export interface PackagingCreateFormProps {
   /** Called with the outcome of every submission. */
   readonly onSubmitted?: (outcome: Outcome<PackagingCreateResult>) => void;
 }
-
-/** What an operator calls this screen. The page decides where it goes. */
-export const PackagingCreateFormLabel = "create";
 
 /**
  * The form for `wamn-wms:packaging/create@1.0.0`.
@@ -272,9 +274,6 @@ export interface PackagingGetDetailProps {
   readonly onOutcome?: (outcome: Outcome<PackagingGetResult>) => void;
 }
 
-/** What an operator calls this screen. The page decides where it goes. */
-export const PackagingGetDetailLabel = "get";
-
 /**
  * The detail screen for `wamn-wms:packaging/get@1.0.0`.
  *
@@ -336,9 +335,6 @@ export interface PackagingQueryTableProps {
   /** Called with every outcome this screen reads. */
   readonly onOutcome?: (outcome: Outcome<PackagingQueryResult>) => void;
 }
-
-/** What an operator calls this screen. The page decides where it goes. */
-export const PackagingQueryTableLabel = "query";
 
 /** The table for `wamn-wms:packaging/query@1.0.0`: the QueryTable over `PACKAGING_QUERY_TABLE`, in the table screen. */
 export function PackagingQueryTable(props: PackagingQueryTableProps) {

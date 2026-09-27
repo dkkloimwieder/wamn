@@ -56,6 +56,11 @@ import {
   update,
 } from "../purchase_order.js";
 import {
+  PurchaseOrderGetDetailLabel,
+  PurchaseOrderQueryTableLabel,
+  PurchaseOrderUpdateFormLabel,
+} from "./labels.js";
+import {
   ReceivingRecordReceiptForm,
 } from "./receiving.js";
 import {
@@ -81,9 +86,6 @@ export interface PurchaseOrderGetDetailProps {
   /** Called with every outcome this screen reads. */
   readonly onOutcome?: (outcome: Outcome<PurchaseOrderGetResult>) => void;
 }
-
-/** What an operator calls this screen. The page decides where it goes. */
-export const PurchaseOrderGetDetailLabel = "Purchase order";
 
 /**
  * The detail screen for `wamn-receiving:purchase-order/get@1.0.0`.
@@ -145,9 +147,6 @@ export interface PurchaseOrderQueryTableProps {
   /** Called with every outcome this screen reads. */
   readonly onOutcome?: (outcome: Outcome<PurchaseOrderQueryResult>) => void;
 }
-
-/** What an operator calls this screen. The page decides where it goes. */
-export const PurchaseOrderQueryTableLabel = "Purchase orders";
 
 /** The table for `wamn-receiving:purchase-order/query@1.0.0`: the QueryTable over `PURCHASE_ORDER_QUERY_TABLE`, in the table screen. */
 export function PurchaseOrderQueryTable(props: PurchaseOrderQueryTableProps) {
@@ -222,9 +221,6 @@ export interface PurchaseOrderUpdateFormProps {
   /** Called with the outcome of every submission. */
   readonly onSubmitted?: (outcome: Outcome<PurchaseOrderUpdateResult>) => void;
 }
-
-/** What an operator calls this screen. The page decides where it goes. */
-export const PurchaseOrderUpdateFormLabel = "Change the supplier";
 
 /**
  * The form for `wamn-receiving:purchase-order/update@1.0.0`.

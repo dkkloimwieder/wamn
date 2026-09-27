@@ -41,6 +41,10 @@ import {
   type SupplierQueryRow,
 } from "../supplier.js";
 import {
+  SupplierCreateFormLabel,
+  SupplierQueryTableLabel,
+} from "./labels.js";
+import {
   PURCHASE_ORDER_QUERY_TABLE,
 } from "./purchase_order.js";
 
@@ -63,9 +67,6 @@ export interface SupplierCreateFormProps {
   /** Called with the outcome of every submission. */
   readonly onSubmitted?: (outcome: Outcome<SupplierCreateResult>) => void;
 }
-
-/** What an operator calls this screen. The page decides where it goes. */
-export const SupplierCreateFormLabel = "Add a supplier";
 
 /**
  * The form for `wamn-receiving:supplier/create@1.0.0`.
@@ -152,9 +153,6 @@ export interface SupplierQueryTableProps {
   /** Called with every outcome this screen reads. */
   readonly onOutcome?: (outcome: Outcome<SupplierQueryResult>) => void;
 }
-
-/** What an operator calls this screen. The page decides where it goes. */
-export const SupplierQueryTableLabel = "Suppliers";
 
 /** The table for `wamn-receiving:supplier/query@1.0.0`: the QueryTable over `SUPPLIER_QUERY_TABLE`, in the table screen. */
 export function SupplierQueryTable(props: SupplierQueryTableProps) {

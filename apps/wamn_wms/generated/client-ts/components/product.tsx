@@ -56,6 +56,12 @@ import {
   update,
 } from "../product.js";
 import {
+  ProductCreateFormLabel,
+  ProductGetDetailLabel,
+  ProductQueryTableLabel,
+  ProductUpdateFormLabel,
+} from "./labels.js";
+import {
   InventoryAdjustForm,
   InventorySplitForm,
 } from "./inventory.js";
@@ -79,9 +85,6 @@ export interface ProductCreateFormProps {
   /** Called with the outcome of every submission. */
   readonly onSubmitted?: (outcome: Outcome<ProductCreateResult>) => void;
 }
-
-/** What an operator calls this screen. The page decides where it goes. */
-export const ProductCreateFormLabel = "create";
 
 /**
  * The form for `wamn-wms:product/create@1.0.0`.
@@ -170,9 +173,6 @@ export interface ProductGetDetailProps {
   readonly onOutcome?: (outcome: Outcome<ProductGetResult>) => void;
 }
 
-/** What an operator calls this screen. The page decides where it goes. */
-export const ProductGetDetailLabel = "get";
-
 /**
  * The detail screen for `wamn-wms:product/get@1.0.0`.
  *
@@ -228,9 +228,6 @@ export interface ProductQueryTableProps {
   /** Called with every outcome this screen reads. */
   readonly onOutcome?: (outcome: Outcome<ProductQueryResult>) => void;
 }
-
-/** What an operator calls this screen. The page decides where it goes. */
-export const ProductQueryTableLabel = "query";
 
 /** The table for `wamn-wms:product/query@1.0.0`: the QueryTable over `PRODUCT_QUERY_TABLE`, in the table screen. */
 export function ProductQueryTable(props: ProductQueryTableProps) {
@@ -301,9 +298,6 @@ export interface ProductUpdateFormProps {
   /** Called with the outcome of every submission. */
   readonly onSubmitted?: (outcome: Outcome<ProductUpdateResult>) => void;
 }
-
-/** What an operator calls this screen. The page decides where it goes. */
-export const ProductUpdateFormLabel = "update";
 
 /**
  * The form for `wamn-wms:product/update@1.0.0`.

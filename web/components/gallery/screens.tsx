@@ -11,27 +11,29 @@ import type { JSX } from "solid-js";
 
 import {
   WidgetArchiveForm,
-  WidgetArchiveFormLabel,
   WidgetCreateForm,
-  WidgetCreateFormLabel,
   WidgetDeleteDelete,
-  WidgetDeleteDeleteLabel,
   WidgetGetDetail,
-  WidgetGetDetailLabel,
   WidgetListTable,
-  WidgetListTableLabel,
   WidgetQueryTable,
-  WidgetQueryTableLabel,
   WidgetRecordBatchForm,
-  WidgetRecordBatchFormLabel,
   WidgetUpdateForm,
-  WidgetUpdateFormLabel,
 } from "../fixture/components/widget.js";
 import {
-  WidgetMakerListTable,
+  WidgetArchiveFormLabel,
+  WidgetCreateFormLabel,
+  WidgetDeleteDeleteLabel,
+  WidgetGetDetailLabel,
+  WidgetListTableLabel,
   WidgetMakerListTableLabel,
-  WidgetMakerQueryTable,
   WidgetMakerQueryTableLabel,
+  WidgetQueryTableLabel,
+  WidgetRecordBatchFormLabel,
+  WidgetUpdateFormLabel,
+} from "../fixture/components/labels.js";
+import {
+  WidgetMakerListTable,
+  WidgetMakerQueryTable,
 } from "../fixture/components/widget_maker.js";
 import {
   archiveStub,

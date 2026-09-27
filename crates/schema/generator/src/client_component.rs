@@ -103,10 +103,27 @@ pub fn emit_ts_components(
     )
     .expect("writing to a String cannot fail");
     index.push('\n');
+    index.push_str("export * from \"./labels.js\";\n");
+    let mut labels = String::from("// @generated from the client-contract IR; do not edit.\n//\n");
+    writeln!(
+        labels,
+        "// Screen labels of package `{}`. A route table imports them from here, so\n// it names a screen without loading the screen's component.",
+        plan.package
+    )
+    .expect("writing to a String cannot fail");
     for model in &plan.models {
         let source = emit_model(model, plan)?;
         if source.is_empty() {
             continue;
+        }
+        for screen in model.screens.iter().filter(|screen| written(screen)) {
+            writeln!(
+                labels,
+                "\n/** What an operator calls this screen. The page decides where it goes. */\nexport const {} = {:?};",
+                label_name(screen),
+                screen_label(screen)
+            )
+            .expect("writing to a String cannot fail");
         }
         writeln!(index, "export * from \"./{}.js\";", model.model.name)
             .expect("writing to a String cannot fail");
@@ -167,6 +184,10 @@ pub fn emit_ts_components(
             .expect("writing to a String cannot fail");
         }
     }
+    files.push(GeneratedFile::new(
+        format!("{COMPONENT_DIRECTORY}/labels.ts").into_boxed_str(),
+        labels.into_bytes().into_boxed_slice(),
+    ));
     files.push(GeneratedFile::new(
         format!("{COMPONENT_DIRECTORY}/index.ts").into_boxed_str(),
         index.into_bytes().into_boxed_slice(),
@@ -356,6 +377,16 @@ fn emit_model(
         model.model.name
     )
     .expect("writing to a String cannot fail");
+    writeln!(
+        source,
+        "import {{\n{}\n}} from \"./labels.js\";",
+        screens
+            .iter()
+            .map(|screen| format!("  {},", label_name(screen)))
+            .collect::<Vec<_>>()
+            .join("\n")
+    )
+    .expect("writing to a String cannot fail");
     for (module, names) in &sibling {
         writeln!(
             source,
@@ -443,6 +474,21 @@ fn label(field: &FieldIr) -> String {
 /// The default applies the field rule to the operation's own name. No
 /// component renders this: each module exports it, and the page that places
 /// the component decides where the text goes. Owner ruling of 2026-09-22.
+/// The name of the constant that holds a screen's label, such as `PalletQueryTableLabel`.
+fn label_name(screen: &ScreenPlan<'_>) -> String {
+    let role = match screen.role {
+        Role::Table => "Table",
+        Role::Detail => "Detail",
+        Role::Form => "Form",
+        Role::Delete => "Delete",
+        Role::Unsupported(_) => "",
+    };
+    format!(
+        "{}{role}Label",
+        crate::client_ts::type_stem(screen.model, screen.name)
+    )
+}
+
 fn screen_label(screen: &ScreenPlan<'_>) -> String {
     screen
         .contract
@@ -526,12 +572,6 @@ fn emit_definition_table(
     writeln!(
         source,
         "  readonly onOutcome?: (outcome: Outcome<{stem}Result>) => void;\n}}"
-    )
-    .expect("write");
-    writeln!(
-        source,
-        "\n/** What an operator calls this screen. The page decides where it goes. */\nexport const {stem}TableLabel = {:?};",
-        screen_label(screen)
     )
     .expect("write");
     writeln!(
@@ -1076,12 +1116,6 @@ fn emit_detail(
 
     writeln!(
         source,
-        "\n/** What an operator calls this screen. The page decides where it goes. */\nexport const {stem}DetailLabel = {:?};",
-        screen_label(screen)
-    )
-    .expect("write");
-    writeln!(
-        source,
         "\n/**\n * The detail screen for `{}`.\n *\n * It reads when it mounts and again whenever its input changes, because the\n * input names the record it shows.\n */",
         screen.contract.operation
     )
@@ -1504,12 +1538,6 @@ fn emit_form(
     source.push_str("}\n");
 
     // The component.
-    writeln!(
-        source,
-        "\n/** What an operator calls this screen. The page decides where it goes. */\nexport const {stem}FormLabel = {:?};",
-        screen_label(screen)
-    )
-    .expect("write");
     writeln!(
         source,
         "\n/**\n * The form for `{}`.\n *\n * It renders what the operator fills and nothing else. The reserved inputs\n * come from the runtime at submit time, and the operator never sees them.\n */",
@@ -2417,12 +2445,6 @@ fn emit_delete(
     .expect("write");
     source.push_str("}\n");
 
-    writeln!(
-        source,
-        "\n/** What an operator calls this screen. The page decides where it goes. */\nexport const {stem}DeleteLabel = {:?};",
-        screen_label(screen)
-    )
-    .expect("write");
     writeln!(
         source,
         "\n/**\n * The delete for `{}`.\n *\n * It asks for a confirmation first, because a removal is not an edit that an\n * operator undoes.\n */",

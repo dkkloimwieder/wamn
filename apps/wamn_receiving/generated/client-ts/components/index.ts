@@ -3,6 +3,7 @@
 // Components of package `wamn_receiving`, one for each operation that has a role
 // and a route.
 
+export * from "./labels.js";
 export * from "./location.js";
 export * from "./purchase_order.js";
 export * from "./receipt.js";

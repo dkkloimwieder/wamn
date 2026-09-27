@@ -32,6 +32,10 @@ import {
   type PackagingQuantityQueryRow,
 } from "../packaging_quantity.js";
 import {
+  PackagingQuantityGetDetailLabel,
+  PackagingQuantityQueryTableLabel,
+} from "./labels.js";
+import {
   PACKAGING_GET_REQUEST_FIELDS,
   PACKAGING_GET_RESULT_FIELDS,
   PACKAGING_GET_ROUTE,
@@ -56,9 +60,6 @@ export interface PackagingQuantityGetDetailProps {
   /** Called with every outcome this screen reads. */
   readonly onOutcome?: (outcome: Outcome<PackagingQuantityGetResult>) => void;
 }
-
-/** What an operator calls this screen. The page decides where it goes. */
-export const PackagingQuantityGetDetailLabel = "get";
 
 /**
  * The detail screen for `wamn-wms:packaging-quantity/get@1.0.0`.
@@ -117,9 +118,6 @@ export interface PackagingQuantityQueryTableProps {
   /** Called with every outcome this screen reads. */
   readonly onOutcome?: (outcome: Outcome<PackagingQuantityQueryResult>) => void;
 }
-
-/** What an operator calls this screen. The page decides where it goes. */
-export const PackagingQuantityQueryTableLabel = "query";
 
 /** The table for `wamn-wms:packaging-quantity/query@1.0.0`: the QueryTable over `PACKAGING_QUANTITY_QUERY_TABLE`, in the table screen. */
 export function PackagingQuantityQueryTable(props: PackagingQuantityQueryTableProps) {

@@ -32,6 +32,10 @@ import {
   type ReceiptQueryRow,
 } from "../receipt.js";
 import {
+  ReceiptGetDetailLabel,
+  ReceiptQueryTableLabel,
+} from "./labels.js";
+import {
   PURCHASE_ORDER_GET_REQUEST_FIELDS,
   PURCHASE_ORDER_GET_RESULT_FIELDS,
   PURCHASE_ORDER_GET_ROUTE,
@@ -51,9 +55,6 @@ export interface ReceiptGetDetailProps {
   /** Called with every outcome this screen reads. */
   readonly onOutcome?: (outcome: Outcome<ReceiptGetResult>) => void;
 }
-
-/** What an operator calls this screen. The page decides where it goes. */
-export const ReceiptGetDetailLabel = "Receipt";
 
 /**
  * The detail screen for `wamn-receiving:receipt/get@1.0.0`.
@@ -112,9 +113,6 @@ export interface ReceiptQueryTableProps {
   /** Called with every outcome this screen reads. */
   readonly onOutcome?: (outcome: Outcome<ReceiptQueryResult>) => void;
 }
-
-/** What an operator calls this screen. The page decides where it goes. */
-export const ReceiptQueryTableLabel = "Receipts";
 
 /** The table for `wamn-receiving:receipt/query@1.0.0`: the QueryTable over `RECEIPT_QUERY_TABLE`, in the table screen. */
 export function ReceiptQueryTable(props: ReceiptQueryTableProps) {

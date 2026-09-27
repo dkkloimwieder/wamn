@@ -56,6 +56,12 @@ import {
   update,
 } from "../location.js";
 import {
+  LocationCreateFormLabel,
+  LocationGetDetailLabel,
+  LocationQueryTableLabel,
+  LocationUpdateFormLabel,
+} from "./labels.js";
+import {
   InventoryMoveForm,
   InventorySplitForm,
 } from "./inventory.js";
@@ -82,9 +88,6 @@ export interface LocationCreateFormProps {
   /** Called with the outcome of every submission. */
   readonly onSubmitted?: (outcome: Outcome<LocationCreateResult>) => void;
 }
-
-/** What an operator calls this screen. The page decides where it goes. */
-export const LocationCreateFormLabel = "create";
 
 /**
  * The form for `wamn-wms:location/create@1.0.0`.
@@ -173,9 +176,6 @@ export interface LocationGetDetailProps {
   readonly onOutcome?: (outcome: Outcome<LocationGetResult>) => void;
 }
 
-/** What an operator calls this screen. The page decides where it goes. */
-export const LocationGetDetailLabel = "get";
-
 /**
  * The detail screen for `wamn-wms:location/get@1.0.0`.
  *
@@ -231,9 +231,6 @@ export interface LocationQueryTableProps {
   /** Called with every outcome this screen reads. */
   readonly onOutcome?: (outcome: Outcome<LocationQueryResult>) => void;
 }
-
-/** What an operator calls this screen. The page decides where it goes. */
-export const LocationQueryTableLabel = "query";
 
 /** The table for `wamn-wms:location/query@1.0.0`: the QueryTable over `LOCATION_QUERY_TABLE`, in the table screen. */
 export function LocationQueryTable(props: LocationQueryTableProps) {
@@ -307,9 +304,6 @@ export interface LocationUpdateFormProps {
   /** Called with the outcome of every submission. */
   readonly onSubmitted?: (outcome: Outcome<LocationUpdateResult>) => void;
 }
-
-/** What an operator calls this screen. The page decides where it goes. */
-export const LocationUpdateFormLabel = "update";
 
 /**
  * The form for `wamn-wms:location/update@1.0.0`.

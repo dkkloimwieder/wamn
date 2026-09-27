@@ -75,6 +75,13 @@ import {
   type InventorySplitResult,
 } from "../inventory.js";
 import {
+  InventoryAdjustFormLabel,
+  InventoryAggregateTableLabel,
+  InventoryMergeFormLabel,
+  InventoryMoveFormLabel,
+  InventorySplitFormLabel,
+} from "./labels.js";
+import {
   get as locationGet,
   query as locationQuery,
   type LocationGetRequest,
@@ -142,9 +149,6 @@ export interface InventoryAdjustFormProps {
   /** Called with the outcome of each row's input, in row order. */
   readonly onEach?: (outcomes: readonly Outcome<InventoryAdjustResult>[]) => void;
 }
-
-/** What an operator calls this screen. The page decides where it goes. */
-export const InventoryAdjustFormLabel = "adjust";
 
 /**
  * The form for `wamn-wms:inventory/adjust@1.0.0`.
@@ -414,9 +418,6 @@ export interface InventoryAggregateTableProps {
   readonly onOutcome?: (outcome: Outcome<InventoryAggregateResult>) => void;
 }
 
-/** What an operator calls this screen. The page decides where it goes. */
-export const InventoryAggregateTableLabel = "aggregate";
-
 /** The table for `wamn-wms:inventory/aggregate@1.0.0`: the QueryTable over `INVENTORY_AGGREGATE_TABLE`, in the table screen. */
 export function InventoryAggregateTable(props: InventoryAggregateTableProps) {
   return (
@@ -486,9 +487,6 @@ export interface InventoryMergeFormProps {
   /** Called with the outcome of each row's input, in row order. */
   readonly onEach?: (outcomes: readonly Outcome<InventoryMergeResult>[]) => void;
 }
-
-/** What an operator calls this screen. The page decides where it goes. */
-export const InventoryMergeFormLabel = "merge";
 
 /**
  * The form for `wamn-wms:inventory/merge@1.0.0`.
@@ -735,9 +733,6 @@ export interface InventoryMoveFormProps {
   /** Called with the outcome of each row's input, in row order. */
   readonly onEach?: (outcomes: readonly Outcome<InventoryMoveResult>[]) => void;
 }
-
-/** What an operator calls this screen. The page decides where it goes. */
-export const InventoryMoveFormLabel = "move";
 
 /**
  * The form for `wamn-wms:inventory/move@1.0.0`.
@@ -994,9 +989,6 @@ export interface InventorySplitFormProps {
   /** Called with the outcome of each row's input, in row order. */
   readonly onEach?: (outcomes: readonly Outcome<InventorySplitResult>[]) => void;
 }
-
-/** What an operator calls this screen. The page decides where it goes. */
-export const InventorySplitFormLabel = "split";
 
 /**
  * The form for `wamn-wms:inventory/split@1.0.0`.

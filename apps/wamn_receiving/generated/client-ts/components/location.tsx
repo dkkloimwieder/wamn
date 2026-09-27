@@ -19,6 +19,9 @@ import {
   type LocationListRow,
 } from "../location.js";
 import {
+  LocationListTableLabel,
+} from "./labels.js";
+import {
   ReceivingRecordReceiptForm,
 } from "./receiving.js";
 
@@ -35,9 +38,6 @@ export interface LocationListTableProps {
   /** Called with every outcome this screen reads. */
   readonly onOutcome?: (outcome: Outcome<LocationListResult>) => void;
 }
-
-/** What an operator calls this screen. The page decides where it goes. */
-export const LocationListTableLabel = "Locations";
 
 /** The table for `wamn-receiving:location/list@1.0.0`: the QueryTable over `LOCATION_LIST_TABLE`, in the table screen. */
 export function LocationListTable(props: LocationListTableProps) {

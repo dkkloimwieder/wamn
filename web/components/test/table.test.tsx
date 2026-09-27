@@ -16,11 +16,8 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { createTransport, type JsonValue, type Outcome } from "@wamn/web-runtime";
 
-import {
-  WIDGET_QUERY_TABLE,
-  WidgetQueryTable,
-  WidgetQueryTableLabel,
-} from "../fixture/components/widget.js";
+import { WidgetQueryTableLabel } from "../fixture/components/labels.js";
+import { WIDGET_QUERY_TABLE, WidgetQueryTable } from "../fixture/components/widget.js";
 import { GONE, MAKER, SOUTH, makerStub, page, tableStub as stub } from "../stubs/index.js";
 
 afterEach(cleanup);

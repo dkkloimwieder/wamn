@@ -32,6 +32,10 @@ import {
   type InventoryTransactionQueryRow,
 } from "../inventory_transaction.js";
 import {
+  InventoryTransactionGetDetailLabel,
+  InventoryTransactionQueryTableLabel,
+} from "./labels.js";
+import {
   PACKAGING_GET_REQUEST_FIELDS,
   PACKAGING_GET_RESULT_FIELDS,
   PACKAGING_GET_ROUTE,
@@ -56,9 +60,6 @@ export interface InventoryTransactionGetDetailProps {
   /** Called with every outcome this screen reads. */
   readonly onOutcome?: (outcome: Outcome<InventoryTransactionGetResult>) => void;
 }
-
-/** What an operator calls this screen. The page decides where it goes. */
-export const InventoryTransactionGetDetailLabel = "get";
 
 /**
  * The detail screen for `wamn-wms:inventory-transaction/get@1.0.0`.
@@ -122,9 +123,6 @@ export interface InventoryTransactionQueryTableProps {
   /** Called with every outcome this screen reads. */
   readonly onOutcome?: (outcome: Outcome<InventoryTransactionQueryResult>) => void;
 }
-
-/** What an operator calls this screen. The page decides where it goes. */
-export const InventoryTransactionQueryTableLabel = "query";
 
 /** The table for `wamn-wms:inventory-transaction/query@1.0.0`: the QueryTable over `INVENTORY_TRANSACTION_QUERY_TABLE`, in the table screen. */
 export function InventoryTransactionQueryTable(props: InventoryTransactionQueryTableProps) {

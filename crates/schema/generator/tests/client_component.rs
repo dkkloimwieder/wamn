@@ -39,6 +39,7 @@ fn every_table_screen_gets_one_component_and_its_plan_columns() {
         [
             "generated/client-ts/components/widget.tsx",
             "generated/client-ts/components/widget_maker.tsx",
+            "generated/client-ts/components/labels.ts",
             "generated/client-ts/components/index.ts",
         ]
     );
@@ -864,22 +865,26 @@ fn a_component_reads_the_authored_label_everywhere_it_states_text() {
         "a scope filter reads the column's authored label"
     );
 
-    // The screen name, exported once for each component and rendered nowhere.
-    assert!(widget.contains("export const WidgetQueryTableLabel = \"Find widgets\";"));
+    // The screen name, exported once for each component from the labels
+    // module, so a route table names a screen without loading its component.
+    let labels = source(&files, "generated/client-ts/components/labels.ts");
+    assert!(labels.contains("export const WidgetQueryTableLabel = \"Find widgets\";"));
     assert!(
-        widget.contains("export const WidgetRecordBatchFormLabel = \"Record a batch\";"),
+        labels.contains("export const WidgetRecordBatchFormLabel = \"Record a batch\";"),
         "an authored command states its own screen name"
     );
     assert!(
-        widget.contains("export const WidgetGetDetailLabel = \"get\";"),
+        labels.contains("export const WidgetGetDetailLabel = \"get\";"),
         "a screen with no authored label takes its operation name"
     );
+    assert!(
+        !widget.contains("export const Widget"),
+        "a component module exports no label"
+    );
+    let maker = source(&files, "generated/client-ts/components/widget_maker.tsx");
     assert_eq!(
-        widget
-            .matches("export const Widget")
-            .filter(|_| true)
-            .count(),
-        widget.matches("export function Widget").count(),
+        labels.matches("export const ").count(),
+        widget.matches("export function ").count() + maker.matches("export function ").count(),
         "one exported label for each component"
     );
     for heading in ["<h1", "<h2", "<h3"] {
