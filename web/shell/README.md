@@ -25,6 +25,8 @@ An application web page lives in `apps/<app>/web/`, and the generator never writ
 Its route table is a list of sections, and each section is a list of screens and other routes:
 
 ```tsx
+const pallet = () => import("@wamn/wms-client/components/pallet.js");
+
 const SECTIONS: readonly ShellSection[] = [
   {
     label: "Pallets",
@@ -33,29 +35,31 @@ const SECTIONS: readonly ShellSection[] = [
         path: "pallets",
         label: PalletQueryTableLabel,
         actions: [{ label: PalletCreateFormLabel, path: "pallets/new" }],
-        component: (props) => (
-          <PalletQueryTable
+        component: screen(pallet, (m) => (props) => (
+          <m.PalletQueryTable
             transport={props.transport}
             onOpen={{
               "wamn-wms:pallet/get@1.0.0": (row) => props.open(`pallets/${encodeURIComponent(row.id)}`),
             }}
           />
-        ),
+        )),
       },
     ],
     routes: [
       {
         path: "pallets/new",
-        component: (props) => (
-          <PalletCreateForm
+        component: screen(pallet, (m) => (props) => (
+          <m.PalletCreateForm
             transport={props.transport}
             onSubmitted={(outcome) => outcome.status === "completed" && props.close()}
           />
-        ),
+        )),
       },
       {
         path: "pallets/:id",
-        component: (props) => <PalletGetDetail transport={props.transport} input={{ id: props.params.id ?? "" }} />,
+        component: screen(pallet, (m) => (props) => (
+          <m.PalletGetDetail transport={props.transport} input={{ id: props.params.id ?? "" }} />
+        )),
       },
     ],
   },
@@ -63,7 +67,8 @@ const SECTIONS: readonly ShellSection[] = [
 ```
 
 A section label names the model and is written by hand.
-A screen label is the label constant that the generated module exports, so no label is written twice.
+A screen label is a constant from the generated `components/labels.js`, so no label is written twice.
+The route table imports only the labels. Each route component loads its generated model module through `screen(load, pick)`, so a screen loads its code only when it opens.
 If a model has one screen, the navigation shows one entry with the model name.
 If a model has more than one screen, the navigation shows the model name with the screen labels below it.
 A record page or a form has no navigation entry.
@@ -84,8 +89,9 @@ The shell renders a screen with five props:
 | `open(path)` | Opens a path below the environment, with a query if the caller gives one. The caller encodes each value that it puts in the path. |
 | `close()` | Returns to the page that opened this one. If no page opened it, for example after a pasted address, it opens the first screen of the section. |
 
-The page mounts `<Shell title=... sections=... />` inside `ColorModeProvider`, beside one `Toaster`.
+The page mounts `<Shell title=... sections=... />` inside `ColorModeProvider`.
 The layout comes from `AppFrame`, `CardPage` and `ScreenActions` in `@wamn/ui`, so the shell states no class.
+The sign in page loads alone. The shell loads `layout.tsx`, with `AppFrame` and the `Toaster`, only after sign in.
 
 ## The dev server
 
