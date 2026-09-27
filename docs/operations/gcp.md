@@ -640,3 +640,35 @@ gcloud iam service-accounts add-iam-policy-binding wamn-registry-reader@wamn-dev
 ```
 
 If the repository binding fails with "Service account ... does not exist", the new account is not visible yet. Make sure that `gcloud iam service-accounts describe` shows it, wait a short time, and run the binding again. On 2026-09-26 the first binding failed this way, and the second one succeeded.
+
+### 3.12 Registry token CronJob
+
+[registry-token.yaml](../../deploy/gcp/registry-token.yaml) holds the service account, the empty Secret `wamn-registry-pull`, the Role that allows only `get` and `patch` on that Secret, and the CronJob. Apply it, run the job once by hand, and make sure that the Secret holds a token:
+
+```bash
+kubectl apply -f deploy/gcp/registry-token.yaml
+kubectl -n hosts create job registry-token-first --from=cronjob/registry-token
+kubectl -n hosts wait job/registry-token-first --for=condition=complete --timeout=180s
+kubectl -n hosts logs job/registry-token-first
+kubectl -n hosts get secret wamn-registry-pull -o jsonpath='{.data.\.dockerconfigjson}' | base64 -d \
+  | jq -c '.auths|to_entries[]|{host:.key,user:.value.username,password_length:(.value.password|length)}'
+```
+
+The log shows only `patch status 200`. Make sure that the token comes from `wamn-registry-reader` and not from the node account:
+
+```bash
+kubectl -n hosts run wi-check --restart=Never --rm -i --quiet \
+  --image=curlimages/curl@sha256:58adaa4e8dca9c988bae2aba4ab3434a0bb2da16bbe3f92dec39ec7785166777 \
+  --overrides='{"spec":{"serviceAccountName":"registry-token"}}' -- \
+  curl -sS -H "Metadata-Flavor: Google" http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/email
+```
+
+On 2026-09-26 the first run took 10 seconds, and the email was `wamn-registry-reader@wamn-dev.iam.gserviceaccount.com`.
+
+### 3.13 Pinned images
+
+| Image | Digest | Use |
+| --- | --- | --- |
+| `wamn-host:src-490a0d098a176e39` | `sha256:b44a6f944a410ca42dccf378c0948226946c54fefa17c4bf3cc246e25dcd9dd2` | host |
+| `wamn-identity:src-bf477a549dc55932` | `sha256:b0896c8fb3f94920c097762f75019fe68a81254fc49a4fa6768a29db97794827` | identity |
+| `curlimages/curl:8.22.0` | `sha256:58adaa4e8dca9c988bae2aba4ab3434a0bb2da16bbe3f92dec39ec7785166777` | registry token CronJob |

@@ -1,0 +1,103 @@
+# The registry token CronJob of docs/plan/gcp-deployment.md step 3.
+# The host pulls components with a username and password from a docker
+# configuration and cannot use Workload Identity (finding wamn-i87m). This job
+# runs as hosts/registry-token, which Workload Identity binds to the Google
+# service account wamn-registry-reader (roles/artifactregistry.reader on
+# repository wamn only). Every 30 minutes it writes a short-lived token into
+# the Secret wamn-registry-pull. The token never reaches the log.
+# The image is curlimages/curl:8.22.0, pinned by digest.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: registry-token
+  namespace: hosts
+  annotations:
+    iam.gke.io/gcp-service-account: wamn-registry-reader@wamn-dev.iam.gserviceaccount.com
+---
+# Empty until the first run. The job only patches it.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: wamn-registry-pull
+  namespace: hosts
+type: kubernetes.io/dockerconfigjson
+data:
+  .dockerconfigjson: e30=
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: registry-token
+  namespace: hosts
+rules:
+  - apiGroups: [""]
+    resources: [secrets]
+    resourceNames: [wamn-registry-pull]
+    verbs: [get, patch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: registry-token
+  namespace: hosts
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: registry-token
+subjects:
+  - kind: ServiceAccount
+    name: registry-token
+    namespace: hosts
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: registry-token
+  namespace: hosts
+spec:
+  schedule: "*/30 * * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 1
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          serviceAccountName: registry-token
+          restartPolicy: OnFailure
+          containers:
+            - name: token
+              image: curlimages/curl@sha256:58adaa4e8dca9c988bae2aba4ab3434a0bb2da16bbe3f92dec39ec7785166777
+              command:
+                - sh
+                - -ec
+                - |
+                  W=/work
+                  SA=/var/run/secrets/kubernetes.io/serviceaccount
+                  curl -sS -f -o "$W/token.json" -H "Metadata-Flavor: Google" \
+                    http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token
+                  TOKEN=$(sed -n 's/.*"access_token" *: *"\([^"]*\)".*/\1/p' "$W/token.json")
+                  rm -f "$W/token.json"
+                  [ -n "$TOKEN" ]
+                  printf '{"auths":{"us-central1-docker.pkg.dev":{"username":"oauth2accesstoken","password":"%s"}}}' \
+                    "$TOKEN" | base64 | tr -d '\n' > "$W/config.b64"
+                  printf '{"data":{".dockerconfigjson":"%s"}}' "$(cat "$W/config.b64")" > "$W/patch.json"
+                  rm -f "$W/config.b64"
+                  STATUS=$(curl -sS -o /dev/null -w '%{http_code}' --cacert "$SA/ca.crt" \
+                    -H "Authorization: Bearer $(cat "$SA/token")" \
+                    -H "Content-Type: application/merge-patch+json" -X PATCH --data-binary "@$W/patch.json" \
+                    https://kubernetes.default.svc/api/v1/namespaces/hosts/secrets/wamn-registry-pull)
+                  rm -f "$W/patch.json"
+                  echo "patch status $STATUS"
+                  [ "$STATUS" = 200 ]
+              volumeMounts:
+                - name: work
+                  mountPath: /work
+              resources:
+                requests:
+                  cpu: 10m
+                  memory: 16Mi
+          volumes:
+            - name: work
+              emptyDir:
+                medium: Memory
