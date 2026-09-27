@@ -15,29 +15,25 @@
  * the form.
  */
 
-import { fillPath, filledValues, type ScreenProps, type ShellSection } from "@wamn/shell";
+import { fillPath, filledValues, screen, type ScreenProps, type ShellSection } from "@wamn/shell";
 import {
-  LocationListTable,
   LocationListTableLabel,
-  PurchaseOrderGetDetail,
-  PurchaseOrderQueryTable,
   PurchaseOrderQueryTableLabel,
-  PurchaseOrderUpdateForm,
   PurchaseOrderUpdateFormLabel,
-  ReceiptGetDetail,
-  ReceiptQueryTable,
   ReceiptQueryTableLabel,
-  ReceivingLoadPurchaseOrderHistoryTable,
   ReceivingLoadPurchaseOrderHistoryTableLabel,
-  ReceivingLoadReceiptScreenTable,
   ReceivingLoadReceiptScreenTableLabel,
-  ReceivingRecordReceiptForm,
   ReceivingRecordReceiptFormLabel,
-  SupplierCreateForm,
   SupplierCreateFormLabel,
-  SupplierQueryTable,
   SupplierQueryTableLabel,
-} from "@wamn/receiving-client/components/index.js";
+} from "@wamn/receiving-client/components/labels.js";
+
+/** The generated module of each model. A route loads its module when it opens. */
+const location = () => import("@wamn/receiving-client/components/location.js");
+const purchaseOrder = () => import("@wamn/receiving-client/components/purchase_order.js");
+const receipt = () => import("@wamn/receiving-client/components/receipt.js");
+const receiving = () => import("@wamn/receiving-client/components/receiving.js");
+const supplier = () => import("@wamn/receiving-client/components/supplier.js");
 
 /** The record page path of one row. */
 const record = (path: string, row: { readonly id: string }) => `${path}/${encodeURIComponent(row.id)}`;
@@ -62,13 +58,13 @@ export const SECTIONS: readonly ShellSection[] = [
       {
         path: "purchase-orders",
         label: PurchaseOrderQueryTableLabel,
-        component: (props) => (
-          <PurchaseOrderQueryTable
+        component: screen(purchaseOrder, (m) => (props) => (
+          <m.PurchaseOrderQueryTable
             transport={props.transport}
             onOpen={{ "wamn-receiving:purchase-order/get@1.0.0": (row) => props.open(record("purchase-orders", row)) }}
             onFill={{ "wamn-receiving:receiving/record-receipt@1.0.0": (fill) => props.open(fillPath("receipts/new", fill)) }}
           />
-        ),
+        )),
       },
     ],
     routes: [
@@ -80,18 +76,18 @@ export const SECTIONS: readonly ShellSection[] = [
           { label: ReceivingLoadPurchaseOrderHistoryTableLabel, path: "purchase-orders/:id/history" },
           { label: PurchaseOrderUpdateFormLabel, path: "purchase-orders/:id/update" },
         ],
-        component: (props) => <PurchaseOrderGetDetail transport={props.transport} input={key(props)} />,
+        component: screen(purchaseOrder, (m) => (props) => <m.PurchaseOrderGetDetail transport={props.transport} input={key(props)} />),
       },
       {
         path: "purchase-orders/:id/update",
-        component: (props) => (
-          <PurchaseOrderUpdateForm transport={props.transport} key={key(props)} onSubmitted={done(props)} />
-        ),
+        component: screen(purchaseOrder, (m) => (props) => (
+          <m.PurchaseOrderUpdateForm transport={props.transport} key={key(props)} onSubmitted={done(props)} />
+        )),
       },
       {
         path: "purchase-orders/:id/receiving",
-        component: (props) => (
-          <ReceivingLoadReceiptScreenTable
+        component: screen(receiving, (m) => (props) => (
+          <m.ReceivingLoadReceiptScreenTable
             transport={props.transport}
             fixed={{ purchaseOrderId: key(props).id }}
             onFill={{
@@ -101,16 +97,16 @@ export const SECTIONS: readonly ShellSection[] = [
                 ),
             }}
           />
-        ),
+        )),
       },
       {
         path: "purchase-orders/:id/history",
-        component: (props) => (
-          <ReceivingLoadPurchaseOrderHistoryTable
+        component: screen(receiving, (m) => (props) => (
+          <m.ReceivingLoadPurchaseOrderHistoryTable
             transport={props.transport}
             fixed={{ id: key(props).id, limit: HISTORY_PAGE }}
           />
-        ),
+        )),
       },
     ],
   },
@@ -121,28 +117,28 @@ export const SECTIONS: readonly ShellSection[] = [
         path: "receipts",
         label: ReceiptQueryTableLabel,
         actions: [{ label: ReceivingRecordReceiptFormLabel, path: "receipts/new" }],
-        component: (props) => (
-          <ReceiptQueryTable
+        component: screen(receipt, (m) => (props) => (
+          <m.ReceiptQueryTable
             transport={props.transport}
             onOpen={{ "wamn-receiving:receipt/get@1.0.0": (row) => props.open(record("receipts", row)) }}
           />
-        ),
+        )),
       },
     ],
     routes: [
       {
         path: "receipts/new",
-        component: (props) => (
-          <ReceivingRecordReceiptForm
+        component: screen(receiving, (m) => (props) => (
+          <m.ReceivingRecordReceiptForm
             transport={props.transport}
             initial={filledValues(props.search)}
             onSubmitted={done(props)}
           />
-        ),
+        )),
       },
       {
         path: "receipts/:id",
-        component: (props) => <ReceiptGetDetail transport={props.transport} input={key(props)} />,
+        component: screen(receipt, (m) => (props) => <m.ReceiptGetDetail transport={props.transport} input={key(props)} />),
       },
     ],
   },
@@ -153,19 +149,19 @@ export const SECTIONS: readonly ShellSection[] = [
         path: "suppliers",
         label: SupplierQueryTableLabel,
         actions: [{ label: SupplierCreateFormLabel, path: "suppliers/new" }],
-        component: (props) => <SupplierQueryTable transport={props.transport} />,
+        component: screen(supplier, (m) => (props) => <m.SupplierQueryTable transport={props.transport} />),
       },
     ],
     routes: [
       {
         path: "suppliers/new",
-        component: (props) => (
-          <SupplierCreateForm
+        component: screen(supplier, (m) => (props) => (
+          <m.SupplierCreateForm
             transport={props.transport}
             initial={filledValues(props.search)}
             onSubmitted={done(props)}
           />
-        ),
+        )),
       },
     ],
   },
@@ -175,12 +171,12 @@ export const SECTIONS: readonly ShellSection[] = [
       {
         path: "locations",
         label: LocationListTableLabel,
-        component: (props) => (
-          <LocationListTable
+        component: screen(location, (m) => (props) => (
+          <m.LocationListTable
             transport={props.transport}
             onFill={{ "wamn-receiving:receiving/record-receipt@1.0.0": (fill) => props.open(fillPath("receipts/new", fill)) }}
           />
-        ),
+        )),
       },
     ],
   },

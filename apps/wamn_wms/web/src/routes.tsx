@@ -17,41 +17,29 @@
  * the form.
  */
 
-import { fillPath, filledValues, type ScreenProps, type ShellSection } from "@wamn/shell";
+import { fillPath, filledValues, screen, type ScreenProps, type ShellSection } from "@wamn/shell";
 import {
-  InventoryAdjustForm,
-  InventoryAggregateTable,
   InventoryAggregateTableLabel,
-  InventoryMergeForm,
   InventoryMergeFormLabel,
-  InventoryMoveForm,
-  InventoryTransactionGetDetail,
-  InventoryTransactionQueryTable,
   InventoryTransactionQueryTableLabel,
-  InventorySplitForm,
-  LocationCreateForm,
   LocationCreateFormLabel,
-  LocationGetDetail,
-  LocationQueryTable,
   LocationQueryTableLabel,
-  LocationUpdateForm,
   LocationUpdateFormLabel,
-  PackagingCreateForm,
   PackagingCreateFormLabel,
-  PackagingGetDetail,
-  PackagingQuantityGetDetail,
-  PackagingQuantityQueryTable,
   PackagingQuantityQueryTableLabel,
-  PackagingQueryTable,
   PackagingQueryTableLabel,
-  ProductCreateForm,
   ProductCreateFormLabel,
-  ProductGetDetail,
-  ProductQueryTable,
   ProductQueryTableLabel,
-  ProductUpdateForm,
   ProductUpdateFormLabel,
-} from "@wamn/wms-client/components/index.js";
+} from "@wamn/wms-client/components/labels.js";
+
+/** The generated module of each model. A route loads its module when it opens. */
+const inventory = () => import("@wamn/wms-client/components/inventory.js");
+const inventoryTransaction = () => import("@wamn/wms-client/components/inventory_transaction.js");
+const location = () => import("@wamn/wms-client/components/location.js");
+const packaging = () => import("@wamn/wms-client/components/packaging.js");
+const packagingQuantity = () => import("@wamn/wms-client/components/packaging_quantity.js");
+const product = () => import("@wamn/wms-client/components/product.js");
 
 /** The record page path of one row. */
 const record = (path: string, row: { readonly id: string }) => `${path}/${encodeURIComponent(row.id)}`;
@@ -74,8 +62,8 @@ export const SECTIONS: readonly ShellSection[] = [
         path: "packagings",
         label: PackagingQueryTableLabel,
         actions: [{ label: PackagingCreateFormLabel, path: "packagings/new" }],
-        component: (props) => (
-          <PackagingQueryTable
+        component: screen(packaging, (m) => (props) => (
+          <m.PackagingQueryTable
             transport={props.transport}
             onOpen={{ "wamn-wms:packaging/get@1.0.0": (row) => props.open(record("packagings", row)) }}
             onFill={{
@@ -84,19 +72,19 @@ export const SECTIONS: readonly ShellSection[] = [
               "wamn-wms:inventory/split@1.0.0": (fill) => props.open(fillPath("inventory/split", fill)),
             }}
           />
-        ),
+        )),
       },
     ],
     routes: [
       {
         path: "packagings/new",
-        component: (props) => (
-          <PackagingCreateForm transport={props.transport} initial={filledValues(props.search)} onSubmitted={done(props)} />
-        ),
+        component: screen(packaging, (m) => (props) => (
+          <m.PackagingCreateForm transport={props.transport} initial={filledValues(props.search)} onSubmitted={done(props)} />
+        )),
       },
       {
         path: "packagings/:id",
-        component: (props) => <PackagingGetDetail transport={props.transport} input={key(props)} />,
+        component: screen(packaging, (m) => (props) => <m.PackagingGetDetail transport={props.transport} input={key(props)} />),
       },
     ],
   },
@@ -106,18 +94,18 @@ export const SECTIONS: readonly ShellSection[] = [
       {
         path: "packaging-quantities",
         label: PackagingQuantityQueryTableLabel,
-        component: (props) => (
-          <PackagingQuantityQueryTable
+        component: screen(packagingQuantity, (m) => (props) => (
+          <m.PackagingQuantityQueryTable
             transport={props.transport}
             onOpen={{ "wamn-wms:packaging-quantity/get@1.0.0": (row) => props.open(record("packaging-quantities", row)) }}
           />
-        ),
+        )),
       },
     ],
     routes: [
       {
         path: "packaging-quantities/:id",
-        component: (props) => <PackagingQuantityGetDetail transport={props.transport} input={key(props)} />,
+        component: screen(packagingQuantity, (m) => (props) => <m.PackagingQuantityGetDetail transport={props.transport} input={key(props)} />),
       },
     ],
   },
@@ -128,31 +116,31 @@ export const SECTIONS: readonly ShellSection[] = [
         path: "inventory",
         label: InventoryAggregateTableLabel,
         actions: [{ label: InventoryMergeFormLabel, path: "inventory/merge" }],
-        component: (props) => <InventoryAggregateTable transport={props.transport} />,
+        component: screen(inventory, (m) => (props) => <m.InventoryAggregateTable transport={props.transport} />),
       },
     ],
     routes: [
       {
         path: "inventory/move",
-        component: (props) => (
-          <InventoryMoveForm transport={props.transport} initial={filledValues(props.search)} onSubmitted={done(props)} />
-        ),
+        component: screen(inventory, (m) => (props) => (
+          <m.InventoryMoveForm transport={props.transport} initial={filledValues(props.search)} onSubmitted={done(props)} />
+        )),
       },
       {
         path: "inventory/adjust",
-        component: (props) => (
-          <InventoryAdjustForm transport={props.transport} initial={filledValues(props.search)} onSubmitted={done(props)} />
-        ),
+        component: screen(inventory, (m) => (props) => (
+          <m.InventoryAdjustForm transport={props.transport} initial={filledValues(props.search)} onSubmitted={done(props)} />
+        )),
       },
       {
         path: "inventory/split",
-        component: (props) => (
-          <InventorySplitForm transport={props.transport} initial={filledValues(props.search)} onSubmitted={done(props)} />
-        ),
+        component: screen(inventory, (m) => (props) => (
+          <m.InventorySplitForm transport={props.transport} initial={filledValues(props.search)} onSubmitted={done(props)} />
+        )),
       },
       {
         path: "inventory/merge",
-        component: (props) => <InventoryMergeForm transport={props.transport} onSubmitted={done(props)} />,
+        component: screen(inventory, (m) => (props) => <m.InventoryMergeForm transport={props.transport} onSubmitted={done(props)} />),
       },
     ],
   },
@@ -162,20 +150,20 @@ export const SECTIONS: readonly ShellSection[] = [
       {
         path: "inventory-transactions",
         label: InventoryTransactionQueryTableLabel,
-        component: (props) => (
-          <InventoryTransactionQueryTable
+        component: screen(inventoryTransaction, (m) => (props) => (
+          <m.InventoryTransactionQueryTable
             transport={props.transport}
             onOpen={{
               "wamn-wms:inventory-transaction/get@1.0.0": (row) => props.open(record("inventory-transactions", row)),
             }}
           />
-        ),
+        )),
       },
     ],
     routes: [
       {
         path: "inventory-transactions/:id",
-        component: (props) => <InventoryTransactionGetDetail transport={props.transport} input={key(props)} />,
+        component: screen(inventoryTransaction, (m) => (props) => <m.InventoryTransactionGetDetail transport={props.transport} input={key(props)} />),
       },
     ],
   },
@@ -186,32 +174,32 @@ export const SECTIONS: readonly ShellSection[] = [
         path: "locations",
         label: LocationQueryTableLabel,
         actions: [{ label: LocationCreateFormLabel, path: "locations/new" }],
-        component: (props) => (
-          <LocationQueryTable
+        component: screen(location, (m) => (props) => (
+          <m.LocationQueryTable
             transport={props.transport}
             onOpen={{ "wamn-wms:location/get@1.0.0": (row) => props.open(record("locations", row)) }}
             onFill={{ "wamn-wms:packaging/create@1.0.0": (fill) => props.open(fillPath("packagings/new", fill)) }}
           />
-        ),
+        )),
       },
     ],
     routes: [
       {
         path: "locations/new",
-        component: (props) => (
-          <LocationCreateForm transport={props.transport} initial={filledValues(props.search)} onSubmitted={done(props)} />
-        ),
+        component: screen(location, (m) => (props) => (
+          <m.LocationCreateForm transport={props.transport} initial={filledValues(props.search)} onSubmitted={done(props)} />
+        )),
       },
       {
         path: "locations/:id",
         actions: [{ label: LocationUpdateFormLabel, path: "locations/:id/update" }],
-        component: (props) => <LocationGetDetail transport={props.transport} input={key(props)} />,
+        component: screen(location, (m) => (props) => <m.LocationGetDetail transport={props.transport} input={key(props)} />),
       },
       {
         path: "locations/:id/update",
-        component: (props) => (
-          <LocationUpdateForm transport={props.transport} key={key(props)} onSubmitted={done(props)} />
-        ),
+        component: screen(location, (m) => (props) => (
+          <m.LocationUpdateForm transport={props.transport} key={key(props)} onSubmitted={done(props)} />
+        )),
       },
     ],
   },
@@ -222,31 +210,31 @@ export const SECTIONS: readonly ShellSection[] = [
         path: "products",
         label: ProductQueryTableLabel,
         actions: [{ label: ProductCreateFormLabel, path: "products/new" }],
-        component: (props) => (
-          <ProductQueryTable
+        component: screen(product, (m) => (props) => (
+          <m.ProductQueryTable
             transport={props.transport}
             onOpen={{ "wamn-wms:product/get@1.0.0": (row) => props.open(record("products", row)) }}
           />
-        ),
+        )),
       },
     ],
     routes: [
       {
         path: "products/new",
-        component: (props) => (
-          <ProductCreateForm transport={props.transport} initial={filledValues(props.search)} onSubmitted={done(props)} />
-        ),
+        component: screen(product, (m) => (props) => (
+          <m.ProductCreateForm transport={props.transport} initial={filledValues(props.search)} onSubmitted={done(props)} />
+        )),
       },
       {
         path: "products/:id",
         actions: [{ label: ProductUpdateFormLabel, path: "products/:id/update" }],
-        component: (props) => <ProductGetDetail transport={props.transport} input={key(props)} />,
+        component: screen(product, (m) => (props) => <m.ProductGetDetail transport={props.transport} input={key(props)} />),
       },
       {
         path: "products/:id/update",
-        component: (props) => (
-          <ProductUpdateForm transport={props.transport} key={key(props)} onSubmitted={done(props)} />
-        ),
+        component: screen(product, (m) => (props) => (
+          <m.ProductUpdateForm transport={props.transport} key={key(props)} onSubmitted={done(props)} />
+        )),
       },
     ],
   },
