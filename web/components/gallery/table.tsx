@@ -14,7 +14,13 @@
 
 import { createSignal, For, type JSX } from "solid-js";
 
-import { DataTable, type DataTableColumn, type DataTableScopeFilter, type DataTableSort } from "@wamn/ui";
+import {
+  DataTable,
+  type DataTableColumn,
+  type DataTableScopeFilter,
+  type DataTableSort,
+  QueryTable,
+} from "@wamn/ui";
 import {
   emptyLoad,
   finishLoad,
@@ -28,6 +34,7 @@ import {
 } from "@wamn/web-runtime";
 
 import { WIDGET_QUERY_TABLE } from "../fixture/components/widget.js";
+import { WIDGET_MAKER_QUERY_TABLE } from "../fixture/components/widget_maker.js";
 import {
   query,
   type WidgetQueryRequestFilter,
@@ -136,7 +143,8 @@ function SeamTable(props: { size: number }): JSX.Element {
       sortFields={definition.sortFields}
       sortMaxFields={definition.sortMaxFields}
       onSortChange={sortBy}
-      scopeFilters={definition.scopeFilters}
+      // The stub reads the code alone, so the bar offers that filter only.
+      scopeFilters={["code"]}
       onScopeChange={scopeBy}
     />
   );
@@ -214,6 +222,24 @@ function MemoryTable(props: {
   );
 }
 
+/**
+ * The maker table from its emitted definition, over a stub of three makers.
+ * Its scope bar shows the required band of the last 30 days, the contains
+ * filter on the name, and the server search.
+ */
+function MakerTable(): JSX.Element {
+  const makers = ["Acme", "Globex", "Initech"].map((name, index) => ({
+    id: `00000000-0000-4000-8000-00000000000${index}`,
+    name,
+    edit_version: "1",
+    created_at: `2026-09-2${index}T12:00:00.000000Z`,
+  }));
+  const transport: Transport = {
+    invoke: () => Promise.resolve({ status: "completed", value: { item: makers, next_cursor: null } }),
+  };
+  return <QueryTable definition={WIDGET_MAKER_QUERY_TABLE} transport={transport} label="makers" />;
+}
+
 /** The DataTable over one load state. A refresh loads again at the cap in force. */
 function LoadedTable<Row extends object>(props: {
   name: string;
@@ -289,6 +315,11 @@ export function TableSections(): JSX.Element {
           <State name="WIDGET_QUERY_TABLE, not fully read: a sort by created at loads again in that order, and the filters are disabled">
             <div class="h-[32rem]">
               <SeamTable size={150} />
+            </div>
+          </State>
+          <State name="WIDGET_MAKER_QUERY_TABLE: a required band of the last 30 days, a contains filter and a server search in the scope bar">
+            <div class="h-[32rem]">
+              <MakerTable />
             </div>
           </State>
           <For each={[1000, 10000]}>

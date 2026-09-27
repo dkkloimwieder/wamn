@@ -63,7 +63,8 @@
  * chooses its aggregate. The column panel shows and hides columns and orders
  * them, and a header edge drag sets a width. The arrangement works in every
  * mode. The scope bar holds the server part of a load: each declared scope
- * filter with its values, and the current sort as a chip. A scope change calls
+ * filter with the control its match mode takes, the server search when the
+ * read declares one, and the current sort as a chip. A scope change calls
  * `onScopeChange`, and the source reads again. The table applies no scope.
  *
  * A view is a named copy of all of this state and the cap, kept in memory for
@@ -160,7 +161,7 @@ import { type DataTableEditResult, EditCell, editedValue, editText, type OpenEdi
 import { ColumnMenu } from "./column-menu";
 import { ColumnPanel } from "./column-panel";
 import { type DataTableGroupSort, GroupBar, VALUE_SORT } from "./group-bar";
-import { type DataTableScopeFilter, ScopeBar } from "./scope-bar";
+import { type DataTableScopeFilter, type DataTableScopeMode, ScopeBar, scopeApplies } from "./scope-bar";
 import {
   type DataTableView,
   type DataTableViewDeclaration,
@@ -244,10 +245,17 @@ export interface DataTableProps<TRow extends object> {
   readonly sortMaxFields: number;
   /** Called with the whole new sort after a click, when the set is not fully read. */
   readonly onSortChange: (sort: readonly DataTableSort<TRow>[]) => void;
-  /** The declared scope filters: the fields the source can read by a list of values. */
+  /** The declared scope filters: the fields the source reads by a scope filter. */
   readonly scopeFilters: readonly (keyof TRow & string)[];
-  /** Called with every scope filter that holds a value, after the scope bar changes one. */
-  readonly onScopeChange: (filters: readonly DataTableScopeFilter<keyof TRow & string>[]) => void;
+  /** How each scope filter matches, when not exactly, and a band's default. */
+  readonly scopeModes?: Readonly<Record<string, DataTableScopeMode>> | undefined;
+  /** True when the source reads a server search, which the scope bar then offers. */
+  readonly findable?: boolean | undefined;
+  /**
+   * Called with every scope filter that narrows the rows, and the server
+   * search, after the scope bar changes one.
+   */
+  readonly onScopeChange: (filters: readonly DataTableScopeFilter<keyof TRow & string>[], find: string) => void;
   /** The fields hidden when the table first draws. A view replaces them later. */
   readonly hiddenFields?: readonly (keyof TRow & string)[] | undefined;
   /** The fields grouped when the table first draws, in nesting order. A view replaces them later. */
@@ -775,16 +783,25 @@ export function DataTable<TRow extends object>(props: DataTableProps<TRow>): JSX
     ),
   );
 
-  /** The values of each scope filter. The source reads them, and the table applies none. */
-  const [scope, setScope] = createSignal<Record<string, readonly string[]>>({});
-  function changeScope(field: string, values: readonly string[]) {
-    const next = { ...scope(), [field]: values };
+  /** Each scope filter and the server search. The source reads them, and the table applies none. */
+  const [scope, setScope] = createSignal<Record<string, DataTableScopeFilter>>({});
+  const [find, setFind] = createSignal("");
+  const modeOf = (field: string): DataTableScopeMode =>
+    props.scopeModes?.[field] ?? {};
+  /** The scope filters that narrow the rows, in declared order. */
+  const appliedScope = (current: Record<string, DataTableScopeFilter>) =>
+    props.scopeFilters.flatMap((declared) => {
+      const filter = current[declared];
+      return filter !== undefined && scopeApplies(filter, modeOf(declared)) ? [filter] : [];
+    }) as DataTableScopeFilter<keyof TRow & string>[];
+  function changeScope(filter: DataTableScopeFilter) {
+    const next = { ...scope(), [filter.field]: filter };
     setScope(next);
-    props.onScopeChange(
-      props.scopeFilters
-        .filter((declared) => (next[declared] ?? []).length > 0)
-        .map((declared) => ({ field: declared, values: next[declared]! })),
-    );
+    props.onScopeChange(appliedScope(next), find());
+  }
+  function changeFind(text: string) {
+    setFind(text);
+    props.onScopeChange(appliedScope(scope()), text);
   }
 
   /** The current sort, as the scope bar shows it. */
@@ -825,6 +842,7 @@ export function DataTable<TRow extends object>(props: DataTableProps<TRow>): JSX
     right: [],
     sort: [],
     scope: [],
+    find: "",
     filters: [],
     search: "",
     group: (props.groupedFields ?? []).map((field) => ({
@@ -852,9 +870,8 @@ export function DataTable<TRow extends object>(props: DataTableProps<TRow>): JSX
         field: sort.id,
         direction: sort.desc ? "descending" : "ascending",
       })),
-      scope: props.scopeFilters
-        .filter((field) => (scope()[field] ?? []).length > 0)
-        .map((field) => ({ field, values: scope()[field]! })),
+      scope: appliedScope(scope()),
+      find: find(),
       filters: (table.atoms.columnFilters?.get() ?? []).map((active) => ({
         field: active.id,
         filter: active.value as DataTableFilter,
@@ -898,9 +915,11 @@ export function DataTable<TRow extends object>(props: DataTableProps<TRow>): JSX
     setGroupSorts(Object.fromEntries(view.group.map((level) => [level.field, level.sort])));
     setChosen({ ...view.aggregates });
     setGeneration((value) => value + 1);
-    if (JSON.stringify(currentView().scope) !== JSON.stringify(view.scope)) {
-      setScope(Object.fromEntries(view.scope.map((scoped) => [scoped.field, scoped.values])));
-      props.onScopeChange(view.scope as readonly DataTableScopeFilter<keyof TRow & string>[]);
+    const before = currentView();
+    if (JSON.stringify(before.scope) !== JSON.stringify(view.scope) || before.find !== view.find) {
+      setScope(Object.fromEntries(view.scope.map((scoped) => [scoped.field, scoped])));
+      setFind(view.find);
+      props.onScopeChange(view.scope as readonly DataTableScopeFilter<keyof TRow & string>[], view.find);
     }
     if (view.cap !== props.cap) {
       props.onCapChange(view.cap);
@@ -1045,15 +1064,17 @@ export function DataTable<TRow extends object>(props: DataTableProps<TRow>): JSX
 
   return (
     <section data-slot="data-table" class="flex h-full min-h-0 min-w-0 flex-col gap-4">
-      <Show when={props.scopeFilters.length > 0 || sortChips().length > 0}>
+      <Show when={props.scopeFilters.length > 0 || sortChips().length > 0 || props.findable === true}>
         <ScopeBar
           filters={props.scopeFilters.map((field) => ({
-            field,
+            ...(scope()[field] ?? { field, values: [] }),
             label: column(field).label,
-            values: scope()[field] ?? [],
+            mode: modeOf(field),
           }))}
+          find={props.findable === true ? find() : undefined}
           sort={sortChips()}
           onChange={changeScope}
+          onFind={changeFind}
         />
       </Show>
       <div

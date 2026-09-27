@@ -549,6 +549,9 @@ The definition names each operation the table calls as a binding, which is its r
 Each filter states its match mode when it does not match exactly, a range states the type of its bounds, and a band states the days it reads by default.
 A read with a server search names the search input and the fields it reads.
 Its declared filters are the scope bar of the table, and the table owns the sort, the cap and the refresh.
+The scope bar shows one control for each filter mode. Exact, contains and prefix filters take value chips, a range takes two bounds, and an is-null filter takes any, empty or has a value.
+A band shows its default days until the operator sets its start, and its reset returns to the default. A load without the band leaves it out of the request.
+A read with a server search gets a search box in the scope bar, apart from the client search of a fully read set. Views and the URL keep each shape.
 It loads when it mounts. A load of a query streams its rows up to the cap, when the transport can stream.
 [`load.ts`](../../web/runtime/src/load.ts) reads the reply lines with a stream decoder and a line buffer, and hands the rows to the table in batches, once per animation frame, or every 50 ms where no frames run.
 A new load aborts the stream of the last one, and a batch of an older load is dropped. A malformed line, or a body without its outcome line, fails the load.

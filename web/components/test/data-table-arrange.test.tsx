@@ -187,7 +187,8 @@ describe("the scope bar", () => {
       fireEvent.keyDown(input, { key: "Enter" });
     };
     add("code", "a");
-    expect(onScopeChange.mock.lastCall).toEqual([[{ field: "code", values: ["a"] }]]);
+    // The second argument is the server search, which this table has none of.
+    expect(onScopeChange.mock.lastCall).toEqual([[{ field: "code", values: ["a"] }], ""]);
     add("code", "b");
     add("qty", "3");
     expect(onScopeChange.mock.lastCall).toEqual([
@@ -195,11 +196,12 @@ describe("the scope bar", () => {
         { field: "code", values: ["a", "b"] },
         { field: "qty", values: ["3"] },
       ],
+      "",
     ]);
     expect(codes()).toEqual(["a", "b", "c"]);
     press("remove code a");
     press("remove code b");
-    expect(onScopeChange.mock.lastCall).toEqual([[{ field: "qty", values: ["3"] }]]);
+    expect(onScopeChange.mock.lastCall).toEqual([[{ field: "qty", values: ["3"] }], ""]);
     expect(onScopeChange).toHaveBeenCalledTimes(5);
   });
 

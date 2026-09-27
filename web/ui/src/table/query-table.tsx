@@ -180,6 +180,38 @@ export interface QueryTableProps<TRow extends object, TResult = unknown> {
 
 type Member = { readonly [name: string]: unknown };
 
+/**
+ * One bound of a range, as the contract type spells it. A time control gives
+ * a local time, which the request sends as an instant. An int32 and a float64
+ * are JSON numbers, and a numeric is a decimal string.
+ */
+function rangeBound(type: string | undefined, text: string): JsonValue {
+  switch (type) {
+    case "timestamptz":
+      return new Date(text).toISOString();
+    case "int32":
+    case "float64":
+      return Number(text);
+    default:
+      return text;
+  }
+}
+
+/** The request value of one scope filter: a list, one value, a range, or whether the field is empty. */
+function scopeValue(filter: QueryTableFilter, chosen: DataTableScopeFilter): JsonValue {
+  if (chosen.empty !== undefined) {
+    return chosen.empty;
+  }
+  if (chosen.range !== undefined) {
+    const { min, max } = chosen.range;
+    return {
+      ...(min === "" ? {} : { min: rangeBound(filter.type, min) }),
+      ...(max === "" ? {} : { max: rangeBound(filter.type, max) }),
+    };
+  }
+  return filter.list ? [...chosen.values] : chosen.values[0]!;
+}
+
 /** What one outcome of a row's input in a bulk action means to that row. */
 function rowResult(outcome: Outcome<unknown>): DataTableRowResult {
   switch (outcome.status) {
@@ -240,19 +272,25 @@ export function QueryTable<TRow extends object, TResult = unknown>(
   const definition = props.definition;
   const transport = props.transport;
   const [scope, setScope] = createSignal<readonly DataTableScopeFilter[]>([]);
+  const [find, setFind] = createSignal("");
   // True while this table sends a write, whose result it puts in place itself.
   let writing = false;
 
   const fixedBy = (filter: QueryTableFilter) => readMember(props.fixed ?? {}, filter.input) !== undefined;
 
-  // The request of one load: the fixed and chosen scope, the limit and the sort.
+  // The request of one load: the fixed and chosen scope, the server search,
+  // the limit and the sort. A band the operator did not set is left out, so
+  // the server reads its default days.
   const request = (limit: number, sort: TableLoadSort | undefined): object => {
     let request = { ...props.fixed } as object;
     for (const chosen of scope()) {
       const filter = definition.filters.find((declared) => declared.field === chosen.field);
       if (filter !== undefined && !fixedBy(filter)) {
-        request = writeMember(request, filter.input, filter.list ? [...chosen.values] : chosen.values[0]!);
+        request = writeMember(request, filter.input, scopeValue(filter, chosen));
       }
+    }
+    if (definition.search !== undefined && find() !== "") {
+      request = writeMember(request, definition.search.input, find());
     }
     if (definition.limitInput !== null) {
       request = writeMember(request, definition.limitInput, limit);
@@ -475,8 +513,21 @@ export function QueryTable<TRow extends object, TResult = unknown>(
           const filter = definition.filters.find((declared) => declared.field === field);
           return filter === undefined || !fixedBy(filter);
         })}
-        onScopeChange={(filters) => {
+        scopeModes={Object.fromEntries(
+          definition.filters.map((filter) => [
+            filter.field,
+            {
+              match: filter.match,
+              type: filter.type,
+              required: filter.required,
+              defaultLastDays: filter.defaultLastDays,
+            },
+          ]),
+        )}
+        findable={definition.search !== undefined}
+        onScopeChange={(filters, text) => {
           setScope(filters);
+          setFind(text);
           void load.load();
         }}
         rowActions={rowActions}

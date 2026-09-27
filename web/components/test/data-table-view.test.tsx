@@ -122,7 +122,7 @@ describe("the URL", () => {
     expect((screen.getByLabelText("search") as HTMLInputElement).value).toBe("e");
     expect(theButton("remove filter qty")).toBeDefined();
     expect(document.querySelector('[data-slot="data-table-total"][data-field="qty"]')?.textContent).toBe("avg 5");
-    expect(onScopeChange).toHaveBeenLastCalledWith([{ field: "code", values: ["a", "b"] }]);
+    expect(onScopeChange).toHaveBeenLastCalledWith([{ field: "code", values: ["a", "b"] }], "");
     expect(cap()).toBe(500);
   });
 
@@ -186,7 +186,7 @@ describe("the views", () => {
     at("?lots.filter.qty=range:3,&lots.scope.code=a&lots.cap=500");
     const { cap, onScopeChange } = table({ fullyRead, urlKey: "lots" });
     expect(cap()).toBe(500);
-    expect(onScopeChange).toHaveBeenLastCalledWith([{ field: "code", values: ["a"] }]);
+    expect(onScopeChange).toHaveBeenLastCalledWith([{ field: "code", values: ["a"] }], "");
     expect(codes()).toEqual(["a", "b", "c"]);
     setFullyRead(true);
     expect(codes()).toEqual(["b", "c"]);

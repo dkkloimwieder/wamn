@@ -54,7 +54,12 @@ export { type DataTableFilter } from "./table/column-filter";
 export { DataTable, type DataTableColumn, type DataTableColumnRole, type DataTableColumnType, type DataTableProps, type DataTableSort, type DataTableSortDirection } from "./table/data-table";
 export { type DataTableAggregate, type DataTableBucket } from "./table/aggregate";
 export { type DataTableGroupSort } from "./table/group-bar";
-export { type DataTableScopeFilter } from "./table/scope-bar";
+export {
+  type DataTableScopeFilter,
+  type DataTableScopeMatch,
+  type DataTableScopeMode,
+  type DataTableScopeRange,
+} from "./table/scope-bar";
 export { type DataTableAction, type DataTableRowResult } from "./table/bulk";
 export { type DataTableEditResult } from "./table/edit-cell";
 export { type DataTableChild } from "./table/child-tables";

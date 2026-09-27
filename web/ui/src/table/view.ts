@@ -12,7 +12,10 @@
  *
  *   ?pallets.order=code,createdAt,id&pallets.sort=createdAt:desc&pallets.cap=5000
  *
- * A scope filter is one key for each value, `pallets.scope.<field>=<value>`.
+ * A list scope filter is one key for each value, `pallets.scope.<field>=<value>`.
+ * A range scope filter is `pallets.scope.<field>.min=<value>` and `.max`, and
+ * an is-null one is `pallets.scope.<field>.empty=true` or `false`. The server
+ * search is `pallets.find=<text>`.
  * A refine filter is `pallets.filter.<field>=<kind>:<value>`. Reading ignores
  * an unknown part, an undeclared field and a value it cannot read, and names
  * each one, so the table can report them.
@@ -21,7 +24,7 @@
 import type { DataTableAggregate, DataTableBucket } from "./aggregate";
 import type { DataTableFilter } from "./column-filter";
 import type { DataTableGroupSort } from "./group-bar";
-import type { DataTableScopeFilter } from "./scope-bar";
+import type { DataTableScopeFilter, DataTableScopeRange } from "./scope-bar";
 
 export type DataTableViewDirection = "ascending" | "descending";
 
@@ -44,6 +47,8 @@ export interface DataTableViewState {
   readonly right: readonly string[];
   readonly sort: readonly { readonly field: string; readonly direction: DataTableViewDirection }[];
   readonly scope: readonly DataTableScopeFilter[];
+  /** The server search, or empty. */
+  readonly find: string;
   readonly filters: readonly { readonly field: string; readonly filter: DataTableFilter }[];
   readonly search: string;
   readonly group: readonly DataTableViewGroup[];
@@ -81,6 +86,7 @@ const PARTS = [
   "right",
   "sort",
   "scope",
+  "find",
   "filter",
   "search",
   "group",
@@ -89,6 +95,12 @@ const PARTS = [
 ] as const;
 
 const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
+
+/** True when a scope filter holds a value, a bound or a choice. */
+const scoped = (scope: DataTableScopeFilter) =>
+  scope.values.length > 0 ||
+  scope.empty !== undefined ||
+  (scope.range !== undefined && (scope.range.min !== "" || scope.range.max !== ""));
 
 /** The state with every undeclared field dropped, and every column in the order. */
 export function declaredView(
@@ -108,9 +120,8 @@ export function declaredView(
     left: state.left.filter(declared),
     right: state.right.filter((field) => declared(field) && !state.left.includes(field)),
     sort: state.sort.filter((sort) => declared(sort.field)),
-    scope: state.scope.filter(
-      (scope) => declaration.scopeFilters.includes(scope.field) && scope.values.length > 0,
-    ),
+    scope: state.scope.filter((scope) => declaration.scopeFilters.includes(scope.field) && scoped(scope)),
+    find: state.find,
     filters: state.filters.filter((filter) => declared(filter.field)),
     search: state.search,
     group: state.group
@@ -190,8 +201,14 @@ export function encodeView(
         if (!same(state.scope, defaults.scope)) {
           for (const scope of state.scope) {
             for (const value of scope.values) put(`scope.${scope.field}`, value);
+            if (scope.range?.min) put(`scope.${scope.field}.min`, scope.range.min);
+            if (scope.range?.max) put(`scope.${scope.field}.max`, scope.range.max);
+            if (scope.empty !== undefined) put(`scope.${scope.field}.empty`, String(scope.empty));
           }
         }
+        break;
+      case "find":
+        if (state.find !== defaults.find) put(part, state.find);
         break;
       case "filter":
         if (!same(state.filters, defaults.filters)) {
@@ -265,6 +282,8 @@ export function decodeView(
   const column = (field: string) => declaration.columns.find((candidate) => candidate.field === field);
   const state: { -readonly [K in keyof DataTableViewState]: DataTableViewState[K] } = { ...defaults };
   const scope = new Map<string, string[]>();
+  const ranges = new Map<string, DataTableScopeRange>();
+  const empties = new Map<string, boolean>();
   const filters: { field: string; filter: DataTableFilter }[] = [];
   /** The fields of a list, or null when one is not declared. */
   const list = (value: string) => {
@@ -289,6 +308,16 @@ export function decodeView(
     if (!name.startsWith(`${key}.`)) continue;
     const [part, field, ...rest] = name.slice(key.length + 1).split(".");
     const ignore = () => ignored.push(`${name}=${value}`);
+    // A range bound or an is-null choice of a scope filter names its member.
+    if (part === "scope" && field !== undefined && rest.length === 1 && declaration.scopeFilters.includes(field)) {
+      const [member] = rest;
+      if ((member === "min" || member === "max") && value !== "") {
+        ranges.set(field, { ...(ranges.get(field) ?? { min: "", max: "" }), [member]: value });
+      } else if (member === "empty" && (value === "true" || value === "false")) {
+        empties.set(field, value === "true");
+      } else ignore();
+      continue;
+    }
     if (rest.length > 0) {
       ignore();
       continue;
@@ -340,6 +369,9 @@ export function decodeView(
       case "search":
         state.search = value;
         break;
+      case "find":
+        state.find = value;
+        break;
       case "group": {
         const levels: DataTableViewGroup[] = [];
         for (const item of value === "" ? [] : value.split(",")) {
@@ -383,10 +415,19 @@ export function decodeView(
     }
     if (!read) ignore();
   }
-  if (scope.size > 0) {
+  if (scope.size > 0 || ranges.size > 0 || empties.size > 0) {
     state.scope = declaration.scopeFilters
-      .filter((field) => scope.has(field))
-      .map((field) => ({ field, values: scope.get(field)! }));
+      .filter((field) => scope.has(field) || ranges.has(field) || empties.has(field))
+      .map((field) => {
+        const range = ranges.get(field);
+        const empty = empties.get(field);
+        return {
+          field,
+          values: scope.get(field) ?? [],
+          ...(range === undefined ? {} : { range }),
+          ...(empty === undefined ? {} : { empty }),
+        };
+      });
   }
   if (filters.length > 0) state.filters = filters;
   return { state: declaredView(state, declaration), ignored };
