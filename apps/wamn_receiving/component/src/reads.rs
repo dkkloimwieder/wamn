@@ -433,8 +433,8 @@ mod tests {
     #[test]
     fn dto_unknown_fields_and_non_int64_wire_scalars_refuse_in_memory() {
         assert!(
-            super::purchase_order_query::decode(r#"[{"limit":2}]"#).unwrap()[0]
-                .input
+            super::purchase_order_query::decode(r#"[{"limit":2}]"#)
+                .unwrap()
                 .is_ok()
         );
         assert!(
