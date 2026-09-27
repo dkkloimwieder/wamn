@@ -1070,3 +1070,42 @@ gcloud compute health-checks delete wamn-edge $P --global --quiet
 gcloud compute firewall-rules delete wamn-edge-health-check $P --quiet
 helm uninstall wamn-edge -n edge
 ```
+
+## 5. Second application: WMS
+
+WMS runs beside Receiving at `wms.wamn.dev`, behind the same certificate and load balancer. The edge chart takes a list of `applications`, one entry for each public host.
+
+### 5.1 Label store
+
+A WMS move stores a pallet label through the blob store capability. On Google Cloud the store is a Cloud Storage bucket, and the host signs with its pod's Google service account through Workload Identity. No HMAC key and no credential handle exist. Make the bucket, with uniform access and no public read:
+
+```bash
+gcloud storage buckets create gs://wamn-dev-labels --project wamn-dev --location us-central1 \
+  --uniform-bucket-level-access --public-access-prevention
+```
+
+Make the Google service account `wamn-blob`, and give it `roles/storage.objectAdmin` on that bucket only:
+
+```bash
+gcloud iam service-accounts create wamn-blob --project wamn-dev --display-name "wamn host blob store"
+gcloud storage buckets add-iam-policy-binding gs://wamn-dev-labels --project wamn-dev \
+  --member serviceAccount:wamn-blob@wamn-dev.iam.gserviceaccount.com --role roles/storage.objectAdmin
+```
+
+If the bucket binding answers that the service account does not exist, the new account is not visible yet. Run the binding again after the account shows in `gcloud iam service-accounts describe`.
+
+Let the host's Kubernetes service account `hosts/wamn-host-runtime-operator-runtime` act as `wamn-blob`:
+
+```bash
+gcloud iam service-accounts add-iam-policy-binding wamn-blob@wamn-dev.iam.gserviceaccount.com --project wamn-dev \
+  --role roles/iam.workloadIdentityUser \
+  --member "serviceAccount:wamn-dev.svc.id.goog[hosts/wamn-host-runtime-operator-runtime]"
+```
+
+The host values annotate that service account with `iam.gke.io/gcp-service-account: wamn-blob@wamn-dev.iam.gserviceaccount.com`. The WMS label binding names the `gcs` provider and no credential handle:
+
+```json
+{"provider": "gcs", "container": "wamn-dev-labels", "prefix": "wms/"}
+```
+
+On 2026-09-27 the bucket, the account and the two bindings took 6 seconds. The first bucket binding failed because the account was not visible yet, and the second attempt passed.
