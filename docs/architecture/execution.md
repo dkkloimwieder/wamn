@@ -79,7 +79,8 @@ The router calls `deliver-stream` of [`wamn:router-delivery` 0.2.0](../../crates
 [`query_read`](../../crates/execution/host/src/query_read.rs) owns the ceiling and the lines.
 
 `invoke_operation` takes an optional intent context, and with one a write logs one intent for each input item and runs only the new items.
-The cloud route passes none. The edge passes one for each route, and the [edge plan](../plan/edge.md#47-sqlite-schema) states the rules.
+The cloud route passes none: a cloud create or command claims its key in the [write log](data-access.md#the-write-log) inside its own transaction. The edge passes one for each route, and the [edge plan](../plan/edge.md#47-sqlite-schema) states the rules.
+A retry that the write log answers commits nothing, so change capture publishes no event for it and no post-commit work runs a second time.
 Publish writes the input field of the idempotency key into the serving manifest route (`idempotency`) from the generated input contract.
 
 A route input that fails its schema returns HTTP 400 with the code `schema-invalid`.
@@ -183,6 +184,7 @@ The queue owner binds these transactions to `wamn_run`, independently of the app
 HTTP admission and queue delivery use separate concurrency bounds, so one workload cannot consume the other's capacity.
 Each host replica polls the durable queue and claims work through database leases; replicas need no wake service or process-local handoff.
 
+The host opens each claims transaction with `BEGIN ISOLATION LEVEL READ COMMITTED`, so a session default cannot change the level that the [write log](data-access.md#the-write-log) retry depends on.
 The host binds the executing principal as `app.user_id` in each claims transaction that it opens.
 [Record history](data-access.md#record-history) stamps that principal on every write.
 
@@ -233,7 +235,7 @@ The result leaves on port `main`, or on port `items`, whose schema is the item a
 The node is a std guest: it imports `wasi:random` at the version that Rust std links, and the virtualizer passes that import through.
 
 The WMS workflow `movement_label` is the first example.
-The `inventory_movement` insert starts it, and it stores one pallet label for each move, keyed by the move's idempotency key.
+The `inventory_movement` insert starts it, and it stores one pallet label for each movement row of a move, keyed by the movement id.
 
 ## Results and effects
 
@@ -652,7 +654,7 @@ Uncertainty belongs to the whole submitted intent.
 A later retry refusal does not clear uncertainty from an earlier attempt.
 Safe retry uses the captured body, key, time, and expected revision byte-for-byte.
 Authorization headers are derived again.
-Only the served claim-replay contract permits this retry.
+Only the served write-log replay contract permits this retry.
 A state command or effectful composition requires a refresh before a new intent.
 Abandoning local intent cancels no server work.
 

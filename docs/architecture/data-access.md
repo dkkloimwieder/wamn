@@ -77,7 +77,7 @@ The generator compares those choices with the schema and SQL. It does not replac
 | Filter `binding` (`json_array` for a list, `json_range` for a range, `json_boolean` for is-null), sort `max_fields`, pagination `kind`, `.cursor`, and limit `invalid` | Fixed query protocol, including cursor version, canonical JSON, encoding, opacity, and refusal. Derive in generated contracts. |
 | `internal_relations.*.schema`, `.table`, `.cdc` | Application relation selection and event-publication policy. PostgreSQL owns relation shape. Retain. |
 | Custom operation `kind`, `visibility`, `permission`, `connection` | Application operation exposure and authority selection. Retain. |
-| `transaction`, `automatic_retry`, `idempotent_by`, `claim.*` | Application transaction and replay choices, including claim statements and generated identities. Retain. |
+| `transaction`, `automatic_retry`, `idempotent_by` | Application transaction and replay choices. `idempotent_by: claim` is the whole declaration of a claim: the generated codec claims the key in the [write log](#the-write-log). Validation refuses a `claim` object. Retain. |
 | `pre_commit`, `participant` | Application participation contract and selection. Retain. |
 | `input.raw_body_maximum`, `.envelope.minimum`, `.maximum`, `.line.minimum`, `.maximum` | Application input bounds. Retain. |
 | Input `item_semantics` and count-bound `invalid` | Fixed per-item outcomes and input refusal. Derive. |
@@ -199,8 +199,8 @@ Return, trap, cancellation, deadline, or transaction completion revokes access. 
 The earlier cross-component borrowed-resource contract failed with `mismatched resource types` on the current pin.
 That result does not describe participant-local resources. Explicit resource transfer between stores remains unimplemented.
 
-The base finalizes its claim and result after successful participation, then commits.
-The claim includes the participant identity and release. Replay returns the stored result without repeated writes, and changed intent refuses.
+The base's codec stores the result in the write log after successful participation, then commits.
+The request bytes include the selected participation intent. A retry answers the stored result without repeated writes, and a changed intent refuses.
 Receiving and Acme use this path for conditional inspection under the existing purchase-order lock.
 No inspection requirement produces no inspection row. An approved requirement permits the write. An unmet requirement rolls back the entire item.
 Permitted direct Receiving calls retain base behavior.
@@ -208,6 +208,40 @@ Permitted direct Receiving calls retain base behavior.
 The host owns begin, commit, rollback, and connection cleanup.
 An error, trap, cancellation, or deadline destroys unfinished transaction state before another request can acquire the connection.
 Serialization and deadlock errors reach the caller without an automatic transaction retry.
+
+### The write log
+
+`app_system.write_log` holds the idempotency record of every create and every command idempotent by claim in one project database.
+`deploy/sql/app-schema.sql` installs it, so no application migration names it.
+It has no tenant column and no row policy, because the database is the tenant, and no record history: the rows the work writes carry the actor.
+`wamn_app` holds `INSERT`, `SELECT` and `UPDATE (result)` on it.
+Its key is the contract operation without its `@version`, for example `wamn-wms:location/create`, and the idempotency key.
+The key is the input field that the contract's `idempotency.key` names: `idempotency_key` for a create, and `value.idempotency_key` for a command item.
+
+The generated codec of a claim operation owns the transaction of each item.
+The data access takes that transaction and does the work.
+For each item the codec runs these steps:
+
+1. It opens the transaction. The host opens every claimed transaction with `BEGIN ISOLATION LEVEL READ COMMITTED`, because the retry below reads the row that another transaction committed.
+2. It claims the key with `log_claim`, an insert that does nothing on conflict. An uncommitted claim of another transaction makes the insert wait until that transaction ends.
+3. If the insert claimed nothing, a committed claim holds the key. `log_read` reads its request and result with a fresh snapshot. The same request answers the stored result, and another request answers `idempotency_conflict`. The codec rolls back, so the retry runs no work.
+4. If the insert claimed the key, the handler does the work. A result is stored with `log_finish` and commits with the work. A refusal rolls back, and the claim goes with it.
+
+A refused item leaves no row, so its key is free again, and a later different request under that key does its work.
+A retry that answers a stored result commits nothing, so no event publishes a second time.
+Update and delete claim nothing: `row_version` is their guard.
+A new id comes from its insert's `RETURNING`, and nothing mints an id before the work.
+No application table implements or references the claim. The stored result names the rows that the work wrote, for example the `movement_ids` of a WMS command.
+
+The request bytes are `wamn_execution_contract::canonical_json_bytes` of the validated request without the key.
+A uuid is lowercase and hyphenated, a `timestamptz` is UTC with six fractional digits, and a `numeric` keeps its scale.
+A command's declared exclusions and line order apply.
+The result is the encoded outcome of the item, without its `request_id`.
+
+The generator writes the three statements once for each package, in `generated/sql/write_log/{claim,read,finish}.sql`.
+Every claim operation lists them in its contract `statements[]`, so the host admits them for its invocation.
+The package statement check does not plan them, because they name a relation outside the package schemas.
+The engine's intent record keeps the same rules for an operation with no SQL at the edge (`crates/platform/engine/src/operation/intent.rs`).
 
 Production-claim and release-attestation errors retain PostgreSQL's primary message and constraint name.
 They omit `DETAIL` and `HINT`, which can include failing row values.
