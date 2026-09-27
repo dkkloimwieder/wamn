@@ -454,7 +454,7 @@ kubectl -n hosts create secret generic wamn-materializer-nats --from-file=bindin
 
 On 2026-09-26 the first start failed. The broker crash-looped, because `deploy/infra/nats-jetstream.yaml` includes the authorization file by an absolute path, and nats-server resolves an include relative to the configuration file (finding `wamn-lrf1`). The Google Cloud copy uses a relative path. The tap-stream Job reached its backoff limit while the broker was down, so it was deleted and applied again. It then completed in 18 seconds.
 
-After the Secrets change, restart the broker so that it reads the new users. `WAMN_TAP` uses memory storage, so the restart drops it, and the tap-stream Job must run again:
+After the Secrets change, restart the broker so that it reads the new users. `WAMN_TAP` uses memory storage, so a restart drops it by design. Run the tap-stream Job again after every event NATS restart:
 
 ```bash
 kubectl -n platform delete pod evt-nats-0
@@ -534,4 +534,38 @@ target/debug/wamn-ctl reconcile-package-data-access --package apps/wamn_receivin
 
 `reconcile-run-plane` runs before `apply-package`, because it installs the catalog schema that `apply-package` writes into. On 2026-09-26 the four verbs took 4, 13, 37 and 16 seconds.
 
-The Secret `wamn-identity-db` in `$P/identity-db.json` is not applied yet. Its URL names the host `127.0.0.1:15432` of the port-forward, which identity cannot reach inside the cluster.
+The verbs copy the host of the admin URL, the port-forward `127.0.0.1:15432`, into every credential URL they emit. Set the cluster host with `jq` before you apply such a Secret (finding `wamn-lczu`):
+
+```bash
+jq '.stringData.url |= sub("@127\\.0\\.0\\.1:15432/"; "@wamn-pg-rw.platform.svc.cluster.local:5432/")' \
+  $P/identity-db.json > $P/identity-db.cluster.json
+kubectl apply -f $P/identity-db.cluster.json
+```
+
+### 3.9 Component
+
+Write a push credential for Artifact Registry into a private temporary directory. The token goes through a pipe, so it never appears on a command line. `wamn-ctl` reads only the `username` and `password` fields:
+
+```bash
+A=$(mktemp -d); chmod 700 $A
+gcloud auth print-access-token | python3 -c '
+import json, os, sys
+token = sys.stdin.read().strip()
+fd = os.open(os.path.join(sys.argv[1], "config.json"), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+os.write(fd, json.dumps({"auths": {"us-central1-docker.pkg.dev": {"username": "oauth2accesstoken", "password": token}}}).encode())
+os.close(fd)' $A
+```
+
+Push the component. `--declaration-template` renders `publication/components/receiving.json.in` with the tenant and the base digests of `wamn.json`:
+
+```bash
+export WAMN_PG_ADMIN_URL="$T"
+target/debug/wamn-ctl push-component --package apps/wamn_receiving \
+  --component-bytes target/virtualized/std-empty-environment/receiving.wasm \
+  --declaration-template apps/wamn_receiving/publication/components/receiving.json.in --tenant dev \
+  --artifact-base us-central1-docker.pkg.dev/wamn-dev/wamn/components --registry-auth-file $A/config.json \
+  --admit-platform-package wamn:node --admit-platform-package wamn:postgres
+rm -rf $A
+```
+
+The printed digest must equal the `sha256sum` of the local `receiving.wasm`. On 2026-09-26 both were `sha256:36b94783af587a75c3054deeb7ab4f721a89a3832b3b2d788e86a60981a36d0e`, and the push took 14 seconds. This credential is for the operator push only. The host pulls with the CronJob token of finding `wamn-i87m`.

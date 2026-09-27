@@ -172,6 +172,10 @@ Owner rulings of 2026-09-26:
 - The identity issuer is `https://identity.identity.svc.cluster.local`: release `identity` in namespace `identity`, the form of the kind cases. Its certificate comes from the internal CA and carries that DNS name. The edge sends `/password` there and checks the CA through `identityCaConfigMap`. Identity has no public host.
 - `reconcile-run-plane --schema wamn_run` runs after `provision-identity-issuer` and before `apply-package`, because it installs the catalog schema that `apply-package` writes into.
 - The event NATS pod restarts now to load the `dkk` users. The operations page records a check that `WAMN_TAP` exists and that the `dkk` provisioning user connects.
+- `WAMN_TAP` uses memory storage, so an event NATS restart drops it by design. The tap Job runs again after every restart.
+- Every credential Secret that a verb emits gets the host `wamn-pg-rw.platform.svc.cluster.local:5432` by `jq`, because the verbs copy the host of the admin URL, which is the port-forward. A finding asks for the `--database-host` flag that the event-reader verb has.
+- `push-component` gets `--declaration-template` with `--tenant`, which renders `publication/components/*.json.in` with `render_declaration_document`, as the dev coordinator does.
+- Components go to `us-central1-docker.pkg.dev/wamn-dev/wamn/components` with `--admit-platform-package wamn:node --admit-platform-package wamn:postgres`. The operator push uses a `.dockerconfigjson` with user `oauth2accesstoken` and a `gcloud auth print-access-token` token, in a mode 0600 file of a private temporary directory, deleted after the push. The token never appears on a command line.
 
 ## 6. Benchmark
 

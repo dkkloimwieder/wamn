@@ -1,9 +1,15 @@
 //! Arguments and output of the `push-component` and `bind-connection` verbs.
 
-use std::path::PathBuf;
+use std::fs::OpenOptions;
+use std::io::Write as _;
+use std::os::unix::fs::OpenOptionsExt as _;
+use std::path::{Path, PathBuf};
 
+use anyhow::Context as _;
 use clap::{Args, ValueEnum};
+use serde_json::Value;
 use wamn_control::bind_connection::{self, BindConnectionRequest, RequirementType};
+use wamn_control::component_declaration::{authored_base_digests, render_declaration_document};
 use wamn_control::push_component::{
     self, AdmitComponentRequest, PublishAdmittedComponentOutcome, PublishAdmittedComponentRequest,
 };
@@ -21,8 +27,18 @@ pub struct PushComponentArgs {
 
     /// JSON declaration of catalog scope, component identity, operation, typed
     /// input/output ports, and parameters.
-    #[arg(long)]
-    pub declaration: PathBuf,
+    #[arg(long, required_unless_present = "declaration_template")]
+    pub declaration: Option<PathBuf>,
+
+    /// Authored declaration template (`publication/components/*.json.in`).
+    /// The verb renders it with `--tenant` and the base digests that the
+    /// `wamn.json` of `--package` authors, as the dev coordinator does.
+    #[arg(long, conflicts_with = "declaration", requires = "tenant")]
+    pub declaration_template: Option<PathBuf>,
+
+    /// Tenant that fills the `scope.tenant-id` slot of `--declaration-template`.
+    #[arg(long, requires = "declaration_template")]
+    pub tenant: Option<String>,
 
     /// Explicit `<registry>/<repository>` base. It must not include a tag or
     /// digest; the admitted component digest derives the immutable tag.
@@ -59,11 +75,25 @@ pub struct PushComponentArgs {
 
 /// Validate, publish, verify, and record one component, then print the result.
 pub async fn push(args: PushComponentArgs) -> anyhow::Result<()> {
-    let outcome = push_component::push_component(
+    let rendered =
+        match (&args.declaration_template, &args.tenant) {
+            (Some(template), Some(tenant)) => Some(write_rendered_declaration(
+                &render_declaration(&args.package, template, tenant)?,
+            )?),
+            _ => None,
+        };
+    let declaration = match (&rendered, args.declaration) {
+        (Some(path), _) => path.clone(),
+        (None, Some(path)) => path,
+        (None, None) => {
+            anyhow::bail!("push-component needs --declaration or --declaration-template")
+        }
+    };
+    let result = push_component::push_component(
         AdmitComponentRequest {
             package: args.package,
             component_bytes: args.component_bytes,
-            declaration: args.declaration,
+            declaration,
             admitted_platform_packages: args.admitted_platform_packages,
         },
         PublishAdmittedComponentRequest {
@@ -75,9 +105,41 @@ pub async fn push(args: PushComponentArgs) -> anyhow::Result<()> {
             control_database_url: args.control_database_url,
         },
     )
-    .await?;
-    print_published(&outcome);
+    .await;
+    if let Some(path) = &rendered {
+        let _ = std::fs::remove_file(path);
+    }
+    print_published(&result?);
     Ok(())
+}
+
+/// Render an authored declaration template with the tenant and the base
+/// digests that the package manifest authors.
+fn render_declaration(package: &Path, template: &Path, tenant: &str) -> anyhow::Result<Value> {
+    let base_digests = authored_base_digests(package).context("read the authored base digests")?;
+    render_declaration_document(template, tenant, &base_digests)
+        .context("render the component declaration")
+}
+
+/// Write the rendered declaration to a private file that the caller removes.
+fn write_rendered_declaration(document: &Value) -> anyhow::Result<PathBuf> {
+    let path = std::env::temp_dir().join(format!(
+        "wamn-ctl-declaration-{}-{}.json",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .context("read the clock")?
+            .as_nanos()
+    ));
+    let mut file = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(&path)
+        .with_context(|| format!("create {}", path.display()))?;
+    file.write_all(&serde_json::to_vec(document)?)
+        .context("write the rendered declaration")?;
+    Ok(path)
 }
 
 /// Print the lines that report one component publication.
@@ -185,4 +247,26 @@ pub async fn bind(args: BindConnectionArgs) -> anyhow::Result<()> {
         bound.validation_hash
     );
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn declaration_template_renders_as_the_dev_coordinator_renders() {
+        let root = wamn_fixture_package::overlay_root();
+        let template = root
+            .join("publication/components")
+            .join("fixture_overlay.json.in");
+        let coordinator = render_declaration_document(
+            &template,
+            "dev",
+            &authored_base_digests(&root).expect("read the fixture base digests"),
+        )
+        .expect("render as the dev coordinator does");
+        let rendered = render_declaration(&root, &template, "dev").expect("render the template");
+        assert_eq!(rendered, coordinator);
+        assert_eq!(rendered["scope"]["tenant-id"], "dev");
+    }
 }
