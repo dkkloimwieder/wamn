@@ -1186,3 +1186,96 @@ target/debug/wamn-ctl push-release-manifest --database-url "$T" --control-databa
 Receiving ran the same `publish-release`, `push-release-manifest` and `print-release-env` commands with `--project receiving --tenant dev`, no `--wiring`, and its own attachments and manifest.
 
 On 2026-09-27 the pushes took 17, 11, 10 and 20 seconds, the gate 3 seconds, `author-wiring` 2 seconds, `publish-release` 10 seconds, `bind-connection` 2 seconds and the manifest push 6 seconds. The WMS release manifest is `sha256:6649148172e83eea8af3c9a5f133cb5f961d634de4f85244909da046475890a3`. The first PAT mint was refused before it reached identity, because a short Kubernetes API timeout left the password read empty. Stop when a credential read returns nothing.
+
+### 5.4 WMS event streams and CDC reader
+
+The event NATS serves both environments. Its users are named after their stream, so the users of the two environments do not clash. Write the WMS users with tenant `wms` and the WMS manifest:
+
+```bash
+cargo run -p wamn-test-infrastructure --example event_broker_files -- \
+  $P/evt nats://evt-nats.platform.svc.cluster.local:4222 dkk wms dev wms 1 "$PWD/apps/wamn_wms/wamn.json"
+E=$P/evt/event-nats
+```
+
+The program derives a consumer from each registration of the manifest, handlers and workflows. WMS has one, `mat_wms_wamn_wms_movement_label` on `evt.dkk.wms.dev.inventory_movement.>`, from the workflow `movement_label`. The program writes its configuration into `consumers.jsonl` for `enable-cdc-project-env`. The first run on 2026-09-27 took handlers only, so the WMS materializer user had no consumer. The program was corrected and run again, and the users were replaced.
+
+Read the current `authorization.conf` from the Secret `evt-nats-authorization` into a mode 0600 file. Keep its Receiving users and `tap-admin`, add the five WMS users of `$E/authorization.conf` without their `tap-admin`, and apply the result. Make the WMS user Secrets. Restart the broker and run the tap-stream Job again as in section 3.5:
+
+```bash
+kubectl -n platform create secret generic evt-nats-authorization \
+  --from-file=authorization.conf=$P/evt/merged-authorization.conf --dry-run=client -o yaml | kubectl apply -f -
+for role in provisioning publisher observer; do
+  kubectl -n platform create secret generic evt-nats-wms-$role --from-file=username=$E/$role-username --from-file=password=$E/$role-password
+done
+kubectl -n hosts create secret generic wamn-event-nats-wms \
+  --from-file=username=$E/runtime-username --from-file=password=$E/runtime-password \
+  --from-literal=org=dkk --from-literal=project=wms --from-literal=environment=dev \
+  --from-literal=stream_replicas=1 --from-literal=dup_window_secs=120
+kubectl -n hosts create secret generic wamn-materializer-nats-wms --from-file=binding.json=$E/binding.json
+```
+
+The restart stops the Receiving event connections for a few seconds. The Receiving CDC reader logged `connected successfully` 11 seconds after the restart, and the host warnings stopped at the same time. After a broker restart, restart the port-forward of section 3.18 too, because it still points at the old pod.
+
+Enable CDC for WMS as in section 3.18, with `--project wms --schema wms --stream EVT_3_dkk_3_wms_3_dev`, the WMS provisioning user, and `--consumer-config "$(cat $P/evt/consumers.jsonl)"`. Apply its role SQL, its CDC SQL in `wamn-db-dkk--wms--dev--bnarqpnc`, and its Secret. Prepare the WMS registry-reader credential as in section 3.19 and apply it. Then deploy the reader of [cdc-reader-wms.yaml](../../deploy/gcp/cdc-reader-wms.yaml):
+
+```bash
+kubectl apply -f deploy/gcp/cdc-reader-wms.yaml
+kubectl -n platform rollout status deploy/cdc-reader-wms --timeout=180s
+```
+
+On 2026-09-27 the Secrets took 6 seconds, the restart and the Job 41 seconds, `enable-cdc-project-env` 3 seconds, its apply 5 seconds, the registry-reader credential 18 seconds and the reader rollout 3 seconds. The reader logged `registration loaded`, the three `preflight` lines and `walsender session open`.
+
+### 5.5 WMS host group and workloads
+
+The host values program renders the WMS overlay as host group `wms` next to Receiving. It names the WMS guest, event NATS and materializer Secrets and the instance suffix `bnarqpnc`. It removes the object-store credentials of the kind overlay, because the `gcs` store needs none. Render with both release digests and upgrade the host:
+
+```bash
+cargo run -p wamn-test-infrastructure --example host_values_files -- deploy/gcp \
+  us-central1-docker.pkg.dev/wamn-dev/wamn/releases <Receiving manifest digest> <WMS manifest digest>
+helm upgrade wamn-host oci://ghcr.io/wasmcloud/charts/runtime-operator --version 2.10.0 -n hosts \
+  -f deploy/gcp/values-host-base.yaml -f deploy/gcp/values-host.yaml --wait --timeout 6m
+```
+
+Push the HTTP ingress and the materializer of the current build with `wash`, as in section 3.20, under the tags `wms-flow-http` and `wms-materializer`. Render the four workloads and apply the WMS ones:
+
+```bash
+cargo run -p wamn-test-infrastructure --example workload_files -- deploy/gcp \
+  $R@<Receiving flow-http digest> $R@<Receiving materializer digest> $R@<WMS flow-http digest> $R@<WMS materializer digest>
+kubectl apply -f deploy/gcp/wms-flow-http.yaml -f deploy/gcp/wms-materializer.yaml
+kubectl -n hosts wait --for=condition=Ready workloaddeployment/wms-flow-http workloaddeployment/wms-materializer --timeout=240s
+```
+
+| Component | File SHA-256 | Pushed digest |
+| --- | --- | --- |
+| `wms-flow-http` (`http_route.wasm`) | `09e74ca57c22b7f396f1f07adb7cbcfa4d65ae4e37dcb1285fc97d8e82dd88a9` | `sha256:923f270bb7425cad48e46a12fa3bb5843f9b1bd174851298ee68485cc8deea7e` |
+| `wms-materializer` | `7d78a4ad93a2484a3964e5d631e857f439316663f8227f4c08676659bf8f8153` | `sha256:581fd2ed52bf349d2adc6cfbad22d0b2c33b157c99f3ef1b3a61aa92bac6ca7a` |
+
+On 2026-09-27 the upgrade took 17 seconds, and the WMS host loaded release 1 with 20 routes and 4 components. The push took 5 seconds, and the workloads were Ready 6 seconds after the apply. Through a port-forward to `hostgroup-wms`, `GET /pallet/query` with `Host: wms.wamn.dev` answered 401 and an unknown path 404.
+
+Give the owner WMS access as in section 4.5: `grant-project-env-membership --project wms`, then `reconcile-run-plane --project wms --tenant wms`, then the temporary `route-caller` insert with tenant `wms` in the WMS database. Load the small WMS dataset inside the database pod, because the port-forward of section 3.6 drops after one connection at times:
+
+```bash
+kubectl -n platform exec -i wamn-pg-1 -c postgres -- psql -U postgres -d wamn-db-dkk--wms--dev--bnarqpnc \
+  -v ON_ERROR_STOP=1 -q < apps/wamn_wms/tests/fixtures/wms-seed-small.sql
+```
+
+It writes 10 locations, 10 pallets, 10 products and 19 pallet quantities. On 2026-09-27 the grant took under 1 second, the reconcile 12 seconds, the role insert 1 second and the load 1 second.
+
+### 5.6 WMS public edge
+
+Upload the WMS client of release 1, as in section 4.2:
+
+```bash
+target/debug/wamn web upload apps/wamn_wms \
+  --release sha256:6649148172e83eea8af3c9a5f133cb5f961d634de4f85244909da046475890a3 --bucket gs://wamn-dev-web/clients
+```
+
+[values-edge.yaml](../../deploy/gcp/values-edge.yaml) lists WMS with its host, `http://wms-flow-http.hosts.svc.cluster.local` and its bucket path. [url-map.yaml](../../deploy/gcp/url-map.yaml) has the host rule `wms.wamn.dev` and the path matcher `wms`, with the same rules as Receiving. Upgrade the edge, import the URL map and add the record:
+
+```bash
+helm upgrade wamn-edge deploy/platform/edge -n edge -f deploy/gcp/values-edge.yaml --wait --timeout 3m
+gcloud compute url-maps import wamn-edge --global --project wamn-dev --source deploy/gcp/url-map.yaml --quiet
+gcloud dns record-sets create wms.wamn.dev. --project wamn-dev --zone wamn-dev --type A --ttl 300 --rrdatas 8.232.230.139
+```
+
+The same certificate `*.wamn.dev` serves both hosts. On 2026-09-27 the upload took 14 seconds, the edge upgrade 12 seconds, the import 17 seconds and the record 1 second. Until the new host rule spreads, `wms.wamn.dev` reaches the default bucket, which answers with a listing of the whole web bucket (finding `wamn-uo2p`).

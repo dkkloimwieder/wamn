@@ -1,4 +1,5 @@
-# The URL map wamn-edge of docs/plan/gcp-deployment.md step 4. It copies the
+# The URL map wamn-edge of docs/plan/gcp-deployment.md steps 4 and 5, one
+# host rule and path matcher for each application. It copies the
 # rules of the removed Config Connector template of deploy/platform/edge:
 # /api/ and /password/ go to the edge, /assets/ to the release path in the
 # bucket, and every other path to its index.html, which the client routes.
@@ -9,6 +10,9 @@ hostRules:
   - hosts:
       - receiving.wamn.dev
     pathMatcher: edge
+  - hosts:
+      - wms.wamn.dev
+    pathMatcher: wms
 pathMatchers:
   - name: edge
     defaultService: https://www.googleapis.com/compute/v1/projects/wamn-dev/global/backendBuckets/wamn-edge-files
@@ -42,3 +46,35 @@ pathMatchers:
         routeAction:
           urlRewrite:
             pathTemplateRewrite: /clients/wamn_receiving/aeb74968dfe09b113a115863ec8be5475923d9577914332081923052a41c16c4/index.html
+  - name: wms
+    defaultService: https://www.googleapis.com/compute/v1/projects/wamn-dev/global/backendBuckets/wamn-edge-files
+    routeRules:
+      - priority: 1
+        matchRules:
+          - prefixMatch: /api/
+        service: https://www.googleapis.com/compute/v1/projects/wamn-dev/global/backendServices/wamn-edge-platform
+      - priority: 2
+        matchRules:
+          - prefixMatch: /password/
+        service: https://www.googleapis.com/compute/v1/projects/wamn-dev/global/backendServices/wamn-edge-platform
+      - priority: 3
+        matchRules:
+          - prefixMatch: /assets/
+        service: https://www.googleapis.com/compute/v1/projects/wamn-dev/global/backendBuckets/wamn-edge-files
+        routeAction:
+          urlRewrite:
+            pathPrefixRewrite: /clients/wamn_wms/6649148172e83eea8af3c9a5f133cb5f961d634de4f85244909da046475890a3/assets/
+      - priority: 4
+        matchRules:
+          - fullPathMatch: /
+        service: https://www.googleapis.com/compute/v1/projects/wamn-dev/global/backendBuckets/wamn-edge-files
+        routeAction:
+          urlRewrite:
+            pathPrefixRewrite: /clients/wamn_wms/6649148172e83eea8af3c9a5f133cb5f961d634de4f85244909da046475890a3/index.html
+      - priority: 5
+        matchRules:
+          - pathTemplateMatch: /{page=**}
+        service: https://www.googleapis.com/compute/v1/projects/wamn-dev/global/backendBuckets/wamn-edge-files
+        routeAction:
+          urlRewrite:
+            pathTemplateRewrite: /clients/wamn_wms/6649148172e83eea8af3c9a5f133cb5f961d634de4f85244909da046475890a3/index.html

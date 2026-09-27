@@ -1,4 +1,4 @@
-# The edge of docs/plan/gcp-deployment.md step 4, release wamn-edge in namespace
+# The edge of docs/plan/gcp-deployment.md steps 4 and 5, release wamn-edge in namespace
 # edge. The wildcard certificate *.wamn.dev of step 2 is already in
 # wamn-edge-tls, so no issuer is set. The load balancer of
 # docs/operations/gcp.md section 4 serves the bucket path.
@@ -11,4 +11,7 @@ applications:
   - host: receiving.wamn.dev
     api: http://flow-http.hosts.svc.cluster.local
     bucketPath: wamn-dev-web/clients/wamn_receiving/aeb74968dfe09b113a115863ec8be5475923d9577914332081923052a41c16c4
+  - host: wms.wamn.dev
+    api: http://wms-flow-http.hosts.svc.cluster.local
+    bucketPath: wamn-dev-web/clients/wamn_wms/6649148172e83eea8af3c9a5f133cb5f961d634de4f85244909da046475890a3
 neg: true
