@@ -26,7 +26,6 @@ use wamn_engine::release_manifest::{LoadedRelease, validate_component_in_release
 use wamn_engine::router_delivery::bounded_node_deadline_ms;
 use wamn_event_wire::Causation;
 use wamn_project_state::PlatformComponent;
-use wamn_run_state::IntentStore;
 use wamn_runtime::plugins::EffectEvidence;
 use wamn_runtime::plugins::connection_http::transport::HttpTransport;
 use wamn_runtime::plugins::connection_http::{
@@ -37,8 +36,8 @@ use wamn_runtime::plugins::wamn_blobstore::plugin::WamnBlobstore;
 use wamn_runtime::plugins::wamn_credentials::WamnCredentials;
 use wamn_runtime::plugins::wamn_logging::WamnLogging;
 use wamn_runtime::plugins::wamn_postgres::{
-    PostgresIntentStore, PreparedStatementSet, ReleaseIdentity, SessionClaims, StatementField,
-    StatementValueType, VerifiedStatement, VerifiedStatementSet, WamnPostgres,
+    PreparedStatementSet, ReleaseIdentity, SessionClaims, StatementField, StatementValueType,
+    VerifiedStatement, VerifiedStatementSet, WamnPostgres,
 };
 use wash_runtime::engine::Engine;
 use wash_runtime::host::allowed_hosts::AllowedHost;
@@ -238,8 +237,6 @@ pub struct OperationHost {
     native: tokio::sync::OnceCell<Arc<NativeApplication<NativePolicy>>>,
     /// The complete release component list a route loads, read once.
     components: tokio::sync::OnceCell<Arc<[AdmittedComponent]>>,
-    /// The intent record that a route's writing call logs to, if any.
-    intents: Option<Arc<dyn IntentStore>>,
 }
 
 impl fmt::Debug for OperationHost {
@@ -300,46 +297,7 @@ impl OperationHost {
             warm_reuse: scope.warm_reuse,
             native: tokio::sync::OnceCell::new(),
             components: tokio::sync::OnceCell::new(),
-            intents: None,
         })
-    }
-
-    /// Log each writing route call to `store`, under the edge's intent rules.
-    #[must_use]
-    pub fn with_intents(mut self, store: Arc<dyn IntentStore>) -> Self {
-        self.intents = Some(store);
-        self
-    }
-
-    /// The intent record of the routes, if the host has one.
-    pub fn intents(&self) -> Option<&dyn IntentStore> {
-        self.intents.as_deref()
-    }
-
-    /// The cloud intent record of this release's tenant: `wamn_run.intents`,
-    /// written as the executor under the claim scope `wamn-route-intents`.
-    pub async fn route_intent_store(&self) -> anyhow::Result<Arc<dyn IntentStore>> {
-        const SCOPE: &str = "wamn-route-intents";
-        let executor = PlatformComponent::Executor;
-        let claims = SessionClaims {
-            // The intent record belongs to the run plane, never the
-            // application schema.
-            schema: Some("wamn_run".to_owned()),
-            user_id: Some(executor.principal_id().to_string()),
-            operation: Some(executor.principal_name().to_owned()),
-            ..self.claims(
-                &self.release.manifest().release.tenant_id,
-                Some(self.release_identity()),
-            )
-        };
-        self.postgres
-            .bind_session_claims(SCOPE, &claims)
-            .await
-            .context("bind the route intent claims")?;
-        Ok(Arc::new(PostgresIntentStore::new(
-            Arc::clone(&self.postgres),
-            SCOPE,
-        )))
     }
 
     /// The identity of the carried release, bound on every released call.

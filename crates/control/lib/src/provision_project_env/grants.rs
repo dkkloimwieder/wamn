@@ -613,22 +613,6 @@ fn verify_executor_platform_grants(
             "UPDATE",
             &sql::EXECUTOR_PLATFORM_QUEUE_UPDATE_COLUMNS[..],
         ),
-        // The route intent record (wamn-an24).
-        (
-            "intents",
-            "INSERT",
-            &sql::EXECUTOR_PLATFORM_INTENT_INSERT_COLUMNS[..],
-        ),
-        (
-            "intents",
-            "SELECT",
-            &sql::EXECUTOR_PLATFORM_INTENT_SELECT_COLUMNS[..],
-        ),
-        (
-            "intents",
-            "UPDATE",
-            &sql::EXECUTOR_PLATFORM_INTENT_UPDATE_COLUMNS[..],
-        ),
         // The event run grain the host admits (wamn-upl3.6).
         (
             "runs",

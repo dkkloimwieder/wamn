@@ -126,7 +126,7 @@ The [operations pages](../operations/README.md) own publication, deployment, and
 
 Five layers run a component, and each layer depends only on the layers below it:
 
-1. [`wamn-run-state`](../../crates/execution/run-state/src/lib.rs) holds pure run decisions and two storage traits. `RunStore` is the queued-run lifecycle. `IntentStore` is the per-call intent record. The edge implements it over SQLite, and `PostgresIntentStore` in `wamn-runtime` implements it over `wamn_run.intents`.
+1. [`wamn-run-state`](../../crates/execution/run-state/src/lib.rs) holds pure run decisions and two storage traits. `RunStore` is the queued-run lifecycle. `IntentStore` is the per-call intent record, declared with no implementation.
 2. [`wamn-engine`](../../crates/platform/engine/src/lib.rs) holds the Wasmtime and wash-runtime host, component admission and artifacts, lifecycle, and `invoke_operation`. It links no Postgres, OCI, or `object_store` crate. A test pins what it links through wash-runtime.
 3. [`wamn-runtime`](../../crates/platform/runtime/src/lib.rs) holds the plugin set: Postgres, JetStream, blobstore, HTTP connections, credentials, logging, route authentication, and the OCI registry source. `WamnPostgres` is the Postgres adapter of `RunStore`.
 4. [`wamn-execution-host`](../../crates/execution/host/src/lib.rs) holds the route path, `OperationHost`, and the delivery bridge.

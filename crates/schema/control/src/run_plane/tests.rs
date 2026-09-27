@@ -386,7 +386,6 @@ fn run_plane_record_tables_are_pinned() {
             "effect_attempt_dispatches",
             "effect_attempt_outcomes",
             "operator_run_actions",
-            "intents",
         ]
     );
     assert_eq!(record_tables(RUN_QUEUE_SQL, "wamn_run"), ["run_queue"]);
@@ -711,8 +710,8 @@ fn observation_at_record_plans_a_noop() {
     assert!(plan.extra_columns.is_empty());
     assert_eq!(
         plan.at_target.len(),
-        8,
-        "all eight retained run-plane tables are at target"
+        7,
+        "all seven retained run-plane tables are at target"
     );
 }
 
@@ -2240,7 +2239,6 @@ fn from_zero_plans_the_full_set_in_order() {
             "effect_attempt_dispatches",
             "effect_attempt_outcomes",
             "operator_run_actions",
-            "intents",
             "run_queue"
         ]
     );
@@ -2280,38 +2278,6 @@ fn from_zero_plans_the_full_set_in_order() {
         .unwrap();
     assert!(rq.sql.contains("CREATE TABLE wamn_runner_demo.run_queue"));
     assert!(!rq.sql.contains("wamn_run."));
-}
-
-/// A run plane from before the route intent record (wamn-an24) gains
-/// `intents` by one table section, with its checks and row-level security, and
-/// no other action.
-#[test]
-fn an_existing_run_plane_gains_the_intent_table_by_one_section() {
-    let mut obs = observation_at_record();
-    obs.tables.remove("intents");
-    obs.checks.retain(|(table, _), _| table != "intents");
-
-    let plan = plan_run_plane(&schema("demo"), &obs);
-    let actions: Vec<(RunPlaneActionKind, &str)> = plan
-        .actions
-        .iter()
-        .map(|action| (action.kind, action.target.as_str()))
-        .collect();
-    // A missing table section replays the idempotent schema header first.
-    assert_eq!(
-        actions,
-        [
-            (RunPlaneActionKind::EnsureSchema, "demo"),
-            (RunPlaneActionKind::CreateTable, "intents")
-        ],
-        "{:#?}",
-        plan.actions
-    );
-    let sql = &plan.actions[1].sql;
-    assert!(sql.contains("CREATE TABLE demo.intents"));
-    assert!(sql.contains("CONSTRAINT intents_key UNIQUE"));
-    assert!(sql.contains("FORCE ROW LEVEL SECURITY"));
-    assert!(sql.contains("CREATE POLICY intents_tenant ON demo.intents"));
 }
 
 /// An unknown live column is SURFACED, never dropped.

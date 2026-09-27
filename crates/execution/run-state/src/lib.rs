@@ -41,8 +41,6 @@ pub mod durability;
 /// The intent store case set that every store runs.
 #[cfg(feature = "test-util")]
 pub mod intent_cases;
-/// The Postgres intent record's SQL text builders.
-pub mod intent_sql;
 /// The per-call intent record as a storage trait.
 pub mod intent_store;
 /// RUN-* as plain `fn check(state)` functions, for the pure decision tests to

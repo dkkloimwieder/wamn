@@ -79,11 +79,7 @@ The router calls `deliver-stream` of [`wamn:router-delivery` 0.2.0](../../crates
 [`query_read`](../../crates/execution/host/src/query_read.rs) owns the ceiling and the lines.
 
 `invoke_operation` takes an optional intent context, and with one a write logs one intent for each input item and runs only the new items.
-The cloud route and the edge pass one for each route, and the [edge plan](../plan/edge.md#47-sqlite-schema) states the rules.
-The cloud host keeps the record in `wamn_run.intents` through `PostgresIntentStore`, as the executor under the claim scope `wamn-route-intents`, and a key is unique per tenant, release, package, and operation.
-Each begin and each finish is one statement, so no transaction spans the export call.
-A streamed read and a wiring node pass no intent context.
-Operators list and resolve uncertain intents with `wamn-ctl intents` ([route intents](../operations/route-intents.md)).
+The cloud route passes none. The edge passes one for each route, and the [edge plan](../plan/edge.md#47-sqlite-schema) states the rules.
 Publish writes the input field of the idempotency key into the serving manifest route (`idempotency`) from the generated input contract.
 
 A route input that fails its schema returns HTTP 400 with the code `schema-invalid`.

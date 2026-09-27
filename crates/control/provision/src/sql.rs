@@ -302,47 +302,6 @@ pub const EXECUTOR_PLATFORM_RUN_INSERT_COLUMNS: [&str; 13] = [
 /// The `run_queue` columns an event admission writes. The FIFO position, the
 /// crash budget and the lease take their defaults.
 pub const EXECUTOR_PLATFORM_QUEUE_INSERT_COLUMNS: [&str; 2] = ["tenant_id", "run_id"];
-
-/// The `intents` columns the executor-platform family INSERTs when a route
-/// call begins its intent (wamn-an24). The id is generated.
-pub const EXECUTOR_PLATFORM_INTENT_INSERT_COLUMNS: [&str; 8] = [
-    "tenant_id",
-    "release",
-    "package",
-    "operation",
-    "idempotency_key",
-    "input_hash",
-    "deadline_ms",
-    "begun_at",
-];
-
-/// The `intents` columns the executor-platform family READs: the key lookup
-/// of a begin, the uncertain list, and the open-row test of a finish or a
-/// resolve. The deadline and the begin time are never read back.
-pub const EXECUTOR_PLATFORM_INTENT_SELECT_COLUMNS: [&str; 12] = [
-    "tenant_id",
-    "id",
-    "release",
-    "package",
-    "operation",
-    "idempotency_key",
-    "input_hash",
-    "finished_at",
-    "outcome_kind",
-    "outcome",
-    "resolved_basis",
-    "resolved_at",
-];
-
-/// The `intents` columns the executor-platform family UPDATEs: a finish writes
-/// the outcome, and a resolve writes the operator's basis.
-pub const EXECUTOR_PLATFORM_INTENT_UPDATE_COLUMNS: [&str; 5] = [
-    "finished_at",
-    "outcome_kind",
-    "outcome",
-    "resolved_basis",
-    "resolved_at",
-];
 /// Idempotently create or harden [`PLATFORM_GROUP_ROLE`], the shared NOLOGIN
 /// group every non-guest tenant-floor arm targets (`wamn-0h0g.22.17`).
 ///
@@ -633,9 +592,6 @@ pub fn grant_session_role_reader_surface_sql() -> String {
 ///   `environment_policies`: the host admits an event-started workflow run
 ///   under its release's authority (`wamn-upl3.6`). The grain check admits only
 ///   an event run from these columns.
-/// * `intents`: column-grain INSERT, SELECT and UPDATE over the
-///   `EXECUTOR_PLATFORM_INTENT_*` columns: a route call begins and finishes its
-///   intent record, and an operator resolves an uncertain one (`wamn-an24`).
 /// * `effect_attempts`: `SELECT` only. The claim path only asks whether a row
 ///   exists.
 /// * `wamn_authority.tenant_key(text)`: MEASURED, and not optional. `runs`
@@ -677,9 +633,6 @@ pub fn grant_executor_platform_surface_sql(schema: &str) -> String {
     let queue_update = quoted_column_list(&EXECUTOR_PLATFORM_QUEUE_UPDATE_COLUMNS);
     let run_insert = quoted_column_list(&EXECUTOR_PLATFORM_RUN_INSERT_COLUMNS);
     let queue_insert = quoted_column_list(&EXECUTOR_PLATFORM_QUEUE_INSERT_COLUMNS);
-    let intent_insert = quoted_column_list(&EXECUTOR_PLATFORM_INTENT_INSERT_COLUMNS);
-    let intent_select = quoted_column_list(&EXECUTOR_PLATFORM_INTENT_SELECT_COLUMNS);
-    let intent_update = quoted_column_list(&EXECUTOR_PLATFORM_INTENT_UPDATE_COLUMNS);
     write!(
         sql,
         " GRANT SELECT ON TABLE {schema}.\"runs\" TO {role}; \
@@ -689,8 +642,6 @@ pub fn grant_executor_platform_surface_sql(schema: &str) -> String {
          GRANT UPDATE ({queue_update}) ON TABLE {schema}.\"run_queue\" TO {role}; \
          GRANT INSERT ({queue_insert}) ON TABLE {schema}.\"run_queue\" TO {role}; \
          GRANT SELECT ON TABLE {schema}.\"environment_policies\" TO {role}; \
-         GRANT INSERT ({intent_insert}), SELECT ({intent_select}), UPDATE ({intent_update}) \
-           ON TABLE {schema}.\"intents\" TO {role}; \
          GRANT SELECT ON TABLE {schema}.\"effect_attempts\" TO {role};"
     )
     .expect("writing to a String cannot fail");
@@ -1170,21 +1121,13 @@ mod tests {
              ON TABLE \"wamn_run\".\"run_queue\" TO \"wamn_executor_platform\"; \
              GRANT SELECT ON TABLE \"wamn_run\".\"environment_policies\" \
              TO \"wamn_executor_platform\"; \
-             GRANT INSERT (\"tenant_id\", \"release\", \"package\", \"operation\", \
-             \"idempotency_key\", \"input_hash\", \"deadline_ms\", \"begun_at\"), \
-             SELECT (\"tenant_id\", \"id\", \"release\", \"package\", \"operation\", \
-             \"idempotency_key\", \"input_hash\", \"finished_at\", \"outcome_kind\", \
-             \"outcome\", \"resolved_basis\", \"resolved_at\"), \
-             UPDATE (\"finished_at\", \"outcome_kind\", \"outcome\", \"resolved_basis\", \
-             \"resolved_at\") ON TABLE \"wamn_run\".\"intents\" TO \"wamn_executor_platform\"; \
              GRANT SELECT ON TABLE \"wamn_run\".\"effect_attempts\" \
              TO \"wamn_executor_platform\"; \
              GRANT EXECUTE ON FUNCTION \"wamn_authority\".tenant_key(text) \
              TO \"wamn_executor_platform\";",
             "the executor-platform grant set moved: it is TABLE SELECT where a \
              fence reads r.*/q.*, COLUMN UPDATE and INSERT everywhere it writes, \
-             column SELECT on the intents, DELETE only on the queue, and only the \
-             tenant-key function grant"
+             DELETE only on the queue, and only the tenant-key function grant"
         );
         // An event admission inserts the admission pins, the wiring identity and
         // the input once, and no UPDATE reaches them afterwards. Named literally,

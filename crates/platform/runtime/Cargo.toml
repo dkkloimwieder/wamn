@@ -69,10 +69,6 @@ tower-service = { workspace = true }
 wasmtime-wasi = { workspace = true }
 
 [dev-dependencies]
-# The intent store case set that the SQLite store runs too.
-wamn-run-state = { workspace = true, features = ["tenant-key", "test-util"] }
-# The executor principal the intent store binds in its claims.
-wamn-project-state = { workspace = true }
 tokio = { workspace = true, features = ["test-util"] }
 hyper = { workspace = true, features = ["server"] }
 base64 = { workspace = true }

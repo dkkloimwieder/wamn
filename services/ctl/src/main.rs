@@ -6,8 +6,8 @@ mod print_platform_principals;
 
 use clap::{Parser, Subcommand};
 use wamn_ctl::{
-    component_verbs, delivery_verbs, identity_verbs, intent_verbs, package_verbs,
-    provisioning_verbs, release_verbs, workflow_verbs,
+    component_verbs, delivery_verbs, identity_verbs, package_verbs, provisioning_verbs,
+    release_verbs, workflow_verbs,
 };
 
 #[derive(Parser)]
@@ -90,9 +90,6 @@ enum Command {
     /// Start, park, release, and list workflow runs.
     #[command(subcommand)]
     Workflow(workflow_verbs::WorkflowCommand),
-    /// List and resolve the uncertain route intents.
-    #[command(subcommand)]
-    Intents(intent_verbs::IntentCommand),
 }
 
 #[tokio::main]
@@ -143,7 +140,6 @@ async fn main() -> anyhow::Result<()> {
         Command::ReconcileRunPlane(args) => release_verbs::reconcile(args).await,
         Command::TerminalizeEffectUncertain(args) => release_verbs::terminalize(args).await,
         Command::Workflow(command) => workflow_verbs::run(command).await,
-        Command::Intents(command) => intent_verbs::run(command).await,
     }
 }
 
@@ -216,34 +212,5 @@ mod tests {
         assert_eq!(args.scope.environment, "dev");
         assert_eq!(args.scope.schema, "wamn_run");
         assert_eq!(args.run_id, "run-1");
-    }
-
-    #[test]
-    fn intent_verbs_parse_their_scope_and_basis() {
-        let cli = Cli::try_parse_from([
-            "wamn-ctl",
-            "intents",
-            "resolve",
-            "--admin-database-url",
-            "postgres://admin:secret@localhost/project",
-            "--tenant",
-            "acme",
-            "--environment",
-            "dev",
-            "7",
-            "operator-judgment",
-        ])
-        .unwrap();
-        let Command::Intents(wamn_ctl::intent_verbs::IntentCommand::Resolve(args)) = cli.command
-        else {
-            panic!("expected intents resolve");
-        };
-        assert_eq!(args.scope.tenant, "acme");
-        assert_eq!(args.scope.environment, "dev");
-        assert_eq!(args.id, 7);
-        assert_eq!(
-            args.basis,
-            wamn_run_state::operator_action::OperatorActionBasis::OperatorJudgment
-        );
     }
 }

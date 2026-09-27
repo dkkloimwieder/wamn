@@ -6457,7 +6457,6 @@ dependencies = [
  "wamn-execution-contract",
  "wamn-pg-core",
  "wamn-platform-identity",
- "wamn-project-state",
  "wamn-run-state",
  "wamn-session",
  "wamn-test-postgres",

@@ -195,7 +195,6 @@ async fn install_project_database(client: &Client, url: &str) {
             "effect_attempt_outcomes",
             "effect_attempts",
             "environment_policies",
-            "intents",
             "operator_run_actions",
             "run_queue",
             "runs",

@@ -863,7 +863,7 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
                 .iter()
                 .map(|value| value.parse())
                 .collect::<Result<Vec<_>, _>>()?;
-            let host = OperationHost::new(
+            Some(Arc::new(OperationHost::new(
                 Arc::clone(&engine),
                 Arc::clone(&postgres),
                 Arc::clone(&http_transport),
@@ -882,9 +882,7 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
                         args.component_reclaim_window_seconds,
                     )?,
                 },
-            )?;
-            let intents = host.route_intent_store().await?;
-            Some(Arc::new(host.with_intents(intents)))
+            )?))
         }
         None => None,
     };

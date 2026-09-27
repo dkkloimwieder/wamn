@@ -88,7 +88,7 @@ const SCENARIO_AUTHOR_PROBE: &str = "wamn_matrix_author_probe";
 /// catalog relations the platform families read, and a package-shaped logged
 /// relation pair with its history tables. A family reaching one it does not own
 /// is what the pairwise arms below name.
-const MATRIX_RELATIONS: [&str; 29] = [
+const MATRIX_RELATIONS: [&str; 28] = [
     "app_system.permissions",
     "app_system.user_roles",
     "app_system.users",
@@ -114,7 +114,6 @@ const MATRIX_RELATIONS: [&str; 29] = [
     "wamn_run.effect_attempt_outcomes",
     "wamn_run.effect_attempts",
     "wamn_run.environment_policies",
-    "wamn_run.intents",
     "wamn_run.operator_run_actions",
     "wamn_run.run_queue",
     "wamn_run.runs",
@@ -226,9 +225,6 @@ const MATRIX: [FamilyReach; 9] = [
             "catalog.wirings|SELECT|table",
             "wamn_run.effect_attempts|SELECT|table",
             "wamn_run.environment_policies|SELECT|table",
-            "wamn_run.intents|INSERT|column",
-            "wamn_run.intents|SELECT|column",
-            "wamn_run.intents|UPDATE|column",
             "wamn_run.run_queue|DELETE|table",
             "wamn_run.run_queue|INSERT|column",
             "wamn_run.run_queue|SELECT|table",

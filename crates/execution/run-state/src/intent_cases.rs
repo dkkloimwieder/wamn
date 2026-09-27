@@ -1,10 +1,8 @@
 //! The intent store case set: the rules every [`IntentStore`] keeps, as
-//! async cases that any store runs (`wamn-an24.2`).
+//! async cases over a store fixture (`wamn-an24.2`).
 //!
-//! The SQLite store runs each case in its own test, over a fresh file. The
-//! Postgres store runs them over one disposable database, with fresh tenants
-//! for each case. A case asks its fixture for stores by case name, so no case
-//! sees another's rows.
+//! The SQLite store runs each case in its own test, over a fresh file. A case
+//! asks its fixture for stores by case name, so no case sees another's rows.
 
 use std::sync::Arc;
 

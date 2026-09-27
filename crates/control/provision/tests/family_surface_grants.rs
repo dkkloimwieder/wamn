@@ -416,45 +416,6 @@ fn expected_executor_grants() -> Vec<String> {
     for column in ["run_id", "tenant_id"] {
         rows.push(format!("column|wamn_run|run_queue.{column}|INSERT"));
     }
-    // The route intent record (wamn-an24): a begin inserts, a finish and a
-    // resolve update, and every statement reads its key and open-row facts.
-    for column in [
-        "begun_at",
-        "deadline_ms",
-        "idempotency_key",
-        "input_hash",
-        "operation",
-        "package",
-        "release",
-        "tenant_id",
-    ] {
-        rows.push(format!("column|wamn_run|intents.{column}|INSERT"));
-    }
-    for column in [
-        "finished_at",
-        "id",
-        "idempotency_key",
-        "input_hash",
-        "operation",
-        "outcome",
-        "outcome_kind",
-        "package",
-        "release",
-        "resolved_at",
-        "resolved_basis",
-        "tenant_id",
-    ] {
-        rows.push(format!("column|wamn_run|intents.{column}|SELECT"));
-    }
-    for column in [
-        "finished_at",
-        "outcome",
-        "outcome_kind",
-        "resolved_at",
-        "resolved_basis",
-    ] {
-        rows.push(format!("column|wamn_run|intents.{column}|UPDATE"));
-    }
     rows.push("relation|wamn_run|environment_policies|SELECT".to_owned());
     for relation in [
         "component_library",
@@ -609,14 +570,6 @@ fn the_executor_platform_role_holds_exactly_its_measured_claim_surface() {
            'an event admission reads the durability class'; \
          ASSERT NOT has_table_privilege(r, 'wamn_run.environment_policies', 'UPDATE'), \
            'the executor never changes a policy'; \
-         ASSERT NOT has_table_privilege(r, 'wamn_run.intents', 'SELECT'), \
-           'the executor reads the intent columns it uses, never a whole row'; \
-         ASSERT NOT has_table_privilege(r, 'wamn_run.intents', 'DELETE'), \
-           'an intent record is never deleted by a route call'; \
-         ASSERT NOT has_column_privilege(r, 'wamn_run.intents', 'id', 'INSERT'), \
-           'the intent id is generated'; \
-         ASSERT NOT has_column_privilege(r, 'wamn_run.intents', 'input_hash', 'UPDATE'), \
-           'a begun key keeps its input'; \
          ASSERT NOT has_table_privilege(r, 'wamn_run.runs', 'DELETE'), \
            'run history pruning is retention''s'; \
          ASSERT has_table_privilege(r, 'wamn_run.run_queue', 'SELECT'), 'no queue read'; \

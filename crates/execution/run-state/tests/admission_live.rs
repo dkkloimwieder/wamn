@@ -313,22 +313,6 @@ package_id,registration_id,status,tenant_id,trigger_source,wiring_hash,wiring_id
                     'wamn_executor_platform', a.attrelid, a.attnum, 'INSERT'); \
            ASSERT actual = 'run_id,tenant_id', \
                   'run_queue INSERT columns drifted: ' || coalesce(actual, '<none>'); \
-           SELECT string_agg(a.attname || ':' || p, ',' ORDER BY a.attname || ':' || p) \
-             INTO actual \
-             FROM pg_catalog.pg_attribute AS a \
-             CROSS JOIN unnest(ARRAY['INSERT','SELECT','UPDATE']) AS p \
-            WHERE a.attrelid = 'wamn_run.intents'::regclass AND a.attnum > 0 \
-              AND NOT a.attisdropped \
-              AND pg_catalog.has_column_privilege( \
-                    'wamn_executor_platform', a.attrelid, a.attnum, p); \
-           ASSERT actual = \
-             'begun_at:INSERT,deadline_ms:INSERT,finished_at:SELECT,finished_at:UPDATE,\
-id:SELECT,idempotency_key:INSERT,idempotency_key:SELECT,input_hash:INSERT,input_hash:SELECT,\
-operation:INSERT,operation:SELECT,outcome:SELECT,outcome:UPDATE,outcome_kind:SELECT,\
-outcome_kind:UPDATE,package:INSERT,package:SELECT,release:INSERT,release:SELECT,\
-resolved_at:SELECT,resolved_at:UPDATE,resolved_basis:SELECT,resolved_basis:UPDATE,\
-tenant_id:INSERT,tenant_id:SELECT', \
-                  'intents columns (the route intent record) drifted: ' || coalesce(actual, '<none>'); \
            ASSERT pg_catalog.has_schema_privilege( \
                     'wamn_executor_platform', 'wamn_run', 'USAGE'); \
            ASSERT pg_catalog.has_schema_privilege( \
@@ -358,49 +342,6 @@ tenant_id:INSERT,tenant_id:SELECT', \
     );
     assert!(claimed.contains(EXECUTOR_LOGIN));
     assert!(claimed.contains("run-1"));
-
-    // The executor begins, reads, finishes and lists an intent under its
-    // tenant claim, with the statements the Postgres intent store runs
-    // (wamn-an24). Another tenant's claim sees nothing.
-    let begin = wamn_run_state::intent_sql::begin_intent_sql();
-    let finish = wamn_run_state::intent_sql::finish_intent_sql();
-    let uncertain = wamn_run_state::intent_sql::uncertain_intents_sql();
-    let intents = success(
-        &url,
-        &format!(
-            "BEGIN; SET LOCAL ROLE {EXECUTOR_LOGIN}; SET LOCAL app.tenant='t1'; \
-             SET LOCAL search_path=wamn_run,catalog,public; \
-             PREPARE b(text,text,text,text,text,text,bigint) AS {begin}; \
-             PREPARE f(bigint,text,text) AS {finish}; \
-             PREPARE u(bigint) AS {uncertain}; \
-             EXECUTE b('t1','rel','cat','op','k1','h1',5000); \
-             EXECUTE b('t1','rel','cat','op','k1','h1',5000); \
-             EXECUTE u(10); \
-             EXECUTE f(1,'completed','{{\"ok\":true}}'); \
-             EXECUTE b('t1','rel','cat','op','k1','h1',5000); \
-             SET LOCAL app.tenant='t2'; SELECT 'other=' || count(*) FROM intents; ROLLBACK;"
-        ),
-    );
-    assert!(
-        intents.contains("|t|"),
-        "the first begin inserts: {intents}"
-    );
-    assert!(
-        intents.contains("|f|h1|||"),
-        "the second begin reads the open row: {intents}"
-    );
-    assert!(
-        intents.contains("|t1|rel|cat|op|k1"),
-        "the open key lists as uncertain: {intents}"
-    );
-    assert!(
-        intents.contains("|f|h1|completed|{\"ok\": true}|"),
-        "a finished key answers its outcome: {intents}"
-    );
-    assert!(
-        intents.contains("other=0"),
-        "another tenant sees no intent: {intents}"
-    );
 
     // The complete-grain CHECK makes a half candidate row unrepresentable, and
     // the trigger names every component-era pin.
