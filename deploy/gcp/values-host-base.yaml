@@ -1,0 +1,142 @@
+runtime:
+  image:
+    tag: src-490a0d098a176e39@sha256:b44a6f944a410ca42dccf378c0948226946c54fefa17c4bf3cc246e25dcd9dd2
+    pull_policy: IfNotPresent
+    registry: ''
+    repository: us-central1-docker.pkg.dev/wamn-dev/wamn/wamn-host
+  hostGroups:
+  - namespace: hosts
+    replicas: 1
+    env:
+    - name: WAMN_PG_URL
+      valueFrom:
+        secretKeyRef:
+          name: wamn-host-db
+          key: url
+    - name: WAMN_PG_GUEST_POOL_MAX
+      value: '14'
+    - name: WAMN_PG_PLATFORM_POOL_MAX
+      value: '2'
+    - name: WAMN_HTTP_ROUTE_IN_FLIGHT_LIMIT
+      value: '64'
+    - name: WAMN_WASMTIME_CACHE_DIR
+      value: /tmp/wamn-wasmtime-cache
+    - name: DOCKER_CONFIG
+      value: /etc/wamn/registry
+    - name: WAMN_REGISTRY_AUTH_FILE
+      value: /etc/wamn/registry/config.json
+    - name: WAMN_COMPONENT_ARTIFACT_BASE
+      value: registry.wamn-system.svc.cluster.local:5000/wamn/components
+    - name: WAMN_EVT_NATS_URL
+      value: nats://evt-nats.wamn-system.svc.cluster.local:4222
+    - name: WAMN_EVT_NATS_USERNAME
+      valueFrom:
+        secretKeyRef:
+          name: wamn-event-nats
+          key: username
+          optional: false
+    - name: WAMN_EVT_NATS_PASSWORD_FILE
+      value: /etc/wamn/event-nats/password
+    - name: WAMN_MAT_NATS_BINDING_FILE
+      value: /etc/wamn/materializer-nats/binding.json
+    - name: WAMN_EVT_ORG
+      valueFrom:
+        secretKeyRef:
+          name: wamn-event-nats
+          key: org
+          optional: false
+    - name: WAMN_EVT_PROJECT
+      valueFrom:
+        secretKeyRef:
+          name: wamn-event-nats
+          key: project
+          optional: false
+    - name: WAMN_EVT_ENV
+      valueFrom:
+        secretKeyRef:
+          name: wamn-event-nats
+          key: environment
+          optional: false
+    - name: WAMN_EVT_STREAM_REPLICAS
+      valueFrom:
+        secretKeyRef:
+          name: wamn-event-nats
+          key: stream_replicas
+          optional: false
+    - name: WAMN_EVT_DUP_WINDOW_SECS
+      valueFrom:
+        secretKeyRef:
+          name: wamn-event-nats
+          key: dup_window_secs
+          optional: false
+    volumes:
+    - name: event-nats
+      secret:
+        secretName: wamn-event-nats
+        optional: false
+        items:
+        - key: password
+          path: password
+    - name: materializer-nats
+      secret:
+        secretName: wamn-materializer-nats
+        optional: false
+        items:
+        - key: binding.json
+          path: binding.json
+    - name: registry-pull
+      secret:
+        secretName: wamn-registry-pull
+        optional: false
+        items:
+        - key: .dockerconfigjson
+          path: config.json
+    http:
+      enabled: true
+      port: 80
+    name: default
+    ociCaPaths:
+    - /runtime-cert/ca.crt
+    resources:
+      requests:
+        memory: 256Mi
+        cpu: '2'
+      limits:
+        memory: 4Gi
+        cpu: '6'
+      defaultHeapMemory: 256MiB
+      coreInstances: 512
+      guestMemoryMode: count
+      maxConcurrentStarts: 4
+    service:
+      type: ClusterIP
+    volumeMounts:
+    - name: event-nats
+      mountPath: /etc/wamn/event-nats
+      readOnly: true
+    - name: materializer-nats
+      mountPath: /etc/wamn/materializer-nats
+      readOnly: true
+    - name: registry-pull
+      mountPath: /etc/wamn/registry
+      readOnly: true
+  drainDelaySeconds: 5
+  natsConnectTimeoutSeconds: 60
+  probes:
+    endpoint:
+      enabled: true
+      port: 8081
+      startupFailureThreshold: 60
+  terminationGracePeriodSeconds: 70
+gateway:
+  enabled: false
+global:
+  certificates:
+    generate: false
+  nats:
+    schedulerUrl: nats://nats.platform.svc.cluster.local:4222
+    dataUrl: nats://nats.platform.svc.cluster.local:4222
+nats:
+  enabled: false
+operator:
+  enabled: false

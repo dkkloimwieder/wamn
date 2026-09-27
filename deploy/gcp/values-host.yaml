@@ -1,0 +1,142 @@
+runtime:
+  hostGroups:
+  - namespace: hosts
+    replicas: 1
+    env:
+    - name: WAMN_PG_URL
+      valueFrom:
+        secretKeyRef:
+          name: wamn-host-db
+          key: url
+    - name: WAMN_PG_GUEST_POOL_MAX
+      value: '14'
+    - name: WAMN_PG_PLATFORM_POOL_MAX
+      value: '2'
+    - name: WAMN_HTTP_ROUTE_IN_FLIGHT_LIMIT
+      value: '64'
+    - name: WAMN_WASMTIME_CACHE_DIR
+      value: /tmp/wamn-wasmtime-cache
+    - name: DOCKER_CONFIG
+      value: /etc/wamn/registry
+    - name: WAMN_REGISTRY_AUTH_FILE
+      value: /etc/wamn/registry/config.json
+    - name: WAMN_COMPONENT_ARTIFACT_BASE
+      value: us-central1-docker.pkg.dev/wamn-dev/wamn/components
+    - name: WAMN_EVT_NATS_URL
+      value: nats://evt-nats.platform.svc.cluster.local:4222
+    - name: WAMN_EVT_NATS_USERNAME
+      valueFrom:
+        secretKeyRef:
+          name: wamn-event-nats
+          key: username
+          optional: false
+    - name: WAMN_EVT_NATS_PASSWORD_FILE
+      value: /etc/wamn/event-nats/password
+    - name: WAMN_MAT_NATS_BINDING_FILE
+      value: /etc/wamn/materializer-nats/binding.json
+    - name: WAMN_EVT_ORG
+      value: dkk
+    - name: WAMN_EVT_PROJECT
+      value: receiving
+    - name: WAMN_EVT_ENV
+      value: dev
+    - name: WAMN_EVT_STREAM_REPLICAS
+      value: '1'
+    - name: WAMN_EVT_DUP_WINDOW_SECS
+      value: '120'
+    - name: WAMN_ORG
+      value: dkk
+    - name: WAMN_PROJECT
+      value: receiving
+    - name: WAMN_SCHEMA
+      value: receiving
+    - name: WAMN_SYSTEM_URL
+      valueFrom:
+        secretKeyRef:
+          name: wamn-identity-reader-dkk--receiving--dev
+          key: url
+          optional: false
+    - name: WAMN_EXECUTOR_PLATFORM_PG_URL
+      valueFrom:
+        secretKeyRef:
+          name: wamn-executor-platform-dkk--receiving--dev
+          key: url
+          optional: false
+    - name: WAMN_HTTP_ADMITTER_PG_URL
+      valueFrom:
+        secretKeyRef:
+          name: wamn-http-admitter-dkk--receiving--dev
+          key: url
+          optional: false
+    - name: WAMN_EVENT_MATERIALIZER_PG_URL
+      valueFrom:
+        secretKeyRef:
+          name: wamn-event-materializer-dkk--receiving--dev
+          key: url
+          optional: false
+    - name: WAMN_SESSION_ISSUER
+      value: https://identity.identity.svc.cluster.local
+    - name: WAMN_SESSION_INSTANCE_SUFFIX
+      value: zf7o454t
+    - name: WAMN_SESSION_JWKS_CA
+      value: /etc/identity-ca/ca.crt
+    volumes:
+    - name: event-nats
+      secret:
+        secretName: wamn-event-nats
+        optional: false
+        items:
+        - key: password
+          path: password
+    - name: materializer-nats
+      secret:
+        secretName: wamn-materializer-nats
+        optional: false
+        items:
+        - key: binding.json
+          path: binding.json
+    - name: registry-pull
+      secret:
+        secretName: wamn-registry-pull
+        optional: false
+        items:
+        - key: .dockerconfigjson
+          path: config.json
+    - name: identity-ca
+      configMap:
+        name: identity-ca
+    extraArgs:
+    - --release-artifact-base=us-central1-docker.pkg.dev/wamn-dev/wamn/releases
+    - --release-manifest-digest=sha256:aeb74968dfe09b113a115863ec8be5475923d9577914332081923052a41c16c4
+    http:
+      enabled: true
+      port: 80
+    name: default
+    ociCaPaths:
+    - /runtime-cert/ca.crt
+    resources:
+      requests:
+        memory: 256Mi
+        cpu: 500m
+      limits:
+        memory: 4Gi
+        cpu: '2'
+      defaultHeapMemory: 256MiB
+      coreInstances: 512
+      guestMemoryMode: count
+      maxConcurrentStarts: 4
+    service:
+      type: ClusterIP
+    volumeMounts:
+    - name: event-nats
+      mountPath: /etc/wamn/event-nats
+      readOnly: true
+    - name: materializer-nats
+      mountPath: /etc/wamn/materializer-nats
+      readOnly: true
+    - name: registry-pull
+      mountPath: /etc/wamn/registry
+      readOnly: true
+    - name: identity-ca
+      mountPath: /etc/identity-ca
+      readOnly: true
