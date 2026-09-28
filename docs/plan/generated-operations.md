@@ -1,6 +1,6 @@
 # Generated operations
 
-Updated through: 2026-09-28, `main` at `c3e7074c7`. Draft for owner review, issue `wamn-iowb`.
+Updated through: 2026-09-28, `main` at `c3e7074c7`. Draft for owner review, issue `wamn-iowb`. The rulings of §7 are in.
 
 ## 1. Goal
 
@@ -10,8 +10,9 @@ Today the generator emits the SQL, the statement accessors, the codec, the contr
 
 ## 2. Fixed rules
 
+- The operation's kind decides. A model operation (`create`, `get`, `query`, `update`, `delete`) is generated whole. A custom command is authored, its SQL and its data access, as today. No operation is half of each, and no manifest switch changes this.
 - A generated operation has no hand-written file. Its handler, data function, world export, route entry and component declaration entry are generated files.
-- The generator writes only under `generated/`. It never edits an authored file.
+- The generator writes under `generated/`, and it writes the migration CHECK that a manifest field rule declares (§4.4). It never edits another authored file.
 - An authored operation keeps its authored SQL, data function and handler. The generator emits for it what it emits today, and nothing more.
 - The wire contract does not change. A generated handler answers the same contract, error literals and details that the hand-written handler answers today. A publish of the same package before and after the change produces the same contract digests.
 - Business rules stay out of generated code. A rule that a generated operation carries today moves to the schema or the manifest, or the operation becomes authored. The generator does not take a hook or a callback for one rule.
@@ -57,7 +58,7 @@ The generator emits `generated/data/<model>.rs` with one `pub async fn` for each
 - `create` maps a constraint failure to the constraint literals that the contract declares.
 - `update` and `delete` read the `outcome` column of their generated SQL and answer `not_found`, `concurrency_conflict` with both revisions, or the row.
 
-The generated error is one type for each package, `generated/data/error.rs`. It carries the contract's error literal and its detail, and it is the type that `codec::map_error` takes. The authored `data/src/error.rs` keeps the kinds of the authored operations and converts into the same literal and detail shape.
+The generated error is one type for each package, `generated/data/error.rs`. It carries the contract's error literal and its detail, and it is the type that `codec::map_error` takes. Every generated operation uses this one style, and Receiving and Acme take it when they regenerate. The detail keys are the detail fields that the contract declares, never a free map. The authored `data/src/error.rs` keeps the kinds of the authored operations and converts into the same literal and detail shape.
 
 The cursor, page and scalar code that each data crate copies today (`cursor.rs`, `page.rs`, `scalar.rs` in WMS) moves to a platform crate that the generated code calls. It is the same code, in one place.
 
@@ -79,7 +80,7 @@ Publish, `materialize_package` and the client builders read both files. An opera
 
 - `packaging.create` refuses `consumed`: the manifest already narrows `values.status` to `available` and `held`. If that narrowing refuses `consumed` before the data function runs, the Rust check is a duplicate and goes. Issue 1 must verify this first.
 - `packaging.query` sort variants: the generated dispatch in §4.1 covers it.
-- `supplier.create` refuses a blank name: a schema CHECK, `name <> ''`, on `receiving.supplier`. The constraint literal comes from the contract, as for every other CHECK.
+- `supplier.create` refuses a blank name: the model declares a minimum length on the field in the manifest, and the generator writes the CHECK into the migration. No migration is hand-written. The constraint literal comes from the contract, as for every other CHECK.
 - `widget.delete` reports the observed revision: the generated delete SQL returns the revision it read in its `outcome` row, as update does.
 
 After §4.4, no generated operation needs authored Rust.
@@ -98,11 +99,14 @@ After §4.4, no generated operation needs authored Rust.
 - Authored operations. Their data function, handler, route entry and declaration entry stay authored.
 - A new operation kind, or a change to the SQL that the generator emits for an existing kind.
 - The TypeScript and Rust clients, apart from reading the generated route file.
-- Merging the two error styles of §3 beyond what §4.1 needs. The authored kinds of Receiving and Acme keep their typed accessors.
+- The error style of authored operations. The authored kinds of Receiving and Acme keep their typed accessors.
 
-## 7. Questions for the owner
+## 7. Owner rulings
 
-1. Does a generated operation ever need to become authored without a change of kind? This plan has no switch for it. The alternative is a manifest field, `handler: authored`, that makes the generator skip §4.1 to §4.3 for one operation.
-2. The generated error type in §4.1 takes the JSON-detail style. Is that acceptable for Receiving and Acme, whose generated operations use typed accessors today?
-3. §4.4 moves the blank-name rule into a schema CHECK. Is a migration of `receiving.supplier` acceptable, or does the rule go to the manifest instead?
-4. Are the generated publication files in §4.3 acceptable, or do the route and declaration entries go into the authored files between generated markers?
+Recorded 2026-09-28.
+
+1. No `handler: authored` switch. The kind decides, as §2 states.
+2. One error style, the generated one, for every generated operation. Receiving and Acme take it when they regenerate. The detail keys are the contract's declared detail fields.
+3. The blank-name rule goes in the manifest as a minimum length on the field. The generator writes the CHECK into the migration.
+4. The generated route and declaration entries go in separate files under `generated/publication/`. Publish reads the authored and the generated files together. No generated markers go inside authored files.
+5. The owner reads this spec on `main` before issue 1 starts.
