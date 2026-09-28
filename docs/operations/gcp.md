@@ -1330,3 +1330,16 @@ grep -v "^DELETE FROM app_system.write_log" apps/wamn_receiving/tests/fixtures/r
 ```
 
 On 2026-09-28 the load wrote 1000 items, 1000 locations, 5 suppliers, 1000 purchase orders and 500500 lines in 258 seconds. The first run, with the reset line, stopped at that line and rolled back.
+
+### 6.2 Postgres volume
+
+The 1000 seed filled the 2 Gi volume of `wamn-pg-1`, and Postgres stopped with "Detected low-disk space condition". Identity, both host groups and both CDC readers stopped with it. The volume is now 10 Gi in [cnpg-cluster.yaml](../../deploy/gcp/cnpg-cluster.yaml). CloudNativePG does not reconcile while the disk is full, so also patch the claim:
+
+```bash
+kubectl apply -f deploy/gcp/cnpg-cluster.yaml
+kubectl -n platform patch pvc wamn-pg-1 --type merge -p '{"spec":{"resources":{"requests":{"storage":"10Gi"}}}}'
+```
+
+On 2026-09-28 the apply alone did not grow the claim in 408 seconds. The patch grew it in 32 seconds, and Postgres was ready 167 seconds later. Only the two live CDC slots existed, so no slot was dropped (finding `wamn-6jit`).
+
+Restart identity and the CDC readers after an outage of Postgres. Do not restart the host groups while they run: two host pods do not fit on the two nodes, and the new pods wait in `Pending`. If that happens, run `kubectl -n hosts rollout undo deploy/<name>`.
