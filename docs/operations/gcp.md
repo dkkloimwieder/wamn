@@ -1480,3 +1480,26 @@ stamp "platform back on main, tap Job complete, Receiving answering"
 ```
 
 A move of `main` to 0 waits for up to an hour on the CloudNativePG budget `wamn-pg-primary`, which allows no eviction, so the script deletes the Postgres pod once its node is cordoned. The data stays on the volume. The quota of 8 CPUs holds a 4 CPU pool, the VM and one `main` node, but not two, so the teardown grows `main` in two steps. `gcloud compute scp` failed once with a 300 second read timeout, so the results come back with `tar` over ssh.
+
+### 6.6 Tier results
+
+The runs of 2026-09-28 used Receiving release 1 (`sha256:aeb74968dfe09b113a115863ec8be5475923d9577914332081923052a41c16c4`), the host image `wamn-host:src-b68fac526bdd771b` and bench commit `33e6828e6`. The client was the VM `wamn-bench-client`, an `e2-small` in `us-central1-a`. Each run lasted 60 seconds, and all runs had 0 errors. The raw files are in `tests/bench/`. Latency is in milliseconds.
+
+| Tier | Nodes | Call | Concurrency | Throughput | p50 | p95 | p99 |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| 1 | 1 x `e2-standard-2` Spot | | | does not fit, no runs | | | |
+| 2 | 2 x `e2-standard-2` Spot | get | 4 | 256/s | 11.3 | 26.6 | 55.3 |
+| 2 | | get | 16 | 626/s | 22.7 | 37.5 | 55.5 |
+| 2 | | update | 4 | 208/s | 15.8 | 27.9 | 50.3 |
+| 2 | | update | 16 | 402/s | 35.3 | 61.1 | 109.0 |
+| 2 | | query | 4 | 152/s | 22.3 | 32.6 | 53.8 |
+| 2 | | query | 16 | 235/s | 64.5 | 89.5 | 140.4 |
+| 3 | 1 x `e2-standard-4` Spot | get | 4 | 318/s | 10.5 | 19.4 | 38.3 |
+| 3 | | get | 16 | 663/s | 21.4 | 31.9 | 53.9 |
+| 3 | | update | 4 | 227/s | 14.2 | 27.1 | 44.9 |
+| 3 | | update | 16 | 458/s | 30.1 | 52.6 | 82.2 |
+| 3 | | query | 4 | 183/s | 18.6 | 28.0 | 60.2 |
+| 3 | | query | 16 | 256/s | 59.3 | 77.4 | 128.1 |
+| 4 | 2 x `e2-standard-4` on demand | | | skipped | | | |
+
+Tier 1 does not fit: the platform requests about 3.4 CPU, and one `e2-standard-2` offers about 1.9. With it, `wamn-pg-1`, `evt-nats-0` and `hostgroup-default` stayed `Pending` on "Insufficient cpu". Tier 4 is skipped: the 8 CPU quota is by design, and two on-demand `e2-standard-4` need all 8 with nothing else running, the client VM included.

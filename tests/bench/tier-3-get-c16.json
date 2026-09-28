@@ -1,0 +1,16 @@
+{
+  "host": "receiving.wamn.dev",
+  "call": "get",
+  "tier": "tier-3",
+  "concurrency": 16,
+  "duration_secs": 60.017868346,
+  "started_at_unix": 1790613263,
+  "orders": 1000,
+  "calls": 39800,
+  "errors": 0,
+  "error_rate": 0.0,
+  "throughput_per_sec": 663.1358476538186,
+  "p50_ms": 21.43,
+  "p95_ms": 31.923,
+  "p99_ms": 53.938
+}
