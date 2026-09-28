@@ -2072,6 +2072,9 @@
       ]
     }
   },
+  "routes": {
+    "id_prefix": ""
+  },
   "workflows": {
     "movement_label": {
       "wiring": "inventory_move_and_label",

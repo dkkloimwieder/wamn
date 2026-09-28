@@ -6,16 +6,6 @@
   },
   "component": "fixture_overlay",
   "interface-version": "0.1.0",
-  "operations": {
-    "platform-fixture-overlay:widget/get@1.0.0": {
-      "registered-operation": "platform-fixture-overlay:widget/get@1.0.0",
-      "input-ports": [{
-        "name": "input",
-        "schema": {"$ref": "generated/routes/widget/get.json"}
-      }],
-      "output-ports": [{"name": "main", "schema": {"type": "array"}}],
-      "parameters": []
-    }
-  },
+  "operations": {},
   "connections": []
 }

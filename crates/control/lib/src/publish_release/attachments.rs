@@ -99,26 +99,45 @@ fn read_authored_attachments(
             "publish-release requires at least one package-owned --attachments document",
         ));
     }
-    let documents = paths
-        .iter()
-        .map(|path| {
-            let bytes = std::fs::read(path).map_err(|error| {
-                MintManifestError::with_source(
-                    MintManifestErrorKind::Document,
-                    format!("read package attachments {}", path.display()),
-                    error,
-                )
-            })?;
-            let attachments = serde_json::from_slice(&bytes).map_err(|error| {
-                MintManifestError::with_source(
-                    MintManifestErrorKind::Document,
-                    format!("parse package attachments {}", path.display()),
-                    error,
-                )
-            })?;
-            Ok((path.clone(), attachments))
-        })
-        .collect::<Result<Vec<_>, MintManifestError>>()?;
+    let mut documents = Vec::new();
+    for path in paths {
+        let bytes = std::fs::read(path).map_err(|error| {
+            MintManifestError::with_source(
+                MintManifestErrorKind::Document,
+                format!("read package attachments {}", path.display()),
+                error,
+            )
+        })?;
+        let attachments = serde_json::from_slice(&bytes).map_err(|error| {
+            MintManifestError::with_source(
+                MintManifestErrorKind::Document,
+                format!("parse package attachments {}", path.display()),
+                error,
+            )
+        })?;
+        documents.push((path.clone(), attachments));
+        // Generation writes the route entries of the package's generated
+        // operations beside the authored document.
+        let root = wamn_schema_generator::route_schema::package_root_of(path);
+        let generated = wamn_schema_generator::route_schema::read_generated_publication(
+            root,
+            wamn_schema_generator::route_schema::GENERATED_ATTACHMENTS,
+        )
+        .and_then(wamn_schema_generator::route_schema::generated_attachments)
+        .map_err(|error| {
+            MintManifestError::with_source(
+                MintManifestErrorKind::Document,
+                format!("read the generated attachments beside {}", path.display()),
+                error,
+            )
+        })?;
+        if !generated.is_empty() {
+            documents.push((
+                root.join(wamn_schema_generator::route_schema::GENERATED_ATTACHMENTS),
+                generated,
+            ));
+        }
+    }
     merge_package_attachment_documents(documents)
 }
 
@@ -332,4 +351,98 @@ fn validate_authored_attachment_routes(
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The route hashes and the whole attachment set of the fixture, as publish
+    /// read them before generation wrote the generated route entries.
+    const FIXTURE_ROUTES: &[(&str, &str)] = &[
+        (
+            "widget-archive-http",
+            "sha256:318e0ed97696b8fa54040bf7fdf8d44251ff7aa18acc475b6a7464d1cd5e3535",
+        ),
+        (
+            "widget-create-http",
+            "sha256:4189444939f50079641e7492fc76f00227d87c31617c9533d2bbbf0f92ebbc11",
+        ),
+        (
+            "widget-delete-http",
+            "sha256:f03abc2aeb927967fe464cc8d95103aea930cb7587923dd4cc4a5e2f81570937",
+        ),
+        (
+            "widget-get-http",
+            "sha256:8c02eb64b189b763080d8b33c505ac8ac728bdd5556a772318e306511f78a788",
+        ),
+        (
+            "widget-list-http",
+            "sha256:e5905f348a94051788ffd9eece1c61e6716ea6864e56cf25dc3d2ac93041c6ed",
+        ),
+        (
+            "widget-maker-get-http",
+            "sha256:039d448ec7fbdf2bed46c6e0809f297fc4ed031fb67687177c363cea7bbafd25",
+        ),
+        (
+            "widget-maker-list-http",
+            "sha256:45ff1b1784d3f7799fea1e777a960099d0c4589c94eec78220ad17579bcc094c",
+        ),
+        (
+            "widget-maker-query-http",
+            "sha256:3be20be39c575f8deb827f95bc441840e8cd4fc9c9efb92ffe4dca22f9a9668e",
+        ),
+        (
+            "widget-query-http",
+            "sha256:6c98260e18b130caf89668deacb9d14a1d34d973ab2068d952c38751920a17e8",
+        ),
+        (
+            "widget-record-batch-http",
+            "sha256:c9617868c09c438f4e03634c9f21ccc5f21e6d6f870af592b691f0bf579d5d2b",
+        ),
+        (
+            "widget-tag-update-http",
+            "sha256:4f99f1c2a78e9cb92500b04b3454e827e2e672a2721beda0654cd3db0d430b0c",
+        ),
+        (
+            "widget-update-http",
+            "sha256:11aa126e11433c107a43b1a1e6a36f47471a603bf768196fa0c22c5eac5f800e",
+        ),
+    ];
+    const FIXTURE_ATTACHMENTS_DIGEST: &str =
+        "sha256:0a63a518eeb9ac7bcccf03a1938589fd4cf5e0f65b641cd851842802a873d802";
+    /// The rendered fixture declaration, before generation wrote its entries.
+    const FIXTURE_DECLARATION_DIGEST: &str =
+        "sha256:e6770014d60668c5e8ed4f12a078576c2c884c398cff8ca1782b09e601e63fef";
+
+    /// A publish of the fixture reads the same routes and the same component
+    /// declaration from the generated entries as from the authored ones they
+    /// replaced (wamn-iowb.3).
+    #[test]
+    fn the_fixture_publishes_what_it_published_before_generated_route_entries() {
+        let root = wamn_fixture_package::package_root();
+        let attachments = read_package_attachments(
+            &[root.join("publication/attachments.json")],
+            &[root.join("wamn.json")],
+        )
+        .expect("read the fixture attachments");
+        let routes = attachments
+            .iter()
+            .map(|(id, attachment)| (id.as_str(), attachment.definition_hash.as_str()))
+            .collect::<Vec<_>>();
+        let digest = wamn_execution_contract::canonical_json_sha256(
+            &serde_json::to_value(&attachments).expect("attachments serialize"),
+        );
+        let declaration = crate::component_declaration::render_declaration_document(
+            &root.join("publication/components/fixture.json.in"),
+            "tenant-a",
+            &crate::component_declaration::authored_base_digests(&root)
+                .expect("read the fixture base digests"),
+        )
+        .expect("render the fixture declaration");
+        let declaration = wamn_execution_contract::canonical_json_sha256(&declaration);
+        assert_eq!(routes, FIXTURE_ROUTES);
+        assert_eq!(digest, FIXTURE_ATTACHMENTS_DIGEST);
+        assert_eq!(declaration, FIXTURE_DECLARATION_DIGEST);
+    }
 }

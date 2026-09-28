@@ -92,11 +92,39 @@ fn read_json(path: &Path) -> Value {
         .unwrap_or_else(|error| panic!("parse {}: {error}", path.display()))
 }
 
+/// One generated publication file of the package.
+fn generated(file: &str) -> Value {
+    read_json(&publication_root().join("..").join(file))
+}
+
+/// The authored attachments with the generated route entries.
+fn attachments_document() -> Value {
+    let mut document = read_json(&publication_root().join("attachments.json"));
+    let generated = generated(wamn_schema_generator::route_schema::GENERATED_ATTACHMENTS);
+    document
+        .as_object_mut()
+        .expect("the attachments are an object")
+        .extend(
+            generated
+                .as_object()
+                .expect("the generated attachments are an object")
+                .clone(),
+        );
+    document
+}
+
 fn declaration() -> ComponentDeclaration {
     let path = publication_root()
         .join("components")
         .join("receiving.json.in");
     let mut document = read_json(&path);
+    wamn_schema_generator::route_schema::merge_operations(
+        &mut document,
+        Some(&generated(
+            wamn_schema_generator::route_schema::GENERATED_COMPONENT_OPERATIONS,
+        )),
+    )
+    .expect("the generated operations join the authored ones");
     document["scope"]["tenant-id"] = Value::String(TENANT.to_owned());
     serde_json::from_value(document)
         .unwrap_or_else(|error| panic!("decode {}: {error}", path.display()))
@@ -106,7 +134,7 @@ fn declaration() -> ComponentDeclaration {
 fn package_owned_inputs_declare_the_exact_eleven_route_closure() {
     let package_manifest = read_json(&repository_root().join("apps/wamn_receiving/wamn.json"));
     let attachments: BTreeMap<String, wamn_catalog::ServingAttachment> =
-        serde_json::from_value(read_json(&publication_root().join("attachments.json")))
+        serde_json::from_value(attachments_document())
             .expect("the attachment map has the serving wire shape");
     assert_eq!(attachments.len(), OPERATIONS.len());
 

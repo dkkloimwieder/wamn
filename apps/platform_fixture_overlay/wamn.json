@@ -7,7 +7,7 @@
     "base_fixture": {
       "package": "platform_fixture",
       "version": "1.0.0",
-      "digest": "sha256:6080f59e0d336bbf27b5566eeaabf4b3834cdf91f8a3eda7d365c3ae0bf42d0d",
+      "digest": "sha256:1544ef526b820028a741ca2e7706202f8859d87b498ef013885f7abcd1803f8b",
       "operations": [
         "widget.archive"
       ]
@@ -53,5 +53,12 @@
         "postgres"
       ]
     }
+  },
+  "routes": {
+    "auth_modes": [
+      "pat"
+    ],
+    "path_prefix": "/overlay",
+    "id_prefix": ""
   }
 }

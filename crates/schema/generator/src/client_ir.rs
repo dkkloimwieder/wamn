@@ -582,13 +582,14 @@ impl ClientContractIr {
     ) -> Result<Self, ClientIrError> {
         // The document sits at `publication/attachments.json`, and the
         // generated schemas it names resolve against the package root above it.
-        let root = attachments
-            .parent()
-            .and_then(Path::parent)
-            .unwrap_or_else(|| Path::new(""));
-        let routes = route_index(attachments, &mut |reference| {
-            crate::route_schema::read_from_package(root, reference)
-        })?;
+        // Generation writes the route entries of the generated operations
+        // beside it, under `generated/publication/`.
+        let root = crate::route_schema::package_root_of(attachments);
+        let routes = route_index(
+            attachments,
+            &mut |file| crate::route_schema::read_generated_publication(root, file),
+            &mut |reference| crate::route_schema::read_from_package(root, reference),
+        )?;
         Self::project(package, contracts, &routes)
     }
 
@@ -727,21 +728,50 @@ impl ClientContractIr {
 /// carries every operation's types and descriptors and no invoke function,
 /// which is what [`ClientContractIr::from_contract_directory`] already means.
 ///
-/// `read` returns the generated route schema a reference names.
+/// `generated` returns a generated publication file of the package, or `None`
+/// when generation wrote none. `read` returns the generated route schema a
+/// reference names.
 ///
 /// # Errors
 ///
-/// [`ClientIrError`] when the file exists and is not a serving attachment map,
-/// or a schema it names cannot be read.
+/// [`ClientIrError`] when a file exists and is not a serving attachment map,
+/// an attachment id appears in both, or a schema it names cannot be read.
 pub fn published_routes(
     attachments: &Path,
-    read: &mut dyn FnMut(&str) -> Result<Value, crate::route_schema::RouteSchemaError>,
+    generated: &mut GeneratedRead<'_>,
+    read: &mut SchemaRead<'_>,
 ) -> Result<BTreeMap<String, RouteIr>, ClientIrError> {
-    if attachments.exists() {
-        route_index(attachments, read)
+    if attachments.exists()
+        || generated(crate::route_schema::GENERATED_ATTACHMENTS)
+            .map_err(|error| unreadable_projection(attachments, &error))?
+            .is_some()
+    {
+        route_index(attachments, generated, read)
     } else {
         Ok(BTreeMap::new())
     }
+}
+
+/// Reads one generated publication file of a package, or `None` when
+/// generation wrote none.
+pub type GeneratedRead<'a> =
+    dyn FnMut(&str) -> Result<Option<Value>, crate::route_schema::RouteSchemaError> + 'a;
+
+/// Reads the generated route schema that a reference names.
+pub type SchemaRead<'a> =
+    dyn FnMut(&str) -> Result<Value, crate::route_schema::RouteSchemaError> + 'a;
+
+fn unreadable_projection(
+    attachments: &Path,
+    error: &crate::route_schema::RouteSchemaError,
+) -> ClientIrError {
+    let cause = std::error::Error::source(error)
+        .map(|source| format!(": {source}"))
+        .unwrap_or_default();
+    ClientIrError::new(
+        ClientIrErrorKind::UnreadableProjection,
+        format!("{}: {error}{cause}", attachments.display()),
+    )
 }
 
 /// Operation identity -> published route, from one release's attachment map.
@@ -768,9 +798,10 @@ pub fn published_routes(
 /// form publication would produce. Fail-closed, one authority, no cycle.
 fn route_index(
     attachments: &Path,
-    read: &mut dyn FnMut(&str) -> Result<Value, crate::route_schema::RouteSchemaError>,
+    generated: &mut GeneratedRead<'_>,
+    read: &mut SchemaRead<'_>,
 ) -> Result<BTreeMap<String, RouteIr>, ClientIrError> {
-    let mut published: BTreeMap<String, wamn_catalog::ServingAttachment> =
+    let mut published: BTreeMap<String, wamn_catalog::ServingAttachment> = if attachments.exists() {
         serde_json::from_value(read_json(attachments)?).map_err(|error| {
             ClientIrError::new(
                 ClientIrErrorKind::MalformedContract,
@@ -779,16 +810,22 @@ fn route_index(
                     attachments.display()
                 ),
             )
-        })?;
-    crate::route_schema::resolve_attachments(&mut published, read).map_err(|error| {
-        let cause = std::error::Error::source(&error)
-            .map(|source| format!(": {source}"))
-            .unwrap_or_default();
-        ClientIrError::new(
-            ClientIrErrorKind::UnreadableProjection,
-            format!("{}: {error}{cause}", attachments.display()),
+        })?
+    } else {
+        BTreeMap::new()
+    };
+    let unreadable = |error| unreadable_projection(attachments, &error);
+    crate::route_schema::merge_attachments(
+        &mut published,
+        crate::route_schema::generated_attachments(
+            generated(crate::route_schema::GENERATED_ATTACHMENTS).map_err(unreadable)?,
         )
-    })?;
+        .map_err(unreadable)?,
+    )
+    .map_err(unreadable)?;
+    let operations =
+        generated(crate::route_schema::GENERATED_COMPONENT_OPERATIONS).map_err(unreadable)?;
+    crate::route_schema::resolve_attachments(&mut published, read).map_err(unreadable)?;
 
     let mut index: BTreeMap<String, RouteIr> = BTreeMap::new();
     for (id, attachment) in published {
@@ -826,7 +863,8 @@ fn route_index(
                 ),
             ));
         }
-        let evidence = crate::client_route::evidence(attachments, &attachment)?;
+        let evidence =
+            crate::client_route::evidence(attachments, &attachment, operations.as_ref())?;
         let route = RouteIr {
             // The join with the operation contract writes the method from its kind.
             method: String::new(),

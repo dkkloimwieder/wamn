@@ -1528,18 +1528,20 @@ fn screen_text_on_the_envelope_bound_refuses_and_names_the_line_bound() {
 ///
 /// The two catalogs differ in one column: `widget.note` becomes NOT NULL with
 /// no default, so a create can no longer omit it or send null. The manifest
-/// and the fixture's `publication/attachments.json` are the same bytes for
-/// both, and the served route schema and definition hash move anyway.
+/// and the generated route entry are the same bytes for both, and the served
+/// route schema and definition hash move anyway.
 #[test]
 fn a_contract_change_moves_the_route_schema_the_attachment_names() {
     const ROUTE: &str = "generated/routes/widget/create.json";
-    let published = || -> std::collections::BTreeMap<String, wamn_catalog::ServingAttachment> {
-        let path = wamn_fixture_package::package_root().join("publication/attachments.json");
-        serde_json::from_slice(&std::fs::read(path).expect("read the fixture attachments"))
-            .expect("the fixture attachments decode")
+    let published = |package: &wamn_schema_generator::GeneratedPackage| {
+        artifact(
+            package,
+            wamn_schema_generator::route_schema::GENERATED_ATTACHMENTS,
+        )
     };
     let served = |package: &wamn_schema_generator::GeneratedPackage| {
-        let mut attachments = published();
+        let mut attachments: std::collections::BTreeMap<String, wamn_catalog::ServingAttachment> =
+            serde_json::from_value(published(package)).expect("the generated attachments decode");
         wamn_schema_generator::route_schema::resolve_attachments(&mut attachments, &mut |path| {
             wamn_schema_generator::route_schema::parse(
                 path,
@@ -1554,15 +1556,15 @@ fn a_contract_change_moves_the_route_schema_the_attachment_names() {
             .remove("widget-create-http")
             .expect("the fixture serves widget create")
     };
-    assert_eq!(
-        published()["widget-create-http"].definition["input-schema"],
-        json!({"$ref": ROUTE}),
-        "the attachment names the generated schema and copies none of it"
-    );
-
     let optional = fixture::generate_fixture();
     let required =
         fixture::generate_with(&fixture::catalog_with_required_note(), &fixture::manifest());
+    assert_eq!(
+        published(&optional)["widget-create-http"]["definition"]["input-schema"],
+        json!({"$ref": ROUTE}),
+        "the attachment names the generated schema and copies none of it"
+    );
+    assert_eq!(published(&optional), published(&required));
     let (before, after) = (served(&optional), served(&required));
     assert_eq!(
         before.definition["input-schema"],
@@ -1583,4 +1585,54 @@ fn a_contract_change_moves_the_route_schema_the_attachment_names() {
     assert_eq!(note(&before), (false, json!("accepted")));
     assert_eq!(note(&after), (true, json!("invalid_input")));
     assert_ne!(before.definition_hash, after.definition_hash);
+}
+
+/// Without a `routes` member, each generated route admits a PAT and a session,
+/// and its attachment id starts with the package id (wamn-iowb.3).
+#[test]
+fn a_package_without_routes_takes_the_default_route_members() {
+    let mut manifest = fixture::manifest();
+    manifest
+        .as_object_mut()
+        .expect("the manifest is an object")
+        .remove("routes");
+    let package = fixture::generate_with(&fixture::catalog(), &manifest);
+    let attachments = artifact(
+        &package,
+        wamn_schema_generator::route_schema::GENERATED_ATTACHMENTS,
+    );
+    let get = &attachments["platform-fixture-widget-get-http"];
+    assert_eq!(get["auth-policy"], json!({"modes": ["pat", "session"]}));
+    assert_eq!(get["definition"]["id"], "platform-fixture-widget-get-http");
+    assert_eq!(get["definition"]["route"]["path"], "/widget/get");
+    assert_eq!(
+        artifact(
+            &package,
+            wamn_schema_generator::route_schema::GENERATED_COMPONENT_OPERATIONS,
+        )["fixture"]["platform-fixture:widget/get@1.0.0"]["input-ports"][0]["schema"],
+        json!({"$ref": "generated/routes/widget/get.json"})
+    );
+}
+
+/// A route member that publish could not serve refuses, and names the member.
+#[test]
+fn a_route_member_publish_cannot_serve_refuses() {
+    for (member, value) in [
+        ("auth_modes", json!(["none"])),
+        ("auth_modes", json!(["session", "pat"])),
+        ("path_prefix", json!("acme")),
+        ("path_prefix", json!("/acme/")),
+        ("id_prefix", json!("Acme")),
+        ("id_prefix", json!("acme-")),
+    ] {
+        let mut manifest = fixture::manifest();
+        manifest["routes"][member] = value.clone();
+        let error = fixture::try_generate_with(&fixture::catalog(), &manifest)
+            .expect_err("the route member refuses");
+        assert_eq!(error.kind(), GenerateErrorKind::InvalidManifest, "{value}");
+        assert!(
+            error.to_string().contains(&format!("routes.{member}")),
+            "{error}"
+        );
+    }
 }

@@ -32,6 +32,9 @@ pub struct PackageManifest {
     pub custom_operations: BTreeMap<String, CustomOperationDeclaration>,
     pub connections: BTreeSet<String>,
     pub components: BTreeMap<String, ComponentDeclaration>,
+    /// The route entries generation writes for the generated operations.
+    #[serde(default, skip_serializing_if = "RoutesDeclaration::is_default")]
+    pub routes: RoutesDeclaration,
     /// Wirings that an application event starts, off the request path, keyed
     /// by workflow id (docs/plan/workflow-feature.md 4.2).
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
@@ -662,6 +665,7 @@ pub fn validate_operation_vocabulary(
     validate_base_dependencies(manifest)?;
     validate_internal_relation_vocabulary(manifest)?;
     validate_workflows(manifest)?;
+    validate_routes(&manifest.routes)?;
 
     let mut declared = BTreeSet::new();
     let mut component_by_operation = BTreeMap::new();
@@ -899,6 +903,55 @@ fn reserved_history_name(subject: &str, schema: &str, table: &str) -> GenerateEr
         ),
         format!("{schema}.{table}"),
     )
+}
+
+fn validate_routes(routes: &RoutesDeclaration) -> Result<(), GenerateError> {
+    let invalid = |detail: String| {
+        Err(GenerateError::new(
+            GenerateErrorKind::InvalidManifest,
+            detail,
+        ))
+    };
+    if let Some(modes) = &routes.auth_modes {
+        let policy = serde_json::json!({ "modes": modes });
+        match wamn_catalog::parse_attachment_auth_policy(&policy) {
+            None | Some(wamn_catalog::AttachmentAuthPolicy::None) => {
+                return invalid(format!(
+                    "routes.auth_modes {modes:?} must be [\"pat\"], [\"session\"] or [\"pat\", \"session\"]"
+                ));
+            }
+            Some(_) => {}
+        }
+    }
+    if let Some(prefix) = &routes.path_prefix {
+        let segments = prefix.strip_prefix('/').map(|rest| rest.split('/'));
+        if !segments.is_some_and(|mut segments| {
+            segments.all(|segment| {
+                !segment.is_empty()
+                    && segment
+                        .bytes()
+                        .all(|byte| byte.is_ascii_alphanumeric() || b"-_".contains(&byte))
+            })
+        }) {
+            return invalid(format!(
+                "routes.path_prefix {prefix:?} must be one or more /segment parts of letters, digits, - and _"
+            ));
+        }
+    }
+    if let Some(prefix) = &routes.id_prefix
+        && !prefix.is_empty()
+        && !prefix.split('-').all(|part| {
+            !part.is_empty()
+                && part
+                    .bytes()
+                    .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit())
+        })
+    {
+        return invalid(format!(
+            "routes.id_prefix {prefix:?} must be empty or lowercase kebab case"
+        ));
+    }
+    Ok(())
 }
 
 fn validate_component_groups(
@@ -2839,6 +2892,31 @@ pub struct LimitDeclaration {
 pub enum CursorDirection {
     Ascending,
     Descending,
+}
+
+/// How generation publishes the route of each generated operation.
+///
+/// A route is `<path_prefix>/<model>/<action>`, with the attachment id
+/// `<id_prefix>-<model>-<action>-http`, or `<model>-<action>-http` when the
+/// prefix is empty.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RoutesDeclaration {
+    /// The authentication modes of each route. Absent means `pat` and `session`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auth_modes: Option<Vec<String>>,
+    /// A path that every route starts with, such as `/acme`. Absent means none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub path_prefix: Option<String>,
+    /// The start of each attachment id. Absent means the package id in kebab case.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub id_prefix: Option<String>,
+}
+
+impl RoutesDeclaration {
+    fn is_default(&self) -> bool {
+        *self == Self::default()
+    }
 }
 
 /// Import requirements for one package-local component group.

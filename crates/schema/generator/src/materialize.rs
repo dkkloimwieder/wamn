@@ -329,7 +329,8 @@ pub fn materialize_package_classified(
 /// GENERATE OUTPUT rather than something dropped next to one (`wamn-10yt.45`).
 ///
 /// The contracts are read from the generated package still in memory, and the
-/// routes from the package's own `publication/attachments.json`. Route
+/// routes from the package's own `publication/attachments.json` and the
+/// generated route entries still in memory. Route
 /// templates are release facts — the base package publishes
 /// `/purchase_order/get` and the overlay publishes its own at
 /// `/acme/purchase_order/get` — so a binding that derived a path from an
@@ -351,6 +352,12 @@ fn client_bindings(package_root: &Path, package: &GeneratedPackage) -> Result<Ve
     // has not written yet, so the reference resolves against these bytes.
     let routes = published_routes(
         &package_root.join("publication/attachments.json"),
+        &mut |path| {
+            package
+                .file(path)
+                .map(|file| crate::route_schema::parse(path, file.bytes()))
+                .transpose()
+        },
         &mut |reference| {
             let file = package
                 .file(reference)

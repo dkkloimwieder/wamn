@@ -1,36 +1,4 @@
 {
-  "client-acme-receiving-purchase-order-get-http": {
-    "kind": "http",
-    "package-id": "client_acme_receiving",
-    "component": "client_acme_receiving",
-    "operation": "client-acme-receiving:purchase-order/get@3.0.0",
-    "definition-hash": "sha256:43155b42e7845d3620708ecc3cb7766c4312f56f56fca8db0229aed4308e25ed",
-    "definition": {
-      "id": "client-acme-receiving-purchase-order-get-http",
-      "kind": "http",
-      "route": {"path": "/acme/purchase_order/get"},
-      "raw-body-bytes": {"maximum": 1048576},
-      "input-schema": {"$ref": "generated/routes/purchase_order/get.json"}
-    },
-    "auth-policy": {"modes": ["pat", "session"]},
-    "registered-operation": "client-acme-receiving:purchase-order/get@3.0.0"
-  },
-  "client-acme-receiving-purchase-order-update-http": {
-    "kind": "http",
-    "package-id": "client_acme_receiving",
-    "component": "client_acme_receiving",
-    "operation": "client-acme-receiving:purchase-order/update@3.0.0",
-    "definition-hash": "sha256:01390350482d9171b9f6ae33d8d5862b673272a58d80fdb888707db29da47651",
-    "definition": {
-      "id": "client-acme-receiving-purchase-order-update-http",
-      "kind": "http",
-      "route": {"path": "/acme/purchase_order/update"},
-      "raw-body-bytes": {"maximum": 1048576},
-      "input-schema": {"$ref": "generated/routes/purchase_order/update.json"}
-    },
-    "auth-policy": {"modes": ["pat", "session"]},
-    "registered-operation": "client-acme-receiving:purchase-order/update@3.0.0"
-  },
   "client-acme-receiving-receiving-record-receipt-http": {
     "kind": "http",
     "package-id": "client_acme_receiving",

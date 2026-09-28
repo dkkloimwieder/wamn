@@ -24,6 +24,7 @@ pub(super) struct RouteEvidence {
 pub(super) fn evidence(
     attachments: &Path,
     attachment: &ServingAttachment,
+    generated: Option<&Value>,
 ) -> Result<RouteEvidence, ClientIrError> {
     let definition = attachment
         .definition
@@ -45,8 +46,15 @@ pub(super) fn evidence(
             // A route calls one export directly and responds with its output.
             result.direct = attachment.registered_operation.as_deref() == Some(operation.as_str());
             result.terminal_operation = Some(operation.clone());
-            result.output_schema =
-                component_schema(publication, attachment, component, None, operation, false)?;
+            result.output_schema = component_schema(
+                publication,
+                generated,
+                attachment,
+                component,
+                None,
+                operation,
+                false,
+            )?;
             return Ok(result);
         }
         AttachmentTarget::Wiring {
@@ -73,10 +81,15 @@ pub(super) fn evidence(
             ));
         }
         if let Some(committed) = &response.committed_result {
-            result.partial_schema =
-                node_schema(publication, attachment, &wiring.nodes[committed], true)?
-                    .as_ref()
-                    .map(partial_response_schema);
+            result.partial_schema = node_schema(
+                publication,
+                generated,
+                attachment,
+                &wiring.nodes[committed],
+                true,
+            )?
+            .as_ref()
+            .map(partial_response_schema);
         }
         Some(read_schema(
             publication,
@@ -84,7 +97,7 @@ pub(super) fn evidence(
             &response.schema,
         )?)
     } else {
-        node_schema(publication, attachment, terminal, false)?
+        node_schema(publication, generated, attachment, terminal, false)?
     };
     Ok(result)
 }
@@ -143,6 +156,7 @@ fn response_node(wiring: &WiringDocument) -> Option<(&str, &WiringNode)> {
 
 fn node_schema(
     publication: &Path,
+    generated: Option<&Value>,
     attachment: &ServingAttachment,
     node: &WiringNode,
     committed: bool,
@@ -154,6 +168,7 @@ fn node_schema(
     }
     component_schema(
         publication,
+        generated,
         attachment,
         &node.component,
         Some(&node.interface_version),
@@ -167,6 +182,7 @@ fn node_schema(
 /// A route names no interface version, so it passes `None` and matches any.
 fn component_schema(
     publication: &Path,
+    generated: Option<&Value>,
     attachment: &ServingAttachment,
     component: &str,
     interface_version: Option<&str>,
@@ -176,7 +192,11 @@ fn component_schema(
     let mut selected = None;
     let mut matched = false;
     for path in declaration_paths(&publication.join("components"), true)? {
-        let declaration: ComponentDeclaration = serde_json::from_value(read_json(&path)?)
+        // The package's generated operations belong to its declarations.
+        let mut document = read_json(&path)?;
+        crate::route_schema::merge_operations(&mut document, generated)
+            .map_err(|error| malformed(&path, error))?;
+        let declaration: ComponentDeclaration = serde_json::from_value(document)
             .map_err(|error| malformed(&path, format!("invalid component declaration: {error}")))?;
         if declaration.scope.package_id != attachment.package_id
             || declaration.component != component
@@ -383,7 +403,7 @@ mod tests {
         let mut wiring = direct_wiring(&attachment);
         wiring["response"] = json!({"node": "operation", "schema": {"type": "array"}});
         fixture.write("wirings/widget-archive.json", &wiring);
-        let result = evidence(&fixture.attachments(), &attachment)
+        let result = evidence(&fixture.attachments(), &attachment, None)
             .expect("read direct publication evidence");
         assert!(result.direct);
         assert_eq!(result.terminal_operation, attachment.registered_operation);
@@ -453,7 +473,7 @@ mod tests {
                 "connections": []
             }),
         );
-        let result = evidence(&fixture.attachments(), &attachment)
+        let result = evidence(&fixture.attachments(), &attachment, None)
             .expect("read composed publication evidence");
         assert!(!result.direct);
         assert_eq!(
@@ -493,8 +513,8 @@ mod tests {
             "wirings/unrelated-file-name.json",
             &direct_wiring(&attachment),
         );
-        let result =
-            evidence(&fixture.attachments(), &attachment).expect("read exact selected wiring");
+        let result = evidence(&fixture.attachments(), &attachment, None)
+            .expect("read exact selected wiring");
         assert!(result.direct);
         assert_eq!(result.terminal_operation, attachment.registered_operation);
         assert_eq!(result.output_schema, None);
@@ -505,7 +525,7 @@ mod tests {
         let attachment = platform_attachment();
         let fixture = Publication::new();
         let result =
-            evidence(&fixture.attachments(), &attachment).expect("missing wiring is unknown");
+            evidence(&fixture.attachments(), &attachment, None).expect("missing wiring is unknown");
         assert!(!result.direct);
         assert_eq!(result.terminal_operation, None);
         assert_eq!(result.output_schema, None);
@@ -520,16 +540,16 @@ mod tests {
         let mut attachment = platform_attachment();
         let fixture = Publication::new();
         attachment.definition["input-schema"] = json!([]);
-        let error =
-            evidence(&fixture.attachments(), &attachment).expect_err("refuse malformed schema");
+        let error = evidence(&fixture.attachments(), &attachment, None)
+            .expect_err("refuse malformed schema");
         assert_eq!(error.kind(), ClientIrErrorKind::MalformedContract);
         assert!(error.to_string().contains("attachments.json"));
         attachment.definition["input-schema"] = json!(true);
         let mut wiring = direct_wiring(&attachment);
         wiring["entry"] = json!("absent");
         fixture.write("wirings/invalid.json", &wiring);
-        let error =
-            evidence(&fixture.attachments(), &attachment).expect_err("refuse malformed wiring");
+        let error = evidence(&fixture.attachments(), &attachment, None)
+            .expect_err("refuse malformed wiring");
         assert_eq!(error.kind(), ClientIrErrorKind::MalformedContract);
         assert!(error.to_string().contains("invalid.json"));
     }
@@ -571,13 +591,13 @@ mod tests {
             "connections": []
         });
         fixture.write("components/declaration.json.in", &declaration);
-        let result =
-            evidence(&fixture.attachments(), &attachment).expect("unrelated package declaration");
+        let result = evidence(&fixture.attachments(), &attachment, None)
+            .expect("unrelated package declaration");
         assert_eq!(result.output_schema, None);
         declaration["scope"]["package-id"] = json!(attachment.package_id);
         fixture.write("components/declaration.json.in", &declaration);
-        let result =
-            evidence(&fixture.attachments(), &attachment).expect("matching package declaration");
+        let result = evidence(&fixture.attachments(), &attachment, None)
+            .expect("matching package declaration");
         assert_eq!(result.output_schema, Some(json!({"type": "array"})));
     }
 
@@ -615,7 +635,7 @@ mod tests {
         });
         let fixture = Publication::new();
         fixture.write("wirings/composed.json", &wiring);
-        let result = evidence(&fixture.attachments(), &attachment).unwrap();
+        let result = evidence(&fixture.attachments(), &attachment, None).unwrap();
         assert!(result.output_schema.is_some());
         assert!(
             result.partial_schema.is_none(),
@@ -623,7 +643,7 @@ mod tests {
         );
         fixture.write("components/fixture.json.in", &declaration);
         assert!(
-            evidence(&fixture.attachments(), &attachment)
+            evidence(&fixture.attachments(), &attachment, None)
                 .unwrap()
                 .partial_schema
                 .is_some()
@@ -644,7 +664,7 @@ mod tests {
             }
             fixture.write("components/fixture.json.in", &unrelated);
             assert!(
-                evidence(&fixture.attachments(), &attachment)
+                evidence(&fixture.attachments(), &attachment, None)
                     .unwrap()
                     .partial_schema
                     .is_none(),
@@ -654,19 +674,19 @@ mod tests {
         let mut without_response = wiring.clone();
         without_response.as_object_mut().unwrap().remove("response");
         fixture.write("wirings/composed.json", &without_response);
-        let opaque = evidence(&fixture.attachments(), &attachment).unwrap();
+        let opaque = evidence(&fixture.attachments(), &attachment, None).unwrap();
         assert!(opaque.output_schema.is_none());
         assert!(opaque.partial_schema.is_none());
         let mut unreachable = wiring.clone();
         unreachable["nodes"]["unreachable"] = wiring["nodes"]["store"].clone();
         unreachable["response"]["node"] = json!("unreachable");
         fixture.write("wirings/composed.json", &unreachable);
-        assert!(evidence(&fixture.attachments(), &attachment).is_err());
+        assert!(evidence(&fixture.attachments(), &attachment, None).is_err());
         fixture.write("wirings/composed.json", &wiring);
         fixture.write("components/fixture.json.in", &declaration);
         fixture.write("components/duplicate.json.in", &declaration);
         assert!(
-            evidence(&fixture.attachments(), &attachment)
+            evidence(&fixture.attachments(), &attachment, None)
                 .unwrap()
                 .partial_schema
                 .is_none(),

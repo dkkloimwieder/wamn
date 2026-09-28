@@ -1,31 +1,4 @@
 {
-  "sample-get-http": {
-    "kind": "http",
-    "package-id": "edge_samples",
-    "component": "samples",
-    "operation": "edge-samples:sample/get@1.0.0",
-    "definition-hash": "sha256:5087e6b6c517570e1d65df602ab26b562b0ae8ca0179146831157489551426c9",
-    "definition": {
-      "id": "sample-get-http",
-      "kind": "http",
-      "route": {
-        "path": "/sample/get"
-      },
-      "raw-body-bytes": {
-        "maximum": 1048576
-      },
-      "input-schema": {
-        "$ref": "generated/routes/sample/get.json"
-      }
-    },
-    "auth-policy": {
-      "modes": [
-        "pat",
-        "session"
-      ]
-    },
-    "registered-operation": "edge-samples:sample/get@1.0.0"
-  },
   "sample-record-http": {
     "kind": "http",
     "package-id": "edge_samples",

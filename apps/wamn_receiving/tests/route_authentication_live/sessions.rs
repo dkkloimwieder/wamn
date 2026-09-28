@@ -70,6 +70,7 @@ pub(super) async fn prepare_session_host_fixture(
         let original =
             std::fs::read(&source).with_context(|| format!("read {}", source.display()))?;
         let mut document: Value = serde_json::from_slice(&original)?;
+        with_generated_attachments(&source, &mut document)?;
         if let Some(attachment) = document.get_mut(SESSION_ATTACHMENT) {
             anyhow::ensure!(
                 attachment["registered-operation"] == OPERATION
@@ -360,6 +361,7 @@ pub(super) async fn assert_nested_session(
         let source = journey_publication_root(package, Some(&inputs)).join("attachments.json");
         let original = std::fs::read(&source)?;
         let mut document: Value = serde_json::from_slice(&original)?;
+        with_generated_attachments(&source, &mut document)?;
         for selected in &selected_attachments {
             if let Some(attachment) = document.get_mut(selected.id) {
                 anyhow::ensure!(

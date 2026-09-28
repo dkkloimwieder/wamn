@@ -112,15 +112,16 @@ pub(super) fn path_map(document: &Value, input: bool) -> BTreeMap<String, String
 }
 
 pub(super) fn route(root: &Path, operation: &str) -> anyhow::Result<String> {
-    let attachment = files(root)?
+    // The authored attachments and the generated route entries both end so.
+    let documents = files(root)?
         .into_iter()
-        .find(|path| path.ends_with("publication/attachments.json"));
-    let Some(attachment) = attachment else {
-        return Ok(String::new());
-    };
-    let document = read_json(&attachment)?;
+        .filter(|path| path.ends_with("publication/attachments.json"))
+        .map(|path| read_json(&path))
+        .collect::<anyhow::Result<Vec<_>>>()?;
     let mut objects = Vec::new();
-    visit_objects(&document, &mut objects);
+    for document in &documents {
+        visit_objects(document, &mut objects);
+    }
     let wiring = operation.replace('.', "_");
     for object in &objects {
         if object["wiring-id"] == wiring || object["operation"] == operation {

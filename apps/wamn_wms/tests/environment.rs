@@ -29,6 +29,7 @@ use wamn_control::reconcile_package_data_access::ReconcilePackageDataAccessReque
 use wamn_control::reconcile_run_plane::{self, ReconcileRunPlaneRequest};
 use wamn_control_provision::{WorkloadRoleFamily, sql};
 use wamn_gate_harness::{environment as shared, journey::JourneyDocument};
+use wamn_schema_generator::route_schema;
 use wamn_test_infrastructure::declarations::{
     GateInput, gate_document, render_component_declaration,
 };
@@ -338,11 +339,23 @@ fn component_declaration(
     package: &PackageCoordinate,
     alias: &str,
 ) -> anyhow::Result<()> {
-    let source =
-        fs::read_to_string(template).with_context(|| format!("read {}", template.display()))?;
+    let mut source: Value = serde_json::from_slice(
+        &fs::read(template).with_context(|| format!("read {}", template.display()))?,
+    )?;
+    // A package template sits at `publication/components/`, and generation
+    // writes the entries of the package's generated operations beside it.
+    let package_root = template
+        .ancestors()
+        .nth(3)
+        .context("a declaration template sits under a package root")?;
+    let generated = route_schema::read_generated_publication(
+        package_root,
+        route_schema::GENERATED_COMPONENT_OPERATIONS,
+    )?;
+    route_schema::merge_operations(&mut source, generated.as_ref())?;
     let scope =
         ComponentPackageScope::new(TENANT, package.package_id(), package.package_version())?;
-    let declaration = render_component_declaration(&source, &scope, alias)?;
+    let declaration = render_component_declaration(&source.to_string(), &scope, alias)?;
     fs::write(output, serde_json::to_vec_pretty(&declaration)?)?;
     Ok(())
 }
@@ -352,16 +365,23 @@ fn component_declaration(
 /// The journey calls every route with a PAT and installs no session issuer,
 /// and a host refuses to serve a session route without one (wamn-1g0u). The
 /// copy keeps each definition and its hash, which the auth policy is outside
-/// of. Generated input schemas still resolve against the package directory.
+/// of, and takes the generated route entries in. Generated input schemas
+/// still resolve against the package directory.
 fn pat_only_attachments(source: &Path, evidence: &Path) -> anyhow::Result<PathBuf> {
     let mut attachments: serde_json::Value = serde_json::from_slice(
         &fs::read(source).with_context(|| format!("read {}", source.display()))?,
     )?;
-    for attachment in attachments
+    let attachments_map = attachments
         .as_object_mut()
-        .context("the attachments are an object")?
-        .values_mut()
-    {
+        .context("the attachments are an object")?;
+    let generated = route_schema::read_generated_publication(
+        route_schema::package_root_of(source),
+        route_schema::GENERATED_ATTACHMENTS,
+    )?;
+    if let Some(Value::Object(generated)) = generated {
+        attachments_map.extend(generated);
+    }
+    for attachment in attachments_map.values_mut() {
         if let Some(modes) = attachment.pointer_mut("/auth-policy/modes") {
             *modes = json!(["pat"]);
         }

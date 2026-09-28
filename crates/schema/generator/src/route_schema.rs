@@ -24,6 +24,13 @@ use wamn_catalog::{DefinitionHash, ServingAttachment};
 /// The package directory generation writes route input schemas into.
 pub const GENERATED_ROUTES: &str = "generated/routes/";
 
+/// The route entries generation writes for the generated operations.
+pub const GENERATED_ATTACHMENTS: &str = "generated/publication/attachments.json";
+
+/// The declaration entries generation writes for the generated operations,
+/// keyed by component and then by operation.
+pub const GENERATED_COMPONENT_OPERATIONS: &str = "generated/publication/component-operations.json";
+
 /// The one member of a schema value that names a generated schema.
 const REFERENCE: &str = "$ref";
 
@@ -38,6 +45,8 @@ pub enum RouteSchemaErrorKind {
     Parse,
     /// An authored definition hash does not identify its authored definition.
     DefinitionHash,
+    /// An authored document repeats an entry that generation writes.
+    Duplicate,
 }
 
 /// Contextual failure to resolve a generated route schema.
@@ -150,9 +159,12 @@ fn checked(reference: &str) -> Result<&str, RouteSchemaError> {
 /// [`RouteSchemaError`] when the reference leaves the generated route schemas,
 /// or the file is unreadable or not JSON.
 pub fn read_from_package(package_root: &Path, reference: &str) -> Result<Value, RouteSchemaError> {
-    let path = package_root.join(checked(reference)?);
+    read_json(&package_root.join(checked(reference)?))
+}
+
+fn read_json(path: &Path) -> Result<Value, RouteSchemaError> {
     let subject = path.display().to_string();
-    let bytes = std::fs::read(&path).map_err(|error| {
+    let bytes = std::fs::read(path).map_err(|error| {
         RouteSchemaError::with_source(RouteSchemaErrorKind::Read, &subject, error)
     })?;
     parse(&subject, &bytes)
@@ -269,12 +281,125 @@ pub fn resolve_declaration(
     Ok(())
 }
 
-/// Read a package's `publication/attachments.json` with every reference resolved.
+/// The package root above an authored document at `<root>/publication/<file>`.
+pub fn package_root_of(authored: &Path) -> &Path {
+    authored
+        .parent()
+        .and_then(Path::parent)
+        .unwrap_or_else(|| Path::new(""))
+}
+
+/// Read one generated publication file of a package on disk, or `None` when
+/// generation wrote none because the package has no generated operation.
 ///
 /// # Errors
 ///
-/// [`RouteSchemaError`] when the document is unreadable or not an attachment
-/// map, or a reference fails.
+/// [`RouteSchemaError`] when the file exists and is unreadable or not JSON.
+pub fn read_generated_publication(
+    package_root: &Path,
+    file: &str,
+) -> Result<Option<Value>, RouteSchemaError> {
+    let path = package_root.join(file);
+    if path.exists() {
+        read_json(&path).map(Some)
+    } else {
+        Ok(None)
+    }
+}
+
+/// Parse a generated attachment document. `None` is an empty map.
+///
+/// # Errors
+///
+/// [`RouteSchemaError`] when the value is not an attachment map.
+pub fn generated_attachments(
+    document: Option<Value>,
+) -> Result<BTreeMap<String, ServingAttachment>, RouteSchemaError> {
+    document.map_or_else(
+        || Ok(BTreeMap::new()),
+        |document| {
+            serde_json::from_value(document).map_err(|error| {
+                RouteSchemaError::with_source(
+                    RouteSchemaErrorKind::Parse,
+                    GENERATED_ATTACHMENTS,
+                    error,
+                )
+            })
+        },
+    )
+}
+
+/// Add the generated attachments to the authored ones.
+///
+/// # Errors
+///
+/// [`RouteSchemaError`] naming an attachment id that both carry.
+pub fn merge_attachments(
+    authored: &mut BTreeMap<String, ServingAttachment>,
+    generated: BTreeMap<String, ServingAttachment>,
+) -> Result<(), RouteSchemaError> {
+    for (attachment_id, attachment) in generated {
+        if authored.contains_key(&attachment_id) {
+            return Err(duplicate(&format!("attachment {attachment_id:?}")));
+        }
+        authored.insert(attachment_id, attachment);
+    }
+    Ok(())
+}
+
+/// Add the generated operation entries of a declaration's component to one
+/// authored component declaration document.
+///
+/// # Errors
+///
+/// [`RouteSchemaError`] naming an operation that both carry.
+pub fn merge_operations(
+    declaration: &mut Value,
+    generated: Option<&Value>,
+) -> Result<(), RouteSchemaError> {
+    let component = declaration.get("component").and_then(Value::as_str);
+    let Some(entries) = generated
+        .zip(component)
+        .and_then(|(generated, component)| generated.get(component))
+        .and_then(Value::as_object)
+        .cloned()
+    else {
+        return Ok(());
+    };
+    let Some(operations) = declaration
+        .get_mut("operations")
+        .and_then(Value::as_object_mut)
+    else {
+        return Err(RouteSchemaError::new(
+            RouteSchemaErrorKind::Parse,
+            "component declaration",
+            "has no operations object",
+        ));
+    };
+    for (operation, entry) in entries {
+        if operations.contains_key(&operation) {
+            return Err(duplicate(&format!("operation {operation:?}")));
+        }
+        operations.insert(operation, entry);
+    }
+    Ok(())
+}
+
+fn duplicate(subject: &str) -> RouteSchemaError {
+    RouteSchemaError::new(
+        RouteSchemaErrorKind::Duplicate,
+        subject,
+        "is generated; remove it from the authored document",
+    )
+}
+
+/// Read a package's `publication/attachments.json` and its generated route
+/// entries, with every reference resolved.
+///
+/// # Errors
+///
+/// [`RouteSchemaError`] when a document is unreadable or not an attachment
+/// map, an attachment id appears in both, or a reference fails.
 pub fn read_package_attachments(
     package_root: &Path,
 ) -> Result<BTreeMap<String, ServingAttachment>, RouteSchemaError> {
@@ -286,6 +411,13 @@ pub fn read_package_attachments(
     let mut attachments = serde_json::from_slice(&bytes).map_err(|error| {
         RouteSchemaError::with_source(RouteSchemaErrorKind::Parse, &subject, error)
     })?;
+    merge_attachments(
+        &mut attachments,
+        generated_attachments(read_generated_publication(
+            package_root,
+            GENERATED_ATTACHMENTS,
+        )?)?,
+    )?;
     resolve_attachments(&mut attachments, &mut |reference| {
         read_from_package(package_root, reference)
     })?;
@@ -297,6 +429,33 @@ mod tests {
     use serde_json::json;
 
     use super::*;
+
+    /// An authored entry that generation also writes refuses by its name.
+    #[test]
+    fn an_authored_copy_of_a_generated_entry_refuses() {
+        let attachment: ServingAttachment = serde_json::from_value(json!({
+            "kind": "http", "package-id": "p", "component": "c",
+            "operation": "p:m/get@1.0.0", "registered-operation": "p:m/get@1.0.0",
+            "definition-hash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "definition": {}, "auth-policy": {"modes": ["pat"]}
+        }))
+        .expect("an attachment");
+        let mut authored = BTreeMap::from([("m-get-http".to_owned(), attachment.clone())]);
+        let error = merge_attachments(
+            &mut authored,
+            BTreeMap::from([("m-get-http".to_owned(), attachment)]),
+        )
+        .expect_err("a repeated attachment id refuses");
+        assert_eq!(error.kind(), RouteSchemaErrorKind::Duplicate);
+        assert!(error.to_string().contains("m-get-http"), "{error}");
+
+        let mut declaration = json!({"component": "c", "operations": {"p:m/get@1.0.0": {}}});
+        let generated = json!({"c": {"p:m/get@1.0.0": {}}});
+        let error = merge_operations(&mut declaration, Some(&generated))
+            .expect_err("a repeated operation refuses");
+        assert_eq!(error.kind(), RouteSchemaErrorKind::Duplicate);
+        assert!(error.to_string().contains("p:m/get@1.0.0"), "{error}");
+    }
 
     #[test]
     fn a_reference_names_only_a_generated_route_schema() {

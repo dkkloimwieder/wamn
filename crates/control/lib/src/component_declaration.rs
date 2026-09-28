@@ -236,12 +236,21 @@ pub fn render_declaration_document(
     }
     // An input port can name its package's generated route schema instead of
     // copying it (wamn-4omo). The template sits at
-    // `publication/components/<component>.json.in` under its package root.
+    // `publication/components/<component>.json.in` under its package root,
+    // and generation writes the entries of the generated operations there.
     let package_root = template
         .parent()
         .and_then(Path::parent)
         .and_then(Path::parent)
         .unwrap_or_else(|| Path::new(""));
+    wamn_schema_generator::route_schema::read_generated_publication(
+        package_root,
+        wamn_schema_generator::route_schema::GENERATED_COMPONENT_OPERATIONS,
+    )
+    .and_then(|generated| {
+        wamn_schema_generator::route_schema::merge_operations(&mut document, generated.as_ref())
+    })
+    .map_err(|error| invalid(format!("cannot take its generated operations: {error}")))?;
     wamn_schema_generator::route_schema::resolve_declaration(&mut document, &mut |reference| {
         wamn_schema_generator::route_schema::read_from_package(package_root, reference)
     })

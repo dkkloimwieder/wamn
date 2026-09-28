@@ -419,9 +419,18 @@ fn paging_and_closed_values_reach_the_platform_ir() {
 fn each_fixture_route_projects_a_direct_client_route() {
     let package = wamn_fixture_package::package_root();
     let publication = package.join("publication");
-    let attachments: BTreeMap<String, Value> =
+    let mut attachments: BTreeMap<String, Value> =
         serde_json::from_slice(&std::fs::read(publication.join("attachments.json")).unwrap())
             .unwrap();
+    attachments.extend(
+        serde_json::from_slice::<BTreeMap<String, Value>>(
+            &std::fs::read(
+                package.join(wamn_schema_generator::route_schema::GENERATED_ATTACHMENTS),
+            )
+            .unwrap(),
+        )
+        .unwrap(),
+    );
     assert!(
         attachments
             .values()

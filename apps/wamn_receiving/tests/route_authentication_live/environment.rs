@@ -61,6 +61,26 @@ pub(super) fn journey_publication_root(
     journey_package_root(package, inputs).join("publication")
 }
 
+/// Add the generated route entries beside an authored attachment document to
+/// a copy of it, which a publish then reads away from its package.
+pub(super) fn with_generated_attachments(
+    source: &Path,
+    document: &mut serde_json::Value,
+) -> anyhow::Result<()> {
+    use wamn_schema_generator::route_schema;
+    let generated = route_schema::read_generated_publication(
+        route_schema::package_root_of(source),
+        route_schema::GENERATED_ATTACHMENTS,
+    )?;
+    if let Some(serde_json::Value::Object(generated)) = generated {
+        document
+            .as_object_mut()
+            .context("an attachment document is an object")?
+            .extend(generated);
+    }
+    Ok(())
+}
+
 pub(super) fn overlay_route_path(wiring_id: &str) -> &'static str {
     JOURNEY_ATTACHMENTS
         .iter()

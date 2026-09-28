@@ -796,5 +796,8 @@
         "postgres"
       ]
     }
+  },
+  "routes": {
+    "path_prefix": "/acme"
   }
 }

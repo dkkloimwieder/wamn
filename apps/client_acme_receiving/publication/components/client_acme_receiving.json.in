@@ -7,24 +7,6 @@
   "component": "client_acme_receiving",
   "interface-version": "0.1.0",
   "operations": {
-    "client-acme-receiving:purchase-order/get@3.0.0": {
-      "registered-operation": "client-acme-receiving:purchase-order/get@3.0.0",
-      "input-ports": [{
-        "name": "input",
-        "schema": {"$ref": "generated/routes/purchase_order/get.json"}
-      }],
-      "output-ports": [{"name": "main", "schema": {"type": "array"}}],
-      "parameters": []
-    },
-    "client-acme-receiving:purchase-order/update@3.0.0": {
-      "registered-operation": "client-acme-receiving:purchase-order/update@3.0.0",
-      "input-ports": [{
-        "name": "input",
-        "schema": {"$ref": "generated/routes/purchase_order/update.json"}
-      }],
-      "output-ports": [{"name": "main", "schema": {"type": "array"}}],
-      "parameters": []
-    },
     "client-acme-receiving:receiving/record-receipt@3.0.0": {
       "registered-operation": "client-acme-receiving:receiving/record-receipt@3.0.0",
       "dependencies": [{
