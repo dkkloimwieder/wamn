@@ -2510,6 +2510,11 @@ pub struct ModelDeclaration {
     pub server_owned_fields: Vec<String>,
     #[serde(default)]
     pub enum_fields: BTreeMap<String, Vec<String>>,
+    /// The fewest characters a text column holds after a trim, keyed by
+    /// column name. The generated codec refuses a shorter value on its field,
+    /// and the table carries the matching CHECK as the database guard.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub min_lengths: BTreeMap<String, u32>,
     /// Authored screen text for a column, keyed by column name.
     ///
     /// A model has no per-field object, because its fields come from

@@ -21,13 +21,6 @@ pub(crate) fn uuid(field: &str, value: &str) -> Result<Uuid, AccessError> {
         .map_err(|_| AccessError::field(AccessErrorKind::InvalidInput, field))
 }
 
-/// A required text value. An absent, null or blank value refuses on its field.
-pub(crate) fn text<'a>(field: &str, value: Option<&'a str>) -> Result<&'a str, AccessError> {
-    value
-        .filter(|value| !value.trim().is_empty())
-        .ok_or_else(|| AccessError::field(AccessErrorKind::InvalidInput, field))
-}
-
 pub(crate) fn timestamp(field: &str, value: &str) -> Result<TimestampTz, AccessError> {
     wamn_execution_contract::canonical_timestamptz(value)
         .map(TimestampTz)

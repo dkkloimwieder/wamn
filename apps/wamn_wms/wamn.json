@@ -55,6 +55,9 @@
       "schema": "wms",
       "table": "location",
       "owner": "wamn_wms",
+      "min_lengths": {
+        "location_code": 1
+      },
       "server_owned_fields": [
         "id",
         "row_version",
@@ -117,6 +120,9 @@
       "schema": "wms",
       "table": "packaging",
       "owner": "wamn_wms",
+      "min_lengths": {
+        "packaging_code": 1
+      },
       "server_owned_fields": [
         "id",
         "row_version",
@@ -303,6 +309,9 @@
       "schema": "wms",
       "table": "product",
       "owner": "wamn_wms",
+      "min_lengths": {
+        "product_code": 1
+      },
       "server_owned_fields": [
         "id",
         "row_version",

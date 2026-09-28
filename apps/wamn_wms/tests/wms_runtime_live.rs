@@ -321,6 +321,54 @@ fn value<'a>(answer: &'a Value, request_id: &str) -> anyhow::Result<&'a Value> {
 
 /// The `error` of the single item answering `request_id`: the refusal that
 /// was asked for, named by its code.
+/// A code that is blank after a trim refuses in the codec, on its field, before
+/// the CHECK that guards the same rule could answer (wamn-iowb.4).
+pub(crate) async fn assert_blank_codes_refuse(route: &Route) -> anyhow::Result<()> {
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(60))
+        .build()
+        .context("build the route client")?;
+    let missing = "00000000-0000-0000-0000-00000000b1a2";
+    for (path, item, field) in [
+        (
+            "/product/create",
+            json!({"request_id": "blank", "idempotency_key": "blank-product", "product_code": "  "}),
+            "product_code",
+        ),
+        (
+            "/location/create",
+            json!({"request_id": "blank", "idempotency_key": "blank-location", "location_code": "\t"}),
+            "location_code",
+        ),
+        (
+            "/packaging/create",
+            json!({"request_id": "blank", "idempotency_key": "blank-packaging", "packaging_code": " ",
+                "type": "tote", "location_id": missing, "status": "available"}),
+            "packaging_code",
+        ),
+        (
+            "/product/update",
+            json!({"request_id": "blank", "id": missing, "expected_row_version": 1,
+                "change": {"product_code": " "}}),
+            "change.product_code",
+        ),
+        (
+            "/location/update",
+            json!({"request_id": "blank", "id": missing, "expected_row_version": 1,
+                "change": {"location_code": ""}}),
+            "change.location_code",
+        ),
+    ] {
+        let answer = route.post(&client, path, &json!([item])).await?;
+        let detail = refusal(&answer, "blank", "invalid_input")?;
+        anyhow::ensure!(
+            detail["field"] == field,
+            "{path} refuses a blank code on {field}: {detail}"
+        );
+    }
+    Ok(())
+}
+
 fn refusal<'a>(answer: &'a Value, request_id: &str, code: &str) -> anyhow::Result<&'a Value> {
     let item = item(answer, request_id)?;
     let error = item

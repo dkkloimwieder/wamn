@@ -1573,11 +1573,10 @@ version = "0.1.0"
 name = "wamn-wms-data-access"
 version = "0.1.0"
 dependencies = [
- "base64",
- "chrono",
  "serde",
  "serde_json",
  "uuid",
+ "wamn-data-access",
  "wamn-execution-contract",
  "wamn-postgres-statements",
 ]

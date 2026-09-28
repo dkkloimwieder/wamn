@@ -7,9 +7,9 @@
 use wamn_postgres_statements::Connection;
 
 use crate::error::{self, AccessError};
-use crate::generated::wamn::inventory_aggregate as sql;
+use crate::statements::wamn::inventory_aggregate as sql;
 
-pub use crate::generated::wamn::inventory_aggregate::InventoryAggregateRow;
+pub use crate::statements::wamn::inventory_aggregate::InventoryAggregateRow;
 
 /// # Errors
 ///

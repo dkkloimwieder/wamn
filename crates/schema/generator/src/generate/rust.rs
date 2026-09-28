@@ -4,12 +4,11 @@ use std::fmt::Write as _;
 
 use super::{
     AccessorBind, AccessorFetch, BTreeMap, CREATE_STATEMENT, CatalogIr, Column, ColumnType,
-    ConstraintKind, ConstraintNameSlice, CrudAction, CustomOperationDeclaration, DeleteMode,
-    GenerateError, ModelDeclaration, MutationConstraintNames, NativeBindFixture,
-    OperationDeclaration, Projection, ProjectionContents, RustMember, RustRow, RustVisibility,
-    StaticSqlAccessor, StaticSqlFetch, Table, WamnAccessor, WamnApi, column, insert_bytes,
-    operation_constraints, operation_exclusions, query_variants, rust_identifier,
-    rust_type_identifier, sha256, sql,
+    ConstraintKind, ConstraintNameSlice, CrudAction, CustomOperationDeclaration, GenerateError,
+    ModelDeclaration, MutationConstraintNames, NativeBindFixture, OperationDeclaration, Projection,
+    ProjectionContents, RustMember, RustRow, RustVisibility, StaticSqlAccessor, StaticSqlFetch,
+    Table, WamnAccessor, WamnApi, column, insert_bytes, operation_constraints,
+    operation_exclusions, query_variants, rust_identifier, rust_type_identifier, sha256, sql,
 };
 
 /// Clippy's default `too-many-arguments-threshold`. The repository declares no
@@ -260,11 +259,7 @@ pub(super) fn wamn_api(
             CrudAction::Create | CrudAction::Update | CrudAction::Delete
         ) {
             mutation_constraints.push(mutation_constraint_names(
-                catalog,
-                table,
-                *action,
-                operation,
-                model.delete_mode,
+                catalog, table, *action, operation, model,
             ));
         }
         match action {
@@ -435,12 +430,12 @@ fn mutation_constraint_names(
     table: &Table,
     action: CrudAction,
     operation: &OperationDeclaration,
-    delete_mode: Option<DeleteMode>,
+    model: &ModelDeclaration,
 ) -> MutationConstraintNames {
     let mut unique = Vec::new();
     let mut foreign_key = Vec::new();
     let mut check = Vec::new();
-    for constraint in operation_constraints(catalog, table, action, operation, delete_mode) {
+    for constraint in operation_constraints(catalog, table, action, operation, model) {
         match constraint.kind() {
             ConstraintKind::PrimaryKey { .. } | ConstraintKind::Unique { .. } => {
                 unique.push(constraint.name().to_owned());

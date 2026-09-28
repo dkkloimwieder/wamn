@@ -57,8 +57,7 @@ pub(super) fn emit_model_wit(
         emit_model_package_wit(catalog, manifest, model_name, model, table, &results).into_bytes(),
     )?;
     for (action, operation) in &model.operations {
-        let details =
-            super::operation_error_details(catalog, table, *action, operation, model.delete_mode);
+        let details = super::operation_error_details(catalog, table, *action, operation, model);
         let claim = (*action == CrudAction::Create)
             .then(|| {
                 super::canonical_operation_identity(
@@ -77,6 +76,7 @@ pub(super) fn emit_model_wit(
             table,
             operation,
             &results[action].fields,
+            &model.min_lengths,
             &details,
             claim.as_ref(),
         );
@@ -105,8 +105,7 @@ fn emit_model_package_wit(
     );
     for action in model.operations.keys() {
         let operation = &model.operations[action];
-        let details =
-            super::operation_error_details(catalog, table, *action, operation, model.delete_mode);
+        let details = super::operation_error_details(catalog, table, *action, operation, model);
         emit_crud_interface(
             &mut source,
             *action,
@@ -406,6 +405,7 @@ fn emit_update_codec(
     table: &Table,
     operation: &OperationDeclaration,
     fields: &[ContractFieldDeclaration],
+    min_lengths: &BTreeMap<String, u32>,
     details: &BTreeMap<AccessOperationErrorLiteral, OperationErrorDetailDeclaration>,
 ) -> String {
     let mut source = codec_prelude("UpdateItem", CRUD_ITEMS_MINIMUM, CRUD_ITEMS_MAXIMUM, true);
@@ -482,7 +482,12 @@ fn emit_update_codec(
         );
     }
     source.push_str(UPDATE_CODEC_FOOTER);
-    source.push_str(&emit_update_normalizer(table, operation, fields));
+    source.push_str(&emit_update_normalizer(
+        table,
+        operation,
+        fields,
+        min_lengths,
+    ));
     source.push_str(&emit_handler("Update", true));
     source.push_str(&emit_row_adapter(
         table
@@ -506,11 +511,12 @@ fn emit_crud_codec(
     table: &Table,
     operation: &OperationDeclaration,
     fields: &[ContractFieldDeclaration],
+    min_lengths: &BTreeMap<String, u32>,
     details: &BTreeMap<AccessOperationErrorLiteral, OperationErrorDetailDeclaration>,
     claim: Option<&ClaimCodec>,
 ) -> String {
     if action == CrudAction::Update {
-        return emit_update_codec(table, operation, fields, details);
+        return emit_update_codec(table, operation, fields, min_lengths, details);
     }
     if action == CrudAction::Query {
         return emit_query_codec(table, operation, fields, details);
@@ -525,7 +531,13 @@ fn emit_crud_codec(
     source.push_str(&emit_crud_json_codec(
         action, table, operation, fields, details,
     ));
-    source.push_str(&emit_crud_normalizer(action, table, operation, fields));
+    source.push_str(&emit_crud_normalizer(
+        action,
+        table,
+        operation,
+        fields,
+        min_lengths,
+    ));
     match claim {
         Some(claim) => source.push_str(&emit_claim_run(
             &type_name,
@@ -600,6 +612,7 @@ fn emit_query_codec(
         table,
         operation,
         fields,
+        &BTreeMap::new(),
     ));
     emit_query_limit(&mut source, operation, details);
     source.push_str(QUERY_ROWS);
@@ -880,6 +893,7 @@ fn emit_mutation_validation(
     table: &Table,
     operation: &OperationDeclaration,
     fields: &[ContractFieldDeclaration],
+    min_lengths: &BTreeMap<String, u32>,
     prefix: &str,
     create: bool,
 ) {
@@ -921,6 +935,11 @@ fn emit_mutation_validation(
         if !values.is_empty() {
             checks.push(format!("!{values:?}.contains(&value.as_str())"));
         }
+        // The fewest characters after a trim. The table's CHECK guards the
+        // same rule, and this refusal answers first.
+        if let Some(minimum) = min_lengths.get(field) {
+            checks.push(format!("value.trim().chars().count() < {minimum}"));
+        }
         if !checks.is_empty() {
             let condition = checks.join(" || ");
             writeln!(source, "    if let Some(Some(value)) = &mut {access} && ({condition}) {{ return Err(invalid({path:?})); }}")
@@ -933,6 +952,7 @@ fn emit_update_normalizer(
     table: &Table,
     operation: &OperationDeclaration,
     fields: &[ContractFieldDeclaration],
+    min_lengths: &BTreeMap<String, u32>,
 ) -> String {
     let mut source = String::from(
         "#[allow(clippy::unnecessary_wraps)]\nfn normalize(request: &mut contract::UpdateRequest) -> Result<(), contract::InvalidInputDetail> {\n",
@@ -945,7 +965,15 @@ fn emit_update_normalizer(
         &[],
         false,
     );
-    emit_mutation_validation(&mut source, table, operation, fields, "change.", false);
+    emit_mutation_validation(
+        &mut source,
+        table,
+        operation,
+        fields,
+        min_lengths,
+        "change.",
+        false,
+    );
     source.push_str("    Ok(())\n}\n\n");
     source
 }
@@ -955,6 +983,7 @@ fn emit_crud_normalizer(
     table: &Table,
     operation: &OperationDeclaration,
     fields: &[ContractFieldDeclaration],
+    min_lengths: &BTreeMap<String, u32>,
 ) -> String {
     let type_name = rust_type_identifier(action.as_str());
     let mut source = format!(
@@ -972,7 +1001,7 @@ fn emit_crud_normalizer(
         );
     }
     if action == CrudAction::Create {
-        emit_mutation_validation(&mut source, table, operation, fields, "", true);
+        emit_mutation_validation(&mut source, table, operation, fields, min_lengths, "", true);
     }
     if action == CrudAction::Query {
         for filter in &operation.filters {

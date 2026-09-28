@@ -139,6 +139,11 @@ fn normalize(request: &mut contract::CreateRequest) -> Result<(), contract::Inva
     if matches!(request.packaging_code, Some(None)) {
         return Err(invalid("packaging_code"));
     }
+    if let Some(Some(value)) = &mut request.packaging_code
+        && (value.trim().chars().count() < 1)
+    {
+        return Err(invalid("packaging_code"));
+    }
     if request.type_.is_none() {
         return Err(invalid("type"));
     }

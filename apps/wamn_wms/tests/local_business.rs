@@ -73,6 +73,7 @@ async fn operations_and_replay() -> anyhow::Result<()> {
     crate::wms_runtime_live::assert_contention_and_replay(&route, &runtime, initial_revision)
         .await?;
     crate::wms_runtime_live::assert_remaining_operations(&route, &runtime).await?;
+    crate::wms_runtime_live::assert_blank_codes_refuse(&route).await?;
     // Every balance equals the sum of its transactions, after the seed and
     // every command above.
     let disagreements = admin

@@ -924,7 +924,7 @@ fn emit_operation_contracts(
     insert_json(
         files,
         &format!("{root}.errors.json"),
-        &error_contract(catalog, table, action, operation, model.delete_mode),
+        &error_contract(catalog, table, action, operation, model),
     )?;
     Ok(())
 }
@@ -1235,7 +1235,7 @@ fn error_contract(
     table: &Table,
     action: CrudAction,
     operation: &OperationDeclaration,
-    delete_mode: Option<DeleteMode>,
+    model: &ModelDeclaration,
 ) -> Value {
     use AccessOperationErrorLiteral as Code;
 
@@ -1287,7 +1287,7 @@ fn error_contract(
         ));
     }
     let mut guarded = BTreeSet::new();
-    for constraint in operation_constraints(catalog, table, action, operation, delete_mode) {
+    for constraint in operation_constraints(catalog, table, action, operation, model) {
         let code = constraint_error_code(constraint.kind());
         cases.push((
             code,

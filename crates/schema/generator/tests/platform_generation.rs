@@ -1636,3 +1636,34 @@ fn a_route_member_publish_cannot_serve_refuses() {
         );
     }
 }
+
+/// A minimum length needs the CHECK that guards it, and generation writes no
+/// migration: the refusal names the column and the expression the author
+/// writes (wamn-iowb.4).
+#[test]
+fn a_minimum_length_without_its_check_refuses() {
+    let mut manifest = fixture::manifest();
+    manifest["models"]["widget"]["min_lengths"] = json!({"code": 1});
+    let error = fixture::try_generate_with(&fixture::catalog(), &manifest)
+        .expect_err("the fixture table has no CHECK on code");
+    assert_eq!(error.kind(), GenerateErrorKind::InvalidModel);
+    assert!(
+        error
+            .to_string()
+            .contains("widget.code declares minimum length 1; the table needs CHECK (char_length(btrim(code)) >= 1)"),
+        "{error}"
+    );
+
+    for (field, minimum) in [("code", 0), ("edit_version", 1)] {
+        let mut manifest = fixture::manifest();
+        manifest["models"]["widget"]["min_lengths"] = json!({field: minimum});
+        let error = fixture::try_generate_with(&fixture::catalog(), &manifest)
+            .expect_err("a minimum length is at least 1 on text");
+        assert!(
+            error
+                .to_string()
+                .contains("minimum length must be at least 1 on a text column"),
+            "{error}"
+        );
+    }
+}

@@ -178,14 +178,21 @@ fn handler(
             if operation.search.is_some() {
                 members.push_str("search: request.search,\n");
             }
+            // A query that declares no sort takes its default one, and its
+            // request carries no sort members.
+            if operation.sort.is_some() {
+                members.push_str(
+                    "sort_field: request.sort_field,\nsort_direction: request.sort_direction,\n",
+                );
+            } else {
+                members.push_str("sort_field: None,\nsort_direction: None,\n");
+            }
             (
                 connection,
                 ", rows: &mut codec::Rows".to_owned(),
                 format!(
                     "let input = model::QueryInput {{\n\
                      {members}\
-                     sort_field: request.sort_field,\n\
-                     sort_direction: request.sort_direction,\n\
                      cursor: request.cursor,\n\
                      limit: request.limit.expect(\"the codec fills the default limit\"),\n\
                      }};\n\

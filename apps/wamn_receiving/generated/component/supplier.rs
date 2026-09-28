@@ -27,8 +27,8 @@ mod query {
         rows: &mut codec::Rows,
     ) -> Result<contract::QueryEnd, contract::QueryError> {
         let input = model::QueryInput {
-            sort_field: request.sort_field,
-            sort_direction: request.sort_direction,
+            sort_field: None,
+            sort_direction: None,
             cursor: request.cursor,
             limit: request.limit.expect("the codec fills the default limit"),
         };

@@ -293,6 +293,30 @@ fn validate_model(
             ));
         }
     }
+    for (field, minimum) in &model.min_lengths {
+        let column = validate_field(table, model_name, field)?;
+        if column.column_type() != ColumnType::Text || *minimum == 0 {
+            return Err(GenerateError::new(
+                GenerateErrorKind::InvalidModel,
+                format!("{model_name}.{field} minimum length must be at least 1 on a text column"),
+            ));
+        }
+        // The author writes the guard in the migration; generation writes
+        // nothing outside `generated/`.
+        let expression = super::min_length_check(field, *minimum);
+        let guarded = table.constraints().iter().any(|constraint| {
+            matches!(constraint.kind(), ConstraintKind::Check { expression: found } if **found == *expression)
+        });
+        if !guarded {
+            return Err(GenerateError::for_object(
+                GenerateErrorKind::InvalidModel,
+                format!(
+                    "{model_name}.{field} declares minimum length {minimum}; the table needs CHECK {expression}"
+                ),
+                format!("{}.{}.{field}", model.schema, model.table),
+            ));
+        }
+    }
 
     // A get reads its revision from the model, so the model has one revision
     // column, whichever operations name it.

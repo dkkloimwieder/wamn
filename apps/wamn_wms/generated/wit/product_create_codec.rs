@@ -107,6 +107,11 @@ fn normalize(request: &mut contract::CreateRequest) -> Result<(), contract::Inva
     if matches!(request.product_code, Some(None)) {
         return Err(invalid("product_code"));
     }
+    if let Some(Some(value)) = &mut request.product_code
+        && (value.trim().chars().count() < 1)
+    {
+        return Err(invalid("product_code"));
+    }
     Ok(())
 }
 

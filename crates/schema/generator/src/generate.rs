@@ -605,7 +605,7 @@ fn operation_error_details(
     table: &Table,
     action: CrudAction,
     operation: &OperationDeclaration,
-    delete_mode: Option<DeleteMode>,
+    model: &ModelDeclaration,
 ) -> BTreeMap<AccessOperationErrorLiteral, OperationErrorDetailDeclaration> {
     use AccessOperationErrorLiteral as Code;
 
@@ -629,7 +629,7 @@ fn operation_error_details(
         codes.insert(Code::IdempotencyConflict);
     }
     codes.extend(
-        operation_constraints(catalog, table, action, operation, delete_mode)
+        operation_constraints(catalog, table, action, operation, model)
             .into_iter()
             .map(|constraint| constraint_error_code(constraint.kind())),
     );
@@ -669,10 +669,10 @@ fn operation_constraints<'a>(
     table: &'a Table,
     action: CrudAction,
     operation: &OperationDeclaration,
-    delete_mode: Option<DeleteMode>,
+    model: &ModelDeclaration,
 ) -> Vec<&'a Constraint> {
     if action == CrudAction::Delete {
-        return match delete_mode {
+        return match model.delete_mode {
             Some(DeleteMode::Hard) => inbound_foreign_keys(catalog, table),
             Some(DeleteMode::Tombstone) => {
                 let marker = TombstoneColumn::ALL.map(|column| column.as_str().to_owned());
@@ -695,7 +695,23 @@ fn operation_constraints<'a>(
             action != CrudAction::Update
                 || update_can_violate(constraint.kind(), &operation.writable_fields)
         })
+        // The codec refuses a value shorter than its minimum first, so the
+        // CHECK that guards it is never the answer.
+        .filter(|constraint| !guards_min_length(constraint, model))
         .collect()
+}
+
+/// The CHECK expression that guards a minimum length, as PostgreSQL prints it.
+fn min_length_check(field: &str, minimum: u32) -> String {
+    format!("(char_length(btrim({field})) >= {minimum})")
+}
+
+/// Whether a constraint is the CHECK of a minimum length the model declares.
+fn guards_min_length(constraint: &Constraint, model: &ModelDeclaration) -> bool {
+    matches!(constraint.kind(), ConstraintKind::Check { expression }
+    if model.min_lengths.iter().any(|(field, minimum)| {
+        **expression == *min_length_check(field, *minimum)
+    }))
 }
 
 /// Every foreign key in the catalog that references this relation and can

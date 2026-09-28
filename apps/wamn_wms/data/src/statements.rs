@@ -1,6 +1,7 @@
-//! Migration-IR projections materialized in the WMS package.
+//! The statement accessors of the WMS commands, materialized in the package.
+//! The generated operations include their own, in [`crate::generated`].
 //!
-//! Four of the six modules carry a `dead_code` expectation. A generated row
+//! Four of the five modules carry a `dead_code` expectation. A generated row
 //! mirrors the columns its statement returns, and a command does not always
 //! read all of them: an existence probe must still select something, and a
 //! write that ends `RETURNING` hands back a row the caller may want only in
@@ -67,55 +68,6 @@ pub(crate) mod wamn {
         include!(concat!(
             env!("CARGO_MANIFEST_DIR"),
             "/../generated/wamn/inventory_split.rs"
-        ));
-    }
-
-    /// Generated `inventory_transaction` projection and statement digests.
-    pub(crate) mod inventory_transaction {
-        include!(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/../generated/wamn/inventory_transaction.rs"
-        ));
-    }
-
-    /// Generated `location` projection and accessors.
-    #[expect(
-        dead_code,
-        reason = "the create and the update map no exclusion constraint"
-    )]
-    pub(crate) mod location {
-        include!(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/../generated/wamn/location.rs"
-        ));
-    }
-
-    /// Generated `packaging` projection and accessors.
-    #[expect(dead_code, reason = "the create maps no exclusion constraint")]
-    pub(crate) mod packaging {
-        include!(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/../generated/wamn/packaging.rs"
-        ));
-    }
-
-    /// Generated `packaging_quantity` projection and statement digests.
-    pub(crate) mod packaging_quantity {
-        include!(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/../generated/wamn/packaging_quantity.rs"
-        ));
-    }
-
-    /// Generated `product` projection and accessors.
-    #[expect(
-        dead_code,
-        reason = "the create and the update map no exclusion constraint"
-    )]
-    pub(crate) mod product {
-        include!(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/../generated/wamn/product.rs"
         ));
     }
 }

@@ -167,33 +167,6 @@ pub fn from_statement(error: &StatementError) -> AccessError {
     AccessError::new(kind, serde_json::json!({}))
 }
 
-/// The translation for a generated write, which may also name a constraint.
-///
-/// A violation of a constraint that the contract lists carries its name. Any
-/// other violation falls to [`from_statement`] and so to `internal_error`.
-#[must_use]
-pub(crate) fn from_write(
-    error: &StatementError,
-    unique: &[&str],
-    foreign_key: &[&str],
-    check: &[&str],
-) -> AccessError {
-    let (kind, listed) = match error.kind() {
-        StatementErrorKind::UniqueViolation => (AccessErrorKind::UniqueViolation, unique),
-        StatementErrorKind::ForeignKeyViolation => {
-            (AccessErrorKind::ForeignKeyViolation, foreign_key)
-        }
-        StatementErrorKind::CheckViolation => (AccessErrorKind::CheckViolation, check),
-        _ => return from_statement(error),
-    };
-    match error.constraint() {
-        Some(constraint) if listed.contains(&constraint) => {
-            AccessError::new(kind, serde_json::json!({ "constraint": constraint }))
-        }
-        _ => from_statement(error),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
