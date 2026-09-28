@@ -96,7 +96,10 @@ struct Scope {
 impl Scope {
     fn holds(&self, org: &str, project: &str) -> bool {
         self.org.as_deref().is_none_or(|wanted| wanted == org)
-            && self.project.as_deref().is_none_or(|wanted| wanted == project)
+            && self
+                .project
+                .as_deref()
+                .is_none_or(|wanted| wanted == project)
     }
 }
 
@@ -327,7 +330,13 @@ async fn handle(
                         org: request.org,
                         project: request.project,
                     };
-                    (request.email, request.password, None, Carrier::Bearer, scope)
+                    (
+                        request.email,
+                        request.password,
+                        None,
+                        Carrier::Bearer,
+                        scope,
+                    )
                 } else {
                     let Ok(request) = serde_json::from_slice::<LoginRequest>(&bytes) else {
                         return invalid();

@@ -98,7 +98,10 @@ fn main() -> anyhow::Result<()> {
         output.join("values-host-base.yaml"),
         google_cloud_base(&host_values(&base, HOST_IMAGE)?)?,
     )?;
-    fs::write(output.join("values-host.yaml"), serde_yaml::to_string(&overlay)?)?;
+    fs::write(
+        output.join("values-host.yaml"),
+        serde_yaml::to_string(&overlay)?,
+    )?;
     println!("{}", output.display());
     Ok(())
 }
@@ -170,7 +173,10 @@ fn without_object_store_credentials(overlay: &str) -> anyhow::Result<String> {
             .with_context(|| format!("the overlay host group has {list}"))?;
         let before = entries.len();
         entries.retain(|entry| entry[key] != name);
-        ensure!(entries.len() + 1 == before, "the overlay has one {name} in {list}");
+        ensure!(
+            entries.len() + 1 == before,
+            "the overlay has one {name} in {list}"
+        );
     }
     Ok(serde_yaml::to_string(&document)?)
 }
@@ -245,7 +251,11 @@ fn google_cloud_overlay(overlay: &str, application: &Application) -> anyhow::Res
     let group = group_mut(&mut document)?;
     group["name"] = application.group.into();
     rename_secret(group, "wamn-event-nats", application.event_secret)?;
-    rename_secret(group, "wamn-materializer-nats", application.materializer_secret)?;
+    rename_secret(
+        group,
+        "wamn-materializer-nats",
+        application.materializer_secret,
+    )?;
     let args = group["extraArgs"]
         .as_sequence_mut()
         .context("the overlay host group has extraArgs")?;

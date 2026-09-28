@@ -145,7 +145,10 @@ fn place_http(documents: &str, application: &Application) -> anyhow::Result<Stri
         } else {
             value["spec"]["template"]["spec"]["kubernetes"]["service"]["name"] =
                 application.http_name.into();
-            value = serde_yaml::from_str(&place(&serde_yaml::to_string(&value)?, application.host_group)?)?;
+            value = serde_yaml::from_str(&place(
+                &serde_yaml::to_string(&value)?,
+                application.host_group,
+            )?)?;
         }
         rendered.push(serde_yaml::to_string(&value)?);
     }
