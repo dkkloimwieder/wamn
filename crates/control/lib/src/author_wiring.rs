@@ -616,49 +616,4 @@ mod tests {
         );
         assert!(format!("{absent}").contains(hash.as_str()));
     }
-
-    /// The report is read under the gated hash, in the plane that holds it.
-    #[test]
-    fn the_report_is_read_under_the_hash_the_gate_produced() {
-        assert!(SELECT_GATE_REPORT_SQL.contains("FROM wamn_run.gate_reports"));
-        assert!(SELECT_GATE_REPORT_SQL.contains("WHERE tenant_id = $1 AND wiring_hash = $2"));
-        // The control read is a READ. Authorship must not be able to mint the
-        // permission it is asking for.
-        for forbidden in ["INSERT", "UPDATE", "DELETE"] {
-            assert!(
-                !SELECT_GATE_REPORT_SQL.contains(forbidden),
-                "the gate-report read carries {forbidden}"
-            );
-        }
-        // The report relation is a CONTROL-plane fact: the project schema this
-        // verb writes into has no such column or relation to check instead
-        // (wamn-0h0g.8.5.6).
-    }
-
-    #[test]
-    fn the_written_row_is_the_documents_own_identity() {
-        for column in [
-            "tenant_id",
-            "package_id",
-            "package_version",
-            "wiring_id",
-            "version",
-            "graph_json",
-            "wiring_hash",
-        ] {
-            assert!(INSERT_WIRING_SQL.contains(column), "insert omits {column}");
-            assert!(
-                EXACT_WIRING_SQL.contains(column),
-                "exactness omits {column}"
-            );
-        }
-        // Immutable storage: a conflicting resubmission refuses, and nothing
-        // this verb runs can replace a stored definition.
-        assert!(INSERT_WIRING_SQL.contains("ON CONFLICT DO NOTHING"));
-        assert!(!INSERT_WIRING_SQL.contains("DO UPDATE"));
-        for statement in [INSERT_WIRING_SQL, EXACT_WIRING_SQL] {
-            assert!(!statement.contains("UPDATE catalog.wirings"));
-            assert!(!statement.contains("DELETE FROM catalog.wirings"));
-        }
-    }
 }

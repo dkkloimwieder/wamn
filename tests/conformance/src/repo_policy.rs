@@ -5,6 +5,7 @@
 //! finds. They read source and repository files, so they are lints, not tests.
 
 mod docker_provenance;
+mod run_state_projection;
 mod session_claims;
 mod system_cluster;
 mod version_identity;
@@ -18,6 +19,7 @@ pub fn check(root: &Path) -> Vec<String> {
     version_identity::check(root, &mut problems);
     session_claims::check(root, &mut problems);
     system_cluster::check(root, &mut problems);
+    run_state_projection::check(root, &mut problems);
     problems.0
 }
 

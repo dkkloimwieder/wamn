@@ -11,7 +11,7 @@ use std::fmt::Write as _;
 use std::io::Write as _;
 use std::process::{Command as Proc, Stdio};
 
-use wamn_control_registry::Template;
+use wamn_control_registry::{EnvPolicy, Org, OrgEnvPolicy, Project, Registry, Template};
 
 // --- live-apply gate: invariants 2/3 + placement/env FK + seed + saga --------
 
@@ -39,6 +39,7 @@ fn system_schema_applies_and_enforces_invariants_on_postgres() {
     script.push_str(wamn_control_provision::SYSTEM_SCHEMA_SQL);
     script.push('\n');
     script.push_str(ASSERTIONS);
+    script.push_str(&identifier_cases());
     // Exercise the REAL org-row builder via PREPARE/EXECUTE: two upserts of the
     // same id must collapse to ONE row (the second refreshing the placement),
     // checking `ON CONFLICT (id) DO UPDATE`.
@@ -94,7 +95,12 @@ fn system_schema_applies_and_enforces_invariants_on_postgres() {
          EXECUTE upp('demo','app');\n\
          EXECUTE upp('demo','app');\n\
          EXECUTE upe('demo','app','dev','wamn-db-demo--app--dev-OLD', NULL, 'k3m9x2p7', true);\n\
-         EXECUTE upe('demo','app','dev','wamn-db-demo--app--dev', NULL, 'r4n8c6v2', false);\n\
+         DO $$ DECLARE suffix text; marker boolean; BEGIN\n\
+           EXECUTE $upe${up_env}$upe$ INTO suffix, marker\n\
+             USING 'demo', 'app', 'dev', 'wamn-db-demo--app--dev', NULL::text, 'r4n8c6v2', false;\n\
+           ASSERT suffix = 'k3m9x2p7' AND NOT marker,\n\
+             'a re-provision gets back the stored instance suffix and marker (RETURNING)';\n\
+         END $$;\n\
          DO $$ BEGIN\n\
            ASSERT (SELECT count(*) FROM registry.projects WHERE org='demo' AND id='app')=1,\n\
              'upsert_project_sql is idempotent — one project row after two upserts';\n\
@@ -341,6 +347,142 @@ fn stamp_statements(org: &str, template: &Template) -> String {
     s
 }
 
+/// The identifier cases that the stored slug and name CHECKs must decide as the
+/// registry validators do (cjv.20, wamn-R27). Each input is inserted under its
+/// column, and the validator's verdict on the same input is the expected
+/// answer: an accepted input applies, and a refused one raises `check_violation`.
+fn identifier_cases() -> String {
+    let long = |length: usize| "a".repeat(length);
+    let org_ids = [
+        "a-b-c".to_owned(),
+        long(40),
+        String::new(),
+        "Bad_Id".to_owned(),
+        "BadCaps".to_owned(),
+        "wamn".to_owned(),
+        "wamn-x".to_owned(),
+        long(41),
+        "a--x".to_owned(),
+        "-a".to_owned(),
+    ];
+    let pools = [
+        "wamn-pg".to_owned(),
+        "wamn--pg--x".to_owned(),
+        long(63),
+        String::new(),
+        "Bad_Pool".to_owned(),
+        long(64),
+        "pool-".to_owned(),
+    ];
+    let project_ids = [
+        "billing-2".to_owned(),
+        long(40),
+        "Bad_Proj".to_owned(),
+        "wamn-run".to_owned(),
+        "x--p".to_owned(),
+        long(41),
+    ];
+    let envs = [
+        "canary".to_owned(),
+        "wamn-env".to_owned(),
+        long(40),
+        "Bad_Env".to_owned(),
+        "d--v".to_owned(),
+        long(41),
+    ];
+
+    let accepted = |registry: Registry, path: &str| {
+        !wamn_control_registry::validate(&registry)
+            .iter()
+            .any(|issue| issue.path == path)
+    };
+    let mut s = String::from(
+        "INSERT INTO registry.orgs (id, placement_kind, pool_cluster) \
+         VALUES ('probe','dedicated',NULL);\n",
+    );
+    let mut case = |accepted: bool, insert: String, remove: String, input: &str| {
+        if accepted {
+            writeln!(s, "{insert};\n{remove};").expect("writing to a String cannot fail");
+        } else {
+            writeln!(
+                s,
+                "DO $$ BEGIN BEGIN\n  {insert};\n  \
+                 ASSERT false, 'the validators refuse {input:?}, so its CHECK must too';\n\
+                 EXCEPTION WHEN check_violation THEN NULL; END; END $$;"
+            )
+            .expect("writing to a String cannot fail");
+        }
+    };
+    for id in &org_ids {
+        let registry = Registry {
+            orgs: vec![Org::dedicated(id.as_str())],
+            ..Registry::empty()
+        };
+        case(
+            accepted(registry, "orgs[0].id"),
+            format!(
+                "INSERT INTO registry.orgs (id, placement_kind, pool_cluster) \
+                 VALUES ('{id}','dedicated',NULL)"
+            ),
+            format!("DELETE FROM registry.orgs WHERE id='{id}'"),
+            id,
+        );
+    }
+    for pool in &pools {
+        let registry = Registry {
+            orgs: vec![Org::pooled("pooled", pool.as_str())],
+            ..Registry::empty()
+        };
+        case(
+            accepted(registry, "orgs[0].placement.pool"),
+            format!(
+                "INSERT INTO registry.orgs (id, placement_kind, pool_cluster) \
+                 VALUES ('pooled','pooled','{pool}')"
+            ),
+            "DELETE FROM registry.orgs WHERE id='pooled'".to_owned(),
+            pool,
+        );
+    }
+    for id in &project_ids {
+        let registry = Registry {
+            projects: vec![Project {
+                org: "probe".into(),
+                id: id.clone(),
+            }],
+            ..Registry::empty()
+        };
+        case(
+            accepted(registry, "projects[0].id"),
+            format!("INSERT INTO registry.projects (org, id) VALUES ('probe','{id}')"),
+            format!("DELETE FROM registry.projects WHERE org='probe' AND id='{id}'"),
+            id,
+        );
+    }
+    for env in &envs {
+        let mut policy = EnvPolicy::defaults().remove(0);
+        policy.name = env.as_str().into();
+        let registry = Registry {
+            env_policies: vec![OrgEnvPolicy {
+                org: "probe".into(),
+                policy,
+            }],
+            ..Registry::empty()
+        };
+        case(
+            accepted(registry, "env-policies[0].policy.name"),
+            format!(
+                "INSERT INTO registry.env_policies \
+                 (org, name, recovery_domain, promotion_rank, instances, storage, cpu, memory, image) \
+                 VALUES ('probe','{env}','\"own\"'::jsonb,10,1,'2Gi','200m','256Mi','x')"
+            ),
+            format!("DELETE FROM registry.env_policies WHERE org='probe' AND name='{env}'"),
+            env,
+        );
+    }
+    s.push_str("DELETE FROM registry.orgs WHERE id='probe';\n");
+    s
+}
+
 /// The live assertions (kept out of the Rust string plumbing for readability).
 const ASSERTIONS: &str = r#"
 -- FK integrity: an org + its per-org policies (8df.4 fixtures — the REAL stamp
@@ -439,105 +581,6 @@ DO $$ BEGIN BEGIN
   INSERT INTO registry.orgs (id, placement_kind) VALUES ('badkind','elastic');
   ASSERT false, 'an unknown placement_kind must be rejected';
 EXCEPTION WHEN check_violation THEN NULL; END; END $$;
-
--- cjv.20: the charset/length backstop on the stored slug/name columns. Each
--- malformed value is rejected by its named CHECK (check_violation); a well-formed
--- one applies. (The PRIMARY guard is crates/control/registry validate(); this DB
--- CHECK backstops a writer that skips both provision-org AND validate().)
--- orgs.id — a check_id mirror (slug + <= 40 bytes + reserved-wamn).
-DO $$ BEGIN BEGIN
-  INSERT INTO registry.orgs (id, placement_kind, pool_cluster) VALUES ('Bad_Id','dedicated',NULL);
-  ASSERT false, 'a non-slug org id must be rejected (orgs_id_charset_check)';
-EXCEPTION WHEN check_violation THEN NULL; END; END $$;
--- Uppercase alone is rejected (the CHECK is case-SENSITIVE `~`, not `~*`).
-DO $$ BEGIN BEGIN
-  INSERT INTO registry.orgs (id, placement_kind, pool_cluster) VALUES ('BadCaps','dedicated',NULL);
-  ASSERT false, 'an uppercase org id must be rejected (case-sensitive charset)';
-EXCEPTION WHEN check_violation THEN NULL; END; END $$;
-DO $$ BEGIN BEGIN
-  INSERT INTO registry.orgs (id, placement_kind, pool_cluster) VALUES ('wamn-x','dedicated',NULL);
-  ASSERT false, 'a reserved-wamn org id must be rejected';
-EXCEPTION WHEN check_violation THEN NULL; END; END $$;
-DO $$ BEGIN BEGIN
-  INSERT INTO registry.orgs (id, placement_kind, pool_cluster)
-    VALUES (repeat('a',41),'dedicated',NULL);
-  ASSERT false, 'an over-length org id must be rejected';
-EXCEPTION WHEN check_violation THEN NULL; END; END $$;
--- orgs.pool_cluster — a check_name mirror (slug + <= 63; MAY carry the wamn prefix).
-DO $$ BEGIN BEGIN
-  INSERT INTO registry.orgs (id, placement_kind, pool_cluster) VALUES ('goodorg','pooled','Bad_Pool');
-  ASSERT false, 'a non-slug pool cluster must be rejected (orgs_pool_cluster_charset_check)';
-EXCEPTION WHEN check_violation THEN NULL; END; END $$;
--- A well-formed org id + a wamn-prefixed pool cluster applies (then cleaned up).
-INSERT INTO registry.orgs (id, placement_kind, pool_cluster) VALUES ('goodorg','pooled','wamn-pg');
-DO $$ BEGIN ASSERT (SELECT count(*) FROM registry.orgs WHERE id='goodorg')=1,
-  'a well-formed org id + wamn-prefixed pool cluster applies'; END $$;
-DELETE FROM registry.orgs WHERE id='goodorg';
--- projects.id — a check_id mirror (slug + reserved), under the existing 'try' org.
-DO $$ BEGIN BEGIN
-  INSERT INTO registry.projects (org, id) VALUES ('try','Bad_Proj');
-  ASSERT false, 'a non-slug project id must be rejected (projects_id_charset_check)';
-EXCEPTION WHEN check_violation THEN NULL; END; END $$;
-DO $$ BEGIN BEGIN
-  INSERT INTO registry.projects (org, id) VALUES ('try','wamn-run');
-  ASSERT false, 'a reserved-wamn project id must be rejected';
-EXCEPTION WHEN check_violation THEN NULL; END; END $$;
--- env_policies.name — a check_env mirror (slug + <= 40, NO reserved), under 'acme'.
-DO $$ BEGIN BEGIN
-  INSERT INTO registry.env_policies
-      (org, name, recovery_domain, promotion_rank, instances, storage, cpu, memory, image)
-    VALUES ('acme','Bad_Env','"own"'::jsonb,10,1,'2Gi','200m','256Mi','x');
-  ASSERT false, 'a non-slug env policy name must be rejected (env_policies_name_charset_check)';
-EXCEPTION WHEN check_violation THEN NULL; END; END $$;
-
--- wamn-R27: an interior `--` run inside an org/project id or env slug is rejected
--- by the tightened component regex — `--` is the wamn-db-<org>--<project>--<env>
--- (and wamn_cdc_<org>__<project>__<env>) separator, so a `--` run would collide
--- two distinct triples onto ONE derived database / CDC role name.
-DO $$ BEGIN BEGIN
-  INSERT INTO registry.orgs (id, placement_kind, pool_cluster) VALUES ('a--x','dedicated',NULL);
-  ASSERT false, 'a consecutive-hyphen org id must be rejected (wamn-R27)';
-EXCEPTION WHEN check_violation THEN NULL; END; END $$;
-DO $$ BEGIN BEGIN
-  INSERT INTO registry.projects (org, id) VALUES ('try','x--p');
-  ASSERT false, 'a consecutive-hyphen project id must be rejected (wamn-R27)';
-EXCEPTION WHEN check_violation THEN NULL; END; END $$;
-DO $$ BEGIN BEGIN
-  INSERT INTO registry.env_policies
-      (org, name, recovery_domain, promotion_rank, instances, storage, cpu, memory, image)
-    VALUES ('acme','d--v','"own"'::jsonb,10,1,'2Gi','200m','256Mi','x');
-  ASSERT false, 'a consecutive-hyphen env policy name must be rejected (wamn-R27)';
-EXCEPTION WHEN check_violation THEN NULL; END; END $$;
--- Length and reserved-word boundaries that the cases above do not reach.
-DO $$ BEGIN BEGIN
-  INSERT INTO registry.orgs (id, placement_kind, pool_cluster) VALUES ('wamn','dedicated',NULL);
-  ASSERT false, 'the bare reserved org id wamn must be rejected';
-EXCEPTION WHEN check_violation THEN NULL; END; END $$;
-DO $$ BEGIN BEGIN
-  INSERT INTO registry.orgs (id, placement_kind, pool_cluster) VALUES ('longpool','pooled',repeat('a',64));
-  ASSERT false, 'a pool cluster over 63 characters must be rejected';
-EXCEPTION WHEN check_violation THEN NULL; END; END $$;
-DO $$ BEGIN BEGIN
-  INSERT INTO registry.projects (org, id) VALUES ('try',repeat('a',41));
-  ASSERT false, 'a project id over 40 characters must be rejected';
-EXCEPTION WHEN check_violation THEN NULL; END; END $$;
-DO $$ BEGIN BEGIN
-  INSERT INTO registry.env_policies
-      (org, name, recovery_domain, promotion_rank, instances, storage, cpu, memory, image)
-    VALUES ('acme',repeat('a',41),'"own"'::jsonb,10,1,'2Gi','200m','256Mi','x');
-  ASSERT false, 'an env policy name over 40 characters must be rejected';
-EXCEPTION WHEN check_violation THEN NULL; END; END $$;
--- A SINGLE interior hyphen stays valid on a component (org id here); then cleaned up.
-INSERT INTO registry.orgs (id, placement_kind, pool_cluster) VALUES ('a-b-c','dedicated',NULL);
-DO $$ BEGIN ASSERT (SELECT count(*) FROM registry.orgs WHERE id='a-b-c')=1,
-  'a single interior hyphen is a valid component id'; END $$;
-DELETE FROM registry.orgs WHERE id='a-b-c';
--- pool_cluster is a DERIVED name and may carry `--` (the ban is for identity
--- slugs only): a `--` pool cluster on a well-formed pooled org applies.
-INSERT INTO registry.orgs (id, placement_kind, pool_cluster) VALUES ('poolorg','pooled','wamn--pg--x');
-DO $$ BEGIN ASSERT (SELECT count(*) FROM registry.orgs WHERE id='poolorg')=1,
-  'a derived pool_cluster name may carry consecutive hyphens (wamn-R27 bans slugs, not names)'; END $$;
-DELETE FROM registry.orgs WHERE id='poolorg';
 
 -- Registry and provisioning store references, not tenant database credentials.
 -- Identity owns authentication hashes and tokens separately.

@@ -94,12 +94,18 @@ async fn connect(url: &str) -> (Client, tokio::task::JoinHandle<()>) {
 }
 
 fn wiring(id: &str, version: u32) -> WiringDocument {
+    wiring_at(id, version, "node")
+}
+
+/// The same identity as [`wiring`] with other bytes: its one node has another
+/// name, so the document carries another hash.
+fn wiring_at(id: &str, version: u32, node: &str) -> WiringDocument {
     WiringDocument::new(
         id,
         version,
-        "node",
+        node,
         BTreeMap::from([(
-            "node".to_string(),
+            node.to_string(),
             WiringNode {
                 component: "inventory_data".to_string(),
                 interface_version: "0.1".to_string(),
@@ -220,11 +226,21 @@ async fn provision_control(control: &Client) {
 /// below shows the gate verb ever WRITES a report; the module header names the
 /// test that does and the measured cost of moving that test here.
 async fn record_report(control: &Client, wiring_hash: &DefinitionHash, passed: bool) {
+    record_tenant_report(control, TENANT, wiring_hash, passed).await;
+}
+
+/// Record one gate verdict under `tenant`.
+async fn record_tenant_report(
+    control: &Client,
+    tenant: &str,
+    wiring_hash: &DefinitionHash,
+    passed: bool,
+) {
     control
         .execute(
             "INSERT INTO wamn_run.gate_reports (tenant_id, wiring_hash, passed, summary) \
              VALUES ($1, $2, $3, '{}'::jsonb)",
-            &[&TENANT, &wiring_hash.as_str(), &passed],
+            &[&tenant, &wiring_hash.as_str(), &passed],
         )
         .await
         .expect("record the gate verdict");
@@ -281,7 +297,8 @@ async fn stored_wirings(project: &Client, wiring_id: &str) -> i64 {
         .get(0)
 }
 
-/// Four documents, four report states, one admitted row.
+/// Five documents, five report states, one admitted row, and a changed
+/// resubmission of the admitted identity.
 ///
 /// Each document is distinct, so each carries its own hash and its own report
 /// key; nothing here depends on rewriting a report, which the relation's
@@ -329,7 +346,17 @@ async fn a_wiring_is_authored_only_under_a_green_report_for_its_own_hash() {
     assert_eq!(refusal.kind(), AuthorWiringErrorKind::Report);
     assert_eq!(stored_wirings(&project, "borrowed").await, 0);
 
-    // 4. A green report covering this document's own hash. Only now is the
+    // 4. A green report for this document's own hash — in another tenant. The
+    // report read is keyed by tenant, so that verdict does not transfer either.
+    let foreign = wiring("foreign", 1);
+    record_tenant_report(&control, "other-tenant", &foreign.wiring_hash(), true).await;
+    let refusal = author(&control, &mut project, &foreign)
+        .await
+        .expect_err("another tenant's green report does not authorize this tenant");
+    assert_eq!(refusal.kind(), AuthorWiringErrorKind::Report);
+    assert_eq!(stored_wirings(&project, "foreign").await, 0);
+
+    // 5. A green report covering this document's own hash. Only now is the
     // definition appended, and the authored hash is the one that was gated.
     let admitted = wiring("admitted", 1);
     record_report(&control, &admitted.wiring_hash(), true).await;
@@ -348,6 +375,27 @@ async fn a_wiring_is_authored_only_under_a_green_report_for_its_own_hash() {
         .expect("read the authored wiring row")
         .get(0);
     assert_eq!(stored, admitted.wiring_hash().as_str());
+
+    // 6. Other bytes under the admitted identity, with their own green report.
+    // A stored definition is immutable, so the resubmission refuses and the
+    // stored row keeps the first hash.
+    let changed = wiring_at("admitted", 1, "moved");
+    assert_ne!(changed.wiring_hash(), admitted.wiring_hash());
+    record_report(&control, &changed.wiring_hash(), true).await;
+    let refusal = author(&control, &mut project, &changed)
+        .await
+        .expect_err("a changed document under an authored identity refuses");
+    assert_eq!(refusal.kind(), AuthorWiringErrorKind::Conflict);
+    let kept: String = project
+        .query_one(
+            "SELECT wiring_hash FROM catalog.wirings \
+              WHERE tenant_id = $1 AND package_id = $2 AND wiring_id = 'admitted'",
+            &[&TENANT, &PACKAGE],
+        )
+        .await
+        .expect("read the authored wiring row again")
+        .get(0);
+    assert_eq!(kept, admitted.wiring_hash().as_str());
 
     drop(project);
     drop(control);

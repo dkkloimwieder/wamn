@@ -140,178 +140,6 @@ fn effect_uncertain_failure_has_one_exact_non_committal_shape() {
 // `run_state_schema_applies_and_isolates_on_postgres` below, which asks the installed constraint
 // itself.
 
-#[test]
-fn postgres_fixture_has_no_retired_flow_runs_checkpoint_table() {
-    let ddl = include_str!("../../../../deploy/sql/postgres-init.sql");
-
-    assert!(!ddl.contains("CREATE TABLE s3.flow_runs"));
-    assert!(!ddl.contains("flow_runs_tenant"));
-}
-
-// ---- deploy/sql/run-state.sql drift guard --------------------------------------
-
-#[test]
-fn run_state_sql_matches_the_model() {
-    let sql = std::fs::read_to_string(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/../../../deploy/sql/run-state.sql"
-    ))
-    .expect("read deploy/sql/run-state.sql");
-
-    // Run history and its tenant floor.
-    assert!(sql.contains("CREATE TABLE wamn_run.runs"));
-    assert!(sql.contains("FORCE ROW LEVEL SECURITY"));
-    assert!(sql.contains("current_setting('app.tenant', true)"));
-    // Retired rerun lineage is absent; trusted event causation and effect frame keys remain.
-    assert!(!sql.contains("\n    replay_of       text"));
-    assert!(!sql.contains("\n    root_run_id     text"));
-    assert!(!sql.contains("CREATE INDEX runs_root "));
-    assert!(sql.contains("event_source_run_id text"));
-    assert!(sql.contains("event_root_run_id text"));
-    assert!(sql.contains("event_depth      int"));
-    for frame_column in [
-        "frame_id",
-        "parent_frame_id",
-        "call_site_id",
-        "current_plan_hash",
-        "local_node_id",
-    ] {
-        assert!(
-            sql.contains(frame_column),
-            "run-state.sql missing frame column {frame_column}"
-        );
-    }
-    for effect_fact in [
-        "root_plan_hash",
-        "current_plan_hash",
-        "frame_id",
-        "local_node_id",
-        "source_artifact_hash",
-        "requirement_name text NOT NULL",
-        "UNIQUE (tenant_id, run_id, frame_id, local_node_id, occurrence)",
-    ] {
-        assert!(
-            sql.contains(effect_fact),
-            "run-state.sql missing effect attempt fact {effect_fact}"
-        );
-    }
-    assert!(sql.contains("runs_idempotency"));
-    // The run-owned 9.6 admission fact.
-    assert!(sql.contains("capture_mode    text NOT NULL DEFAULT 'off'"));
-    assert!(sql.contains(
-        "capture_mode <> 'full' OR trigger_source IS NOT DISTINCT FROM 'scenario-draft'"
-    ));
-    assert!(sql.contains("OR NEW.capture_mode IS DISTINCT FROM OLD.capture_mode"));
-    // The retained class has fixed literals and cannot change after insertion.
-    assert!(sql.contains("durability_class text NOT NULL DEFAULT 'standard'"));
-    assert!(sql.contains("CONSTRAINT runs_durability_class_check"));
-    assert!(sql.contains("CHECK (durability_class IN ('standard', 'durable'))"));
-    assert!(sql.contains("OR NEW.durability_class IS DISTINCT FROM OLD.durability_class"));
-    assert!(sql.contains("CREATE TABLE wamn_run.environment_policies"));
-    assert!(sql.contains("expected_environment text NOT NULL"));
-    assert!(sql.contains("PRIMARY KEY (tenant_id)"));
-    assert!(sql.contains("ALTER TABLE wamn_run.environment_policies FORCE ROW LEVEL SECURITY"));
-    assert!(sql.contains("CREATE POLICY environment_policies_tenant"));
-    // Re-keyed onto `current_user` with the rest of the guest-reachable floor
-    // (`wamn-0h0g.22.6.3`), and carrying the expression index without which the
-    // derivation sequential-scans.
-    // `wamn-0h0g.22.17` narrowed the floor to the guest and admitted the
-    // platform families through one permissive arm. Both halves are asserted:
-    // the floor alone would leave every platform principal reading ZERO ROWS
-    // SILENTLY, which is the failure that bead exists to prevent.
-    assert!(sql.contains(
-        "FOR SELECT\nTO wamn_app\nUSING (wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key())"
-    ));
-    assert!(sql.contains(
-        "CREATE POLICY environment_policies_platform ON wamn_run.environment_policies\n    AS PERMISSIVE FOR SELECT TO wamn_platform\n    USING (true)"
-    ));
-    assert!(sql.contains(
-        "CREATE INDEX environment_policies_tkey\n    ON wamn_run.environment_policies ((wamn_authority.tenant_key(tenant_id)))"
-    ));
-    assert!(sql.contains("GRANT SELECT ON TABLE wamn_run.environment_policies TO wamn_app"));
-    assert!(!sql.contains("GRANT INSERT ON TABLE wamn_run.environment_policies TO wamn_app"));
-    // RIDER 1 of the ruling: an unnamed column's transition arm silently never
-    // fires, so the column-scoped trigger MUST name the class.
-    assert!(sql.contains(
-        "BEFORE UPDATE OF flow_id, flow_version, package_id, effective_release_id, environment,\n                 capture_mode, durability_class, wiring_id, wiring_version,\n                 wiring_hash, binding_world_json, manifest_digest"
-    ));
-    // The effective release is pinned at admission. The claim records only the
-    // verified manifest digest, and every arm that reopens claimability clears
-    // that digest — the classifier's pre-effect reclaim and the queue park
-    // (wamn-0h0g.15.82). The guard is transition-constrained rather than
-    // write-once: NULL -> value and value -> NULL are permitted, while value ->
-    // value' never is (wamn-0h0g.15.55).
-    assert!(sql.contains("    effective_release_id int NOT NULL,"));
-    assert!(!sql.contains("    release_version int,"));
-    assert!(sql.contains("    manifest_digest text,"));
-    assert!(sql.contains("CONSTRAINT runs_release_record_check"));
-    assert!(sql.contains(
-        "IF OLD.manifest_digest IS NOT NULL THEN\n        IF NEW.manifest_digest IS NULL THEN"
-    ));
-    // The erasure arm cannot name its caller, so it checks that nothing references
-    // the digest being erased: still runnable and no effect attempt.
-    assert!(sql.contains("IF NEW.status NOT IN ('dispatched', 'running')"));
-    assert!(sql.contains("OR EXISTS (SELECT 1 FROM wamn_run.effect_attempts AS effect"));
-    assert!(sql.contains("ELSIF NEW.manifest_digest IS DISTINCT FROM OLD.manifest_digest THEN"));
-    assert!(sql.contains("MESSAGE = 'run-release-record-immutable'"));
-    assert!(!sql.contains("GRANT SELECT, INSERT, UPDATE, DELETE ON wamn_run.runs TO wamn_app"));
-    assert!(sql.contains("GRANT SELECT, DELETE ON wamn_run.runs TO wamn_app;"));
-    assert!(!sql.contains("payload_size  bigint"));
-    assert!(!sql.contains("preview_head  text"));
-    assert!(!sql.contains("redacted      boolean"));
-
-    // Every status literal the CHECK constraints pin comes from the crate enums.
-    for s in RunStatus::ALL {
-        assert!(
-            sql.contains(&format!("'{}'", s.as_sql())),
-            "runs CHECK missing {}",
-            s.as_sql()
-        );
-    }
-    for k in FailKind::ALL {
-        assert!(
-            sql.contains(&format!("'{}'", k.as_sql())),
-            "fail_kind CHECK missing {}",
-            k.as_sql()
-        );
-    }
-
-    let normalized = sql.split_whitespace().collect::<Vec<_>>().join(" ");
-    assert!(
-        normalized.contains(
-            "fail_kind text CHECK (fail_kind IN ('terminal', 'retry-exhausted', 'invalid-input', \
-             'runaway-budget', 'effect-uncertain', 'depth-budget', 'dispatch-budget', \
-             'unresolvable-name', 'hash-invalid-bytes', 'foreign-revision', \
-             'incompatible-contract', 'unbound-requirement')),"
-        ),
-        "runs.fail_kind CHECK must carry exactly the frozen vocabulary"
-    );
-}
-
-#[test]
-fn run_delete_is_guarded_by_the_exact_terminal_vocabulary() {
-    let sql = include_str!("../../../../deploy/sql/run-state.sql");
-    let (_, guard_and_rest) = sql
-        .split_once("CREATE FUNCTION wamn_run.guard_terminal_run_delete()")
-        .expect("run-state record declares the delete guard");
-    let (guard, _) = guard_and_rest
-        .split_once("REVOKE ALL ON FUNCTION wamn_run.guard_terminal_run_delete() FROM PUBLIC;")
-        .expect("the ordinary trigger function is not publicly executable");
-
-    assert!(
-        guard.contains(
-            "IF OLD.status NOT IN ('completed', 'failed', 'infrastructure-failure') THEN"
-        )
-    );
-    assert!(guard.contains("ERRCODE = '55000'"));
-    assert!(guard.contains("MESSAGE = 'run-delete-nonterminal'"));
-    assert!(!guard.contains("effect-uncertain"));
-    assert!(!guard.contains("SECURITY DEFINER"));
-    assert!(sql.contains(
-        "CREATE TRIGGER runs_terminal_delete_only\nBEFORE DELETE ON wamn_run.runs\nFOR EACH ROW EXECUTE FUNCTION wamn_run.guard_terminal_run_delete();"
-    ));
-}
-
 // ---- live-apply gate (optional) --------------------------------------------
 
 fn live_database(url: &str) -> String {
@@ -333,7 +161,8 @@ fn live_database(url: &str) -> String {
 /// Apply `deploy/sql/run-state.sql` to a test database and assert the tenant RLS
 /// isolates rows, the idempotency index dedupes, and the INSTALLED run-status CHECK
 /// admits exactly the crate's [`RunStatus`] vocabulary while refusing the retired
-/// run-level `parked`. The test runs as the superuser (the harness prepares an App
+/// run-level `parked`. The installed `fail_kind` CHECK admits exactly
+/// [`FailKind::ALL`], and the server answers each [`RUN_RECORD_CHECKS`] arm. The test runs as the superuser (the harness prepares an App
 /// generation) and holds the process lock, because it changes cluster-wide roles.
 #[test]
 fn run_state_schema_applies_and_isolates_on_postgres() {
@@ -511,6 +340,43 @@ fn run_state_schema_applies_and_isolates_on_postgres() {
          ) AS installed;"
     )
     .expect("writing to a String cannot fail");
+    // The installed fail_kind CHECK, asked for its literal set like the status one.
+    script.push_str(
+        "SELECT 'fail-kind-installed ' || string_agg(DISTINCT literal, ' ' ORDER BY literal)\n\
+         FROM (\n\
+           SELECT hit.parts[1] AS literal\n\
+           FROM pg_constraint AS con\n\
+           JOIN pg_attribute AS col\n\
+             ON col.attrelid = con.conrelid AND col.attnum = con.conkey[1]\n\
+           CROSS JOIN LATERAL regexp_matches(\
+             pg_get_constraintdef(con.oid), '''([^'']*)''', 'g') AS hit(parts)\n\
+           WHERE con.conrelid = 'wamn_run.runs'::regclass\n\
+             AND con.contype = 'c'\n\
+             AND cardinality(con.conkey) = 1\n\
+             AND col.attname = 'fail_kind'\n\
+         ) AS installed;\n",
+    );
+    script.push_str(RUN_RECORD_CHECKS);
+    // The environment policy floor: the App generation reads its own tenant's
+    // row only and cannot write one.
+    writeln!(
+        script,
+        "BEGIN;\n\
+         SET LOCAL ROLE {app_role};\n\
+         DO $$ BEGIN\n\
+           ASSERT (SELECT count(*) FROM wamn_run.environment_policies) = 1,\n\
+             'the App generation reads only its own environment policy';\n\
+           ASSERT (SELECT tenant_id FROM wamn_run.environment_policies) = 't1',\n\
+             'the App generation reads its own tenant''s policy';\n\
+           BEGIN\n\
+             INSERT INTO wamn_run.environment_policies\n\
+               (tenant_id, expected_environment, durability_class) VALUES ('t4', 'test', 'standard');\n\
+             ASSERT false, 'the App generation must not write an environment policy';\n\
+           EXCEPTION WHEN insufficient_privilege THEN NULL; END;\n\
+         END $$;\n\
+         COMMIT;"
+    )
+    .expect("writing to a String cannot fail");
     // Terminal run history remains deletable.
     script.push_str(
         "UPDATE wamn_run.runs SET status='completed' \
@@ -552,7 +418,11 @@ fn run_state_schema_applies_and_isolates_on_postgres() {
     let stdout = String::from_utf8(out.stdout).expect("psql stdout is UTF-8");
     let mut answers = std::collections::BTreeMap::new();
     let mut installed = None;
+    let mut fail_kinds = None;
     for line in stdout.lines() {
+        if let Some(rest) = line.strip_prefix("fail-kind-installed ") {
+            fail_kinds = Some(rest.to_string());
+        }
         if let Some(rest) = line.strip_prefix("status-answer ") {
             let (literal, answer) = rest
                 .split_once(' ')
@@ -586,4 +456,175 @@ fn run_state_schema_applies_and_isolates_on_postgres() {
         Some(vocabulary.join(" ").as_str()),
         "the installed runs status CHECK admits a different vocabulary than RunStatus::ALL"
     );
+
+    let mut fail_vocabulary = FailKind::ALL.map(FailKind::as_sql);
+    fail_vocabulary.sort_unstable();
+    assert_eq!(
+        fail_kinds.as_deref(),
+        Some(fail_vocabulary.join(" ").as_str()),
+        "the installed runs fail_kind CHECK admits a different vocabulary than FailKind::ALL"
+    );
 }
+
+/// The run-record rules that no other live test asks the server about. Each
+/// arm is a refused write, a trigger error or a `pg_catalog` fact.
+const RUN_RECORD_CHECKS: &str = "\
+-- Retired carriers stay absent, and the causation and admission carriers exist.
+DO $$ BEGIN
+  ASSERT NOT EXISTS (
+    SELECT FROM pg_attribute
+     WHERE attrelid = 'wamn_run.runs'::regclass AND NOT attisdropped
+       AND attname IN ('replay_of', 'root_run_id', 'fail_node', 'fail_reason',
+                       'release_version', 'payload_size', 'preview_head', 'redacted')
+  ), 'runs carries a retired column';
+  ASSERT to_regclass('wamn_run.runs_root') IS NULL, 'the retired runs_root index exists';
+  ASSERT (SELECT string_agg(attname || ':' || format_type(atttypid, atttypmod), ' ' ORDER BY attname)
+            FROM pg_attribute
+           WHERE attrelid = 'wamn_run.runs'::regclass AND NOT attisdropped
+             AND attname IN ('event_source_run_id', 'event_root_run_id', 'event_depth',
+                             'effective_release_id', 'manifest_digest'))
+       = 'effective_release_id:integer event_depth:integer event_root_run_id:text '
+         'event_source_run_id:text manifest_digest:text',
+    'runs carries the causation and release record carriers';
+  ASSERT (SELECT attnotnull FROM pg_attribute
+           WHERE attrelid = 'wamn_run.runs'::regclass AND attname = 'effective_release_id'),
+    'every run pins its effective release';
+END $$;
+
+-- One effect attempt per frame node occurrence.
+DO $$ BEGIN
+  ASSERT EXISTS (
+    SELECT FROM pg_constraint AS con
+     WHERE con.conrelid = 'wamn_run.effect_attempts'::regclass AND con.contype = 'u'
+       AND (SELECT array_agg(att.attname::text ORDER BY key.ordinality)
+              FROM unnest(con.conkey) WITH ORDINALITY AS key(attnum, ordinality)
+              JOIN pg_attribute AS att
+                ON att.attrelid = con.conrelid AND att.attnum = key.attnum)
+           = ARRAY['tenant_id', 'run_id', 'frame_id', 'local_node_id', 'occurrence']
+  ), 'effect_attempts is unique per tenant, run, frame, node and occurrence';
+END $$;
+
+-- An admitted run defaults to no capture and the standard class, and refuses
+-- a class or capture outside its vocabulary.
+INSERT INTO wamn_run.runs (
+  tenant_id, run_id, flow_id, flow_version, package_id, effective_release_id, environment,
+  wiring_id, wiring_version, status, idempotency_key
+) VALUES ('t3', 'record-probe', 'f', 1, 'run-state-fixture', 1, 'test',
+          'fixture-wiring', 1, 'running', 'record-probe');
+DO $$ BEGIN
+  ASSERT (SELECT capture_mode || '/' || durability_class FROM wamn_run.runs
+           WHERE tenant_id = 't3' AND run_id = 'record-probe') = 'off/standard',
+    'an admitted run defaults to capture off and the standard class';
+END $$;
+DO $$
+DECLARE refused text;
+BEGIN
+  FOREACH refused IN ARRAY ARRAY[
+    'durability_class = ''bogus''',
+    'capture_mode = ''bogus''',
+    'capture_mode = ''full'''
+  ] LOOP
+    BEGIN
+      EXECUTE format(
+        'INSERT INTO wamn_run.runs (tenant_id, run_id, flow_id, flow_version, package_id, '
+        'effective_release_id, environment, wiring_id, wiring_version, idempotency_key, '
+        'capture_mode, durability_class) VALUES (''t3'', ''record-refused'', ''f'', 1, '
+        '''run-state-fixture'', 1, ''test'', ''fixture-wiring'', 1, ''record-refused'', %s, %s)',
+        CASE WHEN refused LIKE 'capture_mode%' THEN split_part(refused, ' = ', 2) ELSE '''off''' END,
+        CASE WHEN refused LIKE 'durability_class%' THEN split_part(refused, ' = ', 2) ELSE '''standard''' END);
+      ASSERT false, format('a run with %s must be refused', refused);
+    EXCEPTION WHEN check_violation THEN NULL; END;
+  END LOOP;
+END $$;
+
+-- Every admission pin is immutable after insertion.
+DO $$
+DECLARE assignment text; refusal text;
+BEGIN
+  FOREACH assignment IN ARRAY ARRAY[
+    'flow_id = ''g''', 'flow_version = 2', 'package_id = ''other''',
+    'effective_release_id = 2', 'environment = ''other''', 'capture_mode = ''full''',
+    'durability_class = ''durable''', 'wiring_id = ''other''', 'wiring_version = 2',
+    'wiring_hash = ''other''', 'binding_world_json = ''{}''::jsonb',
+    'service_principal_id = ''00000000-0000-4000-8000-000000000001''::uuid'
+  ] LOOP
+    refusal := NULL;
+    BEGIN
+      EXECUTE 'UPDATE wamn_run.runs SET ' || assignment
+        || ' WHERE tenant_id = ''t3'' AND run_id = ''record-probe''';
+    EXCEPTION WHEN object_not_in_prerequisite_state THEN refusal := SQLERRM; END;
+    ASSERT refusal = 'run-admission-pin-immutable',
+      format('changing %s must be refused as run-admission-pin-immutable, got %s',
+             assignment, coalesce(refusal, 'no refusal'));
+  END LOOP;
+END $$;
+
+-- Only terminal history is deletable: effect-uncertain stays, and each
+-- terminal status goes. The guard runs with its caller's rights and PUBLIC
+-- cannot call it.
+UPDATE wamn_run.runs SET status = 'effect-uncertain'
+ WHERE tenant_id = 't3' AND run_id = 'record-probe';
+DO $$
+DECLARE refusal text;
+BEGIN
+  BEGIN
+    DELETE FROM wamn_run.runs WHERE tenant_id = 't3' AND run_id = 'record-probe';
+  EXCEPTION WHEN object_not_in_prerequisite_state THEN refusal := SQLERRM; END;
+  ASSERT refusal = 'run-delete-nonterminal',
+    format('an effect-uncertain run must not be deletable, got %s', coalesce(refusal, 'a delete'));
+END $$;
+DO $$
+DECLARE terminal text;
+BEGIN
+  FOREACH terminal IN ARRAY ARRAY['completed', 'failed', 'infrastructure-failure'] LOOP
+    INSERT INTO wamn_run.runs (
+      tenant_id, run_id, flow_id, flow_version, package_id, effective_release_id, environment,
+      wiring_id, wiring_version, status, idempotency_key
+    ) VALUES ('t3', 'terminal-' || terminal, 'f', 1, 'run-state-fixture', 1, 'test',
+              'fixture-wiring', 1, terminal, 'terminal-' || terminal);
+    DELETE FROM wamn_run.runs WHERE tenant_id = 't3' AND run_id = 'terminal-' || terminal;
+  END LOOP;
+  ASSERT NOT (SELECT prosecdef FROM pg_proc
+               WHERE oid = 'wamn_run.guard_terminal_run_delete()'::regprocedure),
+    'the delete guard runs with its caller''s rights';
+  ASSERT (SELECT proacl IS NOT NULL
+             AND NOT EXISTS (SELECT FROM aclexplode(proacl) AS grant_row WHERE grant_row.grantee = 0)
+            FROM pg_proc WHERE oid = 'wamn_run.guard_terminal_run_delete()'::regprocedure),
+    'PUBLIC cannot execute the delete guard';
+END $$;
+
+-- The app role may read and prune runs and may not write them.
+DO $$ BEGIN
+  ASSERT has_table_privilege('wamn_app', 'wamn_run.runs', 'SELECT')
+     AND has_table_privilege('wamn_app', 'wamn_run.runs', 'DELETE'),
+    'wamn_app reads and prunes runs';
+  ASSERT NOT has_table_privilege('wamn_app', 'wamn_run.runs', 'INSERT')
+     AND NOT has_table_privilege('wamn_app', 'wamn_run.runs', 'UPDATE'),
+    'wamn_app must not write runs';
+END $$;
+
+-- The environment policy relation: one row per tenant, forced row security,
+-- a platform policy that reads every row, and an index on the tenant key.
+DO $$ BEGIN
+  BEGIN
+    INSERT INTO wamn_run.environment_policies (tenant_id, expected_environment, durability_class)
+      VALUES ('t1', 'test', 'durable');
+    ASSERT false, 'a second environment policy for one tenant must be refused';
+  EXCEPTION WHEN unique_violation THEN NULL; END;
+  ASSERT (SELECT relrowsecurity AND relforcerowsecurity FROM pg_class
+           WHERE oid = 'wamn_run.environment_policies'::regclass),
+    'environment_policies forces row security';
+  ASSERT EXISTS (
+    SELECT FROM pg_index
+     WHERE indrelid = 'wamn_run.environment_policies'::regclass
+       AND pg_get_indexdef(indexrelid) LIKE '%tenant_key(tenant_id)%'
+  ), 'environment_policies indexes its tenant key';
+  ASSERT EXISTS (
+    SELECT FROM pg_policy
+     WHERE polrelid = 'wamn_run.environment_policies'::regclass
+       AND polpermissive AND polcmd = 'r'
+       AND polroles = ARRAY['wamn_platform'::regrole::oid]
+       AND pg_get_expr(polqual, polrelid) = 'true'
+  ), 'the platform family reads every environment policy';
+END $$;
+";

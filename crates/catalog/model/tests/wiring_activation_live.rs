@@ -20,7 +20,7 @@ use std::io::Write as _;
 use std::process::{Command, Output, Stdio};
 
 use wamn_catalog::{
-    WiringDocument, WiringEdge, WiringNode, WiringTerminal, flip_activation,
+    WiringDocument, WiringEdge, WiringNode, WiringTerminal, activation_facts, flip_activation,
     previous_confirmed_definition, record_activation_event,
 };
 use wamn_control_provision::{
@@ -137,12 +137,14 @@ fn preamble(database: &str, app_generation: &str) -> String {
     )
 }
 
-/// `PREPARE` the three real builders under short names.
+/// `PREPARE` the four real builders under short names.
 fn prepared() -> String {
     format!(
-        "PREPARE flip (text,text,text,text,boolean) AS {flip};\n\
+        "PREPARE facts (text,text,text,text) AS {facts};\n\
+         PREPARE flip (text,text,text,text,boolean) AS {flip};\n\
          PREPARE record (text,text,text,boolean,text,text,text,text) AS {record};\n\
          PREPARE prior (text,text,text,text) AS {prior};\n",
+        facts = activation_facts(),
         flip = flip_activation(),
         record = record_activation_event(),
         prior = previous_confirmed_definition(),
@@ -235,6 +237,20 @@ fn wiring_activation_live() {
             AND package_id = 'shop' AND environment = 'prod' \
             AND wiring_id = 'orders-create' ORDER BY event_seq;\n",
     );
+    // Another tenant retires the same wiring key. The facts read is scoped to
+    // the `app.tenant` claim, so this tenant's definition stays live and in its
+    // release.
+    writeln!(
+        script,
+        "INSERT INTO catalog.wiring_tombstones \
+                (tenant_id, package_id, environment, wiring_id, reason) \
+         VALUES ('t2','shop','prod','orders-create','another tenant retires it');\n\
+         CREATE TEMP TABLE facts_probe AS EXECUTE facts('shop','prod','orders-create','{a}');\n\
+         SELECT 'facts=' || tombstoned::text || '|' || definition_in_release::text \
+           FROM facts_probe;",
+        a = hash('a'),
+    )
+    .expect("writing to a String cannot fail");
     let stdout = success(&url, &script);
     let reported = |label: &str| {
         stdout
@@ -282,6 +298,12 @@ fn wiring_activation_live() {
         reported("as_app_user"),
         app_generation,
         "the tenant authority must be the prepared App generation"
+    );
+
+    assert_eq!(
+        reported("facts"),
+        "false|true",
+        "another tenant's retirement neither retires this wiring nor hides its release"
     );
 
     let events: Vec<&str> = stdout

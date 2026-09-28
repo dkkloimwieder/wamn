@@ -926,55 +926,6 @@ mod tests {
         );
     }
 
-    /// The builder and the live credential probe agree on the exact seven-column
-    /// Publish append, while the probe still refuses table-wide INSERT and the
-    /// defaulted storage timestamp (`wamn-0h0g.7.7`).
-    #[test]
-    fn the_publish_surface_is_column_exact_at_the_runtime_boundary() {
-        const INSERT_COLUMNS: [&str; 7] = [
-            "tenant_id",
-            "package_id",
-            "package_version",
-            "wiring_id",
-            "version",
-            "graph_json",
-            "wiring_hash",
-        ];
-        assert_eq!(
-            sql::MANAGEMENT_ADMITTER_WIRING_INSERT_COLUMNS,
-            INSERT_COLUMNS
-        );
-        let acl = admission_acl_expectations();
-        for column in INSERT_COLUMNS {
-            assert!(acl.contains(&AclExpectation::new(
-                AclTarget::Column {
-                    relation: "catalog.wirings".into(),
-                    column: column.into(),
-                },
-                "INSERT",
-                true,
-            )));
-        }
-        for forbidden in [
-            AclExpectation::new(
-                AclTarget::Column {
-                    relation: "catalog.wirings".into(),
-                    column: "created_at".into(),
-                },
-                "INSERT",
-                false,
-            ),
-            AclExpectation::new(AclTarget::Table("catalog.wirings".into()), "INSERT", false),
-        ] {
-            assert!(acl.contains(&forbidden));
-        }
-        assert_eq!(
-            acl.len(),
-            14,
-            "schema + two reads + seven inserts + omitted column + three table negatives"
-        );
-    }
-
     /// The expected identity is DERIVED from the parsed connection, never
     /// hand-copied beside it.
     ///

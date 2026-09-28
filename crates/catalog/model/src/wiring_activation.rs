@@ -166,10 +166,7 @@ SELECT confirmed_definition_hash \
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        WiringActivationErrorKind, WiringActivationFacts, activation_facts, flip_activation,
-        previous_confirmed_definition, record_activation_event, validate_wiring_activation,
-    };
+    use super::{WiringActivationErrorKind, WiringActivationFacts, validate_wiring_activation};
 
     #[test]
     fn disabled_activation_accepts_each_retirement_and_membership_state() {
@@ -208,27 +205,5 @@ mod tests {
             error.to_string(),
             "wiring-activation-tombstoned: shop/prod/orders-create"
         );
-    }
-
-    fn statements() -> [&'static str; 4] {
-        [
-            activation_facts(),
-            flip_activation(),
-            record_activation_event(),
-            previous_confirmed_definition(),
-        ]
-    }
-
-    /// A statement that took a tenant parameter would let a superuser driver —
-    /// which bypasses RLS — write into another tenant's pointer by passing the
-    /// wrong string.
-    #[test]
-    fn no_statement_lets_the_caller_choose_the_tenant() {
-        for sql in statements() {
-            assert!(
-                sql.contains("NULLIF(current_setting('app.tenant', true), '')"),
-                "statement does not scope to the app.tenant claim: {sql}"
-            );
-        }
     }
 }

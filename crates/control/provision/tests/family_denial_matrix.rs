@@ -551,6 +551,12 @@ fn build() -> Fixture {
     let mut admin_db = Url::parse(&admin).expect("the test server URL is a URL");
     admin_db.set_path(DATABASE);
     let db_url = admin_db.to_string();
+    // The retired flow checkpoint table stays out of the fixture database.
+    assert_eq!(
+        query(&db_url, "SELECT to_regclass('s3.flow_runs') IS NULL"),
+        "t",
+        "postgres-init.sql must not create the retired s3.flow_runs table"
+    );
 
     for artifact in [CATALOG_SCHEMA, RUN_STATE, RUN_QUEUE, APP_SCHEMA] {
         apply(&db_url, "apply a schema artifact", artifact);
