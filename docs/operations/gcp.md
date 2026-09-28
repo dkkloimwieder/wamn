@@ -1343,3 +1343,119 @@ kubectl -n platform patch pvc wamn-pg-1 --type merge -p '{"spec":{"resources":{"
 On 2026-09-28 the apply alone did not grow the claim in 408 seconds. The patch grew it in 32 seconds, and Postgres was ready 167 seconds later. Only the two live CDC slots existed, so no slot was dropped (finding `wamn-6jit`).
 
 Restart identity and the CDC readers after an outage of Postgres. Do not restart the host groups while they run: two host pods do not fit on the two nodes, and the new pods wait in `Pending`. If that happens, run `kubectl -n hosts rollout undo deploy/<name>`.
+
+### 6.3 Bench client and PAT
+
+Mint the bench PAT as in section 3.16, with `--emit-route-caller-pat-secret <private dir>/route-caller-pat.json`. Then write the tenant `users` row of the service with `reconcile-run-plane` (section 4.5), because the host refuses a principal without one. Use a forward to the pod, `kubectl -n platform port-forward pod/wamn-pg-1 15435:5432`, because the forward to the service closed the connections of the verb.
+
+Make the client VM, copy the source of the commit and the PAT, and build:
+
+```bash
+gcloud compute instances create wamn-bench-client --project wamn-dev --zone us-central1-a --machine-type e2-small \
+  --image-family debian-13 --image-project debian-cloud --boot-disk-size 30GB --boot-disk-type pd-standard \
+  --no-service-account --no-scopes --labels purpose=bench
+gcloud compute ssh wamn-bench-client --project wamn-dev --zone us-central1-a --command 'sudo fallocate -l 4G /swapfile && sudo chmod 600 /swapfile && sudo mkswap /swapfile && sudo swapon /swapfile && sudo apt-get update && sudo apt-get install -y clang mold build-essential cmake pkg-config curl && curl -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain none'
+git archive --format=tar.gz -o src.tar.gz HEAD
+gcloud compute scp src.tar.gz wamn-bench-client:src.tar.gz --project wamn-dev --zone us-central1-a
+gcloud compute ssh wamn-bench-client --project wamn-dev --zone us-central1-a --command 'mkdir -p wamn && tar -xzf src.tar.gz -C wamn && umask 077 && mkdir -p ~/pat'
+gcloud compute scp <private dir>/route-caller-pat.json wamn-bench-client:pat/route-caller-pat.json --project wamn-dev --zone us-central1-a
+gcloud compute ssh wamn-bench-client --project wamn-dev --zone us-central1-a --command 'cd wamn && . ~/.cargo/env && cargo build --release -j 2 -p wamn-bench'
+```
+
+On 2026-09-28 the VM took 15 seconds to create, the tools 86 seconds, the copy 5 seconds and the build 803 seconds. The VM counts 1 CPU against the quota of 8.
+
+### 6.4 One tier
+
+Run `tier.sh <tier> <machine type> <count> <spot|on-demand>` from the repository machine. `tier.sh <tier> teardown` runs only the second half. The script:
+
+```bash
+#!/usr/bin/env bash
+# One benchmark tier: tier.sh <tier> <machine type> <count> <spot|on-demand>
+# main goes to 0, the pool bench-<tier> takes the platform, the six runs go
+# from the client VM, and the results come back to tests/bench/.
+set -euo pipefail
+tier=$1 machine=$2 count=${3:-} kind=${4:-}
+export KUBECONFIG=/tmp/claude-1000/-home-kaalin-dev-wamn/8f6326b9-1dc5-4a4f-b106-5a08992a6757/scratchpad/gke.kubeconfig
+P="--project wamn-dev"
+Z="--zone us-central1-a"
+repo=$HOME/.cache/wamn-f8-gcp
+t0=$(date +%s)
+stamp() { echo "[$(date -u +%H:%M:%S)] $* (+$(( $(date +%s)-t0 ))s)"; }
+
+teardown_only=false
+[ "$machine" = teardown ] && teardown_only=true
+spot=()
+[ "$kind" = spot ] && spot=(--spot)
+if ! $teardown_only; then
+# The CloudNativePG budget wamn-pg-primary allows no eviction, so a drain
+# waits on Postgres for up to an hour. Delete the pod once its node is
+# cordoned; the volume keeps the data.
+gcloud container clusters resize wamn --node-pool main --num-nodes 0 $Z $P --quiet >/dev/null 2>&1 &
+resize=$!
+pg_node=$(kubectl -n platform get pod wamn-pg-1 -o jsonpath='{.spec.nodeName}')
+until kubectl get node "$pg_node" -o jsonpath='{.spec.unschedulable}' 2>/dev/null | grep -q true; do sleep 5; done
+kubectl -n platform delete pod wamn-pg-1 --wait=false >/dev/null
+wait $resize
+stamp "main at 0"
+gcloud container node-pools create "bench-$tier" --cluster wamn $P $Z \
+  --machine-type "$machine" "${spot[@]}" --num-nodes "$count" \
+  --disk-type pd-standard --disk-size 30 \
+  --service-account wamn-nodes@wamn-dev.iam.gserviceaccount.com \
+  --workload-metadata GKE_METADATA \
+  --max-surge-upgrade 0 --max-unavailable-upgrade 1 --quiet >/dev/null 2>&1
+stamp "pool bench-$tier ready: $count x $machine $kind"
+
+unready() {
+  kubectl get pods -A --no-headers 2>/dev/null | awk '{split($3,a,"/"); if(($4!="Running"||a[1]!=a[2]) && $4!="Completed") n++} END{print n+0}'
+}
+until [ "$(unready)" = 0 ]; do sleep 10; done
+stamp "every pod ready"
+kubectl -n platform delete job evt-nats-tap-stream --ignore-not-found >/dev/null
+kubectl apply -f "$repo/deploy/gcp/nats-jetstream.yaml" >/dev/null
+kubectl -n platform wait --for=condition=complete job/evt-nats-tap-stream --timeout=180s >/dev/null
+stamp "tap Job complete"
+# The host keeps a scheduler NATS connection that does not come back after (wamn-gdex)
+# the NATS pod moves, so start the Receiving host last.
+kubectl -n hosts delete $(kubectl -n hosts get pods -o name | grep hostgroup-default) --wait=false >/dev/null
+sleep 5
+until [ "$(unready)" = 0 ]; do sleep 5; done
+until [ "$(curl -s -o /dev/null -w '%{http_code}' https://receiving.wamn.dev/api/purchase_order/query)" = 401 ]; do sleep 5; done
+stamp "Receiving host restarted and answering"
+
+gcloud compute ssh wamn-bench-client $P $Z --quiet --command "
+set -e
+cd wamn && mkdir -p tests/bench
+for call in get update query; do
+  for c in 4 16; do
+    target/release/wamn-bench --host receiving.wamn.dev --pat-file ~/pat/route-caller-pat.json \
+      --call \$call --concurrency \$c --duration-secs 60 --tier $tier \
+      --output tests/bench/$tier-\$call-c\$c.json > /dev/null
+    echo \"$tier \$call c\$c done\"
+  done
+done"
+stamp "six runs done"
+mkdir -p "$repo/tests/bench"
+gcloud compute ssh wamn-bench-client $P $Z --quiet --command "cd wamn/tests/bench && tar -cf - $tier-*.json" 2>/dev/null \
+  | tar -xf - -C "$repo/tests/bench"
+stamp "results copied"
+fi
+
+# The quota of 8 CPUs holds the pool, the client VM and one main node, not two.
+gcloud container clusters resize wamn --node-pool main --num-nodes 1 $Z $P --quiet >/dev/null
+stamp "main at 1"
+kubectl cordon -l cloud.google.com/gke-nodepool="bench-$tier" >/dev/null
+kubectl -n platform delete pod wamn-pg-1 --wait=false >/dev/null
+gcloud container node-pools delete "bench-$tier" --cluster wamn $P $Z --quiet >/dev/null
+stamp "pool bench-$tier deleted"
+gcloud container clusters resize wamn --node-pool main --num-nodes 2 $Z $P --quiet >/dev/null
+stamp "main at 2"
+until [ "$(unready)" = 0 ]; do sleep 10; done
+kubectl -n platform delete job evt-nats-tap-stream --ignore-not-found >/dev/null
+kubectl apply -f "$repo/deploy/gcp/nats-jetstream.yaml" >/dev/null
+kubectl -n platform wait --for=condition=complete job/evt-nats-tap-stream --timeout=180s >/dev/null
+kubectl -n hosts delete $(kubectl -n hosts get pods -o name | grep hostgroup-default) --wait=false >/dev/null
+until [ "$(curl -s -o /dev/null -w '%{http_code}' https://receiving.wamn.dev/api/purchase_order/query)" = 401 ]; do sleep 5; done
+stamp "platform back on main, tap Job complete, Receiving answering"
+```
+
+A move of `main` to 0 waits for up to an hour on the CloudNativePG budget `wamn-pg-primary`, which allows no eviction, so the script deletes the Postgres pod once its node is cordoned. The data stays on the volume. The quota of 8 CPUs holds a 4 CPU pool, the VM and one `main` node, but not two, so the teardown grows `main` in two steps. `gcloud compute scp` failed once with a 300 second read timeout, so the results come back with `tar` over ssh.
