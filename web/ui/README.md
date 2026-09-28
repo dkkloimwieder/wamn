@@ -22,7 +22,7 @@ Labels, column headers, buttons, card titles and detail terms read in capitals, 
 
 | Kind | Items |
 | --- | --- |
-| Components | `alert-dialog`, `badge`, `button`, `card`, `checkbox`, `combobox`, `dropdown-menu`, `field`, `input`, `input-group`, `label`, `popover`, `select`, `separator`, `sheet`, `sidebar`, `skeleton`, `spinner`, `switch`, `toast`, `tooltip` |
+| Components | `alert-dialog`, `badge`, `button`, `card`, `checkbox`, `combobox`, `dropdown-menu`, `field`, `input`, `input-group`, `label`, `popover`, `select`, `sheet`, `sidebar`, `skeleton`, `spinner`, `switch`, `toast`, `tooltip` |
 | Hook | `use-mobile` |
 | Shared | `color-mode` |
 | Design system | `preset-buIovdQ`: `style-lyra`, `neutral`, the indigo theme, `font-inter`, the default radius |
