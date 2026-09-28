@@ -155,6 +155,9 @@
       ],
       "description": "Known only after the route phase has provisioned the project environment and the materializer trigger has produced a receipt. The shell amends the document with it then; before that it is absent, and the materializer test refuses to run rather than read an empty string."
     },
+    "operator_secret_output": {
+      "type": "string"
+    },
     "overlay_compatibility": {
       "anyOf": [
         {
@@ -183,9 +186,6 @@
     "release_artifact_base": {
       "type": "string"
     },
-    "route_caller_secret_output": {
-      "type": "string"
-    },
     "route_host": {
       "type": "string"
     },
@@ -211,9 +211,9 @@
     "flow_http_wasm",
     "host_secret_directory",
     "host_secret_namespace",
+    "operator_secret_output",
     "registry_auth_file",
     "release_artifact_base",
-    "route_caller_secret_output",
     "route_host",
     "system_pg_url"
   ],

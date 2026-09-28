@@ -35,7 +35,7 @@ use wamn_engine::flow_http_routing::{
 use wamn_engine::release_manifest::LoadedRelease;
 use wamn_engine::router_delivery::{ROUTER_DELIVERY_ID, RouterDelivery};
 use wamn_execution_host::{OperationHost, OperationScope, RouterDeliveryBridge, WiringDelivery};
-use wamn_platform_identity::route_caller_subject;
+use wamn_platform_identity::operator_subject;
 use wamn_runtime::component_artifact_source::{
     ComponentArtifactSource, ComponentArtifactSourceConfig,
 };
@@ -303,7 +303,7 @@ pub struct HostArgs {
     /// Organization owning this host's project.
     ///
     /// Required only when the loaded release carries a PAT-protected HTTP
-    /// route; it scopes both the route-caller subject and identity-reader URL.
+    /// route; it scopes both the operator subject and identity-reader URL.
     #[arg(long, env = "WAMN_ORG")]
     pub org: Option<String>,
 
@@ -689,8 +689,8 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
                 .as_deref()
                 .context("an authenticated route requires WAMN_HTTP_ADMITTER_PG_URL")?;
             let subject =
-                route_caller_subject(org, project, &loaded_release.manifest().release.environment)
-                    .context("derive the scoped route-caller subject")?;
+                operator_subject(org, project, &loaded_release.manifest().release.environment)
+                    .context("derive the scoped operator subject")?;
             parse_system_reader_url(
                 SystemReader::Identity,
                 &system_url,

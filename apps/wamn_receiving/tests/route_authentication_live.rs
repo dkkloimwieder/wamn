@@ -60,7 +60,7 @@ use wamn_engine::release_manifest::LoadedRelease;
 use wamn_execution_host::{OperationHost, OperationScope, RouterDeliveryBridge};
 use wamn_gate_harness::journey::{BaseCandidate, JourneyDocument, MaterializerPhase};
 use wamn_platform_identity::{
-    PrincipalKind, create_human, issue_pat, resolve_subject, route_caller_subject,
+    PrincipalKind, create_human, issue_pat, operator_subject, resolve_subject,
 };
 use wamn_runtime::component_artifact_source::{
     ComponentArtifactSource, ComponentArtifactSourceConfig,
@@ -113,7 +113,7 @@ use wamn_control::dev::environment::{
 use wamn_control::provision_project_env::{read_json, secret_value};
 use wamn_test_infrastructure::scratch::ScratchRoot;
 
-const ROUTE_CALLER_ROLE: &str = "route-caller";
+const OPERATOR_ROLE: &str = "operator";
 const BASE_PACKAGE_ID: &str = "wamn_receiving";
 const BASE_PACKAGE_VERSION: &str = "1.0.0";
 const BASE_COMPONENT: &str = "receiving";

@@ -21,7 +21,7 @@ use wamn_control::dev::up::{DevUpRequest, provision_environment};
 /// The operator credential's file, written into `--root` by
 /// [`wamn_control::dev::environment::provision_route`]. Named here so the summary can
 /// point at it: only the path is ever printed, never the token inside it.
-const ROUTE_CALLER_PAT_FILE: &str = "route-caller-pat.json";
+const OPERATOR_PAT_FILE: &str = "operator-pat.json";
 
 /// Inputs `wamn dev up` takes to mint one disposable environment.
 #[derive(Debug, Args)]
@@ -131,8 +131,8 @@ pub async fn run(args: DevUpArgs) -> anyhow::Result<()> {
     // The operator token is also in dev.json for generated client launch.
     // The local Gate uses its separate management-author token.
     println!(
-        "  pat:    {} (operator route-caller PAT, at .stringData.token)",
-        root.join(ROUTE_CALLER_PAT_FILE).display()
+        "  pat:    {} (operator PAT, at .stringData.token)",
+        root.join(OPERATOR_PAT_FILE).display()
     );
     println!();
     println!("run the loop from the repository root, in another terminal:");

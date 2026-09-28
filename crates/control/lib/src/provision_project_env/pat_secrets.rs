@@ -5,7 +5,7 @@ use anyhow::Context as _;
 use super::{
     Client, Duration, IdentityErrorKind, NoTls, PatClient, Path, PathBuf, Principal, PrincipalKind,
     PrincipalStatus, Triple, Value, assign_project_role, authenticate_pat, create_service, json,
-    provisioning_transaction, resolve_subject, revoke_pat, route_caller_subject, write_secret_json,
+    operator_subject, provisioning_transaction, resolve_subject, revoke_pat, write_secret_json,
 };
 
 /// One PAT `Secret` that provisioning issued and wrote.
@@ -37,19 +37,19 @@ pub(super) const MANAGEMENT_AUTHOR: PatPurpose = PatPurpose {
     secret_stem: "wamn-pat-management-author",
 };
 
-pub(super) const ROUTE_CALLER: PatPurpose = PatPurpose {
-    purpose: "route-caller",
-    subject_stem: "wamn-route-caller",
-    display_stem: "WAMN route caller",
-    role: "route-caller",
-    secret_stem: "wamn-pat-route-caller",
+pub(super) const OPERATOR: PatPurpose = PatPurpose {
+    purpose: "operator",
+    subject_stem: "wamn-operator",
+    display_stem: "WAMN operator",
+    role: wamn_project_state::OPERATOR_ROLE,
+    secret_stem: "wamn-pat-operator",
 };
 
 impl PatPurpose {
     pub(super) fn subject(self, triple: &Triple) -> anyhow::Result<String> {
-        if self == ROUTE_CALLER {
-            return route_caller_subject(&triple.org, &triple.project, triple.env.as_str())
-                .context("derive the canonical route-caller subject");
+        if self == OPERATOR {
+            return operator_subject(&triple.org, &triple.project, triple.env.as_str())
+                .context("derive the canonical operator subject");
         }
         Ok(format!(
             "{}-{}--{}--{}",
@@ -78,7 +78,7 @@ pub(super) async fn issue_pat_secrets(
     triple: &Triple,
     namespace: &str,
     management_author_path: Option<&Path>,
-    route_caller_path: Option<&Path>,
+    operator_path: Option<&Path>,
 ) -> anyhow::Result<Vec<IssuedPatSecret>> {
     let (mut client, connection) = tokio_postgres::connect(system_url, NoTls)
         .await
@@ -103,17 +103,10 @@ pub(super) async fn issue_pat_secrets(
                 .await?,
             );
         }
-        if let Some(path) = route_caller_path {
+        if let Some(path) = operator_path {
             issued.push(
-                issue_pat_secret(
-                    &mut client,
-                    pat_client,
-                    triple,
-                    namespace,
-                    ROUTE_CALLER,
-                    path,
-                )
-                .await?,
+                issue_pat_secret(&mut client, pat_client, triple, namespace, OPERATOR, path)
+                    .await?,
             );
         }
         Ok::<_, anyhow::Error>(issued)

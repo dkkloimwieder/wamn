@@ -148,7 +148,7 @@ pub(super) async fn verify_journey_operation_grants(project: &Client) -> anyhow:
             "SELECT permission FROM app_system.permissions \
              WHERE tenant_id = $1 AND role_name = $2 \
              ORDER BY permission COLLATE \"C\"",
-            &[&TENANT, &ROUTE_CALLER_ROLE],
+            &[&TENANT, &OPERATOR_ROLE],
         )
         .await
         .context("read the installed two-package operation-grant union")?
@@ -164,7 +164,7 @@ pub(super) async fn verify_journey_operation_grants(project: &Client) -> anyhow:
         .collect::<BTreeSet<_>>();
     anyhow::ensure!(
         observed == expected,
-        "installed packages projected the wrong route-caller grant union: {observed:?}"
+        "installed packages projected the wrong operator grant union: {observed:?}"
     );
     Ok(())
 }

@@ -34,7 +34,7 @@
 //!    stable `wamn_app` ACL role, and step 4's generation actions refuse to run
 //!    until it has (`wamn-0h0g.12.179`);
 //! 4. `kubectl apply -f` the emitted **credential Secret** and any independently
-//!    requested management-author / route-caller PAT Secrets, then run each
+//!    requested management-author / operator PAT Secrets, then run each
 //!    family's generation prepare — the LOGIN it mints is what actually reaches
 //!    the database. The stable ACL roles do not: they are NOLOGIN grant carriers
 //!    those generations inherit, and every one of them must stay connection-free
@@ -85,7 +85,7 @@ use wamn_control_registry::{Org, Placement, Triple, cluster_of};
 use wamn_pg_core::quote_ident;
 use wamn_platform_identity::{
     IdentityErrorKind, Principal, PrincipalKind, PrincipalStatus, assign_project_role,
-    authenticate_pat, create_service, resolve_subject, revoke_pat, route_caller_subject,
+    authenticate_pat, create_service, operator_subject, resolve_subject, revoke_pat,
 };
 
 use crate::env_policies::{ensure_env_policy_durability_schema, read_env_policy};
@@ -120,7 +120,7 @@ pub use workload::run_workload_action;
 #[cfg(test)]
 use output::SECRET_TEMP_SEQUENCE;
 #[cfg(test)]
-use pat_secrets::{MANAGEMENT_AUTHOR, PAT_TTL, ROUTE_CALLER, render_pat_secret};
+use pat_secrets::{MANAGEMENT_AUTHOR, OPERATOR, PAT_TTL, render_pat_secret};
 
 /// Inputs of one project-environment provisioning.
 ///
@@ -186,8 +186,8 @@ pub struct ProvisionProjectEnvRequest {
     /// Issue a management-author PAT and write its Kubernetes `Secret` JSON here.
     pub emit_management_author_pat_secret: Option<PathBuf>,
 
-    /// Issue a route-caller PAT and write its Kubernetes `Secret` JSON here.
-    pub emit_route_caller_pat_secret: Option<PathBuf>,
+    /// Issue an operator PAT and write its Kubernetes `Secret` JSON here.
+    pub emit_operator_pat_secret: Option<PathBuf>,
 }
 
 /// The names and rendered artifacts of one provisioned project-env.
@@ -385,8 +385,8 @@ pub async fn provision_project_env(
     if let Some(path) = args.emit_management_author_pat_secret.as_deref() {
         ensure_secret_path(path, "--emit-management-author-pat-secret")?;
     }
-    if let Some(path) = args.emit_route_caller_pat_secret.as_deref() {
-        ensure_secret_path(path, "--emit-route-caller-pat-secret")?;
+    if let Some(path) = args.emit_operator_pat_secret.as_deref() {
+        ensure_secret_path(path, "--emit-operator-pat-secret")?;
     }
     ensure_distinct_secret_paths([
         ("--emit-secret", Some(db_secret_path)),
@@ -395,12 +395,12 @@ pub async fn provision_project_env(
             args.emit_management_author_pat_secret.as_deref(),
         ),
         (
-            "--emit-route-caller-pat-secret",
-            args.emit_route_caller_pat_secret.as_deref(),
+            "--emit-operator-pat-secret",
+            args.emit_operator_pat_secret.as_deref(),
         ),
     ])?;
-    let issues_pat = args.emit_management_author_pat_secret.is_some()
-        || args.emit_route_caller_pat_secret.is_some();
+    let issues_pat =
+        args.emit_management_author_pat_secret.is_some() || args.emit_operator_pat_secret.is_some();
     if issues_pat && args.system_database_url.is_none() {
         anyhow::bail!(
             "PAT issuance requires --system-database-url to resolve the stable service principal"
@@ -477,7 +477,7 @@ pub async fn provision_project_env(
                 &triple,
                 &args.namespace,
                 args.emit_management_author_pat_secret.as_deref(),
-                args.emit_route_caller_pat_secret.as_deref(),
+                args.emit_operator_pat_secret.as_deref(),
             )
             .await?
         }

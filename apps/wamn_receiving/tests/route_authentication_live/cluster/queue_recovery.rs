@@ -74,11 +74,10 @@ async fn exercise(cluster: &ReceivingCluster) -> anyhow::Result<()> {
     let restarts = pod["status"]["containerStatuses"][0]["restartCount"]
         .as_u64()
         .context("host has a restart count")?;
-    let secret: Value =
-        serde_json::from_slice(&fs::read(&cluster.inputs.route_caller_secret_output)?)?;
+    let secret: Value = serde_json::from_slice(&fs::read(&cluster.inputs.operator_secret_output)?)?;
     let principal = secret["metadata"]["annotations"]["wamn.io/principal-id"]
         .as_str()
-        .context("existing route caller has a service principal")?;
+        .context("existing operator service has a service principal")?;
     let (mut client, connection) =
         tokio_postgres::connect(&route.database_url, tokio_postgres::NoTls).await?;
     let connection = tokio::spawn(connection);
@@ -141,11 +140,11 @@ async fn recover(
         "SELECT set_config('app.tenant',$1,false), set_config('app.user_id',$2,false), set_config('app.operation','admin:queue-recovery-fixture',false)",
         &[&tenant, &wamn_control_provision::PlatformComponent::Provisioning.principal_id().to_string()],
     ).await.context("bind the disposable queue fixture provisioning actor")?;
-    // HTTP binds the fixed route-caller role. Automation requires an explicit
-    // service-role assignment, as in the existing local queue fixture.
+    // The service holds operator through the grant after publish. The insert
+    // keeps that row, so the fixture also runs on a tenant without the grant.
     client.execute(
-        "INSERT INTO app_system.user_roles (tenant_id,user_id,role_name) VALUES ($1,$2::text::uuid,$3)",
-        &[&tenant, &principal, &super::super::ROUTE_CALLER_ROLE],
+        "INSERT INTO app_system.user_roles (tenant_id,user_id,role_name) VALUES ($1,$2::text::uuid,$3) ON CONFLICT DO NOTHING",
+        &[&tenant, &principal, &super::super::OPERATOR_ROLE],
     ).await.context("assign the disposable queue service its declared role")?;
     let caller = wamn_runtime::plugins::route_authentication::queued_service_caller(
         client, tenant, principal,

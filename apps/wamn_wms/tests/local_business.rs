@@ -49,7 +49,7 @@ async fn operations_and_replay() -> anyhow::Result<()> {
         project: crate::environment::PROJECT,
         environment: crate::environment::ENVIRONMENT,
         schema: crate::environment::SCHEMA,
-        caller_role: "route-caller",
+        caller_role: "operator",
         route_host: "wms.local.test",
         packages: &[LocalPackage {
             root: &app,

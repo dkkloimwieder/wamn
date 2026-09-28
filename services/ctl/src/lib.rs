@@ -19,6 +19,7 @@ pub mod ops_verbs;
 pub mod package_verbs;
 pub mod provisioning_verbs;
 pub mod release_verbs;
+pub mod role_verbs;
 #[cfg(target_os = "linux")]
 pub mod ui;
 pub mod web;

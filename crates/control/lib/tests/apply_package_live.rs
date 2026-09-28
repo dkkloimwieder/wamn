@@ -490,18 +490,18 @@ async fn assert_concurrent_package_grants_share_one_carrier(url: &str) {
         observer
             .query_one(
                 "SELECT count(*) FROM app_system.roles \
-                  WHERE tenant_id = $1 AND name = 'route-caller' AND is_system",
+                  WHERE tenant_id = $1 AND name IN ('operator', 'admin')",
                 &[&RACE_TENANT],
             )
             .await
-            .expect("read the shared route-caller role")
+            .expect("read the shared user roles")
             .get::<_, i64>(0),
-        1
+        2
     );
     let actual_grants = observer
         .query(
             "SELECT permission FROM app_system.permissions \
-              WHERE tenant_id = $1 AND role_name = 'route-caller' \
+              WHERE tenant_id = $1 AND role_name = 'operator' \
                 AND (permission LIKE 'race-alpha:%@1.0.0' \
                      OR permission LIKE 'race-beta:%@1.0.0')",
             &[&RACE_TENANT],
@@ -666,11 +666,11 @@ async fn exact_runner_commits_once_refuses_drift_and_rolls_back_a_failing_suffix
                     set_config('app.operation', 'admin:seed-grant-residue-fixture', true); \
              INSERT INTO app_system.users (tenant_id, id, type, email) \
                  VALUES ('{TENANT}', '{FIXTURE_PRINCIPAL}', 'person', 'fixture@example.invalid'); \
-             INSERT INTO app_system.roles (tenant_id, name, is_system) \
-                 VALUES ('{TENANT}', 'route-caller', false); \
+             INSERT INTO app_system.roles (tenant_id, name) \
+                 VALUES ('{TENANT}', 'operator'); \
              INSERT INTO app_system.permissions (tenant_id, role_name, permission) VALUES \
-                 ('{TENANT}', 'route-caller', 'wamn-inventory:obsolete/operation@1.0.0'), \
-                 ('{TENANT}', 'route-caller', 'client-overlay:rack/get@1.0.0'); \
+                 ('{TENANT}', 'operator', 'wamn-inventory:obsolete/operation@1.0.0'), \
+                 ('{TENANT}', 'operator', 'client-overlay:rack/get@1.0.0'); \
              COMMIT;"
         ))
         .await
@@ -714,22 +714,10 @@ async fn exact_runner_commits_once_refuses_drift_and_rolls_back_a_failing_suffix
         ownership.get::<_, bool>(0) && ownership.get::<_, bool>(1),
         "schema creation and exact package DDL must run as wamn_db_owner"
     );
-    assert!(
-        client
-            .query_one(
-                "SELECT is_system FROM app_system.roles \
-                  WHERE tenant_id = $1 AND name = 'route-caller'",
-                &[&TENANT],
-            )
-            .await
-            .unwrap()
-            .get::<_, bool>(0),
-        "apply-package hardens the package grant carrier"
-    );
     let actual_grants = client
         .query(
             "SELECT permission FROM app_system.permissions \
-              WHERE tenant_id = $1 AND role_name = 'route-caller' \
+              WHERE tenant_id = $1 AND role_name = 'operator' \
                 AND permission LIKE 'wamn-inventory:%@1.0.0'",
             &[&TENANT],
         )
@@ -743,11 +731,27 @@ async fn exact_runner_commits_once_refuses_drift_and_rolls_back_a_failing_suffix
     )
     .expect("derive the declared package grants");
     assert_eq!(actual_grants, expected_grants);
+    let admin_grants = client
+        .query(
+            "SELECT permission FROM app_system.permissions \
+              WHERE tenant_id = $1 AND role_name = 'admin' \
+                AND permission LIKE 'wamn-inventory:%@1.0.0'",
+            &[&TENANT],
+        )
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|row| row.get::<_, String>(0))
+        .collect::<BTreeSet<_>>();
+    assert_eq!(
+        admin_grants, expected_grants,
+        "admin holds the operator set until an administration operation exists"
+    );
     assert_eq!(
         client
             .query_one(
                 "SELECT count(*) FROM app_system.permissions \
-                  WHERE tenant_id = $1 AND role_name = 'route-caller' \
+                  WHERE tenant_id = $1 AND role_name = 'operator' \
                     AND permission = 'client-overlay:rack/get@1.0.0'",
                 &[&TENANT],
             )

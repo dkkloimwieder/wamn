@@ -63,7 +63,7 @@ pub(super) async fn hold(work: &Path, enabled: bool) -> anyhow::Result<()> {
     if enabled {
         eprintln!(
             "WMS browser route: http://127.0.0.1:8080/. The private caller token is in {}. Use /packaging/get to read packaging {} before sending /inventory/move with its current row_version. The environment remains available for {seconds} seconds or until interrupted.",
-            work.join("route-caller-pat.json").display(),
+            work.join("operator-pat.json").display(),
             super::application::PACKAGING_ID
         );
     }

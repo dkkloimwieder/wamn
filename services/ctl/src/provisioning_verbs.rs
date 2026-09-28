@@ -164,14 +164,14 @@ pub struct ProvisionProjectEnvArgs {
     )]
     pub emit_management_author_pat_secret: Option<PathBuf>,
 
-    /// Issue a route-caller PAT and write its Kubernetes `Secret` JSON here.
+    /// Issue an operator PAT and write its Kubernetes `Secret` JSON here.
     #[arg(
         long,
         value_name = "PATH",
         value_parser = parse_secret_path,
         conflicts_with = "revoke_pat_prefix"
     )]
-    pub emit_route_caller_pat_secret: Option<PathBuf>,
+    pub emit_operator_pat_secret: Option<PathBuf>,
 
     /// Revoke one PAT by its non-secret 16-lowercase-hex lookup prefix. This is
     /// a separate invocation and performs no provisioning or Kubernetes work.
@@ -548,7 +548,7 @@ fn workload_action_request(
             && args.emit_privilege_sql.is_none()
             && args.emit_secret.is_none()
             && args.emit_management_author_pat_secret.is_none()
-            && args.emit_route_caller_pat_secret.is_none(),
+            && args.emit_operator_pat_secret.is_none(),
         "{label} generation actions cannot render ordinary provisioning or PAT artifacts; only \
          App prepare may emit the canonical shared-login retirement role SQL"
     );
@@ -604,7 +604,7 @@ fn provisioning_request(
         emit_secret,
         pat_issuer: args.pat_issuer.into(),
         emit_management_author_pat_secret: args.emit_management_author_pat_secret,
-        emit_route_caller_pat_secret: args.emit_route_caller_pat_secret,
+        emit_operator_pat_secret: args.emit_operator_pat_secret,
     })
 }
 

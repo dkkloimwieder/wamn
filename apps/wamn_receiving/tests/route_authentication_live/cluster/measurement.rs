@@ -150,15 +150,15 @@ async fn requests(
     let work = state.resources.work.as_path();
     let evidence = state.resources.evidence.as_path();
     let inputs = &state.inputs;
-    let caller: Value = serde_json::from_slice(&fs::read(&inputs.route_caller_secret_output)?)?;
+    let caller: Value = serde_json::from_slice(&fs::read(&inputs.operator_secret_output)?)?;
     let endpoint =
         super::materializer_case::endpoint(state, "receiving-measurement-nodeport").await?;
     let service_token = caller["stringData"]["token"]
         .as_str()
-        .context("route caller Secret has a token")?;
+        .context("operator Secret has a token")?;
     let service_secret = caller["metadata"]["name"]
         .as_str()
-        .context("route caller Secret has a name")?;
+        .context("operator Secret has a name")?;
     request(
         state,
         &endpoint,
@@ -1123,8 +1123,8 @@ fn throughput_job(
         "postgres@sha256:7157393f508fd8eb46119937fab39813783fe3e7d4c6316c45c12ce2ea25e61d";
     let container = match layer {
         "route" => json!({"name":"oha","image":oha,"imagePullPolicy":"IfNotPresent",
-            "env":[{"name":"ROUTE_CALLER_PAT","valueFrom":{"secretKeyRef":{"name":secret,"key":"token"}}}],"command":["/bin/oha"],
-            "args":["--no-tui","-z","10s","-c",concurrency.to_string(),"--output-format","json","-m","GET","-H",format!("Host: {host}"),"-H","Authorization: Bearer $(ROUTE_CALLER_PAT)",format!("http://flow-http.{namespace}.svc.cluster.local{}", purchase_order_get_target())]}),
+            "env":[{"name":"OPERATOR_PAT","valueFrom":{"secretKeyRef":{"name":secret,"key":"token"}}}],"command":["/bin/oha"],
+            "args":["--no-tui","-z","10s","-c",concurrency.to_string(),"--output-format","json","-m","GET","-H",format!("Host: {host}"),"-H","Authorization: Bearer $(OPERATOR_PAT)",format!("http://flow-http.{namespace}.svc.cluster.local{}", purchase_order_get_target())]}),
         "nodb" => {
             json!({"name":"oha","image":oha,"imagePullPolicy":"IfNotPresent","command":["/bin/oha"],
             "args":["--no-tui","-z","10s","-c",concurrency.to_string(),"--output-format","json","-m","GET","-H",format!("Host: {host}"),format!("http://flow-http.{namespace}.svc.cluster.local/no-such-route")]})
@@ -1270,7 +1270,7 @@ mod tests {
         assert_eq!(container["command"], json!(["/bin/oha"]));
         assert_eq!(
             container["env"],
-            json!([{"name":"ROUTE_CALLER_PAT","valueFrom":{"secretKeyRef":{"name":"selected-pat","key":"token"}}}])
+            json!([{"name":"OPERATOR_PAT","valueFrom":{"secretKeyRef":{"name":"selected-pat","key":"token"}}}])
         );
         let args = container["args"].as_array().unwrap();
         let value_after =
@@ -1281,7 +1281,7 @@ mod tests {
         assert_eq!(value_after("-m"), "GET");
         assert!(args.contains(&json!("Host: selected.example")));
         assert!(!args.contains(&json!("Content-Type: application/json")));
-        assert!(args.contains(&json!("Authorization: Bearer $(ROUTE_CALLER_PAT)")));
+        assert!(args.contains(&json!("Authorization: Bearer $(OPERATOR_PAT)")));
         assert!(!args.contains(&json!("-d")));
         assert_eq!(
             args.last().unwrap(),

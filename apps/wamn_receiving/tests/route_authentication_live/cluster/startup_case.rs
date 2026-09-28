@@ -71,7 +71,7 @@ pub(super) async fn assert_startup(
         let inputs = super::super::startup_burst::Inputs {
             source:cluster.resources.source.clone(), host_binary:cluster.artifacts.target.join("release/wamn-host"),
             host_secrets:cluster.inputs.host_secret_directory.clone(), registry_auth:cluster.inputs.registry_auth_file.clone(),
-            workload:cluster.resources.evidence.join("flow-http-workload.json"), pat_secret:cluster.inputs.route_caller_secret_output.clone(),
+            workload:cluster.resources.evidence.join("flow-http-workload.json"), pat_secret:cluster.inputs.operator_secret_output.clone(),
             private_dir:private.clone(), evidence_dir:evidence.clone(), nats_url:cluster.nats_url.clone(),
             scheduler_nats_url:format!("tls://127.0.0.1:{scheduler}"),
             scheduler_nats_tls_ca:private.join("runtime-ca.crt"),
@@ -598,8 +598,7 @@ fn redactions(cluster: &ReceivingCluster) -> anyhow::Result<Vec<String>> {
         }
     }
     values.insert(fs::read_to_string(&cluster.broker.runtime.password_file)?);
-    let secret: Value =
-        serde_json::from_slice(&fs::read(&cluster.inputs.route_caller_secret_output)?)?;
+    let secret: Value = serde_json::from_slice(&fs::read(&cluster.inputs.operator_secret_output)?)?;
     values.insert(
         secret["stringData"]["token"]
             .as_str()

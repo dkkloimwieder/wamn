@@ -188,8 +188,7 @@ pub(super) async fn install_application_secrets(
         }),
     )
     .await?;
-    let mut caller: Value =
-        serde_json::from_slice(&fs::read(&document.route_caller_secret_output)?)?;
+    let mut caller: Value = serde_json::from_slice(&fs::read(&document.operator_secret_output)?)?;
     caller["metadata"]["namespace"] = json!(document.host_secret_namespace);
     apply_secret(cluster, work, &caller).await
 }

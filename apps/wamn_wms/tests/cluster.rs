@@ -436,7 +436,7 @@ async fn run_created(
         registry_auth_file: registry_auth,
         host_secret_directory: host_secrets,
         host_secret_namespace: cluster.to_owned(),
-        route_caller_secret_output: work.join("route-caller-pat.json"),
+        operator_secret_output: work.join("operator-pat.json"),
         fresh_only_packages: None,
         overlay_compatibility: None,
         postcommit: None,

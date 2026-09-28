@@ -7,7 +7,7 @@ mod print_platform_principals;
 use clap::{Parser, Subcommand};
 use wamn_ctl::{
     component_verbs, delivery_verbs, identity_verbs, package_verbs, provisioning_verbs,
-    release_verbs, workflow_verbs,
+    release_verbs, role_verbs, workflow_verbs,
 };
 
 #[derive(Parser)]
@@ -60,6 +60,10 @@ enum Command {
     RevokeProjectEnvMembership(identity_verbs::ProjectEnvMembershipArgs),
     /// Ask identity to mail an invitation to one human principal.
     Invite(identity_verbs::InviteArgs),
+    /// Give a person or a service the role operator or admin in one environment.
+    GrantRole(role_verbs::UserRoleArgs),
+    /// Take the role operator or admin from a person or a service in one environment.
+    RevokeRole(role_verbs::UserRoleArgs),
     /// Overlay CDC capture onto a provisioned project-env: publication + failover slot + replication role/Secret + reader registration (wamn-l5i9.9, D19 v3)
     EnableCdcProjectEnv(provisioning_verbs::EnableCdcProjectEnvArgs),
     /// Apply one exact package-owned migration stream to a project database.
@@ -125,6 +129,8 @@ async fn main() -> anyhow::Result<()> {
         Command::GrantProjectEnvMembership(args) => identity_verbs::grant(args).await,
         Command::RevokeProjectEnvMembership(args) => identity_verbs::revoke(args).await,
         Command::Invite(args) => identity_verbs::invite(args).await,
+        Command::GrantRole(args) => role_verbs::grant(args).await,
+        Command::RevokeRole(args) => role_verbs::revoke(args).await,
         Command::EnableCdcProjectEnv(args) => provisioning_verbs::enable_cdc(args).await,
         Command::ApplyPackage(args) => package_verbs::apply(args).await,
         Command::BindConnection(args) => component_verbs::bind(args).await,

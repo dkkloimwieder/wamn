@@ -946,14 +946,14 @@ fn the_http_admitter_role_adds_exactly_the_fresh_permission_reads() {
                      'active', 'valid', '{digest}');\n\
              SELECT set_config('app.user_id', '00000000-0000-4000-8000-000000000001', true), \
                     set_config('app.operation', 'admin:seed-family-surface-fixture', true);\n\
-             INSERT INTO app_system.roles (tenant_id, name, is_system) \
-             VALUES ('tenant-a', 'route-caller', true);\n\
+             INSERT INTO app_system.roles (tenant_id, name) \
+             VALUES ('tenant-a', 'operator');\n\
              INSERT INTO app_system.users (tenant_id, id, type, email) \
              VALUES ('tenant-a', '00000000-0000-4000-8000-000000000001', 'person', 'caller@example.test');\n\
              INSERT INTO app_system.user_roles (tenant_id, user_id, role_name) \
-             VALUES ('tenant-a', '00000000-0000-4000-8000-000000000001', 'route-caller');\n\
+             VALUES ('tenant-a', '00000000-0000-4000-8000-000000000001', 'operator');\n\
              INSERT INTO app_system.permissions (tenant_id, role_name, permission) \
-             VALUES ('tenant-a', 'route-caller', \
+             VALUES ('tenant-a', 'operator', \
                      'wamn-widgets:widget/get@1.0.0');\n\
              COMMIT;\n"
         ),
@@ -987,7 +987,7 @@ fn the_http_admitter_role_adds_exactly_the_fresh_permission_reads() {
         query(
             &as_login,
             "SELECT count(*) FROM app_system.permissions \
-              WHERE role_name = 'route-caller' \
+              WHERE role_name = 'operator' \
                 AND permission = 'wamn-widgets:widget/get@1.0.0'"
         ),
         "1",

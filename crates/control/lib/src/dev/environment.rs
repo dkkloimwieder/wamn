@@ -113,11 +113,11 @@ pub async fn provision(
         )
         .await
         .context("record the disposable deployment platform domain")?;
-    let route_secret = root.join("route-caller-pat.json");
+    let route_secret = root.join("operator-pat.json");
     let management_secret = root.join("management-author-pat.json");
     let mut args = provisioning_args(system_url, root, &route_secret, Some(&management_secret));
     args.emit_management_author_pat_secret = None;
-    args.emit_route_caller_pat_secret = None;
+    args.emit_operator_pat_secret = None;
     provision_project_env::provision_project_env(&args).await?;
     let project_url = prepare_route_database(system_url, admin, root).await?;
 
@@ -142,7 +142,7 @@ pub async fn provision(
     provision_project_env::write_secret_json(&target_path, &serde_json::from_str(&target)?)?;
     let issuer = super::pat_issuer::start_environment(system_url, root, &target_path).await?;
     args.emit_management_author_pat_secret = Some(management_secret.clone());
-    args.emit_route_caller_pat_secret = Some(route_secret.clone());
+    args.emit_operator_pat_secret = Some(route_secret.clone());
     args.pat_issuer = issuer.args.clone();
     provision_project_env::provision_project_env(&args).await?;
     let route = route_credentials(project_url, root, Some(&management_secret))?;
@@ -230,7 +230,7 @@ fn provisioning_args(
         emit_privilege_sql: Some(root.join("privileges.sql")),
         emit_secret: root.join("database-secret.json"),
         emit_management_author_pat_secret: management_secret.map(Path::to_path_buf),
-        emit_route_caller_pat_secret: Some(route_secret.to_path_buf()),
+        emit_operator_pat_secret: Some(route_secret.to_path_buf()),
         pat_issuer: PatIssuerConfig::default(),
     }
 }
@@ -301,7 +301,7 @@ pub async fn provision_route(
     root: &Path,
     management_secret: Option<&Path>,
 ) -> anyhow::Result<ProvisionedRoute> {
-    let route_secret = root.join("route-caller-pat.json");
+    let route_secret = root.join("operator-pat.json");
     let issuer = super::pat_issuer::start(system_url, root).await?;
     let mut args = provisioning_args(system_url, root, &route_secret, management_secret);
     args.pat_issuer = issuer.args.clone();
@@ -362,7 +362,7 @@ fn route_credentials(
     root: &Path,
     management_secret: Option<&Path>,
 ) -> anyhow::Result<ProvisionedRoute> {
-    let route_secret = root.join("route-caller-pat.json");
+    let route_secret = root.join("operator-pat.json");
     Ok(ProvisionedRoute {
         database_url,
         token: secret_value(&route_secret, "token")?,
@@ -546,6 +546,35 @@ pub async fn install_journey_platform_floor(
         .batch_execute(&platform_principals)
         .await
         .context("create the platform principal rows")
+}
+
+/// Give the operator service of one environment the `operator` role, as an
+/// operator does with `wamn-ctl grant-role` after the first publish. The
+/// service's `users` row must exist, which `reconcile-run-plane` writes.
+pub async fn grant_operator_role(
+    project_url: &str,
+    org: &str,
+    project: &str,
+    environment: &str,
+    tenant: &str,
+    platform_domain: &str,
+) -> anyhow::Result<()> {
+    let subject = wamn_platform_identity::operator_subject(org, project, environment)
+        .context("derive the operator subject")?;
+    let (mut client, connection) = tokio_postgres::connect(project_url, NoTls)
+        .await
+        .context("connect to grant the operator role")?;
+    let connection = tokio::spawn(connection);
+    let granted = crate::user_roles::grant_role_on(
+        &mut client,
+        tenant,
+        &format!("{subject}@{platform_domain}"),
+        wamn_project_state::OPERATOR_ROLE,
+    )
+    .await;
+    drop(client);
+    let _ = connection.await;
+    granted.map(drop).context("grant the operator role")
 }
 
 pub async fn reconcile_journey_run_plane(

@@ -36,7 +36,7 @@ pub struct JourneyDocument {
     pub registry_auth_file: PathBuf,
     pub host_secret_directory: PathBuf,
     pub host_secret_namespace: String,
-    pub route_caller_secret_output: PathBuf,
+    pub operator_secret_output: PathBuf,
     /// Copied package sources for the dedicated fresh-only test.
     /// The initial phase creates this directory before any package admission.
     pub fresh_only_packages: Option<PathBuf>,
@@ -145,10 +145,7 @@ impl JourneyDocument {
             ("registry_auth_file", path(&self.registry_auth_file)),
             ("host_secret_directory", path(&self.host_secret_directory)),
             ("host_secret_namespace", &self.host_secret_namespace),
-            (
-                "route_caller_secret_output",
-                path(&self.route_caller_secret_output),
-            ),
+            ("operator_secret_output", path(&self.operator_secret_output)),
         ]
     }
 }

@@ -107,7 +107,7 @@ pub(super) async fn run(resources: &Resources) -> anyhow::Result<()> {
         emit_secret: secret_path.clone(),
         pat_issuer: issuer.args.clone(),
         emit_management_author_pat_secret: Some(management_path.clone()),
-        emit_route_caller_pat_secret: Some(route_path.clone()),
+        emit_operator_pat_secret: Some(route_path.clone()),
     })
     .await;
     let stopped = issuer.stop().await;
@@ -172,7 +172,7 @@ pub(super) async fn run(resources: &Resources) -> anyhow::Result<()> {
     for (path, expected) in [
         (&secret_path, "wamn-db-rc--app--dev"),
         (&management_path, "wamn-pat-management-author-rc--app--dev"),
-        (&route_path, "wamn-pat-route-caller-rc--app--dev"),
+        (&route_path, "wamn-pat-operator-rc--app--dev"),
     ] {
         let secret: Value = serde_json::from_slice(&fs::read(path)?)?;
         ensure!(
@@ -190,7 +190,7 @@ pub(super) async fn run(resources: &Resources) -> anyhow::Result<()> {
         "secrets",
         "wamn-db-rc--app--dev",
         "wamn-pat-management-author-rc--app--dev",
-        "wamn-pat-route-caller-rc--app--dev",
+        "wamn-pat-operator-rc--app--dev",
         "-o",
         "json",
     ]))

@@ -197,7 +197,7 @@ async fn exercise(
     )
     .await
     .context("issue the test PAT through production identity")?;
-    assign_project_role(system, principal, &args.org, &args.project, "route-caller")
+    assign_project_role(system, principal, &args.org, &args.project, "operator")
         .await
         .context("assign the project role that must not imply membership")?;
     seed_tenant_role(args, project, principal, role).await?;

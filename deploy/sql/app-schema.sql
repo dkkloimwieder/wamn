@@ -239,14 +239,14 @@ GRANT SELECT ON app_system.users TO wamn_app;
 -- ---------------------------------------------------------------------------
 -- Roles — named roles. `name` is the app.role value the 3.5 RLS builder compares
 -- (a role gate is COALESCE(app.role,'') IN ('r1', …)), so the NAME is the
--- load-bearing identity (the composite PK). `is_system` = platform-provided,
--- structure-locked (e.g. a default `admin`); custom roles are tenant-authored.
+-- load-bearing identity (the composite PK). Publish writes the two user roles,
+-- `operator` and `admin`; a person or service holds one through `wamn-ctl
+-- grant-role`.
 -- ---------------------------------------------------------------------------
 CREATE TABLE app_system.roles (
     tenant_id   text NOT NULL CHECK (tenant_id <> ''),
     name        text NOT NULL,
     description text,
-    is_system   boolean NOT NULL DEFAULT false,
     created_at  timestamptz NOT NULL,
     created_by  uuid NOT NULL,
     updated_at  timestamptz NOT NULL,

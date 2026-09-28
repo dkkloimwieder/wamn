@@ -91,7 +91,7 @@ const SELECT_ROUTE_PAT_SQL: &str = "SELECT p.id::text, p.kind, p.subject, \
         ON p.id = identity.pats.principal_id \
     WHERE identity.pats.token_prefix = $1 AND CASE p.kind \
         WHEN 'service' THEN EXISTS (SELECT 1 FROM identity.project_roles r \
-            WHERE r.principal_id = p.id AND r.org = $2 AND r.project = $3 AND r.role = $5) \
+            WHERE r.principal_id = p.id AND r.org = $2 AND r.project = $3 AND r.role = ANY($5::text[])) \
         WHEN 'human' THEN EXISTS (SELECT 1 FROM identity.project_env_memberships m \
             WHERE m.principal_id = p.id AND m.org = $2 AND m.project = $3 AND m.env = $4) \
         ELSE false END";
@@ -121,15 +121,14 @@ pub const MAX_PAT_LABEL_LEN: usize = 200;
 /// every issued token dies within a year even if nobody revokes it.
 pub const MAX_PAT_TTL: Duration = Duration::from_hours(365 * 24);
 
-/// Construct the canonical service-principal subject for one route caller.
-pub fn route_caller_subject(
+/// Construct the canonical subject of the operator service principal of one
+/// environment.
+pub fn operator_subject(
     org: &str,
     project: &str,
     environment: &str,
 ) -> Result<String, IdentityError> {
-    canonical_subject(&format!(
-        "wamn-route-caller-{org}--{project}--{environment}"
-    ))
+    canonical_subject(&format!("wamn-operator-{org}--{project}--{environment}"))
 }
 
 /// Random bytes behind the non-secret lookup half of a token.
@@ -853,7 +852,7 @@ impl PreparedIdentityReads {
 
     /// Authenticate a route PAT and its system scope in one round trip.
     ///
-    /// Services need the required project role. Humans need explicit membership
+    /// Services need one of the accepted project roles. Humans need explicit membership
     /// in the exact project environment. The caller must still enforce the
     /// configured service identity and read tenant permissions.
     pub async fn authenticate_route_pat(
@@ -863,7 +862,7 @@ impl PreparedIdentityReads {
         org: &str,
         project: &str,
         env: &str,
-        required_role: &str,
+        accepted_roles: &[&str],
     ) -> Result<Option<AuthenticatedPrincipal>, IdentityError> {
         let Some(prefix) = lookup_prefix(PAT_TOKEN_PREFIX, token) else {
             return Ok(None);
@@ -871,9 +870,12 @@ impl PreparedIdentityReads {
         let org = checked_scope_segment("org", org)?;
         let project = checked_scope_segment("project", project)?;
         let env = checked_scope_segment("env", env)?;
-        let role = canonical_role(required_role)?;
+        let roles = accepted_roles
+            .iter()
+            .map(|role| canonical_role(role))
+            .collect::<Result<Vec<_>, _>>()?;
         let row = client
-            .query_opt(&self.route_pat, &[&prefix, &org, &project, &env, &role])
+            .query_opt(&self.route_pat, &[&prefix, &org, &project, &env, &roles])
             .await
             .map_err(|error| database_error(&error))?;
         decide_pat(row, token)
@@ -1245,16 +1247,16 @@ mod tests {
     }
 
     #[test]
-    fn route_caller_subject_is_exactly_environment_scoped_and_validated() {
+    fn operator_subject_is_exactly_environment_scoped_and_validated() {
         assert_eq!(
-            route_caller_subject("demo", "widgets", "prod").unwrap(),
-            "wamn-route-caller-demo--widgets--prod"
+            operator_subject("demo", "widgets", "prod").unwrap(),
+            "wamn-operator-demo--widgets--prod"
         );
         assert_ne!(
-            route_caller_subject("demo", "widgets", "prod").unwrap(),
-            route_caller_subject("demo", "widgets", "dev").unwrap()
+            operator_subject("demo", "widgets", "prod").unwrap(),
+            operator_subject("demo", "widgets", "dev").unwrap()
         );
-        assert!(route_caller_subject("demo", "two words", "prod").is_err());
+        assert!(operator_subject("demo", "two words", "prod").is_err());
     }
 
     fn sample_record() -> PatRecord {

@@ -51,7 +51,7 @@ for ((index = 0; index < ${#args[@]}; index++)); do
         --target-admin-database-url=*) target_admin_database_url=${argument#*=} ;;
         --emit-role-sql|--emit-role-sql=*|\
         --emit-management-author-pat-secret|--emit-management-author-pat-secret=*|\
-        --emit-route-caller-pat-secret|--emit-route-caller-pat-secret=*|\
+        --emit-operator-pat-secret|--emit-operator-pat-secret=*|\
         --revoke-pat-prefix|--revoke-pat-prefix=*|\
         --prepare-control-author-generation|--prepare-control-author-generation=*|\
         --retire-control-author-generation|--retire-control-author-generation=*|\
@@ -75,9 +75,9 @@ fi
 work_dir=$(mktemp -d)
 role_sql_path=$work_dir/role.sql
 management_path=$work_dir/management-author.json
-route_path=$work_dir/route-caller.json
+operator_path=$work_dir/operator.json
 management_new_prefix=
-route_new_prefix=
+operator_new_prefix=
 
 revoke_pat() {
     local prefix=$1
@@ -92,7 +92,7 @@ cleanup() {
     local status=$? cleanup_failed=false prefix
     trap - EXIT
     set +e
-    for prefix in "$management_new_prefix" "$route_new_prefix"; do
+    for prefix in "$management_new_prefix" "$operator_new_prefix"; do
         [[ -z $prefix ]] && continue
         if ! revoke_pat "$prefix"; then
             echo "bootstrap: failed to revoke an uninstalled newly issued PAT" >&2
@@ -221,11 +221,11 @@ capture_management() {
     management_pending_revoke=$secret_pending_revoke
 }
 
-capture_route() {
-    route_state=$secret_state
-    route_prefix=$secret_prefix
-    route_pending_issued=$secret_pending_issued
-    route_pending_revoke=$secret_pending_revoke
+capture_operator() {
+    operator_state=$secret_state
+    operator_prefix=$secret_prefix
+    operator_pending_issued=$secret_pending_issued
+    operator_pending_revoke=$secret_pending_revoke
 }
 
 clear_pending() {
@@ -280,31 +280,31 @@ reconcile_recovery() {
 
 management_name=wamn-pat-management-author-$org--$project--$env_name
 management_subject=wamn-management-author-$org--$project--$env_name
-route_name=wamn-pat-route-caller-$org--$project--$env_name
-route_subject=wamn-route-caller-$org--$project--$env_name
+operator_name=wamn-pat-operator-$org--$project--$env_name
+operator_subject=wamn-operator-$org--$project--$env_name
 
 # Global read-only preflight: neither credential may mutate until both current
 # Secrets and both recovery-marker sets have been inspected and classified.
 inspect_secret management-author "$management_name" "$management_subject" project-author
 capture_management
-inspect_secret route-caller "$route_name" "$route_subject" route-caller
-capture_route
-if [[ $management_state == corrupt || $route_state == corrupt ]]; then
+inspect_secret operator "$operator_name" "$operator_subject" operator
+capture_operator
+if [[ $management_state == corrupt || $operator_state == corrupt ]]; then
     echo "bootstrap: corrupt PAT Secret or recovery metadata; refusing all mutation" >&2
     exit 1
 fi
 
 reconcile_recovery "$management_state" "$management_name" "$management_prefix" \
     "$management_pending_issued" "$management_pending_revoke"
-reconcile_recovery "$route_state" "$route_name" "$route_prefix" \
-    "$route_pending_issued" "$route_pending_revoke"
+reconcile_recovery "$operator_state" "$operator_name" "$operator_prefix" \
+    "$operator_pending_issued" "$operator_pending_revoke"
 
 # Re-read after recovery actions to establish the issuance inputs.
 inspect_secret management-author "$management_name" "$management_subject" project-author
 capture_management
-inspect_secret route-caller "$route_name" "$route_subject" route-caller
-capture_route
-for state in "$management_state" "$route_state"; do
+inspect_secret operator "$operator_name" "$operator_subject" operator
+capture_operator
+for state in "$management_state" "$operator_state"; do
     case $state in
         absent|valid|invalid|pending_expired) ;;
         *) echo "bootstrap: PAT recovery did not converge" >&2; exit 1 ;;
@@ -312,14 +312,14 @@ for state in "$management_state" "$route_state"; do
 done
 
 management_old_prefix=
-route_old_prefix=
+operator_old_prefix=
 case $management_state in
     invalid) management_old_prefix=$management_prefix ;;
     pending_expired) management_old_prefix=$management_pending_revoke ;;
 esac
-case $route_state in
-    invalid) route_old_prefix=$route_prefix ;;
-    pending_expired) route_old_prefix=$route_pending_revoke ;;
+case $operator_state in
+    invalid) operator_old_prefix=$operator_prefix ;;
+    pending_expired) operator_old_prefix=$operator_pending_revoke ;;
 esac
 
 issue_args=()
@@ -328,10 +328,10 @@ if [[ $management_state != valid ]]; then
 else
     echo "bootstrap: $management_name is valid; skipping issuance"
 fi
-if [[ $route_state != valid ]]; then
-    issue_args+=(--emit-route-caller-pat-secret "$route_path")
+if [[ $operator_state != valid ]]; then
+    issue_args+=(--emit-operator-pat-secret "$operator_path")
 else
-    echo "bootstrap: $route_name is valid; skipping issuance"
+    echo "bootstrap: $operator_name is valid; skipping issuance"
 fi
 
 manifest_prefix() {
@@ -355,11 +355,11 @@ track_manifest() {
 if ! "$ctl_bin" provision-project-env "${args[@]}" \
     --emit-role-sql "$role_sql_path" "${issue_args[@]}"; then
     track_manifest "$management_path" management_new_prefix
-    track_manifest "$route_path" route_new_prefix
+    track_manifest "$operator_path" operator_new_prefix
     exit 1
 fi
 track_manifest "$management_path" management_new_prefix
-track_manifest "$route_path" route_new_prefix
+track_manifest "$operator_path" operator_new_prefix
 
 decorate_manifest() {
     local path=$1 new_prefix=$2 old_prefix=$3 decorated=${1%.json}-decorated.json
@@ -396,8 +396,8 @@ stage_recovery() {
         management-author)
             inspect_secret "$purpose" "$secret_name" "$management_subject" project-author
             ;;
-        route-caller)
-            inspect_secret "$purpose" "$secret_name" "$route_subject" route-caller
+        operator)
+            inspect_secret "$purpose" "$secret_name" "$operator_subject" operator
             ;;
     esac
     if [[ $state == absent ]]; then
@@ -449,7 +449,7 @@ if [[ $management_state != valid ]]; then
         "$management_subject" project-author "$management_state" "$management_old_prefix" \
         management_new_prefix
 fi
-if [[ $route_state != valid ]]; then
-    apply_verify_revoke route-caller "$route_path" "$route_name" \
-        "$route_subject" route-caller "$route_state" "$route_old_prefix" route_new_prefix
+if [[ $operator_state != valid ]]; then
+    apply_verify_revoke operator "$operator_path" "$operator_name" \
+        "$operator_subject" operator "$operator_state" "$operator_old_prefix" operator_new_prefix
 fi

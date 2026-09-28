@@ -24,9 +24,9 @@ pub async fn provision_project(
         .clone()
         .context("set the Database output path")?;
     let route_secret = args
-        .emit_route_caller_pat_secret
+        .emit_operator_pat_secret
         .clone()
-        .context("set the route caller Secret output path")?;
+        .context("set the operator Secret output path")?;
     let management_secret = args.emit_management_author_pat_secret.clone();
     let database_prefix = project_env_database_name(&args.org, &args.project, &args.env, "");
     provision_project_env::provision_project_env(&args)

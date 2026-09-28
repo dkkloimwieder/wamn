@@ -1367,7 +1367,7 @@ Changes written in the gap produce no events. On 2026-09-28 the 1000 seed of Rec
 
 ### 6.4 Bench client and PAT
 
-Mint the bench PAT as in section 3.16, with `--emit-route-caller-pat-secret <private dir>/route-caller-pat.json`. Then write the tenant `users` row of the service with `reconcile-run-plane` (section 4.5), because the host refuses a principal without one. Use a forward to the pod, `kubectl -n platform port-forward pod/wamn-pg-1 15435:5432`, because the forward to the service closed the connections of the verb.
+Mint the bench PAT as in section 3.16, with `--emit-operator-pat-secret <private dir>/route-caller-pat.json`. Then write the tenant `users` row of the service with `reconcile-run-plane` (section 4.5), because the host refuses a principal without one. Use a forward to the pod, `kubectl -n platform port-forward pod/wamn-pg-1 15435:5432`, because the forward to the service closed the connections of the verb.
 
 Make the client VM, copy the source of the commit and the PAT, and build:
 

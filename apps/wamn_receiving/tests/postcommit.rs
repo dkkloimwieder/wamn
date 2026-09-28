@@ -128,7 +128,7 @@ async fn request(
     path: &str,
     body: Value,
 ) -> anyhow::Result<Value> {
-    let token = secret_value(&document.route_caller_secret_output, "token")?;
+    let token = secret_value(&document.operator_secret_output, "token")?;
     let response = http
         .post(format!(
             "{}{}",

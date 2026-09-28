@@ -16,7 +16,7 @@ use wamn_control::project_env_membership::{self, ProjectEnvMembershipRequest};
 use wamn_test_infrastructure::rendering::{HttpClaims, HttpWorkloadInput, render_http_workload};
 use wamn_test_infrastructure::workload;
 
-use super::super::{ENVIRONMENT, ORG, PROJECT, RELEASE_ID, ROUTE_CALLER_ROLE, TENANT};
+use super::super::{ENVIRONMENT, OPERATOR_ROLE, ORG, PROJECT, RELEASE_ID, TENANT};
 use super::resources::{self, checked, write_private};
 use super::{ReceivingCluster, apply, deployment, install_host, kubectl, provision, route_cases};
 use super::{session_cluster, start};
@@ -210,7 +210,7 @@ struct Account {
     invitation: String,
 }
 
-/// One person with the route-caller role and an unused invitation.
+/// One person with the operator role and an unused invitation.
 async fn account(cluster: &ReceivingCluster, project_url: &str) -> anyhow::Result<Account> {
     let system = &cluster.inputs.system_pg_url;
     let (admin, admin_task) = super::super::connect(system).await?;
@@ -265,7 +265,7 @@ async fn account(cluster: &ReceivingCluster, project_url: &str) -> anyhow::Resul
         .execute(
             "INSERT INTO app_system.user_roles (tenant_id, user_id, role_name) \
              VALUES ($1, $2::text::uuid, $3)",
-            &[&TENANT, &human.id().as_str(), &ROUTE_CALLER_ROLE],
+            &[&TENANT, &human.id().as_str(), &OPERATOR_ROLE],
         )
         .await?;
     project_task.abort();

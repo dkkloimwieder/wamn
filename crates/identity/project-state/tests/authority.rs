@@ -103,7 +103,7 @@ fn prelude(url: &str) -> (String, String) {
 SET app.user_id = '{U1}';
 SET app.operation = 'admin:seed-authority-fixture';
 INSERT INTO app_system.users (tenant_id, id, type, email) VALUES ('{TENANT}','{U1}','person','u1@t1');
-INSERT INTO app_system.roles (tenant_id, name, is_system) VALUES ('{TENANT}','admin',true),('{TENANT}','auditor',false);
+INSERT INTO app_system.roles (tenant_id, name) VALUES ('{TENANT}','admin'),('{TENANT}','auditor');
 INSERT INTO app_system.user_roles (tenant_id, user_id, role_name) VALUES ('{TENANT}','{U1}','admin');
 INSERT INTO app_system.permissions (tenant_id, role_name, permission) VALUES ('{TENANT}','admin','widgets:read');
 INSERT INTO app_system.api_keys (tenant_id, user_id, name, key_hash, prefix) VALUES ('{TENANT}','{U1}','ci','hash-1','wk_a');
@@ -197,7 +197,7 @@ BEGIN
     'UPDATE app_system.users SET display_name = ''wamn:intruder''',
     'DELETE FROM app_system.users',
     'INSERT INTO app_system.roles (tenant_id, name) VALUES (''{TENANT}'', ''superadmin'')',
-    'UPDATE app_system.roles SET is_system = false',
+    'UPDATE app_system.roles SET description = ''changed''',
     'DELETE FROM app_system.roles',
     'INSERT INTO app_system.user_roles (tenant_id, user_id, role_name) VALUES (''{TENANT}'', ''{U1}'', ''auditor'')',
     'UPDATE app_system.user_roles SET role_name = ''admin''',

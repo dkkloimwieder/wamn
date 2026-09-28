@@ -31,7 +31,7 @@ pub const PACKAGE: &str = "edge_device";
 pub const OPERATION: &str = "edge-device:sample/read@1.0.0";
 pub const ATTACHMENT: &str = "sample-read-http";
 /// The role that publish grants every served operation.
-pub const ROLE: &str = "route-caller";
+pub const ROLE: &str = "operator";
 /// The route host of the dev loop that published the release.
 pub const HOST: &str = "receiving.localhost";
 pub const PATH: &str = "/sample/read";

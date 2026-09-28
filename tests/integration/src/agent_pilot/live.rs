@@ -149,8 +149,11 @@ pub(super) async fn steps(
     if !loop_pass || base.is_empty() {
         return context.grading.replay(&[], false, base);
     }
-    let token=read_json(&context.grading.directory.join("env/route-caller-pat.json"))?["stringData"]["token"]
-        .as_str().context("the route-caller Secret has a token")?.to_owned();
+    let token = read_json(&context.grading.directory.join("env/operator-pat.json"))?["stringData"]
+        ["token"]
+        .as_str()
+        .context("the operator Secret has a token")?
+        .to_owned();
     let host = text(&context.task["identity"]["route_host"]).to_owned();
     let http = reqwest::Client::builder()
         .timeout(Duration::from_secs(60))

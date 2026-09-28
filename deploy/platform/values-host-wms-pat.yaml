@@ -16,7 +16,7 @@
 # references are
 # explicitly mandatory; an absent Secret leaves the host Pod unstartable. The
 # ExecutorPlatform carrier is required when a serving host resolves an exact
-# released wiring on demand. The route-caller bearer Secret is
+# released wiring on demand. The operator bearer Secret is
 # intentionally not mounted here: callers present that PAT, while the host
 # verifies it against sysdb and derives the expected environment-scoped service
 # subject from this trusted org/project plus the released environment.

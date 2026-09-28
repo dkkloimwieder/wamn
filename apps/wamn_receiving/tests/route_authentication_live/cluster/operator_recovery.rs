@@ -835,7 +835,7 @@ pub(super) async fn assert_recovery(cluster: &ReceivingCluster) -> anyhow::Resul
     let endpoint = materializer_case::endpoint(cluster, "receiving-operator-recovery").await?;
     recovery.write("request-origin",&json!({"kind":"owned-nodeport","endpoint":endpoint,"cluster":resources.name,
         "route_host":cluster.inputs.route_host,"route":"/purchase_order/get","connect_timeout_seconds":2,"read_timeout_seconds":5,"total_timeout_seconds":5}))?;
-    let token = secret_value(&cluster.inputs.route_caller_secret_output, "token")?;
+    let token = secret_value(&cluster.inputs.operator_secret_output, "token")?;
     let http = reqwest::Client::builder()
         .connect_timeout(Duration::from_secs(2))
         .read_timeout(Duration::from_secs(5))

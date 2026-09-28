@@ -18,7 +18,7 @@ WHAT IS TRUE OF THIS LOOP:
 - `wamn dev … --hold` runs once and keeps the activated release reachable until
   you stop it; it prints `run served: <base_url> host=<route_host>`. Send requests
   to <base_url> with `Host: $WAMN_ROUTE_HOST` and `Authorization: Bearer <token>`,
-  where <token> is `.stringData.token` in "$WAMN_ROUTE_CALLER_PAT_FILE".
+  where <token> is `.stringData.token` in "$WAMN_OPERATOR_PAT_FILE".
 - There is no reference data. Create it through your own operations.
 
 CONSTRAINTS:

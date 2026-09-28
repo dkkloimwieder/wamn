@@ -208,7 +208,7 @@ impl Run {
             // Read the exit first: a standup that exits right after writing
             // its configuration must still count as ready.
             let exited = child.try_wait()?;
-            let ready = ["env/dev.json", "env/route-caller-pat.json"]
+            let ready = ["env/dev.json", "env/operator-pat.json"]
                 .iter()
                 .all(|path| {
                     self.directory

@@ -188,7 +188,7 @@ The host opens each claims transaction with `BEGIN ISOLATION LEVEL READ COMMITTE
 The host binds the executing principal as `app.user_id` in each claims transaction that it opens.
 [Record history](data-access.md#record-history) stamps that principal on every write.
 
-- An authenticated route caller binds its principal id.
+- An authenticated caller of a route binds its principal id.
 - A post-commit registration delivery binds `wamn:materializer`.
 - An automation delivery binds its admitted service principal.
 - A legacy queue delivery or management candidate case binds `wamn:executor`.

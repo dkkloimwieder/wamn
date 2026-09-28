@@ -391,7 +391,7 @@ pub(super) async fn build_journey_runtime(
             Arc::clone(&postgres),
             ORG,
             PROJECT,
-            route_caller_subject(ORG, PROJECT, ENVIRONMENT)?,
+            operator_subject(ORG, PROJECT, ENVIRONMENT)?,
         )
         .await?,
     ));

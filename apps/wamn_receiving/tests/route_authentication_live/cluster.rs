@@ -174,7 +174,7 @@ fn journey_inputs(
         registry_auth_file,
         host_secret_directory: cluster.work.join("host-secrets"),
         host_secret_namespace: cluster.name.clone(),
-        route_caller_secret_output: cluster.work.join("route-caller-pat.json"),
+        operator_secret_output: cluster.work.join("operator-pat.json"),
         fresh_only_packages: None,
         overlay_compatibility: None,
         postcommit: None,
@@ -485,25 +485,25 @@ async fn install_route_credential(
     inputs: &JourneyDocument,
 ) -> anyhow::Result<()> {
     ensure!(
-        fs::metadata(&inputs.route_caller_secret_output)?
+        fs::metadata(&inputs.operator_secret_output)?
             .permissions()
             .mode()
             & 0o777
             == 0o600,
-        "the route-caller Secret must have mode 0600"
+        "the operator Secret must have mode 0600"
     );
-    let mut secret: Value = serde_json::from_slice(&fs::read(&inputs.route_caller_secret_output)?)?;
+    let mut secret: Value = serde_json::from_slice(&fs::read(&inputs.operator_secret_output)?)?;
     ensure!(
         secret["kind"] == "Secret"
             && secret["type"] == "Opaque"
-            && secret["metadata"]["annotations"]["wamn.io/credential-purpose"] == "route-caller"
+            && secret["metadata"]["annotations"]["wamn.io/credential-purpose"] == "operator"
             && secret["stringData"]["token"]
                 .as_str()
                 .is_some_and(|token| !token.is_empty()),
-        "the route-caller Secret must keep its declared purpose and token"
+        "the operator Secret must keep its declared purpose and token"
     );
     secret["metadata"]["namespace"] = json!(cluster.name);
-    let path = cluster.work.join("route-caller-pat-kube.json");
+    let path = cluster.work.join("operator-pat-kube.json");
     write_private(&path, &serde_json::to_vec(&secret)?)?;
     apply(cluster, &path).await
 }

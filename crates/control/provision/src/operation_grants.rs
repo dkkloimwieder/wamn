@@ -1,4 +1,4 @@
-//! Exact package-operation grants for the first-party route caller.
+//! Exact package-operation grants for the two user roles, `operator` and `admin`.
 //!
 //! This is the pure half of reconciliation: it parses the package's strict
 //! manifest and emits the floor check plus one server-side convergence query.
@@ -10,22 +10,17 @@ use std::collections::BTreeSet;
 use std::error::Error as StdError;
 
 use wamn_pg_core::quote_literal;
+use wamn_project_state::USER_ROLE_NAMES;
 use wamn_schema_generator::{
     OperationVisibility, PackageManifest, canonical_operation_identity, canonical_operation_prefix,
     validate_operation_vocabulary,
 };
 
-/// The project-role slug minted for first-party route callers.
-///
-/// This is deliberately the project-role vocabulary itself, not a mapping to a
-/// second application-role name.
-pub const OPERATION_CALLER_ROLE: &str = "route-caller";
-
-/// Serialize the shared route-caller carrier within one tenant.
+/// Serialize the shared user roles within one tenant.
 ///
 /// Package lineage remains independently locked per family. Grant
 /// reconciliation additionally shares this tenant-grain lock because the first
-/// package creates the one role row every package coordinate contributes to.
+/// package creates the role rows every package coordinate contributes to.
 pub const OPERATION_GRANT_LOCK_SQL: &str = "SELECT pg_advisory_xact_lock(hashtextextended(\
      'wamn.operation-grants:' || $1, 0))";
 
@@ -148,7 +143,7 @@ impl OperationGrantReconcileResult {
         self.role_rows_changed == 0 && self.grants_added == 0 && self.grants_removed == 0
     }
 
-    /// Number of role rows inserted or hardened as system-owned.
+    /// Number of role rows inserted.
     pub const fn role_rows_changed(self) -> i64 {
         self.role_rows_changed
     }
@@ -168,7 +163,7 @@ impl OperationGrantReconcileResult {
 ///
 /// Public component `operations` members are the package-local callable-operation
 /// vocabulary. Private custom operations remain callable only from declared
-/// internal wirings and never become route-caller grants. Rendering each public
+/// internal wirings and never become role grants. Rendering each public
 /// member with the package's native extern spelling yields the generated grant
 /// identity.
 pub fn operation_grant_tokens(
@@ -226,15 +221,17 @@ fn manifest_operation_grants(
     })
 }
 
-/// Emit one exact, transactional route-caller grant reconciliation.
+/// Emit one exact, transactional grant reconciliation for the user roles.
 ///
 /// After [`operation_grant_floor_check_sql`] checks that the existing `app_system`
 /// grant floor is present, this single data-modifying CTE:
 ///
-/// 1. creates the fixed `route-caller` role, or hardens it as system-owned;
-/// 2. deletes this tenant+role's same-coordinate permissions absent from the
+/// 1. creates the `operator` and `admin` roles when they are absent;
+/// 2. deletes each role's same-coordinate permissions absent from the
 ///    manifest;
-/// 3. inserts this manifest's missing package-qualified operation grants; and
+/// 3. inserts this manifest's missing package-qualified operation grants for
+///    both roles, so `admin` holds the `operator` set until an administration
+///    operation exists; and
 /// 4. returns `role_rows_changed`, `grants_added`, `grants_removed` as `bigint`.
 ///
 /// The canonical `<package-id-kebab>:` prefix and `@<package-version>` suffix
@@ -270,23 +267,31 @@ pub fn reconcile_operation_grants_sql(
     let coordinate_prefix = quote_literal(&grants.coordinate_prefix);
     let coordinate_suffix = quote_literal(&grants.coordinate_suffix);
     let tenant = quote_literal(tenant);
-    let role = quote_literal(OPERATION_CALLER_ROLE);
+    let roles = USER_ROLE_NAMES
+        .iter()
+        .map(|role| quote_literal(role))
+        .collect::<Vec<_>>();
+    let role_rows = roles
+        .iter()
+        .map(|role| format!("({tenant}, {role})"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let role_names = roles.join(", ");
 
     Ok(format!(
         "WITH desired(permission) AS ({desired}), \
          role_changed AS ( \
-           INSERT INTO app_system.roles AS stored_role (tenant_id, name, is_system) \
-           VALUES ({tenant}, {role}, true) \
-           ON CONFLICT (tenant_id, name) DO UPDATE SET is_system = true \
-             WHERE stored_role.is_system IS DISTINCT FROM true \
+           INSERT INTO app_system.roles (tenant_id, name) \
+           VALUES {role_rows} \
+           ON CONFLICT (tenant_id, name) DO NOTHING \
            RETURNING tenant_id, name \
          ), \
          role_target AS MATERIALIZED ( \
            SELECT tenant_id, name FROM role_changed \
            UNION ALL \
            SELECT tenant_id, name FROM app_system.roles \
-            WHERE tenant_id = {tenant} AND name = {role} \
-              AND NOT EXISTS (SELECT FROM role_changed) \
+            WHERE tenant_id = {tenant} AND name IN ({role_names}) \
+              AND name NOT IN (SELECT name FROM role_changed) \
          ), \
          removed AS ( \
            DELETE FROM app_system.permissions AS stored USING role_target \
@@ -345,7 +350,7 @@ mod tests {
     }
 
     #[test]
-    fn private_custom_operations_never_become_route_caller_grants() {
+    fn private_custom_operations_never_become_role_grants() {
         let mut manifest: serde_json::Value =
             serde_json::from_slice(&fixture_manifest()).expect("fixture is JSON");
         let operation = &mut manifest["custom_operations"]["widget.record_batch"];

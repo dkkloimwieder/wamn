@@ -47,4 +47,5 @@ pub mod reconcile_replica_identity;
 pub mod reconcile_run_plane;
 pub mod sql_params;
 pub mod terminalize_effect_uncertain;
+pub mod user_roles;
 pub mod verification_policy;

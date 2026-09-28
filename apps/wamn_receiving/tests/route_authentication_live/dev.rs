@@ -298,7 +298,7 @@ pub(super) async fn verify_dev_target_package_and_acl_state(
             "SELECT permission FROM app_system.permissions \
              WHERE tenant_id = $1 AND role_name = $2 \
              ORDER BY permission COLLATE \"C\"",
-            &[&TENANT, &ROUTE_CALLER_ROLE],
+            &[&TENANT, &OPERATOR_ROLE],
         )
         .await
         .context("read product-command operation grants")?

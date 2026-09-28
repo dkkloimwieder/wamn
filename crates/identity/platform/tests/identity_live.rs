@@ -349,9 +349,9 @@ async fn project_environment_membership_round_trip(
         Some(human.id().as_str().to_owned()),
         "human membership must not require a project management role"
     );
-    assign_project_role(client, service.id(), "demo", "widgets", "route-caller")
+    assign_project_role(client, service.id(), "demo", "widgets", "operator")
         .await
-        .expect("assign the service route role");
+        .expect("assign the service operator role");
     assert_eq!(
         route_principal_id(
             &reads,
@@ -737,7 +737,7 @@ async fn route_principal_id(
     env: &str,
 ) -> Option<String> {
     reads
-        .authenticate_route_pat(client, token, org, project, env, "route-caller")
+        .authenticate_route_pat(client, token, org, project, env, &["operator", "admin"])
         .await
         .expect("read route PAT and scope in one statement")
         .map(|authenticated| authenticated.principal().id().as_str().to_owned())

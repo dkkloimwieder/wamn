@@ -8,6 +8,8 @@ const MVP_VERBS: &[&str] = &[
     "push-component",
     "reconcile-replica-identity",
     "reconcile-run-plane",
+    "grant-role",
+    "revoke-role",
     "terminalize-effect-uncertain",
 ];
 

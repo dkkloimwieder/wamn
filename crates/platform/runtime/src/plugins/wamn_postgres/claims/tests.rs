@@ -1659,23 +1659,6 @@ async fn effect_snapshot_checks_out_under_the_callable_http_authority() {
 }
 
 #[tokio::test]
-async fn operation_permissions_reuse_only_the_callable_http_authority() {
-    let provider = Arc::new(RecordingProvider::default());
-    let pg = WamnPostgres::with_provider(Arc::clone(&provider) as Arc<dyn CredentialProvider>);
-
-    pg.operation_permissions(DEFAULT_PROJECT, "tenant-a", "route-caller")
-        .await
-        .expect_err("a provider that names no credential resolves nothing");
-
-    let asked = provider
-        .asked
-        .lock()
-        .expect("recording provider lock poisoned")
-        .clone();
-    assert_eq!(asked, vec![AuthorityClass::CallableHttp]);
-}
-
-#[tokio::test]
 async fn user_operation_permissions_reuse_only_the_callable_http_authority() {
     let provider = Arc::new(RecordingProvider::default());
     let pg = WamnPostgres::with_provider(Arc::clone(&provider) as Arc<dyn CredentialProvider>);

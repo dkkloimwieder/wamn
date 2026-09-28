@@ -1,4 +1,4 @@
-//! PostgreSQL 18 test for exact manifest-derived route-caller grants.
+//! PostgreSQL 18 test for exact manifest-derived grants of the two user roles.
 //!
 //! The test uses a test database of the test PostgreSQL server as its superuser,
 //! and holds the process lock, because it creates cluster-wide roles.
@@ -8,10 +8,11 @@ use std::io::Write as _;
 use std::process::{Command, Stdio};
 
 use wamn_control_provision::operation_grants::{
-    APP_SYSTEM_FLOOR_MISSING, OPERATION_CALLER_ROLE, OPERATION_GRANT_TRANSACTION_PRELUDE_SQL,
+    APP_SYSTEM_FLOOR_MISSING, OPERATION_GRANT_TRANSACTION_PRELUDE_SQL,
     OperationGrantReconcileResult, operation_grant_floor_check_sql, reconcile_operation_grants_sql,
 };
 use wamn_control_provision::{PlatformComponent, bind_platform_principal_sql};
+use wamn_project_state::{ADMIN_ROLE, OPERATOR_ROLE};
 
 const RECORD_HISTORY: &str = include_str!("../../../../deploy/sql/record-history.sql");
 const RECORD_HISTORY_APP_GRANTS: &str =
@@ -87,7 +88,7 @@ fn transaction(statement: &str) -> String {
 }
 
 #[test]
-fn route_caller_grants_are_exact_residue_free_and_convergent_live() {
+fn user_role_grants_are_exact_residue_free_and_convergent_live() {
     let _serialized = wamn_test_postgres::lock();
     let test_database = wamn_test_postgres::database();
     let url = test_database.url().to_owned();
@@ -135,71 +136,89 @@ fn route_caller_grants_are_exact_residue_free_and_convergent_live() {
          set_config('app.operation', 'admin:seed-operation-grant-fixture', true); \
          INSERT INTO app_system.users (tenant_id, id, type, email) VALUES \
            ('t1', '{FIXTURE_PRINCIPAL}', 'person', 'fixture@example.invalid'); \
-         INSERT INTO app_system.roles (tenant_id, name, is_system) VALUES \
-           ('t1', 'route-caller', false), \
-           ('t1', 'sibling-role', false), \
-           ('t2', 'route-caller', false); \
+         INSERT INTO app_system.roles (tenant_id, name) VALUES \
+           ('t1', 'operator'), \
+           ('t1', 'sibling-role'), \
+           ('t2', 'operator'); \
          INSERT INTO app_system.permissions (tenant_id, role_name, permission) VALUES \
-           ('t1', 'route-caller', 'platform-fixture:widget/get@1.0.0'), \
-           ('t1', 'route-caller', 'platform-fixture:obsolete/operation@1.0.0'), \
-           ('t1', 'route-caller', 'platform-fixture:widget/get@1.1.0'), \
-           ('t1', 'route-caller', 'platform-fixture-overlay:widget/archive@3.0.0'), \
+           ('t1', 'operator', 'platform-fixture:widget/get@1.0.0'), \
+           ('t1', 'operator', 'platform-fixture:obsolete/operation@1.0.0'), \
+           ('t1', 'operator', 'platform-fixture:widget/get@1.1.0'), \
+           ('t1', 'operator', 'platform-fixture-overlay:widget/archive@3.0.0'), \
            ('t1', 'sibling-role', 'residue.must.stay'), \
-           ('t2', 'route-caller', 'residue.must.stay'); COMMIT;"
+           ('t2', 'operator', 'residue.must.stay'); COMMIT;"
         ),
     );
 
     let changed = result(&run(&url, "reconcile operation grants", &reconcile));
-    assert_eq!(changed.role_rows_changed(), 1, "role was not hardened");
-    assert_eq!(changed.grants_added(), 11, "missing grants were not exact");
+    assert_eq!(
+        changed.role_rows_changed(),
+        1,
+        "the absent admin role was not created"
+    );
+    assert_eq!(
+        changed.grants_added(),
+        11 + 12,
+        "missing grants of operator and admin were not exact"
+    );
     assert_eq!(
         changed.grants_removed(),
         1,
         "same-coordinate residue survived"
     );
 
-    assert_eq!(
-        query(
-            &url,
-            "SELECT string_agg(permission, E'\\n' ORDER BY permission) \
-               FROM app_system.permissions \
-              WHERE tenant_id = 't1' AND role_name = 'route-caller' \
-                AND starts_with(permission, 'platform-fixture:') \
-                AND right(permission, length('@1.0.0')) = '@1.0.0'"
-        ),
-        [
-            "platform-fixture:widget-maker/get@1.0.0",
-            "platform-fixture:widget-maker/list@1.0.0",
-            "platform-fixture:widget-maker/query@1.0.0",
-            "platform-fixture:widget-tag/update@1.0.0",
-            "platform-fixture:widget/archive@1.0.0",
-            "platform-fixture:widget/create@1.0.0",
-            "platform-fixture:widget/delete@1.0.0",
-            "platform-fixture:widget/get@1.0.0",
-            "platform-fixture:widget/list@1.0.0",
-            "platform-fixture:widget/query@1.0.0",
-            "platform-fixture:widget/record-batch@1.0.0",
-            "platform-fixture:widget/update@1.0.0",
-        ]
-        .join("\n"),
-        "server did not retain exactly the manifest's twelve operation grants"
-    );
-    assert_eq!(
-        query(
-            &url,
-            "SELECT string_agg(permission, E'\\n' ORDER BY permission) \
-               FROM app_system.permissions \
-              WHERE tenant_id = 't1' AND role_name = 'route-caller' \
-                AND NOT (starts_with(permission, 'platform-fixture:') \
-                         AND right(permission, length('@1.0.0')) = '@1.0.0')"
-        ),
-        [
-            "platform-fixture-overlay:widget/archive@3.0.0",
-            "platform-fixture:widget/get@1.1.0",
-        ]
-        .join("\n"),
-        "package reconciliation changed another coordinate's operation grants"
-    );
+    for role in [OPERATOR_ROLE, ADMIN_ROLE] {
+        assert_eq!(
+            query(
+                &url,
+                &format!(
+                    "SELECT string_agg(permission, E'\\n' ORDER BY permission) \
+                   FROM app_system.permissions \
+                  WHERE tenant_id = 't1' AND role_name = '{role}' \
+                    AND starts_with(permission, 'platform-fixture:') \
+                    AND right(permission, length('@1.0.0')) = '@1.0.0'"
+                )
+            ),
+            [
+                "platform-fixture:widget-maker/get@1.0.0",
+                "platform-fixture:widget-maker/list@1.0.0",
+                "platform-fixture:widget-maker/query@1.0.0",
+                "platform-fixture:widget-tag/update@1.0.0",
+                "platform-fixture:widget/archive@1.0.0",
+                "platform-fixture:widget/create@1.0.0",
+                "platform-fixture:widget/delete@1.0.0",
+                "platform-fixture:widget/get@1.0.0",
+                "platform-fixture:widget/list@1.0.0",
+                "platform-fixture:widget/query@1.0.0",
+                "platform-fixture:widget/record-batch@1.0.0",
+                "platform-fixture:widget/update@1.0.0",
+            ]
+            .join("\n"),
+            "{role} did not hold exactly the manifest's twelve operation grants"
+        );
+        assert_eq!(
+            query(
+                &url,
+                &format!(
+                    "SELECT string_agg(permission, E'\\n' ORDER BY permission) \
+                   FROM app_system.permissions \
+                  WHERE tenant_id = 't1' AND role_name = '{role}' \
+                    AND NOT (starts_with(permission, 'platform-fixture:') \
+                             AND right(permission, length('@1.0.0')) = '@1.0.0')"
+                )
+            ),
+            if role == OPERATOR_ROLE {
+                [
+                    "platform-fixture-overlay:widget/archive@3.0.0",
+                    "platform-fixture:widget/get@1.1.0",
+                ]
+                .join("\n")
+            } else {
+                String::new()
+            },
+            "package reconciliation changed another coordinate's operation grants"
+        );
+    }
     assert_eq!(
         query(
             &url,
@@ -212,13 +231,11 @@ fn route_caller_grants_are_exact_residue_free_and_convergent_live() {
     assert_eq!(
         query(
             &url,
-            &format!(
-                "SELECT is_system FROM app_system.roles \
-                  WHERE tenant_id = 't1' AND name = '{OPERATION_CALLER_ROLE}'"
-            )
+            "SELECT string_agg(name, ',' ORDER BY name) FROM app_system.roles \
+              WHERE tenant_id = 't1'"
         ),
-        "t",
-        "the operation role is not system-owned"
+        "admin,operator,sibling-role",
+        "publish did not leave exactly the two user roles beside the sibling role"
     );
 
     let again = result(&run(&url, "replay operation grants", &reconcile));

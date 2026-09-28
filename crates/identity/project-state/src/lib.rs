@@ -236,8 +236,20 @@ pub const USERS: Table = Table {
 /// Named roles. `name` is the [`ROLE_CLAIM`] gate target.
 pub const ROLES: Table = Table {
     name: "roles",
-    columns: &["tenant_id", "name", "is_system"],
+    columns: &["tenant_id", "name"],
 };
+
+/// The user role that holds every operation permission of the published
+/// packages. Publish writes it, and `wamn-ctl grant-role` gives it to a person
+/// or a service.
+pub const OPERATOR_ROLE: &str = "operator";
+
+/// The user role for administration. Publish writes it with the same
+/// permissions as [`OPERATOR_ROLE`] until an administration operation exists.
+pub const ADMIN_ROLE: &str = "admin";
+
+/// The two user roles that publish writes and `wamn-ctl grant-role` accepts.
+pub const USER_ROLE_NAMES: [&str; 2] = [OPERATOR_ROLE, ADMIN_ROLE];
 
 /// The user↔role linkage (many-to-many).
 pub const USER_ROLES: Table = Table {

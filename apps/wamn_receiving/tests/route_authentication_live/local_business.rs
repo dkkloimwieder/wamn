@@ -108,7 +108,7 @@ async fn command_histories() -> anyhow::Result<()> {
         project: super::PROJECT,
         environment: super::ENVIRONMENT,
         schema: "receiving",
-        caller_role: "route-caller",
+        caller_role: "operator",
         route_host: "receiving.local.test",
         attachments: &attachments,
         packages: &[
@@ -436,8 +436,8 @@ async fn histories(
     let path = evidence.join("receiving-correctness.jsonl");
     let inputs = serde_json::from_value(json!({
         "project_pg_url":database_url,"route_endpoint":application.endpoint,
-        "route_host":application.route_host,"route_caller_secret":application.caller_secret_path,
-        "tenant":super::TENANT,"caller_role":"route-caller","evidence_file":path,
+        "route_host":application.route_host,"operator_secret":application.caller_secret_path,
+        "tenant":super::TENANT,"caller_role":"operator","evidence_file":path,
         "source_commit":std::str::from_utf8(&source.stdout)?.trim(),
         "component_digests":application.component_digests,
         "corpus_sha256":package["application_sql_corpus_identity"],"seed":7701,"cases":16,"history":null,

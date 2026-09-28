@@ -168,7 +168,7 @@ fn app_schema_applies_and_enforces_isolation_on_postgres() {
          SET app.operation = 'admin:seed-isolation-fixture';\n\
          INSERT INTO app_system.users (tenant_id, id, type, email) VALUES \
            ('t1','{U1}','person','u1@t1'),('t1','{U2}','service','u2@t1'),('t2','{U3}','person','u3@t2');\n\
-         INSERT INTO app_system.roles (tenant_id, name, is_system) VALUES ('t1','admin',true);\n\
+         INSERT INTO app_system.roles (tenant_id, name) VALUES ('t1','admin');\n\
          INSERT INTO app_system.user_roles (tenant_id, user_id, role_name) VALUES ('t1','{U1}','admin');\n\
          INSERT INTO app_system.permissions (tenant_id, role_name, permission) VALUES ('t1','admin','widgets:read');\n\
          INSERT INTO app_system.api_keys (tenant_id, user_id, name, key_hash, prefix) VALUES ('t1','{U1}','ci','hash-1','wk_a');\n\
@@ -794,10 +794,10 @@ entry|permissions|t1|insert|admin:seed-history-fixture|U1|{"role_name": "admin",
 entry|permissions|t1|delete|admin:change-history-fixture|U2|{"role_name": "admin", "tenant_id": "t1", "permission": "widgets:read"}|{"role_name": "admin", "tenant_id": "t1", "permission": "widgets:read"}|{}
 entry|permissions|t1|insert|admin:change-history-fixture|U2|{"role_name": "admin", "tenant_id": "t1", "permission": "widgets:write"}|{}|{"role_name": "admin", "tenant_id": "t1", "permission": "widgets:write"}
 entry|permissions|t1|delete|admin:remove-history-fixture|U3|{"role_name": "admin", "tenant_id": "t1", "permission": "widgets:write"}|{"role_name": "admin", "tenant_id": "t1", "permission": "widgets:write"}|{}
-entry|roles|t1|insert|admin:seed-history-fixture|U1|{"name": "admin", "tenant_id": "t1"}|{}|{"name": "admin", "is_system": false, "tenant_id": "t1", "description": null}
-entry|roles|t1|insert|admin:seed-history-fixture|U1|{"name": "auditor", "tenant_id": "t1"}|{}|{"name": "auditor", "is_system": false, "tenant_id": "t1", "description": null}
+entry|roles|t1|insert|admin:seed-history-fixture|U1|{"name": "admin", "tenant_id": "t1"}|{}|{"name": "admin", "tenant_id": "t1", "description": null}
+entry|roles|t1|insert|admin:seed-history-fixture|U1|{"name": "auditor", "tenant_id": "t1"}|{}|{"name": "auditor", "tenant_id": "t1", "description": null}
 entry|roles|t1|update|admin:change-history-fixture|U2|{"name": "admin", "tenant_id": "t1"}|{"description": null}|{"description": "administrators"}
-entry|roles|t1|delete|admin:remove-history-fixture|U3|{"name": "admin", "tenant_id": "t1"}|{"name": "admin", "is_system": false, "tenant_id": "t1", "description": "administrators"}|{}
+entry|roles|t1|delete|admin:remove-history-fixture|U3|{"name": "admin", "tenant_id": "t1"}|{"name": "admin", "tenant_id": "t1", "description": "administrators"}|{}
 entry|user_roles|t1|insert|admin:seed-history-fixture|U1|{"user_id": "U1", "role_name": "admin", "tenant_id": "t1"}|{}|{"user_id": "U1", "role_name": "admin", "tenant_id": "t1"}
 entry|user_roles|t1|insert|admin:seed-history-fixture|U1|{"user_id": "U3", "role_name": "admin", "tenant_id": "t1"}|{}|{"user_id": "U3", "role_name": "admin", "tenant_id": "t1"}
 entry|user_roles|t1|delete|admin:change-history-fixture|U2|{"user_id": "U3", "role_name": "admin", "tenant_id": "t1"}|{"user_id": "U3", "role_name": "admin", "tenant_id": "t1"}|{}

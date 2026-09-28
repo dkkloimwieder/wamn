@@ -172,32 +172,41 @@ async fn receiving_release_journey(
         &route.principal_subject,
     )
     .await
-    .context("resolve the production route-caller principal")?
-    .context("the production route-caller principal is absent")?
+    .context("resolve the production operator principal")?
+    .context("the production operator principal is absent")?
     .id()
     .to_string();
-    let route_caller_secret = root.join("route-caller-pat.json");
-    std::fs::copy(&route_caller_secret, &inputs.route_caller_secret_output).with_context(|| {
+    let operator_secret = root.join("operator-pat.json");
+    std::fs::copy(&operator_secret, &inputs.operator_secret_output).with_context(|| {
         format!(
-            "copy production-minted route-caller Secret from {} to {}",
-            route_caller_secret.display(),
-            inputs.route_caller_secret_output.display()
+            "copy production-minted operator Secret from {} to {}",
+            operator_secret.display(),
+            inputs.operator_secret_output.display()
         )
     })?;
     std::fs::set_permissions(
-        &inputs.route_caller_secret_output,
+        &inputs.operator_secret_output,
         Permissions::from_mode(0o600),
     )
     .with_context(|| {
         format!(
-            "set route-caller Secret mode on {}",
-            inputs.route_caller_secret_output.display()
+            "set operator Secret mode on {}",
+            inputs.operator_secret_output.display()
         )
     })?;
     let (project, project_task) = connect(&route.database_url).await?;
     install_journey_project(inputs, project.as_ref(), &route.database_url, fresh_only).await?;
     verify_journey_operation_grants(project.as_ref()).await?;
     reconcile_journey_run_plane(&system_url, &route.database_url).await?;
+    wamn_control::dev::environment::grant_operator_role(
+        &route.database_url,
+        ORG,
+        PROJECT,
+        ENVIRONMENT,
+        TENANT,
+        PLATFORM_DOMAIN,
+    )
+    .await?;
     let credentials = prepare_journey_credentials(
         &system_url,
         &route.database_url,
@@ -757,13 +766,13 @@ async fn receiving_release_journey(
         OVERLAY_PACKAGE_ID,
     ));
 
-    // Ruling 71: the route caller holds every other grant, so only the missing
+    // Ruling 71: the operator service holds every other grant, so only the missing
     // history token refuses, before the component runs.
     let removed = project
         .execute(
             "DELETE FROM app_system.permissions \
              WHERE tenant_id = $1 AND role_name = $2 AND permission = $3",
-            &[&TENANT, &ROUTE_CALLER_ROLE, &HISTORY_OPERATION],
+            &[&TENANT, &OPERATOR_ROLE, &HISTORY_OPERATION],
         )
         .await
         .context("remove only the purchase order history permission")?;
@@ -796,7 +805,7 @@ async fn receiving_release_journey(
         .execute(
             "DELETE FROM app_system.permissions \
              WHERE tenant_id = $1 AND role_name = $2 AND permission = $3",
-            &[&TENANT, &ROUTE_CALLER_ROLE, &BASE_RECORD_RECEIPT],
+            &[&TENANT, &OPERATOR_ROLE, &BASE_RECORD_RECEIPT],
         )
         .await
         .context("remove only the pinned-base record_receipt permission")?;
@@ -1259,7 +1268,7 @@ async fn assert_unauthorized_no_op_refuses(
         .execute(
             "DELETE FROM app_system.permissions \
              WHERE tenant_id = $1 AND role_name = $2 AND permission = $3",
-            &[&TENANT, &ROUTE_CALLER_ROLE, &UPDATE_OPERATION],
+            &[&TENANT, &OPERATOR_ROLE, &UPDATE_OPERATION],
         )
         .await
         .context("remove only the purchase_order.update permission")?;

@@ -35,7 +35,7 @@ pub(crate) struct Inputs {
     project_pg_url: String,
     route_endpoint: String,
     route_host: String,
-    route_caller_secret: PathBuf,
+    operator_secret: PathBuf,
     tenant: String,
     caller_role: String,
     evidence_file: PathBuf,
@@ -965,7 +965,7 @@ pub(crate) fn assert_histories_with_cancellation(
         "cannot read the test compiler version"
     );
     let compiler_version = std::str::from_utf8(&compiler.stdout)?.trim();
-    let secret: Value = serde_json::from_slice(&std::fs::read(&inputs.route_caller_secret)?)?;
+    let secret: Value = serde_json::from_slice(&std::fs::read(&inputs.operator_secret)?)?;
     let route = Route {
         client: reqwest::Client::builder()
             .timeout(Duration::from_secs(15))

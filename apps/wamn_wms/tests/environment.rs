@@ -124,7 +124,7 @@ pub async fn provision_project(
         emit_secret: work.join("project-db.json"),
         pat_issuer,
         emit_management_author_pat_secret: Some(work.join("management-author-pat.json")),
-        emit_route_caller_pat_secret: Some(inputs.route_caller_secret_output.clone()),
+        emit_operator_pat_secret: Some(inputs.operator_secret_output.clone()),
     };
     shared::provision_project(args, admin_url).await
 }
@@ -250,6 +250,15 @@ pub async fn prepare_project(
         database_url: route.database_url.clone(),
         tenant: TENANT.into(),
     })
+    .await?;
+    wamn_control::dev::environment::grant_operator_role(
+        &route.database_url,
+        ORG,
+        PROJECT,
+        ENVIRONMENT,
+        TENANT,
+        PLATFORM_DOMAIN,
+    )
     .await?;
     shared::reconcile_package_data_access(ReconcilePackageDataAccessRequest {
         packages: vec![package_root()],

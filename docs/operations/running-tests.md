@@ -137,7 +137,7 @@ The test `samples_reach_a_live_platform_once_across_kills` forwards to a real pl
 Start the session with `--package` and `--overlay-root` set to `apps/edge_samples`.
 The host serves plain HTTP, and the forward accepts only HTTPS, so put a TLS proxy in front of the served route address.
 The proxy must set the `Host` header to the route host that the session prints.
-Write the token of `route-caller-pat.json` in the environment directory to a file with mode 0600.
+Write the token of `operator-pat.json` in the environment directory to a file with mode 0600.
 Then run the test with the proxy address and the certificate authority of the proxy:
 
 ```bash

@@ -69,7 +69,7 @@ impl HttpRouteTarget {
     /// Bind a target to one published route URL and the PAT that may call it.
     ///
     /// Mint the PAT with `wamn_platform_identity::issue_pat` against a subject
-    /// from `route_caller_subject`; do not hand-assemble a token.
+    /// from `operator_subject`; do not hand-assemble a token.
     #[must_use]
     pub fn new(
         client: reqwest::Client,

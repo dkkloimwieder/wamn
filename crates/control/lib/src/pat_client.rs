@@ -573,7 +573,7 @@ mod tests {
         }).await;
         let client = PatClient::new(&fixture.args).unwrap();
         let result = client
-            .issue(&PRINCIPAL.parse().unwrap(), "route-caller", LIFETIME)
+            .issue(&PRINCIPAL.parse().unwrap(), "operator", LIFETIME)
             .await
             .unwrap();
         assert_eq!(result.token_prefix, PREFIX);
@@ -583,7 +583,7 @@ mod tests {
         assert_eq!(
             serde_json::from_str::<serde_json::Value>(body).unwrap(),
             serde_json::json!({
-                "principal_id": PRINCIPAL, "label": "route-caller", "lifetime_seconds": 2_592_000,
+                "principal_id": PRINCIPAL, "label": "operator", "lifetime_seconds": 2_592_000,
             })
         );
         assert_eq!(fixture.requests.load(Ordering::SeqCst), 1);
@@ -595,7 +595,7 @@ mod tests {
         let fixture = https_fixture("wrong.example", |_| String::new()).await;
         let error = PatClient::new(&fixture.args)
             .unwrap()
-            .issue(&PRINCIPAL.parse().unwrap(), "route-caller", LIFETIME)
+            .issue(&PRINCIPAL.parse().unwrap(), "operator", LIFETIME)
             .await
             .unwrap_err();
         assert!(error.to_string().contains("transport failed"));
@@ -624,7 +624,7 @@ mod tests {
             }).await;
             let error = PatClient::new(&fixture.args)
                 .unwrap()
-                .issue(&PRINCIPAL.parse().unwrap(), "route-caller", LIFETIME)
+                .issue(&PRINCIPAL.parse().unwrap(), "operator", LIFETIME)
                 .await
                 .unwrap_err();
             assert_eq!(

@@ -593,9 +593,27 @@ impl ProductionDevStageRunner {
             })?;
             tracing::info!(package = %outcome.package_id, version = %outcome.package_version, migrations = outcome.migrations_applied, changed = outcome.changed, "applied development package");
         }
+        self.grant_operator_role().await?;
         self.schema_input_digest
             .clone_from(&self.schema_input_candidate);
         Ok(())
+    }
+
+    /// Give the environment's operator service the `operator` role. Publish
+    /// wrote the role above, and `reconcile-run-plane` wrote the service's
+    /// `users` row when the environment was made.
+    async fn grant_operator_role(&self) -> Result<(), ProductionDevStageError> {
+        let identity = self.config.activation_identity();
+        super::environment::grant_operator_role(
+            self.config.target_database_url(),
+            &identity.org,
+            &identity.project,
+            &identity.environment,
+            &identity.tenant,
+            self.config.platform_domain(),
+        )
+        .await
+        .map_err(|source| ProductionDevStageError::owner("grant the operator role", source))
     }
 
     async fn introspect(&mut self) -> Result<(), ProductionDevStageError> {

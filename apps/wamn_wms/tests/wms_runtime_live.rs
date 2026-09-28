@@ -39,15 +39,14 @@ impl Route {
         runtime: &RuntimePhase,
     ) -> anyhow::Result<Self> {
         let secret: Value = serde_json::from_slice(
-            &std::fs::read(&document.route_caller_secret_output).with_context(|| {
-                format!("read {}", document.route_caller_secret_output.display())
-            })?,
+            &std::fs::read(&document.operator_secret_output)
+                .with_context(|| format!("read {}", document.operator_secret_output.display()))?,
         )
-        .context("the route-caller Secret is JSON")?;
+        .context("the operator Secret is JSON")?;
         let bearer = secret["stringData"]["token"]
             .as_str()
             .filter(|token| !token.is_empty())
-            .context("the route-caller Secret carries stringData.token")?
+            .context("the operator Secret carries stringData.token")?
             .to_owned();
         Ok(Self {
             endpoint: runtime.route_endpoint.trim_end_matches('/').to_owned(),

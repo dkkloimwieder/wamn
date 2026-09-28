@@ -11,6 +11,7 @@ use wamn_catalog::SERVING_MANIFEST_FORMAT_VERSION;
 use wamn_control::apply_package::{self, ApplyPackageRequest};
 use wamn_control::project_env_membership::{self, ProjectEnvMembershipRequest};
 use wamn_control::provision_project_env::{self, secret_value};
+use wamn_control::user_roles::{self, UserRoleRequest};
 use wamn_control_provision::{SystemReader, WorkloadRoleFamily, parse_system_reader_url};
 use wamn_engine::flow_http_routing::{FlowHttpRouting, RouteInFlightLimit};
 use wamn_engine::release_manifest::LoadedRelease;
@@ -18,8 +19,9 @@ use wamn_engine::router_delivery::authorize_attachment_for_test;
 use wamn_gate_harness::journey::{journey_document_schema_bytes, parse_journey_document};
 use wamn_platform_identity::{
     PrincipalKind, assign_project_role, create_human, create_service, disable_principal, issue_pat,
-    resolve_subject, revoke_pat, route_caller_subject,
+    operator_subject, resolve_subject, revoke_pat,
 };
+use wamn_project_state::{ADMIN_ROLE, OPERATOR_ROLE};
 use wamn_runtime::plugins::route_authentication::{
     PlatformRouteAuthenticator, RouteAuthentication,
 };
@@ -35,7 +37,6 @@ use wamn_test_infrastructure::scratch::ScratchRoot;
 
 const OTHER_PROJECT: &str = "other";
 const OTHER_ENVIRONMENT: &str = "prod";
-const ROUTE_CALLER_ROLE: &str = "route-caller";
 const FIXTURE_PACKAGE_ID: &str = "route_auth_fixture";
 const FIXTURE_PACKAGE_VERSION: &str = "1.0.0";
 const ATTACHMENT_ID: &str = "route-auth-item-get";
@@ -81,6 +82,46 @@ async fn reset_and_install_control(admin: &Client) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Write the operator service's tenant `users` row, as `reconcile-run-plane`
+/// does, and give it `operator` with the `grant-role` library call.
+async fn grant_service_operator(
+    system_url: &str,
+    project: &Client,
+    project_url: &str,
+    subject: &str,
+) -> anyhow::Result<()> {
+    let (system, system_task) = connect(system_url).await?;
+    let principal = resolve_subject(system.as_ref(), PrincipalKind::Service, subject)
+        .await
+        .context("resolve the operator service")?
+        .context("the operator service is absent")?;
+    system_task.abort();
+    let email = format!("{subject}@example.invalid");
+    project
+        .execute(
+            "INSERT INTO app_system.users (tenant_id, id, type, email) \
+             VALUES ($1, $2::text::uuid, 'service', $3)",
+            &[&TENANT, &principal.id().as_str(), &email],
+        )
+        .await
+        .context("write the operator service's users row")?;
+    let request = UserRoleRequest {
+        system_database_url: system_url.to_owned(),
+        admin_database_url: project_url.to_owned(),
+        org: ORG.to_owned(),
+        project: PROJECT.to_owned(),
+        env: ENVIRONMENT.to_owned(),
+        tenant: TENANT.to_owned(),
+        user: email,
+        role: OPERATOR_ROLE.to_owned(),
+    };
+    let outcome = user_roles::grant_role(&request)
+        .await
+        .context("grant the operator role")?;
+    anyhow::ensure!(outcome.changed, "the first grant wrote no row");
+    Ok(())
+}
+
 fn package_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("fixtures/route_auth_package")
 }
@@ -90,7 +131,7 @@ async fn permission_write_identity(project: &Client) -> anyhow::Result<Vec<Strin
         .query(
             "SELECT permission || ':' || xmin::text FROM app_system.permissions \
              WHERE tenant_id = $1 AND role_name = $2 ORDER BY permission COLLATE \"C\"",
-            &[&TENANT, &ROUTE_CALLER_ROLE],
+            &[&TENANT, &OPERATOR_ROLE],
         )
         .await
         .context("read permission write identities")?
@@ -132,17 +173,16 @@ async fn install_project_and_reconcile(project: &Client, project_url: &str) -> a
         .context("seed the fixture test principal")?;
     project
         .execute(
-            "INSERT INTO app_system.roles (tenant_id, name, is_system) \
-             VALUES ($1, $2, false)",
-            &[&TENANT, &ROUTE_CALLER_ROLE],
+            "INSERT INTO app_system.roles (tenant_id, name) VALUES ($1, $2)",
+            &[&TENANT, &OPERATOR_ROLE],
         )
         .await
-        .context("seed the route-caller role")?;
+        .context("seed the operator role")?;
     project
         .execute(
             "INSERT INTO app_system.permissions (tenant_id, role_name, permission) \
              VALUES ($1, $2, $3)",
-            &[&TENANT, &ROUTE_CALLER_ROLE, &RESIDUE],
+            &[&TENANT, &OPERATOR_ROLE, &RESIDUE],
         )
         .await
         .context("seed package-coordinate residue")?;
@@ -163,7 +203,7 @@ async fn install_project_and_reconcile(project: &Client, project_url: &str) -> a
         .query(
             "SELECT permission::text FROM app_system.permissions \
              WHERE tenant_id = $1 AND role_name = $2 ORDER BY permission COLLATE \"C\"",
-            &[&TENANT, &ROUTE_CALLER_ROLE],
+            &[&TENANT, &OPERATOR_ROLE],
         )
         .await
         .context("read reconciled operation grants")?
@@ -278,7 +318,7 @@ async fn routing(
                         postgres,
                         ORG,
                         PROJECT,
-                        route_caller_subject(ORG, PROJECT, ENVIRONMENT)?,
+                        operator_subject(ORG, PROJECT, ENVIRONMENT)?,
                     )
                     .await?,
                 )),
@@ -307,27 +347,24 @@ async fn issue_scoped_token(
     project: &str,
     environment: &str,
 ) -> anyhow::Result<String> {
-    let subject = route_caller_subject(ORG, project, environment)?;
+    let subject = operator_subject(ORG, project, environment)?;
     let principal = create_service(
         admin,
         &subject,
-        &format!("route caller {project}/{environment}"),
+        &format!("operator {project}/{environment}"),
     )
     .await
-    .context("create wrong-scope route caller")?;
-    assign_project_role(admin, principal.id(), ORG, project, ROUTE_CALLER_ROLE)
+    .context("create wrong-scope operator service")?;
+    assign_project_role(admin, principal.id(), ORG, project, OPERATOR_ROLE)
         .await
-        .context("assign wrong-scope route-caller role")?;
-    Ok(issue_pat(
-        admin,
-        principal.id(),
-        "route-caller",
-        Duration::from_secs(3600),
+        .context("assign wrong-scope operator role")?;
+    Ok(
+        issue_pat(admin, principal.id(), "operator", Duration::from_secs(3600))
+            .await
+            .context("issue wrong-scope route PAT")?
+            .token()
+            .to_owned(),
     )
-    .await
-    .context("issue wrong-scope route PAT")?
-    .token()
-    .to_owned())
 }
 
 async fn issue_pat_for_subject(
@@ -337,8 +374,8 @@ async fn issue_pat_for_subject(
 ) -> anyhow::Result<(String, String)> {
     let principal = resolve_subject(admin, PrincipalKind::Service, subject)
         .await
-        .context("resolve route-caller principal")?
-        .context("route-caller principal is absent")?;
+        .context("resolve the operator principal")?
+        .context("the operator principal is absent")?;
     let issued = issue_pat(admin, principal.id(), label, Duration::from_secs(3600))
         .await
         .with_context(|| format!("issue {label} PAT"))?;
@@ -438,7 +475,7 @@ async fn assert_human_environment_membership(
         )
         .await?;
     // A project-wide role and another environment's membership cannot authorize this route.
-    assign_project_role(admin, human.id(), ORG, PROJECT, ROUTE_CALLER_ROLE).await?;
+    assign_project_role(admin, human.id(), ORG, PROJECT, OPERATOR_ROLE).await?;
     let unauthorized = Refusal::Authentication(401, "unauthorized".to_owned());
     let mut admissions = 0;
     assert_eq!(
@@ -675,7 +712,7 @@ async fn assert_human_environment_membership(
 
 #[tokio::test]
 #[ignore = "requires:"]
-async fn production_route_caller_authentication_and_operation_authorization() {
+async fn production_operator_authentication_and_operation_authorization() {
     wamn_test_postgres::require_prerequisites(&[]);
     wamn_control::dev::pat_issuer::identity_binary().expect("find the wamn-identity binary");
     // Provisioning changes roles and database grants of the whole server, so
@@ -707,10 +744,10 @@ async fn production_route_caller_authentication_and_operation_authorization() {
         .expect("install the control plane");
     let route = provision_route(&admin_url, &admin, root, None)
         .await
-        .expect("mint the production route caller");
+        .expect("mint the production operator service");
     assert_eq!(
         route.principal_subject,
-        route_caller_subject(ORG, PROJECT, ENVIRONMENT).expect("derive expected route subject")
+        operator_subject(ORG, PROJECT, ENVIRONMENT).expect("derive expected route subject")
     );
 
     let (project, project_task) = connect(&route.database_url)
@@ -719,6 +756,14 @@ async fn production_route_caller_authentication_and_operation_authorization() {
     install_project_and_reconcile(&project, &route.database_url)
         .await
         .expect("install and reconcile the route-authentication fixture");
+    grant_service_operator(
+        &admin_url,
+        &project,
+        &route.database_url,
+        &route.principal_subject,
+    )
+    .await
+    .expect("grant the operator role to the operator service");
 
     let identity_secret = root.join("identity-reader.json");
     provision_project_env::run_workload_action(&generation_args(
@@ -862,16 +907,16 @@ async fn production_route_caller_authentication_and_operation_authorization() {
         &route.principal_subject,
     )
     .await
-    .expect("resolve route caller")
-    .expect("route caller remains stored");
+    .expect("resolve the operator service")
+    .expect("the operator service remains stored");
     admin
         .execute(
             "DELETE FROM identity.project_roles WHERE principal_id = $1::text::uuid \
              AND org = $2 AND project = $3 AND role = $4",
-            &[&principal.id().as_str(), &ORG, &PROJECT, &ROUTE_CALLER_ROLE],
+            &[&principal.id().as_str(), &ORG, &PROJECT, &OPERATOR_ROLE],
         )
         .await
-        .expect("remove the route-caller role");
+        .expect("remove the operator role");
     assert_eq!(
         invoke(
             &route_auth,
@@ -884,8 +929,8 @@ async fn production_route_caller_authentication_and_operation_authorization() {
         "role removal must refuse an otherwise valid PAT on the next request"
     );
     for (org, project, role) in [
-        ("other-org", PROJECT, ROUTE_CALLER_ROLE),
-        (ORG, OTHER_PROJECT, ROUTE_CALLER_ROLE),
+        ("other-org", PROJECT, OPERATOR_ROLE),
+        (ORG, OTHER_PROJECT, OPERATOR_ROLE),
         (ORG, PROJECT, "project-author"),
     ] {
         assign_project_role(admin.as_ref(), principal.id(), org, project, role)
@@ -903,15 +948,31 @@ async fn production_route_caller_authentication_and_operation_authorization() {
             "the role {org}/{project}/{role} authorized the wrong route"
         );
     }
-    assign_project_role(
-        admin.as_ref(),
-        principal.id(),
-        ORG,
-        PROJECT,
-        ROUTE_CALLER_ROLE,
+    // The identity check accepts admin as it accepts operator.
+    assign_project_role(admin.as_ref(), principal.id(), ORG, PROJECT, ADMIN_ROLE)
+        .await
+        .expect("assign the admin project role");
+    let mut admin_admissions = 0;
+    invoke(
+        &route_auth,
+        &loaded_release,
+        Some(&valid),
+        &mut admin_admissions,
     )
     .await
-    .expect("restore route-caller role");
+    .expect("the admin project role passes the identity check");
+    assert_eq!(admin_admissions, 1);
+    admin
+        .execute(
+            "DELETE FROM identity.project_roles WHERE principal_id = $1::text::uuid \
+             AND org = $2 AND project = $3 AND role = $4",
+            &[&principal.id().as_str(), &ORG, &PROJECT, &ADMIN_ROLE],
+        )
+        .await
+        .expect("remove the admin project role");
+    assign_project_role(admin.as_ref(), principal.id(), ORG, PROJECT, OPERATOR_ROLE)
+        .await
+        .expect("restore the operator role");
     disable_principal(admin.as_ref(), principal.id())
         .await
         .expect("disable the configured service principal");
@@ -974,7 +1035,7 @@ async fn production_route_caller_authentication_and_operation_authorization() {
         .execute(
             "DELETE FROM app_system.permissions \
              WHERE tenant_id = $1 AND role_name = $2 AND permission = $3",
-            &[&TENANT, &ROUTE_CALLER_ROLE, &OPERATION],
+            &[&TENANT, &OPERATOR_ROLE, &OPERATION],
         )
         .await
         .expect("remove the exact operation grant");
@@ -1040,6 +1101,146 @@ async fn production_route_caller_authentication_and_operation_authorization() {
     );
 
     assert_eq!(route.token_prefix.len(), 16);
+    drop(project);
+    project_task.abort();
+    admin_task.abort();
+}
+
+/// `grant-role` and `revoke-role` against a provisioned environment: both user
+/// roles, the refusals of the rulings, and a registry target that names
+/// another database.
+#[tokio::test]
+#[ignore = "requires:"]
+async fn role_verbs_grant_and_revoke_operator_and_admin() {
+    wamn_test_postgres::require_prerequisites(&[]);
+    wamn_control::dev::pat_issuer::identity_binary().expect("find the wamn-identity binary");
+    let mut server =
+        wamn_test_infrastructure::postgres::start(&[]).expect("start the test PostgreSQL server");
+    let admin_url = server
+        .create_database("wamn_system")
+        .expect("create the wamn_system database")
+        .url()
+        .to_owned();
+    let scratch = ScratchRoot::create().expect("create role verb test directory");
+    let (admin, admin_task) = connect(&admin_url).await.expect("connect admin");
+    reset_and_install_control(&admin)
+        .await
+        .expect("install the control plane");
+    let route = provision_route(&admin_url, &admin, scratch.path(), None)
+        .await
+        .expect("provision the environment");
+    let (project, project_task) = connect(&route.database_url)
+        .await
+        .expect("connect project database");
+    install_project_and_reconcile(&project, &route.database_url)
+        .await
+        .expect("publish the fixture package");
+    for (email, kind) in [
+        ("person@example.invalid", "person"),
+        ("twin@example.invalid", "person"),
+        ("TWIN@example.invalid", "person"),
+        ("service@example.invalid", "service"),
+    ] {
+        project
+            .execute(
+                "INSERT INTO app_system.users (tenant_id, id, type, email) \
+                 VALUES ($1, gen_random_uuid(), $2, $3)",
+                &[&TENANT, &kind, &email],
+            )
+            .await
+            .expect("write a users row");
+    }
+    let request = |user: &str, role: &str| UserRoleRequest {
+        system_database_url: admin_url.clone(),
+        admin_database_url: route.database_url.clone(),
+        org: ORG.to_owned(),
+        project: PROJECT.to_owned(),
+        env: ENVIRONMENT.to_owned(),
+        tenant: TENANT.to_owned(),
+        user: user.to_owned(),
+        role: role.to_owned(),
+    };
+    let held = |email: &'static str| {
+        let project = &project;
+        async move {
+            project
+                .query(
+                    "SELECT r.role_name FROM app_system.user_roles r \
+                     JOIN app_system.users u ON u.tenant_id = r.tenant_id AND u.id = r.user_id \
+                     WHERE r.tenant_id = $1 AND u.email = $2 ORDER BY r.role_name",
+                    &[&TENANT, &email],
+                )
+                .await
+                .expect("read held roles")
+                .into_iter()
+                .map(|row| row.get::<_, String>(0))
+                .collect::<Vec<_>>()
+        }
+    };
+
+    for (user, role) in [
+        ("person@example.invalid", ADMIN_ROLE),
+        ("service@example.invalid", OPERATOR_ROLE),
+        ("Person@Example.invalid", OPERATOR_ROLE),
+    ] {
+        let outcome = user_roles::grant_role(&request(user, role))
+            .await
+            .unwrap_or_else(|error| panic!("grant {role} to {user}: {error:#}"));
+        assert!(
+            outcome.changed,
+            "the grant of {role} to {user} wrote no row"
+        );
+    }
+    let again = user_roles::grant_role(&request("service@example.invalid", OPERATOR_ROLE))
+        .await
+        .expect("a repeated grant succeeds");
+    assert!(!again.changed, "a repeated grant wrote a second row");
+    assert_eq!(
+        held("person@example.invalid").await,
+        [ADMIN_ROLE, OPERATOR_ROLE]
+    );
+    assert_eq!(held("service@example.invalid").await, [OPERATOR_ROLE]);
+
+    for (user, role, refusal) in [
+        ("person@example.invalid", "reader", "is not a user role"),
+        ("person@example.invalid", "platform", "is not a user role"),
+        (
+            "nobody@example.invalid",
+            OPERATOR_ROLE,
+            "reconcile-run-plane",
+        ),
+        ("twin@example.invalid", OPERATOR_ROLE, "names 2 users"),
+    ] {
+        let error = user_roles::grant_role(&request(user, role))
+            .await
+            .expect_err("the grant must refuse");
+        assert!(
+            format!("{error:#}").contains(refusal),
+            "the refusal of {role} for {user} does not say {refusal:?}: {error:#}"
+        );
+    }
+    let mut wrong_env = request("person@example.invalid", OPERATOR_ROLE);
+    wrong_env.env = OTHER_ENVIRONMENT.to_owned();
+    assert!(
+        user_roles::grant_role(&wrong_env).await.is_err(),
+        "a registry target without a recorded instance was accepted"
+    );
+
+    let revoked = user_roles::revoke_role(&request("person@example.invalid", ADMIN_ROLE))
+        .await
+        .expect("revoke admin");
+    assert!(revoked.changed);
+    let revoked = user_roles::revoke_role(&request("service@example.invalid", OPERATOR_ROLE))
+        .await
+        .expect("revoke operator");
+    assert!(revoked.changed);
+    let unchanged = user_roles::revoke_role(&request("service@example.invalid", OPERATOR_ROLE))
+        .await
+        .expect("a repeated revoke succeeds");
+    assert!(!unchanged.changed, "a repeated revoke removed a row");
+    assert_eq!(held("person@example.invalid").await, [OPERATOR_ROLE]);
+    assert!(held("service@example.invalid").await.is_empty());
+
     drop(project);
     project_task.abort();
     admin_task.abort();

@@ -20,8 +20,6 @@ use wamn_session::verifier::SessionVerifier;
 
 use crate::session_keys::IssuerKeys;
 
-const ROUTE_CALLER_ROLE: &str = "route-caller";
-
 /// Resolve an admitted service against its current tenant status and role grants.
 pub async fn queued_service_caller(
     client: &(impl tokio_postgres::GenericClient + Sync),
@@ -289,7 +287,7 @@ impl RouteAuthenticator for PlatformRouteAuthenticator {
                     &authentication.org,
                     &authentication.project,
                     &manifest.release.environment,
-                    ROUTE_CALLER_ROLE,
+                    &wamn_project_state::USER_ROLE_NAMES,
                 )
                 .instrument(tracing::info_span!("wamn.auth.identity"))
                 .await
@@ -299,38 +297,30 @@ impl RouteAuthenticator for PlatformRouteAuthenticator {
                 })?
                 .ok_or_else(unauthorized)?;
             let principal = principal.principal();
-            let permissions = match principal.kind() {
+            match principal.kind() {
                 PrincipalKind::Platform => return Err(unauthorized()),
-                PrincipalKind::Service => {
-                    if principal.subject() != authentication.expected_subject.as_ref() {
-                        return Err(unauthorized());
-                    }
-                    authentication
-                        .postgres
-                        .operation_permissions(
-                            &authentication.project,
-                            &manifest.release.tenant_id,
-                            ROUTE_CALLER_ROLE,
-                        )
-                        .instrument(tracing::info_span!("wamn.auth.permissions"))
-                        .await
+                PrincipalKind::Service
+                    if principal.subject() != authentication.expected_subject.as_ref() =>
+                {
+                    return Err(unauthorized());
                 }
-                PrincipalKind::Human => {
-                    authentication
-                        .postgres
-                        .user_operation_permissions(
-                            &authentication.project,
-                            &manifest.release.tenant_id,
-                            principal.id(),
-                        )
-                        .instrument(tracing::info_span!("wamn.auth.permissions"))
-                        .await
-                }
+                PrincipalKind::Service | PrincipalKind::Human => {}
             }
-            .map_err(|error| {
-                tracing::warn!(error = %error, "route operation grants unavailable");
-                authentication_unavailable()
-            })?;
+            // A service and a person hold their roles the same way, through
+            // `wamn-ctl grant-role`.
+            let permissions = authentication
+                .postgres
+                .user_operation_permissions(
+                    &authentication.project,
+                    &manifest.release.tenant_id,
+                    principal.id(),
+                )
+                .instrument(tracing::info_span!("wamn.auth.permissions"))
+                .await
+                .map_err(|error| {
+                    tracing::warn!(error = %error, "route operation grants unavailable");
+                    authentication_unavailable()
+                })?;
             Ok(AuthenticatedCaller::new(
                 attachment_id,
                 principal.id().as_str(),

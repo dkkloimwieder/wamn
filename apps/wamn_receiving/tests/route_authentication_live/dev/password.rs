@@ -187,7 +187,7 @@ impl Login {
         let (project, task) = connect(&environment.route.database_url).await?;
         let actor = PlatformComponent::Provisioning.principal_id().to_string();
         project.execute("SELECT set_config('app.user_id', $1, false), set_config('app.tenant_id', $2, false), set_config('app.operation','admin:seed-identity-fixture',false)", &[&actor, &TENANT]).await?;
-        project.execute("INSERT INTO app_system.user_roles (tenant_id,user_id,role_name) VALUES ($1,$2::text::uuid,'route-caller') ON CONFLICT DO NOTHING", &[&TENANT,&self.human]).await?;
+        project.execute("INSERT INTO app_system.user_roles (tenant_id,user_id,role_name) VALUES ($1,$2::text::uuid,'operator') ON CONFLICT DO NOTHING", &[&TENANT,&self.human]).await?;
         project.execute("INSERT INTO receiving.supplier (id,name) VALUES ('00000000-0000-0000-0000-000000000401','SUPPLIER-401') ON CONFLICT ON CONSTRAINT supplier_id_pkey DO NOTHING", &[]).await?;
         project.execute("INSERT INTO receiving.purchase_order (id,purchase_order_number,supplier_id) VALUES (gen_random_uuid(),'PASSWORD-JOURNEY','00000000-0000-0000-0000-000000000401')", &[]).await?;
         let repository = super::super::repository_root()?;
@@ -309,7 +309,7 @@ impl Login {
             repeat.status() == reqwest::StatusCode::BAD_REQUEST,
             "an enrolled account accepted a replacement invitation"
         );
-        project.execute("DELETE FROM app_system.user_roles WHERE tenant_id=$1 AND user_id=$2::text::uuid AND role_name='route-caller'", &[&TENANT,&self.human]).await?;
+        project.execute("DELETE FROM app_system.user_roles WHERE tenant_id=$1 AND user_id=$2::text::uuid AND role_name='operator'", &[&TENANT,&self.human]).await?;
         task.abort();
         let response = self
             .http

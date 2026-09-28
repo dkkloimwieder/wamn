@@ -226,7 +226,7 @@ pub(super) async fn trigger(
             .join("materializer-trace-ids.json"),
         serde_json::to_vec(&json!({"update":update_trace,"receipt":receipt_trace}))?,
     )?;
-    let token = secret_value(&cluster.inputs.route_caller_secret_output, "token")?;
+    let token = secret_value(&cluster.inputs.operator_secret_output, "token")?;
     let http = reqwest::Client::builder()
         .no_proxy()
         .redirect(reqwest::redirect::Policy::none())

@@ -78,12 +78,12 @@ fn pat_literals_and_secret_documents_are_exact() {
         "WAMN management author demo/billing/dev"
     );
     assert_eq!(
-        ROUTE_CALLER.subject(&triple).unwrap(),
-        "wamn-route-caller-demo--billing--dev"
+        OPERATOR.subject(&triple).unwrap(),
+        "wamn-operator-demo--billing--dev"
     );
     assert_eq!(
-        ROUTE_CALLER.display_name(&triple),
-        "WAMN route caller demo/billing/dev"
+        OPERATOR.display_name(&triple),
+        "WAMN operator demo/billing/dev"
     );
 
     let secret = render_pat_secret(
@@ -136,10 +136,10 @@ fn pat_literals_and_secret_documents_are_exact() {
         ["token"]
     );
 
-    let route_secret = render_pat_secret(
+    let operator_secret = render_pat_secret(
         &triple,
         "wamn-system",
-        ROUTE_CALLER,
+        OPERATOR,
         "6d3f2d1c-0000-4000-8000-00000000abcd",
         "wamn_pat_other-material",
         "fedcba9876543210",
@@ -147,12 +147,12 @@ fn pat_literals_and_secret_documents_are_exact() {
     )
     .unwrap();
     assert_eq!(
-        route_secret["metadata"]["name"],
-        "wamn-pat-route-caller-demo--billing--dev"
+        operator_secret["metadata"]["name"],
+        "wamn-pat-operator-demo--billing--dev"
     );
     assert_eq!(
-        route_secret["metadata"]["annotations"]["wamn.io/project-role"],
-        "route-caller"
+        operator_secret["metadata"]["annotations"]["wamn.io/project-role"],
+        "operator"
     );
 }
 

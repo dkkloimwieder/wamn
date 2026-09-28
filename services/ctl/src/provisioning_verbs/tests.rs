@@ -150,34 +150,34 @@ fn pat_issue_flags_select_independently_and_revoke_conflicts() {
     ])
     .unwrap();
     assert!(management.emit_management_author_pat_secret.is_some());
-    assert!(management.emit_route_caller_pat_secret.is_none());
+    assert!(management.emit_operator_pat_secret.is_none());
 
     let route = parse_args(&[
         "--emit-secret",
         "/tmp/db.json",
-        "--emit-route-caller-pat-secret",
+        "--emit-operator-pat-secret",
         "/tmp/route.json",
     ])
     .unwrap();
     assert!(route.emit_management_author_pat_secret.is_none());
-    assert!(route.emit_route_caller_pat_secret.is_some());
+    assert!(route.emit_operator_pat_secret.is_some());
 
     let both = parse_args(&[
         "--emit-secret",
         "/tmp/db.json",
         "--emit-management-author-pat-secret",
         "/tmp/management.json",
-        "--emit-route-caller-pat-secret",
+        "--emit-operator-pat-secret",
         "/tmp/route.json",
     ])
     .unwrap();
     assert!(both.emit_management_author_pat_secret.is_some());
-    assert!(both.emit_route_caller_pat_secret.is_some());
+    assert!(both.emit_operator_pat_secret.is_some());
 
     let transport = parse_args(&[
         "--emit-secret",
         "/tmp/db.json",
-        "--emit-route-caller-pat-secret",
+        "--emit-operator-pat-secret",
         "/tmp/route.json",
         "--pat-issuer",
         "https://identity.example/authority",
@@ -244,7 +244,7 @@ fn pat_issue_flags_select_independently_and_revoke_conflicts() {
 
     for issue_flag in [
         "--emit-management-author-pat-secret",
-        "--emit-route-caller-pat-secret",
+        "--emit-operator-pat-secret",
     ] {
         assert!(
             parse_args(&[
@@ -282,7 +282,7 @@ async fn pat_transport_configuration_refuses_before_provisioning_effects() {
         let mut args = parse_args(&[
             "--emit-secret",
             "/tmp/pat-config-refusal-db.json",
-            "--emit-route-caller-pat-secret",
+            "--emit-operator-pat-secret",
             "/tmp/pat-config-refusal-route.json",
         ])
         .unwrap();
@@ -318,7 +318,7 @@ fn every_secret_output_rejects_stdout_and_prefix_is_strict() {
     assert!(parse_args(&["--emit-secret", "-"]).is_err());
     for issue_flag in [
         "--emit-management-author-pat-secret",
-        "--emit-route-caller-pat-secret",
+        "--emit-operator-pat-secret",
     ] {
         assert!(
             parse_args(&["--emit-secret", "/tmp/db.json", issue_flag, "-"]).is_err(),
@@ -345,7 +345,7 @@ fn parsed_credential_outputs_must_name_distinct_files() {
         vec![
             "--emit-secret",
             "/tmp/shared-credential.json",
-            "--emit-route-caller-pat-secret",
+            "--emit-operator-pat-secret",
             "/tmp/shared-credential.json",
         ],
         vec![
@@ -359,7 +359,7 @@ fn parsed_credential_outputs_must_name_distinct_files() {
             "/tmp/db.json",
             "--emit-management-author-pat-secret",
             "/tmp/shared-credential.json",
-            "--emit-route-caller-pat-secret",
+            "--emit-operator-pat-secret",
             "/tmp/shared-credential.json",
         ],
     ] {
@@ -371,8 +371,8 @@ fn parsed_credential_outputs_must_name_distinct_files() {
                 args.emit_management_author_pat_secret.as_deref(),
             ),
             (
-                "--emit-route-caller-pat-secret",
-                args.emit_route_caller_pat_secret.as_deref(),
+                "--emit-operator-pat-secret",
+                args.emit_operator_pat_secret.as_deref(),
             ),
         ])
         .expect_err("duplicate credential output was accepted");
@@ -384,7 +384,7 @@ fn parsed_credential_outputs_must_name_distinct_files() {
         "/tmp/db.json",
         "--emit-management-author-pat-secret",
         "/tmp/management.json",
-        "--emit-route-caller-pat-secret",
+        "--emit-operator-pat-secret",
         "/tmp/route.json",
     ])
     .unwrap();
@@ -395,8 +395,8 @@ fn parsed_credential_outputs_must_name_distinct_files() {
             args.emit_management_author_pat_secret.as_deref(),
         ),
         (
-            "--emit-route-caller-pat-secret",
-            args.emit_route_caller_pat_secret.as_deref(),
+            "--emit-operator-pat-secret",
+            args.emit_operator_pat_secret.as_deref(),
         ),
     ])
     .unwrap();

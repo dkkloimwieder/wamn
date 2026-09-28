@@ -26,9 +26,7 @@ use wamn_execution_host::{
     OperationHost, OperationScope, RouterDeliveryBridge, RouterReadinessProbe,
     RouterReadinessStatus,
 };
-use wamn_platform_identity::{
-    assign_project_role, create_service, issue_pat, route_caller_subject,
-};
+use wamn_platform_identity::{assign_project_role, create_service, issue_pat, operator_subject};
 use wamn_run_state::AuthorityClass;
 use wamn_runtime::plugins::connection_http::transport::HttpTransport;
 use wamn_runtime::plugins::route_authentication::{
@@ -86,8 +84,8 @@ pub(super) async fn assemble(
             &[&input.org, &input.project],
         )
         .await?;
-    let subject = route_caller_subject(input.org, input.project, input.environment)?;
-    let principal = create_service(&system, &subject, "local application route caller").await?;
+    let subject = operator_subject(input.org, input.project, input.environment)?;
+    let principal = create_service(&system, &subject, "local application operator").await?;
     assign_project_role(
         &system,
         principal.id(),
@@ -384,7 +382,7 @@ pub(super) async fn assemble(
         ),
     );
     let flow_http = Component::new(engine.inner(), std::fs::read(input.flow_http_wasm)?)?;
-    let secret = input.scratch.join("route-caller-pat.json");
+    let secret = input.scratch.join("operator-pat.json");
     wamn_control::provision_project_env::write_secret_json(
         &secret,
         &json!({"stringData":{"token":bearer}}),

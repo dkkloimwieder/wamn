@@ -30,11 +30,6 @@ use super::{DEFAULT_PROJECT, PgError, RowSet};
 mod pools;
 mod transactions;
 
-const OPERATION_PERMISSIONS_SQL: &str = "SELECT permission \
-    FROM app_system.permissions \
-    WHERE tenant_id = $1 AND role_name = $2 \
-    ORDER BY permission";
-
 const SESSION_OPERATION_PERMISSIONS_SQL: &str = "SELECT DISTINCT permission \
     FROM app_system.permissions \
     WHERE tenant_id = $1 AND role_name = ANY($2::text[]) \
@@ -1701,60 +1696,6 @@ impl WamnPostgres {
                 Err(error)
             }
         }
-    }
-
-    /// Load the exact registered-operation tokens granted to one application role.
-    ///
-    /// This is host-only authorization work. It reuses the callable-HTTP
-    /// platform pool, selects the tenant and role through bound predicates, and
-    /// installs no `app.role` or `app.user_id` session claim. The returned set is
-    /// attached to the originating caller once and compared at every registered
-    /// invocation, including nested router steps.
-    pub async fn operation_permissions(
-        &self,
-        project: &str,
-        tenant: &str,
-        role: &str,
-    ) -> anyhow::Result<BTreeSet<String>> {
-        anyhow::ensure!(
-            valid_project(project),
-            "invalid operation-permission project"
-        );
-        anyhow::ensure!(valid_tenant(tenant), "invalid operation-permission tenant");
-        anyhow::ensure!(!role.is_empty(), "operation-permission role is empty");
-        let (connection, _policy) = self
-            .checkout_platform(project, AuthorityClass::CallableHttp)
-            .await
-            .map_err(|error| anyhow::anyhow!(error.to_string()))?;
-        // ONE ROUND TRIP, AUTOCOMMIT. This read installs no session claim -- see
-        // the contract above -- so it is exactly the shape that case 3c confirmed needs no
-        // transaction, and the BEGIN/COMMIT around it were ceremony: 0.662 ms of
-        // every authenticated request, against a 0.740 ms read. The
-        // statement_timeout it used to SET per request is pool-uniform and now
-        // rides the pool's post_create hook. Measured in
-        // the measurement record in commit b40a1714b8a0.
-        //
-        // prepare_cached, not a bare &str: deadpool caches the parse per
-        // connection, so the Parse round trip is paid once per connection rather
-        // than once per request.
-        let statement = match connection.prepare_cached(OPERATION_PERMISSIONS_SQL).await {
-            Ok(statement) => statement,
-            Err(error) => {
-                self.destroy(connection);
-                return Err(error).context("prepare registered-operation permissions");
-            }
-        };
-        let rows = connection
-            .query(&statement, &[&tenant, &role])
-            .instrument(tracing::info_span!("wamn.auth.perm.query"))
-            .await
-            .context("read registered-operation permissions")?;
-        rows.into_iter()
-            .map(|row| {
-                row.try_get::<_, String>(0)
-                    .context("decode registered-operation permission")
-            })
-            .collect()
     }
 
     /// Read the fresh permission union for roles from a verified session.

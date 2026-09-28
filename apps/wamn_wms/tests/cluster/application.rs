@@ -360,10 +360,8 @@ pub(super) async fn generated_terminal(
         work,
         evidence,
     } = *paths;
-    let token = wamn_control::provision_project_env::secret_value(
-        &inputs.route_caller_secret_output,
-        "token",
-    )?;
+    let token =
+        wamn_control::provision_project_env::secret_value(&inputs.operator_secret_output, "token")?;
     let token_path = work.join(format!("generated-tui-{mode}-pat"));
     let database_path = work.join(format!("generated-tui-{mode}-database-url"));
     super::deployment::write_private(&token_path, token.as_bytes())?;

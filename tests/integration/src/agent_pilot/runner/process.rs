@@ -312,8 +312,8 @@ impl Run {
                 text(&self.task["identity"]["route_host"]),
             )
             .env(
-                "WAMN_ROUTE_CALLER_PAT_FILE",
-                self.directory.join("env/route-caller-pat.json"),
+                "WAMN_OPERATOR_PAT_FILE",
+                self.directory.join("env/operator-pat.json"),
             )
             .env("WAMN_PILOT_RUN_DIR", &self.directory)
             .env("WAMN_PILOT_TASK_DIR", self.directory.join("fixture"))

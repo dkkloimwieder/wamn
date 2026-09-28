@@ -234,10 +234,10 @@ async fn request(
         trace_id,
         parent_span,
     } = *trace;
-    let caller: Value = serde_json::from_slice(&fs::read(&inputs.route_caller_secret_output)?)?;
+    let caller: Value = serde_json::from_slice(&fs::read(&inputs.operator_secret_output)?)?;
     let secret = caller["metadata"]["name"]
         .as_str()
-        .context("route caller Secret has a name")?;
+        .context("operator Secret has a name")?;
     // A get is a read: its one item travels in the query string, with no
     // request identity.
     let query = wamn_execution_contract::encode_read_query(
@@ -342,7 +342,7 @@ while :; do
   metrics=$(curl --silent --show-error --connect-timeout 5 --max-time 60 \
     --output /tmp/body --write-out '%{http_code} %{time_starttransfer} %{time_total}' \
     --header "Host: $ROUTE_HOST" \
-    --header "Authorization: Bearer $ROUTE_CALLER_PAT" --header "traceparent: $TRACEPARENT" \
+    --header "Authorization: Bearer $OPERATOR_PAT" --header "traceparent: $TRACEPARENT" \
     "$ROUTE_URL") || metrics='000 0 0'
   set -- $metrics
   elapsed=$(( $(date +%s) - probe_start ))
@@ -356,7 +356,7 @@ printf '{"status":"%s","first_seconds":"%s","total_seconds":"%s","recovery_secon
 test "$1" = 200
 "#;
     json!({"apiVersion":"batch/v1","kind":"Job","metadata":{"name":job,"namespace":cluster},"spec":{"activeDeadlineSeconds":200,"backoffLimit":0,"template":{"spec":{"restartPolicy":"Never","containers":[{"name":"probe","image":HTTP_PROBE_IMAGE,"imagePullPolicy":"IfNotPresent","terminationMessagePolicy":"File","command":["/bin/sh","-ec"],"args":[script],"env":[
-        {"name":"ROUTE_CALLER_PAT","valueFrom":{"secretKeyRef":{"name":secret,"key":"token"}}},
+        {"name":"OPERATOR_PAT","valueFrom":{"secretKeyRef":{"name":secret,"key":"token"}}},
         {"name":"ROUTE_HOST","value":route_host},{"name":"TRACEPARENT","value":format!("00-{trace_id}-{parent_span}-01")},
         {"name":"ROUTE_URL","value":format!("http://flow-http.{cluster}.svc.cluster.local/packaging/get?{query}")}
     ]}]}}}})
@@ -810,7 +810,7 @@ mod tests {
         let env = container["env"].as_array().unwrap();
         assert_eq!(
             env[0],
-            json!({"name":"ROUTE_CALLER_PAT","valueFrom":{"secretKeyRef":{"name":"selected-pat","key":"token"}}})
+            json!({"name":"OPERATOR_PAT","valueFrom":{"secretKeyRef":{"name":"selected-pat","key":"token"}}})
         );
         assert_eq!(
             env[1],
@@ -895,7 +895,7 @@ printf '%s 0.001 0.002' "$status"
                 )
                 .env("TEST_DIRECTORY", directory.path())
                 .env("TEST_CODES", codes)
-                .env("ROUTE_CALLER_PAT", "local-test-token");
+                .env("OPERATOR_PAT", "local-test-token");
             for entry in &env[1..] {
                 command.env(
                     entry["name"].as_str().unwrap(),

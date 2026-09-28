@@ -26,7 +26,7 @@ The public operations are declared in the manifest:
 | `location.list` | Read a bounded list of available locations. |
 | `receiving.load_purchase_order_history` | Read one page of the change log of a purchase order. |
 
-Each public operation has its own operation grant, and the `route-caller` role holds every grant.
+Each public operation has its own operation grant, and the `operator` and `admin` roles hold every grant.
 The history read has the grant `wamn-receiving:receiving/load-purchase-order-history@1.0.0`.
 
 The query filters on `supplier_id` and `status`.
@@ -92,7 +92,7 @@ It does not establish a TCP-loss or process-kill result.
 
 [Route tests](tests/route_authentication_live.rs) exercise the deployed application and its exact release.
 The PAT journey folds the served history of a purchase order that the Acme update changed, and it finds no Acme column.
-A route caller that holds every other grant but not the history grant gets `403` `permission-denied`.
+An operator that holds every other grant but not the history grant gets `403` `permission-denied`.
 The [data access tests](tests/receiving_data_access.rs) show that an idempotent replay appends no history entry.
 They also show that an Acme update logs a changed-column diff, and that the fold rebuilds the effective row.
 [Postcommit tests](tests/postcommit.rs) exercise the private Acme consumer through the native event broker.
