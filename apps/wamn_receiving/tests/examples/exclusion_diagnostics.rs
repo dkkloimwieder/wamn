@@ -99,6 +99,7 @@ async fn main() -> anyhow::Result<()> {
             "-z",
             "apps",
             "crates/platform/runtime/wit/deps/wamn-postgres",
+            "crates/platform/runtime/wit/deps/wamn-postgres-0.2",
             "rust-toolchain.toml",
         ])
         .output()?;
@@ -121,6 +122,11 @@ async fn main() -> anyhow::Result<()> {
     client.batch_execute("CREATE SCHEMA receiving; CREATE EXTENSION btree_gist; CREATE ROLE wamn_app; GRANT USAGE ON SCHEMA receiving TO wamn_app;").await?;
     client
         .batch_execute(include_str!("../../migrations/0001_initial.sql"))
+        .await?;
+    client
+        .batch_execute(include_str!(
+            "../../migrations/0002_supplier_name_min_length.sql"
+        ))
         .await?;
     client.batch_execute("GRANT SELECT, UPDATE ON receiving.purchase_order TO wamn_app;
         INSERT INTO receiving.supplier (id, name)
