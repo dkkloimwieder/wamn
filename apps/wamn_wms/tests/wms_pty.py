@@ -112,6 +112,7 @@ def seed(db, ids, prefix):
     # The fixture writes as its test principal, so the stamp trigger has an actor.
     db.sql("01-seed", f"""BEGIN;
 SET LOCAL app.user_id = '{FIXTURE_PRINCIPAL}';
+SET LOCAL app.operation = 'admin:seed-wms-pty-fixture';
 INSERT INTO wms.product (id, product_code) VALUES ('{ids.product}', '{prefix}-PRODUCT');
 INSERT INTO wms.location (id, location_code) VALUES
   ('{ids.source}', '{prefix}-FROM'), ('{ids.destination}', '{prefix}-TO');
@@ -141,6 +142,8 @@ def snapshot(db, name, ids):
 
 def cleanup(db, ids):
     remaining = db.sql("90-cleanup", f"""BEGIN;
+SET LOCAL app.user_id = '{FIXTURE_PRINCIPAL}';
+SET LOCAL app.operation = 'admin:remove-wms-pty-fixture';
 DELETE FROM app_system.write_log AS logged
     WHERE logged.operation = 'wamn-wms:inventory/move' AND logged.result::jsonb ->> 'packaging_id' = '{ids.packaging}';
 DELETE FROM wms.inventory_transaction WHERE '{ids.packaging}' IN (from_packaging_id, to_packaging_id);
