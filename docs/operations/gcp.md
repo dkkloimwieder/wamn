@@ -1308,3 +1308,25 @@ kubectl -n hosts logs -l app.kubernetes.io/instance=wamn-host --all-containers -
 ```
 
 On 2026-09-27 the owner moved one pallet. The movement `8743151e-e335-491e-ac80-258072b2503d` was written at 17:35:45.416 UTC. The host started the `wamn_wms::movement_label` run 111 milliseconds later. The label `wms/8743151e-e335-491e-ac80-258072b2503d` is a 276 byte ZPL document, written in the same second. The row action `move` of the Pallets table was out of reach, because the table cuts off its last columns (finding `wamn-po31`).
+
+## 6. Benchmark
+
+### 6.1 Morning start and the 1000 seed
+
+If the guard scaled `main` to 0 overnight, resize it and run the tap Job again (section 3.5):
+
+```bash
+gcloud container clusters resize wamn --node-pool main --num-nodes 2 --zone us-central1-a --project wamn-dev --quiet
+```
+
+On 2026-09-28 the resize took 73 seconds and the tap Job 25 seconds. About 40 minutes later Google replaced both Spot nodes. Every pod started again in 549 seconds, and the tap Job ran again in 19 seconds.
+
+Load the 1000 seed of Receiving through the database port-forward, as the superuser. The reset empties every Receiving table, so the supplier change of step 4 and every receipt go with it. Release 1 has no `app_system.write_log` table, so remove the reset line that deletes from it:
+
+```bash
+grep -v "^DELETE FROM app_system.write_log" apps/wamn_receiving/tests/fixtures/receiving-seed.sql \
+  | psql -h 127.0.0.1 -p 15432 -U postgres -d wamn-db-dkk--receiving--dev--zf7o454t \
+      -v ON_ERROR_STOP=1 -v reset=1 -v scale=1000 -q
+```
+
+On 2026-09-28 the load wrote 1000 items, 1000 locations, 5 suppliers, 1000 purchase orders and 500500 lines in 258 seconds. The first run, with the reset line, stopped at that line and rolled back.
