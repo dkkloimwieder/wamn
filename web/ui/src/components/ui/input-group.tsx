@@ -15,7 +15,7 @@ const InputGroup = (props: InputGroupProps) => {
       data-slot="input-group"
       role="group"
       class={cn(
-        "group/input-group z-input-group relative flex w-full min-w-0 items-center outline-none has-[>textarea]:h-auto",
+        "group/input-group z-input-group relative flex min-w-0 items-center outline-none has-[>textarea]:h-auto",
         local.class,
       )}
       {...others}

@@ -46,7 +46,9 @@ import {
   type SortingState,
   tableFeatures,
 } from "@tanstack/solid-table";
-import { ChevronDown, ChevronRight, X } from "lucide-solid";
+import ChevronDown from "lucide-solid/icons/chevron-down";
+import ChevronRight from "lucide-solid/icons/chevron-right";
+import X from "lucide-solid/icons/x";
 import { createMemo, createUniqueId, For, type JSX, mergeProps, Show } from "solid-js";
 
 import { Badge } from "../components/ui/badge";

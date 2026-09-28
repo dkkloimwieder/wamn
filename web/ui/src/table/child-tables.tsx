@@ -13,7 +13,8 @@
  * set table shows the rows.
  */
 
-import { ChevronDown, ChevronRight } from "lucide-solid";
+import ChevronDown from "lucide-solid/icons/chevron-down";
+import ChevronRight from "lucide-solid/icons/chevron-right";
 import { createRoot, createSignal, For, getOwner, type JSX, onCleanup, runWithOwner, Show } from "solid-js";
 
 import { Button } from "../components/ui/button";

@@ -9,7 +9,11 @@
  * Grouping runs in the table, which shows the bar only on a fully read set.
  */
 
-import { ArrowDown, ArrowLeft, ArrowRight, ArrowUp, X } from "lucide-solid";
+import ArrowDown from "lucide-solid/icons/arrow-down";
+import ArrowLeft from "lucide-solid/icons/arrow-left";
+import ArrowRight from "lucide-solid/icons/arrow-right";
+import ArrowUp from "lucide-solid/icons/arrow-up";
+import X from "lucide-solid/icons/x";
 import { For, type JSX, Show } from "solid-js";
 
 import { Button } from "../components/ui/button";

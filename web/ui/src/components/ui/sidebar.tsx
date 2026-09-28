@@ -1,8 +1,8 @@
-import type { PolymorphicProps } from "@kobalte/core";
-import { Polymorphic } from "@kobalte/core";
+import type { PolymorphicProps } from "@kobalte/core/polymorphic";
+import { Polymorphic } from "@kobalte/core/polymorphic";
 import type { VariantProps } from "class-variance-authority";
 import { cva } from "class-variance-authority";
-import { PanelLeft } from "lucide-solid";
+import PanelLeft from "lucide-solid/icons/panel-left";
 import type { Accessor, Component, ComponentProps, JSX, ValidComponent } from "solid-js";
 import {
   createContext,

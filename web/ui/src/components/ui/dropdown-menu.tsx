@@ -1,6 +1,6 @@
 import * as DropdownMenuPrimitive from "@kobalte/core/dropdown-menu";
 import type { PolymorphicProps } from "@kobalte/core/polymorphic";
-import { Check } from "lucide-solid";
+import Check from "lucide-solid/icons/check";
 import type { ComponentProps, ValidComponent } from "solid-js";
 import { mergeProps, splitProps } from "solid-js";
 import { cn } from "../../lib/utils";

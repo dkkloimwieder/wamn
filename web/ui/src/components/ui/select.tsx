@@ -9,7 +9,8 @@ import {
   useSelectContext,
   Value,
 } from "@kobalte/core/select";
-import { Check, ChevronsUpDown } from "lucide-solid";
+import Check from "lucide-solid/icons/check";
+import ChevronsUpDown from "lucide-solid/icons/chevrons-up-down";
 import type { ComponentProps, JSX, ValidComponent } from "solid-js";
 import { mergeProps, splitProps } from "solid-js";
 import { cn } from "../../lib/utils";

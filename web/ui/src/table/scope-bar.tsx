@@ -17,7 +17,7 @@
  * table, and the header keeps the refine filters, so the two layers read apart.
  */
 
-import { X } from "lucide-solid";
+import X from "lucide-solid/icons/x";
 import { createUniqueId, For, type JSX, Match, Show, Switch } from "solid-js";
 
 import { Badge } from "../components/ui/badge";

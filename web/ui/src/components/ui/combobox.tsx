@@ -6,7 +6,9 @@ import type {
 } from "@kobalte/core/combobox";
 import * as ComboboxPrimitive from "@kobalte/core/combobox";
 import type { PolymorphicProps } from "@kobalte/core/polymorphic";
-import { Check, ChevronsUpDown, X } from "lucide-solid";
+import Check from "lucide-solid/icons/check";
+import ChevronsUpDown from "lucide-solid/icons/chevrons-up-down";
+import X from "lucide-solid/icons/x";
 import type { ComponentProps, JSX, ValidComponent } from "solid-js";
 import { mergeProps, Show, splitProps } from "solid-js";
 import { cn } from "../../lib/utils";

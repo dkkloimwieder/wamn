@@ -11,7 +11,7 @@
  */
 
 import type { Column } from "@tanstack/solid-table";
-import { ListFilter } from "lucide-solid";
+import ListFilter from "lucide-solid/icons/list-filter";
 import { createUniqueId, For, type JSX, Match, Switch } from "solid-js";
 
 import { Button } from "../components/ui/button";

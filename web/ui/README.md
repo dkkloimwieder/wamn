@@ -34,8 +34,9 @@ The copy changed these things:
 - For the same reason, the mobile sidebar states the type of the props it spreads onto `Sheet`.
 - `tooltip` is a thin wrapper over the Kobalte tooltip, in place of the registry item, which rebuilt Base UI's tooltip on top of Kobalte. It keeps the item's classes, its 600 ms open delay and its padding of 5 pixels, and it carries the side Kobalte settled on as `data-side`.
 - `ComboboxContent` gained a `footer` slot below the list, for a next page control.
-- `Toaster` gives every toast the `z-toast` class, which the registry item leaves out. `src/styles.css` sets the toast corner through `--border-radius`, because solid-sonner draws it from that variable in CSS outside every layer.
-- `src/lib/utils.ts` is the usual `cn`, because the CLI writes it only at `init`.
+- `toast` is the platform's own toast in place of the registry item, which wraps solid-sonner. `Toaster` shows each toast for four seconds at the top center, with the item's icons, and gives it the `z-toast` class.
+- `src/lib/utils.ts` has a `cn` that joins classes with `clsx` and does not use `tailwind-merge`. A default that a caller overrides, such as the width of `field`, `input` and `input-group`, moved from the component into its `z-` rule in the base layer. The caller's utility class then wins.
+- Each `lucide-solid` icon and the Kobalte `polymorphic` import come from their own paths.
 - `src/styles.css` imports `tw-animate-css`, which `init` also adds, and names this package as its Tailwind source.
 - `src/styles.css` carries the shadcn base layer, which gives the page body the theme colors. No registry item writes it.
 - The `data-grid` block is gone (wamn-5pzt). `src/table/grid.tsx` keeps the classes of the path the tables used, in the platform's own grid.

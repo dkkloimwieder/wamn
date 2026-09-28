@@ -305,7 +305,8 @@ function ResizeHandle(props: { header: Header<GridFeatures, object, unknown>; la
             ? // A pinned column is sticky, so the handle sits inside the cell,
               // and the pinned edge draws the separator.
               "end-0 w-5 justify-end before:hidden"
-            : "-end-2 w-5 justify-center before:absolute before:inset-y-0 before:w-px before:-translate-x-px before:bg-border",
+            : "-end-2 w-5 justify-center before:absolute before:inset-y-0 before:-translate-x-px",
+        !props.last && !column().getIsPinned() && !column().getIsResizing() && "before:w-px before:bg-border",
         column().getIsResizing() &&
           (props.last
             ? "before:absolute before:end-0 before:block before:inset-y-0 before:w-0.5 before:bg-primary opacity-100"
@@ -556,7 +557,7 @@ export function Grid<TFeatures extends TableFeatures, TRow extends object>(
   const footer = children(() => props.footer);
 
   return (
-    <div data-slot="data-grid" class={cn("h-[32rem] w-full overflow-auto", props.class)}>
+    <div data-slot="data-grid" class={cn("w-full overflow-auto", props.class ?? "h-[32rem]")}>
       <div
         ref={viewport}
         data-slot="scroll-area-viewport"

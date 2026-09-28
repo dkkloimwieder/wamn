@@ -1,4 +1,5 @@
-import { Loader2Icon, type LucideProps } from "lucide-solid";
+import Loader2Icon from "lucide-solid/icons/loader-circle";
+import type { LucideProps } from "lucide-solid";
 import { splitProps } from "solid-js";
 
 import { cn } from "../../lib/utils";

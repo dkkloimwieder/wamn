@@ -10,7 +10,7 @@
  * write left it, and every other write loads again.
  */
 
-import { Pencil } from "lucide-solid";
+import Pencil from "lucide-solid/icons/pencil";
 import { createEffect, createSignal, type JSX, on, Show } from "solid-js";
 
 import {

@@ -1,7 +1,10 @@
 import { type ClassValue, clsx } from "clsx";
-import { twMerge } from "tailwind-merge";
 
-/** One class string from many, where a later Tailwind class wins a conflict. */
+/**
+ * One class string from many. A default that a caller overrides sits in the
+ * base-layer style class of its component, so the caller's utility class wins
+ * without a merge.
+ */
 export function cn(...inputs: ClassValue[]): string {
-  return twMerge(clsx(inputs));
+  return clsx(inputs);
 }

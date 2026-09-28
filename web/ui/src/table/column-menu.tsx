@@ -9,7 +9,9 @@
  */
 
 import type { Column } from "@tanstack/solid-table";
-import { ArrowDown, ArrowUp, EllipsisVertical } from "lucide-solid";
+import ArrowDown from "lucide-solid/icons/arrow-down";
+import ArrowUp from "lucide-solid/icons/arrow-up";
+import EllipsisVertical from "lucide-solid/icons/ellipsis-vertical";
 import { For, type JSX, Match, Show, Switch } from "solid-js";
 
 import { Button } from "../components/ui/button";

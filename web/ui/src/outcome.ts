@@ -8,7 +8,7 @@
  */
 
 import { type Outcome, refusalSentence } from "@wamn/web-runtime";
-import { toast } from "solid-sonner";
+import { toast } from "./components/ui/toast";
 
 /** Shows one outcome of the screen that `screen` names. */
 export function announceOutcome<T>(outcome: Outcome<T>, screen: string): void {

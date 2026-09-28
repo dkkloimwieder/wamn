@@ -48,7 +48,7 @@ const FieldGroup = (props: FieldGroupProps) => {
   );
 };
 
-const fieldVariants = cva("z-field group/field flex w-full", {
+const fieldVariants = cva("z-field group/field flex", {
   variants: {
     orientation: {
       vertical: "z-field-orientation-vertical flex-col *:w-full [&>.sr-only]:w-auto",

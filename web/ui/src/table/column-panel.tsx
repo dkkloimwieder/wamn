@@ -7,7 +7,9 @@
  * table definition. The panel changes only the table state.
  */
 
-import { ArrowDown, ArrowUp, Columns3 } from "lucide-solid";
+import ArrowDown from "lucide-solid/icons/arrow-down";
+import ArrowUp from "lucide-solid/icons/arrow-up";
+import Columns3 from "lucide-solid/icons/columns-3";
 import { createSignal, createUniqueId, For, type JSX } from "solid-js";
 
 import { Button } from "../components/ui/button";
