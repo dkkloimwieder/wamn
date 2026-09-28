@@ -43,7 +43,7 @@ export {
 export { CardPage, ScreenActions, type CardPageProps, type ScreenActionsProps } from "./page";
 export { announceOutcome } from "./outcome";
 export { createRecordLabels } from "./record-labels";
-export { RecordSelect, type RecordSelectProps } from "./record-select";
+export { RecordSelect, type RecordSelectProps, SearchPause } from "./record-select";
 export { ROW_HEIGHT, WINDOW_FROM } from "./table/grid";
 export {
   builtColumns,

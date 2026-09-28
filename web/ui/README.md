@@ -52,6 +52,7 @@ Add an item only when an emitter target, or a page that places the generated com
 | Export | Purpose |
 | --- | --- |
 | `RecordSelect` | The selector: the rows a list returned, a search after a pause in typing, a next page button, and the one record a stored value names when the list did not return it. It reports the row that carries the stored value, so a form reads that row's revision |
+| `SearchPause` | The pause in typing, in milliseconds, before a selector sends its search. The default is 300. An application sets it once with `<SearchPause.Provider value={500}>` around its shell |
 | `createRecordLabels` | The text of the records a table column names by key, read once for each key and again after each write |
 | `announceOutcome` | Shows one runtime outcome as a toast |
 | `TextField`, `ChoiceField`, `CheckField` | One labeled control and the refusal that marks it |

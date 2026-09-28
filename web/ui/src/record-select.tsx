@@ -8,14 +8,28 @@
  * carries is read by itself, so the control shows its text.
  */
 
-import { createEffect, createMemo, createSignal, createUniqueId, on, onCleanup, Show } from "solid-js";
+import {
+  createContext,
+  createEffect,
+  createMemo,
+  createSignal,
+  createUniqueId,
+  on,
+  onCleanup,
+  Show,
+  useContext,
+} from "solid-js";
 
 import { Button } from "./components/ui/button";
 import { Field, FieldError, FieldLabel } from "./components/ui/field";
 import { Combobox, ComboboxContent, ComboboxInput, ComboboxItem } from "./components/ui/combobox";
 
-/** How long the operator pauses typing before the search is sent. */
-const SEARCH_PAUSE_MS = 300;
+/**
+ * How long, in milliseconds, the operator pauses typing before the search is
+ * sent. An application sets it once with `<SearchPause.Provider value={500}>`
+ * around its shell, and every selector below reads it. The default is 300.
+ */
+export const SearchPause = createContext(300);
 
 export interface RecordSelectProps<Row extends object> {
   /** The rows the list returned, in the order it returned them. */
@@ -127,6 +141,7 @@ export function RecordSelect<Row extends object>(props: RecordSelectProps<Row>) 
     );
   });
 
+  const pause = useContext(SearchPause);
   let pending: ReturnType<typeof setTimeout> | undefined;
   onCleanup(() => clearTimeout(pending));
   const typed = (text: string) => {
@@ -137,7 +152,7 @@ export function RecordSelect<Row extends object>(props: RecordSelectProps<Row>) 
       return;
     }
     clearTimeout(pending);
-    pending = setTimeout(() => search(text), SEARCH_PAUSE_MS);
+    pending = setTimeout(() => search(text), pause);
   };
 
   const labelId = createUniqueId();

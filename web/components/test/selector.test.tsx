@@ -13,6 +13,7 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@solidjs/testing-library";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { SearchPause } from "@wamn/ui";
 import type { JsonValue } from "@wamn/web-runtime";
 
 import { WidgetCreateForm } from "../fixture/components/widget.js";
@@ -85,6 +86,24 @@ describe("a selector over a list that declares its display filter", () => {
     const searched = sent[1]?.items[0] as { filter: { name: string[] }; cursor?: string };
     expect(searched.filter.name).toEqual(["Southwind"]);
     expect(searched.cursor).toBeUndefined();
+  });
+
+  it("waits the pause that the application set (wamn-jc27)", async () => {
+    const { transport, sent } = paged();
+    render(() => (
+      <SearchPause.Provider value={1000}>
+        <WidgetCreateForm transport={transport} />
+      </SearchPause.Provider>
+    ));
+    const input = await openSelector("maker id");
+    await waitFor(() => expect(sent).toHaveLength(1));
+
+    fireEvent.input(input, { target: { value: "Southwind" } });
+
+    // The default pause of 300 ms passes, and no search goes out.
+    await new Promise((resolve) => setTimeout(resolve, 600));
+    expect(sent).toHaveLength(1);
+    await waitFor(() => expect(sent).toHaveLength(2), { timeout: 2000 });
   });
 
   it("keeps the typed search when a record is already chosen", async () => {
