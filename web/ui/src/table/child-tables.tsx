@@ -92,10 +92,8 @@ export function createChildAreas(children: () => readonly DataTableChild[]) {
   return { area, keepOnly };
 }
 
-/** The column that expands a data row to its child tables. */
-export function expandColumn<TRow extends object>(
-  area: (row: TRow) => JSX.Element,
-): ColumnDef<DataTableFeatures, TRow> {
+/** The column that expands a data row to its child tables. The grid shows them under the row. */
+export function expandColumn<TRow extends object>(): ColumnDef<DataTableFeatures, TRow> {
   return {
     id: EXPAND_COLUMN,
     header: "",
@@ -115,9 +113,6 @@ export function expandColumn<TRow extends object>(
         </Button>
       </Show>
     ),
-    // The grid renders this under an expanded data row. A group row expands
-    // to its rows instead, and shows no area.
-    meta: { expandedContent: area },
     size: 48,
     enableSorting: false,
     enableColumnFilter: false,

@@ -8,8 +8,8 @@
  * The table declares one static bundle: `gridFeatures`, column and global
  * filtering, grouping, aggregation, and the filtered, grouped, sorted and
  * expanded row models. The rows pass through them in that order. It renders
- * through `WindowedTable`, so a table above `WINDOW_FROM` rows draws only the
- * rows in view.
+ * through `Grid`, so a table above `WINDOW_FROM` rows draws only the rows in
+ * view.
  *
  * A header click sorts. The sort state lives in the table. If the set is fully
  * read, the table sorts its rows. If it is not, the table calls
@@ -115,14 +115,11 @@ import {
   untrack,
 } from "solid-js";
 
-import { DataGrid, DataGridContainer, DataGridTableFootRow, DataGridTableFootRowCell } from "../blocks/data-grid";
 import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
 import { Field, FieldDescription, FieldLabel } from "../components/ui/field";
 import { Input } from "../components/ui/input";
 import { TextField } from "../fields";
-import { gridFeatures } from "../grid";
-import { WindowedTable } from "../windowed-table";
 import {
   type AggregateResult,
   aggregateValues,
@@ -141,6 +138,7 @@ import { BulkBar, type DataTableAction, type DataTableRowResult, SELECT_COLUMN, 
 import { createChildAreas, type DataTableChild, EXPAND_COLUMN, expandColumn } from "./child-tables";
 import { csvFileName, csvText, downloadCsv, EXPORT_NEEDS_FULL_SET } from "./csv";
 import { type DataTableEditResult, EditCell, editedValue, editText, type OpenEdit } from "./edit-cell";
+import { Grid, GridFootCell, GridFootRow, gridFeatures } from "./grid";
 import { ColumnMenu } from "./column-menu";
 import { ColumnPanel } from "./column-panel";
 import { type DataTableGroupSort, GroupBar, VALUE_SORT } from "./group-bar";
@@ -549,7 +547,7 @@ export function DataTable<TRow extends object>(props: DataTableProps<TRow>): JSX
     const sortFields = props.sortFields;
     return [
       ...(bulk() ? [selectColumn<TRow>((id) => results()[id])] : []),
-      ...(children().length > 0 ? [expandColumn<TRow>(childArea)] : []),
+      ...(children().length > 0 ? [expandColumn<TRow>()] : []),
       ...props.columns.map((definition): ColumnDef<DataTableFeatures, TRow> => ({
         id: definition.field,
         header: (context) => (
@@ -674,7 +672,6 @@ export function DataTable<TRow extends object>(props: DataTableProps<TRow>): JSX
     },
     getRowId: (row) => rowKey(row, props.rowId),
     meta: { groupOrder },
-    manualPagination: true,
     get manualSorting() {
       return !props.fullyRead;
     },
@@ -943,6 +940,12 @@ export function DataTable<TRow extends object>(props: DataTableProps<TRow>): JSX
     }),
   );
 
+  /** The ids of the expanded rows, whose child tables show. */
+  const expandedRows = createMemo(() => {
+    const expanded = table.atoms.expanded?.get() ?? {};
+    return new Set(expanded === true ? [] : Object.keys(expanded).filter((id) => expanded[id]));
+  });
+
   /** Expand or collapse every group of one level. */
   function expandLevel(depth: number, expanded: boolean) {
     const ids = table
@@ -1202,40 +1205,32 @@ export function DataTable<TRow extends object>(props: DataTableProps<TRow>): JSX
         onSort={(field, sort) => setGroupSorts((current) => ({ ...current, [field]: sort }))}
         onExpandLevel={expandLevel}
       />
-      <DataGrid
+      <Grid
         table={table}
-        recordCount={props.rows.length}
-        isLoading={props.busy}
-        // A header edge drag sets the width, which the table state keeps. A pinned column sticks.
-        // The resize mode is a table option: a tableLayout mode would reset the options, which
-        // reads each getter above once and keeps its value.
-        tableLayout={{ columnsResizable: true, columnsPinnable: true }}
+        busy={props.busy}
         emptyMessage={
           props.refusal ?? (filters().length > 0 || search() !== "" ? "No row matches the search and filters." : null)
         }
-      >
-        {/* The grid takes the height the toolbar leaves, in place of its fixed one. */}
-        {/* A revision conflict marks its whole row. */}
-        <DataGridContainer class="h-auto min-h-0 flex-1 [&_tr:has([data-slot=data-table-row-conflict])]:bg-destructive/10">
-          <WindowedTable
-            footerContent={
-              <Show when={props.fullyRead && props.rows.length > 0}>
-                <DataGridTableFootRow>
-                  <For each={totals()}>
-                    {(total) => (
-                      <DataGridTableFootRowCell>
-                        <span data-slot="data-table-total" data-field={total.id}>
-                          <span class="text-muted-foreground">{total.aggregate}</span> {shownText(total.value)}
-                        </span>
-                      </DataGridTableFootRowCell>
-                    )}
-                  </For>
-                </DataGridTableFootRow>
-              </Show>
-            }
-          />
-        </DataGridContainer>
-      </DataGrid>
+        // The grid takes the height the toolbar leaves, in place of its fixed one.
+        // A revision conflict marks its whole row.
+        class="h-auto min-h-0 flex-1 [&_tr:has([data-slot=data-table-row-conflict])]:bg-destructive/10"
+        detail={children().length === 0 ? undefined : { open: expandedRows, render: childArea }}
+        footer={
+          <Show when={props.fullyRead && props.rows.length > 0}>
+            <GridFootRow>
+              <For each={totals()}>
+                {(total) => (
+                  <GridFootCell>
+                    <span data-slot="data-table-total" data-field={total.id}>
+                      <span class="text-muted-foreground">{total.aggregate}</span> {shownText(total.value)}
+                    </span>
+                  </GridFootCell>
+                )}
+              </For>
+            </GridFootRow>
+          </Show>
+        }
+      />
     </section>
   );
 }

@@ -7,7 +7,6 @@
  */
 
 import { createSignal, For, onMount, type JSX } from "solid-js";
-import { createTable, type ColumnDef } from "@tanstack/solid-table";
 
 import {
   announceOutcome,
@@ -16,19 +15,16 @@ import {
   CheckField,
   ChoiceField,
   ConfirmAction,
-  DataGrid,
-  DataGridContainer,
-  DataGridTable,
+  DataTable,
   DetailItem,
   DetailList,
   FieldGroup,
   FormActions,
-  gridFeatures,
   RecordSelect,
   TableScreen,
   TextField,
   type Choice,
-  type GridFeatures,
+  type DataTableColumn,
 } from "@wamn/ui";
 import type { Outcome } from "@wamn/web-runtime";
 
@@ -131,7 +127,7 @@ function LiveSelect(): JSX.Element {
   );
 }
 
-/** One sample widget row of the grid. */
+/** One sample widget row of a table. */
 interface SampleRow {
   readonly id: string;
   readonly code: string;
@@ -140,12 +136,12 @@ interface SampleRow {
   readonly createdAt: string;
 }
 
-const COLUMNS: ColumnDef<GridFeatures, SampleRow>[] = [
-  { accessorKey: "code", header: "code" },
-  { accessorKey: "createdAt", header: "created at" },
-  { accessorKey: "editVersion", header: "edit version" },
-  { accessorKey: "id", header: "id" },
-  { accessorKey: "note", header: "note" },
+const COLUMNS: readonly DataTableColumn<SampleRow>[] = [
+  { field: "code", label: "code", type: "text" },
+  { field: "createdAt", label: "created at", type: "timestamptz" },
+  { field: "editVersion", label: "edit version", type: "int64" },
+  { field: "id", label: "id", type: "text", role: "key" },
+  { field: "note", label: "note", type: "text" },
 ];
 
 const HUNDRED: readonly SampleRow[] = Array.from({ length: 100 }, (_, index) => ({
@@ -156,21 +152,28 @@ const HUNDRED: readonly SampleRow[] = Array.from({ length: 100 }, (_, index) => 
   createdAt: `2026-09-${String(1 + (index % 28)).padStart(2, "0")}T12:00:00.000000Z`,
 }));
 
-function Grid(props: { rows: readonly SampleRow[]; loading: boolean }): JSX.Element {
-  const table = createTable({
-    features: gridFeatures,
-    get data() {
-      return props.rows as SampleRow[];
-    },
-    columns: COLUMNS,
-    manualPagination: true,
-  });
+/** A table over sample rows, all of them read. */
+function SampleTable(props: { rows: readonly SampleRow[] }): JSX.Element {
   return (
-    <DataGrid table={table} recordCount={props.rows.length} isLoading={props.loading}>
-      <DataGridContainer>
-        <DataGridTable />
-      </DataGridContainer>
-    </DataGrid>
+    <DataTable
+      name="widget"
+      columns={COLUMNS}
+      rowId={["id"]}
+      rows={props.rows}
+      fullyRead={true}
+      busy={false}
+      refusal={null}
+      cap={1000}
+      onCapChange={() => {}}
+      onRefresh={() => {}}
+      startedAt={null}
+      endedAt={null}
+      sortFields={[]}
+      sortMaxFields={1}
+      onSortChange={() => {}}
+      scopeFilters={[]}
+      onScopeChange={() => {}}
+    />
   );
 }
 
@@ -239,20 +242,6 @@ export function UiSections(): JSX.Element {
         </div>
       </Section>
 
-      <Section title="Data grid" name="DataGrid, DataGridContainer, DataGridTable">
-        <div class="flex flex-col gap-6">
-          <State name="no rows">
-            <Grid rows={[]} loading={false} />
-          </State>
-          <State name="loading">
-            <Grid rows={[]} loading />
-          </State>
-          <State name="100 rows">
-            <Grid rows={HUNDRED} loading={false} />
-          </State>
-        </div>
-      </Section>
-
       <Section title="Actions row and table screen" name="FormActions, TableScreen">
         <TableScreen>
           <form onSubmit={(event) => event.preventDefault()}>
@@ -263,7 +252,7 @@ export function UiSections(): JSX.Element {
               <Button type="submit">read</Button>
             </FormActions>
           </form>
-          <Grid rows={HUNDRED.slice(0, 3)} loading={false} />
+          <SampleTable rows={HUNDRED.slice(0, 3)} />
           <FormActions>
             <Button type="button" variant="outline" disabled>
               next page

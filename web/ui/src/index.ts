@@ -6,7 +6,6 @@
  * The stylesheet is `@wamn/ui/styles.css`.
  */
 
-export * from "./blocks/data-grid";
 export { Badge } from "./components/ui/badge";
 export { Button } from "./components/ui/button";
 export { Card, CardContent, CardDescription, CardHeader, CardTitle } from "./components/ui/card";
@@ -42,11 +41,10 @@ export {
   type FrameSection,
 } from "./frame";
 export { CardPage, ScreenActions, type CardPageProps, type ScreenActionsProps } from "./page";
-export { gridFeatures, type GridFeatures } from "./grid";
 export { announceOutcome } from "./outcome";
 export { createRecordLabels } from "./record-labels";
 export { RecordSelect, type RecordSelectProps } from "./record-select";
-export { ROW_HEIGHT, WINDOW_FROM, WindowedTable } from "./windowed-table";
+export { ROW_HEIGHT, WINDOW_FROM } from "./table/grid";
 export { type DataTableFilter } from "./table/column-filter";
 export {
   DataTable,
