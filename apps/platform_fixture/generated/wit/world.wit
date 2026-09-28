@@ -1,0 +1,17 @@
+// @generated from the package manifest; do not edit.
+
+package platform-fixture:generated;
+
+/// Every generated operation of the package. An authored world includes it.
+world generated {
+  import wamn:postgres/types@0.2.0;
+  import wamn:postgres/statements@0.2.0;
+  export platform-fixture:widget/get@1.0.0;
+  export platform-fixture:widget/query@1.0.0;
+  export platform-fixture:widget/create@1.0.0;
+  export platform-fixture:widget/update@1.0.0;
+  export platform-fixture:widget/delete@1.0.0;
+  export platform-fixture:widget-maker/get@1.0.0;
+  export platform-fixture:widget-maker/query@1.0.0;
+  export platform-fixture:widget-tag/update@1.0.0;
+}

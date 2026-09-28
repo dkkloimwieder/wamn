@@ -7,38 +7,25 @@
 
 mod widget;
 mod widget_maker;
-mod widget_tag;
 
 use wamn_platform_fixture_data_access::AccessError;
 
+/// The generated operations, whole.
+mod generated {
+    use wamn_platform_fixture_data_access::generated as data;
+    include!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../generated/component/mod.rs"
+    ));
+}
+
 wit_bindgen::generate!({
     world: "platform-fixture:component/fixture@0.1.0",
-    inline: r#"
-        package platform-fixture:component@0.1.0;
-
-        world fixture {
-          import wamn:postgres/types@0.2.0;
-          import wamn:postgres/statements@0.2.0;
-          export platform-fixture:widget/archive@1.0.0;
-          export platform-fixture:widget/create@1.0.0;
-          export platform-fixture:widget/delete@1.0.0;
-          export platform-fixture:widget/get@1.0.0;
-          export platform-fixture:widget/%list@1.0.0;
-          export platform-fixture:widget/query@1.0.0;
-          export platform-fixture:widget/record-batch@1.0.0;
-          export platform-fixture:widget/update@1.0.0;
-          export platform-fixture:widget-maker/get@1.0.0;
-          export platform-fixture:widget-maker/%list@1.0.0;
-          export platform-fixture:widget-maker/query@1.0.0;
-          export platform-fixture:widget-tag/update@1.0.0;
-        }
-    "#,
     path: [
         "../../../crates/execution/workflow/router/wit",
         "../../../crates/platform/runtime/wit/deps/wamn-postgres-0.2",
-        "../generated/wit/deps/platform-fixture-widget",
-        "../generated/wit/deps/platform-fixture-widget-maker",
-        "../generated/wit/deps/platform-fixture-widget-tag",
+        "../generated/wit",
+        "wit",
     ],
     generate_all,
     async: true,

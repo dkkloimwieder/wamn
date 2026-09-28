@@ -1,8 +1,17 @@
-use wamn_platform_fixture_data_access::generated::widget_tag as model;
-use wamn_postgres_statements::Connection;
+// @generated from the package manifest; do not edit.
+
+// The generated `widget_tag` handlers.
+
+#[allow(unused_imports)]
+use super::data::error::Error;
+#[allow(unused_imports)]
+use super::data::widget_tag as model;
+#[allow(unused_imports)]
+use wamn_postgres_statements::{Connection, Transaction};
 
 mod update {
-    use super::{Connection, model};
+    #[allow(unused_imports)]
+    use super::{Connection, Error, Transaction, model};
     use crate::exports::platform_fixture::widget_tag::update as contract;
     mod codec {
         use super::contract;

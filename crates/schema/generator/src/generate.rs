@@ -1,3 +1,4 @@
+mod component;
 mod contracts;
 mod data;
 mod routes;
@@ -396,6 +397,7 @@ pub fn generate(input: &GenerationInput<'_>) -> Result<GeneratedPackage, Generat
         )?;
     }
     data::emit_package_data(&mut files, &manifest)?;
+    component::emit_package_component(&mut files, &manifest)?;
     let data_access = crate::data_access::derive_data_access_overlay(
         input.catalog,
         input.manifest_json,

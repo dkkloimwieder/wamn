@@ -73,6 +73,7 @@ pub(super) fn emit_model(
     }
     emit_model_wit(files, catalog, manifest, model_name, model, table)?;
     super::data::emit_model_data(files, model_name, model, table, &wamn_api)?;
+    super::component::emit_model_component(files, manifest, model_name, model)?;
     let native_bind_fixtures = native_bind_fixtures(&wamn_api);
     emit_projection(
         files,

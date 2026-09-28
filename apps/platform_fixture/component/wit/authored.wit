@@ -1,0 +1,11 @@
+package platform-fixture:component@0.1.0;
+
+/// The platform fixture component: every generated operation, and the custom
+/// operations it authors.
+world fixture {
+  include platform-fixture:generated/generated;
+  export platform-fixture:widget/archive@1.0.0;
+  export platform-fixture:widget/%list@1.0.0;
+  export platform-fixture:widget/record-batch@1.0.0;
+  export platform-fixture:widget-maker/%list@1.0.0;
+}

@@ -1,0 +1,10 @@
+// @generated from the package manifest; do not edit.
+
+package platform-fixture-overlay:generated;
+
+/// Every generated operation of the package. An authored world includes it.
+world generated {
+  import wamn:postgres/types@0.2.0;
+  import wamn:postgres/statements@0.2.0;
+  export platform-fixture-overlay:widget/get@1.0.0;
+}

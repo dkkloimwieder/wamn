@@ -2180,7 +2180,7 @@ fn wit_type(ty: ColumnType) -> String {
     value.to_owned()
 }
 
-fn wit_name(value: &str) -> String {
+pub(super) fn wit_name(value: &str) -> String {
     let name = value.replace('_', "-");
     if matches!(
         name.as_str(),
