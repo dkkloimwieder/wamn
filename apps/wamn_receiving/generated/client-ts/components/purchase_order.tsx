@@ -61,6 +61,9 @@ import {
   PurchaseOrderUpdateFormLabel,
 } from "./labels.js";
 import {
+  SUPPLIER_QUERY_REQUEST_FIELDS,
+  SUPPLIER_QUERY_RESULT_FIELDS,
+  SUPPLIER_QUERY_ROUTE,
   query as supplierQuery,
   type SupplierQueryRequest,
   type SupplierQueryRow,
@@ -181,7 +184,7 @@ export const PURCHASE_ORDER_QUERY_TABLE = {
     { field: "updatedBy", label: "Updated by", type: "uuid", role: "value" },
   ],
   update: { operation: "wamn-receiving:purchase-order/update@1.0.0", binding: { route: PURCHASE_ORDER_UPDATE_ROUTE, request: PURCHASE_ORDER_UPDATE_REQUEST_FIELDS, result: PURCHASE_ORDER_UPDATE_RESULT_FIELDS }, keyInput: ["id"], revisionInput: ["expectedRowVersion"], revisionField: "rowVersion", supplied: [{ input: ["requestId"], kind: "requestId" }], fields: [
-    { field: "supplierId", input: ["change", "supplierId"] },
+    { field: "supplierId", input: ["change", "supplierId"], choices: { read: { route: SUPPLIER_QUERY_ROUTE, request: SUPPLIER_QUERY_REQUEST_FIELDS, result: SUPPLIER_QUERY_RESULT_FIELDS }, rows: "item", keyField: "id", displayField: "name", cursorInput: ["cursor"] } },
   ] },
   actions: [
     { operation: "wamn-receiving:purchase-order/get@1.0.0", label: "get", many: false, opens: "record", fill: [] },

@@ -129,13 +129,13 @@ Each feature follows the core rule: server work sets scope, client work needs a 
 - It loads when the row first expands. Collapsing keeps its rows while its scope value is unchanged.
 - The parent definition names its child tables. The child knows nothing of the parent beyond the scope filter.
 
-### Row actions, bulk actions, inline edit
+### Row actions, bulk actions, row edit
 
 - **Row menu:** lists the served operations that take this row. The Epic 7 row-to-form mapping fills the form.
 - **Bulk actions:** select rows, pick an operation, submit once. One call carries every selected row as one outer input per row, each run independently. It is not one transaction. Each row shows its own result; a refusal marks only its row.
-- **Inline edit:** edit a cell in place; submit calls the model's update operation with the row's revision. A refusal marks the cell. A revision conflict shows on the row and keeps the typed value.
+- **Row edit:** one edit button opens every editable cell of a row, and a field that names a record shows a select over its list. One save calls the model's update operation with the row's revision and the changed fields. A refusal marks the changed cells. A revision conflict shows on the row and keeps the typed values.
 - **Editable cells:** fields the update operation accepts and the plan does not supply.
-- **After a write:** an inline edit of a field that is neither a scope filter nor the server sort field replaces its row in place. Every other write starts a new load of the scope.
+- **After a write:** a row edit of fields that are neither a scope filter nor the server sort field replaces its row in place. Every other write starts a new load of the scope.
 
 ### Views
 

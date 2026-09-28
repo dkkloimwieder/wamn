@@ -445,14 +445,20 @@ export function SetTable<TRow extends object>(props: SetTableProps<TRow>): JSX.E
       .getVisibleLeafColumns()
       .flatMap((leaf) => (declared().some((candidate) => candidate.field === leaf.id) ? [column(leaf.id)] : []));
 
-  /** The footer: each shown column's aggregate over every kept row. */
+  /**
+   * The footer: each shown column's aggregate over every kept row, in the
+   * order of the grid's cells. A control column has an empty cell, so each
+   * total sits under its column.
+   */
   const totals = createMemo(() => {
     const rows = table.getFilteredRowModel().rows;
-    return shownColumns().map((shown) => ({
-      field: shown.field,
-      aggregate: aggregateOf(shown.field),
-      value: aggregateRows(shown.field, rows),
-    }));
+    return table
+      .getVisibleLeafColumns()
+      .map((leaf) =>
+        declared().some((candidate) => candidate.field === leaf.id)
+          ? { field: leaf.id, aggregate: aggregateOf(leaf.id), value: aggregateRows(leaf.id, rows) }
+          : { field: leaf.id, aggregate: null, value: null },
+      );
   });
 
   /** Saves the kept rows as CSV, in the order the table shows them, without group rows or totals. */
@@ -580,9 +586,11 @@ export function SetTable<TRow extends object>(props: SetTableProps<TRow>): JSX.E
               <For each={totals()}>
                 {(total) => (
                   <GridFootCell>
-                    <span data-slot="table-total" data-field={total.field}>
-                      <span class="text-muted-foreground">{total.aggregate}</span> {shownText(total.value)}
-                    </span>
+                    <Show when={total.aggregate !== null}>
+                      <span data-slot="table-total" data-field={total.field}>
+                        <span class="text-muted-foreground">{total.aggregate}</span> {shownText(total.value)}
+                      </span>
+                    </Show>
                   </GridFootCell>
                 )}
               </For>

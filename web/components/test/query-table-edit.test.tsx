@@ -1,8 +1,8 @@
 /**
- * Inline edit of a QueryTable (wamn-8iul.4).
+ * Row edit of a QueryTable (wamn-8iul.4, wamn-v50u).
  *
- * An editable cell edits in place and sends the typed value through the
- * definition's update. A refusal marks the cell, a revision conflict marks the
+ * An edit button opens a row, and its save sends the changed values through the
+ * definition's update. A refusal marks the changed cells, a conflict marks the
  * row and keeps the typed text, and an open edit holds every new load until it
  * closes.
  */
@@ -13,7 +13,9 @@ import { afterEach, describe, expect, it } from "vitest";
 import type { TableColumn } from "@wamn/ui";
 import type { JsonValue, Outcome } from "@wamn/web-runtime";
 
-import { button, theButton } from "./dom.js";
+import { memoryRoute } from "../gallery/memory.js";
+import { choose, selector } from "./choose.js";
+import { theButton } from "./dom.js";
 import { queryTable, settled, type UpdateItem, updating, withUpdate } from "./tables.js";
 
 afterEach(cleanup);
@@ -56,24 +58,37 @@ const refused = (text: string): Outcome<JsonValue> => ({
   text,
 });
 
-describe("inline edit", () => {
-  it("edits only the editable cells, and saves the typed value with its row's key and revision", async () => {
+describe("row edit", () => {
+  it("opens every editable cell of a row, and saves the changed values at once with its key and revision", async () => {
     const { updates } = await table(() => ({ status: "completed", value: null }));
-    expect(button("edit row version r0")).toBeNull();
-    fireEvent.click(theButton("edit qty r1"));
-    // One edit is open at a time, and no load runs while it is open.
-    expect(theButton("edit code r0").disabled).toBe(true);
+    fireEvent.click(theButton("edit r1"));
+    expect(screen.queryByLabelText("row version r1")).toBeNull();
+    // One row is open at a time, and no load runs while it is open.
+    expect(theButton("edit r0").disabled).toBe(true);
     expect(theButton("refresh").disabled).toBe(true);
     type("qty r1", "7");
+    type("code r1", "c");
     fireEvent.click(theButton("save"));
     await waitFor(() => expect(screen.queryByLabelText("qty r1")).toBeNull());
-    expect(updates).toEqual([{ id: "r1", expected: 4, change: { qty: 7 } }]);
+    expect(updates).toEqual([{ id: "r1", expected: 4, change: { code: "c", qty: 7 } }]);
     expect(theButton("refresh").disabled).toBe(false);
+  });
+
+  it("sends only the fields that changed, and closes a row that changed none without a call", async () => {
+    const { updates } = await table(() => ({ status: "completed", value: null }));
+    fireEvent.click(theButton("edit r0"));
+    fireEvent.click(theButton("save"));
+    expect(screen.queryByLabelText("code r0")).toBeNull();
+    fireEvent.click(theButton("edit r0"));
+    type("qty r0", "5");
+    fireEvent.click(theButton("save"));
+    await waitFor(() => expect(screen.queryByLabelText("qty r0")).toBeNull());
+    expect(updates).toEqual([{ id: "r0", expected: 1, change: { qty: 5 } }]);
   });
 
   it("marks the cell a refusal names, and keeps the editor open", async () => {
     await table(() => refused("unique_violation"));
-    fireEvent.click(theButton("edit code r0"));
+    fireEvent.click(theButton("edit r0"));
     type("code r0", "b");
     fireEvent.click(theButton("save"));
     await waitFor(() => expect(screen.getByText("unique_violation")).toBeDefined());
@@ -88,7 +103,7 @@ describe("inline edit", () => {
       detail: null,
       text: "the row changed since it loaded",
     }));
-    fireEvent.click(theButton("edit code r0"));
+    fireEvent.click(theButton("edit r0"));
     type("code r0", "typed");
     fireEvent.click(theButton("save"));
     await waitFor(() =>
@@ -99,7 +114,7 @@ describe("inline edit", () => {
 
   it("refuses a value that does not fit the column type before it calls the update", async () => {
     const { updates } = await table(() => ({ status: "completed", value: null }));
-    fireEvent.click(theButton("edit qty r0"));
+    fireEvent.click(theButton("edit r0"));
     type("qty r0", "two");
     fireEvent.keyDown(screen.getByLabelText("qty r0"), { key: "Enter" });
     expect(screen.getByText("not a whole number")).toBeDefined();
@@ -113,7 +128,7 @@ describe("a held load", () => {
   it("waits while an edit is open, and then runs the last load asked for", async () => {
     const { asked, writes } = await table(() => ({ status: "completed", value: null }));
     expect(asked).toHaveLength(1);
-    fireEvent.click(theButton("edit code r0"));
+    fireEvent.click(theButton("edit r0"));
     // Another session's write asks for a load, and so does a new cap.
     for (const write of writes) {
       write();
@@ -123,5 +138,62 @@ describe("a held load", () => {
     fireEvent.keyDown(screen.getByLabelText("code r0"), { key: "Escape" });
     await settled();
     expect(asked.map((request) => request.limit)).toEqual([1000, 50]);
+  });
+});
+
+interface MakerRow {
+  readonly id: string;
+  readonly code: string;
+  readonly makerId: string;
+  readonly rowVersion: number;
+}
+
+describe("a reference field", () => {
+  const MAKERS = memoryRoute("makers");
+
+  it("edits through a select over the records it can name, and saves the chosen key", async () => {
+    const update = updating(() => ({ status: "completed", value: null }));
+    await queryTable<MakerRow>({
+      columns: [
+        { field: "code", label: "code", type: "text" },
+        { field: "makerId", label: "maker", type: "uuid", role: "reference" },
+      ],
+      rows: () => [{ id: "r0", code: "a", makerId: "m1", rowVersion: 1 }],
+      definition: (declared) => {
+        const updated = withUpdate<MakerRow>(["makerId"])(declared);
+        const choices = {
+          read: { route: MAKERS, request: {}, result: { next_cursor: "nextCursor" } },
+          rows: "item",
+          keyField: "id",
+          displayField: "name",
+        };
+        return { ...updated, update: { ...updated.update!, fields: [{ ...updated.update!.fields[0]!, choices }] } };
+      },
+      transport: (memory) => {
+        const inner = update.transport(memory);
+        return {
+          ...inner,
+          invoke: (request) =>
+            request.operation === MAKERS.operation
+              ? Promise.resolve({
+                  status: "completed",
+                  value: {
+                    item: [
+                      { id: "m1", name: "Acme" },
+                      { id: "m2", name: "Globex" },
+                    ],
+                    next_cursor: null,
+                  },
+                })
+              : inner.invoke(request),
+        };
+      },
+    });
+    fireEvent.click(theButton("edit r0"));
+    await waitFor(() => expect(selector("maker r0").value).toBe("Acme"));
+    await choose("maker r0", "Globex");
+    fireEvent.click(theButton("save"));
+    await waitFor(() => expect(screen.queryByRole("combobox", { name: "maker r0" })).toBeNull());
+    expect(update.updates).toEqual([{ id: "r0", expected: 1, change: { makerId: "m2" } }]);
   });
 });

@@ -12,7 +12,7 @@
  *   match mode takes, and the server search when the read declares one. A
  *   filter that the caller fixes is not offered. A scope change, a cap change
  *   and a refresh each start a new load.
- * - A cell of an update field edits in place (`edit-cell.tsx`).
+ * - A row edits the fields of the update, and saves them at once (`edit-cell.tsx`).
  * - A row shows a button for each operation the page gives a handler.
  * - A child table is this component again, with its scope filter fixed to the
  *   parent row's key, in the detail of its row (`child-tables.tsx`).
@@ -58,8 +58,10 @@ import { ViewBar } from "./view-bar";
 export type {
   QueryTableAction,
   QueryTableChild,
+  QueryTableChoices,
   QueryTableColumn,
   QueryTableDefinition,
+  QueryTableEditField,
   QueryTableFill,
   QueryTableFilter,
   QueryTableMatch,
@@ -265,10 +267,11 @@ export function QueryTable<TRow extends object, TResult = unknown>(props: QueryT
   );
 
   // The columns as the grid renders them: the row selection, the child tables'
-  // expand, the declared columns, and the row buttons.
+  // expand, the row edit, the declared columns, and the row buttons.
   const columns: readonly BuiltColumn<TRow>[] = [
     ...bulk.columns(),
     ...(childTables.length === 0 ? [] : [expandColumn<TRow>(areas)]),
+    ...edits.columns(),
     ...declaredColumns.map((declared): BuiltColumn<TRow> => ({
       id: declared.field,
       declared,

@@ -35,13 +35,15 @@ export interface RecordSelectProps<Row extends object> {
   readonly onRow?: (row: Row | null) => void;
   /** The label of the control. */
   readonly label: string;
+  /** True when only a screen reader reads the label, as in a table cell. */
+  readonly hiddenLabel?: boolean | undefined;
   /** The refusal that marks this control, or null. */
   readonly error?: string | null | undefined;
   /**
    * Called with the typed text after a pause. A selector whose list declares
    * no search passes none, and its input is then read only.
    */
-  readonly onSearch?: (text: string) => void;
+  readonly onSearch?: ((text: string) => void) | undefined;
   /** True while the last reply carried a cursor. */
   readonly hasNextPage?: boolean;
   readonly onNextPage?: () => void;
@@ -50,7 +52,7 @@ export interface RecordSelectProps<Row extends object> {
    * once for each value that no listed or chosen row carries, such as a value
    * a row action filled from a record off the first page.
    */
-  readonly readRow?: (value: string) => Promise<Row | null>;
+  readonly readRow?: ((value: string) => Promise<Row | null>) | undefined;
 }
 
 export function RecordSelect<Row extends object>(props: RecordSelectProps<Row>) {
@@ -141,7 +143,9 @@ export function RecordSelect<Row extends object>(props: RecordSelectProps<Row>) 
   const labelId = createUniqueId();
   return (
     <Field data-invalid={props.error ? "true" : undefined}>
-      <FieldLabel id={labelId}>{props.label}</FieldLabel>
+      <FieldLabel id={labelId} class={props.hiddenLabel === true ? "sr-only" : undefined}>
+        {props.label}
+      </FieldLabel>
       <Combobox<Row>
         options={offered()}
         optionValue={(row) => props.optionValue(row)}

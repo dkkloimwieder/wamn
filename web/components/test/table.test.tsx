@@ -44,13 +44,14 @@ describe("the generated table for a page", () => {
     expect(screen.getByText("a")).toBeDefined();
     expect(screen.getByText("b")).toBeDefined();
     // The totals have one cell for each column of the definition, and none
-    // for the row buttons.
+    // for the row edit or the row buttons.
     expect(document.querySelectorAll("[data-slot=table-total]")).toHaveLength(WIDGET_QUERY_TABLE.columns.length);
     // The definition's columns are the headers, in contract order. A column
     // whose model authors a label reads that text, and one that does not keeps
-    // its field name with spaces. The row buttons are one last column with no
-    // header text.
+    // its field name with spaces. The row edit leads and the row buttons end,
+    // each a column with no header text.
     expect(screen.getAllByRole("columnheader").map((header) => header.textContent)).toEqual([
+      "",
       "Widget code",
       "created at",
       "edit version",

@@ -26,7 +26,7 @@ async function shown() {
 }
 
 async function editAndSave(field: string, index: number, value: string) {
-  fireEvent.click(theButton(`edit ${field} ${id(index)}`));
+  fireEvent.click(theButton(`edit ${id(index)}`));
   fireEvent.input(screen.getByLabelText(`${field} ${id(index)}`), { target: { value } });
   fireEvent.click(theButton("save"));
 }

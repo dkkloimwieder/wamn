@@ -895,9 +895,10 @@ fn write_table_definition(
             )
             .expect("write");
         }
-        let supplied = plan
+        let update_screen = plan
             .screens()
-            .find(|candidate| candidate.contract.operation == update.operation)
+            .find(|candidate| candidate.contract.operation == update.operation);
+        let supplied = update_screen
             .map_or(&[][..], |candidate| &candidate.supplied[..])
             .iter()
             .map(|field| {
@@ -916,13 +917,50 @@ fn write_table_definition(
         write!(source, ", supplied: [{}]", supplied.join(", ")).expect("write");
         source.push_str(", fields: [\n");
         for field in &update.fields {
-            writeln!(
+            write!(
                 source,
-                "    {{ field: {}, input: {} }},",
+                "    {{ field: {}, input: {}",
                 quote(&column_member(field.column, &operation.operation)?),
                 member_literal(field.input)
             )
             .expect("write");
+            // A field that names a record edits through the list its form's
+            // selector reads. A selector that another input narrows has no
+            // such input in a row, so the cell edits its key as text.
+            let selector = update_screen.and_then(|candidate| {
+                candidate.population.iter().find(|populated| {
+                    populated.input == field.input && populated.narrowed_by.is_none()
+                })
+            });
+            if let Some(populated) = selector
+                && let Rows::List { key } = populated.list_rows
+            {
+                write!(
+                    source,
+                    ", choices: {{ read: {}, rows: {}, keyField: {}, displayField: {}",
+                    binding(
+                        populated.list_model,
+                        populated.list_name,
+                        screen.model,
+                        bindings,
+                        foreign
+                    ),
+                    quote(&crate::client_ts::to_camel(key)),
+                    quote(&crate::client_ts::to_camel(populated.key_field)),
+                    quote(&crate::client_ts::to_camel(populated.display_field))
+                )
+                .expect("write");
+                for (name, input) in [
+                    ("searchInput", populated.search_input),
+                    ("cursorInput", populated.cursor_input),
+                ] {
+                    if let Some(input) = input {
+                        write!(source, ", {name}: {}", member_literal(input)).expect("write");
+                    }
+                }
+                source.push_str(" }");
+            }
+            source.push_str(" },\n");
         }
         source.push_str("  ] },\n");
     }

@@ -575,7 +575,9 @@ It names each operation that a row opens. An operation takes many rows when it a
 An operation that takes many rows is a bulk action of the table. It opens its generated form in a sheet, and the form hides the inputs that the rows fill.
 One submission sends one input for each selected row in one call, and each row shows its own outcome. A row sends its own revision when the form's revision input names the input that the row fills.
 It names each child table: another table whose declared filter narrows a column that names a record of this table's model.
-A cell of a column that the update writes edits in place. The table puts the returned row in place, and loads again after any write it did not send.
+A table with an update leads each row with an edit button, which opens every cell of a column that the update writes.
+A column whose update input names a record edits through a select over the list that the update form's selector reads.
+One save sends the changed columns in one update. The table puts the returned row in place, and loads again after any write it did not send.
 A row expands to its child tables. Each child is a table with its scope filter fixed to the row's key, which its scope bar does not offer.
 A detail reads one record and shows its fields.
 A form renders what the operator fills over TanStack Form, and it checks that input with an emitted `zod` schema.

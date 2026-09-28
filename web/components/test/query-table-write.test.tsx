@@ -73,7 +73,7 @@ async function table() {
 }
 
 async function editAndSave(label: string, value: string) {
-  fireEvent.click(theButton(`edit ${label} r0`));
+  fireEvent.click(theButton("edit r0"));
   fireEvent.input(screen.getByLabelText(`${label} r0`), { target: { value } });
   fireEvent.click(theButton("save"));
   await waitFor(() => expect(screen.queryByLabelText(`${label} r0`)).toBeNull());

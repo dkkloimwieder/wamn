@@ -71,7 +71,26 @@ export interface QueryTableAction {
   readonly form?: () => Promise<{ readonly default: Component<any> }>;
 }
 
-/** The update a cell edits through. */
+/**
+ * The list that offers the records a reference field can name: its read, the
+ * result member of its rows, the row member it stores and the one it shows,
+ * and the inputs of its search and its page cursor.
+ */
+export interface QueryTableChoices {
+  readonly read: OperationBinding;
+  readonly rows: string;
+  readonly keyField: string;
+  readonly displayField: string;
+  readonly searchInput?: MemberPath;
+  readonly cursorInput?: MemberPath;
+}
+
+/** An editable column and the input it writes, and the list its records come from when it names a record. */
+export interface QueryTableEditField extends QueryTableFill {
+  readonly choices?: QueryTableChoices;
+}
+
+/** The update a row edits through. */
 export interface QueryTableUpdate {
   readonly binding: OperationBinding;
   /** The input that names the row, which takes the row's one key field. */
@@ -80,7 +99,7 @@ export interface QueryTableUpdate {
   readonly revisionField?: string;
   readonly supplied: readonly SuppliedInput[];
   /** Each editable column and the input it writes. */
-  readonly fields: readonly QueryTableFill[];
+  readonly fields: readonly QueryTableEditField[];
 }
 
 /** One child table: its definition, and the column of its scope filter that names the parent. */
