@@ -9,13 +9,20 @@ use exports::client_acme_receiving::receiving::record_receipt::Guest as RecordRe
 use wamn::node::types::{Emission, ErrorDetail, NodeContext, NodeError};
 use wamn_client_acme_receiving_data_access::{AccessError, AccessErrorKind};
 
-mod get;
+#[cfg(test)]
+mod codecs;
 mod quality;
-mod update;
 
-use get::codec as get_codec;
 use quality::{approve_codec, detail_codec};
-use update::codec as update_codec;
+
+/// The generated operations, whole.
+mod generated {
+    use wamn_client_acme_receiving_data_access::generated as data;
+    include!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../generated/component/mod.rs"
+    ));
+}
 
 mod create_codec {
     use super::exports::client_acme_receiving::quality::create_inspection as contract;
@@ -28,28 +35,12 @@ mod create_codec {
 
 wit_bindgen::generate!({
     world: "client-acme-receiving:component/client-acme-receiving@3.0.0",
-    inline: r#"
-        package client-acme-receiving:component@3.0.0;
-
-        world client-acme-receiving {
-          import wamn:postgres/types@0.2.0;
-          import wamn:postgres/statements@0.2.0;
-          import wamn-receiving:receiving/record-receipt@1.0.0;
-          export client-acme-receiving:purchase-order/get@3.0.0;
-          export client-acme-receiving:purchase-order/update@3.0.0;
-          export client-acme-receiving:quality/load-purchase-order-detail@3.0.0;
-          export client-acme-receiving:quality/approve-inspection@3.0.0;
-          export client-acme-receiving:quality/create-inspection@3.0.0;
-          export client-acme-receiving:receiving/record-receipt@3.0.0;
-        }
-    "#,
     path: [
         "../../../crates/execution/workflow/router/wit",
         "../../../crates/platform/runtime/wit/deps/wamn-postgres-0.2",
-        "../generated/wit/deps/client-acme-receiving-purchase-order",
-        "../generated/wit/deps/client-acme-receiving-quality",
         "../../wamn_receiving/generated/wit/deps/wamn-receiving-receiving",
-        "../generated/wit/deps/client-acme-receiving-receiving",
+        "../generated/wit",
+        "wit",
     ],
     generate_all,
     async: true,
@@ -57,22 +48,6 @@ wit_bindgen::generate!({
 
 struct Component;
 
-get::codec::export_operation!(
-    Component,
-    exports::client_acme_receiving::purchase_order::get,
-    wamn::node::types,
-    wamn_postgres_statements::Connection::new(),
-    get::handle,
-    get_codec
-);
-update::codec::export_operation!(
-    Component,
-    exports::client_acme_receiving::purchase_order::update,
-    wamn::node::types,
-    wamn_postgres_statements::Connection::new(),
-    update::handle,
-    update_codec
-);
 quality::detail_codec::export_operation!(
     Component,
     exports::client_acme_receiving::quality::load_purchase_order_detail,

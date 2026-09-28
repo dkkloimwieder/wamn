@@ -1,7 +1,7 @@
 //! Typed read handlers over the existing application operations.
 
 use wamn_postgres_statements::{Connection, Uuid};
-use wamn_receiving_data_access::{AccessError, AccessErrorKind, purchase_order, read, receipt};
+use wamn_receiving_data_access::{AccessError, AccessErrorKind, read};
 
 pub(super) fn error_detail(
     error: &AccessError,
@@ -24,201 +24,6 @@ pub(super) fn error_detail(
         "maximum" => error.maximum().map(|value| value.to_string()),
         "observed" => error.observed().map(|value| value.to_string()),
         _ => None,
-    }
-}
-
-pub(super) mod purchase_order_get {
-    use super::{Connection, error_detail, purchase_order};
-    use crate::exports::wamn_receiving::purchase_order::get as contract;
-    include!("../../generated/wit/purchase_order_get_codec.rs");
-
-    pub(super) async fn execute(
-        connection: &mut Connection,
-        request: contract::GetRequest,
-    ) -> Result<contract::GetResult, contract::GetError> {
-        purchase_order::get(connection, &request.id)
-            .await
-            .map(|value| contract::GetResult {
-                value: row!(value, contract::GetRow),
-            })
-            .map_err(|error| {
-                map_error(error.kind().literal(), |key| {
-                    error_detail(
-                        &error,
-                        key,
-                        "purchase_order.get",
-                        Some(("id", &request.id)),
-                        None,
-                    )
-                })
-            })
-    }
-}
-
-pub(super) mod receipt_get {
-    use super::{Connection, error_detail, receipt};
-    use crate::exports::wamn_receiving::receipt::get as contract;
-    include!("../../generated/wit/receipt_get_codec.rs");
-
-    pub(super) async fn execute(
-        connection: &mut Connection,
-        request: contract::GetRequest,
-    ) -> Result<contract::GetResult, contract::GetError> {
-        receipt::get(connection, &request.id)
-            .await
-            .map(|value| contract::GetResult {
-                value: row!(value, contract::GetRow),
-            })
-            .map_err(|error| {
-                map_error(error.kind().literal(), |key| {
-                    error_detail(&error, key, "receipt.get", Some(("id", &request.id)), None)
-                })
-            })
-    }
-}
-
-pub(super) mod receipt_query {
-    use super::{Connection, error_detail, receipt};
-    use crate::exports::wamn_receiving::receipt::query as contract;
-    include!("../../generated/wit/receipt_query_codec.rs");
-
-    pub(super) async fn execute(
-        connection: &mut Connection,
-        request: contract::QueryRequest,
-        rows: &mut Rows,
-    ) -> Result<contract::QueryEnd, contract::QueryError> {
-        let input = receipt::QueryInput {
-            cursor: request.cursor.map(Into::into),
-            limit: request.limit.expect("the codec fills the default limit"),
-        };
-        let refuse = |error: wamn_receiving_data_access::AccessError| {
-            map_error(error.kind().literal(), |key| {
-                error_detail(&error, key, "receipt.query", None, None)
-            })
-        };
-        let mut page = receipt::query(connection, &input).await.map_err(refuse)?;
-        while let Some(value) = page.next().await.map_err(refuse)? {
-            rows.push(row!(value, contract::QueryRow)).await?;
-        }
-        Ok(contract::QueryEnd {
-            next_cursor: page.next_cursor().map(Into::into),
-        })
-    }
-}
-
-pub(super) mod purchase_order_query {
-    use super::{Connection, error_detail, purchase_order};
-    use crate::exports::wamn_receiving::purchase_order::query as contract;
-    use purchase_order::PurchaseOrderSort as Sort;
-    include!("../../generated/wit/purchase_order_query_codec.rs");
-
-    pub(super) async fn execute(
-        connection: &mut Connection,
-        request: contract::QueryRequest,
-        rows: &mut Rows,
-    ) -> Result<contract::QueryEnd, contract::QueryError> {
-        let statuses = request
-            .status
-            .map(|values| {
-                values
-                    .into_iter()
-                    .map(|value| match value.as_str() {
-                        "open" => Ok(purchase_order::PurchaseOrderStatus::Open),
-                        "complete" => Ok(purchase_order::PurchaseOrderStatus::Complete),
-                        "cancelled" => Ok(purchase_order::PurchaseOrderStatus::Cancelled),
-                        _ => Err(map_error("invalid_input", |key| {
-                            (key == "field").then(|| "input".to_owned())
-                        })),
-                    })
-                    .collect::<Result<Vec<_>, _>>()
-                    .map(Vec::into_boxed_slice)
-            })
-            .transpose()?;
-        let sort = match (
-            request.sort_field.as_deref(),
-            request.sort_direction.as_deref(),
-        ) {
-            (None, None) => Sort::default(),
-            (Some("purchase_order_number"), Some("ascending")) => {
-                Sort::PurchaseOrderNumberAscending
-            }
-            (Some("purchase_order_number"), Some("descending")) => {
-                Sort::PurchaseOrderNumberDescending
-            }
-            (Some("status"), Some("ascending")) => Sort::StatusAscending,
-            (Some("status"), Some("descending")) => Sort::StatusDescending,
-            (Some("created_at"), Some("ascending")) => Sort::CreatedAtAscending,
-            (Some("created_at"), Some("descending")) => Sort::CreatedAtDescending,
-            _ => {
-                return Err(map_error("invalid_input", |key| {
-                    (key == "field").then(|| "input".to_owned())
-                }));
-            }
-        };
-        let input = purchase_order::QueryInput {
-            supplier_ids: request.supplier_id.map(|values| {
-                values
-                    .into_iter()
-                    .map(Into::into)
-                    .collect::<Vec<_>>()
-                    .into_boxed_slice()
-            }),
-            statuses,
-            purchase_order_numbers: request.purchase_order_number.map(|values| {
-                values
-                    .into_iter()
-                    .map(Into::into)
-                    .collect::<Vec<_>>()
-                    .into_boxed_slice()
-            }),
-            sort,
-            cursor: request.cursor.map(Into::into),
-            limit: request.limit.expect("the codec fills the default limit"),
-        };
-        let refuse = |error: wamn_receiving_data_access::AccessError| {
-            map_error(error.kind().literal(), |key| {
-                error_detail(&error, key, "purchase_order.query", None, None)
-            })
-        };
-        let mut page = purchase_order::query(connection, &input)
-            .await
-            .map_err(refuse)?;
-        while let Some(value) = page.next().await.map_err(refuse)? {
-            rows.push(row!(value, contract::QueryRow)).await?;
-        }
-        Ok(contract::QueryEnd {
-            next_cursor: page.next_cursor().map(Into::into),
-        })
-    }
-}
-
-pub(super) mod supplier_query {
-    use super::{Connection, error_detail};
-    use crate::exports::wamn_receiving::supplier::query as contract;
-    use wamn_receiving_data_access::supplier;
-    include!("../../generated/wit/supplier_query_codec.rs");
-
-    pub(super) async fn execute(
-        connection: &mut Connection,
-        request: contract::QueryRequest,
-        rows: &mut Rows,
-    ) -> Result<contract::QueryEnd, contract::QueryError> {
-        let input = supplier::QueryInput {
-            cursor: request.cursor.map(Into::into),
-            limit: request.limit.expect("the codec fills the default limit"),
-        };
-        let refuse = |error: wamn_receiving_data_access::AccessError| {
-            map_error(error.kind().literal(), |key| {
-                error_detail(&error, key, "supplier.query", None, None)
-            })
-        };
-        let mut page = supplier::query(connection, &input).await.map_err(refuse)?;
-        while let Some(value) = page.next().await.map_err(refuse)? {
-            rows.push(row!(value, contract::QueryRow)).await?;
-        }
-        Ok(contract::QueryEnd {
-            next_cursor: page.next_cursor().map(Into::into),
-        })
     }
 }
 
@@ -315,51 +120,6 @@ pub(super) mod receiving_load_purchase_order_history {
     }
 }
 
-purchase_order_get::export_operation!(
-    crate::Component,
-    crate::exports::wamn_receiving::purchase_order::get,
-    crate::wamn::node::types,
-    Connection::new(),
-    purchase_order_get::execute,
-    purchase_order_get
-);
-
-purchase_order_query::export_operation!(
-    crate::Component,
-    crate::exports::wamn_receiving::purchase_order::query,
-    crate::wamn::node::types,
-    Connection::new(),
-    purchase_order_query::execute,
-    purchase_order_query
-);
-
-receipt_get::export_operation!(
-    crate::Component,
-    crate::exports::wamn_receiving::receipt::get,
-    crate::wamn::node::types,
-    Connection::new(),
-    receipt_get::execute,
-    receipt_get
-);
-
-receipt_query::export_operation!(
-    crate::Component,
-    crate::exports::wamn_receiving::receipt::query,
-    crate::wamn::node::types,
-    Connection::new(),
-    receipt_query::execute,
-    receipt_query
-);
-
-supplier_query::export_operation!(
-    crate::Component,
-    crate::exports::wamn_receiving::supplier::query,
-    crate::wamn::node::types,
-    Connection::new(),
-    supplier_query::execute,
-    supplier_query
-);
-
 location_list::export_operation!(
     crate::Component,
     crate::exports::wamn_receiving::location::list,
@@ -389,13 +149,11 @@ receiving_load_purchase_order_history::export_operation!(
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        location_list as locations, purchase_order_get as get,
-        receiving_load_receipt_screen as screen,
-    };
+    use super::{location_list as locations, receiving_load_receipt_screen as screen};
     use crate::exports::wamn_receiving::{
         location::list as location_contract, receiving::load_receipt_screen as screen_contract,
     };
+    use crate::generated::purchase_order::get::codec as get;
     use wamn_postgres_statements::{Numeric, Uuid};
 
     #[test]
@@ -433,7 +191,7 @@ mod tests {
     #[test]
     fn dto_unknown_fields_and_non_int64_wire_scalars_refuse_in_memory() {
         assert!(
-            super::purchase_order_query::decode(r#"[{"limit":2}]"#)
+            crate::generated::purchase_order::query::codec::decode(r#"[{"limit":2}]"#)
                 .unwrap()
                 .is_ok()
         );

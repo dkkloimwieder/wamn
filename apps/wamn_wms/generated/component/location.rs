@@ -9,11 +9,11 @@ use super::data::location as model;
 #[allow(unused_imports)]
 use wamn_postgres_statements::{Connection, Transaction};
 
-mod get {
+pub(crate) mod get {
     #[allow(unused_imports)]
     use super::{Connection, Error, Transaction, model};
     use crate::exports::wamn_wms::location::get as contract;
-    mod codec {
+    pub(crate) mod codec {
         use super::contract;
         include!(concat!(
             env!("CARGO_MANIFEST_DIR"),
@@ -21,7 +21,7 @@ mod get {
         ));
     }
 
-    async fn handle(
+    pub(crate) async fn handle(
         connection: &mut Connection,
         request: contract::GetRequest,
     ) -> Result<contract::GetResult, contract::GetError> {
@@ -42,11 +42,11 @@ mod get {
     );
 }
 
-mod query {
+pub(crate) mod query {
     #[allow(unused_imports)]
     use super::{Connection, Error, Transaction, model};
     use crate::exports::wamn_wms::location::query as contract;
-    mod codec {
+    pub(crate) mod codec {
         use super::contract;
         include!(concat!(
             env!("CARGO_MANIFEST_DIR"),
@@ -54,7 +54,7 @@ mod query {
         ));
     }
 
-    async fn handle(
+    pub(crate) async fn handle(
         connection: &mut Connection,
         request: contract::QueryRequest,
         rows: &mut codec::Rows,
@@ -85,11 +85,11 @@ mod query {
     );
 }
 
-mod create {
+pub(crate) mod create {
     #[allow(unused_imports)]
     use super::{Connection, Error, Transaction, model};
     use crate::exports::wamn_wms::location::create as contract;
-    mod codec {
+    pub(crate) mod codec {
         use super::contract;
         include!(concat!(
             env!("CARGO_MANIFEST_DIR"),
@@ -97,7 +97,7 @@ mod create {
         ));
     }
 
-    async fn handle(
+    pub(crate) async fn handle(
         transaction: &mut Transaction,
         request: contract::CreateRequest,
     ) -> Result<contract::CreateResult, contract::CreateError> {
@@ -118,11 +118,11 @@ mod create {
     );
 }
 
-mod update {
+pub(crate) mod update {
     #[allow(unused_imports)]
     use super::{Connection, Error, Transaction, model};
     use crate::exports::wamn_wms::location::update as contract;
-    mod codec {
+    pub(crate) mod codec {
         use super::contract;
         include!(concat!(
             env!("CARGO_MANIFEST_DIR"),
@@ -130,7 +130,7 @@ mod update {
         ));
     }
 
-    async fn handle(
+    pub(crate) async fn handle(
         connection: &mut Connection,
         request: contract::UpdateRequest,
     ) -> Result<contract::UpdateResult, contract::UpdateError> {

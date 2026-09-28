@@ -1,0 +1,12 @@
+package wamn:receiving-component@0.1.0;
+
+/// The Receiving component: every generated operation, and the custom
+/// operations it authors.
+world receiving {
+  include wamn-receiving:generated/generated;
+  import wamn-receiving:receiving/record-receipt-pre-commit@1.0.0;
+  export wamn-receiving:location/%list@1.0.0;
+  export wamn-receiving:receiving/load-purchase-order-history@1.0.0;
+  export wamn-receiving:receiving/load-receipt-screen@1.0.0;
+  export wamn-receiving:receiving/record-receipt@1.0.0;
+}

@@ -1,0 +1,9 @@
+package edge-samples:component@0.1.0;
+
+/// The edge samples component: the generated operation, and the commands it
+/// authors.
+world samples {
+  include edge-samples:generated/generated;
+  export edge-samples:sample/read@1.0.0;
+  export edge-samples:sample/%record@1.0.0;
+}

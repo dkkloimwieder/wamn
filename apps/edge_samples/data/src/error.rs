@@ -60,12 +60,6 @@ impl AccessError {
         Self::new(kind, serde_json::json!({ "field": field }))
     }
 
-    /// A not-found refusal, which names the field and the id looked for.
-    #[must_use]
-    pub fn missing(kind: AccessErrorKind, field: &str, id: &str) -> Self {
-        Self::new(kind, serde_json::json!({ "field": field, "id": id }))
-    }
-
     /// What went wrong.
     #[must_use]
     pub const fn kind(&self) -> AccessErrorKind {

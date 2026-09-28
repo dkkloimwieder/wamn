@@ -1,0 +1,6 @@
+package platform-fixture-overlay:component@0.1.0;
+
+/// The platform fixture overlay component: its one generated operation.
+world fixture-overlay {
+  include platform-fixture-overlay:generated/generated;
+}

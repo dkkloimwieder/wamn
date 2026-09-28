@@ -147,15 +147,6 @@ impl AccessError {
         Self::new(AccessErrorKind::NotFound, context)
     }
 
-    pub(crate) fn concurrency_conflict(
-        context: impl Into<Box<str>>,
-        observed_row_version: i32,
-    ) -> Self {
-        let mut error = Self::new(AccessErrorKind::ConcurrencyConflict, context);
-        error.observed_row_version = Some(observed_row_version);
-        error
-    }
-
     pub(crate) fn internal(context: impl Into<Box<str>>) -> Self {
         Self::new(AccessErrorKind::InternalError, context)
     }
@@ -422,13 +413,23 @@ mod tests {
         let constraint = diagnostic["constraint"]
             .as_str()
             .expect("server constraint name");
-        let error = super::AccessError::from_statement_parts(
-            "update purchase_order",
+        let update = crate::generated::error::Constraints {
+            unique: crate::generated::purchase_order::sql::UPDATE_UNIQUE_CONSTRAINTS,
+            foreign_key: crate::generated::purchase_order::sql::UPDATE_FOREIGN_KEY_CONSTRAINTS,
+            check: crate::generated::purchase_order::sql::UPDATE_CHECK_CONSTRAINTS,
+            exclusion: crate::generated::purchase_order::sql::UPDATE_EXCLUSION_CONSTRAINTS,
+        };
+        let error = crate::generated::error::Error::from_parts(
             StatementErrorKind::ExclusionViolation,
             Some(constraint),
-            crate::purchase_order::UPDATE_CONSTRAINTS,
+            &update,
+            "purchase_order.update",
         );
-        assert_eq!(error.kind(), AccessErrorKind::ExclusionViolation);
-        assert_eq!(error.constraint(), Some("purchase_order_supplier_id_excl"));
+        assert_eq!(
+            error,
+            crate::generated::error::Error::ExclusionViolation {
+                constraint: "purchase_order_supplier_id_excl".to_owned()
+            }
+        );
     }
 }

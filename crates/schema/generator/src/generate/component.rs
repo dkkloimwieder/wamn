@@ -8,7 +8,8 @@
 //! every generated operation.
 //!
 //! A component includes the modules in a `mod generated` that names its data
-//! crate's generated module as `data`. Its authored world, in
+//! crate's generated module as `data`. Each operation's codec and handler are
+//! visible in the crate, so a component test can call them. Its authored world, in
 //! `component/wit/authored.wit`, includes the generated world. The authored
 //! world must include it, not the other way round: an authored export names a
 //! package under `generated/wit/deps`, and WIT resolves a directory and its
@@ -72,15 +73,15 @@ pub(super) fn emit_model_component(
         let (state, signature, body) = handler(*action, &contract, operation);
         writeln!(
             source,
-            "mod {name} {{\n\
+            "pub(crate) mod {name} {{\n\
              #[allow(unused_imports)]\n\
              use super::{{Connection, Error, Transaction, model}};\n\
              use crate::exports::{namespace}::{package}::{name} as contract;\n\
-             mod codec {{\n\
+             pub(crate) mod codec {{\n\
              use super::contract;\n\
              include!(concat!(env!(\"CARGO_MANIFEST_DIR\"), \"/../generated/wit/{model_name}_{name}_codec.rs\"));\n\
              }}\n\n\
-             async fn handle({state}, request: contract::{contract}Request{signature}) -> Result<contract::{contract}{end}, contract::{contract}Error> {{\n\
+             pub(crate) async fn handle({state}, request: contract::{contract}Request{signature}) -> Result<contract::{contract}{end}, contract::{contract}Error> {{\n\
              {body}\
              }}\n\
              codec::export_operation!(crate::Component, contract, crate::wamn::node::types, Connection::new(), handle, codec);\n\

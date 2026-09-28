@@ -2,7 +2,7 @@
 
 use crate::cursor::{CursorDirection, decode_cursor, encode_cursor};
 use crate::error::{AccessError, AllowedConstraints};
-use crate::generated::wamn::{
+use crate::statements::wamn::{
     location_list as location_sql, receiving_load_purchase_order_history as history_sql,
     receiving_load_receipt_screen as screen_sql,
 };

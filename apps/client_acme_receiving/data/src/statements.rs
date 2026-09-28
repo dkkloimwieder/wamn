@@ -1,15 +1,6 @@
-//! Package-generator output carrying only admitted statement digests.
-
-pub(crate) mod purchase_order {
-    include!(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/../generated/wamn/purchase_order.rs"
-    ));
-}
-
-const _: &[&str] = purchase_order::UPDATE_UNIQUE_CONSTRAINTS;
-const _: &[&str] = purchase_order::UPDATE_FOREIGN_KEY_CONSTRAINTS;
-const _: &[&str] = purchase_order::UPDATE_CHECK_CONSTRAINTS;
+//! Package-generator output carrying only admitted statement digests, for the
+//! custom operations. The generated operations include their own, in
+//! [`crate::generated`].
 
 pub(crate) mod quality_approve_inspection {
     include!(concat!(

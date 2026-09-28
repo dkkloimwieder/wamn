@@ -363,6 +363,7 @@ dependencies = [
  "serde",
  "serde_json",
  "uuid",
+ "wamn-data-access",
  "wamn-postgres-statements",
  "wit-bindgen",
 ]
@@ -1445,6 +1446,7 @@ dependencies = [
  "serde",
  "serde_json",
  "uuid",
+ "wamn-data-access",
  "wamn-postgres-statements",
 ]
 
@@ -1466,7 +1468,7 @@ version = "0.1.0"
 dependencies = [
  "chrono",
  "serde_json",
- "uuid",
+ "wamn-data-access",
  "wamn-execution-contract",
  "wamn-postgres-statements",
 ]
@@ -1553,6 +1555,7 @@ dependencies = [
  "serde",
  "serde_json",
  "uuid",
+ "wamn-data-access",
  "wamn-execution-contract",
  "wamn-postgres-statements",
  "wamn-record-history",

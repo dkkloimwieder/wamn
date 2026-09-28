@@ -2,23 +2,17 @@
 
 use wamn_postgres_statements::{Connection, TransactionView, Uuid as WamnUuid};
 
-use crate::error::{AccessError, AllowedConstraints};
-use crate::generated::{
-    purchase_order as purchase_order_sql, quality_approve_inspection as approve_sql,
-    quality_create_inspection as create_sql, quality_load_purchase_order_detail as detail_sql,
+use crate::error::AccessError;
+use crate::statements::{
+    quality_approve_inspection as approve_sql, quality_create_inspection as create_sql,
+    quality_load_purchase_order_detail as detail_sql,
     receiving_record_receipt_participant as receipt_participant_sql,
 };
-
-pub use crate::generated::purchase_order::PurchaseOrderRow;
 
 /// Classify failure to acquire the host-issued participant transaction view.
 pub fn participant_view_error(source: &wamn_postgres_statements::StatementError) -> AccessError {
     AccessError::from_statement("acquire participant transaction view", source)
 }
-
-const UPDATE_CONSTRAINTS: AllowedConstraints = AllowedConstraints {
-    exclusion: purchase_order_sql::UPDATE_EXCLUSION_CONSTRAINTS,
-};
 
 /// Result of one successful purchase-order detail load.
 #[derive(Debug)]
@@ -66,104 +60,6 @@ fn parse_uuid(value: &str, field: &'static str) -> Result<WamnUuid, AccessError>
     uuid::Uuid::parse_str(value)
         .map(|parsed| WamnUuid(parsed.hyphenated().to_string()))
         .map_err(|_| AccessError::invalid("input is not a UUID", field))
-}
-
-#[expect(
-    clippy::option_option,
-    reason = "WIT update fields distinguish absent, explicit null, and value"
-)]
-fn update_value<T>(
-    value: Option<Option<T>>,
-    field: &'static str,
-) -> Result<(bool, Option<T>), AccessError> {
-    match value {
-        None => Ok((false, None)),
-        Some(None) => Err(AccessError::invalid(
-            "non-null field does not accept explicit null",
-            field,
-        )),
-        Some(Some(value)) => Ok((true, Some(value))),
-    }
-}
-
-fn quality_status(value: String) -> Result<String, AccessError> {
-    if matches!(value.as_str(), "not_required" | "pending" | "approved") {
-        Ok(value)
-    } else {
-        Err(AccessError::invalid(
-            "acme_quality_status is outside the closed vocabulary",
-            "change.acme_quality_status",
-        ))
-    }
-}
-
-fn purchase_order_update_value(
-    row: purchase_order_sql::PurchaseOrderUpdateRow,
-    expected_row_version: i32,
-) -> Result<PurchaseOrderRow, AccessError> {
-    match row.outcome.as_deref() {
-        Some("not_found") => Err(AccessError::not_found("purchase_order does not exist")),
-        Some("concurrency_conflict") => row.observed_row_version.map_or_else(
-            || {
-                Err(AccessError::internal(
-                    "purchase_order concurrency refusal omitted observed_row_version",
-                ))
-            },
-            |observed| {
-                Err(AccessError::concurrency_conflict(
-                    format!(
-                        "purchase_order row_version {observed} does not match {expected_row_version}"
-                    ),
-                    observed,
-                ))
-            },
-        ),
-        Some("updated") => match (
-            row.id,
-            row.purchase_order_number,
-            row.supplier_id,
-            row.status,
-            row.row_version,
-            row.created_at,
-            row.created_by,
-            row.updated_at,
-            row.updated_by,
-            row.acme_inspection_required,
-            row.acme_quality_status,
-        ) {
-            (
-                Some(id),
-                Some(purchase_order_number),
-                Some(supplier_id),
-                Some(status),
-                Some(row_version),
-                Some(created_at),
-                Some(created_by),
-                Some(updated_at),
-                Some(updated_by),
-                Some(acme_inspection_required),
-                Some(acme_quality_status),
-            ) => Ok(PurchaseOrderRow {
-                acme_inspection_required,
-                acme_quality_status,
-                created_at,
-                created_by,
-                id,
-                purchase_order_number,
-                row_version,
-                status,
-                supplier_id,
-                updated_at,
-                updated_by,
-            }),
-            _ => Err(AccessError::internal(
-                "purchase_order update returned an incomplete row",
-            )),
-        },
-        _ => Err(AccessError::internal(
-            "purchase_order.update returned a null or unknown outcome",
-        )),
-    }
 }
 
 fn approve_inspection_value(
@@ -215,52 +111,6 @@ fn approve_inspection_value(
             "quality.approve_inspection returned a null or unknown outcome",
         )),
     }
-}
-
-/// Execute one typed `purchase_order.get` against generated Acme SQL.
-pub async fn purchase_order_get(
-    connection: &mut Connection,
-    id: &str,
-) -> Result<PurchaseOrderRow, AccessError> {
-    let id = parse_uuid(id, "id")?;
-    purchase_order_sql::get(connection, id)
-        .await
-        .map_err(|source| AccessError::from_statement("load purchase_order", &source))?
-        .ok_or_else(|| AccessError::not_found("purchase_order does not exist"))
-}
-
-/// Execute one typed `purchase_order.update` against generated Acme SQL.
-pub async fn purchase_order_update(
-    connection: &mut Connection,
-    id: &str,
-    expected_row_version: i32,
-    acme_inspection_required: Option<Option<bool>>,
-    acme_quality_status: Option<Option<String>>,
-) -> Result<PurchaseOrderRow, AccessError> {
-    let id = parse_uuid(id, "id")?;
-    let (inspection_present, inspection_value) =
-        update_value(acme_inspection_required, "change.acme_inspection_required")?;
-    let (quality_present, quality_value) =
-        update_value(acme_quality_status, "change.acme_quality_status")?;
-    let quality_value = quality_value.map(quality_status).transpose()?;
-    let row = purchase_order_sql::update(
-        connection,
-        id,
-        expected_row_version,
-        inspection_present,
-        inspection_value,
-        quality_present,
-        quality_value,
-    )
-    .await
-    .map_err(|source| {
-        AccessError::from_statement_with_constraints(
-            "update purchase_order",
-            &source,
-            UPDATE_CONSTRAINTS,
-        )
-    })?;
-    purchase_order_update_value(row, expected_row_version)
 }
 
 /// Execute `quality.load_purchase_order_detail` against its verified projection.

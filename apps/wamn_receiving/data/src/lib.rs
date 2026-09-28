@@ -3,16 +3,20 @@
 //! Runtime access uses content-addressed [`wamn_postgres_statements`] accessors and the generated
 //! Wamn projections. The conformance verifier consumes native sibling
 //! projections and the same physical SQL files; this crate authors no SQL.
+//! The generated operations are generated whole, in [`generated`].
 
 mod cursor;
 mod error;
-mod generated;
-mod page;
-pub mod purchase_order;
 pub mod read;
-pub mod receipt;
 pub mod record_receipt;
-pub mod supplier;
+mod statements;
 
 pub use error::{AccessError, AccessErrorKind};
-pub use page::Page;
+
+/// The generated operations, one module for each model, and their refusal.
+pub mod generated {
+    include!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../generated/data/mod.rs"
+    ));
+}

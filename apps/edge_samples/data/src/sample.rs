@@ -1,30 +1,14 @@
-//! `sample.get` and the command `sample.record` over the generated statements.
+//! The command `sample.record` over the generated statements.
 //!
 //! The generated codec of `sample.record` claims the key in the write log and
 //! holds the transaction. The command inserts the sample, whose id its default
 //! mints.
 
-use wamn_postgres_statements::{Connection, Transaction};
+use wamn_postgres_statements::Transaction;
 
-use crate::error::{self, AccessError, AccessErrorKind};
-use crate::generated::wamn::sample as sql;
-use crate::generated::wamn::sample_record as record_sql;
+use crate::error::{self, AccessError};
 use crate::scalar;
-
-pub use crate::generated::wamn::sample::SampleRow;
-
-/// Load one sample by id.
-///
-/// # Errors
-///
-/// [`AccessError`] carrying the literal the operation contract declares.
-pub async fn get(connection: &mut Connection, id: &str) -> Result<SampleRow, AccessError> {
-    let id = scalar::uuid("id", id)?;
-    sql::get(connection, id.clone())
-        .await
-        .map_err(|e| error::from_statement(&e))?
-        .ok_or_else(|| AccessError::missing(AccessErrorKind::NotFound, "id", &id.0))
-}
+use crate::statements::wamn::sample_record as record_sql;
 
 /// One forwarded sample, as the edge box sends it.
 #[derive(Debug)]

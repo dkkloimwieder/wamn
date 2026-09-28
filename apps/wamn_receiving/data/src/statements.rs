@@ -1,4 +1,6 @@
-//! Migration-IR projections materialized in the Receiving package.
+//! The statement accessors of the Receiving custom operations, materialized in
+//! the package. The generated operations include their own, in
+//! [`crate::generated`].
 
 /// Runtime projections carrying only admitted statement digests.
 pub(crate) mod wamn {
@@ -7,30 +9,6 @@ pub(crate) mod wamn {
         include!(concat!(
             env!("CARGO_MANIFEST_DIR"),
             "/../generated/wamn/location_list.rs"
-        ));
-    }
-
-    /// Generated `purchase_order` projection and statement digests.
-    pub(crate) mod purchase_order {
-        include!(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/../generated/wamn/purchase_order.rs"
-        ));
-    }
-
-    /// Generated `supplier` projection and accessors.
-    pub(crate) mod supplier {
-        include!(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/../generated/wamn/supplier.rs"
-        ));
-    }
-
-    /// Generated `receipt` projection and statement digests.
-    pub(crate) mod receipt {
-        include!(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/../generated/wamn/receipt.rs"
         ));
     }
 

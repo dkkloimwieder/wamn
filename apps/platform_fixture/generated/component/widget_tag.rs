@@ -9,11 +9,11 @@ use super::data::widget_tag as model;
 #[allow(unused_imports)]
 use wamn_postgres_statements::{Connection, Transaction};
 
-mod update {
+pub(crate) mod update {
     #[allow(unused_imports)]
     use super::{Connection, Error, Transaction, model};
     use crate::exports::platform_fixture::widget_tag::update as contract;
-    mod codec {
+    pub(crate) mod codec {
         use super::contract;
         include!(concat!(
             env!("CARGO_MANIFEST_DIR"),
@@ -21,7 +21,7 @@ mod update {
         ));
     }
 
-    async fn handle(
+    pub(crate) async fn handle(
         connection: &mut Connection,
         request: contract::UpdateRequest,
     ) -> Result<contract::UpdateResult, contract::UpdateError> {

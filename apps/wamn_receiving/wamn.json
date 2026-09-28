@@ -319,6 +319,9 @@
       "schema": "receiving",
       "table": "supplier",
       "owner": "wamn_receiving",
+      "min_lengths": {
+        "name": 1
+      },
       "server_owned_fields": [
         "id",
         "created_at"

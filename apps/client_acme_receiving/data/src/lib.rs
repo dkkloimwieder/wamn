@@ -1,7 +1,15 @@
 //! Typed Acme Receiving overlay operations over the frozen PostgreSQL capability.
 
 mod error;
-mod generated;
 pub mod operation;
+mod statements;
 
 pub use error::{AccessError, AccessErrorKind};
+
+/// The generated operations, one module for each model, and their refusal.
+pub mod generated {
+    include!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../generated/data/mod.rs"
+    ));
+}

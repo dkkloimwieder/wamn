@@ -1,0 +1,12 @@
+package client-acme-receiving:component@3.0.0;
+
+/// The Acme Receiving overlay component: every generated operation, and the
+/// custom operations it authors.
+world client-acme-receiving {
+  include client-acme-receiving:generated/generated;
+  import wamn-receiving:receiving/record-receipt@1.0.0;
+  export client-acme-receiving:quality/load-purchase-order-detail@3.0.0;
+  export client-acme-receiving:quality/approve-inspection@3.0.0;
+  export client-acme-receiving:quality/create-inspection@3.0.0;
+  export client-acme-receiving:receiving/record-receipt@3.0.0;
+}

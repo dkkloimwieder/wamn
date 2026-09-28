@@ -9,11 +9,11 @@ use super::data::widget as model;
 #[allow(unused_imports)]
 use wamn_postgres_statements::{Connection, Transaction};
 
-mod get {
+pub(crate) mod get {
     #[allow(unused_imports)]
     use super::{Connection, Error, Transaction, model};
     use crate::exports::platform_fixture_overlay::widget::get as contract;
-    mod codec {
+    pub(crate) mod codec {
         use super::contract;
         include!(concat!(
             env!("CARGO_MANIFEST_DIR"),
@@ -21,7 +21,7 @@ mod get {
         ));
     }
 
-    async fn handle(
+    pub(crate) async fn handle(
         connection: &mut Connection,
         request: contract::GetRequest,
     ) -> Result<contract::GetResult, contract::GetError> {

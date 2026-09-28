@@ -9,40 +9,26 @@ use exports::wamn_receiving::receiving::record_receipt as contract;
 use wamn::node::types::NodeError;
 use wamn_receiving_data_access::record_receipt as receipt;
 
+#[cfg(test)]
+mod codecs;
 mod reads;
-mod supplier;
-mod update;
+
+/// The generated operations, whole.
+mod generated {
+    use wamn_receiving_data_access::generated as data;
+    include!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../generated/component/mod.rs"
+    ));
+}
 
 wit_bindgen::generate!({
     world: "wamn:receiving-component/receiving@0.1.0",
-    inline: r#"
-        package wamn:receiving-component@0.1.0;
-
-        world receiving {
-          import wamn:postgres/types@0.2.0;
-          import wamn:postgres/statements@0.2.0;
-          import wamn-receiving:receiving/record-receipt-pre-commit@1.0.0;
-          export wamn-receiving:location/%list@1.0.0;
-          export wamn-receiving:purchase-order/get@1.0.0;
-          export wamn-receiving:purchase-order/query@1.0.0;
-          export wamn-receiving:purchase-order/update@1.0.0;
-          export wamn-receiving:receipt/get@1.0.0;
-          export wamn-receiving:receipt/query@1.0.0;
-          export wamn-receiving:receiving/load-purchase-order-history@1.0.0;
-          export wamn-receiving:receiving/load-receipt-screen@1.0.0;
-          export wamn-receiving:receiving/record-receipt@1.0.0;
-          export wamn-receiving:supplier/create@1.0.0;
-          export wamn-receiving:supplier/query@1.0.0;
-        }
-    "#,
     path: [
         "../../../crates/execution/workflow/router/wit",
         "../../../crates/platform/runtime/wit/deps/wamn-postgres-0.2",
-        "../generated/wit/deps/wamn-receiving-location",
-        "../generated/wit/deps/wamn-receiving-purchase-order",
-        "../generated/wit/deps/wamn-receiving-receipt",
-        "../generated/wit/deps/wamn-receiving-receiving",
-        "../generated/wit/deps/wamn-receiving-supplier",
+        "../generated/wit",
+        "wit",
     ],
     generate_all,
     async: true,
