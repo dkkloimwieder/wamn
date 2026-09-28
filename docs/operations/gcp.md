@@ -1344,7 +1344,28 @@ On 2026-09-28 the apply alone did not grow the claim in 408 seconds. The patch g
 
 Restart identity and the CDC readers after an outage of Postgres. Do not restart the host groups while they run: two host pods do not fit on the two nodes, and the new pods wait in `Pending`. If that happens, run `kubectl -n hosts rollout undo deploy/<name>`.
 
-### 6.3 Bench client and PAT
+### 6.3 CDC slot lost
+
+If a CDC reader is down while the WAL passes `max_slot_wal_keep_size` (1 GB), Postgres invalidates its slot. The reader then stops for good with `CAPTURE GAP (slot incident)`, because it never creates a slot (finding `wamn-59z6`). Look at the slots:
+
+```bash
+kubectl -n platform exec wamn-pg-1 -c postgres -- psql -U postgres -Atc \
+  "select slot_name, active, wal_status from pg_replication_slots"
+```
+
+If `wal_status` is `lost`, record the gap on the bead of the work. Then drop the slot, and create it again in the project-env database with the slot statement of `enable-cdc-project-env`:
+
+```bash
+S=wamn_cdc_dkk__wms__dev__bnarqpnc
+kubectl -n platform exec wamn-pg-1 -c postgres -- psql -U postgres -Atc "select pg_drop_replication_slot('$S')"
+kubectl -n platform exec wamn-pg-1 -c postgres -- psql -U postgres -d wamn-db-dkk--wms--dev--bnarqpnc -v ON_ERROR_STOP=1 -qc \
+  "DO \$\$ BEGIN IF NOT EXISTS (SELECT FROM pg_replication_slots WHERE slot_name = '$S') THEN PERFORM pg_create_logical_replication_slot('$S', 'pgoutput', false, false, true); END IF; END \$\$;"
+kubectl -n platform rollout restart deploy/cdc-reader-wms
+```
+
+Changes written in the gap produce no events. On 2026-09-28 the 1000 seed of Receiving lost the WMS slot while its reader was down. The WMS rows of the gap were seed data with no consumer, so the owner accepted the gap. The drop and the new slot took 33 seconds, and the reader logged standby status updates at once.
+
+### 6.4 Bench client and PAT
 
 Mint the bench PAT as in section 3.16, with `--emit-route-caller-pat-secret <private dir>/route-caller-pat.json`. Then write the tenant `users` row of the service with `reconcile-run-plane` (section 4.5), because the host refuses a principal without one. Use a forward to the pod, `kubectl -n platform port-forward pod/wamn-pg-1 15435:5432`, because the forward to the service closed the connections of the verb.
 
@@ -1364,7 +1385,7 @@ gcloud compute ssh wamn-bench-client --project wamn-dev --zone us-central1-a --c
 
 On 2026-09-28 the VM took 15 seconds to create, the tools 86 seconds, the copy 5 seconds and the build 803 seconds. The VM counts 1 CPU against the quota of 8.
 
-### 6.4 One tier
+### 6.5 One tier
 
 Run `tier.sh <tier> <machine type> <count> <spot|on-demand>` from the repository machine. `tier.sh <tier> teardown` runs only the second half. The script:
 
