@@ -20,8 +20,8 @@ use serde::Deserialize;
 use wamn_postgres_statements::{Numeric, TimestampTz, Transaction, Uuid};
 
 use crate::error::{self, AccessError, AccessErrorKind};
-use crate::statements::wamn::inventory_split as sql;
 use crate::scalar;
+use crate::statements::wamn::inventory_split as sql;
 
 /// One envelope item's command body.
 #[derive(Debug, Deserialize)]

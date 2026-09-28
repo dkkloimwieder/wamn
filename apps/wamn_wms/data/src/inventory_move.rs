@@ -26,8 +26,8 @@ use serde::Deserialize;
 use wamn_postgres_statements::{TimestampTz, Transaction, Uuid};
 
 use crate::error::{self, AccessError, AccessErrorKind};
-use crate::statements::wamn::inventory_move as sql;
 use crate::scalar;
+use crate::statements::wamn::inventory_move as sql;
 
 /// One envelope item's command body.
 #[derive(Debug, Deserialize)]
