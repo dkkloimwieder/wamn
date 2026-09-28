@@ -1385,6 +1385,16 @@ gcloud compute ssh wamn-bench-client --project wamn-dev --zone us-central1-a --c
 
 On 2026-09-28 the VM took 15 seconds to create, the tools 86 seconds, the copy 5 seconds and the build 803 seconds. The VM counts 1 CPU against the quota of 8.
 
+After the runs, shred the PAT on the VM, delete the VM, and shred the local copy:
+
+```bash
+gcloud compute ssh wamn-bench-client --project wamn-dev --zone us-central1-a --command 'shred -u ~/pat/* && rmdir ~/pat'
+gcloud compute instances delete wamn-bench-client --project wamn-dev --zone us-central1-a --quiet
+shred -u <private dir>/route-caller-pat.json
+```
+
+On 2026-09-28 the shred took 3 seconds and the delete 23 seconds.
+
 ### 6.5 One tier
 
 Run `tier.sh <tier> <machine type> <count> <spot|on-demand>` from the repository machine. `tier.sh <tier> teardown` runs only the second half. The script:
