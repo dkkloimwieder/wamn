@@ -58,17 +58,14 @@ export function editedValue(
     case "numeric":
       return /^-?\d+(\.\d+)?$/.test(trimmed) ? { value: trimmed } : { error: "not a number" };
     case "boolean":
-      return trimmed === "true" || trimmed === "false"
-        ? { value: trimmed === "true" }
-        : { error: "not true or false" };
+      return trimmed === "true" || trimmed === "false" ? { value: trimmed === "true" } : { error: "not true or false" };
     default:
       return { value: type === "text" ? text : trimmed };
   }
 }
 
 /** The text an editor starts with for one value. */
-export const editText = (value: unknown): string =>
-  value === null || value === undefined ? "" : String(value);
+export const editText = (value: unknown): string => (value === null || value === undefined ? "" : String(value));
 
 export function EditCell(props: {
   readonly label: string;

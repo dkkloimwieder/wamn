@@ -20,19 +20,8 @@ import { cn } from "../../lib/utils";
 import { useIsMobile } from "../../hooks/use-mobile";
 import type { ButtonProps } from "./button";
 import { Button } from "./button";
-import {
-  Sheet,
-  SheetContent,
-  SheetDescription,
-  SheetHeader,
-  SheetTitle,
-} from "./sheet";
-import {
-  Tooltip,
-  TooltipContent,
-  type TooltipContentProps,
-  TooltipTrigger,
-} from "./tooltip";
+import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "./sheet";
+import { Tooltip, TooltipContent, type TooltipContentProps, TooltipTrigger } from "./tooltip";
 
 const SIDEBAR_COOKIE_NAME = "sidebar_state";
 const SIDEBAR_COOKIE_MAX_AGE = 60 * 60 * 24 * 7;
@@ -141,10 +130,7 @@ const SidebarProvider = (props: SidebarProviderProps) => {
           "--sidebar-width-icon": SIDEBAR_WIDTH_ICON,
           ...(local.style as JSX.CSSProperties),
         }}
-        class={cn(
-          "group/sidebar-wrapper flex min-h-svh w-full has-data-[variant=inset]:bg-sidebar",
-          local.class,
-        )}
+        class={cn("group/sidebar-wrapper flex min-h-svh w-full has-data-[variant=inset]:bg-sidebar", local.class)}
         {...others}
       >
         {local.children}
@@ -168,13 +154,7 @@ const Sidebar: Component<SidebarProps> = (props) => {
     },
     props,
   );
-  const [local, others] = splitProps(mergedProps, [
-    "side",
-    "variant",
-    "collapsible",
-    "class",
-    "children",
-  ]);
+  const [local, others] = splitProps(mergedProps, ["side", "variant", "collapsible", "class", "children"]);
 
   const { isMobile, state, openMobile, setOpenMobile } = useSidebar();
 
@@ -182,10 +162,7 @@ const Sidebar: Component<SidebarProps> = (props) => {
     <Switch>
       <Match when={local.collapsible === "none"}>
         <div
-          class={cn(
-            "flex h-full w-(--sidebar-width) flex-col bg-sidebar text-sidebar-foreground",
-            local.class,
-          )}
+          class={cn("flex h-full w-(--sidebar-width) flex-col bg-sidebar text-sidebar-foreground", local.class)}
           data-slot="sidebar"
           {...others}
         >
@@ -193,11 +170,7 @@ const Sidebar: Component<SidebarProps> = (props) => {
         </div>
       </Match>
       <Match when={isMobile()}>
-        <Sheet
-          onOpenChange={setOpenMobile}
-          open={openMobile()}
-          {...(others as ComponentProps<typeof Sheet>)}
-        >
+        <Sheet onOpenChange={setOpenMobile} open={openMobile()} {...(others as ComponentProps<typeof Sheet>)}>
           <SheetContent
             class="w-(--sidebar-width) bg-sidebar p-0 text-sidebar-foreground [&>button]:hidden"
             data-mobile="true"
@@ -250,11 +223,7 @@ const Sidebar: Component<SidebarProps> = (props) => {
             )}
             {...others}
           >
-            <div
-              data-sidebar="sidebar"
-              data-slot="sidebar-inner"
-              class="z-sidebar-inner flex size-full flex-col"
-            >
+            <div data-sidebar="sidebar" data-slot="sidebar-inner" class="z-sidebar-inner flex size-full flex-col">
               {local.children}
             </div>
           </div>
@@ -278,9 +247,7 @@ const SidebarTrigger = (props: SidebarTriggerProps) => {
       size="icon-sm"
       class={cn("z-sidebar-trigger", local.class)}
       onClick={(event: MouseEvent & { currentTarget: HTMLButtonElement; target: Element }) => {
-        const handler = local.onClick as
-          | JSX.EventHandlerUnion<HTMLButtonElement, MouseEvent>
-          | undefined;
+        const handler = local.onClick as JSX.EventHandlerUnion<HTMLButtonElement, MouseEvent> | undefined;
         if (typeof handler === "function") handler(event);
         else handler?.[0](handler[1], event);
         toggleSidebar();
@@ -409,9 +376,7 @@ type SidebarMenuButtonProps<T extends ValidComponent = "button"> = PolymorphicPr
     tooltip?: string | TooltipContentProps;
   };
 
-const SidebarMenuButton = <T extends ValidComponent = "button">(
-  rawProps: SidebarMenuButtonProps<T>,
-) => {
+const SidebarMenuButton = <T extends ValidComponent = "button">(rawProps: SidebarMenuButtonProps<T>) => {
   const props = mergeProps({ isActive: false, variant: "default", size: "default" }, rawProps);
   const [local, others] = splitProps(props as SidebarMenuButtonProps, [
     "isActive",
@@ -435,11 +400,7 @@ const SidebarMenuButton = <T extends ValidComponent = "button">(
         data-sidebar="menu-button"
         data-size={local.size}
         data-active={local.isActive ? "true" : undefined}
-        class={cn(
-          sidebarMenuButtonVariants({ variant: local.variant, size: local.size }),
-          _local.class,
-          local.class,
-        )}
+        class={cn(sidebarMenuButtonVariants({ variant: local.variant, size: local.size }), _local.class, local.class)}
         {..._others}
         {...others}
       />
@@ -450,10 +411,7 @@ const SidebarMenuButton = <T extends ValidComponent = "button">(
     <Show fallback={<MenuButton />} when={local.tooltip}>
       <Tooltip placement="right">
         <TooltipTrigger as={MenuButton} class="w-full" />
-        <TooltipContent
-          hidden={state() !== "collapsed" || isMobile()}
-          {...tooltipProps()}
-        />
+        <TooltipContent hidden={state() !== "collapsed" || isMobile()} {...tooltipProps()} />
       </Tooltip>
     </Show>
   );
@@ -492,11 +450,7 @@ const SidebarMenuSubButton = <T extends ValidComponent = "a">(
   rawProps: PolymorphicProps<T, SidebarMenuSubButtonProps<T>>,
 ) => {
   const props = mergeProps({ size: "md" }, rawProps);
-  const [local, others] = splitProps(props as SidebarMenuSubButtonProps, [
-    "size",
-    "isActive",
-    "class",
-  ]);
+  const [local, others] = splitProps(props as SidebarMenuSubButtonProps, ["size", "isActive", "class"]);
 
   return (
     <Polymorphic<SidebarMenuSubButtonProps>

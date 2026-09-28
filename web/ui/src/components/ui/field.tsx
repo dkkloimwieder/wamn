@@ -1,13 +1,6 @@
 import { cva, type VariantProps } from "class-variance-authority";
 import type { ComponentProps, JSX } from "solid-js";
-import {
-  createMemo,
-  For,
-  mergeProps,
-  children as resolveChildren,
-  Show,
-  splitProps,
-} from "solid-js";
+import { createMemo, For, mergeProps, children as resolveChildren, Show, splitProps } from "solid-js";
 
 import { cn } from "../../lib/utils";
 import { Label } from "./label";
@@ -18,13 +11,7 @@ type FieldSetProps = ComponentProps<"fieldset"> & {
 
 const FieldSet = (props: FieldSetProps) => {
   const [local, others] = splitProps(props, ["class"]);
-  return (
-    <fieldset
-      data-slot="field-set"
-      class={cn("z-field-set flex flex-col", local.class)}
-      {...others}
-    />
-  );
+  return <fieldset data-slot="field-set" class={cn("z-field-set flex flex-col", local.class)} {...others} />;
 };
 
 type FieldLegendProps = ComponentProps<"legend"> & {
@@ -55,10 +42,7 @@ const FieldGroup = (props: FieldGroupProps) => {
   return (
     <div
       data-slot="field-group"
-      class={cn(
-        "z-field-group group/field-group @container/field-group flex w-full flex-col",
-        local.class,
-      )}
+      class={cn("z-field-group group/field-group @container/field-group flex w-full flex-col", local.class)}
       {...others}
     />
   );
@@ -160,9 +144,7 @@ const FieldError = (props: FieldErrorProps) => {
       return null;
     }
 
-    const uniqueErrors = [
-      ...new Map(local.errors.map((error) => [error?.message, error])).values(),
-    ];
+    const uniqueErrors = [...new Map(local.errors.map((error) => [error?.message, error])).values()];
 
     if (uniqueErrors?.length === 1) {
       return uniqueErrors[0]?.message;
@@ -184,12 +166,7 @@ const FieldError = (props: FieldErrorProps) => {
   return (
     <Show when={content()}>
       {(resolvedContent) => (
-        <div
-          role="alert"
-          data-slot="field-error"
-          class={cn("z-field-error font-normal", local.class)}
-          {...others}
-        >
+        <div role="alert" data-slot="field-error" class={cn("z-field-error font-normal", local.class)} {...others}>
           {resolvedContent()}
         </div>
       )}
@@ -197,12 +174,4 @@ const FieldError = (props: FieldErrorProps) => {
   );
 };
 
-export {
-  Field,
-  FieldDescription,
-  FieldError,
-  FieldGroup,
-  FieldLabel,
-  FieldLegend,
-  FieldSet,
-};
+export { Field, FieldDescription, FieldError, FieldGroup, FieldLabel, FieldLegend, FieldSet };

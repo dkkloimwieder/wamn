@@ -18,8 +18,7 @@ const PLATFORM: { readonly [code: string]: string } = {
   "route-capacity-exhausted": "The server was busy. Try again.",
   invalid_input: "A value is not valid.",
   not_found: "The record does not exist.",
-  concurrency_conflict:
-    "Another change saved this record after you opened it. Read it again and retry.",
+  concurrency_conflict: "Another change saved this record after you opened it. Read it again and retry.",
   idempotency_conflict: "This request was already sent with other values.",
   unique_violation: "Another record already uses this value.",
   foreign_key_violation: "This change breaks a link to another record.",

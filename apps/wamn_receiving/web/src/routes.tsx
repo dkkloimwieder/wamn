@@ -62,7 +62,9 @@ export const SECTIONS: readonly ShellSection[] = [
           <m.PurchaseOrderQueryTable
             transport={props.transport}
             onOpen={{ "wamn-receiving:purchase-order/get@1.0.0": (row) => props.open(record("purchase-orders", row)) }}
-            onFill={{ "wamn-receiving:receiving/record-receipt@1.0.0": (fill) => props.open(fillPath("receipts/new", fill)) }}
+            onFill={{
+              "wamn-receiving:receiving/record-receipt@1.0.0": (fill) => props.open(fillPath("receipts/new", fill)),
+            }}
           />
         )),
       },
@@ -76,7 +78,9 @@ export const SECTIONS: readonly ShellSection[] = [
           { label: ReceivingLoadPurchaseOrderHistoryTableLabel, path: "purchase-orders/:id/history" },
           { label: PurchaseOrderUpdateFormLabel, path: "purchase-orders/:id/update" },
         ],
-        component: screen(purchaseOrder, (m) => (props) => <m.PurchaseOrderGetDetail transport={props.transport} input={key(props)} />),
+        component: screen(purchaseOrder, (m) => (props) => (
+          <m.PurchaseOrderGetDetail transport={props.transport} input={key(props)} />
+        )),
       },
       {
         path: "purchase-orders/:id/update",
@@ -138,7 +142,9 @@ export const SECTIONS: readonly ShellSection[] = [
       },
       {
         path: "receipts/:id",
-        component: screen(receipt, (m) => (props) => <m.ReceiptGetDetail transport={props.transport} input={key(props)} />),
+        component: screen(receipt, (m) => (props) => (
+          <m.ReceiptGetDetail transport={props.transport} input={key(props)} />
+        )),
       },
     ],
   },
@@ -174,7 +180,9 @@ export const SECTIONS: readonly ShellSection[] = [
         component: screen(location, (m) => (props) => (
           <m.LocationListTable
             transport={props.transport}
-            onFill={{ "wamn-receiving:receiving/record-receipt@1.0.0": (fill) => props.open(fillPath("receipts/new", fill)) }}
+            onFill={{
+              "wamn-receiving:receiving/record-receipt@1.0.0": (fill) => props.open(fillPath("receipts/new", fill)),
+            }}
           />
         )),
       },

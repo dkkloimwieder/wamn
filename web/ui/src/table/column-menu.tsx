@@ -44,13 +44,7 @@ export function ColumnMenu<TRow extends object>(props: {
   const pinned = () => props.column.getIsPinned();
   return (
     <DropdownMenu>
-      <DropdownMenuTrigger
-        as={Button}
-        type="button"
-        variant="ghost"
-        size="icon-xs"
-        aria-label={`menu ${props.label}`}
-      >
+      <DropdownMenuTrigger as={Button} type="button" variant="ghost" size="icon-xs" aria-label={`menu ${props.label}`}>
         <EllipsisVertical aria-hidden="true" />
       </DropdownMenuTrigger>
       <DropdownMenuContent class="w-44">

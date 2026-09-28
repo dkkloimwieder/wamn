@@ -95,8 +95,7 @@ function table(state: Shown, onCapChange = () => {}, onRefresh = () => {}) {
 const MESSAGE = "Full dataset cannot be loaded";
 
 /** The codes of the body rows, in the order they show. */
-const shown = () =>
-  bodyRows().map((row) => row.textContent?.slice(0, 5));
+const shown = () => bodyRows().map((row) => row.textContent?.slice(0, 5));
 
 const header = (label: string) => button(label);
 

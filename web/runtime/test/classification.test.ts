@@ -203,10 +203,9 @@ describe("a transport failure", () => {
       fetch: (_url, init) => {
         body = JSON.parse(String(init?.body));
         return Promise.resolve(
-          new Response(
-            '[{"request_id":"r1","value":{"id":"a"}},{"request_id":"r2","error":{"code":"x"}}]',
-            { status: 200 },
-          ),
+          new Response('[{"request_id":"r1","value":{"id":"a"}},{"request_id":"r2","error":{"code":"x"}}]', {
+            status: 200,
+          }),
         );
       },
     });
@@ -237,9 +236,7 @@ describe("a transport failure", () => {
       credential: "token",
       fetch: (url, init) => {
         seen = { url: String(url), init: init ?? {} };
-        return Promise.resolve(
-          new Response('[{"request_id":"r1","value":{"id":"a"}}]', { status: 200 }),
-        );
+        return Promise.resolve(new Response('[{"request_id":"r1","value":{"id":"a"}}]', { status: 200 }));
       },
     });
     const outcome = await transport.invoke({
@@ -250,8 +247,6 @@ describe("a transport failure", () => {
     const call = seen as { url: string; init: RequestInit } | null;
     expect(call?.url).toBe("https://example.test/widget/get");
     expect(call?.init.method).toBe("POST");
-    expect((call?.init.headers as { [name: string]: string })["authorization"]).toBe(
-      "Bearer token",
-    );
+    expect((call?.init.headers as { [name: string]: string })["authorization"]).toBe("Bearer token");
   });
 });

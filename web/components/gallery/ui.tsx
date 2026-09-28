@@ -36,14 +36,7 @@ import { query, type WidgetMakerQueryRow } from "../fixture/widget_maker.js";
 import { paged, WIDGET } from "../stubs/index.js";
 import { Section, State } from "./section.js";
 
-const BUTTON_VARIANTS = [
-  "default",
-  "outline",
-  "secondary",
-  "ghost",
-  "destructive",
-  "link",
-] as const;
+const BUTTON_VARIANTS = ["default", "outline", "secondary", "ghost", "destructive", "link"] as const;
 
 const BADGE_VARIANTS = [
   "default",
@@ -85,27 +78,14 @@ function Fields(): JSX.Element {
       <State name="filled">
         <FieldGroup>
           <TextField label="code" type="text" value={text()} onInput={setText} />
-          <ChoiceField
-            label="code"
-            choices={CODES}
-            allowEmpty={false}
-            value={choice()}
-            onChange={setChoice}
-          />
+          <ChoiceField label="code" choices={CODES} allowEmpty={false} value={choice()} onChange={setChoice} />
           <CheckField label="archived" checked={checked()} onChange={setChecked} />
         </FieldGroup>
       </State>
       <State name="refused">
         <FieldGroup>
           <TextField label="code" type="text" value="x" error="invalid_value" />
-          <ChoiceField
-            label="code"
-            choices={CODES}
-            allowEmpty
-            value=""
-            onChange={() => {}}
-            error="required"
-          />
+          <ChoiceField label="code" choices={CODES} allowEmpty value="" onChange={() => {}} error="required" />
           <CheckField label="archived" checked={false} onChange={() => {}} error="required" />
         </FieldGroup>
       </State>
@@ -206,9 +186,7 @@ export function UiSections(): JSX.Element {
     <>
       <Section title="Button" name="Button">
         <div class="flex flex-wrap gap-2">
-          <For each={BUTTON_VARIANTS}>
-            {(variant) => <Button variant={variant}>{variant}</Button>}
-          </For>
+          <For each={BUTTON_VARIANTS}>{(variant) => <Button variant={variant}>{variant}</Button>}</For>
           <Button disabled>disabled</Button>
         </div>
       </Section>

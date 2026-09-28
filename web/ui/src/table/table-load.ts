@@ -115,8 +115,7 @@ export function createTableLoad<TRow extends object>(
       );
       return;
     }
-    const limit =
-      definition.pageMaximum === null ? next.cap : loadLimit(next.cap, definition.pageMaximum);
+    const limit = definition.pageMaximum === null ? next.cap : loadLimit(next.cap, definition.pageMaximum);
     const outcome = await read(limit, sort);
     setState((current) => finishLoad(current, next.generation, outcome, definition.rowId));
   };

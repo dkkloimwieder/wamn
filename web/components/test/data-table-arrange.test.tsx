@@ -79,8 +79,7 @@ const codes = () =>
     .filter((code) => code !== undefined);
 
 /** The pin side of a column's header cell, or null. */
-const pinned = (label: string) =>
-  theButton(`menu ${label}`).closest("th")?.getAttribute("data-pinned") ?? null;
+const pinned = (label: string) => theButton(`menu ${label}`).closest("th")?.getAttribute("data-pinned") ?? null;
 
 const press = (name: string) => fireEvent.click(theButton(name));
 

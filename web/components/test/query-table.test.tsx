@@ -176,9 +176,7 @@ describe("QueryTable", () => {
   it("edits a cell through the definition's update, and shows a conflict on the row", async () => {
     const { stub } = await shown();
     await editAndSave("Operator note", 1, "checked");
-    await waitFor(() =>
-      expect(document.querySelector(`tr[data-row-id="${id(1)}"]`)?.textContent).toContain("checked"),
-    );
+    await waitFor(() => expect(document.querySelector(`tr[data-row-id="${id(1)}"]`)?.textContent).toContain("checked"));
     stub.changeElsewhere();
     await editAndSave("Operator note", 0, "late");
     await waitFor(() =>

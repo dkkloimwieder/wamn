@@ -33,9 +33,7 @@ const footerCellSpacingVariants = ({ size }: { size?: "dense" | "default" }) =>
  * Solid applies `style` objects through `setProperty`, so every declaration
  * below is written in hyphenated CSS form with explicit units.
  */
-function getPinningStyles<TData extends object>(
-  column: Column<DataGridFeatures, TData, unknown>,
-): JSX.CSSProperties {
+function getPinningStyles<TData extends object>(column: Column<DataGridFeatures, TData, unknown>): JSX.CSSProperties {
   const isPinned = column.getIsPinned();
 
   return {
@@ -81,8 +79,7 @@ function getDataGridScrollAreaViewport(node: HTMLElement): HTMLElement | null {
 }
 
 type DataGridResizeStartEvent =
-  | (MouseEvent & { currentTarget: HTMLDivElement })
-  | (TouchEvent & { currentTarget: HTMLDivElement });
+  (MouseEvent & { currentTarget: HTMLDivElement }) | (TouchEvent & { currentTarget: HTMLDivElement });
 
 type DataGridResizeDocumentEvent = globalThis.MouseEvent | globalThis.TouchEvent;
 
@@ -113,8 +110,7 @@ function getDataGridResizeEventClientX(
   if (isDataGridTouchEvent(event)) {
     if (typeof touchIdentifier === "number") {
       return (
-        findTouchClientX(event.touches, touchIdentifier) ??
-        findTouchClientX(event.changedTouches, touchIdentifier)
+        findTouchClientX(event.touches, touchIdentifier) ?? findTouchClientX(event.changedTouches, touchIdentifier)
       );
     }
 
@@ -147,10 +143,7 @@ function startDataGridColumnResizeOnEnd<TData extends object>(
   const headerCell = event.currentTarget.closest("th");
   const headerRect = headerCell?.getBoundingClientRect();
   const startOffset =
-    headerRect &&
-    Number.isFinite(
-      table.options.columnResizeDirection === "rtl" ? headerRect.left : headerRect.right,
-    )
+    headerRect && Number.isFinite(table.options.columnResizeDirection === "rtl" ? headerRect.left : headerRect.right)
       ? table.options.columnResizeDirection === "rtl"
         ? headerRect.left
         : headerRect.right
@@ -199,17 +192,13 @@ function startDataGridColumnResizeOnEnd<TData extends object>(
 
     const nextColumnSizing: Record<string, number> = {};
     const deltaPercentage = Math.min(
-      Math.max(
-        ((clientXPos - dragStartClientX) * directionMultiplier) / startSize,
-        minDeltaPercentage,
-      ),
+      Math.max(((clientXPos - dragStartClientX) * directionMultiplier) / startSize, minDeltaPercentage),
       maxDeltaPercentage,
     );
     const deltaOffset = deltaPercentage * startSize;
 
     for (const [columnId, headerSize] of columnSizingStart) {
-      nextColumnSizing[columnId] =
-        Math.round(Math.max(headerSize + headerSize * deltaPercentage, 0) * 100) / 100;
+      nextColumnSizing[columnId] = Math.round(Math.max(headerSize + headerSize * deltaPercentage, 0) * 100) / 100;
     }
 
     table.setColumnResizing((old) => ({
@@ -364,9 +353,7 @@ function getDataGridTableResolvedRows<TData extends object>(
     resolvedRows.push({
       row,
       pinnedBoundary:
-        index === topRows.length - 1 && (centerRows.length > 0 || bottomRows.length > 0)
-          ? "top"
-          : undefined,
+        index === topRows.length - 1 && (centerRows.length > 0 || bottomRows.length > 0) ? "top" : undefined,
     });
   });
 
@@ -377,17 +364,14 @@ function getDataGridTableResolvedRows<TData extends object>(
   bottomRows.forEach((row, index) => {
     resolvedRows.push({
       row,
-      pinnedBoundary:
-        index === 0 && (centerRows.length > 0 || topRows.length > 0) ? "bottom" : undefined,
+      pinnedBoundary: index === 0 && (centerRows.length > 0 || topRows.length > 0) ? "bottom" : undefined,
     });
   });
 
   return resolvedRows;
 }
 
-function getDataGridTableOrderedVisibleColumns<TData extends object>(
-  table: DataGridTableInstance<TData>,
-) {
+function getDataGridTableOrderedVisibleColumns<TData extends object>(table: DataGridTableInstance<TData>) {
   return [
     ...table.getStartVisibleLeafColumns(),
     ...table.getCenterVisibleLeafColumns(),
@@ -395,27 +379,19 @@ function getDataGridTableOrderedVisibleColumns<TData extends object>(
   ] as Column<DataGridFeatures, TData, unknown>[];
 }
 
-function getDataGridTableOrderedVisibleCells<TData extends object>(
-  row: Row<DataGridFeatures, TData>,
-) {
-  return [
-    ...row.getStartVisibleCells(),
-    ...row.getCenterVisibleCells(),
-    ...row.getEndVisibleCells(),
-  ] as Cell<DataGridFeatures, TData, unknown>[];
+function getDataGridTableOrderedVisibleCells<TData extends object>(row: Row<DataGridFeatures, TData>) {
+  return [...row.getStartVisibleCells(), ...row.getCenterVisibleCells(), ...row.getEndVisibleCells()] as Cell<
+    DataGridFeatures,
+    TData,
+    unknown
+  >[];
 }
 
-function getDataGridTableMergedHeaderGroups<TData extends object>(
-  table: DataGridTableInstance<TData>,
-) {
+function getDataGridTableMergedHeaderGroups<TData extends object>(table: DataGridTableInstance<TData>) {
   const leftHeaderGroups = table.getStartHeaderGroups();
   const centerHeaderGroups = table.getCenterHeaderGroups();
   const rightHeaderGroups = table.getEndHeaderGroups();
-  const headerGroupCount = Math.max(
-    leftHeaderGroups.length,
-    centerHeaderGroups.length,
-    rightHeaderGroups.length,
-  );
+  const headerGroupCount = Math.max(leftHeaderGroups.length, centerHeaderGroups.length, rightHeaderGroups.length);
 
   return Array.from({ length: headerGroupCount }, (_, index) => {
     const leftGroup = leftHeaderGroups[index];
@@ -423,9 +399,7 @@ function getDataGridTableMergedHeaderGroups<TData extends object>(
     const rightGroup = rightHeaderGroups[index];
 
     return {
-      id:
-        [leftGroup?.id, centerGroup?.id, rightGroup?.id].filter(Boolean).join(":") ||
-        `header-group-${index}`,
+      id: [leftGroup?.id, centerGroup?.id, rightGroup?.id].filter(Boolean).join(":") || `header-group-${index}`,
       headers: [
         ...(leftGroup?.headers ?? []),
         ...(centerGroup?.headers ?? []),
@@ -435,9 +409,7 @@ function getDataGridTableMergedHeaderGroups<TData extends object>(
   });
 }
 
-function hasDataGridTableRightPinnedColumns<TData extends object>(
-  table: DataGridTableInstance<TData>,
-) {
+function hasDataGridTableRightPinnedColumns<TData extends object>(table: DataGridTableInstance<TData>) {
   return (table.store.state.columnPinning.end?.length ?? 0) > 0;
 }
 
@@ -446,10 +418,7 @@ function DataGridTableFillCol() {
 
   return (
     <Show when={grid.props.tableLayout?.columnsResizable}>
-      <col
-        data-slot="data-grid-table-fill-col"
-        style={{ width: "var(--data-grid-fill-size, 0px)" }}
-      />
+      <col data-slot="data-grid-table-fill-col" style={{ width: "var(--data-grid-fill-size, 0px)" }} />
     </Show>
   );
 }
@@ -717,20 +686,12 @@ function DataGridTableHeadRowCell<TData extends object>(props: {
       ref={(node) => assignRef(props.dndRef, node)}
       scope="col"
       colSpan={props.header.colSpan > 1 ? props.header.colSpan : undefined}
-      aria-sort={
-        sortDirection() === "asc"
-          ? "ascending"
-          : sortDirection() === "desc"
-            ? "descending"
-            : undefined
-      }
+      aria-sort={sortDirection() === "asc" ? "ascending" : sortDirection() === "desc" ? "descending" : undefined}
       style={{
         ...(grid.props.tableLayout?.width === "fixed" && !grid.props.tableLayout?.columnsResizable
           ? { width: `${props.header.getSize()}px` }
           : undefined),
-        ...(grid.props.tableLayout?.columnsPinnable && column().getCanPin()
-          ? getPinningStyles(column())
-          : undefined),
+        ...(grid.props.tableLayout?.columnsPinnable && column().getCanPin() ? getPinningStyles(column()) : undefined),
         ...(grid.props.tableLayout?.columnsResizable
           ? { width: `calc(var(--header-${props.header.id}-size) * 1px)` }
           : undefined),
@@ -747,10 +708,7 @@ function DataGridTableHeadRowCell<TData extends object>(props: {
         grid.props.tableLayout?.columnsResizable &&
           column().getCanResize() &&
           (isPinned() ? "overflow-hidden" : "overflow-visible"),
-        grid.props.tableLayout?.columnsResizable &&
-          column().getCanResize() &&
-          isLastVisibleColumn() &&
-          "pe-8",
+        grid.props.tableLayout?.columnsResizable && column().getCanResize() && isLastVisibleColumn() && "pe-8",
         grid.props.tableLayout?.columnsPinnable &&
           column().getCanPin() &&
           cn(
@@ -761,9 +719,7 @@ function DataGridTableHeadRowCell<TData extends object>(props: {
         props.header.column.columnDef.meta?.headerClassName,
         // Edge detection spans the full visible leaf order; the header's own
         // group only covers one pinning bucket.
-        column().getIndex() === 0 || isLastVisibleColumn()
-          ? grid.props.tableClassNames?.edgeCell
-          : "",
+        column().getIndex() === 0 || isLastVisibleColumn() ? grid.props.tableClassNames?.edgeCell : "",
       )}
     >
       {props.children}
@@ -800,10 +756,8 @@ function DataGridTableHeadRowCellResize<TData extends object>(props: {
   const isLastVisibleColumn = () =>
     column().getIndex() === props.header.getContext().table.getVisibleLeafColumns().length - 1;
   const isResizeModeOnEnd = () =>
-    getDataGridColumnResizeMode(
-      grid.props.tableLayout?.columnsResizeMode,
-      grid.table.options.columnResizeMode,
-    ) === "onEnd";
+    getDataGridColumnResizeMode(grid.props.tableLayout?.columnsResizeMode, grid.table.options.columnResizeMode) ===
+    "onEnd";
 
   let stopResizeSession: (() => void) | undefined;
 
@@ -896,12 +850,8 @@ function DataGridTableResizeIndicator(props: { viewportNode: () => HTMLDivElemen
   const columnResizing = () => grid.table.store.state.columnResizing;
   const resizingColumnId = () => columnResizing().isResizingColumn;
   const resizeMode = () =>
-    getDataGridColumnResizeMode(
-      grid.props.tableLayout?.columnsResizeMode,
-      grid.table.options.columnResizeMode,
-    );
-  const isActive = () =>
-    !!(grid.props.tableLayout?.columnsResizable && resizeMode() === "onEnd" && resizingColumnId());
+    getDataGridColumnResizeMode(grid.props.tableLayout?.columnsResizeMode, grid.table.options.columnResizeMode);
+  const isActive = () => !!(grid.props.tableLayout?.columnsResizable && resizeMode() === "onEnd" && resizingColumnId());
 
   // Positioning happens imperatively on each drag frame: layout reads
   // (viewport rect, thead height) and node access belong outside the render
@@ -929,9 +879,7 @@ function DataGridTableResizeIndicator(props: { viewportNode: () => HTMLDivElemen
     if (headerHeightCache.key !== activeColumnId) {
       headerHeightCache.key = activeColumnId;
       headerHeightCache.value =
-        viewportElement
-          ?.querySelector('[data-slot="data-grid-table"] thead')
-          ?.getBoundingClientRect().height ?? 0;
+        viewportElement?.querySelector('[data-slot="data-grid-table"] thead')?.getBoundingClientRect().height ?? 0;
     }
 
     const headerHeight = headerHeightCache.value;
@@ -1017,11 +965,7 @@ function DataGridTableFootRow(props: { children: JSX.Element }) {
   );
 }
 
-function DataGridTableFootRowCell(props: {
-  children?: JSX.Element;
-  colSpan?: number;
-  class?: string;
-}) {
+function DataGridTableFootRowCell(props: { children?: JSX.Element; colSpan?: number; class?: string }) {
   const grid = useDataGrid();
   const spacing = () =>
     footerCellSpacingVariants({
@@ -1056,8 +1000,7 @@ function DataGridTableBodyRowSkeleton(props: { children: JSX.Element }) {
           grid.props.tableLayout?.rowBorder &&
           "border-border border-b [&:not(:last-child)>td]:border-b",
         grid.props.tableLayout?.cellBorder && "*:last:border-e-0",
-        grid.props.tableLayout?.stripped &&
-          "odd:bg-muted/90 odd:hover:bg-muted hover:bg-transparent",
+        grid.props.tableLayout?.stripped && "odd:bg-muted/90 odd:hover:bg-muted hover:bg-transparent",
         grid.table.options.enableRowSelection && "*:first:relative",
         grid.props.tableClassNames?.bodyRow,
       )}
@@ -1093,8 +1036,7 @@ function DataGridTableBodyRowSkeletonCell<TData extends object>(props: {
         grid.props.tableLayout?.columnsPinnable &&
           props.column.getCanPin() &&
           "data-pinned:bg-background data-pinned:isolate [&[data-pinned=end][data-last-col=end]]:shadow-[inset_1px_0_0_0_var(--border)] [&[data-pinned=start][data-last-col=start]]:shadow-[inset_-1px_0_0_0_var(--border)]",
-        props.column.getIndex() === 0 ||
-          props.column.getIndex() === grid.table.getVisibleLeafColumns().length - 1
+        props.column.getIndex() === 0 || props.column.getIndex() === grid.table.getVisibleLeafColumns().length - 1
           ? grid.props.tableClassNames?.edgeCell
           : "",
       )}
@@ -1132,9 +1074,7 @@ function DataGridTableBodyRow<TData extends object>(props: {
         assignRef(props.dndRef, node);
       }}
       style={{ ...props.dndStyle }}
-      data-state={
-        grid.table.options.enableRowSelection && props.row.getIsSelected() ? "selected" : undefined
-      }
+      data-state={grid.table.options.enableRowSelection && props.row.getIsSelected() ? "selected" : undefined}
       data-index={props.dataIndex}
       data-row-id={props.row.id}
       data-depth={props.row.depth || undefined}
@@ -1144,9 +1084,7 @@ function DataGridTableBodyRow<TData extends object>(props: {
       class={cn(
         "hover:bg-muted/40 data-[state=selected]:bg-muted/50",
         grid.props.onRowClick && "cursor-pointer",
-        !grid.props.tableLayout?.stripped &&
-          grid.props.tableLayout?.rowBorder &&
-          bodyRowBottomBorderClasses,
+        !grid.props.tableLayout?.stripped && grid.props.tableLayout?.rowBorder && bodyRowBottomBorderClasses,
         grid.props.tableLayout?.cellBorder && `*:last:border-e-0 ${bodyRowBottomBorderClasses}`,
         // Virtualized rows stripe by absolute row index (CSS :nth-child
         // parity flips as spacer rows resize while scrolling).
@@ -1168,13 +1106,11 @@ function DataGridTableBodyRow<TData extends object>(props: {
   );
 }
 
-function DataGridTableBodyRowExpandded<TData extends object>(props: {
-  row: Row<DataGridFeatures, TData>;
-}) {
+function DataGridTableBodyRowExpandded<TData extends object>(props: { row: Row<DataGridFeatures, TData> }) {
   const grid = useDataGrid<TData>();
   const expandedContent = () =>
-    grid.table.getAllColumns().find((column) => column.columnDef.meta?.expandedContent)?.columnDef
-      .meta?.expandedContent;
+    grid.table.getAllColumns().find((column) => column.columnDef.meta?.expandedContent)?.columnDef.meta
+      ?.expandedContent;
 
   // Tree and grouped rows share row.getIsExpanded() with detail expansion.
   // Without a detail column there is nothing to render, and an empty <tr>
@@ -1183,14 +1119,10 @@ function DataGridTableBodyRowExpandded<TData extends object>(props: {
   return (
     <Show when={(props.row as { getIsGrouped?: () => boolean }).getIsGrouped?.() !== true && expandedContent()}>
       {(content) => (
-        <tr
-          data-detail-for={props.row.id}
-          class={cn(grid.props.tableLayout?.rowBorder && bodyRowBottomBorderClasses)}
-        >
+        <tr data-detail-for={props.row.id} class={cn(grid.props.tableLayout?.rowBorder && bodyRowBottomBorderClasses)}>
           <td
             colSpan={
-              getDataGridTableOrderedVisibleCells(props.row).length +
-              (grid.props.tableLayout?.columnsResizable ? 1 : 0)
+              getDataGridTableOrderedVisibleCells(props.row).length + (grid.props.tableLayout?.columnsResizable ? 1 : 0)
             }
           >
             {content()(props.row.original)}
@@ -1223,9 +1155,7 @@ function DataGridTableBodyRowCell<TData extends object>(props: {
     <td
       ref={(node) => assignRef(props.dndRef, node)}
       style={{
-        ...(grid.props.tableLayout?.columnsPinnable && column().getCanPin()
-          ? getPinningStyles(column())
-          : undefined),
+        ...(grid.props.tableLayout?.columnsPinnable && column().getCanPin() ? getPinningStyles(column()) : undefined),
         ...(grid.props.tableLayout?.columnsResizable
           ? { width: `calc(var(--col-${props.cell.column.id}-size) * 1px)` }
           : undefined),
@@ -1308,15 +1238,11 @@ function DataGridTableRenderedRow<TData extends object>(props: {
 function DataGridTableEmpty() {
   const grid = useDataGrid();
   const visibleColumnCount = () =>
-    getDataGridTableOrderedVisibleColumns(grid.table).length +
-    (grid.props.tableLayout?.columnsResizable ? 1 : 0);
+    getDataGridTableOrderedVisibleColumns(grid.table).length + (grid.props.tableLayout?.columnsResizable ? 1 : 0);
 
   return (
     <tr>
-      <td
-        colSpan={Math.max(visibleColumnCount(), 1)}
-        class="text-muted-foreground py-6 text-center text-sm"
-      >
+      <td colSpan={Math.max(visibleColumnCount(), 1)} class="text-muted-foreground py-6 text-center text-sm">
         {grid.props.emptyMessage || "No data available"}
       </td>
     </tr>
@@ -1332,18 +1258,14 @@ function DataGridTableEmpty() {
  * on the per-render wrapper objects, so a state change reuses the existing row
  * elements instead of rebuilding the body.
  */
-function DataGridTableBodyRows<TData extends object>(props: {
-  table: DataGridTableInstance<TData>;
-}) {
+function DataGridTableBodyRows<TData extends object>(props: { table: DataGridTableInstance<TData> }) {
   const grid = useDataGrid<TData>();
   const pagination = () => props.table.store.state.pagination;
 
-  const showSkeleton = () =>
-    grid.isLoading && grid.props.loadingMode === "skeleton" && !!pagination()?.pageSize;
+  const showSkeleton = () => grid.isLoading && grid.props.loadingMode === "skeleton" && !!pagination()?.pageSize;
   const showSpinner = () => grid.isLoading && grid.props.loadingMode === "spinner";
 
-  const skeletonRowIndexes = () =>
-    Array.from({ length: pagination()?.pageSize ?? 0 }, (_, index) => index);
+  const skeletonRowIndexes = () => Array.from({ length: pagination()?.pageSize ?? 0 }, (_, index) => index);
   const leftVisibleColumns = () => props.table.getStartVisibleLeafColumns();
   const centerVisibleColumns = () => props.table.getCenterVisibleLeafColumns();
   const rightVisibleColumns = () => props.table.getEndVisibleLeafColumns();
@@ -1365,9 +1287,7 @@ function DataGridTableBodyRows<TData extends object>(props: {
     <Switch
       fallback={
         <For each={rows()}>
-          {(row) => (
-            <DataGridTableRenderedRow row={row} pinnedBoundary={pinnedBoundaries().get(row.id)} />
-          )}
+          {(row) => <DataGridTableRenderedRow row={row} pinnedBoundary={pinnedBoundaries().get(row.id)} />}
         </For>
       }
     >
@@ -1402,10 +1322,7 @@ function DataGridTableBodyRows<TData extends object>(props: {
       <Match when={showSpinner()}>
         <tr>
           <td
-            colSpan={
-              props.table.getVisibleFlatColumns().length +
-              (grid.props.tableLayout?.columnsResizable ? 1 : 0)
-            }
+            colSpan={props.table.getVisibleFlatColumns().length + (grid.props.tableLayout?.columnsResizable ? 1 : 0)}
             class="p-8"
           >
             <div class="flex items-center justify-center">
@@ -1416,14 +1333,7 @@ function DataGridTableBodyRows<TData extends object>(props: {
                 viewBox="0 0 24 24"
                 aria-hidden="true"
               >
-                <circle
-                  class="opacity-25"
-                  cx="12"
-                  cy="12"
-                  r="10"
-                  stroke="currentColor"
-                  stroke-width="4"
-                />
+                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" />
                 <path
                   class="opacity-75"
                   fill="currentColor"
@@ -1452,9 +1362,7 @@ function DataGridTableHeadGroups<TData extends object = object>() {
 
   const headerCell = (header: Header<DataGridFeatures, TData, unknown>) => (
     <DataGridTableHeadRowCell header={header}>
-      {header.isPlaceholder
-        ? null
-        : flexRender(header.column.columnDef.header, header.getContext())}
+      {header.isPlaceholder ? null : flexRender(header.column.columnDef.header, header.getContext())}
       <Show when={grid.props.tableLayout?.columnsResizable && header.column.getCanResize()}>
         <DataGridTableHeadRowCellResize header={header} />
       </Show>
@@ -1465,15 +1373,11 @@ function DataGridTableHeadGroups<TData extends object = object>() {
     <For each={mergedHeaderGroups()}>
       {(headerGroup) => (
         <DataGridTableHeadRow rowId={headerGroup.id}>
-          <For each={headerGroup.headers.filter((header) => header.column.getIsPinned() !== "end")}>
-            {headerCell}
-          </For>
+          <For each={headerGroup.headers.filter((header) => header.column.getIsPinned() !== "end")}>{headerCell}</For>
           <Show when={grid.props.tableLayout?.columnsResizable && hasRightPinnedColumns()}>
             <DataGridTableFillHeadCell />
           </Show>
-          <For each={headerGroup.headers.filter((header) => header.column.getIsPinned() === "end")}>
-            {headerCell}
-          </For>
+          <For each={headerGroup.headers.filter((header) => header.column.getIsPinned() === "end")}>{headerCell}</For>
           <Show when={grid.props.tableLayout?.columnsResizable && !hasRightPinnedColumns()}>
             <DataGridTableFillHeadCell />
           </Show>
@@ -1483,10 +1387,7 @@ function DataGridTableHeadGroups<TData extends object = object>() {
   );
 }
 
-function DataGridTable<TData extends object>(props: {
-  footerContent?: JSX.Element;
-  renderHeader?: boolean;
-}) {
+function DataGridTable<TData extends object>(props: { footerContent?: JSX.Element; renderHeader?: boolean }) {
   const grid = useDataGrid<TData>();
   const renderHeader = () => props.renderHeader ?? true;
   // Resolve once: the footer is JSX handed in as a prop, and testing it for
@@ -1502,12 +1403,7 @@ function DataGridTable<TData extends object>(props: {
           </DataGridTableHead>
         </Show>
 
-        <Show
-          when={
-            renderHeader() &&
-            (grid.props.tableLayout?.stripped || !grid.props.tableLayout?.rowBorder)
-          }
-        >
+        <Show when={renderHeader() && (grid.props.tableLayout?.stripped || !grid.props.tableLayout?.rowBorder)}>
           <DataGridTableRowSpacer />
         </Show>
 

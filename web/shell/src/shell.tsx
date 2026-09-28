@@ -152,8 +152,7 @@ function screenRoute(route: ShellRoute, home: string): Component {
     const open = (path: string) => navigate(`/${params.aud}/${path}`, { state: { opened: true } });
     const close = () =>
       location.state?.opened === true ? navigate(-1) : navigate(`/${params.aud}/${home}`, { replace: true });
-    const fill = (path: string) =>
-      path.replace(/:(\w+)/g, (_, name: string) => encodeURIComponent(params[name] ?? ""));
+    const fill = (path: string) => path.replace(/:(\w+)/g, (_, name: string) => encodeURIComponent(params[name] ?? ""));
     return (
       <>
         <Show when={route.actions}>
@@ -193,10 +192,7 @@ function single(query: Readonly<Record<string, string | string[] | undefined>>):
  * module and picks the component from it, so a screen loads its generated
  * component, and the table or form code it renders, only when it opens.
  */
-export function screen<M>(
-  load: () => Promise<M>,
-  pick: (module: M) => Component<ScreenProps>,
-): Component<ScreenProps> {
+export function screen<M>(load: () => Promise<M>, pick: (module: M) => Component<ScreenProps>): Component<ScreenProps> {
   return lazy(async () => ({ default: pick(await load()) }));
 }
 
@@ -209,10 +205,7 @@ export function Shell(props: ShellProps): JSX.Element {
   const first = screens[0];
   return (
     <Router>
-      <Route
-        path="/"
-        component={() => <ChooseEnvironment title={props.title} scope={props} options={options} />}
-      />
+      <Route path="/" component={() => <ChooseEnvironment title={props.title} scope={props} options={options} />} />
       <Route path="/invite" component={() => <AcceptInvitation title={props.title} options={options} />} />
       <Route
         path="/:aud"
@@ -464,10 +457,7 @@ function Session(props: {
             </Match>
             <Match when={current() !== null}>
               <CardPage title={props.title}>
-                <SignInForm
-                  trouble={failure(current())}
-                  submit={(email, password) => keeper.signIn(email, password)}
-                />
+                <SignInForm trouble={failure(current())} submit={(email, password) => keeper.signIn(email, password)} />
               </CardPage>
             </Match>
           </Switch>

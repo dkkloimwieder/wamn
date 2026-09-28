@@ -4,15 +4,7 @@
 
 import { describe, expect, it } from "vitest";
 
-import {
-  appendRows,
-  type BatchTick,
-  emptyLoad,
-  endLoad,
-  keepLoad,
-  readLoadLines,
-  startLoad,
-} from "../src/load.js";
+import { appendRows, type BatchTick, emptyLoad, endLoad, keepLoad, readLoadLines, startLoad } from "../src/load.js";
 import { createTransport } from "../src/transport.js";
 import type { JsonValue, WireRequest } from "../src/wire.js";
 
@@ -65,7 +57,12 @@ describe("the reply lines of a streamed load", () => {
       (rows) => batches.push(rows),
     );
     expect(end).toEqual({ status: "completed", value: { more: true } });
-    expect(batches).toEqual([[{ id: "a", name: "a" }, { id: "b", name: "b" }]]);
+    expect(batches).toEqual([
+      [
+        { id: "a", name: "a" },
+        { id: "b", name: "b" },
+      ],
+    ]);
   });
 
   it("reads a character and a line that a chunk splits", async () => {
@@ -117,11 +114,7 @@ describe("the reply lines of a streamed load", () => {
       detail: { detail: {} },
       text: "The load took too long.",
     });
-    const uncertain = await readLoadLines(
-      text(row("a"), outcome({ uncertain: {} })),
-      revive,
-      () => undefined,
-    );
+    const uncertain = await readLoadLines(text(row("a"), outcome({ uncertain: {} })), revive, () => undefined);
     expect(uncertain.status).toBe("uncertain");
   });
 
@@ -177,9 +170,7 @@ describe("the load state of a streamed load", () => {
     const second = startLoad(first);
     const stale = appendRows(second, first.generation, [{ id: "a", name: "a" }]);
     expect(stale).toBe(second);
-    expect(endLoad(second, first.generation, { status: "completed", value: { more: false } }, ["id"])).toBe(
-      second,
-    );
+    expect(endLoad(second, first.generation, { status: "completed", value: { more: false } }, ["id"])).toBe(second);
   });
 
   it("fails a load that returned one row id twice, and a load with no rows ends empty", () => {
@@ -196,9 +187,7 @@ describe("the load state of a streamed load", () => {
       { status: "completed", value: { more: false } },
       ["id"],
     );
-    const empty = endLoad(startLoad(loaded), 2, { status: "completed", value: { more: false } }, [
-      "id",
-    ]);
+    const empty = endLoad(startLoad(loaded), 2, { status: "completed", value: { more: false } }, ["id"]);
     expect(empty.rows).toEqual([]);
     expect(empty.fullyRead).toBe(true);
   });
@@ -257,9 +246,7 @@ describe("the transport's streamed read", () => {
     expect(opened !== undefined && "etag" in opened && opened.etag).toBe('W/"v1"');
     expect(asked[0]?.url).toBe("https://wms.test/pallet/query?limit=1000&shape=%22stream%22");
     expect(asked[0]?.init.cache).toBe("no-store");
-    expect((asked[0]?.init.headers as { authorization?: string }).authorization).toBe(
-      "Bearer token",
-    );
+    expect((asked[0]?.init.headers as { authorization?: string }).authorization).toBe("Bearer token");
   });
 
   it("revalidates the last load with its ETag, and unchanged data answers not modified", async () => {
@@ -280,10 +267,10 @@ describe("the transport's streamed read", () => {
     const transport = createTransport({
       baseUrl: "https://wms.test",
       fetch: async () =>
-        new Response(
-          JSON.stringify([{ error: { code: "invalid_input", detail: { field: "limit" } } }]),
-          { status: 200, headers: { "content-type": "application/json" } },
-        ),
+        new Response(JSON.stringify([{ error: { code: "invalid_input", detail: { field: "limit" } } }]), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
     });
     const opened = await transport.openStream?.(request);
     expect(opened).toEqual({

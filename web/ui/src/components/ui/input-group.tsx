@@ -23,22 +23,19 @@ const InputGroup = (props: InputGroupProps) => {
   );
 };
 
-const inputGroupAddonVariants = cva(
-  "z-input-group-addon flex cursor-text items-center justify-center select-none",
-  {
-    variants: {
-      align: {
-        "inline-start": "z-input-group-addon-align-inline-start order-first",
-        "inline-end": "z-input-group-addon-align-inline-end order-last",
-        "block-start": "z-input-group-addon-align-block-start order-first w-full justify-start",
-        "block-end": "z-input-group-addon-align-block-end order-last w-full justify-start",
-      },
-    },
-    defaultVariants: {
-      align: "inline-start",
+const inputGroupAddonVariants = cva("z-input-group-addon flex cursor-text items-center justify-center select-none", {
+  variants: {
+    align: {
+      "inline-start": "z-input-group-addon-align-inline-start order-first",
+      "inline-end": "z-input-group-addon-align-inline-end order-last",
+      "block-start": "z-input-group-addon-align-block-start order-first w-full justify-start",
+      "block-end": "z-input-group-addon-align-block-end order-last w-full justify-start",
     },
   },
-);
+  defaultVariants: {
+    align: "inline-start",
+  },
+});
 
 type InputGroupAddonProps = ComponentProps<"div"> & VariantProps<typeof inputGroupAddonVariants>;
 
@@ -103,18 +100,7 @@ type InputGroupInputProps = InputProps;
 
 const InputGroupInput = (props: InputGroupInputProps) => {
   const [local, others] = splitProps(props, ["class"]);
-  return (
-    <Input
-      data-slot="input-group-control"
-      class={cn("z-input-group-input flex-1", local.class)}
-      {...others}
-    />
-  );
+  return <Input data-slot="input-group-control" class={cn("z-input-group-input flex-1", local.class)} {...others} />;
 };
 
-export {
-  InputGroup,
-  InputGroupAddon,
-  InputGroupButton,
-  InputGroupInput,
-};
+export { InputGroup, InputGroupAddon, InputGroupButton, InputGroupInput };

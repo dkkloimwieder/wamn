@@ -1,8 +1,4 @@
-import type {
-  SolidTable,
-  Table,
-  TableFeatures,
-} from "@tanstack/solid-table";
+import type { SolidTable, Table, TableFeatures } from "@tanstack/solid-table";
 import {
   columnFacetingFeature,
   columnFilteringFeature,
@@ -139,10 +135,7 @@ export type DataGridTableInstance<TData extends object> = SolidTable<DataGridFea
  * itself. Kept feature-agnostic: layout and messaging never depend on which
  * TanStack features the consumer registered.
  */
-type DataGridLayoutProps<TData extends object> = Omit<
-  DataGridProps<TableFeatures, TData>,
-  "table" | "children"
->;
+type DataGridLayoutProps<TData extends object> = Omit<DataGridProps<TableFeatures, TData>, "table" | "children">;
 
 interface DataGridContextProps<TData extends object> {
   props: DataGridLayoutProps<TData>;
@@ -398,9 +391,7 @@ function DataGridProvider<TData extends object>(
   return <DataGridContext.Provider value={value}>{props.children}</DataGridContext.Provider>;
 }
 
-function DataGrid<TFeatures extends TableFeatures, TData extends object>(
-  props: DataGridProps<TFeatures, TData>,
-) {
+function DataGrid<TFeatures extends TableFeatures, TData extends object>(props: DataGridProps<TFeatures, TData>) {
   const tableLayout = createMemo(() => ({
     ...dataGridDefaultTableLayout,
     ...props.tableLayout,
@@ -431,10 +422,7 @@ function DataGrid<TFeatures extends TableFeatures, TData extends object>(
   const internalProps = mergedProps as unknown as DataGridLayoutProps<TData>;
 
   return (
-    <DataGridProvider
-      {...internalProps}
-      table={props.table as unknown as DataGridTableInstance<TData>}
-    >
+    <DataGridProvider {...internalProps} table={props.table as unknown as DataGridTableInstance<TData>}>
       {props.children}
     </DataGridProvider>
   );

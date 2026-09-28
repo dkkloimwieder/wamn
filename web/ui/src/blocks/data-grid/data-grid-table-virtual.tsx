@@ -1,11 +1,6 @@
 import type { Column, Header, Row } from "@tanstack/solid-table";
 import { flexRender } from "@tanstack/solid-table";
-import type {
-  PartialKeys,
-  VirtualItem,
-  Virtualizer,
-  VirtualizerOptions,
-} from "@tanstack/solid-virtual";
+import type { PartialKeys, VirtualItem, Virtualizer, VirtualizerOptions } from "@tanstack/solid-virtual";
 import { createVirtualizer } from "@tanstack/solid-virtual";
 import type { JSX } from "solid-js";
 import { children, createEffect, createMemo, createSignal, For, mergeProps, Show } from "solid-js";
@@ -124,9 +119,7 @@ function getDataGridTableHeaderOffset({
 }) {
   if (!headerSticky) return 0;
 
-  const headerElement = containerElement.querySelector<HTMLElement>(
-    ':scope > [data-slot="data-grid-table"] > thead',
-  );
+  const headerElement = containerElement.querySelector<HTMLElement>(':scope > [data-slot="data-grid-table"] > thead');
 
   if (!headerElement) return 0;
 
@@ -333,9 +326,7 @@ function DataGridTableVirtualUtilityRow<TData extends object>(props: {
 
   return (
     <tr aria-hidden={props.ariaHidden || undefined} class={props.rowClass}>
-      <For each={leftVisibleColumns()}>
-        {(column) => <DataGridTableVirtualPinnedPlaceholderCell column={column} />}
-      </For>
+      <For each={leftVisibleColumns()}>{(column) => <DataGridTableVirtualPinnedPlaceholderCell column={column} />}</For>
       <td
         colSpan={Math.max(centerVisibleColumns().length, 1)}
         class={props.centerCellClass}
@@ -433,9 +424,7 @@ function DataGridTableVirtualBody<TData extends object>(props: VirtualBodyProps<
         {(row, index) => (
           <DataGridTableRenderedRow
             row={row}
-            pinnedBoundary={
-              index() === props.topRows.length - 1 && hasMiddleSection() ? "top" : undefined
-            }
+            pinnedBoundary={index() === props.topRows.length - 1 && hasMiddleSection() ? "top" : undefined}
           />
         )}
       </For>
@@ -453,11 +442,7 @@ function DataGridTableVirtualBody<TData extends object>(props: VirtualBodyProps<
           {(virtualRow) => (
             <Show when={props.centerRows[virtualRow.index]}>
               {(row) => (
-                <DataGridTableRenderedRow
-                  row={row()}
-                  rowRef={props.measureRowRef}
-                  rowIndex={virtualRow.index}
-                />
+                <DataGridTableRenderedRow row={row()} rowRef={props.measureRowRef} rowIndex={virtualRow.index} />
               )}
             </Show>
           )}
@@ -484,11 +469,7 @@ function DataGridTableVirtualBody<TData extends object>(props: VirtualBodyProps<
         {(row, index) => (
           <DataGridTableRenderedRow
             row={row}
-            pinnedBoundary={
-              index() === 0 && (props.topRows.length > 0 || hasMiddleSection())
-                ? "bottom"
-                : undefined
-            }
+            pinnedBoundary={index() === 0 && (props.topRows.length > 0 || hasMiddleSection()) ? "bottom" : undefined}
           />
         )}
       </For>
@@ -509,9 +490,7 @@ function DataGridTableVirtual<TData extends object>(props: DataGridTableVirtualP
 
   const mergedHeaderGroups = createMemo(() => getDataGridTableMergedHeaderGroups(grid.table));
   const hasRightPinnedColumns = () => hasDataGridTableRightPinnedColumns(grid.table);
-  const rowSections = createMemo(() =>
-    getDataGridTableRowSections(grid.table, grid.props.tableLayout?.rowsPinnable),
-  );
+  const rowSections = createMemo(() => getDataGridTableRowSections(grid.table, grid.props.tableLayout?.rowsPinnable));
   const topRows = () => rowSections().topRows;
   const centerRows = () => rowSections().centerRows;
   const bottomRows = () => rowSections().bottomRows;
@@ -556,12 +535,10 @@ function DataGridTableVirtual<TData extends object>(props: DataGridTableVirtualP
   };
 
   const isVirtualizationEnabled = () => props.virtualizerOptions?.enabled !== false;
-  const loadingMoreMessage = () =>
-    grid.props.fetchingMoreMessage || grid.props.loadingMessage || "Loading...";
+  const loadingMoreMessage = () => grid.props.fetchingMoreMessage || grid.props.loadingMessage || "Loading...";
   const allRowsLoadedMessage = () => grid.props.allRowsLoadedMessage || "All records loaded";
 
-  const usesExternalScrollArea = () =>
-    scrollElement() !== null && scrollElement() !== containerElement();
+  const usesExternalScrollArea = () => scrollElement() !== null && scrollElement() !== containerElement();
 
   const resolveScrollElement = () => {
     const custom = customGetScrollElement();
@@ -740,12 +717,7 @@ function DataGridTableVirtual<TData extends object>(props: DataGridTableVirtualP
   });
 
   createEffect(() => {
-    if (
-      !isVirtualizationEnabled() ||
-      !isInfiniteMode() ||
-      props.hasMore === false ||
-      isFetchingMore()
-    ) {
+    if (!isVirtualizationEnabled() || !isInfiniteMode() || props.hasMore === false || isFetchingMore()) {
       return;
     }
 
@@ -769,9 +741,7 @@ function DataGridTableVirtual<TData extends object>(props: DataGridTableVirtualP
 
   const headerCell = (header: Header<DataGridFeatures, TData, unknown>) => (
     <DataGridTableHeadRowCell header={header}>
-      {header.isPlaceholder
-        ? null
-        : flexRender(header.column.columnDef.header, header.getContext())}
+      {header.isPlaceholder ? null : flexRender(header.column.columnDef.header, header.getContext())}
       <Show when={grid.props.tableLayout?.columnsResizable && header.column.getCanResize()}>
         <DataGridTableHeadRowCellResize header={header} />
       </Show>
@@ -802,21 +772,13 @@ function DataGridTableVirtual<TData extends object>(props: DataGridTableVirtualP
             <For each={mergedHeaderGroups()}>
               {(headerGroup) => (
                 <DataGridTableHeadRow rowId={headerGroup.id}>
-                  <For
-                    each={headerGroup.headers.filter(
-                      (header) => header.column.getIsPinned() !== "end",
-                    )}
-                  >
+                  <For each={headerGroup.headers.filter((header) => header.column.getIsPinned() !== "end")}>
                     {headerCell}
                   </For>
                   <Show when={grid.props.tableLayout?.columnsResizable && hasRightPinnedColumns()}>
                     <DataGridTableFillHeadCell />
                   </Show>
-                  <For
-                    each={headerGroup.headers.filter(
-                      (header) => header.column.getIsPinned() === "end",
-                    )}
-                  >
+                  <For each={headerGroup.headers.filter((header) => header.column.getIsPinned() === "end")}>
                     {headerCell}
                   </For>
                   <Show when={grid.props.tableLayout?.columnsResizable && !hasRightPinnedColumns()}>
@@ -828,12 +790,7 @@ function DataGridTableVirtual<TData extends object>(props: DataGridTableVirtualP
           </DataGridTableHead>
         </Show>
 
-        <Show
-          when={
-            renderHeader() &&
-            (grid.props.tableLayout?.stripped || !grid.props.tableLayout?.rowBorder)
-          }
-        >
+        <Show when={renderHeader() && (grid.props.tableLayout?.stripped || !grid.props.tableLayout?.rowBorder)}>
           <DataGridTableRowSpacer />
         </Show>
 

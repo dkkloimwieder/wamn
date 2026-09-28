@@ -15,9 +15,7 @@ type AlertDialogTriggerProps<T extends ValidComponent = "button"> = PolymorphicP
   AlertDialogPrimitive.AlertDialogTriggerProps<T>
 >;
 
-const AlertDialogTrigger = <T extends ValidComponent = "button">(
-  props: AlertDialogTriggerProps<T>,
-) => {
+const AlertDialogTrigger = <T extends ValidComponent = "button">(props: AlertDialogTriggerProps<T>) => {
   return <AlertDialogPrimitive.Trigger data-slot="alert-dialog-trigger" {...props} />;
 };
 
@@ -31,9 +29,7 @@ type AlertDialogOverlayProps<T extends ValidComponent = "div"> = PolymorphicProp
 > &
   Pick<ComponentProps<T>, "class">;
 
-const AlertDialogOverlay = <T extends ValidComponent = "div">(
-  props: AlertDialogOverlayProps<T>,
-) => {
+const AlertDialogOverlay = <T extends ValidComponent = "div">(props: AlertDialogOverlayProps<T>) => {
   const [local, others] = splitProps(props as AlertDialogOverlayProps, ["class"]);
   return (
     <AlertDialogPrimitive.Overlay
@@ -50,9 +46,7 @@ type AlertDialogContentProps<T extends ValidComponent = "div"> = PolymorphicProp
 > &
   Pick<ComponentProps<T>, "class"> & { size?: "default" | "sm" };
 
-const AlertDialogContent = <T extends ValidComponent = "div">(
-  props: AlertDialogContentProps<T>,
-) => {
+const AlertDialogContent = <T extends ValidComponent = "div">(props: AlertDialogContentProps<T>) => {
   const mergedProps = mergeProps({ size: "default" } as AlertDialogContentProps, props);
   const [local, others] = splitProps(mergedProps, ["class", "size"]);
   return (
@@ -75,13 +69,7 @@ type AlertDialogHeaderProps = ComponentProps<"div">;
 
 const AlertDialogHeader = (props: AlertDialogHeaderProps) => {
   const [local, others] = splitProps(props, ["class"]);
-  return (
-    <div
-      class={cn("z-alert-dialog-header", local.class)}
-      data-slot="alert-dialog-header"
-      {...others}
-    />
-  );
+  return <div class={cn("z-alert-dialog-header", local.class)} data-slot="alert-dialog-header" {...others} />;
 };
 
 type AlertDialogFooterProps = ComponentProps<"div">;
@@ -119,17 +107,9 @@ const AlertDialogTitle = <T extends ValidComponent = "h2">(props: AlertDialogTit
 
 type AlertDialogActionProps<T extends ValidComponent = "button"> = ButtonProps<T>;
 
-const AlertDialogAction = <T extends ValidComponent = "button">(
-  props: AlertDialogActionProps<T>,
-) => {
+const AlertDialogAction = <T extends ValidComponent = "button">(props: AlertDialogActionProps<T>) => {
   const [local, others] = splitProps(props as AlertDialogActionProps, ["class"]);
-  return (
-    <Button
-      data-slot="alert-dialog-action"
-      class={cn("z-alert-dialog-action", local.class)}
-      {...others}
-    />
-  );
+  return <Button data-slot="alert-dialog-action" class={cn("z-alert-dialog-action", local.class)} {...others} />;
 };
 
 type AlertDialogCancelProps<T extends ValidComponent = "button"> = PolymorphicProps<
@@ -138,15 +118,9 @@ type AlertDialogCancelProps<T extends ValidComponent = "button"> = PolymorphicPr
 > &
   Pick<ButtonProps, "variant" | "size" | "class">;
 
-const AlertDialogCancel = <T extends ValidComponent = "button">(
-  props: AlertDialogCancelProps<T>,
-) => {
+const AlertDialogCancel = <T extends ValidComponent = "button">(props: AlertDialogCancelProps<T>) => {
   const mergedProps = mergeProps({ variant: "outline", size: "default" }, props);
-  const [local, others] = splitProps(mergedProps as AlertDialogCancelProps, [
-    "class",
-    "variant",
-    "size",
-  ]);
+  const [local, others] = splitProps(mergedProps as AlertDialogCancelProps, ["class", "variant", "size"]);
   return (
     <AlertDialogPrimitive.CloseButton
       as={Button}

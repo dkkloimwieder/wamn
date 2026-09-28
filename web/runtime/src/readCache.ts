@@ -74,9 +74,7 @@ export function createReadStore(): ReadStore {
     if (entries.get(key) !== entry) {
       return reply;
     }
-    const directives = (response.cacheControl ?? "")
-      .split(",")
-      .map((directive) => directive.trim().toLowerCase());
+    const directives = (response.cacheControl ?? "").split(",").map((directive) => directive.trim().toLowerCase());
     let maxAge = 0;
     for (const directive of directives) {
       const age = /^max-age=(\d+)$/.exec(directive);
@@ -89,12 +87,7 @@ export function createReadStore(): ReadStore {
     }
     const etag = response.etag ?? (reply === previous ? entry.etag : null);
     // A reply that is never fresh and has no tag saves no request, so it is not kept.
-    if (
-      reply.status !== 200 ||
-      directives.includes("no-store") ||
-      (etag === null && maxAge === 0) ||
-      !keep(reply)
-    ) {
+    if (reply.status !== 200 || directives.includes("no-store") || (etag === null && maxAge === 0) || !keep(reply)) {
       entries.delete(key);
       return reply;
     }

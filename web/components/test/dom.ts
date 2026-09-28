@@ -27,8 +27,7 @@ export function theButton(name: string): HTMLButtonElement {
 }
 
 /** The rows of the table body, in the order they show. */
-export const bodyRows = (): HTMLTableRowElement[] =>
-  Array.from(document.querySelectorAll("tbody tr"));
+export const bodyRows = (): HTMLTableRowElement[] => Array.from(document.querySelectorAll("tbody tr"));
 
 /** Opens the header menu of one column and picks its item named `item`, as a pointer does. */
 export function pickMenu(column: string, item: string) {

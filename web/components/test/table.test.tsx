@@ -45,9 +45,7 @@ describe("the generated table for a page", () => {
     expect(screen.getByText("b")).toBeDefined();
     // The totals have one cell for each column of the definition, and none
     // for the row buttons.
-    expect(document.querySelectorAll("[data-slot=data-table-total]")).toHaveLength(
-      WIDGET_QUERY_TABLE.columns.length,
-    );
+    expect(document.querySelectorAll("[data-slot=data-table-total]")).toHaveLength(WIDGET_QUERY_TABLE.columns.length);
     // The definition's columns are the headers, in contract order. A column
     // whose model authors a label reads that text, and one that does not keeps
     // its field name with spaces. The row buttons are one last column with no
@@ -185,13 +183,9 @@ describe("the generated table for a page", () => {
   });
 
   it("states an outcome that is not a completion in place of the empty message", async () => {
-    const { transport } = stub([
-      { status: "refused", code: "permission_denied", detail: null },
-    ]);
+    const { transport } = stub([{ status: "refused", code: "permission_denied", detail: null }]);
     const seen: Outcome<unknown>[] = [];
-    render(() => (
-      <WidgetQueryTable transport={transport} onOutcome={(outcome) => seen.push(outcome)} />
-    ));
+    render(() => <WidgetQueryTable transport={transport} onOutcome={(outcome) => seen.push(outcome)} />);
     await waitFor(() => expect(seen).toHaveLength(1));
     expect(seen[0]?.status).toBe("refused");
     // The header row, and the one row the grid shows when it holds no record,
@@ -231,23 +225,17 @@ describe("the generated table for a page", () => {
       },
     });
     const seen: Outcome<unknown>[] = [];
-    render(() => (
-      <WidgetQueryTable transport={transport} onOutcome={(outcome) => seen.push(outcome)} />
-    ));
+    render(() => <WidgetQueryTable transport={transport} onOutcome={(outcome) => seen.push(outcome)} />);
 
     await waitFor(() => expect(seen).toHaveLength(1));
     expect(seen[0]).toMatchObject({ status: "refused", code: "unauthenticated" });
-    await waitFor(() =>
-      expect(screen.getAllByText("You are not signed in.").length).toBeGreaterThan(0),
-    );
+    await waitFor(() => expect(screen.getAllByText("You are not signed in.").length).toBeGreaterThan(0));
     expect(screen.queryByText("No data available")).toBeNull();
 
     fireEvent.click(screen.getByRole("button", { name: "refresh" }));
     await waitFor(() => expect(seen).toHaveLength(2));
     expect(seen[1]?.status).toBe("uncertain");
-    await waitFor(() =>
-      expect(screen.getAllByText(/the server reported internal_error/).length).toBeGreaterThan(0),
-    );
+    await waitFor(() => expect(screen.getAllByText(/the server reported internal_error/).length).toBeGreaterThan(0));
     expect(screen.queryByText("No data available")).toBeNull();
   });
 });

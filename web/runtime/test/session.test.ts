@@ -5,21 +5,8 @@
 
 import { describe, expect, it } from "vitest";
 
-import {
-  environments,
-  keepSession,
-  renew,
-  signIn,
-  signOut,
-  type Clock,
-  type SessionState,
-} from "../src/session.js";
-import {
-  createTransport,
-  type BearerOptions,
-  type CookieOptions,
-  type TransportOptions,
-} from "../src/transport.js";
+import { environments, keepSession, renew, signIn, signOut, type Clock, type SessionState } from "../src/session.js";
+import { createTransport, type BearerOptions, type CookieOptions, type TransportOptions } from "../src/transport.js";
 import type { ResponseContract } from "../src/wire.js";
 
 /** One call that a stub fetch saw. */
@@ -37,9 +24,7 @@ function stubFetch(replies: Array<() => Response>): {
   const fetch: typeof globalThis.fetch = (url, init) => {
     seen.push({ url: String(url), init: init ?? {} });
     const reply = replies.shift();
-    return reply === undefined
-      ? Promise.reject(new Error("no reply is queued"))
-      : Promise.resolve(reply());
+    return reply === undefined ? Promise.reject(new Error("no reply is queued")) : Promise.resolve(reply());
   };
   return { fetch, seen };
 }
@@ -70,8 +55,7 @@ describe("the transport carrier", () => {
     contract,
     items: [{ request_id: "r1" }],
   };
-  const completed = (): Response =>
-    new Response('[{"request_id":"r1","value":{"id":"a"}}]', { status: 200 });
+  const completed = (): Response => new Response('[{"request_id":"r1","value":{"id":"a"}}]', { status: 200 });
 
   async function send(
     options: Omit<BearerOptions, "baseUrl"> | Omit<CookieOptions, "baseUrl">,
@@ -317,11 +301,7 @@ describe("the session keeper", () => {
 
   it("keeps a new sign in and stops after sign out", async () => {
     const clock = fakeClock(0);
-    const stub = stubFetch([
-      reply(401),
-      times(1_000),
-      reply(204),
-    ]);
+    const stub = stubFetch([reply(401), times(1_000), reply(204)]);
     const states: SessionState[] = [];
     const keeper = keepSession({
       aud: "aud-1",
@@ -334,11 +314,7 @@ describe("the session keeper", () => {
     expect(clock.pending()).toEqual([940_000]);
     await keeper.signOut();
     expect(clock.pending()).toEqual([]);
-    expect(stub.seen.map((call) => call.url)).toEqual([
-      "/password/renew",
-      "/password/session",
-      "/password/logout",
-    ]);
+    expect(stub.seen.map((call) => call.url)).toEqual(["/password/renew", "/password/session", "/password/logout"]);
     expect(states).toEqual([
       { status: "signedOut" },
       { status: "signedIn", expiresAt: 1_000, loginExpiresAt: 28_000 },

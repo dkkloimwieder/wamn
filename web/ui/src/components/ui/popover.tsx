@@ -45,10 +45,7 @@ const PopoverContent = <T extends ValidComponent = "div">(props: PopoverContentP
   );
 };
 
-type PopoverTitleProps<T extends ValidComponent = "h2"> = PolymorphicProps<
-  T,
-  PopoverPrimitive.PopoverTitleProps<T>
-> &
+type PopoverTitleProps<T extends ValidComponent = "h2"> = PolymorphicProps<T, PopoverPrimitive.PopoverTitleProps<T>> &
   Pick<ComponentProps<T>, "class">;
 
 const PopoverTitle = <T extends ValidComponent = "h2">(props: PopoverTitleProps<T>) => {

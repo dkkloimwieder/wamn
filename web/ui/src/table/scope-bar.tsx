@@ -61,9 +61,7 @@ export function scopeApplies(filter: DataTableScopeFilter, mode: DataTableScopeM
     return true;
   }
   if (filter.range !== undefined) {
-    return mode.required === true
-      ? filter.range.min !== ""
-      : filter.range.min !== "" || filter.range.max !== "";
+    return mode.required === true ? filter.range.min !== "" : filter.range.min !== "" || filter.range.max !== "";
   }
   return filter.values.length > 0;
 }
@@ -128,8 +126,7 @@ function RangeControl(props: {
 }): JSX.Element {
   const time = () => props.mode.type === "timestamptz";
   const band = () => props.mode.required === true;
-  const set = (range: DataTableScopeRange) =>
-    props.onChange(range.min === "" && range.max === "" ? undefined : range);
+  const set = (range: DataTableScopeRange) => props.onChange(range.min === "" && range.max === "" ? undefined : range);
   return (
     <>
       <Input

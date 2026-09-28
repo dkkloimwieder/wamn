@@ -42,15 +42,11 @@ export function allowedAggregates(type: DataTableColumnType): readonly DataTable
 }
 
 /** The aggregate a column shows until the operator chooses one. */
-export function defaultAggregate(
-  type: DataTableColumnType,
-  role: DataTableColumnRole,
-): DataTableAggregate {
+export function defaultAggregate(type: DataTableColumnType, role: DataTableColumnRole): DataTableAggregate {
   return role === "value" ? allowedAggregates(type)[0]! : "count";
 }
 
-export const isEmpty = (value: unknown): boolean =>
-  value === null || value === undefined || value === "";
+export const isEmpty = (value: unknown): boolean => value === null || value === undefined || value === "";
 
 /** A decimal as whole units of its scale: 12.5 at scale 2 is 1250. */
 interface Decimal {
@@ -72,8 +68,7 @@ function parseDecimal(text: string): Decimal {
 }
 
 /** The units of a decimal at a scale at least its own. */
-const unitsAt = (decimal: Decimal, scale: number): bigint =>
-  decimal.units * 10n ** BigInt(scale - decimal.scale);
+const unitsAt = (decimal: Decimal, scale: number): bigint => decimal.units * 10n ** BigInt(scale - decimal.scale);
 
 function formatDecimal(units: bigint, scale: number): string {
   const negative = units < 0n;
@@ -90,7 +85,7 @@ function divideRounded(dividend: bigint, divisor: bigint): bigint {
   if (twice < (divisor < 0n ? -divisor : divisor)) {
     return quotient;
   }
-  return quotient + ((dividend < 0n) === (divisor < 0n) ? 1n : -1n);
+  return quotient + (dividend < 0n === divisor < 0n ? 1n : -1n);
 }
 
 const compareNumbers = (a: number, b: number) => (a < b ? -1 : a > b ? 1 : 0);
@@ -147,15 +142,10 @@ export function aggregateValues(
         bestOrder = order;
       }
     }
-    return type === "numeric"
-      ? formatDecimal(bestOrder as bigint, scale)
-      : (best as number | string);
+    return type === "numeric" ? formatDecimal(bestOrder as bigint, scale) : (best as number | string);
   }
   if (type === "numeric") {
-    const sum = present.reduce<bigint>(
-      (total, value) => total + unitsAt(parseDecimal(String(value)), scale),
-      0n,
-    );
+    const sum = present.reduce<bigint>((total, value) => total + unitsAt(parseDecimal(String(value)), scale), 0n);
     return aggregate === "sum"
       ? formatDecimal(sum, scale)
       : formatDecimal(divideRounded(sum * 100n, BigInt(present.length)), scale + 2);
@@ -191,9 +181,7 @@ function zonedDate(instant: number, timeZone: string): [number, number, number] 
     });
     zoneFormats.set(timeZone, format);
   }
-  const parts = Object.fromEntries(
-    format.formatToParts(instant).map((part) => [part.type, part.value]),
-  );
+  const parts = Object.fromEntries(format.formatToParts(instant).map((part) => [part.type, part.value]));
   return [Number(parts["year"]), Number(parts["month"]), Number(parts["day"])];
 }
 
@@ -204,12 +192,7 @@ const pad = (value: number) => String(value).padStart(2, "0");
  * the time zone. `weekStart` is the ISO weekday a week starts on, 1 for Monday.
  * An empty or unreadable time has no bucket.
  */
-export function bucketOf(
-  value: unknown,
-  bucket: DataTableBucket,
-  timeZone: string,
-  weekStart: number,
-): string | null {
+export function bucketOf(value: unknown, bucket: DataTableBucket, timeZone: string, weekStart: number): string | null {
   const instant = isEmpty(value) ? Number.NaN : Date.parse(String(value));
   if (Number.isNaN(instant)) {
     return null;

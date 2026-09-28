@@ -213,5 +213,4 @@ export function GroupBar(props: {
   );
 }
 
-const sortText = (sort: DataTableGroupSort) =>
-  `${sort.by} ${sort.descending ? "descending" : "ascending"}`;
+const sortText = (sort: DataTableGroupSort) => `${sort.by} ${sort.descending ? "descending" : "ascending"}`;

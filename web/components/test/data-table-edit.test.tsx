@@ -63,8 +63,7 @@ function table(
   ));
 }
 
-const type = (label: string, value: string) =>
-  fireEvent.input(screen.getByLabelText(label), { target: { value } });
+const type = (label: string, value: string) => fireEvent.input(screen.getByLabelText(label), { target: { value } });
 
 describe("inline edit", () => {
   it("edits only the editable cells, and saves the typed value with its row", async () => {

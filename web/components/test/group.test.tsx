@@ -30,11 +30,8 @@ describe("a repeated group", () => {
     const { transport, sent } = stub();
     render(() => <WidgetRecordBatchForm transport={transport} />);
     fireEvent.click(screen.getByRole("button", { name: "add" }));
-    await waitFor(() =>
-      expect(sent.some((request) => request.operation.includes("widget-maker"))).toBe(true),
-    );
-    const lineReads = () =>
-      sent.filter((request) => !request.operation.includes("widget-maker")).length;
+    await waitFor(() => expect(sent.some((request) => request.operation.includes("widget-maker"))).toBe(true));
+    const lineReads = () => sent.filter((request) => !request.operation.includes("widget-maker")).length;
     // The line list has no input to read until a maker is chosen.
     expect(lineReads()).toBe(0);
 
@@ -54,7 +51,7 @@ describe("a repeated group", () => {
     render(() => (
       <WidgetRecordBatchForm
         transport={transport}
-       
+
         initial={{ value: { grade: "first" } }}
       />
     ));
@@ -73,9 +70,7 @@ describe("a repeated group", () => {
 
     // The refusal marks the quantity control in place.
     await waitFor(() =>
-      expect(screen.getAllByRole("alert").map((mark) => mark.textContent)).toContain(
-        "expected decimal text",
-      ),
+      expect(screen.getAllByRole("alert").map((mark) => mark.textContent)).toContain("expected decimal text"),
     );
     expect(quantity.getAttribute("aria-invalid")).toBe("true");
     expect(sent.filter((request) => request.operation.includes("record-batch"))).toHaveLength(0);

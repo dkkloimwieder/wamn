@@ -202,11 +202,7 @@ function reported(reason: string, document: unknown): Outcome<JsonValue> {
  * request identity: its one outcome matches its one item by position, and an
  * outcome that carries an identity establishes nothing.
  */
-export function classify(
-  contract: ResponseContract,
-  requestId: string | null,
-  reply: HttpReply,
-): Outcome<JsonValue> {
+export function classify(contract: ResponseContract, requestId: string | null, reply: HttpReply): Outcome<JsonValue> {
   if (reply.status === 401 && contract.direct) {
     return refused("unauthenticated", null);
   }
@@ -221,10 +217,7 @@ export function classify(
   }
 
   const partial = PARTIAL.safeParse(document);
-  if (
-    partial.success &&
-    (partial.data.committed_result !== undefined || partial.data.failed_outcome !== undefined)
-  ) {
+  if (partial.success && (partial.data.committed_result !== undefined || partial.data.failed_outcome !== undefined)) {
     if (reply.status < 400 || reply.status >= 600) {
       return uncertain("partial completion requires an HTTP error response");
     }
@@ -234,8 +227,7 @@ export function classify(
   const envelope = ERROR_ENVELOPE.safeParse(document);
   if (envelope.success) {
     const { code, operation } = envelope.data.error;
-    const bare =
-      Object.keys(envelope.data).length === 1 && Object.keys(envelope.data.error).length === 1;
+    const bare = Object.keys(envelope.data).length === 1 && Object.keys(envelope.data.error).length === 1;
     if (bare && COMPLETE_REFUSALS.some(([status, literal]) => reply.status === status && literal === code)) {
       return refused(code, null);
     }
@@ -305,10 +297,7 @@ export function classifyEach(
     document = undefined;
   }
   const partial = PARTIAL.safeParse(document);
-  if (
-    partial.success &&
-    (partial.data.committed_result !== undefined || partial.data.failed_outcome !== undefined)
-  ) {
+  if (partial.success && (partial.data.committed_result !== undefined || partial.data.failed_outcome !== undefined)) {
     return every(uncertain("a partial completion does not name the item it belongs to"));
   }
   if (reply.status !== 200 || document === undefined) {
@@ -372,15 +361,12 @@ function confirmed(contract: ResponseContract, error: { code?: string | undefine
   }
   const detail = (error as { detail?: unknown }).detail;
   const member = (name: string): unknown =>
-    detail !== null && typeof detail === "object"
-      ? (detail as { [key: string]: unknown })[name]
-      : undefined;
+    detail !== null && typeof detail === "object" ? (detail as { [key: string]: unknown })[name] : undefined;
   const present = declared.required.every((name) => {
     const value = member(name);
     if (name === "expected_row_version" || name === "observed_row_version") {
       return (
-        (typeof value === "number" && Number.isInteger(value)) ||
-        (typeof value === "string" && /^-?\d+$/.test(value))
+        (typeof value === "number" && Number.isInteger(value)) || (typeof value === "string" && /^-?\d+$/.test(value))
       );
     }
     return typeof value === "string" && value !== "";
@@ -450,11 +436,7 @@ function classifyPartial(
   if (!item.success || !matchesRequest(requestId, item.data.request_id)) {
     return uncertain("the committed result does not match the submitted request");
   }
-  if (
-    item.data.value === undefined ||
-    item.data.error !== undefined ||
-    document.failed_outcome === undefined
-  ) {
+  if (item.data.value === undefined || item.data.error !== undefined || document.failed_outcome === undefined) {
     return uncertain("the response does not establish partial completion");
   }
   return {
@@ -528,8 +510,7 @@ export function createTransport(options: TransportOptions): Transport {
         // "no-store", so its 304 reaches the store. A read the store does
         // not hold, as after a reload, uses "no-cache": the browser
         // revalidates its own copy, and a 304 saves the body.
-        const stored = (outcome: Outcome<JsonValue>) =>
-          outcome.status === "completed" || outcome.status === "refused";
+        const stored = (outcome: Outcome<JsonValue>) => outcome.status === "completed" || outcome.status === "refused";
         reply = await reads.read(
           `${request.operation} ${target}`,
           (tag) =>
@@ -571,9 +552,7 @@ export function createTransport(options: TransportOptions): Transport {
       }
       const requestIds = request.items.map(itemRequestId);
       const reply = await exchange(request);
-      return isReply(reply)
-        ? classifyEach(request.contract, requestIds, reply)
-        : requestIds.map(() => reply);
+      return isReply(reply) ? classifyEach(request.contract, requestIds, reply) : requestIds.map(() => reply);
     },
     onWrite(listener: () => void): () => void {
       writeListeners.add(listener);
@@ -735,10 +714,7 @@ function declaredPath(pointer: string): string | null {
  * the other. `refusalMarks` then reads the answer exactly as it reads a
  * refusal that the release sent.
  */
-export function checkedMember(
-  path: readonly (string | number)[] | undefined,
-  fields: FieldMap,
-): string | null {
+export function checkedMember(path: readonly (string | number)[] | undefined, fields: FieldMap): string | null {
   if (path === undefined || path.length === 0) {
     return null;
   }
@@ -748,9 +724,7 @@ export function checkedMember(
     if (typeof segment === "number") {
       // The field map spells a repeated group's key with `[]`, and the index
       // fills those brackets rather than adding a second pair.
-      member = member.endsWith("[]")
-        ? `${member.slice(0, -2)}[${segment}]`
-        : `${member}[${segment}]`;
+      member = member.endsWith("[]") ? `${member.slice(0, -2)}[${segment}]` : `${member}[${segment}]`;
       continue;
     }
     const entries: [string, FieldMap[string]][] = Object.entries(level ?? {});

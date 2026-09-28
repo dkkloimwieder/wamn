@@ -55,17 +55,12 @@ function valueFilter(type: DataTableColumnType): ValueFilter {
 }
 
 /** The text a filter control shows when the set is not fully read. */
-export const FILTER_NEEDS_FULL_SET =
-  "Filters apply only to a fully read set. Raise the cap to read every row.";
+export const FILTER_NEEDS_FULL_SET = "Filters apply only to a fully read set. Raise the cap to read every row.";
 
 const isEmpty = (value: unknown) => value === null || value === undefined || value === "";
 
 /** True when a row value of one column type passes the filter. */
-export function filterMatches(
-  type: DataTableColumnType,
-  value: unknown,
-  filter: DataTableFilter,
-): boolean {
+export function filterMatches(type: DataTableColumnType, value: unknown, filter: DataTableFilter): boolean {
   switch (filter.kind) {
     case "empty":
       return isEmpty(value);
@@ -84,9 +79,7 @@ export function filterMatches(
       // A time compares as an instant; the control gives a local time.
       const read = type === "timestamptz" ? Date.parse : Number;
       const at = read(String(value));
-      return (
-        (filter.min === "" || at >= read(filter.min)) && (filter.max === "" || at <= read(filter.max))
-      );
+      return (filter.min === "" || at >= read(filter.min)) && (filter.max === "" || at <= read(filter.max));
     }
   }
 }

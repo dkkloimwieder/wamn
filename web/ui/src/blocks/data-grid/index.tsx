@@ -1,13 +1,5 @@
-export type {
-  DataGridColumnMeta,
-  DataGridFeatures,
-  DataGridTableInstance,
-} from "./data-grid";
-export {
-  DataGrid,
-  DataGridContainer,
-  useDataGrid,
-} from "./data-grid";
+export type { DataGridColumnMeta, DataGridFeatures, DataGridTableInstance } from "./data-grid";
+export { DataGrid, DataGridContainer, useDataGrid } from "./data-grid";
 export type { DataGridRefCallback } from "./data-grid-table";
 export {
   DataGridTable,

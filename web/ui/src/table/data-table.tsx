@@ -115,12 +115,7 @@ import {
   untrack,
 } from "solid-js";
 
-import {
-  DataGrid,
-  DataGridContainer,
-  DataGridTableFootRow,
-  DataGridTableFootRowCell,
-} from "../blocks/data-grid";
+import { DataGrid, DataGridContainer, DataGridTableFootRow, DataGridTableFootRowCell } from "../blocks/data-grid";
 import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
 import { Field, FieldDescription, FieldLabel } from "../components/ui/field";
@@ -141,20 +136,8 @@ import {
   defaultAggregate,
   isEmpty,
 } from "./aggregate";
-import {
-  ColumnFilter,
-  type DataTableFilter,
-  FILTER_NEEDS_FULL_SET,
-  filterMatches,
-  filterText,
-} from "./column-filter";
-import {
-  BulkBar,
-  type DataTableAction,
-  type DataTableRowResult,
-  SELECT_COLUMN,
-  selectColumn,
-} from "./bulk";
+import { ColumnFilter, type DataTableFilter, FILTER_NEEDS_FULL_SET, filterMatches, filterText } from "./column-filter";
+import { BulkBar, type DataTableAction, type DataTableRowResult, SELECT_COLUMN, selectColumn } from "./bulk";
 import { createChildAreas, type DataTableChild, EXPAND_COLUMN, expandColumn } from "./child-tables";
 import { csvFileName, csvText, downloadCsv, EXPORT_NEEDS_FULL_SET } from "./csv";
 import { type DataTableEditResult, EditCell, editedValue, editText, type OpenEdit } from "./edit-cell";
@@ -174,16 +157,7 @@ import { ViewBar } from "./view-bar";
 
 /** The type of a column, as the frozen `wamn:postgres/types.sql-value` names it. */
 export type DataTableColumnType =
-  | "boolean"
-  | "int32"
-  | "int64"
-  | "float64"
-  | "text"
-  | "bytes"
-  | "numeric"
-  | "timestamptz"
-  | "json"
-  | "uuid";
+  "boolean" | "int32" | "int64" | "float64" | "text" | "bytes" | "numeric" | "timestamptz" | "json" | "uuid";
 
 /**
  * What a column is to its row: the row id, a reference to another record, the
@@ -277,9 +251,7 @@ export interface DataTableProps<TRow extends object> {
    * Runs one action once over the selected rows, in the table's order, and
    * returns one result for each row, in the same order.
    */
-  readonly onBulk?:
-    | ((operation: string, rows: readonly TRow[]) => Promise<readonly DataTableRowResult[]>)
-    | undefined;
+  readonly onBulk?: ((operation: string, rows: readonly TRow[]) => Promise<readonly DataTableRowResult[]>) | undefined;
   /** The fields whose cells edit in place: the columns the update writes. */
   readonly editableFields?: readonly (keyof TRow & string)[] | undefined;
   /**
@@ -287,8 +259,7 @@ export interface DataTableProps<TRow extends object> {
    * revision, and returns what the write came to.
    */
   readonly onEdit?:
-    | ((row: TRow, field: keyof TRow & string, value: unknown) => Promise<DataTableEditResult<TRow>>)
-    | undefined;
+    ((row: TRow, field: keyof TRow & string, value: unknown) => Promise<DataTableEditResult<TRow>>) | undefined;
   /**
    * Called with true when an edit opens and with false when it is saved or
    * dropped. The source runs no new load in between.
@@ -422,15 +393,13 @@ function compareValues(type: DataTableColumnType, a: unknown, b: unknown): numbe
 }
 
 /** The shown text of one value or aggregate. */
-const shownText = (value: unknown): string =>
-  value === null || value === undefined ? "" : String(value);
+const shownText = (value: unknown): string => (value === null || value === undefined ? "" : String(value));
 
 const groupable = (type: DataTableColumnType) => type !== "json" && type !== "bytes";
 
 /** The data rows under a group row, without the group rows nested in it. */
-const dataRows = <TRow extends object>(
-  row: Row<DataTableFeatures, TRow>,
-): Row<DataTableFeatures, TRow>[] => row.getLeafRows().filter((leaf) => !leaf.getIsGrouped());
+const dataRows = <TRow extends object>(row: Row<DataTableFeatures, TRow>): Row<DataTableFeatures, TRow>[] =>
+  row.getLeafRows().filter((leaf) => !leaf.getIsGrouped());
 
 /**
  * A group row's value, as its first data row gives it. TanStack keys a group
@@ -476,9 +445,7 @@ export function DataTable<TRow extends object>(props: DataTableProps<TRow>): JSX
           candidate.field,
           props.rows.reduce(
             (scale, row) =>
-              isEmpty(row[candidate.field])
-                ? scale
-                : Math.max(scale, decimalScale(String(row[candidate.field]))),
+              isEmpty(row[candidate.field]) ? scale : Math.max(scale, decimalScale(String(row[candidate.field]))),
             0,
           ),
         ]),
@@ -583,8 +550,7 @@ export function DataTable<TRow extends object>(props: DataTableProps<TRow>): JSX
     return [
       ...(bulk() ? [selectColumn<TRow>((id) => results()[id])] : []),
       ...(children().length > 0 ? [expandColumn<TRow>(childArea)] : []),
-      ...props.columns.map(
-      (definition): ColumnDef<DataTableFeatures, TRow> => ({
+      ...props.columns.map((definition): ColumnDef<DataTableFeatures, TRow> => ({
         id: definition.field,
         header: (context) => (
           <div class="flex items-center gap-1">
@@ -614,9 +580,7 @@ export function DataTable<TRow extends object>(props: DataTableProps<TRow>): JSX
               cell={context.cell}
               show={definition.cell}
               groupLabel={(field, value) =>
-                column(field).type === "timestamptz"
-                  ? bucketLabel(String(value), bucketFor(field))
-                  : String(value)
+                column(field).type === "timestamptz" ? bucketLabel(String(value), bucketFor(field)) : String(value)
               }
             />
           );
@@ -626,9 +590,7 @@ export function DataTable<TRow extends object>(props: DataTableProps<TRow>): JSX
                 label={definition.label}
                 rowId={context.row.id}
                 shown={shown()}
-                edit={
-                  edit()?.rowId === context.row.id && edit()?.field === definition.field ? edit() : null
-                }
+                edit={edit()?.rowId === context.row.id && edit()?.field === definition.field ? edit() : null}
                 blocked={edit() !== null}
                 onOpen={() => openEdit(context.row.id, context.row.original, definition.field)}
                 onText={(text) => setEdit((open) => (open === null ? null : { ...open, text }))}
@@ -670,8 +632,7 @@ export function DataTable<TRow extends object>(props: DataTableProps<TRow>): JSX
         },
         // A set that is not fully read sorts only by a declared sort field.
         enableSorting: fullyRead || sortFields.some((sort) => sort.field === definition.field),
-      }),
-      ),
+      })),
       ...(props.rowActions === undefined ? [] : [actionsColumn(props.rowActions)]),
     ];
   });
@@ -791,8 +752,7 @@ export function DataTable<TRow extends object>(props: DataTableProps<TRow>): JSX
   /** Each scope filter and the server search. The source reads them, and the table applies none. */
   const [scope, setScope] = createSignal<Record<string, DataTableScopeFilter>>({});
   const [find, setFind] = createSignal("");
-  const modeOf = (field: string): DataTableScopeMode =>
-    props.scopeModes?.[field] ?? {};
+  const modeOf = (field: string): DataTableScopeMode => props.scopeModes?.[field] ?? {};
   /** The scope filters that narrow the rows, in declared order. */
   const appliedScope = (current: Record<string, DataTableScopeFilter>) =>
     props.scopeFilters.flatMap((declared) => {
@@ -820,9 +780,11 @@ export function DataTable<TRow extends object>(props: DataTableProps<TRow>): JSX
     table.atoms.columnVisibility?.get();
     const order = table.atoms.columnOrder?.get() ?? [];
     const fields = props.columns.map((candidate) => candidate.field as string);
-    return [...order.filter((id) => fields.includes(id)), ...fields.filter((id) => !order.includes(id))].map(
-      (id) => ({ id, label: column(id).label, visible: table.getColumn(id)?.getIsVisible() ?? true }),
-    );
+    return [...order.filter((id) => fields.includes(id)), ...fields.filter((id) => !order.includes(id))].map((id) => ({
+      id,
+      label: column(id).label,
+      visible: table.getColumn(id)?.getIsVisible() ?? true,
+    }));
   };
 
   const search = () => (table.atoms.globalFilter?.get() as string | undefined) ?? "";
@@ -1001,16 +963,10 @@ export function DataTable<TRow extends object>(props: DataTableProps<TRow>): JSX
   }
 
   /** The visible columns that hold a field, which leaves out the row selection and buttons. */
-  const dataColumns = () =>
-    table
-      .getVisibleLeafColumns()
-      .filter((leaf) => !CONTROL_COLUMNS.includes(leaf.id));
+  const dataColumns = () => table.getVisibleLeafColumns().filter((leaf) => !CONTROL_COLUMNS.includes(leaf.id));
 
   /** The selected data rows, in the table's order. */
-  const selectedRows = () =>
-    table
-      .getRowModel()
-      .flatRows.filter((row) => !row.getIsGrouped() && row.getIsSelected());
+  const selectedRows = () => table.getRowModel().flatRows.filter((row) => !row.getIsGrouped() && row.getIsSelected());
 
   /** Runs one bulk action over the selected rows, and keeps each row's result. */
   async function runBulk(operation: string) {
@@ -1082,10 +1038,7 @@ export function DataTable<TRow extends object>(props: DataTableProps<TRow>): JSX
           onFind={changeFind}
         />
       </Show>
-      <div
-        data-slot="data-table-toolbar"
-        class="flex shrink-0 flex-wrap items-end justify-between gap-4"
-      >
+      <div data-slot="data-table-toolbar" class="flex shrink-0 flex-wrap items-end justify-between gap-4">
         <div class="flex items-end gap-2">
           <div class="w-32">
             <TextField
@@ -1169,9 +1122,7 @@ export function DataTable<TRow extends object>(props: DataTableProps<TRow>): JSX
               value={search()}
               disabled={!props.fullyRead}
               onInput={(event) =>
-                table.setGlobalFilter(
-                  event.currentTarget.value === "" ? undefined : event.currentTarget.value,
-                )
+                table.setGlobalFilter(event.currentTarget.value === "" ? undefined : event.currentTarget.value)
               }
             />
             <Show when={!props.fullyRead}>
@@ -1180,9 +1131,7 @@ export function DataTable<TRow extends object>(props: DataTableProps<TRow>): JSX
           </Field>
         </div>
         <div role="status" class="flex flex-col items-end gap-1 text-sm text-muted-foreground">
-          <Show when={props.startedAt}>
-            {(at) => <p>started {at().toLocaleTimeString()}</p>}
-          </Show>
+          <Show when={props.startedAt}>{(at) => <p>started {at().toLocaleTimeString()}</p>}</Show>
           <Show when={props.endedAt}>{(at) => <p>ended {at().toLocaleTimeString()}</p>}</Show>
           <Show when={props.busy}>
             <p>Loading...</p>
@@ -1262,8 +1211,7 @@ export function DataTable<TRow extends object>(props: DataTableProps<TRow>): JSX
         // reads each getter above once and keeps its value.
         tableLayout={{ columnsResizable: true, columnsPinnable: true }}
         emptyMessage={
-          props.refusal ??
-          (filters().length > 0 || search() !== "" ? "No row matches the search and filters." : null)
+          props.refusal ?? (filters().length > 0 || search() !== "" ? "No row matches the search and filters." : null)
         }
       >
         {/* The grid takes the height the toolbar leaves, in place of its fixed one. */}
@@ -1277,8 +1225,7 @@ export function DataTable<TRow extends object>(props: DataTableProps<TRow>): JSX
                     {(total) => (
                       <DataGridTableFootRowCell>
                         <span data-slot="data-table-total" data-field={total.id}>
-                          <span class="text-muted-foreground">{total.aggregate}</span>{" "}
-                          {shownText(total.value)}
+                          <span class="text-muted-foreground">{total.aggregate}</span> {shownText(total.value)}
                         </span>
                       </DataGridTableFootRowCell>
                     )}
@@ -1343,9 +1290,7 @@ const LEADING_COLUMNS = [SELECT_COLUMN, EXPAND_COLUMN];
 const CONTROL_COLUMNS = [...LEADING_COLUMNS, ACTIONS_COLUMN];
 
 /** The last column: the buttons of each data row, and nothing on a group row. */
-function actionsColumn<TRow extends object>(
-  actions: (row: TRow) => JSX.Element,
-): ColumnDef<DataTableFeatures, TRow> {
+function actionsColumn<TRow extends object>(actions: (row: TRow) => JSX.Element): ColumnDef<DataTableFeatures, TRow> {
   return {
     id: ACTIONS_COLUMN,
     header: "",

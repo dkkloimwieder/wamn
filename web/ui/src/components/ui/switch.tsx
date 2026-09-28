@@ -4,10 +4,7 @@ import { type ComponentProps, mergeProps, splitProps, type ValidComponent } from
 
 import { cn } from "../../lib/utils";
 
-type SwitchProps<T extends ValidComponent = "div"> = PolymorphicProps<
-  T,
-  SwitchPrimitive.SwitchRootProps<T>
-> &
+type SwitchProps<T extends ValidComponent = "div"> = PolymorphicProps<T, SwitchPrimitive.SwitchRootProps<T>> &
   Pick<ComponentProps<T>, "class" | "children"> & {
     size?: "sm" | "default";
   };

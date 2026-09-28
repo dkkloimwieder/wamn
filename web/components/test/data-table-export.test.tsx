@@ -107,8 +107,7 @@ async function exported(): Promise<string> {
 }
 
 /** The text of an export of the header and the lines of these codes. */
-const csv = (codes: string) =>
-  `\uFEFF${[HEADER, ...codes.split("").map((code) => LINE[code]!)].join("\r\n")}\r\n`;
+const csv = (codes: string) => `\uFEFF${[HEADER, ...codes.split("").map((code) => LINE[code]!)].join("\r\n")}\r\n`;
 
 describe("the CSV export", () => {
   it("quotes by RFC 4180, ends lines in CRLF, starts with a BOM, and names the file by the table", async () => {

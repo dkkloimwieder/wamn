@@ -40,9 +40,9 @@ function stub() {
         ? { status: "completed", value: maker }
         : request.operation.includes("widget/query")
           ? { status: "completed", value: { item: [widget], next_cursor: null } }
-        : request.operation.includes("widget-maker/list")
-          ? { status: "completed", value: { rows: [maker] } }
-          : { status: "completed", value: { item: [maker], nextCursor: null } };
+          : request.operation.includes("widget-maker/list")
+            ? { status: "completed", value: { rows: [maker] } }
+            : { status: "completed", value: { item: [maker], nextCursor: null } };
       return Promise.resolve(reply);
     },
     onWrite: (listener) => {
@@ -56,8 +56,7 @@ function stub() {
       listener();
     }
   };
-  const reads = (operation: string) =>
-    sent.filter((request) => request.operation.includes(operation)).length;
+  const reads = (operation: string) => sent.filter((request) => request.operation.includes(operation)).length;
   return { transport, write, reads, listeners };
 }
 

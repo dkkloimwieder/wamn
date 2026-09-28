@@ -10,12 +10,7 @@ import { Check, ChevronsUpDown, X } from "lucide-solid";
 import type { ComponentProps, JSX, ValidComponent } from "solid-js";
 import { mergeProps, Show, splitProps } from "solid-js";
 import { cn } from "../../lib/utils";
-import {
-  InputGroup,
-  InputGroupAddon,
-  InputGroupButton,
-  InputGroupInput,
-} from "./input-group";
+import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupInput } from "./input-group";
 
 // ============================================================================
 // Combobox Root
@@ -27,9 +22,7 @@ type ComboboxProps<O, OptGroup = never, T extends ValidComponent = "div"> = Poly
 > &
   Pick<ComponentProps<T>, "class" | "children">;
 
-const Combobox = <O, OptGroup = never, T extends ValidComponent = "div">(
-  props: ComboboxProps<O, OptGroup, T>,
-) => {
+const Combobox = <O, OptGroup = never, T extends ValidComponent = "div">(props: ComboboxProps<O, OptGroup, T>) => {
   const mergedProps = mergeProps(
     {
       sameWidth: true,
@@ -55,10 +48,7 @@ const Combobox = <O, OptGroup = never, T extends ValidComponent = "div">(
 // Combobox Input
 // ============================================================================
 
-type ComboboxInputProps<T extends ValidComponent = "input"> = PolymorphicProps<
-  T,
-  ComboboxPrimitiveInputProps<T>
-> &
+type ComboboxInputProps<T extends ValidComponent = "input"> = PolymorphicProps<T, ComboboxPrimitiveInputProps<T>> &
   Pick<ComponentProps<"input">, "class" | "placeholder" | "disabled" | "id" | "name"> & {
     showTrigger?: boolean;
     showClear?: boolean;
@@ -102,10 +92,7 @@ const ComboboxInput = <T extends ValidComponent = "input">(rawProps: ComboboxInp
                 class="group-has-data-[slot=combobox-clear]/input-group:hidden data-pressed:bg-transparent"
                 disabled={isDisabled()}
               >
-                <ComboboxPrimitive.Icon
-                  as={ChevronsUpDown}
-                  class="pointer-events-none z-combobox-trigger-icon"
-                />
+                <ComboboxPrimitive.Icon as={ChevronsUpDown} class="pointer-events-none z-combobox-trigger-icon" />
               </ComboboxPrimitive.Trigger>
             </Show>
             <Show when={local.showClear && state.selectedOptions().length > 0}>
@@ -138,10 +125,7 @@ const ComboboxInput = <T extends ValidComponent = "input">(rawProps: ComboboxInp
 // Combobox Content
 // ============================================================================
 
-type ComboboxContentProps<T extends ValidComponent = "div"> = PolymorphicProps<
-  T,
-  ComboboxPrimitiveContentProps<T>
-> &
+type ComboboxContentProps<T extends ValidComponent = "div"> = PolymorphicProps<T, ComboboxPrimitiveContentProps<T>> &
   Pick<ComponentProps<T>, "class"> & {
     /**
      * Content below the list, inside the popup. Platform addition: Kobalte
@@ -152,11 +136,7 @@ type ComboboxContentProps<T extends ValidComponent = "div"> = PolymorphicProps<
 
 const ComboboxContent = <T extends ValidComponent = "div">(props: ComboboxContentProps<T>) => {
   const context = ComboboxPrimitive.useComboboxContext();
-  const [local, others] = splitProps(props as ComboboxContentProps, [
-    "class",
-    "onCloseAutoFocus",
-    "footer",
-  ]);
+  const [local, others] = splitProps(props as ComboboxContentProps, ["class", "onCloseAutoFocus", "footer"]);
   return (
     <ComboboxPrimitive.Portal>
       <ComboboxPrimitive.Content
@@ -191,10 +171,7 @@ const ComboboxContent = <T extends ValidComponent = "div">(props: ComboboxConten
 // Combobox Item
 // ============================================================================
 
-type ComboboxItemProps<T extends ValidComponent = "li"> = PolymorphicProps<
-  T,
-  ComboboxPrimitiveItemProps<T>
-> &
+type ComboboxItemProps<T extends ValidComponent = "li"> = PolymorphicProps<T, ComboboxPrimitiveItemProps<T>> &
   Pick<ComponentProps<T>, "class"> & {
     children?: JSX.Element;
   };
@@ -213,10 +190,7 @@ const ComboboxItem = <T extends ValidComponent = "li">(props: ComboboxItemProps<
       <ComboboxPrimitive.ItemLabel class="z-combobox-item-label z-select-item-text shrink-0 whitespace-nowrap">
         {local.children}
       </ComboboxPrimitive.ItemLabel>
-      <ComboboxPrimitive.ItemIndicator
-        as="span"
-        class="z-combobox-item-indicator z-select-item-indicator"
-      >
+      <ComboboxPrimitive.ItemIndicator as="span" class="z-combobox-item-indicator z-select-item-indicator">
         <Check class="pointer-events-none z-combobox-item-indicator-icon z-select-item-indicator-icon" />
       </ComboboxPrimitive.ItemIndicator>
     </ComboboxPrimitive.Item>
@@ -231,9 +205,4 @@ const ComboboxItem = <T extends ValidComponent = "li">(props: ComboboxItemProps<
 // Combobox Separator
 // ============================================================================
 
-export {
-  Combobox,
-  ComboboxContent,
-  ComboboxInput,
-  ComboboxItem,
-};
+export { Combobox, ComboboxContent, ComboboxInput, ComboboxItem };

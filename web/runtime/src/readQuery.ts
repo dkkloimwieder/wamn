@@ -60,9 +60,7 @@ function escape(text: string): string {
       byte === 0x2e ||
       byte === 0x5f ||
       byte === 0x7e;
-    out += unreserved
-      ? String.fromCharCode(byte)
-      : `%${byte.toString(16).toUpperCase().padStart(2, "0")}`;
+    out += unreserved ? String.fromCharCode(byte) : `%${byte.toString(16).toUpperCase().padStart(2, "0")}`;
   }
   return out;
 }

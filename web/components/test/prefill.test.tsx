@@ -29,9 +29,14 @@ describe("a row that opens a form", () => {
     const transport = stub();
     let carried: WidgetCreateFormInitial | undefined;
     render(() => (
-      <WidgetMakerQueryTable transport={transport} onFill={{ "platform-fixture:widget/create@1.0.0": (initial) => {
-        carried = initial;
-      } }} />
+      <WidgetMakerQueryTable
+        transport={transport}
+        onFill={{
+          "platform-fixture:widget/create@1.0.0": (initial) => {
+            carried = initial;
+          },
+        }}
+      />
     ));
     await waitFor(() => expect(screen.getByText("Northwind")).toBeDefined());
 
@@ -58,9 +63,14 @@ describe("a row that opens a form", () => {
     };
     let carried: WidgetRecordBatchFormInitial | undefined;
     render(() => (
-      <WidgetListTable transport={transport} onFill={{ "platform-fixture:widget/record-batch@1.0.0": (initial) => {
-        carried = initial;
-      } }} />
+      <WidgetListTable
+        transport={transport}
+        onFill={{
+          "platform-fixture:widget/record-batch@1.0.0": (initial) => {
+            carried = initial;
+          },
+        }}
+      />
     ));
     await waitFor(() => expect(screen.getByText("standard")).toBeDefined());
 
@@ -83,7 +93,10 @@ describe("a row that opens a form", () => {
     render(() => (
       <WidgetMakerQueryTable
         transport={transport}
-        onFill={{ "platform-fixture:widget/create@1.0.0": () => {}, "platform-fixture:widget/record-batch@1.0.0": (initial) => void batch.push(initial) }}
+        onFill={{
+          "platform-fixture:widget/create@1.0.0": () => {},
+          "platform-fixture:widget/record-batch@1.0.0": (initial) => void batch.push(initial),
+        }}
       />
     ));
     await waitFor(() => expect(screen.getByText("Northwind")).toBeDefined());

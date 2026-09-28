@@ -87,11 +87,9 @@ const shown = () =>
     .map((row) => row.querySelector("td")?.textContent)
     .filter((code) => ROWS.some((row) => row.code === code));
 
-const open = (label: string) =>
-  fireEvent.click(theButton(`filter ${label}`));
+const open = (label: string) => fireEvent.click(theButton(`filter ${label}`));
 
-const type = (label: string, value: string) =>
-  fireEvent.input(screen.getByLabelText(label), { target: { value } });
+const type = (label: string, value: string) => fireEvent.input(screen.getByLabelText(label), { target: { value } });
 
 const press = (name: string) => fireEvent.click(theButton(name));
 
@@ -185,9 +183,7 @@ describe("the refine filters", () => {
     // The load that lands closes an open filter.
     open("code");
     expect(screen.getByLabelText("contains").hasAttribute("disabled")).toBe(true);
-    expect(theButton("remove filter code").hasAttribute("disabled")).toBe(
-      true,
-    );
+    expect(theButton("remove filter code").hasAttribute("disabled")).toBe(true);
     expect(theButton("clear all").hasAttribute("disabled")).toBe(true);
     expect(screen.getAllByText(/Filters apply only to a fully read set/).length).toBeGreaterThan(0);
     setFullyRead(true);

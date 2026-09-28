@@ -31,10 +31,7 @@ import {
   WidgetRecordBatchFormLabel,
   WidgetUpdateFormLabel,
 } from "../fixture/components/labels.js";
-import {
-  WidgetMakerListTable,
-  WidgetMakerQueryTable,
-} from "../fixture/components/widget_maker.js";
+import { WidgetMakerListTable, WidgetMakerQueryTable } from "../fixture/components/widget_maker.js";
 import {
   archiveStub,
   deleteStub,
@@ -54,10 +51,7 @@ export function ScreenSections(): JSX.Element {
     <>
       <Section title={WidgetQueryTableLabel} name="WidgetQueryTable">
         <WidgetQueryTable
-          transport={
-            tableStub([page(["widget-001", "widget-002"], "c1"), page(["widget-003"], null)])
-              .transport
-          }
+          transport={tableStub([page(["widget-001", "widget-002"], "c1"), page(["widget-003"], null)]).transport}
         />
       </Section>
 
@@ -99,10 +93,7 @@ export function ScreenSections(): JSX.Element {
       </Section>
 
       <Section title={WidgetDeleteDeleteLabel} name="WidgetDeleteDelete">
-        <WidgetDeleteDelete
-          transport={deleteStub().transport}
-          record={{ id: WIDGET, editVersion: "7" }}
-        />
+        <WidgetDeleteDelete transport={deleteStub().transport} record={{ id: WIDGET, editVersion: "7" }} />
       </Section>
     </>
   );

@@ -44,11 +44,66 @@ const COLUMNS: readonly DataTableColumn<Row>[] = [
 
 /** 2026-09-21 is a Monday. */
 const ROWS: readonly Row[] = [
-  { id: "r0", region: "east", code: "a", qty: 5, weight: "0.1", ratio: 0.5, at: "2026-09-21T10:00:00.000000Z", version: "1", maker: "m1", ref: 7 },
-  { id: "r1", region: "west", code: "b", qty: 2, weight: "0.25", ratio: 1.5, at: "2026-09-22T10:00:00.000000Z", version: "2", maker: "m1", ref: 8 },
-  { id: "r2", region: "east", code: "c", qty: 1, weight: "0.2", ratio: 2.5, at: "2026-09-28T10:00:00.000000Z", version: "3", maker: null, ref: 9 },
-  { id: "r3", region: null, code: "d", qty: 10, weight: "1", ratio: 0.25, at: "2026-10-01T10:00:00.000000Z", version: "4", maker: "m2", ref: null },
-  { id: "r4", region: "", code: "e", qty: 3, weight: "0.05", ratio: 1, at: "2026-10-05T10:00:00.000000Z", version: "5", maker: "m2", ref: 1 },
+  {
+    id: "r0",
+    region: "east",
+    code: "a",
+    qty: 5,
+    weight: "0.1",
+    ratio: 0.5,
+    at: "2026-09-21T10:00:00.000000Z",
+    version: "1",
+    maker: "m1",
+    ref: 7,
+  },
+  {
+    id: "r1",
+    region: "west",
+    code: "b",
+    qty: 2,
+    weight: "0.25",
+    ratio: 1.5,
+    at: "2026-09-22T10:00:00.000000Z",
+    version: "2",
+    maker: "m1",
+    ref: 8,
+  },
+  {
+    id: "r2",
+    region: "east",
+    code: "c",
+    qty: 1,
+    weight: "0.2",
+    ratio: 2.5,
+    at: "2026-09-28T10:00:00.000000Z",
+    version: "3",
+    maker: null,
+    ref: 9,
+  },
+  {
+    id: "r3",
+    region: null,
+    code: "d",
+    qty: 10,
+    weight: "1",
+    ratio: 0.25,
+    at: "2026-10-01T10:00:00.000000Z",
+    version: "4",
+    maker: "m2",
+    ref: null,
+  },
+  {
+    id: "r4",
+    region: "",
+    code: "e",
+    qty: 3,
+    weight: "0.05",
+    ratio: 1,
+    at: "2026-10-05T10:00:00.000000Z",
+    version: "5",
+    maker: "m2",
+    ref: 1,
+  },
 ];
 
 interface Shape {
@@ -92,8 +147,7 @@ const shown = () =>
   bodyRows().map((row) => {
     const group = row.querySelector('[data-slot="data-table-group-value"]');
     return group === null
-      ? (Array.from(row.querySelectorAll("td")).find((cell) => CODES.has(cell.textContent ?? ""))
-          ?.textContent ?? "")
+      ? (Array.from(row.querySelectorAll("td")).find((cell) => CODES.has(cell.textContent ?? ""))?.textContent ?? "")
       : `${group.textContent} ${group.nextElementSibling?.textContent}`;
   });
 
@@ -112,15 +166,7 @@ describe("the grouping", () => {
     table({ groupedFields: ["region", "maker"] });
     expect(shown()).toEqual(["east (2)", "west (1)", "(none) (2)"]);
     press("expand all region");
-    expect(groups()).toEqual([
-      "east (2)",
-      "m1 (1)",
-      "(none) (1)",
-      "west (1)",
-      "m1 (1)",
-      "(none) (2)",
-      "m2 (2)",
-    ]);
+    expect(groups()).toEqual(["east (2)", "m1 (1)", "(none) (1)", "west (1)", "m1 (1)", "(none) (2)", "m2 (2)"]);
     press("move maker out");
     expect(groups().slice(0, 3)).toEqual(["m1 (2)", "m2 (2)", "(none) (1)"]);
   });

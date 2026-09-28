@@ -137,15 +137,11 @@ describe("the path a refusal names", () => {
   it("reads a schema pointer as the declared path it names", () => {
     expect(refusedMember({ data: { pointer: "/0/change/code" } })).toBe("change.code");
     expect(refusedMember({ pointer: "/0/id" })).toBe("id");
-    expect(refusedMember({ data: { pointer: "/0/value/line/2/quantity" } })).toBe(
-      "value.line[2].quantity",
-    );
+    expect(refusedMember({ data: { pointer: "/0/value/line/2/quantity" } })).toBe("value.line[2].quantity");
   });
 
   it("descends into the detail that the error carries beside its code", () => {
-    expect(refusedMember({ detail: { field: "value.line[].quantity" } })).toBe(
-      "value.line[].quantity",
-    );
+    expect(refusedMember({ detail: { field: "value.line[].quantity" } })).toBe("value.line[].quantity");
   });
 
   it("names nothing when the refusal names nothing", () => {
@@ -208,9 +204,7 @@ describe("the member a checked input refuses", () => {
 
   it("states the contract's spelling, with the element it refused", () => {
     expect(checkedMember(["value", "makerId"], FIELDS)).toBe("value.maker_id");
-    expect(checkedMember(["value", "line", 2, "quantity"], FIELDS)).toBe(
-      "value.line[2].quantity",
-    );
+    expect(checkedMember(["value", "line", 2, "quantity"], FIELDS)).toBe("value.line[2].quantity");
   });
 
   it("states nothing for a path no field map holds", () => {

@@ -20,11 +20,9 @@ import { WIDGET, updateStub as stub } from "../stubs/index.js";
 
 afterEach(cleanup);
 
-const reads = (sent: WireRequest[]) =>
-  sent.filter((request) => request.operation.includes("/get@")).length;
+const reads = (sent: WireRequest[]) => sent.filter((request) => request.operation.includes("/get@")).length;
 
-const updates = (sent: WireRequest[]) =>
-  sent.filter((request) => request.operation.includes("/update@"));
+const updates = (sent: WireRequest[]) => sent.filter((request) => request.operation.includes("/update@"));
 
 const revision = (request: WireRequest | undefined) =>
   (request?.items[0] as { [key: string]: JsonValue } | undefined)?.["expected_edit_version"];
@@ -52,9 +50,7 @@ describe("the generated update", () => {
     expect(updates(sent).map(revision)).toEqual(["7"]);
     expect(seen[0]).toMatchObject({ status: "refused", code: "concurrency_conflict" });
     // The operator reads a sentence, never the code (wamn-55bk).
-    await screen.findByText(
-      "Another change saved this record after you opened it. Read it again and retry.",
-    );
+    await screen.findByText("Another change saved this record after you opened it. Read it again and retry.");
     expect(screen.queryByText("concurrency_conflict")).toBeNull();
   });
 

@@ -267,9 +267,7 @@ function nestedFields(fields: FieldMap, member: string): FieldMap {
   return entry === undefined || typeof entry === "string" ? {} : entry.fields;
 }
 
-export function QueryTable<TRow extends object, TResult = unknown>(
-  props: QueryTableProps<TRow, TResult>,
-): JSX.Element {
+export function QueryTable<TRow extends object, TResult = unknown>(props: QueryTableProps<TRow, TResult>): JSX.Element {
   // The definition and the transport name one table for its whole life.
   const definition = props.definition;
   const transport = props.transport;
@@ -338,9 +336,7 @@ export function QueryTable<TRow extends object, TResult = unknown>(
               definition.read.route.contract.errors,
             );
             lastLoad =
-              end.status === "completed" && opened.etag !== null
-                ? { request: key, etag: opened.etag }
-                : undefined;
+              end.status === "completed" && opened.etag !== null ? { request: key, etag: opened.etag } : undefined;
           } else if (opened.status === "completed") {
             onRows(opened.value.item);
             end = { status: "completed", value: { more: opened.value.nextCursor !== null } };
@@ -356,18 +352,22 @@ export function QueryTable<TRow extends object, TResult = unknown>(
         }
       : undefined;
 
-  const load = createTableLoad<TRow>(definition, async (limit, sort) => {
-    const outcome = await callOperation<LoadPage<TRow> & { readonly rows: readonly TRow[] }>(
-      transport,
-      definition.read,
-      [request(limit, sort)],
-    );
-    props.onOutcome?.(outcome as Outcome<unknown> as Outcome<TResult>);
-    if (outcome.status !== "completed") {
-      announceOutcome(outcome, props.label);
-    }
-    return definition.rows === "rows" ? boundedPage(outcome) : outcome;
-  }, stream);
+  const load = createTableLoad<TRow>(
+    definition,
+    async (limit, sort) => {
+      const outcome = await callOperation<LoadPage<TRow> & { readonly rows: readonly TRow[] }>(
+        transport,
+        definition.read,
+        [request(limit, sort)],
+      );
+      props.onOutcome?.(outcome as Outcome<unknown> as Outcome<TResult>);
+      if (outcome.status !== "completed") {
+        announceOutcome(outcome, props.label);
+      }
+      return definition.rows === "rows" ? boundedPage(outcome) : outcome;
+    },
+    stream,
+  );
   void load.load();
   onCleanup(
     afterWrites(transport, () => {

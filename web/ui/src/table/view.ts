@@ -103,10 +103,7 @@ const scoped = (scope: DataTableScopeFilter) =>
   (scope.range !== undefined && (scope.range.min !== "" || scope.range.max !== ""));
 
 /** The state with every undeclared field dropped, and every column in the order. */
-export function declaredView(
-  state: DataTableViewState,
-  declaration: DataTableViewDeclaration,
-): DataTableViewState {
+export function declaredView(state: DataTableViewState, declaration: DataTableViewDeclaration): DataTableViewState {
   const fields = declaration.columns.map((column) => column.field);
   const declared = (field: string) => fields.includes(field);
   const column = (field: string) => declaration.columns.find((candidate) => candidate.field === field);
@@ -114,9 +111,7 @@ export function declaredView(
   return {
     order: [...new Set([...kept, ...fields.filter((field) => !kept.includes(field))])],
     hidden: state.hidden.filter(declared),
-    widths: Object.fromEntries(
-      Object.entries(state.widths).filter(([field, width]) => declared(field) && width > 0),
-    ),
+    widths: Object.fromEntries(Object.entries(state.widths).filter(([field, width]) => declared(field) && width > 0)),
     left: state.left.filter(declared),
     right: state.right.filter((field) => declared(field) && !state.left.includes(field)),
     sort: state.sort.filter((sort) => declared(sort.field)),
@@ -135,9 +130,7 @@ export function declaredView(
             : { by: "value", descending: level.sort.descending },
       })),
     aggregates: Object.fromEntries(
-      Object.entries(state.aggregates).filter(([field, aggregate]) =>
-        column(field)?.aggregates.includes(aggregate),
-      ),
+      Object.entries(state.aggregates).filter(([field, aggregate]) => column(field)?.aggregates.includes(aggregate)),
     ),
     cap: Number.isInteger(state.cap) && state.cap > 0 ? state.cap : 1,
   };
@@ -164,11 +157,7 @@ function filterText(filter: DataTableFilter): string {
  * The URL parameters of a state, under its key: only the parts that differ
  * from the default, in the fixed order.
  */
-export function encodeView(
-  key: string,
-  state: DataTableViewState,
-  defaults: DataTableViewState,
-): [string, string][] {
+export function encodeView(key: string, state: DataTableViewState, defaults: DataTableViewState): [string, string][] {
   const out: [string, string][] = [];
   const put = (part: string, value: string) => out.push([`${key}.${part}`, value]);
   const inOrder = <T>(record: Readonly<Record<string, T>>) =>
@@ -185,7 +174,12 @@ export function encodeView(
         break;
       case "width":
         if (!same(state.widths, defaults.widths)) {
-          put(part, inOrder(state.widths).map(([field, width]) => `${field}:${width}`).join(","));
+          put(
+            part,
+            inOrder(state.widths)
+              .map(([field, width]) => `${field}:${width}`)
+              .join(","),
+          );
         }
         break;
       case "left":
@@ -233,7 +227,12 @@ export function encodeView(
         break;
       case "aggregate":
         if (!same(state.aggregates, defaults.aggregates)) {
-          put(part, inOrder(state.aggregates).map(([field, aggregate]) => `${field}:${aggregate}`).join(","));
+          put(
+            part,
+            inOrder(state.aggregates)
+              .map(([field, aggregate]) => `${field}:${aggregate}`)
+              .join(","),
+          );
         }
         break;
       case "cap":
@@ -359,9 +358,7 @@ export function decodeView(
         break;
       }
       case "sort": {
-        const sorts = pairs(value, (_, text) =>
-          text === "asc" ? "ascending" : text === "desc" ? "descending" : null,
-        );
+        const sorts = pairs(value, (_, text) => (text === "asc" ? "ascending" : text === "desc" ? "descending" : null));
         if (sorts === null) read = false;
         else state.sort = sorts.map(([sortField, sortDirection]) => ({ field: sortField, direction: sortDirection }));
         break;
@@ -398,9 +395,7 @@ export function decodeView(
       }
       case "aggregate": {
         const chosen = pairs(value, (aggregateField, text) =>
-          column(aggregateField)!.aggregates.includes(text as DataTableAggregate)
-            ? (text as DataTableAggregate)
-            : null,
+          column(aggregateField)!.aggregates.includes(text as DataTableAggregate) ? (text as DataTableAggregate) : null,
         );
         if (chosen === null) read = false;
         else state.aggregates = Object.fromEntries(chosen);

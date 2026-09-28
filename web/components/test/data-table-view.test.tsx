@@ -60,9 +60,7 @@ const search = () => decodeURIComponent(window.location.search);
 beforeEach(() => at(""));
 afterEach(cleanup);
 
-function table(
-  shape: { fullyRead?: () => boolean; urlKey?: string; onScopeChange?: (filters: unknown) => void } = {},
-) {
+function table(shape: { fullyRead?: () => boolean; urlKey?: string; onScopeChange?: (filters: unknown) => void } = {}) {
   const [cap, setCap] = createSignal(1000);
   const onScopeChange = vi.fn(shape.onScopeChange ?? (() => {}));
   render(() => (
@@ -135,7 +133,9 @@ describe("the URL", () => {
   });
 
   it("ignores what the table does not declare or cannot read, and says so once", () => {
-    at("?lots.bogus=1&lots.sort=nope:asc&lots.cap=500&lots.scope.qty=3&lots.filter.code=weird:x&lots.group=note:day:value:asc");
+    at(
+      "?lots.bogus=1&lots.sort=nope:asc&lots.cap=500&lots.scope.qty=3&lots.filter.code=weird:x&lots.group=note:day:value:asc",
+    );
     const { cap } = table({ urlKey: "lots" });
     expect(cap()).toBe(500);
     expect(search()).toBe("?lots.cap=500");

@@ -52,9 +52,7 @@ export interface LoadPage<Row> {
  * A bounded list answers with every row and no cursor, so its load is always
  * fully read.
  */
-export function boundedPage<Row>(
-  outcome: Outcome<{ readonly rows: readonly Row[] }>,
-): Outcome<LoadPage<Row>> {
+export function boundedPage<Row>(outcome: Outcome<{ readonly rows: readonly Row[] }>): Outcome<LoadPage<Row>> {
   switch (outcome.status) {
     case "completed":
       return { status: "completed", value: { item: outcome.value.rows, nextCursor: null } };
@@ -89,11 +87,7 @@ export function emptyLoad<Row>(cap: number): LoadState<Row> {
  * A cap change, a scope change and a refresh each start one. The caller holds
  * the scope. The rows of the last load stay on screen until this one ends.
  */
-export function startLoad<Row>(
-  state: LoadState<Row>,
-  cap: number = state.cap,
-  now: Date = new Date(),
-): LoadState<Row> {
+export function startLoad<Row>(state: LoadState<Row>, cap: number = state.cap, now: Date = new Date()): LoadState<Row> {
   return {
     ...state,
     fullyRead: false,
@@ -168,11 +162,7 @@ export type LoadEnd = Outcome<{ readonly more: boolean }>;
  * follows it, so the table shows rows as they arrive. A batch of an older
  * load is dropped.
  */
-export function appendRows<Row>(
-  state: LoadState<Row>,
-  generation: number,
-  rows: readonly Row[],
-): LoadState<Row> {
+export function appendRows<Row>(state: LoadState<Row>, generation: number, rows: readonly Row[]): LoadState<Row> {
   if (generation !== state.generation || !state.busy) {
     return state;
   }
@@ -328,11 +318,7 @@ export async function readLoadLines<Row>(
       }
       buffered += value;
       let start = 0;
-      for (
-        let newline = buffered.indexOf("\n", start);
-        newline !== -1;
-        newline = buffered.indexOf("\n", start)
-      ) {
+      for (let newline = buffered.indexOf("\n", start); newline !== -1; newline = buffered.indexOf("\n", start)) {
         const line = buffered.slice(start, newline);
         start = newline + 1;
         const parsed = parseLine(line);
@@ -366,9 +352,7 @@ function uncertainLoad(reason: string): LoadEnd {
 }
 
 /** One reply line: a row or the outcome, or null for anything else. */
-function parseLine(
-  line: string,
-): { readonly row: JsonValue } | { readonly outcome: JsonValue } | null {
+function parseLine(line: string): { readonly row: JsonValue } | { readonly outcome: JsonValue } | null {
   let value: unknown;
   try {
     value = JSON.parse(line);
@@ -417,9 +401,7 @@ function outcomeLine(outcome: JsonValue, errors: readonly ErrorCase[]): LoadEnd 
     };
   }
   return uncertainLoad(
-    "uncertain" in members
-      ? "the release cannot say how the load ended"
-      : "the load sent a malformed outcome line",
+    "uncertain" in members ? "the release cannot say how the load ended" : "the load sent a malformed outcome line",
   );
 }
 

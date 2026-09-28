@@ -48,19 +48,12 @@ export function startRead<Row>(state: PageState<Row>): PageState<Row> {
  *
  * The rows replace what the screen held, because this is a new list.
  */
-export function firstPage<Row>(
-  rows: readonly Row[],
-  cursor: string | null = null,
-): PageState<Row> {
+export function firstPage<Row>(rows: readonly Row[], cursor: string | null = null): PageState<Row> {
   return { rows: [...rows], cursor, busy: false, refusal: null };
 }
 
 /** Take the next page of a read, which follows the rows already shown. */
-export function appendPage<Row>(
-  state: PageState<Row>,
-  rows: readonly Row[],
-  cursor: string | null,
-): PageState<Row> {
+export function appendPage<Row>(state: PageState<Row>, rows: readonly Row[], cursor: string | null): PageState<Row> {
   return { rows: [...state.rows, ...rows], cursor, busy: false, refusal: null };
 }
 

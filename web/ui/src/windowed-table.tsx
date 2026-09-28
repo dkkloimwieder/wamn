@@ -93,8 +93,7 @@ export function WindowedTable(props: {
 
   type WindowedRow = { readonly id: string; getIsExpanded: () => boolean };
   // No measured area means no row has an extra height.
-  const extra = (row: WindowedRow) =>
-    heights.size === 0 || !row.getIsExpanded() ? 0 : (heights.get(row.id) ?? 0);
+  const extra = (row: WindowedRow) => (heights.size === 0 || !row.getIsExpanded() ? 0 : (heights.get(row.id) ?? 0));
 
   // One options object, which the virtual table reads for every row's size.
   // Written inline in the JSX, Solid builds a new object on each read.

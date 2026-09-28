@@ -23,13 +23,7 @@ export type Int64 = string;
 export type Numeric = string;
 
 /** Any JSON value. */
-export type JsonValue =
-  | null
-  | boolean
-  | number
-  | string
-  | readonly JsonValue[]
-  | { readonly [key: string]: JsonValue };
+export type JsonValue = null | boolean | number | string | readonly JsonValue[] | { readonly [key: string]: JsonValue };
 
 /** What one operation's response contract states. A transport classifies with it. */
 export interface ResponseContract {
@@ -135,11 +129,7 @@ export interface Transport {
    * row returns its outcome, as `invoke` classifies it. `signal` aborts the
    * read, which ends the query.
    */
-  openStream?(
-    request: WireRequest,
-    signal?: AbortSignal,
-    etag?: string,
-  ): Promise<StreamReply | Outcome<JsonValue>>;
+  openStream?(request: WireRequest, signal?: AbortSignal, etag?: string): Promise<StreamReply | Outcome<JsonValue>>;
 }
 
 /** A streamed read that started: its lines, or the answer that nothing changed. */
@@ -181,8 +171,7 @@ function walk(value: unknown, fields: FieldMap, rename: Rename): JsonValue {
     const converted: { [name: string]: JsonValue } = {};
     for (const [name, member] of Object.entries(value)) {
       const [renamed, nested] = rename(fields, name);
-      converted[renamed] =
-        nested === null ? (member as JsonValue) : walk(member, nested, rename);
+      converted[renamed] = nested === null ? (member as JsonValue) : walk(member, nested, rename);
     }
     return converted;
   }
@@ -282,11 +271,7 @@ export async function openStream<T>(
   if (transport.openStream === undefined) {
     throw new Error("this transport opens no streamed read");
   }
-  const opened = await transport.openStream(
-    { ...binding.route, items: [toWire(item, binding.request)] },
-    signal,
-    etag,
-  );
+  const opened = await transport.openStream({ ...binding.route, items: [toWire(item, binding.request)] }, signal, etag);
   return isStreamReply(opened) ? opened : reviveOutcome<T>(opened, binding.result);
 }
 

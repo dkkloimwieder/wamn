@@ -87,11 +87,7 @@ export async function enroll(
   password: string,
   options: SessionOptions = {},
 ): Promise<void> {
-  const response = await post(
-    "/password/enroll",
-    { principal_id: principalId, invitation, password },
-    options,
-  );
+  const response = await post("/password/enroll", { principal_id: principalId, invitation, password }, options);
   if (!response.ok) {
     const answer = (await response.json().catch(() => null)) as { error?: unknown } | null;
     throw new Error(typeof answer?.error === "string" ? answer.error : `/password/enroll answered ${response.status}`);
@@ -105,11 +101,7 @@ export async function signIn(
   aud: string,
   options: SessionOptions = {},
 ): Promise<SessionTimes> {
-  const response = await post(
-    "/password/session",
-    { email, password, aud, carrier: "cookie" },
-    options,
-  );
+  const response = await post("/password/session", { email, password, aud, carrier: "cookie" }, options);
   if (!response.ok) {
     throw refusedBy("/password/session", response);
   }

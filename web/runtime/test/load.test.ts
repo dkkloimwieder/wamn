@@ -4,15 +4,7 @@
 
 import { describe, expect, it } from "vitest";
 
-import {
-  boundedPage,
-  emptyLoad,
-  finishLoad,
-  loadLimit,
-  replaceRow,
-  startLoad,
-  type LoadPage,
-} from "../src/load.js";
+import { boundedPage, emptyLoad, finishLoad, loadLimit, replaceRow, startLoad, type LoadPage } from "../src/load.js";
 import { refusalSentence } from "../src/refusal.js";
 import type { Outcome } from "../src/wire.js";
 
@@ -116,12 +108,7 @@ describe("the load state", () => {
   });
 
   it("reads a refusal as the forms read one, and keeps no rows", () => {
-    const loaded = finishLoad(
-      startLoad(emptyLoad<Row>(1000)),
-      1,
-      page(rows("a"), null),
-      ["id"],
-    );
+    const loaded = finishLoad(startLoad(emptyLoad<Row>(1000)), 1, page(rows("a"), null), ["id"]);
     const started = startLoad(loaded);
     const refused = finishLoad(
       started,
@@ -147,12 +134,27 @@ describe("the load state", () => {
 
 describe("a row a write left", () => {
   it("takes the place of the loaded row with its id, and keeps the rest of the load", () => {
-    const loaded = finishLoad(startLoad(emptyLoad<{ id: string; code: string }>(1000), 1000, START), 1, {
-      status: "completed",
-      value: { item: [{ id: "a", code: "x" }, { id: "b", code: "y" }], nextCursor: null },
-    }, ["id"], END);
+    const loaded = finishLoad(
+      startLoad(emptyLoad<{ id: string; code: string }>(1000), 1000, START),
+      1,
+      {
+        status: "completed",
+        value: {
+          item: [
+            { id: "a", code: "x" },
+            { id: "b", code: "y" },
+          ],
+          nextCursor: null,
+        },
+      },
+      ["id"],
+      END,
+    );
     const replaced = replaceRow(loaded, { id: "b", code: "z" }, ["id"]);
-    expect(replaced.rows).toEqual([{ id: "a", code: "x" }, { id: "b", code: "z" }]);
+    expect(replaced.rows).toEqual([
+      { id: "a", code: "x" },
+      { id: "b", code: "z" },
+    ]);
     expect({ ...replaced, rows: loaded.rows }).toEqual(loaded);
     expect(replaceRow(loaded, { id: "c", code: "z" }, ["id"])).toBe(loaded);
   });

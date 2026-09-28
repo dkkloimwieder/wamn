@@ -93,8 +93,7 @@ const EMPTY: Choice = { value: "", text: "" };
 export function ChoiceField(props: ChoiceFieldProps): JSX.Element {
   const labelId = createUniqueId();
   const options = (): Choice[] => (props.allowEmpty ? [EMPTY, ...props.choices] : [...props.choices]);
-  const selected = (): Choice | null =>
-    options().find((choice) => choice.value === (props.value ?? "")) ?? null;
+  const selected = (): Choice | null => options().find((choice) => choice.value === (props.value ?? "")) ?? null;
   return (
     <Field data-invalid={props.error ? "true" : undefined}>
       <FieldLabel id={labelId}>{props.label}</FieldLabel>

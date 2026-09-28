@@ -49,9 +49,7 @@ describe("a selector that holds a record its list did not return", () => {
   it("reads that record and shows its text (wamn-1jrv)", async () => {
     const { transport, sent } = paged();
     // A row action filled Southwind, which is on the second page.
-    render(() => (
-      <WidgetCreateForm transport={transport} initial={{ code: "standard", makerId: SOUTH }} />
-    ));
+    render(() => <WidgetCreateForm transport={transport} initial={{ code: "standard", makerId: SOUTH }} />);
     await waitFor(() => expect(selector("maker id").value).toBe("Southwind"));
     const reads = sent.filter((request) => request.operation.includes("widget-maker/get@"));
     expect(reads.map((request) => (request.items[0] as { id: string }).id)).toEqual([SOUTH]);
@@ -61,9 +59,7 @@ describe("a selector that holds a record its list did not return", () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     try {
       const { transport } = paged();
-      render(() => (
-        <WidgetCreateForm transport={transport} initial={{ code: "standard", makerId: SOUTH }} />
-      ));
+      render(() => <WidgetCreateForm transport={transport} initial={{ code: "standard", makerId: SOUTH }} />);
       await waitFor(() => expect(selector("maker id").value).toBe("Southwind"));
       const leaks = warn.mock.calls.filter((call) => String(call[0]).includes("outside a `createRoot`"));
       expect(leaks).toEqual([]);
@@ -116,10 +112,7 @@ describe("a selector over a list that declares its display filter", () => {
 
     await waitFor(() => expect(screen.getByRole("option", { name: "Southwind" })).toBeDefined());
     // The first page stays above the second.
-    expect(screen.getAllByRole("option").map((option) => option.textContent)).toEqual([
-      "Northwind",
-      "Southwind",
-    ]);
+    expect(screen.getAllByRole("option").map((option) => option.textContent)).toEqual(["Northwind", "Southwind"]);
     expect((sent[1]?.items[0] as { cursor: string }).cursor).toBe("page-2");
   });
 });

@@ -14,13 +14,7 @@
 
 import { createSignal, For, type JSX } from "solid-js";
 
-import {
-  DataTable,
-  type DataTableColumn,
-  type DataTableScopeFilter,
-  type DataTableSort,
-  QueryTable,
-} from "@wamn/ui";
+import { DataTable, type DataTableColumn, type DataTableScopeFilter, type DataTableSort, QueryTable } from "@wamn/ui";
 import {
   emptyLoad,
   finishLoad,
@@ -80,9 +74,7 @@ function widgetStub(size: number): Transport {
       const kept = codes === undefined ? widgets : widgets.filter((widget) => codes.includes(widget.code));
       const sign = item?.sort?.direction === "descending" ? -1 : 1;
       const ordered =
-        item?.sort === undefined
-          ? kept
-          : [...kept].sort((a, b) => sign * a.created_at.localeCompare(b.created_at));
+        item?.sort === undefined ? kept : [...kept].sort((a, b) => sign * a.created_at.localeCompare(b.created_at));
       return Promise.resolve({
         status: "completed",
         value: { item: ordered.slice(0, limit), next_cursor: ordered.length > limit ? "more" : null },
@@ -184,9 +176,7 @@ function MemoryTable(props: {
   groupedFields?: readonly (keyof PalletRow & string)[];
   urlKey?: string;
 }): JSX.Element {
-  const [state, setState] = createSignal<LoadState<PalletRow>>(
-    emptyLoad(props.cap ?? DEFAULT_CAP),
-  );
+  const [state, setState] = createSignal<LoadState<PalletRow>>(emptyLoad(props.cap ?? DEFAULT_CAP));
 
   function load(cap: number) {
     const next = startLoad(state(), cap);
@@ -340,7 +330,9 @@ export function TableSections(): JSX.Element {
         </div>
       </Section>
       <Section title="Data table in an app" name="DataTable">
-        <State name={`the widget table with row buttons, a bulk action, editable cells and a child table; served alone at ?${APP_TABLE_ONLY}`}>
+        <State
+          name={`the widget table with row buttons, a bulk action, editable cells and a child table; served alone at ?${APP_TABLE_ONLY}`}
+        >
           <AppTable />
         </State>
       </Section>

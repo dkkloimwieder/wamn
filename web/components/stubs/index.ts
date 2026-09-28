@@ -57,9 +57,7 @@ export function tableStub(replies: readonly Outcome<JsonValue>[]): {
         sent.push(request);
         const reply = replies[Math.min(next, replies.length - 1)];
         next += 1;
-        return Promise.resolve(
-          reply ?? { status: "uncertain", reason: "the stub ran out", retryRefusal: null },
-        );
+        return Promise.resolve(reply ?? { status: "uncertain", reason: "the stub ran out", retryRefusal: null });
       },
     },
   };
@@ -111,13 +109,7 @@ export function makerStub(): { transport: Transport; sent: WireRequest[] } {
           return Promise.resolve<Outcome<JsonValue>>({
             status: "completed",
             value: {
-              item: [
-                widget("a", MAKER),
-                widget("b", SOUTH),
-                widget("c", MAKER),
-                widget("d", GONE),
-                widget("e", null),
-              ],
+              item: [widget("a", MAKER), widget("b", SOUTH), widget("c", MAKER), widget("d", GONE), widget("e", null)],
               next_cursor: null,
             },
           });
@@ -321,9 +313,11 @@ export function prefillStub(): Transport {
  * is a second writer that moves the revision behind the form's back. An
  * update to the code `taken` refuses as a unique violation.
  */
-export function updateStub(
-  taken: string | null = null,
-): { transport: Transport; sent: WireRequest[]; write: () => void } {
+export function updateStub(taken: string | null = null): {
+  transport: Transport;
+  sent: WireRequest[];
+  write: () => void;
+} {
   const sent: WireRequest[] = [];
   let version = 7;
   const row = (): JsonValue => ({

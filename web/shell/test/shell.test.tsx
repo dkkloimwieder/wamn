@@ -71,7 +71,11 @@ const SECTIONS: readonly ShellSection[] = [
     label: "Pallets",
     screens: [{ path: "pallets", label: "query", component: stubScreen("pallets") }],
     routes: [
-      { path: "pallets/:id", component: stubRecord, actions: [{ label: "update", path: "pallets/:id/update?note=hi" }] },
+      {
+        path: "pallets/:id",
+        component: stubRecord,
+        actions: [{ label: "update", path: "pallets/:id/update?note=hi" }],
+      },
       { path: "pallets/:id/update", component: stubForm },
     ],
   },
@@ -180,10 +184,7 @@ describe("the app shell", () => {
 
   it("asks identity for the environments of its org and project, and offers only the reply", async () => {
     const PROD = "urn:wamn:project-env:acme:widgets:prod:q8w4e2r6";
-    const { state, fetch } = identity(false, [
-      ...ONE,
-      { aud: PROD, org: "acme", project: "widgets", env: "prod" },
-    ]);
+    const { state, fetch } = identity(false, [...ONE, { aud: PROD, org: "acme", project: "widgets", env: "prod" }]);
     open("/", fetch);
     await signIn();
     expect(await screen.findByText("acme/widgets/prod")).toBeDefined();

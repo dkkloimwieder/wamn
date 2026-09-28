@@ -8,24 +8,11 @@
  * carries is read by itself, so the control shows its text.
  */
 
-import {
-  createEffect,
-  createMemo,
-  createSignal,
-  createUniqueId,
-  on,
-  onCleanup,
-  Show,
-} from "solid-js";
+import { createEffect, createMemo, createSignal, createUniqueId, on, onCleanup, Show } from "solid-js";
 
 import { Button } from "./components/ui/button";
 import { Field, FieldError, FieldLabel } from "./components/ui/field";
-import {
-  Combobox,
-  ComboboxContent,
-  ComboboxInput,
-  ComboboxItem,
-} from "./components/ui/combobox";
+import { Combobox, ComboboxContent, ComboboxInput, ComboboxItem } from "./components/ui/combobox";
 
 /** How long the operator pauses typing before the search is sent. */
 const SEARCH_PAUSE_MS = 300;
@@ -73,18 +60,22 @@ export function RecordSelect<Row extends object>(props: RecordSelectProps<Row>) 
   // The combobox writes the chosen label back into the input whenever the
   // selection changes identity. A search reply replaces every row, so the
   // chosen row stays the same object while its value stays the same.
-  const selected = createMemo((): Row | null => {
-    const value = props.value;
-    if (value === null || value === "") {
-      return null;
-    }
-    const listed = props.options.find((row) => props.optionValue(row) === value);
-    if (listed !== undefined) {
-      return listed;
-    }
-    const kept = chosen();
-    return kept !== null && props.optionValue(kept) === value ? kept : null;
-  }, null, { equals: (previous, next) => key(previous) === key(next) });
+  const selected = createMemo(
+    (): Row | null => {
+      const value = props.value;
+      if (value === null || value === "") {
+        return null;
+      }
+      const listed = props.options.find((row) => props.optionValue(row) === value);
+      if (listed !== undefined) {
+        return listed;
+      }
+      const kept = chosen();
+      return kept !== null && props.optionValue(kept) === value ? kept : null;
+    },
+    null,
+    { equals: (previous, next) => key(previous) === key(next) },
+  );
   createEffect(
     on(selected, (row) => {
       if (row !== null) {
@@ -164,9 +155,7 @@ export function RecordSelect<Row extends object>(props: RecordSelectProps<Row>) 
         onInputChange={typed}
         defaultFilter={() => true}
         triggerMode={props.onSearch === undefined ? "focus" : "input"}
-        itemComponent={(item) => (
-          <ComboboxItem item={item.item}>{item.item.textValue}</ComboboxItem>
-        )}
+        itemComponent={(item) => <ComboboxItem item={item.item}>{item.item.textValue}</ComboboxItem>}
       >
         <ComboboxInput
           aria-labelledby={labelId}

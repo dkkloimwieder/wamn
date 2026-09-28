@@ -5,10 +5,7 @@ import { type ComponentProps, splitProps, type ValidComponent } from "solid-js";
 
 import { cn } from "../../lib/utils";
 
-type CheckboxProps<T extends ValidComponent = "div"> = PolymorphicProps<
-  T,
-  CheckboxPrimitive.CheckboxRootProps<T>
-> &
+type CheckboxProps<T extends ValidComponent = "div"> = PolymorphicProps<T, CheckboxPrimitive.CheckboxRootProps<T>> &
   Pick<ComponentProps<T>, "class">;
 
 const Checkbox = <T extends ValidComponent = "div">(props: CheckboxProps<T>) => {

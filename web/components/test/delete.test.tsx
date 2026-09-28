@@ -47,11 +47,7 @@ describe("the generated delete", () => {
     const { transport, sent } = stub();
     const seen: Outcome<unknown>[] = [];
     render(() => (
-      <WidgetDeleteDelete
-        transport={transport}
-        record={DISPLAYED}
-        onSubmitted={(outcome) => seen.push(outcome)}
-      />
+      <WidgetDeleteDelete transport={transport} record={DISPLAYED} onSubmitted={(outcome) => seen.push(outcome)} />
     ));
     await confirm();
     await waitFor(() => expect(seen).toHaveLength(1));
@@ -67,11 +63,7 @@ describe("the generated delete", () => {
     const { transport, sent, write } = stub();
     const seen: Outcome<unknown>[] = [];
     render(() => (
-      <WidgetDeleteDelete
-        transport={transport}
-        record={DISPLAYED}
-        onSubmitted={(outcome) => seen.push(outcome)}
-      />
+      <WidgetDeleteDelete transport={transport} record={DISPLAYED} onSubmitted={(outcome) => seen.push(outcome)} />
     ));
     write();
     await confirm();
@@ -79,9 +71,7 @@ describe("the generated delete", () => {
 
     expect(sent).toHaveLength(1);
     expect(seen[0]).toMatchObject({ status: "refused", code: "concurrency_conflict" });
-    await screen.findByText(
-      "Another change saved this record after you opened it. Read it again and retry.",
-    );
+    await screen.findByText("Another change saved this record after you opened it. Read it again and retry.");
     expect(screen.queryByText("concurrency_conflict")).toBeNull();
   });
 });

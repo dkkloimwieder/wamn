@@ -74,8 +74,7 @@ const shown = () =>
     .map((row) => row.querySelector("td")?.textContent)
     .filter((code) => ROWS.some((row) => row.code === code));
 
-const search = (value: string) =>
-  fireEvent.input(screen.getByLabelText("search"), { target: { value } });
+const search = (value: string) => fireEvent.input(screen.getByLabelText("search"), { target: { value } });
 
 describe("the search", () => {
   it("matches the shown text of a cell, in any case", () => {

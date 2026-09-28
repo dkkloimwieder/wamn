@@ -40,11 +40,7 @@ describe("a declared refusal with authored text", () => {
     };
     const seen: Outcome<unknown>[] = [];
     render(() => (
-      <WidgetArchiveForm
-        transport={transport}
-        initial={{ id: WIDGET }}
-        onSubmitted={(outcome) => seen.push(outcome)}
-      />
+      <WidgetArchiveForm transport={transport} initial={{ id: WIDGET }} onSubmitted={(outcome) => seen.push(outcome)} />
     ));
 
     await screen.findByDisplayValue("standard");

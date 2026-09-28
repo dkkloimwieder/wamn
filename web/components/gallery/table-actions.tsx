@@ -103,8 +103,7 @@ const MAKER = {
   created_at: "2026-09-20T08:00:00.000000Z",
 };
 
-const uuid = (prefix: number, index: number) =>
-  `0000000${prefix}-0000-4000-8000-${String(index).padStart(12, "0")}`;
+const uuid = (prefix: number, index: number) => `0000000${prefix}-0000-4000-8000-${String(index).padStart(12, "0")}`;
 
 /** Every seventh widget is held, and record-batch refuses it. */
 const HELD = "held";

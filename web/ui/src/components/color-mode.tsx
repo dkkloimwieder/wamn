@@ -1,11 +1,4 @@
-import {
-  type Accessor,
-  createContext,
-  createSignal,
-  type ParentProps,
-  untrack,
-  useContext,
-} from "solid-js";
+import { type Accessor, createContext, createSignal, type ParentProps, untrack, useContext } from "solid-js";
 
 const ZAIDAN_COLOR_MODE_COOKIE_KEY = "zaidan-color-mode";
 

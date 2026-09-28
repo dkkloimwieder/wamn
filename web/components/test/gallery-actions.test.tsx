@@ -72,11 +72,9 @@ describe("the gallery's app-shaped table", () => {
     fireEvent.click(theButton("add"));
     fireEvent.input(screen.getByLabelText("Quantity received"), { target: { value: "1.00" } });
     fireEvent.click(theButton("submit"));
-    await waitFor(() =>
-      expect(document.querySelectorAll('[data-slot="data-table-row-result"]').length).toBe(8),
-    );
-    const refusedRows = Array.from(document.querySelectorAll('[data-status="refused"]')).map(
-      (result) => result.closest("tr")?.getAttribute("data-row-id"),
+    await waitFor(() => expect(document.querySelectorAll('[data-slot="data-table-row-result"]').length).toBe(8));
+    const refusedRows = Array.from(document.querySelectorAll('[data-status="refused"]')).map((result) =>
+      result.closest("tr")?.getAttribute("data-row-id"),
     );
     expect(refusedRows).toEqual([id(3)]);
     // The run fills a whole form, so it takes longer than one click.
