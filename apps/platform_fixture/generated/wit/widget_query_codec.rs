@@ -125,6 +125,13 @@ fn error_value(error: &contract::QueryError) -> Value {
 #[allow(clippy::unnecessary_wraps)]
 fn normalize(request: &mut contract::QueryRequest) -> Result<(), contract::InvalidInputDetail> {
     let _ = &request;
+    if let Some(values) = &request.code {
+        for value in values {
+            if !["priority", "standard"].contains(&value.as_str()) {
+                return Err(invalid("filter.code"));
+            }
+        }
+    }
     Ok(())
 }
 

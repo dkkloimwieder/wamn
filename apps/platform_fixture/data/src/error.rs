@@ -92,13 +92,6 @@ impl AccessError {
         )
     }
 
-    pub(crate) fn missing(id: &str) -> Self {
-        Self::new(
-            AccessErrorKind::NotFound,
-            json!({ "field": "id", "id": id }),
-        )
-    }
-
     pub(crate) fn conflict(expected: i64, observed: i64) -> Self {
         Self::new(
             AccessErrorKind::ConcurrencyConflict,
@@ -190,12 +183,13 @@ impl Constraints {
 
 #[cfg(test)]
 mod tests {
-    use serde_json::json;
     use wamn_postgres_statements::StatementErrorKind;
 
-    use super::{AccessError, AccessErrorKind};
+    use crate::generated::error::{Constraints, Error};
+    use crate::generated::widget::sql;
 
-    // The exclusion diagnostics example supplies actual PostgreSQL diagnostics.
+    // The exclusion diagnostics example supplies actual PostgreSQL diagnostics,
+    // and generates the fixture again with the exclusion the diagnostics name.
     #[test]
     #[ignore = "requires: WAMN_EXCLUSION_DIAGNOSTICS"]
     fn generated_update_exclusion_from_postgres() {
@@ -209,15 +203,23 @@ mod tests {
         let constraint = diagnostic["constraint"]
             .as_str()
             .expect("server constraint name");
-        let error = AccessError::from_statement_parts(
+        let update = Constraints {
+            unique: sql::UPDATE_UNIQUE_CONSTRAINTS,
+            foreign_key: sql::UPDATE_FOREIGN_KEY_CONSTRAINTS,
+            check: sql::UPDATE_CHECK_CONSTRAINTS,
+            exclusion: sql::UPDATE_EXCLUSION_CONSTRAINTS,
+        };
+        let error = Error::from_parts(
             StatementErrorKind::ExclusionViolation,
             Some(constraint),
-            crate::widget::UPDATE,
+            &update,
+            "widget.update",
         );
-        assert_eq!(error.kind(), AccessErrorKind::ExclusionViolation);
         assert_eq!(
-            error.detail(),
-            &json!({ "constraint": "widget_maker_id_excl" })
+            error,
+            Error::ExclusionViolation {
+                constraint: "widget_maker_id_excl".to_owned()
+            }
         );
     }
 }

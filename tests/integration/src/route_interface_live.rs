@@ -22,6 +22,9 @@ use crate::local_application::{LocalApplication, LocalApplicationConfig, LocalPa
 
 const ROUTE_PREFIX: &str = "/route";
 
+/// An id that names no row.
+const MISSING: &str = "00000000-0000-4000-8000-00000000dead";
+
 /// The fixture operations that get no one-node wiring: only their routes
 /// serve them.
 const ROUTE_ONLY: &[&str] = &["widget_maker_list", "widget_maker_query"];
@@ -178,6 +181,16 @@ fn refusal(answer: &Value) -> anyhow::Result<&str> {
         .with_context(|| format!("the answer carries a refusal: {answer}"))
 }
 
+/// Require the one item of an answer to refuse with exactly this code and
+/// detail.
+fn refused(answer: &Value, code: &str, detail: &Value) -> anyhow::Result<()> {
+    anyhow::ensure!(
+        refusal(answer)? == code && &answer[0]["error"]["detail"] == detail,
+        "the answer refuses with {code} {detail}: {answer}"
+    );
+    Ok(())
+}
+
 fn edit_version(answer: &Value) -> anyhow::Result<i64> {
     let version = &value(answer)?["edit_version"];
     version
@@ -318,6 +331,18 @@ async fn a_route_answers_every_operation_kind_as_its_one_node_wiring() -> anyhow
         .await?;
     let other = value(&second)?["id"].clone();
     anyhow::ensure!(other != id, "a new key creates a new widget: {second}");
+    // A second widget with a taken code breaks the unique key the create
+    // names.
+    refused(
+        &paths
+            .alike(
+                "/widget/create",
+                &json!([{"request_id": "taken", "idempotency_key": "taken", "code": "priority"}]),
+            )
+            .await?,
+        "unique_violation",
+        &json!({"constraint": "widget_code_key", "field": "code"}),
+    )?;
 
     // GET, QUERY and PROJECTION reads answer alike.
     let got = paths.alike("/widget/get", &json!([{"id": id}])).await?;
@@ -326,6 +351,20 @@ async fn a_route_answers_every_operation_kind_as_its_one_node_wiring() -> anyhow
     paths
         .alike("/widget/list", &json!([{"selector": {}}]))
         .await?;
+    refused(
+        &paths
+            .alike("/widget/query", &json!([{"cursor": "not-a-cursor"}]))
+            .await?,
+        "invalid_input",
+        &json!({"field": "cursor"}),
+    )?;
+    refused(
+        &paths
+            .alike("/widget_maker/get", &json!([{"id": MISSING}]))
+            .await?,
+        "not_found",
+        &json!({"field": "id", "id": MISSING}),
+    )?;
 
     // A server-owned field is invalid input on both paths: the route input
     // schema admits no member the caller does not own.
@@ -354,7 +393,36 @@ async fn a_route_answers_every_operation_kind_as_its_one_node_wiring() -> anyhow
         "request_id": "stale", "id": id, "expected_edit_version": version.to_string(),
         "change": {"note": "stale"},
     }]);
-    refusal(&paths.alike("/widget/update", &stale).await?)?;
+    refused(
+        &paths.alike("/widget/update", &stale).await?,
+        "concurrency_conflict",
+        &json!({
+            "expected_row_version": version.to_string(),
+            "observed_row_version": (version + 1).to_string(),
+        }),
+    )?;
+    let missing = json!([{
+        "request_id": "missing", "id": MISSING, "expected_edit_version": "1",
+        "change": {"note": "missing"},
+    }]);
+    refused(
+        &paths.alike("/widget/update", &missing).await?,
+        "not_found",
+        &json!({"field": "id", "id": MISSING}),
+    )?;
+    refused(
+        &paths
+            .alike(
+                "/widget_tag/update",
+                &json!([{
+                    "request_id": "missing", "id": MISSING, "expected_edit_version": "1",
+                    "change": {"label": "missing"},
+                }]),
+            )
+            .await?,
+        "not_found",
+        &json!({"field": "id", "id": MISSING}),
+    )?;
     let updated = paths
         .route(
             "/widget/update",
@@ -392,9 +460,43 @@ async fn a_route_answers_every_operation_kind_as_its_one_node_wiring() -> anyhow
     // DELETE. A stale delete is refused alike, the route deletes, and both
     // paths then read the same absence.
     let delete = |expected: i64| json!([{"request_id": "delete", "id": id, "expected_edit_version": expected.to_string()}]);
-    refusal(&paths.alike("/widget/delete", &delete(version - 1)).await?)?;
+    // The delete statement reports the revision it read, so the conflict
+    // carries it.
+    refused(
+        &paths.alike("/widget/delete", &delete(version - 1)).await?,
+        "concurrency_conflict",
+        &json!({
+            "expected_row_version": (version - 1).to_string(),
+            "observed_row_version": version.to_string(),
+        }),
+    )?;
     value(&paths.route("/widget/delete", &delete(version)).await?)?;
-    paths.alike("/widget/get", &json!([{"id": id}])).await?;
+    let absent = json!({"field": "id", "id": id});
+    refused(
+        &paths.alike("/widget/get", &json!([{"id": id}])).await?,
+        "not_found",
+        &absent,
+    )?;
+    refused(
+        &paths.alike("/widget/delete", &delete(version)).await?,
+        "not_found",
+        &absent,
+    )?;
+    // Its code is free again, and a maker that does not exist breaks the
+    // foreign key the create names.
+    refused(
+        &paths
+            .alike(
+                "/widget/create",
+                &json!([{
+                    "request_id": "no-maker", "idempotency_key": "no-maker",
+                    "code": "standard", "maker_id": MISSING,
+                }]),
+            )
+            .await?,
+        "foreign_key_violation",
+        &json!({"constraint": "widget_maker_id_fkey", "field": "maker_id"}),
+    )?;
 
     // NO WALK. The projections have no wiring anywhere in this release.
     value(&paths.route("/widget_maker/list", &json!([{}])).await?)?;

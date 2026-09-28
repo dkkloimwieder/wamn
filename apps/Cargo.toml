@@ -25,6 +25,7 @@ members = [
     "platform/execution/contract",
     "platform/execution/jsonata",
     "platform/execution/materializer",
+    "platform/data/access",
     "platform/data/postgres-statements",
     "platform/data/postgres-sqlx",
     "platform/data/record-history",
@@ -125,6 +126,7 @@ wamn-event-reg = { path = "platform/events/registration", version = "0.1.0" }
 wamn-event-wire = { path = "platform/events/wire", version = "0.1.0" }
 wamn-execution-contract = { path = "platform/execution/contract", version = "0.1.0" }
 wamn-materializer = { path = "platform/events/materializer", version = "0.1.0" }
+wamn-data-access = { path = "platform/data/access", version = "0.1.0" }
 wamn-postgres-statements = { path = "platform/data/postgres-statements", version = "0.1.0" }
 wamn-postgres-sqlx = { path = "platform/data/postgres-sqlx", version = "0.1.0" }
 wamn-record-history = { path = "platform/data/record-history", version = "0.1.0" }

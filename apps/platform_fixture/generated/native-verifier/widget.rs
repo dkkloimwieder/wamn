@@ -25,6 +25,7 @@ pub struct WidgetUpdateRow {
 #[derive(Debug, sqlx::FromRow)]
 pub struct WidgetDeleteRow {
     pub outcome: Option<String>,
+    pub observed_edit_version: Option<i64>,
 }
 
 pub(crate) const CREATE_SQL: &str = include_str!("../sql/widget/create.sql");

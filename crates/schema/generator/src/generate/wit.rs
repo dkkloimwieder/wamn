@@ -385,7 +385,7 @@ fn model_column<'a>(table: &'a Table, field: &str) -> &'a Column {
         .expect("validated model operation field exists")
 }
 
-fn access_error_literal(literal: AccessOperationErrorLiteral) -> &'static str {
+pub(super) fn access_error_literal(literal: AccessOperationErrorLiteral) -> &'static str {
     match literal {
         AccessOperationErrorLiteral::InvalidInput => "invalid_input",
         AccessOperationErrorLiteral::NotFound => "not_found",
@@ -981,6 +981,16 @@ fn emit_crud_normalizer(
             // Only a list carries uuid values: an is-null filter carries one boolean.
             if column.column_type() == ColumnType::Uuid && filter.match_mode.takes_list() {
                 writeln!(source, "    if let Some(values) = &mut request.{name} {{ for value in values {{ if !canonical_uuid(value) {{ return Err(invalid({:?})); }} }} }}", format!("filter.{}", filter.field))
+                    .expect("writing to a String cannot fail");
+            }
+            // A filter over a field with a value domain matches only those
+            // values, as the route schema states.
+            let values = fields
+                .iter()
+                .find(|item| item.path == filter.field)
+                .map_or(&[][..], |item| item.values.as_slice());
+            if !values.is_empty() && filter.match_mode.takes_list() {
+                writeln!(source, "    if let Some(values) = &request.{name} {{ for value in values {{ if !{values:?}.contains(&value.as_str()) {{ return Err(invalid({:?})); }} }} }}", format!("filter.{}", filter.field))
                     .expect("writing to a String cannot fail");
             }
         }

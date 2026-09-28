@@ -1,10 +1,12 @@
-use wamn_platform_fixture_data_access::{Band, QueryInput, widget_maker};
+use wamn_platform_fixture_data_access::generated::error::Error;
+use wamn_platform_fixture_data_access::generated::widget_maker as model;
+use wamn_platform_fixture_data_access::widget_maker;
 use wamn_postgres_statements::Connection;
 
 use crate::detail;
 
 mod get {
-    use super::{Connection, detail, widget_maker};
+    use super::{Connection, model};
     use crate::exports::platform_fixture::widget_maker::get as contract;
     mod codec {
         use super::contract;
@@ -18,16 +20,12 @@ mod get {
         connection: &mut Connection,
         request: contract::GetRequest,
     ) -> Result<contract::GetResult, contract::GetError> {
-        widget_maker::get(connection, &request.id)
+        model::get(connection, &request.id)
             .await
             .map(|row| contract::GetResult {
                 value: codec::row!(row, contract::GetRow),
             })
-            .map_err(|error| {
-                codec::map_error(error.kind().literal(), |key| {
-                    detail(&error, "widget_maker.get", key)
-                })
-            })
+            .map_err(|error| codec::map_error(error.literal(), |key| error.detail(key)))
     }
     codec::export_operation!(
         crate::Component,
@@ -40,7 +38,7 @@ mod get {
 }
 
 mod query {
-    use super::{Band, Connection, QueryInput, detail, widget_maker};
+    use super::{Connection, Error, model};
     use crate::exports::platform_fixture::widget_maker::query as contract;
     mod codec {
         use super::contract;
@@ -55,11 +53,9 @@ mod query {
         request: contract::QueryRequest,
         rows: &mut codec::Rows,
     ) -> Result<contract::QueryEnd, contract::QueryError> {
-        let input = QueryInput {
-            filter: request.name,
-            prefix: None,
-            empty: None,
-            band: request.created_at.map(|band| Band {
+        let input = model::QueryInput {
+            name: request.name,
+            created_at: request.created_at.map(|band| model::Range {
                 min: band.min,
                 max: band.max,
             }),
@@ -69,14 +65,8 @@ mod query {
             cursor: request.cursor,
             limit: request.limit.expect("the codec fills the default limit"),
         };
-        let refuse = |error: wamn_platform_fixture_data_access::AccessError| {
-            codec::map_error(error.kind().literal(), |key| {
-                detail(&error, "widget_maker.query", key)
-            })
-        };
-        let mut page = widget_maker::query(connection, &input)
-            .await
-            .map_err(refuse)?;
+        let refuse = |error: Error| codec::map_error(error.literal(), |key| error.detail(key));
+        let mut page = model::query(connection, input).await.map_err(refuse)?;
         while let Some(row) = page.next().await.map_err(refuse)? {
             rows.push(codec::row!(row, contract::QueryRow)).await?;
         }

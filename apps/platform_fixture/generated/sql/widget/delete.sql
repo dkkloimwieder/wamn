@@ -15,4 +15,5 @@ SELECT CASE
     WHEN NOT EXISTS (SELECT 1 FROM target) THEN 'not_found'
     WHEN NOT EXISTS (SELECT 1 FROM deleted) THEN 'concurrency_conflict'
     ELSE 'deleted'
-END AS outcome;
+END AS outcome,
+    (SELECT target.edit_version FROM target) AS observed_edit_version;

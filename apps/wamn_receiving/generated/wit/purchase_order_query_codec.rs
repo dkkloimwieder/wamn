@@ -135,6 +135,13 @@ fn normalize(request: &mut contract::QueryRequest) -> Result<(), contract::Inval
             }
         }
     }
+    if let Some(values) = &request.status {
+        for value in values {
+            if !["open", "complete", "cancelled"].contains(&value.as_str()) {
+                return Err(invalid("filter.status"));
+            }
+        }
+    }
     Ok(())
 }
 

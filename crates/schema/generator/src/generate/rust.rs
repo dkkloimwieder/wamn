@@ -552,31 +552,32 @@ fn operation_result_row(
         statement_type: ColumnType::Text,
         nullable: true,
     }];
+    // Update and delete both report the revision the row carried.
+    let revision = operation
+        .revision_field
+        .as_deref()
+        .expect("update and delete validation require a revision field");
+    // The observed revision is the column the model declares, at its width.
+    let revision_type = table
+        .columns()
+        .iter()
+        .find(|column| column.name() == revision)
+        .expect("the revision field is a column")
+        .column_type();
+    fields.push(RustMember {
+        name: format!(
+            "observed_{}",
+            rust_identifier(revision).expect("model field names were validated for Rust")
+        ),
+        rust_type: if revision_type == ColumnType::Int32 {
+            "Option<i32>".to_owned()
+        } else {
+            "Option<i64>".to_owned()
+        },
+        statement_type: revision_type,
+        nullable: true,
+    });
     if action == CrudAction::Update {
-        let revision = operation
-            .revision_field
-            .as_deref()
-            .expect("update validation requires a revision field");
-        // The observed revision is the column the model declares, at its width.
-        let revision_type = table
-            .columns()
-            .iter()
-            .find(|column| column.name() == revision)
-            .expect("update validation requires a revision column")
-            .column_type();
-        fields.push(RustMember {
-            name: format!(
-                "observed_{}",
-                rust_identifier(revision).expect("model field names were validated for Rust")
-            ),
-            rust_type: if revision_type == ColumnType::Int32 {
-                "Option<i32>".to_owned()
-            } else {
-                "Option<i64>".to_owned()
-            },
-            statement_type: revision_type,
-            nullable: true,
-        });
         fields.extend(table.columns().iter().map(|column| RustMember {
             name: rust_identifier(column.name()).expect("model fields were validated for Rust"),
             rust_type: optional_rust_type(column, projection),

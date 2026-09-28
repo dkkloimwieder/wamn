@@ -1,4 +1,5 @@
 mod contracts;
+mod data;
 mod routes;
 mod rust;
 mod validation;
@@ -394,6 +395,7 @@ pub fn generate(input: &GenerationInput<'_>) -> Result<GeneratedPackage, Generat
             operation,
         )?;
     }
+    data::emit_package_data(&mut files, &manifest)?;
     let data_access = crate::data_access::derive_data_access_overlay(
         input.catalog,
         input.manifest_json,

@@ -27,12 +27,13 @@ pub struct WidgetUpdateRow {
 #[derive(Debug)]
 pub struct WidgetDeleteRow {
     pub outcome: Option<String>,
+    pub observed_edit_version: Option<i64>,
 }
 
 pub(crate) const CREATE_DIGEST: &str =
     "sha256:4beebeaa6a19f314c9a3c993585207896d71982988720af3c7d820c7a4995513";
 pub(crate) const DELETE_DIGEST: &str =
-    "sha256:4abef9e5b92ef8351c009537cf0446f9710c1d5383b186dbe93a045b623f2fce";
+    "sha256:bbd65bd9876edc16ad8b39dadf056eed11a3476e39f4ad368a4bd7927565e35f";
 pub(crate) const GET_DIGEST: &str =
     "sha256:9033b3a1caa6ee73ba3aa4a5df84824c1aaf806e3e7c90329e2a9a3324e9b9bf";
 pub(crate) const QUERY_0_DIGEST: &str =
@@ -236,6 +237,7 @@ pub(crate) async fn delete(
     wamn_postgres_statements::decode_one(DELETE_DIGEST, rows, |row| {
         Ok(WidgetDeleteRow {
             outcome: row.decode("outcome")?,
+            observed_edit_version: row.decode("observed_edit_version")?,
         })
     })
 }

@@ -1,62 +1,12 @@
-//! The `widget_maker` model get and query, and the `widget_maker.list`
-//! projection.
+//! The `widget_maker.list` projection.
 
 use wamn_postgres_statements::{Connection, StatementError};
 
 use crate::error::{AccessError, Constraints};
-use crate::generated::wamn::{widget_maker as sql, widget_maker_list};
-use crate::page::{self, Page, QueryInput};
-use crate::scalar;
+use crate::statements::wamn::widget_maker_list;
 
 #[doc(inline)]
-pub use crate::generated::wamn::widget_maker::WidgetMakerRow;
-#[doc(inline)]
-pub use crate::generated::wamn::widget_maker_list::ListRow;
-
-/// Load one widget maker by id.
-///
-/// # Errors
-///
-/// [`AccessError`] carrying the literal the operation contract declares.
-pub async fn get(connection: &mut Connection, id: &str) -> Result<WidgetMakerRow, AccessError> {
-    let id = scalar::uuid("id", id)?;
-    sql::get(connection, id.clone())
-        .await
-        .map_err(|error| AccessError::from_statement(&error, Constraints::NONE))?
-        .ok_or_else(|| AccessError::missing(&id.0))
-}
-
-/// Query one bounded page, filtered by a part of `name`, in the band of
-/// `created_at`, and searched by `name`.
-///
-/// # Errors
-///
-/// [`AccessError`] carrying the literal the operation contract declares.
-pub async fn query(
-    connection: &mut Connection,
-    input: &QueryInput,
-) -> Result<Page<WidgetMakerRow>, AccessError> {
-    let plan = page::plan(input)?;
-    let (filter, band, search, key, id) = (
-        plan.filter.clone(),
-        plan.band.clone(),
-        plan.search.clone(),
-        plan.cursor_key.clone(),
-        plan.cursor_id.clone(),
-    );
-    let rows = if plan.descending {
-        sql::query_created_at_descending(connection, filter, band, search, key, id, plan.limit + 1)
-            .await
-    } else {
-        sql::query_created_at_ascending(connection, filter, band, search, key, id, plan.limit + 1)
-            .await
-    }
-    .map_err(|error| AccessError::from_statement(&error, Constraints::NONE))?;
-    let descending = plan.descending;
-    Ok(Page::new(rows, plan.limit, move |row| {
-        page::cursor(descending, &row.created_at, &row.id)
-    }))
-}
+pub use crate::statements::wamn::widget_maker_list::ListRow;
 
 /// List every widget maker in name order.
 ///

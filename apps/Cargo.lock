@@ -1449,6 +1449,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "wamn-data-access"
+version = "0.1.0"
+dependencies = [
+ "base64",
+ "chrono",
+ "serde_json",
+ "uuid",
+ "wamn-execution-contract",
+ "wamn-postgres-statements",
+]
+
+[[package]]
 name = "wamn-edge-samples-data-access"
 version = "0.1.0"
 dependencies = [
@@ -1506,11 +1518,9 @@ dependencies = [
 name = "wamn-platform-fixture-data-access"
 version = "0.1.0"
 dependencies = [
- "base64",
- "chrono",
  "serde_json",
  "uuid",
- "wamn-execution-contract",
+ "wamn-data-access",
  "wamn-postgres-statements",
 ]
 

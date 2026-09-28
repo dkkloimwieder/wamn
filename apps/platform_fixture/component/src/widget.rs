@@ -1,10 +1,12 @@
-use wamn_platform_fixture_data_access::{QueryInput, widget};
+use wamn_platform_fixture_data_access::generated::error::Error;
+use wamn_platform_fixture_data_access::generated::widget as model;
+use wamn_platform_fixture_data_access::widget;
 use wamn_postgres_statements::{Connection, Transaction};
 
 use crate::detail;
 
 mod get {
-    use super::{Connection, detail, widget};
+    use super::{Connection, model};
     use crate::exports::platform_fixture::widget::get as contract;
     mod codec {
         use super::contract;
@@ -18,16 +20,12 @@ mod get {
         connection: &mut Connection,
         request: contract::GetRequest,
     ) -> Result<contract::GetResult, contract::GetError> {
-        widget::get(connection, &request.id)
+        model::get(connection, &request.id)
             .await
             .map(|row| contract::GetResult {
                 value: codec::row!(row, contract::GetRow),
             })
-            .map_err(|error| {
-                codec::map_error(error.kind().literal(), |key| {
-                    detail(&error, "widget.get", key)
-                })
-            })
+            .map_err(|error| codec::map_error(error.literal(), |key| error.detail(key)))
     }
     codec::export_operation!(
         crate::Component,
@@ -40,7 +38,7 @@ mod get {
 }
 
 mod query {
-    use super::{Connection, QueryInput, detail, widget};
+    use super::{Connection, Error, model};
     use crate::exports::platform_fixture::widget::query as contract;
     mod codec {
         use super::contract;
@@ -55,23 +53,17 @@ mod query {
         request: contract::QueryRequest,
         rows: &mut codec::Rows,
     ) -> Result<contract::QueryEnd, contract::QueryError> {
-        let input = QueryInput {
-            filter: request.code,
-            prefix: request.note,
-            empty: request.maker_id,
-            band: None,
-            search: None,
+        let input = model::QueryInput {
+            code: request.code,
+            note: request.note,
+            maker_id: request.maker_id,
             sort_field: request.sort_field,
             sort_direction: request.sort_direction,
             cursor: request.cursor,
             limit: request.limit.expect("the codec fills the default limit"),
         };
-        let refuse = |error: wamn_platform_fixture_data_access::AccessError| {
-            codec::map_error(error.kind().literal(), |key| {
-                detail(&error, "widget.query", key)
-            })
-        };
-        let mut page = widget::query(connection, &input).await.map_err(refuse)?;
+        let refuse = |error: Error| codec::map_error(error.literal(), |key| error.detail(key));
+        let mut page = model::query(connection, input).await.map_err(refuse)?;
         while let Some(row) = page.next().await.map_err(refuse)? {
             rows.push(codec::row!(row, contract::QueryRow)).await?;
         }
@@ -90,7 +82,7 @@ mod query {
 }
 
 mod create {
-    use super::{Connection, Transaction, detail, widget};
+    use super::{Connection, Transaction, model};
     use crate::exports::platform_fixture::widget::create as contract;
     mod codec {
         use super::contract;
@@ -104,21 +96,17 @@ mod create {
         transaction: &mut Transaction,
         request: contract::CreateRequest,
     ) -> Result<contract::CreateResult, contract::CreateError> {
-        widget::create(
+        model::create(
             transaction,
-            request.code.flatten().as_deref(),
-            request.maker_id.flatten().as_deref(),
-            request.note.flatten().as_deref(),
+            request.code.flatten(),
+            request.maker_id.flatten(),
+            request.note.flatten(),
         )
         .await
         .map(|row| contract::CreateResult {
             value: codec::row!(row, contract::CreateRow),
         })
-        .map_err(|error| {
-            codec::map_error(error.kind().literal(), |key| {
-                detail(&error, "widget.create", key)
-            })
-        })
+        .map_err(|error| codec::map_error(error.literal(), |key| error.detail(key)))
     }
     codec::export_operation!(
         crate::Component,
@@ -131,7 +119,7 @@ mod create {
 }
 
 mod update {
-    use super::{Connection, detail, widget};
+    use super::{Connection, model};
     use crate::exports::platform_fixture::widget::update as contract;
     mod codec {
         use super::contract;
@@ -145,24 +133,17 @@ mod update {
         connection: &mut Connection,
         request: contract::UpdateRequest,
     ) -> Result<contract::UpdateResult, contract::UpdateError> {
-        let change = widget::Change {
-            code: request.change.code,
-            maker_id: request.change.maker_id,
-            note: request.change.note,
-        };
-        widget::update(
+        model::update(
             connection,
             &request.id,
             request.expected_edit_version,
-            change,
+            request.change.code,
+            request.change.maker_id,
+            request.change.note,
         )
         .await
         .map(|row| codec::row!(row, contract::UpdateResult))
-        .map_err(|error| {
-            codec::map_error(error.kind().literal(), |key| {
-                detail(&error, "widget.update", key)
-            })
-        })
+        .map_err(|error| codec::map_error(error.literal(), |key| error.detail(key)))
     }
     codec::export_operation!(
         crate::Component,
@@ -175,7 +156,7 @@ mod update {
 }
 
 mod delete {
-    use super::{Connection, detail, widget};
+    use super::{Connection, model};
     use crate::exports::platform_fixture::widget::delete as contract;
     mod codec {
         use super::contract;
@@ -189,16 +170,12 @@ mod delete {
         connection: &mut Connection,
         request: contract::DeleteRequest,
     ) -> Result<contract::DeleteResult, contract::DeleteError> {
-        widget::delete(connection, &request.id, request.expected_edit_version)
+        model::delete(connection, &request.id, request.expected_edit_version)
             .await
             .map(|row| contract::DeleteResult {
                 value: codec::row!(row, contract::DeleteRow),
             })
-            .map_err(|error| {
-                codec::map_error(error.kind().literal(), |key| {
-                    detail(&error, "widget.delete", key)
-                })
-            })
+            .map_err(|error| codec::map_error(error.literal(), |key| error.detail(key)))
     }
     codec::export_operation!(
         crate::Component,

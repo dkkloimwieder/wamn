@@ -130,6 +130,13 @@ fn error_value(error: &contract::QueryError) -> Value {
 #[allow(clippy::unnecessary_wraps)]
 fn normalize(request: &mut contract::QueryRequest) -> Result<(), contract::InvalidInputDetail> {
     let _ = &request;
+    if let Some(values) = &request.status {
+        for value in values {
+            if !["available", "held", "consumed"].contains(&value.as_str()) {
+                return Err(invalid("filter.status"));
+            }
+        }
+    }
     if let Some(values) = &mut request.location_id {
         for value in values {
             if !canonical_uuid(value) {

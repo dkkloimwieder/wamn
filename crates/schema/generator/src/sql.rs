@@ -134,7 +134,8 @@ pub(crate) fn update(table: &Table, operation: &OperationDeclaration, tombstoned
 ///
 /// A hard delete removes the row, and an inbound foreign key can refuse it. A
 /// tombstone sets the marker instead, so it removes nothing and violates
-/// nothing. Both report the same three outcomes.
+/// nothing. Both report the same three outcomes, and the revision the row
+/// carried, as update does, so a conflict reports it without a second read.
 pub(crate) fn delete(table: &Table, operation: &OperationDeclaration, mode: DeleteMode) -> String {
     let revision = operation
         .revision_field
@@ -158,7 +159,7 @@ pub(crate) fn delete(table: &Table, operation: &OperationDeclaration, mode: Dele
         ),
     };
     format!(
-        "WITH target AS MATERIALIZED (\n    SELECT id, {revision}\n    FROM {}\n    WHERE id = $1::uuid{live}\n    FOR UPDATE\n),\ndeleted AS (\n{removal}\n    WHERE model.id = target.id\n      AND target.{revision} = $2::{revision_cast}\n    RETURNING model.id\n)\nSELECT CASE\n    WHEN NOT EXISTS (SELECT 1 FROM target) THEN '{OUTCOME_NOT_FOUND}'\n    WHEN NOT EXISTS (SELECT 1 FROM deleted) THEN '{OUTCOME_CONCURRENCY_CONFLICT}'\n    ELSE '{OUTCOME_DELETED}'\nEND AS outcome;\n",
+        "WITH target AS MATERIALIZED (\n    SELECT id, {revision}\n    FROM {}\n    WHERE id = $1::uuid{live}\n    FOR UPDATE\n),\ndeleted AS (\n{removal}\n    WHERE model.id = target.id\n      AND target.{revision} = $2::{revision_cast}\n    RETURNING model.id\n)\nSELECT CASE\n    WHEN NOT EXISTS (SELECT 1 FROM target) THEN '{OUTCOME_NOT_FOUND}'\n    WHEN NOT EXISTS (SELECT 1 FROM deleted) THEN '{OUTCOME_CONCURRENCY_CONFLICT}'\n    ELSE '{OUTCOME_DELETED}'\nEND AS outcome,\n    (SELECT target.{revision} FROM target) AS observed_{revision};\n",
         table.name()
     )
 }

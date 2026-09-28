@@ -72,6 +72,7 @@ pub(super) fn emit_model(
         )?;
     }
     emit_model_wit(files, catalog, manifest, model_name, model, table)?;
+    super::data::emit_model_data(files, model_name, model, table, &wamn_api)?;
     let native_bind_fixtures = native_bind_fixtures(&wamn_api);
     emit_projection(
         files,
@@ -752,11 +753,15 @@ fn emit_operation_contracts(
             statement_value_contract(column.name(), column.column_type(), column.nullable())
         })
         .collect::<Vec<_>>();
-    // A public create or update succeeds with the model row. The update
-    // statement's outcome and observed revision remain SQL accessor columns.
+    // A public create or update succeeds with the model row, and a delete
+    // with its outcome. The observed revision of an update or a delete
+    // remains an SQL accessor column.
     let columns = if action == CrudAction::Delete {
         accessors.first().map_or_else(Vec::new, |accessor| {
             operation_row_columns(wamn_api, &accessor.row)
+                .into_iter()
+                .filter(|column| column.name == "outcome")
+                .collect()
         })
     } else {
         model_columns.clone()
