@@ -87,7 +87,7 @@ The graph keeps its id `inventory_move_and_label`. The move node leaves the grap
 packaging update -> shape (jsonata) -> label (label-render) -> store (blob-put)
 ```
 
-The `shape` node turns the row event into the item array that `label-render` takes, with `packaging_id` and `location_id`, and the label key `{packaging_id}/{row_version}`. Epic 25 (`docs/plan/wms-inventory.md`) moved the trigger from the movement insert to the packaging update. One move therefore stores one label, and a redelivered event overwrites it. The graph has no `respond` terminal, because no caller waits. The WMS cluster cases read the label from the blob store after the run completes. They no longer read it from the move response.
+The `shape` node turns the row event into the item array that `label-render` takes, with `packaging_id` and `location_id`, and the label key `{packaging_id}/{row_version}`. Epic 25 (`docs/history/wms-inventory-spec.md`) moved the trigger from the movement insert to the packaging update. One move therefore stores one label, and a redelivered event overwrites it. The graph has no `respond` terminal, because no caller waits. The WMS cluster cases read the label from the blob store after the run completes. They no longer read it from the move response.
 
 ## 5. Issues
 
