@@ -65,6 +65,7 @@ The generator compares those choices with the schema and SQL. It does not replac
 | `required_platform_policy_contract.id`, `.state` | WAMN policy requirement. Retain independently of migration shape. |
 | `models.*.schema`, `.table`, `.owner` | Application relation selection and package ownership. PostgreSQL supplies the selected relation's schema. Retain selection and ownership. |
 | `server_owned_fields`, `client_field_extensible`, `enum_fields` | Application exposure, extension, and value policies. Database defaults and checks do not determine all these choices. Retain. |
+| `min_lengths` | Application value policy: the fewest characters that a text column holds after a trim. The generated codec refuses a shorter value with `invalid_input` on its field. The author writes `CHECK (char_length(btrim(<column>)) >= <n>)` in a migration, and generation refuses the model without it. That CHECK is the database guard and never the answer, so no operation contract lists it. Retain. |
 | `audit_log.columns`, `.retention` | Application history policy. Retain. |
 | `operations` keys, `permission`, `writable_fields`, `revision_field`, `result` | Application operation, authority, revision, and result choices. Retain. |
 | Create `values` | Application value policy for a new record: the subset of an `enum_fields` list that a create accepts. The generated input contract states it, and states the model list for every other enum field, so a client and the generated route schema offer only those values. Retain. |
@@ -95,7 +96,8 @@ Compiled component metadata owns actual WIT imports and exports for runtime admi
 Those bytes exist after generation, so reading them to generate the same component creates a circular dependency.
 The manifest does not duplicate native deployment replicas, credentials, database targets, or workload bindings.
 Those facts remain with the existing deployment and binding owners.
-This change does not generate new component worlds or change deployment representation.
+Generation writes one world for the generated operations of a package, and an authored world includes it, as [generated operations](#generated-operations) states.
+It does not change deployment representation.
 
 ## Generated SQL and contracts
 
@@ -119,7 +121,41 @@ The `minimum`, `maximum`, and `observed` refusal details are decimal strings in 
 Custom fields declare `revision: true`; CRUD operations use their declared revision field.
 Other integer fields remain JSON numbers.
 The common integer codec preserves exact values above JavaScript’s safe-integer limit.
-Application handlers retain business rules, transaction sequencing, and deliberate result transformations.
+Application handlers of custom operations retain business rules, transaction sequencing, and deliberate result transformations.
+
+## Generated operations
+
+A generated CRUD operation needs no authored Rust, WIT, route entry, or declaration entry.
+Generation writes these files for each package:
+
+1. `generated/data/<model>.rs` holds one data function for each operation of the model. The function parses the scalars, calls the generated accessor, and returns the one generated refusal type.
+2. `generated/data/error.rs` holds that refusal type. It spells the closed vocabulary of the operation contracts, and its details are the declared detail fields.
+3. `generated/component/<model>.rs` holds one module for each operation, with its codec, its handler, and its export.
+4. `generated/wit/world.wit` holds the world `<package>:generated/generated`, which exports every generated operation.
+5. `generated/publication/attachments.json` holds one route entry for each generated operation, with its definition hash.
+6. `generated/publication/component-operations.json` holds one declaration entry for each generated operation, keyed by component.
+
+The shared crate `wamn-data-access` holds the keyset cursor, the query page, and the scalar parsers that the data functions use.
+A data crate includes `generated/data/mod.rs` as its public module `generated`.
+A component includes `generated/component/mod.rs` in a module that names that data module `data`.
+The fixture overlay has no data crate, so its component includes the data functions itself.
+
+The authored world, in `component/wit/authored.wit`, includes the generated world and exports the custom operations.
+The authored world includes the generated one, and the reverse is not possible.
+An authored export names a package under `generated/wit/deps`, and WIT resolves a directory with its dependencies as one group.
+
+The authored `publication/attachments.json` and component declaration carry only the custom operations.
+Publication, the declaration render, the client generator, and `materialize_package` read the authored file and the generated file together.
+An attachment id or an operation in both files refuses.
+A copy of an authored document outside its package reads the generated file beside it only when the copy keeps the package layout.
+
+The manifest member `routes` sets how a generated route is published:
+
+- `auth_modes` is the authentication modes of each route. It defaults to `["pat", "session"]`.
+- `path_prefix` starts each path, such as `/acme`. It defaults to none.
+- `id_prefix` starts each attachment id. It defaults to the package id in kebab case. An empty prefix gives `<model>-<action>-http`.
+
+A query that names an undeclared sort refuses with `invalid_input` on the field `sort`.
 
 Native SQLx tests compile the exact files that guest execution names.
 Guests send statement identities and arguments through `wamn:postgres`.

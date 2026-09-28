@@ -1134,11 +1134,10 @@ On 2026-09-27 the project environment took 3 seconds and its apply 9 seconds. `r
 
 ### 5.3 WMS components, wiring and release
 
-Build every component with `tools/build-components all`. The WMS components land in `apps/target/virtualized/std-empty-environment`, and `label_render.wasm` lands in `apps/platform/no-std/target/wasm32-wasip2/release`. Render the four declarations with tenant `wms`, package `wamn_wms` `1.0.0`, and the store alias `labels` for `blob-put`, as the WMS cluster case does:
+Build every component with `tools/build-components all`. The WMS components land in `apps/target/virtualized/std-empty-environment`, and `label_render.wasm` lands in `apps/platform/no-std/target/wasm32-wasip2/release`. Render the three platform declarations with tenant `wms`, package `wamn_wms` `1.0.0`, and the store alias `labels` for `blob-put`, as the WMS cluster case does:
 
 ```bash
-for pair in wms:apps/wamn_wms/publication/components/wms.json.in \
-  label-render:apps/platform/no-std/label-render/declaration.json.in \
+for pair in label-render:apps/platform/no-std/label-render/declaration.json.in \
   blob-put:apps/platform/execution/blob-put/declaration.json.in \
   jsonata:apps/platform/execution/jsonata/declaration.json.in; do
   sed -e 's/__TENANT_ID__/wms/g; s/__PACKAGE_ID__/wamn_wms/g; s/__PACKAGE_VERSION__/1.0.0/g; s/__STORE_ALIAS__/labels/g' \
@@ -1146,7 +1145,8 @@ for pair in wms:apps/wamn_wms/publication/components/wms.json.in \
 done
 ```
 
-Push each component with the credential file of section 3.9, `--package apps/wamn_wms --tenant wms --declaration $P/<name>.declaration.json`, and these admitted packages:
+Push each component with the credential file of section 3.9, `--package apps/wamn_wms --tenant wms --declaration $P/<name>.declaration.json`, and these admitted packages.
+Push `wms` with `--declaration-template apps/wamn_wms/publication/components/wms.json.in` in place of `--declaration`, because the render adds the entries of the generated operations from `generated/publication/component-operations.json`:
 
 | Component | Bytes | `--admit-platform-package` | Digest on 2026-09-27 |
 | --- | --- | --- | --- |

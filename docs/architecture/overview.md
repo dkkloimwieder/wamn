@@ -95,7 +95,9 @@ Conflicting content refuses, and exact retries retain their original facts.
 Publication mints one route for each attachment that targets a route.
 The route carries the contract kind of its operation, which publication reads from the generated `operation.json` of the package.
 Generation derives the route input schema of each generated CRUD operation from its input contract, and writes it to `generated/routes/<model>/<action>.json`.
-The route `input-schema` in `publication/attachments.json` and the operation input port in the component declaration name that file, and hold no copy.
+Generation also writes the route entry and the declaration entry of each generated operation, under `generated/publication/`.
+The authored `publication/attachments.json` and component declaration carry only the custom operations, and each reader reads both files, as [data access](data-access.md#generated-operations) states.
+The route `input-schema` and the operation input port name the route schema file, and hold no copy.
 Each one writes `{"$ref": "generated/routes/<model>/<action>.json"}`.
 Publication, component admission and the client generator resolve the name against the package root, so a contract change moves the served schema and its definition hash.
 An authored operation keeps the input schema that its author writes.
