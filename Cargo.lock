@@ -5559,6 +5559,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "wamn-bench"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "tokio",
+ "wamn-execution-contract",
+]
+
+[[package]]
 name = "wamn-catalog"
 version = "0.1.0"
 dependencies = [

@@ -1,0 +1,23 @@
+[package]
+name = "wamn-bench"
+description = "A benchmark of a deployed host over HTTPS (docs/plan/gcp-deployment.md section 6)."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[[bin]]
+name = "wamn-bench"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = { workspace = true }
+clap = { workspace = true, features = ["derive"] }
+reqwest = { workspace = true, features = ["rustls", "json"] }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time", "fs"] }
+wamn-execution-contract = { workspace = true }
+
+[lints]
+workspace = true
