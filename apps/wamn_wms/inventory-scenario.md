@@ -23,7 +23,7 @@ The four commands have distinct authority and effects:
 
 | Operation | Purpose |
 |---|---|
-| `inventory.move` | Move a packaging to another location. It writes no transaction row. |
+| `inventory.move` | Move a packaging to another location at the time it names. It writes no transaction row. |
 | `inventory.adjust` | Change quantity with a reason. |
 | `inventory.merge` | Move stock between two packagings and retire the source. The two need not share a type. |
 | `inventory.split` | Transfer quantity into a new packaging of a given type. |
@@ -38,6 +38,9 @@ The write log stores the result of each command.
 `adjust`, `merge`, and `split` return `transaction_ids`, the ids of the transaction rows that the command wrote.
 A command that would write no row refuses, so the list is never empty. An adjust to the current count refuses as `invalid_input`.
 A move returns the packaging id, its new location, and its new `row_version`. A move to the current location or of a consumed packaging refuses.
+A move writes its `occurred_at` to `packaging.located_at` together with the new `location_id`, so a backdated move keeps its time.
+A split writes its `occurred_at` to the `located_at` of the new packaging, and a `packaging.create` sets `located_at` to the time of the write.
+The record history of `packaging` keeps each pair of `location_id` and `located_at`.
 Repeating the same command returns that result without another write.
 Changing its body under the same key refuses.
 Two competing moves on the same packaging must produce one success and one `concurrency_conflict`.

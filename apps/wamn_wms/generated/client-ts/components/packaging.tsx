@@ -310,6 +310,7 @@ export function PackagingGetDetail(props: PackagingGetDetailProps) {
         <DetailItem term="created at">{cellText(readMember(record(), ["createdAt"]), "timestamptz")}</DetailItem>
         <DetailItem term="created by">{cellText(readMember(record(), ["createdBy"]), "uuid")}</DetailItem>
         <DetailItem term="id">{cellText(readMember(record(), ["id"]), "uuid")}</DetailItem>
+        <DetailItem term="located at">{cellText(readMember(record(), ["locatedAt"]), "timestamptz")}</DetailItem>
         <DetailItem term="location id">{cellText(readMember(record(), ["locationId"]), "uuid")}</DetailItem>
         <DetailItem term="packaging code">{cellText(readMember(record(), ["packagingCode"]), "text")}</DetailItem>
         <DetailItem term="row version">{cellText(readMember(record(), ["rowVersion"]), "int32")}</DetailItem>
@@ -364,6 +365,7 @@ export const PACKAGING_QUERY_TABLE = {
     { field: "createdAt", label: "created at", type: "timestamptz", role: "value" },
     { field: "createdBy", label: "created by", type: "uuid", role: "value" },
     { field: "id", label: "id", type: "uuid", role: "key" },
+    { field: "locatedAt", label: "located at", type: "timestamptz", role: "value" },
     { field: "locationId", label: "location id", type: "uuid", role: "reference", displayField: "locationCode", recordRead: { read: { route: LOCATION_GET_ROUTE, request: LOCATION_GET_REQUEST_FIELDS, result: LOCATION_GET_RESULT_FIELDS }, keyInput: ["id"] } },
     { field: "packagingCode", label: "packaging code", type: "text", role: "value" },
     { field: "rowVersion", label: "row version", type: "int32", role: "revision" },

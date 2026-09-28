@@ -5,6 +5,7 @@ pub struct PackagingRow {
     pub created_at: chrono::DateTime<chrono::Utc>,
     pub created_by: uuid::Uuid,
     pub id: uuid::Uuid,
+    pub located_at: chrono::DateTime<chrono::Utc>,
     pub location_id: uuid::Uuid,
     pub packaging_code: String,
     pub row_version: i32,

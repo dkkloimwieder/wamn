@@ -7,6 +7,7 @@ pub struct PackagingRow {
     pub created_at: wamn_postgres_statements::TimestampTz,
     pub created_by: wamn_postgres_statements::Uuid,
     pub id: wamn_postgres_statements::Uuid,
+    pub located_at: wamn_postgres_statements::TimestampTz,
     pub location_id: wamn_postgres_statements::Uuid,
     pub packaging_code: String,
     pub row_version: i32,
@@ -17,25 +18,25 @@ pub struct PackagingRow {
 }
 
 pub(crate) const CREATE_DIGEST: &str =
-    "sha256:898a64c23401060fde5706968227d43cb0cef070f6bc02b1633c4506d75c8357";
+    "sha256:8be4213d29cd4fbc47391647bffa3452a7dae5364acd5e1b28db4e9783cd451c";
 pub(crate) const GET_DIGEST: &str =
-    "sha256:385031f095c3d1af3a821db75cf5b2c39d632d12bd0b16a72a5435e41c5b2ee6";
+    "sha256:9d87126d9ce2c4c7d73bd6e476c0ec81e9b2919ec26a6d6c16ad56d843371aad";
 pub(crate) const QUERY_0_DIGEST: &str =
-    "sha256:c97bbed6b93cfecb816a045ff5cc453d8de820e7d1264a18911d202829ff455a";
+    "sha256:dd78781bc618e6a43941093f3125c84d05d08da130fed61c75f58076b380d4f7";
 pub(crate) const QUERY_1_DIGEST: &str =
-    "sha256:7d1542dc5294c049797dea2f7dd200f77ab9e17828d8bb462659b065c5e30771";
+    "sha256:261a46585d86c07743aa0b2b18e72580fd9350bba0c6445bda05181bbf5fe44c";
 pub(crate) const QUERY_2_DIGEST: &str =
-    "sha256:4aeac50d0fb396063002b9e6a701fddd48cba31faec8c9e381c9c37bc8317652";
+    "sha256:3fd059dd269f0cbdb8f3bb63594e59a4303788386ea3009dc27f418d588e9667";
 pub(crate) const QUERY_3_DIGEST: &str =
-    "sha256:14626c78b2db531076bbe73ae423d5b125c874b376010e438aad42ddd0f67b30";
+    "sha256:d4e87b195e88f215ec2d05da117098b13c1dc5050b1b868a315bf84b1e980c53";
 pub(crate) const QUERY_4_DIGEST: &str =
-    "sha256:b7e19bb1a6d9fe884fdea971c06fee86fe36438253e570dd4ad1c54b339bdcd7";
+    "sha256:48d7e16b45689ec2b1930d56731968b4343851e617f7199da2ecfd3827342da2";
 pub(crate) const QUERY_5_DIGEST: &str =
-    "sha256:e0ecb4e8b04a8eba9a43684cd9b575b9586c1b754f4004bee66987e5cf8abf44";
+    "sha256:707c7cf94de40bbe5afc22e7b1384d0a4e023a3edc4e4a635aec3d21f3163e1c";
 pub(crate) const QUERY_6_DIGEST: &str =
-    "sha256:3d82df595efed2bfb853d9c8e9ea0731275b46aa851363dd469c43dedd314588";
+    "sha256:0e4a32edfb28f00dab95d182c104a2a9f63a98d4a8aa6d2d2b2b6c13630b304f";
 pub(crate) const QUERY_7_DIGEST: &str =
-    "sha256:e39db5d058c403281ef31b0b1b578073c64872cfb47de0057ce7e8757e010212";
+    "sha256:b71f3e85339254c53dc5bf309935823f61ad5d589f4d5eb11e8667ed7cacdf78";
 
 pub(crate) const CREATE_UNIQUE_CONSTRAINTS: &[&str] =
     &["packaging_id_pkey", "packaging_packaging_code_key"];
@@ -59,6 +60,7 @@ pub(crate) async fn get(
             created_at: row.decode("created_at")?,
             created_by: row.decode("created_by")?,
             id: row.decode("id")?,
+            located_at: row.decode("located_at")?,
             location_id: row.decode("location_id")?,
             packaging_code: row.decode("packaging_code")?,
             row_version: row.decode("row_version")?,
@@ -98,6 +100,7 @@ pub(crate) async fn query_packaging_code_ascending(
                     created_at: row.decode("created_at")?,
                     created_by: row.decode("created_by")?,
                     id: row.decode("id")?,
+                    located_at: row.decode("located_at")?,
                     location_id: row.decode("location_id")?,
                     packaging_code: row.decode("packaging_code")?,
                     row_version: row.decode("row_version")?,
@@ -139,6 +142,7 @@ pub(crate) async fn query_packaging_code_descending(
                     created_at: row.decode("created_at")?,
                     created_by: row.decode("created_by")?,
                     id: row.decode("id")?,
+                    located_at: row.decode("located_at")?,
                     location_id: row.decode("location_id")?,
                     packaging_code: row.decode("packaging_code")?,
                     row_version: row.decode("row_version")?,
@@ -180,6 +184,7 @@ pub(crate) async fn query_location_id_ascending(
                     created_at: row.decode("created_at")?,
                     created_by: row.decode("created_by")?,
                     id: row.decode("id")?,
+                    located_at: row.decode("located_at")?,
                     location_id: row.decode("location_id")?,
                     packaging_code: row.decode("packaging_code")?,
                     row_version: row.decode("row_version")?,
@@ -221,6 +226,7 @@ pub(crate) async fn query_location_id_descending(
                     created_at: row.decode("created_at")?,
                     created_by: row.decode("created_by")?,
                     id: row.decode("id")?,
+                    located_at: row.decode("located_at")?,
                     location_id: row.decode("location_id")?,
                     packaging_code: row.decode("packaging_code")?,
                     row_version: row.decode("row_version")?,
@@ -262,6 +268,7 @@ pub(crate) async fn query_updated_at_ascending(
                     created_at: row.decode("created_at")?,
                     created_by: row.decode("created_by")?,
                     id: row.decode("id")?,
+                    located_at: row.decode("located_at")?,
                     location_id: row.decode("location_id")?,
                     packaging_code: row.decode("packaging_code")?,
                     row_version: row.decode("row_version")?,
@@ -303,6 +310,7 @@ pub(crate) async fn query_updated_at_descending(
                     created_at: row.decode("created_at")?,
                     created_by: row.decode("created_by")?,
                     id: row.decode("id")?,
+                    located_at: row.decode("located_at")?,
                     location_id: row.decode("location_id")?,
                     packaging_code: row.decode("packaging_code")?,
                     row_version: row.decode("row_version")?,
@@ -344,6 +352,7 @@ pub(crate) async fn query_created_at_ascending(
                     created_at: row.decode("created_at")?,
                     created_by: row.decode("created_by")?,
                     id: row.decode("id")?,
+                    located_at: row.decode("located_at")?,
                     location_id: row.decode("location_id")?,
                     packaging_code: row.decode("packaging_code")?,
                     row_version: row.decode("row_version")?,
@@ -385,6 +394,7 @@ pub(crate) async fn query_created_at_descending(
                     created_at: row.decode("created_at")?,
                     created_by: row.decode("created_by")?,
                     id: row.decode("id")?,
+                    located_at: row.decode("located_at")?,
                     location_id: row.decode("location_id")?,
                     packaging_code: row.decode("packaging_code")?,
                     row_version: row.decode("row_version")?,
@@ -421,6 +431,7 @@ pub(crate) async fn create(
             created_at: row.decode("created_at")?,
             created_by: row.decode("created_by")?,
             id: row.decode("id")?,
+            located_at: row.decode("located_at")?,
             location_id: row.decode("location_id")?,
             packaging_code: row.decode("packaging_code")?,
             row_version: row.decode("row_version")?,

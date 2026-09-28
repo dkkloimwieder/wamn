@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT\n    packaging.created_at,\n    packaging.created_by,\n    packaging.id,\n    packaging.location_id,\n    packaging.packaging_code,\n    packaging.row_version,\n    packaging.status,\n    packaging.type,\n    packaging.updated_at,\n    packaging.updated_by\nFROM packaging AS packaging\nWHERE\n    (\n        $1::jsonb IS NULL\n        OR packaging.status IN (\n            SELECT filter.value\n            FROM jsonb_array_elements_text($1::jsonb) AS filter(value)\n        )\n    )\n    AND (\n        $2::jsonb IS NULL\n        OR packaging.location_id::text IN (\n            SELECT filter.value\n            FROM jsonb_array_elements_text($2::jsonb) AS filter(value)\n        )\n    )\n    AND (\n        $3::jsonb IS NULL\n        OR EXISTS (\n            SELECT 1\n            FROM jsonb_array_elements_text($3::jsonb) AS filter(value)\n            WHERE strpos(packaging.packaging_code, filter.value) > 0\n        )\n    )\n    AND (\n        $4::timestamptz IS NULL\n        OR packaging.updated_at > $4::timestamptz\n        OR (\n            packaging.updated_at = $4::timestamptz\n            AND packaging.id > $5::uuid\n        )\n    )\nORDER BY\n    packaging.updated_at ASC,\n    packaging.id ASC\nLIMIT $6::int8;\n",
+  "query": "INSERT INTO packaging (packaging_code, type, location_id, status)\nVALUES ($1::text, $2::text, $3::uuid, $4::text)\nRETURNING\n    created_at,\n    created_by,\n    id,\n    located_at,\n    location_id,\n    packaging_code,\n    row_version,\n    status,\n    type,\n    updated_at,\n    updated_by;\n",
   "describe": {
     "columns": [
       {
@@ -38,6 +38,17 @@
       },
       {
         "ordinal": 3,
+        "name": "located_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "packaging",
+            "name": "located_at"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
         "name": "location_id",
         "type_info": "Uuid",
         "origin": {
@@ -48,7 +59,7 @@
         }
       },
       {
-        "ordinal": 4,
+        "ordinal": 5,
         "name": "packaging_code",
         "type_info": "Text",
         "origin": {
@@ -59,7 +70,7 @@
         }
       },
       {
-        "ordinal": 5,
+        "ordinal": 6,
         "name": "row_version",
         "type_info": "Int4",
         "origin": {
@@ -70,7 +81,7 @@
         }
       },
       {
-        "ordinal": 6,
+        "ordinal": 7,
         "name": "status",
         "type_info": "Text",
         "origin": {
@@ -81,7 +92,7 @@
         }
       },
       {
-        "ordinal": 7,
+        "ordinal": 8,
         "name": "type",
         "type_info": "Text",
         "origin": {
@@ -92,7 +103,7 @@
         }
       },
       {
-        "ordinal": 8,
+        "ordinal": 9,
         "name": "updated_at",
         "type_info": "Timestamptz",
         "origin": {
@@ -103,7 +114,7 @@
         }
       },
       {
-        "ordinal": 9,
+        "ordinal": 10,
         "name": "updated_by",
         "type_info": "Uuid",
         "origin": {
@@ -116,12 +127,10 @@
     ],
     "parameters": {
       "Left": [
-        "Jsonb",
-        "Jsonb",
-        "Jsonb",
-        "Timestamptz",
+        "Text",
+        "Text",
         "Uuid",
-        "Int8"
+        "Text"
       ]
     },
     "nullable": [
@@ -134,8 +143,9 @@
       false,
       false,
       false,
+      false,
       false
     ]
   },
-  "hash": "b7e19bb1a6d9fe884fdea971c06fee86fe36438253e570dd4ad1c54b339bdcd7"
+  "hash": "8be4213d29cd4fbc47391647bffa3452a7dae5364acd5e1b28db4e9783cd451c"
 }

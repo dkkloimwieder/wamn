@@ -4,6 +4,7 @@ RETURNING
     created_at,
     created_by,
     id,
+    located_at,
     location_id,
     packaging_code,
     row_version,

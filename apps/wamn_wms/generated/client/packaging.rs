@@ -25,6 +25,12 @@ pub const PACKAGING_FIELDS: &[FieldDescriptor] = &[
         values: &[],
     },
     FieldDescriptor {
+        path: "located_at",
+        type_name: "timestamptz",
+        nullable: false,
+        values: &[],
+    },
+    FieldDescriptor {
         path: "location_id",
         type_name: "uuid",
         nullable: false,
@@ -94,6 +100,8 @@ pub struct PackagingCreateResult {
     pub created_by: uuid::Uuid,
     /// `uuid`
     pub id: uuid::Uuid,
+    /// `timestamptz`
+    pub located_at: chrono::DateTime<chrono::Utc>,
     /// `uuid`
     pub location_id: uuid::Uuid,
     /// `text`
@@ -167,6 +175,12 @@ pub const PACKAGING_CREATE_RESULT: &[FieldDescriptor] = &[
     FieldDescriptor {
         path: "id",
         type_name: "uuid",
+        nullable: false,
+        values: &[],
+    },
+    FieldDescriptor {
+        path: "located_at",
+        type_name: "timestamptz",
         nullable: false,
         values: &[],
     },
@@ -328,6 +342,18 @@ pub const PACKAGING_CREATE_RESULT_SCHEMA: &[wamn_client::descriptor::FieldSchema
     },
     wamn_client::descriptor::FieldSchema {
         field: FieldDescriptor {
+            path: "located_at",
+            type_name: "timestamptz",
+            nullable: false,
+            values: &[],
+        },
+        required: true,
+        minimum: None,
+        maximum: None,
+        children: &[],
+    },
+    wamn_client::descriptor::FieldSchema {
+        field: FieldDescriptor {
             path: "location_id",
             type_name: "uuid",
             nullable: false,
@@ -476,6 +502,8 @@ pub struct PackagingGetResult {
     pub created_by: uuid::Uuid,
     /// `uuid`
     pub id: uuid::Uuid,
+    /// `timestamptz`
+    pub located_at: chrono::DateTime<chrono::Utc>,
     /// `uuid`
     pub location_id: uuid::Uuid,
     /// `text`
@@ -517,6 +545,12 @@ pub const PACKAGING_GET_RESULT: &[FieldDescriptor] = &[
     FieldDescriptor {
         path: "id",
         type_name: "uuid",
+        nullable: false,
+        values: &[],
+    },
+    FieldDescriptor {
+        path: "located_at",
+        type_name: "timestamptz",
         nullable: false,
         values: &[],
     },
@@ -607,6 +641,18 @@ pub const PACKAGING_GET_RESULT_SCHEMA: &[wamn_client::descriptor::FieldSchema] =
         field: FieldDescriptor {
             path: "id",
             type_name: "uuid",
+            nullable: false,
+            values: &[],
+        },
+        required: true,
+        minimum: None,
+        maximum: None,
+        children: &[],
+    },
+    wamn_client::descriptor::FieldSchema {
+        field: FieldDescriptor {
+            path: "located_at",
+            type_name: "timestamptz",
             nullable: false,
             values: &[],
         },
@@ -786,6 +832,8 @@ pub struct PackagingQueryResult {
     pub created_by: uuid::Uuid,
     /// `uuid`
     pub id: uuid::Uuid,
+    /// `timestamptz`
+    pub located_at: chrono::DateTime<chrono::Utc>,
     /// `uuid`
     pub location_id: uuid::Uuid,
     /// `text`
@@ -865,6 +913,12 @@ pub const PACKAGING_QUERY_RESULT: &[FieldDescriptor] = &[
     FieldDescriptor {
         path: "id",
         type_name: "uuid",
+        nullable: false,
+        values: &[],
+    },
+    FieldDescriptor {
+        path: "located_at",
+        type_name: "timestamptz",
         nullable: false,
         values: &[],
     },
@@ -1087,6 +1141,18 @@ pub const PACKAGING_QUERY_RESULT_SCHEMA: &[wamn_client::descriptor::FieldSchema]
         field: FieldDescriptor {
             path: "id",
             type_name: "uuid",
+            nullable: false,
+            values: &[],
+        },
+        required: true,
+        minimum: None,
+        maximum: None,
+        children: &[],
+    },
+    wamn_client::descriptor::FieldSchema {
+        field: FieldDescriptor {
+            path: "located_at",
+            type_name: "timestamptz",
             nullable: false,
             values: &[],
         },

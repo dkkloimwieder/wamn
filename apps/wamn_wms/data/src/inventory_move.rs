@@ -12,17 +12,18 @@
 //! → compare expected_row_version to observed
 //! → refuse a destination the packaging is already at
 //! → validate the destination
-//! → move the packaging and bump its revision
+//! → move the packaging, stamp located_at, and bump its revision
 //! ```
 //!
 //! A move is a packaging command, not a quantity command: the location change
-//! is a fact on `packaging` and its record history, and no stock changes
-//! packaging or status, so it writes no transaction row. The label workflow
+//! is a fact on `packaging` (`location_id` with the `located_at` the command
+//! names) and its record history, and no stock changes packaging or status,
+//! so it writes no transaction row. The label workflow
 //! triggers on the location change. The generated codec claims the key in the
 //! write log and holds the transaction, so a retry answers the stored result.
 
 use serde::Deserialize;
-use wamn_postgres_statements::{Transaction, Uuid};
+use wamn_postgres_statements::{TimestampTz, Transaction, Uuid};
 
 use crate::error::{self, AccessError, AccessErrorKind};
 use crate::generated::wamn::inventory_move as sql;
@@ -50,13 +51,14 @@ pub struct MoveResult {
 struct Parsed {
     packaging_id: Uuid,
     to_location_id: Uuid,
+    occurred_at: TimestampTz,
 }
 
 fn parse(command: &MoveCommand) -> Result<Parsed, AccessError> {
-    scalar::timestamp("value.occurred_at", &command.occurred_at)?;
     Ok(Parsed {
         packaging_id: scalar::uuid("value.packaging_id", &command.packaging_id)?,
         to_location_id: scalar::uuid("value.to_location_id", &command.to_location_id)?,
+        occurred_at: scalar::timestamp("value.occurred_at", &command.occurred_at)?,
     })
 }
 
@@ -135,6 +137,7 @@ async fn run(
         transaction,
         parsed.packaging_id.clone(),
         parsed.to_location_id.clone(),
+        parsed.occurred_at.clone(),
     )
     .await
     .map_err(|e| error::from_statement(&e))?;

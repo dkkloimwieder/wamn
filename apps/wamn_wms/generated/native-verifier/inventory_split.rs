@@ -73,6 +73,9 @@ pub(crate) fn create_packaging_new_packaging_type_bind_fixture() -> String {
 pub(crate) fn create_packaging_to_location_id_bind_fixture() -> uuid::Uuid {
     uuid::Uuid::nil()
 }
+pub(crate) fn create_packaging_occurred_at_bind_fixture() -> chrono::DateTime<chrono::Utc> {
+    chrono::DateTime::<chrono::Utc>::UNIX_EPOCH
+}
 pub(crate) fn create_packaging_status_bind_fixture() -> String {
     String::new()
 }

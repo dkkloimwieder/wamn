@@ -167,6 +167,7 @@ async fn run(
         command.new_packaging_code.clone(),
         parsed.new_packaging_type.clone(),
         parsed.to_location_id.clone(),
+        parsed.occurred_at.clone(),
         locked.status.clone(),
     )
     .await

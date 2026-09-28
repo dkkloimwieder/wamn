@@ -24,7 +24,7 @@ pub struct ValidateLocationRow {
 pub(crate) const LOCK_PACKAGING_DIGEST: &str =
     "sha256:404783208c619d13cc5921442a94d7698cf002213e042b8db230086980a7c84a";
 pub(crate) const MOVE_PACKAGING_DIGEST: &str =
-    "sha256:3c966597d9a67570931537e4ac8427310ed818fc30bcc97d94419d7f791a1099";
+    "sha256:71936bf0c61b97d95f331725b6d1cd5f9af39ff8f6bad725943b30ac792089e3";
 pub(crate) const VALIDATE_LOCATION_DIGEST: &str =
     "sha256:043f1cb7e8359f79c83b7944e308c1d4238a2bc7b0eac50a0093e53e7563d516";
 
@@ -51,6 +51,7 @@ pub(crate) async fn move_packaging(
     transaction: &mut Transaction,
     packaging_id: wamn_postgres_statements::Uuid,
     to_location_id: wamn_postgres_statements::Uuid,
+    occurred_at: wamn_postgres_statements::TimestampTz,
 ) -> Result<MovePackagingRow, wamn_postgres_statements::StatementError> {
     let rows = transaction
         .run(
@@ -58,6 +59,7 @@ pub(crate) async fn move_packaging(
             vec![
                 wamn_postgres_statements::into_sql_value(packaging_id),
                 wamn_postgres_statements::into_sql_value(to_location_id),
+                wamn_postgres_statements::into_sql_value(occurred_at),
             ],
         )
         .await?;

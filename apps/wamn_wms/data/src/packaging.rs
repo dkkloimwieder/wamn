@@ -336,6 +336,7 @@ mod tests {
             created_at: TimestampTz(created_at.to_owned()),
             created_by: Uuid(ACTOR.to_owned()),
             id: Uuid(id.to_owned()),
+            located_at: TimestampTz(created_at.to_owned()),
             location_id: Uuid(LOCATION.to_owned()),
             packaging_code: "PAL-1".to_owned(),
             r#type: "pallet".to_owned(),

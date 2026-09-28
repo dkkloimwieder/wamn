@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT\n    packaging.created_at,\n    packaging.created_by,\n    packaging.id,\n    packaging.location_id,\n    packaging.packaging_code,\n    packaging.row_version,\n    packaging.status,\n    packaging.type,\n    packaging.updated_at,\n    packaging.updated_by\nFROM packaging AS packaging\nWHERE\n    (\n        $1::jsonb IS NULL\n        OR packaging.status IN (\n            SELECT filter.value\n            FROM jsonb_array_elements_text($1::jsonb) AS filter(value)\n        )\n    )\n    AND (\n        $2::jsonb IS NULL\n        OR packaging.location_id::text IN (\n            SELECT filter.value\n            FROM jsonb_array_elements_text($2::jsonb) AS filter(value)\n        )\n    )\n    AND (\n        $3::jsonb IS NULL\n        OR EXISTS (\n            SELECT 1\n            FROM jsonb_array_elements_text($3::jsonb) AS filter(value)\n            WHERE strpos(packaging.packaging_code, filter.value) > 0\n        )\n    )\n    AND (\n        $4::text IS NULL\n        OR packaging.packaging_code < $4::text\n        OR (\n            packaging.packaging_code = $4::text\n            AND packaging.id > $5::uuid\n        )\n    )\nORDER BY\n    packaging.packaging_code DESC,\n    packaging.id ASC\nLIMIT $6::int8;\n",
+  "query": "SELECT\n    packaging.created_at,\n    packaging.created_by,\n    packaging.id,\n    packaging.located_at,\n    packaging.location_id,\n    packaging.packaging_code,\n    packaging.row_version,\n    packaging.status,\n    packaging.type,\n    packaging.updated_at,\n    packaging.updated_by\nFROM packaging AS packaging\nWHERE\n    (\n        $1::jsonb IS NULL\n        OR packaging.status IN (\n            SELECT filter.value\n            FROM jsonb_array_elements_text($1::jsonb) AS filter(value)\n        )\n    )\n    AND (\n        $2::jsonb IS NULL\n        OR packaging.location_id::text IN (\n            SELECT filter.value\n            FROM jsonb_array_elements_text($2::jsonb) AS filter(value)\n        )\n    )\n    AND (\n        $3::jsonb IS NULL\n        OR EXISTS (\n            SELECT 1\n            FROM jsonb_array_elements_text($3::jsonb) AS filter(value)\n            WHERE strpos(packaging.packaging_code, filter.value) > 0\n        )\n    )\n    AND (\n        $4::timestamptz IS NULL\n        OR packaging.updated_at > $4::timestamptz\n        OR (\n            packaging.updated_at = $4::timestamptz\n            AND packaging.id > $5::uuid\n        )\n    )\nORDER BY\n    packaging.updated_at ASC,\n    packaging.id ASC\nLIMIT $6::int8;\n",
   "describe": {
     "columns": [
       {
@@ -38,6 +38,17 @@
       },
       {
         "ordinal": 3,
+        "name": "located_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "packaging",
+            "name": "located_at"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
         "name": "location_id",
         "type_info": "Uuid",
         "origin": {
@@ -48,7 +59,7 @@
         }
       },
       {
-        "ordinal": 4,
+        "ordinal": 5,
         "name": "packaging_code",
         "type_info": "Text",
         "origin": {
@@ -59,7 +70,7 @@
         }
       },
       {
-        "ordinal": 5,
+        "ordinal": 6,
         "name": "row_version",
         "type_info": "Int4",
         "origin": {
@@ -70,7 +81,7 @@
         }
       },
       {
-        "ordinal": 6,
+        "ordinal": 7,
         "name": "status",
         "type_info": "Text",
         "origin": {
@@ -81,7 +92,7 @@
         }
       },
       {
-        "ordinal": 7,
+        "ordinal": 8,
         "name": "type",
         "type_info": "Text",
         "origin": {
@@ -92,7 +103,7 @@
         }
       },
       {
-        "ordinal": 8,
+        "ordinal": 9,
         "name": "updated_at",
         "type_info": "Timestamptz",
         "origin": {
@@ -103,7 +114,7 @@
         }
       },
       {
-        "ordinal": 9,
+        "ordinal": 10,
         "name": "updated_by",
         "type_info": "Uuid",
         "origin": {
@@ -119,7 +130,7 @@
         "Jsonb",
         "Jsonb",
         "Jsonb",
-        "Text",
+        "Timestamptz",
         "Uuid",
         "Int8"
       ]
@@ -134,8 +145,9 @@
       false,
       false,
       false,
+      false,
       false
     ]
   },
-  "hash": "7d1542dc5294c049797dea2f7dd200f77ab9e17828d8bb462659b065c5e30771"
+  "hash": "48d7e16b45689ec2b1930d56731968b4343851e617f7199da2ecfd3827342da2"
 }

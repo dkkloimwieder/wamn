@@ -35,6 +35,9 @@ pub(crate) fn move_packaging_packaging_id_bind_fixture() -> uuid::Uuid {
 pub(crate) fn move_packaging_to_location_id_bind_fixture() -> uuid::Uuid {
     uuid::Uuid::nil()
 }
+pub(crate) fn move_packaging_occurred_at_bind_fixture() -> chrono::DateTime<chrono::Utc> {
+    chrono::DateTime::<chrono::Utc>::UNIX_EPOCH
+}
 pub(crate) fn validate_location_location_id_bind_fixture() -> uuid::Uuid {
     uuid::Uuid::nil()
 }

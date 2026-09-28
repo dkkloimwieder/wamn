@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "INSERT INTO packaging (packaging_code, type, location_id, status)\nVALUES ($1::text, $2::text, $3::uuid, $4::text)\nRETURNING\n    created_at,\n    created_by,\n    id,\n    location_id,\n    packaging_code,\n    row_version,\n    status,\n    type,\n    updated_at,\n    updated_by;\n",
+  "query": "SELECT\n    model.created_at,\n    model.created_by,\n    model.id,\n    model.located_at,\n    model.location_id,\n    model.packaging_code,\n    model.row_version,\n    model.status,\n    model.type,\n    model.updated_at,\n    model.updated_by\nFROM packaging AS model\nWHERE model.id = $1::uuid;\n",
   "describe": {
     "columns": [
       {
@@ -38,6 +38,17 @@
       },
       {
         "ordinal": 3,
+        "name": "located_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "packaging",
+            "name": "located_at"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
         "name": "location_id",
         "type_info": "Uuid",
         "origin": {
@@ -48,7 +59,7 @@
         }
       },
       {
-        "ordinal": 4,
+        "ordinal": 5,
         "name": "packaging_code",
         "type_info": "Text",
         "origin": {
@@ -59,7 +70,7 @@
         }
       },
       {
-        "ordinal": 5,
+        "ordinal": 6,
         "name": "row_version",
         "type_info": "Int4",
         "origin": {
@@ -70,7 +81,7 @@
         }
       },
       {
-        "ordinal": 6,
+        "ordinal": 7,
         "name": "status",
         "type_info": "Text",
         "origin": {
@@ -81,7 +92,7 @@
         }
       },
       {
-        "ordinal": 7,
+        "ordinal": 8,
         "name": "type",
         "type_info": "Text",
         "origin": {
@@ -92,7 +103,7 @@
         }
       },
       {
-        "ordinal": 8,
+        "ordinal": 9,
         "name": "updated_at",
         "type_info": "Timestamptz",
         "origin": {
@@ -103,7 +114,7 @@
         }
       },
       {
-        "ordinal": 9,
+        "ordinal": 10,
         "name": "updated_by",
         "type_info": "Uuid",
         "origin": {
@@ -116,10 +127,7 @@
     ],
     "parameters": {
       "Left": [
-        "Text",
-        "Text",
-        "Uuid",
-        "Text"
+        "Uuid"
       ]
     },
     "nullable": [
@@ -132,8 +140,9 @@
       false,
       false,
       false,
+      false,
       false
     ]
   },
-  "hash": "898a64c23401060fde5706968227d43cb0cef070f6bc02b1633c4506d75c8357"
+  "hash": "9d87126d9ce2c4c7d73bd6e476c0ec81e9b2919ec26a6d6c16ad56d843371aad"
 }

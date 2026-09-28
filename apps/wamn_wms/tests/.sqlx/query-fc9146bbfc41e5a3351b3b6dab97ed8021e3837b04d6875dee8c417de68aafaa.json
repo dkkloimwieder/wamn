@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "INSERT INTO packaging (packaging_code, type, location_id, status)\nVALUES ($1, $2, $3, $4)\nRETURNING id, row_version, status;\n",
+  "query": "INSERT INTO packaging (packaging_code, type, location_id, located_at, status)\nVALUES ($1, $2, $3, $4, $5)\nRETURNING id, row_version, status;\n",
   "describe": {
     "columns": [
       {
@@ -42,6 +42,7 @@
         "Text",
         "Text",
         "Uuid",
+        "Timestamptz",
         "Text"
       ]
     },
@@ -51,5 +52,5 @@
       false
     ]
   },
-  "hash": "51e68e26f18407996647624648304d78e7b4259c59199fc081e8777d00fdf5d2"
+  "hash": "fc9146bbfc41e5a3351b3b6dab97ed8021e3837b04d6875dee8c417de68aafaa"
 }

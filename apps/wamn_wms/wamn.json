@@ -487,6 +487,7 @@
           ],
           "insert_fields": [],
           "update_fields": [
+            "located_at",
             "location_id",
             "row_version"
           ],
@@ -564,6 +565,11 @@
             {
               "name": "to_location_id",
               "type": "uuid",
+              "nullable": false
+            },
+            {
+              "name": "occurred_at",
+              "type": "timestamptz",
               "nullable": false
             }
           ],
@@ -1632,6 +1638,7 @@
             "status"
           ],
           "insert_fields": [
+            "located_at",
             "location_id",
             "packaging_code",
             "status",
@@ -1796,6 +1803,11 @@
             {
               "name": "to_location_id",
               "type": "uuid",
+              "nullable": false
+            },
+            {
+              "name": "occurred_at",
+              "type": "timestamptz",
               "nullable": false
             },
             {

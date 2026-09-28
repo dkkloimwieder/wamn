@@ -39,6 +39,8 @@ export interface PackagingCreateResult {
   readonly createdBy: Uuid;
   /** `uuid` */
   readonly id: Uuid;
+  /** `timestamptz` */
+  readonly locatedAt: Timestamptz;
   /** `uuid` */
   readonly locationId: Uuid;
   /** `text` */
@@ -60,6 +62,7 @@ export const PACKAGING_CREATE_RESULT_FIELDS: FieldMap = {
   "created_at": "createdAt",
   "created_by": "createdBy",
   "id": "id",
+  "located_at": "locatedAt",
   "location_id": "locationId",
   "packaging_code": "packagingCode",
   "row_version": "rowVersion",
@@ -134,6 +137,8 @@ export interface PackagingGetResult {
   readonly createdBy: Uuid;
   /** `uuid` */
   readonly id: Uuid;
+  /** `timestamptz` */
+  readonly locatedAt: Timestamptz;
   /** `uuid` */
   readonly locationId: Uuid;
   /** `text` */
@@ -155,6 +160,7 @@ export const PACKAGING_GET_RESULT_FIELDS: FieldMap = {
   "created_at": "createdAt",
   "created_by": "createdBy",
   "id": "id",
+  "located_at": "locatedAt",
   "location_id": "locationId",
   "packaging_code": "packagingCode",
   "row_version": "rowVersion",
@@ -264,6 +270,8 @@ export interface PackagingQueryRow {
   readonly createdBy: Uuid;
   /** `uuid` */
   readonly id: Uuid;
+  /** `timestamptz` */
+  readonly locatedAt: Timestamptz;
   /** `uuid` */
   readonly locationId: Uuid;
   /** `text` */
@@ -296,6 +304,7 @@ export const PACKAGING_QUERY_RESULT_FIELDS: FieldMap = {
       "created_at": "createdAt",
       "created_by": "createdBy",
       "id": "id",
+      "located_at": "locatedAt",
       "location_id": "locationId",
       "packaging_code": "packagingCode",
       "row_version": "rowVersion",

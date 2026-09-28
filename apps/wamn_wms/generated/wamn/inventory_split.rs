@@ -50,7 +50,7 @@ pub struct ValidateLocationRow {
 }
 
 pub(crate) const CREATE_PACKAGING_DIGEST: &str =
-    "sha256:51e68e26f18407996647624648304d78e7b4259c59199fc081e8777d00fdf5d2";
+    "sha256:fc9146bbfc41e5a3351b3b6dab97ed8021e3837b04d6875dee8c417de68aafaa";
 pub(crate) const INSERT_TRANSACTION_DIGEST: &str =
     "sha256:210fc0bc3e8fded3c634d68e608a4999f01bd521c5b98c88b7c453d815cfcb43";
 pub(crate) const LOCK_PACKAGING_DIGEST: &str =
@@ -71,6 +71,7 @@ pub(crate) async fn create_packaging(
     new_packaging_code: String,
     new_packaging_type: String,
     to_location_id: wamn_postgres_statements::Uuid,
+    occurred_at: wamn_postgres_statements::TimestampTz,
     status: String,
 ) -> Result<CreatePackagingRow, wamn_postgres_statements::StatementError> {
     let rows = transaction
@@ -80,6 +81,7 @@ pub(crate) async fn create_packaging(
                 wamn_postgres_statements::into_sql_value(new_packaging_code),
                 wamn_postgres_statements::into_sql_value(new_packaging_type),
                 wamn_postgres_statements::into_sql_value(to_location_id),
+                wamn_postgres_statements::into_sql_value(occurred_at),
                 wamn_postgres_statements::into_sql_value(status),
             ],
         )

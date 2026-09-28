@@ -2,6 +2,7 @@ SELECT
     packaging.created_at,
     packaging.created_by,
     packaging.id,
+    packaging.located_at,
     packaging.location_id,
     packaging.packaging_code,
     packaging.row_version,

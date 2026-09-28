@@ -224,6 +224,19 @@ pub(crate) async fn assert_contention_and_replay(
         value["packaging_id"] == runtime.packaging_id.as_str(),
         "the winner moved the fixture packaging: {value}"
     );
+    // The packaging keeps the time the move names, not the time of the write.
+    let answer = route
+        .get(
+            &client,
+            "/packaging/get",
+            &json!({"id": runtime.packaging_id}),
+        )
+        .await?;
+    let moved = read_value(&answer)?;
+    anyhow::ensure!(
+        moved["located_at"] == OCCURRED_AT,
+        "the moved packaging is located at the move's occurred_at: {moved}"
+    );
     // And the loser lost to THAT version, not to something else.
     anyhow::ensure!(
         loser["error"]["detail"]["expected_row_version"].as_i64() == Some(expected_revision)
@@ -516,8 +529,8 @@ pub(crate) async fn assert_remaining_operations(
         .await?;
     let consumed = read_value(&answer)?;
     anyhow::ensure!(
-        consumed["status"] == "consumed",
-        "the merged packaging reads consumed: {consumed}"
+        consumed["status"] == "consumed" && consumed["located_at"] == OCCURRED_AT,
+        "the merged packaging reads consumed, located at the split's occurred_at: {consumed}"
     );
     let answer = route
         .post(

@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "UPDATE packaging\nSET\n    location_id = $2,\n    row_version = row_version + 1\nWHERE id = $1\nRETURNING location_id, row_version, status;\n",
+  "query": "UPDATE packaging\nSET\n    location_id = $2,\n    located_at = $3,\n    row_version = row_version + 1\nWHERE id = $1\nRETURNING location_id, row_version, status;\n",
   "describe": {
     "columns": [
       {
@@ -40,7 +40,8 @@
     "parameters": {
       "Left": [
         "Uuid",
-        "Uuid"
+        "Uuid",
+        "Timestamptz"
       ]
     },
     "nullable": [
@@ -49,5 +50,5 @@
       false
     ]
   },
-  "hash": "3c966597d9a67570931537e4ac8427310ed818fc30bcc97d94419d7f791a1099"
+  "hash": "71936bf0c61b97d95f331725b6d1cd5f9af39ff8f6bad725943b30ac792089e3"
 }

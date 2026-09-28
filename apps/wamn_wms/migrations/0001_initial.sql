@@ -18,6 +18,7 @@ CREATE TABLE wms.packaging (
     location_id uuid NOT NULL
         CONSTRAINT packaging_location_id_fkey
         REFERENCES wms.location (id),
+    located_at timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP,
     type text NOT NULL,
     status text NOT NULL,
     row_version int4 NOT NULL DEFAULT 1,

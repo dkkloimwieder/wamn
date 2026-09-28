@@ -2,6 +2,7 @@ SELECT
     model.created_at,
     model.created_by,
     model.id,
+    model.located_at,
     model.location_id,
     model.packaging_code,
     model.row_version,
