@@ -23,7 +23,7 @@
  * its own outcome.
  */
 
-import { type Component, type JSX, Show, createSignal, onCleanup } from "solid-js";
+import { type Component, For, type JSX, Show, createSignal, onCleanup } from "solid-js";
 import { Dynamic } from "solid-js/web";
 
 import {
@@ -113,6 +113,7 @@ export interface QueryTableAction {
   /** The revision the row carries for the record it fills, and the input that sends it. */
   readonly revision?: QueryTableFill;
   /** The form that sends one input for each of many rows, which a bulk action opens. */
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- a form or a table of any row shape.
   readonly form?: () => Component<any>;
 }
 
@@ -132,6 +133,7 @@ export interface QueryTableUpdate {
 export interface QueryTableChild {
   readonly label: string;
   /** Returns the child's definition. A function, so modules that import each other load. */
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- a form or a table of any row shape.
   readonly table: () => QueryTableDefinition<any>;
   readonly scopeFilter: string;
 }
@@ -432,8 +434,8 @@ export function QueryTable<TRow extends object, TResult = unknown>(
     definition.actions.length === 0
       ? undefined
       : (row: TRow) => (
-          <>
-            {definition.actions.map((action) => {
+          <For each={definition.actions}>
+            {(action) => {
               const opened = action.opens === "record" ? props.onOpen?.[action.operation] : undefined;
               const filled = action.opens === "form" ? props.onFill?.[action.operation] : undefined;
               return (
@@ -448,8 +450,8 @@ export function QueryTable<TRow extends object, TResult = unknown>(
                   </Button>
                 </Show>
               );
-            })}
-          </>
+            }}
+          </For>
         );
 
   const update = definition.update;

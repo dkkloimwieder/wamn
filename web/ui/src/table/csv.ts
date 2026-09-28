@@ -13,7 +13,7 @@ const quoteField = (field: string) => (/[",\r\n]/.test(field) ? `"${field.replac
 
 /** The CSV text of a header line and the lines under it. */
 export function csvText(lines: readonly (readonly string[])[]): string {
-  return `﻿${lines.map((line) => line.map(quoteField).join(",")).join("\r\n")}\r\n`;
+  return `\uFEFF${lines.map((line) => line.map(quoteField).join(",")).join("\r\n")}\r\n`;
 }
 
 /** The file name of an export: the table name, then the time in UTC. */

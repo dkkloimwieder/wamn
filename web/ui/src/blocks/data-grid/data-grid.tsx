@@ -84,6 +84,7 @@ export interface DataGridColumnMeta<TData> {
  * Or drop it entirely and hand `<DataGrid>` a leaner table - the components
  * accept any bundle, so you keep full ownership of the TanStack core.
  */
+// eslint-disable-next-line @typescript-eslint/no-unused-vars -- the value exists for its type, DataGridFeatures.
 const dataGridFeatures = tableFeatures({
   columnVisibilityFeature,
   columnOrderingFeature,
@@ -114,7 +115,7 @@ const dataGridFeatures = tableFeatures({
   // sortFn names against this map alone, and registering them one by one
   // keeps every other built-in out of the bundle.
   sortFns: { basic: sortFn_basic, text: sortFn_text },
-  // biome-ignore lint/suspicious/noExplicitAny: type-only slot, shared by every row shape.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- type-only slot, shared by every row shape.
   columnMeta: metaHelper<DataGridColumnMeta<any>>(),
 });
 
@@ -318,7 +319,7 @@ const dataGridDefaultTableClassNames = {
 } satisfies DataGridProps<TableFeatures, object>["tableClassNames"];
 
 const DataGridContext = createContext<
-  // biome-ignore lint/suspicious/noExplicitAny: one context serves every row shape; TData is restored per consumer.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- one context serves every row shape; TData is restored per consumer.
   DataGridContextProps<any> | undefined
 >(undefined);
 
@@ -334,7 +335,7 @@ const DataGridContext = createContext<
  * React selector/memo bookkeeping wholesale.
  */
 function useDataGrid<
-  // biome-ignore lint/suspicious/noExplicitAny: mirrors the context's erased row shape.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- mirrors the context's erased row shape.
   TData extends object = any,
 >(): DataGridContextProps<TData> {
   const context = useContext(DataGridContext) as DataGridContextProps<TData> | undefined;

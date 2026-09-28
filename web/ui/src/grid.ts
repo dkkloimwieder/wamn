@@ -42,7 +42,7 @@ export const gridFeatures = tableFeatures({
   rowSelectionFeature,
   rowExpandingFeature,
   rowPinningFeature,
-  // biome-ignore lint/suspicious/noExplicitAny: type-only slot, shared by every row shape.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- type-only slot, shared by every row shape.
   columnMeta: metaHelper<DataGridColumnMeta<any>>(),
 });
 

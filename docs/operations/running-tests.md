@@ -644,6 +644,17 @@ pnpm install
 
 The workspace has one lock file, `pnpm-lock.yaml`, at the repository root.
 
+Prettier formats the hand-written web code, and ESLint lints it.
+One configuration for each tool is at the repository root: `.prettierrc.json`, `.prettierignore` and `eslint.config.js`.
+To make sure that the code is formatted and has no lint errors, run this at the repository root:
+
+```bash
+pnpm run check
+```
+
+The command fails on a lint error but not on a lint warning.
+To format the code, run `pnpm run format` at the repository root.
+
 ### Web runtime
 
 The runtime is hand-written TypeScript, and its own tests run under Node.

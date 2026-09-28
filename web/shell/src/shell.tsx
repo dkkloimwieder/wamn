@@ -223,9 +223,9 @@ export function Shell(props: ShellProps): JSX.Element {
         )}
       >
         <Route path="/" component={() => (first === undefined ? <NotFound /> : <Navigate href={first.path} />)} />
-        {routes.map(({ route, home }) => (
-          <Route path={`/${route.path}`} component={screenRoute(route, home)} />
-        ))}
+        <For each={routes}>
+          {({ route, home }) => <Route path={`/${route.path}`} component={screenRoute(route, home)} />}
+        </For>
         <Route path="*" component={NotFound} />
       </Route>
       <Route path="*" component={NotFound} />

@@ -25,5 +25,14 @@ export default tseslint.config(
     languageOptions: {
       globals: { ...globals.browser, ...globals.node },
     },
+    rules: {
+      // A leading underscore marks a name that is unused on purpose.
+      "@typescript-eslint/no-unused-vars": [
+        "error",
+        { argsIgnorePattern: "^_", varsIgnorePattern: "^_", destructuredArrayIgnorePattern: "^_" },
+      ],
+      // Solid assigns a `ref={element}` variable, which this rule cannot see.
+      "no-unassigned-vars": "off",
+    },
   },
 );

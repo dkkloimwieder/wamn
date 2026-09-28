@@ -323,6 +323,7 @@ const searchMatches = (value: unknown, search: string) =>
 interface GroupOrder {
   /** Changes whenever the order changes. */
   readonly key: string;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- TanStack rows of any shape.
   readonly compare: (a: Row<any, any>, b: Row<any, any>) => number;
 }
 
@@ -339,8 +340,11 @@ interface DataTableMeta {
  */
 function createOrderedGroupedRowModel() {
   const grouped = createGroupedRowModel();
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- TanStack rows of any shape.
   return (table: Table<any, any>) => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- TanStack rows of any shape.
     const model = grouped(table as never) as () => RowModel<any, any>;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- TanStack rows of any shape.
     let last: { model: RowModel<any, any>; key: string; ordered: RowModel<any, any> } | undefined;
     return () => {
       const current = model();
@@ -351,6 +355,7 @@ function createOrderedGroupedRowModel() {
       if (last !== undefined && last.model === current && last.key === order.key) {
         return last.ordered;
       }
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- TanStack rows of any shape.
       const level = (rows: Row<any, any>[]): Row<any, any>[] => {
         if (rows[0] === undefined || !rows[0].getIsGrouped()) {
           return rows;
