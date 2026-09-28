@@ -7,14 +7,15 @@
  */
 
 import { cleanup, fireEvent, render, screen, waitFor } from "@solidjs/testing-library";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 
-import { DataTable, QueryTable } from "@wamn/ui";
+import { QueryTable } from "@wamn/ui";
 
 import { WIDGET_QUERY_TABLE } from "../fixture/components/widget.js";
 import { WIDGET_MAKER_QUERY_TABLE } from "../fixture/components/widget_maker.js";
 import { page, tableStub } from "../stubs/index.js";
 import { theButton } from "./dom.js";
+import { queryTable } from "./tables.js";
 
 afterEach(() => {
   cleanup();
@@ -105,44 +106,34 @@ describe("the scope controls of the widget maker table", () => {
 describe("a scope in the URL", () => {
   const SCOPE = "?lots.scope.at.min=2026-09-01T00:00&lots.scope.note.empty=true&lots.find=acme";
 
-  it("reads a range, an is-null choice and the server search, and writes them back the same", () => {
+  it("reads a range, an is-null choice and the server search before the first load, and writes them back the same", async () => {
     window.history.replaceState(null, "", `/${SCOPE}`);
-    const onScopeChange = vi.fn();
-    render(() => (
-      <DataTable
-        name="lots"
-        columns={[
-          { field: "note", label: "note", type: "text" },
-          { field: "at", label: "at", type: "timestamptz" },
-          { field: "id", label: "id", type: "uuid", role: "key" },
-        ]}
-        rowId={["id"]}
-        rows={[]}
-        fullyRead={false}
-        busy={false}
-        cap={1000}
-        onCapChange={() => {}}
-        refusal={null}
-        onRefresh={() => {}}
-        startedAt={null}
-        endedAt={null}
-        sortFields={[]}
-        sortMaxFields={1}
-        onSortChange={() => {}}
-        scopeFilters={["at", "note"]}
-        scopeModes={{ at: { match: "range", type: "timestamptz" }, note: { match: "is_null" } }}
-        findable
-        onScopeChange={onScopeChange}
-        urlKey="lots"
-      />
-    ));
-    expect(onScopeChange).toHaveBeenLastCalledWith(
-      [
-        { field: "at", values: [], range: { min: "2026-09-01T00:00", max: "" } },
-        { field: "note", values: [], empty: true },
+    const { asked } = await queryTable({
+      name: "lots",
+      columns: [
+        { field: "note", label: "note", type: "text" },
+        { field: "at", label: "at", type: "timestamptz" },
+        { field: "id", label: "id", type: "uuid", role: "key" },
       ],
-      "acme",
-    );
+      rows: () => [],
+      urlKey: "lots",
+      definition: (definition) => ({
+        ...definition,
+        filters: [
+          { field: "at", input: ["filter", "at"], list: false, match: "range", type: "timestamptz" },
+          { field: "note", input: ["filter", "note"], list: false, match: "is_null" },
+        ],
+        scopeFilters: ["at", "note"],
+        search: { input: ["search"], fields: ["note"] },
+      }),
+    });
+    expect(asked).toEqual([
+      {
+        limit: 1000,
+        filter: { at: { min: new Date("2026-09-01T00:00").toISOString() }, note: true },
+        search: "acme",
+      },
+    ]);
     expect(decodeURIComponent(window.location.search)).toBe(SCOPE);
     expect((screen.getByLabelText("at from") as HTMLInputElement).value).toBe("2026-09-01T00:00");
     expect(theButton("is empty").getAttribute("aria-pressed")).toBe("true");

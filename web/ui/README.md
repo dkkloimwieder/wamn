@@ -22,7 +22,6 @@ Labels, column headers, buttons, card titles and detail terms read in capitals, 
 
 | Kind | Items |
 | --- | --- |
-| Block | `data-grid`, trimmed to `data-grid.tsx`, `data-grid-table.tsx`, `data-grid-table-virtual.tsx`, and an index of those three |
 | Components | `alert-dialog`, `badge`, `button`, `card`, `checkbox`, `combobox`, `dropdown-menu`, `field`, `input`, `input-group`, `label`, `popover`, `select`, `separator`, `sheet`, `sidebar`, `skeleton`, `spinner`, `switch`, `toast`, `tooltip` |
 | Hook | `use-mobile` |
 | Shared | `color-mode` |
@@ -31,17 +30,16 @@ Labels, column headers, buttons, card titles and detail terms read in capitals, 
 The copy changed these things:
 
 - Every `@/` import became a relative path, so the package compiles inside any consumer.
-- Twenty optional props gained `| undefined`, so the source passes `exactOptionalPropertyTypes`. The virtual table also states the type of the options it hands to `createVirtualizer`, for the same reason.
+- Twenty optional props gained `| undefined`, so the source passes `exactOptionalPropertyTypes`.
 - For the same reason, the mobile sidebar states the type of the props it spreads onto `Sheet`.
 - `tooltip` is a thin wrapper over the Kobalte tooltip, in place of the registry item, which rebuilt Base UI's tooltip on top of Kobalte. It keeps the item's classes, its 600 ms open delay and its padding of 5 pixels, and it carries the side Kobalte settled on as `data-side`.
 - `ComboboxContent` gained a `footer` slot below the list, for a next page control.
-- A body row hands itself to the virtualizer one microtask after its ref runs. Solid runs the ref before it sets `data-index`, and the virtualizer cannot measure a row with no index.
 - `Toaster` gives every toast the `z-toast` class, which the registry item leaves out. `src/styles.css` sets the toast corner through `--border-radius`, because solid-sonner draws it from that variable in CSS outside every layer.
-- `DataGridContainer` has a fixed height of 32rem and scrolls in both directions, and the header row is sticky by default. A read never changes the height of the page.
 - `src/lib/utils.ts` is the usual `cn`, because the CLI writes it only at `init`.
 - `src/styles.css` imports `tw-animate-css`, which `init` also adds, and names this package as its Tailwind source.
 - `src/styles.css` carries the shadcn base layer, which gives the page body the theme colors. No registry item writes it.
-- The copy keeps only what something imports. A component part, a helper or a type that no file names is removed. A rule in `src/styles/base.css` is removed when no source names its `z-` class, and `src/styles/utilities.css` keeps only `no-scrollbar`. The `textarea` item went because nothing used it.
+- The `data-grid` block is gone (wamn-5pzt). `src/table/grid.tsx` keeps the classes of the path the tables used, in the platform's own grid.
+The copy keeps only what something imports. A component part, a helper or a type that no file names is removed. A rule in `src/styles/base.css` is removed when no source names its `z-` class, and `src/styles/utilities.css` keeps only `no-scrollbar`. The `textarea` item went because nothing used it.
 
 To add an item, run the CLI in a scratch Vite SolidJS project with the Zaidan `components.json`.
 Then copy the new files here and make the same changes.
@@ -52,7 +50,6 @@ Add an item only when an emitter target, or a page that places the generated com
 
 | Export | Purpose |
 | --- | --- |
-| `gridFeatures`, `GridFeatures` | The TanStack Table features that the `DataTable` builds on |
 | `RecordSelect` | The selector: the rows a list returned, a search after a pause in typing, a next page button, and the one record a stored value names when the list did not return it. It reports the row that carries the stored value, so a form reads that row's revision |
 | `createRecordLabels` | The text of the records a table column names by key, read once for each key and again after each write |
 | `announceOutcome` | Shows one runtime outcome as a toast |
@@ -61,10 +58,11 @@ Add an item only when an emitter target, or a page that places the generated com
 | `ConfirmAction` | One action the operator confirms first, in an alert dialog |
 | `FormActions` | The buttons that close a form or a table, in one full-width row aligned right |
 | `FormDone` | The line a form shows beside its buttons after its command completes |
-| `WindowedTable` | The rows of the `DataTable`, windowed above `WINDOW_FROM` rows inside its box, and in full below it |
-| `TableScreen` | One table screen. A `DataTable` in it takes the height of the viewport, and at least 32rem |
-| `createTableLoad`, `DEFAULT_CAP` | The load of one `DataTable` over a table definition: the cap, the sort, and a new load for each change |
-| `QueryTable` | The `DataTable` of one generated read, wired from its table definition alone: the load, the scope filters, the sort, the record labels, the row buttons, the inline edit, the bulk actions through their forms and the child tables |
+| `TableScreen` | One table screen. A `QueryTable` in it takes the height of the viewport, and at least 32rem |
+| `QueryTable` | The table of one generated read, wired from its table definition alone: the load, the scope filters, the sort, the cap, the record labels, the row buttons, the inline edit, the bulk actions through their forms, the child tables, the column arrangement, the views and the URL. Over a fully read set it places a `SetTable` |
+| `SetTable` | Every row of a complete set: refine filters, search, a client sort, grouping by day, week or month, aggregates, a totals row and CSV export. It takes its rows, its columns and its state from its caller |
+| `builtColumns`, `defaultSetView`, `defaultGridView` | The columns and the first state of a `SetTable` that a page places alone |
+| `WINDOW_FROM`, `ROW_HEIGHT` | A table windows its rows above `WINDOW_FROM` rows inside its box. Every row is `ROW_HEIGHT` pixels tall |
 | `AppFrame` | The signed-in page of an application: the sidebar with its navigation, a header, and the screen |
 | `CardPage` | One card in the middle of an empty page, for signing in and for an address with no page |
 | `ScreenActions` | The row of buttons above a screen |

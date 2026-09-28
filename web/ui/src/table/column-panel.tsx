@@ -1,5 +1,5 @@
 /**
- * The column panel of the DataTable (wamn-9v2r.1).
+ * The column panel of a table (wamn-9v2r.1).
  *
  * It lists every column in the table's order, each with a switch that shows or
  * hides it. A column moves by a drag onto another row or by its arrows. Show
@@ -46,7 +46,7 @@ export function ColumnPanel(props: {
       </PopoverTrigger>
       <PopoverContent class="w-72">
         <PopoverTitle>columns</PopoverTitle>
-        <ul data-slot="data-table-column-panel" class="flex flex-col gap-1">
+        <ul data-slot="table-column-panel" class="flex flex-col gap-1">
           <For each={props.columns}>
             {(column, index) => {
               const id = createUniqueId();

@@ -1,10 +1,19 @@
 /**
- * The views of a DataTable (wamn-9v2r.2): a named copy of the table state.
+ * The views of a table: a named copy of its state, and its state in the URL
+ * (wamn-9v2r.2).
  *
- * A view holds the columns (order, hidden, width, pin), the sort, the scope
- * filters, the refine filters, the search, the group levels, the chosen
- * aggregates and the cap. It names only declared fields: a field that the
- * table does not declare is dropped when the view is applied.
+ * The state has three parts, and each part has one owner, which defaults it,
+ * reads it and writes it:
+ *
+ * - the grid: the column order, the hidden columns, the widths and the pins,
+ *   in `grid-view.ts`;
+ * - the query: the sort, the scope filters, the server search and the cap, in
+ *   `query-view.ts`;
+ * - the set: the refine filters, the search, the group levels and the chosen
+ *   aggregates, in `set-view.ts`.
+ *
+ * A view names only declared fields: a field that the table does not declare
+ * is dropped when the view is applied.
  *
  * A top-level table also writes its state to the URL, under its URL key. The
  * encoding is canonical: the parts come in one fixed order, and only a part
@@ -12,258 +21,64 @@
  *
  *   ?pallets.order=code,createdAt,id&pallets.sort=createdAt:desc&pallets.cap=5000
  *
- * A list scope filter is one key for each value, `pallets.scope.<field>=<value>`.
- * A range scope filter is `pallets.scope.<field>.min=<value>` and `.max`, and
- * an is-null one is `pallets.scope.<field>.empty=true` or `false`. The server
- * search is `pallets.find=<text>`.
- * A refine filter is `pallets.filter.<field>=<kind>:<value>`. Reading ignores
- * an unknown part, an undeclared field and a value it cannot read, and names
- * each one, so the table can report them.
+ * Reading ignores an unknown part, an undeclared field and a value it cannot
+ * read, and names each one, in the order of the URL, so the table can report
+ * them.
  */
 
-import type { DataTableAggregate, DataTableBucket } from "./aggregate";
-import type { DataTableFilter } from "./column-filter";
-import type { DataTableGroupSort } from "./group-bar";
-import type { DataTableScopeFilter, DataTableScopeRange } from "./scope-bar";
+import { GRID_VIEW, type GridViewState } from "./grid-view";
+import { QUERY_VIEW, type QueryViewState } from "./query-view";
+import { SET_VIEW, type SetViewState } from "./set-view";
+import type { ViewDeclaration } from "./view-parts";
 
-export type DataTableViewDirection = "ascending" | "descending";
-
-/** One group level: its field, its time bucket, and how its groups sort. */
-export interface DataTableViewGroup {
-  readonly field: string;
-  /** The bucket of a time field, or null for any other field. */
-  readonly bucket: DataTableBucket | null;
-  readonly sort: DataTableGroupSort;
-}
+export type { ViewDeclaration } from "./view-parts";
 
 /** The whole state a view saves. */
-export interface DataTableViewState {
-  /** Every column, in the table's order. */
-  readonly order: readonly string[];
-  readonly hidden: readonly string[];
-  /** The width of each column that a drag set, in pixels. */
-  readonly widths: Readonly<Record<string, number>>;
-  readonly left: readonly string[];
-  readonly right: readonly string[];
-  readonly sort: readonly { readonly field: string; readonly direction: DataTableViewDirection }[];
-  readonly scope: readonly DataTableScopeFilter[];
-  /** The server search, or empty. */
-  readonly find: string;
-  readonly filters: readonly { readonly field: string; readonly filter: DataTableFilter }[];
-  readonly search: string;
-  readonly group: readonly DataTableViewGroup[];
-  /** The aggregate of each column whose choice differs from its default. */
-  readonly aggregates: Readonly<Record<string, DataTableAggregate>>;
-  readonly cap: number;
+export interface TableView {
+  readonly grid: GridViewState;
+  readonly query: QueryViewState;
+  readonly set: SetViewState;
 }
 
 /** A named view. */
-export interface DataTableView {
+export interface NamedView {
   readonly name: string;
-  readonly state: DataTableViewState;
+  readonly view: TableView;
 }
-
-/** What the table declares. A view is checked against it. */
-export interface DataTableViewDeclaration {
-  readonly columns: readonly {
-    readonly field: string;
-    /** True for a time column, which groups by a bucket. */
-    readonly time: boolean;
-    readonly groupable: boolean;
-    readonly aggregates: readonly DataTableAggregate[];
-  }[];
-  readonly scopeFilters: readonly string[];
-}
-
-const BUCKETS: readonly DataTableBucket[] = ["day", "week", "month"];
 
 /** The parts of the URL, in the order the encoding writes them. */
-const PARTS = [
-  "order",
-  "hidden",
-  "width",
-  "left",
-  "right",
-  "sort",
-  "scope",
-  "find",
-  "filter",
-  "search",
-  "group",
-  "aggregate",
-  "cap",
-] as const;
+const PARTS = [...GRID_VIEW.parts, "sort", "scope", "find", ...SET_VIEW.parts, "cap"] as const;
 
-const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
-
-/** True when a scope filter holds a value, a bound or a choice. */
-const scoped = (scope: DataTableScopeFilter) =>
-  scope.values.length > 0 ||
-  scope.empty !== undefined ||
-  (scope.range !== undefined && (scope.range.min !== "" || scope.range.max !== ""));
-
-/** The state with every undeclared field dropped, and every column in the order. */
-export function declaredView(state: DataTableViewState, declaration: DataTableViewDeclaration): DataTableViewState {
-  const fields = declaration.columns.map((column) => column.field);
-  const declared = (field: string) => fields.includes(field);
-  const column = (field: string) => declaration.columns.find((candidate) => candidate.field === field);
-  const kept = state.order.filter(declared);
+/** The state with every undeclared field dropped. */
+export function declaredView(view: TableView, declaration: ViewDeclaration): TableView {
   return {
-    order: [...new Set([...kept, ...fields.filter((field) => !kept.includes(field))])],
-    hidden: state.hidden.filter(declared),
-    widths: Object.fromEntries(Object.entries(state.widths).filter(([field, width]) => declared(field) && width > 0)),
-    left: state.left.filter(declared),
-    right: state.right.filter((field) => declared(field) && !state.left.includes(field)),
-    sort: state.sort.filter((sort) => declared(sort.field)),
-    scope: state.scope.filter((scope) => declaration.scopeFilters.includes(scope.field) && scoped(scope)),
-    find: state.find,
-    filters: state.filters.filter((filter) => declared(filter.field)),
-    search: state.search,
-    group: state.group
-      .filter((level) => column(level.field)?.groupable === true)
-      .map((level) => ({
-        field: level.field,
-        bucket: column(level.field)!.time ? (level.bucket ?? "day") : null,
-        sort:
-          level.sort.by === "value" || declared(level.sort.by)
-            ? level.sort
-            : { by: "value", descending: level.sort.descending },
-      })),
-    aggregates: Object.fromEntries(
-      Object.entries(state.aggregates).filter(([field, aggregate]) => column(field)?.aggregates.includes(aggregate)),
-    ),
-    cap: Number.isInteger(state.cap) && state.cap > 0 ? state.cap : 1,
+    grid: GRID_VIEW.declared(view.grid, declaration),
+    query: QUERY_VIEW.declared(view.query, declaration),
+    set: SET_VIEW.declared(view.set, declaration),
   };
-}
-
-const direction = (value: DataTableViewDirection) => (value === "descending" ? "desc" : "asc");
-
-function filterText(filter: DataTableFilter): string {
-  switch (filter.kind) {
-    case "contains":
-      return `contains:${filter.text}`;
-    case "equals":
-      return `equals:${filter.value}`;
-    case "range":
-      return `range:${filter.min},${filter.max}`;
-    case "is":
-      return `is:${filter.value}`;
-    default:
-      return filter.kind;
-  }
 }
 
 /**
  * The URL parameters of a state, under its key: only the parts that differ
  * from the default, in the fixed order.
  */
-export function encodeView(key: string, state: DataTableViewState, defaults: DataTableViewState): [string, string][] {
-  const out: [string, string][] = [];
-  const put = (part: string, value: string) => out.push([`${key}.${part}`, value]);
-  const inOrder = <T>(record: Readonly<Record<string, T>>) =>
-    defaults.order.filter((field) => field in record).map((field) => [field, record[field]!] as const);
-  for (const part of PARTS) {
-    switch (part) {
-      case "order":
-        if (!same(state.order, defaults.order)) put(part, state.order.join(","));
-        break;
-      case "hidden":
-        if (!same([...state.hidden].sort(), [...defaults.hidden].sort())) {
-          put(part, defaults.order.filter((field) => state.hidden.includes(field)).join(","));
-        }
-        break;
-      case "width":
-        if (!same(state.widths, defaults.widths)) {
-          put(
-            part,
-            inOrder(state.widths)
-              .map(([field, width]) => `${field}:${width}`)
-              .join(","),
-          );
-        }
-        break;
-      case "left":
-      case "right":
-        if (!same(state[part], defaults[part])) put(part, state[part].join(","));
-        break;
-      case "sort":
-        if (!same(state.sort, defaults.sort)) {
-          put(part, state.sort.map((sort) => `${sort.field}:${direction(sort.direction)}`).join(","));
-        }
-        break;
-      case "scope":
-        if (!same(state.scope, defaults.scope)) {
-          for (const scope of state.scope) {
-            for (const value of scope.values) put(`scope.${scope.field}`, value);
-            if (scope.range?.min) put(`scope.${scope.field}.min`, scope.range.min);
-            if (scope.range?.max) put(`scope.${scope.field}.max`, scope.range.max);
-            if (scope.empty !== undefined) put(`scope.${scope.field}.empty`, String(scope.empty));
-          }
-        }
-        break;
-      case "find":
-        if (state.find !== defaults.find) put(part, state.find);
-        break;
-      case "filter":
-        if (!same(state.filters, defaults.filters)) {
-          for (const filter of state.filters) put(`filter.${filter.field}`, filterText(filter.filter));
-        }
-        break;
-      case "search":
-        if (state.search !== defaults.search) put(part, state.search);
-        break;
-      case "group":
-        if (!same(state.group, defaults.group)) {
-          put(
-            part,
-            state.group
-              .map(
-                (level) =>
-                  `${level.field}:${level.bucket ?? ""}:${level.sort.by}:${level.sort.descending ? "desc" : "asc"}`,
-              )
-              .join(","),
-          );
-        }
-        break;
-      case "aggregate":
-        if (!same(state.aggregates, defaults.aggregates)) {
-          put(
-            part,
-            inOrder(state.aggregates)
-              .map(([field, aggregate]) => `${field}:${aggregate}`)
-              .join(","),
-          );
-        }
-        break;
-      case "cap":
-        if (state.cap !== defaults.cap) put(part, String(state.cap));
-        break;
-    }
-  }
-  return out;
-}
-
-function readFilter(text: string): DataTableFilter | null {
-  const colon = text.indexOf(":");
-  const kind = colon < 0 ? text : text.slice(0, colon);
-  const value = colon < 0 ? null : text.slice(colon + 1);
-  switch (kind) {
-    case "contains":
-      return value === null ? null : { kind, text: value };
-    case "equals":
-      return value === null ? null : { kind, value };
-    case "range": {
-      const bounds = value?.split(",");
-      return bounds?.length === 2 ? { kind, min: bounds[0]!, max: bounds[1]! } : null;
-    }
-    case "is":
-      return value === "true" || value === "false" ? { kind, value: value === "true" } : null;
-    case "empty":
-    case "not-empty":
-      return value === null ? { kind } : null;
-    default:
-      return null;
-  }
+export function encodeView(
+  key: string,
+  view: TableView,
+  defaults: TableView,
+  declaration: ViewDeclaration,
+): [string, string][] {
+  const written = [
+    ...GRID_VIEW.encode(view.grid, defaults.grid, declaration),
+    ...QUERY_VIEW.encode(view.query, defaults.query, declaration),
+    ...SET_VIEW.encode(view.set, defaults.set, declaration),
+  ];
+  const rank = (name: string) => PARTS.indexOf(name.split(".")[0] as (typeof PARTS)[number]);
+  // A stable sort keeps each owner's own order inside one part.
+  return written
+    .map(([name, value], index) => ({ name, value, index }))
+    .sort((a, b) => rank(a.name) - rank(b.name) || a.index - b.index)
+    .map(({ name, value }) => [`${key}.${name}`, value]);
 }
 
 /**
@@ -273,157 +88,32 @@ function readFilter(text: string): DataTableFilter | null {
 export function decodeView(
   key: string,
   params: URLSearchParams,
-  defaults: DataTableViewState,
-  declaration: DataTableViewDeclaration,
-): { state: DataTableViewState; ignored: string[] } {
+  defaults: TableView,
+  declaration: ViewDeclaration,
+): { view: TableView; ignored: string[] } {
   const ignored: string[] = [];
-  const fields = declaration.columns.map((column) => column.field);
-  const column = (field: string) => declaration.columns.find((candidate) => candidate.field === field);
-  const state: { -readonly [K in keyof DataTableViewState]: DataTableViewState[K] } = { ...defaults };
-  const scope = new Map<string, string[]>();
-  const ranges = new Map<string, DataTableScopeRange>();
-  const empties = new Map<string, boolean>();
-  const filters: { field: string; filter: DataTableFilter }[] = [];
-  /** The fields of a list, or null when one is not declared. */
-  const list = (value: string) => {
-    const items = value === "" ? [] : value.split(",");
-    return items.every((field) => fields.includes(field)) ? items : null;
+  const readers = {
+    grid: GRID_VIEW.reader(defaults.grid, declaration),
+    query: QUERY_VIEW.reader(defaults.query, declaration),
+    set: SET_VIEW.reader(defaults.set, declaration),
   };
-  /** The `field:value` pairs of a list, or null when one does not read. */
-  const pairs = <T>(value: string, read: (field: string, text: string) => T | null) => {
-    const out: [string, T][] = [];
-    for (const item of value.split(",")) {
-      const colon = item.indexOf(":");
-      const field = item.slice(0, colon);
-      const parsed = colon > 0 && fields.includes(field) ? read(field, item.slice(colon + 1)) : null;
-      if (parsed === null) return null;
-      out.push([field, parsed]);
+  const owner = (part: string | undefined) =>
+    GRID_VIEW.parts.includes(part ?? "")
+      ? readers.grid
+      : SET_VIEW.parts.includes(part ?? "")
+        ? readers.set
+        : QUERY_VIEW.parts.includes(part ?? "")
+          ? readers.query
+          : undefined;
+  params.forEach((value, name) => {
+    if (!name.startsWith(`${key}.`)) {
+      return;
     }
-    return out;
-  };
-  const entries: [string, string][] = [];
-  params.forEach((value, name) => entries.push([name, value]));
-  for (const [name, value] of entries) {
-    if (!name.startsWith(`${key}.`)) continue;
-    const [part, field, ...rest] = name.slice(key.length + 1).split(".");
-    const ignore = () => ignored.push(`${name}=${value}`);
-    // A range bound or an is-null choice of a scope filter names its member.
-    if (part === "scope" && field !== undefined && rest.length === 1 && declaration.scopeFilters.includes(field)) {
-      const [member] = rest;
-      if ((member === "min" || member === "max") && value !== "") {
-        ranges.set(field, { ...(ranges.get(field) ?? { min: "", max: "" }), [member]: value });
-      } else if (member === "empty" && (value === "true" || value === "false")) {
-        empties.set(field, value === "true");
-      } else ignore();
-      continue;
+    const split = name.slice(key.length + 1).split(".");
+    if (owner(split[0])?.read(split, value) !== true) {
+      ignored.push(`${name}=${value}`);
     }
-    if (rest.length > 0) {
-      ignore();
-      continue;
-    }
-    if (part === "scope" || part === "filter") {
-      if (field === undefined || !fields.includes(field)) {
-        ignore();
-      } else if (part === "scope") {
-        if (declaration.scopeFilters.includes(field) && value !== "") {
-          scope.set(field, [...(scope.get(field) ?? []), value]);
-        } else ignore();
-      } else {
-        const filter = readFilter(value);
-        if (filter !== null && !filters.some((kept) => kept.field === field)) {
-          filters.push({ field, filter });
-        } else ignore();
-      }
-      continue;
-    }
-    if (field !== undefined) {
-      ignore();
-      continue;
-    }
-    let read = true;
-    switch (part) {
-      case "order":
-      case "hidden":
-      case "left":
-      case "right": {
-        const items = list(value);
-        if (items === null) read = false;
-        else state[part] = items;
-        break;
-      }
-      case "width": {
-        const widths = pairs(value, (_, text) => (/^\d+$/.test(text) && Number(text) > 0 ? Number(text) : null));
-        if (widths === null) read = false;
-        else state.widths = Object.fromEntries(widths);
-        break;
-      }
-      case "sort": {
-        const sorts = pairs(value, (_, text) => (text === "asc" ? "ascending" : text === "desc" ? "descending" : null));
-        if (sorts === null) read = false;
-        else state.sort = sorts.map(([sortField, sortDirection]) => ({ field: sortField, direction: sortDirection }));
-        break;
-      }
-      case "search":
-        state.search = value;
-        break;
-      case "find":
-        state.find = value;
-        break;
-      case "group": {
-        const levels: DataTableViewGroup[] = [];
-        for (const item of value === "" ? [] : value.split(",")) {
-          const [groupField = "", bucket = "", by = "", dir = ""] = item.split(":");
-          const groupColumn = column(groupField);
-          const bucketOk = groupColumn?.time ? BUCKETS.includes(bucket as DataTableBucket) : bucket === "";
-          if (
-            groupColumn?.groupable !== true ||
-            !bucketOk ||
-            !(by === "value" || fields.includes(by)) ||
-            !(dir === "asc" || dir === "desc")
-          ) {
-            read = false;
-            break;
-          }
-          levels.push({
-            field: groupField,
-            bucket: groupColumn.time ? (bucket as DataTableBucket) : null,
-            sort: { by, descending: dir === "desc" },
-          });
-        }
-        if (read) state.group = levels;
-        break;
-      }
-      case "aggregate": {
-        const chosen = pairs(value, (aggregateField, text) =>
-          column(aggregateField)!.aggregates.includes(text as DataTableAggregate) ? (text as DataTableAggregate) : null,
-        );
-        if (chosen === null) read = false;
-        else state.aggregates = Object.fromEntries(chosen);
-        break;
-      }
-      case "cap":
-        if (/^\d+$/.test(value) && Number(value) > 0) state.cap = Number(value);
-        else read = false;
-        break;
-      default:
-        read = false;
-    }
-    if (!read) ignore();
-  }
-  if (scope.size > 0 || ranges.size > 0 || empties.size > 0) {
-    state.scope = declaration.scopeFilters
-      .filter((field) => scope.has(field) || ranges.has(field) || empties.has(field))
-      .map((field) => {
-        const range = ranges.get(field);
-        const empty = empties.get(field);
-        return {
-          field,
-          values: scope.get(field) ?? [],
-          ...(range === undefined ? {} : { range }),
-          ...(empty === undefined ? {} : { empty }),
-        };
-      });
-  }
-  if (filters.length > 0) state.filters = filters;
-  return { state: declaredView(state, declaration), ignored };
+  });
+  const view = { grid: readers.grid.done(), query: readers.query.done(), set: readers.set.done() };
+  return { view: declaredView(view, declaration), ignored };
 }

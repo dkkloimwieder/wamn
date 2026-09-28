@@ -33,10 +33,10 @@ import {
   columnSizingFeature,
   columnVisibilityFeature,
   flexRender,
+  functionalUpdate,
   type Header,
+  type OnChangeFn,
   type Row,
-  rowExpandingFeature,
-  rowSelectionFeature,
   rowSortingFeature,
   type SolidTable,
   type Table,
@@ -50,6 +50,7 @@ import {
   createMemo,
   createSignal,
   For,
+  Index,
   type JSX,
   onCleanup,
   onMount,
@@ -59,10 +60,12 @@ import {
 
 import { Spinner } from "../components/ui/spinner";
 import { cn } from "../lib/utils";
+import type { GridViewState } from "./grid-view";
 
 /**
  * The features every platform table declares, whose methods the grid calls on
- * every render. A table adds the ones it runs itself, such as filtering.
+ * every render: the column arrangement and the sort a header shows. A table
+ * adds the ones it runs itself, such as filtering.
  */
 export const gridFeatures = tableFeatures({
   columnVisibilityFeature,
@@ -72,8 +75,6 @@ export const gridFeatures = tableFeatures({
   // columnResizingFeature requires columnSizingFeature, declared above.
   columnResizingFeature,
   rowSortingFeature,
-  rowSelectionFeature,
-  rowExpandingFeature,
 });
 
 /** The feature set `gridFeatures` registers. */
@@ -87,6 +88,65 @@ export const ROW_HEIGHT = 48;
 
 /** The rows the virtualizer places beyond the view, above and below. */
 const OVERSCAN = 10;
+
+/** A memo that keeps its last value while the new one has the same content. */
+export const sameMemo = <T,>(compute: () => T) =>
+  createMemo(compute, undefined, { equals: (a, b) => JSON.stringify(a) === JSON.stringify(b) });
+
+/**
+ * The TanStack state of a grid view, and the handlers that write a change back
+ * to it. `lead` names the control columns, which come first; `hidden` names
+ * more columns that stay hidden. A drag writes whole pixels. Each slice keeps
+ * its identity while its content holds, because TanStack builds its headers
+ * again for a new one.
+ */
+export function gridViewOptions(
+  view: () => GridViewState,
+  onView: (next: GridViewState) => void,
+  lead: () => readonly string[],
+  hidden: () => readonly string[] = () => [],
+) {
+  const order = sameMemo(() => [...lead(), ...view().order]);
+  const visibility = sameMemo(
+    () => Object.fromEntries([...view().hidden, ...hidden()].map((field) => [field, false])) as Record<string, boolean>,
+  );
+  const pinning = sameMemo(() => ({ start: [...view().left], end: [...view().right] }));
+  const sizing = sameMemo(() => ({ ...view().widths }));
+  const declared = (id: string) => view().order.includes(id);
+  const change =
+    <T,>(current: () => T, apply: (next: T) => Partial<GridViewState>): OnChangeFn<T> =>
+    (updater) =>
+      onView({ ...view(), ...apply(functionalUpdate(updater, current())) });
+  return {
+    state: {
+      get columnOrder() {
+        return order();
+      },
+      get columnVisibility() {
+        return visibility();
+      },
+      get columnSizing() {
+        return sizing();
+      },
+      get columnPinning() {
+        return pinning();
+      },
+    },
+    onColumnOrderChange: change(order, (next) => ({ order: next.filter(declared) })),
+    onColumnVisibilityChange: change(visibility, (next) => ({
+      hidden: view().order.filter((field) => next[field] === false),
+    })),
+    onColumnSizingChange: change(sizing, (next) => ({
+      widths: Object.fromEntries(
+        Object.entries(next).flatMap(([id, width]) => (declared(id) && width > 0 ? [[id, Math.round(width)]] : [])),
+      ),
+    })),
+    onColumnPinningChange: change(pinning, (next) => ({
+      left: (next.start ?? []).filter(declared),
+      right: (next.end ?? []).filter(declared),
+    })),
+  };
+}
 
 type GridTable = SolidTable<GridFeatures, object>;
 type GridRow = Row<GridFeatures, object>;
@@ -208,7 +268,11 @@ function HeadCell(props: { header: Header<GridFeatures, object, unknown>; last: 
         column().getCanPin() && PINNED_HEAD_CELL,
       )}
     >
-      {props.header.isPlaceholder ? null : flexRender(column().columnDef.header, props.header.getContext())}
+      {/* A context reads the table options, which each state change sets again. The
+          header keeps itself up to date, so it renders once for its header. */}
+      {props.header.isPlaceholder
+        ? null
+        : untrack(() => flexRender(column().columnDef.header, props.header.getContext()))}
       <Show when={resizable()}>
         <ResizeHandle header={props.header} last={props.last} />
       </Show>
@@ -267,7 +331,8 @@ function BodyCell(props: { cell: Cell<GridFeatures, object, unknown> }): JSX.Ele
         column().getCanPin() && PINNED_BODY_CELL,
       )}
     >
-      {flexRender(column().columnDef.cell, props.cell.getContext())}
+      {/* A cell renders once for its cell, as a header does. A new row is a new cell. */}
+      {untrack(() => flexRender(column().columnDef.cell, props.cell.getContext()))}
     </td>
   );
 }
@@ -301,7 +366,8 @@ export function Grid<TFeatures extends TableFeatures, TRow extends object>(
   const endColumns = () => table().getEndVisibleLeafColumns();
   const endPinned = () => (table().store.state.columnPinning.end?.length ?? 0) > 0;
   const visibleCount = () => table().getVisibleLeafColumns().length;
-  const rows = () => table().getRowModel().rows as GridRow[];
+  // The virtualizer reads the rows for every index, so they are read once for each change.
+  const rows = createMemo(() => table().getRowModel().rows as GridRow[]);
 
   // The header groups of the three pin sections, merged into one row each.
   const headerGroups = createMemo(() => {
@@ -516,16 +582,17 @@ export function Grid<TFeatures extends TableFeatures, TRow extends object>(
               </Show>
             </colgroup>
             <thead class="sticky top-0 z-40 bg-background/90 backdrop-blur-xs">
-              <For each={headerGroups()}>
+              {/* A header row keeps its place, and each cell its header, so a new width keeps them. */}
+              <Index each={headerGroups()}>
                 {(headers) => (
                   <tr class="[&>th]:border-b bg-transparent">
-                    <For each={headers.filter((header) => header.column.getIsPinned() !== "end")}>
+                    <For each={headers().filter((header) => header.column.getIsPinned() !== "end")}>
                       {(header) => <HeadCell header={header} last={header.column.getIndex() === visibleCount() - 1} />}
                     </For>
                     <Show when={endPinned()}>
                       <th aria-hidden="true" style={FILL_WIDTH} class="p-0" />
                     </Show>
-                    <For each={headers.filter((header) => header.column.getIsPinned() === "end")}>
+                    <For each={headers().filter((header) => header.column.getIsPinned() === "end")}>
                       {(header) => <HeadCell header={header} last={header.column.getIndex() === visibleCount() - 1} />}
                     </For>
                     <Show when={!endPinned()}>
@@ -533,7 +600,7 @@ export function Grid<TFeatures extends TableFeatures, TRow extends object>(
                     </Show>
                   </tr>
                 )}
-              </For>
+              </Index>
             </thead>
             <tbody data-slot="data-grid-table-body">
               <Show

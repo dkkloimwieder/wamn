@@ -1,17 +1,19 @@
 /**
- * The refine filters of the DataTable (wamn-vfvx.2).
+ * The refine filters of a SetTable (wamn-vfvx.2).
  *
  * Each column type gets its filter, every type can be empty or not empty, and
- * the filters apply only to a fully read set, before the sort.
+ * the filters apply before the sort. A QueryTable shows them only over a fully
+ * read set, and keeps them while it is not.
  */
 
-import { cleanup, fireEvent, render, screen } from "@solidjs/testing-library";
+import { cleanup, fireEvent, screen } from "@solidjs/testing-library";
 import { createSignal } from "solid-js";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { DataTable, type DataTableColumn } from "@wamn/ui";
+import type { TableColumn } from "@wamn/ui";
 
-import { bodyRows, theButton } from "./dom.js";
+import { bodyRows, button, theButton } from "./dom.js";
+import { queryTable, setTable, settled } from "./tables.js";
 
 afterEach(cleanup);
 
@@ -28,7 +30,7 @@ interface Row {
   readonly body: string | null;
 }
 
-const COLUMNS: readonly DataTableColumn<Row>[] = [
+const COLUMNS: readonly TableColumn<Row>[] = [
   { field: "code", label: "code", type: "text" },
   { field: "rank", label: "rank", type: "int32" },
   { field: "weight", label: "weight", type: "numeric" },
@@ -57,29 +59,7 @@ const ROWS: Row[] = [0, 1, 2, 3].map((index) => ({
   body: index === 3 ? null : "{}",
 }));
 
-function table(fullyRead: () => boolean = () => true) {
-  render(() => (
-    <DataTable
-      name="rows"
-      columns={COLUMNS}
-      rowId={["id"]}
-      rows={ROWS}
-      fullyRead={fullyRead()}
-      busy={false}
-      cap={1000}
-      onCapChange={() => {}}
-      refusal={null}
-      onRefresh={() => {}}
-      startedAt={null}
-      endedAt={null}
-      sortFields={[]}
-      sortMaxFields={1}
-      onSortChange={() => {}}
-      scopeFilters={[]}
-      onScopeChange={() => {}}
-    />
-  ));
-}
+const table = () => setTable({ columns: COLUMNS, rows: ROWS });
 
 /** The codes of the body rows, in the order they show. */
 const shown = () =>
@@ -172,21 +152,22 @@ describe("the refine filters", () => {
     expect(shown()).toEqual(["ALPHABET", "beta", "Alpha"]);
   });
 
-  it("are disabled and say why on a set that is not fully read, and keep their state", () => {
-    const [fullyRead, setFullyRead] = createSignal(true);
-    table(fullyRead);
+  it("leave a set that is not fully read, and come back with their state when it is", async () => {
+    const [more, setMore] = createSignal(false);
+    await queryTable({ columns: COLUMNS, rows: () => ROWS, more });
     open("code");
     type("contains", "alpha");
     expect(shown()).toEqual(["Alpha", "ALPHABET"]);
-    setFullyRead(false);
+    setMore(true);
+    press("refresh");
+    await settled();
     expect(shown()).toEqual(["Alpha", "beta", "ALPHABET", "gamma"]);
-    // The load that lands closes an open filter.
-    open("code");
-    expect(screen.getByLabelText("contains").hasAttribute("disabled")).toBe(true);
-    expect(theButton("remove filter code").hasAttribute("disabled")).toBe(true);
-    expect(theButton("clear all").hasAttribute("disabled")).toBe(true);
-    expect(screen.getAllByText(/Filters apply only to a fully read set/).length).toBeGreaterThan(0);
-    setFullyRead(true);
+    expect(button("filter code")).toBeNull();
+    expect(button("remove filter code")).toBeNull();
+    setMore(false);
+    press("refresh");
+    await settled();
     expect(shown()).toEqual(["Alpha", "ALPHABET"]);
+    expect(button("remove filter code")).not.toBeNull();
   });
 });

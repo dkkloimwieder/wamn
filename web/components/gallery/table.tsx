@@ -1,48 +1,51 @@
 /**
- * The DataTable over the load state of `@wamn/web-runtime`.
+ * The platform tables: a QueryTable over a read, and a SetTable over a set.
  *
- * The seam states render the fixture's emitted table definition for the widget
- * query and read it through a stub transport. The stub refuses a limit above
- * the page maximum, as the server does, so a load reads one page of at most
- * that many rows. The stub keeps the codes of the request's scope filter and
- * sorts by the request's sort. A scope change in the table reads again. A set of 3 rows is
- * fully read, so the table sorts it. A set of 150 rows is not, so a sort starts
- * a new load in the new order. The 1000 and 10,000 row states generate
- * their rows in memory, because one page cannot hold them. Both sources hand
- * their result to the same load state.
+ * The QueryTable states render the fixture's emitted table definition for the
+ * widget query and read it through a stub transport. The stub refuses a limit
+ * above the page maximum, as the server does, so a load reads one page of at
+ * most that many rows. The stub keeps the codes of the request's scope filter
+ * and sorts by the request's sort. A scope change in the table reads again. A
+ * set of 3 rows is fully read, so a set table shows it and sorts it. A set of
+ * 150 rows is not, so a sort starts a new load in the new order.
+ *
+ * The SetTable states hold their rows in memory, 100, 1000 and 10,000 of
+ * them, and their own state. The grouped state reads its 10,000 rows through a
+ * QueryTable over a memory read, which keeps its state in the URL.
  */
 
 import { createSignal, For, type JSX } from "solid-js";
 
-import { DataTable, type DataTableColumn, type DataTableScopeFilter, type DataTableSort, QueryTable } from "@wamn/ui";
 import {
-  emptyLoad,
-  finishLoad,
-  loadLimit,
-  startLoad,
-  type LoadPage,
-  type LoadState,
-  type Outcome,
-  type RowKey,
-  type Transport,
-} from "@wamn/web-runtime";
+  builtColumns,
+  defaultGridView,
+  defaultSetView,
+  QueryTable,
+  type QueryTableDefinition,
+  SetTable,
+  type TableColumn,
+  type TableSort,
+} from "@wamn/ui";
+import type { Transport } from "@wamn/web-runtime";
 
 import { WIDGET_QUERY_TABLE } from "../fixture/components/widget.js";
 import { WIDGET_MAKER_QUERY_TABLE } from "../fixture/components/widget_maker.js";
-import {
-  query,
-  type WidgetQueryRequestFilter,
-  type WidgetQueryRequestSort,
-  type WidgetQueryRow,
-} from "../fixture/widget.js";
+import type { WidgetQueryRow } from "../fixture/widget.js";
+import { memoryDefinition, memoryTransport } from "./memory.js";
 import { Section, State } from "./section.js";
 import { ActionTable } from "./table-actions.js";
 
 /** The page maximum the fixture contract declares. */
-const PAGE_MAXIMUM = WIDGET_QUERY_TABLE.pageMaximum;
+const PAGE_MAXIMUM = WIDGET_QUERY_TABLE.pageMaximum!;
 
-/** The default cap of the platform table. */
-const DEFAULT_CAP = 1000;
+/** The widget table with its scope and sort alone: no edit, no row buttons, and the code as its one scope filter. */
+const { update: _update, ...WIDGET_READ } = WIDGET_QUERY_TABLE;
+const WIDGETS: QueryTableDefinition<WidgetQueryRow> = {
+  ...WIDGET_READ,
+  scopeFilters: ["code"],
+  actions: [],
+  childTables: [],
+};
 
 /**
  * A transport that answers the widget query from a set of `size` widgets, in
@@ -53,6 +56,7 @@ function widgetStub(size: number): Transport {
   const widgets = Array.from({ length: size }, (_, index) => ({
     id: `00000000-0000-4000-8000-${String(index).padStart(12, "0")}`,
     code: index % 3 === 0 ? "priority" : "standard",
+    maker_id: null,
     note: null,
     edit_version: "1",
     created_at: `2026-09-21T${String((index * 7) % 24).padStart(2, "0")}:${String(index % 60).padStart(2, "0")}:00.000000Z`,
@@ -83,65 +87,6 @@ function widgetStub(size: number): Transport {
   };
 }
 
-/** One table that renders the widget query's definition and loads it through the stub. */
-function SeamTable(props: { size: number }): JSX.Element {
-  const definition = WIDGET_QUERY_TABLE;
-  const transport = widgetStub(props.size);
-  const [state, setState] = createSignal<LoadState<WidgetQueryRow>>(emptyLoad(DEFAULT_CAP));
-  const [sort, setSort] = createSignal<WidgetQueryRequestSort>();
-  const [filter, setFilter] = createSignal<WidgetQueryRequestFilter>();
-
-  async function load(cap: number) {
-    const next = startLoad(state(), cap);
-    setState(next);
-    const order = sort();
-    const scope = filter();
-    const outcome = await query(transport, [
-      {
-        limit: loadLimit(next.cap, definition.pageMaximum),
-        ...(order === undefined ? {} : { sort: order }),
-        ...(scope === undefined ? {} : { filter: scope }),
-      },
-    ]);
-    setState((current) => finishLoad(current, next.generation, outcome, definition.rowId));
-  }
-  void load(DEFAULT_CAP);
-
-  // The table names the field, and the request sends its wire name. The
-  // contract sorts by one field, so the sort holds one.
-  function sortBy(sorts: readonly DataTableSort<WidgetQueryRow>[]) {
-    const [first] = sorts;
-    const declared = definition.sortFields.find((sort) => sort.field === first?.field);
-    if (first !== undefined && declared !== undefined) {
-      setSort({ field: declared.wire, direction: first.direction });
-      void load(state().cap);
-    }
-  }
-
-  // The one scope filter is the widget code, which the request sends as a list.
-  function scopeBy(filters: readonly DataTableScopeFilter<keyof WidgetQueryRow & string>[]) {
-    const codes = filters.find((scope) => scope.field === "code")?.values;
-    setFilter(codes === undefined ? undefined : { code: [...codes] });
-    void load(state().cap);
-  }
-
-  return (
-    <LoadedTable
-      name="widget"
-      columns={definition.columns}
-      rowId={definition.rowId}
-      state={state()}
-      load={load}
-      sortFields={definition.sortFields}
-      sortMaxFields={definition.sortMaxFields}
-      onSortChange={sortBy}
-      // The stub reads the code alone, so the bar offers that filter only.
-      scopeFilters={["code"]}
-      onScopeChange={scopeBy}
-    />
-  );
-}
-
 /** One generated pallet row. */
 interface PalletRow {
   readonly id: string;
@@ -151,7 +96,7 @@ interface PalletRow {
   readonly createdAt: string;
 }
 
-const PALLET_COLUMNS: readonly DataTableColumn<PalletRow>[] = [
+const PALLET_COLUMNS: readonly TableColumn<PalletRow>[] = [
   { field: "code", label: "code", type: "text" },
   { field: "quantity", label: "quantity", type: "int32" },
   { field: "weight", label: "weight", type: "numeric" },
@@ -169,45 +114,45 @@ function pallets(count: number): PalletRow[] {
   }));
 }
 
-/** One table over a set of `size` rows generated in memory, loaded up to its cap. */
-function MemoryTable(props: {
-  size: number;
-  cap?: number;
-  groupedFields?: readonly (keyof PalletRow & string)[];
-  urlKey?: string;
-}): JSX.Element {
-  const [state, setState] = createSignal<LoadState<PalletRow>>(emptyLoad(props.cap ?? DEFAULT_CAP));
-
-  function load(cap: number) {
-    const next = startLoad(state(), cap);
-    setState(next);
-    const outcome: Outcome<LoadPage<PalletRow>> = {
-      status: "completed",
-      value: {
-        item: pallets(Math.min(props.size, next.cap)),
-        nextCursor: props.size > next.cap ? "more" : null,
-      },
-    };
-    setState((current) => finishLoad(current, next.generation, outcome, ["id"]));
-  }
-  load(state().cap);
-
-  // No source sorts these rows, so only a fully read set sorts, in the table.
-  // Two sort fields let a shift click show a sort by more than one field.
+/**
+ * A set table over `size` pallets in memory, with its own state. Two sort
+ * fields let a shift click show a sort by more than one field.
+ */
+export function MemoryTable(props: { size: number }): JSX.Element {
+  const rows = pallets(props.size);
+  const [view, setView] = createSignal(defaultSetView());
+  const [grid, setGrid] = createSignal(defaultGridView(PALLET_COLUMNS.map((column) => column.field)));
+  const [sort, setSort] = createSignal<readonly TableSort[]>([]);
   return (
-    <LoadedTable
-      name="pallet"
-      columns={PALLET_COLUMNS}
-      rowId={["id"]}
-      state={state()}
-      load={load}
-      sortFields={[]}
-      sortMaxFields={2}
-      onSortChange={() => {}}
-      scopeFilters={[]}
-      onScopeChange={() => {}}
-      groupedFields={props.groupedFields}
-      urlKey={props.urlKey}
+    <div class="flex h-full min-h-0 flex-col gap-4">
+      <SetTable
+        name="pallet"
+        rows={rows}
+        rowId={(row) => row.id}
+        columns={builtColumns(PALLET_COLUMNS)}
+        view={view()}
+        onView={setView}
+        grid={grid()}
+        onGrid={setGrid}
+        sort={sort()}
+        onSort={setSort}
+        sortMaxFields={2}
+        gridClass="h-auto min-h-0 flex-1"
+      />
+    </div>
+  );
+}
+
+/** The 10,000 pallets through a QueryTable, grouped, with the table state in the URL. */
+function GroupedPallets(): JSX.Element {
+  const rows = pallets(10000);
+  return (
+    <QueryTable
+      definition={memoryDefinition("pallet", PALLET_COLUMNS, { sortMaxFields: 2 })}
+      transport={memoryTransport(() => rows)}
+      label="pallets"
+      urlKey="pallets"
+      groupedFields={["createdAt", "quantity"]}
     />
   );
 }
@@ -228,46 +173,6 @@ function MakerTable(): JSX.Element {
     invoke: () => Promise.resolve({ status: "completed", value: { item: makers, next_cursor: null } }),
   };
   return <QueryTable definition={WIDGET_MAKER_QUERY_TABLE} transport={transport} label="makers" />;
-}
-
-/** The DataTable over one load state. A refresh loads again at the cap in force. */
-function LoadedTable<Row extends object>(props: {
-  name: string;
-  columns: readonly DataTableColumn<Row>[];
-  rowId: RowKey<Row>;
-  state: LoadState<Row>;
-  load: (cap: number) => void;
-  sortFields: readonly { readonly field: keyof Row & string }[];
-  sortMaxFields: number;
-  onSortChange: (sort: readonly DataTableSort<Row>[]) => void;
-  scopeFilters: readonly (keyof Row & string)[];
-  onScopeChange: (filters: readonly DataTableScopeFilter<keyof Row & string>[]) => void;
-  groupedFields?: readonly (keyof Row & string)[] | undefined;
-  urlKey?: string | undefined;
-}): JSX.Element {
-  return (
-    <DataTable
-      name={props.name}
-      columns={props.columns}
-      rowId={props.rowId}
-      rows={props.state.rows}
-      fullyRead={props.state.fullyRead}
-      busy={props.state.busy}
-      refusal={props.state.refusal}
-      cap={props.state.cap}
-      onCapChange={props.load}
-      onRefresh={() => props.load(props.state.cap)}
-      startedAt={props.state.startedAt}
-      endedAt={props.state.endedAt}
-      sortFields={props.sortFields}
-      sortMaxFields={props.sortMaxFields}
-      onSortChange={props.onSortChange}
-      scopeFilters={props.scopeFilters}
-      onScopeChange={props.onScopeChange}
-      groupedFields={props.groupedFields}
-      urlKey={props.urlKey}
-    />
-  );
 }
 
 /**
@@ -295,16 +200,16 @@ export const APP_TABLE_ONLY = "app-table";
 export function TableSections(): JSX.Element {
   return (
     <>
-      <Section title="Data table" name="DataTable, LoadState">
+      <Section title="Query table" name="QueryTable">
         <div class="flex flex-col gap-6">
-          <State name="WIDGET_QUERY_TABLE, fully read: a header click sorts in the table">
+          <State name="WIDGET_QUERY_TABLE, fully read: a set table shows the rows, and a header click sorts them">
             <div class="h-[32rem]">
-              <SeamTable size={3} />
+              <QueryTable definition={WIDGETS} transport={widgetStub(3)} label="widgets" />
             </div>
           </State>
-          <State name="WIDGET_QUERY_TABLE, not fully read: a sort by created at loads again in that order, and the filters are disabled">
+          <State name="WIDGET_QUERY_TABLE, not fully read: a sort by created at loads again in that order">
             <div class="h-[32rem]">
-              <SeamTable size={150} />
+              <QueryTable definition={WIDGETS} transport={widgetStub(150)} label="widgets" />
             </div>
           </State>
           <State name="WIDGET_MAKER_QUERY_TABLE: a required band of the last 30 days, a contains filter and a server search in the scope bar">
@@ -312,24 +217,37 @@ export function TableSections(): JSX.Element {
               <MakerTable />
             </div>
           </State>
-          <For each={[1000, 10000]}>
+          <State name="a first load in progress">
+            <div class="h-[32rem]">
+              <QueryTable
+                definition={memoryDefinition("pallet", PALLET_COLUMNS)}
+                transport={memoryTransport<PalletRow>(() => [], { never: true })}
+                label="pallets"
+              />
+            </div>
+          </State>
+          <State name="10000 rows grouped by the day of creation, then by quantity, with the table state in the URL">
+            <div class="h-[32rem]">
+              {/* The one table that keeps its state in the URL, so a reload brings it back. */}
+              <GroupedPallets />
+            </div>
+          </State>
+        </div>
+      </Section>
+      <Section title="Set table" name="SetTable">
+        <div class="flex flex-col gap-6">
+          <For each={[0, 100, 1000, 10000]}>
             {(size) => (
-              <State name={`${size} rows generated in memory`}>
+              <State name={size === 0 ? "no rows" : `${size} rows in memory`}>
                 <div class="h-[32rem]">
                   <MemoryTable size={size} />
                 </div>
               </State>
             )}
           </For>
-          <State name="10000 rows grouped by the day of creation, then by quantity, with the table state in the URL">
-            <div class="h-[32rem]">
-              {/* The one table that keeps its state in the URL, so a reload brings it back. */}
-              <MemoryTable size={10000} cap={10000} groupedFields={["createdAt", "quantity"]} urlKey="pallets" />
-            </div>
-          </State>
         </div>
       </Section>
-      <Section title="Data table in an app" name="DataTable">
+      <Section title="Query table in an app" name="QueryTable in an app">
         <State
           name={`the widget table with row buttons, a bulk action, editable cells and a child table; served alone at ?${APP_TABLE_ONLY}`}
         >

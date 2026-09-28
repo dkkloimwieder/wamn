@@ -180,7 +180,7 @@ describe("QueryTable", () => {
     stub.changeElsewhere();
     await editAndSave("Operator note", 0, "late");
     await waitFor(() =>
-      expect(document.querySelector(`tr[data-row-id="${id(0)}"] [data-slot="data-table-row-conflict"]`)).not.toBeNull(),
+      expect(document.querySelector(`tr[data-row-id="${id(0)}"] [data-slot="table-row-conflict"]`)).not.toBeNull(),
     );
   });
 
@@ -196,6 +196,6 @@ describe("QueryTable", () => {
     await shown({ filter: { code: ["priority"] } });
     // Widgets 0, 3 and 6 are priority, so widget 1 is not read.
     expect(document.querySelector(`tr[data-row-id="${id(1)}"]`)).toBeNull();
-    expect(document.querySelector('[data-slot="data-table-scope"] [data-field="code"]')).toBeNull();
+    expect(document.querySelector('[data-slot="table-scope"] [data-field="code"]')).toBeNull();
   });
 });

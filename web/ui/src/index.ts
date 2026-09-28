@@ -45,27 +45,25 @@ export { announceOutcome } from "./outcome";
 export { createRecordLabels } from "./record-labels";
 export { RecordSelect, type RecordSelectProps } from "./record-select";
 export { ROW_HEIGHT, WINDOW_FROM } from "./table/grid";
-export { type DataTableFilter } from "./table/column-filter";
 export {
-  DataTable,
-  type DataTableColumn,
-  type DataTableColumnRole,
-  type DataTableColumnType,
-  type DataTableProps,
-  type DataTableSort,
-  type DataTableSortDirection,
-} from "./table/data-table";
-export { type DataTableAggregate, type DataTableBucket } from "./table/aggregate";
-export { type DataTableGroupSort } from "./table/group-bar";
-export {
-  type DataTableScopeFilter,
-  type DataTableScopeMatch,
-  type DataTableScopeMode,
-  type DataTableScopeRange,
-} from "./table/scope-bar";
-export { type DataTableAction, type DataTableRowResult } from "./table/bulk";
-export { type DataTableEditResult } from "./table/edit-cell";
-export { type DataTableChild } from "./table/child-tables";
+  builtColumns,
+  type BuiltColumn,
+  type TableColumn,
+  type TableColumnRole,
+  type TableColumnType,
+  type TableSort,
+  type TableSortDirection,
+} from "./table/columns";
+export { SetTable, type SetTableProps } from "./table/set-table";
+export { defaultSetView, type GroupLevel, type SetViewState } from "./table/set-view";
+export { defaultGridView, type GridViewState } from "./table/grid-view";
+export { type QueryViewState } from "./table/query-view";
+export { type SetFilter } from "./table/column-filter";
+export { type Aggregate, type Bucket } from "./table/aggregate";
+export { type GroupSort } from "./table/group-bar";
+export { type ScopeFilter, type ScopeMatch, type ScopeMode, type ScopeRange } from "./table/scope-bar";
+export { type BulkAction, type RowResult } from "./table/bulk";
+export { type EditResult } from "./table/edit-cell";
 export {
   QueryTable,
   type QueryTableAction,
@@ -79,10 +77,3 @@ export {
   type QueryTableSearch,
   type QueryTableUpdate,
 } from "./table/query-table";
-export {
-  createTableLoad,
-  DEFAULT_CAP,
-  type TableLoad,
-  type TableLoadDefinition,
-  type TableLoadSort,
-} from "./table/table-load";

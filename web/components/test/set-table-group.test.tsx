@@ -1,18 +1,20 @@
 /**
- * The grouping, aggregates and totals row of the DataTable (wamn-vfvx.4).
+ * The grouping, aggregates and totals row of a SetTable (wamn-vfvx.4).
  *
  * The rows nest by the group bar's levels, each group sorts by its value or
- * by an aggregate, and the footer aggregates every kept row. All of it applies
- * only to a fully read set.
+ * by an aggregate, and the footer aggregates every kept row. A QueryTable
+ * shows all of it only over a fully read set, and keeps the levels while it
+ * is not.
  */
 
-import { cleanup, fireEvent, render, screen } from "@solidjs/testing-library";
+import { cleanup, fireEvent, screen } from "@solidjs/testing-library";
 import { createSignal } from "solid-js";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { DataTable, type DataTableColumn } from "@wamn/ui";
+import type { TableColumn } from "@wamn/ui";
 
-import { bodyRows, pickChoice, pickMenu, theButton } from "./dom.js";
+import { bodyRows, button, pickChoice, pickMenu, theButton } from "./dom.js";
+import { queryTable, setTable, settled } from "./tables.js";
 
 afterEach(cleanup);
 
@@ -29,7 +31,7 @@ interface Row {
   readonly ref: number | null;
 }
 
-const COLUMNS: readonly DataTableColumn<Row>[] = [
+const COLUMNS: readonly TableColumn<Row>[] = [
   { field: "region", label: "region", type: "text" },
   { field: "code", label: "code", type: "text" },
   { field: "qty", label: "qty", type: "int32" },
@@ -107,45 +109,26 @@ const ROWS: readonly Row[] = [
 ];
 
 interface Shape {
-  readonly rows?: () => readonly Row[];
-  readonly fullyRead?: () => boolean;
+  readonly rows?: readonly Row[];
   readonly groupedFields?: readonly (keyof Row & string)[];
   readonly weekStart?: number;
 }
 
-function table(shape: Shape = {}) {
-  render(() => (
-    <DataTable
-      name="regions"
-      columns={COLUMNS}
-      rowId={["id"]}
-      rows={shape.rows?.() ?? ROWS}
-      fullyRead={shape.fullyRead?.() ?? true}
-      busy={false}
-      cap={1000}
-      onCapChange={() => {}}
-      refusal={null}
-      onRefresh={() => {}}
-      startedAt={null}
-      endedAt={null}
-      sortFields={[]}
-      sortMaxFields={1}
-      onSortChange={() => {}}
-      scopeFilters={[]}
-      onScopeChange={() => {}}
-      groupedFields={shape.groupedFields}
-      timeZone="UTC"
-      weekStart={shape.weekStart}
-    />
-  ));
-}
+const table = (shape: Shape = {}) =>
+  setTable({
+    columns: COLUMNS,
+    rows: shape.rows ?? ROWS,
+    groupedFields: shape.groupedFields,
+    timeZone: "UTC",
+    weekStart: shape.weekStart,
+  });
 
 const CODES = new Set(ROWS.map((row) => row.code));
 
 /** Each body row: a group as "value (count)", or a row as its code. */
 const shown = () =>
   bodyRows().map((row) => {
-    const group = row.querySelector('[data-slot="data-table-group-value"]');
+    const group = row.querySelector('[data-slot="table-group-value"]');
     return group === null
       ? (Array.from(row.querySelectorAll("td")).find((cell) => CODES.has(cell.textContent ?? ""))?.textContent ?? "")
       : `${group.textContent} ${group.nextElementSibling?.textContent}`;
@@ -156,7 +139,7 @@ const groups = () => shown().filter((text) => text.endsWith(")"));
 const press = (name: string) => fireEvent.click(theButton(name));
 
 const total = (field: string) =>
-  document.querySelector(`[data-slot="data-table-total"][data-field="${field}"]`)?.textContent;
+  document.querySelector(`[data-slot="table-total"][data-field="${field}"]`)?.textContent;
 
 /** Choose one column's aggregate in its header menu. */
 const aggregate = (field: string, name: string) => pickMenu(field, name);
@@ -185,11 +168,13 @@ describe("the grouping", () => {
     expect(shown()).toEqual(["east (2)", "west (1)", "(none) (2)"]);
   });
 
-  it("keeps a group expanded across a new load", () => {
+  it("keeps a group expanded across a new load", async () => {
     const [rows, setRows] = createSignal<readonly Row[]>(ROWS);
-    table({ rows, groupedFields: ["region"] });
+    await queryTable({ columns: COLUMNS, rows, groupedFields: ["region"], timeZone: "UTC" });
     fireEvent.click(screen.getByText("east").closest("button")!);
     setRows(ROWS.map((row) => ({ ...row, qty: row.qty + 1 })));
+    press("refresh");
+    await settled();
     expect(shown()).toEqual(["east (2)", "a", "c", "west (1)", "(none) (2)"]);
   });
 
@@ -228,16 +213,27 @@ describe("the grouping", () => {
     // A choice opens and picks through Kobalte; on a loaded machine this takes more than 5 s.
   }, 20_000);
 
-  it("does not group json or bytes, and is disabled and says why on a set that is not fully read", () => {
-    const [fullyRead, setFullyRead] = createSignal(true);
-    table({ fullyRead, groupedFields: ["region"] });
-    setFullyRead(false);
-    expect(document.querySelector('[data-slot="data-table-group-value"]')).toBeNull();
-    expect(screen.getByText("Grouping applies only to a fully read set.")).toBeDefined();
-    expect(theButton("remove group region").hasAttribute("disabled")).toBe(true);
+  it("leaves a set that is not fully read, and comes back with its levels when it is", async () => {
+    const [more, setMore] = createSignal(false);
+    await queryTable({ columns: COLUMNS, rows: () => ROWS, more, groupedFields: ["region"], timeZone: "UTC" });
+    setMore(true);
+    press("refresh");
+    await settled();
+    expect(document.querySelector('[data-slot="table-group-value"]')).toBeNull();
+    expect(button("remove group region")).toBeNull();
     expect(total("qty")).toBeUndefined();
-    setFullyRead(true);
+    setMore(false);
+    press("refresh");
+    await settled();
     expect(groups()).toEqual(["east (2)", "west (1)", "(none) (2)"]);
+  });
+
+  it("offers no json or bytes column to group by", async () => {
+    setTable({
+      columns: [...COLUMNS, { field: "id", label: "body", type: "json" }] as TableColumn<Row>[],
+      rows: ROWS,
+    });
+    await expect(pickChoice("group by", "body")).rejects.toThrow();
   });
 });
 
@@ -285,15 +281,15 @@ describe("the aggregates and the totals row", () => {
   it("sum and average decimals exactly, rounding an average half away from zero", () => {
     const decimals = (weights: readonly string[]) =>
       weights.map((weight, index) => ({ ...ROWS[0]!, id: `d${index}`, weight }));
-    table({ rows: () => decimals(["0.1", "0.2"]) });
+    table({ rows: decimals(["0.1", "0.2"]) });
     expect(total("weight")).toBe("sum 0.3");
     cleanup();
     const eighth = ["0.01", "0.00", "0.00", "0.00", "0.00", "0.00", "0.00", "0.00"];
-    table({ rows: () => decimals(eighth) });
+    table({ rows: decimals(eighth) });
     aggregate("weight", "avg");
     expect(total("weight")).toBe("avg 0.0013");
     cleanup();
-    table({ rows: () => decimals(eighth.map((weight) => `-${weight}`)) });
+    table({ rows: decimals(eighth.map((weight) => `-${weight}`)) });
     aggregate("weight", "avg");
     expect(total("weight")).toBe("avg -0.0013");
   });

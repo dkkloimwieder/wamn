@@ -1,165 +1,71 @@
 /**
- * The DataTable of one generated read, wired from its table definition alone
- * (wamn-sa7d.1).
+ * The table of one generated read, wired from its table definition alone
+ * (wamn-sa7d.1, wamn-5pzt).
  *
- * The emitter writes the definition as data: the read and every operation the
- * table calls, as bindings, the input paths of the limit, the sort and each
- * scope filter, the record read of each column that names a record, the
- * update a cell edits through, the operations a row opens, and the child
- * tables. This component does the rest, so no screen carries table code.
+ * The emitter writes the definition as data, and this component does the
+ * rest, so no screen carries table code. It is the server table: everything
+ * that talks to the read.
  *
- * The table loads when it mounts, and again after every write on the
- * transport that it did not send itself. A filter that the caller fixes is
- * not offered in the scope bar. A row shows a button for each operation the
- * page gives a handler. A child table is this component again, with its scope
- * filter fixed to the parent row's key.
+ * - The read loads when the table mounts, and again after every write on the
+ *   transport that the table did not send itself (`table-load.ts`).
+ * - The scope bar holds the declared scope filters, with the control each
+ *   match mode takes, and the server search when the read declares one. A
+ *   filter that the caller fixes is not offered. A scope change, a cap change
+ *   and a refresh each start a new load.
+ * - A cell of an update field edits in place (`edit-cell.tsx`).
+ * - A row shows a button for each operation the page gives a handler.
+ * - A child table is this component again, with its scope filter fixed to the
+ *   parent row's key, in the detail of its row (`child-tables.tsx`).
+ * - An action that takes many rows and names its form is a bulk action
+ *   (`bulk.tsx`).
+ * - The state has its views and its place in the URL (`table-state.ts`).
  *
- * It renders the DataTable alone, so a page places it, and a child fills the
- * expanded area of its row.
- *
- * An action that takes many rows and names its form is a bulk action. It
- * opens that form in a sheet, with the values each selected row fills. One
- * submission sends one input for each row in one call, and each row shows
- * its own outcome.
+ * When the last load that ended read every row, a `SetTable` shows the rows,
+ * with its filters, search, groups, totals and export. Otherwise the grid
+ * shows them as the read returned them, and a header click on a declared sort
+ * field loads again in that order. A load in progress changes neither, so a
+ * reload after a write neither unmounts a set table nor flickers. The state of
+ * every part stays here while the other shows.
  */
 
-import { type Component, For, type JSX, Show, createSignal, onCleanup } from "solid-js";
-import { Dynamic } from "solid-js/web";
+import { createEffect, createSignal, For, type JSX, Show } from "solid-js";
 
-import {
-  afterWrites,
-  boundedPage,
-  callOperation,
-  fillMember,
-  type FieldMap,
-  fromWire,
-  isStreamReply,
-  type JsonValue,
-  type LoadEnd,
-  type LoadPage,
-  type MemberPath,
-  type OperationBinding,
-  type Outcome,
-  openStream,
-  readLoadLines,
-  readMember,
-  refusalSentence,
-  type RowKey,
-  type SuppliedInput,
-  type Transport,
-  writeMember,
-  writeSupplied,
-} from "@wamn/web-runtime";
+import { callOperation, type Outcome, rowKey, type Transport, writeMember } from "@wamn/web-runtime";
 
 import { Button } from "../components/ui/button";
-import { Sheet, SheetContent, SheetHeader, SheetTitle } from "../components/ui/sheet";
-import { announceOutcome } from "../outcome";
+import { TextField } from "../fields";
 import { createRecordLabels } from "../record-labels";
-import type { DataTableRowResult } from "./bulk";
-import type { DataTableChild } from "./child-tables";
-import { DataTable, type DataTableColumn } from "./data-table";
-import type { DataTableEditResult } from "./edit-cell";
-import type { DataTableScopeFilter } from "./scope-bar";
-import { createTableLoad, type TableLoadSort, type TableStream } from "./table-load";
+import { allowedAggregates } from "./aggregate";
+import { createBulk, fillOf } from "./bulk";
+import { type ChildTable, createChildAreas, expandColumn } from "./child-tables";
+import { ColumnPanel } from "./column-panel";
+import { type BuiltColumn, shownText, startWidth, type TableColumn, type TableSort } from "./columns";
+import { createEdits } from "./edit-cell";
+import type { GridDetail } from "./grid";
+import { defaultGridView } from "./grid-view";
+import type { QueryTableDefinition } from "./query-definition";
+import { defaultQueryView } from "./query-view";
+import { ScopeBar, type ScopeFilter, type ScopeMode, scopeApplies } from "./scope-bar";
+import { ServerGrid } from "./server-grid";
+import { SetTable } from "./set-table";
+import { defaultSetView } from "./set-view";
+import { createQueryLoad, DEFAULT_CAP, fixedBy } from "./table-load";
+import { createTableState } from "./table-state";
+import type { TableView, ViewDeclaration } from "./view";
+import { same } from "./view-parts";
+import { ViewBar } from "./view-bar";
 
-/** One column of a definition. A column that names a record names the read of its text. */
-export type QueryTableColumn<TRow extends object> = Omit<DataTableColumn<TRow>, "cell"> & {
-  /** The member of the record read's result that the cell shows. */
-  readonly displayField?: string;
-  /** The read that returns one record by the key this column holds. */
-  readonly recordRead?: { readonly read: OperationBinding; readonly keyInput: MemberPath };
-};
-
-/** How a scope filter matches a value: exactly when the definition states none. */
-export type QueryTableMatch = "contains" | "prefix" | "range" | "is_null";
-
-/**
- * One declared scope filter: the row member, its input path, whether it takes
- * a list, and how it matches. A range states the contract type of its bounds.
- * A band is a required range, which reads the last `defaultLastDays` days when
- * a request leaves it out.
- */
-export interface QueryTableFilter {
-  readonly field: string;
-  readonly input: MemberPath;
-  readonly list: boolean;
-  readonly match?: QueryTableMatch;
-  readonly type?: string;
-  readonly required?: boolean;
-  readonly defaultLastDays?: number;
-}
-
-/** A read's server search: its input, and the row members it reads. */
-export interface QueryTableSearch {
-  readonly input: MemberPath;
-  readonly fields: readonly string[];
-}
-
-/** A row member and the input it fills. A `"[]"` in the input marks a repeated member. */
-export interface QueryTableFill {
-  readonly field: string;
-  readonly input: MemberPath;
-}
-
-/** One operation a row opens: a record by the row, or a form the row fills. */
-export interface QueryTableAction {
-  readonly operation: string;
-  readonly label: string;
-  /** True when one call takes many rows. */
-  readonly many: boolean;
-  readonly opens: "record" | "form";
-  /** The inputs of the form that the row fills. */
-  readonly fill: readonly QueryTableFill[];
-  /** The revision the row carries for the record it fills, and the input that sends it. */
-  readonly revision?: QueryTableFill;
-  /** The form that sends one input for each of many rows, which a bulk action opens. */
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- a form or a table of any row shape.
-  readonly form?: () => Component<any>;
-}
-
-/** The update a cell edits through. */
-export interface QueryTableUpdate {
-  readonly binding: OperationBinding;
-  /** The input that names the row, which takes the row's one key field. */
-  readonly keyInput: MemberPath;
-  readonly revisionInput?: MemberPath;
-  readonly revisionField?: string;
-  readonly supplied: readonly SuppliedInput[];
-  /** Each editable column and the input it writes. */
-  readonly fields: readonly QueryTableFill[];
-}
-
-/** One child table: its definition, and the column of its scope filter that names the parent. */
-export interface QueryTableChild {
-  readonly label: string;
-  /** Returns the child's definition. A function, so modules that import each other load. */
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- a form or a table of any row shape.
-  readonly table: () => QueryTableDefinition<any>;
-  readonly scopeFilter: string;
-}
-
-/** The table definition the emitter writes for one read. */
-export interface QueryTableDefinition<TRow extends object> {
-  /** The table's name, which the file name of a CSV export starts with. */
-  readonly name: string;
-  readonly read: OperationBinding;
-  /** `item` for one page of a paged read, `rows` for every row of a bounded read. */
-  readonly rows: "item" | "rows";
-  readonly rowId: RowKey<TRow>;
-  readonly pageMaximum: number | null;
-  readonly limitInput: MemberPath | null;
-  readonly sortFieldInput: MemberPath | null;
-  readonly sortDirectionInput: MemberPath | null;
-  readonly filters: readonly QueryTableFilter[];
-  readonly scopeFilters: readonly (keyof TRow & string)[];
-  readonly search?: QueryTableSearch;
-  readonly sortFields: readonly { readonly field: keyof TRow & string; readonly wire: string }[];
-  readonly sortMaxFields: number;
-  readonly columns: readonly QueryTableColumn<TRow>[];
-  readonly update?: QueryTableUpdate;
-  readonly actions: readonly QueryTableAction[];
-  readonly childTables: readonly QueryTableChild[];
-}
+export type {
+  QueryTableAction,
+  QueryTableChild,
+  QueryTableColumn,
+  QueryTableDefinition,
+  QueryTableFill,
+  QueryTableFilter,
+  QueryTableMatch,
+  QueryTableSearch,
+  QueryTableUpdate,
+} from "./query-definition";
 
 export interface QueryTableProps<TRow extends object, TResult = unknown> {
   readonly definition: QueryTableDefinition<TRow>;
@@ -178,304 +84,125 @@ export interface QueryTableProps<TRow extends object, TResult = unknown> {
   readonly onFill?: { readonly [operation: string]: (initial: object) => void } | undefined;
   /** Called with every outcome of the read. */
   readonly onOutcome?: ((outcome: Outcome<TResult>) => void) | undefined;
+  /**
+   * The key of the table's state in the URL, such as the definition name.
+   * Only a top-level table has one. A table without one stays out of the URL.
+   */
+  readonly urlKey?: string | undefined;
+  /** The fields hidden when the table first draws. A view replaces them later. */
+  readonly hiddenFields?: readonly (keyof TRow & string)[] | undefined;
+  /** The fields grouped when the table first draws, in nesting order. A view replaces them later. */
+  readonly groupedFields?: readonly (keyof TRow & string)[] | undefined;
+  /** The time zone of a time's bucket. The default is the browser's zone. */
+  readonly timeZone?: string | undefined;
+  /** The ISO weekday a week bucket starts on, 1 for Monday, the default. */
+  readonly weekStart?: number | undefined;
 }
+
+/** The line that says where the set features are while the set is not fully read. */
+export const SET_NEEDS_FULL_SET =
+  "Filters, search, grouping, totals and CSV export show when every row is read. Raise the cap to read every row.";
+
+/** The id of the last column, which holds the buttons of each row. */
+const ACTIONS_COLUMN = "rowActions";
 
 type Member = { readonly [name: string]: unknown };
-
-/**
- * One bound of a range, as the contract type spells it. A time control gives
- * a local time, which the request sends as an instant. An int32 and a float64
- * are JSON numbers, and a numeric is a decimal string.
- */
-function rangeBound(type: string | undefined, text: string): JsonValue {
-  switch (type) {
-    case "timestamptz":
-      return new Date(text).toISOString();
-    case "int32":
-    case "float64":
-      return Number(text);
-    default:
-      return text;
-  }
-}
-
-/** The request value of one scope filter: a list, one value, a range, or whether the field is empty. */
-function scopeValue(filter: QueryTableFilter, chosen: DataTableScopeFilter): JsonValue {
-  if (chosen.empty !== undefined) {
-    return chosen.empty;
-  }
-  if (chosen.range !== undefined) {
-    const { min, max } = chosen.range;
-    return {
-      ...(min === "" ? {} : { min: rangeBound(filter.type, min) }),
-      ...(max === "" ? {} : { max: rangeBound(filter.type, max) }),
-    };
-  }
-  return filter.list ? [...chosen.values] : chosen.values[0]!;
-}
-
-/** What one outcome of a row's input in a bulk action means to that row. */
-function rowResult(outcome: Outcome<unknown>): DataTableRowResult {
-  switch (outcome.status) {
-    case "completed":
-      return { status: "completed" };
-    case "refused":
-      return { status: "refused", message: refusalSentence(outcome.code, outcome.text) };
-    case "uncertain":
-      return { status: "uncertain", message: outcome.reason };
-    default:
-      return { status: "uncertain", message: "partially completed" };
-  }
-}
-
-/** One bulk action the operator opened: its action, each row's values, and where its results go. */
-interface BulkRun {
-  readonly action: QueryTableAction;
-  readonly rows: readonly object[];
-  readonly finish: (results: readonly DataTableRowResult[]) => void;
-}
-
-/** What one outcome of an inline edit means to its cell. */
-function editResult<TRow>(outcome: Outcome<unknown>, row: TRow): DataTableEditResult<TRow> {
-  switch (outcome.status) {
-    case "completed": {
-      // The row takes the members the write returned, and keeps the rest.
-      const written = (outcome.value ?? {}) as Member;
-      const next = { ...row } as Member & TRow;
-      for (const name of Object.keys(next)) {
-        if (name in written) {
-          (next as { [name: string]: unknown })[name] = written[name];
-        }
-      }
-      return { status: "completed", row: next };
-    }
-    case "refused":
-      return {
-        status: outcome.code === "concurrency_conflict" ? "conflict" : "refused",
-        message: refusalSentence(outcome.code, outcome.text),
-      };
-    case "uncertain":
-      return { status: "uncertain", message: outcome.reason };
-    default:
-      return { status: "uncertain", message: "partially completed" };
-  }
-}
-
-/** The field map of the values inside one member of a result, or none. */
-function nestedFields(fields: FieldMap, member: string): FieldMap {
-  const entry = fields[member];
-  return entry === undefined || typeof entry === "string" ? {} : entry.fields;
-}
 
 export function QueryTable<TRow extends object, TResult = unknown>(props: QueryTableProps<TRow, TResult>): JSX.Element {
   // The definition and the transport name one table for its whole life.
   const definition = props.definition;
   const transport = props.transport;
-  const [scope, setScope] = createSignal<readonly DataTableScopeFilter[]>([]);
-  const [find, setFind] = createSignal("");
-  // True while this table sends a write, whose result it puts in place itself.
-  let writing = false;
+  const idOf = (row: TRow) => rowKey(row, definition.rowId);
+  const column = (field: string) => definition.columns.find((candidate) => candidate.field === field);
+  const labelOf = (field: string) => column(field)?.label ?? field;
 
-  const fixedBy = (filter: QueryTableFilter) => readMember(props.fixed ?? {}, filter.input) !== undefined;
-
-  // The request of one load: the fixed and chosen scope, the server search,
-  // the limit and the sort. A band the operator did not set is left out, so
-  // the server reads its default days.
-  const request = (limit: number, sort: TableLoadSort | undefined): object => {
-    let request = { ...props.fixed } as object;
-    for (const chosen of scope()) {
-      const filter = definition.filters.find((declared) => declared.field === chosen.field);
-      if (filter !== undefined && !fixedBy(filter)) {
-        request = writeMember(request, filter.input, scopeValue(filter, chosen));
-      }
-    }
-    if (definition.search !== undefined && find() !== "") {
-      request = writeMember(request, definition.search.input, find());
-    }
-    if (definition.limitInput !== null) {
-      request = writeMember(request, definition.limitInput, limit);
-    }
-    if (sort !== undefined) {
-      if (definition.sortFieldInput !== null) {
-        request = writeMember(request, definition.sortFieldInput, sort.field);
-      }
-      if (definition.sortDirectionInput !== null) {
-        request = writeMember(request, definition.sortDirectionInput, sort.direction);
-      }
-    }
-    return request;
-  };
-
-  // The request and the ETag of the last load that read to its end. The
-  // same request revalidates its rows with that ETag.
-  let lastLoad: { readonly request: string; readonly etag: string } | undefined;
-
-  // A page read streams its load, up to the cap, when the transport can.
-  const stream: TableStream<TRow> | undefined =
-    definition.rows === "item" && transport.openStream !== undefined
-      ? async (cap, sort, signal, onRows) => {
-          const item = request(cap, sort);
-          const key = JSON.stringify(item);
-          const opened = await openStream<LoadPage<TRow>>(
-            transport,
-            definition.read,
-            item,
-            signal,
-            lastLoad?.request === key ? lastLoad.etag : undefined,
-          );
-          if (isStreamReply(opened) && "notModified" in opened) {
-            return { status: "unchanged" };
-          }
-          let end: LoadEnd;
-          if (isStreamReply(opened)) {
-            const rowFields = nestedFields(definition.read.result, "item");
-            end = await readLoadLines(
-              opened.body,
-              (row) => fromWire(row, rowFields) as TRow,
-              onRows,
-              definition.read.route.contract.errors,
-            );
-            lastLoad =
-              end.status === "completed" && opened.etag !== null ? { request: key, etag: opened.etag } : undefined;
-          } else if (opened.status === "completed") {
-            onRows(opened.value.item);
-            end = { status: "completed", value: { more: opened.value.nextCursor !== null } };
-          } else {
-            end = opened as Outcome<never>;
-          }
-          // A streamed load reports only a load that did not complete.
-          if (end.status !== "completed") {
-            props.onOutcome?.(end as Outcome<unknown> as Outcome<TResult>);
-            announceOutcome(end, props.label);
-          }
-          return end;
-        }
-      : undefined;
-
-  const load = createTableLoad<TRow>(
-    definition,
-    async (limit, sort) => {
-      const outcome = await callOperation<LoadPage<TRow> & { readonly rows: readonly TRow[] }>(
-        transport,
-        definition.read,
-        [request(limit, sort)],
-      );
-      props.onOutcome?.(outcome as Outcome<unknown> as Outcome<TResult>);
-      if (outcome.status !== "completed") {
-        announceOutcome(outcome, props.label);
-      }
-      return definition.rows === "rows" ? boundedPage(outcome) : outcome;
-    },
-    stream,
-  );
-  void load.load();
-  onCleanup(
-    afterWrites(transport, () => {
-      if (!writing) {
-        void load.load();
-      }
-    }),
-  );
-
-  // A column that names a record shows the text its record read returns.
-  const columns: readonly DataTableColumn<TRow>[] = definition.columns.map((column) => {
-    const { recordRead, displayField, ...shown } = column;
-    if (recordRead === undefined || displayField === undefined) {
-      return shown;
-    }
-    const labels = createRecordLabels(transport, async (key) => {
-      const outcome = await callOperation<Member>(transport, recordRead.read, [
-        writeMember({}, recordRead.keyInput, key),
-      ]);
-      if (outcome.status !== "completed") {
-        return null;
-      }
-      const text = outcome.value[displayField];
-      return text == null ? null : String(text);
-    });
-    return { ...shown, cell: (value: unknown) => <>{labels(value as string | null)}</> };
+  const scopeFields = definition.scopeFilters.filter((field) => {
+    const filter = definition.filters.find((declared) => declared.field === field);
+    return filter === undefined || !fixedBy(props.fixed, filter);
   });
-
-  const fill = (action: QueryTableAction, row: TRow) =>
-    action.fill.reduce<object>(
-      (initial, { field, input }) => fillMember(initial, input, (row as Member)[field] as JsonValue),
-      {},
-    );
-
-  // A bulk action needs a transport that sends many outer inputs in one call.
-  const bulkActions =
-    transport.invokeEach === undefined
-      ? []
-      : definition.actions.filter((action) => action.many && action.form !== undefined);
-  const [bulk, setBulk] = createSignal<BulkRun | null>(null);
-  const finishBulk = (results: readonly DataTableRowResult[]) => {
-    const run = bulk();
-    setBulk(null);
-    run?.finish(results);
+  const modeOf = (field: string): ScopeMode => {
+    const filter = definition.filters.find((declared) => declared.field === field);
+    return {
+      match: filter?.match,
+      type: filter?.type,
+      required: filter?.required,
+      defaultLastDays: filter?.defaultLastDays,
+    };
   };
-  const runBulk = (operation: string, rows: readonly TRow[]) =>
-    new Promise<readonly DataTableRowResult[]>((finish) => {
-      const action = bulkActions.find((candidate) => candidate.operation === operation)!;
-      const revision = action.revision;
-      setBulk({
-        action,
-        rows: rows.map((row) => {
-          const filled = fill(action, row);
-          return revision === undefined
-            ? filled
-            : writeMember(filled, revision.input, (row as Member)[revision.field] as JsonValue);
-        }),
-        finish,
-      });
+
+  const declaration: ViewDeclaration = {
+    columns: definition.columns.map((declared) => ({
+      field: declared.field,
+      time: declared.type === "timestamptz",
+      groupable: declared.type !== "json" && declared.type !== "bytes",
+      aggregates: allowedAggregates(declared.type),
+    })),
+    scopeFilters: scopeFields,
+  };
+  const defaults: TableView = {
+    grid: defaultGridView(
+      definition.columns.map((declared) => declared.field),
+      props.hiddenFields,
+    ),
+    query: defaultQueryView(DEFAULT_CAP),
+    set: defaultSetView(
+      (props.groupedFields ?? []).map((field) => ({ field, time: column(field)?.type === "timestamptz" })),
+    ),
+  };
+  // The values the scope bar holds, a band without its start among them. The query holds the ones that apply.
+  const [scopeDraft, setScopeDraft] = createSignal<Readonly<Record<string, ScopeFilter>>>({});
+  const state = createTableState({
+    declaration,
+    defaults,
+    urlKey: props.urlKey,
+    // A change of what the read is asked reads again, and so does a sort on a set that is not fully read.
+    onApply: (before, after) => {
+      setScopeDraft(Object.fromEntries(after.query.scope.map((scope) => [scope.field, scope])));
+      const asked = (query: TableView["query"]) => [query.scope, query.find, query.cap];
+      if (!same(asked(before), asked(after.query)) || (!load.complete() && !same(before.sort, after.query.sort))) {
+        load.reload();
+      }
+    },
+  });
+  setScopeDraft(Object.fromEntries(state.view().query.scope.map((scope) => [scope.field, scope])));
+  const query = () => state.view().query;
+
+  const load = createQueryLoad<TRow, TResult>(definition, {
+    transport,
+    label: props.label,
+    fixed: props.fixed,
+    onOutcome: props.onOutcome,
+    query,
+  });
+  load.reload();
+
+  function changeQuery(change: Partial<TableView["query"]>) {
+    state.setQuery(change);
+    load.reload();
+  }
+  /** A sort reads again only when the set is not fully read. A fully read set sorts its rows. */
+  function changeSort(sort: readonly TableSort[]) {
+    state.setQuery({ sort });
+    if (!load.complete()) {
+      load.reload();
+    }
+  }
+  function changeScope(filter: ScopeFilter) {
+    const next = { ...scopeDraft(), [filter.field]: filter };
+    setScopeDraft(next);
+    changeQuery({
+      scope: scopeFields.flatMap((field) => {
+        const chosen = next[field];
+        return chosen !== undefined && scopeApplies(chosen, modeOf(field)) ? [chosen] : [];
+      }),
     });
+  }
 
-  // The buttons of one row: each operation it opens, when the page takes it.
-  const rowActions =
-    definition.actions.length === 0
-      ? undefined
-      : (row: TRow) => (
-          <For each={definition.actions}>
-            {(action) => {
-              const opened = action.opens === "record" ? props.onOpen?.[action.operation] : undefined;
-              const filled = action.opens === "form" ? props.onFill?.[action.operation] : undefined;
-              return (
-                <Show when={opened ?? filled}>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    onClick={() => (opened !== undefined ? opened(row) : filled?.(fill(action, row)))}
-                  >
-                    {action.label}
-                  </Button>
-                </Show>
-              );
-            }}
-          </For>
-        );
-
-  const update = definition.update;
-  const edit =
-    update === undefined
-      ? undefined
-      : async (row: TRow, field: string, value: unknown): Promise<DataTableEditResult<TRow>> => {
-          const target = update.fields.find((editable) => editable.field === field)!;
-          const member = row as Member;
-          let request = writeMember({}, update.keyInput, member[definition.rowId[0]!] as JsonValue);
-          if (update.revisionInput !== undefined && update.revisionField !== undefined) {
-            request = writeMember(request, update.revisionInput, member[update.revisionField] as JsonValue);
-          }
-          request = writeSupplied(writeMember(request, target.input, value as JsonValue), update.supplied);
-          writing = true;
-          try {
-            return editResult(await callOperation(transport, update.binding, [request]), row);
-          } finally {
-            writing = false;
-          }
-        };
+  const edits = createEdits({ definition, load, transport, idOf, sort: () => query().sort });
+  const bulk = createBulk({ definition, transport, load, idOf });
 
   // Each child is this table again, with its scope filter fixed to the row's key.
-  const childTables: readonly DataTableChild[] = definition.childTables.map((child) => ({
+  const childTables: readonly ChildTable[] = definition.childTables.map((child) => ({
     label: child.label,
     render: (key: string) => {
       const table = child.table();
@@ -492,78 +219,183 @@ export function QueryTable<TRow extends object, TResult = unknown>(props: QueryT
       );
     },
   }));
+  const areas = createChildAreas(() => childTables);
+  createEffect(() => areas.keepOnly(new Set(load.state().rows.map(idOf))));
+  const detail: GridDetail<TRow> | undefined =
+    childTables.length === 0 ? undefined : { open: areas.open, render: (row) => areas.area(idOf(row), idOf(row)) };
+
+  // A column that names a record shows the text its record read returns.
+  const declaredColumns: readonly TableColumn<TRow>[] = definition.columns.map((declared) => {
+    const { recordRead, displayField, ...shown } = declared;
+    if (recordRead === undefined || displayField === undefined) {
+      return shown;
+    }
+    const labels = createRecordLabels(transport, async (key) => {
+      const outcome = await callOperation<Member>(transport, recordRead.read, [
+        writeMember({}, recordRead.keyInput, key),
+      ]);
+      const text = outcome.status === "completed" ? outcome.value[displayField] : null;
+      return text == null ? null : String(text);
+    });
+    return { ...shown, cell: (value: unknown) => <>{labels(value as string | null)}</> };
+  });
+
+  // The buttons of one row: each operation it opens, when the page takes it.
+  const rowActions = (row: TRow) => (
+    <div class="flex gap-2">
+      <For each={definition.actions}>
+        {(action) => {
+          const opened = action.opens === "record" ? props.onOpen?.[action.operation] : undefined;
+          const filled = action.opens === "form" ? props.onFill?.[action.operation] : undefined;
+          return (
+            <Show when={opened ?? filled}>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => (opened !== undefined ? opened(row) : filled?.(fillOf(action, row)))}
+              >
+                {action.label}
+              </Button>
+            </Show>
+          );
+        }}
+      </For>
+    </div>
+  );
+
+  // The columns as the grid renders them: the row selection, the child tables'
+  // expand, the declared columns, and the row buttons.
+  const columns: readonly BuiltColumn<TRow>[] = [
+    ...bulk.columns(),
+    ...(childTables.length === 0 ? [] : [expandColumn<TRow>(areas)]),
+    ...declaredColumns.map((declared): BuiltColumn<TRow> => ({
+      id: declared.field,
+      declared,
+      size: startWidth(declared.type),
+      cell: edits.cell(declared, (row) => declared.cell?.(row[declared.field]) ?? shownText(row[declared.field])),
+    })),
+    ...(definition.actions.length === 0 ? [] : [{ id: ACTIONS_COLUMN, size: 150, header: () => "", cell: rowActions }]),
+  ];
+
+  const view = state.view;
+  const loaded = load.state;
+  const gridClass = "h-auto min-h-0 flex-1 [&_tr:has([data-slot=table-row-conflict])]:bg-destructive/10";
 
   return (
-    <>
-      <DataTable
-        name={definition.name}
-        columns={columns}
-        rowId={definition.rowId}
-        rows={load.state().rows}
-        fullyRead={load.state().fullyRead}
-        busy={load.state().busy}
-        refusal={load.state().refusal}
-        cap={load.state().cap}
-        onCapChange={(cap) => void load.load(cap)}
-        onRefresh={() => void load.load()}
-        startedAt={load.state().startedAt}
-        endedAt={load.state().endedAt}
-        sortFields={definition.sortFields}
-        sortMaxFields={definition.sortMaxFields}
-        onSortChange={load.sortBy}
-        scopeFilters={definition.scopeFilters.filter((field) => {
-          const filter = definition.filters.find((declared) => declared.field === field);
-          return filter === undefined || !fixedBy(filter);
-        })}
-        scopeModes={Object.fromEntries(
-          definition.filters.map((filter) => [
-            filter.field,
-            {
-              match: filter.match,
-              type: filter.type,
-              required: filter.required,
-              defaultLastDays: filter.defaultLastDays,
-            },
-          ]),
-        )}
-        findable={definition.search !== undefined}
-        onScopeChange={(filters, text) => {
-          setScope(filters);
-          setFind(text);
-          void load.load();
-        }}
-        rowActions={rowActions}
-        editableFields={update?.fields.map((editable) => editable.field as keyof TRow & string)}
-        onEdit={edit}
-        onEditing={load.hold}
-        onRowChange={load.replaceRow}
-        onReload={() => void load.load()}
-        childTables={childTables.length === 0 ? undefined : childTables}
-        bulkActions={bulkActions.length === 0 ? undefined : bulkActions}
-        onBulk={bulkActions.length === 0 ? undefined : runBulk}
-      />
-      {/* A closed sheet ran nothing, so no row shows a result. */}
-      <Sheet open={bulk() !== null} onOpenChange={(open) => !open && finishBulk([])}>
-        <SheetContent>
-          <Show when={bulk()}>
-            {(run) => (
-              <div class="flex flex-col gap-4 overflow-y-auto p-4">
-                <SheetHeader>
-                  <SheetTitle as="p">
-                    {run().action.label} on {run().rows.length} rows
-                  </SheetTitle>
-                </SheetHeader>
-                <Dynamic
-                  component={run().action.form!()}
-                  transport={transport}
-                  rows={run().rows}
-                  onEach={(outcomes: readonly Outcome<unknown>[]) => finishBulk(outcomes.map(rowResult))}
-                />
-              </div>
-            )}
+    <section data-slot="query-table" class="flex h-full min-h-0 min-w-0 flex-col gap-4">
+      <Show when={scopeFields.length > 0 || query().sort.length > 0 || definition.search !== undefined}>
+        <ScopeBar
+          filters={scopeFields.map((field) => ({
+            ...(scopeDraft()[field] ?? { field, values: [] }),
+            label: labelOf(field),
+            mode: modeOf(field),
+          }))}
+          find={definition.search === undefined ? undefined : query().find}
+          sort={query().sort.map((sort) => `${labelOf(sort.field)} ${sort.direction}`)}
+          onChange={changeScope}
+          onFind={(find) => changeQuery({ find })}
+        />
+      </Show>
+      <div data-slot="table-toolbar" class="flex shrink-0 flex-wrap items-end justify-between gap-4">
+        <div class="flex items-end gap-2">
+          <div class="w-32">
+            <TextField
+              label="cap"
+              type="number"
+              min={1}
+              value={String(query().cap)}
+              onChange={(value) => {
+                const cap = Number(value);
+                if (Number.isInteger(cap) && cap > 0) {
+                  changeQuery({ cap });
+                }
+              }}
+            />
+          </div>
+          <Button type="button" variant="outline" disabled={loaded().busy || edits.open()} onClick={load.reload}>
+            refresh
+          </Button>
+          <ViewBar
+            names={state.views.names()}
+            chosen={state.views.chosen()}
+            ignored={state.ignored}
+            onPick={state.views.pick}
+            onSave={state.views.save}
+            onRename={state.views.rename}
+            onDelete={state.views.remove}
+            onReset={state.views.reset}
+          />
+          <ColumnPanel
+            columns={view().grid.order.map((field) => ({
+              id: field,
+              label: labelOf(field),
+              visible: !view().grid.hidden.includes(field),
+            }))}
+            onVisible={(id, visible) =>
+              state.setGrid({
+                ...view().grid,
+                hidden: visible ? view().grid.hidden.filter((field) => field !== id) : [...view().grid.hidden, id],
+              })
+            }
+            onOrder={(order) => state.setGrid({ ...view().grid, order: [...order] })}
+            onShowAll={() => state.setGrid({ ...view().grid, hidden: [] })}
+            onReset={() => state.setGrid({ ...view().grid, order: [...defaults.grid.order] })}
+          />
+        </div>
+        <div data-slot="table-status" role="status" class="flex flex-col items-end gap-1 text-sm text-muted-foreground">
+          <Show when={loaded().startedAt}>{(at) => <p>started {at().toLocaleTimeString()}</p>}</Show>
+          <Show when={loaded().endedAt}>{(at) => <p>ended {at().toLocaleTimeString()}</p>}</Show>
+          <Show when={loaded().busy}>
+            <p>Loading...</p>
           </Show>
-        </SheetContent>
-      </Sheet>
-    </>
+          <Show when={!loaded().busy && !loaded().fullyRead && loaded().refusal === null}>
+            <p class="text-foreground">Full dataset cannot be loaded</p>
+            <p>{SET_NEEDS_FULL_SET}</p>
+          </Show>
+        </div>
+      </div>
+      <bulk.Bar />
+      <Show
+        when={load.complete()}
+        fallback={
+          <ServerGrid
+            rows={loaded().rows}
+            rowId={idOf}
+            columns={columns}
+            sortFields={definition.sortFields.map((sort) => sort.field)}
+            sortMaxFields={definition.sortMaxFields}
+            grid={view().grid}
+            onGrid={state.setGrid}
+            sort={query().sort}
+            onSort={changeSort}
+            busy={loaded().busy}
+            emptyMessage={loaded().refusal}
+            detail={detail}
+            class={gridClass}
+          />
+        }
+      >
+        <SetTable
+          name={definition.name}
+          rows={load.rows()}
+          rowId={idOf}
+          columns={columns}
+          view={view().set}
+          onView={state.setSet}
+          grid={view().grid}
+          onGrid={state.setGrid}
+          sort={query().sort}
+          onSort={changeSort}
+          sortMaxFields={definition.sortMaxFields}
+          detail={detail}
+          emptyMessage={loaded().refusal}
+          gridClass={gridClass}
+          timeZone={props.timeZone}
+          weekStart={props.weekStart}
+        />
+      </Show>
+      <bulk.Form />
+    </section>
   );
 }

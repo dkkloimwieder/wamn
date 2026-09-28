@@ -1,5 +1,5 @@
 /**
- * The scope bar of the DataTable (wamn-9v2r.1, wamn-3nsf.5).
+ * The scope bar of a QueryTable (wamn-9v2r.1, wamn-3nsf.5).
  *
  * The scope is the server part of a load: the declared scope filters, the
  * server search and the sort. The bar shows one control for each scope filter,
@@ -25,10 +25,10 @@ import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
 
 /** How a scope filter matches: exactly when none is stated. */
-export type DataTableScopeMatch = "contains" | "prefix" | "range" | "is_null";
+export type ScopeMatch = "contains" | "prefix" | "range" | "is_null";
 
 /** The bounds of a range scope filter, as its controls hold them. Empty means unbounded. */
-export interface DataTableScopeRange {
+export interface ScopeRange {
   readonly min: string;
   readonly max: string;
 }
@@ -39,16 +39,16 @@ export interface DataTableScopeRange {
  * keeps the empty rows when `empty` is true, and the rows with a value when it
  * is false.
  */
-export interface DataTableScopeFilter<Field extends string = string> {
+export interface ScopeFilter<Field extends string = string> {
   readonly field: Field;
   readonly values: readonly string[];
-  readonly range?: DataTableScopeRange;
+  readonly range?: ScopeRange;
   readonly empty?: boolean;
 }
 
 /** How one declared scope filter matches, and its band default. */
-export interface DataTableScopeMode {
-  readonly match?: DataTableScopeMatch | undefined;
+export interface ScopeMode {
+  readonly match?: ScopeMatch | undefined;
   /** The contract type of a range's bounds. */
   readonly type?: string | undefined;
   readonly required?: boolean | undefined;
@@ -56,7 +56,7 @@ export interface DataTableScopeMode {
 }
 
 /** True when a scope filter narrows the rows. A band needs its start. */
-export function scopeApplies(filter: DataTableScopeFilter, mode: DataTableScopeMode = {}): boolean {
+export function scopeApplies(filter: ScopeFilter, mode: ScopeMode = {}): boolean {
   if (filter.empty !== undefined) {
     return true;
   }
@@ -120,13 +120,13 @@ function ListControl(props: {
 function RangeControl(props: {
   label: string;
   id: string;
-  mode: DataTableScopeMode;
-  range: DataTableScopeRange;
-  onChange: (range: DataTableScopeRange | undefined) => void;
+  mode: ScopeMode;
+  range: ScopeRange;
+  onChange: (range: ScopeRange | undefined) => void;
 }): JSX.Element {
   const time = () => props.mode.type === "timestamptz";
   const band = () => props.mode.required === true;
-  const set = (range: DataTableScopeRange) => props.onChange(range.min === "" && range.max === "" ? undefined : range);
+  const set = (range: ScopeRange) => props.onChange(range.min === "" && range.max === "" ? undefined : range);
   return (
     <>
       <Input
@@ -163,7 +163,7 @@ function RangeControl(props: {
         <Show
           when={props.range.min !== ""}
           fallback={
-            <span data-slot="data-table-scope-band" class="text-xs text-muted-foreground">
+            <span data-slot="table-scope-band" class="text-xs text-muted-foreground">
               last {props.mode.defaultLastDays} days
             </span>
           }
@@ -209,19 +209,19 @@ function EmptyControl(props: {
 
 export function ScopeBar(props: {
   /** Each declared scope filter, with its label, its mode and its current value. */
-  filters: readonly (DataTableScopeFilter & { readonly label: string; readonly mode: DataTableScopeMode })[];
+  filters: readonly (ScopeFilter & { readonly label: string; readonly mode: ScopeMode })[];
   /** The server search, when the read declares one: its current text. */
   find?: string | undefined;
   /** The current sort, as each chip reads. */
   sort: readonly string[];
-  onChange: (filter: DataTableScopeFilter) => void;
+  onChange: (filter: ScopeFilter) => void;
   onFind?: ((text: string) => void) | undefined;
 }): JSX.Element {
   const findId = createUniqueId();
   return (
-    <div data-slot="data-table-scope" class="flex shrink-0 flex-wrap items-center gap-4">
+    <div data-slot="table-scope" class="flex shrink-0 flex-wrap items-center gap-4">
       <Show when={props.find !== undefined}>
-        <div data-slot="data-table-scope-find" class="flex items-center gap-2">
+        <div data-slot="table-scope-find" class="flex items-center gap-2">
           <label for={findId} class="text-xs font-medium uppercase">
             server search
           </label>
@@ -291,7 +291,7 @@ export function ScopeBar(props: {
         }}
       </For>
       <Show when={props.sort.length > 0}>
-        <div data-slot="data-table-scope-sort" class="flex items-center gap-2">
+        <div data-slot="table-scope-sort" class="flex items-center gap-2">
           <span class="text-xs font-medium uppercase">sort</span>
           <For each={props.sort}>{(sort) => <Badge variant="outline">{sort}</Badge>}</For>
         </div>

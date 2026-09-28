@@ -7,22 +7,22 @@
  * end. A boolean is true or false. An id and an int64 equal a value. Every
  * type can also be empty or not empty, and json and bytes can only be that.
  *
- * A filter runs in the table, so it applies only to a fully read set. On a set
- * that is not fully read, the control says why and changes nothing.
+ * A filter runs in the table, which shows it only on a fully read set.
  */
 
 import type { Column } from "@tanstack/solid-table";
 import { ListFilter } from "lucide-solid";
-import { createUniqueId, For, type JSX, Match, Show, Switch } from "solid-js";
+import { createUniqueId, For, type JSX, Match, Switch } from "solid-js";
 
 import { Button } from "../components/ui/button";
 import { Field, FieldLabel } from "../components/ui/field";
 import { Input } from "../components/ui/input";
 import { Popover, PopoverContent, PopoverTitle, PopoverTrigger } from "../components/ui/popover";
-import type { DataTableColumnType, DataTableFeatures } from "./data-table";
+import { isEmpty, type TableColumnType } from "./columns";
+import type { SetFeatures } from "./set-table";
 
 /** The filter of one column, as the table state holds it. */
-export type DataTableFilter =
+export type SetFilter =
   | { readonly kind: "contains"; readonly text: string }
   | { readonly kind: "range"; readonly min: string; readonly max: string }
   | { readonly kind: "is"; readonly value: boolean }
@@ -33,7 +33,7 @@ export type DataTableFilter =
 /** The value filter a column type offers, beside empty and not empty. */
 type ValueFilter = "contains" | "number" | "time" | "is" | "equals" | null;
 
-function valueFilter(type: DataTableColumnType): ValueFilter {
+function valueFilter(type: TableColumnType): ValueFilter {
   switch (type) {
     case "text":
       return "contains";
@@ -54,13 +54,8 @@ function valueFilter(type: DataTableColumnType): ValueFilter {
   }
 }
 
-/** The text a filter control shows when the set is not fully read. */
-export const FILTER_NEEDS_FULL_SET = "Filters apply only to a fully read set. Raise the cap to read every row.";
-
-const isEmpty = (value: unknown) => value === null || value === undefined || value === "";
-
 /** True when a row value of one column type passes the filter. */
-export function filterMatches(type: DataTableColumnType, value: unknown, filter: DataTableFilter): boolean {
+export function filterMatches(type: TableColumnType, value: unknown, filter: SetFilter): boolean {
   switch (filter.kind) {
     case "empty":
       return isEmpty(value);
@@ -85,7 +80,7 @@ export function filterMatches(type: DataTableColumnType, value: unknown, filter:
 }
 
 /** The text of a filter's chip, after the column label. */
-export function filterText(type: DataTableColumnType, filter: DataTableFilter): string {
+export function filterText(type: TableColumnType, filter: SetFilter): string {
   switch (filter.kind) {
     case "empty":
       return "is empty";
@@ -107,15 +102,13 @@ export function filterText(type: DataTableColumnType, filter: DataTableFilter): 
   }
 }
 
-const isValue = (filter: DataTableFilter | undefined, value: boolean) =>
-  filter?.kind === "is" && filter.value === value;
+const isValue = (filter: SetFilter | undefined, value: boolean) => filter?.kind === "is" && filter.value === value;
 
 /** One labeled input of a filter control. */
 function FilterInput(props: {
   label: string;
   type: "text" | "number" | "datetime-local";
   value: string;
-  disabled: boolean;
   onInput: (value: string) => void;
 }): JSX.Element {
   const id = createUniqueId();
@@ -126,7 +119,6 @@ function FilterInput(props: {
         id={id}
         type={props.type}
         value={props.value}
-        disabled={props.disabled}
         onInput={(event) => props.onInput(event.currentTarget.value)}
       />
     </Field>
@@ -135,14 +127,12 @@ function FilterInput(props: {
 
 /** The filter control in one column header. */
 export function ColumnFilter<TRow extends object>(props: {
-  column: Column<DataTableFeatures, TRow, unknown>;
-  type: DataTableColumnType;
+  column: Column<SetFeatures, TRow, unknown>;
+  type: TableColumnType;
   label: string;
-  /** False when the set is not fully read. */
-  enabled: boolean;
 }): JSX.Element {
-  const current = () => props.column.getFilterValue() as DataTableFilter | undefined;
-  const set = (filter: DataTableFilter | undefined) => props.column.setFilterValue(filter);
+  const current = () => props.column.getFilterValue() as SetFilter | undefined;
+  const set = (filter: SetFilter | undefined) => props.column.setFilterValue(filter);
   const range = () => {
     const filter = current();
     return filter?.kind === "range" ? filter : { kind: "range" as const, min: "", max: "" };
@@ -157,8 +147,6 @@ export function ColumnFilter<TRow extends object>(props: {
         ? filter.value
         : "";
   };
-  const disabled = () => !props.enabled;
-
   return (
     <Popover>
       <PopoverTrigger
@@ -171,16 +159,12 @@ export function ColumnFilter<TRow extends object>(props: {
       </PopoverTrigger>
       <PopoverContent class="flex flex-col gap-3">
         <PopoverTitle>filter {props.label}</PopoverTitle>
-        <Show when={disabled()}>
-          <p class="text-sm text-muted-foreground">{FILTER_NEEDS_FULL_SET}</p>
-        </Show>
         <Switch>
           <Match when={valueFilter(props.type) === "contains"}>
             <FilterInput
               label="contains"
               type="text"
               value={text("contains")}
-              disabled={disabled()}
               onInput={(value) => set(value === "" ? undefined : { kind: "contains", text: value })}
             />
           </Match>
@@ -189,7 +173,6 @@ export function ColumnFilter<TRow extends object>(props: {
               label="equals"
               type="text"
               value={text("equals")}
-              disabled={disabled()}
               onInput={(value) => set(value === "" ? undefined : { kind: "equals", value })}
             />
           </Match>
@@ -199,14 +182,12 @@ export function ColumnFilter<TRow extends object>(props: {
                 label={valueFilter(props.type) === "time" ? "from" : "min"}
                 type={valueFilter(props.type) === "time" ? "datetime-local" : "number"}
                 value={range().min}
-                disabled={disabled()}
                 onInput={(value) => setRange(value, range().max)}
               />
               <FilterInput
                 label={valueFilter(props.type) === "time" ? "to" : "max"}
                 type={valueFilter(props.type) === "time" ? "datetime-local" : "number"}
                 value={range().max}
-                disabled={disabled()}
                 onInput={(value) => setRange(range().min, value)}
               />
             </div>
@@ -219,7 +200,6 @@ export function ColumnFilter<TRow extends object>(props: {
                     type="button"
                     size="sm"
                     variant={isValue(current(), value) ? "default" : "outline"}
-                    disabled={disabled()}
                     onClick={() => set({ kind: "is", value })}
                   >
                     {String(value)}
@@ -234,7 +214,6 @@ export function ColumnFilter<TRow extends object>(props: {
             type="button"
             size="sm"
             variant={current()?.kind === "empty" ? "default" : "outline"}
-            disabled={disabled()}
             onClick={() => set({ kind: "empty" })}
           >
             is empty
@@ -243,7 +222,6 @@ export function ColumnFilter<TRow extends object>(props: {
             type="button"
             size="sm"
             variant={current()?.kind === "not-empty" ? "default" : "outline"}
-            disabled={disabled()}
             onClick={() => set({ kind: "not-empty" })}
           >
             is not empty
@@ -252,7 +230,7 @@ export function ColumnFilter<TRow extends object>(props: {
             type="button"
             size="sm"
             variant="ghost"
-            disabled={disabled() || current() === undefined}
+            disabled={current() === undefined}
             onClick={() => set(undefined)}
           >
             clear

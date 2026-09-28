@@ -1,18 +1,20 @@
 /**
- * The CSV export of the DataTable (wamn-vfvx.5).
+ * The CSV export of a SetTable (wamn-vfvx.5).
  *
- * It saves the rows the filters and the search keep, in the table sort, with
- * the visible columns in their order and each cell's shown text. Group rows
- * and the totals are not exported. It applies only to a fully read set.
+ * It saves the rows the filters and the search keep, in the order the table
+ * shows them, with the visible columns in their order and each cell's shown
+ * text. Group rows and the totals are not exported. A QueryTable offers it
+ * only over a fully read set.
  */
 
-import { cleanup, fireEvent, render, screen } from "@solidjs/testing-library";
+import { cleanup, fireEvent, screen } from "@solidjs/testing-library";
 import { createSignal } from "solid-js";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { DataTable, type DataTableColumn } from "@wamn/ui";
+import type { TableColumn } from "@wamn/ui";
 
-import { theButton } from "./dom.js";
+import { button, theButton } from "./dom.js";
+import { queryTable, setTable, settled } from "./tables.js";
 
 interface Row {
   readonly id: string;
@@ -24,7 +26,7 @@ interface Row {
   readonly secret: string;
 }
 
-const COLUMNS: readonly DataTableColumn<Row>[] = [
+const COLUMNS: readonly TableColumn<Row>[] = [
   { field: "code", label: "code", type: "text" },
   { field: "qty", label: "qty", type: "int32" },
   { field: "note", label: "note", type: "text" },
@@ -72,31 +74,8 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-function table(shape: { fullyRead?: () => boolean; groupedFields?: readonly (keyof Row & string)[] } = {}) {
-  render(() => (
-    <DataTable
-      name="lots"
-      columns={COLUMNS}
-      rowId={["id"]}
-      rows={ROWS}
-      fullyRead={shape.fullyRead?.() ?? true}
-      busy={false}
-      cap={1000}
-      onCapChange={() => {}}
-      refusal={null}
-      onRefresh={() => {}}
-      startedAt={null}
-      endedAt={null}
-      sortFields={[]}
-      sortMaxFields={1}
-      onSortChange={() => {}}
-      scopeFilters={[]}
-      onScopeChange={() => {}}
-      hiddenFields={["secret"]}
-      groupedFields={shape.groupedFields}
-    />
-  ));
-}
+const table = (groupedFields?: readonly (keyof Row & string)[]) =>
+  setTable({ columns: COLUMNS, rows: ROWS, hiddenFields: ["secret"], groupedFields });
 
 /** Export, and return the saved bytes as text, with the byte order mark kept. */
 async function exported(): Promise<string> {
@@ -113,7 +92,7 @@ describe("the CSV export", () => {
   it("quotes by RFC 4180, ends lines in CRLF, starts with a BOM, and names the file by the table", async () => {
     table();
     expect(await exported()).toBe(csv("abcde"));
-    expect(saved!.name).toMatch(/^lots-\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}Z\.csv$/);
+    expect(saved!.name).toMatch(/^rows-\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}Z\.csv$/);
     expect(saved!.blob.type).toBe("text/csv;charset=utf-8");
   });
 
@@ -140,29 +119,29 @@ describe("the CSV export", () => {
     expect(await exported()).toBe(csv("deacb"));
   });
 
-  it("exports the data rows without the group rows or the totals", async () => {
-    table({ groupedFields: ["region"] });
+  it("exports the data rows in the order of their groups, without the group rows or the totals", async () => {
+    table(["region"]);
     fireEvent.click(theButton("expand all region"));
     const lines = (await exported()).split("\r\n");
     // Grouping moves the grouped column first, as the table shows it.
-    expect(lines[0]).toBe("﻿region,code,qty,note,maker");
+    expect(lines[0]).toBe("\uFEFFregion,code,qty,note,maker");
     expect(lines.slice(1, -1)).toEqual([
       "east,a,3,plain,m1",
-      'west,b,1,"one, two",',
       'east,c,2,"say ""hi""",m2',
-      'west,d,5,"two\nlines",m1',
       "east,e,4,,m2",
+      'west,b,1,"one, two",',
+      'west,d,5,"two\nlines",m1',
     ]);
   });
 
-  it("is disabled and says why on a set that is not fully read", () => {
-    const [fullyRead, setFullyRead] = createSignal(true);
-    table({ fullyRead });
-    setFullyRead(false);
-    expect(theButton("export CSV").hasAttribute("disabled")).toBe(true);
-    expect(screen.getByText("Export applies only to a fully read set.")).toBeDefined();
-    setFullyRead(true);
-    expect(theButton("export CSV").hasAttribute("disabled")).toBe(false);
-    expect(screen.queryByText("Export applies only to a fully read set.")).toBeNull();
+  it("is not offered on a set that is not fully read, and comes back when it is", async () => {
+    const [more, setMore] = createSignal(true);
+    await queryTable({ name: "lots", columns: COLUMNS, rows: () => ROWS, more, hiddenFields: ["secret"] });
+    expect(button("export CSV")).toBeNull();
+    setMore(false);
+    fireEvent.click(theButton("refresh"));
+    await settled();
+    expect(await exported()).toBe(csv("abcde"));
+    expect(saved!.name).toMatch(/^lots-/);
   });
 });

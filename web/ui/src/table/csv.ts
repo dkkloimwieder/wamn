@@ -1,13 +1,10 @@
 /**
- * The CSV export of a DataTable (wamn-vfvx.5).
+ * The CSV export of a SetTable (wamn-vfvx.5).
  *
  * The text follows RFC 4180: a field that holds a comma, a quote or a line
  * break is quoted, and a quote inside it is doubled. Lines end in CRLF. The
  * text starts with a byte order mark, so a spreadsheet reads it as UTF-8.
  */
-
-/** The text the export button shows when the set is not fully read. */
-export const EXPORT_NEEDS_FULL_SET = "Export applies only to a fully read set.";
 
 const quoteField = (field: string) => (/[",\r\n]/.test(field) ? `"${field.replaceAll('"', '""')}"` : field);
 

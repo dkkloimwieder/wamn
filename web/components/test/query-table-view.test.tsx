@@ -1,5 +1,5 @@
 /**
- * The views of the DataTable, in memory and in the URL (wamn-9v2r.2).
+ * The views of a QueryTable, in memory and in the URL (wamn-9v2r.2).
  *
  * A view is a named copy of the table state. A table with a URL key reads its
  * state from the URL when it draws, and writes it back in one canonical form:
@@ -7,13 +7,14 @@
  * definition. The URL can name only what the table declares.
  */
 
-import { cleanup, fireEvent, render, screen } from "@solidjs/testing-library";
+import { cleanup, fireEvent, screen } from "@solidjs/testing-library";
 import { createSignal } from "solid-js";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { DataTable, type DataTableColumn } from "@wamn/ui";
+import type { TableColumn } from "@wamn/ui";
 
 import { bodyRows, pickChoice, theButton } from "./dom.js";
+import { queryTable, settled } from "./tables.js";
 
 interface Row {
   readonly id: string;
@@ -23,7 +24,7 @@ interface Row {
   readonly at: string;
 }
 
-const COLUMNS: readonly DataTableColumn<Row>[] = [
+const COLUMNS: readonly TableColumn<Row>[] = [
   { field: "code", label: "code", type: "text" },
   { field: "qty", label: "qty", type: "int32" },
   { field: "note", label: "note", type: "text" },
@@ -60,32 +61,19 @@ const search = () => decodeURIComponent(window.location.search);
 beforeEach(() => at(""));
 afterEach(cleanup);
 
-function table(shape: { fullyRead?: () => boolean; urlKey?: string; onScopeChange?: (filters: unknown) => void } = {}) {
-  const [cap, setCap] = createSignal(1000);
-  const onScopeChange = vi.fn(shape.onScopeChange ?? (() => {}));
-  render(() => (
-    <DataTable
-      name="lots"
-      columns={COLUMNS}
-      rowId={["id"]}
-      rows={ROWS}
-      fullyRead={shape.fullyRead?.() ?? true}
-      busy={false}
-      cap={cap()}
-      onCapChange={setCap}
-      refusal={null}
-      onRefresh={() => {}}
-      startedAt={null}
-      endedAt={null}
-      sortFields={[]}
-      sortMaxFields={1}
-      onSortChange={() => {}}
-      scopeFilters={["code"]}
-      onScopeChange={onScopeChange}
-      urlKey={shape.urlKey}
-    />
-  ));
-  return { cap, onScopeChange };
+/** The table, whose read takes the code as its one scope filter. */
+async function table(shape: { more?: () => boolean; urlKey?: string } = {}) {
+  const { asked } = await queryTable({
+    name: "lots",
+    columns: COLUMNS,
+    rows: () => ROWS,
+    scopeFilters: ["code"],
+    ...(shape.more === undefined ? {} : { more: shape.more }),
+    ...(shape.urlKey === undefined ? {} : { urlKey: shape.urlKey }),
+  });
+  /** The cap of the last load, and its scope. */
+  const last = () => asked.at(-1)!;
+  return { asked, last };
 }
 
 /** The labels of the column headers, in the order they show. */
@@ -108,9 +96,9 @@ function saveView(name: string) {
 }
 
 describe("the URL", () => {
-  it("sets every part of the state when the table draws, and writes it back the same", () => {
+  it("sets every part of the state before the first load, and writes it back the same", async () => {
     at(`?${FULL}`);
-    const { cap, onScopeChange } = table({ urlKey: "lots" });
+    const { asked } = await table({ urlKey: "lots" });
     expect(search()).toBe(`?${FULL}`);
     // Grouping puts the grouped column first after the pinned one, as the table shows it.
     expect(headers()).toEqual(["note", "at", "code", "qty"]);
@@ -119,38 +107,39 @@ describe("the URL", () => {
     expect(document.querySelector("table")?.style.getPropertyValue("--col-code-size")).toBe("200");
     expect((screen.getByLabelText("search") as HTMLInputElement).value).toBe("e");
     expect(theButton("remove filter qty")).toBeDefined();
-    expect(document.querySelector('[data-slot="data-table-total"][data-field="qty"]')?.textContent).toBe("avg 5");
-    expect(onScopeChange).toHaveBeenLastCalledWith([{ field: "code", values: ["a", "b"] }], "");
-    expect(cap()).toBe(500);
+    // The read keeps codes a and b, and the refine filter keeps a quantity of at least 3: b alone.
+    expect(document.querySelector('[data-slot="table-total"][data-field="qty"]')?.textContent).toBe("avg 6");
+    // One load, with the scope and the cap of the URL.
+    expect(asked).toEqual([{ limit: 500, filter: { code: ["a", "b"] } }]);
   });
 
-  it("writes the parts in the fixed order, only those that differ, and keeps other keys", () => {
+  it("writes the parts in the fixed order, only those that differ, and keeps other keys", async () => {
     at("?other=1&lots.cap=500&lots.hidden=&lots.sort=qty:desc&lots.search=");
-    table({ urlKey: "lots" });
+    await table({ urlKey: "lots" });
     expect(search()).toBe("?other=1&lots.sort=qty:desc&lots.cap=500");
     press("qty");
     expect(search()).toBe("?other=1&lots.sort=qty:asc&lots.cap=500");
   });
 
-  it("ignores what the table does not declare or cannot read, and says so once", () => {
+  it("ignores what the table does not declare or cannot read, and says so once", async () => {
     at(
       "?lots.bogus=1&lots.sort=nope:asc&lots.cap=500&lots.scope.qty=3&lots.filter.code=weird:x&lots.group=note:day:value:asc",
     );
-    const { cap } = table({ urlKey: "lots" });
-    expect(cap()).toBe(500);
+    const { last } = await table({ urlKey: "lots" });
+    expect(last().limit).toBe(500);
     expect(search()).toBe("?lots.cap=500");
-    const report = document.querySelectorAll('[data-slot="data-table-url-ignored"]');
+    const report = document.querySelectorAll('[data-slot="table-url-ignored"]');
     expect(report.length).toBe(1);
     expect(report[0]?.textContent).toContain(
       "lots.bogus=1, lots.sort=nope:asc, lots.scope.qty=3, lots.filter.code=weird:x, lots.group=note:day:value:asc",
     );
   });
 
-  it("leaves the URL alone for a table without a URL key", () => {
+  it("leaves the URL alone for a table without a URL key", async () => {
     at("?lots.cap=500");
-    const { cap } = table();
+    const { last } = await table();
     press("qty");
-    expect(cap()).toBe(1000);
+    expect(last().limit).toBe(1000);
     expect(search()).toBe("?lots.cap=500");
   });
 });
@@ -158,20 +147,22 @@ describe("the URL", () => {
 describe("the views", () => {
   it("keep every part of the state, and reset applies the definition", async () => {
     at(`?${FULL}`);
-    const { cap } = table({ urlKey: "lots" });
+    const { last } = await table({ urlKey: "lots" });
     saveView("wide");
     press("reset view");
+    await settled();
     expect(search()).toBe("");
     expect(headers()).toEqual(["code", "qty", "note", "at", "id"]);
-    expect(cap()).toBe(1000);
+    expect(last()).toEqual({ limit: 1000 });
     expect(codes()).toEqual(["a", "b", "c"]);
     await pickChoice(/^view/, "wide");
+    await settled();
     expect(search()).toBe(`?${FULL}`);
-    expect(cap()).toBe(500);
+    expect(last()).toEqual({ limit: 500, filter: { code: ["a", "b"] } });
   }, 20_000);
 
   it("are renamed and deleted", async () => {
-    table();
+    await table();
     saveView("first");
     fireEvent.input(screen.getByLabelText("view name"), { target: { value: "second" } });
     press("rename");
@@ -181,14 +172,17 @@ describe("the views", () => {
     expect(theButton("delete").hasAttribute("disabled")).toBe(true);
   }, 20_000);
 
-  it("apply the scope and the cap on a set that is not fully read, and the client parts wait", () => {
-    const [fullyRead, setFullyRead] = createSignal(false);
-    at("?lots.filter.qty=range:3,&lots.scope.code=a&lots.cap=500");
-    const { cap, onScopeChange } = table({ fullyRead, urlKey: "lots" });
-    expect(cap()).toBe(500);
-    expect(onScopeChange).toHaveBeenLastCalledWith([{ field: "code", values: ["a"] }], "");
-    expect(codes()).toEqual(["a", "b", "c"]);
-    setFullyRead(true);
-    expect(codes()).toEqual(["b", "c"]);
+  it("apply the scope and the cap on a set that is not fully read, and the set parts wait", async () => {
+    const [more, setMore] = createSignal(true);
+    at("?lots.filter.qty=range:3,&lots.scope.code=a&lots.scope.code=b&lots.cap=500");
+    const { last } = await table({ more, urlKey: "lots" });
+    expect(last()).toEqual({ limit: 500, filter: { code: ["a", "b"] } });
+    expect(codes()).toEqual(["a", "b"]);
+    setMore(false);
+    press("refresh");
+    await settled();
+    expect(codes()).toEqual(["b"]);
+    // The refine filter waited in the URL the whole time.
+    expect(search()).toContain("lots.filter.qty=range:3,");
   });
 });

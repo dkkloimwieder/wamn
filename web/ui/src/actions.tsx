@@ -53,7 +53,7 @@ export function TableScreen(props: TableScreenProps): JSX.Element {
     // and never less than 32rem. A read never changes the height of the page.
     <section
       data-slot="table-screen"
-      class="flex min-w-0 flex-col gap-4 [&>[data-slot=data-table]]:h-[calc(100svh-9rem)] [&>[data-slot=data-table]]:min-h-[32rem]"
+      class="flex min-w-0 flex-col gap-4 [&>[data-slot=query-table]]:h-[calc(100svh-9rem)] [&>[data-slot=query-table]]:min-h-[32rem]"
     >
       {props.children}
     </section>

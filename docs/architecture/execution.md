@@ -547,8 +547,9 @@ A generated detail, a table, the record text in a table's reference column and a
 A form's own record read does not read again, because the form sends the revision that it read when it opened.
 
 A package that generates TypeScript also generates [SolidJS components](../../crates/schema/generator/src/client_component.rs), one for each operation the plan gives a role.
-Every table renders the platform `DataTable` over a table definition that the generator derives from the read's contract.
+Every table renders the platform `QueryTable` over a table definition that the generator derives from the read's contract.
 The emitter writes the definition as data, and each table component is one line: the [`QueryTable`](../../web/ui/src/table/query-table.tsx) of the UI package over that definition.
+When the last load read every row, the `QueryTable` places a [`SetTable`](../../web/ui/src/table/set-table.tsx) over the rows, which filters, searches, sorts, groups, totals and exports them in the browser.
 The definition names each operation the table calls as a binding, which is its route and its field maps, and the input path of the limit, the sort and each scope filter.
 Each filter states its match mode when it does not match exactly, a range states the type of its bounds, and a band states the days it reads by default.
 A read with a server search names the search input and the fields it reads.

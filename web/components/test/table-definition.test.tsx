@@ -1,56 +1,31 @@
 /**
- * The DataTable renders from the fixture's emitted table definition, and loads
- * through the load state with the definition's page maximum (wamn-xtz2.3). Its
- * sort fields name the row member and the wire name (wamn-vfvx.1). A filter
- * states its match mode, and a band its default days (wamn-3nsf.4).
+ * A QueryTable renders from the fixture's emitted table definition, and loads
+ * with the definition's page maximum (wamn-xtz2.3). Its sort fields name the
+ * row member and the wire name (wamn-vfvx.1). A filter states its match mode,
+ * and a band its default days (wamn-3nsf.4).
  */
 
 import { cleanup, render, screen, waitFor } from "@solidjs/testing-library";
-import { createSignal } from "solid-js";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { DataTable } from "@wamn/ui";
-import { emptyLoad, finishLoad, loadLimit, startLoad, type LoadState } from "@wamn/web-runtime";
+import { QueryTable } from "@wamn/ui";
 
 import { WIDGET_QUERY_TABLE } from "../fixture/components/widget.js";
 import { WIDGET_MAKER_QUERY_TABLE } from "../fixture/components/widget_maker.js";
-import { query, type WidgetQueryRow } from "../fixture/widget.js";
 import { page, tableStub } from "../stubs/index.js";
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  window.history.replaceState(null, "", "/");
+});
 
 const definition = WIDGET_QUERY_TABLE;
 
-/** Render the definition's table and run one load at `cap` over the stub. */
+/** Render the definition's table at `cap`, which the URL names, over one page from the stub. */
 function loaded(cap: number, ids: string[], cursor: string | null) {
   const { transport, sent } = tableStub([page(ids, cursor)]);
-  const [state, setState] = createSignal<LoadState<WidgetQueryRow>>(emptyLoad(cap));
-  const next = startLoad(state());
-  setState(next);
-  void query(transport, [{ limit: loadLimit(next.cap, definition.pageMaximum) }]).then((outcome) =>
-    setState((current) => finishLoad(current, next.generation, outcome, definition.rowId)),
-  );
-  render(() => (
-    <DataTable
-      name="widgets"
-      columns={definition.columns}
-      rowId={definition.rowId}
-      rows={state().rows}
-      fullyRead={state().fullyRead}
-      busy={state().busy}
-      refusal={state().refusal}
-      cap={state().cap}
-      onCapChange={() => {}}
-      onRefresh={() => {}}
-      startedAt={state().startedAt}
-      endedAt={state().endedAt}
-      sortFields={definition.sortFields}
-      sortMaxFields={definition.sortMaxFields}
-      onSortChange={() => {}}
-      scopeFilters={definition.scopeFilters}
-      onScopeChange={() => {}}
-    />
-  ));
+  window.history.replaceState(null, "", `/?widget.cap=${cap}`);
+  render(() => <QueryTable definition={definition} transport={transport} label="widgets" urlKey="widget" />);
   return sent;
 }
 

@@ -1,18 +1,19 @@
 /**
- * The search box of the DataTable (wamn-vfvx.3).
+ * The search box of a SetTable (wamn-vfvx.3).
  *
  * It matches the shown text of the visible columns, in any case, but not json
- * or bytes. It applies with the refine filters, before the sort, and only to a
- * fully read set.
+ * or bytes. It applies with the refine filters, before the sort. A QueryTable
+ * shows it only over a fully read set, and keeps its text while it is not.
  */
 
-import { cleanup, fireEvent, render, screen } from "@solidjs/testing-library";
+import { cleanup, fireEvent, screen } from "@solidjs/testing-library";
 import { createSignal } from "solid-js";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { DataTable, type DataTableColumn } from "@wamn/ui";
+import type { TableColumn } from "@wamn/ui";
 
 import { bodyRows, theButton } from "./dom.js";
+import { queryTable, setTable, settled } from "./tables.js";
 
 afterEach(cleanup);
 
@@ -25,7 +26,7 @@ interface Row {
   readonly body: string;
 }
 
-const COLUMNS: readonly DataTableColumn<Row>[] = [
+const COLUMNS: readonly TableColumn<Row>[] = [
   { field: "code", label: "code", type: "text" },
   { field: "rank", label: "rank", type: "int32" },
   { field: "at", label: "at", type: "timestamptz" },
@@ -43,30 +44,7 @@ const ROWS: Row[] = [0, 1, 2, 3].map((index) => ({
   body: index === 3 ? '{"tag":"qqq"}' : "{}",
 }));
 
-function table(fullyRead: () => boolean = () => true) {
-  render(() => (
-    <DataTable
-      name="codes"
-      columns={COLUMNS}
-      rowId={["id"]}
-      rows={ROWS}
-      fullyRead={fullyRead()}
-      busy={false}
-      cap={1000}
-      onCapChange={() => {}}
-      refusal={null}
-      onRefresh={() => {}}
-      startedAt={null}
-      endedAt={null}
-      sortFields={[]}
-      sortMaxFields={1}
-      onSortChange={() => {}}
-      scopeFilters={[]}
-      onScopeChange={() => {}}
-      hiddenFields={["secret"]}
-    />
-  ));
-}
+const table = () => setTable({ columns: COLUMNS, rows: ROWS, hiddenFields: ["secret"] });
 
 /** The codes of the body rows, in the order they show. */
 const shown = () =>
@@ -116,17 +94,19 @@ describe("the search", () => {
     expect(shown()).toEqual(["ALPHABET", "Alpha"]);
   });
 
-  it("is disabled and says why on a set that is not fully read, and keeps its text", () => {
-    const [fullyRead, setFullyRead] = createSignal(true);
-    table(fullyRead);
+  it("leaves a set that is not fully read, and comes back with its text when it is", async () => {
+    const [more, setMore] = createSignal(false);
+    await queryTable({ columns: COLUMNS, rows: () => ROWS, more, hiddenFields: ["secret"] });
     search("alpha");
-    setFullyRead(false);
+    setMore(true);
+    fireEvent.click(theButton("refresh"));
+    await settled();
     expect(shown()).toEqual(["Alpha", "beta", "ALPHABET", "gamma"]);
-    const box = screen.getByLabelText("search") as HTMLInputElement;
-    expect(box.hasAttribute("disabled")).toBe(true);
-    expect(box.value).toBe("alpha");
-    expect(screen.getByText("Search applies only to a fully read set.")).toBeDefined();
-    setFullyRead(true);
+    expect(screen.queryByLabelText("search")).toBeNull();
+    setMore(false);
+    fireEvent.click(theButton("refresh"));
+    await settled();
+    expect((screen.getByLabelText("search") as HTMLInputElement).value).toBe("alpha");
     expect(shown()).toEqual(["Alpha", "ALPHABET"]);
   });
 });

@@ -12,23 +12,25 @@
  * to two places past that scale.
  */
 
-import type { DataTableColumnRole, DataTableColumnType } from "./data-table";
+import { compareValues, isEmpty, parseDecimal, type TableColumnRole, type TableColumnType, unitsAt } from "./columns";
 
 /** One aggregate a column can show. */
-export type DataTableAggregate = "sum" | "count" | "min" | "max" | "avg";
+export type Aggregate = "sum" | "count" | "min" | "max" | "avg";
 
 /** The size of one date bucket of a grouped time. */
-export type DataTableBucket = "day" | "week" | "month";
+export type Bucket = "day" | "week" | "month";
+
+export const BUCKETS: readonly Bucket[] = ["day", "week", "month"];
 
 /** The result of one aggregate: a number, a text value, or null for no values. */
 export type AggregateResult = number | string | null;
 
-const NUMBERS: readonly DataTableAggregate[] = ["sum", "count", "min", "max", "avg"];
-const TIMES: readonly DataTableAggregate[] = ["max", "min", "count"];
-const COUNT: readonly DataTableAggregate[] = ["count"];
+const NUMBERS: readonly Aggregate[] = ["sum", "count", "min", "max", "avg"];
+const TIMES: readonly Aggregate[] = ["max", "min", "count"];
+const COUNT: readonly Aggregate[] = ["count"];
 
 /** The aggregates a column type allows, its default first. */
-export function allowedAggregates(type: DataTableColumnType): readonly DataTableAggregate[] {
+export function allowedAggregates(type: TableColumnType): readonly Aggregate[] {
   switch (type) {
     case "int32":
     case "numeric":
@@ -42,33 +44,9 @@ export function allowedAggregates(type: DataTableColumnType): readonly DataTable
 }
 
 /** The aggregate a column shows until the operator chooses one. */
-export function defaultAggregate(type: DataTableColumnType, role: DataTableColumnRole): DataTableAggregate {
+export function defaultAggregate(type: TableColumnType, role: TableColumnRole): Aggregate {
   return role === "value" ? allowedAggregates(type)[0]! : "count";
 }
-
-export const isEmpty = (value: unknown): boolean => value === null || value === undefined || value === "";
-
-/** A decimal as whole units of its scale: 12.5 at scale 2 is 1250. */
-interface Decimal {
-  readonly units: bigint;
-  readonly scale: number;
-}
-
-/** The number of decimal places of one decimal text. */
-export function decimalScale(text: string): number {
-  const point = text.indexOf(".");
-  return point === -1 ? 0 : text.length - point - 1;
-}
-
-function parseDecimal(text: string): Decimal {
-  const trimmed = text.trim();
-  const point = trimmed.indexOf(".");
-  const digits = point === -1 ? trimmed : trimmed.slice(0, point) + trimmed.slice(point + 1);
-  return { units: BigInt(digits), scale: decimalScale(trimmed) };
-}
-
-/** The units of a decimal at a scale at least its own. */
-const unitsAt = (decimal: Decimal, scale: number): bigint => decimal.units * 10n ** BigInt(scale - decimal.scale);
 
 function formatDecimal(units: bigint, scale: number): string {
   const negative = units < 0n;
@@ -88,31 +66,10 @@ function divideRounded(dividend: bigint, divisor: bigint): bigint {
   return quotient + (dividend < 0n === divisor < 0n ? 1n : -1n);
 }
 
-const compareNumbers = (a: number, b: number) => (a < b ? -1 : a > b ? 1 : 0);
-
-function compareDecimals(a: string, b: string): number {
-  const [x, y] = [parseDecimal(a), parseDecimal(b)];
-  const scale = Math.max(x.scale, y.scale);
-  const [ux, uy] = [unitsAt(x, scale), unitsAt(y, scale)];
-  return ux < uy ? -1 : ux > uy ? 1 : 0;
-}
-
-/** The order of two non-empty values of one type, as an aggregate compares them. */
-function compareTyped(type: DataTableColumnType, a: unknown, b: unknown): number {
-  switch (type) {
-    case "numeric":
-      return compareDecimals(String(a), String(b));
-    case "timestamptz":
-      return compareNumbers(Date.parse(String(a)), Date.parse(String(b)));
-    default:
-      return compareNumbers(Number(a), Number(b));
-  }
-}
-
 /** One aggregate over the values of one column. `scale` is the column's numeric scale. */
 export function aggregateValues(
-  type: DataTableColumnType,
-  aggregate: DataTableAggregate,
+  type: TableColumnType,
+  aggregate: Aggregate,
   values: readonly unknown[],
   scale: number,
 ): AggregateResult {
@@ -156,15 +113,15 @@ export function aggregateValues(
 
 /** The order of two results of one aggregate of one column type. Null sorts last. */
 export function compareAggregates(
-  type: DataTableColumnType,
-  aggregate: DataTableAggregate,
+  type: TableColumnType,
+  aggregate: Aggregate,
   a: AggregateResult,
   b: AggregateResult,
 ): number {
   if (a === null || b === null) {
     return (a === null ? 1 : 0) - (b === null ? 1 : 0);
   }
-  return aggregate === "count" ? compareNumbers(Number(a), Number(b)) : compareTyped(type, a, b);
+  return compareValues(aggregate === "count" ? "int32" : type, a, b);
 }
 
 const zoneFormats = new Map<string, Intl.DateTimeFormat>();
@@ -192,7 +149,7 @@ const pad = (value: number) => String(value).padStart(2, "0");
  * the time zone. `weekStart` is the ISO weekday a week starts on, 1 for Monday.
  * An empty or unreadable time has no bucket.
  */
-export function bucketOf(value: unknown, bucket: DataTableBucket, timeZone: string, weekStart: number): string | null {
+export function bucketOf(value: unknown, bucket: Bucket, timeZone: string, weekStart: number): string | null {
   const instant = isEmpty(value) ? Number.NaN : Date.parse(String(value));
   if (Number.isNaN(instant)) {
     return null;
@@ -211,5 +168,4 @@ export function bucketOf(value: unknown, bucket: DataTableBucket, timeZone: stri
 }
 
 /** The label of a bucket's group. */
-export const bucketLabel = (key: string, bucket: DataTableBucket): string =>
-  bucket === "week" ? `week of ${key}` : key;
+export const bucketLabel = (key: string, bucket: Bucket): string => (bucket === "week" ? `week of ${key}` : key);

@@ -24,7 +24,7 @@ afterEach(cleanup);
 
 /** Types one value into the scope bar control of a filter and adds it with Enter. */
 function addScope(label: string, value: string) {
-  const bar = document.querySelector<HTMLElement>("[data-slot=data-table-scope]")!;
+  const bar = document.querySelector<HTMLElement>("[data-slot=table-scope]")!;
   const input = within(bar).getByLabelText(label) as HTMLInputElement;
   input.value = value;
   fireEvent.keyDown(input, { key: "Enter" });
@@ -45,7 +45,7 @@ describe("the generated table for a page", () => {
     expect(screen.getByText("b")).toBeDefined();
     // The totals have one cell for each column of the definition, and none
     // for the row buttons.
-    expect(document.querySelectorAll("[data-slot=data-table-total]")).toHaveLength(WIDGET_QUERY_TABLE.columns.length);
+    expect(document.querySelectorAll("[data-slot=table-total]")).toHaveLength(WIDGET_QUERY_TABLE.columns.length);
     // The definition's columns are the headers, in contract order. A column
     // whose model authors a label reads that text, and one that does not keeps
     // its field name with spaces. The row buttons are one last column with no

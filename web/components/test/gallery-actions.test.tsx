@@ -55,7 +55,7 @@ describe("the gallery's app-shaped table", () => {
     fireEvent.click(theButton("change the first widget elsewhere"));
     await editAndSave("Operator note", 0, "late");
     await waitFor(() =>
-      expect(document.querySelector(`tr[data-row-id="${id(0)}"] [data-slot="data-table-row-conflict"]`)).not.toBeNull(),
+      expect(document.querySelector(`tr[data-row-id="${id(0)}"] [data-slot="table-row-conflict"]`)).not.toBeNull(),
     );
     expect((screen.getByLabelText(`Operator note ${id(0)}`) as HTMLInputElement).value).toBe("late");
   });
@@ -72,7 +72,7 @@ describe("the gallery's app-shaped table", () => {
     fireEvent.click(theButton("add"));
     fireEvent.input(screen.getByLabelText("Quantity received"), { target: { value: "1.00" } });
     fireEvent.click(theButton("submit"));
-    await waitFor(() => expect(document.querySelectorAll('[data-slot="data-table-row-result"]').length).toBe(8));
+    await waitFor(() => expect(document.querySelectorAll('[data-slot="table-row-result"]').length).toBe(8));
     const refusedRows = Array.from(document.querySelectorAll('[data-status="refused"]')).map((result) =>
       result.closest("tr")?.getAttribute("data-row-id"),
     );

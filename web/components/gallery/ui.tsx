@@ -14,17 +14,21 @@ import {
   Button,
   CheckField,
   ChoiceField,
+  builtColumns,
   ConfirmAction,
-  DataTable,
+  defaultGridView,
+  defaultSetView,
   DetailItem,
   DetailList,
   FieldGroup,
   FormActions,
   RecordSelect,
+  SetTable,
   TableScreen,
   TextField,
   type Choice,
-  type DataTableColumn,
+  type TableColumn,
+  type TableSort,
 } from "@wamn/ui";
 import type { Outcome } from "@wamn/web-runtime";
 
@@ -136,7 +140,7 @@ interface SampleRow {
   readonly createdAt: string;
 }
 
-const COLUMNS: readonly DataTableColumn<SampleRow>[] = [
+const COLUMNS: readonly TableColumn<SampleRow>[] = [
   { field: "code", label: "code", type: "text" },
   { field: "createdAt", label: "created at", type: "timestamptz" },
   { field: "editVersion", label: "edit version", type: "int64" },
@@ -144,7 +148,7 @@ const COLUMNS: readonly DataTableColumn<SampleRow>[] = [
   { field: "note", label: "note", type: "text" },
 ];
 
-const HUNDRED: readonly SampleRow[] = Array.from({ length: 100 }, (_, index) => ({
+const ROWS: readonly SampleRow[] = Array.from({ length: 3 }, (_, index) => ({
   id: `widget-${String(index + 1).padStart(3, "0")}`,
   code: index % 3 === 0 ? "priority" : "standard",
   note: index % 4 === 0 ? "checked at the dock" : null,
@@ -152,27 +156,24 @@ const HUNDRED: readonly SampleRow[] = Array.from({ length: 100 }, (_, index) => 
   createdAt: `2026-09-${String(1 + (index % 28)).padStart(2, "0")}T12:00:00.000000Z`,
 }));
 
-/** A table over sample rows, all of them read. */
+/** A set table over sample rows, with its own state. */
 function SampleTable(props: { rows: readonly SampleRow[] }): JSX.Element {
+  const [view, setView] = createSignal(defaultSetView());
+  const [grid, setGrid] = createSignal(defaultGridView(COLUMNS.map((column) => column.field)));
+  const [sort, setSort] = createSignal<readonly TableSort[]>([]);
   return (
-    <DataTable
+    <SetTable
       name="widget"
-      columns={COLUMNS}
-      rowId={["id"]}
       rows={props.rows}
-      fullyRead={true}
-      busy={false}
-      refusal={null}
-      cap={1000}
-      onCapChange={() => {}}
-      onRefresh={() => {}}
-      startedAt={null}
-      endedAt={null}
-      sortFields={[]}
+      rowId={(row) => row.id}
+      columns={builtColumns(COLUMNS)}
+      view={view()}
+      onView={setView}
+      grid={grid()}
+      onGrid={setGrid}
+      sort={sort()}
+      onSort={setSort}
       sortMaxFields={1}
-      onSortChange={() => {}}
-      scopeFilters={[]}
-      onScopeChange={() => {}}
     />
   );
 }
@@ -252,7 +253,7 @@ export function UiSections(): JSX.Element {
               <Button type="submit">read</Button>
             </FormActions>
           </form>
-          <SampleTable rows={HUNDRED.slice(0, 3)} />
+          <SampleTable rows={ROWS} />
           <FormActions>
             <Button type="button" variant="outline" disabled>
               next page

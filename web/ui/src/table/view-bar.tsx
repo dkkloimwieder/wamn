@@ -1,5 +1,5 @@
 /**
- * The view controls of the DataTable toolbar (wamn-9v2r.2).
+ * The view controls of a QueryTable toolbar (wamn-9v2r.2).
  *
  * The picker applies a saved view. A name and save keep the current state as
  * a view, rename gives the chosen view the typed name, delete removes it, and
@@ -29,7 +29,7 @@ export function ViewBar(props: {
   const [name, setName] = createSignal("");
   const typed = () => name().trim();
   return (
-    <div data-slot="data-table-views" class="flex flex-wrap items-end gap-2">
+    <div data-slot="table-views" class="flex flex-wrap items-end gap-2">
       <div class="w-40">
         <ChoiceField
           label="view"
@@ -80,7 +80,7 @@ export function ViewBar(props: {
         reset view
       </Button>
       <Show when={props.ignored.length > 0}>
-        <p data-slot="data-table-url-ignored" class="w-full text-sm text-muted-foreground">
+        <p data-slot="table-url-ignored" class="w-full text-sm text-muted-foreground">
           The address named what this table does not have, so it was ignored: {props.ignored.join(", ")}
         </p>
       </Show>
