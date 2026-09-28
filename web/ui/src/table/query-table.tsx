@@ -47,7 +47,7 @@ import type { QueryTableDefinition } from "./query-definition";
 import { defaultQueryView } from "./query-view";
 import { ScopeBar, type ScopeFilter, type ScopeMode, scopeApplies } from "./scope-bar";
 import { ServerGrid } from "./server-grid";
-import { SetTable } from "./set-table";
+import type { SetTable as SetTableComponent } from "./set-table";
 import { defaultSetView } from "./set-view";
 import { createQueryLoad, DEFAULT_CAP, fixedBy } from "./table-load";
 import { createTableState } from "./table-state";
@@ -282,6 +282,31 @@ export function QueryTable<TRow extends object, TResult = unknown>(props: QueryT
   const loaded = load.state;
   const gridClass = "h-auto min-h-0 flex-1 [&_tr:has([data-slot=table-row-conflict])]:bg-destructive/10";
 
+  /** The set table's module loads when the table first reads a complete set. */
+  const [setTable, setSetTable] = createSignal<typeof SetTableComponent>();
+  createEffect(() => {
+    if (load.complete() && setTable() === undefined) {
+      void import("./set-table").then((module) => setSetTable(() => module.SetTable));
+    }
+  });
+  const serverGrid = () => (
+    <ServerGrid
+      rows={loaded().rows}
+      rowId={idOf}
+      columns={columns}
+      sortFields={definition.sortFields.map((sort) => sort.field)}
+      sortMaxFields={definition.sortMaxFields}
+      grid={view().grid}
+      onGrid={state.setGrid}
+      sort={query().sort}
+      onSort={changeSort}
+      busy={loaded().busy}
+      emptyMessage={loaded().refusal}
+      detail={detail}
+      class={gridClass}
+    />
+  );
+
   return (
     <section data-slot="query-table" class="flex h-full min-h-0 min-w-0 flex-col gap-4">
       <Show when={scopeFields.length > 0 || query().sort.length > 0 || definition.search !== undefined}>
@@ -356,44 +381,30 @@ export function QueryTable<TRow extends object, TResult = unknown>(props: QueryT
         </div>
       </div>
       <bulk.Bar />
-      <Show
-        when={load.complete()}
-        fallback={
-          <ServerGrid
-            rows={loaded().rows}
-            rowId={idOf}
-            columns={columns}
-            sortFields={definition.sortFields.map((sort) => sort.field)}
-            sortMaxFields={definition.sortMaxFields}
-            grid={view().grid}
-            onGrid={state.setGrid}
-            sort={query().sort}
-            onSort={changeSort}
-            busy={loaded().busy}
-            emptyMessage={loaded().refusal}
-            detail={detail}
-            class={gridClass}
-          />
-        }
-      >
-        <SetTable
-          name={definition.name}
-          rows={load.rows()}
-          rowId={idOf}
-          columns={columns}
-          view={view().set}
-          onView={state.setSet}
-          grid={view().grid}
-          onGrid={state.setGrid}
-          sort={query().sort}
-          onSort={changeSort}
-          sortMaxFields={definition.sortMaxFields}
-          detail={detail}
-          emptyMessage={loaded().refusal}
-          gridClass={gridClass}
-          timeZone={props.timeZone}
-          weekStart={props.weekStart}
-        />
+      <Show when={load.complete() && setTable()} fallback={serverGrid()}>
+        {(component) => {
+          const SetTable = component();
+          return (
+            <SetTable
+              name={definition.name}
+              rows={load.rows()}
+              rowId={idOf}
+              columns={columns}
+              view={view().set}
+              onView={state.setSet}
+              grid={view().grid}
+              onGrid={state.setGrid}
+              sort={query().sort}
+              onSort={changeSort}
+              sortMaxFields={definition.sortMaxFields}
+              detail={detail}
+              emptyMessage={loaded().refusal}
+              gridClass={gridClass}
+              timeZone={props.timeZone}
+              weekStart={props.weekStart}
+            />
+          );
+        }}
       </Show>
       <bulk.Form />
     </section>

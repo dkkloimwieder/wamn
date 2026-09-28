@@ -63,9 +63,12 @@ export interface QueryTableAction {
   readonly fill: readonly QueryTableFill[];
   /** The revision the row carries for the record it fills, and the input that sends it. */
   readonly revision?: QueryTableFill;
-  /** The form that sends one input for each of many rows, which a bulk action opens. */
+  /**
+   * Loads the form that sends one input for each of many rows, which a bulk
+   * action opens. The form loads when the action first opens.
+   */
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- a form or a table of any row shape.
-  readonly form?: () => Component<any>;
+  readonly form?: () => Promise<{ readonly default: Component<any> }>;
 }
 
 /** The update a cell edits through. */

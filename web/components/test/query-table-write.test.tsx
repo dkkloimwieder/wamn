@@ -63,7 +63,7 @@ async function table() {
           many: true,
           opens: "form",
           fill: [],
-          form: () => ArchiveForm,
+          form: async () => ({ default: ArchiveForm }),
         },
       ],
     }),

@@ -62,10 +62,6 @@ import {
   LocationUpdateFormLabel,
 } from "./labels.js";
 import {
-  InventoryMoveForm,
-  InventorySplitForm,
-} from "./inventory.js";
-import {
   PACKAGING_QUERY_TABLE,
 } from "./packaging.js";
 
@@ -267,8 +263,8 @@ export const LOCATION_QUERY_TABLE = {
   ] },
   actions: [
     { operation: "wamn-wms:location/get@1.0.0", label: "get", many: false, opens: "record", fill: [] },
-    { operation: "wamn-wms:inventory/move@1.0.0", label: "move", many: true, opens: "form", fill: [{ field: "id", input: ["value", "toLocationId"] }], form: () => InventoryMoveForm },
-    { operation: "wamn-wms:inventory/split@1.0.0", label: "split", many: true, opens: "form", fill: [{ field: "id", input: ["value", "toLocationId"] }], form: () => InventorySplitForm },
+    { operation: "wamn-wms:inventory/move@1.0.0", label: "move", many: true, opens: "form", fill: [{ field: "id", input: ["value", "toLocationId"] }], form: () => import("./inventory.js").then((module) => ({ default: module.InventoryMoveForm })) },
+    { operation: "wamn-wms:inventory/split@1.0.0", label: "split", many: true, opens: "form", fill: [{ field: "id", input: ["value", "toLocationId"] }], form: () => import("./inventory.js").then((module) => ({ default: module.InventorySplitForm })) },
     { operation: "wamn-wms:packaging/create@1.0.0", label: "create", many: false, opens: "form", fill: [{ field: "id", input: ["locationId"] }] },
   ],
   childTables: [

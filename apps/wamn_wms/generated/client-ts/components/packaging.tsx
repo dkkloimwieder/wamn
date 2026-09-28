@@ -62,11 +62,6 @@ import {
   PackagingQueryTableLabel,
 } from "./labels.js";
 import {
-  InventoryAdjustForm,
-  InventoryMoveForm,
-  InventorySplitForm,
-} from "./inventory.js";
-import {
   LOCATION_GET_REQUEST_FIELDS,
   LOCATION_GET_RESULT_FIELDS,
   LOCATION_GET_ROUTE,
@@ -376,9 +371,9 @@ export const PACKAGING_QUERY_TABLE = {
   ],
   actions: [
     { operation: "wamn-wms:packaging/get@1.0.0", label: "get", many: false, opens: "record", fill: [] },
-    { operation: "wamn-wms:inventory/adjust@1.0.0", label: "adjust", many: true, opens: "form", fill: [{ field: "id", input: ["value", "packagingId"] }], revision: { field: "rowVersion", input: ["value", "expectedRowVersion"] }, form: () => InventoryAdjustForm },
-    { operation: "wamn-wms:inventory/move@1.0.0", label: "move", many: true, opens: "form", fill: [{ field: "id", input: ["value", "packagingId"] }], revision: { field: "rowVersion", input: ["value", "expectedRowVersion"] }, form: () => InventoryMoveForm },
-    { operation: "wamn-wms:inventory/split@1.0.0", label: "split", many: true, opens: "form", fill: [{ field: "id", input: ["value", "sourcePackagingId"] }], revision: { field: "rowVersion", input: ["value", "expectedRowVersion"] }, form: () => InventorySplitForm },
+    { operation: "wamn-wms:inventory/adjust@1.0.0", label: "adjust", many: true, opens: "form", fill: [{ field: "id", input: ["value", "packagingId"] }], revision: { field: "rowVersion", input: ["value", "expectedRowVersion"] }, form: () => import("./inventory.js").then((module) => ({ default: module.InventoryAdjustForm })) },
+    { operation: "wamn-wms:inventory/move@1.0.0", label: "move", many: true, opens: "form", fill: [{ field: "id", input: ["value", "packagingId"] }], revision: { field: "rowVersion", input: ["value", "expectedRowVersion"] }, form: () => import("./inventory.js").then((module) => ({ default: module.InventoryMoveForm })) },
+    { operation: "wamn-wms:inventory/split@1.0.0", label: "split", many: true, opens: "form", fill: [{ field: "id", input: ["value", "sourcePackagingId"] }], revision: { field: "rowVersion", input: ["value", "expectedRowVersion"] }, form: () => import("./inventory.js").then((module) => ({ default: module.InventorySplitForm })) },
   ],
   childTables: [],
 } as const;

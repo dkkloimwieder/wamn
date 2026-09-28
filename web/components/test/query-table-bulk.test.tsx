@@ -67,7 +67,7 @@ async function table(results: (code: string) => Outcome<unknown>, more = false) 
           many: true,
           opens: "form",
           fill: [{ field: "code", input: ["value", "code"] }],
-          form: () => Form,
+          form: async () => ({ default: Form }),
         },
       ],
     }),

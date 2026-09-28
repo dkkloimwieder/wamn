@@ -28,13 +28,18 @@ import { type MemoryRequest, memoryDefinition, memoryRoute, memoryTransport } fr
 /** The text of the table's status: when the load started and ended, and what it could not read. */
 export const statusText = () => document.querySelector('[data-slot="table-status"]')?.textContent ?? "";
 
-/** Waits until no load runs. */
-export const settled = () =>
-  waitFor(() => {
+/**
+ * Waits until no load runs, and then for one more task, in which the set
+ * table's module arrives over a complete set.
+ */
+export const settled = async () => {
+  await waitFor(() => {
     if (!/ended/.test(statusText()) || /Loading/.test(statusText())) {
       throw new Error("a load is running");
     }
   });
+  await new Promise((resolve) => setTimeout(resolve));
+};
 
 export interface QueryTableOptions<Row extends object> {
   readonly name?: string;

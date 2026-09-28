@@ -947,21 +947,25 @@ fn write_table_definition(
                     .expect("write");
                 }
                 // A form that sends one input for each of many rows runs a
-                // bulk action. Its component is read when the action runs, so
-                // modules that import each other load.
+                // bulk action. The module of another model's form loads when
+                // the action opens, so a screen does not load it with its table.
                 let target = plan
                     .screens()
                     .find(|candidate| candidate.contract.operation == form.operation);
                 if action.many && target.is_some_and(many_rows) {
                     let component =
                         format!("{}Form", crate::client_ts::type_stem(form.model, form.name));
-                    if form.model != screen.model {
-                        sibling
-                            .entry(form.model.to_owned())
-                            .or_default()
-                            .insert(component.clone());
+                    if form.model == screen.model {
+                        write!(tail, ", form: async () => ({{ default: {component} }})")
+                            .expect("write");
+                    } else {
+                        write!(
+                            tail,
+                            ", form: () => import(\"./{}.js\").then((module) => ({{ default: module.{component} }}))",
+                            form.model
+                        )
+                        .expect("write");
                     }
-                    write!(tail, ", form: () => {component}").expect("write");
                 }
             }
             let (opens, fill) = match row_form {

@@ -67,6 +67,8 @@ describe("the gallery's app-shaped table", () => {
     fireEvent.click(theButton("run on 8 selected"));
     // The batch form asks for what no row fills, and each row fills its widget.
     await waitFor(() => expect(screen.getByText("record-batch on 8 rows")).toBeDefined());
+    // The form loads when the action first opens.
+    await waitFor(() => expect(screen.getByRole("button", { name: "Grade" })).toBeDefined());
     await pickChoice("Grade", "first");
     await choose("Inspector", "Northwind");
     fireEvent.click(theButton("add"));

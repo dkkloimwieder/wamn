@@ -11,7 +11,7 @@
  * own result beside its checkbox, so a refusal marks only its row.
  */
 
-import { createMemo, createSignal, createUniqueId, type JSX, Show } from "solid-js";
+import { createMemo, createSignal, createUniqueId, type JSX, lazy, Show } from "solid-js";
 import { Dynamic } from "solid-js/web";
 
 import { fillMember, type JsonValue, type Outcome, type Transport, writeMember } from "@wamn/web-runtime";
@@ -210,6 +210,9 @@ export function createBulk<TRow extends object>(options: {
   /** The last result of each row a bulk action ran over, by row id. */
   const [results, setResults] = createSignal<Readonly<Record<string, RowResult>>>({});
   const [running, setRunning] = createSignal<BulkRun | null>(null);
+  /** Each action's form, which loads when the action first opens. */
+  const forms = new Map(actions.map((action) => [action, lazy(action.form!)]));
+  const formOf = (action: QueryTableAction) => forms.get(action)!;
   const finish = (outcomes: readonly RowResult[]) => {
     const run = running();
     setRunning(null);
@@ -266,7 +269,7 @@ export function createBulk<TRow extends object>(options: {
                 </SheetTitle>
               </SheetHeader>
               <Dynamic
-                component={current().action.form!()}
+                component={formOf(current().action)}
                 transport={options.transport}
                 rows={current().rows}
                 onEach={(outcomes: readonly Outcome<unknown>[]) => finish(outcomes.map(rowResult))}

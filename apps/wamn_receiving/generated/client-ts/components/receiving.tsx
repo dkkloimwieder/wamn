@@ -196,7 +196,7 @@ export const RECEIVING_LOAD_RECEIPT_SCREEN_TABLE = {
     { field: "supplierId", label: "Supplier", type: "uuid", role: "value" },
   ],
   actions: [
-    { operation: "wamn-receiving:receiving/record-receipt@1.0.0", label: "record-receipt", many: true, opens: "form", fill: [{ field: "lineId", input: ["value", "line", "[]", "purchaseOrderLineId"] }], form: () => ReceivingRecordReceiptForm },
+    { operation: "wamn-receiving:receiving/record-receipt@1.0.0", label: "record-receipt", many: true, opens: "form", fill: [{ field: "lineId", input: ["value", "line", "[]", "purchaseOrderLineId"] }], form: async () => ({ default: ReceivingRecordReceiptForm }) },
   ],
   childTables: [],
 } as const;

@@ -66,7 +66,7 @@ describe("a table that holds 1000 rows", () => {
     const { transport } = stub([page(ids(0, 60), null)]);
     render(() => <WidgetQueryTable transport={transport} />);
     await waitFor(() => expect(screen.getByText("w0059")).toBeDefined());
-    // One header row, one row for each record, and the totals row.
-    expect(screen.getAllByRole("row")).toHaveLength(62);
+    // One header row, one row for each record, and the totals row of the set table.
+    await waitFor(() => expect(screen.getAllByRole("row")).toHaveLength(62));
   });
 });
