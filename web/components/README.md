@@ -63,3 +63,13 @@ If the change is intended, accept it:
 3. Commit the changed PNG files with the change that caused them.
 
 A new gallery section gets its reference images the same way.
+
+## Bundle size
+
+`pnpm size` builds the Receiving and WMS web clients into a temporary directory and prints their sizes in gzip kB.
+It prints the entry, each route and lazy part with every chunk it loads beyond the entry, and the largest chunk.
+It sets no limit. A closeout that changes the web clients records the output on its bead.
+
+```bash
+cd web/components && pnpm size
+```

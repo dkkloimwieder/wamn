@@ -7,7 +7,8 @@
     "check": "tsc --project tsconfig.json",
     "test": "vitest run",
     "test:visual": "vitest run --config vitest.visual.config.ts",
-    "gallery": "vite --config gallery/vite.config.ts"
+    "gallery": "vite --config gallery/vite.config.ts",
+    "size": "node size.mjs"
   },
   "devDependencies": {
     "@solidjs/testing-library": "^0.8.10",
