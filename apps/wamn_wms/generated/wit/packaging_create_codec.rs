@@ -168,7 +168,7 @@ fn normalize(request: &mut contract::CreateRequest) -> Result<(), contract::Inva
         return Err(invalid("status"));
     }
     if let Some(Some(value)) = &mut request.status
-        && (!["available", "held", "consumed"].contains(&value.as_str()))
+        && (!["available", "held"].contains(&value.as_str()))
     {
         return Err(invalid("status"));
     }

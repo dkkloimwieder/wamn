@@ -903,10 +903,17 @@ fn emit_mutation_validation(
             )
             .expect("writing to a String cannot fail");
         }
-        let values = fields
-            .iter()
-            .find(|item| item.path == *field)
-            .map_or(&[][..], |item| item.values.as_slice());
+        // The values the contract states: the fewer an operation declares, or
+        // the model's.
+        let values = operation.values.get(field).map_or_else(
+            || {
+                fields
+                    .iter()
+                    .find(|item| item.path == *field)
+                    .map_or(&[][..], |item| item.values.as_slice())
+            },
+            Vec::as_slice,
+        );
         let mut checks = Vec::new();
         if column.column_type() == ColumnType::Uuid {
             checks.push("!canonical_uuid(value)".to_owned());
