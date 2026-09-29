@@ -137,12 +137,12 @@ const CONTRACT: &[(&str, &str, MethodSurfaces)] = &[
     // exists in one build is exactly the one a runtime probe would miss.
     (
         POSTGRES,
-        "bindings::named_imports::wamn::postgres::client::Host",
+        "bindings::named_imports::wamn::postgres0_1_0::client::Host",
         &[],
     ),
     (
         POSTGRES,
-        "bindings::named_imports::wamn::postgres::client::HostWithStore",
+        "bindings::named_imports::wamn::postgres0_1_0::client::HostWithStore",
         &[
             ("query", Surface::Effect),
             ("execute", Surface::Effect),
@@ -151,12 +151,12 @@ const CONTRACT: &[(&str, &str, MethodSurfaces)] = &[
     ),
     (
         POSTGRES,
-        "bindings::named_imports::wamn::postgres::client::HostTransaction",
+        "bindings::named_imports::wamn::postgres0_1_0::client::HostTransaction",
         &[("drop", DESTRUCTOR)],
     ),
     (
         POSTGRES,
-        "bindings::named_imports::wamn::postgres::client::HostTransactionWithStore",
+        "bindings::named_imports::wamn::postgres0_1_0::client::HostTransactionWithStore",
         &[
             ("query", Surface::Effect),
             ("execute", Surface::Effect),
@@ -167,12 +167,12 @@ const CONTRACT: &[(&str, &str, MethodSurfaces)] = &[
     ),
     (
         POSTGRES,
-        "bindings::named_imports::wamn::postgres::client::HostCursor",
+        "bindings::named_imports::wamn::postgres0_1_0::client::HostCursor",
         &[("drop", DESTRUCTOR)],
     ),
     (
         POSTGRES,
-        "bindings::named_imports::wamn::postgres::client::HostCursorWithStore",
+        "bindings::named_imports::wamn::postgres0_1_0::client::HostCursorWithStore",
         &[("fetch", Surface::Effect)],
     ),
     // The SQL-by-reference world. A guest names a statement digest instead of
