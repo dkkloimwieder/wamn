@@ -1,5 +1,6 @@
 //! Arguments and output of the `provision-system`, `provision-org`,
-//! `provision-project-env`, and `enable-cdc-project-env` verbs.
+//! `provision-project-env`, `enable-cdc-project-env`, `recover-capture-gap`, and
+//! `close-capture-gap` verbs.
 
 use std::fmt;
 use std::path::{Path, PathBuf};
@@ -7,6 +8,9 @@ use std::path::{Path, PathBuf};
 use anyhow::Context as _;
 use clap::{Args, ValueEnum};
 use serde_json::Value;
+use wamn_control::capture_gap::{
+    self, CloseCaptureGapRequest, ClosedCaptureGap, RecoverCaptureGapRequest, RecoveredCaptureGap,
+};
 use wamn_control::enable_cdc_project_env::{
     self, EnableCdcProjectEnvOutcome, EnableCdcProjectEnvRequest,
 };
@@ -438,6 +442,61 @@ pub struct EnableCdcProjectEnvArgs {
     pub emit_secret: Option<PathBuf>,
 }
 
+#[derive(Debug, Args)]
+pub struct RecoverCaptureGapArgs {
+    /// Org id.
+    #[arg(long)]
+    pub org: String,
+
+    /// Project id.
+    #[arg(long)]
+    pub project: String,
+
+    /// Environment slug.
+    #[arg(long)]
+    pub env: String,
+
+    /// Superuser Postgres URL to the T1 system DB (`wamn_system`): the instance
+    /// suffix, the reader registration, and the gap row.
+    #[arg(long, env = "WAMN_SYSTEM_ADMIN_URL")]
+    pub system_database_url: String,
+
+    /// Superuser connection to the project database, which holds the slot.
+    #[arg(long, env = "WAMN_PG_ADMIN_URL")]
+    pub admin_database_url: String,
+
+    /// Event broker of the environment.
+    #[arg(long, env = "WAMN_EVT_NATS_URL")]
+    pub nats_url: String,
+
+    /// Observer username of the environment. Reading the stream is its job.
+    #[arg(long, env = "WAMN_EVT_NATS_USERNAME")]
+    pub nats_username: String,
+
+    /// Private file containing the observer password.
+    #[arg(long, env = "WAMN_EVT_NATS_PASSWORD_FILE")]
+    pub nats_password_file: PathBuf,
+}
+
+#[derive(Debug, Args)]
+pub struct CloseCaptureGapArgs {
+    /// Org id.
+    #[arg(long)]
+    pub org: String,
+
+    /// Project id.
+    #[arg(long)]
+    pub project: String,
+
+    /// Environment slug.
+    #[arg(long)]
+    pub env: String,
+
+    /// Superuser Postgres URL to the T1 system DB (`wamn_system`).
+    #[arg(long, env = "WAMN_SYSTEM_ADMIN_URL")]
+    pub system_database_url: String,
+}
+
 /// TLS credentials and the identity service endpoint for operator PAT issuance.
 #[derive(Clone, Default, Args)]
 pub struct PatIssuerArgs {
@@ -695,6 +754,55 @@ pub fn print_workload_action(request: &WorkloadActionRequest, outcome: &Workload
             );
         }
     }
+}
+
+/// Recover one capture gap and print the row it wrote.
+pub async fn recover_capture_gap(args: RecoverCaptureGapArgs) -> anyhow::Result<()> {
+    let RecoveredCaptureGap {
+        triple,
+        slot,
+        reason,
+        start_lsn,
+        start_at,
+        end_lsn,
+        created_at,
+    } = capture_gap::recover_capture_gap(&RecoverCaptureGapRequest {
+        org: args.org,
+        project: args.project,
+        env: args.env,
+        system_database_url: args.system_database_url,
+        admin_database_url: args.admin_database_url,
+        nats_url: args.nats_url,
+        nats_username: args.nats_username,
+        nats_password_file: args.nats_password_file,
+    })
+    .await?;
+    println!(
+        "capture gap of {triple} recorded at {created_at}: slot {slot:?} created again, \
+         reason {reason:?}, start_lsn {}, start_at {start_at}, end_lsn {end_lsn}",
+        start_lsn.as_deref().unwrap_or("null"),
+    );
+    Ok(())
+}
+
+/// Close the newest capture gap of one reader and print it.
+pub async fn close_capture_gap(args: CloseCaptureGapArgs) -> anyhow::Result<()> {
+    let ClosedCaptureGap {
+        triple,
+        slot,
+        created_at,
+        resync_at,
+    } = capture_gap::close_capture_gap(&CloseCaptureGapRequest {
+        org: args.org,
+        project: args.project,
+        env: args.env,
+        system_database_url: args.system_database_url,
+    })
+    .await?;
+    println!(
+        "capture gap of {triple} recorded at {created_at} for slot {slot:?} closed: resync_at {resync_at}"
+    );
+    Ok(())
 }
 
 /// Overlay CDC capture onto one provisioned project-env and print what it did.

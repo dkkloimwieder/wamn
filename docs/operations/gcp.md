@@ -1416,24 +1416,36 @@ Restart identity and the CDC readers after an outage of Postgres. Do not restart
 
 ### 6.3 CDC slot lost
 
-If a CDC reader is down while the WAL passes `max_slot_wal_keep_size` (1 GB), Postgres invalidates its slot. The reader then stops for good with `CAPTURE GAP (slot incident)`, because it never creates a slot (finding `wamn-59z6`). Look at the slots:
+If a CDC reader is down while the WAL passes `max_slot_wal_keep_size` (4 GB), Postgres invalidates its slot. The reader then stays running and stopped. It logs `CDC_CAPTURE_GAP` once and reads its gap row every 30 seconds (`docs/plan/cdc-reader-slot.md` section 4.3). Look at the slots:
 
 ```bash
 kubectl -n platform exec wamn-pg-1 -c postgres -- psql -U postgres -Atc \
-  "select slot_name, active, wal_status from pg_replication_slots"
+  "select slot_name, active, wal_status, invalidation_reason from pg_replication_slots"
 ```
 
-If `wal_status` is `lost`, record the gap on the bead of the work. Then drop the slot, and create it again in the project-env database with the slot statement of `enable-cdc-project-env`:
+Keep the port-forwards of sections 3.6 and 3.18. Write the observer user of the environment into a private directory `G` at mode 0700:
 
 ```bash
-S=wamn_cdc_dkk__wms__dev__0nk1lrpr
-kubectl -n platform exec wamn-pg-1 -c postgres -- psql -U postgres -Atc "select pg_drop_replication_slot('$S')"
-kubectl -n platform exec wamn-pg-1 -c postgres -- psql -U postgres -d wamn-db-dkk--wms--dev--0nk1lrpr -v ON_ERROR_STOP=1 -qc \
-  "DO \$\$ BEGIN IF NOT EXISTS (SELECT FROM pg_replication_slots WHERE slot_name = '$S') THEN PERFORM pg_create_logical_replication_slot('$S', 'pgoutput', false, false, true); END IF; END \$\$;"
-kubectl -n platform rollout restart deploy/cdc-reader-wms
+(umask 077
+ kubectl -n platform get secret evt-nats-wms-observer -o jsonpath='{.data.username}' | base64 -d > $G/observer-username
+ kubectl -n platform get secret evt-nats-wms-observer -o jsonpath='{.data.password}' | base64 -d > $G/observer-password)
 ```
 
-Changes written in the gap produce no events. On 2026-09-28 the 1000 seed of Receiving lost the WMS slot while its reader was down. The WMS rows of the gap were seed data with no consumer, so the owner accepted the gap. The drop and the new slot took 33 seconds, and the reader logged standby status updates at once.
+Run `recover-capture-gap`. It drops the lost slot, creates it again under the same name, and writes the open gap row. The reader stays stopped on the new slot:
+
+```bash
+WAMN_PG_ADMIN_URL="${WAMN_SYSTEM_ADMIN_URL%/*}/wamn-db-dkk--wms--dev--0nk1lrpr" target/debug/wamn-ctl recover-capture-gap \
+  --org dkk --project wms --env dev \
+  --nats-url nats://127.0.0.1:14222 --nats-username "$(cat $G/observer-username)" \
+  --nats-password-file $G/observer-password
+rm -f $G/observer-username $G/observer-password
+```
+
+After the resync, or on the owner's word while no resync exists, run `close-capture-gap`. The reader resumes within 30 seconds, with no restart:
+
+```bash
+target/debug/wamn-ctl close-capture-gap --org dkk --project wms --env dev
+```
 
 ### 6.4 Bench client and PAT
 

@@ -66,6 +66,10 @@ enum Command {
     RevokeRole(role_verbs::UserRoleArgs),
     /// Overlay CDC capture onto a provisioned project-env: publication + failover slot + replication role/Secret + reader registration (wamn-l5i9.9, D19 v3)
     EnableCdcProjectEnv(provisioning_verbs::EnableCdcProjectEnvArgs),
+    /// Drop a lost CDC slot, create it again under the same name, and record the capture gap (wamn-59z6)
+    RecoverCaptureGap(provisioning_verbs::RecoverCaptureGapArgs),
+    /// Set resync_at on the newest capture gap of a CDC reader, which lets it resume (wamn-59z6)
+    CloseCaptureGap(provisioning_verbs::CloseCaptureGapArgs),
     /// Apply one exact package-owned migration stream to a project database.
     ApplyPackage(package_verbs::ApplyPackageArgs),
     /// Reconcile generated package data privileges after apply-package.
@@ -132,6 +136,8 @@ async fn main() -> anyhow::Result<()> {
         Command::GrantRole(args) => role_verbs::grant(args).await,
         Command::RevokeRole(args) => role_verbs::revoke(args).await,
         Command::EnableCdcProjectEnv(args) => provisioning_verbs::enable_cdc(args).await,
+        Command::RecoverCaptureGap(args) => provisioning_verbs::recover_capture_gap(args).await,
+        Command::CloseCaptureGap(args) => provisioning_verbs::close_capture_gap(args).await,
         Command::ApplyPackage(args) => package_verbs::apply(args).await,
         Command::BindConnection(args) => component_verbs::bind(args).await,
         Command::ReconcilePackageDataAccess(args) => {
