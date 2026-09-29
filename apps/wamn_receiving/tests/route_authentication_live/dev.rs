@@ -321,6 +321,9 @@ pub(super) async fn verify_dev_target_package_and_acl_state(
                     *token != sealed("client-acme-receiving:quality/create-inspection")
                 }),
         )
+        .chain([sealed(
+            "client-acme-receiving:receiving/record-receipt-participant",
+        )])
         .collect::<BTreeSet<_>>();
     anyhow::ensure!(
         observed_permissions == expected_permissions,
