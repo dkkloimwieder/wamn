@@ -123,7 +123,8 @@ fn an_unknown_template_is_refused() {
 
 #[test]
 fn a_missing_required_field_is_refused() {
-    let error = render("packaging", &json!({"packaging_id": "PAL-000042"})).expect_err("must refuse");
+    let error =
+        render("packaging", &json!({"packaging_id": "PAL-000042"})).expect_err("must refuse");
     assert_eq!(error.kind(), RenderErrorKind::MissingField);
     assert!(error.detail().contains("location_id"), "{}", error.detail());
 }
