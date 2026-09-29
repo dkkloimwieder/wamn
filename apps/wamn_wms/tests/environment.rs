@@ -104,6 +104,7 @@ pub async fn provision_project(
         org: ORG.to_owned(),
         template: wamn_control_registry::Template::trials(),
         pool: CLUSTER.to_owned(),
+        cluster_namespace: "wamn-system".into(),
         system_database_url: Some(inputs.system_pg_url.clone()),
     })
     .await?;
@@ -116,12 +117,13 @@ pub async fn provision_project(
         system_database_url: Some(inputs.system_pg_url.clone()),
         cluster: Some(CLUSTER.into()),
         connection_limit: None,
+        cluster_namespace: "wamn-system".into(),
         namespace: inputs.host_secret_namespace.clone(),
         secret_namespace: None,
         emit_database: Some(work.join("database.json")),
         emit_role_sql: Some(work.join("roles.sql")),
         emit_privilege_sql: Some(work.join("privileges.sql")),
-        emit_secret: work.join("project-db.json"),
+        emit_secret: Some(work.join("project-db.json")),
         pat_issuer,
         emit_management_author_pat_secret: Some(work.join("management-author-pat.json")),
         emit_operator_pat_secret: Some(inputs.operator_secret_output.clone()),
