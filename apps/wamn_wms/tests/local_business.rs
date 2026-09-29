@@ -34,7 +34,7 @@ async fn operations_and_replay() -> anyhow::Result<()> {
         .context("WMS declares the move route")?
         .target = wamn_catalog::AttachmentTarget::Route {
         component: "wms".into(),
-        operation: "wamn-wms:inventory/move@1.0.0".into(),
+        operation: wamn_test_infrastructure::operations::sealed("wamn-wms:inventory/move"),
     };
     let components = PathBuf::from(std::env::var("WAMN_APPLICATION_COMPONENTS")?);
     let flow_http = PathBuf::from(std::env::var("WAMN_FLOW_HTTP_COMPONENT")?);

@@ -78,12 +78,13 @@ export interface QueryTableProps<TRow extends object, TResult = unknown> {
   /** Input the parent fixes, which the operator does not edit. */
   readonly fixed?: object | undefined;
   /**
-   * For each operation whose record a row opens, what opening it does. A row
-   * shows a button only for the operations the page names here.
+   * For each operation whose record a row opens, what opening it does, keyed
+   * by the operation reference. A row shows a button only for the operations
+   * the page names here.
    */
-  readonly onOpen?: { readonly [operation: string]: (row: TRow) => void } | undefined;
-  /** For each operation whose form a row fills, what the filled values do. */
-  readonly onFill?: { readonly [operation: string]: (initial: object) => void } | undefined;
+  readonly onOpen?: { readonly [reference: string]: (row: TRow) => void } | undefined;
+  /** For each operation whose form a row fills, what the filled values do, keyed by the operation reference. */
+  readonly onFill?: { readonly [reference: string]: (initial: object) => void } | undefined;
   /** Called with every outcome of the read. */
   readonly onOutcome?: ((outcome: Outcome<TResult>) => void) | undefined;
   /**
@@ -252,7 +253,7 @@ export function QueryTable<TRow extends object, TResult = unknown>(props: QueryT
 
   // The labels of the buttons the page shows: the actions it takes.
   const shownActions = definition.actions
-    .filter((action) => (action.opens === "record" ? props.onOpen : props.onFill)?.[action.operation])
+    .filter((action) => (action.opens === "record" ? props.onOpen : props.onFill)?.[action.reference])
     .map((action) => action.label);
 
   // The buttons of one row: each operation it opens, when the page takes it.
@@ -260,8 +261,8 @@ export function QueryTable<TRow extends object, TResult = unknown>(props: QueryT
     <div class="flex gap-2">
       <For each={definition.actions}>
         {(action) => {
-          const opened = action.opens === "record" ? props.onOpen?.[action.operation] : undefined;
-          const filled = action.opens === "form" ? props.onFill?.[action.operation] : undefined;
+          const opened = action.opens === "record" ? props.onOpen?.[action.reference] : undefined;
+          const filled = action.opens === "form" ? props.onFill?.[action.reference] : undefined;
           return (
             <Show when={opened ?? filled}>
               <Button

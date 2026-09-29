@@ -152,7 +152,7 @@ export const PACKAGING_QUANTITY_QUERY_TABLE = {
     { field: "status", label: "status", type: "text", role: "value" },
   ],
   actions: [
-    { operation: "wamn-wms:packaging-quantity/get@1.0.0", label: "get", many: false, opens: "record", fill: [] },
+    { operation: "wamn-wms:packaging-quantity/get@1.0.0", reference: "wamn-wms:packaging-quantity/get", label: "get", many: false, opens: "record", fill: [] },
   ],
   childTables: [],
 } as const;

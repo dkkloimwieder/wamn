@@ -67,8 +67,8 @@ describe("the generated table for a page", () => {
     render(() => (
       <WidgetQueryTable
         transport={transport}
-        onOpen={{ "platform-fixture:widget/get@1.0.0": () => undefined }}
-        onFill={{ "platform-fixture:widget/archive@1.0.0": () => undefined }}
+        onOpen={{ "platform-fixture:widget/get": () => undefined }}
+        onFill={{ "platform-fixture:widget/archive": () => undefined }}
       />
     ));
     await waitFor(() => expect(screen.getAllByRole("button", { name: "get" })).toHaveLength(2));
@@ -103,7 +103,7 @@ describe("the generated table for a page", () => {
     render(() => (
       <WidgetQueryTable
         transport={transport}
-        onOpen={{ "platform-fixture:widget/get@1.0.0": (row) => void opened.push(row.id) }}
+        onOpen={{ "platform-fixture:widget/get": (row) => void opened.push(row.id) }}
       />
     ));
     await waitFor(() => expect(screen.getAllByRole("button", { name: "get" })).toHaveLength(2));

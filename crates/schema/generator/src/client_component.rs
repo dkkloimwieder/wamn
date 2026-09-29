@@ -1016,8 +1016,9 @@ fn write_table_definition(
                 None => ("record", Vec::new()),
             };
             Ok(format!(
-                "{{ operation: {}, label: {}, many: {}, opens: {}, fill: [{}]{tail} }}",
+                "{{ operation: {}, reference: {}, label: {}, many: {}, opens: {}, fill: [{}]{tail} }}",
                 quote(action.operation),
+                quote(crate::sealed_operation_reference(action.operation)),
                 quote(&link_label(action.operation)),
                 action.many,
                 quote(opens),

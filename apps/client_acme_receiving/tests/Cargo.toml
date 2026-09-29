@@ -16,6 +16,7 @@ wamn-catalog = { workspace = true }
 wamn-control = { workspace = true }
 wamn-execution-contract = { workspace = true }
 wamn-schema-generator = { workspace = true }
+wamn-test-infrastructure = { workspace = true }
 
 [lints]
 workspace = true

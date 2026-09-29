@@ -266,10 +266,10 @@ export const LOCATION_QUERY_TABLE = {
     { field: "locationCode", input: ["change", "locationCode"] },
   ] },
   actions: [
-    { operation: "wamn-wms:location/get@1.0.0", label: "get", many: false, opens: "record", fill: [] },
-    { operation: "wamn-wms:inventory/move@1.0.0", label: "move", many: true, opens: "form", fill: [{ field: "id", input: ["value", "toLocationId"] }], form: () => import("./inventory.js").then((module) => ({ default: module.InventoryMoveForm })) },
-    { operation: "wamn-wms:inventory/split@1.0.0", label: "split", many: true, opens: "form", fill: [{ field: "id", input: ["value", "toLocationId"] }], form: () => import("./inventory.js").then((module) => ({ default: module.InventorySplitForm })) },
-    { operation: "wamn-wms:packaging/create@1.0.0", label: "create", many: false, opens: "form", fill: [{ field: "id", input: ["locationId"] }] },
+    { operation: "wamn-wms:location/get@1.0.0", reference: "wamn-wms:location/get", label: "get", many: false, opens: "record", fill: [] },
+    { operation: "wamn-wms:inventory/move@1.0.0", reference: "wamn-wms:inventory/move", label: "move", many: true, opens: "form", fill: [{ field: "id", input: ["value", "toLocationId"] }], form: () => import("./inventory.js").then((module) => ({ default: module.InventoryMoveForm })) },
+    { operation: "wamn-wms:inventory/split@1.0.0", reference: "wamn-wms:inventory/split", label: "split", many: true, opens: "form", fill: [{ field: "id", input: ["value", "toLocationId"] }], form: () => import("./inventory.js").then((module) => ({ default: module.InventorySplitForm })) },
+    { operation: "wamn-wms:packaging/create@1.0.0", reference: "wamn-wms:packaging/create", label: "create", many: false, opens: "form", fill: [{ field: "id", input: ["locationId"] }] },
   ],
   childTables: [
     { label: "packaging", table: () => PACKAGING_QUERY_TABLE, scopeFilter: "locationId" },

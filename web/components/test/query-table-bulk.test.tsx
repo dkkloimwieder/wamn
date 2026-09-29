@@ -63,6 +63,7 @@ async function table(results: (code: string) => Outcome<unknown>, more = false) 
       actions: [
         {
           operation: MOVE,
+          reference: "fixture:row/move",
           label: "move",
           many: true,
           opens: "form",

@@ -76,23 +76,23 @@ async fn command_histories() -> anyhow::Result<()> {
         wamn_schema_generator::route_schema::read_package_attachments(&receiving)?;
     attachments.retain(|_, attachment| {
         matches!(
-            route_operation(attachment),
-            "wamn-receiving:purchase-order/query@1.0.0"
-                | "wamn-receiving:purchase-order/update@1.0.0"
-                | "wamn-receiving:receipt/get@1.0.0"
-                | "wamn-receiving:receiving/record-receipt@1.0.0"
-                | "wamn-receiving:receiving/load-receipt-screen@1.0.0"
-                | "wamn-receiving:receiving/load-purchase-order-history@1.0.0"
-                | "wamn-receiving:location/list@1.0.0"
+            wamn_schema_generator::sealed_operation_reference(route_operation(attachment)),
+            "wamn-receiving:purchase-order/query"
+                | "wamn-receiving:purchase-order/update"
+                | "wamn-receiving:receipt/get"
+                | "wamn-receiving:receiving/record-receipt"
+                | "wamn-receiving:receiving/load-receipt-screen"
+                | "wamn-receiving:receiving/load-purchase-order-history"
+                | "wamn-receiving:location/list"
         )
     });
     let overlay_attachments: std::collections::BTreeMap<String, wamn_catalog::ServingAttachment> =
         wamn_schema_generator::route_schema::read_package_attachments(&acme)?;
     for (name, attachment) in overlay_attachments {
         if matches!(
-            route_operation(&attachment),
-            "client-acme-receiving:receiving/record-receipt@3.0.0"
-                | "client-acme-receiving:quality/load-purchase-order-detail@3.0.0"
+            wamn_schema_generator::sealed_operation_reference(route_operation(&attachment)),
+            "client-acme-receiving:receiving/record-receipt"
+                | "client-acme-receiving:quality/load-purchase-order-detail"
         ) {
             attachments.insert(name, attachment);
         }

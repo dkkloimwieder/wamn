@@ -126,7 +126,8 @@ pub(super) async fn install_journey_project(
         .with_context(|| {
             format!(
                 "apply {}@{} through the exact-byte runner",
-                package.id, package.version
+                package.id,
+                package.version()
             )
         })?;
         if fresh_only && package.id == BASE_PACKAGE_ID {
@@ -176,9 +177,9 @@ pub(super) async fn verify_journey_operation_grants(project: &Client) -> anyhow:
     let expected = BASE_OPERATIONS
         .iter()
         .chain(OVERLAY_OPERATIONS.iter())
-        .map(|(_, token)| (*token).to_owned())
-        .filter(|token| token != "client-acme-receiving:quality/create-inspection@3.0.0")
-        .chain([OVERLAY_RECEIPT_PARTICIPANT.to_owned()])
+        .map(|(_, token)| sealed(token))
+        .filter(|token| *token != sealed("client-acme-receiving:quality/create-inspection"))
+        .chain([(*OVERLAY_RECEIPT_PARTICIPANT).to_owned()])
         .collect::<BTreeSet<_>>();
     anyhow::ensure!(
         observed == expected,
@@ -219,7 +220,7 @@ pub(super) fn render_component_declarations(
                 wamn_control::component_declaration::authored_base_digests(&package_root)
                     .with_context(|| format!("read {} base pins", package_root.display()))?;
             for base in JOURNEY_PACKAGES {
-                let coordinate = format!("{}@{}", base.id, base.version);
+                let coordinate = format!("{}@{}", base.id, base.version());
                 if let Some(digest) = base_digests.get_mut(coordinate.as_str()) {
                     let artifact = component_directory.join(format!("{}.wasm", base.component));
                     let bytes = std::fs::read(&artifact)
@@ -274,13 +275,13 @@ fn disposable_component_declarations_follow_built_base_bytes() -> anyhow::Result
             .expect("the journey renders its overlay");
         let declaration: Value = serde_json::from_slice(&std::fs::read(&overlay.path)?)?;
         assert_eq!(
-            declaration["operations"][OVERLAY_RECORD_RECEIPT]["dependencies"],
+            declaration["operations"][*OVERLAY_RECORD_RECEIPT]["dependencies"],
             serde_json::json!([{
                 "package": BASE_PACKAGE_ID,
-                "version": BASE_PACKAGE_VERSION,
+                "version": *BASE_PACKAGE_VERSION,
                 "digest": wamn_engine::component_admission::component_digest(bytes),
-                "operation": BASE_RECORD_RECEIPT,
-                "participant": "client-acme-receiving:receiving/record-receipt-participant@3.0.0",
+                "operation": *BASE_RECORD_RECEIPT,
+                "participant": *OVERLAY_RECEIPT_PARTICIPANT,
             }]),
         );
     }
@@ -322,7 +323,9 @@ pub(super) async fn push_journey_components(
         .with_context(|| {
             format!(
                 "publish production component {}@{}::{}",
-                package.id, package.version, package.component
+                package.id,
+                package.version(),
+                package.component
             )
         })?;
     }
@@ -340,7 +343,7 @@ pub(super) async fn verify_journey_components_are_effectful(
                  FROM catalog.component_library \
                  WHERE tenant_id = $1 AND package_id = $2 AND package_version = $3 \
                  ORDER BY component COLLATE \"C\"",
-                &[&TENANT, &package.id, &package.version],
+                &[&TENANT, &package.id, &package.version()],
             )
             .await
             .with_context(|| format!("read the admitted {} effect projection", package.id))?;
@@ -364,15 +367,12 @@ pub(super) async fn verify_journey_components_are_effectful(
         let mut expected = package
             .operations
             .iter()
-            .map(|(_, token)| *token)
+            .map(|(_, token)| sealed(token))
             .collect::<BTreeSet<_>>();
         if package.id == OVERLAY_PACKAGE_ID {
-            expected.insert(OVERLAY_RECEIPT_PARTICIPANT);
+            expected.insert((*OVERLAY_RECEIPT_PARTICIPANT).to_owned());
         }
-        let observed = operation_facts
-            .keys()
-            .map(String::as_str)
-            .collect::<BTreeSet<_>>();
+        let observed = operation_facts.keys().cloned().collect::<BTreeSet<_>>();
         anyhow::ensure!(
             observed == expected,
             "{} component projected the wrong operation set: {observed:?}",
@@ -380,17 +380,17 @@ pub(super) async fn verify_journey_components_are_effectful(
         );
         for token in expected {
             let fact = operation_facts
-                .get(token)
+                .get(&token)
                 .with_context(|| format!("{} operation fact missing for {token}", package.id))?;
             let registered = fact["registered-operation"].as_str();
-            if token == "client-acme-receiving:quality/create-inspection@3.0.0" {
+            if token == sealed("client-acme-receiving:quality/create-inspection") {
                 anyhow::ensure!(
                     registered.is_none(),
                     "private operation {token} fabricated an authorization identity"
                 );
             } else {
                 anyhow::ensure!(
-                    registered == Some(token),
+                    registered == Some(token.as_str()),
                     "operation {token} projected a different authorization identity"
                 );
             }
@@ -421,7 +421,7 @@ pub(super) fn gate_document(
     wamn_test_infrastructure::declarations::gate_document(
         &wamn_test_infrastructure::declarations::GateInput {
             command_id: command_id.to_owned(),
-            package: PackageCoordinate::new(package.id, package.version)?,
+            package: PackageCoordinate::new(package.id, package.version())?,
             scope: wamn_authoring_model::AuthoringScope {
                 project_id: PROJECT.to_owned(),
                 environment: ENVIRONMENT.to_owned(),
@@ -545,7 +545,7 @@ pub(super) async fn author_journey_wirings(
                 &AuthorWiringRequest {
                     tenant_id: TENANT,
                     package_id: package.id,
-                    package_version: package.version,
+                    package_version: package.version(),
                     document: &document,
                 },
             )
@@ -583,7 +583,7 @@ pub(super) async fn mint_journey_release(
         .iter()
         .flat_map(|package| {
             package.wirings.iter().map(move |wiring| {
-                format!("{}@{}::{wiring}=1", package.id, package.version)
+                format!("{}@{}::{wiring}=1", package.id, package.version())
                     .parse::<ReleaseWiringTarget>()
                     .map_err(anyhow::Error::msg)
             })
@@ -601,7 +601,7 @@ pub(super) async fn mint_journey_release(
         run_schema: "wamn_run".to_owned(),
         packages: JOURNEY_PACKAGES
             .iter()
-            .map(|package| PackageCoordinate::new(package.id, package.version))
+            .map(|package| PackageCoordinate::new(package.id, package.version()))
             .collect::<Result<Vec<_>, _>>()?,
         wirings,
         attachments,
@@ -722,7 +722,7 @@ pub(super) fn released_component_digests(
 ) -> anyhow::Result<HashMap<String, String>> {
     let expected_packages = JOURNEY_PACKAGES
         .iter()
-        .map(|package| PackageCoordinate::new(package.id, package.version))
+        .map(|package| PackageCoordinate::new(package.id, package.version()))
         .collect::<Result<BTreeSet<_>, _>>()?;
     anyhow::ensure!(
         release.manifest().release.packages == expected_packages,
@@ -768,11 +768,10 @@ pub(super) fn released_component_digests(
     anyhow::ensure!(
         overlay
             .operations
-            .get(OVERLAY_RECORD_RECEIPT)
+            .get(*OVERLAY_RECORD_RECEIPT)
             .is_some_and(
-                |operation| operation.permissions.contains(BASE_RECORD_RECEIPT)
-                    && operation.participant.as_deref()
-                        == Some("client-acme-receiving:receiving/record-receipt-participant@3.0.0")
+                |operation| operation.permissions.contains(*BASE_RECORD_RECEIPT)
+                    && operation.participant.as_deref() == Some(*OVERLAY_RECEIPT_PARTICIPANT)
             ),
         "released overlay record_receipt omitted its folded base grant or participant"
     );
@@ -801,8 +800,8 @@ pub(super) fn released_component_digests(
             attachment.kind == AttachmentKind::Http
                 && attachment.package_id == expected.package_id
                 && attachment.component == component
-                && attachment.operation == expected.operation
-                && attachment.registered_operation.as_deref() == Some(expected.operation)
+                && attachment.operation == sealed(expected.operation)
+                && attachment.registered_operation == Some(sealed(expected.operation))
                 && attachment.definition["route"]["method"] == expected.method
                 && attachment.definition["route"]["path"] == expected.path
                 && attachment.definition["route"]["host"] == route_host

@@ -69,9 +69,17 @@ const WIDGETS: QueryTableDefinition<WidgetQueryRow> = {
     supplied: [{ input: ["requestId"], kind: "requestId" }],
   },
   actions: [
-    { operation: "platform-fixture:widget/get@1.0.0", label: "get", many: false, opens: "record", fill: [] },
+    {
+      operation: "platform-fixture:widget/get@1.0.0",
+      reference: "platform-fixture:widget/get",
+      label: "get",
+      many: false,
+      opens: "record",
+      fill: [],
+    },
     {
       operation: "platform-fixture:widget/archive@1.0.0",
+      reference: "platform-fixture:widget/archive",
       label: "archive",
       many: false,
       opens: "form",
@@ -94,8 +102,8 @@ async function shown(fixed?: object) {
         transport={stub.transport}
         label="widgets"
         fixed={fixed}
-        onOpen={{ "platform-fixture:widget/get@1.0.0": (row) => opened.push(row.id) }}
-        onFill={{ "platform-fixture:widget/archive@1.0.0": (initial) => filled.push(initial) }}
+        onOpen={{ "platform-fixture:widget/get": (row) => opened.push(row.id) }}
+        onFill={{ "platform-fixture:widget/archive": (initial) => filled.push(initial) }}
       />
     </div>
   ));

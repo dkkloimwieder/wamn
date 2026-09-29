@@ -263,9 +263,9 @@ export const PRODUCT_QUERY_TABLE = {
     { field: "productCode", input: ["change", "productCode"] },
   ] },
   actions: [
-    { operation: "wamn-wms:product/get@1.0.0", label: "get", many: false, opens: "record", fill: [] },
-    { operation: "wamn-wms:inventory/adjust@1.0.0", label: "adjust", many: true, opens: "form", fill: [{ field: "id", input: ["value", "productId"] }], form: () => import("./inventory.js").then((module) => ({ default: module.InventoryAdjustForm })) },
-    { operation: "wamn-wms:inventory/split@1.0.0", label: "split", many: true, opens: "form", fill: [{ field: "id", input: ["value", "productId"] }], form: () => import("./inventory.js").then((module) => ({ default: module.InventorySplitForm })) },
+    { operation: "wamn-wms:product/get@1.0.0", reference: "wamn-wms:product/get", label: "get", many: false, opens: "record", fill: [] },
+    { operation: "wamn-wms:inventory/adjust@1.0.0", reference: "wamn-wms:inventory/adjust", label: "adjust", many: true, opens: "form", fill: [{ field: "id", input: ["value", "productId"] }], form: () => import("./inventory.js").then((module) => ({ default: module.InventoryAdjustForm })) },
+    { operation: "wamn-wms:inventory/split@1.0.0", reference: "wamn-wms:inventory/split", label: "split", many: true, opens: "form", fill: [{ field: "id", input: ["value", "productId"] }], form: () => import("./inventory.js").then((module) => ({ default: module.InventorySplitForm })) },
   ],
   childTables: [],
 } as const;

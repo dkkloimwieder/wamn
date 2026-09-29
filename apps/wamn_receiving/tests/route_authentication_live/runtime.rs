@@ -199,7 +199,7 @@ pub(super) fn assert_nested_record_receipt_trace(
         overlay,
         trace_id,
         "",
-        OVERLAY_RECORD_RECEIPT,
+        *OVERLAY_RECORD_RECEIPT,
         overlay_digest,
         caller_principal_id,
     );
@@ -259,13 +259,13 @@ pub(super) fn assert_nested_permission_denial_trace(
         overlay,
         trace_id,
         "",
-        OVERLAY_RECORD_RECEIPT,
+        *OVERLAY_RECORD_RECEIPT,
         overlay_digest,
         caller_principal_id,
     );
     assert!(
         components.iter().all(|span| {
-            span_attribute(span, "wamn.operation").as_deref() != Some(BASE_RECORD_RECEIPT)
+            span_attribute(span, "wamn.operation").as_deref() != Some(*BASE_RECORD_RECEIPT)
                 && span_attribute(span, "wamn.component_digest").as_deref() != Some(base_digest)
         }),
         "trace {trace_id} invoked the denied pinned-base operation"

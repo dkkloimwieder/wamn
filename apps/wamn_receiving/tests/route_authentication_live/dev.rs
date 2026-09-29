@@ -6,26 +6,30 @@ mod local_delivery;
 mod password;
 
 pub(super) const DEV_COMMAND_TIMEOUT: Duration = Duration::from_mins(12);
-pub(super) const DEV_EXPECTED_MIGRATIONS: [(&str, &str, i32, &str); 3] = [
-    (
-        OVERLAY_PACKAGE_ID,
-        OVERLAY_PACKAGE_VERSION,
-        1,
-        "migrations/0001_add_inspection_required.sql",
-    ),
-    (
-        OVERLAY_PACKAGE_ID,
-        OVERLAY_PACKAGE_VERSION,
-        2,
-        "migrations/0002_quality_inspection.sql",
-    ),
-    (
-        BASE_PACKAGE_ID,
-        BASE_PACKAGE_VERSION,
-        1,
-        "migrations/0001_initial.sql",
-    ),
-];
+/// The migrations the dev command installs, with each package version from
+/// its wamn.json.
+pub(super) fn dev_expected_migrations() -> [(&'static str, &'static str, i32, &'static str); 3] {
+    [
+        (
+            OVERLAY_PACKAGE_ID,
+            *OVERLAY_PACKAGE_VERSION,
+            1,
+            "migrations/0001_add_inspection_required.sql",
+        ),
+        (
+            OVERLAY_PACKAGE_ID,
+            *OVERLAY_PACKAGE_VERSION,
+            2,
+            "migrations/0002_quality_inspection.sql",
+        ),
+        (
+            BASE_PACKAGE_ID,
+            *BASE_PACKAGE_VERSION,
+            1,
+            "migrations/0001_initial.sql",
+        ),
+    ]
+}
 
 pub(super) struct DevJourneyInputs {
     pub(super) wamn_binary: PathBuf,
@@ -245,8 +249,8 @@ pub(super) async fn verify_dev_target_package_and_acl_state(
         })
         .collect::<Vec<_>>();
     let expected_packages = [
-        (OVERLAY_PACKAGE_ID, OVERLAY_PACKAGE_VERSION),
-        (BASE_PACKAGE_ID, BASE_PACKAGE_VERSION),
+        (OVERLAY_PACKAGE_ID, *OVERLAY_PACKAGE_VERSION),
+        (BASE_PACKAGE_ID, *BASE_PACKAGE_VERSION),
     ];
     anyhow::ensure!(
         observed_packages.len() == expected_packages.len()
@@ -282,14 +286,15 @@ pub(super) async fn verify_dev_target_package_and_acl_state(
         })
         .collect::<Vec<_>>();
     anyhow::ensure!(
-        observed_migrations.len() == DEV_EXPECTED_MIGRATIONS.len()
-            && observed_migrations.iter().zip(DEV_EXPECTED_MIGRATIONS).all(
-                |((id, version, ordinal, path, hash), expected)| {
+        observed_migrations.len() == dev_expected_migrations().len()
+            && observed_migrations
+                .iter()
+                .zip(dev_expected_migrations())
+                .all(|((id, version, ordinal, path, hash), expected)| {
                     (id.as_str(), version.as_str(), *ordinal, path.as_str()) == expected
                         && hash.len() == 71
                         && hash.starts_with("sha256:")
-                }
-            ),
+                }),
         "wamn dev installed the wrong exact migration records: {observed_migrations:?}"
     );
 
@@ -307,12 +312,14 @@ pub(super) async fn verify_dev_target_package_and_acl_state(
         .collect::<BTreeSet<_>>();
     let expected_permissions = BASE_OPERATIONS
         .iter()
-        .map(|(_, token)| (*token).to_owned())
+        .map(|(_, token)| sealed(token))
         .chain(
             OVERLAY_OPERATIONS
                 .iter()
-                .map(|(_, token)| (*token).to_owned())
-                .filter(|token| token != "client-acme-receiving:quality/create-inspection@3.0.0"),
+                .map(|(_, token)| sealed(token))
+                .filter(|token| {
+                    *token != sealed("client-acme-receiving:quality/create-inspection")
+                }),
         )
         .collect::<BTreeSet<_>>();
     anyhow::ensure!(

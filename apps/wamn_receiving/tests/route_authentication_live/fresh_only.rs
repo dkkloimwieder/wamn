@@ -96,7 +96,7 @@ pub(super) async fn test_prior_commit(test: PriorCommitTest<'_>) -> anyhow::Resu
         .context("prior-commit release lacks the actual Receiving component")?;
     anyhow::ensure!(
         base.operations
-            .get(BASE_RECORD_RECEIPT)
+            .get(*BASE_RECORD_RECEIPT)
             .is_some_and(|operation| operation.fresh_only),
         "prior-commit fixture requires the released fresh-only base"
     );
@@ -155,14 +155,14 @@ pub(super) async fn test_prior_commit(test: PriorCommitTest<'_>) -> anyhow::Resu
             .join("components/receiving.json.in"),
         wamn_schema_generator::operation_reference::AuthoredDocument::Declaration,
     )?;
-    let ports = &source["operations"][BASE_RECORD_RECEIPT];
+    let ports = &source["operations"][*BASE_RECORD_RECEIPT];
     let declaration = json!({
         "scope": {"tenant-id": TENANT, "package-id": PACKAGE, "package-version": VERSION},
         "component": WIRING, "interface-version": "0.1.0", "connections": [],
         "operations": {(OPERATION): {
             "fresh-only": false,
-            "dependencies": [{"package": BASE_PACKAGE_ID, "version": BASE_PACKAGE_VERSION,
-                "digest": base_digest, "operation": BASE_RECORD_RECEIPT}],
+            "dependencies": [{"package": BASE_PACKAGE_ID, "version": *BASE_PACKAGE_VERSION,
+                "digest": base_digest, "operation": *BASE_RECORD_RECEIPT}],
             "input-ports": ports["input-ports"], "output-ports": ports["output-ports"],
             "parameters": []
         }}
@@ -254,7 +254,7 @@ pub(super) async fn test_prior_commit(test: PriorCommitTest<'_>) -> anyhow::Resu
     // Acme's event handler is outside this wiring's actual dependency closure.
     // Including that package would also require its unrelated handler wiring.
     let packages = vec![
-        PackageCoordinate::new(BASE_PACKAGE_ID, BASE_PACKAGE_VERSION)?,
+        PackageCoordinate::new(BASE_PACKAGE_ID, *BASE_PACKAGE_VERSION)?,
         PackageCoordinate::new(PACKAGE, VERSION)?,
     ];
     let manifests = vec![
@@ -349,7 +349,7 @@ pub(super) async fn test_prior_commit(test: PriorCommitTest<'_>) -> anyhow::Resu
                         .get(OPERATION)
                         .is_some_and(|operation| operation.fresh_only
                             && operation.registered_operation.is_none()
-                            && operation.permissions.contains(BASE_RECORD_RECEIPT)))
+                            && operation.permissions.contains(*BASE_RECORD_RECEIPT)))
             && release
                 .manifest()
                 .components
@@ -397,7 +397,7 @@ pub(super) async fn test_prior_commit(test: PriorCommitTest<'_>) -> anyhow::Resu
             counter(&test, &counter_read).await? == 0,
             "counter must start at zero"
         );
-        let removed = test.project.query("DELETE FROM app_system.permissions WHERE tenant_id=$1 AND permission=$2 RETURNING role_name", &[&TENANT,&BASE_RECORD_RECEIPT]).await?;
+        let removed = test.project.query("DELETE FROM app_system.permissions WHERE tenant_id=$1 AND permission=$2 RETURNING role_name", &[&TENANT,&*BASE_RECORD_RECEIPT]).await?;
         anyhow::ensure!(!removed.is_empty(), "nested permission fixture requires a grant");
         let (trace, parent) = journey_trace(41);
         let client_items: Vec<Value> = serde_json::from_slice(&test.body)?;
@@ -434,7 +434,7 @@ pub(super) async fn test_prior_commit(test: PriorCommitTest<'_>) -> anyhow::Resu
             let refusal = assert_operation_refusal(
                 &response,
                 "permission-denied",
-                BASE_RECORD_RECEIPT,
+                *BASE_RECORD_RECEIPT,
             );
             if refusal.is_err() {
                 diagnose_prior_commit_failure(&test, &trace).await;
@@ -448,7 +448,7 @@ pub(super) async fn test_prior_commit(test: PriorCommitTest<'_>) -> anyhow::Resu
         assert_counter_trace(&test, &trace, &parent_digest, "session", false)?;
         for row in removed {
             let role: String = row.get(0);
-            test.project.execute("INSERT INTO app_system.permissions (tenant_id,role_name,permission) VALUES ($1,$2,$3)", &[&TENANT,&role,&BASE_RECORD_RECEIPT]).await?;
+            test.project.execute("INSERT INTO app_system.permissions (tenant_id,role_name,permission) VALUES ($1,$2,$3)", &[&TENANT,&role,&*BASE_RECORD_RECEIPT]).await?;
         }
         let (trace, parent) = journey_trace(42);
         if let Some(client) = &client {
@@ -823,7 +823,7 @@ fn fixture_manifest(base_digest: &str) -> Value {
     json!({
         "package": {"id": PACKAGE, "version": VERSION},
         "base_dependencies": {"base_receiving": {
-            "package": BASE_PACKAGE_ID, "version": BASE_PACKAGE_VERSION,
+            "package": BASE_PACKAGE_ID, "version": *BASE_PACKAGE_VERSION,
             "digest": base_digest, "operations": ["receiving.record_receipt"]
         }},
         "required_platform_policy_contract": {"id": "prior_commit_fixture", "state": "satisfied"},
@@ -891,8 +891,8 @@ fn counter_parent_has_the_real_node_and_nested_operation_abi() -> anyhow::Result
         "scope": {"tenant-id": "fixture", "package-id": PACKAGE, "package-version": VERSION},
         "component": WIRING, "interface-version": "0.1.0", "connections": [],
         "operations": {(OPERATION): {"dependencies": [{"package": BASE_PACKAGE_ID,
-            "version": BASE_PACKAGE_VERSION, "digest": base_digest,
-            "operation": BASE_RECORD_RECEIPT}],
+            "version": *BASE_PACKAGE_VERSION, "digest": base_digest,
+            "operation": *BASE_RECORD_RECEIPT}],
             "input-ports": [{"name": "input", "schema": {"type": "array"}}],
             "output-ports": [{"name": "main", "schema": {"type": "array"}}], "parameters": []}}
     });
@@ -1294,24 +1294,26 @@ mod execution_tests {
                     row_version: 2,
                 }),
             }];
-            linker.instance(BASE_RECORD_RECEIPT)?.func_wrap_concurrent(
-                "run",
-                move |accessor, (context, input): (NodeContext, Vec<RecordReceiptItem>)| {
-                    let nested_result = nested_result.clone();
-                    Box::pin(async move {
-                        accessor.with(|mut store| {
-                            store.data_mut().order.push("nested");
-                            store.data_mut().nested = Some((context, input.clone()));
-                        });
-                        if refuse_nested {
-                            return Err(wash_runtime::wasmtime::Error::msg(
-                                "local nested refusal sentinel",
-                            ));
-                        }
-                        Ok((Ok::<Vec<RecordReceiptOutcome>, NodeError>(nested_result),))
-                    })
-                },
-            )?;
+            linker
+                .instance(*BASE_RECORD_RECEIPT)?
+                .func_wrap_concurrent(
+                    "run",
+                    move |accessor, (context, input): (NodeContext, Vec<RecordReceiptItem>)| {
+                        let nested_result = nested_result.clone();
+                        Box::pin(async move {
+                            accessor.with(|mut store| {
+                                store.data_mut().order.push("nested");
+                                store.data_mut().nested = Some((context, input.clone()));
+                            });
+                            if refuse_nested {
+                                return Err(wash_runtime::wasmtime::Error::msg(
+                                    "local nested refusal sentinel",
+                                ));
+                            }
+                            Ok((Ok::<Vec<RecordReceiptOutcome>, NodeError>(nested_result),))
+                        })
+                    },
+                )?;
             let mut store = Store::new(&engine, Calls::default());
             let instance = linker.instantiate_async(&mut store, &component).await?;
             let handler = instance

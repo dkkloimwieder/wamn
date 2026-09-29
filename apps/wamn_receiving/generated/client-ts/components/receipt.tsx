@@ -147,7 +147,7 @@ export const RECEIPT_QUERY_TABLE = {
     { field: "receiptReference", label: "Receipt reference", type: "text", role: "value" },
   ],
   actions: [
-    { operation: "wamn-receiving:receipt/get@1.0.0", label: "get", many: false, opens: "record", fill: [] },
+    { operation: "wamn-receiving:receipt/get@1.0.0", reference: "wamn-receiving:receipt/get", label: "get", many: false, opens: "record", fill: [] },
   ],
   childTables: [],
 } as const;

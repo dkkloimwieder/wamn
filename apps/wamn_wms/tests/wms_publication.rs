@@ -10,6 +10,7 @@ use std::path::{Path, PathBuf};
 
 use serde_json::Value;
 use wamn_catalog::{AttachmentKind, AttachmentTarget, ComponentDeclaration};
+use wamn_test_infrastructure::operations::sealed;
 
 const TENANT: &str = "wms-publication-test";
 const PACKAGE_ID: &str = "wamn_wms";
@@ -30,104 +31,104 @@ struct Operation {
 // four in one commit.
 const OPERATIONS: [Operation; 20] = [
     Operation {
-        token: "wamn-wms:packaging/get@1.0.0",
+        token: "wamn-wms:packaging/get",
         attachment: "packaging-get-http",
         route: "/packaging/get",
     },
     Operation {
-        token: "wamn-wms:packaging/query@1.0.0",
+        token: "wamn-wms:packaging/query",
         attachment: "packaging-query-http",
         route: "/packaging/query",
     },
     Operation {
         // RULED 2026-09-24 (wamn-nq1b): the move route calls the export like
         // every other operation. The label wiring is not on the request path.
-        token: "wamn-wms:inventory/move@1.0.0",
+        token: "wamn-wms:inventory/move",
         attachment: "inventory-move-http",
         route: "/inventory/move",
     },
     Operation {
-        token: "wamn-wms:inventory/adjust@1.0.0",
+        token: "wamn-wms:inventory/adjust",
         attachment: "inventory-adjust-http",
         route: "/inventory/adjust",
     },
     Operation {
-        token: "wamn-wms:inventory/merge@1.0.0",
+        token: "wamn-wms:inventory/merge",
         attachment: "inventory-merge-http",
         route: "/inventory/merge",
     },
     Operation {
-        token: "wamn-wms:inventory/split@1.0.0",
+        token: "wamn-wms:inventory/split",
         attachment: "inventory-split-http",
         route: "/inventory/split",
     },
     Operation {
-        token: "wamn-wms:inventory/aggregate@1.0.0",
+        token: "wamn-wms:inventory/aggregate",
         attachment: "inventory-aggregate-http",
         route: "/inventory/aggregate",
     },
     Operation {
-        token: "wamn-wms:inventory-transaction/get@1.0.0",
+        token: "wamn-wms:inventory-transaction/get",
         attachment: "inventory-transaction-get-http",
         route: "/inventory_transaction/get",
     },
     Operation {
-        token: "wamn-wms:inventory-transaction/query@1.0.0",
+        token: "wamn-wms:inventory-transaction/query",
         attachment: "inventory-transaction-query-http",
         route: "/inventory_transaction/query",
     },
     Operation {
-        token: "wamn-wms:location/create@1.0.0",
+        token: "wamn-wms:location/create",
         attachment: "location-create-http",
         route: "/location/create",
     },
     Operation {
-        token: "wamn-wms:location/get@1.0.0",
+        token: "wamn-wms:location/get",
         attachment: "location-get-http",
         route: "/location/get",
     },
     Operation {
-        token: "wamn-wms:location/query@1.0.0",
+        token: "wamn-wms:location/query",
         attachment: "location-query-http",
         route: "/location/query",
     },
     Operation {
-        token: "wamn-wms:location/update@1.0.0",
+        token: "wamn-wms:location/update",
         attachment: "location-update-http",
         route: "/location/update",
     },
     Operation {
-        token: "wamn-wms:packaging/create@1.0.0",
+        token: "wamn-wms:packaging/create",
         attachment: "packaging-create-http",
         route: "/packaging/create",
     },
     Operation {
-        token: "wamn-wms:packaging-quantity/get@1.0.0",
+        token: "wamn-wms:packaging-quantity/get",
         attachment: "packaging-quantity-get-http",
         route: "/packaging_quantity/get",
     },
     Operation {
-        token: "wamn-wms:packaging-quantity/query@1.0.0",
+        token: "wamn-wms:packaging-quantity/query",
         attachment: "packaging-quantity-query-http",
         route: "/packaging_quantity/query",
     },
     Operation {
-        token: "wamn-wms:product/create@1.0.0",
+        token: "wamn-wms:product/create",
         attachment: "product-create-http",
         route: "/product/create",
     },
     Operation {
-        token: "wamn-wms:product/get@1.0.0",
+        token: "wamn-wms:product/get",
         attachment: "product-get-http",
         route: "/product/get",
     },
     Operation {
-        token: "wamn-wms:product/query@1.0.0",
+        token: "wamn-wms:product/query",
         attachment: "product-query-http",
         route: "/product/query",
     },
     Operation {
-        token: "wamn-wms:product/update@1.0.0",
+        token: "wamn-wms:product/update",
         attachment: "product-update-http",
         route: "/product/update",
     },
@@ -211,15 +212,17 @@ fn package_owned_inputs_declare_the_exact_shipped_route_closure() {
     assert_eq!(declaration.operations.len(), OPERATIONS.len());
 
     for operation in &OPERATIONS {
+        // The table names each operation by reference, as the authored files do.
+        let token = sealed(operation.token);
         let target = AttachmentTarget::Route {
             component: COMPONENT.into(),
-            operation: operation.token.into(),
+            operation: token.clone(),
         };
 
         let fact = declaration
             .operations
-            .get(operation.token)
-            .unwrap_or_else(|| panic!("{} is not declared on the component", operation.token));
+            .get(&token)
+            .unwrap_or_else(|| panic!("{token} is not declared on the component"));
         assert_eq!(fact.input_ports.len(), 1);
 
         let attachment = attachments
@@ -230,7 +233,7 @@ fn package_owned_inputs_declare_the_exact_shipped_route_closure() {
         assert_eq!(attachment.target, target);
         assert_eq!(
             attachment.registered_operation.as_deref(),
-            Some(operation.token)
+            Some(token.as_str())
         );
         assert_eq!(
             attachment.auth_policy,

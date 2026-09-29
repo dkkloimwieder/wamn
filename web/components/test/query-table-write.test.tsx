@@ -59,6 +59,7 @@ async function table() {
       actions: [
         {
           operation: "fixture:row/archive@1.0.0",
+          reference: "fixture:row/archive",
           label: "archive",
           many: true,
           opens: "form",

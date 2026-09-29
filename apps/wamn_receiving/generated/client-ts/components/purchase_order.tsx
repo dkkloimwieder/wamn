@@ -187,8 +187,8 @@ export const PURCHASE_ORDER_QUERY_TABLE = {
     { field: "supplierId", input: ["change", "supplierId"], choices: { read: { route: SUPPLIER_QUERY_ROUTE, request: SUPPLIER_QUERY_REQUEST_FIELDS, result: SUPPLIER_QUERY_RESULT_FIELDS }, rows: "item", keyField: "id", displayField: "name", cursorInput: ["cursor"] } },
   ] },
   actions: [
-    { operation: "wamn-receiving:purchase-order/get@1.0.0", label: "get", many: false, opens: "record", fill: [] },
-    { operation: "wamn-receiving:receiving/record-receipt@1.0.0", label: "record-receipt", many: true, opens: "form", fill: [{ field: "id", input: ["value", "purchaseOrderId"] }], form: () => import("./receiving.js").then((module) => ({ default: module.ReceivingRecordReceiptForm })) },
+    { operation: "wamn-receiving:purchase-order/get@1.0.0", reference: "wamn-receiving:purchase-order/get", label: "get", many: false, opens: "record", fill: [] },
+    { operation: "wamn-receiving:receiving/record-receipt@1.0.0", reference: "wamn-receiving:receiving/record-receipt", label: "record-receipt", many: true, opens: "form", fill: [{ field: "id", input: ["value", "purchaseOrderId"] }], form: () => import("./receiving.js").then((module) => ({ default: module.ReceivingRecordReceiptForm })) },
   ],
   childTables: [],
 } as const;

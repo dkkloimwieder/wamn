@@ -65,11 +65,11 @@ export const SECTIONS: readonly ShellSection[] = [
         component: screen(packaging, (m) => (props) => (
           <m.PackagingQueryTable
             transport={props.transport}
-            onOpen={{ "wamn-wms:packaging/get@1.0.0": (row) => props.open(record("packagings", row)) }}
+            onOpen={{ "wamn-wms:packaging/get": (row) => props.open(record("packagings", row)) }}
             onFill={{
-              "wamn-wms:inventory/move@1.0.0": (fill) => props.open(fillPath("inventory/move", fill)),
-              "wamn-wms:inventory/adjust@1.0.0": (fill) => props.open(fillPath("inventory/adjust", fill)),
-              "wamn-wms:inventory/split@1.0.0": (fill) => props.open(fillPath("inventory/split", fill)),
+              "wamn-wms:inventory/move": (fill) => props.open(fillPath("inventory/move", fill)),
+              "wamn-wms:inventory/adjust": (fill) => props.open(fillPath("inventory/adjust", fill)),
+              "wamn-wms:inventory/split": (fill) => props.open(fillPath("inventory/split", fill)),
             }}
           />
         )),
@@ -104,7 +104,7 @@ export const SECTIONS: readonly ShellSection[] = [
           <m.PackagingQuantityQueryTable
             transport={props.transport}
             onOpen={{
-              "wamn-wms:packaging-quantity/get@1.0.0": (row) => props.open(record("packaging-quantities", row)),
+              "wamn-wms:packaging-quantity/get": (row) => props.open(record("packaging-quantities", row)),
             }}
           />
         )),
@@ -178,7 +178,7 @@ export const SECTIONS: readonly ShellSection[] = [
           <m.InventoryTransactionQueryTable
             transport={props.transport}
             onOpen={{
-              "wamn-wms:inventory-transaction/get@1.0.0": (row) => props.open(record("inventory-transactions", row)),
+              "wamn-wms:inventory-transaction/get": (row) => props.open(record("inventory-transactions", row)),
             }}
           />
         )),
@@ -203,8 +203,8 @@ export const SECTIONS: readonly ShellSection[] = [
         component: screen(location, (m) => (props) => (
           <m.LocationQueryTable
             transport={props.transport}
-            onOpen={{ "wamn-wms:location/get@1.0.0": (row) => props.open(record("locations", row)) }}
-            onFill={{ "wamn-wms:packaging/create@1.0.0": (fill) => props.open(fillPath("packagings/new", fill)) }}
+            onOpen={{ "wamn-wms:location/get": (row) => props.open(record("locations", row)) }}
+            onFill={{ "wamn-wms:packaging/create": (fill) => props.open(fillPath("packagings/new", fill)) }}
           />
         )),
       },
@@ -245,7 +245,7 @@ export const SECTIONS: readonly ShellSection[] = [
         component: screen(product, (m) => (props) => (
           <m.ProductQueryTable
             transport={props.transport}
-            onOpen={{ "wamn-wms:product/get@1.0.0": (row) => props.open(record("products", row)) }}
+            onOpen={{ "wamn-wms:product/get": (row) => props.open(record("products", row)) }}
           />
         )),
       },

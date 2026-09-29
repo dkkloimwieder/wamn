@@ -378,7 +378,9 @@ async fn assert_replay_and_progress(
             .is_some_and(|nodes| nodes.len() == 1)
             && graph["entry"] == "operation"
             && graph["nodes"]["operation"]["operation"]
-                == "client-acme-receiving:quality/create-inspection@3.0.0"
+                == wamn_test_infrastructure::operations::sealed(
+                    "client-acme-receiving:quality/create-inspection"
+                )
             && graph["nodes"]["operation"]["config"].get("retry").is_none(),
         "the test requires the unchanged one-node private handler and default retry policy"
     );

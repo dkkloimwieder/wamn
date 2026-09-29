@@ -374,10 +374,10 @@ export const PACKAGING_QUERY_TABLE = {
     { field: "updatedBy", label: "updated by", type: "uuid", role: "value" },
   ],
   actions: [
-    { operation: "wamn-wms:packaging/get@1.0.0", label: "get", many: false, opens: "record", fill: [] },
-    { operation: "wamn-wms:inventory/adjust@1.0.0", label: "adjust", many: true, opens: "form", fill: [{ field: "id", input: ["value", "packagingId"] }], revision: { field: "rowVersion", input: ["value", "expectedRowVersion"] }, form: () => import("./inventory.js").then((module) => ({ default: module.InventoryAdjustForm })) },
-    { operation: "wamn-wms:inventory/move@1.0.0", label: "move", many: true, opens: "form", fill: [{ field: "id", input: ["value", "packagingId"] }], revision: { field: "rowVersion", input: ["value", "expectedRowVersion"] }, form: () => import("./inventory.js").then((module) => ({ default: module.InventoryMoveForm })) },
-    { operation: "wamn-wms:inventory/split@1.0.0", label: "split", many: true, opens: "form", fill: [{ field: "id", input: ["value", "sourcePackagingId"] }], revision: { field: "rowVersion", input: ["value", "expectedRowVersion"] }, form: () => import("./inventory.js").then((module) => ({ default: module.InventorySplitForm })) },
+    { operation: "wamn-wms:packaging/get@1.0.0", reference: "wamn-wms:packaging/get", label: "get", many: false, opens: "record", fill: [] },
+    { operation: "wamn-wms:inventory/adjust@1.0.0", reference: "wamn-wms:inventory/adjust", label: "adjust", many: true, opens: "form", fill: [{ field: "id", input: ["value", "packagingId"] }], revision: { field: "rowVersion", input: ["value", "expectedRowVersion"] }, form: () => import("./inventory.js").then((module) => ({ default: module.InventoryAdjustForm })) },
+    { operation: "wamn-wms:inventory/move@1.0.0", reference: "wamn-wms:inventory/move", label: "move", many: true, opens: "form", fill: [{ field: "id", input: ["value", "packagingId"] }], revision: { field: "rowVersion", input: ["value", "expectedRowVersion"] }, form: () => import("./inventory.js").then((module) => ({ default: module.InventoryMoveForm })) },
+    { operation: "wamn-wms:inventory/split@1.0.0", reference: "wamn-wms:inventory/split", label: "split", many: true, opens: "form", fill: [{ field: "id", input: ["value", "sourcePackagingId"] }], revision: { field: "rowVersion", input: ["value", "expectedRowVersion"] }, form: () => import("./inventory.js").then((module) => ({ default: module.InventorySplitForm })) },
   ],
   childTables: [],
 } as const;

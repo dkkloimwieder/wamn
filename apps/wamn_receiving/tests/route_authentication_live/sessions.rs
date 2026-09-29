@@ -73,7 +73,7 @@ pub(super) async fn prepare_session_host_fixture(
         with_generated_attachments(&source, &mut document)?;
         if let Some(attachment) = document.get_mut(SESSION_ATTACHMENT) {
             anyhow::ensure!(
-                attachment["registered-operation"] == reference_of(OPERATION)
+                attachment["registered-operation"] == reference_of(*OPERATION)
                     && attachment["auth-policy"]
                         == serde_json::json!({"modes": ["pat", "session"]}),
                 "session fixture target differs from the existing purchase-order GET route"
@@ -149,7 +149,7 @@ pub(super) async fn prepare_session_host_fixture(
         .await?;
     project.execute(
         "INSERT INTO app_system.permissions (tenant_id, role_name, permission) VALUES ($1, $2, $3)",
-        &[&TENANT, &SESSION_ROLE, &OPERATION],
+        &[&TENANT, &SESSION_ROLE, &*OPERATION],
     ).await?;
     project
         .execute(
@@ -228,11 +228,11 @@ pub(super) async fn assert_nested_session(
     const ROLE: &str = "session-nested-caller";
     let overlay_attachment = JOURNEY_ATTACHMENTS
         .iter()
-        .find(|attachment| attachment.operation == OVERLAY_RECORD_RECEIPT)
+        .find(|attachment| sealed(attachment.operation) == *OVERLAY_RECORD_RECEIPT)
         .context("the journey omitted the overlay Receipt route")?;
     let direct_attachment = JOURNEY_ATTACHMENTS
         .iter()
-        .find(|attachment| attachment.operation == BASE_RECORD_RECEIPT)
+        .find(|attachment| sealed(attachment.operation) == *BASE_RECORD_RECEIPT)
         .context("the journey omitted the direct Receipt route")?;
     let mut selected_attachments = vec![overlay_attachment];
     if fresh_only {
@@ -242,7 +242,7 @@ pub(super) async fn assert_nested_session(
         selected_attachments.push(
             JOURNEY_ATTACHMENTS
                 .iter()
-                .find(|attachment| attachment.operation == OPERATION)
+                .find(|attachment| sealed(attachment.operation) == *OPERATION)
                 .context("the journey omitted the ordinary client GET route")?,
         );
     }
@@ -251,7 +251,7 @@ pub(super) async fn assert_nested_session(
         selected_attachments.push(
             JOURNEY_ATTACHMENTS
                 .iter()
-                .find(|attachment| attachment.operation == OVERLAY_UPDATE)
+                .find(|attachment| sealed(attachment.operation) == *OVERLAY_UPDATE)
                 .context("the journey omitted the Acme purchase_order update route")?,
         );
     }
@@ -335,8 +335,8 @@ pub(super) async fn assert_nested_session(
             .map(|operation| operation.fresh_only)
     };
     anyhow::ensure!(
-        operation_freshness(BASE_RECORD_RECEIPT) == Some(fresh_only)
-            && operation_freshness(OVERLAY_RECORD_RECEIPT) == Some(fresh_only),
+        operation_freshness(*BASE_RECORD_RECEIPT) == Some(fresh_only)
+            && operation_freshness(*OVERLAY_RECORD_RECEIPT) == Some(fresh_only),
         "nested test requires the admitted base freshness, folded into the overlay entry"
     );
     let digests = released_component_digests(&previous, &inputs.route_host)?;
@@ -365,7 +365,7 @@ pub(super) async fn assert_nested_session(
         for selected in &selected_attachments {
             if let Some(attachment) = document.get_mut(selected.id) {
                 anyhow::ensure!(
-                    attachment["registered-operation"] == reference_of(selected.operation)
+                    attachment["registered-operation"] == selected.operation
                         && attachment["auth-policy"]
                             == serde_json::json!({"modes": ["pat", "session"]}),
                     "caller test route differs from the authored PAT attachment"
@@ -451,12 +451,12 @@ pub(super) async fn assert_nested_session(
             &[&TENANT, &ROLE],
         )
         .await?;
-    let mut permitted_operations = vec![OVERLAY_RECORD_RECEIPT, BASE_RECORD_RECEIPT];
+    let mut permitted_operations = vec![*OVERLAY_RECORD_RECEIPT, *BASE_RECORD_RECEIPT];
     if session_client {
-        permitted_operations.push(OPERATION);
+        permitted_operations.push(*OPERATION);
     }
     if stamp_equality {
-        permitted_operations.extend([BASE_UPDATE, OVERLAY_UPDATE]);
+        permitted_operations.extend([*BASE_UPDATE, *OVERLAY_UPDATE]);
     }
     for operation in permitted_operations {
         project.execute(
@@ -708,7 +708,7 @@ pub(super) async fn assert_nested_session(
             &traces.spans(),
             &direct_session_trace,
             "",
-            BASE_RECORD_RECEIPT,
+            *BASE_RECORD_RECEIPT,
             &digests[BASE_PACKAGE_ID],
             human.id().as_str(),
         );
@@ -747,7 +747,7 @@ pub(super) async fn assert_nested_session(
             &direct_spans,
             &direct_pat_trace,
             "",
-            BASE_RECORD_RECEIPT,
+            *BASE_RECORD_RECEIPT,
             &digests[BASE_PACKAGE_ID],
             human.id().as_str(),
         );
@@ -806,7 +806,7 @@ pub(super) async fn assert_nested_session(
             request_body.clone(),
         )
         .await?;
-        assert_operation_refusal(&response, "permission-denied", OVERLAY_RECORD_RECEIPT)?;
+        assert_operation_refusal(&response, "permission-denied", *OVERLAY_RECORD_RECEIPT)?;
         assert_no_component_trace(&traces.spans(), &role_trace);
         project
             .execute(
@@ -891,8 +891,10 @@ pub(super) async fn assert_nested_session(
     Ok(())
 }
 
-const BASE_UPDATE: &str = "wamn-receiving:purchase-order/update@1.0.0";
-const OVERLAY_UPDATE: &str = "client-acme-receiving:purchase-order/update@3.0.0";
+static BASE_UPDATE: LazyLock<&'static str> =
+    LazyLock::new(|| sealed("wamn-receiving:purchase-order/update").leak());
+static OVERLAY_UPDATE: LazyLock<&'static str> =
+    LazyLock::new(|| sealed("client-acme-receiving:purchase-order/update").leak());
 
 /// Two credentials of one person.
 struct StampCredentials<'a> {

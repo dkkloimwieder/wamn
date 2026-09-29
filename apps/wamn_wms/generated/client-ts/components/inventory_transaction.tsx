@@ -162,7 +162,7 @@ export const INVENTORY_TRANSACTION_QUERY_TABLE = {
     { field: "toStatus", label: "to status", type: "text", role: "value" },
   ],
   actions: [
-    { operation: "wamn-wms:inventory-transaction/get@1.0.0", label: "get", many: false, opens: "record", fill: [] },
+    { operation: "wamn-wms:inventory-transaction/get@1.0.0", reference: "wamn-wms:inventory-transaction/get", label: "get", many: false, opens: "record", fill: [] },
   ],
   childTables: [],
 } as const;

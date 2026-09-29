@@ -32,7 +32,7 @@ describe("a row that opens a form", () => {
       <WidgetMakerQueryTable
         transport={transport}
         onFill={{
-          "platform-fixture:widget/create@1.0.0": (initial) => {
+          "platform-fixture:widget/create": (initial) => {
             carried = initial;
           },
         }}
@@ -66,7 +66,7 @@ describe("a row that opens a form", () => {
       <WidgetListTable
         transport={transport}
         onFill={{
-          "platform-fixture:widget/record-batch@1.0.0": (initial) => {
+          "platform-fixture:widget/record-batch": (initial) => {
             carried = initial;
           },
         }}
@@ -94,8 +94,8 @@ describe("a row that opens a form", () => {
       <WidgetMakerQueryTable
         transport={transport}
         onFill={{
-          "platform-fixture:widget/create@1.0.0": () => {},
-          "platform-fixture:widget/record-batch@1.0.0": (initial) => void batch.push(initial),
+          "platform-fixture:widget/create": () => {},
+          "platform-fixture:widget/record-batch": (initial) => void batch.push(initial),
         }}
       />
     ));

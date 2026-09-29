@@ -25,7 +25,9 @@ use database::{
 use model::{Expected, History, Receipt, Step};
 
 const RECEIPT_PATH: &str = "/receiving/record_receipt";
-const RECEIPT_OPERATION: &str = "wamn-receiving:receiving/record-receipt@1.0.0";
+static RECEIPT_OPERATION: std::sync::LazyLock<&'static str> = std::sync::LazyLock::new(|| {
+    wamn_test_infrastructure::operations::sealed("wamn-receiving:receiving/record-receipt").leak()
+});
 const OCCURRED_AT: &str = "2026-09-09T12:00:00.000000Z";
 
 // Secrets cross only through this private file. The evidence excludes them.
@@ -873,7 +875,7 @@ async fn authority(db: &Client, route: &Route, inputs: &Inputs, evidence: &mut F
         .execute(
             "DELETE FROM app_system.permissions \
         WHERE tenant_id=$1 AND role_name=$2 AND permission=$3",
-            &[&inputs.tenant, &inputs.caller_role, &RECEIPT_OPERATION],
+            &[&inputs.tenant, &inputs.caller_role, &*RECEIPT_OPERATION],
         )
         .await?;
     ensure!(
@@ -885,7 +887,7 @@ async fn authority(db: &Client, route: &Route, inputs: &Inputs, evidence: &mut F
     let restored = db
         .execute(
             "INSERT INTO app_system.permissions(tenant_id,role_name,permission) VALUES($1,$2,$3)",
-            &[&inputs.tenant, &inputs.caller_role, &RECEIPT_OPERATION],
+            &[&inputs.tenant, &inputs.caller_role, &*RECEIPT_OPERATION],
         )
         .await;
     let denied = denied?;
@@ -894,7 +896,7 @@ async fn authority(db: &Client, route: &Route, inputs: &Inputs, evidence: &mut F
         denied.status == reqwest::StatusCode::FORBIDDEN
             && denied.body
                 == json!({"error":{
-        "code":"permission-denied","operation":RECEIPT_OPERATION}}),
+        "code":"permission-denied","operation":*RECEIPT_OPERATION}}),
         "REC-AUTHORITY expected exact operation denial: {denied:?}"
     );
     ensure!(

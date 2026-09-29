@@ -245,7 +245,7 @@ export function ActionTable(props: { size: number }): JSX.Element {
           definition={WIDGETS}
           transport={stub.transport}
           label="widgets"
-          onOpen={{ "platform-fixture:widget/get@1.0.0": (row) => setOpened(`get opened for ${row.id}`) }}
+          onOpen={{ "platform-fixture:widget/get": (row) => setOpened(`get opened for ${row.id}`) }}
         />
       </div>
     </div>

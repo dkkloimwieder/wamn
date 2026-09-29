@@ -5639,6 +5639,7 @@ dependencies = [
  "wamn-control",
  "wamn-execution-contract",
  "wamn-schema-generator",
+ "wamn-test-infrastructure",
 ]
 
 [[package]]

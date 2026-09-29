@@ -260,7 +260,7 @@ pub(super) fn assert_permission_refusal(
     result: Result<Vec<ItemOutcome>, ClientError>,
 ) -> anyhow::Result<()> {
     anyhow::ensure!(
-        matches!(result, Err(ClientError::Operation { literal, detail }) if literal == "permission-denied" && detail == json!({"operation": BASE_RECORD_RECEIPT})),
+        matches!(result, Err(ClientError::Operation { literal, detail }) if literal == "permission-denied" && detail == json!({"operation": *BASE_RECORD_RECEIPT})),
         "client must expose the exact late permission-denied refusal"
     );
     Ok(())
@@ -304,7 +304,7 @@ pub(super) async fn assert_session_client(
             &test,
             61 + index as u64,
             "",
-            OPERATION,
+            *OPERATION,
             base_digest,
             "session",
         )?;
@@ -321,7 +321,7 @@ pub(super) async fn assert_session_client(
         transport.calls() == 3 && login.transport.calls.load(Ordering::SeqCst) == 1,
         "legacy fresh client call must send one session request without exchange"
     );
-    assert_kind(&test, 63, "", BASE_RECORD_RECEIPT, base_digest, "session")?;
+    assert_kind(&test, 63, "", *BASE_RECORD_RECEIPT, base_digest, "session")?;
 
     let expired = issue_pat(
         test.control,

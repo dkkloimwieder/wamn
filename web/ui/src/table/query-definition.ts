@@ -55,6 +55,11 @@ export interface QueryTableFill {
 /** One operation a row opens: a record by the row, or a form the row fills. */
 export interface QueryTableAction {
   readonly operation: string;
+  /**
+   * The operation without its package version, `<package>:<interface>/<operation>`.
+   * A page keys `onOpen` and `onFill` by it, so a page shows one version of each package.
+   */
+  readonly reference: string;
   readonly label: string;
   /** True when one call takes many rows. */
   readonly many: boolean;

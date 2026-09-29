@@ -429,7 +429,7 @@ async fn receiving_release_journey(
     expected_direct_traces.push((
         trace_id,
         "",
-        "wamn-receiving:purchase-order/get@1.0.0",
+        sealed("wamn-receiving:purchase-order/get").leak() as &str,
         BASE_PACKAGE_ID,
     ));
 
@@ -465,7 +465,7 @@ async fn receiving_release_journey(
     expected_direct_traces.push((
         trace_id,
         "",
-        "wamn-receiving:purchase-order/query@1.0.0",
+        sealed("wamn-receiving:purchase-order/query").leak() as &str,
         BASE_PACKAGE_ID,
     ));
 
@@ -500,7 +500,7 @@ async fn receiving_release_journey(
     expected_direct_traces.push((
         trace_id,
         "",
-        "wamn-receiving:purchase-order/update@1.0.0",
+        sealed("wamn-receiving:purchase-order/update").leak() as &str,
         BASE_PACKAGE_ID,
     ));
     assert_route_update_record_history(
@@ -559,7 +559,7 @@ async fn receiving_release_journey(
             && stamps.get::<_, String>(2) == caller_principal_id,
         "receiving.record_receipt did not stamp the order and receipt with one instant and actor"
     );
-    expected_direct_traces.push((trace_id, "", BASE_RECORD_RECEIPT, BASE_PACKAGE_ID));
+    expected_direct_traces.push((trace_id, "", *BASE_RECORD_RECEIPT, BASE_PACKAGE_ID));
 
     let (trace_id, traceparent) = journey_trace(6);
     let response = invoke_journey_read(
@@ -584,7 +584,7 @@ async fn receiving_release_journey(
     expected_direct_traces.push((
         trace_id,
         "",
-        "wamn-receiving:receipt/get@1.0.0",
+        sealed("wamn-receiving:receipt/get").leak() as &str,
         BASE_PACKAGE_ID,
     ));
 
@@ -619,7 +619,7 @@ async fn receiving_release_journey(
     expected_direct_traces.push((
         trace_id,
         "",
-        "wamn-receiving:receipt/query@1.0.0",
+        sealed("wamn-receiving:receipt/query").leak() as &str,
         BASE_PACKAGE_ID,
     ));
     seed_preexisting_quality_fixture(project.as_ref()).await?;
@@ -650,7 +650,7 @@ async fn receiving_release_journey(
     expected_direct_traces.push((
         trace_id,
         "",
-        "client-acme-receiving:purchase-order/get@3.0.0",
+        sealed("client-acme-receiving:purchase-order/get").leak() as &str,
         OVERLAY_PACKAGE_ID,
     ));
 
@@ -688,7 +688,7 @@ async fn receiving_release_journey(
     expected_direct_traces.push((
         trace_id,
         "",
-        "client-acme-receiving:purchase-order/update@3.0.0",
+        sealed("client-acme-receiving:purchase-order/update").leak() as &str,
         OVERLAY_PACKAGE_ID,
     ));
     assert_route_history_read(
@@ -727,7 +727,7 @@ async fn receiving_release_journey(
     expected_direct_traces.push((
         trace_id,
         "",
-        "client-acme-receiving:quality/load-purchase-order-detail@3.0.0",
+        sealed("client-acme-receiving:quality/load-purchase-order-detail").leak() as &str,
         OVERLAY_PACKAGE_ID,
     ));
 
@@ -762,7 +762,7 @@ async fn receiving_release_journey(
     expected_direct_traces.push((
         trace_id,
         "",
-        "client-acme-receiving:quality/approve-inspection@3.0.0",
+        sealed("client-acme-receiving:quality/approve-inspection").leak() as &str,
         OVERLAY_PACKAGE_ID,
     ));
 
@@ -772,7 +772,7 @@ async fn receiving_release_journey(
         .execute(
             "DELETE FROM app_system.permissions \
              WHERE tenant_id = $1 AND role_name = $2 AND permission = $3",
-            &[&TENANT, &OPERATOR_ROLE, &HISTORY_OPERATION],
+            &[&TENANT, &OPERATOR_ROLE, &*HISTORY_OPERATION],
         )
         .await
         .context("remove only the purchase order history permission")?;
@@ -798,14 +798,14 @@ async fn receiving_release_journey(
     super::sessions::assert_operation_refusal(
         &denied_history,
         "permission-denied",
-        HISTORY_OPERATION,
+        *HISTORY_OPERATION,
     )?;
 
     let removed = project
         .execute(
             "DELETE FROM app_system.permissions \
              WHERE tenant_id = $1 AND role_name = $2 AND permission = $3",
-            &[&TENANT, &OPERATOR_ROLE, &BASE_RECORD_RECEIPT],
+            &[&TENANT, &OPERATOR_ROLE, &*BASE_RECORD_RECEIPT],
         )
         .await
         .context("remove only the pinned-base record_receipt permission")?;
@@ -838,7 +838,7 @@ async fn receiving_release_journey(
                 == serde_json::json!({
                     "error": {
                         "code": "permission-denied",
-                        "operation": BASE_RECORD_RECEIPT,
+                        "operation": *BASE_RECORD_RECEIPT,
                     }
                 }),
         "nested permission refusal was not the exact discoverable 403 contract: status={} body={denied_nested_body}",
@@ -1251,7 +1251,6 @@ async fn assert_unauthorized_no_op_refuses(
     token: &str,
     project: &Client,
 ) -> anyhow::Result<()> {
-    const UPDATE_OPERATION: &str = "wamn-receiving:purchase-order/update@1.0.0";
     async fn row(project: &Client) -> anyhow::Result<Value> {
         project
             .query_one(
@@ -1263,12 +1262,13 @@ async fn assert_unauthorized_no_op_refuses(
             .map(|row| row.get::<_, Value>(0))
             .context("read the purchase order around the unauthorized no-op")
     }
+    let update_operation = sealed("wamn-receiving:purchase-order/update");
     let before = row(project).await?;
     let removed = project
         .execute(
             "DELETE FROM app_system.permissions \
              WHERE tenant_id = $1 AND role_name = $2 AND permission = $3",
-            &[&TENANT, &OPERATOR_ROLE, &UPDATE_OPERATION],
+            &[&TENANT, &OPERATOR_ROLE, &update_operation],
         )
         .await
         .context("remove only the purchase_order.update permission")?;
@@ -1297,7 +1297,7 @@ async fn assert_unauthorized_no_op_refuses(
         Bytes::from(body),
     )
     .await?;
-    super::sessions::assert_operation_refusal(&response, "permission-denied", UPDATE_OPERATION)?;
+    super::sessions::assert_operation_refusal(&response, "permission-denied", &update_operation)?;
     anyhow::ensure!(
         row(project).await? == before,
         "an unauthorized no-op changed the purchase order"

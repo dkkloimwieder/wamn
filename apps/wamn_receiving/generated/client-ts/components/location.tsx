@@ -65,7 +65,7 @@ export const LOCATION_LIST_TABLE = {
     { field: "locationCode", label: "Location code", type: "text", role: "value" },
   ],
   actions: [
-    { operation: "wamn-receiving:receiving/record-receipt@1.0.0", label: "record-receipt", many: true, opens: "form", fill: [{ field: "id", input: ["value", "line", "[]", "locationId"] }], form: () => import("./receiving.js").then((module) => ({ default: module.ReceivingRecordReceiptForm })) },
+    { operation: "wamn-receiving:receiving/record-receipt@1.0.0", reference: "wamn-receiving:receiving/record-receipt", label: "record-receipt", many: true, opens: "form", fill: [{ field: "id", input: ["value", "line", "[]", "locationId"] }], form: () => import("./receiving.js").then((module) => ({ default: module.ReceivingRecordReceiptForm })) },
   ],
   childTables: [],
 } as const;

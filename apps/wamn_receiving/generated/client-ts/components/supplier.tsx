@@ -189,7 +189,7 @@ export const SUPPLIER_QUERY_TABLE = {
     { field: "name", label: "Supplier name", type: "text", role: "value" },
   ],
   actions: [
-    { operation: "wamn-receiving:purchase-order/update@1.0.0", label: "update", many: false, opens: "form", fill: [{ field: "id", input: ["change", "supplierId"] }] },
+    { operation: "wamn-receiving:purchase-order/update@1.0.0", reference: "wamn-receiving:purchase-order/update", label: "update", many: false, opens: "form", fill: [{ field: "id", input: ["change", "supplierId"] }] },
   ],
   childTables: [
     { label: "purchase order", table: () => PURCHASE_ORDER_QUERY_TABLE, scopeFilter: "supplierId" },

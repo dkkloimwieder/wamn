@@ -27,6 +27,7 @@ use std::io::Write;
 use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::sync::LazyLock;
 use std::time::Duration;
 
 use anyhow::Context;
@@ -112,15 +113,23 @@ use wamn_control::dev::environment::{
     spawn_journey_management_gate, write_dev_config,
 };
 use wamn_control::provision_project_env::{read_json, secret_value};
+use wamn_test_infrastructure::operations::{package_version, sealed};
 use wamn_test_infrastructure::scratch::ScratchRoot;
 
 const OPERATOR_ROLE: &str = "operator";
 const BASE_PACKAGE_ID: &str = "wamn_receiving";
-const BASE_PACKAGE_VERSION: &str = "1.0.0";
+/// The version of the base package, from its wamn.json.
+static BASE_PACKAGE_VERSION: LazyLock<&'static str> =
+    LazyLock::new(|| package_version(BASE_PACKAGE_ID).leak());
 const BASE_COMPONENT: &str = "receiving";
-const OPERATION: &str = "wamn-receiving:purchase-order/get@1.0.0";
+// Each operation is named by reference, as the authored files name it, and
+// `sealed` reads its version from the package wamn.json.
+static OPERATION: LazyLock<&'static str> =
+    LazyLock::new(|| sealed("wamn-receiving:purchase-order/get").leak());
 const OVERLAY_PACKAGE_ID: &str = "client_acme_receiving";
-const OVERLAY_PACKAGE_VERSION: &str = "3.0.0";
+/// The version of the overlay package, from its wamn.json.
+static OVERLAY_PACKAGE_VERSION: LazyLock<&'static str> =
+    LazyLock::new(|| package_version(OVERLAY_PACKAGE_ID).leak());
 const OVERLAY_COMPONENT: &str = "client_acme_receiving";
 const RAW_BODY_LIMIT: usize = 1024 * 1024;
 /// Domain of the platform principal emails in every test tenant.
@@ -129,66 +138,69 @@ const REGISTRY_IO_TIMEOUT: Duration = Duration::from_secs(30);
 // Eleven base operations: the supplier record (wamn-rm14.8) added
 // supplier_create and supplier_query to the nine before it.
 const BASE_OPERATIONS: [(&str, &str); 11] = [
-    ("location_list", "wamn-receiving:location/list@1.0.0"),
-    (
-        "purchase_order_get",
-        "wamn-receiving:purchase-order/get@1.0.0",
-    ),
+    ("location_list", "wamn-receiving:location/list"),
+    ("purchase_order_get", "wamn-receiving:purchase-order/get"),
     (
         "purchase_order_query",
-        "wamn-receiving:purchase-order/query@1.0.0",
+        "wamn-receiving:purchase-order/query",
     ),
     (
         "purchase_order_update",
-        "wamn-receiving:purchase-order/update@1.0.0",
+        "wamn-receiving:purchase-order/update",
     ),
-    ("receipt_get", "wamn-receiving:receipt/get@1.0.0"),
-    ("receipt_query", "wamn-receiving:receipt/query@1.0.0"),
-    ("receiving_load_purchase_order_history", HISTORY_OPERATION),
+    ("receipt_get", "wamn-receiving:receipt/get"),
+    ("receipt_query", "wamn-receiving:receipt/query"),
+    (
+        "receiving_load_purchase_order_history",
+        "wamn-receiving:receiving/load-purchase-order-history",
+    ),
     (
         "receiving_load_receipt_screen",
-        "wamn-receiving:receiving/load-receipt-screen@1.0.0",
+        "wamn-receiving:receiving/load-receipt-screen",
     ),
     (
         "receiving_record_receipt",
-        "wamn-receiving:receiving/record-receipt@1.0.0",
+        "wamn-receiving:receiving/record-receipt",
     ),
-    ("supplier_create", "wamn-receiving:supplier/create@1.0.0"),
-    ("supplier_query", "wamn-receiving:supplier/query@1.0.0"),
+    ("supplier_create", "wamn-receiving:supplier/create"),
+    ("supplier_query", "wamn-receiving:supplier/query"),
 ];
 const OVERLAY_OPERATIONS: [(&str, &str); 6] = [
     (
         "purchase_order_get",
-        "client-acme-receiving:purchase-order/get@3.0.0",
+        "client-acme-receiving:purchase-order/get",
     ),
     (
         "purchase_order_update",
-        "client-acme-receiving:purchase-order/update@3.0.0",
+        "client-acme-receiving:purchase-order/update",
     ),
     (
         "receiving_record_receipt",
-        "client-acme-receiving:receiving/record-receipt@3.0.0",
+        "client-acme-receiving:receiving/record-receipt",
     ),
     (
         "quality_load_purchase_order_detail",
-        "client-acme-receiving:quality/load-purchase-order-detail@3.0.0",
+        "client-acme-receiving:quality/load-purchase-order-detail",
     ),
     (
         "quality_approve_inspection",
-        "client-acme-receiving:quality/approve-inspection@3.0.0",
+        "client-acme-receiving:quality/approve-inspection",
     ),
     (
         "quality_create_inspection",
-        "client-acme-receiving:quality/create-inspection@3.0.0",
+        "client-acme-receiving:quality/create-inspection",
     ),
 ];
-const BASE_RECORD_RECEIPT: &str = "wamn-receiving:receiving/record-receipt@1.0.0";
 /// The reference that the authored base declaration names the operation by.
 const BASE_RECORD_RECEIPT_REFERENCE: &str = "wamn-receiving:receiving/record-receipt";
-const HISTORY_OPERATION: &str = "wamn-receiving:receiving/load-purchase-order-history@1.0.0";
-const OVERLAY_RECORD_RECEIPT: &str = "client-acme-receiving:receiving/record-receipt@3.0.0";
-const OVERLAY_RECEIPT_PARTICIPANT: &str =
-    "client-acme-receiving:receiving/record-receipt-participant@3.0.0";
+static BASE_RECORD_RECEIPT: LazyLock<&'static str> =
+    LazyLock::new(|| sealed(BASE_RECORD_RECEIPT_REFERENCE).leak());
+static HISTORY_OPERATION: LazyLock<&'static str> =
+    LazyLock::new(|| sealed("wamn-receiving:receiving/load-purchase-order-history").leak());
+static OVERLAY_RECORD_RECEIPT: LazyLock<&'static str> =
+    LazyLock::new(|| sealed("client-acme-receiving:receiving/record-receipt").leak());
+static OVERLAY_RECEIPT_PARTICIPANT: LazyLock<&'static str> =
+    LazyLock::new(|| sealed("client-acme-receiving:receiving/record-receipt-participant").leak());
 const PREEXISTING_QUALITY_RECEIPT_ID: &str = "00000000-0000-0000-0000-000000000603";
 const MATERIALIZER_STREAM: &str = "EVT_4_acme_9_receiving_3_dev";
 const MATERIALIZER_DURABLE: &str =
@@ -216,7 +228,7 @@ const JOURNEY_ATTACHMENTS: [JourneyAttachment; 16] = [
         wiring_id: "location_list",
         path: "/location/list",
         method: "GET",
-        operation: "wamn-receiving:location/list@1.0.0",
+        operation: "wamn-receiving:location/list",
     },
     JourneyAttachment {
         id: "purchase-order-get-http",
@@ -224,7 +236,7 @@ const JOURNEY_ATTACHMENTS: [JourneyAttachment; 16] = [
         wiring_id: "purchase_order_get",
         path: "/purchase_order/get",
         method: "GET",
-        operation: "wamn-receiving:purchase-order/get@1.0.0",
+        operation: "wamn-receiving:purchase-order/get",
     },
     JourneyAttachment {
         id: "purchase-order-query-http",
@@ -232,7 +244,7 @@ const JOURNEY_ATTACHMENTS: [JourneyAttachment; 16] = [
         wiring_id: "purchase_order_query",
         path: "/purchase_order/query",
         method: "GET",
-        operation: "wamn-receiving:purchase-order/query@1.0.0",
+        operation: "wamn-receiving:purchase-order/query",
     },
     JourneyAttachment {
         id: "purchase-order-update-http",
@@ -240,7 +252,7 @@ const JOURNEY_ATTACHMENTS: [JourneyAttachment; 16] = [
         wiring_id: "purchase_order_update",
         path: "/purchase_order/update",
         method: "POST",
-        operation: "wamn-receiving:purchase-order/update@1.0.0",
+        operation: "wamn-receiving:purchase-order/update",
     },
     JourneyAttachment {
         id: "receipt-get-http",
@@ -248,7 +260,7 @@ const JOURNEY_ATTACHMENTS: [JourneyAttachment; 16] = [
         wiring_id: "receipt_get",
         path: "/receipt/get",
         method: "GET",
-        operation: "wamn-receiving:receipt/get@1.0.0",
+        operation: "wamn-receiving:receipt/get",
     },
     JourneyAttachment {
         id: "receipt-query-http",
@@ -256,7 +268,7 @@ const JOURNEY_ATTACHMENTS: [JourneyAttachment; 16] = [
         wiring_id: "receipt_query",
         path: "/receipt/query",
         method: "GET",
-        operation: "wamn-receiving:receipt/query@1.0.0",
+        operation: "wamn-receiving:receipt/query",
     },
     JourneyAttachment {
         id: "receiving-record-receipt-http",
@@ -264,7 +276,7 @@ const JOURNEY_ATTACHMENTS: [JourneyAttachment; 16] = [
         wiring_id: "receiving_record_receipt",
         path: "/receiving/record_receipt",
         method: "POST",
-        operation: BASE_RECORD_RECEIPT,
+        operation: BASE_RECORD_RECEIPT_REFERENCE,
     },
     JourneyAttachment {
         id: "receiving-load-receipt-screen-http",
@@ -272,7 +284,7 @@ const JOURNEY_ATTACHMENTS: [JourneyAttachment; 16] = [
         wiring_id: "receiving_load_receipt_screen",
         path: "/receiving/load_receipt_screen",
         method: "GET",
-        operation: "wamn-receiving:receiving/load-receipt-screen@1.0.0",
+        operation: "wamn-receiving:receiving/load-receipt-screen",
     },
     JourneyAttachment {
         id: "receiving-load-purchase-order-history-http",
@@ -280,7 +292,7 @@ const JOURNEY_ATTACHMENTS: [JourneyAttachment; 16] = [
         wiring_id: "receiving_load_purchase_order_history",
         path: "/receiving/load_purchase_order_history",
         method: "GET",
-        operation: HISTORY_OPERATION,
+        operation: "wamn-receiving:receiving/load-purchase-order-history",
     },
     JourneyAttachment {
         id: "supplier-create-http",
@@ -288,7 +300,7 @@ const JOURNEY_ATTACHMENTS: [JourneyAttachment; 16] = [
         wiring_id: "supplier_create",
         path: "/supplier/create",
         method: "POST",
-        operation: "wamn-receiving:supplier/create@1.0.0",
+        operation: "wamn-receiving:supplier/create",
     },
     JourneyAttachment {
         id: "supplier-query-http",
@@ -296,7 +308,7 @@ const JOURNEY_ATTACHMENTS: [JourneyAttachment; 16] = [
         wiring_id: "supplier_query",
         path: "/supplier/query",
         method: "GET",
-        operation: "wamn-receiving:supplier/query@1.0.0",
+        operation: "wamn-receiving:supplier/query",
     },
     JourneyAttachment {
         id: "client-acme-receiving-purchase-order-get-http",
@@ -304,7 +316,7 @@ const JOURNEY_ATTACHMENTS: [JourneyAttachment; 16] = [
         wiring_id: "purchase_order_get",
         path: "/acme/purchase_order/get",
         method: "GET",
-        operation: "client-acme-receiving:purchase-order/get@3.0.0",
+        operation: "client-acme-receiving:purchase-order/get",
     },
     JourneyAttachment {
         id: "client-acme-receiving-purchase-order-update-http",
@@ -312,7 +324,7 @@ const JOURNEY_ATTACHMENTS: [JourneyAttachment; 16] = [
         wiring_id: "purchase_order_update",
         path: "/acme/purchase_order/update",
         method: "POST",
-        operation: "client-acme-receiving:purchase-order/update@3.0.0",
+        operation: "client-acme-receiving:purchase-order/update",
     },
     JourneyAttachment {
         id: "client-acme-receiving-receiving-record-receipt-http",
@@ -320,7 +332,7 @@ const JOURNEY_ATTACHMENTS: [JourneyAttachment; 16] = [
         wiring_id: "receiving_record_receipt",
         path: "/acme/receiving/record_receipt",
         method: "POST",
-        operation: OVERLAY_RECORD_RECEIPT,
+        operation: "client-acme-receiving:receiving/record-receipt",
     },
     JourneyAttachment {
         id: "client-acme-receiving-quality-load-purchase-order-detail-http",
@@ -328,7 +340,7 @@ const JOURNEY_ATTACHMENTS: [JourneyAttachment; 16] = [
         wiring_id: "quality_load_purchase_order_detail",
         path: "/acme/quality/load_purchase_order_detail",
         method: "GET",
-        operation: "client-acme-receiving:quality/load-purchase-order-detail@3.0.0",
+        operation: "client-acme-receiving:quality/load-purchase-order-detail",
     },
     JourneyAttachment {
         id: "client-acme-receiving-quality-approve-inspection-http",
@@ -336,31 +348,39 @@ const JOURNEY_ATTACHMENTS: [JourneyAttachment; 16] = [
         wiring_id: "quality_approve_inspection",
         path: "/acme/quality/approve_inspection",
         method: "POST",
-        operation: "client-acme-receiving:quality/approve-inspection@3.0.0",
+        operation: "client-acme-receiving:quality/approve-inspection",
     },
 ];
 
 #[derive(Clone, Copy)]
 struct JourneyPackage {
     id: &'static str,
-    version: &'static str,
     component: &'static str,
     operations: &'static [(&'static str, &'static str)],
     /// The wirings the package publishes. Every other operation is a route.
     wirings: &'static [&'static str],
 }
 
+impl JourneyPackage {
+    /// The version of the package, from its wamn.json.
+    fn version(&self) -> &'static str {
+        if self.id == BASE_PACKAGE_ID {
+            *BASE_PACKAGE_VERSION
+        } else {
+            *OVERLAY_PACKAGE_VERSION
+        }
+    }
+}
+
 const JOURNEY_PACKAGES: [JourneyPackage; 2] = [
     JourneyPackage {
         id: BASE_PACKAGE_ID,
-        version: BASE_PACKAGE_VERSION,
         component: BASE_COMPONENT,
         operations: &BASE_OPERATIONS,
         wirings: &[],
     },
     JourneyPackage {
         id: OVERLAY_PACKAGE_ID,
-        version: OVERLAY_PACKAGE_VERSION,
         component: OVERLAY_COMPONENT,
         operations: &OVERLAY_OPERATIONS,
         // The receipt-insert registration names this event handler wiring.

@@ -5,10 +5,10 @@ use std::path::{Path, PathBuf};
 
 use serde_json::Value;
 use wamn_catalog::{AttachmentKind, AttachmentTarget, ComponentDeclaration};
+use wamn_test_infrastructure::operations::{package_version, sealed};
 
 const TENANT: &str = "receiving-publication-test";
 const PACKAGE_ID: &str = "wamn_receiving";
-const PACKAGE_VERSION: &str = "1.0.0";
 const COMPONENT: &str = "receiving";
 const INTERFACE_VERSION: &str = "0.1.0";
 const RAW_BODY_MAXIMUM: u64 = 1_048_576;
@@ -21,57 +21,57 @@ struct Operation {
 
 const OPERATIONS: [Operation; 11] = [
     Operation {
-        token: "wamn-receiving:purchase-order/get@1.0.0",
+        token: "wamn-receiving:purchase-order/get",
         attachment: "purchase-order-get-http",
         route: "/purchase_order/get",
     },
     Operation {
-        token: "wamn-receiving:purchase-order/query@1.0.0",
+        token: "wamn-receiving:purchase-order/query",
         attachment: "purchase-order-query-http",
         route: "/purchase_order/query",
     },
     Operation {
-        token: "wamn-receiving:purchase-order/update@1.0.0",
+        token: "wamn-receiving:purchase-order/update",
         attachment: "purchase-order-update-http",
         route: "/purchase_order/update",
     },
     Operation {
-        token: "wamn-receiving:receipt/get@1.0.0",
+        token: "wamn-receiving:receipt/get",
         attachment: "receipt-get-http",
         route: "/receipt/get",
     },
     Operation {
-        token: "wamn-receiving:receipt/query@1.0.0",
+        token: "wamn-receiving:receipt/query",
         attachment: "receipt-query-http",
         route: "/receipt/query",
     },
     Operation {
-        token: "wamn-receiving:receiving/load-receipt-screen@1.0.0",
+        token: "wamn-receiving:receiving/load-receipt-screen",
         attachment: "receiving-load-receipt-screen-http",
         route: "/receiving/load_receipt_screen",
     },
     Operation {
-        token: "wamn-receiving:receiving/load-purchase-order-history@1.0.0",
+        token: "wamn-receiving:receiving/load-purchase-order-history",
         attachment: "receiving-load-purchase-order-history-http",
         route: "/receiving/load_purchase_order_history",
     },
     Operation {
-        token: "wamn-receiving:location/list@1.0.0",
+        token: "wamn-receiving:location/list",
         attachment: "location-list-http",
         route: "/location/list",
     },
     Operation {
-        token: "wamn-receiving:receiving/record-receipt@1.0.0",
+        token: "wamn-receiving:receiving/record-receipt",
         attachment: "receiving-record-receipt-http",
         route: "/receiving/record_receipt",
     },
     Operation {
-        token: "wamn-receiving:supplier/query@1.0.0",
+        token: "wamn-receiving:supplier/query",
         attachment: "supplier-query-http",
         route: "/supplier/query",
     },
     Operation {
-        token: "wamn-receiving:supplier/create@1.0.0",
+        token: "wamn-receiving:supplier/create",
         attachment: "supplier-create-http",
         route: "/supplier/create",
     },
@@ -156,7 +156,10 @@ fn package_owned_inputs_declare_the_exact_eleven_route_closure() {
     let declaration = declaration();
     assert_eq!(declaration.scope.tenant_id, TENANT);
     assert_eq!(declaration.scope.package_id, PACKAGE_ID);
-    assert_eq!(declaration.scope.package_version, PACKAGE_VERSION);
+    assert_eq!(
+        declaration.scope.package_version,
+        package_version(PACKAGE_ID)
+    );
     assert_eq!(declaration.component, COMPONENT);
     assert_eq!(declaration.interface_version, INTERFACE_VERSION);
     assert!(declaration.connections.is_empty());
@@ -164,11 +167,11 @@ fn package_owned_inputs_declare_the_exact_eleven_route_closure() {
         declaration
             .operations
             .keys()
-            .map(String::as_str)
+            .cloned()
             .collect::<BTreeSet<_>>(),
         OPERATIONS
             .iter()
-            .map(|operation| operation.token)
+            .map(|operation| sealed(operation.token))
             .collect::<BTreeSet<_>>()
     );
     assert_eq!(
@@ -177,13 +180,15 @@ fn package_owned_inputs_declare_the_exact_eleven_route_closure() {
     );
 
     for operation in &OPERATIONS {
+        // The table names each operation by reference, as the authored files do.
+        let token = sealed(operation.token);
         let fact = declaration
             .operations
-            .get(operation.token)
+            .get(&token)
             .expect("the component declares the exact operation token");
         assert_eq!(
             fact.registered_operation.as_deref(),
-            Some(operation.token),
+            Some(token.as_str()),
             "the redundant authorization identity must equal its export selector"
         );
         assert_eq!(fact.input_ports.len(), 1);
@@ -199,12 +204,12 @@ fn package_owned_inputs_declare_the_exact_eleven_route_closure() {
             attachment.target,
             AttachmentTarget::Route {
                 component: COMPONENT.into(),
-                operation: operation.token.into(),
+                operation: token.clone(),
             }
         );
         assert_eq!(
             attachment.registered_operation.as_deref(),
-            Some(operation.token)
+            Some(token.as_str())
         );
         assert_eq!(
             attachment.auth_policy,

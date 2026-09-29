@@ -13,7 +13,7 @@ pub(super) fn candidate() -> anyhow::Result<Option<(Candidate, ServingManifest)>
     let (manifest, _) = candidate.manifest()?;
     let packages = super::JOURNEY_PACKAGES
         .iter()
-        .map(|package| wamn_catalog::PackageCoordinate::new(package.id, package.version))
+        .map(|package| wamn_catalog::PackageCoordinate::new(package.id, package.version()))
         .collect::<Result<std::collections::BTreeSet<_>, _>>()?;
     ensure!(
         manifest.release.tenant_id == super::TENANT
