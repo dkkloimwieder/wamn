@@ -250,7 +250,12 @@ async fn input_prompt(
                         "login cancelled",
                     ));
                 }
-                KeyCode::Enter => {
+                // A terminal that turns Enter into a line feed sends Ctrl-J
+                // in raw mode, and the prompt then never submits (wamn-pm90).
+                KeyCode::Enter | KeyCode::Char('j')
+                    if key.code == KeyCode::Enter
+                        || key.modifiers.contains(KeyModifiers::CONTROL) =>
+                {
                     if input.is_empty() {
                         continue;
                     }

@@ -136,7 +136,9 @@ def recovery_pending(binary):
         identity.recovery_delay = 0.5
         try:
             with terminal.Session(binary, ROOT, fixture, "password-fixture", operator.HOST, None, identity.environment()) as session:
-                answer(session, "Enter L", "r")
+                session.text("Enter L")
+                # A terminal that turns Enter into a line feed submits too (wamn-pm90).
+                session.send(b"r\n")
                 session.text("Recovery email:")
                 # A second Enter while email is pending must not cancel the next prompt.
                 session.send(b"alice@example.invalid\r\r")
