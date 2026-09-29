@@ -99,6 +99,8 @@ wamn-test-postgres = { workspace = true }
 wamn-engine = { workspace = true, features = ["test-util"] }
 # The session verifier tests bind a fixed token clock.
 wamn-session = { workspace = true, features = ["test-util"] }
+# The write log store runs the intent store case set.
+wamn-run-state = { workspace = true, features = ["tenant-key", "test-util"] }
 
 [lints]
 workspace = true

@@ -20,7 +20,7 @@ use wamn_catalog::OperationKind;
 use wamn_run_state::IntentStore;
 use wamn_run_state::intent_store::{Begun, Intent, IntentId, StoredOutcome};
 
-use super::invocation_policy::{InvocationPolicy as _, ItemCommitFailure, ItemTransaction as _};
+use super::invocation_policy::{InvocationPolicy as _, ItemCommitFailure, ItemTransaction};
 use super::{
     ApplicationHost, OperationCall, application_of, component_id_of, node_types, run_export,
 };
@@ -231,7 +231,19 @@ pub(super) async fn invoke_logged<H: ApplicationHost>(
             deadline_ms,
             facts,
         };
-        let settled = settle_item(host, item_call, intent, item, transaction.is_some()).await?;
+        // An operation with SQL claims in its item transaction.
+        let store = transaction
+            .as_ref()
+            .and_then(ItemTransaction::intent_store)
+            .unwrap_or(intent.store);
+        let settled = settle_item(
+            host,
+            item_call,
+            IntentContext { store, ..intent },
+            item,
+            transaction.is_some(),
+        )
+        .await?;
         let (body, id, commit) = match settled {
             Settled::Cancelled | Settled::Failed(_) => {
                 if let Some(transaction) = &transaction {

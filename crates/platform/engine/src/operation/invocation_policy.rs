@@ -62,6 +62,11 @@ pub trait ItemTransaction: Send + Sync {
     fn commit(&self) -> impl Future<Output = Result<(), ItemCommitFailure>> + Send;
     /// Roll the transaction back.
     fn rollback(&self) -> impl Future<Output = anyhow::Result<()>> + Send;
+    /// The store that claims the item's key inside this transaction, so the
+    /// claim commits with the work. `None` claims in the call's own store.
+    fn intent_store(&self) -> Option<&dyn wamn_run_state::IntentStore> {
+        None
+    }
 }
 
 /// Why the commit of an item transaction did not succeed.

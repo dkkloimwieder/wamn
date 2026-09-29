@@ -69,9 +69,9 @@
 --   surface, and narrowing it would protect the platform from data the platform
 --   never consumes.
 --
---   WRITE LOG — write_log. INSERT, SELECT and UPDATE (result) only. The
---   generated codec of every create and command claims its key here. It is
---   outside the tenant floor and the record history: see THE WRITE LOG below.
+--   WRITE LOG — write_log. INSERT, SELECT, UPDATE (result) and DELETE only.
+--   The engine claims the key of every create and command here. It is outside
+--   the tenant floor and the record history: see THE WRITE LOG below.
 --
 --   HISTORY: the six <table>_history tables. No SELECT. The log trigger fires
 --   as the writer, and wamn_app writes configurations only, so wamn_app holds
@@ -545,10 +545,15 @@ CREATE TRIGGER wamn_record_history_log
 
 -- ---------------------------------------------------------------------------
 -- THE WRITE LOG (`docs/plan/write-log.md`, wamn-z7uv). One idempotency record
--- for every create and command in this database. The generated codec of a
--- claim operation inserts the claim, does the work and stores the result in
--- one READ COMMITTED transaction, so a committed row always has a result. A
--- refused item rolls its claim back, so it leaves no row.
+-- for every create and command in this database. For an operation with SQL,
+-- the engine inserts the claim in the item's host transaction, the guest does
+-- the work in it, and the engine stores the result and commits, so the row
+-- commits with its result. A refused item rolls its claim back, so it leaves
+-- no row. An operation without SQL claims in two steps
+-- (`docs/plan/host-transaction.md` 4.3): the claim commits with a null
+-- `result`, the finish stores it, and a refused item deletes its claim. A
+-- committed row with a null `result` is a claim that began and never
+-- finished, which is uncertain.
 --
 -- The primary key is the operation and the key. `operation` is the contract
 -- operation without its @version, so a retry across a release answers the
@@ -557,8 +562,8 @@ CREATE TRIGGER wamn_record_history_log
 -- The table is outside the tenant floor and the record history on purpose.
 -- The database is the tenant, so it has no tenant_id and no row policy. The
 -- rows that the work writes carry the actor, so it has no user columns and no
--- stamp or log trigger. wamn_app inserts a claim, reads a claim and writes
--- the result, and changes no other column. Nothing deletes a row.
+-- stamp or log trigger. wamn_app inserts a claim, reads a claim, writes the
+-- result and deletes a refused two-step claim, and changes no other column.
 --
 -- IF NOT EXISTS, so that this section runs again on a database that has it.
 -- ---------------------------------------------------------------------------
@@ -572,3 +577,4 @@ CREATE TABLE IF NOT EXISTS app_system.write_log (
 );
 GRANT SELECT, INSERT ON app_system.write_log TO wamn_app;
 GRANT UPDATE (result) ON app_system.write_log TO wamn_app;
+GRANT DELETE ON app_system.write_log TO wamn_app;

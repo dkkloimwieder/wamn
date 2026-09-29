@@ -61,6 +61,11 @@ impl OperationTransaction {
         self.transaction.lent()
     }
 
+    /// The owned transaction, for the host's own statements in it.
+    pub(super) fn transaction(&self) -> &PgTransaction {
+        &self.transaction
+    }
+
     /// Commit the transaction.
     ///
     /// # Errors
@@ -144,6 +149,11 @@ impl wamn_engine::operation::ItemTransaction for OperationTransaction {
         OperationTransaction::rollback(self)
             .await
             .map_err(|error| anyhow::anyhow!("roll back the item transaction: {error:?}"))
+    }
+
+    /// The item claims in the write log, inside this transaction.
+    fn intent_store(&self) -> Option<&dyn wamn_run_state::IntentStore> {
+        Some(self)
     }
 }
 

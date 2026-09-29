@@ -77,8 +77,9 @@ fn wamn_app_privileges(table: &str) -> &'static str {
             "INSERT (tenant_id, row_key, kind, operation, changed_by, changed_at, \
              transaction_id, before, after)"
         }
-        // The write log: a claim, its read, and its result, and nothing else.
-        "write_log" => "SELECT, INSERT, UPDATE (result)",
+        // The write log: a claim, its read, its result, and the delete of a
+        // refused two-step claim, and nothing else.
+        "write_log" => "SELECT, INSERT, DELETE, UPDATE (result)",
         other => panic!("table {other} has no adjudicated wamn_app grant (R11)"),
     }
 }
