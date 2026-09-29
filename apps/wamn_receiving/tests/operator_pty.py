@@ -57,31 +57,43 @@ class Fixture:
             def log_message(self, *_args):
                 pass  # Never print headers, bodies, credentials, or access logs.
 
+            def do_GET(self):
+                # A read is a GET: its one item is the query, it has no body,
+                # and its answer carries no request_id (wamn-rst8.1).
+                self.answer(read=True)
+
             def do_POST(self):
+                self.answer(read=False)
+
+            def answer(self, read):
                 request = None
                 try:
                     self.connection.settimeout(2.0)
                     size = int(self.headers.get("Content-Length", "0"))
-                    require(0 < size <= 8192, "unexpected request body length")
-                    body = self.rfile.read(size)
+                    if read:
+                        require(size == 0, "a read carries no request body")
+                        body = self.path.partition("?")[2].encode()
+                    else:
+                        require(0 < size <= 8192, "unexpected request body length")
+                        body = self.rfile.read(size)
                     with fixture.lock:
                         request = Request(self.command, self.path, {key.lower(): value for key, value in self.headers.items()}, body, fixture.label)
                         if not fixture.hold:
                             request.release.set()
                         fixture.requests.append(request)
-                    item = json.loads(body)[0]
+                    envelope = {} if read else {"request_id": json.loads(body)[0]["request_id"]}
                     deadline = time.monotonic() + 4 * TIMEOUT
                     while not request.release.wait(0.1):
                         if fixture.closing.is_set():
                             return
                         require(time.monotonic() < deadline, "held HTTP response timed out")
                     response = json.dumps([{
-                        "request_id": item["request_id"],
+                        **envelope,
                         "value": {"item": [{
                             "id": ORDER_ID,
                             "purchase_order_number": request.label,
                             "status": "open",
-                            "row_version": "1",
+                            "row_version": 1,
                             "supplier_id": "00000000-0000-0000-0000-000000000042",
                             "created_at": "2026-09-03T00:00:00Z",
                             "updated_at": "2026-09-03T00:00:00Z",
