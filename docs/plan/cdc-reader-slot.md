@@ -76,7 +76,7 @@ After issue 1, the confirmed position can sit past the last commit, so `start_at
 
 Two verbs write the row with the control credential:
 
-- `wamn-ctl recover-capture-gap --org --project --env` drops the lost slot, creates the new slot, updates `registry.event_readers`, and writes the row with its end position. It reads the last source-stream event with the NATS flags of `enable-cdc-project-env`.
+- `wamn-ctl recover-capture-gap --org --project --env` drops the lost slot and creates it again under the same name, `cdc_object_name(org, project, env, instance)`. The publication and the replication role keep that name and stay untouched. The verb writes the row with its end position. It reads the last source-stream event with the NATS flags of `enable-cdc-project-env`.
 - `wamn-ctl close-capture-gap --org --project --env` sets `resync_at` on the newest row. Until the resync of section 6 exists, the operator runs it on the owner's word.
 
 Section 6.3 of the operations page names these two verbs and nothing else.
@@ -125,4 +125,6 @@ Owner rulings of 2026-09-29:
 - The definition of the resync is in section 6. Its build is out of scope.
 - The names: `registry.capture_gap`, `wamn-ctl recover-capture-gap` and `wamn-ctl close-capture-gap`.
 - The gap row (2026-09-29): `start_lsn` and `start_at` come as section 4.3 states, with a null `start_lsn` only for an empty stream. No `detected_at`: the reader's event carries the detection time, and the row's `created_at` carries the verb's time. The reader stays `SELECT` only. The row is keyed by the `registry.event_readers` row and keeps the lost slot's name as a field. One `CDC_CAPTURE_GAP` per process, then a silent read every 30 seconds.
+- The slot name (2026-09-29): the slot keeps `cdc_object_name(org, project, env, instance)`, which the publication and the role share. The row stays keyed by the `registry.event_readers` row and keeps the slot name as a field, because an instance change renames the slot.
+- wamn-dev gets `registry.capture_gap` by one recorded `CREATE TABLE` and one `GRANT`, the way of the `is_system` drop. A P2 finding records that `provision-system` has no way to apply a later system schema change.
 - The keepalive confirm is split (2026-09-29). The fork returns a keepalive from `next_event` as an event with its `wal_end`, and nothing more. The reader applies the confirm rule. The new fork rev is pinned in `Cargo.toml`. A reader that raises its flushed position while idle and relies on the library's cap is out.
