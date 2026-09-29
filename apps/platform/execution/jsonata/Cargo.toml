@@ -13,7 +13,7 @@ serde_json = { workspace = true }
 wit-bindgen = { workspace = true }
 
 [lib]
-crate-type = ["cdylib", "rlib"]
+crate-type = ["cdylib"]
 
 [lints]
 workspace = true
