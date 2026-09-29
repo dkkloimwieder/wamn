@@ -87,11 +87,12 @@ use environment::{
     JourneyReleaseTarget, author_journey_wirings, gate_journey_wirings, install_journey_project,
     journey_package_root, journey_publication_root, journey_scenario_worker_binary,
     overlay_package_root, overlay_route_path, package_root, publish_journey_release,
-    push_journey_components, reconcile_journey_data_access, released_component_digests,
-    render_component_declarations, repository_root, required_journey, required_journey_path,
-    seed_materializer_order, seed_materializer_trigger_rows, seed_preexisting_quality_fixture,
-    seed_receiving_business_rows, verify_journey_components_are_effectful,
-    verify_journey_operation_grants, verify_zero_case_gate_reports, with_generated_attachments,
+    push_journey_components, reconcile_journey_data_access, reference_of,
+    released_component_digests, render_component_declarations, repository_root, required_journey,
+    required_journey_path, seed_materializer_order, seed_materializer_trigger_rows,
+    seed_preexisting_quality_fixture, seed_receiving_business_rows,
+    verify_journey_components_are_effectful, verify_journey_operation_grants,
+    verify_zero_case_gate_reports, with_generated_attachments,
 };
 use routes::copy_fresh_only_package;
 use runtime::{
@@ -182,6 +183,8 @@ const OVERLAY_OPERATIONS: [(&str, &str); 6] = [
     ),
 ];
 const BASE_RECORD_RECEIPT: &str = "wamn-receiving:receiving/record-receipt@1.0.0";
+/// The reference that the authored base declaration names the operation by.
+const BASE_RECORD_RECEIPT_REFERENCE: &str = "wamn-receiving:receiving/record-receipt";
 const HISTORY_OPERATION: &str = "wamn-receiving:receiving/load-purchase-order-history@1.0.0";
 const OVERLAY_RECORD_RECEIPT: &str = "client-acme-receiving:receiving/record-receipt@3.0.0";
 const OVERLAY_RECEIPT_PARTICIPANT: &str =

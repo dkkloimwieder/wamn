@@ -3,7 +3,7 @@
     "kind": "http",
     "package-id": "wamn_wms",
     "component": "wms",
-    "operation": "wamn-wms:inventory/move@1.0.0",
+    "operation": "wamn-wms:inventory/move",
     "definition-hash": "sha256:94d5db8cfee9e72c6e0022021af46102836d139305677285f6a4119c14958d66",
     "definition": {
       "id": "inventory-move-http",
@@ -69,13 +69,13 @@
     "auth-policy": {
       "modes": ["pat", "session"]
     },
-    "registered-operation": "wamn-wms:inventory/move@1.0.0"
+    "registered-operation": "wamn-wms:inventory/move"
   },
   "inventory-adjust-http": {
     "kind": "http",
     "package-id": "wamn_wms",
     "component": "wms",
-    "operation": "wamn-wms:inventory/adjust@1.0.0",
+    "operation": "wamn-wms:inventory/adjust",
     "definition-hash": "sha256:d98e9963eb66e0b1386b5f2e55048866413f10162c42fc12e8815ab4801e647a",
     "definition": {
       "id": "inventory-adjust-http",
@@ -159,13 +159,13 @@
     "auth-policy": {
       "modes": ["pat", "session"]
     },
-    "registered-operation": "wamn-wms:inventory/adjust@1.0.0"
+    "registered-operation": "wamn-wms:inventory/adjust"
   },
   "inventory-merge-http": {
     "kind": "http",
     "package-id": "wamn_wms",
     "component": "wms",
-    "operation": "wamn-wms:inventory/merge@1.0.0",
+    "operation": "wamn-wms:inventory/merge",
     "definition-hash": "sha256:53f01e164e8cf46d031f49cd51893019d1ceb58b3e2fdef7117bb9c1331a01ff",
     "definition": {
       "id": "inventory-merge-http",
@@ -231,13 +231,13 @@
     "auth-policy": {
       "modes": ["pat", "session"]
     },
-    "registered-operation": "wamn-wms:inventory/merge@1.0.0"
+    "registered-operation": "wamn-wms:inventory/merge"
   },
   "inventory-split-http": {
     "kind": "http",
     "package-id": "wamn_wms",
     "component": "wms",
-    "operation": "wamn-wms:inventory/split@1.0.0",
+    "operation": "wamn-wms:inventory/split",
     "definition-hash": "sha256:59857c736f7287c144855acb0196ee77e120618bf6670e41017f4a11dd21d3a6",
     "definition": {
       "id": "inventory-split-http",
@@ -337,13 +337,13 @@
     "auth-policy": {
       "modes": ["pat", "session"]
     },
-    "registered-operation": "wamn-wms:inventory/split@1.0.0"
+    "registered-operation": "wamn-wms:inventory/split"
   },
   "inventory-aggregate-http": {
     "kind": "http",
     "package-id": "wamn_wms",
     "component": "wms",
-    "operation": "wamn-wms:inventory/aggregate@1.0.0",
+    "operation": "wamn-wms:inventory/aggregate",
     "definition-hash": "sha256:b38d671e87b272062b9d9a87c1cc002beb36e48b47929138f2b7d211b17df98b",
     "definition": {
       "id": "inventory-aggregate-http",
@@ -370,6 +370,6 @@
     "auth-policy": {
       "modes": ["pat", "session"]
     },
-    "registered-operation": "wamn-wms:inventory/aggregate@1.0.0"
+    "registered-operation": "wamn-wms:inventory/aggregate"
   }
 }

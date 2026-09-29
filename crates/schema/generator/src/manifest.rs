@@ -2260,7 +2260,7 @@ pub fn canonical_operation_prefix(package: &PackageIdentity) -> Result<String, G
 /// `wamn.json` is the one place the version is authored, so a reference that
 /// carries one refuses.
 pub fn resolve_operation_reference(
-    manifest: &PackageManifest,
+    owners: &OperationOwners,
     reference: &str,
 ) -> Result<String, GenerateError> {
     let refuse = |reason: &str| {
@@ -2280,9 +2280,9 @@ pub fn resolve_operation_reference(
     let (interface, operation) = path
         .split_once('/')
         .ok_or_else(|| refuse("must be <package>:<interface>/<operation>"))?;
-    let owner = std::iter::once((&manifest.package.id, &manifest.package.version))
+    let owner = std::iter::once((&owners.package.id, &owners.package.version))
         .chain(
-            manifest
+            owners
                 .base_dependencies
                 .values()
                 .map(|base| (&base.package, &base.version)),
@@ -2520,6 +2520,40 @@ pub struct PackageIdentity {
 pub struct ClientPackage {
     /// The package name, optionally scoped.
     pub name: String,
+}
+
+/// The part of `wamn.json` that owns the version of each operation reference:
+/// the package identity and the base dependencies. It reads a manifest with
+/// any other members, so a reader that only resolves references needs no
+/// complete manifest.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct OperationOwners {
+    pub package: PackageIdentity,
+    #[serde(default)]
+    pub base_dependencies: BTreeMap<String, BaseDependencyRequirement>,
+}
+
+impl OperationOwners {
+    /// Read the owners from the bytes of a `wamn.json`.
+    pub fn from_slice(bytes: &[u8]) -> Result<Self, GenerateError> {
+        serde_json::from_slice(bytes).map_err(|source| {
+            GenerateError::with_source(
+                GenerateErrorKind::InvalidManifest,
+                "wamn.json names no package identity",
+                source,
+            )
+        })
+    }
+}
+
+impl PackageManifest {
+    /// The owners of the operation references of this package.
+    pub fn operation_owners(&self) -> OperationOwners {
+        OperationOwners {
+            package: self.package.clone(),
+            base_dependencies: self.base_dependencies.clone(),
+        }
+    }
 }
 
 /// Exact package artifact and local operation set bound to one source alias.

@@ -405,10 +405,12 @@ pub fn read_package_attachments(
 ) -> Result<BTreeMap<String, ServingAttachment>, RouteSchemaError> {
     let path = package_root.join("publication/attachments.json");
     let subject = path.display().to_string();
-    let bytes = std::fs::read(&path).map_err(|error| {
-        RouteSchemaError::with_source(RouteSchemaErrorKind::Read, &subject, error)
-    })?;
-    let mut attachments = serde_json::from_slice(&bytes).map_err(|error| {
+    let document = crate::operation_reference::read_authored_document(
+        &path,
+        crate::operation_reference::AuthoredDocument::Attachments,
+    )
+    .map_err(|error| RouteSchemaError::with_source(RouteSchemaErrorKind::Read, &subject, error))?;
+    let mut attachments = serde_json::from_value(document).map_err(|error| {
         RouteSchemaError::with_source(RouteSchemaErrorKind::Parse, &subject, error)
     })?;
     merge_attachments(

@@ -1,8 +1,7 @@
 {
   "scope": {
     "tenant-id": "__TENANT_ID__",
-    "package-id": "platform_fixture_overlay",
-    "package-version": "1.0.0"
+    "package-id": "platform_fixture_overlay"
   },
   "component": "fixture_overlay",
   "interface-version": "0.1.0",

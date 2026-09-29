@@ -1,20 +1,19 @@
 {
   "scope": {
     "tenant-id": "__TENANT_ID__",
-    "package-id": "client_acme_receiving",
-    "package-version": "3.0.0"
+    "package-id": "client_acme_receiving"
   },
   "component": "client_acme_receiving",
   "interface-version": "0.1.0",
   "operations": {
-    "client-acme-receiving:receiving/record-receipt@3.0.0": {
-      "registered-operation": "client-acme-receiving:receiving/record-receipt@3.0.0",
+    "client-acme-receiving:receiving/record-receipt": {
+      "registered-operation": "client-acme-receiving:receiving/record-receipt",
       "dependencies": [{
         "package": "wamn_receiving",
         "version": "1.0.0",
         "digest": "__BASE_DIGEST__",
-        "operation": "wamn-receiving:receiving/record-receipt@1.0.0",
-        "participant": "client-acme-receiving:receiving/record-receipt-participant@3.0.0"
+        "operation": "wamn-receiving:receiving/record-receipt",
+        "participant": "client-acme-receiving:receiving/record-receipt-participant"
       }],
       "input-ports": [{
         "name": "input",
@@ -61,8 +60,8 @@
       "output-ports": [{"name": "main", "schema": {"type": "array"}}],
       "parameters": []
     },
-    "client-acme-receiving:receiving/record-receipt-participant@3.0.0": {
-      "registered-operation": "client-acme-receiving:receiving/record-receipt-participant@3.0.0",
+    "client-acme-receiving:receiving/record-receipt-participant": {
+      "registered-operation": "client-acme-receiving:receiving/record-receipt-participant",
       "input-ports": [{
         "name": "input",
         "schema": {
@@ -89,8 +88,8 @@
       }],
       "parameters": []
     },
-    "client-acme-receiving:quality/load-purchase-order-detail@3.0.0": {
-      "registered-operation": "client-acme-receiving:quality/load-purchase-order-detail@3.0.0",
+    "client-acme-receiving:quality/load-purchase-order-detail": {
+      "registered-operation": "client-acme-receiving:quality/load-purchase-order-detail",
       "input-ports": [{
         "name": "input",
         "schema": {
@@ -108,8 +107,8 @@
       "output-ports": [{"name": "main", "schema": {"type": "array"}}],
       "parameters": []
     },
-    "client-acme-receiving:quality/approve-inspection@3.0.0": {
-      "registered-operation": "client-acme-receiving:quality/approve-inspection@3.0.0",
+    "client-acme-receiving:quality/approve-inspection": {
+      "registered-operation": "client-acme-receiving:quality/approve-inspection",
       "input-ports": [{
         "name": "input",
         "schema": {
@@ -129,7 +128,7 @@
       "output-ports": [{"name": "main", "schema": {"type": "array"}}],
       "parameters": []
     },
-    "client-acme-receiving:quality/create-inspection@3.0.0": {
+    "client-acme-receiving:quality/create-inspection": {
       "input-ports": [{
         "name": "input",
         "schema": {

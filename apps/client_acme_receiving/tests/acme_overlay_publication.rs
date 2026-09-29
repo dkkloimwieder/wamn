@@ -100,8 +100,17 @@ fn wiring(name: &str) -> WiringDocument {
     let path = publication_root()
         .join("wirings")
         .join(format!("{name}.json"));
-    WiringDocument::parse(&read_json(&path))
+    WiringDocument::parse(&authored_wiring(&path))
         .unwrap_or_else(|error| panic!("decode {}: {error}", path.display()))
+}
+
+/// One authored wiring, with its operation references resolved.
+fn authored_wiring(path: &Path) -> serde_json::Value {
+    wamn_schema_generator::operation_reference::read_authored_document(
+        path,
+        wamn_schema_generator::operation_reference::AuthoredDocument::Wiring,
+    )
+    .unwrap_or_else(|error| panic!("read {}: {error}", path.display()))
 }
 
 #[test]
@@ -243,7 +252,7 @@ fn receipt_insert_registration_selects_one_private_owner_wiring() {
         if path.extension().and_then(|extension| extension.to_str()) != Some("json") {
             continue;
         }
-        let document = WiringDocument::parse(&read_json(&path))
+        let document = WiringDocument::parse(&authored_wiring(&path))
             .unwrap_or_else(|error| panic!("decode {}: {error}", path.display()));
         let node = &document.nodes[&document.entry];
         if node.component == COMPONENT && node.operation == PRIVATE_OPERATION {

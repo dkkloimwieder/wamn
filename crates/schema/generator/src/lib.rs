@@ -32,6 +32,7 @@ mod error;
 mod generate;
 mod manifest;
 mod materialize;
+pub mod operation_reference;
 pub mod route_schema;
 mod rustfmt;
 mod sql;
@@ -64,13 +65,13 @@ pub use manifest::{
     CustomOperationResultDeclaration, EventRegistrationDeclaration, FieldText, FilterDeclaration,
     FilterDefault, FilterMatch, InheritedClaimDeclaration, InternalRelationDeclaration,
     LimitDeclaration, ModelDeclaration, OperationDeclaration, OperationErrorDetailDeclaration,
-    OperationErrorDetailKey, OperationVisibility, PackageIdentity, PackageManifest,
-    PaginationDeclaration, PolicyContractRequirement, PolicyContractState, RecordHistoryColumn,
-    ResultClass, Revision, SearchDeclaration, SortDeclaration, SortKey, StateGuardDeclaration,
-    StaticSqlFetch, StaticSqlRelationDeclaration, StaticSqlStatementDeclaration,
-    StaticSqlValueDeclaration, TieBreakerDeclaration, WorkflowDeclaration,
-    canonical_operation_identity, canonical_operation_prefix, resolve_operation_reference,
-    validate_operation_vocabulary,
+    OperationErrorDetailKey, OperationOwners, OperationVisibility, PackageIdentity,
+    PackageManifest, PaginationDeclaration, PolicyContractRequirement, PolicyContractState,
+    RecordHistoryColumn, ResultClass, Revision, SearchDeclaration, SortDeclaration, SortKey,
+    StateGuardDeclaration, StaticSqlFetch, StaticSqlRelationDeclaration,
+    StaticSqlStatementDeclaration, StaticSqlValueDeclaration, TieBreakerDeclaration,
+    WorkflowDeclaration, canonical_operation_identity, canonical_operation_prefix,
+    resolve_operation_reference, validate_operation_vocabulary,
 };
 pub use materialize::{
     MaterializeMode, introspect_package, materialize_package, materialize_package_from_catalog,

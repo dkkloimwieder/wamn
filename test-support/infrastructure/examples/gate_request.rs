@@ -8,7 +8,7 @@
 //! cargo run -p wamn-test-infrastructure --example gate_request -- \
 //!   <package id> <package version> <project> <environment> <wiring document>
 
-use std::fs;
+use std::path::Path;
 
 use anyhow::ensure;
 use wamn_authoring_model::AuthoringScope;
@@ -22,14 +22,16 @@ fn main() -> anyhow::Result<()> {
         "usage: <package id> <package version> <project> <environment> <wiring document>"
     );
     let package = PackageCoordinate::new(&arguments[0], &arguments[1])?;
-    let wiring = fs::read_to_string(&arguments[4])?;
-    let wiring_id = serde_json::from_str::<serde_json::Value>(&wiring)?["wiring-id"]
-        .as_str()
-        .map(str::to_owned);
-    let wiring_id = match wiring_id {
-        Some(id) => id,
-        None => anyhow::bail!("the wiring document names no wiring-id"),
+    // The gate judges sealed ids, so the authored references resolve against
+    // the wamn.json of the package that holds the document.
+    let document = wamn_schema_generator::operation_reference::read_authored_document(
+        Path::new(&arguments[4]),
+        wamn_schema_generator::operation_reference::AuthoredDocument::Wiring,
+    )?;
+    let Some(wiring_id) = document["wiring-id"].as_str().map(str::to_owned) else {
+        anyhow::bail!("the wiring document names no wiring-id")
     };
+    let wiring = serde_json::to_string(&document)?;
     let request = gate_document(
         &GateInput {
             command_id: format!("gate-{}-{wiring_id}", package.package_id()),

@@ -118,18 +118,26 @@ fn placeholder(value: &str) -> Option<&str> {
 mod tests {
     use super::*;
 
-    const OVERLAY: &str = include_str!(
-        "../../apps/platform_fixture_overlay/publication/components/fixture_overlay.json.in"
-    );
     const LABEL: &str = include_str!("../../apps/platform/no-std/label-render/declaration.json.in");
     const BLOB: &str = include_str!("../../apps/platform/execution/blob-put/declaration.json.in");
     const WIRING: &str =
         include_str!("../../apps/wamn_wms/publication/wirings/inventory_move_and_label.json");
 
-    /// The overlay template with its base digest filled, which the control
-    /// plane renders before this renderer sees it.
+    /// The overlay template with its operation references resolved and its
+    /// base digest filled, which the control plane renders before this
+    /// renderer sees it.
     fn overlay() -> String {
-        OVERLAY.replace("__BASE_DIGEST__", &format!("sha256:{}", "7".repeat(64)))
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(
+            "../../apps/platform_fixture_overlay/publication/components/fixture_overlay.json.in",
+        );
+        let document = wamn_schema_generator::operation_reference::read_authored_document(
+            &path,
+            wamn_schema_generator::operation_reference::AuthoredDocument::Declaration,
+        )
+        .unwrap();
+        serde_json::to_string(&document)
+            .unwrap()
+            .replace("__BASE_DIGEST__", &format!("sha256:{}", "7".repeat(64)))
     }
 
     fn scope() -> ComponentPackageScope {

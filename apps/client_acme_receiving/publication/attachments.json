@@ -3,7 +3,7 @@
     "kind": "http",
     "package-id": "client_acme_receiving",
     "component": "client_acme_receiving",
-    "operation": "client-acme-receiving:receiving/record-receipt@3.0.0",
+    "operation": "client-acme-receiving:receiving/record-receipt",
     "definition-hash": "sha256:829bbbf5e8eed922cbafeed672aa8e3afdd13ed6674173c0a072a7128ee98483",
     "definition": {
       "id": "client-acme-receiving-receiving-record-receipt-http",
@@ -51,13 +51,13 @@
       }
     },
     "auth-policy": {"modes": ["pat", "session"]},
-    "registered-operation": "client-acme-receiving:receiving/record-receipt@3.0.0"
+    "registered-operation": "client-acme-receiving:receiving/record-receipt"
   },
   "client-acme-receiving-quality-load-purchase-order-detail-http": {
     "kind": "http",
     "package-id": "client_acme_receiving",
     "component": "client_acme_receiving",
-    "operation": "client-acme-receiving:quality/load-purchase-order-detail@3.0.0",
+    "operation": "client-acme-receiving:quality/load-purchase-order-detail",
     "definition-hash": "sha256:29253c340fc33cbe48eba9949d72a0a76214e8e32fcbd35e934e5837006bd0d4",
     "definition": {
       "id": "client-acme-receiving-quality-load-purchase-order-detail-http",
@@ -77,13 +77,13 @@
       }
     },
     "auth-policy": {"modes": ["pat", "session"]},
-    "registered-operation": "client-acme-receiving:quality/load-purchase-order-detail@3.0.0"
+    "registered-operation": "client-acme-receiving:quality/load-purchase-order-detail"
   },
   "client-acme-receiving-quality-approve-inspection-http": {
     "kind": "http",
     "package-id": "client_acme_receiving",
     "component": "client_acme_receiving",
-    "operation": "client-acme-receiving:quality/approve-inspection@3.0.0",
+    "operation": "client-acme-receiving:quality/approve-inspection",
     "definition-hash": "sha256:d69e1168647f0e09638aa031e8373a405c8ca872b3bcc39cb1c6da64720a6ad7",
     "definition": {
       "id": "client-acme-receiving-quality-approve-inspection-http",
@@ -105,6 +105,6 @@
       }
     },
     "auth-policy": {"modes": ["pat", "session"]},
-    "registered-operation": "client-acme-receiving:quality/approve-inspection@3.0.0"
+    "registered-operation": "client-acme-receiving:quality/approve-inspection"
   }
 }

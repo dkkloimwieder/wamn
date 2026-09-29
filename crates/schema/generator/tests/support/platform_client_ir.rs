@@ -69,11 +69,19 @@ impl ReleaseFiles {
                         "definition": {"id": format!("widget-{index}"), "kind": "http",
                             "route": {"path": route.template}},
                         "auth-policy": {"modes": ["pat"]},
+                        // An authored entry names its operation by reference.
                         "registered-operation": operation
+                            .rsplit_once('@')
+                            .map_or(operation.as_str(), |(reference, _)| reference)
                     }),
                 )
             })
             .collect();
+        std::fs::write(
+            root.join("wamn.json"),
+            r#"{"package": {"id": "platform_fixture", "version": "1.0.0"}}"#,
+        )
+        .unwrap();
         Self {
             attachments: root.join("attachments.json"),
             root,

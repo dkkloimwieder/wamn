@@ -2004,7 +2004,7 @@ fn all_stamps_manifest() -> Value {
 fn an_operation_reference_takes_its_version_from_the_manifest() {
     let mut overlay = overlay_manifest();
     overlay["package"]["version"] = json!("2.0.0");
-    let manifest = parsed_manifest(&overlay);
+    let manifest = parsed_manifest(&overlay).operation_owners();
     assert_eq!(
         resolve_operation_reference(&manifest, "acme-inventory:gadget/assemble").unwrap(),
         "acme-inventory:gadget/assemble@2.0.0"

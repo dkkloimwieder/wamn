@@ -88,11 +88,14 @@ fn main() -> anyhow::Result<()> {
         .with_context(|| format!("write composed component {}", args.output.display()))
 }
 
+/// Read an authored declaration template, with its operation references
+/// resolved against the wamn.json of the package that holds it.
 fn read_declaration(path: &Path) -> anyhow::Result<Value> {
-    let bytes = std::fs::read(path)
-        .with_context(|| format!("read component declaration {}", path.display()))?;
-    serde_json::from_slice(&bytes)
-        .with_context(|| format!("parse component declaration {}", path.display()))
+    wamn_schema_generator::operation_reference::read_authored_document(
+        path,
+        wamn_schema_generator::operation_reference::AuthoredDocument::Declaration,
+    )
+    .with_context(|| format!("read component declaration {}", path.display()))
 }
 
 fn read_component(path: &Path) -> anyhow::Result<Vec<u8>> {

@@ -2910,10 +2910,12 @@ mod tests {
 
     fn resolve_fixture_private_handler_entry() -> String {
         let declaration = fixture_overlay_declaration();
-        let document_value = serde_json::from_str(include_str!(
-            "../tests/fixtures/observer_package/wiring.json"
-        ))
-        .expect("the fixture handler wiring parses as JSON");
+        let document_value = wamn_schema_generator::operation_reference::read_authored_document(
+            &std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("tests/fixtures/observer_package/wiring.json"),
+            wamn_schema_generator::operation_reference::AuthoredDocument::Wiring,
+        )
+        .expect("the fixture handler wiring resolves");
         let document = WiringDocument::parse(&document_value)
             .expect("the fixture handler wiring is structurally valid");
         let operation = document.nodes[&document.entry].operation.clone();

@@ -183,6 +183,15 @@ pub fn render_declaration_document(
             detail,
         )
     };
+    // The template names each operation by reference, and the version is
+    // authored once, in the wamn.json of the package that holds the template.
+    let (_, owners) = wamn_schema_generator::operation_reference::package_owners_of(template)
+        .map_err(|error| invalid(error.context().to_owned()))?;
+    wamn_schema_generator::operation_reference::resolve_declaration_document(
+        &mut document,
+        &owners,
+    )
+    .map_err(|error| invalid(error.context().to_owned()))?;
     let slot = document
         .pointer_mut("/scope/tenant-id")
         .ok_or_else(|| invalid("has no scope.tenant-id".to_owned()))?;
@@ -285,19 +294,18 @@ mod tests {
         let template = serde_json::json!({
             "scope": {
                 "tenant-id": COMPONENT_DECLARATION_PLACEHOLDER,
-                "package-id": "platform_fixture_overlay",
-                "package-version": "1.0.0"
+                "package-id": "platform_fixture_overlay"
             },
             "component": "fixture_overlay",
             "interface-version": "0.1.0",
             "operations": {
-                "platform-fixture-overlay:widget/get@1.0.0": {
-                    "registered-operation": "platform-fixture-overlay:widget/get@1.0.0",
+                "platform-fixture-overlay:widget/get": {
+                    "registered-operation": "platform-fixture-overlay:widget/get",
                     "dependencies": [{
                         "package": "platform_fixture",
                         "version": "1.0.0",
                         "digest": COMPONENT_DECLARATION_BASE_DIGEST_PLACEHOLDER,
-                        "operation": "platform-fixture:widget/archive@1.0.0"
+                        "operation": "platform-fixture:widget/archive"
                     }],
                     "input-ports": [],
                     "output-ports": [],
@@ -306,10 +314,29 @@ mod tests {
             },
             "connections": []
         });
-        let path = std::env::temp_dir().join(format!(
-            "wamn-control-declaration-{name}-{}.json.in",
+        // The template sits in a package, whose wamn.json owns the versions of
+        // its operation references.
+        let package = std::env::temp_dir().join(format!(
+            "wamn-control-declaration-{name}-{}",
             std::process::id()
         ));
+        fs::create_dir_all(package.join("publication/components"))
+            .expect("create the template package");
+        fs::write(
+            package.join(PACKAGE_MANIFEST),
+            serde_json::to_vec_pretty(&serde_json::json!({
+                "package": {"id": "platform_fixture_overlay", "version": "1.0.0"},
+                "base_dependencies": {"base": {
+                    "package": "platform_fixture",
+                    "version": "1.0.0",
+                    "digest": format!("sha256:{}", "0".repeat(64)),
+                    "operations": ["widget.archive"]
+                }}
+            }))
+            .expect("serialize the template package manifest"),
+        )
+        .expect("write the template package manifest");
+        let path = package.join("publication/components/fixture_overlay.json.in");
         fs::write(
             &path,
             serde_json::to_vec_pretty(&template).expect("serialize the template"),
@@ -368,7 +395,7 @@ mod tests {
             Some("tenant-a"),
             "the tenant placeholder is still filled"
         );
-        let _ = fs::remove_file(&template);
+        let _ = fs::remove_dir_all(template.ancestors().nth(3).expect("the template package"));
     }
 
     /// The digest is authored ONCE, and no second copy can hide in the tree.
@@ -410,7 +437,12 @@ mod tests {
         fs::write(&hand_written, restated.as_bytes()).expect("write the control template");
         let refusal = render_declaration_document(&hand_written, "tenant-a", &authored)
             .expect_err("a restated digest is refused");
-        let _ = fs::remove_file(&hand_written);
+        let _ = fs::remove_dir_all(
+            hand_written
+                .ancestors()
+                .nth(3)
+                .expect("the template package"),
+        );
         assert!(
             refusal.to_string().contains("authored once"),
             "the refusal names the single authored site: {refusal}"

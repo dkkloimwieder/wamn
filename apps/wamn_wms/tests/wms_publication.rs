@@ -148,6 +148,15 @@ fn read_json(path: &Path) -> Value {
         .unwrap_or_else(|error| panic!("parse {}: {error}", path.display()))
 }
 
+/// One authored publication file, with its operation references resolved.
+fn authored(
+    path: &Path,
+    kind: wamn_schema_generator::operation_reference::AuthoredDocument,
+) -> Value {
+    wamn_schema_generator::operation_reference::read_authored_document(path, kind)
+        .unwrap_or_else(|error| panic!("read {}: {error}", path.display()))
+}
+
 /// One generated publication file of the package.
 fn generated(file: &str) -> Value {
     read_json(&publication_root().join("..").join(file))
@@ -155,7 +164,10 @@ fn generated(file: &str) -> Value {
 
 /// The authored attachments with the generated route entries.
 fn attachments_document() -> Value {
-    let mut document = read_json(&publication_root().join("attachments.json"));
+    let mut document = authored(
+        &publication_root().join("attachments.json"),
+        wamn_schema_generator::operation_reference::AuthoredDocument::Attachments,
+    );
     let generated = generated(wamn_schema_generator::route_schema::GENERATED_ATTACHMENTS);
     document
         .as_object_mut()
@@ -171,7 +183,10 @@ fn attachments_document() -> Value {
 
 fn declaration() -> ComponentDeclaration {
     let path = publication_root().join("components").join("wms.json.in");
-    let mut document = read_json(&path);
+    let mut document = authored(
+        &path,
+        wamn_schema_generator::operation_reference::AuthoredDocument::Declaration,
+    );
     wamn_schema_generator::route_schema::merge_operations(
         &mut document,
         Some(&generated(

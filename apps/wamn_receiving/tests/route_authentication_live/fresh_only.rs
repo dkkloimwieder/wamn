@@ -150,10 +150,11 @@ pub(super) async fn test_prior_commit(test: PriorCommitTest<'_>) -> anyhow::Resu
         .iter()
         .find(|package| package.id == BASE_PACKAGE_ID)
         .context("the journey must declare the actual base package")?;
-    let source: Value = serde_json::from_slice(&std::fs::read(
-        journey_publication_root(base_package, Some(test.inputs))
+    let source = wamn_schema_generator::operation_reference::read_authored_document(
+        &journey_publication_root(base_package, Some(test.inputs))
             .join("components/receiving.json.in"),
-    )?)?;
+        wamn_schema_generator::operation_reference::AuthoredDocument::Declaration,
+    )?;
     let ports = &source["operations"][BASE_RECORD_RECEIPT];
     let declaration = json!({
         "scope": {"tenant-id": TENANT, "package-id": PACKAGE, "package-version": VERSION},
@@ -895,8 +896,8 @@ fn counter_parent_has_the_real_node_and_nested_operation_abi() -> anyhow::Result
             "input-ports": [{"name": "input", "schema": {"type": "array"}}],
             "output-ports": [{"name": "main", "schema": {"type": "array"}}], "parameters": []}}
     });
-    let base_declaration: Value = serde_json::from_slice(&std::fs::read(
-        journey_publication_root(
+    let base_declaration = wamn_schema_generator::operation_reference::read_authored_document(
+        &journey_publication_root(
             *JOURNEY_PACKAGES
                 .iter()
                 .find(|package| package.id == BASE_PACKAGE_ID)
@@ -904,7 +905,8 @@ fn counter_parent_has_the_real_node_and_nested_operation_abi() -> anyhow::Result
             None,
         )
         .join("components/receiving.json.in"),
-    )?)?;
+        wamn_schema_generator::operation_reference::AuthoredDocument::Declaration,
+    )?;
     // Composition type-checks the parent's import against the base's export.
     let composed = wamn_component_composer::compose(
         &declaration,

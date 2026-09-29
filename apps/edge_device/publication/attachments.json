@@ -3,7 +3,7 @@
     "kind": "http",
     "package-id": "edge_device",
     "component": "device",
-    "operation": "edge-device:sample/read@1.0.0",
+    "operation": "edge-device:sample/read",
     "definition-hash": "sha256:e7f8dfa8f364078553452bf72c235598929b9f429ded0323326ca30a0d1bc55f",
     "definition": {
       "id": "sample-read-http",
@@ -57,6 +57,6 @@
         "session"
       ]
     },
-    "registered-operation": "edge-device:sample/read@1.0.0"
+    "registered-operation": "edge-device:sample/read"
   }
 }

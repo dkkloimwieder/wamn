@@ -72,13 +72,31 @@ pub(super) fn with_generated_attachments(
         route_schema::package_root_of(source),
         route_schema::GENERATED_ATTACHMENTS,
     )?;
-    if let Some(serde_json::Value::Object(generated)) = generated {
+    if let Some(serde_json::Value::Object(mut generated)) = generated {
+        generated.values_mut().for_each(as_authored_entry);
         document
             .as_object_mut()
             .context("an attachment document is an object")?
             .extend(generated);
     }
     Ok(())
+}
+
+/// The reference of a sealed operation id, as an authored copy names it.
+pub(super) fn reference_of(sealed: &str) -> &str {
+    sealed
+        .rsplit_once('@')
+        .map_or(sealed, |(reference, _)| reference)
+}
+
+/// Write a generated route entry as an authored one, which names its
+/// operation by reference: a publish reads the copy as an authored document.
+fn as_authored_entry(entry: &mut serde_json::Value) {
+    for member in ["operation", "registered-operation"] {
+        if let Some(sealed) = entry.get(member).and_then(serde_json::Value::as_str) {
+            entry[member] = serde_json::Value::String(reference_of(sealed).to_owned());
+        }
+    }
 }
 
 pub(super) fn overlay_route_path(wiring_id: &str) -> &'static str {
@@ -430,10 +448,12 @@ pub(super) async fn gate_journey_wirings(
             let path = journey_publication_root(package, Some(inputs))
                 .join("wirings")
                 .join(format!("{wiring}.json"));
-            let document: Value = serde_json::from_slice(
-                &std::fs::read(&path).with_context(|| format!("read {}", path.display()))?,
+            // The gate judges sealed ids, so the authored references resolve first.
+            let document = wamn_schema_generator::operation_reference::read_authored_document(
+                &path,
+                wamn_schema_generator::operation_reference::AuthoredDocument::Wiring,
             )
-            .with_context(|| format!("parse {}", path.display()))?;
+            .with_context(|| format!("read {}", path.display()))?;
             let response = client
                 .post(format!("http://{bind}/authoring"))
                 .bearer_auth(bearer)

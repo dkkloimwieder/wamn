@@ -7,7 +7,7 @@
     "operation": {
       "component": "client_acme_receiving",
       "interface-version": "0.1.0",
-      "operation": "client-acme-receiving:quality/create-inspection@3.0.0"
+      "operation": "client-acme-receiving:quality/create-inspection"
     }
   }
 }

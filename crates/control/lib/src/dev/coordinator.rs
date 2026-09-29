@@ -2343,16 +2343,14 @@ fn load_wirings(packages: &[PackageInput]) -> Result<Vec<WiringInput>, Productio
             if path.extension().is_none_or(|extension| extension != "json") {
                 continue;
             }
-            let bytes = fs::read(&path).map_err(|source| {
+            let document = wamn_schema_generator::operation_reference::read_authored_document(
+                &path,
+                wamn_schema_generator::operation_reference::AuthoredDocument::Wiring,
+            )
+            .map_err(|source| {
                 ProductionDevStageError::owner(
                     "read package wiring",
                     anyhow!(source).context(format!("read {}", path.display())),
-                )
-            })?;
-            let document = serde_json::from_slice(&bytes).map_err(|source| {
-                ProductionDevStageError::owner(
-                    "parse package wiring",
-                    anyhow!(source).context(format!("parse {}", path.display())),
                 )
             })?;
             let wiring = WiringDocument::parse(&document).map_err(|source| {

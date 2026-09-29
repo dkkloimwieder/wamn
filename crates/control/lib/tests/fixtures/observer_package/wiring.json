@@ -7,7 +7,7 @@
     "operation": {
       "component": "observer_fixture",
       "interface-version": "0.1.0",
-      "operation": "observer-fixture:audit/observe@3.0.0"
+      "operation": "observer-fixture:audit/observe"
     }
   }
 }

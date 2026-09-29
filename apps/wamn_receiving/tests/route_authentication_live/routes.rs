@@ -66,7 +66,7 @@ pub(super) fn prepare_fresh_only_packages(root: &Path) -> anyhow::Result<()> {
     let declaration_path = base.join("publication/components/receiving.json.in");
     let mut declaration: Value = serde_json::from_slice(&std::fs::read(&declaration_path)?)?;
     declaration["operations"]
-        .get_mut(BASE_RECORD_RECEIPT)
+        .get_mut(BASE_RECORD_RECEIPT_REFERENCE)
         .context("the base declaration must name the registered operation")?["fresh-only"] =
         Value::Bool(true);
     std::fs::write(declaration_path, serde_json::to_vec(&declaration)?)?;
@@ -92,7 +92,7 @@ fn fresh_only_fixture_changes_copies_without_changing_business_policy() -> anyho
         true
     );
     assert_eq!(
-        declaration["operations"][BASE_RECORD_RECEIPT]["fresh-only"],
+        declaration["operations"][BASE_RECORD_RECEIPT_REFERENCE]["fresh-only"],
         true
     );
     assert_eq!(std::fs::read(source_manifest)?, manifest_before);

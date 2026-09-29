@@ -274,17 +274,16 @@ async fn author_in_transaction(
 /// [`wamn_catalog::CatalogIdentityError`] is carried as this refusal's source
 /// so the operator sees the validator's own words.
 pub fn read_wiring_document(path: &Path) -> Result<WiringDocument, AuthorWiringError> {
-    let bytes = std::fs::read(path).map_err(|error| {
+    // The document names each package operation by reference, and the version
+    // comes from the wamn.json of the package that holds it.
+    let value = wamn_schema_generator::operation_reference::read_authored_document(
+        path,
+        wamn_schema_generator::operation_reference::AuthoredDocument::Wiring,
+    )
+    .map_err(|error| {
         AuthorWiringError::with_source(
             AuthorWiringErrorKind::Document,
             format!("read wiring document {}", path.display()),
-            error,
-        )
-    })?;
-    let value = serde_json::from_slice(&bytes).map_err(|error| {
-        AuthorWiringError::with_source(
-            AuthorWiringErrorKind::Document,
-            format!("wiring document {} is not JSON", path.display()),
             error,
         )
     })?;
@@ -539,8 +538,19 @@ mod tests {
         // does not declare, which only `WiringDocument::parse` refuses.
         let mut wire = serde_json::to_value(document()).expect("the fixture serializes");
         wire["entry"] = serde_json::json!("absent");
-        let path =
-            std::env::temp_dir().join(format!("wamn-author-wiring-{}.json", std::process::id()));
+        wire["nodes"]["node"]["operation"] = serde_json::json!("orders-app:order/call");
+        // The document sits in a package, whose wamn.json owns the version of
+        // the operation reference.
+        let package =
+            std::env::temp_dir().join(format!("wamn-author-wiring-{}", std::process::id()));
+        std::fs::create_dir_all(package.join("publication/wirings"))
+            .expect("create the wiring package");
+        std::fs::write(
+            package.join("wamn.json"),
+            r#"{"package": {"id": "orders_app", "version": "1.0.0"}}"#,
+        )
+        .expect("write the wiring package manifest");
+        let path = package.join("publication/wirings/orders.json");
         std::fs::write(
             &path,
             serde_json::to_vec(&wire).expect("the invalid document serializes"),
@@ -548,7 +558,7 @@ mod tests {
         .expect("write the invalid wiring document");
         let refusal =
             read_wiring_document(&path).expect_err("a graph the router cannot enter refuses");
-        std::fs::remove_file(&path).expect("remove the invalid wiring document");
+        std::fs::remove_dir_all(&package).expect("remove the wiring package");
 
         assert_eq!(refusal.kind(), AuthorWiringErrorKind::Document);
         let validator = refusal

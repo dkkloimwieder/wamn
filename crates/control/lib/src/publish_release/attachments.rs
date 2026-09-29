@@ -24,9 +24,35 @@ pub(super) fn read_package_attachments(
     paths: &[PathBuf],
     package_manifests: &[PathBuf],
 ) -> Result<BTreeMap<String, ServingAttachment>, MintManifestError> {
-    let mut attachments = read_authored_attachments(paths)?;
+    let mut attachments = read_authored_attachments(paths, &package_owners(package_manifests)?)?;
     resolve_generated_input_schemas(&mut attachments, package_manifests)?;
     Ok(attachments)
+}
+
+/// The operation owners of each package the release presents, by package id.
+fn package_owners(
+    package_manifests: &[PathBuf],
+) -> Result<BTreeMap<String, wamn_schema_generator::OperationOwners>, MintManifestError> {
+    let mut owners = BTreeMap::new();
+    for path in package_manifests {
+        let bytes = std::fs::read(path).map_err(|error| {
+            MintManifestError::with_source(
+                MintManifestErrorKind::PackageManifest,
+                format!("read package manifest {}", path.display()),
+                error,
+            )
+        })?;
+        let package =
+            wamn_schema_generator::OperationOwners::from_slice(&bytes).map_err(|error| {
+                MintManifestError::with_source(
+                    MintManifestErrorKind::PackageManifest,
+                    format!("parse package manifest {}", path.display()),
+                    error,
+                )
+            })?;
+        owners.insert(package.package.id.clone(), package);
+    }
+    Ok(owners)
 }
 
 fn resolve_generated_input_schemas(
@@ -92,6 +118,7 @@ fn resolve_generated_input_schemas(
 
 fn read_authored_attachments(
     paths: &[PathBuf],
+    owners: &BTreeMap<String, wamn_schema_generator::OperationOwners>,
 ) -> Result<BTreeMap<String, ServingAttachment>, MintManifestError> {
     if paths.is_empty() {
         return Err(MintManifestError::new(
@@ -108,13 +135,50 @@ fn read_authored_attachments(
                 error,
             )
         })?;
-        let attachments = serde_json::from_slice(&bytes).map_err(|error| {
+        let parse = |error| {
             MintManifestError::with_source(
                 MintManifestErrorKind::Document,
                 format!("parse package attachments {}", path.display()),
                 error,
             )
-        })?;
+        };
+        let mut document: BTreeMap<String, serde_json::Value> =
+            serde_json::from_slice(&bytes).map_err(parse)?;
+        // An authored entry names its operation by reference. The version
+        // comes from the wamn.json the release presents for its package.
+        for (attachment_id, entry) in &mut document {
+            let package_id = entry
+                .get("package-id")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or_default();
+            let package = owners.get(package_id).ok_or_else(|| {
+                MintManifestError::new(
+                    MintManifestErrorKind::Document,
+                    format!(
+                        "attachment {attachment_id:?} names package {package_id:?}, and the release presents no wamn.json for it"
+                    ),
+                )
+            })?;
+            wamn_schema_generator::operation_reference::resolve_attachment_entry(
+                attachment_id,
+                entry,
+                package,
+            )
+            .map_err(|error| {
+                MintManifestError::with_source(
+                    MintManifestErrorKind::Document,
+                    format!("package attachments {}", path.display()),
+                    error,
+                )
+            })?;
+        }
+        let attachments = document
+            .into_iter()
+            .map(|(attachment_id, entry)| {
+                serde_json::from_value(entry).map(|attachment| (attachment_id, attachment))
+            })
+            .collect::<Result<BTreeMap<_, _>, _>>()
+            .map_err(parse)?;
         documents.push((path.clone(), attachments));
         // Generation writes the route entries of the package's generated
         // operations beside the authored document.

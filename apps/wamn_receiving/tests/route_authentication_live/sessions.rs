@@ -73,7 +73,7 @@ pub(super) async fn prepare_session_host_fixture(
         with_generated_attachments(&source, &mut document)?;
         if let Some(attachment) = document.get_mut(SESSION_ATTACHMENT) {
             anyhow::ensure!(
-                attachment["registered-operation"] == OPERATION
+                attachment["registered-operation"] == reference_of(OPERATION)
                     && attachment["auth-policy"]
                         == serde_json::json!({"modes": ["pat", "session"]}),
                 "session fixture target differs from the existing purchase-order GET route"
@@ -365,7 +365,7 @@ pub(super) async fn assert_nested_session(
         for selected in &selected_attachments {
             if let Some(attachment) = document.get_mut(selected.id) {
                 anyhow::ensure!(
-                    attachment["registered-operation"] == selected.operation
+                    attachment["registered-operation"] == reference_of(selected.operation)
                         && attachment["auth-policy"]
                             == serde_json::json!({"modes": ["pat", "session"]}),
                     "caller test route differs from the authored PAT attachment"

@@ -44,7 +44,7 @@
         "session"
       ]
     },
-    "registered-operation": "ui-scaffold-fixture:entry/get@1.0.0"
+    "registered-operation": "ui-scaffold-fixture:entry/get"
   },
   "entry-update-http": {
     "kind": "http",
@@ -110,6 +110,6 @@
         "session"
       ]
     },
-    "registered-operation": "ui-scaffold-fixture:entry/update@1.0.0"
+    "registered-operation": "ui-scaffold-fixture:entry/update"
   }
 }

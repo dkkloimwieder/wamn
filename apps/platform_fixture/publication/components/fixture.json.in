@@ -1,14 +1,13 @@
 {
   "scope": {
     "tenant-id": "__TENANT_ID__",
-    "package-id": "platform_fixture",
-    "package-version": "1.0.0"
+    "package-id": "platform_fixture"
   },
   "component": "fixture",
   "interface-version": "0.1.0",
   "operations": {
-    "platform-fixture:widget/archive@1.0.0": {
-      "registered-operation": "platform-fixture:widget/archive@1.0.0",
+    "platform-fixture:widget/archive": {
+      "registered-operation": "platform-fixture:widget/archive",
       "input-ports": [{
         "name": "input",
         "schema": {
@@ -30,8 +29,8 @@
       "output-ports": [{"name": "main", "schema": {"type": "array"}}],
       "parameters": []
     },
-    "platform-fixture:widget/list@1.0.0": {
-      "registered-operation": "platform-fixture:widget/list@1.0.0",
+    "platform-fixture:widget/list": {
+      "registered-operation": "platform-fixture:widget/list",
       "input-ports": [{
         "name": "input",
         "schema": {
@@ -52,8 +51,8 @@
       "output-ports": [{"name": "main", "schema": {"type": "array"}}],
       "parameters": []
     },
-    "platform-fixture:widget/record-batch@1.0.0": {
-      "registered-operation": "platform-fixture:widget/record-batch@1.0.0",
+    "platform-fixture:widget/record-batch": {
+      "registered-operation": "platform-fixture:widget/record-batch",
       "input-ports": [{
         "name": "input",
         "schema": {
@@ -100,8 +99,8 @@
       "output-ports": [{"name": "main", "schema": {"type": "array"}}],
       "parameters": []
     },
-    "platform-fixture:widget-maker/list@1.0.0": {
-      "registered-operation": "platform-fixture:widget-maker/list@1.0.0",
+    "platform-fixture:widget-maker/list": {
+      "registered-operation": "platform-fixture:widget-maker/list",
       "input-ports": [{
         "name": "input",
         "schema": {

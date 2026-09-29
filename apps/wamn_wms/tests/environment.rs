@@ -387,7 +387,8 @@ fn pat_only_attachments(source: &Path, evidence: &Path) -> anyhow::Result<PathBu
         route_schema::package_root_of(source),
         route_schema::GENERATED_ATTACHMENTS,
     )?;
-    if let Some(Value::Object(generated)) = generated {
+    if let Some(Value::Object(mut generated)) = generated {
+        generated.values_mut().for_each(as_authored_entry);
         attachments_map.extend(generated);
     }
     for attachment in attachments_map.values_mut() {
@@ -398,6 +399,18 @@ fn pat_only_attachments(source: &Path, evidence: &Path) -> anyhow::Result<PathBu
     let target = evidence.join("attachments.pat.json");
     fs::write(&target, serde_json::to_vec_pretty(&attachments)?)?;
     Ok(target)
+}
+
+/// Write a generated route entry as an authored one, which names its
+/// operation by reference: a publish reads the copy as an authored document.
+fn as_authored_entry(entry: &mut serde_json::Value) {
+    for member in ["operation", "registered-operation"] {
+        if let Some(sealed) = entry.get(member).and_then(serde_json::Value::as_str)
+            && let Some((reference, _)) = sealed.rsplit_once('@')
+        {
+            entry[member] = serde_json::Value::String(reference.to_owned());
+        }
+    }
 }
 
 /// Publish WMS and its label components, author its wirings, then bind and attest.
@@ -686,7 +699,14 @@ async fn author_wirings(
                         environment: ENVIRONMENT.into(),
                     },
                 },
-                &fs::read_to_string(path)?,
+                // The gate judges sealed ids, so the authored references
+                // resolve first.
+                &serde_json::to_string(
+                    &wamn_schema_generator::operation_reference::read_authored_document(
+                        path,
+                        wamn_schema_generator::operation_reference::AuthoredDocument::Wiring,
+                    )?,
+                )?,
             )?;
             let response = client
                 .post(format!("http://{bind}/authoring"))

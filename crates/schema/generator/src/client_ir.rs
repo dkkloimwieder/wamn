@@ -34,6 +34,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::client_fields::{fields_of, input_fields_of, schema_fields};
+use crate::operation_reference::AuthoredDocument;
 
 /// IR shape version. A consumer that does not recognise it must refuse rather
 /// than guess at a field's meaning.
@@ -802,15 +803,17 @@ fn route_index(
     read: &mut SchemaRead<'_>,
 ) -> Result<BTreeMap<String, RouteIr>, ClientIrError> {
     let mut published: BTreeMap<String, wamn_catalog::ServingAttachment> = if attachments.exists() {
-        serde_json::from_value(read_json(attachments)?).map_err(|error| {
-            ClientIrError::new(
-                ClientIrErrorKind::MalformedContract,
-                format!(
-                    "{} is not a serving attachment map: {error}",
-                    attachments.display()
-                ),
-            )
-        })?
+        serde_json::from_value(read_authored(attachments, AuthoredDocument::Attachments)?).map_err(
+            |error| {
+                ClientIrError::new(
+                    ClientIrErrorKind::MalformedContract,
+                    format!(
+                        "{} is not a serving attachment map: {error}",
+                        attachments.display()
+                    ),
+                )
+            },
+        )?
     } else {
         BTreeMap::new()
     };
@@ -995,6 +998,13 @@ fn split_contract_name(file_name: &str) -> Option<(&str, &str)> {
     let stem = file_name.strip_suffix(".json")?;
     let (operation, part) = stem.rsplit_once('.')?;
     Some((operation, part))
+}
+
+/// Read one authored publication file with its operation references resolved.
+pub(crate) fn read_authored(path: &Path, kind: AuthoredDocument) -> Result<Value, ClientIrError> {
+    crate::operation_reference::read_authored_document(path, kind).map_err(|error| {
+        ClientIrError::new(ClientIrErrorKind::MalformedContract, error.to_string())
+    })
 }
 
 fn read_json(path: &Path) -> Result<Value, ClientIrError> {

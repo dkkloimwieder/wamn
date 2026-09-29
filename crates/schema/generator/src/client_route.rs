@@ -9,7 +9,8 @@ use wamn_catalog::{
     WiringTerminal, partial_response_schema,
 };
 
-use crate::client_ir::{ClientIrError, ClientIrErrorKind};
+use crate::client_ir::{ClientIrError, ClientIrErrorKind, read_authored};
+use crate::operation_reference::AuthoredDocument;
 
 #[derive(Debug, Default)]
 pub(super) struct RouteEvidence {
@@ -109,7 +110,7 @@ fn selected_wiring(
 ) -> Result<Option<WiringDocument>, ClientIrError> {
     let mut selected = None;
     for path in declaration_paths(&publication.join("wirings"), false)? {
-        let document = read_json(&path)?;
+        let document = read_authored(&path, AuthoredDocument::Wiring)?;
         let wiring = WiringDocument::parse(&document)
             .map_err(|error| malformed(&path, format!("invalid wiring: {error}")))?;
         if wiring.wiring_id != wiring_id || wiring.version != wiring_version {
@@ -193,7 +194,7 @@ fn component_schema(
     let mut matched = false;
     for path in declaration_paths(&publication.join("components"), true)? {
         // The package's generated operations belong to its declarations.
-        let mut document = read_json(&path)?;
+        let mut document = read_authored(&path, AuthoredDocument::Declaration)?;
         crate::route_schema::merge_operations(&mut document, generated)
             .map_err(|error| malformed(&path, error))?;
         let declaration: ComponentDeclaration = serde_json::from_value(document)
@@ -267,12 +268,6 @@ fn declaration_paths(directory: &Path, templates: bool) -> Result<Vec<PathBuf>, 
     Ok(paths)
 }
 
-fn read_json(path: &Path) -> Result<Value, ClientIrError> {
-    let bytes = std::fs::read(path).map_err(|error| unreadable(path, &error))?;
-    serde_json::from_slice(&bytes)
-        .map_err(|error| malformed(path, format!("invalid JSON: {error}")))
-}
-
 fn read_schema(path: &Path, field: &str, schema: &Value) -> Result<Value, ClientIrError> {
     if !schema.is_object() && !schema.is_boolean() {
         return Err(malformed(
@@ -319,15 +314,25 @@ mod tests {
                 NEXT.fetch_add(1, Ordering::Relaxed)
             ));
             std::fs::create_dir_all(&root).expect("create route fixture");
+            std::fs::write(
+                root.join("wamn.json"),
+                r#"{"package": {"id": "platform_fixture", "version": "1.0.0"}}"#,
+            )
+            .expect("write the fixture package manifest");
             Self(root)
         }
 
+        /// Write one authored document. An authored document names each
+        /// package operation by reference, so the fixture package version
+        /// leaves every sealed id the test built.
         fn write(&self, relative: &str, value: &Value) {
             let path = self.0.join(relative);
             std::fs::create_dir_all(path.parent().expect("fixture parent"))
                 .expect("create publication directory");
-            std::fs::write(path, serde_json::to_vec(value).expect("serialize fixture"))
-                .expect("write declaration");
+            let authored = serde_json::to_string(value)
+                .expect("serialize fixture")
+                .replace("@1.0.0\"", "\"");
+            std::fs::write(path, authored).expect("write declaration");
         }
 
         fn attachments(&self) -> PathBuf {
@@ -455,8 +460,7 @@ mod tests {
         fixture.write(
             "components/fixture.json.in",
             &json!({
-                "scope": {"tenant-id": "tenant-a", "package-id": "platform_fixture",
-                    "package-version": "1.0.0"},
+                "scope": {"tenant-id": "tenant-a", "package-id": "platform_fixture"},
                 "component": "fixture",
                 "interface-version": "1.0.0",
                 "operations": {(operation): {
@@ -579,7 +583,7 @@ mod tests {
             .as_deref()
             .expect("registered operation");
         let mut declaration = json!({
-            "scope": {"tenant-id": "tenant-a", "package-id": "other", "package-version": "1.0.0"},
+            "scope": {"tenant-id": "tenant-a", "package-id": "other"},
             "component": "fixture",
             "interface-version": "0.1.0",
             "operations": {(operation): {
@@ -623,8 +627,7 @@ mod tests {
                 "schema": {"type": "array"}}
         });
         let declaration = json!({
-            "scope": {"tenant-id": "tenant-a", "package-id": attachment.package_id,
-                "package-version": "1.0.0"},
+            "scope": {"tenant-id": "tenant-a", "package-id": attachment.package_id},
             "component": "fixture", "interface-version": "1.0.0",
             "operations": {(operation): {
                 "registered-operation": operation,
@@ -658,7 +661,8 @@ mod tests {
             if field == "package-id" {
                 unrelated["scope"][field] = json!("other");
             } else if field == "registered-operation" {
-                unrelated["operations"][operation][field] = json!("other");
+                unrelated["operations"][operation][field] =
+                    json!("platform-fixture:widget/other@1.0.0");
             } else {
                 unrelated[field] = json!("other");
             }
