@@ -256,6 +256,7 @@ Owner rulings of 2026-09-27:
 - Re-provision, corrected (2026-09-28, `wamn-wq26`): no supported recreate path exists, because `provision-project-env` keeps the stored suffix and the disposable recreate is the dev loop's template clone. Nothing is marked disposable. Delete the two `registry.project_envs` rows and their `catalog.tenant_environments` rows, and drop the two databases with their CDC slots and replication roles. `provision-project-env` then mints new suffixes, and sections 3.7 to 3.20 and 5.2 to 5.5 run as written. Use generation `b` wherever a verb refuses the existing credential, and report each such step. Retire the old generation roles of the dropped databases with their verbs, so the cluster holds no role for a database that no longer exists. Where a verb has no retire path for a role, drop it with one statement and note it on the operations page. The teardown section written now is the interim procedure of a P2 finding: no verb deletes an environment.
 - The sealed package, corrected (2026-09-29, `wamn-wq26`): no version bump. The package, component and release rows of a torn-down environment are orphans of that teardown, so they go with it. Delete the `dev` and `wms` rows from those `wamn_system` tables with the immutability triggers off for that statement only, in the teardown section of the operations page. The teardown finding adds that the missing verb must remove these rows too. Acme stays on `1.0.0`. Both applications publish as release 1 on the new databases. The identity issuer retires generation `a` once identity runs on `b`. The owner's memberships are granted again as section 4.5 states, then the `admin` grants. A P2 finding records that the package version sits in every operation id, so a new version renames about 120 authored files.
 - WMS rulings (2026-09-29, `wamn-wq26`): the teardown also deletes the old gate audit row and gate report, with the trigger off for that one statement, deletes the old materializer consumer so that `enable-cdc-project-env` creates it with the new filter, and deletes both event streams of the dropped databases with their provisioning users: a torn-down environment's stream is deleted, not purged, and `enable-cdc-project-env` creates it again. No NATS permission is added. The teardown finding lists these steps as work for the missing verb. The rebuilt identity and CDC reader images are pinned by digest in `values-identity.yaml` and both `cdc-reader` manifests, and roll out.
+- Tier table (2026-09-29, `wamn-ghx2.6`): the tier table lives in section 6.1 of this plan, the one place it belongs. `wamn-ghx2.6` gets a note that points there. A close reason stays as written.
 
 ## 6. Benchmark
 
@@ -274,6 +275,29 @@ Each run writes one JSON file with p50, p95 and p99 latency, throughput and erro
 Each tier gets one scale-up, one run and one scale-down, and its result file goes under `tests/bench/`.
 The node choice of section 7 follows the results.
 Tier 4 uses all 8 CPU of the quota, so no other machine runs at the same time.
+
+### 6.1 Tier results
+
+The runs of 2026-09-28 used Receiving release 1 (`sha256:aeb74968dfe09b113a115863ec8be5475923d9577914332081923052a41c16c4`), the host image `wamn-host:src-b68fac526bdd771b` and bench commit `33e6828e6`. The client was the VM `wamn-bench-client`, an `e2-small` in `us-central1-a`. Each run lasted 60 seconds, and all runs had 0 errors. The raw files are in `tests/bench/`. Latency is in milliseconds.
+
+| Tier | Nodes | Call | Concurrency | Throughput | p50 | p95 | p99 |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| 1 | 1 x `e2-standard-2` Spot | | | does not fit, no runs | | | |
+| 2 | 2 x `e2-standard-2` Spot | get | 4 | 256/s | 11.3 | 26.6 | 55.3 |
+| 2 | | get | 16 | 626/s | 22.7 | 37.5 | 55.5 |
+| 2 | | update | 4 | 208/s | 15.8 | 27.9 | 50.3 |
+| 2 | | update | 16 | 402/s | 35.3 | 61.1 | 109.0 |
+| 2 | | query | 4 | 152/s | 22.3 | 32.6 | 53.8 |
+| 2 | | query | 16 | 235/s | 64.5 | 89.5 | 140.4 |
+| 3 | 1 x `e2-standard-4` Spot | get | 4 | 318/s | 10.5 | 19.4 | 38.3 |
+| 3 | | get | 16 | 663/s | 21.4 | 31.9 | 53.9 |
+| 3 | | update | 4 | 227/s | 14.2 | 27.1 | 44.9 |
+| 3 | | update | 16 | 458/s | 30.1 | 52.6 | 82.2 |
+| 3 | | query | 4 | 183/s | 18.6 | 28.0 | 60.2 |
+| 3 | | query | 16 | 256/s | 59.3 | 77.4 | 128.1 |
+| 4 | 2 x `e2-standard-4` on demand | | | skipped | | | |
+
+Tier 1 does not fit: the platform requests about 3.4 CPU, and one `e2-standard-2` offers about 1.9. With it, `wamn-pg-1`, `evt-nats-0` and `hostgroup-default` stayed `Pending` on "Insufficient cpu". Tier 4 is skipped: the 8 CPU quota is by design, and two on-demand `e2-standard-4` need all 8 with nothing else running, the client VM included.
 
 ## 7. The only mode
 
