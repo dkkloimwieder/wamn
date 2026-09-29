@@ -51,7 +51,7 @@ An authored route entry, declaration or wiring names each operation by its refer
 
 ### 4.4 Web routes and tests
 
-The generated TypeScript client gives each operation its reference beside its sealed id. The query table keys `onOpen` and `onFill` by the reference, so `routes.tsx` names references. An application test names an operation by its reference and gets the sealed id from the generated client, or from `resolve_operation_reference` over the package `wamn.json`. A test value that is opaque data, such as a history row in `apps/wamn_receiving/data/src/read.rs:228`, stays as it is.
+The generated TypeScript client gives each operation its reference beside its sealed id. The query table keys `onOpen` and `onFill` by the reference, so `routes.tsx` names references. So a page cannot show two versions of one package at once, and that loss against the sealed id is intended. An application test names an operation by its reference and gets the sealed id from the generated client, or from `resolve_operation_reference` over the package `wamn.json`. A test value that is opaque data, such as a history row in `apps/wamn_receiving/data/src/read.rs:228`, stays as it is.
 
 ### 4.5 The digest test
 
