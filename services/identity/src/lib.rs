@@ -93,8 +93,12 @@ pub struct IdentityService {
 #[derive(Debug)]
 struct Inner {
     issuer: String,
+    // Every held connection opens again with this capability after Postgres
+    // closes it, for example when the server restarts.
+    connection: IdentityIssuerConnection,
     passwords: Option<password::State>,
-    database: Database,
+    database: std::sync::RwLock<Arc<Database>>,
+    reopening: Mutex<()>,
     // PAT issuance needs a transaction, so it holds its own connection.
     issuance: Mutex<Database>,
     // Key reads remain available while a signer waits on the rotation barrier.
@@ -149,6 +153,33 @@ pub(crate) async fn connect_database(url: &str) -> Result<Database, IdentityServ
     Ok(Database { client, driver })
 }
 
+impl Inner {
+    /// The shared connection, opened again when Postgres closed it.
+    async fn database(&self) -> Result<Arc<Database>, IdentityServiceError> {
+        let current = || self.database.read().expect("database lock").clone();
+        let database = current();
+        if !database.client.is_closed() {
+            return Ok(database);
+        }
+        let _reopening = self.reopening.lock().await;
+        let database = current();
+        if !database.client.is_closed() {
+            return Ok(database);
+        }
+        let database = Arc::new(connect_database(self.connection.url()).await?);
+        *self.database.write().expect("database lock") = database.clone();
+        Ok(database)
+    }
+
+    /// Open a held connection again when Postgres closed it.
+    async fn reopen(&self, database: &mut Database) -> Result<(), IdentityServiceError> {
+        if database.client.is_closed() {
+            *database = connect_database(self.connection.url()).await?;
+        }
+        Ok(())
+    }
+}
+
 impl IdentityService {
     /// Connect using already validated issuer-scoped authority.
     pub async fn connect(config: IdentityConfig) -> Result<Self, IdentityServiceError> {
@@ -167,8 +198,10 @@ impl IdentityService {
         Ok(Self {
             inner: Arc::new(Inner {
                 issuer: config.issuer,
+                connection: config.connection,
                 passwords,
-                database,
+                database: std::sync::RwLock::new(Arc::new(database)),
+                reopening: Mutex::new(()),
                 issuance,
                 signing,
                 targets: config
@@ -229,15 +262,17 @@ impl IdentityService {
             response(StatusCode::NOT_FOUND, "text/plain", b"not found\n".to_vec())
         } else {
             match request.uri().path() {
-                "/healthz" if !self.inner.database.client.is_closed() => {
-                    response(StatusCode::OK, "text/plain", b"ok\n".to_vec())
-                }
-                "/healthz" => unavailable(),
+                "/healthz" => match self.inner.database().await {
+                    Ok(_) => response(StatusCode::OK, "text/plain", b"ok\n".to_vec()),
+                    Err(_) => unavailable(),
+                },
                 "/.well-known/jwks.json" => {
-                    match tokio::time::timeout(
-                        IO_TIMEOUT,
-                        session_jwks(&self.inner.database.client, &self.inner.issuer),
-                    )
+                    match tokio::time::timeout(IO_TIMEOUT, async {
+                        let database = self.inner.database().await.map_err(|_| ())?;
+                        session_jwks(&database.client, &self.inner.issuer)
+                            .await
+                            .map_err(|_| ())
+                    })
                     .await
                     {
                         Ok(Ok(keys)) => match serde_json::to_vec(&keys) {
@@ -257,7 +292,7 @@ impl IdentityService {
                             }
                             Err(_) => unavailable(),
                         },
-                        Ok(Err(_)) | Err(_) => unavailable(),
+                        Ok(Err(())) | Err(_) => unavailable(),
                     }
                 }
                 _ => response(StatusCode::NOT_FOUND, "text/plain", b"not found\n".to_vec()),

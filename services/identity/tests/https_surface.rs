@@ -294,6 +294,42 @@ async fn identity_https_has_only_public_jwks_and_health() {
             .is_empty(),
         "JWKS must read committed state on every request"
     );
+    // A restarted server ends every session. Identity opens its connection
+    // again and serves without a restart of its own (wamn-fwzc).
+    let ended: i64 = admin
+        .query_one(
+            "SELECT count(*) FROM (SELECT pg_terminate_backend(pid) FROM pg_stat_activity \
+             WHERE usename = $1) ended",
+            &[&role],
+        )
+        .await
+        .expect("end the service's sessions")
+        .get(0);
+    assert!(ended > 0, "the service holds sessions to end");
+    let mut status = 0;
+    for _ in 0..50 {
+        status = trusted
+            .get(format!("{endpoint}/.well-known/jwks.json"))
+            .send()
+            .await
+            .expect("JWKS after the sessions ended")
+            .status()
+            .as_u16();
+        if status == 200 {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    assert_eq!(status, 200, "identity opens its connection again");
+    assert_eq!(
+        trusted
+            .get(format!("{endpoint}/healthz"))
+            .send()
+            .await
+            .expect("health after the sessions ended")
+            .status(),
+        200
+    );
     admin
         .batch_execute(&format!(
             "REVOKE SELECT ON identity.session_keys FROM {}",

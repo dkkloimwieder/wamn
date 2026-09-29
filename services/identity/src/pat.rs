@@ -74,6 +74,9 @@ async fn issue(inner: &Inner, request: Request<Incoming>) -> Response<Full<Bytes
     };
     // Issuance has no person caller yet, so the token row stamps wamn:provisioning.
     let mut issuance = inner.issuance.lock().await;
+    if inner.reopen(&mut issuance).await.is_err() {
+        return unavailable();
+    }
     let Ok(transaction) = issuance.client.transaction().await else {
         return unavailable();
     };

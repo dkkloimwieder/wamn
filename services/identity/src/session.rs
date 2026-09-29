@@ -119,7 +119,8 @@ async fn exchange(
         .to_bytes();
     let request: ExchangeRequest = serde_json::from_slice(&bytes).map_err(|_| refused())?;
     let target = inner.targets.get(&request.aud).ok_or_else(refused)?;
-    let principal = authenticate_pat(&inner.database.client, pat)
+    let database = inner.database().await.map_err(|_| failed())?;
+    let principal = authenticate_pat(&database.client, pat)
         .await
         .map_err(|_| failed())?
         .ok_or_else(refused)?;
@@ -140,6 +141,7 @@ pub(super) async fn mint_for_principal(
     let authority = SessionAuthority::Pat(principal.pat_id().ok_or_else(refused)?.to_owned());
     let claims = claims_for_principal(inner, principal, configured, authority).await?;
     let mut signing = inner.signing.as_ref().ok_or_else(failed)?.lock().await;
+    inner.reopen(&mut signing).await.map_err(|_| failed())?;
     sign_session_token(&mut signing.client, claims, started_at)
         .await
         .map_err(|_| failed())
@@ -189,8 +191,9 @@ pub(super) async fn authorized_roles(
     let principal = principal.principal();
     let target = &configured.binding;
     let triple = target.triple();
+    let database = inner.database().await.map_err(|_| failed())?;
     if !has_project_env_membership(
-        &inner.database.client,
+        &database.client,
         principal.id(),
         &triple.org,
         &triple.project,
@@ -201,8 +204,7 @@ pub(super) async fn authorized_roles(
     {
         return Err(refused());
     }
-    let current: bool = inner
-        .database
+    let current: bool = database
         .client
         .query_one(
             CURRENT_TARGET_SQL,
