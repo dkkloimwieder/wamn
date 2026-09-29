@@ -4,20 +4,20 @@ Updated through: 2026-09-29, `main` at `e1d076e43`.
 
 ## 1. Goal
 
-An operation id is `<package>:<interface>/<operation>`, for example `wamn-receiving:location/list`. It carries no `@version`. The package version is on the package coordinate only: `catalog.packages`, the release membership, and the `scope.package-version` of a declaration.
+The package version is authored once, in `wamn.json` as `package.version`, and derived everywhere else. An authored file names an operation by its reference, `<package>:<interface>/<operation>`, for example `wamn-receiving:location/list`. Generation and publish derive the sealed operation id, `<package>:<interface>/<operation>@<version>`, from the reference and the package version.
 
-Today every operation id ends in the package version, for example `wamn-receiving:location/list@1.0.0`. A manifest change that needs a new package version therefore renames every operation of the package, in about 120 authored files (`wamn-cuqc`). After this change, a new package version renames no file.
+The sealed ids do not change. WIT packages, component worlds, contracts, the files under `generated/publication/`, the client names, grants and the host's statement sets keep the version, as WASI practice requires.
+
+Today an authored file spells the sealed id, so a manifest change that needs a new package version edits about 120 authored files (`wamn-cuqc`). After this change, a version change is one line in `wamn.json` and a regeneration.
 
 ## 2. Fixed rules
 
-- One spelling of an operation id: `<package>:<interface>/<operation>`. Every producer writes it, and every reader reads it, with no second form and no strip step.
-- The version of a package is a fact of the package coordinate. No operation id, grant, route entry, declaration key, statement set key or history row repeats it.
-- A release holds one version of each package (`catalog.effective_release_packages` is keyed by the package id). So an operation id is unique in a release without a version.
-- The contract, the route entry, the declaration entry, the client bindings and the host's statement set follow the new id. Each one keys on the same string.
-- The WIT export name of an application operation is its operation id, as today. The host looks up the export by that name (`crates/platform/engine/src/operation/native_call.rs:195`), and admission compares the two (`crates/platform/engine/src/component_admission.rs`). So an application WIT package carries no version either. WIT permits a package without a version, and the generated world `<package>:generated` has none today.
-- Platform WIT packages keep their versions: `wamn:node@0.1.0`, `wamn:postgres@0.2.0`, `wasi:*` and `wasmcloud:*`. They are interface versions of the platform, not operation ids.
-- A validator refuses an operation id that contains `@`.
-- The digest test of `wamn-iowb.3` makes sure that nothing else moves (section 4.5).
+- An authored file names an operation by its reference, with no `@version`. A reference in an authored file that carries a version refuses, with a message that names `wamn.json` as the place of the version.
+- The version of a reference comes from exactly one place. A reference to an operation of the package itself takes `package.version`. A reference to an operation of a base package takes the `version` of that base in `base_dependencies`.
+- The sealed id is `<reference>@<version>`. One function builds it: `canonical_operation_identity` (`crates/schema/generator/src/manifest.rs:2232-2247`). Every producer and every resolver calls it.
+- Generated files carry the sealed id: the WIT package headers and the world, the contracts, `generated/publication/`, the clients and the no-op crates.
+- Publish, the declaration render and `resolve_attachment` resolve an authored reference to its sealed id before any reader sees it. No reader downstream of them sees a reference.
+- The digest test of `wamn-iowb.3` stays with its pinned values. A sealed id that changes is a defect of this change.
 
 ## 3. Current state
 
@@ -25,68 +25,54 @@ Measured on `main` at `e1d076e43` on 2026-09-29.
 
 | Place | Today |
 | --- | --- |
-| Id builder | `canonical_operation_identity` writes `<prefix><interface>/<operation>@<version>` (`crates/schema/generator/src/manifest.rs:2232-2247`). The generated route and declaration entries build the id again with their own `format!` (`crates/schema/generator/src/generate/publication.rs:51`). |
-| Contracts | The members `operation`, `grant` and `dependency.participant` hold the versioned id (`generate/contracts.rs:214-274`, `:740`). The `pre_commit` slot splits the id at `@` and panics without a version (`generate/contracts.rs:283-289`). |
-| Write log | `log_operation` strips the version (`crates/schema/generator/src/write_log.rs:59-63`). The column `app_system.write_log.operation` holds the id without it. |
-| Generated WIT | `package <package>:<group>@<version>;` in each `generated/wit/deps/*/package.wit` (`generate/wit.rs:102-104`, `:1763`, `:1896`). Each `export` line of the generated world (`generate/component.rs:253-256`), the pre-commit slot (`generate/wit.rs:1681`) and each participant `use` line (`generate/wit.rs:1829`, `:1877`) name the version. |
-| Clients | The client IR copies the contract `operation` (`client_ir.rs:329-330`, `:403`). The TypeScript client writes it as `operation: "<id>"` (`client_ts.rs:525`). `operation_stem`, `link_label` and `local_name` split at `@` and also accept an id without a version. |
-| Catalog model | `validate_canonical_operation` refuses an id without a version (`crates/catalog/model/src/package.rs:8-35`). `validate_canonical_operation_for_package` requires the suffix `@<package version>` (`package.rs:37-52`). The serving manifest and the component library call both (`serving_manifest.rs:960`, `:1284-1308`, `component_library.rs:741-825`). |
-| Grants | `operation_grants.rs` removes a stale grant of a package only when the grant ends in `@<version>` (`crates/control/provision/src/operation_grants.rs:210`, `:295-297`). |
-| Control | Publish builds a dependency id from the dependency version (`crates/control/lib/src/publish_release/components.rs:74`), an event-handler target (`publish_release.rs:1695`), and a projection check (`push_component.rs:949`). |
-| Host and runtime | The host keys the statement set on the id (`crates/execution/host/src/operation.rs:585-596`, `operation/native_policy.rs:244-260`) and binds it as `app.operation` (`native_policy.rs:197`). Record history copies `app.operation` into its `operation` column (`deploy/sql/record-history.sql:200`). The engine grant check compares the id with the stored grants (`crates/platform/engine/src/router_delivery.rs:554-579`). None of these parse the id. |
-| Composer | The composer plugs exports by the dependency id, the pre-commit slot and the participant name, read from the declarations (`crates/platform/component-composer/src/lib.rs:108-196`). |
-| Database | The versioned id is data in `catalog.release_components.route_operation`, the keys of `catalog.component_library.operations`, the node `operation` in `catalog.wirings.graph_json`, the release manifest snapshots, and `app_system.permissions.permission`. No CHECK reads the id. |
-| Authored files | 1,416 versioned ids under `apps/`, most of them generated. The authored ones are WIT `export` lines, `publication/attachments.json`, the `*.json.in` declarations, `web/src/routes.tsx`, tests, and a few Rust sources such as `apps/wamn_receiving/data/src/read.rs:228`. Outside `apps/`, the ids are mostly test data. |
-| Web | `web/runtime` and `web/shell` treat the id as an opaque string. |
+| Id builder | `canonical_operation_identity` builds the sealed id. `generate/publication.rs:51` builds it again with its own `format!`. |
+| Authored WIT | `component/wit/authored.wit` exports each custom operation and imports each pre-commit slot by its sealed id, for example `export wamn-receiving:receiving/record-receipt@1.0.0;`. It includes the generated world. |
+| Authored route entries | `publication/attachments.json` spells the sealed id in `operation` and `registered-operation` of each custom operation route. |
+| Authored declarations | `publication/components/*.json.in` spells the sealed id in each operation key, `registered-operation` and `pre-commit`, and repeats the version in `scope.package-version`. |
+| Wirings | A wiring node names an application operation by its sealed id, for example `apps/client_acme_receiving/publication/wirings/`. |
+| Web routes | `web/src/routes.tsx` keys `onOpen` and `onFill` by the sealed id, for example `apps/wamn_wms/web/src/routes.tsx:68`. |
+| Tests | Application tests spell sealed ids as constants, for example `apps/client_acme_receiving/tests/acme_overlay_publication.rs:17-35`. |
+| Readers | `read_package_attachments` and `render_declaration_document` merge the authored file with the generated file (`crates/schema/generator/src/route_schema.rs`, `crates/control/lib/src/component_declaration.rs`). `resolve_attachment` checks a definition hash and resolves an input schema reference (`route_schema.rs:219-243`). None of them resolves an operation id. |
+| Count | 1,416 sealed ids under `apps/`. Most are generated. The authored ones are in the places above. |
 
 ## 4. Design
 
-### 4.1 One builder
+### 4.1 One builder, one resolver
 
-`canonical_operation_identity` writes `<prefix><interface>/<operation>`. It takes the package identity for its prefix only. `publication.rs` calls it and loses its own `format!`. `log_operation` goes, and the write log takes the operation id as it is. The pre-commit slot is `<prefix><interface>/<operation>-pre-commit`.
+`generate/publication.rs` calls `canonical_operation_identity` and loses its own `format!`. A new function, `resolve_operation_reference`, takes a reference and the package manifest. It refuses a reference that carries `@`. It finds the owning package by the prefix: the package itself, or one entry of `base_dependencies`. A prefix that names neither refuses. It returns the sealed id through `canonical_operation_identity`.
 
-### 4.2 Validators
+### 4.2 Authored WIT
 
-`validate_canonical_operation` refuses an id that contains `@`, with a message that names the package coordinate as the place of the version. `validate_canonical_operation_for_package` makes sure that the id starts with the package prefix. It no longer reads a version. Its callers do not change.
+The generated world also exports each custom operation and imports each pre-commit slot, from the `custom_operations` of `wamn.json`. `authored.wit` keeps its own package header and its `include` of the generated world, and loses every `export` and `import` of an application operation. An authored world package such as `wamn:receiving-component@0.1.0` is the component's own version, not the package version, and stays.
 
-### 4.3 WIT
+### 4.3 Route entries, declarations and wirings
 
-A generated `package.wit` header is `package <package>:<group>;`. Each generated `export`, slot and `use` line loses its version. An authored `export` or `import` of an application operation loses its version too. Authored world packages such as `wamn:receiving-component@0.1.0` and platform imports keep theirs. They are not operation ids.
+An authored route entry, declaration or wiring names each operation by its reference. The declaration template loses `scope.package-version`. The renderer fills it from `wamn.json`, as it fills `__TENANT_ID__`. `read_package_attachments`, `render_declaration_document` and the wiring reader resolve each reference with `resolve_operation_reference`. Publish reads through them, so it sees sealed ids only. `resolve_attachment` refuses an authored `operation` or `registered-operation` that carries a version.
 
-### 4.4 Grants
+### 4.4 Web routes and tests
 
-The grant prune removes a stale grant by the package prefix alone: a grant of the package that the desired set does not hold. The suffix match goes. A grant is the operation id, so a new package version keeps every grant whose operation stays.
+The generated TypeScript client gives each operation its reference beside its sealed id. The query table keys `onOpen` and `onFill` by the reference, so `routes.tsx` names references. An application test names an operation by its reference and gets the sealed id from the generated client, or from `resolve_operation_reference` over the package `wamn.json`. A test value that is opaque data, such as a history row in `apps/wamn_receiving/data/src/read.rs:228`, stays as it is.
 
 ### 4.5 The digest test
 
-`the_fixture_publishes_what_it_published_before_generated_route_entries` (`crates/control/lib/src/publish_release/attachments.rs:422-447`) pins three values for the platform fixture:
-
-1. The 12 route ids and their definition hashes. A definition holds no operation id, so these values do not change.
-2. `FIXTURE_ATTACHMENTS_DIGEST`, over the merged attachment map. Its `operation` and `registered-operation` members change.
-3. `FIXTURE_DECLARATION_DIGEST`, over the rendered declaration. Its keys, `registered-operation` and `pre-commit` change.
-
-The issue that changes the ids takes the committed fixture documents from before the change and removes `@1.0.0` from each operation id with a script. It makes sure that the digests of the results equal the new values 2 and 3, and it records the script and both digests in the issue notes. The test then pins the new values. Values 1 do not change. Together these make sure that the id is the only thing that moved.
+`the_fixture_publishes_what_it_published_before_generated_route_entries` (`crates/control/lib/src/publish_release/attachments.rs:422-447`) keeps its three pinned values: the 12 route definition hashes, `FIXTURE_ATTACHMENTS_DIGEST` and `FIXTURE_DECLARATION_DIGEST`. The fixture's authored files change to references, and the readers resolve them. Equal digests make sure that the resolved documents are the documents of today, byte for byte.
 
 ### 4.6 What moves
 
-Removing the version moves every value that is computed over an operation id: the two digests above, every contract digest, the serving manifest digest and its mint vector (`crates/catalog/model/tests/serving_manifest_digest.rs`), each `projection_hash`, each wiring hash whose nodes name an application operation, and every component byte digest, because the export names are compiled in. The committed pins of base components (the overlay pin of `platform_fixture`, the Acme pin of `wamn_receiving`) take the new digests. Nothing else changes.
+No sealed id moves, so no contract digest, component digest, base pin, route definition hash or serving manifest digest moves. Only the authored files change. A component whose authored WIT loses its exports keeps the same world, because the generated world now carries them. The issue that moves them makes sure that each component world is the same before and after.
 
 ## 5. Issues
 
 One branch, one agent (the routes agent). Each issue lands with its tests. No stop between them.
 
-1. The builder and the validators. `canonical_operation_identity`, the pre-commit slot, `publication.rs`, `log_operation`, the two catalog validators and the grant prune take the new id. The catalog and generator unit tests change their expected ids, and one validator test refuses an id with `@`. Regenerate all six packages. Record the script result of section 4.5 and pin the new digests.
-2. The WIT and the components. Generated WIT headers, exports, slots and `use` lines lose the version. Authored WIT, component sources and the data sources that spell an id change. Rebuild the components and move the committed base pins. The application publication tests and the Receiving and WMS live tests run as they are.
-3. The authored publication and the clients. `publication/attachments.json`, the `*.json.in` declarations, `web/src/routes.tsx`, wirings, the tests under `apps/` and the test data outside `apps/` take the new id. Regenerate the clients. The web checks run as they are.
-4. Closeout. `docs/architecture` states the id grammar and the place of the version. `wamn-cuqc` closes with the file count that a version change now renames, which is zero. Workspace test run, log path in the close reason, cluster stages noted pending, merge to main.
+1. The resolver. `resolve_operation_reference` and its refusals, and `publication.rs` calls `canonical_operation_identity`. Generator unit tests: a reference of the package, a reference of a base, a reference with a version, and an unknown prefix.
+2. WIT. The generated world exports the custom operations and imports the pre-commit slots, and every `authored.wit` loses them. Regenerate all packages. Every component world is the same before and after.
+3. Route entries, declarations and wirings. The readers resolve references, the renderer fills `scope.package-version`, and `resolve_attachment` refuses a versioned authored id. Every authored publication file names references. The digest test passes with its pinned values, and the application publication tests run as they are.
+4. Web routes and tests. The TypeScript client carries references, the query table keys by them, `routes.tsx` and the application tests name references. Regenerate the clients. The web checks run as they are. This issue changes `web/ui`, so the routes agent tells the table agent which files go first.
+5. Closeout. `docs/architecture` states where the version is authored and which files carry the sealed id. `wamn-cuqc` closes with the count of authored files that a version change edits, which is one. Workspace test run, log path in the close reason, cluster stages noted pending, merge to main.
 
 ## 6. Out of scope
 
-- An upgrade of a deployed database. Stored grants, route rows, library keys and history rows hold the old id. No rewrite of record history happens. The kind clusters are disposable, and the Google Cloud dev environment is provisioned again after this change.
-- Platform WIT interface versions. `wamn:node@0.1.0` and `wamn:postgres@0.2.0` stay versioned. A platform interface change is a WIT change and goes to the owner.
-- Two versions of one package in one release. A release holds one version of each package today, and this change depends on that rule.
-
-## 7. Questions for review
-
-1. The WIT export name follows the operation id, so application WIT packages lose their version (section 4.3). The other choice is a map from the unversioned id to a versioned export name in the host, admission and the composer. Is the version-free WIT package the choice?
-2. A deployed database keeps the old ids (section 6), and the Google Cloud dev environment is provisioned again. Is that acceptable while `wamn-wq26` runs there?
+- Sealed ids in stored data. Grants, route rows, library keys, history rows and write log rows keep what they hold. They are sealed ids, and a new package version writes new ones, as today.
+- Platform WIT interface versions, such as `wamn:node@0.1.0` and `wamn:postgres@0.2.0`. They are not operation ids.
+- The version of a base in `base_dependencies`. It is the dependent package's own record of which base it overlays, with the base digest, and it stays authored.

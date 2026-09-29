@@ -8,7 +8,7 @@ These pages describe unbuilt work and its limits. Current behavior belongs in [a
 - [Generated operations](generated-operations.md): Draft design for generating the handler, data function, world export, route entry and declaration entry of each generated operation.
 - [Google Cloud deployment](gcp-deployment.md): Epic 23 proposal for the first deployment to the `wamn-dev` project, with costs, a limited mode and shutdown commands.
 - [Human identity and login](identity-plan.md): Incremental password login, later account lifecycle, and PAT-free sensitive operations with planning at each epic start.
-- [Operation ids](operation-ids.md): Design for an operation id without the package version, so a new version renames no file.
+- [Operation ids](operation-ids.md): Design for authoring the package version once, in `wamn.json`, and deriving each sealed operation id from it.
 - [Operator UI](operator-ui.md): Deferred client and screen capabilities.
 - [Upgrades](upgrades.md): Design for changing a schema after installation.
 - [Web deployment](web-deployment.md): Epic 20 rules for the web client host, and its remaining real deployment.
