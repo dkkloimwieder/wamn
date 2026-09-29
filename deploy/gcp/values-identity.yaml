@@ -1,10 +1,10 @@
 # Identity values of docs/plan/gcp-deployment.md step 3. The chart writes the
 # image as repository:tag, so the digest is split at its colon: the image is
 # us-central1-docker.pkg.dev/wamn-dev/wamn/wamn-identity@sha256:<hex>, built
-# from source identity src-6b96a6486078165d.
+# from source identity src-c2cfa0047530e945.
 image:
   repository: us-central1-docker.pkg.dev/wamn-dev/wamn/wamn-identity@sha256
-  tag: f924a3e273ba683f06f252f6ced93a22d712956d725287d996b30b8b03aa8f3e
+  tag: 896a386eaf97c365f23c7d992d3e66768336ccb2121d867e26e1e92489adc465
   pullPolicy: IfNotPresent
 issuer: https://identity.identity.svc.cluster.local
 databaseSecret: wamn-identity-db

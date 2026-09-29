@@ -684,7 +684,7 @@ On 2026-09-26 the first run took 10 seconds, and the email was `wamn-registry-re
 | Image | Digest | Use |
 | --- | --- | --- |
 | `wamn-host:src-91f318b6c6fe387c` | `sha256:a403fef9f1e7bca336c3640851cd3a99eee2202885e6b59f5261490b39647d76` | host |
-| `wamn-identity:src-6b96a6486078165d` | `sha256:f924a3e273ba683f06f252f6ced93a22d712956d725287d996b30b8b03aa8f3e` | identity |
+| `wamn-identity:src-c2cfa0047530e945` | `sha256:896a386eaf97c365f23c7d992d3e66768336ccb2121d867e26e1e92489adc465` | identity |
 | `wamn-cdc-reader:src-bb749700d40cfff3` | `sha256:659d8ee7e880882cdff0cd0c0940a0a0ccd69a59b1bec81c3210b0c7c02ed645` | CDC reader |
 | `curlimages/curl:8.22.0` | `sha256:58adaa4e8dca9c988bae2aba4ab3434a0bb2da16bbe3f92dec39ec7785166777` | registry token CronJob |
 
@@ -950,6 +950,32 @@ psql "$WAMN_SYSTEM_ADMIN_URL" -Atc "select to_jsonb(t) - 'token_hash' from ident
 ```
 
 On 2026-09-29 the first reset was refused. The secret expired at 15:21:41 UTC, and the page submitted at 15:40:27, so the row stayed unconsumed. The request body matched the contract. The second mail went out at 15:43:13 UTC. The owner reset the password at 15:57:35 with `200`, 32 seconds before that secret expired, and the transaction consumed both reset secrets.
+
+### 4.2.2 Identity reconnects after Postgres ends its sessions
+
+Commit `a616abae8` (`wamn-fwzc`) makes identity open a closed database connection again, so a Postgres restart no longer leaves `/healthz` at 503. On 2026-09-29 the image `wamn-identity:src-c2cfa0047530e945` was built from main `a616abae8` in 56 seconds and pushed in 3 seconds. The Helm upgrade took 1 second (revision 7), and the rollout took 4 seconds. The in-cluster check of section 3.10 returned the key set with `HTTP 200` in 3 seconds.
+
+Prove the fix live. List the identity sessions on the primary:
+
+```bash
+kubectl -n platform exec wamn-pg-1 -c postgres -- psql -U postgres -d wamn_system -Atc \
+  "select usename, count(*) from pg_stat_activity where usename like 'wamn_identity%' group by 1"
+```
+
+The identity service logs in as the issuer role `wamn_identity_issuer_<hash>_b`. The `wamn_identity_reader_*` sessions belong to the hosts. End only the issuer sessions:
+
+```bash
+kubectl -n platform exec wamn-pg-1 -c postgres -- psql -U postgres -d wamn_system -Atc \
+  "select count(*) filter (where pg_terminate_backend(pid)) from pg_stat_activity where usename='<issuer role>'"
+```
+
+Then poll `/healthz` from a pod in `hosts`, as in the check of section 3.10, with the command `curl -s -o /dev/null -w %{http_code} --cacert /ca/ca.crt https://identity.identity.svc.cluster.local/healthz` every 2 seconds. Read the restart count after:
+
+```bash
+kubectl -n identity get pod -o custom-columns=N:.metadata.name,R:.status.containerStatuses[0].restartCount,READY:.status.containerStatuses[0].ready
+```
+
+On 2026-09-29 the command ended 3 issuer sessions at 16:38:26 UTC. `/healthz` answered `200` at 16:38:28 and at each probe to 16:38:36. A new issuer session (pid 7010) started at 16:38:28. The pod `identity-749bc76b9d-5z6sj` stayed ready with 0 restarts.
 
 ### 4.3 Load balancer
 
