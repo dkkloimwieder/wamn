@@ -305,6 +305,7 @@ mod tests {
     use std::path::Path;
 
     use wamn_catalog::{OperationKind, ServingRelation};
+    use wamn_test_infrastructure::operations::sealed;
 
     use super::package_route;
 
@@ -329,13 +330,13 @@ mod tests {
     #[test]
     fn a_read_route_carries_its_relations_and_a_get_its_revision() {
         let wms = app("wamn_wms");
-        let get = package_route(&wms, "wamn_wms", "wms", "wamn-wms:packaging/get@1.0.0")
+        let get = package_route(&wms, "wamn_wms", "wms", &sealed("wamn-wms:packaging/get"))
             .expect("the packaging get has a contract");
         assert_eq!(get.kind, OperationKind::Get);
         assert_eq!(get.revision.as_deref(), Some("row_version"));
         assert_eq!(get.reads, relations(&[("wms", "packaging")]));
 
-        let query = package_route(&wms, "wamn_wms", "wms", "wamn-wms:packaging/query@1.0.0")
+        let query = package_route(&wms, "wamn_wms", "wms", &sealed("wamn-wms:packaging/query"))
             .expect("the packaging query has a contract");
         assert_eq!((query.kind, query.revision), (OperationKind::Query, None));
         assert_eq!(query.reads, relations(&[("wms", "packaging")]));
@@ -344,7 +345,7 @@ mod tests {
             &wms,
             "wamn_wms",
             "wms",
-            "wamn-wms:inventory/aggregate@1.0.0",
+            &sealed("wamn-wms:inventory/aggregate"),
         )
         .expect("the authored projection has a contract");
         assert_eq!(
@@ -356,7 +357,7 @@ mod tests {
             &app("wamn_receiving"),
             "wamn_receiving",
             "receiving",
-            "wamn-receiving:receiving/load-purchase-order-history@1.0.0",
+            &sealed("wamn-receiving:receiving/load-purchase-order-history"),
         )
         .expect("the history projection has a contract");
         assert_eq!(
@@ -365,7 +366,7 @@ mod tests {
             "a history table stands for its model relation"
         );
 
-        let write = package_route(&wms, "wamn_wms", "wms", "wamn-wms:inventory/move@1.0.0")
+        let write = package_route(&wms, "wamn_wms", "wms", &sealed("wamn-wms:inventory/move"))
             .expect("the move command has a contract");
         assert_eq!((write.reads, write.revision), (BTreeSet::new(), None));
     }
@@ -375,20 +376,20 @@ mod tests {
     #[test]
     fn a_write_route_names_its_idempotency_field() {
         let wms = app("wamn_wms");
-        let route = |operation| {
+        let route = |operation: &str| {
             package_route(&wms, "wamn_wms", "wms", operation)
                 .expect("the operation has a contract")
                 .idempotency
         };
         assert_eq!(
-            route("wamn-wms:inventory/move@1.0.0").as_deref(),
+            route(&sealed("wamn-wms:inventory/move")).as_deref(),
             Some("value.idempotency_key")
         );
         assert_eq!(
-            route("wamn-wms:packaging/create@1.0.0").as_deref(),
+            route(&sealed("wamn-wms:packaging/create")).as_deref(),
             Some("idempotency_key")
         );
-        assert_eq!(route("wamn-wms:packaging/get@1.0.0"), None);
+        assert_eq!(route(&sealed("wamn-wms:packaging/get")), None);
         let archive = package_route(
             &app("platform_fixture"),
             "platform_fixture",

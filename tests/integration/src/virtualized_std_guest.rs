@@ -39,16 +39,18 @@ mod tests {
     };
 
     const SENTINEL_KEY: &str = "WAMN_STD_VIRTUALIZATION_SENTINEL";
+    // Each export is named by reference, and `sealed` reads its version from
+    // the package wamn.json.
     const RECEIVING_EXPORTS: [&str; 9] = [
-        "wamn-receiving:location/list@1.0.0",
-        "wamn-receiving:purchase-order/get@1.0.0",
-        "wamn-receiving:purchase-order/query@1.0.0",
-        "wamn-receiving:purchase-order/update@1.0.0",
-        "wamn-receiving:receipt/get@1.0.0",
-        "wamn-receiving:receipt/query@1.0.0",
-        "wamn-receiving:receiving/load-purchase-order-history@1.0.0",
-        "wamn-receiving:receiving/load-receipt-screen@1.0.0",
-        "wamn-receiving:receiving/record-receipt@1.0.0",
+        "wamn-receiving:location/list",
+        "wamn-receiving:purchase-order/get",
+        "wamn-receiving:purchase-order/query",
+        "wamn-receiving:purchase-order/update",
+        "wamn-receiving:receipt/get",
+        "wamn-receiving:receipt/query",
+        "wamn-receiving:receiving/load-purchase-order-history",
+        "wamn-receiving:receiving/load-receipt-screen",
+        "wamn-receiving:receiving/record-receipt",
     ];
     const HANDLER_PARAMETERS_AND_RESULTS: &str = concat!(
         "(ctx:record{wiring-id:string,wiring-version:u32,node-id:string,",
@@ -407,7 +409,10 @@ mod tests {
             "virtualized Receiving artifact imports {packages:?}, not its exact four-package profile"
         );
         let exports = operation_exports(&engine, &bytes, "virtualized receiving")?;
-        let expected_exports = RECEIVING_EXPORTS.map(str::to_owned).into_iter().collect();
+        let expected_exports = RECEIVING_EXPORTS
+            .map(wamn_test_infrastructure::operations::sealed)
+            .into_iter()
+            .collect();
         ensure!(
             exports.keys().cloned().collect::<BTreeSet<_>>() == expected_exports,
             "virtualized Receiving artifact exports {:?}, not {expected_exports:?}",

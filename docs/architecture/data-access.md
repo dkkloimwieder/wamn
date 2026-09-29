@@ -131,7 +131,7 @@ Generation writes these files for each package:
 1. `generated/data/<model>.rs` holds one data function for each operation of the model. The function parses the scalars, calls the generated accessor, and returns the one generated refusal type.
 2. `generated/data/error.rs` holds that refusal type. It spells the closed vocabulary of the operation contracts, and its details are the declared detail fields.
 3. `generated/component/<model>.rs` holds one module for each operation, with its codec, its handler, and its export.
-4. `generated/wit/world.wit` holds the world `<package>:generated/generated`, which exports every generated operation.
+4. `generated/wit/world.wit` holds the world `<package>:generated/generated`, which exports every operation of the package and imports what those operations call. A package with a participant also gets the world `participant`.
 5. `generated/publication/attachments.json` holds one route entry for each generated operation, with its definition hash.
 6. `generated/publication/component-operations.json` holds one declaration entry for each generated operation, keyed by component.
 
@@ -140,14 +140,31 @@ A data crate includes `generated/data/mod.rs` as its public module `generated`.
 A component includes `generated/component/mod.rs` in a module that names that data module `data`.
 The fixture overlay has no data crate, so its component includes the data functions itself.
 
-The authored world, in `component/wit/authored.wit`, includes the generated world and exports the custom operations.
+The authored world, in `component/wit/authored.wit`, only includes the generated world.
 The authored world includes the generated one, and the reverse is not possible.
-An authored export names a package under `generated/wit/deps`, and WIT resolves a directory with its dependencies as one group.
 
 The authored `publication/attachments.json` and component declaration carry only the custom operations.
 Publication, the declaration render, the client generator, and `materialize_package` read the authored file and the generated file together.
 An attachment id or an operation in both files refuses.
 A copy of an authored document outside its package reads the generated file beside it only when the copy keeps the package layout.
+
+### Operation references
+
+The package version is authored once, as `package.version` in `wamn.json`.
+A sealed operation id is `<package>:<interface>/<operation>@<version>`, for example `wamn-receiving:location/list@1.0.0`.
+WIT packages, component worlds, contracts, the files under `generated/`, the clients, grants and the statement sets of the host carry the sealed id.
+
+An authored route entry, component declaration or wiring names an operation by its reference, `<package>:<interface>/<operation>`.
+A declaration template authors no `scope.package-version`.
+A reference to an operation of the package takes `package.version`, and a reference to an operation of a base takes the `version` of that base in `base_dependencies`.
+A platform interface, such as `wamn:node/handler@0.1.0`, is not a package operation and keeps its WIT version.
+
+Every reader of an authored file resolves its references with `wamn_schema_generator::operation_reference` before it uses the file.
+The readers are the generator, publication, the declaration render, the author-wiring verb, the dev coordinator and the composer.
+An authored id that carries a version, or a template that authors `scope.package-version`, refuses.
+A web page keys `onOpen` and `onFill` by the reference, so one page shows one version of each package.
+A test gets the sealed id and the package version from `wamn.json` through `wamn_test_infrastructure::operations`.
+A new package version is one line in `wamn.json` and a regeneration.
 
 The manifest member `routes` sets how a generated route is published:
 
