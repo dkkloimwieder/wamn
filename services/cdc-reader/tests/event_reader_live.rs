@@ -17,6 +17,7 @@
 //! - commit order + envelope shape + `Nats-Msg-Id` dedupe on the stream;
 //! - confirmed LSN advances only on JetStream ack;
 //! - crash (task abort) → restart resumes from the confirmed LSN, no gaps;
+//! - an idle database's slot follows another database's WAL (keepalive confirm);
 //! - JetStream unreachable (a severed TCP proxy) → the LSN HOLDS while
 //!   writes continue → restore → delayed, never lost;
 //! - clean shutdown on cancellation; teardown leaves NO slot behind.
@@ -794,6 +795,31 @@ async fn reader_streams_one_project_env_to_the_evt_stream() {
         "crash+restart: no gaps, no dupes (dedupe absorbed any redelivery), order kept"
     );
     wait_confirmed_past(&sys, &cdc_name, &wal_c, 75).await;
+
+    // --- phase C2: an idle database's slot follows the WAL (wamn-59z6) ------
+    // Only another database writes. The reader has nothing to publish, and it
+    // confirms the keepalive position, so its slot does not hold that WAL.
+    admin
+        .batch_execute(
+            "DROP TABLE IF EXISTS public.reader_live_other; \
+             CREATE TABLE public.reader_live_other (id bigint PRIMARY KEY, pad text); \
+             INSERT INTO public.reader_live_other \
+               SELECT g, repeat('x', 1000) FROM generate_series(1, 2000) g",
+        )
+        .await
+        .expect("another database writes");
+    let wal_other = insert_lsn(&admin).await;
+    let count_idle = stream_count(&js, &stream_name).await;
+    wait_confirmed_past(&sys, &cdc_name, &wal_other, 75).await;
+    assert_eq!(
+        stream_count(&js, &stream_name).await,
+        count_idle,
+        "another database's writes publish nothing"
+    );
+    admin
+        .batch_execute("DROP TABLE public.reader_live_other")
+        .await
+        .expect("drop the other database's table");
 
     // --- phase D: JetStream down ⇒ the LSN holds ⇒ delayed, never lost ------
     let c0 = confirmed_lsn(&sys, &cdc_name).await;

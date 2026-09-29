@@ -1394,6 +1394,21 @@ async fn drain(
             EventType::Relation { .. } | EventType::Type { .. } | EventType::Origin { .. } => {
                 continue;
             }
+            // A keepalive carries the server's sent position (wamn-59z6). With no
+            // transaction open, the last returned commit is acknowledged, because
+            // the Commit arm settles every ack before the loop reads on. No change
+            // of this database before `wal_end` is then unpublished, so the reader
+            // confirms it, and the slot of an idle database follows the WAL.
+            EventType::Keepalive { wal_end } => {
+                let (flushed, _) = stream.get_feedback_lsn();
+                if txn.is_none() && wal_end.value() > flushed {
+                    stream.update_flushed_lsn(wal_end.value());
+                    stream.update_applied_lsn(wal_end.value());
+                    last_lsn_advance_ms
+                        .store(chrono::Utc::now().timestamp_millis(), Ordering::Relaxed);
+                }
+                continue;
+            }
             other => {
                 // Streaming/two-phase frames can't occur (Off/off) — a
                 // protocol surprise is worth a loud log, not a crash.
