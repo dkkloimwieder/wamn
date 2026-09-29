@@ -168,10 +168,16 @@ fn dependency_declarations(source: &str) -> Vec<Declaration<'_>> {
         let Some((raw_name, value)) = trimmed.split_once('=') else {
             continue;
         };
+        // A dotted key, as in `wamn-catalog.workspace = true`, names the crate
+        // before its first dot and one of its keys after it.
+        let (name, keys) = match raw_name.trim().split_once('.') {
+            Some((name, key)) => (name, format!("{key}={value}")),
+            None => (raw_name.trim(), value.to_owned()),
+        };
         declarations.push(Declaration {
             line: line_index + 1,
-            name: raw_name.trim().trim_matches('"'),
-            keys: value.split_whitespace().collect(),
+            name: name.trim().trim_matches('"'),
+            keys: keys.split_whitespace().collect(),
             dev: dev_dependency_table,
         });
     }
