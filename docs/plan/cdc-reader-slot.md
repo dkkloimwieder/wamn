@@ -55,16 +55,29 @@ Postgres removes the WAL segments that the invalidated slot held (`invalidation_
 ### 4.3 What the reader does on invalidation
 
 1. The reader stops capture and does not open a session. It stays running and does not exit.
-2. It logs one structured event `CDC_CAPTURE_GAP` with the slot, the reason (`missing`, or the `invalidation_reason`), and the gap start. The start is the slot's `confirmed_flush_lsn` while the invalidated row exists. For a missing slot, the start is the LSN of the last message on the source stream (`Nats-Msg-Id = <project>_<env>:<lsn>`), with that message's time.
-3. The gap end is the first position of the next slot. The recovery verb records it, because only that verb creates the slot.
-4. Every 30 seconds, on the cadence of the slot monitor, the reader reads the gap record of its slot. When `resync_at` is set, it resumes capture on the new slot, with no restart. A new slot alone does not start capture again.
+2. It logs one structured event `CDC_CAPTURE_GAP` per process. The event names the slot and the reason (`missing`, or the `invalidation_reason`). Its log line carries the detection time.
+3. Every 30 seconds, on the cadence of the slot monitor, it reads the newest `registry.capture_gap` row of its own `registry.event_readers` row. That read logs nothing.
+4. Two conditions let it capture: its slot is healthy, and that row has `resync_at` set or no row exists. It then resumes on the slot that the registry names, with no restart. A new slot alone does not start capture again.
 
-The reader has no readiness probe, in `deploy/gcp/cdc-reader.yaml` or `deploy/gcp/cdc-reader-wms.yaml`, and this spec adds none. The reader stays running and stopped. The gap shows in the `CDC_CAPTURE_GAP` event and in `pg_replication_slots`, and `recover-capture-gap` writes the row.
+The reader has no readiness probe, in `deploy/gcp/cdc-reader.yaml` or `deploy/gcp/cdc-reader-wms.yaml`, and this spec adds none. The reader stays running and stopped. The gap shows in the `CDC_CAPTURE_GAP` event and in `pg_replication_slots`, and `recover-capture-gap` writes the row. The reader keeps its `SELECT` credential.
 
-The gap record is one row per gap in `registry.capture_gap`: `slot`, `start_lsn`, `start_at`, `reason`, `detected_at`, `end_lsn`, `resync_at`. The reader reads it as it reads `registry.event_readers` today. Two verbs write it with the control credential:
+The gap record is one row per gap in `registry.capture_gap`. Its key is the `registry.event_readers` row (`org`, `project`, `env`) and its own `created_at`. That `created_at` carries the time of the recovery verb. Its fields:
 
-- `wamn-ctl recover-capture-gap --org --project --env` drops the lost slot, creates it again with `create_failover_slot_sql`, and writes the row with its end position.
-- `wamn-ctl close-capture-gap --org --project --env` sets `resync_at`. Until the resync of section 6 exists, the operator runs it on the owner's word.
+| Field | Value |
+| --- | --- |
+| `slot` | The name of the lost slot. |
+| `start_lsn` | The invalidated slot's `confirmed_flush_lsn`. For a missing slot, the LSN in the `Nats-Msg-Id` of the last event on the source stream. An empty stream gives null, which means "from registration". |
+| `start_at` | The `commit_ts` of the last event on the source stream. When the stream is empty, the `created_at` of the `registry.event_readers` row. |
+| `reason` | `missing`, or the `invalidation_reason`. |
+| `end_lsn` | The first position of the new slot. |
+| `resync_at` | Null until `close-capture-gap` sets it. |
+
+After issue 1, the confirmed position can sit past the last commit, so `start_at` is an earlier bound than the true gap start. The resync of section 6 then reads more rows than the gap changed, and misses none.
+
+Two verbs write the row with the control credential:
+
+- `wamn-ctl recover-capture-gap --org --project --env` drops the lost slot, creates the new slot, updates `registry.event_readers`, and writes the row with its end position. It reads the last source-stream event with the NATS flags of `enable-cdc-project-env`.
+- `wamn-ctl close-capture-gap --org --project --env` sets `resync_at` on the newest row. Until the resync of section 6 exists, the operator runs it on the owner's word.
 
 Section 6.3 of the operations page names these two verbs and nothing else.
 
@@ -111,4 +124,5 @@ Owner rulings of 2026-09-29:
 - 4 GB is right, with the disk cost of section 4.5.
 - The definition of the resync is in section 6. Its build is out of scope.
 - The names: `registry.capture_gap`, `wamn-ctl recover-capture-gap` and `wamn-ctl close-capture-gap`.
+- The gap row (2026-09-29): `start_lsn` and `start_at` come as section 4.3 states, with a null `start_lsn` only for an empty stream. No `detected_at`: the reader's event carries the detection time, and the row's `created_at` carries the verb's time. The reader stays `SELECT` only. The row is keyed by the `registry.event_readers` row and keeps the lost slot's name as a field. One `CDC_CAPTURE_GAP` per process, then a silent read every 30 seconds.
 - The keepalive confirm is split (2026-09-29). The fork returns a keepalive from `next_event` as an event with its `wal_end`, and nothing more. The reader applies the confirm rule. The new fork rev is pinned in `Cargo.toml`. A reader that raises its flushed position while idle and relies on the library's cap is out.
