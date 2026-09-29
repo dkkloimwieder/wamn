@@ -1125,7 +1125,11 @@ ALTER TABLE {target}.runs
     ADD COLUMN IF NOT EXISTS wiring_version integer,
     ADD COLUMN IF NOT EXISTS wiring_hash text,
     ADD COLUMN IF NOT EXISTS binding_world_json jsonb,
-    ADD COLUMN IF NOT EXISTS service_principal_id uuid;
+    ADD COLUMN IF NOT EXISTS service_principal_id uuid,
+    -- The execution-grain CHECK below names these two, so a legacy table
+    -- gains them here before the CHECK is written.
+    ADD COLUMN IF NOT EXISTS trigger_source text,
+    ADD COLUMN IF NOT EXISTS registration_id text;
 ALTER TABLE {target}.runs
     ALTER COLUMN run_id SET DEFAULT gen_random_uuid()::text,
     ALTER COLUMN flow_id TYPE text USING flow_id::text,

@@ -297,7 +297,7 @@ pub(super) async fn shared_runner_legacy_leg(su: &Client) {
     // than let the reconciler fabricate provenance for them. That is the
     // documented contract — "a legacy row that violates the canonical contract
     // aborts reconciliation rather than being rewritten or deleted".
-    assert_eq!(database.code().code(), "23502");
+    assert_eq!(database.code().code(), "23502", "{}", database.message());
     assert!(
         database.message().contains("package_id") && database.message().contains("runs"),
         "the refusal names the pin carrier it could not fabricate: {}",
