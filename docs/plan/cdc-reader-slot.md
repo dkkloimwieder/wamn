@@ -66,18 +66,20 @@ The gap record is one row per gap in `registry.capture_gap`. Its key is the `reg
 | Field | Value |
 | --- | --- |
 | `slot` | The name of the lost slot. |
-| `start_lsn` | The invalidated slot's `confirmed_flush_lsn`. For a missing slot, the LSN in the `Nats-Msg-Id` of the last event on the source stream. An empty stream gives null, which means "from registration". |
-| `start_at` | The `commit_ts` of the last event on the source stream. When the stream is empty, the `created_at` of the `registry.event_readers` row. |
+| `start_lsn` | The invalidated slot's `confirmed_flush_lsn`. For a missing slot, the LSN in the `Nats-Msg-Id` of the last CDC event on the source stream. A stream with no CDC event gives null, which means "from registration". |
+| `start_at` | The `commit_ts` of the last CDC event on the source stream. When the stream has no CDC event, the `created_at` of the `registry.event_readers` row. |
 | `reason` | `missing`, or the `invalidation_reason`. |
 | `end_lsn` | The first position of the new slot. |
 | `resync_at` | Null until `close-capture-gap` sets it. |
+
+The last CDC event is the newest event whose `Nats-Msg-Id` is `<project>_<env>:<lsn>`. Derived events share the source stream with the id `derived:<hash>` and carry no LSN, so the verb skips them.
 
 After issue 1, the confirmed position can sit past the last commit, so `start_at` is an earlier bound than the true gap start. The resync of section 6 then reads more rows than the gap changed, and misses none.
 
 Two verbs write the row with the control credential:
 
-- `wamn-ctl recover-capture-gap --org --project --env` drops the lost slot and creates it again under the same name, `cdc_object_name(org, project, env, instance)`. The publication and the replication role keep that name and stay untouched. The verb writes the row with its end position. It reads the last source-stream event with the NATS flags of `enable-cdc-project-env`.
-- `wamn-ctl close-capture-gap --org --project --env` sets `resync_at` on the newest row. Until the resync of section 6 exists, the operator runs it on the owner's word.
+- `wamn-ctl recover-capture-gap --org --project --env` drops the lost slot and creates it again under the same name, `cdc_object_name(org, project, env, instance)`. The publication and the replication role keep that name and stay untouched. The verb writes the row with its end position. It reads the last CDC event with the observer credential, through the three NATS flags of `enable-cdc-project-env`. It takes `--system-database-url` as `enable-cdc-project-env` does, and `--admin-database-url` as `reconcile-replica-identity` does. It refuses a healthy slot, an active slot, and a connection to any database other than the project-env database.
+- `wamn-ctl close-capture-gap --org --project --env` sets `resync_at` on the newest row. It refuses when no row exists and when the newest row already has `resync_at`. Until the resync of section 6 exists, the operator runs it on the owner's word.
 
 Section 6.3 of the operations page names these two verbs and nothing else.
 
@@ -128,3 +130,4 @@ Owner rulings of 2026-09-29:
 - The slot name (2026-09-29): the slot keeps `cdc_object_name(org, project, env, instance)`, which the publication and the role share. The row stays keyed by the `registry.event_readers` row and keeps the slot name as a field, because an instance change renames the slot.
 - wamn-dev gets `registry.capture_gap` by one recorded `CREATE TABLE` and one `GRANT`, the way of the `is_system` drop. A P2 finding records that `provision-system` has no way to apply a later system schema change.
 - The keepalive confirm is split (2026-09-29). The fork returns a keepalive from `next_event` as an event with its `wal_end`, and nothing more. The reader applies the confirm rule. The new fork rev is pinned in `Cargo.toml`. A reader that raises its flushed position while idle and relies on the library's cap is out.
+- The verbs (2026-09-29). `start_lsn` and `start_at` come from the newest CDC event, and a `derived:<hash>` event is skipped. The verb reads the stream with the observer credential, because reading a stream is the observer's job. Provisioning gets no new permission. The flag and variable names follow `enable-cdc-project-env` and `reconcile-replica-identity`. An active slot means a reader that still streams, because a reader stopped on a gap holds no session. Each refusal names its reason on one line.
