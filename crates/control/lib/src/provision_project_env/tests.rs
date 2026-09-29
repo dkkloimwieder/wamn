@@ -431,6 +431,7 @@ fn the_registry_reader_grants_are_exact_and_never_reach_identity() {
     let exact = vec![
         role_acl("schema", "registry", "registry", "USAGE"),
         role_acl("relation", "registry", "event_readers", "SELECT"),
+        role_acl("relation", "registry", "capture_gap", "SELECT"),
     ];
     let verify = |grants: &[RoleAcl], database: &str| {
         verify_system_reader_grants(
