@@ -62,7 +62,7 @@ describe("the generated table for a page", () => {
     ]);
   });
 
-  it("shows the row buttons in the first column, wide enough for each button (wamn-po31)", async () => {
+  it("shows the row buttons before the data columns, wide enough for each button (wamn-po31)", async () => {
     const { transport } = stub([page(["a", "b"], null)]);
     render(() => (
       <WidgetQueryTable

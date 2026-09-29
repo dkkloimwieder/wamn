@@ -279,15 +279,15 @@ export function QueryTable<TRow extends object, TResult = unknown>(props: QueryT
     </div>
   );
 
-  // The columns as the grid renders them: the child tables' expand, the row
-  // buttons, the row selection, the row edit, and the declared columns. The
-  // row buttons come first, or second after the expand, so no scroll hides them.
+  // The columns as the grid renders them: the row selection, the child
+  // tables' expand, the row buttons, the row edit, and the declared columns.
+  // The row buttons come before any data column, so no scroll hides them.
   const columns: readonly BuiltColumn<TRow>[] = [
+    ...bulk.columns(),
     ...(childTables.length === 0 ? [] : [expandColumn<TRow>(areas)]),
     ...(shownActions.length === 0
       ? []
       : [{ id: ACTIONS_COLUMN, size: actionsWidth(shownActions), header: () => "", cell: rowActions }]),
-    ...bulk.columns(),
     ...edits.columns(),
     ...declaredColumns.map((declared): BuiltColumn<TRow> => ({
       id: declared.field,
