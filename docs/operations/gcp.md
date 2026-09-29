@@ -684,7 +684,7 @@ On 2026-09-26 the first run took 10 seconds, and the email was `wamn-registry-re
 | Image | Digest | Use |
 | --- | --- | --- |
 | `wamn-host:src-91f318b6c6fe387c` | `sha256:a403fef9f1e7bca336c3640851cd3a99eee2202885e6b59f5261490b39647d76` | host |
-| `wamn-identity:src-91f318b6c6fe387c` | `sha256:96dbf60cbb687000f6c17816cbbf64ba2be8f532310427ebafa101b6adb903cb` | identity |
+| `wamn-identity:src-6b96a6486078165d` | `sha256:f924a3e273ba683f06f252f6ced93a22d712956d725287d996b30b8b03aa8f3e` | identity |
 | `wamn-cdc-reader:src-bb749700d40cfff3` | `sha256:659d8ee7e880882cdff0cd0c0940a0a0ccd69a59b1bec81c3210b0c7c02ed645` | CDC reader |
 | `curlimages/curl:8.22.0` | `sha256:58adaa4e8dca9c988bae2aba4ab3434a0bb2da16bbe3f92dec39ec7785166777` | registry token CronJob |
 
@@ -921,6 +921,26 @@ target/debug/wamn web upload apps/wamn_receiving \
 On 2026-09-27 the upload wrote 10 files in 17 seconds, after a 54 second build of `wamn`. The files go to `clients/wamn_receiving/<digest hex>/`, which `deploy/gcp/values-edge.yaml` and `deploy/gcp/url-map.yaml` name. The first ruling asked for an HMAC key on the owner's account. `gsutil hmac create` and `gcloud storage hmac create` accept only a service account, so that ruling was replaced.
 The second upload on 2026-09-27 added the `/invite` page and took 10 seconds. Run the same command after each change to the client.
 The `--org` value is a deployment value. The project comes from the client package name `@wamn/<project>-client`. The build receives both as `WAMN_ORG` and `WAMN_PROJECT`, and the shell offers and accepts only environments of that org and project. The third upload on 2026-09-27 added `--org` and took 15 seconds.
+
+### 4.2.1 Password recovery mail
+
+The reset mail carries one link, `<inviteUrl>/reset#<secret>`, from commit `2b9f62a7e`. The secret is in the fragment, so the browser never sends it. On 2026-09-29 the identity image `wamn-identity:src-6b96a6486078165d` was built from main `f51854018` with the command of section 3.4 in 78 seconds and pushed in 2 seconds. Pin its digest in `deploy/gcp/values-identity.yaml` and roll it out:
+
+```bash
+helm upgrade identity deploy/platform/identity -n identity -f deploy/gcp/values-identity.yaml
+kubectl -n identity rollout status deploy/identity --timeout=180s
+```
+
+The rollout took 5 seconds. Restart the identity port-forward after it, because the forward ends with the old pod. Then build `wamn` again and upload the Receiving client with the command above, which adds the `/recover` and `/reset` pages. The build took 22 seconds and the upload 8 seconds.
+
+Request one recovery mail as the check, the same request that the `/recover` page sends:
+
+```bash
+curl -s -o /dev/null -w '%{http_code}\n' -H 'content-type: application/json' \
+  -d '{"email":"<owner email>"}' https://receiving.wamn.dev/password/recover
+```
+
+Identity answers `202` for every address, known or not, so the check is the mail in the owner's mailbox. On 2026-09-29 the request took 7 seconds.
 
 ### 4.3 Load balancer
 
