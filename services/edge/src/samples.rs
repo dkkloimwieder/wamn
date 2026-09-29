@@ -309,10 +309,7 @@ impl IntentStore for SampleIntents<'_> {
     }
 
     async fn finish(&self, id: &IntentId, outcome: &StoredOutcome) -> Result<(), StoreError> {
-        let StoredOutcome::Completed(result) = outcome else {
-            return self.store.finish(id, outcome).await;
-        };
-        let body = result.get("value").ok_or_else(|| {
+        let body = outcome.0.get("value").ok_or_else(|| {
             StoreError::new(
                 StoreErrorKind::Contract,
                 "finish",
@@ -337,6 +334,10 @@ impl IntentStore for SampleIntents<'_> {
             .await?;
         self.stored.notify_one();
         Ok(())
+    }
+
+    async fn release(&self, id: &IntentId) -> Result<(), StoreError> {
+        self.store.release(id).await
     }
 
     async fn uncertain(&self, limit: u32) -> Result<Vec<UncertainIntent>, StoreError> {

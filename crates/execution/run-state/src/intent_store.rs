@@ -18,6 +18,9 @@ pub trait IntentStore: Send + Sync {
     async fn begin(&self, intent: &Intent<'_>) -> Result<Begun, StoreError>;
     /// Record the outcome of a begun intent.
     async fn finish(&self, id: &IntentId, outcome: &StoredOutcome) -> Result<(), StoreError>;
+    /// Free the key of a begun intent whose item was refused. The record goes,
+    /// so the next call with the key is new.
+    async fn release(&self, id: &IntentId) -> Result<(), StoreError>;
     /// List intents that began and never finished. The host never replays them.
     async fn uncertain(&self, limit: u32) -> Result<Vec<UncertainIntent>, StoreError>;
     /// Close an uncertain intent by an operator decision.
@@ -33,7 +36,7 @@ pub struct Intent<'a> {
     pub operation: &'a str,
     /// The caller's key. A repeated key within the tenant is the same intent.
     pub idempotency_key: &'a str,
-    /// The canonical JSON SHA-256 of the call input.
+    /// The request hash of the item (`wamn_engine` `item_input_hash`).
     pub input_hash: &'a str,
     /// The call's bounded deadline in milliseconds.
     pub deadline_ms: u64,
@@ -62,14 +65,10 @@ pub enum Begun {
     Conflict(IntentId),
 }
 
-/// The recorded outcome of a finished intent.
+/// The recorded outcome of a finished intent: the value that the export
+/// returned. A refused item records nothing, because its key is released.
 #[derive(Debug, Clone, PartialEq)]
-pub enum StoredOutcome {
-    /// The export returned this value.
-    Completed(serde_json::Value),
-    /// The export failed with this error body.
-    Failed(serde_json::Value),
-}
+pub struct StoredOutcome(pub serde_json::Value);
 
 /// An intent that began and never finished.
 #[derive(Debug, Clone, PartialEq, Eq)]

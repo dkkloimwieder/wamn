@@ -40,8 +40,9 @@ pub trait IntentStoreFixture: Sync {
 }
 
 /// Every case, by name, for a store that runs them all in one test.
-pub const CASES: [&str; 8] = [
+pub const CASES: [&str; 9] = [
     "a_finished_key_returns_its_stored_outcome",
+    "a_released_key_is_new_again",
     "a_begun_key_is_uncertain_and_never_new_again",
     "a_repeated_key_with_another_input_conflicts",
     "keys_belong_to_their_tenant",
@@ -57,6 +58,7 @@ pub async fn run(fixture: &dyn IntentStoreFixture, case: &'static str) {
         "a_finished_key_returns_its_stored_outcome" => {
             a_finished_key_returns_its_stored_outcome(fixture).await;
         }
+        "a_released_key_is_new_again" => a_released_key_is_new_again(fixture).await,
         "a_begun_key_is_uncertain_and_never_new_again" => {
             a_begun_key_is_uncertain_and_never_new_again(fixture).await;
         }
@@ -99,32 +101,56 @@ pub async fn a_finished_key_returns_its_stored_outcome(fixture: &dyn IntentStore
     let CaseStores { store, tenant, .. } = fixture
         .stores("a_finished_key_returns_its_stored_outcome")
         .await;
-    for (key, outcome) in [
-        (
-            "k-completed",
-            StoredOutcome::Completed(json!({"grams": 1250})),
-        ),
-        (
-            "k-failed",
-            StoredOutcome::Failed(json!({"code": "refused"})),
-        ),
-    ] {
-        let id = new_id(
-            store
-                .begin(&intent(&tenant, key, "h1"))
-                .await
-                .expect("begin"),
-        );
-        store.finish(&id, &outcome).await.expect("finish");
-        assert_eq!(
-            store
-                .begin(&intent(&tenant, key, "h1"))
-                .await
-                .expect("begin again"),
-            Begun::Finished(outcome)
-        );
-    }
+    let outcome = StoredOutcome(json!({"grams": 1250}));
+    let id = new_id(
+        store
+            .begin(&intent(&tenant, "k1", "h1"))
+            .await
+            .expect("begin"),
+    );
+    store.finish(&id, &outcome).await.expect("finish");
+    assert_eq!(
+        store
+            .begin(&intent(&tenant, "k1", "h1"))
+            .await
+            .expect("begin again"),
+        Begun::Finished(outcome)
+    );
     assert!(store.uncertain(10).await.expect("uncertain").is_empty());
+}
+
+/// A refused item frees its key: the record goes, and the key is new again,
+/// with any input.
+pub async fn a_released_key_is_new_again(fixture: &dyn IntentStoreFixture) {
+    let CaseStores { store, tenant, .. } = fixture.stores("a_released_key_is_new_again").await;
+    let id = new_id(
+        store
+            .begin(&intent(&tenant, "k1", "h1"))
+            .await
+            .expect("begin"),
+    );
+    store.release(&id).await.expect("release");
+    assert!(store.uncertain(10).await.expect("uncertain").is_empty());
+    let error = store
+        .release(&id)
+        .await
+        .expect_err("a released intent does not release again");
+    assert_eq!(error.kind(), StoreErrorKind::Contract);
+    let again = new_id(
+        store
+            .begin(&intent(&tenant, "k1", "h2"))
+            .await
+            .expect("begin again"),
+    );
+    store
+        .finish(&again, &StoredOutcome(json!(1)))
+        .await
+        .expect("finish");
+    let error = store
+        .release(&again)
+        .await
+        .expect_err("a finished intent does not release");
+    assert_eq!(error.kind(), StoreErrorKind::Contract);
 }
 
 pub async fn a_begun_key_is_uncertain_and_never_new_again(fixture: &dyn IntentStoreFixture) {
@@ -200,7 +226,7 @@ pub async fn finish_closes_an_intent_once(fixture: &dyn IntentStoreFixture) {
             .await
             .expect("begin"),
     );
-    let outcome = StoredOutcome::Completed(json!(null));
+    let outcome = StoredOutcome(json!(null));
     store.finish(&id, &outcome).await.expect("finish");
     let error = store
         .finish(&id, &outcome)
@@ -239,7 +265,7 @@ pub async fn uncertain_lists_open_intents_oldest_first_up_to_the_limit(
             .expect("begin"),
     );
     store
-        .finish(&finished, &StoredOutcome::Completed(json!(1)))
+        .finish(&finished, &StoredOutcome(json!(1)))
         .await
         .expect("finish");
 
@@ -293,7 +319,7 @@ pub async fn a_resolved_intent_leaves_the_list_and_answers_its_basis(
         .expect_err("a resolved intent does not resolve again");
     assert_eq!(error.kind(), StoreErrorKind::Contract);
     let error = store
-        .finish(&id, &StoredOutcome::Completed(json!(1)))
+        .finish(&id, &StoredOutcome(json!(1)))
         .await
         .expect_err("a resolved intent does not finish");
     assert_eq!(error.kind(), StoreErrorKind::Contract);
@@ -309,7 +335,7 @@ pub async fn a_finished_intent_does_not_resolve(fixture: &dyn IntentStoreFixture
             .expect("begin"),
     );
     store
-        .finish(&id, &StoredOutcome::Completed(json!(1)))
+        .finish(&id, &StoredOutcome(json!(1)))
         .await
         .expect("finish");
     let error = store

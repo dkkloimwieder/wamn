@@ -2,14 +2,17 @@
 //!
 //! A call of a kind that changes records logs one intent for each input item
 //! before its export runs. The key is the item field that the route names for
-//! its idempotency key, or else the item's `request_id`. Only new items run:
+//! its idempotency key, or else the item's `request_id`. Only new items run,
+//! each alone, as a one-item list (`docs/plan/host-transaction.md` section 2):
 //! an item whose key finished answers its stored outcome, an item whose key
 //! began and never finished answers `intent-uncertain`, and an item whose key
 //! an operator resolved answers `intent-resolved` with the operator's basis.
-//! The answers merge into one item list in the order of the input.
+//! A refused item releases its key. The answers merge into one item list in
+//! the order of the input.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::fmt;
+use std::time::Duration;
 
 use anyhow::Context as _;
 use serde_json::{Map, Value, json};
@@ -29,6 +32,8 @@ pub const IDEMPOTENCY_CONFLICT: &str = "idempotency_conflict";
 const INVALID_INPUT: &str = "invalid_input";
 /// The item field that correlates an item with its result.
 const REQUEST_ID: &str = "request_id";
+/// The member that carries the participation intent in the request hash.
+const PARTICIPATION_INTENT: &str = "participation_intent";
 
 /// What one route call needs to log its intents.
 #[derive(Clone, Copy)]
@@ -43,6 +48,10 @@ pub struct IntentContext<'a> {
     /// The item field of the idempotency key, such as
     /// `value.idempotency_key`. `None` keys each item by its `request_id`.
     pub key_field: Option<&'a str>,
+    /// The intent of the pre-commit participant that the call selects, if
+    /// any. It is part of the request hash, so one key under two intents is
+    /// two requests.
+    pub participation: Option<&'a str>,
 }
 
 impl fmt::Debug for IntentContext<'_> {
@@ -54,6 +63,7 @@ impl fmt::Debug for IntentContext<'_> {
             .field("package", &self.package)
             .field("kind", &self.kind)
             .field("key_field", &self.key_field)
+            .field("participation", &self.participation)
             .finish_non_exhaustive()
     }
 }
@@ -108,14 +118,18 @@ fn items<'v>(input: &'v Value, key_field: Option<&str>) -> Result<Vec<Item<'v>>,
         .collect()
 }
 
-/// The input hash of one item's intent: the canonical JSON SHA-256 of the item
-/// without its `request_id`, so that a retry under one idempotency key with a
-/// new request id is the same input.
+/// The request hash of one item's intent: the canonical JSON SHA-256 of the
+/// item without its `request_id`, with the key kept, and with the selected
+/// participation intent added. A retry under one idempotency key with a new
+/// request id is the same request.
 #[must_use]
-pub fn item_input_hash(item: &Value) -> String {
+pub fn item_input_hash(item: &Value, participation: Option<&str>) -> String {
     let mut body = item.clone();
     if let Some(object) = body.as_object_mut() {
         object.remove(REQUEST_ID);
+        if let Some(intent) = participation {
+            object.insert(PARTICIPATION_INTENT.to_owned(), Value::from(intent));
+        }
     }
     wamn_execution_contract::canonical_json_sha256(&body)
 }
@@ -154,10 +168,12 @@ fn uncertain(id: &IntentId) -> Value {
     )
 }
 
-/// Log the intents of one call, run its new items, and merge every answer.
+/// Log the intents of one call, run each new item alone, and merge every
+/// answer.
 ///
-/// A trap, a missed deadline or a host failure leaves the new intents begun, so
-/// they are uncertain, because the export may have changed records.
+/// A trap, a missed deadline or a host failure leaves the running item's
+/// intent begun, so it is uncertain, because the export may have changed
+/// records. An item not yet reached begins no intent.
 pub(super) async fn invoke_logged<H: ApplicationHost>(
     host: &H,
     call: OperationCall<'_, H::Policy>,
@@ -174,9 +190,20 @@ pub(super) async fn invoke_logged<H: ApplicationHost>(
             )));
         }
     };
-    let mut answers: Vec<Option<Value>> = Vec::with_capacity(items.len());
-    let mut running = Vec::new();
-    for (index, item) in items.iter().enumerate() {
+    // The items share the deadline of the call.
+    let deadline = tokio::time::Instant::now() + Duration::from_millis(call.deadline_ms);
+    let mut answers = Vec::with_capacity(items.len());
+    let mut port = None;
+    for item in &items {
+        let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+        // An item not reached before the deadline begins no intent.
+        anyhow::ensure!(
+            !remaining.is_zero(),
+            "native node enclosing deadline elapsed"
+        );
+        let deadline_ms = u64::try_from(remaining.as_millis())
+            .unwrap_or(u64::MAX)
+            .max(1);
         let begun = intent
             .store
             .begin(&Intent {
@@ -185,47 +212,54 @@ pub(super) async fn invoke_logged<H: ApplicationHost>(
                 package: intent.package,
                 operation: call.operation,
                 idempotency_key: item.key,
-                input_hash: &item_input_hash(item.value),
-                deadline_ms: call.deadline_ms,
+                input_hash: &item_input_hash(item.value, intent.participation),
+                deadline_ms,
             })
             .await?;
-        answers.push(match begun {
-            Begun::New(id) => {
-                running.push((index, id));
-                None
+        let id = match begun {
+            Begun::New(id) => id,
+            Begun::Finished(StoredOutcome(body)) => {
+                answers.push(body);
+                continue;
             }
-            Begun::Finished(StoredOutcome::Completed(body) | StoredOutcome::Failed(body)) => {
-                Some(body)
+            Begun::Uncertain(id) => {
+                answers.push(uncertain(&id));
+                continue;
             }
-            Begun::Uncertain(id) => Some(uncertain(&id)),
-            Begun::Resolved { id, basis } => Some(refusal(
-                INTENT_RESOLVED,
-                format!(
-                    "an operator resolved intent {} by {basis}; send a new key",
-                    id.0
-                ),
-                json!({"intent": id.0, "basis": basis.as_str()}),
-            )),
-            Begun::Conflict(id) => Some(refusal(
-                IDEMPOTENCY_CONFLICT,
-                format!("the key {} repeats with another input", item.key),
-                json!({"field": intent.key_field.unwrap_or(REQUEST_ID), "intent": id.0}),
-            )),
-        });
-    }
-    let mut port = None;
-    if !running.is_empty() {
-        let batch = Value::Array(
-            running
-                .iter()
-                .map(|(index, _)| items[*index].value.clone())
-                .collect(),
-        );
+            Begun::Resolved { id, basis } => {
+                answers.push(refusal(
+                    INTENT_RESOLVED,
+                    format!(
+                        "an operator resolved intent {} by {basis}; send a new key",
+                        id.0
+                    ),
+                    json!({"intent": id.0, "basis": basis.as_str()}),
+                ));
+                continue;
+            }
+            Begun::Conflict(id) => {
+                answers.push(refusal(
+                    IDEMPOTENCY_CONFLICT,
+                    format!("the key {} repeats with another input", item.key),
+                    json!({"field": intent.key_field.unwrap_or(REQUEST_ID), "intent": id.0}),
+                ));
+                continue;
+            }
+        };
+        let one = Value::Array(vec![item.value.clone()]);
         let outcome = run_export(
             host,
             OperationCall {
-                input: &batch,
-                ..call
+                closure: call.closure,
+                component: call.component,
+                operation: call.operation,
+                context: node_types::NodeContext {
+                    deadline_ms: Some(deadline_ms),
+                    ..call.context.clone()
+                },
+                input: &one,
+                deadline_ms,
+                facts: call.facts.clone(),
             },
         )
         .await?;
@@ -234,43 +268,34 @@ pub(super) async fn invoke_logged<H: ApplicationHost>(
                 return Ok(Err(node_types::NodeError::Cancelled));
             }
             Err(error) => {
-                let body = failed_body(&error);
-                for (index, id) in &running {
-                    intent
-                        .store
-                        .finish(id, &StoredOutcome::Failed(body.clone()))
-                        .await?;
-                    answers[*index] = Some(body.clone());
-                }
-                // A call that ran every item answers as an unlogged call does.
-                if running.len() == items.len() {
+                intent.store.release(&id).await?;
+                // A call of one item answers as an unlogged call does.
+                if items.len() == 1 {
                     return Ok(Err(error));
                 }
+                answers.push(failed_body(&error));
             }
             Ok(emission) => {
                 let results: Vec<Map<String, Value>> = serde_json::from_str(&emission.payload)
                     .context("a logged call emitted no item list")?;
-                let mut by_request: HashMap<String, Value> = results
-                    .into_iter()
-                    .filter_map(|mut result| {
-                        let request_id = result.remove(REQUEST_ID)?.as_str()?.to_owned();
-                        Some((request_id, Value::Object(result)))
-                    })
-                    .collect();
-                for (index, id) in &running {
-                    // An item the export answered nothing for stays uncertain.
-                    let Some(body) = by_request.remove(items[*index].request_id) else {
-                        answers[*index] = Some(uncertain(id));
-                        continue;
-                    };
-                    let outcome = if body.get("error").is_some() {
-                        StoredOutcome::Failed(body.clone())
-                    } else {
-                        StoredOutcome::Completed(body.clone())
-                    };
-                    intent.store.finish(id, &outcome).await?;
-                    answers[*index] = Some(body);
+                let body = results.into_iter().find_map(|mut result| {
+                    let request_id = result.remove(REQUEST_ID)?;
+                    (request_id.as_str() == Some(item.request_id)).then_some(Value::Object(result))
+                });
+                // An item the export answered nothing for stays uncertain.
+                let Some(body) = body else {
+                    answers.push(uncertain(&id));
+                    continue;
+                };
+                if body.get("error").is_some() {
+                    intent.store.release(&id).await?;
+                } else {
+                    intent
+                        .store
+                        .finish(&id, &StoredOutcome(body.clone()))
+                        .await?;
                 }
+                answers.push(body);
                 port = emission.port;
             }
         }
@@ -281,7 +306,7 @@ pub(super) async fn invoke_logged<H: ApplicationHost>(
         .map(|(item, body)| {
             let mut answer = Map::new();
             answer.insert(REQUEST_ID.to_owned(), Value::from(item.request_id));
-            if let Some(Value::Object(body)) = body {
+            if let Value::Object(body) = body {
                 answer.extend(body);
             }
             Value::Object(answer)
@@ -362,12 +387,43 @@ mod tests {
     #[test]
     fn a_new_request_id_under_one_key_is_the_same_input() {
         assert_eq!(
-            item_input_hash(&json!({"request_id": "r-1", "value": {"idempotency_key": "k"}})),
-            item_input_hash(&json!({"request_id": "r-2", "value": {"idempotency_key": "k"}}))
+            item_input_hash(
+                &json!({"request_id": "r-1", "value": {"idempotency_key": "k"}}),
+                None
+            ),
+            item_input_hash(
+                &json!({"request_id": "r-2", "value": {"idempotency_key": "k"}}),
+                None
+            )
         );
         assert_ne!(
-            item_input_hash(&json!({"request_id": "r-1", "value": 1})),
-            item_input_hash(&json!({"request_id": "r-1", "value": 2}))
+            item_input_hash(&json!({"request_id": "r-1", "value": 1}), None),
+            item_input_hash(&json!({"request_id": "r-1", "value": 2}), None)
+        );
+    }
+
+    #[test]
+    fn the_request_hash_keeps_the_key_and_adds_the_participation_intent() {
+        let item = json!({"request_id": "r-1", "value": {"idempotency_key": "k", "n": 1}});
+        assert_ne!(
+            item_input_hash(&item, None),
+            item_input_hash(
+                &json!({"request_id": "r-1", "value": {"idempotency_key": "other", "n": 1}}),
+                None
+            ),
+            "the key is part of the request"
+        );
+        assert_ne!(
+            item_input_hash(&item, Some("ship")),
+            item_input_hash(&item, Some("hold")),
+            "one key under two intents is two requests"
+        );
+        assert_eq!(
+            item_input_hash(&item, Some("ship")),
+            wamn_execution_contract::canonical_json_sha256(&json!({
+                "value": {"idempotency_key": "k", "n": 1},
+                "participation_intent": "ship"
+            }))
         );
     }
 }

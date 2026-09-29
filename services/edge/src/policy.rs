@@ -34,6 +34,7 @@ struct ComponentPolicy {
 }
 
 /// The facts of one edge call that only the policy reads.
+#[derive(Clone)]
 pub struct EdgeFacts {
     caller: Option<AuthenticatedCaller>,
 }

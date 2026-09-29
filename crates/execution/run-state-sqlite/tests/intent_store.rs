@@ -71,6 +71,11 @@ async fn a_finished_key_returns_its_stored_outcome() {
 }
 
 #[tokio::test]
+async fn a_released_key_is_new_again() {
+    intent_cases::a_released_key_is_new_again(&Files).await;
+}
+
+#[tokio::test]
 async fn a_begun_key_is_uncertain_and_never_new_again() {
     intent_cases::a_begun_key_is_uncertain_and_never_new_again(&Files).await;
 }

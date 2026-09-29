@@ -64,6 +64,7 @@ struct ComponentPolicy {
 }
 
 /// The facts of one native call that only this policy reads.
+#[derive(Clone)]
 pub struct NativeFacts {
     pub(super) acquisition: NodeAcquisition,
     pub(super) caller: Option<AuthenticatedCaller>,

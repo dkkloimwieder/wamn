@@ -17,7 +17,8 @@ use super::native_workload::NativeApplication;
 /// The call path dispatches through this plugin by its [`HostPlugin::id`].
 pub trait InvocationPolicy: HostPlugin + Sized {
     /// The facts of one call that only the policy reads.
-    type Facts: Send + Sync + 'static;
+    /// A logged call clones them for each item it runs.
+    type Facts: Clone + Send + Sync + 'static;
     /// Revokes the authority of one call when it drops.
     type Authority: Send;
 

@@ -38,13 +38,11 @@ CREATE TABLE IF NOT EXISTS intents (
     deadline_ms INTEGER NOT NULL,
     begun_at INTEGER NOT NULL,
     finished_at INTEGER,
-    outcome_kind TEXT CHECK (outcome_kind IN ('completed', 'failed')),
     outcome TEXT,
     resolved_basis TEXT,
     resolved_at INTEGER,
     UNIQUE (tenant, idempotency_key),
-    CHECK ((finished_at IS NULL) = (outcome_kind IS NULL)),
-    CHECK ((outcome_kind IS NULL) = (outcome IS NULL)),
+    CHECK ((finished_at IS NULL) = (outcome IS NULL)),
     CHECK ((resolved_basis IS NULL) = (resolved_at IS NULL)),
     CHECK (finished_at IS NULL OR resolved_at IS NULL)
 ) STRICT;
@@ -192,6 +190,24 @@ impl IntentStore for SqliteIntentStore {
         .await
     }
 
+    async fn release(&self, id: &IntentId) -> Result<(), StoreError> {
+        let id = row_id("release", id)?;
+        self.run("release", move |connection| {
+            let changed = connection
+                .execute(
+                    "DELETE FROM intents \
+                     WHERE id = ?1 AND finished_at IS NULL AND resolved_at IS NULL",
+                    params![id],
+                )
+                .map_err(storage("release"))?;
+            if changed == 0 {
+                return Err(contract("release", format!("intent {id} is not open")));
+            }
+            Ok(())
+        })
+        .await
+    }
+
     async fn uncertain(&self, limit: u32) -> Result<Vec<UncertainIntent>, StoreError> {
         self.run("uncertain", move |connection| {
             let storage = storage("uncertain");
@@ -249,17 +265,13 @@ pub fn finish_in(
     outcome: &StoredOutcome,
 ) -> Result<(), StoreError> {
     let id = row_id("finish", id)?;
-    let (kind, value) = match outcome {
-        StoredOutcome::Completed(value) => ("completed", value),
-        StoredOutcome::Failed(value) => ("failed", value),
-    };
-    let value = serde_json::to_string(value)
+    let value = serde_json::to_string(&outcome.0)
         .map_err(|error| contract("finish", format!("encode outcome: {error}")))?;
     let changed = transaction
         .execute(
-            "UPDATE intents SET finished_at = ?1, outcome_kind = ?2, outcome = ?3 \
-             WHERE id = ?4 AND finished_at IS NULL AND resolved_at IS NULL",
-            params![now_ms("finish")?, kind, value, id],
+            "UPDATE intents SET finished_at = ?1, outcome = ?2 \
+             WHERE id = ?3 AND finished_at IS NULL AND resolved_at IS NULL",
+            params![now_ms("finish")?, value, id],
         )
         .map_err(storage("finish"))?;
     if changed == 0 {
@@ -289,7 +301,7 @@ fn begin(connection: &mut Connection, intent: &OwnedIntent) -> Result<Begun, Sto
         .map_err(&storage)?;
     let existing = transaction
         .query_row(
-            "SELECT id, input_hash, outcome_kind, outcome, resolved_basis FROM intents \
+            "SELECT id, input_hash, outcome, resolved_basis FROM intents \
              WHERE tenant = ?1 AND idempotency_key = ?2",
             params![intent.tenant, intent.idempotency_key],
             |row| {
@@ -298,7 +310,6 @@ fn begin(connection: &mut Connection, intent: &OwnedIntent) -> Result<Begun, Sto
                     row.get::<_, String>(1)?,
                     row.get::<_, Option<String>>(2)?,
                     row.get::<_, Option<String>>(3)?,
-                    row.get::<_, Option<String>>(4)?,
                 ))
             },
         )
@@ -308,10 +319,8 @@ fn begin(connection: &mut Connection, intent: &OwnedIntent) -> Result<Begun, Sto
         Some((id, input_hash, ..)) if input_hash != intent.input_hash => {
             Begun::Conflict(IntentId(id.to_string()))
         }
-        Some((_, _, Some(kind), Some(outcome), _)) => {
-            Begun::Finished(stored_outcome(&kind, &outcome)?)
-        }
-        Some((id, _, _, _, Some(basis))) => Begun::Resolved {
+        Some((_, _, Some(outcome), _)) => Begun::Finished(stored_outcome(&outcome)?),
+        Some((id, _, _, Some(basis))) => Begun::Resolved {
             id: IntentId(id.to_string()),
             basis: basis
                 .parse()
@@ -342,14 +351,10 @@ fn begin(connection: &mut Connection, intent: &OwnedIntent) -> Result<Begun, Sto
     Ok(begun)
 }
 
-fn stored_outcome(kind: &str, outcome: &str) -> Result<StoredOutcome, StoreError> {
-    let value = serde_json::from_str(outcome)
-        .map_err(|error| contract("begin", format!("stored outcome is not JSON: {error}")))?;
-    match kind {
-        "completed" => Ok(StoredOutcome::Completed(value)),
-        "failed" => Ok(StoredOutcome::Failed(value)),
-        other => Err(contract("begin", format!("stored outcome kind {other}"))),
-    }
+fn stored_outcome(outcome: &str) -> Result<StoredOutcome, StoreError> {
+    serde_json::from_str(outcome)
+        .map(StoredOutcome)
+        .map_err(|error| contract("begin", format!("stored outcome is not JSON: {error}")))
 }
 
 /// The row id that an [`IntentId`] names as decimal text.

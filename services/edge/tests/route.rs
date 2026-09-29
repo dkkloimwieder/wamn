@@ -136,7 +136,7 @@ async fn begin(store: &SqliteIntentStore, release: &str, item: &Value) -> Intent
             package: PACKAGE,
             operation: OPERATION,
             idempotency_key: item["request_id"].as_str().expect("a request id"),
-            input_hash: &item_input_hash(item),
+            input_hash: &item_input_hash(item, None),
             deadline_ms: 1_000,
         })
         .await
@@ -169,10 +169,7 @@ async fn a_write_logs_one_intent_per_item_and_runs_only_new_items() {
         let id = begin(&store, &release, &stored).await;
         // The component would answer "1 kg", so this answer shows no run.
         store
-            .finish(
-                &id,
-                &StoredOutcome::Completed(json!({"value": {"frame": "stored"}})),
-            )
+            .finish(&id, &StoredOutcome(json!({"value": {"frame": "stored"}})))
             .await
             .expect("finish");
         let open_id = begin(&store, &release, &open).await;
