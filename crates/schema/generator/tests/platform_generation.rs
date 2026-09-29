@@ -1588,7 +1588,7 @@ fn a_contract_change_moves_the_route_schema_the_attachment_names() {
 }
 
 /// Without a `routes` member, each generated route admits a PAT and a session,
-/// and its attachment id starts with the package id (wamn-iowb.3).
+/// and its attachment id has no prefix (wamn-iowb.3).
 #[test]
 fn a_package_without_routes_takes_the_default_route_members() {
     let mut manifest = fixture::manifest();
@@ -1601,9 +1601,9 @@ fn a_package_without_routes_takes_the_default_route_members() {
         &package,
         wamn_schema_generator::route_schema::GENERATED_ATTACHMENTS,
     );
-    let get = &attachments["platform-fixture-widget-get-http"];
+    let get = &attachments["widget-get-http"];
     assert_eq!(get["auth-policy"], json!({"modes": ["pat", "session"]}));
-    assert_eq!(get["definition"]["id"], "platform-fixture-widget-get-http");
+    assert_eq!(get["definition"]["id"], "widget-get-http");
     assert_eq!(get["definition"]["route"]["path"], "/widget/get");
     assert_eq!(
         artifact(

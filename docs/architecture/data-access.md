@@ -153,7 +153,7 @@ The manifest member `routes` sets how a generated route is published:
 
 - `auth_modes` is the authentication modes of each route. It defaults to `["pat", "session"]`.
 - `path_prefix` starts each path, such as `/acme`. It defaults to none.
-- `id_prefix` starts each attachment id. It defaults to the package id in kebab case. An empty prefix gives `<model>-<action>-http`.
+- `id_prefix` starts each attachment id. It defaults to none, which gives `<model>-<action>-http`.
 
 A query that names an undeclared sort refuses with `invalid_input` on the field `sort`.
 

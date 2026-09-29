@@ -698,7 +698,6 @@
   "routes": {
     "auth_modes": [
       "pat"
-    ],
-    "id_prefix": ""
+    ]
   }
 }

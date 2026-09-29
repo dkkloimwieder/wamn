@@ -798,6 +798,7 @@
     }
   },
   "routes": {
-    "path_prefix": "/acme"
+    "path_prefix": "/acme",
+    "id_prefix": "client-acme-receiving"
   }
 }

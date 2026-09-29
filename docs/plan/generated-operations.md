@@ -113,7 +113,7 @@ Recorded 2026-09-28.
 3. The blank-name rule goes in the manifest as a minimum length on the field. The author writes the CHECK in the migration. The generator refuses a migration whose table lacks the matching CHECK, and names the column and the rule. Corrected 2026-09-28 after the owner read the spec at `7a0397239`.
 4. The generated route and declaration entries go in separate files under `generated/publication/`. Publish reads the authored and the generated files together. No generated markers go inside authored files.
 5. The owner reads this spec on `main` before issue 1 starts.
-6. Issue 3: the package manifest takes the member `"routes": {"auth_modes": [...], "path_prefix": "...", "id_prefix": "..."}`. All three are optional. `auth_modes` defaults to `["pat", "session"]`. `path_prefix` defaults to none. `id_prefix` defaults to the package id in kebab case. Every current attachment id and path stays, and the issue 3 digest test proves it.
+6. Issue 3: the package manifest takes the member `"routes": {"auth_modes": [...], "path_prefix": "...", "id_prefix": "..."}`. All three are optional. `auth_modes` defaults to `["pat", "session"]`. `path_prefix` defaults to none. `id_prefix` defaults to none, so an id is `<model>-<action>-http`, and only Acme declares its prefix. Every current attachment id and path stays, and the issue 3 digest test proves it.
 7. `product_code`, `location_code` and `packaging_code` in WMS take ruling 3, as `supplier.name` does.
 8. The minimum length counts the characters after a trim. The codec refuses first, with `invalid_input` on the field. The migration CHECK is the database guard and never the answer. The wire contract does not change.
 9. Issues 3 to 6 run without a stop.

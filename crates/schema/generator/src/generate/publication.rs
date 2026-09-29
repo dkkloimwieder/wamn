@@ -27,10 +27,7 @@ pub(super) fn emit_package_publication(
     let package = &manifest.package;
     let namespace = package.id.replace('_', "-");
     let routes = &manifest.routes;
-    let id_prefix = routes
-        .id_prefix
-        .clone()
-        .unwrap_or_else(|| namespace.clone());
+    let id_prefix = routes.id_prefix.as_deref().unwrap_or("");
     let path_prefix = routes.path_prefix.as_deref().unwrap_or("");
     let modes = routes
         .auth_modes

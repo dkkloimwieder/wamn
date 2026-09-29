@@ -213,8 +213,5 @@
         "postgres"
       ]
     }
-  },
-  "routes": {
-    "id_prefix": ""
   }
 }

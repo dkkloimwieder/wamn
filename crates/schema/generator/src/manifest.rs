@@ -2913,7 +2913,7 @@ pub struct RoutesDeclaration {
     /// A path that every route starts with, such as `/acme`. Absent means none.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub path_prefix: Option<String>,
-    /// The start of each attachment id. Absent means the package id in kebab case.
+    /// The start of each attachment id. Absent means none.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub id_prefix: Option<String>,
 }

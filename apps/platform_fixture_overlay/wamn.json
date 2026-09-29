@@ -58,7 +58,6 @@
     "auth_modes": [
       "pat"
     ],
-    "path_prefix": "/overlay",
-    "id_prefix": ""
+    "path_prefix": "/overlay"
   }
 }
