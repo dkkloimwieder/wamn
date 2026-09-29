@@ -31,7 +31,7 @@ const ENVIRONMENT: &str = "dev";
 /// The org that the checked-in Receiving overlay names.
 const OVERLAY_ORG: &str = "acme";
 const NAMESPACE: &str = "hosts";
-const HOST_IMAGE: &str = "us-central1-docker.pkg.dev/wamn-dev/wamn/wamn-host:src-239f4c69363afee8@sha256:91bbe0d40bc3042a70553f69ee072c9ed7a5e3702178496803bdf93c01031005";
+const HOST_IMAGE: &str = "us-central1-docker.pkg.dev/wamn-dev/wamn/wamn-host:src-91f318b6c6fe387c@sha256:a403fef9f1e7bca336c3640851cd3a99eee2202885e6b59f5261490b39647d76";
 /// The Google service account of the label store (docs/operations/gcp.md 5.1).
 const BLOB_ACCOUNT: &str = "wamn-blob@wamn-dev.iam.gserviceaccount.com";
 const COMPONENT_BASE: &str = "us-central1-docker.pkg.dev/wamn-dev/wamn/components";
@@ -56,7 +56,7 @@ const RECEIVING: Application = Application {
     group: "default",
     project: "receiving",
     overlay: "deploy/platform/values-host-receiving-pat.yaml",
-    instance_suffix: "zf7o454t",
+    instance_suffix: "4pqjfmli",
     guest_secret: "wamn-host-db",
     event_secret: "wamn-event-nats",
     materializer_secret: "wamn-materializer-nats",
@@ -66,7 +66,7 @@ const WMS: Application = Application {
     group: "wms",
     project: "wms",
     overlay: "deploy/platform/values-host-wms-pat.yaml",
-    instance_suffix: "bnarqpnc",
+    instance_suffix: "0nk1lrpr",
     guest_secret: "wamn-host-db-wms",
     event_secret: "wamn-event-nats-wms",
     materializer_secret: "wamn-materializer-nats-wms",

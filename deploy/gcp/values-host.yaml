@@ -77,7 +77,7 @@ runtime:
     - name: WAMN_SESSION_ISSUER
       value: https://identity.identity.svc.cluster.local
     - name: WAMN_SESSION_INSTANCE_SUFFIX
-      value: zf7o454t
+      value: 4pqjfmli
     - name: WAMN_SESSION_JWKS_CA
       value: /etc/identity-ca/ca.crt
     volumes:
@@ -107,7 +107,7 @@ runtime:
         name: identity-ca
     extraArgs:
     - --release-artifact-base=us-central1-docker.pkg.dev/wamn-dev/wamn/releases
-    - --release-manifest-digest=sha256:aeb74968dfe09b113a115863ec8be5475923d9577914332081923052a41c16c4
+    - --release-manifest-digest=sha256:900d35fbd2da116aac3d76abcf3895da7810cedeaf75fd5fdc4f9858f578fdfc
     http:
       enabled: true
       port: 80
@@ -217,7 +217,7 @@ runtime:
     - name: WAMN_SESSION_ISSUER
       value: https://identity.identity.svc.cluster.local
     - name: WAMN_SESSION_INSTANCE_SUFFIX
-      value: bnarqpnc
+      value: 0nk1lrpr
     - name: WAMN_SESSION_JWKS_CA
       value: /etc/identity-ca/ca.crt
     volumes:
@@ -247,7 +247,7 @@ runtime:
         name: identity-ca
     extraArgs:
     - --release-artifact-base=us-central1-docker.pkg.dev/wamn-dev/wamn/releases
-    - --release-manifest-digest=sha256:6649148172e83eea8af3c9a5f133cb5f961d634de4f85244909da046475890a3
+    - --release-manifest-digest=sha256:3d6b13f9c7864e2b34317b6822d85b6d6a5542c36f9b5ae5d2ae049c1fcab2f6
     http:
       enabled: true
       port: 80

@@ -515,19 +515,19 @@ Apply the files in this order. The verb writes the `Database` namespace as `wamn
 ```bash
 kubectl -n platform exec -i wamn-pg-1 -c postgres -- psql -U postgres -d postgres -v ON_ERROR_STOP=1 -q < $P/role.sql
 jq '.metadata.namespace="platform"' $P/database.json | kubectl apply -f -
-kubectl -n platform wait database/wamn-db-dkk--receiving--dev--zf7o454t --for=jsonpath='{.status.applied}'=true --timeout=120s
+kubectl -n platform wait database/wamn-db-dkk--receiving--dev--4pqjfmli --for=jsonpath='{.status.applied}'=true --timeout=120s
 kubectl -n platform exec -i wamn-pg-1 -c postgres -- psql -U postgres -d postgres -v ON_ERROR_STOP=1 -q < $P/privilege.sql
 jq '.metadata.namespace="hosts"' $P/secret.json | kubectl apply -f -
 ```
 
-The instance suffix `zf7o454t` comes from the registry, so a new environment has a different database name. On 2026-09-26 `provision-org` took 2 seconds, `provision-project-env` 3 seconds, and the apply steps 8 seconds.
+The instance suffix `4pqjfmli` comes from the registry, so a new environment has a different database name. The first suffix was `zf7o454t`, and section 6.7 tells why it changed. On 2026-09-26 `provision-org` took 2 seconds, `provision-project-env` 3 seconds, and the apply steps 8 seconds.
 
 ### 3.8 Identity issuer, run plane and package
 
 Keep the port-forward and `WAMN_SYSTEM_ADMIN_URL` of section 3.6. Set the superuser URL of the tenant database, without printing it:
 
 ```bash
-T="postgresql://postgres:${PW}@127.0.0.1:15432/wamn-db-dkk--receiving--dev--zf7o454t"
+T="postgresql://postgres:${PW}@127.0.0.1:15432/wamn-db-dkk--receiving--dev--4pqjfmli"
 target/debug/wamn-ctl provision-identity-issuer --issuer https://identity.identity.svc.cluster.local \
   --prepare-generation a --namespace identity --emit-secret $P/identity-db.json
 target/debug/wamn-ctl reconcile-run-plane --system-database-url "$WAMN_SYSTEM_ADMIN_URL" --admin-database-url "$T" \
@@ -565,7 +565,7 @@ Push the component. `--declaration-template` renders `publication/components/rec
 ```bash
 export WAMN_PG_ADMIN_URL="$T"
 target/debug/wamn-ctl push-component --package apps/wamn_receiving \
-  --component-bytes target/virtualized/std-empty-environment/receiving.wasm \
+  --component-bytes apps/target/virtualized/std-empty-environment/receiving.wasm \
   --declaration-template apps/wamn_receiving/publication/components/receiving.json.in --tenant dev \
   --artifact-base us-central1-docker.pkg.dev/wamn-dev/wamn/components --registry-auth-file $A/config.json \
   --admit-platform-package wamn:node --admit-platform-package wamn:postgres
@@ -683,9 +683,9 @@ On 2026-09-26 the first run took 10 seconds, and the email was `wamn-registry-re
 
 | Image | Digest | Use |
 | --- | --- | --- |
-| `wamn-host:src-b68fac526bdd771b` | `sha256:dc6b737abb8c0efc000489433d529939df015cb54901acf46f58180c2fb0aaa5` | host |
-| `wamn-identity:src-4d7d761fa53551b2` | `sha256:5ba5e9dc09043d36f6fbc2cf830b09d08dea2f5a63bde2be74dc246411a55164` | identity |
-| `wamn-cdc-reader:src-6bf15eedaa8cb8e8` | `sha256:fa38da50c62ff38679ecdcd3490df8650fb6a4b4d6adda3017fb134dadac797a` | CDC reader |
+| `wamn-host:src-91f318b6c6fe387c` | `sha256:a403fef9f1e7bca336c3640851cd3a99eee2202885e6b59f5261490b39647d76` | host |
+| `wamn-identity:src-91f318b6c6fe387c` | `sha256:96dbf60cbb687000f6c17816cbbf64ba2be8f532310427ebafa101b6adb903cb` | identity |
+| `wamn-cdc-reader:src-bb749700d40cfff3` | `sha256:659d8ee7e880882cdff0cd0c0940a0a0ccd69a59b1bec81c3210b0c7c02ed645` | CDC reader |
 | `curlimages/curl:8.22.0` | `sha256:58adaa4e8dca9c988bae2aba4ab3434a0bb2da16bbe3f92dec39ec7785166777` | registry token CronJob |
 
 ### 3.14 Host values
@@ -795,12 +795,12 @@ Apply the role SQL, then the CDC SQL, then the Secret. Then delete the files tha
 ```bash
 kubectl -n platform exec -i wamn-pg-1 -c postgres -- psql -U postgres -d postgres -v ON_ERROR_STOP=1 -q < $C/role.sql
 kubectl -n platform exec -i wamn-pg-1 -c postgres -- \
-  psql -U postgres -d wamn-db-dkk--receiving--dev--zf7o454t -v ON_ERROR_STOP=1 -q < $C/cdc.sql
+  psql -U postgres -d wamn-db-dkk--receiving--dev--4pqjfmli -v ON_ERROR_STOP=1 -q < $C/cdc.sql
 kubectl apply -f $C/secret.json
 rm -f $C/replication-password $C/role.sql $C/secret.json
 ```
 
-The verb writes `role.sql` with mode 0664, so keep `C` at mode 0700. The `--db-host` flag puts the cluster host into the Secret URL, so no `jq` step is necessary here. On 2026-09-27 the verb took 3 seconds and the apply 5 seconds. The publication and the slot are `wamn_cdc_dkk__receiving__dev__zf7o454t`, and the Secret is `platform/wamn-cdc-dkk--receiving--dev`.
+The verb writes `role.sql` with mode 0664, so keep `C` at mode 0700. The `--db-host` flag puts the cluster host into the Secret URL, so no `jq` step is necessary here. On 2026-09-27 the verb took 3 seconds and the apply 5 seconds. The publication and the slot are `wamn_cdc_dkk__receiving__dev__4pqjfmli`, and the Secret is `platform/wamn-cdc-dkk--receiving--dev`.
 
 ### 3.19 CDC reader
 
@@ -914,7 +914,7 @@ Build the `wamn` binary and upload the Receiving client of release 1:
 ```bash
 cargo build -p wamn-ctl --bin wamn
 target/debug/wamn web upload apps/wamn_receiving \
-  --release sha256:aeb74968dfe09b113a115863ec8be5475923d9577914332081923052a41c16c4 \
+  --release sha256:900d35fbd2da116aac3d76abcf3895da7810cedeaf75fd5fdc4f9858f578fdfc \
   --bucket gs://wamn-dev-web/clients --org dkk
 ```
 
@@ -1024,23 +1024,19 @@ The first invitation showed a code for the terminal client, and the web client h
 kubectl -n identity port-forward svc/identity 8443:443
 ```
 
-Temporary step (`wamn-wq26`): no user role exists, so after sign-up the sign-in lists no environment. Give the owner the system role `route-caller` with one insert through the database port-forward, as the superuser, with the provisioning principal as the actor:
+Give the owner the role `admin` after the reconcile. Publish writes the roles `operator` and `admin` (see [deployment](deployment.md#user-roles)):
 
-```sql
-BEGIN;
-SELECT set_config('app.user_id', '770df186-ac15-579e-b46b-c297cae2011b', true),
-       set_config('app.operation', 'admin:temporary-route-caller-grant', true);
-INSERT INTO app_system.user_roles (tenant_id, user_id, role_name)
-  VALUES ('dev', 'ccc4533d-a81a-465d-8a44-1414369ae2fd', 'route-caller');
-COMMIT;
+```bash
+target/debug/wamn-ctl grant-role --system-database-url "$WAMN_SYSTEM_ADMIN_URL" --admin-database-url "$T" \
+  --org dkk --project receiving --env dev --tenant dev --user dkkloimwieder@gmail.com --role admin
 ```
 
-Run it in database `wamn-db-dkk--receiving--dev--zf7o454t`. On 2026-09-27 it took 1 second. When `wamn-wq26` lands, remove this row and use `wamn-ctl grant-role`.
+On 2026-09-29 the grant took 1 second.
 
 Load the small Receiving dataset through the same port-forward, as the superuser. It writes 10 items, 10 locations, 5 suppliers, 10 purchase orders and 55 lines:
 
 ```bash
-psql -h 127.0.0.1 -p 15432 -U postgres -d wamn-db-dkk--receiving--dev--zf7o454t \
+psql -h 127.0.0.1 -p 15432 -U postgres -d wamn-db-dkk--receiving--dev--4pqjfmli \
   -v ON_ERROR_STOP=1 -f apps/wamn_receiving/tests/fixtures/receiving-seed-small.sql
 ```
 
@@ -1128,7 +1124,7 @@ Make sure that a pod with that service account gets the `wamn-blob` identity fro
 
 WMS uses org `dkk`, project `wms`, env `dev` and tenant `wms`. A tenant is one per project database, so tenant `dev` stays with Receiving. With tenant `dev`, `provision-project-env` refused with `tenant-environment-identity-projection-content-conflict`, after it had already recorded the registry row `dkk/wms/dev`. The run with tenant `wms` then reused that row.
 
-Run the commands of sections 3.7, 3.8 and 3.11 with `--project wms --tenant wms` and the WMS database `wamn-db-dkk--wms--dev--bnarqpnc`. Name the guest Secret `wamn-host-db-wms`, because `wamn-host-db` belongs to Receiving in the same namespace. Prepare the session target of section 3.10 with `--project wms --tenant wms`, and apply it in `identity`. Add its Secret `wamn-session-role-reader-dkk--wms--dev` to `sessionTargetSecrets` in [values-identity.yaml](../../deploy/gcp/values-identity.yaml), and upgrade identity as in section 3.10. Without it, the sign-in page lists only Receiving, and the WMS host refuses the Receiving session with `You are not signed in.` On 2026-09-27 this step was first left out, and the upgrade then took 5 seconds.
+Run the commands of sections 3.7, 3.8 and 3.11 with `--project wms --tenant wms` and the WMS database `wamn-db-dkk--wms--dev--0nk1lrpr`. Name the guest Secret `wamn-host-db-wms`, because `wamn-host-db` belongs to Receiving in the same namespace. Prepare the session target of section 3.10 with `--project wms --tenant wms`, and apply it in `identity`. Add its Secret `wamn-session-role-reader-dkk--wms--dev` to `sessionTargetSecrets` in [values-identity.yaml](../../deploy/gcp/values-identity.yaml), and upgrade identity as in section 3.10. Without it, the sign-in page lists only Receiving, and the WMS host refuses the Receiving session with `You are not signed in.` On 2026-09-27 this step was first left out, and the upgrade then took 5 seconds.
 
 On 2026-09-27 the project environment took 3 seconds and its apply 9 seconds. `reconcile-run-plane`, `apply-package` and `reconcile-package-data-access` took 12, 37 and 9 seconds. The session target took 21 seconds and the five host credentials 108 seconds.
 
@@ -1219,7 +1215,7 @@ kubectl -n hosts create secret generic wamn-materializer-nats-wms --from-file=bi
 
 The restart stops the Receiving event connections for a few seconds. The Receiving CDC reader logged `connected successfully` 11 seconds after the restart, and the host warnings stopped at the same time. After a broker restart, restart the port-forward of section 3.18 too, because it still points at the old pod.
 
-Enable CDC for WMS as in section 3.18, with `--project wms --schema wms --stream EVT_3_dkk_3_wms_3_dev`, the WMS provisioning user, and `--consumer-config "$(cat $P/evt/consumers.jsonl)"`. Apply its role SQL, its CDC SQL in `wamn-db-dkk--wms--dev--bnarqpnc`, and its Secret. Prepare the WMS registry-reader credential as in section 3.19 and apply it. Then deploy the reader of [cdc-reader-wms.yaml](../../deploy/gcp/cdc-reader-wms.yaml):
+Enable CDC for WMS as in section 3.18, with `--project wms --schema wms --stream EVT_3_dkk_3_wms_3_dev`, the WMS provisioning user, and `--consumer-config "$(cat $P/evt/consumers.jsonl)"`. Apply its role SQL, its CDC SQL in `wamn-db-dkk--wms--dev--0nk1lrpr`, and its Secret. Prepare the WMS registry-reader credential as in section 3.19 and apply it. Then deploy the reader of [cdc-reader-wms.yaml](../../deploy/gcp/cdc-reader-wms.yaml):
 
 ```bash
 kubectl apply -f deploy/gcp/cdc-reader-wms.yaml
@@ -1230,7 +1226,7 @@ On 2026-09-27 the Secrets took 6 seconds, the restart and the Job 41 seconds, `e
 
 ### 5.5 WMS host group and workloads
 
-The host values program renders the WMS overlay as host group `wms` next to Receiving. It names the WMS guest, event NATS and materializer Secrets and the instance suffix `bnarqpnc`. It removes the object-store credentials of the kind overlay, because the `gcs` store needs none. Render with both release digests and upgrade the host:
+The host values program renders the WMS overlay as host group `wms` next to Receiving. It names the WMS guest, event NATS and materializer Secrets and the instance suffix `0nk1lrpr`. It removes the object-store credentials of the kind overlay, because the `gcs` store needs none. Render with both release digests and upgrade the host:
 
 ```bash
 cargo run -p wamn-test-infrastructure --example host_values_files -- deploy/gcp \
@@ -1255,10 +1251,10 @@ kubectl -n hosts wait --for=condition=Ready workloaddeployment/wms-flow-http wor
 
 On 2026-09-27 the upgrade took 17 seconds, and the WMS host loaded release 1 with 20 routes and 4 components. The push took 5 seconds, and the workloads were Ready 6 seconds after the apply. Through a port-forward to `hostgroup-wms`, `GET /pallet/query` with `Host: wms.wamn.dev` answered 401 and an unknown path 404.
 
-Give the owner WMS access as in section 4.5: `grant-project-env-membership --project wms`, then `reconcile-run-plane --project wms --tenant wms`, then the temporary `route-caller` insert with tenant `wms` in the WMS database. Load the small WMS dataset inside the database pod, because the port-forward of section 3.6 drops after one connection at times:
+Give the owner WMS access as in section 4.5: `grant-project-env-membership --project wms`, then `reconcile-run-plane --project wms --tenant wms`, then `grant-role --project wms --tenant wms --role admin`. Load the small WMS dataset inside the database pod, because the port-forward of section 3.6 drops after one connection at times:
 
 ```bash
-kubectl -n platform exec -i wamn-pg-1 -c postgres -- psql -U postgres -d wamn-db-dkk--wms--dev--bnarqpnc \
+kubectl -n platform exec -i wamn-pg-1 -c postgres -- psql -U postgres -d wamn-db-dkk--wms--dev--0nk1lrpr \
   -v ON_ERROR_STOP=1 -q < apps/wamn_wms/tests/fixtures/wms-seed-small.sql
 ```
 
@@ -1270,7 +1266,7 @@ Upload the WMS client of release 1, as in section 4.2:
 
 ```bash
 target/debug/wamn web upload apps/wamn_wms \
-  --release sha256:6649148172e83eea8af3c9a5f133cb5f961d634de4f85244909da046475890a3 --bucket gs://wamn-dev-web/clients \
+  --release sha256:3d6b13f9c7864e2b34317b6822d85b6d6a5542c36f9b5ae5d2ae049c1fcab2f6 --bucket gs://wamn-dev-web/clients \
   --org dkk
 ```
 
@@ -1289,7 +1285,7 @@ The same certificate `*.wamn.dev` serves both hosts. On 2026-09-27 the upload to
 The owner signs in at `https://wms.wamn.dev` and moves one pallet from the move form. Read the movement row:
 
 ```bash
-kubectl -n platform exec wamn-pg-1 -c postgres -- psql -d wamn-db-dkk--wms--dev--bnarqpnc -Atc \
+kubectl -n platform exec wamn-pg-1 -c postgres -- psql -d wamn-db-dkk--wms--dev--0nk1lrpr -Atc \
   "select * from wms.inventory_movement order by created_at desc limit 3;"
 ```
 
@@ -1321,15 +1317,14 @@ gcloud container clusters resize wamn --node-pool main --num-nodes 2 --zone us-c
 
 On 2026-09-28 the resize took 73 seconds and the tap Job 25 seconds. About 40 minutes later Google replaced both Spot nodes. Every pod started again in 549 seconds, and the tap Job ran again in 19 seconds.
 
-Load the 1000 seed of Receiving through the database port-forward, as the superuser. The reset empties every Receiving table, so the supplier change of step 4 and every receipt go with it. Release 1 has no `app_system.write_log` table, so remove the reset line that deletes from it:
+Load the 1000 seed of Receiving through the database port-forward, as the superuser. The reset empties every Receiving table, so the supplier change of step 4 and every receipt go with it. Run it inside the database pod, because the port-forward drops at times:
 
 ```bash
-grep -v "^DELETE FROM app_system.write_log" apps/wamn_receiving/tests/fixtures/receiving-seed.sql \
-  | psql -h 127.0.0.1 -p 15432 -U postgres -d wamn-db-dkk--receiving--dev--zf7o454t \
-      -v ON_ERROR_STOP=1 -v reset=1 -v scale=1000 -q
+kubectl -n platform exec -i wamn-pg-1 -c postgres -- psql -U postgres -d wamn-db-dkk--receiving--dev--4pqjfmli \
+  -v ON_ERROR_STOP=1 -v reset=1 -v scale=1000 -q < apps/wamn_receiving/tests/fixtures/receiving-seed.sql
 ```
 
-On 2026-09-28 the load wrote 1000 items, 1000 locations, 5 suppliers, 1000 purchase orders and 500500 lines in 258 seconds. The first run, with the reset line, stopped at that line and rolled back.
+On 2026-09-28 the load wrote 1000 items, 1000 locations, 5 suppliers, 1000 purchase orders and 500500 lines in 258 seconds. The first run, with the reset line, stopped at that line and rolled back, because release 1 of that day had no `app_system.write_log` table. On 2026-09-29 the load on the new database took 264 seconds, with the reset line.
 
 ### 6.2 Postgres volume
 
@@ -1356,9 +1351,9 @@ kubectl -n platform exec wamn-pg-1 -c postgres -- psql -U postgres -Atc \
 If `wal_status` is `lost`, record the gap on the bead of the work. Then drop the slot, and create it again in the project-env database with the slot statement of `enable-cdc-project-env`:
 
 ```bash
-S=wamn_cdc_dkk__wms__dev__bnarqpnc
+S=wamn_cdc_dkk__wms__dev__0nk1lrpr
 kubectl -n platform exec wamn-pg-1 -c postgres -- psql -U postgres -Atc "select pg_drop_replication_slot('$S')"
-kubectl -n platform exec wamn-pg-1 -c postgres -- psql -U postgres -d wamn-db-dkk--wms--dev--bnarqpnc -v ON_ERROR_STOP=1 -qc \
+kubectl -n platform exec wamn-pg-1 -c postgres -- psql -U postgres -d wamn-db-dkk--wms--dev--0nk1lrpr -v ON_ERROR_STOP=1 -qc \
   "DO \$\$ BEGIN IF NOT EXISTS (SELECT FROM pg_replication_slots WHERE slot_name = '$S') THEN PERFORM pg_create_logical_replication_slot('$S', 'pgoutput', false, false, true); END IF; END \$\$;"
 kubectl -n platform rollout restart deploy/cdc-reader-wms
 ```
@@ -1367,7 +1362,7 @@ Changes written in the gap produce no events. On 2026-09-28 the 1000 seed of Rec
 
 ### 6.4 Bench client and PAT
 
-Mint the bench PAT as in section 3.16, with `--emit-operator-pat-secret <private dir>/route-caller-pat.json`. Then write the tenant `users` row of the service with `reconcile-run-plane` (section 4.5), because the host refuses a principal without one. Use a forward to the pod, `kubectl -n platform port-forward pod/wamn-pg-1 15435:5432`, because the forward to the service closed the connections of the verb.
+Mint the bench PAT as in section 3.16, with `--emit-operator-pat-secret <private dir>/operator-pat.json`. Then write the tenant `users` row of the service with `reconcile-run-plane` (section 4.5), and give it the role `operator` with `grant-role --user wamn-operator-dkk--receiving--dev@wamn.dev --role operator`. Use a forward to the pod, `kubectl -n platform port-forward pod/wamn-pg-1 15435:5432`, because the forward to the service closed the connections of the verb.
 
 Make the client VM, copy the source of the commit and the PAT, and build:
 
@@ -1379,7 +1374,7 @@ gcloud compute ssh wamn-bench-client --project wamn-dev --zone us-central1-a --c
 git archive --format=tar.gz -o src.tar.gz HEAD
 gcloud compute scp src.tar.gz wamn-bench-client:src.tar.gz --project wamn-dev --zone us-central1-a
 gcloud compute ssh wamn-bench-client --project wamn-dev --zone us-central1-a --command 'mkdir -p wamn && tar -xzf src.tar.gz -C wamn && umask 077 && mkdir -p ~/pat'
-gcloud compute scp <private dir>/route-caller-pat.json wamn-bench-client:pat/route-caller-pat.json --project wamn-dev --zone us-central1-a
+gcloud compute scp <private dir>/operator-pat.json wamn-bench-client:pat/operator-pat.json --project wamn-dev --zone us-central1-a
 gcloud compute ssh wamn-bench-client --project wamn-dev --zone us-central1-a --command 'cd wamn && . ~/.cargo/env && cargo build --release -j 2 -p wamn-bench'
 ```
 
@@ -1390,7 +1385,7 @@ After the runs, shred the PAT on the VM, delete the VM, and shred the local copy
 ```bash
 gcloud compute ssh wamn-bench-client --project wamn-dev --zone us-central1-a --command 'shred -u ~/pat/* && rmdir ~/pat'
 gcloud compute instances delete wamn-bench-client --project wamn-dev --zone us-central1-a --quiet
-shred -u <private dir>/route-caller-pat.json
+shred -u <private dir>/operator-pat.json
 ```
 
 On 2026-09-28 the shred took 3 seconds and the delete 23 seconds.
@@ -1458,7 +1453,7 @@ set -e
 cd wamn && mkdir -p tests/bench
 for call in get update query; do
   for c in 4 16; do
-    target/release/wamn-bench --host receiving.wamn.dev --pat-file ~/pat/route-caller-pat.json \
+    target/release/wamn-bench --host receiving.wamn.dev --pat-file ~/pat/operator-pat.json \
       --call \$call --concurrency \$c --duration-secs 60 --tier $tier \
       --output tests/bench/$tier-\$call-c\$c.json > /dev/null
     echo \"$tier \$call c\$c done\"
@@ -1513,3 +1508,92 @@ The runs of 2026-09-28 used Receiving release 1 (`sha256:aeb74968dfe09b113a11586
 | 4 | 2 x `e2-standard-4` on demand | | | skipped | | | |
 
 Tier 1 does not fit: the platform requests about 3.4 CPU, and one `e2-standard-2` offers about 1.9. With it, `wamn-pg-1`, `evt-nats-0` and `hostgroup-default` stayed `Pending` on "Insufficient cpu". Tier 4 is skipped: the 8 CPU quota is by design, and two on-demand `e2-standard-4` need all 8 with nothing else running, the client VM included.
+
+### 6.7 Tear down an environment
+
+No verb deletes an environment (finding `wamn-psss`). This section is the interim procedure. It removes one environment and everything named by its instance, so that `provision-project-env` mints a new suffix. Set the names of the environment, for example the old Receiving environment:
+
+```bash
+ORG=dkk PROJECT=receiving ENV=dev TENANT=dev
+DB=wamn-db-dkk--receiving--dev--zf7o454t SLOT=wamn_cdc_dkk__receiving__dev__zf7o454t
+STREAM=EVT_3_dkk_9_receiving_3_dev
+```
+
+Stop the CDC reader and the host group of the environment:
+
+```bash
+kubectl -n platform scale deploy/cdc-reader --replicas=0
+kubectl -n hosts scale deploy/hostgroup-default --replicas=0
+```
+
+Drop the slot and the database. Then drop the CDC role and every generation role that can connect to the database, with one statement each. No verb retires these roles, because a retire needs a live replacement of the same scope, and the scope includes the database:
+
+```bash
+kubectl -n platform exec wamn-pg-1 -c postgres -- psql -U postgres -d postgres -Atc \
+  "select a.grantee::regrole from pg_database d, aclexplode(d.datacl) a
+   where d.datname = '$DB' and a.privilege_type = 'CONNECT' and a.grantee::regrole::text ~ '_[ab]\$'"
+kubectl -n platform exec wamn-pg-1 -c postgres -- psql -U postgres -d postgres -v ON_ERROR_STOP=1 \
+  -c "SELECT pg_drop_replication_slot('$SLOT')" -c "DROP DATABASE \"$DB\" WITH (FORCE)" -c "DROP ROLE \"$SLOT\""
+kubectl -n platform exec wamn-pg-1 -c postgres -- psql -U postgres -d postgres -v ON_ERROR_STOP=1 -c 'DROP ROLE "<role>"'
+```
+
+Run the first query before the drop, because the drop removes the grants it reads. Delete the CloudNativePG `Database` object. It has `ensure: present`, so it creates the database again if it stays:
+
+```bash
+kubectl -n platform delete database $DB
+```
+
+Delete the registry row and the tenant environment row in one transaction. A trigger records the old suffix in `registry.retired_project_envs`. The delete also removes the environment's memberships and its `registry.event_readers` row, so grant the memberships of section 4.5 again after the new provision:
+
+```bash
+kubectl -n platform exec wamn-pg-1 -c postgres -- psql -U postgres -d wamn_system -v ON_ERROR_STOP=1 -1 \
+  -c "DELETE FROM registry.project_envs WHERE org = '$ORG' AND project = '$PROJECT' AND env = '$ENV'" \
+  -c "DELETE FROM catalog.tenant_environments WHERE tenant_id = '$TENANT'"
+```
+
+Delete the control rows of the tenant in `wamn_system`. A trigger refuses every change to them, so turn the trigger off for its one statement only. If they stay, the next `push-component` refuses with `package-coordinate-content-conflict`, and the next gate refuses with `command-id-reuse`:
+
+```sql
+BEGIN;
+ALTER TABLE catalog.deployment_attestations DISABLE TRIGGER deployment_attestations_immutable;
+DELETE FROM catalog.deployment_attestations WHERE tenant_id = '<tenant>';
+ALTER TABLE catalog.deployment_attestations ENABLE TRIGGER deployment_attestations_immutable;
+-- The same three statements for catalog.connection_requirements, catalog.component_library,
+-- catalog.effective_releases, catalog.packages, catalog.authoring_command_audit and
+-- wamn_run.gate_reports, in this order. Each trigger is <table>_immutable.
+COMMIT;
+```
+
+Delete the event stream as the provisioning user of the stream. The delete also removes the materializer consumers of the stream, so the next `enable-cdc-project-env` creates both with the current declaration. No NATS client is installed, so a short script sends the request through the port-forward of section 3.18. Each user may subscribe only to its own inbox prefix:
+
+```bash
+cat > jsapi.py <<'PY'
+#!/usr/bin/env python3
+# jsapi.py <user file> <password file> <subject>: one JetStream API request. INBOX is the user's inbox prefix.
+import json, os, socket, sys
+user, pw = (open(p).read().strip() for p in sys.argv[1:3])
+inbox = (os.environ["INBOX"] + ".jsapi").encode()
+s = socket.create_connection(("127.0.0.1", 14222), timeout=10); f = s.makefile("rb"); f.readline()
+s.sendall(b"CONNECT " + json.dumps({"user": user, "pass": pw, "verbose": False}).encode() + b"\r\n")
+s.sendall(b"SUB " + inbox + b" 1\r\nPUB " + sys.argv[3].encode() + b" " + inbox + b" 0\r\n\r\nPING\r\n")
+for line in iter(f.readline, b""):
+    if line.startswith(b"-ERR"): sys.exit(line.decode().strip())
+    if line.startswith(b"MSG"): print(f.read(int(line.split()[-1]) + 2).decode().strip()); break
+PY
+INBOX=_INBOX_provisioning_$STREAM python3 jsapi.py $E/provisioning-username $E/provisioning-password "\$JS.API.STREAM.DELETE.$STREAM"
+```
+
+No user may purge a stream, and a torn-down environment's stream is deleted, not purged. After `enable-cdc-project-env` runs again, run the tap-stream Job of section 3.5 again. A second `enable-cdc-project-env` writes a new password into the Secret but keeps the old one on an existing role (finding `wamn-fipl`). Set the role password from the Secret URL with `ALTER ROLE`, then restart the reader.
+
+On 2026-09-28 and 2026-09-29 this procedure removed Receiving `zf7o454t` and WMS `bnarqpnc`. The stop took 23 seconds, the slots and the databases 1 second, the 13 roles 1 second, the registry rows under 1 second, the control rows 1 second and the gate rows under 1 second. The WMS consumer was deleted by itself first, then both streams, each in under 1 second. The WMS stream held 51 events and the Receiving stream 581397. The new suffixes are `4pqjfmli` for Receiving and `0nk1lrpr` for WMS.
+
+The first new Receiving environment, `ra3cel54`, was torn down unused, because its package steps ran with a `wamn-ctl` built before a rebase on main, so it recorded the old manifest.
+
+The new provision needed generation `b` in one place. `provision-identity-issuer --prepare-generation a` refused with "prepare requires an inactive identity credential slot", because the issuer serves the whole platform. Generation `b` took 2 seconds, and `--retire-generation a` took 2 seconds after identity ran on `b`. Every other credential took generation `a`. On 2026-09-29 the releases were:
+
+| Application | Release | Manifest digest | Component digests |
+| --- | --- | --- | --- |
+| Receiving | 1 | `sha256:900d35fbd2da116aac3d76abcf3895da7810cedeaf75fd5fdc4f9858f578fdfc` | `receiving` `sha256:1d034a09179b5c1a1eb74643d8a9376d612653116e7f7edddd8666dc74712fdb` |
+| WMS | 1 | `sha256:3d6b13f9c7864e2b34317b6822d85b6d6a5542c36f9b5ae5d2ae049c1fcab2f6` | `wms` `sha256:0533b015d675921df8529bdd58913730d36a8f97dbbb2b0f4affae963422ce58`, `label-render` `sha256:587434540bb0173ae447be16d89876ae0b70047b6c9241bf375c87f8c08efc91`, `blob-put` and `jsonata` unchanged |
+
+The service `wamn-operator-dkk--receiving--dev` holds the role `operator`, with a PAT of prefix `1a98d582140907ed` that expires on 2026-10-29. The owner holds `admin` in both environments. The host upgrade with `--timeout 10m` took 15 seconds, and the Helm release reads `deployed` at revision 5. The web clients of both releases took 7 seconds each to upload.

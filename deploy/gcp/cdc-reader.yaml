@@ -39,7 +39,7 @@ spec:
       automountServiceAccountToken: false
       containers:
         - name: cdc-reader
-          image: us-central1-docker.pkg.dev/wamn-dev/wamn/wamn-cdc-reader@sha256:fa38da50c62ff38679ecdcd3490df8650fb6a4b4d6adda3017fb134dadac797a
+          image: us-central1-docker.pkg.dev/wamn-dev/wamn/wamn-cdc-reader@sha256:659d8ee7e880882cdff0cd0c0940a0a0ccd69a59b1bec81c3210b0c7c02ed645
           args:
             - --org=dkk
             - --project=receiving

@@ -10,8 +10,8 @@ identityCaConfigMap: identity-ca
 applications:
   - host: receiving.wamn.dev
     api: http://flow-http.hosts.svc.cluster.local
-    bucketPath: wamn-dev-web/clients/wamn_receiving/aeb74968dfe09b113a115863ec8be5475923d9577914332081923052a41c16c4
+    bucketPath: wamn-dev-web/clients/wamn_receiving/900d35fbd2da116aac3d76abcf3895da7810cedeaf75fd5fdc4f9858f578fdfc
   - host: wms.wamn.dev
     api: http://wms-flow-http.hosts.svc.cluster.local
-    bucketPath: wamn-dev-web/clients/wamn_wms/6649148172e83eea8af3c9a5f133cb5f961d634de4f85244909da046475890a3
+    bucketPath: wamn-dev-web/clients/wamn_wms/3d6b13f9c7864e2b34317b6822d85b6d6a5542c36f9b5ae5d2ae049c1fcab2f6
 neg: true

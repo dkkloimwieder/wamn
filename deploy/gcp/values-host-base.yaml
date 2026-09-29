@@ -1,6 +1,6 @@
 runtime:
   image:
-    tag: src-239f4c69363afee8@sha256:91bbe0d40bc3042a70553f69ee072c9ed7a5e3702178496803bdf93c01031005
+    tag: src-91f318b6c6fe387c@sha256:a403fef9f1e7bca336c3640851cd3a99eee2202885e6b59f5261490b39647d76
     pull_policy: IfNotPresent
     registry: ''
     repository: us-central1-docker.pkg.dev/wamn-dev/wamn/wamn-host

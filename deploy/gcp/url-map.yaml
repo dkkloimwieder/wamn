@@ -31,21 +31,21 @@ pathMatchers:
         service: https://www.googleapis.com/compute/v1/projects/wamn-dev/global/backendBuckets/wamn-edge-files
         routeAction:
           urlRewrite:
-            pathPrefixRewrite: /clients/wamn_receiving/aeb74968dfe09b113a115863ec8be5475923d9577914332081923052a41c16c4/assets/
+            pathPrefixRewrite: /clients/wamn_receiving/900d35fbd2da116aac3d76abcf3895da7810cedeaf75fd5fdc4f9858f578fdfc/assets/
       - priority: 4
         matchRules:
           - fullPathMatch: /
         service: https://www.googleapis.com/compute/v1/projects/wamn-dev/global/backendBuckets/wamn-edge-files
         routeAction:
           urlRewrite:
-            pathPrefixRewrite: /clients/wamn_receiving/aeb74968dfe09b113a115863ec8be5475923d9577914332081923052a41c16c4/index.html
+            pathPrefixRewrite: /clients/wamn_receiving/900d35fbd2da116aac3d76abcf3895da7810cedeaf75fd5fdc4f9858f578fdfc/index.html
       - priority: 5
         matchRules:
           - pathTemplateMatch: /{page=**}
         service: https://www.googleapis.com/compute/v1/projects/wamn-dev/global/backendBuckets/wamn-edge-files
         routeAction:
           urlRewrite:
-            pathTemplateRewrite: /clients/wamn_receiving/aeb74968dfe09b113a115863ec8be5475923d9577914332081923052a41c16c4/index.html
+            pathTemplateRewrite: /clients/wamn_receiving/900d35fbd2da116aac3d76abcf3895da7810cedeaf75fd5fdc4f9858f578fdfc/index.html
   - name: wms
     defaultService: https://www.googleapis.com/compute/v1/projects/wamn-dev/global/backendBuckets/wamn-edge-files
     routeRules:
@@ -63,18 +63,18 @@ pathMatchers:
         service: https://www.googleapis.com/compute/v1/projects/wamn-dev/global/backendBuckets/wamn-edge-files
         routeAction:
           urlRewrite:
-            pathPrefixRewrite: /clients/wamn_wms/6649148172e83eea8af3c9a5f133cb5f961d634de4f85244909da046475890a3/assets/
+            pathPrefixRewrite: /clients/wamn_wms/3d6b13f9c7864e2b34317b6822d85b6d6a5542c36f9b5ae5d2ae049c1fcab2f6/assets/
       - priority: 4
         matchRules:
           - fullPathMatch: /
         service: https://www.googleapis.com/compute/v1/projects/wamn-dev/global/backendBuckets/wamn-edge-files
         routeAction:
           urlRewrite:
-            pathPrefixRewrite: /clients/wamn_wms/6649148172e83eea8af3c9a5f133cb5f961d634de4f85244909da046475890a3/index.html
+            pathPrefixRewrite: /clients/wamn_wms/3d6b13f9c7864e2b34317b6822d85b6d6a5542c36f9b5ae5d2ae049c1fcab2f6/index.html
       - priority: 5
         matchRules:
           - pathTemplateMatch: /{page=**}
         service: https://www.googleapis.com/compute/v1/projects/wamn-dev/global/backendBuckets/wamn-edge-files
         routeAction:
           urlRewrite:
-            pathTemplateRewrite: /clients/wamn_wms/6649148172e83eea8af3c9a5f133cb5f961d634de4f85244909da046475890a3/index.html
+            pathTemplateRewrite: /clients/wamn_wms/3d6b13f9c7864e2b34317b6822d85b6d6a5542c36f9b5ae5d2ae049c1fcab2f6/index.html
