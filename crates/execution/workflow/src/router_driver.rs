@@ -22,9 +22,9 @@ use wamn_engine::release_manifest::{LoadedRelease, validate_component_in_release
 use wamn_engine::router_delivery::{authorize_registered_operation, bounded_node_deadline_ms};
 use wamn_event_wire::Causation;
 use wamn_execution_host::{
-    DeadlineAdjustment, InvocationSite, NativeFacts, NativePolicy, NodeAcquisition, OperationHost,
-    WiringPreload, component_invocation, invocation_span, node_trace_context, remote_trace_context,
-    synchronous_request_kind,
+    CallIntents, DeadlineAdjustment, InvocationSite, NativeFacts, NativePolicy, NodeAcquisition,
+    OperationHost, WiringPreload, component_invocation, invocation_span, node_trace_context,
+    remote_trace_context, synchronous_request_kind,
 };
 use wamn_project_state::PlatformComponent;
 use wamn_router::{
@@ -1009,8 +1009,14 @@ impl RouterDriver {
                 request.caller.clone(),
             ),
         };
+        // A node logs the intents of the route that its operation publishes.
+        let intents = self
+            .operations
+            .call_intents(component, call.operation)
+            .map_err(|error| error.context("build the intents of a node call"))?;
+        let intent = intents.as_ref().map(CallIntents::context);
         // Boxed, so each node's call does not grow the delivery future.
-        Box::pin(invoke_operation(&*self.operations, call, None))
+        Box::pin(invoke_operation(&*self.operations, call, intent))
             .await
             .and_then(lower_node_outcome)
     }

@@ -12,7 +12,7 @@ use wamn_event_wire::Causation;
 use wamn_runtime::plugins::connection_http::{ConnectionExecutionClosure, InvocationEntry};
 
 use crate::operation::{
-    InvocationSite, NativeFacts, NodeAcquisition, OperationHost, component_invocation,
+    CallIntents, InvocationSite, NativeFacts, NodeAcquisition, OperationHost, component_invocation,
     invocation_span, node_trace_context, remote_trace_context,
 };
 use wamn_engine::flow_http_routing::AuthenticatedCaller;
@@ -135,10 +135,16 @@ async fn call_route(
             deadline_ms,
             facts: NativeFacts::entry(acquisition, route.caller),
         };
-        Ok(match rows {
-            Some(rows) => RouteReturn::Streamed(invoke_operation_stream(host, call, rows).await?),
-            None => RouteReturn::Whole(invoke_operation(host, call, None).await?),
-        })
+        if let Some(rows) = rows {
+            return Ok(RouteReturn::Streamed(
+                invoke_operation_stream(host, call, rows).await?,
+            ));
+        }
+        let intents = host.call_intents(component, route.operation)?;
+        let intent = intents.as_ref().map(CallIntents::context);
+        Ok(RouteReturn::Whole(
+            invoke_operation(host, call, intent).await?,
+        ))
     }
     .instrument(span)
     .await

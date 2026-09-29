@@ -336,21 +336,7 @@ impl InvocationPolicy for NativePolicy {
             .get(operation)
             .and_then(|released| released.participant.as_ref())
         {
-            // The composed component embeds the participant, so the entry
-            // component names it in the intent.
-            let fact = &component.fact;
-            let participant_dependency = ComponentOperationDependency {
-                participant: None,
-                package: fact.scope.package_id.clone(),
-                version: fact.scope.package_version.clone(),
-                digest: fact.component_digest.clone(),
-                operation: participant.clone(),
-            };
-            let intent = serde_json::to_string(&serde_json::json!({
-                "participant": participant_dependency,
-                "release": resources.release.manifest().release.effective_release_id,
-                "manifest": resources.release.release().manifest_digest.as_str(),
-            }))?;
+            let intent = participation_intent(&resources.release, &component.fact, participant)?;
             resources
                 .postgres
                 .bind_selected_participant(scope, participant.clone(), intent)?;
@@ -408,6 +394,28 @@ impl InvocationPolicy for NativePolicy {
         self.resources.postgres.revoke_session_claims(scope);
         self.resources.postgres.clear_statement_scope(scope);
     }
+}
+
+/// The participation intent of an entry of `fact` that selects
+/// `participant`: the participant, the release and the manifest. The composed
+/// component embeds the participant, so the entry component names it.
+pub(crate) fn participation_intent(
+    release: &LoadedRelease,
+    fact: &AdmittedComponent,
+    participant: &str,
+) -> anyhow::Result<String> {
+    let participant = ComponentOperationDependency {
+        participant: None,
+        package: fact.scope.package_id.clone(),
+        version: fact.scope.package_version.clone(),
+        digest: fact.component_digest.clone(),
+        operation: participant.to_owned(),
+    };
+    Ok(serde_json::to_string(&serde_json::json!({
+        "participant": participant,
+        "release": release.manifest().release.effective_release_id,
+        "manifest": release.release().manifest_digest.as_str(),
+    }))?)
 }
 
 /// Revoke host registries when a call returns, traps, fails to bind, or is cancelled.

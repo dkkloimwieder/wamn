@@ -37,7 +37,7 @@ use wamn_runtime::plugins::wamn_credentials::WamnCredentials;
 use wamn_runtime::plugins::wamn_logging::WamnLogging;
 use wamn_runtime::plugins::wamn_postgres::{
     PreparedStatementSet, ReleaseIdentity, SessionClaims, StatementField, StatementValueType,
-    VerifiedStatement, VerifiedStatementSet, WamnPostgres,
+    VerifiedStatement, VerifiedStatementSet, WamnPostgres, WriteLogStore,
 };
 use wash_runtime::engine::Engine;
 use wash_runtime::host::allowed_hosts::AllowedHost;
@@ -47,6 +47,36 @@ use wamn_engine::operation::{invocation_policy, native_call, native_workload, ne
 use wamn_engine::warm_reuse::WarmReuse;
 
 mod native_policy;
+
+/// What one cloud call needs to log its intents
+/// (`docs/plan/host-transaction.md` 5, issue 4).
+#[derive(Debug)]
+pub struct CallIntents {
+    /// The two-step store of an operation without SQL. An operation with SQL
+    /// claims in its item transaction instead.
+    store: WriteLogStore,
+    tenant: String,
+    release: String,
+    package: String,
+    kind: wamn_catalog::OperationKind,
+    key_field: Option<String>,
+    participation: Option<String>,
+}
+
+impl CallIntents {
+    /// The intent context of the call.
+    pub fn context(&self) -> wamn_engine::operation::IntentContext<'_> {
+        wamn_engine::operation::IntentContext {
+            store: &self.store,
+            tenant: &self.tenant,
+            release: &self.release,
+            package: &self.package,
+            kind: self.kind,
+            key_field: self.key_field.as_deref(),
+            participation: self.participation.as_deref(),
+        }
+    }
+}
 
 use invocation_policy::ApplicationHost;
 use native_call::prepare_native;
@@ -330,6 +360,51 @@ impl OperationHost {
     ///
     /// A wiring reads the same list beside its graph, so a route and a wiring
     /// load one application.
+    /// The intents of a call of `operation` on `component`, from the route
+    /// that the release publishes for it. An operation without a route logs
+    /// none.
+    pub fn call_intents(
+        &self,
+        component: &AdmittedComponent,
+        operation: &str,
+    ) -> anyhow::Result<Option<CallIntents>> {
+        let manifest = self.release.manifest();
+        let Some(route) =
+            manifest.route(&component.scope.package_id, &component.component, operation)
+        else {
+            return Ok(None);
+        };
+        let participant = manifest
+            .components
+            .iter()
+            .find(|served| {
+                served.package_id == component.scope.package_id
+                    && served.component == component.component
+                    && served.digest.as_str() == component.component_digest
+            })
+            .and_then(|served| served.operations.get(operation))
+            .and_then(|released| released.participant.as_deref());
+        let participation = participant
+            .map(|participant| {
+                native_policy::participation_intent(&self.release, component, participant)
+            })
+            .transpose()?;
+        let tenant = manifest.release.tenant_id.clone();
+        Ok(Some(CallIntents {
+            store: WriteLogStore::new(
+                Arc::clone(&self.postgres),
+                self.project.clone(),
+                tenant.clone(),
+            ),
+            tenant,
+            release: self.release.release().manifest_digest.to_string(),
+            package: route.package_id.clone(),
+            kind: route.kind,
+            key_field: route.idempotency.clone(),
+            participation,
+        }))
+    }
+
     pub async fn release_components(&self) -> anyhow::Result<Arc<[AdmittedComponent]>> {
         self.components
             .get_or_try_init(|| async {

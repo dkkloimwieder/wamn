@@ -14,8 +14,9 @@ mod route;
 mod router_delivery;
 
 pub use operation::{
-    InvocationSite, NativeFacts, NativePolicy, NodeAcquisition, OperationHost, OperationScope,
-    component_invocation, invocation_span, node_trace_context, remote_trace_context,
+    CallIntents, InvocationSite, NativeFacts, NativePolicy, NodeAcquisition, OperationHost,
+    OperationScope, component_invocation, invocation_span, node_trace_context,
+    remote_trace_context,
 };
 pub use readiness::{
     RELEASE_READINESS_CHECK_FAILED, RELEASE_READINESS_INVALIDATED, RouterReadinessProbe,
