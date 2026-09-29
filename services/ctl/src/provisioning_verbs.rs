@@ -151,12 +151,18 @@ pub struct ProvisionProjectEnvArgs {
     pub emit_privilege_sql: Option<PathBuf>,
 
     /// Write the database credential `Secret` (JSON) here. Required for
-    /// provisioning and must name a file; credentials are never written to stdout.
+    /// provisioning unless the run only issues a PAT, and must name a file;
+    /// credentials are never written to stdout.
     #[arg(
         long,
         value_name = "PATH",
         value_parser = parse_secret_path,
-        required_unless_present_any = ["revoke_pat_prefix", WORKLOAD_ACTION_GROUP]
+        required_unless_present_any = [
+            "revoke_pat_prefix",
+            WORKLOAD_ACTION_GROUP,
+            "emit_management_author_pat_secret",
+            "emit_operator_pat_secret"
+        ]
     )]
     pub emit_secret: Option<PathBuf>,
 
@@ -595,7 +601,7 @@ pub async fn provision(args: ProvisionProjectEnvArgs) -> anyhow::Result<()> {
         "--target-admin-database-url is valid only for a workload generation action"
     );
 
-    let request = provisioning_request(args)?;
+    let request = provisioning_request(args);
     let outcome = provision_project_env::provision_project_env(&request).await?;
     print_provisioned(&request, &outcome)
 }
@@ -639,13 +645,8 @@ fn workload_action_request(
     })
 }
 
-fn provisioning_request(
-    args: ProvisionProjectEnvArgs,
-) -> anyhow::Result<ProvisionProjectEnvRequest> {
-    let emit_secret = args
-        .emit_secret
-        .context("--emit-secret PATH is required and must not be '-'")?;
-    Ok(ProvisionProjectEnvRequest {
+fn provisioning_request(args: ProvisionProjectEnvArgs) -> ProvisionProjectEnvRequest {
+    ProvisionProjectEnvRequest {
         org: args.org.expect(
             "clap parser invariant: --org is required unless --revoke-pat-prefix is present",
         ),
@@ -666,11 +667,11 @@ fn provisioning_request(
         emit_database: args.emit_database,
         emit_role_sql: args.emit_role_sql,
         emit_privilege_sql: args.emit_privilege_sql,
-        emit_secret,
+        emit_secret: args.emit_secret,
         pat_issuer: args.pat_issuer.into(),
         emit_management_author_pat_secret: args.emit_management_author_pat_secret,
         emit_operator_pat_secret: args.emit_operator_pat_secret,
-    })
+    }
 }
 
 /// Print the lines that report one project-env provisioning.
@@ -698,10 +699,12 @@ pub fn print_provisioned(
         "privilege SQL (psql the TARGET cluster AFTER the Database is ready)",
         &outcome.privilege_sql,
     );
-    println!(
-        "wrote {} (database credential Secret; kubectl apply)",
-        request.emit_secret.display()
-    );
+    if let Some(path) = &request.emit_secret {
+        println!(
+            "wrote {} (database credential Secret; kubectl apply)",
+            path.display()
+        );
+    }
 
     println!(
         "recorded project {:?} + project-env {} in the registry (wamn_system)",

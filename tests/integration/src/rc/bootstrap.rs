@@ -106,7 +106,7 @@ pub(super) async fn run(resources: &Resources) -> anyhow::Result<()> {
         emit_database: Some(database_path.clone()),
         emit_role_sql: Some(role_path.clone()),
         emit_privilege_sql: Some(privilege_path.clone()),
-        emit_secret: secret_path.clone(),
+        emit_secret: Some(secret_path.clone()),
         pat_issuer: issuer.args.clone(),
         emit_management_author_pat_secret: Some(management_path.clone()),
         emit_operator_pat_secret: Some(route_path.clone()),

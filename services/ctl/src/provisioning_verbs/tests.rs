@@ -316,6 +316,14 @@ fn every_secret_output_rejects_stdout_and_prefix_is_strict() {
         "database Secret path became optional"
     );
     assert!(parse_args(&["--emit-secret", "-"]).is_err());
+    // A PAT-only rerun writes no database Secret (wamn-6b4g).
+    for issue_flag in [
+        "--emit-management-author-pat-secret",
+        "--emit-operator-pat-secret",
+    ] {
+        let pat_only = parse_args(&[issue_flag, "/tmp/pat.json"]).unwrap();
+        assert!(pat_only.emit_secret.is_none(), "{issue_flag}");
+    }
     for issue_flag in [
         "--emit-management-author-pat-secret",
         "--emit-operator-pat-secret",
@@ -489,21 +497,24 @@ fn no_flag_exclusion_list_names_a_family_and_none_can() {
         0,
         "a hand-written clap exclusion array is back"
     );
-    // The only surviving requirement list names the single derived GROUP.
-    // Sixteen arrays collapse to this one two-element expression, repeated
-    // once per argument that owes it — never per family.
-    let survivors: Vec<&str> = implementation
+    // The only surviving requirement list names the single derived GROUP,
+    // and the two PAT outputs of a PAT-only rerun (wamn-6b4g), which are not
+    // families. It appears once per argument that owes it — never per family.
+    let survivors: Vec<String> = implementation
         .match_indices("required_unless_present_any = ")
         .map(|(at, _)| {
-            implementation[at..]
-                .lines()
-                .next()
-                .expect("the attribute occupies one line")
+            let end = implementation[at..].find(']').expect("the list closes");
+            implementation[at..=at + end]
+                .split_whitespace()
+                .collect::<Vec<_>>()
+                .join(" ")
         })
         .collect();
     for line in &survivors {
         assert_eq!(
-            *line, "required_unless_present_any = [\"revoke_pat_prefix\", WORKLOAD_ACTION_GROUP]",
+            line,
+            "required_unless_present_any = [ \"revoke_pat_prefix\", WORKLOAD_ACTION_GROUP, \
+             \"emit_management_author_pat_secret\", \"emit_operator_pat_secret\" ]",
             "an exclusion list grew members again"
         );
     }

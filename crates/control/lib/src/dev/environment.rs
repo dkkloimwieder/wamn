@@ -229,7 +229,7 @@ fn provisioning_args(
         emit_database: Some(root.join("database.json")),
         emit_role_sql: Some(root.join("roles.sql")),
         emit_privilege_sql: Some(root.join("privileges.sql")),
-        emit_secret: root.join("database-secret.json"),
+        emit_secret: Some(root.join("database-secret.json")),
         emit_management_author_pat_secret: management_secret.map(Path::to_path_buf),
         emit_operator_pat_secret: Some(route_secret.to_path_buf()),
         pat_issuer: PatIssuerConfig::default(),

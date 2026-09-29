@@ -181,7 +181,8 @@ pub struct ProvisionProjectEnvRequest {
     pub emit_privilege_sql: Option<PathBuf>,
 
     /// Write the database credential `Secret` (JSON) here. It must name a file.
-    pub emit_secret: PathBuf,
+    /// Absent only for a run that issues a PAT and writes no database Secret.
+    pub emit_secret: Option<PathBuf>,
 
     /// Operator authentication for PAT issuance through `wamn-identity`.
     pub pat_issuer: PatIssuerConfig,
@@ -383,8 +384,10 @@ pub async fn provisioning_transaction(client: &mut Client) -> anyhow::Result<Tra
 pub async fn provision_project_env(
     args: &ProvisionProjectEnvRequest,
 ) -> anyhow::Result<ProvisionProjectEnvOutcome> {
-    let db_secret_path = args.emit_secret.as_path();
-    ensure_secret_path(db_secret_path, "--emit-secret")?;
+    let db_secret_path = args.emit_secret.as_deref();
+    if let Some(path) = db_secret_path {
+        ensure_secret_path(path, "--emit-secret")?;
+    }
     if let Some(path) = args.emit_management_author_pat_secret.as_deref() {
         ensure_secret_path(path, "--emit-management-author-pat-secret")?;
     }
@@ -392,7 +395,7 @@ pub async fn provision_project_env(
         ensure_secret_path(path, "--emit-operator-pat-secret")?;
     }
     ensure_distinct_secret_paths([
-        ("--emit-secret", Some(db_secret_path)),
+        ("--emit-secret", db_secret_path),
         (
             "--emit-management-author-pat-secret",
             args.emit_management_author_pat_secret.as_deref(),
@@ -476,7 +479,9 @@ pub async fn provision_project_env(
     )?;
     write_output(args.emit_role_sql.as_deref(), &role_sql)?;
     write_output(args.emit_privilege_sql.as_deref(), &privilege_sql)?;
-    write_secret_json(db_secret_path, &secret_doc)?;
+    if let Some(path) = db_secret_path {
+        write_secret_json(path, &secret_doc)?;
+    }
 
     let pat_secrets = match pat_client.as_ref() {
         Some(pat_client) => {
