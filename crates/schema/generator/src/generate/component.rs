@@ -22,7 +22,10 @@ use super::{
     CrudAction, GenerateError, ModelDeclaration, OperationDeclaration, PackageManifest,
     binding_identifier, insert_bytes, rust_identifier, rust_type_identifier,
 };
-use crate::manifest::FilterMatch;
+use crate::manifest::{
+    CommandIdempotence, CommandTransaction, CustomOperationDeclaration, FilterMatch,
+    InheritedClaimDeclaration, PackageIdentity, canonical_operation_prefix,
+};
 
 const HEADER: &str = "// @generated from the package manifest; do not edit.\n\n";
 
@@ -209,8 +212,9 @@ fn handler(
     }
 }
 
-/// Emit `generated/component/mod.rs` and `generated/wit/world.wit`, when any
-/// model of the package has a generated operation.
+/// Emit `generated/component/mod.rs`, when any model of the package has a
+/// generated operation, and `generated/wit/world.wit`, when the package has
+/// any operation.
 pub(super) fn emit_package_component(
     files: &mut BTreeMap<String, Vec<u8>>,
     manifest: &PackageManifest,
@@ -221,7 +225,7 @@ pub(super) fn emit_package_component(
         .filter(|(_, model)| !model.operations.is_empty())
         .collect::<Vec<_>>();
     if models.is_empty() {
-        return Ok(());
+        return emit_package_world(files, manifest, &models);
     }
     let mut source = String::from(HEADER);
     source.push_str(
@@ -236,28 +240,126 @@ pub(super) fn emit_package_component(
         .expect("writing to a String cannot fail");
     }
     insert_bytes(files, "generated/component/mod.rs", source.into_bytes())?;
+    emit_package_world(files, manifest, &models)
+}
 
-    let namespace = manifest.package.id.replace('_', "-");
-    let mut world = format!(
-        "// @generated from the package manifest; do not edit.\n\n\
-         package {namespace}:{WORLD_PACKAGE};\n\n\
-         /// Every generated operation of the package. An authored world includes it.\n\
-         world {WORLD_PACKAGE} {{\n\
-         \x20 import wamn:postgres/types@0.2.0;\n\
-         \x20 import wamn:postgres/statements@0.2.0;\n"
-    );
-    for (model_name, model) in &models {
+/// Emit `generated/wit/world.wit`: the world `generated`, which exports every
+/// operation of the package that the component runs and imports what those
+/// operations call, and the world `participant`, when the package has a
+/// participant. An authored world includes the one it builds, so no authored
+/// file names a sealed operation id.
+fn emit_package_world(
+    files: &mut BTreeMap<String, Vec<u8>>,
+    manifest: &PackageManifest,
+    models: &[(&String, &ModelDeclaration)],
+) -> Result<(), GenerateError> {
+    const POSTGRES: &str =
+        "  import wamn:postgres/types@0.2.0;\n  import wamn:postgres/statements@0.2.0;\n";
+    let package = &manifest.package;
+    let sealed = |package: &PackageIdentity, local: &str| -> Result<String, GenerateError> {
+        let (group, name) = local
+            .split_once('.')
+            .expect("validated operation identity has one separator");
+        Ok(format!(
+            "{}{}/{}@{}",
+            canonical_operation_prefix(package)?,
+            super::wit::wit_name(group),
+            super::wit::wit_name(name),
+            package.version
+        ))
+    };
+    let base = |alias: &str| -> PackageIdentity {
+        let base = &manifest.base_dependencies[alias];
+        PackageIdentity {
+            id: base.package.clone(),
+            version: base.version.clone(),
+            predecessor_version: None,
+        }
+    };
+    // The custom lines come first, where the authored world had them, so each
+    // component keeps its world byte for byte.
+    let mut imports = String::new();
+    let mut exports = String::new();
+    let mut participant = String::new();
+    let mut postgres = !models.is_empty();
+    for (local, operation) in &manifest.custom_operations {
+        if operation.transaction == Some(CommandTransaction::Participant) {
+            let inherited = inherited(operation).expect("a participant inherits its base claim");
+            let (group, name) = inherited
+                .operation
+                .split_once('.')
+                .expect("validated operation identity has one separator");
+            writeln!(
+                participant,
+                "  export {};\n  export {};",
+                sealed(
+                    &base(&inherited.base),
+                    &format!("{group}.{name}_pre_commit")
+                )?,
+                sealed(package, local)?
+            )
+            .expect("writing to a String cannot fail");
+            continue;
+        }
+        postgres |= operation.connection.is_some();
+        if operation.pre_commit.is_some() {
+            writeln!(
+                imports,
+                "  import {};",
+                sealed(package, &format!("{local}_pre_commit"))?
+            )
+            .expect("writing to a String cannot fail");
+        }
+        if operation.participant.is_some()
+            && let Some(inherited) = inherited(operation)
+        {
+            writeln!(
+                imports,
+                "  import {};",
+                sealed(&base(&inherited.base), &inherited.operation)?
+            )
+            .expect("writing to a String cannot fail");
+        }
+        writeln!(exports, "  export {};", sealed(package, local)?)
+            .expect("writing to a String cannot fail");
+    }
+    for (model_name, model) in models {
         for action in model.operations.keys() {
             writeln!(
-                world,
-                "  export {namespace}:{}/{}@{};",
-                super::wit::wit_name(model_name),
-                action.as_str(),
-                manifest.package.version
+                exports,
+                "  export {};",
+                sealed(package, &format!("{model_name}.{}", action.as_str()))?
             )
             .expect("writing to a String cannot fail");
         }
     }
-    world.push_str("}\n");
+    if exports.is_empty() {
+        return Ok(());
+    }
+
+    let namespace = package.id.replace('_', "-");
+    let postgres = if postgres { POSTGRES } else { "" };
+    let mut world = format!(
+        "// @generated from the package manifest; do not edit.\n\n\
+         package {namespace}:{WORLD_PACKAGE};\n\n\
+         /// Every operation of the package. An authored world includes it.\n\
+         world {WORLD_PACKAGE} {{\n{imports}{postgres}{exports}}}\n"
+    );
+    if !participant.is_empty() {
+        write!(
+            world,
+            "\n/// The participant of the package. An authored participant world includes it.\n\
+             world participant {{\n{POSTGRES}{participant}}}\n"
+        )
+        .expect("writing to a String cannot fail");
+    }
     insert_bytes(files, "generated/wit/world.wit", world.into_bytes())
+}
+
+/// The base claim an operation inherits, when it inherits one.
+fn inherited(operation: &CustomOperationDeclaration) -> Option<&InheritedClaimDeclaration> {
+    match &operation.idempotent_by {
+        Some(CommandIdempotence::Inherited(inherited)) => Some(inherited),
+        _ => None,
+    }
 }

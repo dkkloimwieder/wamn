@@ -1,0 +1,8 @@
+// @generated from the package manifest; do not edit.
+
+package edge-device:generated;
+
+/// Every operation of the package. An authored world includes it.
+world generated {
+  export edge-device:sample/read@1.0.0;
+}

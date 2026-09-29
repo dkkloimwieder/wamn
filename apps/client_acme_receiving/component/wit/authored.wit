@@ -4,9 +4,4 @@ package client-acme-receiving:component@3.0.0;
 /// custom operations it authors.
 world client-acme-receiving {
   include client-acme-receiving:generated/generated;
-  import wamn-receiving:receiving/record-receipt@1.0.0;
-  export client-acme-receiving:quality/load-purchase-order-detail@3.0.0;
-  export client-acme-receiving:quality/approve-inspection@3.0.0;
-  export client-acme-receiving:quality/create-inspection@3.0.0;
-  export client-acme-receiving:receiving/record-receipt@3.0.0;
 }

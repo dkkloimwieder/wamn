@@ -24,17 +24,14 @@ wit_bindgen::generate!({
         package client-acme-receiving:participant@3.0.0;
 
         world client-acme-receiving-participant {
-          import wamn:postgres/types@0.2.0;
-          import wamn:postgres/statements@0.2.0;
-          export wamn-receiving:receiving/record-receipt-pre-commit@1.0.0;
-          export client-acme-receiving:receiving/record-receipt-participant@3.0.0;
+          include client-acme-receiving:generated/participant;
         }
     "#,
     path: [
         "../../../crates/execution/workflow/router/wit",
         "../../../crates/platform/runtime/wit/deps/wamn-postgres-0.2",
         "../../wamn_receiving/generated/wit/deps/wamn-receiving-receiving",
-        "../generated/wit/deps/client-acme-receiving-receiving",
+        "../generated/wit",
     ],
     generate_all,
     async: true,

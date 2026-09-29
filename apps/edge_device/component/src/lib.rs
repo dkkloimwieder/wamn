@@ -14,12 +14,12 @@ wit_bindgen::generate!({
         package edge-device:component@0.1.0;
 
         world device {
-          export edge-device:sample/read@1.0.0;
+          include edge-device:generated/generated;
         }
     "#,
     path: [
         "../../../crates/execution/workflow/router/wit",
-        "../generated/wit/deps/edge-device-sample",
+        "../generated/wit",
     ],
     generate_all,
     async: true,

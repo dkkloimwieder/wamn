@@ -3,9 +3,4 @@ package wamn:wms-component@0.1.0;
 /// The WMS component: every generated operation, and the commands it authors.
 world wms {
   include wamn-wms:generated/generated;
-  export wamn-wms:inventory/adjust@1.0.0;
-  export wamn-wms:inventory/aggregate@1.0.0;
-  export wamn-wms:inventory/merge@1.0.0;
-  export wamn-wms:inventory/move@1.0.0;
-  export wamn-wms:inventory/split@1.0.0;
 }
