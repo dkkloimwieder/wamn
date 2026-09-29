@@ -949,7 +949,7 @@ kubectl -n edge logs deploy/wamn-edge --since=1h | grep 'POST /password/reset'
 psql "$WAMN_SYSTEM_ADMIN_URL" -Atc "select to_jsonb(t) - 'token_hash' from identity.password_tokens t join identity.principals p on p.id=t.principal_id where p.email='<owner email>' and t.purpose='reset' order by t.created_at desc limit 1"
 ```
 
-On 2026-09-29 the first reset was refused. The secret expired at 15:21:41 UTC, and the page submitted at 15:40:27, so the row stayed unconsumed. The request body matched the contract. The second mail went out at 15:43:13 UTC.
+On 2026-09-29 the first reset was refused. The secret expired at 15:21:41 UTC, and the page submitted at 15:40:27, so the row stayed unconsumed. The request body matched the contract. The second mail went out at 15:43:13 UTC. The owner reset the password at 15:57:35 with `200`, 32 seconds before that secret expired, and the transaction consumed both reset secrets.
 
 ### 4.3 Load balancer
 
