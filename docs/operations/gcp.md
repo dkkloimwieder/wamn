@@ -1008,7 +1008,7 @@ gcloud compute ssl-certificates create wamn-edge $P --global --certificate $C/tl
 rm -rf $C
 ```
 
-The load balancer keeps this copy when cert-manager renews the Secret. The copy expires on 2026-12-25. Finding `wamn-ghx2.7` names the fix.
+The load balancer keeps this copy when cert-manager renews the Secret. The copy expires on 2026-12-25. Section 4.3.1 renews it.
 
 Create the backend service over the endpoint group, then the URL map, the proxy and the forwarding rule. `deploy/gcp/url-map.yaml` holds the rules of the removed template and the release path in the bucket:
 
@@ -1032,6 +1032,38 @@ gcloud dns record-sets create receiving.wamn.dev. $P --zone wamn-dev --type A --
 ```
 
 On 2026-09-27 the address was `8.232.230.139`. The first six commands took 45 seconds, the backend service 97 seconds, the URL map 6 seconds, and the proxy, rule and record 29 seconds.
+
+### 4.3.1 Certificate renewal
+
+[deploy/gcp/edge-cert.yaml](../../deploy/gcp/edge-cert.yaml) holds the CronJob `edge/edge-cert` of finding `wamn-ghx2.7`. At 14:00 New York time every day, it compares the serial of `edge/wamn-edge-tls` with the serial of the entry that the proxy `wamn-edge` serves. If the serials differ, it uploads the Secret as `wamn-edge-<first 12 hex digits of the serial>`, moves the proxy, and deletes the old entry.
+
+Create the custom role and bind it to the Workload Identity principal of `edge/edge-cert`. No Google service account is used:
+
+```bash
+gcloud iam roles create wamnEdgeCert $P --title "wamn edge certificate" \
+  --description "Replace the load balancer certificate entry (wamn-ghx2.7)" --stage GA \
+  --permissions compute.sslCertificates.create,compute.sslCertificates.get,compute.sslCertificates.delete,compute.targetHttpsProxies.get,compute.targetHttpsProxies.setSslCertificates,compute.globalOperations.get
+gcloud projects add-iam-policy-binding wamn-dev --role projects/wamn-dev/roles/wamnEdgeCert --condition None \
+  --member principal://iam.googleapis.com/projects/540250462877/locations/global/workloadIdentityPools/wamn-dev.svc.id.goog/subject/ns/edge/sa/edge-cert
+```
+
+Install the job, and run it once:
+
+```bash
+kubectl apply -f deploy/gcp/edge-cert.yaml
+kubectl -n edge create job edge-cert-1 --from=cronjob/edge-cert
+kubectl -n edge wait job/edge-cert-1 --for=condition=Complete --timeout=180s
+kubectl -n edge logs job/edge-cert-1
+```
+
+Make sure that the load balancer serves the serial of the Secret:
+
+```bash
+openssl s_client -connect receiving.wamn.dev:443 -servername receiving.wamn.dev </dev/null 2>/dev/null \
+  | openssl x509 -noout -serial -enddate
+```
+
+On 2026-09-29 the first run found the same serial `06ccf3ff54175c089af96483743efd28e56b` in the Secret and at the proxy, and did nothing in 5 seconds. The Secret was then deleted as section 2.5 does, and cert-manager issued serial `059522f2075be58b8a66f5ddeb356437f93a` in 5 seconds. The second run created `wamn-edge-059522f2075b` and then failed with 404 on the move, because `setSslCertificates` of a global proxy has no `/global` in its path. After the fix, the third run moved the proxy and deleted `wamn-edge` in 32 seconds. The load balancer served the new serial 37 seconds after the move.
 
 ### 4.4 Measurements
 
@@ -1114,15 +1146,20 @@ The result was history row 11, kind `update`, operation `wamn-receiving:purchase
 
 ### 4.6 Delete the public edge
 
-Delete in the reverse order. The forwarding rule and the address bill while they exist:
+Delete in the reverse order. The forwarding rule and the address bill while they exist. The renewal job of section 4.3.1 goes first, and `E` keeps the name of the certificate entry that the proxy serves:
 
 ```bash
+kubectl delete -f deploy/gcp/edge-cert.yaml
+gcloud projects remove-iam-policy-binding wamn-dev --role projects/wamn-dev/roles/wamnEdgeCert --condition None \
+  --member principal://iam.googleapis.com/projects/540250462877/locations/global/workloadIdentityPools/wamn-dev.svc.id.goog/subject/ns/edge/sa/edge-cert
+gcloud iam roles delete wamnEdgeCert $P
+E=$(gcloud compute target-https-proxies describe wamn-edge $P --global --format='value(sslCertificates[0].basename())')
 gcloud dns record-sets delete receiving.wamn.dev. $P --zone wamn-dev --type A
 gcloud compute forwarding-rules delete wamn-edge $P --global --quiet
 gcloud compute target-https-proxies delete wamn-edge $P --global --quiet
 gcloud compute url-maps delete wamn-edge $P --global --quiet
 gcloud compute backend-services delete wamn-edge-platform $P --global --quiet
-gcloud compute ssl-certificates delete wamn-edge $P --global --quiet
+gcloud compute ssl-certificates delete $E $P --global --quiet
 gcloud compute backend-buckets delete wamn-edge-files $P --quiet
 gcloud storage buckets remove-iam-policy-binding gs://wamn-dev-web $P --member allUsers --role roles/storage.objectViewer
 gcloud compute addresses delete wamn-edge $P --global --quiet

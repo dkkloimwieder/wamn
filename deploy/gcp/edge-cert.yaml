@@ -1,0 +1,221 @@
+# The edge certificate CronJob of finding wamn-ghx2.7.
+# The load balancer serves a self-managed copy of edge/wamn-edge-tls, and
+# cert-manager renews only the Secret. Once a day this job compares the serial
+# of the Secret's certificate with the serial of the entry the target HTTPS
+# proxy wamn-edge serves. If they differ, it uploads the Secret as the entry
+# wamn-edge-<first 12 hex digits of the serial>, moves the proxy to it, and
+# deletes the old entry after the move's operation is DONE.
+# It runs as edge/edge-cert. The Workload Identity principal of that account
+# holds the custom role wamnEdgeCert on project wamn-dev, with no Google service
+# account and no key. The private key and the tokens never reach the log.
+# The image is curlimages/curl:8.22.0, pinned by digest. It has no openssl, so
+# the job reads the serial from the certificate's DER bytes.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: edge-cert
+  namespace: edge
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: edge-cert
+  namespace: edge
+rules:
+  - apiGroups: [""]
+    resources: [secrets]
+    resourceNames: [wamn-edge-tls]
+    verbs: [get]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: edge-cert
+  namespace: edge
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: edge-cert
+subjects:
+  - kind: ServiceAccount
+    name: edge-cert
+    namespace: edge
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: edge-cert
+  namespace: edge
+spec:
+  # 14:00 New York, inside the running hours. The guard stops the machines at
+  # 03:00 New York. A missed day is harmless, because cert-manager renews 30
+  # days before the certificate expires.
+  schedule: "0 14 * * *"
+  timeZone: America/New_York
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 1
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          serviceAccountName: edge-cert
+          restartPolicy: OnFailure
+          containers:
+            - name: cert
+              image: curlimages/curl@sha256:58adaa4e8dca9c988bae2aba4ab3434a0bb2da16bbe3f92dec39ec7785166777
+              command:
+                - sh
+                - -ec
+                - |
+                  W=/work
+                  SA=/var/run/secrets/kubernetes.io/serviceaccount
+                  C=https://compute.googleapis.com/compute/v1/projects/wamn-dev/global
+                  PROXY=wamn-edge
+
+                  # The serial of the first certificate of a PEM file, in lowercase
+                  # hex, without the sign byte 00.
+                  serial() {
+                    awk '/-----BEGIN CERTIFICATE-----/{f=1;next} /-----END CERTIFICATE-----/{exit} f' "$1" \
+                      | base64 -d | od -An -tx1 -v | awk '
+                        function h(x) { return (index("0123456789abcdef", substr(x, 1, 1)) - 1) * 16 + index("0123456789abcdef", substr(x, 2, 1)) - 1 }
+                        { for (k = 1; k <= NF; k++) b[++n] = $k }
+                        END {
+                          i = 1
+                          for (s = 0; s < 2; s++) { l = h(b[i + 1]); i += 2 + (l >= 128 ? l - 128 : 0) }
+                          if (b[i] == "a0") i += 2 + h(b[i + 1])
+                          if (b[i] != "02") exit 1
+                          l = h(b[i + 1]); i += 2
+                          if (b[i] == "00" && l > 1) { i++; l-- }
+                          for (k = 0; k < l; k++) printf "%s", b[i + k]
+                          print ""
+                        }'
+                  }
+
+                  # api METHOD URL [BODY FILE]: the response goes to $W/resp.json.
+                  # The status is in $CODE. Any status other than 200 stops the job,
+                  # except 404 when ALLOW404 is set.
+                  api() {
+                    if [ -n "${3:-}" ]; then
+                      CODE=$(curl -sS -o "$W/resp.json" -w '%{http_code}' -X "$1" -H @"$W/auth" \
+                        -H "Content-Type: application/json" --data-binary @"$3" "$2")
+                    else
+                      CODE=$(curl -sS -o "$W/resp.json" -w '%{http_code}' -X "$1" -H @"$W/auth" "$2")
+                    fi
+                    [ "$CODE" = 200 ] && return 0
+                    [ "$CODE" = 404 ] && [ -n "${ALLOW404:-}" ] && return 0
+                    echo "$1 $2 answered $CODE"
+                    cat "$W/resp.json"
+                    return 1
+                  }
+
+                  # wait_done OPERATION: wait until the global operation is DONE, and
+                  # stop the job if it carries an error.
+                  wait_done() {
+                    for n in 1 2 3 4 5 6 7 8 9 10; do
+                      api POST "$C/operations/$1/wait"
+                      if grep -q '"status": *"DONE"' "$W/resp.json"; then
+                        if grep -q '"error"' "$W/resp.json"; then
+                          echo "operation $1 failed"
+                          cat "$W/resp.json"
+                          return 1
+                        fi
+                        echo "operation $1 DONE"
+                        return 0
+                      fi
+                    done
+                    echo "operation $1 not DONE after 10 waits"
+                    return 1
+                  }
+
+                  op_name() { sed -n 's/^ *"name": *"\([^"]*\)".*/\1/p' "$W/resp.json" | head -n 1; }
+
+                  # The entry names the proxy serves, one per line.
+                  served() { grep -o '/sslCertificates/[a-z0-9-]*"' "$W/resp.json" | sed 's#/sslCertificates/##; s#"##'; }
+
+                  # The serial of a certificate entry, from its certificate field.
+                  entry_serial() {
+                    grep -m 1 '"certificate"' "$W/resp.json" \
+                      | sed 's/.*"certificate": *"\([^"]*\)".*/\1/; s/\\n/\n/g' > "$W/entry.pem"
+                    serial "$W/entry.pem"
+                  }
+
+                  curl -sS -f -o "$W/token.json" -H "Metadata-Flavor: Google" \
+                    http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token
+                  TOKEN=$(sed -n 's/.*"access_token" *: *"\([^"]*\)".*/\1/p' "$W/token.json")
+                  rm -f "$W/token.json"
+                  [ -n "$TOKEN" ]
+                  printf 'Authorization: Bearer %s\n' "$TOKEN" > "$W/auth"
+                  printf 'Authorization: Bearer %s\n' "$(cat "$SA/token")" > "$W/kube"
+
+                  curl -sS -f -o "$W/secret.json" --cacert "$SA/ca.crt" -H @"$W/kube" \
+                    https://kubernetes.default.svc/api/v1/namespaces/edge/secrets/wamn-edge-tls
+                  rm -f "$W/kube"
+                  sed -n 's/.*"tls\.crt": *"\([^"]*\)".*/\1/p' "$W/secret.json" | base64 -d > "$W/tls.crt"
+                  sed -n 's/.*"tls\.key": *"\([^"]*\)".*/\1/p' "$W/secret.json" | base64 -d > "$W/tls.key"
+                  rm -f "$W/secret.json"
+                  NEW=$(serial "$W/tls.crt")
+                  [ -n "$NEW" ]
+
+                  api GET "$C/targetHttpsProxies/$PROXY"
+                  OLD=$(served)
+                  [ -n "$OLD" ]
+                  [ "$(echo "$OLD" | wc -l)" = 1 ] || { echo "proxy $PROXY serves more than one entry: $OLD"; exit 1; }
+                  api GET "$C/sslCertificates/$OLD"
+                  SERVED=$(entry_serial)
+                  echo "secret serial $NEW, proxy $PROXY serves $OLD with serial $SERVED"
+                  if [ "$NEW" = "$SERVED" ]; then
+                    rm -f "$W/tls.crt" "$W/tls.key"
+                    echo "nothing to do"
+                    exit 0
+                  fi
+
+                  NAME=wamn-edge-$(echo "$NEW" | cut -c 1-12)
+                  [ "$NAME" != "$OLD" ]
+                  ALLOW404=1
+                  api GET "$C/sslCertificates/$NAME"
+                  ALLOW404=
+                  if [ "$CODE" = 404 ]; then
+                    {
+                      printf '{"name":"%s","certificate":"' "$NAME"
+                      awk '{printf "%s\\n", $0}' "$W/tls.crt"
+                      printf '","privateKey":"'
+                      awk '{printf "%s\\n", $0}' "$W/tls.key"
+                      printf '"}'
+                    } > "$W/insert.json"
+                    rm -f "$W/tls.key"
+                    api POST "$C/sslCertificates" "$W/insert.json" || { rm -f "$W/insert.json"; exit 1; }
+                    rm -f "$W/insert.json"
+                    wait_done "$(op_name)"
+                    echo "created $NAME"
+                  else
+                    rm -f "$W/tls.key"
+                    [ "$(entry_serial)" = "$NEW" ] || { echo "$NAME exists with another serial"; exit 1; }
+                    echo "$NAME exists from an earlier run"
+                  fi
+                  rm -f "$W/tls.crt"
+
+                  printf '{"sslCertificates":["%s/sslCertificates/%s"]}' "$C" "$NAME" > "$W/set.json"
+                  # This one method has no /global in its path.
+                  api POST "${C%/global}/targetHttpsProxies/$PROXY/setSslCertificates" "$W/set.json"
+                  wait_done "$(op_name)"
+                  echo "proxy $PROXY moved to $NAME"
+
+                  api GET "$C/targetHttpsProxies/$PROXY"
+                  NOW=$(served)
+                  [ "$NOW" = "$NAME" ] || { echo "proxy $PROXY serves $NOW, not $NAME; $OLD stays"; exit 1; }
+                  api DELETE "$C/sslCertificates/$OLD"
+                  wait_done "$(op_name)"
+                  echo "deleted $OLD"
+                  rm -f "$W/auth"
+              volumeMounts:
+                - name: work
+                  mountPath: /work
+              resources:
+                requests:
+                  cpu: 10m
+                  memory: 16Mi
+          volumes:
+            - name: work
+              emptyDir:
+                medium: Memory
