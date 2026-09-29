@@ -235,7 +235,7 @@ The CLI also accepts `--resend-api-key` and `--resend-from`; prefer environment 
 For Kubernetes, create a Secret with the `api-key` entry in the identity namespace.
 Set the identity chart's `resendSecret` to that Secret and `resendFrom` to the verified sender.
 Set `operatorCaSecret` to permit operator invitation requests.
-Set `inviteUrl` to the web client base, for example `https://receiving.wamn.dev`. The invitation mail then carries one link to `<inviteUrl>/invite#<code>`. If `inviteUrl` is empty, the mail shows the code to paste into the terminal client.
+Set `inviteUrl` to the web client base, for example `https://receiving.wamn.dev`. The invitation mail then carries one link to `<inviteUrl>/invite#<code>`, and the reset mail one link to `<inviteUrl>/reset#<secret>`. If `inviteUrl` is empty, each mail shows the code to paste into the terminal client.
 An operator sends an invitation with `wamn-ctl invite`, which uses the operator certificate flags of the PAT mint. Identity mails the invitation, and the command prints only identity's reply:
 
 ```bash

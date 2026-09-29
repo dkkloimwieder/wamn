@@ -47,8 +47,9 @@ impl ResendConfig {
         })
     }
 
-    /// Send the invitation as one link to `<base>/invite#<code>`. Without a
-    /// base, the mail shows the code to paste into the terminal prompt.
+    /// Send the invitation as one link to `<base>/invite#<code>`, and the
+    /// reset as one link to `<base>/reset#<secret>`. Without a base, each mail
+    /// shows the code to paste into the terminal prompt.
     pub fn with_invite_url(mut self, base: &str) -> Result<Self, IdentityServiceError> {
         if !base.starts_with("https://")
             || base.len() > 2048
@@ -157,9 +158,7 @@ impl Mailer {
         email: &str,
         secret: &str,
     ) -> Result<(), IdentityServiceError> {
-        let text = Zeroizing::new(format!(
-            "Reset your WAMN password.\n\nReset secret: {secret}\n\nEnter your email and this secret in the password reset prompt. It expires after 15 minutes and works once. If you did not request this, ignore this email."
-        ));
+        let text = Zeroizing::new(reset_text(self.config.invite_url.as_deref(), secret));
         self.password_email(email, "Reset your WAMN password", &text)
             .await
     }
@@ -219,13 +218,24 @@ fn invitation_text(invite_url: Option<&str>, principal: &str, secret: &str) -> S
     }
 }
 
+fn reset_text(invite_url: Option<&str>, secret: &str) -> String {
+    match invite_url {
+        Some(base) => {
+            format!("Open this link to reset your WAMN password.\n{base}/reset#{secret}\n")
+        }
+        None => format!(
+            "Reset your WAMN password.\n\nReset secret: {secret}\n\nEnter your email and this secret in the password reset prompt. It expires after 15 minutes and works once. If you did not request this, ignore this email."
+        ),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
 
     #[test]
-    fn an_invite_url_makes_the_mail_one_line_and_one_link() {
+    fn an_invite_url_makes_each_mail_one_line_and_one_link() {
         let config = ResendConfig::new("key".into(), "WAMN <fixture@example.invalid>".into())
             .unwrap()
             .with_invite_url("https://receiving.example.invalid/")
@@ -235,6 +245,11 @@ mod tests {
             "Open this link to set your WAMN password.\nhttps://receiving.example.invalid/invite#p:wamn_inv_s\n"
         );
         assert!(invitation_text(None, "p", "wamn_inv_s").contains("Invitation code: p:wamn_inv_s"));
+        assert_eq!(
+            reset_text(config.invite_url.as_deref(), "wamn_reset_s"),
+            "Open this link to reset your WAMN password.\nhttps://receiving.example.invalid/reset#wamn_reset_s\n"
+        );
+        assert!(reset_text(None, "wamn_reset_s").contains("Reset secret: wamn_reset_s"));
     }
 
     #[tokio::test]

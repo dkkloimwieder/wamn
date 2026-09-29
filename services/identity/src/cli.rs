@@ -60,7 +60,7 @@ struct MailArgs {
     resend_api_key: Option<String>,
     #[arg(long, env = "RESEND_FROM", requires = "resend_api_key")]
     resend_from: Option<String>,
-    /// Base URL of the web invitation page. The mail links to `<base>/invite#<code>`.
+    /// Base URL of the web client. The invitation mail links to `<base>/invite#<code>`, and the reset mail to `<base>/reset#<secret>`.
     #[arg(long, env = "WAMN_IDENTITY_INVITE_URL", requires = "resend_api_key")]
     invite_url: Option<String>,
 }
