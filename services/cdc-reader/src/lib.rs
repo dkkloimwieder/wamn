@@ -36,9 +36,13 @@
 //!   order == commit order per DB.
 //! - **The reader NEVER creates the slot.** `enable-cdc-project-env` created
 //!   it (WAL pinned from enable); a MISSING or INVALIDATED slot is a capture
-//!   GAP — a first-class incident (v3 §11): the reader refuses to start (or
-//!   dies) loudly instead of silently re-creating and resuming from "now".
-//!   Recovery is operator-driven: re-enable CDC + replay/backfill assessment.
+//!   GAP — a first-class incident (v3 §11, `wamn-59z6`). The reader stops
+//!   capture, stays running, logs `CDC_CAPTURE_GAP` once per process, and
+//!   every 30 seconds reads its registration, its newest `registry.capture_gap`
+//!   row and its slot. It resumes in the same process when the slot is healthy
+//!   and that row has `resync_at` set. Recovery is operator-driven:
+//!   `wamn-ctl recover-capture-gap`, the resync, `wamn-ctl close-capture-gap`
+//!   (docs/plan/cdc-reader-slot.md 4.3).
 //! - **The reader captures only the declared shape** (wamn-0h0g.19.19). Before
 //!   every session it reads the server version, the publication, and the slot,
 //!   and compares them against the provisioning declaration in
@@ -90,7 +94,7 @@ use wamn_control_provision::events::{
 };
 use wamn_control_provision::{SystemReader, parse_system_reader_url};
 use wamn_control_registry::Triple;
-use wamn_control_registry::sql::select_event_reader_sql;
+use wamn_control_registry::sql::{select_capture_gap_sql, select_event_reader_sql};
 #[cfg(test)]
 use wamn_event_wire::stream_subjects;
 use wamn_event_wire::{Causation, Envelope, Op, msg_id, stream_name, subject};
@@ -186,7 +190,8 @@ pub struct EventReaderArgs {
 enum SessionFate {
     /// Shutdown was requested — exit cleanly.
     Cancelled,
-    /// The slot is gone/invalidated: a capture GAP — die loudly (v3 §11).
+    /// The slot is gone/invalidated: a capture GAP — the next preflight stops
+    /// capture until the gap closes (v3 §11, `wamn-59z6`).
     SlotIncident,
     /// Misconfiguration that a retry cannot fix.
     Fatal,
@@ -545,12 +550,7 @@ async fn read_registration(args: &EventReaderArgs) -> anyhow::Result<Registratio
         &args.project,
         &args.env,
     )?;
-    let (client, conn) = tokio_postgres::connect(&args.system_database_url, NoTls)
-        .await
-        .context("connect to the system DB (--system-database-url)")?;
-    tokio::spawn(async move {
-        let _ = conn.await;
-    });
+    let client = connect_system(args).await?;
     let row = client
         .query_opt(
             select_event_reader_sql(),
@@ -570,6 +570,120 @@ async fn read_registration(args: &EventReaderArgs) -> anyhow::Result<Registratio
         stream: row.get(2),
         enabled: row.get(5),
     })
+}
+
+async fn connect_system(args: &EventReaderArgs) -> anyhow::Result<tokio_postgres::Client> {
+    let (client, conn) = tokio_postgres::connect(&args.system_database_url, NoTls)
+        .await
+        .context("connect to the system DB (--system-database-url)")?;
+    tokio::spawn(async move {
+        let _ = conn.await;
+    });
+    Ok(client)
+}
+
+/// Refuse a registration that names another stream or is disabled.
+fn check_registration(args: &EventReaderArgs, reg: &Registration) -> anyhow::Result<()> {
+    let expected_stream = stream_name(&args.org, &args.project, &args.env);
+    if reg.stream != expected_stream {
+        bail!(
+            "registered source stream {} does not match this environment's stream {expected_stream}",
+            reg.stream
+        );
+    }
+    if !reg.enabled {
+        bail!(
+            "event-reader registration for {}/{}/{} is disabled",
+            args.org,
+            args.project,
+            args.env
+        );
+    }
+    Ok(())
+}
+
+/// The structured event of a capture gap (`wamn-59z6`), logged once per process.
+pub const CAPTURE_GAP_EVENT: &str = "CDC_CAPTURE_GAP";
+
+/// How often a reader stopped on a capture gap reads its registration, its
+/// newest gap row and its slot again: the slot monitor's default cadence.
+const GAP_POLL: Duration = Duration::from_secs(30);
+
+/// Why capture cannot run: the slot is lost, or the newest gap row of the
+/// registration waits for its resync (docs/plan/cdc-reader-slot.md 4.3).
+#[derive(Debug)]
+struct CaptureGap {
+    slot: String,
+    reason: String,
+}
+
+/// The newest `registry.capture_gap` row of this registration, when its
+/// `resync_at` is not set.
+async fn open_capture_gap(args: &EventReaderArgs) -> anyhow::Result<Option<CaptureGap>> {
+    let client = connect_system(args).await?;
+    let row = client
+        .query_opt(
+            select_capture_gap_sql(),
+            &[&args.org, &args.project, &args.env],
+        )
+        .await
+        .context("read registry.capture_gap")?;
+    Ok(row
+        .filter(|row| !row.get::<_, bool>(1))
+        .map(|row| CaptureGap {
+            slot: row.get(0),
+            reason: "the newest capture gap waits for close-capture-gap".to_owned(),
+        }))
+}
+
+/// Capture may run only with no open gap row and a healthy slot of the
+/// declared shape. Drift and connection failures stay errors.
+async fn capture_gap(
+    args: &EventReaderArgs,
+    reg: &Registration,
+) -> anyhow::Result<Option<CaptureGap>> {
+    if let Some(gap) = open_capture_gap(args).await? {
+        return Ok(Some(gap));
+    }
+    preflight(args, reg).await
+}
+
+/// Stop capture on a gap: log [`CAPTURE_GAP_EVENT`] once per process, then read
+/// the registration, its newest gap row and the slot every [`GAP_POLL`], with
+/// no log, until capture may run. Returns the registration to resume on, or
+/// `None` on shutdown. The reader never creates or drops a slot here.
+async fn wait_out_gap(
+    args: &EventReaderArgs,
+    gap: CaptureGap,
+    reported: &mut bool,
+    token: &CancellationToken,
+) -> anyhow::Result<Option<Registration>> {
+    if !*reported {
+        *reported = true;
+        tracing::error!(
+            target: "wamn::event_reader",
+            event = CAPTURE_GAP_EVENT,
+            slot = %gap.slot,
+            reason = %gap.reason,
+            "CAPTURE GAP: capture stopped until recover-capture-gap and close-capture-gap"
+        );
+    }
+    loop {
+        tokio::select! {
+            () = token.cancelled() => return Ok(None),
+            () = tokio::time::sleep(GAP_POLL) => {}
+        }
+        let reg = read_registration(args).await?;
+        check_registration(args, &reg)?;
+        if capture_gap(args, &reg).await?.is_none() {
+            tracing::info!(
+                target: "wamn::event_reader",
+                slot = reg.slot,
+                "capture gap closed; capture resumes"
+            );
+            return Ok(Some(reg));
+        }
+    }
 }
 
 /// The lowest PostgreSQL major version the reader accepts.
@@ -599,10 +713,14 @@ pub const TRUNCATE_INCIDENT_EVENT: &str = "CDC_TRUNCATE_RECEIVED";
 /// connection, before every session: the server version floor, the publication
 /// shape, and the slot shape and health.
 ///
-/// An absent or invalidated slot is the v3 §11 capture-gap incident. Any other
+/// An absent or invalidated slot is the v3 §11 capture-gap incident, returned
+/// as a [`CaptureGap`] (`wamn-59z6`). Any other
 /// difference from the provisioned declaration is drift, and the reader refuses
 /// it rather than capture an unknown shape (wamn-0h0g.19.19).
-async fn preflight(args: &EventReaderArgs, reg: &Registration) -> anyhow::Result<()> {
+async fn preflight(
+    args: &EventReaderArgs,
+    reg: &Registration,
+) -> anyhow::Result<Option<CaptureGap>> {
     let url = preflight_url(&args.cdc_url, &args.sslmode)?;
     let (client, conn) = tokio_postgres::connect(&url, NoTls)
         .await
@@ -774,7 +892,10 @@ async fn preflight_publication(
 /// Verify the slot EXISTS, is healthy, and carries its declared shape over an
 /// ordinary SQL connection, and log the resume position. Absent or invalidated
 /// ⇒ the v3 §11 incident. A different shape ⇒ a drift refusal.
-async fn preflight_slot(client: &tokio_postgres::Client, slot: &str) -> anyhow::Result<()> {
+async fn preflight_slot(
+    client: &tokio_postgres::Client,
+    slot: &str,
+) -> anyhow::Result<Option<CaptureGap>> {
     let row = client
         .query_opt(
             "SELECT active, confirmed_flush_lsn::text, wal_status::text, invalidation_reason::text, \
@@ -785,21 +906,21 @@ async fn preflight_slot(client: &tokio_postgres::Client, slot: &str) -> anyhow::
         .await
         .context("preflight: read pg_replication_slots")?;
     let Some(row) = row else {
-        bail!(
-            "CAPTURE GAP (slot incident): replication slot {slot} does not exist — \
-             the reader never creates slots; re-enable CDC and assess the gap (v3 §11)"
-        );
+        // The reader never creates slots: recover-capture-gap does.
+        return Ok(Some(CaptureGap {
+            slot: slot.to_owned(),
+            reason: "missing".to_owned(),
+        }));
     };
     let active: bool = row.get(0);
     let confirmed: Option<String> = row.get(1);
     let wal_status: Option<String> = row.get(2);
     let invalidation: Option<String> = row.get(3);
     if invalidation.is_some() || wal_status.as_deref() == Some("lost") {
-        bail!(
-            "CAPTURE GAP (slot incident): slot {slot} invalidated \
-             (wal_status={wal_status:?}, reason={invalidation:?}) — re-enable CDC and \
-             assess the gap (v3 §11)"
-        );
+        return Ok(Some(CaptureGap {
+            slot: slot.to_owned(),
+            reason: invalidation.unwrap_or_else(|| "wal_status lost".to_owned()),
+        }));
     }
     let drift = slot_drift(&SlotShape {
         slot_type: row.get(4),
@@ -823,7 +944,7 @@ async fn preflight_slot(client: &tokio_postgres::Client, slot: &str) -> anyhow::
         wal_status = wal_status.as_deref().unwrap_or("-"),
         "preflight: slot healthy and matching its declaration (resume position = confirmed LSN)"
     );
-    Ok(())
+    Ok(None)
 }
 
 async fn open_session(
@@ -954,22 +1075,8 @@ pub async fn run_with_shutdown(
         args.nats_username.as_deref(),
         args.nats_password_file.as_deref(),
     )?;
-    let reg = read_registration(&args).await?;
-    let expected_stream = stream_name(&args.org, &args.project, &args.env);
-    if reg.stream != expected_stream {
-        bail!(
-            "registered source stream {} does not match this environment's stream {expected_stream}",
-            reg.stream
-        );
-    }
-    if !reg.enabled {
-        bail!(
-            "event-reader registration for {}/{}/{} is disabled",
-            args.org,
-            args.project,
-            args.env
-        );
-    }
+    let mut reg = read_registration(&args).await?;
+    check_registration(&args, &reg)?;
     tracing::info!(
         publication = reg.publication,
         slot = reg.slot,
@@ -1006,29 +1113,52 @@ pub async fn run_with_shutdown(
     // advance, seeded at start so a reader that never commits still ages. Shared
     // with the detached slot-headroom monitor.
     let last_lsn_advance_ms = Arc::new(AtomicI64::new(chrono::Utc::now().timestamp_millis()));
+    // The monitor follows the registered slot. A recovery can name a new
+    // slot, so the monitor has its own token and restarts with the slot.
+    let mut monitor = token.child_token();
     spawn_slot_monitor(
         &args,
         reg.slot.clone(),
-        token.clone(),
+        monitor.clone(),
         last_lsn_advance_ms.clone(),
     );
 
     let mut ladder = ReopenLadder::new();
+    let mut gap_reported = false;
     loop {
         if token.is_cancelled() {
             return Ok(());
         }
-        // Absent/invalidated slot = incident, a drifted publication or slot =
-        // refusal — checked before EVERY session, so a substrate changed
-        // mid-life is caught on the re-open path too.
-        preflight(&args, &reg).await?;
+        // An open gap row or an absent/invalidated slot = the capture-gap
+        // incident, a drifted publication or slot = refusal — checked before
+        // EVERY session, so a substrate changed mid-life is caught on the
+        // re-open path too.
+        if let Some(gap) = capture_gap(&args, &reg).await? {
+            let Some(resumed) = wait_out_gap(&args, gap, &mut gap_reported, &token).await? else {
+                return Ok(());
+            };
+            if resumed.slot != reg.slot {
+                monitor.cancel();
+                monitor = token.child_token();
+                spawn_slot_monitor(
+                    &args,
+                    resumed.slot.clone(),
+                    monitor.clone(),
+                    last_lsn_advance_ms.clone(),
+                );
+            }
+            reg = resumed;
+            continue;
+        }
 
         let mut stream = match open_session(&args, &reg, token.clone()).await {
             Ok(s) => s,
             Err(e) => match classify(&e) {
                 SessionFate::Cancelled => return Ok(()),
                 SessionFate::SlotIncident => {
-                    bail!("CAPTURE GAP (slot incident) opening the session: {e} (v3 §11)")
+                    // The next preflight finds the lost slot and waits.
+                    ladder_step_or_bail(&mut ladder, 0, &e, &token).await?;
+                    continue;
                 }
                 SessionFate::Fatal => return Err(anyhow::anyhow!(e).context("open session")),
                 SessionFate::Reopen => {
@@ -1068,7 +1198,8 @@ pub async fn run_with_shutdown(
                 match classify(&e) {
                     SessionFate::Cancelled => return Ok(()),
                     SessionFate::SlotIncident => {
-                        bail!("CAPTURE GAP (slot incident) mid-stream: {e} (v3 §11)")
+                        // The next preflight finds the lost slot and waits.
+                        ladder_step_or_bail(&mut ladder, summary.commits, &e, &token).await?;
                     }
                     SessionFate::Fatal => return Err(anyhow::anyhow!(e).context("drain")),
                     SessionFate::Reopen => {

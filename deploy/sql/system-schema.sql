@@ -689,6 +689,31 @@ CREATE TABLE registry.event_readers (
 );
 
 -- ---------------------------------------------------------------------------
+-- Capture gaps (wamn-59z6, docs/plan/cdc-reader-slot.md section 4.3): one row
+-- per lost slot of a CDC reader registration. `wamn-ctl recover-capture-gap`
+-- writes it, and `wamn-ctl close-capture-gap` sets `resync_at`. The reader
+-- captures only while the newest row of its registration has `resync_at` set,
+-- or no row exists. `slot` keeps the lost slot's name. A null `start_lsn`
+-- means "from registration": the source stream held no event. `created_at` is
+-- the time of the recovery verb.
+-- ---------------------------------------------------------------------------
+CREATE TABLE registry.capture_gap (
+    org        text NOT NULL,
+    project    text NOT NULL,
+    env        text NOT NULL,
+    slot       text NOT NULL,
+    start_lsn  pg_lsn,
+    start_at   timestamptz NOT NULL,
+    reason     text NOT NULL,
+    end_lsn    pg_lsn NOT NULL,
+    resync_at  timestamptz,
+    created_at timestamptz NOT NULL DEFAULT now(),
+    PRIMARY KEY (org, project, env, created_at),
+    FOREIGN KEY (org, project, env)
+        REFERENCES registry.event_readers (org, project, env) ON DELETE CASCADE
+);
+
+-- ---------------------------------------------------------------------------
 -- Provisioning sagas — minimal exactly-once / resumable state for the
 -- provisioning orchestrator (10.1; consumed by .6 provision-org / .7
 -- provision-project-env). One row per saga run.

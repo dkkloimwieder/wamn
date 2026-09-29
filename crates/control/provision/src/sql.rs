@@ -708,11 +708,12 @@ pub fn grant_event_materializer_surface_sql(schema: &str) -> String {
 /// across all three and granted inside exactly one.
 pub const SYSTEM_PLANE_SCHEMAS: [&str; 3] = ["identity", "provisioning", "registry"];
 
-/// The one relation the CDC reader's registration `SELECT` touches.
+/// The two relations the CDC reader's `SELECT`s touch.
 ///
 /// `services/cdc-reader` runs `wamn_control_registry::sql::select_event_reader_sql`
-/// over `WAMN_SYSTEM_URL` and nothing else, so this is its whole authority.
-pub const REGISTRY_READER_RELATIONS: [&str; 1] = ["event_readers"];
+/// and `select_capture_gap_sql` over `WAMN_SYSTEM_URL` and nothing else, so this
+/// is its whole authority (`wamn-59z6`: the reader reads its gap row).
+pub const REGISTRY_READER_RELATIONS: [&str; 2] = ["event_readers", "capture_gap"];
 
 /// The relations the management and human route identity reads touch.
 ///
@@ -777,7 +778,7 @@ fn grant_system_reader_surface_sql(
 
 /// Converge `wamn_registry_reader` to its exact CDC-registration read surface.
 ///
-/// One `SELECT`, on `registry.event_readers`. The role is refused on `identity.*`
+/// `SELECT` on `registry.event_readers` and `registry.capture_gap`. The role is refused on `identity.*`
 /// by the same batch that grants it here, which is why the CDC reader's
 /// credential cannot be reused to read or forge identity.
 pub fn grant_registry_reader_surface_sql() -> String {
@@ -1197,22 +1198,23 @@ mod tests {
              REVOKE ALL PRIVILEGES ON SCHEMA \"identity\", \"provisioning\", \"registry\" \
              FROM \"wamn_registry_reader\"; \
              GRANT USAGE ON SCHEMA \"registry\" TO \"wamn_registry_reader\"; \
-             GRANT SELECT ON TABLE \"registry\".\"event_readers\" TO \"wamn_registry_reader\";"
+             GRANT SELECT ON TABLE \"registry\".\"event_readers\" TO \"wamn_registry_reader\"; \
+             GRANT SELECT ON TABLE \"registry\".\"capture_gap\" TO \"wamn_registry_reader\";"
         );
     }
 
     /// THE DISJOINTNESS GUARD, from the registry side (`wamn-0h0g.12.116`).
     ///
-    /// One SELECT and one relation, and not one syllable of `identity`
+    /// Two SELECTs on two registry relations, and not one syllable of `identity`
     /// downstream of the revocation. Widening this role onto the identity plane
     /// — the one edit that would collapse the two disjoint grant sets into a
     /// union — fails here.
     #[test]
     fn the_registry_reader_is_never_granted_anything_on_the_identity_plane() {
         let sql = grant_registry_reader_surface_sql();
-        assert_eq!(sql.matches("GRANT SELECT").count(), 1);
+        assert_eq!(sql.matches("GRANT SELECT").count(), 2);
         assert_eq!(sql.matches("GRANT USAGE ON SCHEMA").count(), 1);
-        assert_eq!(REGISTRY_READER_RELATIONS.len(), 1);
+        assert_eq!(REGISTRY_READER_RELATIONS.len(), 2);
         for forbidden in ["INSERT", "UPDATE", "DELETE", "TRUNCATE", "REFERENCES"] {
             assert!(
                 !sql.contains(&format!("GRANT {forbidden}")),

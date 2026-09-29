@@ -261,11 +261,12 @@ fn the_registry_reader_holds_one_select_and_is_refused_everywhere_else() {
     assert_eq!(
         load_role_grants(&admin_url, stable),
         vec![
+            "relation|registry|capture_gap|SELECT|false".to_owned(),
             "relation|registry|event_readers|SELECT|false".to_owned(),
             "schema|registry|registry|USAGE|false".to_owned(),
         ],
         "the stable registry-reader role's aclexplode grants are not exactly \
-         USAGE on registry plus SELECT on registry.event_readers"
+         USAGE on registry plus SELECT on registry.event_readers and registry.capture_gap"
     );
     // The generation itself holds only CONNECT, directly: its read authority is
     // inherited, so a direct table grant here would be a second, unmanaged path.
@@ -462,6 +463,7 @@ fn the_identity_reader_can_never_write_identity_and_neither_reader_reaches_the_o
     assert_eq!(
         load_role_grants(&admin_url, WorkloadRoleFamily::RegistryReader.acl_role()),
         vec![
+            "relation|registry|capture_gap|SELECT|false".to_owned(),
             "relation|registry|event_readers|SELECT|false".to_owned(),
             "schema|registry|registry|USAGE|false".to_owned(),
         ],

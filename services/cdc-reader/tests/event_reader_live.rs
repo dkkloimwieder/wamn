@@ -13,13 +13,16 @@
 //! subcommand runs — through the load-bearing drills:
 //!
 //! - refusal probes: a disabled registration refuses; a MISSING slot is the
-//!   v3 §11 capture-gap incident (the reader never creates slots);
+//!   v3 §11 capture-gap incident: the reader stays running and stopped, and
+//!   never creates slots;
 //! - commit order + envelope shape + `Nats-Msg-Id` dedupe on the stream;
 //! - confirmed LSN advances only on JetStream ack;
 //! - crash (task abort) → restart resumes from the confirmed LSN, no gaps;
 //! - an idle database's slot follows another database's WAL (keepalive confirm);
 //! - JetStream unreachable (a severed TCP proxy) → the LSN HOLDS while
 //!   writes continue → restore → delayed, never lost;
+//! - an invalidated slot stops capture until the newest gap row has
+//!   resync_at, and capture resumes in the same process (wamn-59z6);
 //! - clean shutdown on cancellation; teardown leaves NO slot behind.
 
 use std::sync::Arc;
@@ -563,17 +566,33 @@ async fn reader_streams_one_project_env_to_the_evt_stream() {
         .await
         .expect("provision declared advisory stream");
 
-    let err = tokio::time::timeout(
-        Duration::from_secs(60),
-        run_with_shutdown(
-            reader_args(&super_url, &cdc_name, proxied_nats.clone()),
-            ReaderShutdown::new(),
-        ),
-    )
-    .await
-    .expect("the missing-slot probe must terminate (a hung reader = the incident path is broken)")
-    .expect_err("a missing slot is the v3 §11 incident, never a silent create");
-    assert!(err.to_string().contains("CAPTURE GAP"), "got: {err:#}");
+    // A missing slot is the capture-gap incident (wamn-59z6): the reader stays
+    // running and stopped, and never creates the slot.
+    let gap_shutdown = ReaderShutdown::new();
+    let gap_reader = tokio::spawn(run_with_shutdown(
+        reader_args(&super_url, &cdc_name, proxied_nats.clone()),
+        gap_shutdown.clone(),
+    ));
+    tokio::time::sleep(Duration::from_secs(5)).await;
+    assert!(
+        !gap_reader.is_finished(),
+        "a missing slot stops capture; the reader does not exit"
+    );
+    let slots: i64 = sys
+        .query_one(
+            "SELECT count(*) FROM pg_replication_slots WHERE slot_name = $1",
+            &[&cdc_name],
+        )
+        .await
+        .unwrap()
+        .get(0);
+    assert_eq!(slots, 0, "the reader never creates the slot");
+    gap_shutdown.shutdown();
+    tokio::time::timeout(Duration::from_secs(10), gap_reader)
+        .await
+        .expect("a stopped reader ends on shutdown")
+        .expect("reader task join")
+        .expect("a stopped reader shuts down cleanly");
 
     // --- slot (the real builder), then the reader ---------------------------
     sys.batch_execute(&sql::create_failover_slot_sql(&cdc_name))
@@ -974,7 +993,7 @@ async fn reader_streams_one_project_env_to_the_evt_stream() {
 
     // --- phase H: an unmapped application relation refuses before publish ----
     let handle3 = tokio::spawn(run_with_shutdown(
-        reader_args(&super_url, &cdc_name, proxied_nats),
+        reader_args(&super_url, &cdc_name, proxied_nats.clone()),
         ReaderShutdown::new(),
     ));
     let deadline = Instant::now() + Duration::from_secs(15);
@@ -1024,6 +1043,125 @@ async fn reader_streams_one_project_env_to_the_evt_stream() {
         before_unmapped,
         "the refused unmapped row must not enter the event stream"
     );
+
+    // --- phase I: an invalidated slot stops capture until the gap closes -----
+    // (wamn-59z6) A 1 MB slot limit and WAL written past it invalidate the
+    // inactive slot. The reader stays stopped while the gap row is open, and it
+    // resumes in the same process when resync_at is set.
+    // ALTER SYSTEM refuses a transaction block, so it runs alone.
+    for statement in [
+        "ALTER SYSTEM SET max_slot_wal_keep_size = '1MB'",
+        "SELECT pg_reload_conf()",
+        "DROP TABLE IF EXISTS public.reader_live_other",
+        "CREATE TABLE public.reader_live_other (id bigint PRIMARY KEY, pad text)",
+    ] {
+        admin
+            .batch_execute(statement)
+            .await
+            .expect("a 1 MB slot limit");
+    }
+    let mut lost = false;
+    for round in 0..20i64 {
+        admin
+            .execute(
+                "INSERT INTO public.reader_live_other \
+                 SELECT g, repeat('x', 1000) FROM generate_series($1::bigint * 10000 + 1, $1::bigint * 10000 + 10000) g",
+                &[&round],
+            )
+            .await
+            .expect("write WAL past the limit");
+        for statement in ["SELECT pg_switch_wal()", "CHECKPOINT"] {
+            admin
+                .batch_execute(statement)
+                .await
+                .expect("switch and checkpoint");
+        }
+        let status: Option<String> = sys
+            .query_one(
+                "SELECT wal_status::text FROM pg_replication_slots WHERE slot_name = $1",
+                &[&cdc_name],
+            )
+            .await
+            .unwrap()
+            .get(0);
+        if status.as_deref() == Some("lost") {
+            lost = true;
+            break;
+        }
+    }
+    assert!(lost, "the slot was never invalidated");
+    let lost_confirmed = confirmed_lsn(&sys, &cdc_name).await;
+    let shutdown_i = ReaderShutdown::new();
+    let handle_i = tokio::spawn(run_with_shutdown(
+        reader_args(&super_url, &cdc_name, proxied_nats.clone()),
+        shutdown_i.clone(),
+    ));
+    tokio::time::sleep(Duration::from_secs(5)).await;
+    assert!(
+        !handle_i.is_finished(),
+        "an invalidated slot does not end the reader"
+    );
+    // The recovery, as recover-capture-gap writes it: a new slot, then the row.
+    sys.execute("SELECT pg_drop_replication_slot($1)", &[&cdc_name])
+        .await
+        .expect("drop the lost slot");
+    sys.batch_execute(&sql::create_failover_slot_sql(&cdc_name))
+        .await
+        .expect("the new slot");
+    sys.execute(
+        "INSERT INTO registry.capture_gap \
+           (org, project, env, slot, start_lsn, start_at, reason, end_lsn) \
+         SELECT $1, $2, $3, $4, $5::text::pg_lsn, now(), 'wal_removed', confirmed_flush_lsn \
+         FROM pg_replication_slots WHERE slot_name::text = $4",
+        &[&ORG, &PROJECT, &ENV, &cdc_name, &lost_confirmed],
+    )
+    .await
+    .expect("the open gap row");
+    let before_gap = stream_count(&js, &stream_name).await;
+    sys.execute(
+        "INSERT INTO app.widgets (id, val) VALUES (900, 'after the gap')",
+        &[],
+    )
+    .await
+    .unwrap();
+    tokio::time::sleep(Duration::from_secs(40)).await;
+    assert_eq!(
+        stream_count(&js, &stream_name).await,
+        before_gap,
+        "an open gap row keeps capture stopped on a healthy new slot"
+    );
+    assert!(
+        !handle_i.is_finished(),
+        "the stopped reader is still running"
+    );
+    sys.execute(
+        "UPDATE registry.capture_gap SET resync_at = now() \
+         WHERE org = $1 AND project = $2 AND env = $3",
+        &[&ORG, &PROJECT, &ENV],
+    )
+    .await
+    .expect("close the gap");
+    wait_for_count(&js, &stream_name, before_gap + 1, 45).await;
+    assert!(
+        !handle_i.is_finished(),
+        "capture resumed in the same process, with no restart"
+    );
+    shutdown_i.shutdown();
+    tokio::time::timeout(Duration::from_secs(15), handle_i)
+        .await
+        .expect("the resumed reader ends on shutdown")
+        .expect("reader task join")
+        .expect("the resumed reader shuts down cleanly");
+    for statement in [
+        "ALTER SYSTEM RESET max_slot_wal_keep_size",
+        "SELECT pg_reload_conf()",
+        "DROP TABLE public.reader_live_other",
+    ] {
+        admin
+            .batch_execute(statement)
+            .await
+            .expect("restore the slot limit");
+    }
 
     // --- teardown: NO slot left behind --------------------------------------
     let _ = js.delete_stream(&stream_name).await;

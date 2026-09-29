@@ -199,6 +199,16 @@ pub fn upsert_event_reader_sql() -> &'static str {
        updated_at = now()"
 }
 
+/// Read the newest capture gap of one CDC reader registration (`wamn-59z6`).
+/// Params: `$1` org, `$2` project, `$3` env. Columns: `slot` (the lost slot)
+/// and whether `resync_at` is set. No row: the registration never lost a slot.
+pub fn select_capture_gap_sql() -> &'static str {
+    "SELECT slot, resync_at IS NOT NULL \
+     FROM registry.capture_gap \
+     WHERE org = $1 AND project = $2 AND env = $3 \
+     ORDER BY created_at DESC LIMIT 1"
+}
+
 /// Read one project-env's CDC reader registration — what the reader service
 /// (l5i9.10) streams by. Params: `$1` org, `$2` project, `$3` env. Columns:
 /// `publication, slot, stream, replication_secret_name,
