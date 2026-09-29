@@ -78,7 +78,7 @@ The generator compares those choices with the schema and SQL. It does not replac
 | Filter `binding` (`json_array` for a list, `json_range` for a range, `json_boolean` for is-null), sort `max_fields`, pagination `kind`, `.cursor`, and limit `invalid` | Fixed query protocol, including cursor version, canonical JSON, encoding, opacity, and refusal. Derive in generated contracts. |
 | `internal_relations.*.schema`, `.table`, `.cdc` | Application relation selection and event-publication policy. PostgreSQL owns relation shape. Retain. |
 | Custom operation `kind`, `visibility`, `permission`, `connection` | Application operation exposure and authority selection. Retain. |
-| `transaction`, `automatic_retry`, `idempotent_by` | Application transaction and replay choices. `idempotent_by: claim` is the whole declaration of a claim: the generated codec claims the key in the [write log](#the-write-log). Validation refuses a `claim` object. Retain. |
+| `transaction`, `automatic_retry`, `idempotent_by` | Application transaction and replay choices. `idempotent_by: claim` is the whole declaration of a claim: the engine claims the key in the [write log](#the-write-log), and `inherited` takes the claim of a base operation. Validation refuses a `claim` object. Retain. |
 | `pre_commit`, `participant` | Application participation contract and selection. Retain. |
 | `input.raw_body_maximum`, `.envelope.minimum`, `.maximum`, `.line.minimum`, `.maximum` | Application input bounds. Retain. |
 | Input `item_semantics` and count-bound `invalid` | Fixed per-item outcomes and input refusal. Derive. |
@@ -254,8 +254,8 @@ Return, trap, cancellation, deadline, or transaction completion revokes access. 
 The earlier cross-component borrowed-resource contract failed with `mismatched resource types` on the current pin.
 That result does not describe participant-local resources. Explicit resource transfer between stores remains unimplemented.
 
-The base's codec stores the result in the write log after successful participation, then commits.
-The request bytes include the selected participation intent. A retry answers the stored result without repeated writes, and a changed intent refuses.
+The engine stores the result in the write log after successful participation, and the host commits.
+The request hash includes the selected participation intent. A retry answers the stored result without repeated writes, and a changed intent refuses.
 Receiving and Acme use this path for conditional inspection under the existing purchase-order lock.
 No inspection requirement produces no inspection row. An approved requirement permits the write. An unmet requirement rolls back the entire item.
 Permitted direct Receiving calls retain base behavior.
@@ -266,37 +266,49 @@ Serialization and deadlock errors reach the caller without an automatic transact
 
 ### The write log
 
-`app_system.write_log` holds the idempotency record of every create and every command idempotent by claim in one project database.
+`app_system.write_log` holds the idempotency record of every create, update, delete and command in one project database.
 `deploy/sql/app-schema.sql` installs it, so no application migration names it.
 It has no tenant column and no row policy, because the database is the tenant, and no record history: the rows the work writes carry the actor.
-`wamn_app` holds `INSERT`, `SELECT` and `UPDATE (result)` on it.
-Its key is the contract operation without its `@version`, for example `wamn-wms:location/create`, and the idempotency key.
-The key is the input field that the contract's `idempotency.key` names: `idempotency_key` for a create, and `value.idempotency_key` for a command item.
+`wamn_app` holds `INSERT`, `SELECT`, `UPDATE (result)` and `DELETE` on it.
+Its key is the claim operation without its `@version`, for example `wamn-wms:location/create`, and the idempotency key.
+The key is the input field that the route's `idempotency` names: `idempotency_key` for a create, and `value.idempotency_key` for a command item.
+An update, a delete, and any other route without a key field key each item by its `request_id`.
 
-The generated codec of a claim operation owns the transaction of each item.
-The data access takes that transaction and does the work.
-For each item the codec runs these steps:
+The engine is the one claim path.
+It runs the intent rules of [`intent.rs`](../../crates/platform/engine/src/operation/intent.rs) around every create, update, delete and command, in the cloud and on the edge.
+No codec, data function or component spells a claim.
+The engine calls the component once for each item, with a one-item list.
+For an operation with SQL, the host begins one transaction for each item, and the steps of that item run inside it:
 
-1. It opens the transaction. The host opens every claimed transaction with `BEGIN ISOLATION LEVEL READ COMMITTED`, because the retry below reads the row that another transaction committed.
-2. It claims the key with `log_claim`, an insert that does nothing on conflict. An uncommitted claim of another transaction makes the insert wait until that transaction ends.
-3. If the insert claimed nothing, a committed claim holds the key. `log_read` reads its request and result with a fresh snapshot. The same request answers the stored result, and another request answers `idempotency_conflict`. The codec rolls back, so the retry runs no work.
-4. If the insert claimed the key, the handler does the work. A result is stored with `log_finish` and commits with the work. A refusal rolls back, and the claim goes with it.
+1. The host opens the transaction with `BEGIN ISOLATION LEVEL READ COMMITTED`, because the retry below reads the row that another transaction committed.
+2. The engine claims the key with an insert that does nothing on conflict. An uncommitted claim of another transaction makes the insert wait until that transaction ends.
+3. If the insert claimed nothing, a committed claim holds the key. The engine reads its request and result. The same request answers the stored result, and another request answers `idempotency_conflict` with the detail `{field, intent}`. The host rolls back, so the retry runs no work.
+4. If the insert claimed the key, the component does the work in the same transaction. The engine stores the result in the claim, and it commits with the work. A refusal rolls back, and the claim goes with it.
+
+The component reaches that transaction with `wamn_postgres_statements::operation_transaction()` of `wamn:postgres` 0.3.0, and its data access takes the `Transaction`.
+A `begin` inside such an operation refuses.
+An operation without SQL claims in two steps on a host connection of its own: begin before the call, and finish after it.
+A begun claim has a null `result` until it finishes.
+A claim that never finishes answers `intent-uncertain`, and so does a commit that the host sent without reading its answer.
 
 A refused item leaves no row, so its key is free again, and a later different request under that key does its work.
 A retry that answers a stored result commits nothing, so no event publishes a second time.
-Update and delete claim nothing: `row_version` is their guard.
 A new id comes from its insert's `RETURNING`, and nothing mints an id before the work.
 No application table implements or references the claim. The stored result names the rows that the work wrote, for example the `transaction_ids` of a WMS command.
 
-The request bytes are `wamn_execution_contract::canonical_json_bytes` of the validated request without the key.
-A uuid is lowercase and hyphenated, a `timestamptz` is UTC with six fractional digits, and a `numeric` keeps its scale.
-A command's declared exclusions and line order apply.
-The result is the encoded outcome of the item, without its `request_id`.
+The request is the SHA-256 of the canonical item without `request_id`, with the key kept and the participation intent of the selected participant added.
+The route carries the canonical form of its input item (`canonicalization`), which publish reads from the generated input contract.
+The engine applies it before it hashes an item and before the component gets it.
+It spells each `numeric` leaf as PostgreSQL does, with its scale kept, and each `timestamptz` leaf in UTC with six fractional digits.
+It orders the declared lines, and the declared exclusions leave the hash.
+The component's normalize keeps only its checks.
+The result is the answer body of the item, `{"value": ...}`, without its `request_id`.
 
-The generator writes the three statements once for each package, in `generated/sql/write_log/{claim,read,finish}.sql`.
-Every claim operation lists them in its contract `statements[]`, so the host admits them for its invocation.
-The package statement check does not plan them, because they name a relation outside the package schemas.
-The engine's intent record keeps the same rules for an operation with no SQL at the edge (`crates/platform/engine/src/operation/intent.rs`).
+An operation that declares `idempotent_by: inherited` takes the claim of its base operation.
+Publish reads the base contract through `base_dependencies`, and it gives the route the base operation (`claim_operation`), the base key field and the base canonical form.
+The participant intent stays in the hash, because the overlay does the participant's work.
+So a key sent through the overlay route and then through the base route answers `idempotency_conflict`, and a repeat through one route in any line order answers the stored result.
+Acme's `receiving.record_receipt` inherits the claim of Receiving's.
 
 Production-claim and release-attestation errors retain PostgreSQL's primary message and constraint name.
 They omit `DETAIL` and `HINT`, which can include failing row values.

@@ -70,7 +70,7 @@
 --   never consumes.
 --
 --   WRITE LOG — write_log. INSERT, SELECT, UPDATE (result) and DELETE only.
---   The engine claims the key of every create and command here. It is outside
+--   The engine claims the key of every create, update, delete and command here. It is outside
 --   the tenant floor and the record history: see THE WRITE LOG below.
 --
 --   HISTORY: the six <table>_history tables. No SELECT. The log trigger fires

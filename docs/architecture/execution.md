@@ -79,9 +79,10 @@ The router calls `deliver-stream` of [`wamn:router-delivery` 0.2.0](../../crates
 [`query_read`](../../crates/execution/host/src/query_read.rs) owns the ceiling and the lines.
 
 `invoke_operation` takes an optional intent context, and with one a write logs one intent for each input item and runs only the new items.
-The cloud route passes none: a cloud create or command claims its key in the [write log](data-access.md#the-write-log) inside its own transaction. The edge passes one for each route, and the [edge plan](../plan/edge.md#47-sqlite-schema) states the rules.
+The cloud route, the router driver and the edge each pass one for every route, so every create, update, delete and command claims through the engine.
+In the cloud the store is the [write log](data-access.md#the-write-log). On the edge it is SQLite, and the [edge plan](../plan/edge.md#47-sqlite-schema) states the rules.
 A retry that the write log answers commits nothing, so change capture publishes no event for it and no post-commit work runs a second time.
-Publish writes the input field of the idempotency key into the serving manifest route (`idempotency`) from the generated input contract.
+Publish writes three input facts into the serving manifest route from the generated contracts: the key field (`idempotency`), the canonical item form (`canonicalization`) and, for an inherited claim, the base operation (`claim_operation`).
 
 A route input that fails its schema returns HTTP 400 with the code `schema-invalid`.
 The body carries the RFC 6901 pointer of the offending value in `data.pointer`:

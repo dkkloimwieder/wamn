@@ -96,9 +96,7 @@ One branch, one agent (the routes agent, in place of `wamn-an24`). Each issue la
 ## 6. Out of scope
 
 - Replay of the log. It needs a stated purpose first, then commit order, platform-minted values and a determinism rule. Nothing in the table shape blocks it.
-- Logging update and delete. Without replay nothing reads them.
 - Retention. One row per write, bounded by the request size, and the table grows without bound until a retention period comes with the record-history verb.
 - Stored refusals. Prior art stores and replays errors; this design frees the key instead (§2).
 - The edge box. Its SQL-free commands keep the engine's intent record in SQLite. `edge_samples` on the platform side is in scope.
 - An upgrade of a deployed database. The kind clusters are disposable, and the Google Cloud dev database is provisioned again after this change.
-- Unifying the two stores. Today a SQL write claims inside its own transaction, and a SQL-free command claims in two steps, begin and finish, because it has no transaction; the second shape is where `intent-uncertain` comes from. The two protocols follow from the work, not from the design, and stay. The two code paths do not have to: when the host owns the operation's transaction, the engine can run the intent rules around every operation, claim in the work's transaction when there is one and in two steps when there is not, and use the write log as the store for both. That moves `wamn_postgres_statements::Transaction` to the host and changes every data access signature. It is its own epic. This epic files it as a finding and builds nothing toward it beyond the shared-definitions rule in section 2.
