@@ -505,22 +505,22 @@ Render the project environment into a private directory `P`. The verb writes fil
 
 ```bash
 target/debug/wamn-ctl provision-project-env --org dkk --project receiving --env dev --tenant dev \
-  --namespace platform --secret-namespace hosts \
+  --cluster-namespace platform --namespace hosts --secret-namespace hosts \
   --emit-database $P/database.json --emit-role-sql $P/role.sql \
   --emit-privilege-sql $P/privilege.sql --emit-secret $P/secret.json
 ```
 
-Apply the files in this order. The verb writes the `Database` namespace as `wamn-system` and the Secret namespace from `--namespace`, so `jq` sets both (finding `wamn-6b4g`):
+Apply the files in this order. `--cluster-namespace` names the namespace of the Cluster, which the `Database` shares. `--namespace` names the namespace of the Secret:
 
 ```bash
 kubectl -n platform exec -i wamn-pg-1 -c postgres -- psql -U postgres -d postgres -v ON_ERROR_STOP=1 -q < $P/role.sql
-jq '.metadata.namespace="platform"' $P/database.json | kubectl apply -f -
+kubectl apply -f $P/database.json
 kubectl -n platform wait database/wamn-db-dkk--receiving--dev--4pqjfmli --for=jsonpath='{.status.applied}'=true --timeout=120s
 kubectl -n platform exec -i wamn-pg-1 -c postgres -- psql -U postgres -d postgres -v ON_ERROR_STOP=1 -q < $P/privilege.sql
-jq '.metadata.namespace="hosts"' $P/secret.json | kubectl apply -f -
+kubectl apply -f $P/secret.json
 ```
 
-The instance suffix `4pqjfmli` comes from the registry, so a new environment has a different database name. The first suffix was `zf7o454t`, and section 6.7 tells why it changed. On 2026-09-26 `provision-org` took 2 seconds, `provision-project-env` 3 seconds, and the apply steps 8 seconds.
+The instance suffix `4pqjfmli` comes from the registry, so a new environment has a different database name. The first suffix was `zf7o454t`, and section 6.7 tells why it changed. On 2026-09-26 `provision-org` took 2 seconds, `provision-project-env` 3 seconds, and the apply steps 8 seconds. On 2026-09-29 the fixed verb ran again for Receiving and WMS in 2 and 1 seconds. Both `Database` files applied as `unchanged`. Both Secrets applied as `configured`, but their `resourceVersion` stayed the same. `kubectl apply` prints `configured` for a Secret with `stringData` even when the server writes nothing.
 
 ### 3.8 Identity issuer, run plane and package
 
