@@ -685,7 +685,7 @@ On 2026-09-26 the first run took 10 seconds, and the email was `wamn-registry-re
 | --- | --- | --- |
 | `wamn-host:src-91f318b6c6fe387c` | `sha256:a403fef9f1e7bca336c3640851cd3a99eee2202885e6b59f5261490b39647d76` | host |
 | `wamn-identity:src-c2cfa0047530e945` | `sha256:896a386eaf97c365f23c7d992d3e66768336ccb2121d867e26e1e92489adc465` | identity |
-| `wamn-cdc-reader:src-bb749700d40cfff3` | `sha256:659d8ee7e880882cdff0cd0c0940a0a0ccd69a59b1bec81c3210b0c7c02ed645` | CDC reader |
+| `wamn-cdc-reader:src-596c8e6604d119a0` | `sha256:9b1ed15e87122ce208114582b27ce23af7cc06c80653c798fcac5b79172e1c52` | CDC reader |
 | `curlimages/curl:8.22.0` | `sha256:58adaa4e8dca9c988bae2aba4ab3434a0bb2da16bbe3f92dec39ec7785166777` | registry token CronJob |
 
 ### 3.14 Host values
@@ -836,6 +836,12 @@ The reader log shows `registration loaded`, the three `preflight` lines and `wal
 
 On 2026-09-27 the change to the defaults and `Recreate` rolled out in 5 seconds, and the reader opened its session again. The host crash-looped until the source stream existed. It then became Ready by itself at its next restart, before the reader started, so the ruled restart was its second start.
 
+On 2026-09-29 the reader image `src-596c8e6604d119a0` (`wamn-59z6`) rolled out to both readers in 6 seconds. It confirms the keepalive position of an idle database, and it stays stopped on a capture gap. Before the roll, the WMS slot was at `0/E9004398` while the WAL was at `1/2000148`. The WMS reader confirmed `1/20070D0` within 8 seconds of its start. Then a 15-second `wamn-bench --call update --concurrency 1` run from the repository machine made 98 Receiving updates with no error. The WMS slot followed the Receiving writes to `1/205E130`, and 12 seconds later both slots were at `1/2062A98`, level with the WAL. The restart count of both readers stayed 0. Run the bench client as in section 6.4, and read the slots with:
+
+```bash
+kubectl -n platform exec wamn-pg-1 -c postgres -- psql -U postgres -Atc \
+  "select slot_name, confirmed_flush_lsn, pg_current_wal_lsn() from pg_replication_slots"
+```
 
 ### 3.20 HTTP and materializer workloads
 
@@ -1665,3 +1671,21 @@ The new provision needed generation `b` in one place. `provision-identity-issuer
 | WMS | 1 | `sha256:3d6b13f9c7864e2b34317b6822d85b6d6a5542c36f9b5ae5d2ae049c1fcab2f6` | `wms` `sha256:0533b015d675921df8529bdd58913730d36a8f97dbbb2b0f4affae963422ce58`, `label-render` `sha256:587434540bb0173ae447be16d89876ae0b70047b6c9241bf375c87f8c08efc91`, `blob-put` and `jsonata` unchanged |
 
 The service `wamn-operator-dkk--receiving--dev` holds the role `operator`, with a PAT of prefix `1a98d582140907ed` that expires on 2026-10-29. The owner holds `admin` in both environments. The host upgrade with `--timeout 10m` took 15 seconds, and the Helm release reads `deployed` at revision 5. The web clients of both releases took 7 seconds each to upload.
+
+## 7. Schema changes applied by hand
+
+No verb applies a schema change to an installed database (finding `wamn-o8b9`, design in `docs/plan/upgrades.md`). Record every statement that you run by hand on wamn-dev in this section, with its date and its finding.
+
+On 2026-09-29 (`wamn-59z6`, `wamn-o8b9`), the capture gap table of `deploy/sql/system-schema.sql` went into `wamn_system` as its owner, with the read grant of the CDC reader. Write the `CREATE TABLE registry.capture_gap` block of that file between the two lines below into `$P/capture-gap.sql`, and apply it:
+
+```sql
+SET ROLE wamn_system;
+CREATE TABLE registry.capture_gap (...);
+GRANT SELECT ON TABLE registry.capture_gap TO wamn_registry_reader;
+```
+
+```bash
+kubectl -n platform exec -i wamn-pg-1 -c postgres -- psql -U postgres -d wamn_system -v ON_ERROR_STOP=1 < $P/capture-gap.sql
+```
+
+The apply took 1 second. The table owner is `wamn_system`, and `wamn_registry_reader` holds `SELECT` only.
