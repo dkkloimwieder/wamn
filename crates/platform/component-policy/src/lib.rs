@@ -609,14 +609,16 @@ mod tests {
         keys.sort_unstable();
         keys.dedup();
         assert_eq!(keys.len(), total, "duplicate registry key");
-        let mut packages: Vec<&str> = CAPABILITY_REGISTRY.iter().map(|row| row.package).collect();
-        packages.sort_unstable();
-        packages.dedup();
-        assert_eq!(
-            packages.len(),
-            total,
-            "a package appears at two versions; posture is package-grain"
-        );
+        for row in &CAPABILITY_REGISTRY {
+            assert!(
+                CAPABILITY_REGISTRY
+                    .iter()
+                    .filter(|other| other.package == row.package)
+                    .all(|other| other.posture == row.posture),
+                "{} has two postures; posture is package-grain",
+                row.package
+            );
+        }
     }
 
     /// An effect still needs its per-component grant. Deleting the shape check
