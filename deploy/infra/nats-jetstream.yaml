@@ -49,7 +49,9 @@ data:
     http: 127.0.0.1:8222
     # Preserve the default 1 MiB event ceiling explicitly for bounded native pulls.
     max_payload: 1048576
-    include /etc/nats-authorization/authorization.conf
+    # nats-server resolves an include relative to this file, and both copies of
+    # this manifest use the relative path (finding wamn-lrf1).
+    include ../nats-authorization/authorization.conf
 
     jetstream {
       store_dir: /data/jetstream
