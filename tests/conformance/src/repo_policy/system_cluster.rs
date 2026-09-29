@@ -1,15 +1,18 @@
 //! Invariant 1: the system cluster is absent from every request path.
 //!
-//! Only the T1 cluster definition itself (`wamn-sysdb.yaml`) may name the
-//! system cluster or its database. No data-plane workload manifest under
+//! Only a definition of the cluster that holds the system database may name
+//! the system cluster or its database. No data-plane workload manifest under
 //! `deploy/` may.
 
 use std::path::Path;
 
 use super::Problems;
 
-/// The one manifest that defines the system cluster.
-const ALLOWLIST: &[&str] = &["wamn-sysdb.yaml"];
+/// The manifests, below `deploy/`, that define the cluster of the system
+/// database: the T1 cluster of kind, and the one cluster of the Google Cloud
+/// test deployment, which holds the system database and every tenant database
+/// (`docs/plan/gcp-deployment.md`).
+const ALLOWLIST: &[&str] = &["platform/wamn-sysdb.yaml", "gcp/cnpg-cluster.yaml"];
 
 /// The fewest manifests a real `deploy/` tree holds. A lower count means the
 /// walk went vacuous (the pre-tiering flat `read_dir` bug class).
@@ -17,7 +20,8 @@ const MINIMUM_MANIFESTS: usize = 10;
 
 pub(super) fn check(root: &Path, problems: &mut Problems) {
     let mut scanned = 0usize;
-    let mut stack = vec![root.join("deploy")];
+    let deploy = root.join("deploy");
+    let mut stack = vec![deploy.clone()];
     while let Some(directory) = stack.pop() {
         let entries = match std::fs::read_dir(&directory) {
             Ok(entries) => entries,
@@ -37,7 +41,8 @@ pub(super) fn check(root: &Path, problems: &mut Problems) {
             }
             scanned += 1;
             let name = path
-                .file_name()
+                .strip_prefix(&deploy)
+                .ok()
                 .and_then(|name| name.to_str())
                 .unwrap_or_default();
             if ALLOWLIST.contains(&name) {
@@ -96,8 +101,12 @@ mod tests {
             )
             .expect("write a clean manifest");
         }
-        std::fs::write(root.join("deploy/wamn-sysdb.yaml"), "name: wamn-sysdb\n")
-            .expect("write the allowed cluster definition");
+        std::fs::create_dir_all(root.join("deploy/platform")).expect("create the platform tree");
+        std::fs::write(
+            root.join("deploy/platform/wamn-sysdb.yaml"),
+            "name: wamn-sysdb\n",
+        )
+        .expect("write the allowed cluster definition");
 
         let mut clean = Problems::default();
         check(&root, &mut clean);

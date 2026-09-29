@@ -270,8 +270,14 @@ fn build_graph_has_one_source_stage_and_no_retired_leg(dockerfile: &str, problem
         .filter_map(|line| line.split_once("id=wamn-root-target-"))
         .filter_map(|(_, rest)| rest.split(',').next())
         .collect();
-    problems.require(targets.len() == 6, || {
-        format!("every native build stage owns one target cache, got {targets:?}")
+    let stages = dockerfile
+        .lines()
+        .filter(|line| line.starts_with("FROM root-source AS build-"))
+        .count();
+    problems.require(targets.len() == stages, || {
+        format!(
+            "every one of the {stages} native build stages owns one target cache, got {targets:?}"
+        )
     });
 
     // wamn-0h0g.15.139 audited these against the bare-ordinary-English rule and

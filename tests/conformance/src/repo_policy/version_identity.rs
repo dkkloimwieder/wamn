@@ -1,6 +1,7 @@
-//! Every governed first-party version identity stays at the MVP `0.1` line.
+//! Every governed first-party version identity stays at the MVP `0.1` line,
+//! and the tree holds one version of each WAMN WIT package.
 
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -11,7 +12,6 @@ use super::Problems;
 
 const MVP_CARGO_VERSION: &str = "0.1.0";
 const MVP_SCHEMA_VERSION: &str = "0.1";
-const MVP_WIT_VERSION: &str = "0.1.0";
 
 #[derive(Clone, Copy, Debug)]
 struct GovernedLiteral {
@@ -141,7 +141,7 @@ pub(super) fn check(root: &Path, problems: &mut Problems) {
             Err(problem) => problems.push(problem),
         }
     }
-    wamn_wit_packages_stay_at_mvp_version(root, problems);
+    wamn_wit_packages_have_one_version(root, problems);
     governed_literal_violations(root, problems);
     problems.require(INVOCATION_CONTEXT_VERSION == MVP_SCHEMA_VERSION, || {
         format!(
@@ -225,7 +225,9 @@ fn tracked_wit_files(repository: &Path) -> Result<Vec<PathBuf>, String> {
         .collect())
 }
 
-fn wamn_wit_packages_stay_at_mvp_version(root: &Path, problems: &mut Problems) {
+/// A WAMN WIT package keeps its own version (`docs/plan/operation-ids.md`),
+/// and the tree holds one version of it. Copies of that version may repeat.
+fn wamn_wit_packages_have_one_version(root: &Path, problems: &mut Problems) {
     let files = match tracked_wit_files(root) {
         Ok(files) => files,
         Err(problem) => {
@@ -233,7 +235,7 @@ fn wamn_wit_packages_stay_at_mvp_version(root: &Path, problems: &mut Problems) {
             return;
         }
     };
-    let mut governed_count = 0;
+    let mut versions: BTreeMap<String, BTreeMap<String, String>> = BTreeMap::new();
     for path in files {
         let source = match std::fs::read_to_string(&path) {
             Ok(source) => source,
@@ -256,20 +258,29 @@ fn wamn_wit_packages_stay_at_mvp_version(root: &Path, problems: &mut Problems) {
                 continue;
             }
 
-            governed_count += 1;
-            let version = declaration.split_once('@').map(|(_, version)| version);
-            problems.require(version == Some(MVP_WIT_VERSION), || {
-                format!(
-                    "{}:{}: WAMN package `{declaration}` must use @{MVP_WIT_VERSION}",
-                    path.display(),
-                    line_index + 1
-                )
-            });
+            let version = declaration
+                .split_once('@')
+                .map_or("", |(_, version)| version);
+            versions
+                .entry(package_name.to_owned())
+                .or_default()
+                .entry(version.to_owned())
+                .or_insert_with(|| format!("{}:{}", path.display(), line_index + 1));
         }
     }
-    problems.require(governed_count > 0, || {
+    problems.require(!versions.is_empty(), || {
         "WAMN WIT package list must not be empty".to_owned()
     });
+    for (package, found) in &versions {
+        problems.require(found.len() == 1, || {
+            let found = found
+                .iter()
+                .map(|(version, place)| format!("@{version} at {place}"))
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!("WAMN WIT package `{package}` has more than one version in the tree: {found}")
+        });
+    }
 }
 
 fn governed_literal_violations(repository: &Path, problems: &mut Problems) {
