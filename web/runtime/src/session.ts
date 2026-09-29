@@ -89,9 +89,42 @@ export async function enroll(
 ): Promise<void> {
   const response = await post("/password/enroll", { principal_id: principalId, invitation, password }, options);
   if (!response.ok) {
-    const answer = (await response.json().catch(() => null)) as { error?: unknown } | null;
-    throw new Error(typeof answer?.error === "string" ? answer.error : `/password/enroll answered ${response.status}`);
+    throw await refusalOf("/password/enroll", response);
   }
+}
+
+/**
+ * Ask for a password reset mail. The identity service answers the same for
+ * every address, so a reply says nothing about the account. A refusal throws
+ * with the text the identity service answered.
+ */
+export async function recover(email: string, options: SessionOptions = {}): Promise<void> {
+  const response = await post("/password/recover", { email }, options);
+  if (!response.ok) {
+    throw await refusalOf("/password/recover", response);
+  }
+}
+
+/**
+ * Replace the password with the secret of a reset mail. A refusal throws with
+ * the text the identity service answered.
+ */
+export async function resetPassword(
+  email: string,
+  secret: string,
+  password: string,
+  options: SessionOptions = {},
+): Promise<void> {
+  const response = await post("/password/reset", { email, secret, password }, options);
+  if (!response.ok) {
+    throw await refusalOf("/password/reset", response);
+  }
+}
+
+/** The error of a refused call, with the text the identity service answered. */
+async function refusalOf(path: string, response: Response): Promise<Error> {
+  const answer = (await response.json().catch(() => null)) as { error?: unknown } | null;
+  return new Error(typeof answer?.error === "string" ? answer.error : `${path} answered ${response.status}`);
 }
 
 /** Sign in to one environment. The identity service sets the cookies. */

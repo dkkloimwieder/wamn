@@ -174,6 +174,43 @@ describe("the app shell", () => {
     ]);
   });
 
+  it("links sign in to recovery, and posts the email to recover", async () => {
+    const seen: { url: string; body: unknown }[] = [];
+    const fetch = (url: string | URL | Request, init?: RequestInit) => {
+      seen.push({ url: String(url), body: JSON.parse(String(init?.body)) });
+      return Promise.resolve(new Response(null, { status: 202 }));
+    };
+    open("/", fetch as typeof globalThis.fetch);
+    fireEvent.click(await screen.findByText("forgot password"));
+    const send = await screen.findByText("send reset link");
+    fireEvent.input(screen.getByLabelText("email"), { target: { value: "someone@wamn.dev" } });
+    fireEvent.click(send);
+    expect(await screen.findByText(/a mail with a reset link is on its way/)).toBeDefined();
+    expect(window.location.pathname).toBe("/recover");
+    expect(seen).toEqual([{ url: "/password/recover", body: { email: "someone@wamn.dev" } }]);
+  });
+
+  it("posts the reset code of the address, the email and the password to reset, then opens sign in", async () => {
+    const seen: { url: string; body: unknown }[] = [];
+    const fetch = (url: string | URL | Request, init?: RequestInit) => {
+      seen.push({ url: String(url), body: JSON.parse(String(init?.body)) });
+      return Promise.resolve(new Response(null, { status: 200 }));
+    };
+    open("/reset#wamn_reset_0f", fetch as typeof globalThis.fetch);
+    fireEvent.input(await screen.findByLabelText("email"), { target: { value: "someone@wamn.dev" } });
+    fireEvent.input(screen.getByLabelText("password"), { target: { value: "a long password string" } });
+    fireEvent.input(screen.getByLabelText("password again"), { target: { value: "a long password string" } });
+    fireEvent.click(screen.getByText("set password"));
+    expect(await screen.findByText("sign in")).toBeDefined();
+    expect(window.location.pathname).toBe("/");
+    expect(seen).toEqual([
+      {
+        url: "/password/reset",
+        body: { email: "someone@wamn.dev", secret: "wamn_reset_0f", password: "a long password string" },
+      },
+    ]);
+  });
+
   it("signs in at the root, and the one environment of the project opens the first screen", async () => {
     const { fetch } = identity(false);
     open("/", fetch);

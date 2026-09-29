@@ -443,6 +443,7 @@ HTTP 200 reports `{"status":"password_reset","notification":"accepted_for_delive
 If notification fails, the response reports `"notification":"unavailable"`. The password change remains committed.
 Normal login uses the replacement password. Existing PATs retain their separate revocation path.
 The terminal supports recovery through the same endpoints and requires normal login after reset.
+The web shell does the same at `/recover` and `/reset#<secret>`, and then opens sign in.
 For mailbox loss, an authorized administrator updates the existing principal's email through the [operator procedure](../operations/deployment.md#mailbox-loss-recovery).
 That transaction consumes outstanding email secrets and revokes renewal families. The person then uses normal recovery at the replacement address.
 

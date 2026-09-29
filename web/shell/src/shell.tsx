@@ -39,6 +39,8 @@ import {
   enroll,
   environments,
   keepSession,
+  recover,
+  resetPassword,
   signIn,
   type Environment,
   type SessionOptions,
@@ -207,6 +209,8 @@ export function Shell(props: ShellProps): JSX.Element {
     <Router>
       <Route path="/" component={() => <ChooseEnvironment title={props.title} scope={props} options={options} />} />
       <Route path="/invite" component={() => <AcceptInvitation title={props.title} options={options} />} />
+      <Route path="/recover" component={() => <RecoverPassword title={props.title} options={options} />} />
+      <Route path="/reset" component={() => <ResetPassword title={props.title} options={options} />} />
       <Route
         path="/:aud"
         component={(section: RouteSectionProps) => (
@@ -265,6 +269,7 @@ function SignInForm(props: {
         </Field>
         <Show when={refused() ?? props.trouble}>{(text) => <FieldError>{text()}</FieldError>}</Show>
         <Button type="submit">sign in</Button>
+        <A href="/recover">forgot password</A>
       </FieldGroup>
     </form>
   );
@@ -280,40 +285,86 @@ function signInFailed(error: unknown): string {
  * log. The page sets the first password and goes to the sign in page.
  */
 function AcceptInvitation(props: { readonly title: string; readonly options: SessionOptions }): JSX.Element {
-  const navigate = useNavigate();
   const code = window.location.hash.slice(1);
   const split = code.indexOf(":");
+  return (
+    <NewPassword
+      title={props.title}
+      id="invite"
+      missing={split > 0 ? null : "This address holds no invitation code. Open the link in the invitation mail."}
+      failed="Sign up failed"
+      submit={(_, password) => enroll(code.slice(0, split), code.slice(split + 1), password, props.options)}
+    />
+  );
+}
+
+/**
+ * The page at `/reset#<secret>`, which the reset mail links to. The secret is
+ * in the fragment, so it never reaches a server log. The page replaces the
+ * password and goes to the sign in page.
+ */
+function ResetPassword(props: { readonly title: string; readonly options: SessionOptions }): JSX.Element {
+  const secret = window.location.hash.slice(1);
+  return (
+    <NewPassword
+      title={props.title}
+      id="reset"
+      missing={secret === "" ? "This address holds no reset code. Open the link in the reset mail." : null}
+      failed="Reset failed"
+      submit={(email, password) => resetPassword(email, secret, password, props.options)}
+    />
+  );
+}
+
+/**
+ * The form of a new password: the email, and the password twice. With a code
+ * in the address, it submits and goes to the sign in page, and it shows what
+ * the identity service refused.
+ */
+function NewPassword(props: {
+  readonly title: string;
+  /** The prefix of the field ids. */
+  readonly id: string;
+  /** The text when the address holds no code, or null. */
+  readonly missing: string | null;
+  /** The start of the refusal text, such as `Sign up failed`. */
+  readonly failed: string;
+  readonly submit: (email: string, password: string) => Promise<void>;
+}): JSX.Element {
+  const navigate = useNavigate();
   const [email, setEmail] = createSignal("");
   const [password, setPassword] = createSignal("");
   const [again, setAgain] = createSignal("");
-  const [refused, setRefused] = createSignal<string | null>(
-    split > 0 ? null : "This address holds no invitation code. Open the link in the invitation mail.",
-  );
+  const [differ, setDiffer] = createSignal(false);
+  const [refused, setRefused] = createSignal<string | null>(null);
+  const trouble = () =>
+    props.missing ??
+    (differ() ? "The two passwords differ." : null) ??
+    (refused() === null ? null : `${props.failed}: ${refused()}.`);
   return (
     <CardPage title={props.title}>
       <form
         onSubmit={(event) => {
           event.preventDefault();
-          if (split <= 0) {
+          if (props.missing !== null) {
             return;
           }
-          if (password() !== again()) {
-            setRefused("The two passwords differ.");
-            return;
-          }
+          setDiffer(password() !== again());
           setRefused(null);
-          enroll(code.slice(0, split), code.slice(split + 1), password(), props.options)
+          if (differ()) {
+            return;
+          }
+          props
+            .submit(email(), password())
             .then(() => navigate("/", { replace: true }))
-            .catch((error: unknown) =>
-              setRefused(`Sign up failed: ${error instanceof Error ? error.message : String(error)}.`),
-            );
+            .catch((error: unknown) => setRefused(error instanceof Error ? error.message : String(error)));
         }}
       >
         <FieldGroup>
           <Field>
-            <FieldLabel for="invite-email">email</FieldLabel>
+            <FieldLabel for={`${props.id}-email`}>email</FieldLabel>
             <Input
-              id="invite-email"
+              id={`${props.id}-email`}
               type="email"
               autocomplete="username"
               value={email()}
@@ -321,9 +372,9 @@ function AcceptInvitation(props: { readonly title: string; readonly options: Ses
             />
           </Field>
           <Field>
-            <FieldLabel for="invite-password">password</FieldLabel>
+            <FieldLabel for={`${props.id}-password`}>password</FieldLabel>
             <Input
-              id="invite-password"
+              id={`${props.id}-password`}
               type="password"
               autocomplete="new-password"
               value={password()}
@@ -331,17 +382,62 @@ function AcceptInvitation(props: { readonly title: string; readonly options: Ses
             />
           </Field>
           <Field>
-            <FieldLabel for="invite-again">password again</FieldLabel>
+            <FieldLabel for={`${props.id}-again`}>password again</FieldLabel>
             <Input
-              id="invite-again"
+              id={`${props.id}-again`}
               type="password"
               autocomplete="new-password"
               value={again()}
               onInput={(event) => setAgain(event.currentTarget.value)}
             />
           </Field>
-          <Show when={refused()}>{(text) => <FieldError>{text()}</FieldError>}</Show>
+          <Show when={trouble()}>{(text) => <FieldError>{text()}</FieldError>}</Show>
           <Button type="submit">set password</Button>
+        </FieldGroup>
+      </form>
+    </CardPage>
+  );
+}
+
+/**
+ * The page at `/recover`, which the sign in page links to. It asks identity
+ * to mail a reset link to the address. Identity answers the same for every
+ * address, so the page says the same for every address.
+ */
+function RecoverPassword(props: { readonly title: string; readonly options: SessionOptions }): JSX.Element {
+  const [email, setEmail] = createSignal("");
+  const [sent, setSent] = createSignal(false);
+  const [refused, setRefused] = createSignal<string | null>(null);
+  return (
+    <CardPage title={props.title}>
+      <form
+        onSubmit={(event) => {
+          event.preventDefault();
+          setRefused(null);
+          recover(email(), props.options)
+            .then(() => setSent(true))
+            .catch((error: unknown) =>
+              setRefused(`Recovery failed: ${error instanceof Error ? error.message : String(error)}.`),
+            );
+        }}
+      >
+        <FieldGroup>
+          <Field>
+            <FieldLabel for="recover-email">email</FieldLabel>
+            <Input
+              id="recover-email"
+              type="email"
+              autocomplete="username"
+              value={email()}
+              onInput={(event) => setEmail(event.currentTarget.value)}
+            />
+          </Field>
+          <Show when={refused()}>{(text) => <FieldError>{text()}</FieldError>}</Show>
+          <Show when={sent()}>
+            <p>If this address has an account, a mail with a reset link is on its way.</p>
+          </Show>
+          <Button type="submit">send reset link</Button>
+          <A href="/">sign in</A>
         </FieldGroup>
       </form>
     </CardPage>

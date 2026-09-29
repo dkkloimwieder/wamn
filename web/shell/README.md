@@ -13,6 +13,9 @@ A reload renews the session from the renewal cookie, so the page keeps nothing i
 | Address | Page |
 | --- | --- |
 | `/` | Sign in. The account lists the environments it can reach, and the chosen one opens its first screen. |
+| `/invite#<code>` | The first password. The invitation mail links here, and the page then opens sign in. |
+| `/recover` | The sign in page links here. The page asks identity to mail a reset link to the email. |
+| `/reset#<code>` | A new password. The reset mail links here, and the page then opens sign in. |
 | `/<audience>` | The first screen of the application. |
 | `/<audience>/<path>` | One screen. With no session, the page asks for the password on the same address and then shows the screen. |
 | `/<audience>/<path>/<id>` | One record page, for example `/<audience>/pallets/<id>`. The navigation entry of its model stays active. |
