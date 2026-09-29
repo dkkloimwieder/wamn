@@ -942,6 +942,15 @@ curl -s -o /dev/null -w '%{http_code}\n' -H 'content-type: application/json' \
 
 Identity answers `202` for every address, known or not, so the check is the mail in the owner's mailbox. On 2026-09-29 the request took 7 seconds.
 
+Use the link within 15 minutes, because a reset secret expires then. Identity answers every refusal with the same `400 {"error":"password request refused"}` and logs no reason. To find the reason, read the edge log for the request and the token row:
+
+```bash
+kubectl -n edge logs deploy/wamn-edge --since=1h | grep 'POST /password/reset'
+psql "$WAMN_SYSTEM_ADMIN_URL" -Atc "select to_jsonb(t) - 'token_hash' from identity.password_tokens t join identity.principals p on p.id=t.principal_id where p.email='<owner email>' and t.purpose='reset' order by t.created_at desc limit 1"
+```
+
+On 2026-09-29 the first reset was refused. The secret expired at 15:21:41 UTC, and the page submitted at 15:40:27, so the row stayed unconsumed. The request body matched the contract. The second mail went out at 15:43:13 UTC.
+
 ### 4.3 Load balancer
 
 Create the resources in this order. The names come from the release `wamn-edge`, as in the removed Config Connector template:
