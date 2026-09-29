@@ -477,8 +477,14 @@ async fn a_route_answers_every_operation_kind_as_its_one_node_wiring() -> anyhow
         "not_found",
         &absent,
     )?;
+    // A delete is keyed by its request_id, so a second delete is a new request.
     refused(
-        &paths.alike("/widget/delete", &delete(version)).await?,
+        &paths
+            .alike(
+                "/widget/delete",
+                &json!([{"request_id": "delete-again", "id": id, "expected_edit_version": version.to_string()}]),
+            )
+            .await?,
         "not_found",
         &absent,
     )?;
