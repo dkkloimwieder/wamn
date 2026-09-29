@@ -12,6 +12,7 @@ use std::collections::BTreeMap;
 use serde_json::{Value, json};
 
 use super::{GenerateError, PackageManifest, insert_json_line};
+use crate::manifest::canonical_operation_identity;
 use crate::route_schema::{
     GENERATED_ATTACHMENTS, GENERATED_COMPONENT_OPERATIONS, GENERATED_ROUTES,
 };
@@ -25,7 +26,6 @@ pub(super) fn emit_package_publication(
     manifest: &PackageManifest,
 ) -> Result<(), GenerateError> {
     let package = &manifest.package;
-    let namespace = package.id.replace('_', "-");
     let routes = &manifest.routes;
     let id_prefix = routes.id_prefix.as_deref().unwrap_or("");
     let path_prefix = routes.path_prefix.as_deref().unwrap_or("");
@@ -48,7 +48,8 @@ pub(super) fn emit_package_publication(
                 .as_ref()
                 .or(single)
                 .expect("manifest validation groups every operation in one component");
-            let registered = format!("{namespace}:{kebab}/{action}@{}", package.version);
+            let registered =
+                canonical_operation_identity(package, &format!("{model_name}.{action}"))?;
             let schema = json!({"$ref": format!("{GENERATED_ROUTES}{model_name}/{action}.json")});
             let id = if id_prefix.is_empty() {
                 format!("{kebab}-{action}-http")

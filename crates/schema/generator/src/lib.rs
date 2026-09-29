@@ -69,7 +69,8 @@ pub use manifest::{
     ResultClass, Revision, SearchDeclaration, SortDeclaration, SortKey, StateGuardDeclaration,
     StaticSqlFetch, StaticSqlRelationDeclaration, StaticSqlStatementDeclaration,
     StaticSqlValueDeclaration, TieBreakerDeclaration, WorkflowDeclaration,
-    canonical_operation_identity, canonical_operation_prefix, validate_operation_vocabulary,
+    canonical_operation_identity, canonical_operation_prefix, resolve_operation_reference,
+    validate_operation_vocabulary,
 };
 pub use materialize::{
     MaterializeMode, introspect_package, materialize_package, materialize_package_from_catalog,

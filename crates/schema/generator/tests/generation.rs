@@ -7,7 +7,8 @@ use wamn_execution_contract::canonical_json_bytes;
 use wamn_schema_generator::{
     AuthoredSql, CrudAction, DATA_ACCESS_OVERLAY_PATH, GenerateErrorKind, GeneratedPackage,
     GeneratedPackageMetadata, PackageManifest, canonical_operation_identity,
-    canonical_operation_prefix, corpus_sha256, validate_operation_vocabulary,
+    canonical_operation_prefix, corpus_sha256, resolve_operation_reference,
+    validate_operation_vocabulary,
 };
 use wamn_schema_introspection::ir::{
     CatalogIr, Column, ColumnDefault, ColumnType, Constraint, Exclusion, ExclusionAccessMethod,
@@ -1995,6 +1996,42 @@ fn all_stamps_manifest() -> Value {
         &json!(["created_at", "created_by", "updated_at", "updated_by"]),
         "none",
     )
+}
+
+/// An authored reference takes the version of the package that owns it, from
+/// `wamn.json`, and a reference that carries a version refuses (wamn-uqs5.1).
+#[test]
+fn an_operation_reference_takes_its_version_from_the_manifest() {
+    let mut overlay = overlay_manifest();
+    overlay["package"]["version"] = json!("2.0.0");
+    let manifest = parsed_manifest(&overlay);
+    assert_eq!(
+        resolve_operation_reference(&manifest, "acme-inventory:gadget/assemble").unwrap(),
+        "acme-inventory:gadget/assemble@2.0.0"
+    );
+    assert_eq!(
+        resolve_operation_reference(&manifest, "platform-gadget:gadget/get").unwrap(),
+        "platform-gadget:gadget/get@1.0.0"
+    );
+    for (reference, reason) in [
+        (
+            "acme-inventory:gadget/assemble@2.0.0",
+            "must not carry a version",
+        ),
+        ("other-package:gadget/get", "names neither this package"),
+        (
+            "acme-inventory:gadget",
+            "must be <package>:<interface>/<operation>",
+        ),
+        (
+            "acme-inventory:gadget/as_semble",
+            "must be <package>:<interface>/<operation>",
+        ),
+    ] {
+        let error = resolve_operation_reference(&manifest, reference).unwrap_err();
+        assert_eq!(error.kind(), GenerateErrorKind::InvalidIdentity);
+        assert!(error.to_string().contains(reason), "{reference}: {error}");
+    }
 }
 
 /// A package that overlays the `platform_gadget` purchase order.

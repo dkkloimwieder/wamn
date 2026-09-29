@@ -2252,6 +2252,61 @@ pub fn canonical_operation_prefix(package: &PackageIdentity) -> Result<String, G
     Ok(format!("{}:", package.id.replace('_', "-")))
 }
 
+/// Resolve an authored operation reference, `<package>:<interface>/<operation>`,
+/// to its sealed operation id.
+///
+/// The version comes from `package.version` for an operation of the package,
+/// and from the base's entry in `base_dependencies` for an operation of a base.
+/// `wamn.json` is the one place the version is authored, so a reference that
+/// carries one refuses.
+pub fn resolve_operation_reference(
+    manifest: &PackageManifest,
+    reference: &str,
+) -> Result<String, GenerateError> {
+    let refuse = |reason: &str| {
+        GenerateError::new(
+            GenerateErrorKind::InvalidIdentity,
+            format!("operation reference {reference:?} {reason}"),
+        )
+    };
+    if reference.contains('@') {
+        return Err(refuse(
+            "must not carry a version; the version is authored once, as package.version in wamn.json",
+        ));
+    }
+    let (prefix, path) = reference
+        .split_once(':')
+        .ok_or_else(|| refuse("must be <package>:<interface>/<operation>"))?;
+    let (interface, operation) = path
+        .split_once('/')
+        .ok_or_else(|| refuse("must be <package>:<interface>/<operation>"))?;
+    let owner = std::iter::once((&manifest.package.id, &manifest.package.version))
+        .chain(
+            manifest
+                .base_dependencies
+                .values()
+                .map(|base| (&base.package, &base.version)),
+        )
+        .find(|(package, _)| package.replace('_', "-") == prefix)
+        .ok_or_else(|| refuse("names neither this package nor one of its base_dependencies"))?;
+    let package = PackageIdentity {
+        id: owner.0.clone(),
+        version: owner.1.clone(),
+        predecessor_version: None,
+    };
+    let local = format!(
+        "{}.{}",
+        interface.replace('-', "_"),
+        operation.replace('-', "_")
+    );
+    let sealed = canonical_operation_identity(&package, &local)
+        .map_err(|_| refuse("must be <package>:<interface>/<operation>"))?;
+    if sealed != format!("{reference}@{}", package.version) {
+        return Err(refuse("must be <package>:<interface>/<operation>"));
+    }
+    Ok(sealed)
+}
+
 fn validate_package_identity(package: &PackageIdentity) -> Result<(), GenerateError> {
     // The platform owns the `wamn:` operation-token namespace.
     if package.id == "wamn" {
