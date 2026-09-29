@@ -335,8 +335,8 @@ pub async fn query(
     }
 }
 
-/// `packaging.create`: create one row in the transaction the codec holds
-/// for the write log.
+/// `packaging.create`: create one row in the transaction the host began
+/// for the operation.
 ///
 /// # Errors
 ///

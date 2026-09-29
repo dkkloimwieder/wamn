@@ -1540,7 +1540,6 @@ fn compile_inventory_item_component(package: &GeneratedPackage) {
             "src/delete_codec.rs",
         ),
         ("generated/wit/operation_codec.rs", "src/operation_codec.rs"),
-        ("generated/wit/write_log_codec.rs", "src/write_log_codec.rs"),
     ] {
         std::fs::write(
             scratch.join(target),
@@ -1593,7 +1592,7 @@ macro_rules! operation {{
             include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/", stringify!($module), ".rs"));
         }}
         async fn $handler(
-            _state: &mut (),
+            _transaction: &mut wamn_postgres_statements::Transaction,
             _request: exports::wamn_inventory::inventory_item::$contract::$request,
         ) -> Result<
             exports::wamn_inventory::inventory_item::$contract::$result,
@@ -1611,18 +1610,9 @@ macro_rules! operation {{
         "{lib}\noperation!(create_codec, create, create_handler, CreateRequest, CreateResult, CreateError);\n\
          operation!(update_codec, update, update_handler, UpdateRequest, UpdateResult, UpdateError);\n\
          operation!(delete_codec, delete, delete_handler, DeleteRequest, DeleteResult, DeleteError);\n\n\
-         create_codec::export_operation!(Component, crate::exports::wamn_inventory::inventory_item::create, crate::wamn::node::types, wamn_postgres_statements::Connection::new(), create_claim_handler, create_codec);\n\
-         update_codec::export_operation!(Component, crate::exports::wamn_inventory::inventory_item::update, crate::wamn::node::types, (), update_handler, update_codec);\n\
-         delete_codec::export_operation!(Component, crate::exports::wamn_inventory::inventory_item::delete, crate::wamn::node::types, (), delete_handler, delete_codec);\n\n\
-         async fn create_claim_handler(\n\
-             _transaction: &mut wamn_postgres_statements::Transaction,\n\
-             request: exports::wamn_inventory::inventory_item::create::CreateRequest,\n\
-         ) -> Result<\n\
-             exports::wamn_inventory::inventory_item::create::CreateResult,\n\
-             exports::wamn_inventory::inventory_item::create::CreateError,\n\
-         > {{\n\
-             create_handler(&mut (), request).await\n\
-         }}\n\n\
+         create_codec::export_operation!(Component, crate::exports::wamn_inventory::inventory_item::create, crate::wamn::node::types, create_handler, create_codec);\n\
+         update_codec::export_operation!(Component, crate::exports::wamn_inventory::inventory_item::update, crate::wamn::node::types, update_handler, update_codec);\n\
+         delete_codec::export_operation!(Component, crate::exports::wamn_inventory::inventory_item::delete, crate::wamn::node::types, delete_handler, delete_codec);\n\n\
          export!(Component);\n\n{CODEC_TESTS}"
     );
     std::fs::write(scratch.join("src/lib.rs"), lib).expect("write fixture component");
@@ -1805,8 +1795,9 @@ fn generated_create_binds_no_identity() {
     assert_eq!(model["insert_fields"], json!(["stock_id"]));
 }
 
-/// The create contract names the write log, its three statements, and the
-/// refusal of a key sent again with another request.
+/// The create contract names the write log, in which the host claims its key,
+/// and the refusal of a key sent again with another request. It lists no
+/// write log statement: the host owns them.
 #[test]
 fn generated_create_contracts_publish_the_write_log_and_its_refusal() {
     let package = run(&catalog(false), &create_manifest(), &QUERY_SOURCES).unwrap();
@@ -1822,7 +1813,6 @@ fn generated_create_contracts_publish_the_write_log_and_its_refusal() {
                 "table": "write_log",
                 "operation": "platform-gadget:gadget/create",
             },
-            "statements": {"claim": "log_claim", "read": "log_read", "finish": "log_finish"},
             "isolation": "read_committed",
             "replay": {"writes": "none", "answer": "stored_result"},
             "conflict": {"on": "changed_request", "refusal": "idempotency_conflict"},
@@ -1837,7 +1827,7 @@ fn generated_create_contracts_publish_the_write_log_and_its_refusal() {
             .iter()
             .map(|statement| statement["name"].as_str().unwrap())
             .collect::<Vec<_>>(),
-        ["create", "log_claim", "log_read", "log_finish"]
+        ["create"]
     );
     assert_eq!(
         statements[0]["binds"],

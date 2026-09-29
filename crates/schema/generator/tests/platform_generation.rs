@@ -973,14 +973,12 @@ fn a_participant_takes_the_request_record_of_the_base_pre_commit() {
     assert!(!codec.contains("ArchiveParticipantRequest"), "{codec}");
 }
 
-/// The fixture's claim command lists the three write log statements, and its
-/// codec claims the key its contract names. The key is the field that publish
-/// hands the engine's intent rules, so the two stores key one field.
+/// The fixture's claim command names its key and the canonical form of its
+/// item, and its codec claims nothing: the host claims the key in the
+/// operation transaction (`docs/plan/host-transaction.md` 4.4). Publish hands
+/// the key and the canonical form to the engine's intent rules.
 #[test]
-fn a_claim_command_lists_the_write_log_and_its_codec_claims_its_key() {
-    use sha2::Digest as _;
-    use wamn_schema_generator::write_log::{WRITE_LOG_DIRECTORY, WRITE_LOG_STATEMENTS};
-
+fn a_claim_command_names_its_key_and_its_codec_claims_nothing() {
     let package = fixture::generate_fixture();
     let operation = artifact(
         &package,
@@ -992,6 +990,26 @@ fn a_claim_command_lists_the_write_log_and_its_codec_claims_its_key() {
         operation["idempotency"]["log"]["operation"],
         "platform-fixture:widget/record-batch"
     );
+    let statements = |operation: &serde_json::Value| {
+        operation["statements"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|statement| statement["name"].as_str().unwrap().to_owned())
+            .collect::<Vec<_>>()
+    };
+    let create = artifact(&package, "generated/contracts/widget/create.operation.json");
+    for operation in [&operation, &create] {
+        assert!(
+            statements(operation)
+                .iter()
+                .all(|name| !name.starts_with("log_")),
+            "{operation}"
+        );
+    }
+    assert!(package.file("generated/sql/write_log/claim.sql").is_none());
+    assert!(package.file("generated/wit/write_log_codec.rs").is_none());
+
     let input = artifact(
         &package,
         "generated/contracts/widget/record_batch.input.json",
@@ -1000,76 +1018,34 @@ fn a_claim_command_lists_the_write_log_and_its_codec_claims_its_key() {
         wamn_schema_generator::client_plan::idempotency_field(&input).as_deref(),
         Some("value.idempotency_key")
     );
-    let statements = operation["statements"].as_array().unwrap();
-    for (name, stem, sql) in WRITE_LOG_STATEMENTS {
-        let path = format!("{WRITE_LOG_DIRECTORY}/{stem}.sql");
-        let listed = statements
-            .iter()
-            .find(|statement| statement["name"] == name)
-            .unwrap_or_else(|| panic!("{name} is listed"));
-        assert_eq!(listed["path"], path);
-        assert_eq!(
-            listed["digest"],
-            format!("sha256:{}", hex::encode(sha2::Sha256::digest(sql)))
-        );
-        assert_eq!(package.file(&path).expect(&path).bytes(), sql.as_bytes());
-    }
-    // A create lists the same three, with the same digests.
-    let create = artifact(&package, "generated/contracts/widget/create.operation.json");
-    let digests = |operation: &serde_json::Value| {
-        operation["statements"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .filter(|statement| {
-                statement["name"]
-                    .as_str()
-                    .is_some_and(|name| name.starts_with("log_"))
-            })
-            .map(|statement| statement["digest"].clone())
-            .collect::<Vec<_>>()
-    };
-    assert_eq!(digests(&create), digests(&operation));
-    assert_eq!(digests(&create).len(), 3);
+    assert_eq!(
+        wamn_schema_generator::client_plan::route_canonicalization(&input),
+        Some(wamn_catalog::RouteCanonicalization {
+            excluded: std::collections::BTreeSet::new(),
+            lines: Some(wamn_catalog::RouteLineOrder {
+                path: "value.line".to_owned(),
+                ascending_by: "widget_id".to_owned(),
+            }),
+            spelling: std::collections::BTreeMap::from([(
+                "value.line[].amount".to_owned(),
+                wamn_catalog::CanonicalSpelling::Numeric,
+            )]),
+        })
+    );
 
-    let codec = std::str::from_utf8(
-        package
-            .file("generated/wit/widget_record_batch_codec.rs")
-            .unwrap()
-            .bytes(),
-    )
-    .unwrap()
-    .to_owned();
-    for expected in [
-        "include!(\"write_log_codec.rs\");",
-        "const OPERATION: &str = \"platform-fixture:widget/record-batch\";",
-        "const KEY_FIELD: &str = \"value.idempotency_key\";",
-        "let key = request.idempotency_key.clone();",
-        "F: AsyncFnMut(\n        &mut wamn_postgres_statements::Transaction,",
-        // The request bytes respell a numeric, keep the declared line order,
-        // and leave the key out.
-        "wamn_execution_contract::canonical_numeric(&element.amount)",
-        "left[\"widget_id\"]",
+    for codec in [
+        "generated/wit/widget_record_batch_codec.rs",
+        "generated/wit/widget_create_codec.rs",
     ] {
-        assert!(codec.contains(expected), "{expected}\n{codec}");
+        let codec = std::str::from_utf8(package.file(codec).unwrap().bytes()).unwrap();
+        for absent in ["write_log_codec.rs", "request_bytes", "begin()"] {
+            assert!(!codec.contains(absent), "{absent}\n{codec}");
+        }
+        assert!(
+            codec.contains("wamn_postgres_statements::operation_transaction()"),
+            "{codec}"
+        );
     }
-    let request_bytes = &codec[codec
-        .find("fn request_bytes(")
-        .expect("the codec builds its request bytes")..];
-    let request_bytes = &request_bytes[..request_bytes.find("\n}\n").expect("one function")];
-    for absent in ["idempotency_key", "request_id"] {
-        assert!(!request_bytes.contains(absent), "{absent}\n{request_bytes}");
-    }
-    // A command that claims nothing keeps the plain handler loop.
-    let archive = std::str::from_utf8(
-        package
-            .file("generated/wit/widget_archive_codec.rs")
-            .unwrap()
-            .bytes(),
-    )
-    .unwrap()
-    .to_owned();
-    assert!(!archive.contains("write_log_codec.rs"), "{archive}");
 }
 
 /// Validation refuses the `claim` object: `idempotent_by: claim` is the whole

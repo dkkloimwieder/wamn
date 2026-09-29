@@ -147,7 +147,16 @@ fn detail_name(key: OperationErrorDetailKey) -> &'static str {
 }
 
 /// Emit component exports around an application's typed handler.
-pub(super) fn emit_export_adapter(type_name: &str, direct: bool, pass_context: bool) -> String {
+///
+/// A `transacted` operation works in the transaction that the host began for
+/// it (`docs/plan/host-transaction.md` 4.1), so its export takes no state: its
+/// handler gets the operation transaction.
+pub(super) fn emit_export_adapter(
+    type_name: &str,
+    direct: bool,
+    pass_context: bool,
+    transacted: bool,
+) -> String {
     let input_type = if direct {
         format!("__contract::{type_name}Request")
     } else {
@@ -180,11 +189,26 @@ pub(super) fn emit_export_adapter(type_name: &str, direct: bool, pass_context: b
             .to_owned()
     };
     let context_parameter = if pass_context { "context" } else { "_context" };
+    let (state_parameter, state) = if transacted {
+        (
+            "",
+            "wamn_postgres_statements::operation_transaction()
+                        .await
+                        .map_err(|error| {
+                            __node::NodeError::Terminal(__node::ErrorDetail {
+                                message: error.to_string(),
+                                code: Some(\"internal_error\".to_owned()),
+                            })
+                        })?",
+        )
+    } else {
+        (" $state:expr,", "$state")
+    };
     format!(
         r#"
 #[allow(unused_macros)]
 macro_rules! export_operation {{
-    ($component:ty, $contract:path, $node:path, $state:expr, $handler:path, $codec:ident) => {{
+    ($component:ty, $contract:path, $node:path,{state_parameter} $handler:path, $codec:ident) => {{
         const _: () = {{
             use $contract as __contract;
             use $node as __node;
@@ -202,7 +226,7 @@ macro_rules! export_operation {{
                     {context_parameter}: __node::NodeContext,
                     input: {input_type},
                 ) -> Result<{output_type}, __node::NodeError> {{
-                    let mut state = $state;
+                    let mut state = {state};
                     {run}
                 }}
 

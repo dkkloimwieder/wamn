@@ -1,7 +1,5 @@
 // @generated from migration IR; do not edit.
 
-use wamn_postgres_statements::Connection;
-
 #[derive(Debug)]
 pub struct WidgetTagRow {
     pub edit_version: i64,
@@ -27,13 +25,13 @@ pub(crate) const UPDATE_CHECK_CONSTRAINTS: &[&str] = &[];
 pub(crate) const UPDATE_EXCLUSION_CONSTRAINTS: &[&str] = &[];
 
 pub(crate) async fn update(
-    connection: &mut Connection,
+    transaction: &mut wamn_postgres_statements::Transaction,
     id: wamn_postgres_statements::Uuid,
     expected_edit_version: i64,
     label_present: bool,
     label_value: Option<String>,
 ) -> Result<WidgetTagUpdateRow, wamn_postgres_statements::StatementError> {
-    let rows = connection
+    let rows = transaction
         .run(
             UPDATE_DIGEST,
             vec![

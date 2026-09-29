@@ -151,6 +151,15 @@ impl CustomOperationDeclaration {
         self.registration.as_ref()
     }
 
+    /// Whether the host begins the transaction this operation works in: a
+    /// command with SQL of its own (`docs/plan/host-transaction.md` 4.1). A
+    /// participant works in the transaction of its base.
+    pub fn has_host_transaction(&self) -> bool {
+        self.kind == CustomOperationKind::Command
+            && !self.statements.is_empty()
+            && self.transaction != Some(CommandTransaction::Participant)
+    }
+
     /// Whether this command claims its key in the write log.
     pub const fn claims(&self) -> bool {
         matches!(self.idempotent_by, Some(CommandIdempotence::Claim))
@@ -2772,6 +2781,12 @@ impl CrudAction {
             Self::Update => "update",
             Self::Delete => "delete",
         }
+    }
+
+    /// Whether the action changes records, so the host begins the
+    /// transaction it works in (`docs/plan/host-transaction.md` 4.1).
+    pub const fn changes_records(self) -> bool {
+        matches!(self, Self::Create | Self::Update | Self::Delete)
     }
 }
 

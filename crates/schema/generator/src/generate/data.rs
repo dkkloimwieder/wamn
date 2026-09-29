@@ -131,13 +131,23 @@ pub(super) fn emit_model_data(
     api: &WamnApi,
 ) -> Result<(), GenerateError> {
     let model_type = rust_type_identifier(model_name);
+    // A read runs on the connection; a change runs in the host's transaction.
+    let connection = if api
+        .accessors
+        .iter()
+        .any(|accessor| !accessor.operation.changes_records())
+    {
+        "use wamn_postgres_statements::Connection;\n"
+    } else {
+        ""
+    };
     let mut source = String::from(HEADER);
     writeln!(
         source,
         "// The generated `{model_name}` operations.\n\n\
          #[allow(unused_imports)]\n\
          use wamn_data_access::{{Direction, Invalid, Page, cursor, scalar}};\n\
-         use wamn_postgres_statements::Connection;\n\n\
+         {connection}\n\
          #[allow(unused_imports)]\n\
          use super::error::{{Constraints, Error}};\n\n\
          /// The statement accessors of the model.\n\
@@ -245,8 +255,8 @@ fn emit_create(
     let refuse = statement_error(CrudAction::Create, &constraints(CrudAction::Create));
     writeln!(
         source,
-        "/// `{model_name}.create`: create one row in the transaction the codec holds\n\
-         /// for the write log.\n\
+        "/// `{model_name}.create`: create one row in the transaction the host began\n\
+         /// for the operation.\n\
          ///\n/// # Errors\n///\n/// [`Error`] carrying the literal the operation contract declares.\n\
          #[allow(clippy::too_many_arguments)]\n\
          pub async fn create(transaction: &mut wamn_postgres_statements::Transaction, {parameters}) -> Result<{model_type}Row, Error> {{\n\
@@ -351,9 +361,9 @@ fn emit_update(
         "/// `{model_name}.update`: change one row at the revision the caller last read.\n\
          ///\n/// # Errors\n///\n/// [`Error`] carrying the literal the operation contract declares.\n\
          #[allow(clippy::too_many_arguments)]\n\
-         pub async fn update(connection: &mut Connection, {parameters}) -> Result<{model_type}Row, Error> {{\n\
+         pub async fn update(transaction: &mut wamn_postgres_statements::Transaction, {parameters}) -> Result<{model_type}Row, Error> {{\n\
          {body}\
-         let row = sql::update(connection, {arguments}).await.map_err({refuse})?;\n\
+         let row = sql::update(transaction, {arguments}).await.map_err({refuse})?;\n\
          match row.outcome.as_deref() {{\n\
          Some({updated:?}) => Ok({model_type}Row {{ {members} }}),\n\
          Some({not_found:?}) => Err(Error::not_found(&id)),\n\
@@ -390,9 +400,9 @@ fn emit_delete(
         source,
         "/// `{model_name}.delete`: delete one row at the revision the caller last read.\n\
          ///\n/// # Errors\n///\n/// [`Error`] carrying the literal the operation contract declares.\n\
-         pub async fn delete(connection: &mut Connection, id: &str, expected_{revision_name}: {revision_rust}) -> Result<{model_type}DeleteRow, Error> {{\n\
+         pub async fn delete(transaction: &mut wamn_postgres_statements::Transaction, id: &str, expected_{revision_name}: {revision_rust}) -> Result<{model_type}DeleteRow, Error> {{\n\
          let id = scalar::uuid(id).map_err(|Invalid| Error::invalid(\"id\"))?;\n\
-         let row = sql::delete(connection, id.clone(), expected_{revision_name}).await.map_err({refuse})?;\n\
+         let row = sql::delete(transaction, id.clone(), expected_{revision_name}).await.map_err({refuse})?;\n\
          match row.outcome.as_deref() {{\n\
          Some({deleted:?}) => Ok(row),\n\
          Some({not_found:?}) => Err(Error::not_found(&id)),\n\

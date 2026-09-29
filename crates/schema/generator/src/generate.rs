@@ -369,9 +369,6 @@ pub fn generate(input: &GenerationInput<'_>) -> Result<GeneratedPackage, Generat
     let mut files = BTreeMap::<String, Vec<u8>>::new();
     let mut sql_corpus = authored_sql_map(input.authored_sql)?;
     emit_cursor_contract(&mut files)?;
-    if manifest.has_claim_operation() {
-        crate::write_log::emit(&mut files, &mut sql_corpus)?;
-    }
 
     for (model_name, model) in &manifest.models {
         let table = relation(input.catalog, model).expect("validation resolved every relation");

@@ -39,11 +39,11 @@ pub(super) async fn handle_detail(
 }
 
 pub(super) async fn handle_approve(
-    connection: &mut wamn_postgres_statements::Connection,
+    transaction: &mut wamn_postgres_statements::Transaction,
     request: approve_contract::ApproveInspectionRequest,
 ) -> Result<approve_contract::ApproveInspectionResult, approve_contract::ApproveInspectionError> {
     operation::quality_approve_inspection(
-        connection,
+        transaction,
         &request.receipt_id,
         request.expected_row_version,
     )

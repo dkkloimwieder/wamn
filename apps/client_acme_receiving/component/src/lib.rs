@@ -37,7 +37,7 @@ wit_bindgen::generate!({
     world: "client-acme-receiving:component/client-acme-receiving@3.0.0",
     path: [
         "../../../crates/execution/workflow/router/wit",
-        "../../../crates/platform/runtime/wit/deps/wamn-postgres-0.2",
+        "../../../crates/platform/runtime/wit/deps/wamn-postgres-0.3",
         "../../wamn_receiving/generated/wit/deps/wamn-receiving-receiving",
         "../generated/wit",
         "wit",
@@ -60,7 +60,6 @@ quality::approve_codec::export_operation!(
     Component,
     exports::client_acme_receiving::quality::approve_inspection,
     wamn::node::types,
-    wamn_postgres_statements::Connection::new(),
     quality::handle_approve,
     approve_codec
 );

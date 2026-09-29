@@ -60,6 +60,8 @@ pub struct CallIntents {
     package: String,
     kind: wamn_catalog::OperationKind,
     key_field: Option<String>,
+    canonicalization: Option<wamn_catalog::RouteCanonicalization>,
+    claim_operation: Option<String>,
     participation: Option<String>,
 }
 
@@ -73,6 +75,8 @@ impl CallIntents {
             package: &self.package,
             kind: self.kind,
             key_field: self.key_field.as_deref(),
+            canonicalization: self.canonicalization.as_ref(),
+            claim_operation: self.claim_operation.as_deref(),
             participation: self.participation.as_deref(),
         }
     }
@@ -401,6 +405,8 @@ impl OperationHost {
             package: route.package_id.clone(),
             kind: route.kind,
             key_field: route.idempotency.clone(),
+            canonicalization: route.canonicalization.clone(),
+            claim_operation: route.claim_operation.clone(),
             participation,
         }))
     }

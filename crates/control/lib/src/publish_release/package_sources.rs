@@ -6,7 +6,7 @@ use wamn_record_history::{HISTORY_TABLE_SUFFIX, is_history_table_name};
 
 use super::{
     BTreeMap, BTreeSet, MintManifestError, MintManifestErrorKind, OperationKind, PathBuf,
-    RouteContract, RouteContracts, ServingRelation, ServingRoute, sha256,
+    RouteCanonicalization, RouteContract, RouteContracts, ServingRelation, ServingRoute, sha256,
 };
 
 /// Every package's parsed manifest, every package's manifest digest, and the
@@ -22,7 +22,7 @@ pub(super) fn read_package_manifests(
 ) -> Result<PackageManifestSources, MintManifestError> {
     let mut manifests = BTreeMap::new();
     let mut hashes = BTreeMap::new();
-    let mut kinds = RouteContracts::new();
+    let mut contracts = BTreeMap::new();
     for path in paths {
         let bytes = std::fs::read(path).map_err(|error| {
             MintManifestError::with_source(
@@ -80,9 +80,7 @@ pub(super) fn read_package_manifests(
         })?;
         validate_package_metadata(&manifest, &metadata)?;
         let package_id = manifest.package.id.clone();
-        for (operation, contract) in read_operation_contracts(root)? {
-            kinds.insert((package_id.clone(), operation), contract);
-        }
+        contracts.insert(package_id.clone(), read_operation_contracts(root)?);
         if manifests.insert(package_id.clone(), manifest).is_some() {
             return Err(MintManifestError::new(
                 MintManifestErrorKind::PackageManifest,
@@ -91,6 +89,22 @@ pub(super) fn read_package_manifests(
         }
         hashes.insert(package_id, sha256(&bytes));
     }
+    let mut kinds = RouteContracts::new();
+    for (package_id, package) in &contracts {
+        for contract in package {
+            let route = resolve_claim(&manifests[package_id], contract, |base| {
+                contracts.get(base).map(Vec::as_slice).ok_or_else(|| {
+                    MintManifestError::new(
+                        MintManifestErrorKind::PackageManifest,
+                        format!(
+                            "package {package_id:?} inherits a claim from package {base:?}, which the release does not carry"
+                        ),
+                    )
+                })
+            })?;
+            kinds.insert((package_id.clone(), contract.operation.clone()), route);
+        }
+    }
     Ok((manifests, hashes, kinds))
 }
 
@@ -98,21 +112,31 @@ pub(super) fn read_package_manifests(
 /// publish writes it from the generated contract of its operation.
 ///
 /// A local application assembly calls it, so a test release carries the same
-/// route facts as a published one.
+/// route facts as a published one. `roots` holds the directory of every
+/// assembled package, so an inherited claim reads its base contract.
 ///
 /// # Errors
 ///
 /// Returns [`MintManifestError`] when no generated contract declares the
 /// operation, or a contract cannot be read.
 pub fn package_route(
-    root: &Path,
+    roots: &BTreeMap<String, &Path>,
     package_id: &str,
     component: &str,
     operation: &str,
 ) -> Result<ServingRoute, MintManifestError> {
-    let (_, contract) = read_operation_contracts(root)?
+    let unassembled = |package: &str| {
+        MintManifestError::new(
+            MintManifestErrorKind::PackageManifest,
+            format!("package {package:?} is not assembled"),
+        )
+    };
+    let root = roots
+        .get(package_id)
+        .ok_or_else(|| unassembled(package_id))?;
+    let contract = read_operation_contracts(root)?
         .into_iter()
-        .find(|(declared, _)| declared == operation)
+        .find(|contract| contract.operation == operation)
         .ok_or_else(|| {
             MintManifestError::new(
                 MintManifestErrorKind::GeneratedPackageMetadata,
@@ -121,6 +145,29 @@ pub fn package_route(
                 ),
             )
         })?;
+    let contract = if contract.inherited.is_some() {
+        let path = root.join("wamn.json");
+        let bytes = std::fs::read(&path).map_err(|error| {
+            MintManifestError::with_source(
+                MintManifestErrorKind::PackageManifest,
+                format!("read package manifest {}", path.display()),
+                error,
+            )
+        })?;
+        let manifest =
+            wamn_schema_generator::PackageManifest::from_slice(&bytes).map_err(|error| {
+                MintManifestError::with_source(
+                    MintManifestErrorKind::PackageManifest,
+                    format!("parse package manifest {}", path.display()),
+                    error,
+                )
+            })?;
+        resolve_claim(&manifest, &contract, |base| {
+            read_operation_contracts(roots.get(base).ok_or_else(|| unassembled(base))?)
+        })?
+    } else {
+        contract.route
+    };
     Ok(ServingRoute {
         package_id: package_id.to_owned(),
         component: component.to_owned(),
@@ -129,6 +176,67 @@ pub fn package_route(
         reads: contract.reads,
         revision: contract.revision,
         idempotency: contract.idempotency,
+        canonicalization: contract.canonicalization,
+        claim_operation: contract.claim_operation,
+    })
+}
+
+/// One generated contract of a package, before an inherited claim reads its
+/// base.
+struct PackageContract {
+    operation: String,
+    /// The manifest name of the operation, `<model>.<name>`.
+    declared: String,
+    /// The base operation whose claim the operation inherits.
+    inherited: Option<InheritedClaim>,
+    route: RouteContract,
+}
+
+#[derive(serde::Deserialize)]
+struct InheritedClaim {
+    base: String,
+    operation: String,
+}
+
+/// The route facts of `contract`. An inherited claim is the base's: the
+/// route claims under the base operation, with the base key field and the
+/// base canonical form, so one key through either route is one request.
+fn resolve_claim<B: std::borrow::Borrow<[PackageContract]>>(
+    manifest: &wamn_schema_generator::PackageManifest,
+    contract: &PackageContract,
+    base_contracts: impl FnOnce(&str) -> Result<B, MintManifestError>,
+) -> Result<RouteContract, MintManifestError> {
+    let Some(inherited) = &contract.inherited else {
+        return Ok(contract.route.clone());
+    };
+    let refused = |detail: String| {
+        MintManifestError::new(MintManifestErrorKind::GeneratedPackageMetadata, detail)
+    };
+    let dependency = manifest
+        .base_dependencies
+        .get(&inherited.base)
+        .ok_or_else(|| {
+            refused(format!(
+                "operation {:?} inherits a claim from undeclared base dependency {:?}",
+                contract.operation, inherited.base
+            ))
+        })?;
+    let base_contracts = base_contracts(&dependency.package)?;
+    let base = base_contracts
+        .borrow()
+        .iter()
+        .find(|base| base.declared == inherited.operation)
+        .ok_or_else(|| {
+            refused(format!(
+                "operation {:?} inherits the claim of {:?}, which package {:?} does not generate",
+                contract.operation, inherited.operation, dependency.package
+            ))
+        })?;
+    Ok(RouteContract {
+        idempotency: base.route.idempotency.clone(),
+        canonicalization: base.route.canonicalization.clone(),
+        claim_operation: Some(base.operation.clone()),
+        ..contract.route.clone()
     })
 }
 
@@ -138,9 +246,7 @@ pub fn package_route(
 /// relations a read reads, of the revision field of a `get`, and of the item
 /// field that carries an idempotency key. A package that generates no contract
 /// has no operation a route can call.
-fn read_operation_contracts(
-    root: &Path,
-) -> Result<Vec<(String, RouteContract)>, MintManifestError> {
+fn read_operation_contracts(root: &Path) -> Result<Vec<PackageContract>, MintManifestError> {
     #[derive(serde::Deserialize)]
     struct Contract {
         operation: String,
@@ -149,6 +255,14 @@ fn read_operation_contracts(
         relations: Vec<Relation>,
         #[serde(default)]
         record: Option<Record>,
+        #[serde(default)]
+        idempotent_by: Option<IdempotentBy>,
+    }
+    #[derive(serde::Deserialize)]
+    #[serde(untagged)]
+    enum IdempotentBy {
+        Inherited { inherited: InheritedClaim },
+        Other(serde::de::IgnoredAny),
     }
     #[derive(serde::Deserialize)]
     struct Relation {
@@ -220,29 +334,46 @@ fn read_operation_contracts(
                 .record
                 .and_then(|record| record.revision_field)
                 .filter(|_| contract.kind == OperationKind::Get);
-            let idempotency = if contract.kind.is_read() {
-                None
+            let (idempotency, canonicalization) = if contract.kind.is_read() {
+                (None, None)
             } else {
-                read_idempotency_field(&path)?
+                read_input_identity(&path)?
             };
-            kinds.push((
-                contract.operation,
-                RouteContract {
+            let inherited = match contract.idempotent_by {
+                Some(IdempotentBy::Inherited { inherited }) => Some(inherited),
+                _ => None,
+            };
+            let stem = path.file_name().unwrap_or_default().to_string_lossy();
+            let declared = format!(
+                "{}.{}",
+                model.file_name().unwrap_or_default().to_string_lossy(),
+                &stem[..stem.len() - ".operation.json".len()]
+            );
+            kinds.push(PackageContract {
+                operation: contract.operation,
+                declared,
+                inherited,
+                route: RouteContract {
                     kind: contract.kind,
                     reads,
                     revision,
                     idempotency,
+                    canonicalization,
+                    claim_operation: None,
                 },
-            ));
+            });
         }
     }
     Ok(kinds)
 }
 
-/// The idempotency key field of the input contract beside `operation_path`.
+/// The idempotency key field and the canonical item form of the input
+/// contract beside `operation_path`.
 ///
-/// An operation with no input contract declares no key.
-fn read_idempotency_field(operation_path: &Path) -> Result<Option<String>, MintManifestError> {
+/// An operation with no input contract declares neither.
+fn read_input_identity(
+    operation_path: &Path,
+) -> Result<(Option<String>, Option<RouteCanonicalization>), MintManifestError> {
     let name = operation_path.to_string_lossy();
     let input_path = std::path::PathBuf::from(format!(
         "{}.input.json",
@@ -250,7 +381,7 @@ fn read_idempotency_field(operation_path: &Path) -> Result<Option<String>, MintM
     ));
     let bytes = match std::fs::read(&input_path) {
         Ok(bytes) => bytes,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok((None, None)),
         Err(error) => {
             return Err(MintManifestError::with_source(
                 MintManifestErrorKind::GeneratedPackageMetadata,
@@ -269,8 +400,9 @@ fn read_idempotency_field(operation_path: &Path) -> Result<Option<String>, MintM
             error,
         )
     })?;
-    Ok(wamn_schema_generator::client_plan::idempotency_field(
-        &contract,
+    Ok((
+        wamn_schema_generator::client_plan::idempotency_field(&contract),
+        wamn_schema_generator::client_plan::route_canonicalization(&contract),
     ))
 }
 
@@ -307,12 +439,23 @@ mod tests {
     use wamn_catalog::{OperationKind, ServingRelation};
     use wamn_test_infrastructure::operations::sealed;
 
-    use super::package_route;
+    use super::BTreeMap;
 
     fn app(name: &str) -> std::path::PathBuf {
         Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../../../apps")
             .join(name)
+    }
+
+    /// The route of one package, assembled alone.
+    fn package_route(
+        root: &Path,
+        package_id: &str,
+        component: &str,
+        operation: &str,
+    ) -> Result<wamn_catalog::ServingRoute, super::MintManifestError> {
+        let roots = BTreeMap::from([(package_id.to_owned(), root)]);
+        super::package_route(&roots, package_id, component, operation)
     }
 
     fn relations(names: &[(&str, &str)]) -> BTreeSet<ServingRelation> {
@@ -400,5 +543,39 @@ mod tests {
             archive.expect("the archive has a contract").idempotency,
             None
         );
+    }
+
+    /// An inherited claim is the base's: the overlay route claims under the
+    /// base operation, with the base key field and the base canonical form.
+    #[test]
+    fn an_inherited_claim_carries_the_base_claim() {
+        let receiving = app("wamn_receiving");
+        let acme = app("client_acme_receiving");
+        let roots = BTreeMap::from([
+            ("wamn_receiving".to_owned(), receiving.as_path()),
+            ("client_acme_receiving".to_owned(), acme.as_path()),
+        ]);
+        let base = super::package_route(
+            &roots,
+            "wamn_receiving",
+            "receiving",
+            "wamn-receiving:receiving/record-receipt@1.0.0",
+        )
+        .expect("the base command has a contract");
+        let overlay = super::package_route(
+            &roots,
+            "client_acme_receiving",
+            "client_acme_receiving",
+            "client-acme-receiving:receiving/record-receipt@3.0.0",
+        )
+        .expect("the overlay command has a contract");
+        assert_eq!(base.claim_operation, None);
+        assert_eq!(
+            overlay.claim_operation.as_deref(),
+            Some(base.operation.as_str())
+        );
+        assert_eq!(overlay.idempotency, base.idempotency);
+        assert!(base.canonicalization.is_some());
+        assert_eq!(overlay.canonicalization, base.canonicalization);
     }
 }

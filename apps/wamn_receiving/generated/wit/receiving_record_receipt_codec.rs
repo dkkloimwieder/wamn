@@ -204,114 +204,15 @@ fn normalize(
     Ok(())
 }
 
-include!("write_log_codec.rs");
-
-/// The write log operation of this contract: its operation without the version.
-const OPERATION: &str = "wamn-receiving:receiving/record-receipt";
-/// The input field that carries the key the write log claims.
-const KEY_FIELD: &str = "value.idempotency_key";
-
-/// The bytes the write log keeps for one validated request: its canonical JSON
-/// without the key and the request id, and the participation intent when one
-/// is selected.
-fn request_bytes(request: &contract::RecordReceiptRequest, intent: Option<&str>) -> Vec<u8> {
-    let mut value = {
-        let mut value = Map::new();
-        value.insert("line".to_owned(), {
-            let mut lines = request
-                .line
-                .iter()
-                .map(|element| {
-                    let mut value = Map::new();
-                    value.insert("location_id".to_owned(), json!(&element.location_id));
-                    value.insert(
-                        "purchase_order_line_id".to_owned(),
-                        json!(&element.purchase_order_line_id),
-                    );
-                    value.insert(
-                        "quantity".to_owned(),
-                        json!(
-                            wamn_execution_contract::canonical_numeric(&element.quantity)
-                                .unwrap_or_else(|| element.quantity.clone())
-                        ),
-                    );
-                    Value::Object(value)
-                })
-                .collect::<Vec<_>>();
-            lines.sort_by(|left, right| {
-                left["purchase_order_line_id"]
-                    .to_string()
-                    .cmp(&right["purchase_order_line_id"].to_string())
-            });
-            Value::Array(lines)
-        });
-        value.insert(
-            "occurred_at".to_owned(),
-            json!(
-                wamn_execution_contract::canonical_timestamptz(&request.occurred_at)
-                    .unwrap_or_else(|| request.occurred_at.clone())
-            ),
-        );
-        value.insert(
-            "purchase_order_id".to_owned(),
-            json!(&request.purchase_order_id),
-        );
-        value.insert(
-            "receipt_reference".to_owned(),
-            json!(&request.receipt_reference),
-        );
-        Value::Object(value)
-    };
-    if let (Some(intent), Value::Object(object)) = (intent, &mut value) {
-        object.insert("participation_intent".to_owned(), json!(intent));
-    }
-    wamn_execution_contract::canonical_json_bytes(&value)
-}
-
-/// The result the write log stores for one success: its encoded outcome
-/// without the request id.
-fn stored_result(result: &contract::RecordReceiptResult) -> String {
-    let encoded = encode(&[contract::RecordReceiptOutcome {
-        request_id: String::new(),
-        outcome: Ok(result.clone()),
-    }]);
-    let mut outcomes: Vec<Value> =
-        serde_json::from_str(&encoded).expect("the encoder writes a JSON list");
-    outcomes
-        .pop()
-        .and_then(|mut outcome| outcome.get_mut("value").map(Value::take))
-        .expect("an encoded success carries its value")
-        .to_string()
-}
-
-#[derive(Deserialize)]
-struct JsonResult {
-    receipt_id: String,
-    purchase_order_id: String,
-    purchase_order_status: String,
-    row_version: i32,
-}
-
-/// The success that one stored result answers.
-fn stored_success(result: &str) -> Option<contract::RecordReceiptResult> {
-    let value: JsonResult = serde_json::from_str(result).ok()?;
-    Some(contract::RecordReceiptResult {
-        receipt_id: value.receipt_id,
-        purchase_order_id: value.purchase_order_id,
-        purchase_order_status: value.purchase_order_status,
-        row_version: value.row_version,
-    })
-}
-
 #[allow(dead_code)]
-pub(crate) async fn run<F>(
+pub(crate) async fn run<S, F>(
     input: Vec<contract::RecordReceiptItem>,
-    connection: &mut wamn_postgres_statements::Connection,
+    state: &mut S,
     mut handler: F,
 ) -> Vec<contract::RecordReceiptOutcome>
 where
     F: AsyncFnMut(
-        &mut wamn_postgres_statements::Transaction,
+        &mut S,
         contract::RecordReceiptRequest,
     ) -> Result<contract::RecordReceiptResult, contract::RecordReceiptError>,
 {
@@ -319,7 +220,7 @@ where
     for item in input {
         let outcome = match item.input {
             Ok(mut request) => match normalize(&mut request) {
-                Ok(()) => claimed(connection, request, &mut handler).await,
+                Ok(()) => handler(state, request).await,
                 Err(error) => Err(contract::RecordReceiptError::InvalidInput(error)),
             },
             Err(error) => Err(contract::RecordReceiptError::InvalidInput(error)),
@@ -330,63 +231,6 @@ where
         });
     }
     output
-}
-
-/// Claim the key of one request, do its work and store its result in one
-/// transaction, or answer what a committed claim of the key holds.
-async fn claimed<F>(
-    connection: &mut wamn_postgres_statements::Connection,
-    request: contract::RecordReceiptRequest,
-    handler: &mut F,
-) -> Result<contract::RecordReceiptResult, contract::RecordReceiptError>
-where
-    F: AsyncFnMut(
-        &mut wamn_postgres_statements::Transaction,
-        contract::RecordReceiptRequest,
-    ) -> Result<contract::RecordReceiptResult, contract::RecordReceiptError>,
-{
-    let refuse =
-        |error: &wamn_postgres_statements::StatementError| map_error(log_error(error), |_| None);
-    let key = request.idempotency_key.clone();
-    let intent = wamn_postgres_statements::participation()
-        .await
-        .map_err(|error| refuse(&error))?
-        .map(|selected| selected.intent);
-    let bytes = request_bytes(&request, intent.as_deref());
-    let mut transaction = connection.begin().await.map_err(|error| refuse(&error))?;
-    match log_claim(&mut transaction, OPERATION, &key, &bytes).await {
-        Ok(Logged::Claimed) => {}
-        Ok(Logged::Stored(stored, result)) => {
-            let _ = transaction.rollback().await;
-            if stored != bytes {
-                return Err(map_error("idempotency_conflict", |name| {
-                    (name == "field").then(|| KEY_FIELD.to_owned())
-                }));
-            }
-            return result
-                .as_deref()
-                .and_then(stored_success)
-                .ok_or_else(|| map_error("internal_error", |_| None));
-        }
-        Err(error) => {
-            let _ = transaction.rollback().await;
-            return Err(refuse(&error));
-        }
-    }
-    let result = match handler(&mut transaction, request).await {
-        Ok(result) => result,
-        Err(error) => {
-            let _ = transaction.rollback().await;
-            return Err(error);
-        }
-    };
-    if let Err(error) = log_finish(&mut transaction, OPERATION, &key, stored_result(&result)).await
-    {
-        let _ = transaction.rollback().await;
-        return Err(refuse(&error));
-    }
-    transaction.commit().await.map_err(|error| refuse(&error))?;
-    Ok(result)
 }
 
 #[allow(unused_macros)]
@@ -517,7 +361,7 @@ pub(crate) fn map_error(
 
 #[allow(unused_macros)]
 macro_rules! export_operation {
-    ($component:ty, $contract:path, $node:path, $state:expr, $handler:path, $codec:ident) => {
+    ($component:ty, $contract:path, $node:path, $handler:path, $codec:ident) => {
         const _: () = {
             use $codec as __codec;
             use $contract as __contract;
@@ -535,7 +379,14 @@ macro_rules! export_operation {
                     context: __node::NodeContext,
                     input: Vec<__contract::RecordReceiptItem>,
                 ) -> Result<Vec<__contract::RecordReceiptOutcome>, __node::NodeError> {
-                    let mut state = $state;
+                    let mut state = wamn_postgres_statements::operation_transaction()
+                        .await
+                        .map_err(|error| {
+                            __node::NodeError::Terminal(__node::ErrorDetail {
+                                message: error.to_string(),
+                                code: Some("internal_error".to_owned()),
+                            })
+                        })?;
                     __codec::validate(&input).map_err(invalid)?;
                     Ok(__codec::run(input, &mut state, async |state, request| {
                         $handler(context.clone(), state, request).await

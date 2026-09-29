@@ -4,7 +4,7 @@ use wamn_postgres_statements::{Connection, Transaction};
 use crate::detail;
 
 mod archive {
-    use super::{Connection, detail, widget};
+    use super::{Transaction, detail, widget};
     use crate::exports::platform_fixture::widget::archive as contract;
     mod codec {
         use super::contract;
@@ -15,10 +15,10 @@ mod archive {
     }
 
     async fn handle(
-        connection: &mut Connection,
+        transaction: &mut Transaction,
         request: contract::ArchiveRequest,
     ) -> Result<contract::ArchiveResult, contract::ArchiveError> {
-        widget::archive(connection, &request.id, request.expected_edit_version)
+        widget::archive(transaction, &request.id, request.expected_edit_version)
             .await
             .map(|row| codec::row!(row, contract::ArchiveResult))
             .map_err(|error| {
@@ -31,7 +31,6 @@ mod archive {
         crate::Component,
         contract,
         crate::wamn::node::types,
-        Connection::new(),
         handle,
         codec
     );
@@ -79,7 +78,7 @@ mod list {
 }
 
 mod record_batch {
-    use super::{Connection, Transaction, detail, widget};
+    use super::{Transaction, detail, widget};
     use crate::exports::platform_fixture::widget::record_batch as contract;
     mod codec {
         use super::contract;
@@ -122,7 +121,6 @@ mod record_batch {
         crate::Component,
         contract,
         crate::wamn::node::types,
-        Connection::new(),
         handle,
         codec
     );

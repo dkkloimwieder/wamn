@@ -104,8 +104,8 @@ pub async fn query(
     }
 }
 
-/// `location.create`: create one row in the transaction the codec holds
-/// for the write log.
+/// `location.create`: create one row in the transaction the host began
+/// for the operation.
 ///
 /// # Errors
 ///
@@ -142,7 +142,7 @@ pub async fn create(
 /// [`Error`] carrying the literal the operation contract declares.
 #[allow(clippy::too_many_arguments)]
 pub async fn update(
-    connection: &mut Connection,
+    transaction: &mut wamn_postgres_statements::Transaction,
     id: &str,
     expected_row_version: i32,
     location_code: Option<Option<String>>,
@@ -154,7 +154,7 @@ pub async fn update(
     let location_code_present = location_code.is_some();
     let location_code = location_code.flatten();
     let row = sql::update(
-        connection,
+        transaction,
         id.clone(),
         expected_row_version,
         location_code_present,

@@ -4,7 +4,7 @@ package platform-fixture-overlay:generated;
 
 /// Every operation of the package. An authored world includes it.
 world generated {
-  import wamn:postgres/types@0.2.0;
-  import wamn:postgres/statements@0.2.0;
+  import wamn:postgres/types@0.3.0;
+  import wamn:postgres/statements@0.3.0;
   export platform-fixture-overlay:widget/get@1.0.0;
 }

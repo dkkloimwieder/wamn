@@ -78,7 +78,6 @@ pub(crate) mod create {
         crate::Component,
         contract,
         crate::wamn::node::types,
-        Connection::new(),
         handle,
         codec
     );

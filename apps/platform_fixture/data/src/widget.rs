@@ -36,14 +36,13 @@ pub struct Batch {
 ///
 /// [`AccessError`] carrying the literal the operation contract declares.
 pub async fn archive(
-    connection: &mut Connection,
+    transaction: &mut Transaction,
     id: &str,
     expected_edit_version: i64,
 ) -> Result<ArchiveRow, AccessError> {
     let id = scalar::uuid("id", id)?;
     let statement = |error: StatementError| AccessError::from_statement(&error, Constraints::NONE);
-    let mut transaction = connection.begin().await.map_err(statement)?;
-    let row = widget_archive::archive(&mut transaction, id)
+    let row = widget_archive::archive(transaction, id)
         .await
         .map_err(statement)?;
     if row.edit_version != expected_edit_version {
@@ -52,7 +51,6 @@ pub async fn archive(
             row.edit_version,
         ));
     }
-    transaction.commit().await.map_err(statement)?;
     Ok(row)
 }
 
@@ -71,8 +69,8 @@ pub async fn list(connection: &mut Connection) -> Result<Vec<ListRow>, AccessErr
     Ok(rows)
 }
 
-/// Record one batch of lines in the transaction its codec holds for the write
-/// log, and answer the widget of its first line in `widget_id` order.
+/// Record one batch of lines in the transaction the host began for the
+/// operation, and answer the widget of its first line in `widget_id` order.
 ///
 /// # Errors
 ///

@@ -111,13 +111,13 @@ pub(crate) async fn create(
 }
 
 pub(crate) async fn update(
-    connection: &mut Connection,
+    transaction: &mut wamn_postgres_statements::Transaction,
     id: wamn_postgres_statements::Uuid,
     expected_row_version: i32,
     location_code_present: bool,
     location_code_value: Option<String>,
 ) -> Result<LocationUpdateRow, wamn_postgres_statements::StatementError> {
-    let rows = connection
+    let rows = transaction
         .run(
             UPDATE_DIGEST,
             vec![

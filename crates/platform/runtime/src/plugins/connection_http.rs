@@ -1338,6 +1338,8 @@ mod tests {
             reads: BTreeSet::new(),
             revision: None,
             idempotency: None,
+            canonicalization: None,
+            claim_operation: None,
         });
         authorize_release_closure(&manifest, &invocation, &snapshot)
             .expect("a released route authorizes its origin export");

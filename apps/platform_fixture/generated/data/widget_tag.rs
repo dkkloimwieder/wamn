@@ -4,7 +4,6 @@
 
 #[allow(unused_imports)]
 use wamn_data_access::{Direction, Invalid, Page, cursor, scalar};
-use wamn_postgres_statements::Connection;
 
 #[allow(unused_imports)]
 use super::error::{Constraints, Error};
@@ -29,7 +28,7 @@ const UPDATE_OPERATION: &str = "widget_tag.update";
 /// [`Error`] carrying the literal the operation contract declares.
 #[allow(clippy::too_many_arguments)]
 pub async fn update(
-    connection: &mut Connection,
+    transaction: &mut wamn_postgres_statements::Transaction,
     id: &str,
     expected_edit_version: i64,
     label: Option<Option<String>>,
@@ -41,7 +40,7 @@ pub async fn update(
     let label_present = label.is_some();
     let label = label.flatten();
     let row = sql::update(
-        connection,
+        transaction,
         id.clone(),
         expected_edit_version,
         label_present,

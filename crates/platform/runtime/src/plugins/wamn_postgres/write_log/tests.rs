@@ -223,4 +223,20 @@ async fn the_claim_of_an_item_commits_with_its_transaction() {
     );
     waiter.rollback().await.expect("rollback");
     assert_eq!(rows().trim(), "2", "k1 and k3 committed, k2 left no row");
+
+    // A statement that finds its connection lost fails, and the rollback
+    // after it answers that the transaction ended.
+    let lost = begin().await;
+    database
+        .execute(&["SELECT pg_terminate_backend(pid) FROM pg_stat_activity \
+             WHERE state = 'idle in transaction' AND pid <> pg_backend_pid()"])
+        .expect("end the item connection");
+    assert!(
+        lost.begin(&intent("k4", "h1")).await.is_err(),
+        "a lost connection fails the claim"
+    );
+    lost.rollback()
+        .await
+        .expect("the rollback of a lost connection succeeds");
+    assert_eq!(rows().trim(), "2", "a lost connection leaves no row");
 }

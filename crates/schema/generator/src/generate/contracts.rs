@@ -234,13 +234,6 @@ fn emit_custom_operation_contracts(
             })
             .collect::<Result<Vec<_>, _>>()?;
     let key = operation.idempotency_key_field();
-    let statements = match key {
-        Some(_) => statements
-            .into_iter()
-            .chain(write_log_statement_contracts())
-            .collect(),
-        None => statements,
-    };
     let mut operation_contract = serde_json::Map::from_iter([
         ("operation".to_owned(), json!(operation_id)),
         ("kind".to_owned(), json!(operation.kind())),
@@ -421,24 +414,23 @@ fn operation_row_columns(wamn_api: &WamnApi, row: &str) -> Vec<StatementValueCon
 }
 
 /// What a consumer must know about the retry of one claim operation
-/// (`docs/plan/write-log.md` 4.2).
+/// (`docs/plan/host-transaction.md` 4.2).
 ///
-/// The codec claims the key in the write log, does the work and stores the
-/// result in one transaction. A retry with the same request answers the stored
-/// result and writes nothing. A refused item rolls its claim back.
+/// The host claims the key in the write log, the work runs and the host stores
+/// the result in one transaction. A retry with the same request answers the
+/// stored result and writes nothing. A refused item rolls its claim back.
 fn idempotency_contract(key: &str, operation_id: &str) -> Value {
-    let operation = crate::write_log::log_operation(operation_id);
+    // The operation without its `@version`, so a retry across a release
+    // answers the stored result.
+    let operation = operation_id
+        .rsplit_once('@')
+        .map_or(operation_id, |(operation, _)| operation);
     json!({
         "key": key,
         "log": {
-            "schema": crate::write_log::WRITE_LOG_SCHEMA,
-            "table": crate::write_log::WRITE_LOG_TABLE,
+            "schema": "app_system",
+            "table": "write_log",
             "operation": operation,
-        },
-        "statements": {
-            "claim": crate::write_log::LOG_CLAIM,
-            "read": crate::write_log::LOG_READ,
-            "finish": crate::write_log::LOG_FINISH,
         },
         "isolation": "read_committed",
         "replay": {"writes": "none", "answer": "stored_result"},
@@ -448,48 +440,6 @@ fn idempotency_contract(key: &str, operation_id: &str) -> Value {
         },
         "refusal": {"log": "none"},
         "atomicity": "claim_work_and_result_commit_together",
-    })
-}
-
-/// The contracts of the three write log statements. Every claim operation
-/// lists the same three, so the host admits them for its invocation.
-fn write_log_statement_contracts() -> [StatementContract; 3] {
-    let text = |name: &str, nullable| statement_value_contract(name, ColumnType::Text, nullable);
-    let bytes = |name: &str| statement_value_contract(name, ColumnType::Bytes, false);
-    crate::write_log::WRITE_LOG_STATEMENTS.map(|(name, stem, sql)| {
-        let (binds, columns, transactional) = match name {
-            crate::write_log::LOG_CLAIM => (
-                vec![
-                    text("operation", false),
-                    text("idempotency_key", false),
-                    bytes("request"),
-                ],
-                vec![text("idempotency_key", false)],
-                true,
-            ),
-            crate::write_log::LOG_READ => (
-                vec![text("operation", false), text("idempotency_key", false)],
-                vec![bytes("request"), text("result", true)],
-                false,
-            ),
-            _ => (
-                vec![
-                    text("operation", false),
-                    text("idempotency_key", false),
-                    text("result", false),
-                ],
-                vec![text("idempotency_key", false)],
-                true,
-            ),
-        };
-        StatementContract {
-            name: name.to_owned(),
-            path: format!("{}/{stem}.sql", crate::write_log::WRITE_LOG_DIRECTORY),
-            digest: sha256(sql.as_bytes()),
-            binds,
-            columns,
-            transactional,
-        }
     })
 }
 
@@ -792,14 +742,6 @@ fn emit_operation_contracts(
             )
         })
         .collect::<Result<Vec<_>, _>>()?;
-    let statements = if action == CrudAction::Create {
-        statements
-            .into_iter()
-            .chain(write_log_statement_contracts())
-            .collect()
-    } else {
-        statements
-    };
     let mut record = serde_json::Map::from_iter([
         (
             "relation".to_owned(),

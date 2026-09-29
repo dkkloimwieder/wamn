@@ -112,14 +112,28 @@ impl OperationTransaction {
     /// # Errors
     ///
     /// Returns the error of `ROLLBACK`. The connection is then destroyed, so
-    /// the server aborts the transaction.
+    /// the server aborts the transaction. A transaction whose connection is
+    /// already lost, for example after a failed statement, is rolled back, so
+    /// it answers `Ok`.
     pub async fn rollback(&self) -> Result<(), PgError> {
-        super::resources::finish_statement_txn(
+        if self
+            .transaction
+            .state
+            .lock()
+            .is_ok_and(|state| state.finished && state.conn.is_none())
+        {
+            return Ok(());
+        }
+        match super::resources::finish_statement_txn(
             &self.transaction.state,
             &self.transaction.destroyed,
             "ROLLBACK",
         )
         .await
+        {
+            Err(PgError::ConnectionUnavailable) => Ok(()),
+            finished => finished,
+        }
     }
 }
 

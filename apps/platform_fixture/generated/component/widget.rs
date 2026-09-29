@@ -119,7 +119,6 @@ pub(crate) mod create {
         crate::Component,
         contract,
         crate::wamn::node::types,
-        Connection::new(),
         handle,
         codec
     );
@@ -138,11 +137,11 @@ pub(crate) mod update {
     }
 
     pub(crate) async fn handle(
-        connection: &mut Connection,
+        transaction: &mut Transaction,
         request: contract::UpdateRequest,
     ) -> Result<contract::UpdateResult, contract::UpdateError> {
         model::update(
-            connection,
+            transaction,
             &request.id,
             request.expected_edit_version,
             request.change.code,
@@ -157,7 +156,6 @@ pub(crate) mod update {
         crate::Component,
         contract,
         crate::wamn::node::types,
-        Connection::new(),
         handle,
         codec
     );
@@ -176,10 +174,10 @@ pub(crate) mod delete {
     }
 
     pub(crate) async fn handle(
-        connection: &mut Connection,
+        transaction: &mut Transaction,
         request: contract::DeleteRequest,
     ) -> Result<contract::DeleteResult, contract::DeleteError> {
-        model::delete(connection, &request.id, request.expected_edit_version)
+        model::delete(transaction, &request.id, request.expected_edit_version)
             .await
             .map(|row| contract::DeleteResult {
                 value: codec::row!(row, contract::DeleteRow),
@@ -190,7 +188,6 @@ pub(crate) mod delete {
         crate::Component,
         contract,
         crate::wamn::node::types,
-        Connection::new(),
         handle,
         codec
     );

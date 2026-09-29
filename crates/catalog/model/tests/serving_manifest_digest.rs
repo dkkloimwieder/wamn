@@ -110,6 +110,8 @@ fn routes() -> BTreeSet<ServingRoute> {
         reads: BTreeSet::new(),
         revision: None,
         idempotency: None,
+        canonicalization: None,
+        claim_operation: None,
     }])
 }
 

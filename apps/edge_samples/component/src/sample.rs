@@ -77,7 +77,6 @@ mod record {
         crate::Component,
         contract,
         crate::wamn::node::types,
-        wamn_postgres_statements::Connection::new(),
         handle,
         codec
     );

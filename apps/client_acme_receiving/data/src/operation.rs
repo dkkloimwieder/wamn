@@ -1,6 +1,6 @@
 //! Wire adapters for Acme Receiving operations backed by generated SQL.
 
-use wamn_postgres_statements::{Connection, TransactionView, Uuid as WamnUuid};
+use wamn_postgres_statements::{Connection, Transaction, TransactionView, Uuid as WamnUuid};
 
 use crate::error::AccessError;
 use crate::statements::{
@@ -134,26 +134,18 @@ pub async fn quality_load_purchase_order_detail(
         .ok_or_else(|| AccessError::not_found("purchase_order does not exist"))
 }
 
-/// Execute `quality.approve_inspection` as one transaction per input item.
+/// Execute `quality.approve_inspection` in the transaction the host began for
+/// the input item.
 pub async fn quality_approve_inspection(
-    connection: &mut Connection,
+    transaction: &mut Transaction,
     receipt_id: &str,
     expected_row_version: i32,
 ) -> Result<ApproveInspectionValue, AccessError> {
     let receipt_id = parse_uuid(receipt_id, "receipt_id")?;
-    let mut transaction = connection
-        .begin()
-        .await
-        .map_err(|source| AccessError::from_statement("begin inspection approval", &source))?;
-    let row = approve_sql::approve_inspection(&mut transaction, receipt_id, expected_row_version)
+    let row = approve_sql::approve_inspection(transaction, receipt_id, expected_row_version)
         .await
         .map_err(|source| AccessError::from_statement("approve quality_inspection", &source))?;
-    let value = approve_inspection_value(row, expected_row_version)?;
-    transaction
-        .commit()
-        .await
-        .map_err(|source| AccessError::from_statement("commit inspection approval", &source))?;
-    Ok(value)
+    approve_inspection_value(row, expected_row_version)
 }
 
 /// Execute private `quality.create_inspection` without caller or permission synthesis.

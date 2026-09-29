@@ -328,7 +328,9 @@ async fn history(db: &Client, route: &Route, history: &History, evidence: &mut F
         let mut state = model::model(history.ordered);
         for (index, &step) in history.steps.iter().enumerate() {
             let before = snapshot(db, &fixture).await?;
-            let request_id = format!("step-{index}");
+            // An update is keyed by its request id, so each history's ids are
+            // its own.
+            let request_id = format!("{}-step-{index}", fixture.key_prefix);
             let receipt = model::receipt(&state, step);
             let supplier = Uuid::new_v4();
             let (path, body) = if let Some(receipt) = receipt {
@@ -845,7 +847,7 @@ async fn lost_response(db: &Client, route: &Route, evidence: &mut File) -> Resul
         .await?
         .get(0);
     ensure!(
-        value == serde_json::from_str::<Value>(&expected)?,
+        value == serde_json::from_str::<Value>(&expected)?["value"],
         "REC-LOST-RESPONSE retry did not return the independently observed original result"
     );
     ensure!(

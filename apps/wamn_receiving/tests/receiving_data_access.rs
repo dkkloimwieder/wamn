@@ -1494,8 +1494,8 @@ mod tests {
         }
     }
 
-    /// Run the command as its generated codec runs it: claim the key in the
-    /// write log, do the work, and store the result, in one transaction. A key
+    /// Run the command as the host runs it: claim the key in the write log, do
+    /// the work, and store the result, in one transaction. A key
     /// that a committed claim holds answers its stored result, or
     /// `idempotency_conflict` for another request.
     async fn execute_record_receipt_in(
@@ -1505,7 +1505,7 @@ mod tests {
         let (request, line_json) = canonical_receipt_command(command);
         let claimed = transaction
             .query_opt(
-                wamn_schema_generator::write_log::LOG_CLAIM_SQL,
+                wamn_runtime::plugins::wamn_postgres::write_log::CLAIM_SQL,
                 &[
                     &RECORD_RECEIPT_OPERATION,
                     &command.idempotency_key,
@@ -1517,7 +1517,7 @@ mod tests {
         if claimed.is_none() {
             let stored = transaction
                 .query_one(
-                    wamn_schema_generator::write_log::LOG_READ_SQL,
+                    wamn_runtime::plugins::wamn_postgres::write_log::READ_SQL,
                     &[&RECORD_RECEIPT_OPERATION, &command.idempotency_key],
                 )
                 .await
@@ -1534,7 +1534,7 @@ mod tests {
         .to_string();
         transaction
             .query_one(
-                wamn_schema_generator::write_log::LOG_FINISH_SQL,
+                wamn_runtime::plugins::wamn_postgres::write_log::FINISH_SQL,
                 &[&RECORD_RECEIPT_OPERATION, &command.idempotency_key, &stored],
             )
             .await

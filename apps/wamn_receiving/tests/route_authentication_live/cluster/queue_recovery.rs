@@ -236,7 +236,7 @@ async fn recover(
             && outcome[0]["value"]["receipt_id"].is_string(),
         "recovered command must return its committed receipt"
     );
-    let count: i64 = client.query_one("SELECT count(*) FROM receiving.receipt WHERE id::text IN (SELECT result::jsonb ->> 'receipt_id' FROM app_system.write_log WHERE operation='wamn-receiving:receiving/record-receipt' AND idempotency_key='deployed-queue-recovery')", &[]).await?.get(0);
+    let count: i64 = client.query_one("SELECT count(*) FROM receiving.receipt WHERE id::text IN (SELECT result::jsonb -> 'value' ->> 'receipt_id' FROM app_system.write_log WHERE operation='wamn-receiving:receiving/record-receipt' AND idempotency_key='deployed-queue-recovery')", &[]).await?.get(0);
     ensure!(
         count == 1,
         "interrupted command must commit exactly one receipt"

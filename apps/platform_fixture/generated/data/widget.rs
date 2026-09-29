@@ -146,8 +146,8 @@ pub async fn query(
     }
 }
 
-/// `widget.create`: create one row in the transaction the codec holds
-/// for the write log.
+/// `widget.create`: create one row in the transaction the host began
+/// for the operation.
 ///
 /// # Errors
 ///
@@ -190,7 +190,7 @@ pub async fn create(
 /// [`Error`] carrying the literal the operation contract declares.
 #[allow(clippy::too_many_arguments)]
 pub async fn update(
-    connection: &mut Connection,
+    transaction: &mut wamn_postgres_statements::Transaction,
     id: &str,
     expected_edit_version: i64,
     code: Option<Option<String>>,
@@ -213,7 +213,7 @@ pub async fn update(
     let note_present = note.is_some();
     let note = note.flatten();
     let row = sql::update(
-        connection,
+        transaction,
         id.clone(),
         expected_edit_version,
         code_present,
@@ -260,12 +260,12 @@ pub async fn update(
 ///
 /// [`Error`] carrying the literal the operation contract declares.
 pub async fn delete(
-    connection: &mut Connection,
+    transaction: &mut wamn_postgres_statements::Transaction,
     id: &str,
     expected_edit_version: i64,
 ) -> Result<WidgetDeleteRow, Error> {
     let id = scalar::uuid(id).map_err(|Invalid| Error::invalid("id"))?;
-    let row = sql::delete(connection, id.clone(), expected_edit_version)
+    let row = sql::delete(transaction, id.clone(), expected_edit_version)
         .await
         .map_err(|error| {
             Error::from_statement(

@@ -7,6 +7,8 @@
 //! an item whose key finished answers its stored outcome, an item whose key
 //! began and never finished answers `intent-uncertain`, and an item whose key
 //! an operator resolved answers `intent-resolved` with the operator's basis.
+//! The route's canonical form applies to each item before its hash and before
+//! its export gets it, so two spellings of one request are one request.
 //! A refused item releases its key. The answers merge into one item list in
 //! the order of the input.
 
@@ -16,7 +18,7 @@ use std::time::Duration;
 
 use anyhow::Context as _;
 use serde_json::{Map, Value, json};
-use wamn_catalog::OperationKind;
+use wamn_catalog::{OperationKind, RouteCanonicalization};
 use wamn_run_state::IntentStore;
 use wamn_run_state::intent_store::{Begun, Intent, IntentId, StoredOutcome};
 
@@ -51,6 +53,12 @@ pub struct IntentContext<'a> {
     /// The item field of the idempotency key, such as
     /// `value.idempotency_key`. `None` keys each item by its `request_id`.
     pub key_field: Option<&'a str>,
+    /// The canonical form of an item, from the route. `None` takes each item
+    /// as it is sent.
+    pub canonicalization: Option<&'a RouteCanonicalization>,
+    /// The base operation whose claim the items take, from the route. `None`
+    /// claims under the called operation.
+    pub claim_operation: Option<&'a str>,
     /// The intent of the pre-commit participant that the call selects, if
     /// any. It is part of the request hash, so one key under two intents is
     /// two requests.
@@ -66,6 +74,8 @@ impl fmt::Debug for IntentContext<'_> {
             .field("package", &self.package)
             .field("kind", &self.kind)
             .field("key_field", &self.key_field)
+            .field("canonicalization", &self.canonicalization)
+            .field("claim_operation", &self.claim_operation)
             .field("participation", &self.participation)
             .finish_non_exhaustive()
     }
@@ -182,7 +192,21 @@ pub(super) async fn invoke_logged<H: ApplicationHost>(
     call: OperationCall<'_, H::Policy>,
     intent: IntentContext<'_>,
 ) -> anyhow::Result<Result<node_types::Emission, node_types::NodeError>> {
-    let items = match items(call.input, intent.key_field) {
+    let canonical;
+    let input = match intent.canonicalization {
+        Some(form) => {
+            let mut input = call.input.clone();
+            if let Some(items) = input.as_array_mut() {
+                for item in items {
+                    form.apply(item);
+                }
+            }
+            canonical = input;
+            &canonical
+        }
+        None => call.input,
+    };
+    let items = match items(input, intent.key_field) {
         Ok(items) => items,
         Err(message) => {
             return Ok(Err(node_types::NodeError::InvalidInput(
@@ -227,7 +251,7 @@ pub(super) async fn invoke_logged<H: ApplicationHost>(
                 deadline_ms: Some(deadline_ms),
                 ..call.context.clone()
             },
-            input: call.input,
+            input,
             deadline_ms,
             facts,
         };
@@ -336,15 +360,19 @@ async fn settle_item<H: ApplicationHost>(
         commit: false,
         port: None,
     };
+    let hashed = intent.canonicalization.map(|form| form.hashed(item.value));
     let begun = intent
         .store
         .begin(&Intent {
             tenant: intent.tenant,
             release: intent.release,
             package: intent.package,
-            operation: call.operation,
+            operation: intent.claim_operation.unwrap_or(call.operation),
             idempotency_key: item.key,
-            input_hash: &item_input_hash(item.value, intent.participation),
+            input_hash: &item_input_hash(
+                hashed.as_ref().unwrap_or(item.value),
+                intent.participation,
+            ),
             deadline_ms: call.deadline_ms,
         })
         .await?;
@@ -428,8 +456,10 @@ async fn settle_item<H: ApplicationHost>(
 
 #[cfg(test)]
 mod tests {
+    use std::collections::{BTreeMap, BTreeSet};
+
     use serde_json::json;
-    use wamn_catalog::OperationKind;
+    use wamn_catalog::{CanonicalSpelling, OperationKind, RouteCanonicalization, RouteLineOrder};
 
     use super::{item_input_hash, items, logs_intent};
 
@@ -532,6 +562,86 @@ mod tests {
                 "value": {"idempotency_key": "k", "n": 1},
                 "participation_intent": "ship"
             }))
+        );
+    }
+
+    /// The canonical form of a command with lines, as publish derives it from
+    /// the fixture's `widget.record_batch` contract.
+    fn record_batch() -> RouteCanonicalization {
+        RouteCanonicalization {
+            excluded: BTreeSet::from(["value.note".to_owned()]),
+            lines: Some(RouteLineOrder {
+                path: "value.line".to_owned(),
+                ascending_by: "widget_id".to_owned(),
+            }),
+            spelling: BTreeMap::from([
+                ("value.line[].amount".to_owned(), CanonicalSpelling::Numeric),
+                (
+                    "value.occurred_at".to_owned(),
+                    CanonicalSpelling::Timestamptz,
+                ),
+            ]),
+        }
+    }
+
+    fn canonical_hash(form: &RouteCanonicalization, mut item: serde_json::Value) -> String {
+        form.apply(&mut item);
+        item_input_hash(&form.hashed(&item), None)
+    }
+
+    #[test]
+    fn reordered_lines_and_other_spellings_are_one_request() {
+        let form = record_batch();
+        let sent = json!({"request_id": "r-1", "value": {
+            "idempotency_key": "k",
+            "note": "first",
+            "occurred_at": "2026-09-29T12:00:00Z",
+            "line": [
+                {"widget_id": "b", "amount": "2"},
+                {"widget_id": "a", "amount": "1.50"},
+            ],
+        }});
+        let retried = json!({"request_id": "r-2", "value": {
+            "idempotency_key": "k",
+            "note": "an excluded field",
+            "occurred_at": "2026-09-29T14:00:00.000000+02:00",
+            "line": [
+                {"widget_id": "a", "amount": "01.50"},
+                {"widget_id": "b", "amount": "2."},
+            ],
+        }});
+        assert_eq!(
+            canonical_hash(&form, sent.clone()),
+            canonical_hash(&form, retried)
+        );
+        let changed = json!({"request_id": "r-2", "value": {
+            "idempotency_key": "k",
+            "note": "first",
+            "occurred_at": "2026-09-29T12:00:00Z",
+            "line": [
+                {"widget_id": "a", "amount": "1.5"},
+                {"widget_id": "b", "amount": "2"},
+            ],
+        }});
+        assert_ne!(
+            canonical_hash(&form, sent.clone()),
+            canonical_hash(&form, changed),
+            "a numeric keeps its scale"
+        );
+        // The component gets the canonical item, excluded fields kept.
+        let mut item = sent;
+        form.apply(&mut item);
+        assert_eq!(
+            item["value"],
+            json!({
+                "idempotency_key": "k",
+                "note": "first",
+                "occurred_at": "2026-09-29T12:00:00.000000Z",
+                "line": [
+                    {"widget_id": "a", "amount": "1.50"},
+                    {"widget_id": "b", "amount": "2"},
+                ],
+            })
         );
     }
 }

@@ -435,7 +435,6 @@ fn statement_corpus(
         if std::path::Path::new(file.path())
             .extension()
             .is_some_and(|extension| extension == "sql")
-            && !crate::write_log::is_write_log_path(file.path())
         {
             corpus.insert(file.path().to_owned(), file.bytes().to_vec());
         }

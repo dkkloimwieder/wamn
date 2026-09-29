@@ -52,7 +52,6 @@ mod adjust {
         crate::Component,
         contract,
         crate::wamn::node::types,
-        wamn_postgres_statements::Connection::new(),
         handle,
         codec
     );
@@ -143,7 +142,6 @@ mod merge {
         crate::Component,
         contract,
         crate::wamn::node::types,
-        wamn_postgres_statements::Connection::new(),
         handle,
         codec
     );
@@ -185,7 +183,6 @@ mod move_ {
         crate::Component,
         contract,
         crate::wamn::node::types,
-        wamn_postgres_statements::Connection::new(),
         handle,
         codec
     );
@@ -234,7 +231,6 @@ mod split {
         crate::Component,
         contract,
         crate::wamn::node::types,
-        wamn_postgres_statements::Connection::new(),
         handle,
         codec
     );

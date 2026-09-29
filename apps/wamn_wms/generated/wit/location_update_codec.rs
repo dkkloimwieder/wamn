@@ -249,7 +249,7 @@ pub(crate) fn map_error(
 
 #[allow(unused_macros)]
 macro_rules! export_operation {
-    ($component:ty, $contract:path, $node:path, $state:expr, $handler:path, $codec:ident) => {
+    ($component:ty, $contract:path, $node:path, $handler:path, $codec:ident) => {
         const _: () = {
             use $codec as __codec;
             use $contract as __contract;
@@ -267,7 +267,14 @@ macro_rules! export_operation {
                     _context: __node::NodeContext,
                     input: Vec<__contract::UpdateItem>,
                 ) -> Result<Vec<__contract::UpdateOutcome>, __node::NodeError> {
-                    let mut state = $state;
+                    let mut state = wamn_postgres_statements::operation_transaction()
+                        .await
+                        .map_err(|error| {
+                            __node::NodeError::Terminal(__node::ErrorDetail {
+                                message: error.to_string(),
+                                code: Some("internal_error".to_owned()),
+                            })
+                        })?;
                     __codec::validate(&input).map_err(invalid)?;
                     Ok(__codec::run(input, &mut state, $handler).await)
                 }

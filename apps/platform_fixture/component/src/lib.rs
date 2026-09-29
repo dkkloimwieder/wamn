@@ -23,7 +23,7 @@ wit_bindgen::generate!({
     world: "platform-fixture:component/fixture@0.1.0",
     path: [
         "../../../crates/execution/workflow/router/wit",
-        "../../../crates/platform/runtime/wit/deps/wamn-postgres-0.2",
+        "../../../crates/platform/runtime/wit/deps/wamn-postgres-0.3",
         "../generated/wit",
         "wit",
     ],

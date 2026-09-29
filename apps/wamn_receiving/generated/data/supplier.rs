@@ -81,8 +81,8 @@ pub async fn query(
     }
 }
 
-/// `supplier.create`: create one row in the transaction the codec holds
-/// for the write log.
+/// `supplier.create`: create one row in the transaction the host began
+/// for the operation.
 ///
 /// # Errors
 ///

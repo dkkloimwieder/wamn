@@ -1,16 +1,14 @@
 //! The generated codecs, tested at the component.
 
 use crate::exports::wamn_receiving::purchase_order::update as contract;
-use crate::generated::purchase_order::update::{codec, handle};
+use crate::generated::purchase_order::update::codec;
 use crate::{NodeError, invalid_input};
 
 async fn run(input: Vec<contract::UpdateItem>) -> Result<Vec<contract::UpdateOutcome>, NodeError> {
     codec::validate(&input).map_err(|error| invalid_input(error.context()))?;
-    Ok(codec::run(
-        input,
-        &mut wamn_postgres_statements::Connection::new(),
-        handle,
-    )
+    Ok(codec::run(input, &mut (), async |(), _| {
+        unreachable!("a refused item reaches no handler")
+    })
     .await)
 }
 
@@ -108,14 +106,12 @@ fn a_blank_supplier_name_refuses_on_its_field() {
         ]"#,
     )
     .unwrap();
-    let mut connection = wamn_postgres_statements::Connection::new();
-    // Each item refuses before the codec claims its key, so the test needs no
+    // Each item refuses before the handler runs, so the test needs no
     // database.
-    let mut call = std::pin::pin!(create::run(
-        input,
-        &mut connection,
-        async |_, _| unreachable!("a refused item reaches no handler")
-    ));
+    let mut state = ();
+    let mut call = std::pin::pin!(create::run(input, &mut state, async |(), _| unreachable!(
+        "a refused item reaches no handler"
+    )));
     let mut context = std::task::Context::from_waker(std::task::Waker::noop());
     let std::task::Poll::Ready(output) = std::future::Future::poll(call.as_mut(), &mut context)
     else {

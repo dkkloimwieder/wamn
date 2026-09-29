@@ -70,7 +70,7 @@ mod transaction_views;
 mod types;
 mod v0_3;
 mod wiring_resolution;
-mod write_log;
+pub mod write_log;
 
 pub use wiring_resolution::{
     CANDIDATE_WIRING_SQL, CandidateWiringResolution, RELEASE_COMPONENTS_SQL, RELEASE_WIRING_SQL,

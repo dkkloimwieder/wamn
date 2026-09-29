@@ -403,6 +403,152 @@ pub struct ServingRoute {
     /// without one keys its intents by the item `request_id`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub idempotency: Option<String>,
+    /// The canonical form of an input item, from the generated input
+    /// contract. A route without one takes its items as they are sent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub canonicalization: Option<RouteCanonicalization>,
+    /// The base operation whose write log claim the route's items take, when
+    /// the operation inherits its claim (`idempotent_by: inherited`). The
+    /// key field and the canonical form are then the base's too, so one key
+    /// sent to the base route and to this route is one request. A route
+    /// without one claims under its own operation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub claim_operation: Option<String>,
+}
+
+/// The canonical form of one route's input item
+/// (`docs/plan/host-transaction.md` 7, ruling (a)).
+///
+/// Two spellings of one request are one request: the host respells the
+/// declared leaves and orders the declared lines before it hashes the item
+/// and before the component gets it. Paths are dotted item paths, and `[]`
+/// names each element of a list, such as `value.line[].quantity`.
+#[derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
+pub struct RouteCanonicalization {
+    /// Item paths that the request hash leaves out. The key and the
+    /// `request_id` are never here.
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    pub excluded: BTreeSet<String>,
+    /// The line list and the member whose ascending order is its canonical
+    /// order.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lines: Option<RouteLineOrder>,
+    /// The leaves that take the canonical spelling of their type.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub spelling: BTreeMap<String, CanonicalSpelling>,
+}
+
+/// The line list of an item and the member that orders it.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
+pub struct RouteLineOrder {
+    /// The dotted path of the list, such as `value.line`.
+    pub path: String,
+    pub ascending_by: String,
+}
+
+/// The canonical spelling of one leaf type.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum CanonicalSpelling {
+    /// PostgreSQL's own text of the value, scale kept.
+    Numeric,
+    /// UTC RFC 3339 with six fractional digits.
+    Timestamptz,
+}
+
+impl RouteCanonicalization {
+    /// Respell the declared leaves of `item` and order its declared lines.
+    ///
+    /// A value that the respelling refuses keeps its text, and the component
+    /// refuses it.
+    pub fn apply(&self, item: &mut Value) {
+        for (path, spelling) in &self.spelling {
+            let segments = path.split('.').collect::<Vec<_>>();
+            respell(item, &segments, *spelling);
+        }
+        if let Some(order) = &self.lines
+            && let Some(Value::Array(lines)) = order
+                .path
+                .split('.')
+                .try_fold(&mut *item, |value, name| value.get_mut(name))
+        {
+            lines.sort_by_cached_key(|line| {
+                line.get(&order.ascending_by)
+                    .map_or_else(String::new, Value::to_string)
+            });
+        }
+    }
+
+    /// `item` without its excluded paths: what the request hash covers.
+    #[must_use]
+    pub fn hashed(&self, item: &Value) -> Value {
+        let mut hashed = item.clone();
+        for path in &self.excluded {
+            let segments = path.split('.').collect::<Vec<_>>();
+            remove(&mut hashed, &segments);
+        }
+        hashed
+    }
+}
+
+/// Respell the leaves at `segments` below `value`.
+fn respell(value: &mut Value, segments: &[&str], spelling: CanonicalSpelling) {
+    let Some((first, rest)) = segments.split_first() else {
+        if let Value::String(text) = value {
+            let respelled = match spelling {
+                CanonicalSpelling::Numeric => wamn_execution_contract::canonical_numeric(text),
+                CanonicalSpelling::Timestamptz => {
+                    wamn_execution_contract::canonical_timestamptz(text)
+                }
+            };
+            if let Some(respelled) = respelled {
+                *text = respelled;
+            }
+        }
+        return;
+    };
+    match first.strip_suffix("[]") {
+        Some(name) => {
+            if let Some(Value::Array(elements)) = value.get_mut(name) {
+                for element in elements {
+                    respell(element, rest, spelling);
+                }
+            }
+        }
+        None => {
+            if let Some(member) = value.get_mut(*first) {
+                respell(member, rest, spelling);
+            }
+        }
+    }
+}
+
+/// Remove the members at `segments` below `value`.
+fn remove(value: &mut Value, segments: &[&str]) {
+    match segments {
+        [] => {}
+        [last] => {
+            if let Some(object) = value.as_object_mut() {
+                object.remove(*last);
+            }
+        }
+        [first, rest @ ..] => match first.strip_suffix("[]") {
+            Some(name) => {
+                if let Some(Value::Array(elements)) = value.get_mut(name) {
+                    for element in elements {
+                        remove(element, rest);
+                    }
+                }
+            }
+            None => {
+                if let Some(member) = value.get_mut(*first) {
+                    remove(member, rest);
+                }
+            }
+        },
+    }
 }
 
 /// One relation of a project database, by schema and name.
@@ -1452,6 +1598,8 @@ mod tests {
             reads: BTreeSet::new(),
             revision: None,
             idempotency: None,
+            canonicalization: None,
+            claim_operation: None,
         }])
     }
 

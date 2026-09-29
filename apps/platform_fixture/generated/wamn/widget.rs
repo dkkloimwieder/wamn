@@ -181,7 +181,7 @@ pub(crate) async fn create(
     reason = "the parameters are the statement's bind list"
 )]
 pub(crate) async fn update(
-    connection: &mut Connection,
+    transaction: &mut wamn_postgres_statements::Transaction,
     id: wamn_postgres_statements::Uuid,
     expected_edit_version: i64,
     code_present: bool,
@@ -191,7 +191,7 @@ pub(crate) async fn update(
     note_present: bool,
     note_value: Option<String>,
 ) -> Result<WidgetUpdateRow, wamn_postgres_statements::StatementError> {
-    let rows = connection
+    let rows = transaction
         .run(
             UPDATE_DIGEST,
             vec![
@@ -221,11 +221,11 @@ pub(crate) async fn update(
 }
 
 pub(crate) async fn delete(
-    connection: &mut Connection,
+    transaction: &mut wamn_postgres_statements::Transaction,
     id: wamn_postgres_statements::Uuid,
     expected_edit_version: i64,
 ) -> Result<WidgetDeleteRow, wamn_postgres_statements::StatementError> {
-    let rows = connection
+    let rows = transaction
         .run(
             DELETE_DIGEST,
             vec![

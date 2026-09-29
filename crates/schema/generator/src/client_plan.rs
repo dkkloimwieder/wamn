@@ -108,6 +108,66 @@ pub fn idempotency_field(input_contract: &serde_json::Value) -> Option<String> {
         .map(|field| field.path.clone())
 }
 
+/// The canonical form of one operation's input item, from its generated input
+/// contract, or `None` when the contract declares nothing to canonicalize.
+///
+/// Every `numeric` and `timestamptz` leaf takes its canonical spelling. The
+/// `canonicalization` of the contract adds its excluded fields, without the
+/// `request_id` and the key, and its line order. Publish writes it into the
+/// operation's route, and the host applies it before it hashes an item
+/// (`docs/plan/host-transaction.md` 7, ruling (a)).
+#[must_use]
+pub fn route_canonicalization(
+    input_contract: &serde_json::Value,
+) -> Option<wamn_catalog::RouteCanonicalization> {
+    let fields = crate::client_fields::input_fields_of(input_contract);
+    let leaves = leaf_fields(&fields);
+    let spelling = leaves
+        .iter()
+        .filter_map(|field| {
+            let spelling = match field.type_name.as_str() {
+                "numeric" => wamn_catalog::CanonicalSpelling::Numeric,
+                "timestamptz" => wamn_catalog::CanonicalSpelling::Timestamptz,
+                _ => return None,
+            };
+            Some((field.path.clone(), spelling))
+        })
+        .collect();
+    let declared = input_contract.get("canonicalization");
+    let key = idempotency_field(input_contract);
+    let excluded = declared
+        .and_then(|declared| declared.get("excluded_fields"))
+        .and_then(serde_json::Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(serde_json::Value::as_str)
+        .filter(|path| *path != "request_id" && Some(*path) != key.as_deref())
+        .map(str::to_owned)
+        .collect();
+    let lines = declared
+        .and_then(|declared| declared.get("line_order"))
+        .and_then(serde_json::Value::as_str)
+        .and_then(|order| order.strip_suffix("_ascending"))
+        .and_then(|member| {
+            let suffix = format!("[].{member}");
+            leaves.iter().find_map(|field| {
+                field
+                    .path
+                    .strip_suffix(&suffix)
+                    .map(|path| wamn_catalog::RouteLineOrder {
+                        path: path.to_owned(),
+                        ascending_by: member.to_owned(),
+                    })
+            })
+        });
+    let canonicalization = wamn_catalog::RouteCanonicalization {
+        excluded,
+        lines,
+        spelling,
+    };
+    (canonicalization != wamn_catalog::RouteCanonicalization::default()).then_some(canonicalization)
+}
+
 /// The platform value that a session driver writes into a reserved input.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SuppliedKind {

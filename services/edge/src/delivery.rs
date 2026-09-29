@@ -167,6 +167,8 @@ impl EdgeDelivery {
                 package: &target.package_id,
                 kind: route.kind,
                 key_field: route.idempotency.as_deref(),
+                canonicalization: route.canonicalization.as_ref(),
+                claim_operation: route.claim_operation.as_deref(),
                 // The edge selects no pre-commit participant.
                 participation: None,
             });

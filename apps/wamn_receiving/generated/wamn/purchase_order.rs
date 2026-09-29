@@ -318,13 +318,13 @@ pub(crate) async fn query_created_at_descending(
 }
 
 pub(crate) async fn update(
-    connection: &mut Connection,
+    transaction: &mut wamn_postgres_statements::Transaction,
     id: wamn_postgres_statements::Uuid,
     expected_row_version: i32,
     supplier_id_present: bool,
     supplier_id_value: Option<wamn_postgres_statements::Uuid>,
 ) -> Result<PurchaseOrderUpdateRow, wamn_postgres_statements::StatementError> {
-    let rows = connection
+    let rows = transaction
         .run(
             UPDATE_DIGEST,
             vec![

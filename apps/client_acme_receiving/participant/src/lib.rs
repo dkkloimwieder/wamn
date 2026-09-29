@@ -29,7 +29,7 @@ wit_bindgen::generate!({
     "#,
     path: [
         "../../../crates/execution/workflow/router/wit",
-        "../../../crates/platform/runtime/wit/deps/wamn-postgres-0.2",
+        "../../../crates/platform/runtime/wit/deps/wamn-postgres-0.3",
         "../../wamn_receiving/generated/wit/deps/wamn-receiving-receiving",
         "../generated/wit",
     ],

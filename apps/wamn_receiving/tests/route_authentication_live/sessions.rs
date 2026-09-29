@@ -551,12 +551,12 @@ pub(super) async fn assert_nested_session(
     // The base replays its stored result unchanged. Read current Acme fields separately.
     let expected_replay = project
         .query_one(
-            "SELECT command.result::jsonb, \
+            "SELECT command.result::jsonb -> 'value', \
            purchase.row_version, purchase.acme_inspection_required, \
            purchase.acme_quality_status \
          FROM app_system.write_log AS command \
          JOIN receiving.purchase_order AS purchase \
-           ON purchase.id = (command.result::jsonb ->> 'purchase_order_id')::uuid \
+           ON purchase.id = (command.result::jsonb -> 'value' ->> 'purchase_order_id')::uuid \
          WHERE command.operation = 'wamn-receiving:receiving/record-receipt' \
            AND command.idempotency_key = 'receipt-command-2' \
            AND purchase.id = '00000000-0000-0000-0000-000000000302'",

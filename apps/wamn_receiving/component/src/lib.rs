@@ -26,7 +26,7 @@ wit_bindgen::generate!({
     world: "wamn:receiving-component/receiving@0.1.0",
     path: [
         "../../../crates/execution/workflow/router/wit",
-        "../../../crates/platform/runtime/wit/deps/wamn-postgres-0.2",
+        "../../../crates/platform/runtime/wit/deps/wamn-postgres-0.3",
         "../generated/wit",
         "wit",
     ],
@@ -52,7 +52,6 @@ receipt_codec::export_operation!(
     Component,
     exports::wamn_receiving::receiving::record_receipt,
     wamn::node::types,
-    wamn_postgres_statements::Connection::new(),
     record_receipt_execute_with_context,
     receipt_codec
 );
@@ -62,29 +61,10 @@ async fn record_receipt(
     input: Vec<contract::RecordReceiptItem>,
 ) -> Result<Vec<contract::RecordReceiptOutcome>, NodeError> {
     receipt_codec::validate(&input).map_err(|error| invalid_input(error.context()))?;
-    Ok(receipt_codec::run(
-        input,
-        &mut wamn_postgres_statements::Connection::new(),
-        record_receipt_execute,
-    )
+    Ok(receipt_codec::run(input, &mut (), async |(), _| {
+        unreachable!("a refused call reaches no handler")
+    })
     .await)
-}
-
-#[cfg(test)]
-async fn record_receipt_execute(
-    transaction: &mut wamn_postgres_statements::Transaction,
-    request: contract::RecordReceiptRequest,
-) -> Result<contract::RecordReceiptResult, contract::RecordReceiptError> {
-    let command = record_receipt_command(request);
-    receipt::execute(transaction, &command)
-        .await
-        .map(|value| contract::RecordReceiptResult {
-            receipt_id: value.receipt_id.into(),
-            purchase_order_id: value.purchase_order_id.into(),
-            purchase_order_status: value.purchase_order_status.as_str().to_owned(),
-            row_version: value.row_version,
-        })
-        .map_err(|error| map_record_receipt_error(&error))
 }
 
 fn record_receipt_command(request: contract::RecordReceiptRequest) -> receipt::RecordReceiptValue {
@@ -225,18 +205,18 @@ mod tests {
     #[test]
     fn arbitrary_request_id_is_preserved_in_each_outcome() {
         let request_id = "submit receipt / café 🧾";
-        // Both items refuse before the codec opens a transaction, so the test
-        // needs no database.
+        // Both items refuse before the handler runs, so the test needs no
+        // database.
         let input = receipt_codec::decode(&format!(
             r#"[{{"request_id":{id},"value":{{"unknown":true}}}},{{"request_id":{id},"value":null}}]"#,
             id = serde_json::to_string(request_id).unwrap(),
         ))
         .unwrap();
-        let mut connection = wamn_postgres_statements::Connection::new();
+        let mut state = ();
         let mut call = std::pin::pin!(receipt_codec::run(
             input,
-            &mut connection,
-            async |_, _| unreachable!("a refused item reaches no handler")
+            &mut state,
+            async |(), _| unreachable!("a refused item reaches no handler")
         ));
         let mut context = std::task::Context::from_waker(std::task::Waker::noop());
         let std::task::Poll::Ready(output) = std::future::Future::poll(call.as_mut(), &mut context)

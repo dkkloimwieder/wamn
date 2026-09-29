@@ -72,7 +72,7 @@ pub(crate) async fn get(
 }
 
 pub(crate) async fn update(
-    connection: &mut Connection,
+    transaction: &mut wamn_postgres_statements::Transaction,
     id: wamn_postgres_statements::Uuid,
     expected_row_version: i32,
     acme_inspection_required_present: bool,
@@ -80,7 +80,7 @@ pub(crate) async fn update(
     acme_quality_status_present: bool,
     acme_quality_status_value: Option<String>,
 ) -> Result<PurchaseOrderUpdateRow, wamn_postgres_statements::StatementError> {
-    let rows = connection
+    let rows = transaction
         .run(
             UPDATE_DIGEST,
             vec![

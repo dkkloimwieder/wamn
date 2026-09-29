@@ -15,9 +15,9 @@ use tokio_postgres::{Client, NoTls, Transaction};
 use wamn_catalog::{
     AdmittedComponent, AdmittedComponentEffect, AdmittedComponentOperation, AttachmentTarget,
     ComponentPackageScope, EffectiveReleaseId, ManifestDigest, OperationKind, PackageCoordinate,
-    SERVING_MANIFEST_FORMAT_VERSION, ServingAttachment, ServingComponent, ServingManifest,
-    ServingRegistration, ServingRelation, ServingRelease, ServingRoute, ServingWiring,
-    WiringDocument, WorkflowSection, validate_resolved_wiring_compatibility,
+    RouteCanonicalization, SERVING_MANIFEST_FORMAT_VERSION, ServingAttachment, ServingComponent,
+    ServingManifest, ServingRegistration, ServingRelation, ServingRelease, ServingRoute,
+    ServingWiring, WiringDocument, WorkflowSection, validate_resolved_wiring_compatibility,
 };
 use wamn_control_registry::Triple;
 use wamn_schema_control::{
@@ -357,6 +357,10 @@ struct RouteContract {
     reads: BTreeSet<ServingRelation>,
     revision: Option<String>,
     idempotency: Option<String>,
+    canonicalization: Option<RouteCanonicalization>,
+    /// The base operation whose claim the route's items take, when the
+    /// operation inherits it.
+    claim_operation: Option<String>,
 }
 
 #[cfg(test)]
@@ -367,6 +371,8 @@ impl From<OperationKind> for RouteContract {
             reads: BTreeSet::new(),
             revision: None,
             idempotency: None,
+            canonicalization: None,
+            claim_operation: None,
         }
     }
 }
@@ -1202,6 +1208,8 @@ pub async fn mint_promoted_release_manifest(
                     reads: route.reads.clone(),
                     revision: route.revision.clone(),
                     idempotency: route.idempotency.clone(),
+                    canonicalization: route.canonicalization.clone(),
+                    claim_operation: route.claim_operation.clone(),
                 },
             )
         })
@@ -2007,6 +2015,8 @@ fn project_routes(
             reads: contract.reads.clone(),
             revision: contract.revision.clone(),
             idempotency: contract.idempotency.clone(),
+            canonicalization: contract.canonicalization.clone(),
+            claim_operation: contract.claim_operation.clone(),
         });
     }
     Ok(routes)

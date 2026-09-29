@@ -273,7 +273,7 @@ pub async fn query(
 /// [`Error`] carrying the literal the operation contract declares.
 #[allow(clippy::too_many_arguments)]
 pub async fn update(
-    connection: &mut Connection,
+    transaction: &mut wamn_postgres_statements::Transaction,
     id: &str,
     expected_row_version: i32,
     supplier_id: Option<Option<String>>,
@@ -290,7 +290,7 @@ pub async fn update(
         None => None,
     };
     let row = sql::update(
-        connection,
+        transaction,
         id.clone(),
         expected_row_version,
         supplier_id_present,

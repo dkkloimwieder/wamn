@@ -537,14 +537,9 @@ fn selected_attachments(
                 AttachmentTarget::Route {
                     component,
                     operation,
-                } => {
-                    let root = roots
-                        .get(&attachment.package_id)
-                        .context("a route attachment names an assembled package")?;
-                    package_route(root, &attachment.package_id, component, operation)?
-                        .kind
-                        .http_method()
-                }
+                } => package_route(roots, &attachment.package_id, component, operation)?
+                    .kind
+                    .http_method(),
                 AttachmentTarget::Wiring { .. } => "POST",
             };
             attachment.definition["route"]["method"] = Value::String(method.into());
@@ -573,11 +568,8 @@ fn attachment_routes(
         else {
             continue;
         };
-        let root = roots
-            .get(&attachment.package_id)
-            .context("a route attachment names an assembled package")?;
         routes.insert(package_route(
-            root,
+            roots,
             &attachment.package_id,
             component,
             operation,

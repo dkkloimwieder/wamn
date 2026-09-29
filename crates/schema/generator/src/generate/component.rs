@@ -74,6 +74,13 @@ pub(super) fn emit_model_component(
         let name = action.as_str();
         let contract = rust_type_identifier(name);
         let (state, signature, body) = handler(*action, &contract, operation);
+        // A change works in the host's operation transaction, so its export
+        // takes no state.
+        let export_state = if action.changes_records() {
+            ""
+        } else {
+            " Connection::new(),"
+        };
         writeln!(
             source,
             "pub(crate) mod {name} {{\n\
@@ -87,7 +94,7 @@ pub(super) fn emit_model_component(
              pub(crate) async fn handle({state}, request: contract::{contract}Request{signature}) -> Result<contract::{contract}{end}, contract::{contract}Error> {{\n\
              {body}\
              }}\n\
-             codec::export_operation!(crate::Component, contract, crate::wamn::node::types, Connection::new(), handle, codec);\n\
+             codec::export_operation!(crate::Component, contract, crate::wamn::node::types,{export_state} handle, codec);\n\
              }}\n",
             end = if *action == CrudAction::Query { "End" } else { "Result" },
         )
@@ -113,6 +120,7 @@ fn handler(
     operation: &OperationDeclaration,
 ) -> (&'static str, String, String) {
     let connection = "connection: &mut Connection";
+    let transaction = "transaction: &mut Transaction";
     let revision = || {
         let revision = operation
             .revision_field
@@ -136,7 +144,7 @@ fn handler(
                 .collect::<Vec<_>>()
                 .join(", ");
             (
-                "transaction: &mut Transaction",
+                transaction,
                 String::new(),
                 format!(
                     "model::create(transaction, {arguments}).await.map(|row| contract::{contract}Result {{ value: codec::row!(row, contract::{contract}Row) }}){REFUSE}\n"
@@ -150,18 +158,18 @@ fn handler(
                     .expect("writing to a String cannot fail");
             }
             (
-                connection,
+                transaction,
                 String::new(),
                 format!(
-                    "model::update(connection, {arguments}).await.map(|row| codec::row!(row, contract::{contract}Result)){REFUSE}\n"
+                    "model::update(transaction, {arguments}).await.map(|row| codec::row!(row, contract::{contract}Result)){REFUSE}\n"
                 ),
             )
         }
         CrudAction::Delete => (
-            connection,
+            transaction,
             String::new(),
             format!(
-                "model::delete(connection, &request.id, {}).await.map(|row| contract::{contract}Result {{ value: codec::row!(row, contract::{contract}Row) }}){REFUSE}\n",
+                "model::delete(transaction, &request.id, {}).await.map(|row| contract::{contract}Result {{ value: codec::row!(row, contract::{contract}Row) }}){REFUSE}\n",
                 revision()
             ),
         ),
@@ -254,7 +262,7 @@ fn emit_package_world(
     models: &[(&String, &ModelDeclaration)],
 ) -> Result<(), GenerateError> {
     const POSTGRES: &str =
-        "  import wamn:postgres/types@0.2.0;\n  import wamn:postgres/statements@0.2.0;\n";
+        "  import wamn:postgres/types@0.3.0;\n  import wamn:postgres/statements@0.3.0;\n";
     let package = &manifest.package;
     let sealed = |package: &PackageIdentity, local: &str| -> Result<String, GenerateError> {
         let (group, name) = local

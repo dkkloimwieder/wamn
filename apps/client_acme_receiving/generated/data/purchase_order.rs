@@ -43,7 +43,7 @@ pub async fn get(connection: &mut Connection, id: &str) -> Result<PurchaseOrderR
 /// [`Error`] carrying the literal the operation contract declares.
 #[allow(clippy::too_many_arguments)]
 pub async fn update(
-    connection: &mut Connection,
+    transaction: &mut wamn_postgres_statements::Transaction,
     id: &str,
     expected_row_version: i32,
     acme_inspection_required: Option<Option<bool>>,
@@ -61,7 +61,7 @@ pub async fn update(
     let acme_quality_status_present = acme_quality_status.is_some();
     let acme_quality_status = acme_quality_status.flatten();
     let row = sql::update(
-        connection,
+        transaction,
         id.clone(),
         expected_row_version,
         acme_inspection_required_present,

@@ -4,8 +4,8 @@ package platform-fixture:generated;
 
 /// Every operation of the package. An authored world includes it.
 world generated {
-  import wamn:postgres/types@0.2.0;
-  import wamn:postgres/statements@0.2.0;
+  import wamn:postgres/types@0.3.0;
+  import wamn:postgres/statements@0.3.0;
   export platform-fixture:widget/archive@1.0.0;
   export platform-fixture:widget/%list@1.0.0;
   export platform-fixture:widget/record-batch@1.0.0;

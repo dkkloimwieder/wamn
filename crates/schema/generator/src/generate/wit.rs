@@ -4,7 +4,7 @@ use std::fmt::Write as _;
 
 use super::wit_adapters::{emit_error_mapper, emit_export_adapter, emit_row_adapter};
 use super::{
-    AccessOperationErrorLiteral, BTreeMap, BTreeSet, Column, ColumnType, ContractFieldDeclaration,
+    AccessOperationErrorLiteral, BTreeMap, Column, ColumnType, ContractFieldDeclaration,
     CrudAction, CustomOperationDeclaration, CustomOperationResultDeclaration, GenerateError,
     GenerateErrorKind, ModelDeclaration, OperationDeclaration, OperationErrorDetailDeclaration,
     PackageManifest, ResultClass, Table, binding_identifier, insert_bytes, rust_identifier,
@@ -58,19 +58,6 @@ pub(super) fn emit_model_wit(
     )?;
     for (action, operation) in &model.operations {
         let details = super::operation_error_details(catalog, table, *action, operation, model);
-        let claim = (*action == CrudAction::Create)
-            .then(|| {
-                super::canonical_operation_identity(
-                    &manifest.package,
-                    &format!("{model_name}.create"),
-                )
-            })
-            .transpose()?
-            .map(|operation_id| ClaimCodec {
-                operation: crate::write_log::log_operation(&operation_id).to_owned(),
-                key_field: super::CREATE_KEY_FIELD.to_owned(),
-                participation: false,
-            });
         let codec = emit_crud_codec(
             *action,
             table,
@@ -78,7 +65,6 @@ pub(super) fn emit_model_wit(
             &results[action].fields,
             &model.min_lengths,
             &details,
-            claim.as_ref(),
         );
         insert_bytes(
             files,
@@ -502,7 +488,7 @@ fn emit_update_codec(
             .map(|(literal, detail)| (access_error_literal(*literal), detail)),
         revision_width(table, operation),
     ));
-    source.push_str(&emit_export_adapter("Update", false, false));
+    source.push_str(&emit_export_adapter("Update", false, false, true));
     source
 }
 
@@ -513,7 +499,6 @@ fn emit_crud_codec(
     fields: &[ContractFieldDeclaration],
     min_lengths: &BTreeMap<String, u32>,
     details: &BTreeMap<AccessOperationErrorLiteral, OperationErrorDetailDeclaration>,
-    claim: Option<&ClaimCodec>,
 ) -> String {
     if action == CrudAction::Update {
         return emit_update_codec(table, operation, fields, min_lengths, details);
@@ -538,21 +523,7 @@ fn emit_crud_codec(
         fields,
         min_lengths,
     ));
-    match claim {
-        Some(claim) => source.push_str(&emit_claim_run(
-            &type_name,
-            claim,
-            &create_request_value(table, operation),
-            &fields
-                .iter()
-                .map(|field| (field.path.as_str(), field.ty, field.nullable))
-                .collect::<Vec<_>>(),
-            &format!(
-                "contract::{type_name}Result {{ value: contract::{type_name}Row {{ {{fields}} }} }}"
-            ),
-        )),
-        None => source.push_str(&emit_handler(&type_name, crud_is_keyed(action))),
-    }
+    source.push_str(&emit_handler(&type_name, crud_is_keyed(action)));
     source.push_str(&emit_row_adapter(
         fields
             .iter()
@@ -565,7 +536,12 @@ fn emit_crud_codec(
             .map(|(literal, detail)| (access_error_literal(*literal), detail)),
         revision_width(table, operation),
     ));
-    source.push_str(&emit_export_adapter(&type_name, false, false));
+    source.push_str(&emit_export_adapter(
+        &type_name,
+        false,
+        false,
+        action.changes_records(),
+    ));
     source
 }
 
@@ -1639,19 +1615,7 @@ pub(super) fn emit_custom_operation_wit(
         || local_name.to_owned(),
         |(_, base_operation)| format!("{}_pre_commit", base_local_name(base_operation)),
     );
-    let claim = operation
-        .idempotency_key_field()
-        .map(|key_field| {
-            super::canonical_operation_identity(&manifest.package, operation_name).map(
-                |operation_id| ClaimCodec {
-                    operation: crate::write_log::log_operation(&operation_id).to_owned(),
-                    key_field: key_field.to_owned(),
-                    participation: operation.pre_commit.is_some(),
-                },
-            )
-        })
-        .transpose()?;
-    let codec = emit_custom_codec(&codec_name, operation, claim.as_ref());
+    let codec = emit_custom_codec(&codec_name, operation);
     insert_bytes(
         files,
         &format!(
@@ -2247,15 +2211,11 @@ fn artifact_name(value: &str) -> String {
         .to_owned()
 }
 
-fn emit_custom_codec(
-    local_name: &str,
-    operation: &CustomOperationDeclaration,
-    claim: Option<&ClaimCodec>,
-) -> String {
+fn emit_custom_codec(local_name: &str, operation: &CustomOperationDeclaration) -> String {
     let Some(result) = operation.result.as_ref() else {
         let type_name = rust_type_identifier(local_name);
         let mut source = emit_direct_custom_codec(&type_name, operation);
-        source.push_str(&emit_export_adapter(&type_name, true, false));
+        source.push_str(&emit_export_adapter(&type_name, true, false, false));
         return source;
     };
     let (minimum, maximum) = operation
@@ -2332,20 +2292,7 @@ fn emit_custom_codec(
     }
     source.push_str(CUSTOM_CODEC_FOOTER);
     source.push_str(&emit_custom_normalizer(&type_name, operation));
-    match claim {
-        Some(claim) => source.push_str(&emit_claim_run(
-            &type_name,
-            claim,
-            &custom_request_value(operation, &claim.key_field),
-            &result
-                .fields
-                .iter()
-                .map(|field| (field.path.as_str(), field.ty, field.nullable))
-                .collect::<Vec<_>>(),
-            &format!("contract::{type_name}Result {{ {{fields}} }}"),
-        )),
-        None => source.push_str(&emit_handler(&type_name, keyed)),
-    }
+    source.push_str(&emit_handler(&type_name, keyed));
     source.push_str(&emit_row_adapter(
         result
             .fields
@@ -2382,6 +2329,7 @@ fn emit_custom_codec(
         &type_name,
         false,
         operation.pre_commit.is_some(),
+        operation.has_host_transaction(),
     ));
     source
 }
@@ -2948,335 +2896,3 @@ const CUSTOM_CODEC_FOOTER: &str = r#"    };
     json!({"code": code, "detail": detail})
 }
 "#;
-
-/// What the codec of one claim operation needs to claim its key in the write
-/// log (`docs/plan/write-log.md` 4.2).
-pub(super) struct ClaimCodec {
-    /// The contract operation without its version.
-    pub(super) operation: String,
-    /// The input field of the key, as the contract names it.
-    pub(super) key_field: String,
-    /// Whether the command selects a pre-commit participant. Its request bytes
-    /// then carry the participation intent, so one key under two intents is
-    /// two requests.
-    pub(super) participation: bool,
-}
-
-/// The claim loop of one claim operation, in place of [`emit_handler`].
-///
-/// Each item runs in its own `READ COMMITTED` transaction: the claim, the
-/// handler's work and the stored result commit together. A key a committed
-/// claim holds answers its stored result for the same request bytes and
-/// `idempotency_conflict` for others, and runs no work. A refusal rolls the
-/// claim back, so it leaves no row.
-fn emit_claim_run(
-    type_name: &str,
-    claim: &ClaimCodec,
-    request_value: &str,
-    result_fields: &[(&str, ColumnType, bool)],
-    success: &str,
-) -> String {
-    let key_member = binding_identifier(
-        claim
-            .key_field
-            .rsplit('.')
-            .next()
-            .expect("a key field has a member"),
-    )
-    .expect("validated key field has a Rust name");
-    let mut json_result = String::new();
-    let mut assignments = String::new();
-    for (path, ty, nullable) in result_fields {
-        let list = result_list_member(path);
-        let member =
-            rust_identifier(list.unwrap_or(path)).expect("validated result field has a Rust name");
-        let target = binding_identifier(list.unwrap_or(path))
-            .expect("validated result field has a Rust name");
-        let element = codec_rust_type(*ty, *nullable);
-        let json_type = if list.is_some() {
-            format!("Vec<{element}>")
-        } else {
-            element
-        };
-        writeln!(json_result, "    {member}: {json_type},")
-            .expect("writing to a String cannot fail");
-        let conversion = match (ty, nullable) {
-            (ColumnType::Int64, false) => "value.0",
-            (ColumnType::Int64, true) => "value.map(|value| value.0)",
-            (ColumnType::Json, false) => "value.to_string()",
-            (ColumnType::Json, true) => "value.map(|value| value.to_string())",
-            _ => "value",
-        };
-        let value = match (list, conversion) {
-            (_, "value") => format!("value.{member}"),
-            (None, conversion) => conversion.replacen("value", &format!("value.{member}"), 1),
-            (Some(_), conversion) => {
-                format!("value.{member}.into_iter().map(|value| {conversion}).collect()")
-            }
-        };
-        writeln!(assignments, "{target}: {value},").expect("writing to a String cannot fail");
-    }
-    let success = success.replace("{fields}", &assignments);
-    format!(
-        r#"
-include!("write_log_codec.rs");
-
-/// The write log operation of this contract: its operation without the version.
-const OPERATION: &str = {operation:?};
-/// The input field that carries the key the write log claims.
-const KEY_FIELD: &str = {key_field:?};
-
-/// The bytes the write log keeps for one validated request: its canonical JSON
-/// without the key and the request id, and the participation intent when one
-/// is selected.
-fn request_bytes(request: &contract::{type_name}Request, intent: Option<&str>) -> Vec<u8> {{
-    let mut value = {request_value};
-    if let (Some(intent), Value::Object(object)) = (intent, &mut value) {{
-        object.insert("participation_intent".to_owned(), json!(intent));
-    }}
-    wamn_execution_contract::canonical_json_bytes(&value)
-}}
-
-/// The result the write log stores for one success: its encoded outcome
-/// without the request id.
-fn stored_result(result: &contract::{type_name}Result) -> String {{
-    let encoded = encode(&[contract::{type_name}Outcome {{
-        request_id: String::new(),
-        outcome: Ok(result.clone()),
-    }}]);
-    let mut outcomes: Vec<Value> =
-        serde_json::from_str(&encoded).expect("the encoder writes a JSON list");
-    outcomes
-        .pop()
-        .and_then(|mut outcome| outcome.get_mut("value").map(Value::take))
-        .expect("an encoded success carries its value")
-        .to_string()
-}}
-
-#[derive(Deserialize)]
-struct JsonResult {{
-{json_result}}}
-
-/// The success that one stored result answers.
-fn stored_success(result: &str) -> Option<contract::{type_name}Result> {{
-    let value: JsonResult = serde_json::from_str(result).ok()?;
-    Some({success})
-}}
-
-#[allow(dead_code)]
-pub(crate) async fn run<F>(
-    input: Vec<contract::{type_name}Item>,
-    connection: &mut wamn_postgres_statements::Connection,
-    mut handler: F,
-) -> Vec<contract::{type_name}Outcome>
-where
-    F: AsyncFnMut(
-        &mut wamn_postgres_statements::Transaction,
-        contract::{type_name}Request,
-    ) -> Result<contract::{type_name}Result, contract::{type_name}Error>,
-{{
-    let mut output = Vec::with_capacity(input.len());
-    for item in input {{
-        let outcome = match item.input {{
-            Ok(mut request) => match normalize(&mut request) {{
-                Ok(()) => claimed(connection, request, &mut handler).await,
-                Err(error) => Err(contract::{type_name}Error::InvalidInput(error)),
-            }},
-            Err(error) => Err(contract::{type_name}Error::InvalidInput(error)),
-        }};
-        output.push(contract::{type_name}Outcome {{
-            request_id: item.request_id,
-            outcome,
-        }});
-    }}
-    output
-}}
-
-/// Claim the key of one request, do its work and store its result in one
-/// transaction, or answer what a committed claim of the key holds.
-async fn claimed<F>(
-    connection: &mut wamn_postgres_statements::Connection,
-    request: contract::{type_name}Request,
-    handler: &mut F,
-) -> Result<contract::{type_name}Result, contract::{type_name}Error>
-where
-    F: AsyncFnMut(
-        &mut wamn_postgres_statements::Transaction,
-        contract::{type_name}Request,
-    ) -> Result<contract::{type_name}Result, contract::{type_name}Error>,
-{{
-    let refuse = |error: &wamn_postgres_statements::StatementError| map_error(log_error(error), |_| None);
-    let key = request.{key_member}.clone();
-{intent}    let bytes = request_bytes(&request, intent.as_deref());
-    let mut transaction = connection.begin().await.map_err(|error| refuse(&error))?;
-    match log_claim(&mut transaction, OPERATION, &key, &bytes).await {{
-        Ok(Logged::Claimed) => {{}}
-        Ok(Logged::Stored(stored, result)) => {{
-            let _ = transaction.rollback().await;
-            if stored != bytes {{
-                return Err(map_error("idempotency_conflict", |name| {{
-                    (name == "field").then(|| KEY_FIELD.to_owned())
-                }}));
-            }}
-            return result
-                .as_deref()
-                .and_then(stored_success)
-                .ok_or_else(|| map_error("internal_error", |_| None));
-        }}
-        Err(error) => {{
-            let _ = transaction.rollback().await;
-            return Err(refuse(&error));
-        }}
-    }}
-    let result = match handler(&mut transaction, request).await {{
-        Ok(result) => result,
-        Err(error) => {{
-            let _ = transaction.rollback().await;
-            return Err(error);
-        }}
-    }};
-    if let Err(error) = log_finish(&mut transaction, OPERATION, &key, stored_result(&result)).await {{
-        let _ = transaction.rollback().await;
-        return Err(refuse(&error));
-    }}
-    transaction.commit().await.map_err(|error| refuse(&error))?;
-    Ok(result)
-}}
-"#,
-        operation = claim.operation,
-        key_field = claim.key_field,
-        intent = if claim.participation {
-            "    let intent = wamn_postgres_statements::participation()\n        .await\n        .map_err(|error| refuse(&error))?\n        .map(|selected| selected.intent);\n"
-        } else {
-            "    let intent: Option<String> = None;\n"
-        },
-    )
-}
-
-/// The JSON value of one request leaf in its canonical spelling.
-///
-/// A `timestamptz` or a `numeric` is respelled the way the operation contract
-/// states, so two spellings of one request are one request. A value the
-/// respelling refuses keeps its text: the handler refuses it.
-fn canonical_leaf(access: &str, ty: Option<ColumnType>, nullable: bool) -> String {
-    let function = match ty {
-        Some(ColumnType::Timestamptz) => "canonical_timestamptz",
-        Some(ColumnType::Numeric) => "canonical_numeric",
-        _ => return format!("json!(&{access})"),
-    };
-    if nullable {
-        format!(
-            "json!({access}.as_deref().map(|value| wamn_execution_contract::{function}(value).unwrap_or_else(|| value.to_owned())))"
-        )
-    } else {
-        format!(
-            "json!(wamn_execution_contract::{function}(&{access}).unwrap_or_else(|| {access}.clone()))"
-        )
-    }
-}
-
-/// The request value of a generated create: every writable field the request
-/// carries, and no key.
-fn create_request_value(table: &Table, operation: &OperationDeclaration) -> String {
-    let mut source = String::from("{\n    let mut value = Map::new();\n");
-    for field in &operation.writable_fields {
-        let member = binding_identifier(field).expect("validated field has a Rust name");
-        let leaf = canonical_leaf(
-            "field",
-            Some(model_column(table, field).column_type()),
-            true,
-        );
-        writeln!(
-            source,
-            "    if let Some(field) = &request.{member} {{ value.insert({field:?}.to_owned(), {leaf}); }}"
-        )
-        .expect("writing to a String cannot fail");
-    }
-    source.push_str("    Value::Object(value)\n}");
-    source
-}
-
-/// The request value of a claim command: its input tree without the excluded
-/// fields and the key, with its lines in their declared order.
-fn custom_request_value(operation: &CustomOperationDeclaration, key_field: &str) -> String {
-    let tree = input_fields_of(
-        &serde_json::to_value(&operation.input).expect("validated custom input serializes"),
-    );
-    let value = tree.iter().find(|field| field.path == "value");
-    let fields = value.map_or_else(
-        || {
-            tree.iter()
-                .filter(|field| field.path != "request_id")
-                .cloned()
-                .collect::<Vec<_>>()
-        },
-        |value| value.children.clone(),
-    );
-    let mut excluded = operation
-        .canonicalization
-        .as_ref()
-        .map(|canonicalization| {
-            canonicalization
-                .excluded_fields
-                .iter()
-                .map(String::as_str)
-                .collect::<BTreeSet<_>>()
-        })
-        .unwrap_or_default();
-    excluded.insert(key_field);
-    let line_order = operation
-        .canonicalization
-        .as_ref()
-        .and_then(|canonicalization| canonicalization.line_order.as_ref())
-        .map(|order| order.ascending_by.as_str());
-    tree_value(&fields, "request", &excluded, line_order)
-}
-
-fn tree_value(
-    fields: &[FieldIr],
-    access: &str,
-    excluded: &BTreeSet<&str>,
-    line_order: Option<&str>,
-) -> String {
-    let mut source = String::from("{ let mut value = Map::new(); ");
-    for field in fields {
-        if excluded.contains(field.path.as_str()) {
-            continue;
-        }
-        let name = field
-            .path
-            .rsplit('.')
-            .next()
-            .expect("declared field has a member")
-            .trim_end_matches("[]");
-        let member = binding_identifier(name).expect("validated field has a Rust name");
-        let entry = if field.children.is_empty() {
-            canonical_leaf(
-                &format!("{access}.{member}"),
-                column_type_of(&field.type_name),
-                field.nullable,
-            )
-        } else if field.type_name == "array" || field.path.ends_with("[]") {
-            let element = tree_value(&field.children, "element", excluded, None);
-            match line_order.filter(|_| name == "line") {
-                Some(order) => format!(
-                    "{{ let mut lines = {access}.{member}.iter().map(|element| {element}).collect::<Vec<_>>(); lines.sort_by(|left, right| left[{order:?}].to_string().cmp(&right[{order:?}].to_string())); Value::Array(lines) }}"
-                ),
-                None => format!(
-                    "Value::Array({access}.{member}.iter().map(|element| {element}).collect())"
-                ),
-            }
-        } else {
-            tree_value(
-                &field.children,
-                &format!("{access}.{member}"),
-                excluded,
-                line_order,
-            )
-        };
-        write!(source, "value.insert({name:?}.to_owned(), {entry}); ")
-            .expect("writing to a String cannot fail");
-    }
-    source.push_str("Value::Object(value) }");
-    source
-}

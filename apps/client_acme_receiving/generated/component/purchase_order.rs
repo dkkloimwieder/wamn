@@ -55,11 +55,11 @@ pub(crate) mod update {
     }
 
     pub(crate) async fn handle(
-        connection: &mut Connection,
+        transaction: &mut Transaction,
         request: contract::UpdateRequest,
     ) -> Result<contract::UpdateResult, contract::UpdateError> {
         model::update(
-            connection,
+            transaction,
             &request.id,
             request.expected_row_version,
             request.change.acme_inspection_required,
@@ -73,7 +73,6 @@ pub(crate) mod update {
         crate::Component,
         contract,
         crate::wamn::node::types,
-        Connection::new(),
         handle,
         codec
     );

@@ -167,7 +167,7 @@ pub async fn snapshot(client: &Client, fixture: &Fixture) -> Result<Snapshot> {
         ), receipts AS (
             SELECT * FROM receiving.receipt
             WHERE purchase_order_id = $1
-                OR id::text IN (SELECT result::jsonb ->> 'receipt_id' FROM claims)
+                OR id::text IN (SELECT result::jsonb -> 'value' ->> 'receipt_id' FROM claims)
         ), receipt_lines AS (
             SELECT * FROM receiving.receipt_line
             WHERE receipt_id IN (SELECT id FROM receipts)

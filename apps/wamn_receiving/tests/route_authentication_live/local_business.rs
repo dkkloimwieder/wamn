@@ -152,7 +152,8 @@ async fn transactional_participation(
                ('00000000-0000-0000-0000-000000000730', 'SUPPLIER-730'), \
                ('00000000-0000-0000-0000-000000000731', 'SUPPLIER-731'), \
                ('00000000-0000-0000-0000-000000000732', 'SUPPLIER-732'), \
-               ('00000000-0000-0000-0000-000000000733', 'SUPPLIER-733'); \
+               ('00000000-0000-0000-0000-000000000733', 'SUPPLIER-733'), \
+               ('00000000-0000-0000-0000-000000000734', 'SUPPLIER-734'); \
              INSERT INTO receiving.purchase_order \
                (id, purchase_order_number, supplier_id, status, row_version, \
                 acme_inspection_required, acme_quality_status) VALUES \
@@ -163,13 +164,17 @@ async fn transactional_participation(
                ('00000000-0000-0000-0000-000000000722', 'PO-PART-R', \
                 '00000000-0000-0000-0000-000000000732', 'open', 1, true, 'pending'), \
                ('00000000-0000-0000-0000-000000000723', 'PO-PART-I', \
-                '00000000-0000-0000-0000-000000000733', 'open', 1, false, 'not_required'); \
+                '00000000-0000-0000-0000-000000000733', 'open', 1, false, 'not_required'), \
+               ('00000000-0000-0000-0000-000000000724', 'PO-PART-O', \
+                '00000000-0000-0000-0000-000000000734', 'open', 1, false, 'not_required'); \
              INSERT INTO receiving.purchase_order_line \
                (id, purchase_order_id, line_number, item_id, ordered_quantity, received_quantity) VALUES \
                ('00000000-0000-0000-0000-000000000820', '00000000-0000-0000-0000-000000000720', 1, '00000000-0000-0000-0000-000000000710', 1, 0), \
                ('00000000-0000-0000-0000-000000000821', '00000000-0000-0000-0000-000000000721', 1, '00000000-0000-0000-0000-000000000710', 1, 0), \
                ('00000000-0000-0000-0000-000000000822', '00000000-0000-0000-0000-000000000722', 1, '00000000-0000-0000-0000-000000000710', 1, 0), \
-               ('00000000-0000-0000-0000-000000000823', '00000000-0000-0000-0000-000000000723', 1, '00000000-0000-0000-0000-000000000710', 1, 0);",
+               ('00000000-0000-0000-0000-000000000823', '00000000-0000-0000-0000-000000000723', 1, '00000000-0000-0000-0000-000000000710', 1, 0), \
+               ('00000000-0000-0000-0000-000000000824', '00000000-0000-0000-0000-000000000724', 1, '00000000-0000-0000-0000-000000000710', 1, 0), \
+               ('00000000-0000-0000-0000-000000000825', '00000000-0000-0000-0000-000000000724', 2, '00000000-0000-0000-0000-000000000710', 1, 0);",
         )
         .await?;
 
@@ -261,7 +266,7 @@ async fn transactional_participation(
     let no_qc_receipt = project
         .query_one(
             "SELECT id::text FROM receiving.receipt WHERE id = \
-             (SELECT (result::jsonb ->> 'receipt_id')::uuid FROM app_system.write_log WHERE operation = 'wamn-receiving:receiving/record-receipt' AND idempotency_key = 'part-none')",
+             (SELECT (result::jsonb -> 'value' ->> 'receipt_id')::uuid FROM app_system.write_log WHERE operation = 'wamn-receiving:receiving/record-receipt' AND idempotency_key = 'part-none')",
             &[],
         )
         .await?
@@ -306,7 +311,7 @@ async fn transactional_participation(
         project
             .query_one(
                 "SELECT (SELECT count(*) = 1 FROM receiving.receipt WHERE id = \
-                         (SELECT (result::jsonb ->> 'receipt_id')::uuid FROM app_system.write_log WHERE operation = 'wamn-receiving:receiving/record-receipt' AND idempotency_key = 'part-approved')) \
+                         (SELECT (result::jsonb -> 'value' ->> 'receipt_id')::uuid FROM app_system.write_log WHERE operation = 'wamn-receiving:receiving/record-receipt' AND idempotency_key = 'part-approved')) \
                         AND (SELECT count(*) = 1 FROM receiving.quality_inspection WHERE receipt_id = $1::text::uuid)",
                 &[&approved_receipt],
             )
@@ -345,6 +350,64 @@ async fn transactional_participation(
     ensure!(
         changed[0]["error"]["code"] == "idempotency_conflict",
         "direct command reused an extended intent identity"
+    );
+
+    // A retry through Acme with its lines in another order and its time
+    // spelled another way is the same request under the base canonical form.
+    let reordered = async |lines: [&str; 2], occurred_at: &str| -> anyhow::Result<Value> {
+        let response = http
+            .post(format!("{}/acme/receiving/record_receipt", application.endpoint))
+            .header(reqwest::header::HOST, &application.route_host)
+            .bearer_auth(&application.bearer)
+            .json(&json!([{"request_id":"part-reordered","value":{
+                "idempotency_key":"part-reordered",
+                "purchase_order_id":"00000000-0000-0000-0000-000000000724",
+                "receipt_reference":"part-reordered",
+                "occurred_at":occurred_at,
+                "line":lines.map(|line| json!({"purchase_order_line_id":line,"quantity":"1","location_id":"00000000-0000-0000-0000-000000000711"}))
+            }}]))
+            .send()
+            .await?;
+        ensure!(
+            response.status().is_success(),
+            "record_receipt returned {}",
+            response.status()
+        );
+        response.json::<Value>().await.map_err(Into::into)
+    };
+    let first = reordered(
+        [
+            "00000000-0000-0000-0000-000000000824",
+            "00000000-0000-0000-0000-000000000825",
+        ],
+        "2026-09-20T12:00:00.000000Z",
+    )
+    .await?;
+    ensure!(
+        first[0].get("value").is_some(),
+        "the two-line receipt failed"
+    );
+    let retry = reordered(
+        [
+            "00000000-0000-0000-0000-000000000825",
+            "00000000-0000-0000-0000-000000000824",
+        ],
+        "2026-09-20T12:00:00Z",
+    )
+    .await?;
+    ensure!(
+        retry[0]["value"] == first[0]["value"],
+        "a reordered retry through Acme did not answer the stored result: {retry}"
+    );
+    ensure!(
+        project
+            .query_one(
+                "SELECT count(*) = 1 FROM receiving.receipt WHERE purchase_order_id = '00000000-0000-0000-0000-000000000724'",
+                &[],
+            )
+            .await?
+            .get::<_, bool>(0),
+        "a reordered retry wrote a second receipt"
     );
 
     drop(project);

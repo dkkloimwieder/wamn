@@ -637,7 +637,12 @@ pub(super) fn emit_projection(
         ),
     };
     let mut source = String::from("// @generated from migration IR; do not edit.\n\n");
-    if matches!(projection, Projection::Wamn) {
+    // A read runs on the connection; a change runs in the host's transaction.
+    if wamn_api.is_some_and(|api| {
+        api.accessors
+            .iter()
+            .any(|accessor| !accessor.operation.changes_records())
+    }) {
         source.push_str("use wamn_postgres_statements::Connection;\n\n");
     }
     let model_row = RustRow {
@@ -801,8 +806,8 @@ fn emit_rust_row(source: &mut String, row: &RustRow, projection: Projection) {
 }
 
 fn emit_wamn_accessor(source: &mut String, accessor: &WamnAccessor, row: &RustRow) {
-    // A create runs inside the transaction its codec holds for the write log.
-    let transactional = accessor.operation == CrudAction::Create;
+    // A change runs in the transaction the host began for its operation.
+    let transactional = accessor.operation.changes_records();
     emit_argument_count_expectation(source, accessor.binds.len());
     writeln!(
         source,
