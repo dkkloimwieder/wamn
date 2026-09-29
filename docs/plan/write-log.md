@@ -25,6 +25,8 @@ The change removes one table per model and per command from every application sc
 - The engine's intent record (`crates/platform/engine/src/operation/intent.rs`) stays what it is: the edge's record for an operation with no SQL. It is not extended to the cloud. `wamn-an24` is withdrawn.
 - The write log and the engine's intent record are two stores of one rule set. The write log takes its definitions from `intent.rs`: which field is the key (`idempotency.key`), the canonical bytes of the request, the conflict answer `idempotency_conflict`, and the stored-outcome answer. Where the guest can link that code, it calls it; where it cannot, it copies the definition and a generator test pins the two equal. No third definition appears.
 
+The cloud write log has no resolution state and no operator verb. A two-step claim that never finished answers `intent-uncertain` for its key for good. The caller decides with a new key, because only the caller knows whether the SQL-free work may run again (owner ruling on `wamn-bn35`, 2026-09-29).
+
 ## 3. Current state
 
 Measured on `main` at `b32865103` on 2026-09-26.
