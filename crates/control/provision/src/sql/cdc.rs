@@ -24,11 +24,19 @@ use super::{quote_ident, quote_literal};
 /// CONNECT only on its own database; ordinary DML remains denied; and each
 /// reader is configured with its own slot and publication. The M1 gate shows
 /// those production-shaped legs.
+///
+/// An existing role gets the same password and attributes through `ALTER
+/// ROLE`, so every run leaves the role holding the password of the Secret it
+/// emits (finding wamn-fipl). The statement states the role and compares
+/// nothing.
 pub fn ensure_replication_role_sql(role: &str, password: &str) -> String {
     format!(
         "DO $$ BEGIN \
            IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = {role_lit}) THEN \
              CREATE ROLE {role} LOGIN REPLICATION PASSWORD {pw} \
+               NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS; \
+           ELSE \
+             ALTER ROLE {role} LOGIN REPLICATION PASSWORD {pw} \
                NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS; \
            END IF; \
          END $$;",

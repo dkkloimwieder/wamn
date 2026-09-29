@@ -1566,6 +1566,11 @@ mod tests {
         let sql = ensure_replication_role_sql("wamn_cdc_acme__billing__dev", "s3cr3t");
         assert!(sql.contains("IF NOT EXISTS"), "idempotent guard");
         assert!(sql.contains("CREATE ROLE \"wamn_cdc_acme__billing__dev\" LOGIN REPLICATION"));
+        // An existing role gets the same password and attributes (wamn-fipl).
+        assert!(sql.contains(
+            "ELSE ALTER ROLE \"wamn_cdc_acme__billing__dev\" LOGIN REPLICATION PASSWORD 's3cr3t' \
+             NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS;"
+        ));
         assert!(sql.contains("PASSWORD 's3cr3t'"));
         // The R8b tier: REPLICATION but nothing else elevated. NOINHERIT is the
         // house default every other minted role carries.

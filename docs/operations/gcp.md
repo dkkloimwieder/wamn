@@ -1694,7 +1694,14 @@ PY
 INBOX=_INBOX_provisioning_$STREAM python3 jsapi.py $E/provisioning-username $E/provisioning-password "\$JS.API.STREAM.DELETE.$STREAM"
 ```
 
-No user may purge a stream, and a torn-down environment's stream is deleted, not purged. After `enable-cdc-project-env` runs again, run the tap-stream Job of section 3.5 again. A second `enable-cdc-project-env` writes a new password into the Secret but keeps the old one on an existing role (finding `wamn-fipl`). Set the role password from the Secret URL with `ALTER ROLE`, then restart the reader.
+No user may purge a stream, and a torn-down environment's stream is deleted, not purged. After `enable-cdc-project-env` runs again, run the tap-stream Job of section 3.5 again. Since finding `wamn-fipl`, the role SQL of every `enable-cdc-project-env` run sets the Secret's password and attributes on an existing role. The reader reads the Secret at start, so restart it after the Secret changes:
+
+```bash
+kubectl -n platform rollout restart deploy/cdc-reader
+kubectl -n platform rollout status deploy/cdc-reader --timeout=180s
+```
+
+On 2026-09-29 the Receiving run of section 3.18 took 1 second with a new password, and its apply took 2 seconds. The `passwd` of the role in `pg_authid` changed, and the attributes stayed the same. The reader restart took 4 seconds, and the new reader was `streaming` from 21:06:03 UTC with 0 restarts. The first attempt failed at 21:02, because the Spot node `gke-wamn-main-cb3380eb-bvs4` was preempted and `evt-nats-0` moved. The cluster recovered by 21:05.
 
 On 2026-09-28 and 2026-09-29 this procedure removed Receiving `zf7o454t` and WMS `bnarqpnc`. The stop took 23 seconds, the slots and the databases 1 second, the 13 roles 1 second, the registry rows under 1 second, the control rows 1 second and the gate rows under 1 second. The WMS consumer was deleted by itself first, then both streams, each in under 1 second. The WMS stream held 51 events and the Receiving stream 581397. The new suffixes are `4pqjfmli` for Receiving and `0nk1lrpr` for WMS.
 
