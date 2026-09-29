@@ -1,10 +1,10 @@
 # CDC reader slot
 
-Updated through: 2026-09-29, `main` at `12a4da7b2`. Finding `wamn-59z6`.
+Updated through: 2026-09-29, `main` at `90c7e336d`. Finding `wamn-59z6`.
 
 ## 1. Goal
 
-A CDC reader (`services/cdc-reader`) streams the row changes of one project-env database through one logical replication slot. When Postgres invalidates that slot, the changes between the last confirmed position and the next slot are gone. This spec states what the reader does then, how the slot is kept alive, and how `max_slot_wal_keep_size` is set on wamn-dev. It is a spec for review. No code changes before the owner accepts it.
+A CDC reader (`services/cdc-reader`) streams the row changes of one project-env database through one logical replication slot. When Postgres invalidates that slot, the changes between the last confirmed position and the next slot are gone. This spec states what the reader does then, how the slot is kept alive, and how `max_slot_wal_keep_size` is set on wamn-dev. The owner accepted it on 2026-09-29 with the rulings of section 7.
 
 ## 2. Fixed rules
 
@@ -13,6 +13,7 @@ A CDC reader (`services/cdc-reader`) streams the row changes of one project-env 
 - No automatic re-slot. No component creates a slot again without an operator.
 - No switch. Nothing in this spec adds a mode, a flag or a fallback.
 - On invalidation the reader stops, reports the gap boundaries, and requires a full resync of the materialized set before capture resumes.
+- Keeping a slot alive is never an operator's job. The reader keeps its slot moving, and the limit covers only a reader that is down.
 
 ## 3. Current state
 
@@ -53,12 +54,19 @@ Postgres removes the WAL segments that the invalidated slot held (`invalidation_
 
 ### 4.3 What the reader does on invalidation
 
-1. The reader stops capture and does not open a session.
+1. The reader stops capture and does not open a session. It stays running and does not exit.
 2. It logs one structured event `CDC_CAPTURE_GAP` with the slot, the reason (`missing`, or the `invalidation_reason`), and the gap start. The start is the slot's `confirmed_flush_lsn` while the invalidated row exists. For a missing slot, the start is the LSN of the last message on the source stream (`Nats-Msg-Id = <project>_<env>:<lsn>`), with that message's time.
-3. The gap end is the first position of the next slot. The operator's recovery step records it, because only that step creates the slot.
-4. The reader stays stopped until the gap record says that the full resync is done. A new slot alone does not start capture again.
+3. The gap end is the first position of the next slot. The recovery verb records it, because only that verb creates the slot.
+4. Every 30 seconds, on the cadence of the slot monitor, the reader reads the gap record of its slot. When `resync_at` is set, it resumes capture on the new slot, with no restart. A new slot alone does not start capture again.
 
-The gap record is one row per gap in the system database, written by the recovery verb with the control credential: slot, start position, start time, reason, detection time, end position, and resync time. The reader reads it as it reads `registry.event_readers` today. The recovery verb replaces the `psql` statements of section 6.3.
+The reader has no readiness probe today, in `deploy/gcp/cdc-reader.yaml` or `deploy/gcp/cdc-reader-wms.yaml`. The pod keeps that readiness, and this spec adds no probe endpoint. The stopped state is in the `CDC_CAPTURE_GAP` event.
+
+The gap record is one row per gap in `registry.capture_gap`: `slot`, `start_lsn`, `start_at`, `reason`, `detected_at`, `end_lsn`, `resync_at`. The reader reads it as it reads `registry.event_readers` today. Two verbs write it with the control credential:
+
+- `wamn-ctl recover-capture-gap --org --project --env` drops the lost slot, creates it again with `create_failover_slot_sql`, and writes the row with its end position.
+- `wamn-ctl close-capture-gap --org --project --env` sets `resync_at`. Until the resync of section 6 exists, the operator runs it on the owner's word.
+
+Section 6.3 of the operations page names these two verbs and nothing else.
 
 ### 4.4 The slot of an idle database
 
@@ -70,7 +78,7 @@ The fix: when no transaction is open and every publish is acknowledged, the read
 
 With the fix of section 4.4, the limit covers only a reader that is down or stalled on JetStream. At the idle rate, 1 GB covers about 11 hours of reader downtime, and 4 GB covers about 43 hours. A bulk load writes much faster: the Receiving seed of 1000 wrote more than 1 GB, so no limit covers a reader that is down during a bulk load.
 
-The disk cost is the limit itself plus `max_wal_size`. With 4 GB, `pg_wal` can reach about 5 GB. The data takes about 0.5 GB today, so the volume holds about 5.5 GB at worst and 4.3 GB stays free. A full volume stops Postgres for every environment (section 6.2 of the operations page), which is worse than one lost slot. The limit therefore stays finite, and the proposal is 4 GB. The value is `max_slot_wal_keep_size: "4GB"` in `deploy/gcp/cnpg-cluster.yaml`, and it changes without a restart.
+The disk cost is the limit itself plus `max_wal_size`. With 4 GB, `pg_wal` can reach about 5 GB. The data takes about 0.5 GB today, so the volume holds about 5.5 GB at worst and 4.3 GB stays free. A full volume stops Postgres for every environment (section 6.2 of the operations page), which is worse than one lost slot. The limit therefore stays finite, and the proposal is 4 GB. The value is `max_slot_wal_keep_size: "4GB"` in `deploy/gcp/cnpg-cluster.yaml`, and it changes without a restart. A bulk load with the reader down still loses the slot. The gap report of section 4.3 is the answer there, not a larger limit.
 
 ### 4.6 A Postgres move against a true gap
 
@@ -80,15 +88,26 @@ A true gap has one of three causes: a slot limit passed, a slot dropped by hand,
 
 ## 5. Issues
 
-One branch per issue. Workspace tests only, with live tests on a disposable database.
+One branch per issue, in the order 1, 3, 2. Workspace tests only, with live tests on a disposable database.
 
 1. The idle slot (section 4.4). With nothing open and nothing unacknowledged, the reader confirms a keepalive position. Live test: two databases, the idle one's `confirmed_flush_lsn` advances with the writes of the other.
-2. The gap stop and report (section 4.3). The `CDC_CAPTURE_GAP` event with its boundaries, the gap record, the recovery verb, and the reader's refusal until the resync time is set. Live tests: an invalidated slot gives one event with the start position. The test sets `max_slot_wal_keep_size` low and writes past it. A missing slot gives one event too. The reader does not capture on a new slot until the record is closed.
-3. The limit on wamn-dev (section 4.5). `cnpg-cluster.yaml`, the apply, and the operations page section 6.3 rewritten for the recovery verb.
+2. The gap stop and report (section 4.3). The `CDC_CAPTURE_GAP` event with its boundaries, `registry.capture_gap`, the two verbs, and the reader's wait for `resync_at` without a restart. Live tests: an invalidated slot gives one event with the start position. The test sets `max_slot_wal_keep_size` low and writes past it. A missing slot gives one event too. The reader does not capture on a new slot until `close-capture-gap` sets `resync_at`, and then it resumes in the same process.
+3. The limit on wamn-dev (section 4.5). Applied on 2026-09-29 in commit `90c7e336d`: the server shows `4GB`, and the WMS slot's `safe_wal_size` rose from 738097816 to 3942627736 bytes. Section 6.3 of the operations page is rewritten for the two verbs with issue 2.
 
 ## 6. Out of scope
 
-- The resync itself. No resync path exists, and "the materialized set" needs a definition for each consumer before a spec can build one. Today the consumers are the event workflows that the materializer starts.
+- The resync itself. Its definition: the events that the gap swallowed are produced again from the tables. Every table carries `updated_at`, so the rows changed in the gap are the rows with `updated_at` between `start_at` and `resync_at`. The resync presents each row as one event at the gap end position, and the materializer runs the same conditions on them. A delete in the gap is not in the tables and stays lost. The resync finding states that.
 - A second Postgres instance or failover slot synchronization. wamn-dev has one instance.
 - A separate WAL volume.
 - The kind cluster values in `deploy/infra/cnpg-cluster.yaml`.
+
+## 7. Owner rulings
+
+Owner rulings of 2026-09-29:
+
+- No operator write to save the WMS slot, and no recorded loss. The 4 GB limit applies at once (issue 3), with no restart.
+- The keepalive confirm is issue 1 and comes first. It is the common cause, and the limit passed only because of it.
+- A reader with a gap stays running, not ready. It logs `CDC_CAPTURE_GAP` once and reads the gap record every 30 seconds. After `resync_at` is set, it resumes with no restart. The pod keeps the readiness it has today, and no probe endpoint is added.
+- 4 GB is right, with the disk cost of section 4.5.
+- The definition of the resync is in section 6. Its build is out of scope.
+- The names: `registry.capture_gap`, `wamn-ctl recover-capture-gap` and `wamn-ctl close-capture-gap`.
