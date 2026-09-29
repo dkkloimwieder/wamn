@@ -4,7 +4,6 @@
 // nothing else.
 
 import { Show, createResource, createSignal, onCleanup } from "solid-js";
-import { createForm } from "@tanstack/solid-form";
 import * as z from "zod/mini";
 import {
   afterWrites,
@@ -16,6 +15,7 @@ import {
   refusalMarks,
   refusalSentence,
   refusedMember,
+  type JsonValue,
   type Outcome,
   type Transport,
   type Uuid,
@@ -92,59 +92,63 @@ export function ProductCreateForm(props: ProductCreateFormProps) {
   const [refusal, setRefusal] = createSignal<{ text: string; member: string | null } | null>(null);
   const [done, setDone] = createSignal(false);
 
-  const form = createForm(() => ({
-    defaultValues: { ...props.initial } as Partial<ProductCreateRequest>,
-    onSubmit: async ({ value }: { value: Partial<ProductCreateRequest> }) => {
-      setDone(false);
-      const checked = CREATE_INPUT.safeParse(value);
-      if (!checked.success) {
-        const issue = checked.error.issues[0];
-        setRefusal({
-          text: issue?.message ?? "A value is not valid.",
-          member: checkedMember(
-            issue?.path as (string | number)[] | undefined,
-            PRODUCT_CREATE_REQUEST_FIELDS,
-          ),
-        });
-        return;
+  const [productCodeValue, setProductCodeValue] = createSignal<JsonValue | undefined>(
+    readMember(props.initial, ["productCode"]) as JsonValue | undefined,
+  );
+
+  const submit = async () => {
+    setDone(false);
+    let value = { ...props.initial } as Partial<ProductCreateRequest>;
+    const hold = (path: readonly string[], member: JsonValue | undefined) => {
+      if (member !== undefined) {
+        value = writeMember(value, path, member);
       }
-      let item = { ...value } as ProductCreateRequest;
-      item = writeMember(item, ["idempotencyKey"], newIdempotencyKey());
-      item = writeMember(item, ["requestId"], newRequestId());
-      const outcome = await create(props.transport, [item]);
-      props.onSubmitted?.(outcome);
-      announceOutcome(outcome, ProductCreateFormLabel);
-      setRefusal(
-        outcome.status === "refused"
-          ? { text: refusalSentence(outcome.code, outcome.text), member: refusedMember(outcome.detail) }
-          : null,
-      );
-      setDone(outcome.status === "completed");
-    },
-  }));
+    };
+    hold(["productCode"], productCodeValue());
+    const checked = CREATE_INPUT.safeParse(value);
+    if (!checked.success) {
+      const issue = checked.error.issues[0];
+      setRefusal({
+        text: issue?.message ?? "A value is not valid.",
+        member: checkedMember(
+          issue?.path as (string | number)[] | undefined,
+          PRODUCT_CREATE_REQUEST_FIELDS,
+        ),
+      });
+      return;
+    }
+    let item = { ...value } as ProductCreateRequest;
+    item = writeMember(item, ["idempotencyKey"], newIdempotencyKey());
+    item = writeMember(item, ["requestId"], newRequestId());
+    const outcome = await create(props.transport, [item]);
+    props.onSubmitted?.(outcome);
+    announceOutcome(outcome, ProductCreateFormLabel);
+    setRefusal(
+      outcome.status === "refused"
+        ? { text: refusalSentence(outcome.code, outcome.text), member: refusedMember(outcome.detail) }
+        : null,
+    );
+    setDone(outcome.status === "completed");
+  };
 
   return (
     <form
       onSubmit={(event) => {
         event.preventDefault();
-        void form.handleSubmit();
+        void submit();
       }}
     >
       <Show when={refusal()?.member === null ? refusal() : undefined}>
         <FieldError>{refusal()?.text}</FieldError>
       </Show>
       <FieldGroup>
-        <form.Field name={`productCode`}>
-          {(field) => (
-            <TextField
-              label="product code"
-              type="text"
-              value={String(field().state.value ?? "")}
-              onInput={(value) => field().handleChange(value)}
-              error={refusalMarks(refusal()?.member ?? null, "product_code") ? (refusal()?.text ?? null) : null}
-            />
-          )}
-        </form.Field>
+        <TextField
+          label="product code"
+          type="text"
+          value={String(productCodeValue() ?? "")}
+          onInput={(value) => setProductCodeValue(value)}
+          error={refusalMarks(refusal()?.member ?? null, "product_code") ? (refusal()?.text ?? null) : null}
+        />
       </FieldGroup>
       <FormActions>
         <FormDone when={done()} />
@@ -312,70 +316,74 @@ export function ProductUpdateForm(props: ProductUpdateFormProps) {
     (key: ProductGetDetailInput) => get(props.transport, [key]),
   );
 
-  const form = createForm(() => ({
-    defaultValues: { ...props.initial } as Partial<ProductUpdateRequest>,
-    onSubmit: async ({ value }: { value: Partial<ProductUpdateRequest> }) => {
-      setDone(false);
-      const checked = UPDATE_INPUT.safeParse(value);
-      if (!checked.success) {
-        const issue = checked.error.issues[0];
-        setRefusal({
-          text: issue?.message ?? "A value is not valid.",
-          member: checkedMember(
-            issue?.path as (string | number)[] | undefined,
-            PRODUCT_UPDATE_REQUEST_FIELDS,
-          ),
-        });
-        return;
+  const [changeProductCodeValue, setChangeProductCodeValue] = createSignal<JsonValue | undefined>(
+    readMember(props.initial, ["change", "productCode"]) as JsonValue | undefined,
+  );
+
+  const submit = async () => {
+    setDone(false);
+    let value = { ...props.initial } as Partial<ProductUpdateRequest>;
+    const hold = (path: readonly string[], member: JsonValue | undefined) => {
+      if (member !== undefined) {
+        value = writeMember(value, path, member);
       }
-      let item = { ...value } as ProductUpdateRequest;
-      item = writeMember(item, ["requestId"], newRequestId());
-      // The revision is the one the form read when it opened, never one read
-      // now, because a change made since then is what the conflict outcome names.
-      const read = record();
-      if (read?.status !== "completed") {
-        setRefusal({ text: "The record this form changes is not read yet.", member: null });
-        return;
-      }
-      item = writeMember(item, ["id"], readMember(read.value, ["id"]) ?? null);
-      item = writeMember(item, ["expectedRowVersion"], readMember(read.value, ["rowVersion"]) ?? null);
-      const outcome = await update(props.transport, [item]);
-      props.onSubmitted?.(outcome);
-      if (outcome.status === "completed") {
-        void readAgain();
-      }
-      announceOutcome(outcome, ProductUpdateFormLabel);
-      setRefusal(
-        outcome.status === "refused"
-          ? { text: refusalSentence(outcome.code, outcome.text), member: refusedMember(outcome.detail) }
-          : null,
-      );
-      setDone(outcome.status === "completed");
-    },
-  }));
+    };
+    hold(["change", "productCode"], changeProductCodeValue());
+    const checked = UPDATE_INPUT.safeParse(value);
+    if (!checked.success) {
+      const issue = checked.error.issues[0];
+      setRefusal({
+        text: issue?.message ?? "A value is not valid.",
+        member: checkedMember(
+          issue?.path as (string | number)[] | undefined,
+          PRODUCT_UPDATE_REQUEST_FIELDS,
+        ),
+      });
+      return;
+    }
+    let item = { ...value } as ProductUpdateRequest;
+    item = writeMember(item, ["requestId"], newRequestId());
+    // The revision is the one the form read when it opened, never one read
+    // now, because a change made since then is what the conflict outcome names.
+    const read = record();
+    if (read?.status !== "completed") {
+      setRefusal({ text: "The record this form changes is not read yet.", member: null });
+      return;
+    }
+    item = writeMember(item, ["id"], readMember(read.value, ["id"]) ?? null);
+    item = writeMember(item, ["expectedRowVersion"], readMember(read.value, ["rowVersion"]) ?? null);
+    const outcome = await update(props.transport, [item]);
+    props.onSubmitted?.(outcome);
+    if (outcome.status === "completed") {
+      void readAgain();
+    }
+    announceOutcome(outcome, ProductUpdateFormLabel);
+    setRefusal(
+      outcome.status === "refused"
+        ? { text: refusalSentence(outcome.code, outcome.text), member: refusedMember(outcome.detail) }
+        : null,
+    );
+    setDone(outcome.status === "completed");
+  };
 
   return (
     <form
       onSubmit={(event) => {
         event.preventDefault();
-        void form.handleSubmit();
+        void submit();
       }}
     >
       <Show when={refusal()?.member === null ? refusal() : undefined}>
         <FieldError>{refusal()?.text}</FieldError>
       </Show>
       <FieldGroup>
-        <form.Field name={`change.productCode`}>
-          {(field) => (
-            <TextField
-              label="product code"
-              type="text"
-              value={String(field().state.value ?? "")}
-              onInput={(value) => field().handleChange(value)}
-              error={refusalMarks(refusal()?.member ?? null, "change.product_code") ? (refusal()?.text ?? null) : null}
-            />
-          )}
-        </form.Field>
+        <TextField
+          label="product code"
+          type="text"
+          value={String(changeProductCodeValue() ?? "")}
+          onInput={(value) => setChangeProductCodeValue(value)}
+          error={refusalMarks(refusal()?.member ?? null, "change.product_code") ? (refusal()?.text ?? null) : null}
+        />
       </FieldGroup>
       <FormActions>
         <FormDone when={done()} />

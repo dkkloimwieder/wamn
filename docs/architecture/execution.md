@@ -580,7 +580,7 @@ A column whose update input names a record edits through a select over the list 
 One save sends the changed columns in one update. The table puts the returned row in place, and loads again after any write it did not send.
 A row expands to its child tables. Each child is a table with its scope filter fixed to the row's key, which its scope bar does not offer.
 A detail reads one record and shows its fields.
-A form renders what the operator fills over TanStack Form, and it checks that input with an emitted `zod` schema.
+A form holds each input the operator fills in a Solid signal, and it checks that input with an emitted `zod` schema.
 It writes the reserved inputs from the runtime at submit time.
 A delete asks for a confirmation first.
 A form whose plan binds a revision reads the record when it opens and sends the revision of that read.

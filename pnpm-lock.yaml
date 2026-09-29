@@ -35,9 +35,6 @@ importers:
       '@solidjs/router':
         specifier: ^1.0.0
         version: 1.0.0(solid-js@1.9.15)
-      '@tanstack/solid-form':
-        specifier: ^1.33.5
-        version: 1.33.5(solid-js@1.9.15)
       '@tanstack/solid-table':
         specifier: ^9.2.4
         version: 9.2.4(solid-js@1.9.15)
@@ -72,9 +69,6 @@ importers:
       '@solidjs/router':
         specifier: ^1.0.0
         version: 1.0.0(solid-js@1.9.15)
-      '@tanstack/solid-form':
-        specifier: ^1.33.5
-        version: 1.33.5(solid-js@1.9.15)
       '@tanstack/solid-table':
         specifier: ^9.2.4
         version: 9.2.4(solid-js@1.9.15)
@@ -112,9 +106,6 @@ importers:
       '@tailwindcss/vite':
         specifier: ^4.3.3
         version: 4.3.3(vite@8.3.1(@types/node@24.13.6)(esbuild@0.28.2)(jiti@2.7.0))
-      '@tanstack/solid-form':
-        specifier: ^1.33.5
-        version: 1.33.5(solid-js@1.9.15)
       '@tanstack/solid-table':
         specifier: ^9.2.4
         version: 9.2.4(solid-js@1.9.15)
@@ -1164,28 +1155,6 @@ packages:
     resolution: {integrity: sha512-yYU8cogLeSh/ms2jh8Fj7jaba/EWa7Ja6GoUqYZaraEuCI5YS6ms6ObZgjjedm+jm6XZjdNRWBpPP6Z86oOxcw==}
     peerDependencies:
       vite: ^5.2.0 || ^6 || ^7 || ^8
-
-  '@tanstack/devtools-event-client@0.4.4':
-    resolution: {integrity: sha512-6T5Yop/793YI+H+5J8Hsyj4kCih9sl4t3ElLgKioW5hk3ocn+ZdSJ94tT7vL7uabxSugWYBZlOTMPzEw2puvQw==}
-    engines: {node: '>=18'}
-    hasBin: true
-
-  '@tanstack/form-core@1.33.5':
-    resolution: {integrity: sha512-3dfx9MBP0aq5sXKteikG629X9oviptrQj0IFRk9YGcb+lB7Kv5x8S17oOSk1wUWgjQZ4xVJEMbKwOAODymocgA==}
-
-  '@tanstack/pacer-lite@0.1.1':
-    resolution: {integrity: sha512-y/xtNPNt/YeyoVxE/JCx+T7yjEzpezmbb+toK8DDD1P4m7Kzs5YR956+7OKexG3f8aXgC3rLZl7b1V+yNUSy5w==}
-    engines: {node: '>=18'}
-
-  '@tanstack/solid-form@1.33.5':
-    resolution: {integrity: sha512-azYHYzNwop64bedJRKgjCpi5w9cHu7cNz+dAdSXzaqy9M6JO+GlKNQn54VFhCLYJo45sgNjcdrnz4eyTmgzJ/w==}
-    peerDependencies:
-      solid-js: '>=1.9.9'
-
-  '@tanstack/solid-store@0.11.1':
-    resolution: {integrity: sha512-wzJsiqqLHyQacqbYPT8dKNfhR00NNu743vGeWz2lEpOyE/R+6AYIfFLhXsCIT/Kb+KKiT1KDkB2/35DhLEGx8g==}
-    peerDependencies:
-      solid-js: ^1.6.0
 
   '@tanstack/solid-table@9.2.4':
     resolution: {integrity: sha512-fPveX8c3TJp63Bt9hQkrgd2Lm7Cfsm6/s6lh1Vmp2jcX90+RP+UHr3VO8/GPtVOSSroik9ZVSzC3Gobi17SqSA==}
@@ -3124,27 +3093,6 @@ snapshots:
       '@tailwindcss/oxide': 4.3.3
       tailwindcss: 4.3.3
       vite: 8.3.1(@types/node@24.13.6)(esbuild@0.28.2)(jiti@2.7.0)
-
-  '@tanstack/devtools-event-client@0.4.4': {}
-
-  '@tanstack/form-core@1.33.5':
-    dependencies:
-      '@tanstack/devtools-event-client': 0.4.4
-      '@tanstack/pacer-lite': 0.1.1
-      '@tanstack/store': 0.11.1
-
-  '@tanstack/pacer-lite@0.1.1': {}
-
-  '@tanstack/solid-form@1.33.5(solid-js@1.9.15)':
-    dependencies:
-      '@tanstack/form-core': 1.33.5
-      '@tanstack/solid-store': 0.11.1(solid-js@1.9.15)
-      solid-js: 1.9.15
-
-  '@tanstack/solid-store@0.11.1(solid-js@1.9.15)':
-    dependencies:
-      '@tanstack/store': 0.11.1
-      solid-js: 1.9.15
 
   '@tanstack/solid-table@9.2.4(solid-js@1.9.15)':
     dependencies:

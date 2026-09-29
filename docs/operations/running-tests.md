@@ -688,7 +688,7 @@ It shows that the CSS entry compiles.
 
 ### Generated components
 
-A generated component imports SolidJS, TanStack Table, TanStack Form, zod, and `@wamn/ui`.
+A generated component imports SolidJS, TanStack Table, zod, and `@wamn/ui`.
 `web/components` installs those libraries and holds the harness that checks the components.
 The harness resolves `@wamn/ui` from `web/ui`.
 

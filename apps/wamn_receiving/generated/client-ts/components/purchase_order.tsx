@@ -4,7 +4,6 @@
 // nothing else.
 
 import { Show, createResource, createSignal, onCleanup } from "solid-js";
-import { createForm } from "@tanstack/solid-form";
 import * as z from "zod/mini";
 import {
   afterWrites,
@@ -19,6 +18,7 @@ import {
   refusalMarks,
   refusalSentence,
   refusedMember,
+  type JsonValue,
   type Outcome,
   type PageState,
   type Transport,
@@ -239,47 +239,55 @@ export function PurchaseOrderUpdateForm(props: PurchaseOrderUpdateFormProps) {
     (key: PurchaseOrderGetDetailInput) => get(props.transport, [key]),
   );
 
-  const form = createForm(() => ({
-    defaultValues: { ...props.initial } as Partial<PurchaseOrderUpdateRequest>,
-    onSubmit: async ({ value }: { value: Partial<PurchaseOrderUpdateRequest> }) => {
-      setDone(false);
-      const checked = UPDATE_INPUT.safeParse(value);
-      if (!checked.success) {
-        const issue = checked.error.issues[0];
-        setRefusal({
-          text: issue?.message ?? "A value is not valid.",
-          member: checkedMember(
-            issue?.path as (string | number)[] | undefined,
-            PURCHASE_ORDER_UPDATE_REQUEST_FIELDS,
-          ),
-        });
-        return;
+  const [changeSupplierIdValue, setChangeSupplierIdValue] = createSignal<JsonValue | undefined>(
+    readMember(props.initial, ["change", "supplierId"]) as JsonValue | undefined,
+  );
+
+  const submit = async () => {
+    setDone(false);
+    let value = { ...props.initial } as Partial<PurchaseOrderUpdateRequest>;
+    const hold = (path: readonly string[], member: JsonValue | undefined) => {
+      if (member !== undefined) {
+        value = writeMember(value, path, member);
       }
-      let item = { ...value } as PurchaseOrderUpdateRequest;
-      item = writeMember(item, ["requestId"], newRequestId());
-      // The revision is the one the form read when it opened, never one read
-      // now, because a change made since then is what the conflict outcome names.
-      const read = record();
-      if (read?.status !== "completed") {
-        setRefusal({ text: "The record this form changes is not read yet.", member: null });
-        return;
-      }
-      item = writeMember(item, ["id"], readMember(read.value, ["id"]) ?? null);
-      item = writeMember(item, ["expectedRowVersion"], readMember(read.value, ["rowVersion"]) ?? null);
-      const outcome = await update(props.transport, [item]);
-      props.onSubmitted?.(outcome);
-      if (outcome.status === "completed") {
-        void readAgain();
-      }
-      announceOutcome(outcome, PurchaseOrderUpdateFormLabel);
-      setRefusal(
-        outcome.status === "refused"
-          ? { text: refusalSentence(outcome.code, outcome.text), member: refusedMember(outcome.detail) }
-          : null,
-      );
-      setDone(outcome.status === "completed");
-    },
-  }));
+    };
+    hold(["change", "supplierId"], changeSupplierIdValue());
+    const checked = UPDATE_INPUT.safeParse(value);
+    if (!checked.success) {
+      const issue = checked.error.issues[0];
+      setRefusal({
+        text: issue?.message ?? "A value is not valid.",
+        member: checkedMember(
+          issue?.path as (string | number)[] | undefined,
+          PURCHASE_ORDER_UPDATE_REQUEST_FIELDS,
+        ),
+      });
+      return;
+    }
+    let item = { ...value } as PurchaseOrderUpdateRequest;
+    item = writeMember(item, ["requestId"], newRequestId());
+    // The revision is the one the form read when it opened, never one read
+    // now, because a change made since then is what the conflict outcome names.
+    const read = record();
+    if (read?.status !== "completed") {
+      setRefusal({ text: "The record this form changes is not read yet.", member: null });
+      return;
+    }
+    item = writeMember(item, ["id"], readMember(read.value, ["id"]) ?? null);
+    item = writeMember(item, ["expectedRowVersion"], readMember(read.value, ["rowVersion"]) ?? null);
+    const outcome = await update(props.transport, [item]);
+    props.onSubmitted?.(outcome);
+    if (outcome.status === "completed") {
+      void readAgain();
+    }
+    announceOutcome(outcome, PurchaseOrderUpdateFormLabel);
+    setRefusal(
+      outcome.status === "refused"
+        ? { text: refusalSentence(outcome.code, outcome.text), member: refusedMember(outcome.detail) }
+        : null,
+    );
+    setDone(outcome.status === "completed");
+  };
   const [changeSupplierIdOptions, setChangeSupplierIdOptions] = createSignal<PageState<SupplierQueryRow>>(emptyPage<SupplierQueryRow>());
   const readChangeSupplierIdOptions = async (cursor: string | null) => {
     let request = {} as SupplierQueryRequest;
@@ -304,28 +312,24 @@ export function PurchaseOrderUpdateForm(props: PurchaseOrderUpdateFormProps) {
     <form
       onSubmit={(event) => {
         event.preventDefault();
-        void form.handleSubmit();
+        void submit();
       }}
     >
       <Show when={refusal()?.member === null ? refusal() : undefined}>
         <FieldError>{refusal()?.text}</FieldError>
       </Show>
       <FieldGroup>
-        <form.Field name={`change.supplierId`}>
-          {(field) => (
-            <RecordSelect
-              label="Supplier"
-              options={changeSupplierIdOptions().rows}
-              optionValue={(row) => String(row.id)}
-              optionLabel={(row) => String(row.name)}
-              value={field().state.value == null ? null : String(field().state.value)}
-              onChange={(value) => field().handleChange(value ?? "")}
-              hasNextPage={hasNextPage(changeSupplierIdOptions())}
-              onNextPage={() => void readChangeSupplierIdOptions(changeSupplierIdOptions().cursor)}
-              error={refusalMarks(refusal()?.member ?? null, "change.supplier_id") ? (refusal()?.text ?? null) : null}
-            />
-          )}
-        </form.Field>
+        <RecordSelect
+          label="Supplier"
+          options={changeSupplierIdOptions().rows}
+          optionValue={(row) => String(row.id)}
+          optionLabel={(row) => String(row.name)}
+          value={changeSupplierIdValue() == null ? null : String(changeSupplierIdValue())}
+          onChange={(value) => setChangeSupplierIdValue(value ?? "")}
+          hasNextPage={hasNextPage(changeSupplierIdOptions())}
+          onNextPage={() => void readChangeSupplierIdOptions(changeSupplierIdOptions().cursor)}
+          error={refusalMarks(refusal()?.member ?? null, "change.supplier_id") ? (refusal()?.text ?? null) : null}
+        />
       </FieldGroup>
       <FormActions>
         <FormDone when={done()} />

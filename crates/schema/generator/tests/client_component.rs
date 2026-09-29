@@ -303,12 +303,12 @@ fn a_form_renders_the_plan_inputs_and_supplies_the_reserved_ones() {
     );
     for reserved in ["requestId", "idempotencyKey"] {
         assert!(
-            !create.contains(&format!("<form.Field name={{`{reserved}`}}>")),
+            !create.contains(&format!("hold([\"{reserved}\"]")),
             "the operator never sees {reserved}"
         );
     }
     assert_eq!(
-        create.matches("<form.Field").count(),
+        create.matches("    hold([").count(),
         3,
         "one control for each plan input, and no other"
     );
@@ -339,7 +339,7 @@ fn a_form_renders_the_plan_inputs_and_supplies_the_reserved_ones() {
         "    z.object({\n",
         "      code: z.optional(z.enum([\"priority\", \"standard\"])),\n",
     )));
-    assert!(widget.contains("<form.Field name={`change.code`}>"));
+    assert!(widget.contains("hold([\"change\", \"code\"], changeCodeValue());"));
     let update = widget
         .split("export function WidgetUpdateForm")
         .nth(1)
@@ -374,9 +374,9 @@ fn a_form_renders_through_the_ui_fields_and_states_no_class() {
         "a repeated group is one field set, with one group for each line"
     );
     assert!(
-        batch.contains("                    <Button\n                      type=\"button\"\n")
-            && batch.contains(">\n                      remove\n                    </Button>")
-            && batch.contains(">\n                add\n              </Button>"),
+        batch.contains("                <Button\n                  type=\"button\"\n")
+            && batch.contains(">\n                  remove\n                </Button>")
+            && batch.contains(">\n            add\n          </Button>"),
         "adding and removing a line are buttons"
     );
     assert!(
@@ -391,8 +391,8 @@ fn a_form_renders_through_the_ui_fields_and_states_no_class() {
     );
     assert!(
         batch.contains(concat!(
-            "      props.onSubmitted?.(outcome);\n",
-            "      announceOutcome(outcome, WidgetRecordBatchFormLabel);\n",
+            "    props.onSubmitted?.(outcome);\n",
+            "    announceOutcome(outcome, WidgetRecordBatchFormLabel);\n",
         )),
         "every outcome of a submission reaches the operator as a toast"
     );
@@ -422,13 +422,13 @@ fn a_repeated_control_states_its_declared_path_and_its_index() {
         .expect("the record batch form exists");
 
     assert!(
-        batch.contains("<form.Field name={\"value.line\"} mode=\"array\">"),
+        batch.contains("<Index each={valueLineValue() ?? []}>"),
         "the repeated group renders as a list"
     );
     assert!(
         batch.contains(concat!(
             "error={refusalMarks(refusal()?.member ?? null, ",
-            "\"value.line[].amount\", index()) ?"
+            "\"value.line[].amount\", index) ?"
         )),
         "a control inside the group states its declared path and its index"
     );
@@ -450,10 +450,10 @@ fn a_revision_bound_form_sends_the_revision_it_read_when_it_opened() {
         .nth(1)
         .expect("the update form exists");
     let submit = form
-        .split("onSubmit: async")
+        .split("const submit = async")
         .nth(1)
         .expect("the form submits")
-        .split("\n  }));")
+        .split("\n  };")
         .next()
         .expect("the submission ends");
     assert!(
@@ -592,7 +592,7 @@ fn a_delete_confirms_and_sends_the_revision_the_page_displayed() {
         ),
         "it sends the revision the page displayed"
     );
-    assert!(!remove.contains("<form.Field"), "a delete fills no field");
+    assert!(!remove.contains("hold("), "a delete fills no field");
 }
 
 /// A bound command writes its key from the record it read, so a control for
@@ -609,7 +609,7 @@ fn a_bound_key_is_a_prop_and_never_a_control() {
         .next()
         .expect("the form ends");
     assert!(
-        !update.contains("<form.Field name={`id`}>"),
+        !update.contains("hold([\"id\"]"),
         "the record key comes from the props"
     );
     assert!(
@@ -858,7 +858,7 @@ fn a_component_reads_the_authored_label_everywhere_it_states_text() {
         "a control inside a repeated group reads its own authored label"
     );
     assert!(
-        widget.contains("              <FieldLegend>Batch lines</FieldLegend>"),
+        widget.contains("          <FieldLegend>Batch lines</FieldLegend>"),
         "a repeated group reads the label its line bound declares"
     );
 
@@ -943,20 +943,16 @@ fn a_populated_input_renders_a_selector_fed_by_its_list() {
         "an authored display field reaches the option text"
     );
     assert!(
-        widget.contains("value={field().state.value == null ? null : String(field().state.value)}"),
+        widget.contains("value={makerIdValue() == null ? null : String(makerIdValue())}"),
         "the selector states the value the form holds, and the UI package \
          shows the row once the options arrive"
     );
 
     // A narrowed selector reads the value the operator already chose, and it
     // reads again when that value changes.
-    assert!(
-        widget.contains("  const formValues = useStore(form.store, (state) => state.values);\n")
-    );
     assert!(widget.contains(concat!(
         "  createEffect(() => {\n",
-        "    formValues();\n",
-        "    setValueLineWidgetIdNarrowed((form.getFieldValue(`value.makerId`) as string | null) ?? null);\n",
+        "    setValueLineWidgetIdNarrowed((valueMakerIdValue() as string | null | undefined) ?? null);\n",
         "    void readValueLineWidgetIdOptions(null);\n",
         "  });\n",
     )));
@@ -985,9 +981,9 @@ fn a_populated_input_renders_a_selector_fed_by_its_list() {
         .expect("the form ends");
     assert!(
         create.contains(concat!(
-            "            <TextField\n",
-            "              label=\"Operator note\"\n",
-            "              type=\"text\"\n",
+            "        <TextField\n",
+            "          label=\"Operator note\"\n",
+            "          type=\"text\"\n",
         )),
         "an input that names no record stays a text control"
     );
@@ -1059,18 +1055,18 @@ fn a_repeated_group_states_its_label_its_bounds_and_its_spellings() {
 
     // wamn-j3yr: the line bound declares the group, so the legend is authored.
     assert!(
-        widget.contains("            <FieldLegend>Batch lines</FieldLegend>"),
+        widget.contains("          <FieldLegend>Batch lines</FieldLegend>"),
         "the group reads the label its line bound declares"
     );
 
     // wamn-z5vd: the bounds reach the schema and both controls.
     assert!(widget.contains("        ).check(z.minLength(1), z.maxLength(10)),\n"));
     assert!(
-        widget.contains("disabled={!canAdd(group().state.value ?? [], 10)}"),
+        widget.contains("disabled={!canAdd(valueLineValue() ?? [], 10)}"),
         "the add control stops at the declared maximum"
     );
     assert!(
-        widget.contains("disabled={!canRemove(group().state.value ?? [], 1)}"),
+        widget.contains("disabled={!canRemove(valueLineValue() ?? [], 1)}"),
         "the remove control stops at the declared minimum"
     );
 
@@ -1119,13 +1115,13 @@ fn a_selector_searches_by_its_display_field_and_reads_the_next_page() {
     );
     assert!(
         create.contains(concat!(
-            "            <RecordSelect\n",
-            "              label=\"maker id\"\n",
+            "        <RecordSelect\n",
+            "          label=\"maker id\"\n",
         )) && create.contains(concat!(
-            "              onSearch={(text) => {\n",
-            "                setMakerIdSearch(text);\n",
-            "                void readMakerIdOptions(null);\n",
-            "              }}\n",
+            "          onSearch={(text) => {\n",
+            "            setMakerIdSearch(text);\n",
+            "            void readMakerIdOptions(null);\n",
+            "          }}\n",
         )),
         "the selector hands its search to the list it reads"
     );
@@ -1150,8 +1146,8 @@ fn a_selector_searches_by_its_display_field_and_reads_the_next_page() {
     );
     assert!(
         create.contains(concat!(
-            "              hasNextPage={hasNextPage(makerIdOptions())}\n",
-            "              onNextPage={() => void readMakerIdOptions(makerIdOptions().cursor)}\n",
+            "          hasNextPage={hasNextPage(makerIdOptions())}\n",
+            "          onNextPage={() => void readMakerIdOptions(makerIdOptions().cursor)}\n",
         )),
         "the next page control reads the cursor the selector holds"
     );
@@ -1283,16 +1279,16 @@ fn a_form_sends_the_record_revision_its_revision_names() {
     // The revision follows the row that carries the held key, which a filled
     // key reaches without a pick (wamn-fuda).
     assert!(widget.contains(concat!(
-        "                onChange={(value) => field().handleChange(value ?? \"\")}\n",
-        "                onRow={(row) => setValueInspectorIdRevision(row?.editVersion ?? null)}\n",
+        "            onChange={(value) => setValueInspectorIdValue(value ?? \"\")}\n",
+        "            onRow={(row) => setValueInspectorIdRevision(row?.editVersion ?? null)}\n",
     )));
     assert!(widget.contains(concat!(
-        "      const valueInspectorIdChosen = valueInspectorIdRevision();\n",
-        "      if (valueInspectorIdChosen === null) {\n",
-        "        setRefusal({ text: \"Choose the record from its list.\", member: \"value.inspector_id\" });\n",
-        "        return;\n",
-        "      }\n",
-        "      item = writeMember(item, [\"value\", \"expectedEditVersion\"], valueInspectorIdChosen);\n",
+        "    const valueInspectorIdChosen = valueInspectorIdRevision();\n",
+        "    if (valueInspectorIdChosen === null) {\n",
+        "      setRefusal({ text: \"Choose the record from its list.\", member: \"value.inspector_id\" });\n",
+        "      return;\n",
+        "    }\n",
+        "    item = writeMember(item, [\"value\", \"expectedEditVersion\"], valueInspectorIdChosen);\n",
     )));
     assert!(
         !widget.contains("valueMakerIdRevision"),
@@ -1530,10 +1526,10 @@ fn a_form_that_takes_many_rows_sends_one_input_for_each_row_in_one_call() {
         "{batch}"
     );
     for line in [
-        "          const each = mergeMembers(value, row);\n",
+        "        const each = mergeMembers(value, row);\n",
         // A revision the row carries is the row's own.
-        "          if (readMember(item, [\"value\", \"expectedEditVersion\"]) === undefined) {\n",
-        "          await callEach<WidgetRecordBatchResult>(\n",
+        "        if (readMember(item, [\"value\", \"expectedEditVersion\"]) === undefined) {\n",
+        "        await callEach<WidgetRecordBatchResult>(\n",
         "        <Show when={!rowsFill([\"value\", \"grade\"])}>\n",
     ] {
         assert!(widget.contains(line), "{line}");

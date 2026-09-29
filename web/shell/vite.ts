@@ -134,7 +134,6 @@ export function applicationConfig(options: ApplicationOptions): ApplicationConfi
         { find: /^solid-js$/, replacement: installed("solid-js") },
         { find: /^@solidjs\/router$/, replacement: installed("@solidjs/router") },
         { find: /^@tanstack\/solid-table$/, replacement: installed("@tanstack/solid-table") },
-        { find: /^@tanstack\/solid-form$/, replacement: installed("@tanstack/solid-form") },
         { find: /^zod(\/.*)?$/, replacement: `${installed("zod")}$1` },
       ],
       // web/ui installs its own libraries, and they import solid-js. Two

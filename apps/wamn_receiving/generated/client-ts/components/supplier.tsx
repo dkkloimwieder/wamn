@@ -4,15 +4,16 @@
 // nothing else.
 
 import { Show, createSignal } from "solid-js";
-import { createForm } from "@tanstack/solid-form";
 import * as z from "zod/mini";
 import {
   checkedMember,
   newIdempotencyKey,
   newRequestId,
+  readMember,
   refusalMarks,
   refusalSentence,
   refusedMember,
+  type JsonValue,
   type Outcome,
   type Transport,
   writeMember,
@@ -78,59 +79,63 @@ export function SupplierCreateForm(props: SupplierCreateFormProps) {
   const [refusal, setRefusal] = createSignal<{ text: string; member: string | null } | null>(null);
   const [done, setDone] = createSignal(false);
 
-  const form = createForm(() => ({
-    defaultValues: { ...props.initial } as Partial<SupplierCreateRequest>,
-    onSubmit: async ({ value }: { value: Partial<SupplierCreateRequest> }) => {
-      setDone(false);
-      const checked = CREATE_INPUT.safeParse(value);
-      if (!checked.success) {
-        const issue = checked.error.issues[0];
-        setRefusal({
-          text: issue?.message ?? "A value is not valid.",
-          member: checkedMember(
-            issue?.path as (string | number)[] | undefined,
-            SUPPLIER_CREATE_REQUEST_FIELDS,
-          ),
-        });
-        return;
+  const [nameValue, setNameValue] = createSignal<JsonValue | undefined>(
+    readMember(props.initial, ["name"]) as JsonValue | undefined,
+  );
+
+  const submit = async () => {
+    setDone(false);
+    let value = { ...props.initial } as Partial<SupplierCreateRequest>;
+    const hold = (path: readonly string[], member: JsonValue | undefined) => {
+      if (member !== undefined) {
+        value = writeMember(value, path, member);
       }
-      let item = { ...value } as SupplierCreateRequest;
-      item = writeMember(item, ["idempotencyKey"], newIdempotencyKey());
-      item = writeMember(item, ["requestId"], newRequestId());
-      const outcome = await create(props.transport, [item]);
-      props.onSubmitted?.(outcome);
-      announceOutcome(outcome, SupplierCreateFormLabel);
-      setRefusal(
-        outcome.status === "refused"
-          ? { text: refusalSentence(outcome.code, outcome.text), member: refusedMember(outcome.detail) }
-          : null,
-      );
-      setDone(outcome.status === "completed");
-    },
-  }));
+    };
+    hold(["name"], nameValue());
+    const checked = CREATE_INPUT.safeParse(value);
+    if (!checked.success) {
+      const issue = checked.error.issues[0];
+      setRefusal({
+        text: issue?.message ?? "A value is not valid.",
+        member: checkedMember(
+          issue?.path as (string | number)[] | undefined,
+          SUPPLIER_CREATE_REQUEST_FIELDS,
+        ),
+      });
+      return;
+    }
+    let item = { ...value } as SupplierCreateRequest;
+    item = writeMember(item, ["idempotencyKey"], newIdempotencyKey());
+    item = writeMember(item, ["requestId"], newRequestId());
+    const outcome = await create(props.transport, [item]);
+    props.onSubmitted?.(outcome);
+    announceOutcome(outcome, SupplierCreateFormLabel);
+    setRefusal(
+      outcome.status === "refused"
+        ? { text: refusalSentence(outcome.code, outcome.text), member: refusedMember(outcome.detail) }
+        : null,
+    );
+    setDone(outcome.status === "completed");
+  };
 
   return (
     <form
       onSubmit={(event) => {
         event.preventDefault();
-        void form.handleSubmit();
+        void submit();
       }}
     >
       <Show when={refusal()?.member === null ? refusal() : undefined}>
         <FieldError>{refusal()?.text}</FieldError>
       </Show>
       <FieldGroup>
-        <form.Field name={`name`}>
-          {(field) => (
-            <TextField
-              label="Supplier name"
-              type="text"
-              value={String(field().state.value ?? "")}
-              onInput={(value) => field().handleChange(value)}
-              error={refusalMarks(refusal()?.member ?? null, "name") ? (refusal()?.text ?? null) : null}
-            />
-          )}
-        </form.Field>
+        <TextField
+          label="Supplier name"
+          type="text"
+          value={String(nameValue() ?? "")}
+          onInput={(value) => setNameValue(value)}
+          error={refusalMarks(refusal()?.member ?? null, "name") ? (refusal()?.text ?? null) : null}
+        />
       </FieldGroup>
       <FormActions>
         <FormDone when={done()} />

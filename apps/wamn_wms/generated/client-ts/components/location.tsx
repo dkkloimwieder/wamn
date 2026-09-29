@@ -4,7 +4,6 @@
 // nothing else.
 
 import { Show, createResource, createSignal, onCleanup } from "solid-js";
-import { createForm } from "@tanstack/solid-form";
 import * as z from "zod/mini";
 import {
   afterWrites,
@@ -16,6 +15,7 @@ import {
   refusalMarks,
   refusalSentence,
   refusedMember,
+  type JsonValue,
   type Outcome,
   type Transport,
   type Uuid,
@@ -95,59 +95,63 @@ export function LocationCreateForm(props: LocationCreateFormProps) {
   const [refusal, setRefusal] = createSignal<{ text: string; member: string | null } | null>(null);
   const [done, setDone] = createSignal(false);
 
-  const form = createForm(() => ({
-    defaultValues: { ...props.initial } as Partial<LocationCreateRequest>,
-    onSubmit: async ({ value }: { value: Partial<LocationCreateRequest> }) => {
-      setDone(false);
-      const checked = CREATE_INPUT.safeParse(value);
-      if (!checked.success) {
-        const issue = checked.error.issues[0];
-        setRefusal({
-          text: issue?.message ?? "A value is not valid.",
-          member: checkedMember(
-            issue?.path as (string | number)[] | undefined,
-            LOCATION_CREATE_REQUEST_FIELDS,
-          ),
-        });
-        return;
+  const [locationCodeValue, setLocationCodeValue] = createSignal<JsonValue | undefined>(
+    readMember(props.initial, ["locationCode"]) as JsonValue | undefined,
+  );
+
+  const submit = async () => {
+    setDone(false);
+    let value = { ...props.initial } as Partial<LocationCreateRequest>;
+    const hold = (path: readonly string[], member: JsonValue | undefined) => {
+      if (member !== undefined) {
+        value = writeMember(value, path, member);
       }
-      let item = { ...value } as LocationCreateRequest;
-      item = writeMember(item, ["idempotencyKey"], newIdempotencyKey());
-      item = writeMember(item, ["requestId"], newRequestId());
-      const outcome = await create(props.transport, [item]);
-      props.onSubmitted?.(outcome);
-      announceOutcome(outcome, LocationCreateFormLabel);
-      setRefusal(
-        outcome.status === "refused"
-          ? { text: refusalSentence(outcome.code, outcome.text), member: refusedMember(outcome.detail) }
-          : null,
-      );
-      setDone(outcome.status === "completed");
-    },
-  }));
+    };
+    hold(["locationCode"], locationCodeValue());
+    const checked = CREATE_INPUT.safeParse(value);
+    if (!checked.success) {
+      const issue = checked.error.issues[0];
+      setRefusal({
+        text: issue?.message ?? "A value is not valid.",
+        member: checkedMember(
+          issue?.path as (string | number)[] | undefined,
+          LOCATION_CREATE_REQUEST_FIELDS,
+        ),
+      });
+      return;
+    }
+    let item = { ...value } as LocationCreateRequest;
+    item = writeMember(item, ["idempotencyKey"], newIdempotencyKey());
+    item = writeMember(item, ["requestId"], newRequestId());
+    const outcome = await create(props.transport, [item]);
+    props.onSubmitted?.(outcome);
+    announceOutcome(outcome, LocationCreateFormLabel);
+    setRefusal(
+      outcome.status === "refused"
+        ? { text: refusalSentence(outcome.code, outcome.text), member: refusedMember(outcome.detail) }
+        : null,
+    );
+    setDone(outcome.status === "completed");
+  };
 
   return (
     <form
       onSubmit={(event) => {
         event.preventDefault();
-        void form.handleSubmit();
+        void submit();
       }}
     >
       <Show when={refusal()?.member === null ? refusal() : undefined}>
         <FieldError>{refusal()?.text}</FieldError>
       </Show>
       <FieldGroup>
-        <form.Field name={`locationCode`}>
-          {(field) => (
-            <TextField
-              label="location code"
-              type="text"
-              value={String(field().state.value ?? "")}
-              onInput={(value) => field().handleChange(value)}
-              error={refusalMarks(refusal()?.member ?? null, "location_code") ? (refusal()?.text ?? null) : null}
-            />
-          )}
-        </form.Field>
+        <TextField
+          label="location code"
+          type="text"
+          value={String(locationCodeValue() ?? "")}
+          onInput={(value) => setLocationCodeValue(value)}
+          error={refusalMarks(refusal()?.member ?? null, "location_code") ? (refusal()?.text ?? null) : null}
+        />
       </FieldGroup>
       <FormActions>
         <FormDone when={done()} />
@@ -318,70 +322,74 @@ export function LocationUpdateForm(props: LocationUpdateFormProps) {
     (key: LocationGetDetailInput) => get(props.transport, [key]),
   );
 
-  const form = createForm(() => ({
-    defaultValues: { ...props.initial } as Partial<LocationUpdateRequest>,
-    onSubmit: async ({ value }: { value: Partial<LocationUpdateRequest> }) => {
-      setDone(false);
-      const checked = UPDATE_INPUT.safeParse(value);
-      if (!checked.success) {
-        const issue = checked.error.issues[0];
-        setRefusal({
-          text: issue?.message ?? "A value is not valid.",
-          member: checkedMember(
-            issue?.path as (string | number)[] | undefined,
-            LOCATION_UPDATE_REQUEST_FIELDS,
-          ),
-        });
-        return;
+  const [changeLocationCodeValue, setChangeLocationCodeValue] = createSignal<JsonValue | undefined>(
+    readMember(props.initial, ["change", "locationCode"]) as JsonValue | undefined,
+  );
+
+  const submit = async () => {
+    setDone(false);
+    let value = { ...props.initial } as Partial<LocationUpdateRequest>;
+    const hold = (path: readonly string[], member: JsonValue | undefined) => {
+      if (member !== undefined) {
+        value = writeMember(value, path, member);
       }
-      let item = { ...value } as LocationUpdateRequest;
-      item = writeMember(item, ["requestId"], newRequestId());
-      // The revision is the one the form read when it opened, never one read
-      // now, because a change made since then is what the conflict outcome names.
-      const read = record();
-      if (read?.status !== "completed") {
-        setRefusal({ text: "The record this form changes is not read yet.", member: null });
-        return;
-      }
-      item = writeMember(item, ["id"], readMember(read.value, ["id"]) ?? null);
-      item = writeMember(item, ["expectedRowVersion"], readMember(read.value, ["rowVersion"]) ?? null);
-      const outcome = await update(props.transport, [item]);
-      props.onSubmitted?.(outcome);
-      if (outcome.status === "completed") {
-        void readAgain();
-      }
-      announceOutcome(outcome, LocationUpdateFormLabel);
-      setRefusal(
-        outcome.status === "refused"
-          ? { text: refusalSentence(outcome.code, outcome.text), member: refusedMember(outcome.detail) }
-          : null,
-      );
-      setDone(outcome.status === "completed");
-    },
-  }));
+    };
+    hold(["change", "locationCode"], changeLocationCodeValue());
+    const checked = UPDATE_INPUT.safeParse(value);
+    if (!checked.success) {
+      const issue = checked.error.issues[0];
+      setRefusal({
+        text: issue?.message ?? "A value is not valid.",
+        member: checkedMember(
+          issue?.path as (string | number)[] | undefined,
+          LOCATION_UPDATE_REQUEST_FIELDS,
+        ),
+      });
+      return;
+    }
+    let item = { ...value } as LocationUpdateRequest;
+    item = writeMember(item, ["requestId"], newRequestId());
+    // The revision is the one the form read when it opened, never one read
+    // now, because a change made since then is what the conflict outcome names.
+    const read = record();
+    if (read?.status !== "completed") {
+      setRefusal({ text: "The record this form changes is not read yet.", member: null });
+      return;
+    }
+    item = writeMember(item, ["id"], readMember(read.value, ["id"]) ?? null);
+    item = writeMember(item, ["expectedRowVersion"], readMember(read.value, ["rowVersion"]) ?? null);
+    const outcome = await update(props.transport, [item]);
+    props.onSubmitted?.(outcome);
+    if (outcome.status === "completed") {
+      void readAgain();
+    }
+    announceOutcome(outcome, LocationUpdateFormLabel);
+    setRefusal(
+      outcome.status === "refused"
+        ? { text: refusalSentence(outcome.code, outcome.text), member: refusedMember(outcome.detail) }
+        : null,
+    );
+    setDone(outcome.status === "completed");
+  };
 
   return (
     <form
       onSubmit={(event) => {
         event.preventDefault();
-        void form.handleSubmit();
+        void submit();
       }}
     >
       <Show when={refusal()?.member === null ? refusal() : undefined}>
         <FieldError>{refusal()?.text}</FieldError>
       </Show>
       <FieldGroup>
-        <form.Field name={`change.locationCode`}>
-          {(field) => (
-            <TextField
-              label="location code"
-              type="text"
-              value={String(field().state.value ?? "")}
-              onInput={(value) => field().handleChange(value)}
-              error={refusalMarks(refusal()?.member ?? null, "change.location_code") ? (refusal()?.text ?? null) : null}
-            />
-          )}
-        </form.Field>
+        <TextField
+          label="location code"
+          type="text"
+          value={String(changeLocationCodeValue() ?? "")}
+          onInput={(value) => setChangeLocationCodeValue(value)}
+          error={refusalMarks(refusal()?.member ?? null, "change.location_code") ? (refusal()?.text ?? null) : null}
+        />
       </FieldGroup>
       <FormActions>
         <FormDone when={done()} />

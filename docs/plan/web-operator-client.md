@@ -9,7 +9,7 @@ Generated browser UIs for human admins and operators, from the release contract,
 In:
 
 - Generated TS bindings, and generated table and form components.
-- SolidJS, client side only. TanStack Table and TanStack Form.
+- SolidJS, client side only. TanStack Table. A form holds its values in Solid signals.
 - Screens assembled from components by an agent or a developer.
 - Local dev and real deployment. Login through the existing identity service.
 

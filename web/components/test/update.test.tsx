@@ -22,6 +22,12 @@ afterEach(cleanup);
 
 const reads = (sent: WireRequest[]) => sent.filter((request) => request.operation.includes("/get@")).length;
 
+/** The form sent its read `count` times, and the reply of the last one landed. */
+const opened = async (sent: WireRequest[], count: number) => {
+  await waitFor(() => expect(reads(sent)).toBe(count));
+  await new Promise((resolve) => setTimeout(resolve, 0));
+};
+
 const updates = (sent: WireRequest[]) => sent.filter((request) => request.operation.includes("/update@"));
 
 const revision = (request: WireRequest | undefined) =>
@@ -39,7 +45,7 @@ describe("the generated update", () => {
         onSubmitted={(outcome) => seen.push(outcome)}
       />
     ));
-    await waitFor(() => expect(reads(sent)).toBe(1));
+    await opened(sent, 1);
 
     write();
     fireEvent.click(screen.getByRole("button", { name: "submit" }));
@@ -65,7 +71,7 @@ describe("the generated update", () => {
         onSubmitted={(outcome) => seen.push(outcome)}
       />
     ));
-    await waitFor(() => expect(reads(sent)).toBe(1));
+    await opened(sent, 1);
 
     fireEvent.click(screen.getByRole("button", { name: "submit" }));
     await waitFor(() => expect(seen).toHaveLength(1));
@@ -87,7 +93,7 @@ describe("the generated update", () => {
         onSubmitted={(outcome) => seen.push(outcome)}
       />
     ));
-    await waitFor(() => expect(reads(sent)).toBe(1));
+    await opened(sent, 1);
     expect(screen.queryByText("Completed.")).toBeNull();
 
     fireEvent.click(screen.getByRole("button", { name: "submit" }));
@@ -106,12 +112,12 @@ describe("the generated update", () => {
         onSubmitted={(outcome) => seen.push(outcome)}
       />
     ));
-    await waitFor(() => expect(reads(sent)).toBe(1));
+    await opened(sent, 1);
 
     fireEvent.click(screen.getByRole("button", { name: "submit" }));
     await waitFor(() => expect(seen).toHaveLength(1));
     // After its own write, the form reads the record again.
-    await waitFor(() => expect(reads(sent)).toBe(2));
+    await opened(sent, 2);
 
     fireEvent.click(screen.getByRole("button", { name: "submit" }));
     await waitFor(() => expect(seen).toHaveLength(2));

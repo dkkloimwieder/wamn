@@ -3,8 +3,7 @@
 // `receiving` components. Each one calls the bindings and the runtime, and
 // nothing else.
 
-import { For, Show, createEffect, createSignal, onCleanup } from "solid-js";
-import { createForm, useStore } from "@tanstack/solid-form";
+import { Index, Show, createEffect, createSignal, onCleanup } from "solid-js";
 import * as z from "zod/mini";
 import {
   afterWrites,
@@ -24,6 +23,7 @@ import {
   refusalMarks,
   refusalSentence,
   refusedMember,
+  type JsonValue,
   type Numeric,
   type Outcome,
   type PageState,
@@ -260,69 +260,88 @@ export function ReceivingRecordReceiptForm(props: ReceivingRecordReceiptFormProp
   const [refusal, setRefusal] = createSignal<{ text: string; member: string | null } | null>(null);
   const [done, setDone] = createSignal(false);
 
-  const form = createForm(() => ({
-    defaultValues: { ...props.initial } as Partial<ReceivingRecordReceiptRequest>,
-    onSubmit: async ({ value }: { value: Partial<ReceivingRecordReceiptRequest> }) => {
-      setDone(false);
-      if (props.rows !== undefined) {
-        const items: ReceivingRecordReceiptRequest[] = [];
-        for (const row of props.rows) {
-          const each = mergeMembers(value, row);
-          const checked = RECORD_RECEIPT_INPUT.safeParse(each);
-          if (!checked.success) {
-            const issue = checked.error.issues[0];
-            setRefusal({
-              text: issue?.message ?? "A value is not valid.",
-              member: checkedMember(
-                issue?.path as (string | number)[] | undefined,
-                RECEIVING_RECORD_RECEIPT_REQUEST_FIELDS,
-              ),
-            });
-            return;
-          }
-          let item = { ...each } as ReceivingRecordReceiptRequest;
-          item = writeMember(item, ["requestId"], newRequestId());
-          item = writeMember(item, ["value", "idempotencyKey"], newIdempotencyKey());
-          item = writeMember(item, ["value", "occurredAt"], occurredAt());
-          items.push(item);
+  const [valueLineValue, setValueLineValue] = createSignal<JsonValue[] | undefined>(
+    readMember(props.initial, ["value", "line"]) as JsonValue[] | undefined,
+  );
+  const setValueLineMember = (index: number, path: readonly string[], member: JsonValue) =>
+    setValueLineValue((list) =>
+      (list ?? []).map((element, at) => (at === index ? writeMember(element, path, member) : element)),
+    );
+  const [valuePurchaseOrderIdValue, setValuePurchaseOrderIdValue] = createSignal<JsonValue | undefined>(
+    readMember(props.initial, ["value", "purchaseOrderId"]) as JsonValue | undefined,
+  );
+  const [valueReceiptReferenceValue, setValueReceiptReferenceValue] = createSignal<JsonValue | undefined>(
+    readMember(props.initial, ["value", "receiptReference"]) as JsonValue | undefined,
+  );
+
+  const submit = async () => {
+    setDone(false);
+    let value = { ...props.initial } as Partial<ReceivingRecordReceiptRequest>;
+    const hold = (path: readonly string[], member: JsonValue | undefined) => {
+      if (member !== undefined) {
+        value = writeMember(value, path, member);
+      }
+    };
+    hold(["value", "line"], valueLineValue());
+    hold(["value", "purchaseOrderId"], valuePurchaseOrderIdValue());
+    hold(["value", "receiptReference"], valueReceiptReferenceValue());
+    if (props.rows !== undefined) {
+      const items: ReceivingRecordReceiptRequest[] = [];
+      for (const row of props.rows) {
+        const each = mergeMembers(value, row);
+        const checked = RECORD_RECEIPT_INPUT.safeParse(each);
+        if (!checked.success) {
+          const issue = checked.error.issues[0];
+          setRefusal({
+            text: issue?.message ?? "A value is not valid.",
+            member: checkedMember(
+              issue?.path as (string | number)[] | undefined,
+              RECEIVING_RECORD_RECEIPT_REQUEST_FIELDS,
+            ),
+          });
+          return;
         }
-        props.onEach?.(
-          await callEach<ReceivingRecordReceiptResult>(
-            props.transport,
-            { route: RECEIVING_RECORD_RECEIPT_ROUTE, request: RECEIVING_RECORD_RECEIPT_REQUEST_FIELDS, result: RECEIVING_RECORD_RECEIPT_RESULT_FIELDS },
-            items,
-          ),
-        );
-        return;
+        let item = { ...each } as ReceivingRecordReceiptRequest;
+        item = writeMember(item, ["requestId"], newRequestId());
+        item = writeMember(item, ["value", "idempotencyKey"], newIdempotencyKey());
+        item = writeMember(item, ["value", "occurredAt"], occurredAt());
+        items.push(item);
       }
-      const checked = RECORD_RECEIPT_INPUT.safeParse(value);
-      if (!checked.success) {
-        const issue = checked.error.issues[0];
-        setRefusal({
-          text: issue?.message ?? "A value is not valid.",
-          member: checkedMember(
-            issue?.path as (string | number)[] | undefined,
-            RECEIVING_RECORD_RECEIPT_REQUEST_FIELDS,
-          ),
-        });
-        return;
-      }
-      let item = { ...value } as ReceivingRecordReceiptRequest;
-      item = writeMember(item, ["requestId"], newRequestId());
-      item = writeMember(item, ["value", "idempotencyKey"], newIdempotencyKey());
-      item = writeMember(item, ["value", "occurredAt"], occurredAt());
-      const outcome = await recordReceipt(props.transport, [item]);
-      props.onSubmitted?.(outcome);
-      announceOutcome(outcome, ReceivingRecordReceiptFormLabel);
-      setRefusal(
-        outcome.status === "refused"
-          ? { text: refusalSentence(outcome.code, outcome.text), member: refusedMember(outcome.detail) }
-          : null,
+      props.onEach?.(
+        await callEach<ReceivingRecordReceiptResult>(
+          props.transport,
+          { route: RECEIVING_RECORD_RECEIPT_ROUTE, request: RECEIVING_RECORD_RECEIPT_REQUEST_FIELDS, result: RECEIVING_RECORD_RECEIPT_RESULT_FIELDS },
+          items,
+        ),
       );
-      setDone(outcome.status === "completed");
-    },
-  }));
-  const formValues = useStore(form.store, (state) => state.values);
+      return;
+    }
+    const checked = RECORD_RECEIPT_INPUT.safeParse(value);
+    if (!checked.success) {
+      const issue = checked.error.issues[0];
+      setRefusal({
+        text: issue?.message ?? "A value is not valid.",
+        member: checkedMember(
+          issue?.path as (string | number)[] | undefined,
+          RECEIVING_RECORD_RECEIPT_REQUEST_FIELDS,
+        ),
+      });
+      return;
+    }
+    let item = { ...value } as ReceivingRecordReceiptRequest;
+    item = writeMember(item, ["requestId"], newRequestId());
+    item = writeMember(item, ["value", "idempotencyKey"], newIdempotencyKey());
+    item = writeMember(item, ["value", "occurredAt"], occurredAt());
+    const outcome = await recordReceipt(props.transport, [item]);
+    props.onSubmitted?.(outcome);
+    announceOutcome(outcome, ReceivingRecordReceiptFormLabel);
+    setRefusal(
+      outcome.status === "refused"
+        ? { text: refusalSentence(outcome.code, outcome.text), member: refusedMember(outcome.detail) }
+        : null,
+    );
+    setDone(outcome.status === "completed");
+  };
   const [valueLineLocationIdOptions, setValueLineLocationIdOptions] = createSignal<PageState<LocationListRow>>(emptyPage<LocationListRow>());
   const readValueLineLocationIdOptions = async (cursor: string | null) => {
     const request = {} as LocationListRequest;
@@ -360,8 +379,7 @@ export function ReceivingRecordReceiptForm(props: ReceivingRecordReceiptFormProp
     );
   };
   createEffect(() => {
-    formValues();
-    setValueLinePurchaseOrderLineIdNarrowed((form.getFieldValue(`value.purchaseOrderId`) as string | null) ?? null);
+    setValueLinePurchaseOrderLineIdNarrowed((valuePurchaseOrderIdValue() as string | null | undefined) ?? null);
     void readValueLinePurchaseOrderLineIdOptions(null);
   });
   onCleanup(afterWrites(props.transport, () => void readValueLinePurchaseOrderLineIdOptions(null)));
@@ -400,114 +418,90 @@ export function ReceivingRecordReceiptForm(props: ReceivingRecordReceiptFormProp
     <form
       onSubmit={(event) => {
         event.preventDefault();
-        void form.handleSubmit();
+        void submit();
       }}
     >
       <Show when={refusal()?.member === null ? refusal() : undefined}>
         <FieldError>{refusal()?.text}</FieldError>
       </Show>
       <FieldGroup>
-        <form.Field name={"value.line"} mode="array">
-          {(group) => (
-            <FieldSet>
-              <FieldLegend>Receipt lines</FieldLegend>
-              <For each={group().state.value ?? []}>
-                {(_, index) => (
-                  <FieldGroup>
-                    <form.Field name={`value.line[${index()}].locationId`}>
-                      {(field) => (
-                        <RecordSelect
-                          label="Location"
-                          options={valueLineLocationIdOptions().rows}
-                          optionValue={(row) => String(row.id)}
-                          optionLabel={(row) => String(row.locationCode)}
-                          value={field().state.value == null ? null : String(field().state.value)}
-                          onChange={(value) => field().handleChange(value ?? "")}
-                          error={refusalMarks(refusal()?.member ?? null, "value.line[].location_id", index()) ? (refusal()?.text ?? null) : null}
-                        />
-                      )}
-                    </form.Field>
-                    <form.Field name={`value.line[${index()}].purchaseOrderLineId`}>
-                      {(field) => (
-                        <RecordSelect
-                          label="Order line"
-                          options={valueLinePurchaseOrderLineIdOptions().rows}
-                          optionValue={(row) => String(row.lineId)}
-                          optionLabel={(row) => String(row.itemNumber)}
-                          value={field().state.value == null ? null : String(field().state.value)}
-                          onChange={(value) => field().handleChange(value ?? "")}
-                          error={refusalMarks(refusal()?.member ?? null, "value.line[].purchase_order_line_id", index()) ? (refusal()?.text ?? null) : null}
-                        />
-                      )}
-                    </form.Field>
-                    <form.Field name={`value.line[${index()}].quantity`}>
-                      {(field) => (
-                        <TextField
-                          label="Quantity"
-                          type="text"
-                          value={String(field().state.value ?? "")}
-                          onInput={(value) => field().handleChange(value)}
-                          error={refusalMarks(refusal()?.member ?? null, "value.line[].quantity", index()) ? (refusal()?.text ?? null) : null}
-                        />
-                      )}
-                    </form.Field>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      disabled={!canRemove(group().state.value ?? [], 1)}
-                      onClick={() => group().removeValue(index())}
-                    >
-                      remove
-                    </Button>
-                  </FieldGroup>
-                )}
-              </For>
-              <Button
-                type="button"
-                variant="outline"
-                disabled={!canAdd(group().state.value ?? [], 100)}
-                onClick={() => group().pushValue({} as NonNullable<NonNullable<NonNullable<ReceivingRecordReceiptRequest>["value"]>["line"]>[number])}
-              >
-                add
-              </Button>
-            </FieldSet>
-          )}
-        </form.Field>
-        <Show when={!rowsFill(["value", "purchaseOrderId"])}>
-          <form.Field name={`value.purchaseOrderId`}>
-            {(field) => (
-              <RecordSelect
-                label="Purchase order"
-                options={valuePurchaseOrderIdOptions().rows}
-                optionValue={(row) => String(row.id)}
-                optionLabel={(row) => String(row.purchaseOrderNumber)}
-                value={field().state.value == null ? null : String(field().state.value)}
-                onChange={(value) => field().handleChange(value ?? "")}
-                onSearch={(text) => {
-                  setValuePurchaseOrderIdSearch(text);
-                  void readValuePurchaseOrderIdOptions(null);
-                }}
-                hasNextPage={hasNextPage(valuePurchaseOrderIdOptions())}
-                onNextPage={() => void readValuePurchaseOrderIdOptions(valuePurchaseOrderIdOptions().cursor)}
-                readRow={readValuePurchaseOrderIdRecord}
-                error={refusalMarks(refusal()?.member ?? null, "value.purchase_order_id") ? (refusal()?.text ?? null) : null}
-              />
+        <FieldSet>
+          <FieldLegend>Receipt lines</FieldLegend>
+          <Index each={valueLineValue() ?? []}>
+            {(element, index) => (
+              <FieldGroup>
+                <RecordSelect
+                  label="Location"
+                  options={valueLineLocationIdOptions().rows}
+                  optionValue={(row) => String(row.id)}
+                  optionLabel={(row) => String(row.locationCode)}
+                  value={readMember(element(), ["locationId"]) == null ? null : String(readMember(element(), ["locationId"]))}
+                  onChange={(value) => setValueLineMember(index, ["locationId"], value ?? "")}
+                  error={refusalMarks(refusal()?.member ?? null, "value.line[].location_id", index) ? (refusal()?.text ?? null) : null}
+                />
+                <RecordSelect
+                  label="Order line"
+                  options={valueLinePurchaseOrderLineIdOptions().rows}
+                  optionValue={(row) => String(row.lineId)}
+                  optionLabel={(row) => String(row.itemNumber)}
+                  value={readMember(element(), ["purchaseOrderLineId"]) == null ? null : String(readMember(element(), ["purchaseOrderLineId"]))}
+                  onChange={(value) => setValueLineMember(index, ["purchaseOrderLineId"], value ?? "")}
+                  error={refusalMarks(refusal()?.member ?? null, "value.line[].purchase_order_line_id", index) ? (refusal()?.text ?? null) : null}
+                />
+                <TextField
+                  label="Quantity"
+                  type="text"
+                  value={String(readMember(element(), ["quantity"]) ?? "")}
+                  onInput={(value) => setValueLineMember(index, ["quantity"], value)}
+                  error={refusalMarks(refusal()?.member ?? null, "value.line[].quantity", index) ? (refusal()?.text ?? null) : null}
+                />
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  disabled={!canRemove(valueLineValue() ?? [], 1)}
+                  onClick={() => setValueLineValue((list) => (list ?? []).filter((_, at) => at !== index))}
+                >
+                  remove
+                </Button>
+              </FieldGroup>
             )}
-          </form.Field>
+          </Index>
+          <Button
+            type="button"
+            variant="outline"
+            disabled={!canAdd(valueLineValue() ?? [], 100)}
+            onClick={() => setValueLineValue((list) => [...(list ?? []), {}])}
+          >
+            add
+          </Button>
+        </FieldSet>
+        <Show when={!rowsFill(["value", "purchaseOrderId"])}>
+          <RecordSelect
+            label="Purchase order"
+            options={valuePurchaseOrderIdOptions().rows}
+            optionValue={(row) => String(row.id)}
+            optionLabel={(row) => String(row.purchaseOrderNumber)}
+            value={valuePurchaseOrderIdValue() == null ? null : String(valuePurchaseOrderIdValue())}
+            onChange={(value) => setValuePurchaseOrderIdValue(value ?? "")}
+            onSearch={(text) => {
+              setValuePurchaseOrderIdSearch(text);
+              void readValuePurchaseOrderIdOptions(null);
+            }}
+            hasNextPage={hasNextPage(valuePurchaseOrderIdOptions())}
+            onNextPage={() => void readValuePurchaseOrderIdOptions(valuePurchaseOrderIdOptions().cursor)}
+            readRow={readValuePurchaseOrderIdRecord}
+            error={refusalMarks(refusal()?.member ?? null, "value.purchase_order_id") ? (refusal()?.text ?? null) : null}
+          />
         </Show>
         <Show when={!rowsFill(["value", "receiptReference"])}>
-          <form.Field name={`value.receiptReference`}>
-            {(field) => (
-              <TextField
-                label="Receipt reference"
-                type="text"
-                value={String(field().state.value ?? "")}
-                onInput={(value) => field().handleChange(value)}
-                error={refusalMarks(refusal()?.member ?? null, "value.receipt_reference") ? (refusal()?.text ?? null) : null}
-              />
-            )}
-          </form.Field>
+          <TextField
+            label="Receipt reference"
+            type="text"
+            value={String(valueReceiptReferenceValue() ?? "")}
+            onInput={(value) => setValueReceiptReferenceValue(value)}
+            error={refusalMarks(refusal()?.member ?? null, "value.receipt_reference") ? (refusal()?.text ?? null) : null}
+          />
         </Show>
       </FieldGroup>
       <FormActions>

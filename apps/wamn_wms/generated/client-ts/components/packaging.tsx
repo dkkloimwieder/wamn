@@ -4,7 +4,6 @@
 // nothing else.
 
 import { Show, createResource, createSignal, onCleanup } from "solid-js";
-import { createForm } from "@tanstack/solid-form";
 import * as z from "zod/mini";
 import {
   afterWrites,
@@ -20,6 +19,7 @@ import {
   refusalMarks,
   refusalSentence,
   refusedMember,
+  type JsonValue,
   type Outcome,
   type PageState,
   type Transport,
@@ -111,36 +111,56 @@ export function PackagingCreateForm(props: PackagingCreateFormProps) {
   const [refusal, setRefusal] = createSignal<{ text: string; member: string | null } | null>(null);
   const [done, setDone] = createSignal(false);
 
-  const form = createForm(() => ({
-    defaultValues: { ...props.initial } as Partial<PackagingCreateRequest>,
-    onSubmit: async ({ value }: { value: Partial<PackagingCreateRequest> }) => {
-      setDone(false);
-      const checked = CREATE_INPUT.safeParse(value);
-      if (!checked.success) {
-        const issue = checked.error.issues[0];
-        setRefusal({
-          text: issue?.message ?? "A value is not valid.",
-          member: checkedMember(
-            issue?.path as (string | number)[] | undefined,
-            PACKAGING_CREATE_REQUEST_FIELDS,
-          ),
-        });
-        return;
+  const [locationIdValue, setLocationIdValue] = createSignal<JsonValue | undefined>(
+    readMember(props.initial, ["locationId"]) as JsonValue | undefined,
+  );
+  const [packagingCodeValue, setPackagingCodeValue] = createSignal<JsonValue | undefined>(
+    readMember(props.initial, ["packagingCode"]) as JsonValue | undefined,
+  );
+  const [statusValue, setStatusValue] = createSignal<JsonValue | undefined>(
+    readMember(props.initial, ["status"]) as JsonValue | undefined,
+  );
+  const [typeValue, setTypeValue] = createSignal<JsonValue | undefined>(
+    readMember(props.initial, ["type"]) as JsonValue | undefined,
+  );
+
+  const submit = async () => {
+    setDone(false);
+    let value = { ...props.initial } as Partial<PackagingCreateRequest>;
+    const hold = (path: readonly string[], member: JsonValue | undefined) => {
+      if (member !== undefined) {
+        value = writeMember(value, path, member);
       }
-      let item = { ...value } as PackagingCreateRequest;
-      item = writeMember(item, ["idempotencyKey"], newIdempotencyKey());
-      item = writeMember(item, ["requestId"], newRequestId());
-      const outcome = await create(props.transport, [item]);
-      props.onSubmitted?.(outcome);
-      announceOutcome(outcome, PackagingCreateFormLabel);
-      setRefusal(
-        outcome.status === "refused"
-          ? { text: refusalSentence(outcome.code, outcome.text), member: refusedMember(outcome.detail) }
-          : null,
-      );
-      setDone(outcome.status === "completed");
-    },
-  }));
+    };
+    hold(["locationId"], locationIdValue());
+    hold(["packagingCode"], packagingCodeValue());
+    hold(["status"], statusValue());
+    hold(["type"], typeValue());
+    const checked = CREATE_INPUT.safeParse(value);
+    if (!checked.success) {
+      const issue = checked.error.issues[0];
+      setRefusal({
+        text: issue?.message ?? "A value is not valid.",
+        member: checkedMember(
+          issue?.path as (string | number)[] | undefined,
+          PACKAGING_CREATE_REQUEST_FIELDS,
+        ),
+      });
+      return;
+    }
+    let item = { ...value } as PackagingCreateRequest;
+    item = writeMember(item, ["idempotencyKey"], newIdempotencyKey());
+    item = writeMember(item, ["requestId"], newRequestId());
+    const outcome = await create(props.transport, [item]);
+    props.onSubmitted?.(outcome);
+    announceOutcome(outcome, PackagingCreateFormLabel);
+    setRefusal(
+      outcome.status === "refused"
+        ? { text: refusalSentence(outcome.code, outcome.text), member: refusedMember(outcome.detail) }
+        : null,
+    );
+    setDone(outcome.status === "completed");
+  };
   const [locationIdOptions, setLocationIdOptions] = createSignal<PageState<LocationQueryRow>>(emptyPage<LocationQueryRow>());
   const [locationIdSearch, setLocationIdSearch] = createSignal("");
   const readLocationIdOptions = async (cursor: string | null) => {
@@ -174,77 +194,61 @@ export function PackagingCreateForm(props: PackagingCreateFormProps) {
     <form
       onSubmit={(event) => {
         event.preventDefault();
-        void form.handleSubmit();
+        void submit();
       }}
     >
       <Show when={refusal()?.member === null ? refusal() : undefined}>
         <FieldError>{refusal()?.text}</FieldError>
       </Show>
       <FieldGroup>
-        <form.Field name={`locationId`}>
-          {(field) => (
-            <RecordSelect
-              label="location id"
-              options={locationIdOptions().rows}
-              optionValue={(row) => String(row.id)}
-              optionLabel={(row) => String(row.locationCode)}
-              value={field().state.value == null ? null : String(field().state.value)}
-              onChange={(value) => field().handleChange(value ?? "")}
-              onSearch={(text) => {
-                setLocationIdSearch(text);
-                void readLocationIdOptions(null);
-              }}
-              hasNextPage={hasNextPage(locationIdOptions())}
-              onNextPage={() => void readLocationIdOptions(locationIdOptions().cursor)}
-              readRow={readLocationIdRecord}
-              error={refusalMarks(refusal()?.member ?? null, "location_id") ? (refusal()?.text ?? null) : null}
-            />
-          )}
-        </form.Field>
-        <form.Field name={`packagingCode`}>
-          {(field) => (
-            <TextField
-              label="packaging code"
-              type="text"
-              value={String(field().state.value ?? "")}
-              onInput={(value) => field().handleChange(value)}
-              error={refusalMarks(refusal()?.member ?? null, "packaging_code") ? (refusal()?.text ?? null) : null}
-            />
-          )}
-        </form.Field>
-        <form.Field name={`status`}>
-          {(field) => (
-            <ChoiceField
-              label="status"
-              allowEmpty={false}
-              choices={[
-                { value: "available", text: "available" },
-                { value: "held", text: "held" },
-              ]}
-              value={String(field().state.value ?? "")}
-              onChange={(value) => field().handleChange(value as "available" | "held")}
-              error={refusalMarks(refusal()?.member ?? null, "status") ? (refusal()?.text ?? null) : null}
-            />
-          )}
-        </form.Field>
-        <form.Field name={`type`}>
-          {(field) => (
-            <ChoiceField
-              label="type"
-              allowEmpty={false}
-              choices={[
-                { value: "bin", text: "bin" },
-                { value: "case", text: "case" },
-                { value: "loose", text: "loose" },
-                { value: "pallet", text: "pallet" },
-                { value: "tote", text: "tote" },
-              ]}
-              value={String(field().state.value ?? "")}
-              onChange={(value) => field().handleChange(value as "bin" | "case" | "loose" | "pallet" | "tote")}
-              error={refusalMarks(refusal()?.member ?? null, "type") ? (refusal()?.text ?? null) : null}
-            />
-          )}
-        </form.Field>
+        <RecordSelect
+          label="location id"
+          options={locationIdOptions().rows}
+          optionValue={(row) => String(row.id)}
+          optionLabel={(row) => String(row.locationCode)}
+          value={locationIdValue() == null ? null : String(locationIdValue())}
+          onChange={(value) => setLocationIdValue(value ?? "")}
+          onSearch={(text) => {
+            setLocationIdSearch(text);
+            void readLocationIdOptions(null);
+          }}
+          hasNextPage={hasNextPage(locationIdOptions())}
+          onNextPage={() => void readLocationIdOptions(locationIdOptions().cursor)}
+          readRow={readLocationIdRecord}
+          error={refusalMarks(refusal()?.member ?? null, "location_id") ? (refusal()?.text ?? null) : null}
+        />
+        <TextField
+          label="packaging code"
+          type="text"
+          value={String(packagingCodeValue() ?? "")}
+          onInput={(value) => setPackagingCodeValue(value)}
+          error={refusalMarks(refusal()?.member ?? null, "packaging_code") ? (refusal()?.text ?? null) : null}
+        />
+        <ChoiceField
+          label="status"
+          allowEmpty={false}
+          choices={[
+            { value: "available", text: "available" },
+            { value: "held", text: "held" },
+          ]}
+          value={String(statusValue() ?? "")}
+          onChange={(value) => setStatusValue(value as "available" | "held")}
+          error={refusalMarks(refusal()?.member ?? null, "status") ? (refusal()?.text ?? null) : null}
+        />
+        <ChoiceField
+          label="type"
+          allowEmpty={false}
+          choices={[
+            { value: "bin", text: "bin" },
+            { value: "case", text: "case" },
+            { value: "loose", text: "loose" },
+            { value: "pallet", text: "pallet" },
+            { value: "tote", text: "tote" },
+          ]}
+          value={String(typeValue() ?? "")}
+          onChange={(value) => setTypeValue(value as "bin" | "case" | "loose" | "pallet" | "tote")}
+          error={refusalMarks(refusal()?.member ?? null, "type") ? (refusal()?.text ?? null) : null}
+        />
       </FieldGroup>
       <FormActions>
         <FormDone when={done()} />

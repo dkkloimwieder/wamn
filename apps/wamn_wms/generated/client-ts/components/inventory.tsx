@@ -4,7 +4,6 @@
 // nothing else.
 
 import { Show, createSignal, onCleanup } from "solid-js";
-import { createForm } from "@tanstack/solid-form";
 import * as z from "zod/mini";
 import {
   afterWrites,
@@ -22,6 +21,7 @@ import {
   refusalMarks,
   refusalSentence,
   refusedMember,
+  type JsonValue,
   type Numeric,
   type Outcome,
   type PageState,
@@ -160,82 +160,106 @@ export function InventoryAdjustForm(props: InventoryAdjustFormProps) {
   const [refusal, setRefusal] = createSignal<{ text: string; member: string | null } | null>(null);
   const [done, setDone] = createSignal(false);
 
-  const form = createForm(() => ({
-    defaultValues: { ...props.initial } as Partial<InventoryAdjustRequest>,
-    onSubmit: async ({ value }: { value: Partial<InventoryAdjustRequest> }) => {
-      setDone(false);
-      if (props.rows !== undefined) {
-        const items: InventoryAdjustRequest[] = [];
-        for (const row of props.rows) {
-          const each = mergeMembers(value, row);
-          const checked = ADJUST_INPUT.safeParse(each);
-          if (!checked.success) {
-            const issue = checked.error.issues[0];
-            setRefusal({
-              text: issue?.message ?? "A value is not valid.",
-              member: checkedMember(
-                issue?.path as (string | number)[] | undefined,
-                INVENTORY_ADJUST_REQUEST_FIELDS,
-              ),
-            });
+  const [valuePackagingIdValue, setValuePackagingIdValue] = createSignal<JsonValue | undefined>(
+    readMember(props.initial, ["value", "packagingId"]) as JsonValue | undefined,
+  );
+  const [valueProductIdValue, setValueProductIdValue] = createSignal<JsonValue | undefined>(
+    readMember(props.initial, ["value", "productId"]) as JsonValue | undefined,
+  );
+  const [valueQuantityValue, setValueQuantityValue] = createSignal<JsonValue | undefined>(
+    readMember(props.initial, ["value", "quantity"]) as JsonValue | undefined,
+  );
+  const [valueReasonCodeValue, setValueReasonCodeValue] = createSignal<JsonValue | undefined>(
+    readMember(props.initial, ["value", "reasonCode"]) as JsonValue | undefined,
+  );
+  const [valueStatusValue, setValueStatusValue] = createSignal<JsonValue | undefined>(
+    readMember(props.initial, ["value", "status"]) as JsonValue | undefined,
+  );
+
+  const submit = async () => {
+    setDone(false);
+    let value = { ...props.initial } as Partial<InventoryAdjustRequest>;
+    const hold = (path: readonly string[], member: JsonValue | undefined) => {
+      if (member !== undefined) {
+        value = writeMember(value, path, member);
+      }
+    };
+    hold(["value", "packagingId"], valuePackagingIdValue());
+    hold(["value", "productId"], valueProductIdValue());
+    hold(["value", "quantity"], valueQuantityValue());
+    hold(["value", "reasonCode"], valueReasonCodeValue());
+    hold(["value", "status"], valueStatusValue());
+    if (props.rows !== undefined) {
+      const items: InventoryAdjustRequest[] = [];
+      for (const row of props.rows) {
+        const each = mergeMembers(value, row);
+        const checked = ADJUST_INPUT.safeParse(each);
+        if (!checked.success) {
+          const issue = checked.error.issues[0];
+          setRefusal({
+            text: issue?.message ?? "A value is not valid.",
+            member: checkedMember(
+              issue?.path as (string | number)[] | undefined,
+              INVENTORY_ADJUST_REQUEST_FIELDS,
+            ),
+          });
+          return;
+        }
+        let item = { ...each } as InventoryAdjustRequest;
+        item = writeMember(item, ["requestId"], newRequestId());
+        item = writeMember(item, ["value", "idempotencyKey"], newIdempotencyKey());
+        item = writeMember(item, ["value", "occurredAt"], occurredAt());
+        if (readMember(item, ["value", "expectedRowVersion"]) === undefined) {
+          const valuePackagingIdChosen = valuePackagingIdRevision();
+          if (valuePackagingIdChosen === null) {
+            setRefusal({ text: "Choose the record from its list.", member: "value.packaging_id" });
             return;
           }
-          let item = { ...each } as InventoryAdjustRequest;
-          item = writeMember(item, ["requestId"], newRequestId());
-          item = writeMember(item, ["value", "idempotencyKey"], newIdempotencyKey());
-          item = writeMember(item, ["value", "occurredAt"], occurredAt());
-          if (readMember(item, ["value", "expectedRowVersion"]) === undefined) {
-            const valuePackagingIdChosen = valuePackagingIdRevision();
-            if (valuePackagingIdChosen === null) {
-              setRefusal({ text: "Choose the record from its list.", member: "value.packaging_id" });
-              return;
-            }
-            item = writeMember(item, ["value", "expectedRowVersion"], valuePackagingIdChosen);
-          }
-          items.push(item);
+          item = writeMember(item, ["value", "expectedRowVersion"], valuePackagingIdChosen);
         }
-        props.onEach?.(
-          await callEach<InventoryAdjustResult>(
-            props.transport,
-            { route: INVENTORY_ADJUST_ROUTE, request: INVENTORY_ADJUST_REQUEST_FIELDS, result: INVENTORY_ADJUST_RESULT_FIELDS },
-            items,
-          ),
-        );
-        return;
+        items.push(item);
       }
-      const checked = ADJUST_INPUT.safeParse(value);
-      if (!checked.success) {
-        const issue = checked.error.issues[0];
-        setRefusal({
-          text: issue?.message ?? "A value is not valid.",
-          member: checkedMember(
-            issue?.path as (string | number)[] | undefined,
-            INVENTORY_ADJUST_REQUEST_FIELDS,
-          ),
-        });
-        return;
-      }
-      let item = { ...value } as InventoryAdjustRequest;
-      item = writeMember(item, ["requestId"], newRequestId());
-      item = writeMember(item, ["value", "idempotencyKey"], newIdempotencyKey());
-      item = writeMember(item, ["value", "occurredAt"], occurredAt());
-      const valuePackagingIdChosen = valuePackagingIdRevision();
-      if (valuePackagingIdChosen === null) {
-        setRefusal({ text: "Choose the record from its list.", member: "value.packaging_id" });
-        return;
-      }
-      item = writeMember(item, ["value", "expectedRowVersion"], valuePackagingIdChosen);
-      const outcome = await adjust(props.transport, [item]);
-      props.onSubmitted?.(outcome);
-      announceOutcome(outcome, InventoryAdjustFormLabel);
-      setRefusal(
-        outcome.status === "refused"
-          ? { text: refusalSentence(outcome.code, outcome.text), member: refusedMember(outcome.detail) }
-          : null,
+      props.onEach?.(
+        await callEach<InventoryAdjustResult>(
+          props.transport,
+          { route: INVENTORY_ADJUST_ROUTE, request: INVENTORY_ADJUST_REQUEST_FIELDS, result: INVENTORY_ADJUST_RESULT_FIELDS },
+          items,
+        ),
       );
-      setDone(outcome.status === "completed");
-    },
-  }));
+      return;
+    }
+    const checked = ADJUST_INPUT.safeParse(value);
+    if (!checked.success) {
+      const issue = checked.error.issues[0];
+      setRefusal({
+        text: issue?.message ?? "A value is not valid.",
+        member: checkedMember(
+          issue?.path as (string | number)[] | undefined,
+          INVENTORY_ADJUST_REQUEST_FIELDS,
+        ),
+      });
+      return;
+    }
+    let item = { ...value } as InventoryAdjustRequest;
+    item = writeMember(item, ["requestId"], newRequestId());
+    item = writeMember(item, ["value", "idempotencyKey"], newIdempotencyKey());
+    item = writeMember(item, ["value", "occurredAt"], occurredAt());
+    const valuePackagingIdChosen = valuePackagingIdRevision();
+    if (valuePackagingIdChosen === null) {
+      setRefusal({ text: "Choose the record from its list.", member: "value.packaging_id" });
+      return;
+    }
+    item = writeMember(item, ["value", "expectedRowVersion"], valuePackagingIdChosen);
+    const outcome = await adjust(props.transport, [item]);
+    props.onSubmitted?.(outcome);
+    announceOutcome(outcome, InventoryAdjustFormLabel);
+    setRefusal(
+      outcome.status === "refused"
+        ? { text: refusalSentence(outcome.code, outcome.text), member: refusedMember(outcome.detail) }
+        : null,
+    );
+    setDone(outcome.status === "completed");
+  };
   const [valuePackagingIdOptions, setValuePackagingIdOptions] = createSignal<PageState<PackagingQueryRow>>(emptyPage<PackagingQueryRow>());
   const [valuePackagingIdSearch, setValuePackagingIdSearch] = createSignal("");
   const [valuePackagingIdRevision, setValuePackagingIdRevision] = createSignal<PackagingQueryRow["rowVersion"] | null>(null);
@@ -300,7 +324,7 @@ export function InventoryAdjustForm(props: InventoryAdjustFormProps) {
     <form
       onSubmit={(event) => {
         event.preventDefault();
-        void form.handleSubmit();
+        void submit();
       }}
     >
       <Show when={refusal()?.member === null ? refusal() : undefined}>
@@ -308,92 +332,72 @@ export function InventoryAdjustForm(props: InventoryAdjustFormProps) {
       </Show>
       <FieldGroup>
         <Show when={!rowsFill(["value", "packagingId"])}>
-          <form.Field name={`value.packagingId`}>
-            {(field) => (
-              <RecordSelect
-                label="packaging id"
-                options={valuePackagingIdOptions().rows}
-                optionValue={(row) => String(row.id)}
-                optionLabel={(row) => String(row.packagingCode)}
-                value={field().state.value == null ? null : String(field().state.value)}
-                onChange={(value) => field().handleChange(value ?? "")}
-                onRow={(row) => setValuePackagingIdRevision(row?.rowVersion ?? null)}
-                onSearch={(text) => {
-                  setValuePackagingIdSearch(text);
-                  void readValuePackagingIdOptions(null);
-                }}
-                hasNextPage={hasNextPage(valuePackagingIdOptions())}
-                onNextPage={() => void readValuePackagingIdOptions(valuePackagingIdOptions().cursor)}
-                readRow={readValuePackagingIdRecord}
-                error={refusalMarks(refusal()?.member ?? null, "value.packaging_id") ? (refusal()?.text ?? null) : null}
-              />
-            )}
-          </form.Field>
+          <RecordSelect
+            label="packaging id"
+            options={valuePackagingIdOptions().rows}
+            optionValue={(row) => String(row.id)}
+            optionLabel={(row) => String(row.packagingCode)}
+            value={valuePackagingIdValue() == null ? null : String(valuePackagingIdValue())}
+            onChange={(value) => setValuePackagingIdValue(value ?? "")}
+            onRow={(row) => setValuePackagingIdRevision(row?.rowVersion ?? null)}
+            onSearch={(text) => {
+              setValuePackagingIdSearch(text);
+              void readValuePackagingIdOptions(null);
+            }}
+            hasNextPage={hasNextPage(valuePackagingIdOptions())}
+            onNextPage={() => void readValuePackagingIdOptions(valuePackagingIdOptions().cursor)}
+            readRow={readValuePackagingIdRecord}
+            error={refusalMarks(refusal()?.member ?? null, "value.packaging_id") ? (refusal()?.text ?? null) : null}
+          />
         </Show>
         <Show when={!rowsFill(["value", "productId"])}>
-          <form.Field name={`value.productId`}>
-            {(field) => (
-              <RecordSelect
-                label="product id"
-                options={valueProductIdOptions().rows}
-                optionValue={(row) => String(row.id)}
-                optionLabel={(row) => String(row.productCode)}
-                value={field().state.value == null ? null : String(field().state.value)}
-                onChange={(value) => field().handleChange(value ?? "")}
-                onSearch={(text) => {
-                  setValueProductIdSearch(text);
-                  void readValueProductIdOptions(null);
-                }}
-                hasNextPage={hasNextPage(valueProductIdOptions())}
-                onNextPage={() => void readValueProductIdOptions(valueProductIdOptions().cursor)}
-                readRow={readValueProductIdRecord}
-                error={refusalMarks(refusal()?.member ?? null, "value.product_id") ? (refusal()?.text ?? null) : null}
-              />
-            )}
-          </form.Field>
+          <RecordSelect
+            label="product id"
+            options={valueProductIdOptions().rows}
+            optionValue={(row) => String(row.id)}
+            optionLabel={(row) => String(row.productCode)}
+            value={valueProductIdValue() == null ? null : String(valueProductIdValue())}
+            onChange={(value) => setValueProductIdValue(value ?? "")}
+            onSearch={(text) => {
+              setValueProductIdSearch(text);
+              void readValueProductIdOptions(null);
+            }}
+            hasNextPage={hasNextPage(valueProductIdOptions())}
+            onNextPage={() => void readValueProductIdOptions(valueProductIdOptions().cursor)}
+            readRow={readValueProductIdRecord}
+            error={refusalMarks(refusal()?.member ?? null, "value.product_id") ? (refusal()?.text ?? null) : null}
+          />
         </Show>
         <Show when={!rowsFill(["value", "quantity"])}>
-          <form.Field name={`value.quantity`}>
-            {(field) => (
-              <TextField
-                label="quantity"
-                type="text"
-                value={String(field().state.value ?? "")}
-                onInput={(value) => field().handleChange(value)}
-                error={refusalMarks(refusal()?.member ?? null, "value.quantity") ? (refusal()?.text ?? null) : null}
-              />
-            )}
-          </form.Field>
+          <TextField
+            label="quantity"
+            type="text"
+            value={String(valueQuantityValue() ?? "")}
+            onInput={(value) => setValueQuantityValue(value)}
+            error={refusalMarks(refusal()?.member ?? null, "value.quantity") ? (refusal()?.text ?? null) : null}
+          />
         </Show>
         <Show when={!rowsFill(["value", "reasonCode"])}>
-          <form.Field name={`value.reasonCode`}>
-            {(field) => (
-              <TextField
-                label="reason code"
-                type="text"
-                value={String(field().state.value ?? "")}
-                onInput={(value) => field().handleChange(value)}
-                error={refusalMarks(refusal()?.member ?? null, "value.reason_code") ? (refusal()?.text ?? null) : null}
-              />
-            )}
-          </form.Field>
+          <TextField
+            label="reason code"
+            type="text"
+            value={String(valueReasonCodeValue() ?? "")}
+            onInput={(value) => setValueReasonCodeValue(value)}
+            error={refusalMarks(refusal()?.member ?? null, "value.reason_code") ? (refusal()?.text ?? null) : null}
+          />
         </Show>
         <Show when={!rowsFill(["value", "status"])}>
-          <form.Field name={`value.status`}>
-            {(field) => (
-              <ChoiceField
-                label="status"
-                allowEmpty={false}
-                choices={[
-                  { value: "available", text: "available" },
-                  { value: "held", text: "held" },
-                ]}
-                value={String(field().state.value ?? "")}
-                onChange={(value) => field().handleChange(value as "available" | "held")}
-                error={refusalMarks(refusal()?.member ?? null, "value.status") ? (refusal()?.text ?? null) : null}
-              />
-            )}
-          </form.Field>
+          <ChoiceField
+            label="status"
+            allowEmpty={false}
+            choices={[
+              { value: "available", text: "available" },
+              { value: "held", text: "held" },
+            ]}
+            value={String(valueStatusValue() ?? "")}
+            onChange={(value) => setValueStatusValue(value as "available" | "held")}
+            error={refusalMarks(refusal()?.member ?? null, "value.status") ? (refusal()?.text ?? null) : null}
+          />
         </Show>
       </FieldGroup>
       <FormActions>
@@ -498,82 +502,94 @@ export function InventoryMergeForm(props: InventoryMergeFormProps) {
   const [refusal, setRefusal] = createSignal<{ text: string; member: string | null } | null>(null);
   const [done, setDone] = createSignal(false);
 
-  const form = createForm(() => ({
-    defaultValues: { ...props.initial } as Partial<InventoryMergeRequest>,
-    onSubmit: async ({ value }: { value: Partial<InventoryMergeRequest> }) => {
-      setDone(false);
-      if (props.rows !== undefined) {
-        const items: InventoryMergeRequest[] = [];
-        for (const row of props.rows) {
-          const each = mergeMembers(value, row);
-          const checked = MERGE_INPUT.safeParse(each);
-          if (!checked.success) {
-            const issue = checked.error.issues[0];
-            setRefusal({
-              text: issue?.message ?? "A value is not valid.",
-              member: checkedMember(
-                issue?.path as (string | number)[] | undefined,
-                INVENTORY_MERGE_REQUEST_FIELDS,
-              ),
-            });
+  const [valueSourcePackagingIdValue, setValueSourcePackagingIdValue] = createSignal<JsonValue | undefined>(
+    readMember(props.initial, ["value", "sourcePackagingId"]) as JsonValue | undefined,
+  );
+  const [valueTargetPackagingIdValue, setValueTargetPackagingIdValue] = createSignal<JsonValue | undefined>(
+    readMember(props.initial, ["value", "targetPackagingId"]) as JsonValue | undefined,
+  );
+
+  const submit = async () => {
+    setDone(false);
+    let value = { ...props.initial } as Partial<InventoryMergeRequest>;
+    const hold = (path: readonly string[], member: JsonValue | undefined) => {
+      if (member !== undefined) {
+        value = writeMember(value, path, member);
+      }
+    };
+    hold(["value", "sourcePackagingId"], valueSourcePackagingIdValue());
+    hold(["value", "targetPackagingId"], valueTargetPackagingIdValue());
+    if (props.rows !== undefined) {
+      const items: InventoryMergeRequest[] = [];
+      for (const row of props.rows) {
+        const each = mergeMembers(value, row);
+        const checked = MERGE_INPUT.safeParse(each);
+        if (!checked.success) {
+          const issue = checked.error.issues[0];
+          setRefusal({
+            text: issue?.message ?? "A value is not valid.",
+            member: checkedMember(
+              issue?.path as (string | number)[] | undefined,
+              INVENTORY_MERGE_REQUEST_FIELDS,
+            ),
+          });
+          return;
+        }
+        let item = { ...each } as InventoryMergeRequest;
+        item = writeMember(item, ["requestId"], newRequestId());
+        item = writeMember(item, ["value", "idempotencyKey"], newIdempotencyKey());
+        item = writeMember(item, ["value", "occurredAt"], occurredAt());
+        if (readMember(item, ["value", "expectedRowVersion"]) === undefined) {
+          const valueTargetPackagingIdChosen = valueTargetPackagingIdRevision();
+          if (valueTargetPackagingIdChosen === null) {
+            setRefusal({ text: "Choose the record from its list.", member: "value.target_packaging_id" });
             return;
           }
-          let item = { ...each } as InventoryMergeRequest;
-          item = writeMember(item, ["requestId"], newRequestId());
-          item = writeMember(item, ["value", "idempotencyKey"], newIdempotencyKey());
-          item = writeMember(item, ["value", "occurredAt"], occurredAt());
-          if (readMember(item, ["value", "expectedRowVersion"]) === undefined) {
-            const valueTargetPackagingIdChosen = valueTargetPackagingIdRevision();
-            if (valueTargetPackagingIdChosen === null) {
-              setRefusal({ text: "Choose the record from its list.", member: "value.target_packaging_id" });
-              return;
-            }
-            item = writeMember(item, ["value", "expectedRowVersion"], valueTargetPackagingIdChosen);
-          }
-          items.push(item);
+          item = writeMember(item, ["value", "expectedRowVersion"], valueTargetPackagingIdChosen);
         }
-        props.onEach?.(
-          await callEach<InventoryMergeResult>(
-            props.transport,
-            { route: INVENTORY_MERGE_ROUTE, request: INVENTORY_MERGE_REQUEST_FIELDS, result: INVENTORY_MERGE_RESULT_FIELDS },
-            items,
-          ),
-        );
-        return;
+        items.push(item);
       }
-      const checked = MERGE_INPUT.safeParse(value);
-      if (!checked.success) {
-        const issue = checked.error.issues[0];
-        setRefusal({
-          text: issue?.message ?? "A value is not valid.",
-          member: checkedMember(
-            issue?.path as (string | number)[] | undefined,
-            INVENTORY_MERGE_REQUEST_FIELDS,
-          ),
-        });
-        return;
-      }
-      let item = { ...value } as InventoryMergeRequest;
-      item = writeMember(item, ["requestId"], newRequestId());
-      item = writeMember(item, ["value", "idempotencyKey"], newIdempotencyKey());
-      item = writeMember(item, ["value", "occurredAt"], occurredAt());
-      const valueTargetPackagingIdChosen = valueTargetPackagingIdRevision();
-      if (valueTargetPackagingIdChosen === null) {
-        setRefusal({ text: "Choose the record from its list.", member: "value.target_packaging_id" });
-        return;
-      }
-      item = writeMember(item, ["value", "expectedRowVersion"], valueTargetPackagingIdChosen);
-      const outcome = await merge(props.transport, [item]);
-      props.onSubmitted?.(outcome);
-      announceOutcome(outcome, InventoryMergeFormLabel);
-      setRefusal(
-        outcome.status === "refused"
-          ? { text: refusalSentence(outcome.code, outcome.text), member: refusedMember(outcome.detail) }
-          : null,
+      props.onEach?.(
+        await callEach<InventoryMergeResult>(
+          props.transport,
+          { route: INVENTORY_MERGE_ROUTE, request: INVENTORY_MERGE_REQUEST_FIELDS, result: INVENTORY_MERGE_RESULT_FIELDS },
+          items,
+        ),
       );
-      setDone(outcome.status === "completed");
-    },
-  }));
+      return;
+    }
+    const checked = MERGE_INPUT.safeParse(value);
+    if (!checked.success) {
+      const issue = checked.error.issues[0];
+      setRefusal({
+        text: issue?.message ?? "A value is not valid.",
+        member: checkedMember(
+          issue?.path as (string | number)[] | undefined,
+          INVENTORY_MERGE_REQUEST_FIELDS,
+        ),
+      });
+      return;
+    }
+    let item = { ...value } as InventoryMergeRequest;
+    item = writeMember(item, ["requestId"], newRequestId());
+    item = writeMember(item, ["value", "idempotencyKey"], newIdempotencyKey());
+    item = writeMember(item, ["value", "occurredAt"], occurredAt());
+    const valueTargetPackagingIdChosen = valueTargetPackagingIdRevision();
+    if (valueTargetPackagingIdChosen === null) {
+      setRefusal({ text: "Choose the record from its list.", member: "value.target_packaging_id" });
+      return;
+    }
+    item = writeMember(item, ["value", "expectedRowVersion"], valueTargetPackagingIdChosen);
+    const outcome = await merge(props.transport, [item]);
+    props.onSubmitted?.(outcome);
+    announceOutcome(outcome, InventoryMergeFormLabel);
+    setRefusal(
+      outcome.status === "refused"
+        ? { text: refusalSentence(outcome.code, outcome.text), member: refusedMember(outcome.detail) }
+        : null,
+    );
+    setDone(outcome.status === "completed");
+  };
   const [valueSourcePackagingIdOptions, setValueSourcePackagingIdOptions] = createSignal<PageState<PackagingQueryRow>>(emptyPage<PackagingQueryRow>());
   const [valueSourcePackagingIdSearch, setValueSourcePackagingIdSearch] = createSignal("");
   const readValueSourcePackagingIdOptions = async (cursor: string | null) => {
@@ -638,7 +654,7 @@ export function InventoryMergeForm(props: InventoryMergeFormProps) {
     <form
       onSubmit={(event) => {
         event.preventDefault();
-        void form.handleSubmit();
+        void submit();
       }}
     >
       <Show when={refusal()?.member === null ? refusal() : undefined}>
@@ -646,49 +662,41 @@ export function InventoryMergeForm(props: InventoryMergeFormProps) {
       </Show>
       <FieldGroup>
         <Show when={!rowsFill(["value", "sourcePackagingId"])}>
-          <form.Field name={`value.sourcePackagingId`}>
-            {(field) => (
-              <RecordSelect
-                label="source packaging id"
-                options={valueSourcePackagingIdOptions().rows}
-                optionValue={(row) => String(row.id)}
-                optionLabel={(row) => String(row.packagingCode)}
-                value={field().state.value == null ? null : String(field().state.value)}
-                onChange={(value) => field().handleChange(value ?? "")}
-                onSearch={(text) => {
-                  setValueSourcePackagingIdSearch(text);
-                  void readValueSourcePackagingIdOptions(null);
-                }}
-                hasNextPage={hasNextPage(valueSourcePackagingIdOptions())}
-                onNextPage={() => void readValueSourcePackagingIdOptions(valueSourcePackagingIdOptions().cursor)}
-                readRow={readValueSourcePackagingIdRecord}
-                error={refusalMarks(refusal()?.member ?? null, "value.source_packaging_id") ? (refusal()?.text ?? null) : null}
-              />
-            )}
-          </form.Field>
+          <RecordSelect
+            label="source packaging id"
+            options={valueSourcePackagingIdOptions().rows}
+            optionValue={(row) => String(row.id)}
+            optionLabel={(row) => String(row.packagingCode)}
+            value={valueSourcePackagingIdValue() == null ? null : String(valueSourcePackagingIdValue())}
+            onChange={(value) => setValueSourcePackagingIdValue(value ?? "")}
+            onSearch={(text) => {
+              setValueSourcePackagingIdSearch(text);
+              void readValueSourcePackagingIdOptions(null);
+            }}
+            hasNextPage={hasNextPage(valueSourcePackagingIdOptions())}
+            onNextPage={() => void readValueSourcePackagingIdOptions(valueSourcePackagingIdOptions().cursor)}
+            readRow={readValueSourcePackagingIdRecord}
+            error={refusalMarks(refusal()?.member ?? null, "value.source_packaging_id") ? (refusal()?.text ?? null) : null}
+          />
         </Show>
         <Show when={!rowsFill(["value", "targetPackagingId"])}>
-          <form.Field name={`value.targetPackagingId`}>
-            {(field) => (
-              <RecordSelect
-                label="target packaging id"
-                options={valueTargetPackagingIdOptions().rows}
-                optionValue={(row) => String(row.id)}
-                optionLabel={(row) => String(row.packagingCode)}
-                value={field().state.value == null ? null : String(field().state.value)}
-                onChange={(value) => field().handleChange(value ?? "")}
-                onRow={(row) => setValueTargetPackagingIdRevision(row?.rowVersion ?? null)}
-                onSearch={(text) => {
-                  setValueTargetPackagingIdSearch(text);
-                  void readValueTargetPackagingIdOptions(null);
-                }}
-                hasNextPage={hasNextPage(valueTargetPackagingIdOptions())}
-                onNextPage={() => void readValueTargetPackagingIdOptions(valueTargetPackagingIdOptions().cursor)}
-                readRow={readValueTargetPackagingIdRecord}
-                error={refusalMarks(refusal()?.member ?? null, "value.target_packaging_id") ? (refusal()?.text ?? null) : null}
-              />
-            )}
-          </form.Field>
+          <RecordSelect
+            label="target packaging id"
+            options={valueTargetPackagingIdOptions().rows}
+            optionValue={(row) => String(row.id)}
+            optionLabel={(row) => String(row.packagingCode)}
+            value={valueTargetPackagingIdValue() == null ? null : String(valueTargetPackagingIdValue())}
+            onChange={(value) => setValueTargetPackagingIdValue(value ?? "")}
+            onRow={(row) => setValueTargetPackagingIdRevision(row?.rowVersion ?? null)}
+            onSearch={(text) => {
+              setValueTargetPackagingIdSearch(text);
+              void readValueTargetPackagingIdOptions(null);
+            }}
+            hasNextPage={hasNextPage(valueTargetPackagingIdOptions())}
+            onNextPage={() => void readValueTargetPackagingIdOptions(valueTargetPackagingIdOptions().cursor)}
+            readRow={readValueTargetPackagingIdRecord}
+            error={refusalMarks(refusal()?.member ?? null, "value.target_packaging_id") ? (refusal()?.text ?? null) : null}
+          />
         </Show>
       </FieldGroup>
       <FormActions>
@@ -744,82 +752,94 @@ export function InventoryMoveForm(props: InventoryMoveFormProps) {
   const [refusal, setRefusal] = createSignal<{ text: string; member: string | null } | null>(null);
   const [done, setDone] = createSignal(false);
 
-  const form = createForm(() => ({
-    defaultValues: { ...props.initial } as Partial<InventoryMoveRequest>,
-    onSubmit: async ({ value }: { value: Partial<InventoryMoveRequest> }) => {
-      setDone(false);
-      if (props.rows !== undefined) {
-        const items: InventoryMoveRequest[] = [];
-        for (const row of props.rows) {
-          const each = mergeMembers(value, row);
-          const checked = MOVE_INPUT.safeParse(each);
-          if (!checked.success) {
-            const issue = checked.error.issues[0];
-            setRefusal({
-              text: issue?.message ?? "A value is not valid.",
-              member: checkedMember(
-                issue?.path as (string | number)[] | undefined,
-                INVENTORY_MOVE_REQUEST_FIELDS,
-              ),
-            });
+  const [valuePackagingIdValue, setValuePackagingIdValue] = createSignal<JsonValue | undefined>(
+    readMember(props.initial, ["value", "packagingId"]) as JsonValue | undefined,
+  );
+  const [valueToLocationIdValue, setValueToLocationIdValue] = createSignal<JsonValue | undefined>(
+    readMember(props.initial, ["value", "toLocationId"]) as JsonValue | undefined,
+  );
+
+  const submit = async () => {
+    setDone(false);
+    let value = { ...props.initial } as Partial<InventoryMoveRequest>;
+    const hold = (path: readonly string[], member: JsonValue | undefined) => {
+      if (member !== undefined) {
+        value = writeMember(value, path, member);
+      }
+    };
+    hold(["value", "packagingId"], valuePackagingIdValue());
+    hold(["value", "toLocationId"], valueToLocationIdValue());
+    if (props.rows !== undefined) {
+      const items: InventoryMoveRequest[] = [];
+      for (const row of props.rows) {
+        const each = mergeMembers(value, row);
+        const checked = MOVE_INPUT.safeParse(each);
+        if (!checked.success) {
+          const issue = checked.error.issues[0];
+          setRefusal({
+            text: issue?.message ?? "A value is not valid.",
+            member: checkedMember(
+              issue?.path as (string | number)[] | undefined,
+              INVENTORY_MOVE_REQUEST_FIELDS,
+            ),
+          });
+          return;
+        }
+        let item = { ...each } as InventoryMoveRequest;
+        item = writeMember(item, ["requestId"], newRequestId());
+        item = writeMember(item, ["value", "idempotencyKey"], newIdempotencyKey());
+        item = writeMember(item, ["value", "occurredAt"], occurredAt());
+        if (readMember(item, ["value", "expectedRowVersion"]) === undefined) {
+          const valuePackagingIdChosen = valuePackagingIdRevision();
+          if (valuePackagingIdChosen === null) {
+            setRefusal({ text: "Choose the record from its list.", member: "value.packaging_id" });
             return;
           }
-          let item = { ...each } as InventoryMoveRequest;
-          item = writeMember(item, ["requestId"], newRequestId());
-          item = writeMember(item, ["value", "idempotencyKey"], newIdempotencyKey());
-          item = writeMember(item, ["value", "occurredAt"], occurredAt());
-          if (readMember(item, ["value", "expectedRowVersion"]) === undefined) {
-            const valuePackagingIdChosen = valuePackagingIdRevision();
-            if (valuePackagingIdChosen === null) {
-              setRefusal({ text: "Choose the record from its list.", member: "value.packaging_id" });
-              return;
-            }
-            item = writeMember(item, ["value", "expectedRowVersion"], valuePackagingIdChosen);
-          }
-          items.push(item);
+          item = writeMember(item, ["value", "expectedRowVersion"], valuePackagingIdChosen);
         }
-        props.onEach?.(
-          await callEach<InventoryMoveResult>(
-            props.transport,
-            { route: INVENTORY_MOVE_ROUTE, request: INVENTORY_MOVE_REQUEST_FIELDS, result: INVENTORY_MOVE_RESULT_FIELDS },
-            items,
-          ),
-        );
-        return;
+        items.push(item);
       }
-      const checked = MOVE_INPUT.safeParse(value);
-      if (!checked.success) {
-        const issue = checked.error.issues[0];
-        setRefusal({
-          text: issue?.message ?? "A value is not valid.",
-          member: checkedMember(
-            issue?.path as (string | number)[] | undefined,
-            INVENTORY_MOVE_REQUEST_FIELDS,
-          ),
-        });
-        return;
-      }
-      let item = { ...value } as InventoryMoveRequest;
-      item = writeMember(item, ["requestId"], newRequestId());
-      item = writeMember(item, ["value", "idempotencyKey"], newIdempotencyKey());
-      item = writeMember(item, ["value", "occurredAt"], occurredAt());
-      const valuePackagingIdChosen = valuePackagingIdRevision();
-      if (valuePackagingIdChosen === null) {
-        setRefusal({ text: "Choose the record from its list.", member: "value.packaging_id" });
-        return;
-      }
-      item = writeMember(item, ["value", "expectedRowVersion"], valuePackagingIdChosen);
-      const outcome = await move(props.transport, [item]);
-      props.onSubmitted?.(outcome);
-      announceOutcome(outcome, InventoryMoveFormLabel);
-      setRefusal(
-        outcome.status === "refused"
-          ? { text: refusalSentence(outcome.code, outcome.text), member: refusedMember(outcome.detail) }
-          : null,
+      props.onEach?.(
+        await callEach<InventoryMoveResult>(
+          props.transport,
+          { route: INVENTORY_MOVE_ROUTE, request: INVENTORY_MOVE_REQUEST_FIELDS, result: INVENTORY_MOVE_RESULT_FIELDS },
+          items,
+        ),
       );
-      setDone(outcome.status === "completed");
-    },
-  }));
+      return;
+    }
+    const checked = MOVE_INPUT.safeParse(value);
+    if (!checked.success) {
+      const issue = checked.error.issues[0];
+      setRefusal({
+        text: issue?.message ?? "A value is not valid.",
+        member: checkedMember(
+          issue?.path as (string | number)[] | undefined,
+          INVENTORY_MOVE_REQUEST_FIELDS,
+        ),
+      });
+      return;
+    }
+    let item = { ...value } as InventoryMoveRequest;
+    item = writeMember(item, ["requestId"], newRequestId());
+    item = writeMember(item, ["value", "idempotencyKey"], newIdempotencyKey());
+    item = writeMember(item, ["value", "occurredAt"], occurredAt());
+    const valuePackagingIdChosen = valuePackagingIdRevision();
+    if (valuePackagingIdChosen === null) {
+      setRefusal({ text: "Choose the record from its list.", member: "value.packaging_id" });
+      return;
+    }
+    item = writeMember(item, ["value", "expectedRowVersion"], valuePackagingIdChosen);
+    const outcome = await move(props.transport, [item]);
+    props.onSubmitted?.(outcome);
+    announceOutcome(outcome, InventoryMoveFormLabel);
+    setRefusal(
+      outcome.status === "refused"
+        ? { text: refusalSentence(outcome.code, outcome.text), member: refusedMember(outcome.detail) }
+        : null,
+    );
+    setDone(outcome.status === "completed");
+  };
   const [valuePackagingIdOptions, setValuePackagingIdOptions] = createSignal<PageState<PackagingQueryRow>>(emptyPage<PackagingQueryRow>());
   const [valuePackagingIdSearch, setValuePackagingIdSearch] = createSignal("");
   const [valuePackagingIdRevision, setValuePackagingIdRevision] = createSignal<PackagingQueryRow["rowVersion"] | null>(null);
@@ -884,7 +904,7 @@ export function InventoryMoveForm(props: InventoryMoveFormProps) {
     <form
       onSubmit={(event) => {
         event.preventDefault();
-        void form.handleSubmit();
+        void submit();
       }}
     >
       <Show when={refusal()?.member === null ? refusal() : undefined}>
@@ -892,49 +912,41 @@ export function InventoryMoveForm(props: InventoryMoveFormProps) {
       </Show>
       <FieldGroup>
         <Show when={!rowsFill(["value", "packagingId"])}>
-          <form.Field name={`value.packagingId`}>
-            {(field) => (
-              <RecordSelect
-                label="packaging id"
-                options={valuePackagingIdOptions().rows}
-                optionValue={(row) => String(row.id)}
-                optionLabel={(row) => String(row.packagingCode)}
-                value={field().state.value == null ? null : String(field().state.value)}
-                onChange={(value) => field().handleChange(value ?? "")}
-                onRow={(row) => setValuePackagingIdRevision(row?.rowVersion ?? null)}
-                onSearch={(text) => {
-                  setValuePackagingIdSearch(text);
-                  void readValuePackagingIdOptions(null);
-                }}
-                hasNextPage={hasNextPage(valuePackagingIdOptions())}
-                onNextPage={() => void readValuePackagingIdOptions(valuePackagingIdOptions().cursor)}
-                readRow={readValuePackagingIdRecord}
-                error={refusalMarks(refusal()?.member ?? null, "value.packaging_id") ? (refusal()?.text ?? null) : null}
-              />
-            )}
-          </form.Field>
+          <RecordSelect
+            label="packaging id"
+            options={valuePackagingIdOptions().rows}
+            optionValue={(row) => String(row.id)}
+            optionLabel={(row) => String(row.packagingCode)}
+            value={valuePackagingIdValue() == null ? null : String(valuePackagingIdValue())}
+            onChange={(value) => setValuePackagingIdValue(value ?? "")}
+            onRow={(row) => setValuePackagingIdRevision(row?.rowVersion ?? null)}
+            onSearch={(text) => {
+              setValuePackagingIdSearch(text);
+              void readValuePackagingIdOptions(null);
+            }}
+            hasNextPage={hasNextPage(valuePackagingIdOptions())}
+            onNextPage={() => void readValuePackagingIdOptions(valuePackagingIdOptions().cursor)}
+            readRow={readValuePackagingIdRecord}
+            error={refusalMarks(refusal()?.member ?? null, "value.packaging_id") ? (refusal()?.text ?? null) : null}
+          />
         </Show>
         <Show when={!rowsFill(["value", "toLocationId"])}>
-          <form.Field name={`value.toLocationId`}>
-            {(field) => (
-              <RecordSelect
-                label="to location id"
-                options={valueToLocationIdOptions().rows}
-                optionValue={(row) => String(row.id)}
-                optionLabel={(row) => String(row.locationCode)}
-                value={field().state.value == null ? null : String(field().state.value)}
-                onChange={(value) => field().handleChange(value ?? "")}
-                onSearch={(text) => {
-                  setValueToLocationIdSearch(text);
-                  void readValueToLocationIdOptions(null);
-                }}
-                hasNextPage={hasNextPage(valueToLocationIdOptions())}
-                onNextPage={() => void readValueToLocationIdOptions(valueToLocationIdOptions().cursor)}
-                readRow={readValueToLocationIdRecord}
-                error={refusalMarks(refusal()?.member ?? null, "value.to_location_id") ? (refusal()?.text ?? null) : null}
-              />
-            )}
-          </form.Field>
+          <RecordSelect
+            label="to location id"
+            options={valueToLocationIdOptions().rows}
+            optionValue={(row) => String(row.id)}
+            optionLabel={(row) => String(row.locationCode)}
+            value={valueToLocationIdValue() == null ? null : String(valueToLocationIdValue())}
+            onChange={(value) => setValueToLocationIdValue(value ?? "")}
+            onSearch={(text) => {
+              setValueToLocationIdSearch(text);
+              void readValueToLocationIdOptions(null);
+            }}
+            hasNextPage={hasNextPage(valueToLocationIdOptions())}
+            onNextPage={() => void readValueToLocationIdOptions(valueToLocationIdOptions().cursor)}
+            readRow={readValueToLocationIdRecord}
+            error={refusalMarks(refusal()?.member ?? null, "value.to_location_id") ? (refusal()?.text ?? null) : null}
+          />
         </Show>
       </FieldGroup>
       <FormActions>
@@ -1000,82 +1012,114 @@ export function InventorySplitForm(props: InventorySplitFormProps) {
   const [refusal, setRefusal] = createSignal<{ text: string; member: string | null } | null>(null);
   const [done, setDone] = createSignal(false);
 
-  const form = createForm(() => ({
-    defaultValues: { ...props.initial } as Partial<InventorySplitRequest>,
-    onSubmit: async ({ value }: { value: Partial<InventorySplitRequest> }) => {
-      setDone(false);
-      if (props.rows !== undefined) {
-        const items: InventorySplitRequest[] = [];
-        for (const row of props.rows) {
-          const each = mergeMembers(value, row);
-          const checked = SPLIT_INPUT.safeParse(each);
-          if (!checked.success) {
-            const issue = checked.error.issues[0];
-            setRefusal({
-              text: issue?.message ?? "A value is not valid.",
-              member: checkedMember(
-                issue?.path as (string | number)[] | undefined,
-                INVENTORY_SPLIT_REQUEST_FIELDS,
-              ),
-            });
+  const [valueNewPackagingCodeValue, setValueNewPackagingCodeValue] = createSignal<JsonValue | undefined>(
+    readMember(props.initial, ["value", "newPackagingCode"]) as JsonValue | undefined,
+  );
+  const [valueNewPackagingTypeValue, setValueNewPackagingTypeValue] = createSignal<JsonValue | undefined>(
+    readMember(props.initial, ["value", "newPackagingType"]) as JsonValue | undefined,
+  );
+  const [valueProductIdValue, setValueProductIdValue] = createSignal<JsonValue | undefined>(
+    readMember(props.initial, ["value", "productId"]) as JsonValue | undefined,
+  );
+  const [valueQuantityValue, setValueQuantityValue] = createSignal<JsonValue | undefined>(
+    readMember(props.initial, ["value", "quantity"]) as JsonValue | undefined,
+  );
+  const [valueSourcePackagingIdValue, setValueSourcePackagingIdValue] = createSignal<JsonValue | undefined>(
+    readMember(props.initial, ["value", "sourcePackagingId"]) as JsonValue | undefined,
+  );
+  const [valueStatusValue, setValueStatusValue] = createSignal<JsonValue | undefined>(
+    readMember(props.initial, ["value", "status"]) as JsonValue | undefined,
+  );
+  const [valueToLocationIdValue, setValueToLocationIdValue] = createSignal<JsonValue | undefined>(
+    readMember(props.initial, ["value", "toLocationId"]) as JsonValue | undefined,
+  );
+
+  const submit = async () => {
+    setDone(false);
+    let value = { ...props.initial } as Partial<InventorySplitRequest>;
+    const hold = (path: readonly string[], member: JsonValue | undefined) => {
+      if (member !== undefined) {
+        value = writeMember(value, path, member);
+      }
+    };
+    hold(["value", "newPackagingCode"], valueNewPackagingCodeValue());
+    hold(["value", "newPackagingType"], valueNewPackagingTypeValue());
+    hold(["value", "productId"], valueProductIdValue());
+    hold(["value", "quantity"], valueQuantityValue());
+    hold(["value", "sourcePackagingId"], valueSourcePackagingIdValue());
+    hold(["value", "status"], valueStatusValue());
+    hold(["value", "toLocationId"], valueToLocationIdValue());
+    if (props.rows !== undefined) {
+      const items: InventorySplitRequest[] = [];
+      for (const row of props.rows) {
+        const each = mergeMembers(value, row);
+        const checked = SPLIT_INPUT.safeParse(each);
+        if (!checked.success) {
+          const issue = checked.error.issues[0];
+          setRefusal({
+            text: issue?.message ?? "A value is not valid.",
+            member: checkedMember(
+              issue?.path as (string | number)[] | undefined,
+              INVENTORY_SPLIT_REQUEST_FIELDS,
+            ),
+          });
+          return;
+        }
+        let item = { ...each } as InventorySplitRequest;
+        item = writeMember(item, ["requestId"], newRequestId());
+        item = writeMember(item, ["value", "idempotencyKey"], newIdempotencyKey());
+        item = writeMember(item, ["value", "occurredAt"], occurredAt());
+        if (readMember(item, ["value", "expectedRowVersion"]) === undefined) {
+          const valueSourcePackagingIdChosen = valueSourcePackagingIdRevision();
+          if (valueSourcePackagingIdChosen === null) {
+            setRefusal({ text: "Choose the record from its list.", member: "value.source_packaging_id" });
             return;
           }
-          let item = { ...each } as InventorySplitRequest;
-          item = writeMember(item, ["requestId"], newRequestId());
-          item = writeMember(item, ["value", "idempotencyKey"], newIdempotencyKey());
-          item = writeMember(item, ["value", "occurredAt"], occurredAt());
-          if (readMember(item, ["value", "expectedRowVersion"]) === undefined) {
-            const valueSourcePackagingIdChosen = valueSourcePackagingIdRevision();
-            if (valueSourcePackagingIdChosen === null) {
-              setRefusal({ text: "Choose the record from its list.", member: "value.source_packaging_id" });
-              return;
-            }
-            item = writeMember(item, ["value", "expectedRowVersion"], valueSourcePackagingIdChosen);
-          }
-          items.push(item);
+          item = writeMember(item, ["value", "expectedRowVersion"], valueSourcePackagingIdChosen);
         }
-        props.onEach?.(
-          await callEach<InventorySplitResult>(
-            props.transport,
-            { route: INVENTORY_SPLIT_ROUTE, request: INVENTORY_SPLIT_REQUEST_FIELDS, result: INVENTORY_SPLIT_RESULT_FIELDS },
-            items,
-          ),
-        );
-        return;
+        items.push(item);
       }
-      const checked = SPLIT_INPUT.safeParse(value);
-      if (!checked.success) {
-        const issue = checked.error.issues[0];
-        setRefusal({
-          text: issue?.message ?? "A value is not valid.",
-          member: checkedMember(
-            issue?.path as (string | number)[] | undefined,
-            INVENTORY_SPLIT_REQUEST_FIELDS,
-          ),
-        });
-        return;
-      }
-      let item = { ...value } as InventorySplitRequest;
-      item = writeMember(item, ["requestId"], newRequestId());
-      item = writeMember(item, ["value", "idempotencyKey"], newIdempotencyKey());
-      item = writeMember(item, ["value", "occurredAt"], occurredAt());
-      const valueSourcePackagingIdChosen = valueSourcePackagingIdRevision();
-      if (valueSourcePackagingIdChosen === null) {
-        setRefusal({ text: "Choose the record from its list.", member: "value.source_packaging_id" });
-        return;
-      }
-      item = writeMember(item, ["value", "expectedRowVersion"], valueSourcePackagingIdChosen);
-      const outcome = await split(props.transport, [item]);
-      props.onSubmitted?.(outcome);
-      announceOutcome(outcome, InventorySplitFormLabel);
-      setRefusal(
-        outcome.status === "refused"
-          ? { text: refusalSentence(outcome.code, outcome.text), member: refusedMember(outcome.detail) }
-          : null,
+      props.onEach?.(
+        await callEach<InventorySplitResult>(
+          props.transport,
+          { route: INVENTORY_SPLIT_ROUTE, request: INVENTORY_SPLIT_REQUEST_FIELDS, result: INVENTORY_SPLIT_RESULT_FIELDS },
+          items,
+        ),
       );
-      setDone(outcome.status === "completed");
-    },
-  }));
+      return;
+    }
+    const checked = SPLIT_INPUT.safeParse(value);
+    if (!checked.success) {
+      const issue = checked.error.issues[0];
+      setRefusal({
+        text: issue?.message ?? "A value is not valid.",
+        member: checkedMember(
+          issue?.path as (string | number)[] | undefined,
+          INVENTORY_SPLIT_REQUEST_FIELDS,
+        ),
+      });
+      return;
+    }
+    let item = { ...value } as InventorySplitRequest;
+    item = writeMember(item, ["requestId"], newRequestId());
+    item = writeMember(item, ["value", "idempotencyKey"], newIdempotencyKey());
+    item = writeMember(item, ["value", "occurredAt"], occurredAt());
+    const valueSourcePackagingIdChosen = valueSourcePackagingIdRevision();
+    if (valueSourcePackagingIdChosen === null) {
+      setRefusal({ text: "Choose the record from its list.", member: "value.source_packaging_id" });
+      return;
+    }
+    item = writeMember(item, ["value", "expectedRowVersion"], valueSourcePackagingIdChosen);
+    const outcome = await split(props.transport, [item]);
+    props.onSubmitted?.(outcome);
+    announceOutcome(outcome, InventorySplitFormLabel);
+    setRefusal(
+      outcome.status === "refused"
+        ? { text: refusalSentence(outcome.code, outcome.text), member: refusedMember(outcome.detail) }
+        : null,
+    );
+    setDone(outcome.status === "completed");
+  };
   const [valueProductIdOptions, setValueProductIdOptions] = createSignal<PageState<ProductQueryRow>>(emptyPage<ProductQueryRow>());
   const [valueProductIdSearch, setValueProductIdSearch] = createSignal("");
   const readValueProductIdOptions = async (cursor: string | null) => {
@@ -1168,7 +1212,7 @@ export function InventorySplitForm(props: InventorySplitFormProps) {
     <form
       onSubmit={(event) => {
         event.preventDefault();
-        void form.handleSubmit();
+        void submit();
       }}
     >
       <Show when={refusal()?.member === null ? refusal() : undefined}>
@@ -1176,134 +1220,106 @@ export function InventorySplitForm(props: InventorySplitFormProps) {
       </Show>
       <FieldGroup>
         <Show when={!rowsFill(["value", "newPackagingCode"])}>
-          <form.Field name={`value.newPackagingCode`}>
-            {(field) => (
-              <TextField
-                label="new packaging code"
-                type="text"
-                value={String(field().state.value ?? "")}
-                onInput={(value) => field().handleChange(value)}
-                error={refusalMarks(refusal()?.member ?? null, "value.new_packaging_code") ? (refusal()?.text ?? null) : null}
-              />
-            )}
-          </form.Field>
+          <TextField
+            label="new packaging code"
+            type="text"
+            value={String(valueNewPackagingCodeValue() ?? "")}
+            onInput={(value) => setValueNewPackagingCodeValue(value)}
+            error={refusalMarks(refusal()?.member ?? null, "value.new_packaging_code") ? (refusal()?.text ?? null) : null}
+          />
         </Show>
         <Show when={!rowsFill(["value", "newPackagingType"])}>
-          <form.Field name={`value.newPackagingType`}>
-            {(field) => (
-              <ChoiceField
-                label="new packaging type"
-                allowEmpty={false}
-                choices={[
-                  { value: "bin", text: "bin" },
-                  { value: "case", text: "case" },
-                  { value: "loose", text: "loose" },
-                  { value: "pallet", text: "pallet" },
-                  { value: "tote", text: "tote" },
-                ]}
-                value={String(field().state.value ?? "")}
-                onChange={(value) => field().handleChange(value as "bin" | "case" | "loose" | "pallet" | "tote")}
-                error={refusalMarks(refusal()?.member ?? null, "value.new_packaging_type") ? (refusal()?.text ?? null) : null}
-              />
-            )}
-          </form.Field>
+          <ChoiceField
+            label="new packaging type"
+            allowEmpty={false}
+            choices={[
+              { value: "bin", text: "bin" },
+              { value: "case", text: "case" },
+              { value: "loose", text: "loose" },
+              { value: "pallet", text: "pallet" },
+              { value: "tote", text: "tote" },
+            ]}
+            value={String(valueNewPackagingTypeValue() ?? "")}
+            onChange={(value) => setValueNewPackagingTypeValue(value as "bin" | "case" | "loose" | "pallet" | "tote")}
+            error={refusalMarks(refusal()?.member ?? null, "value.new_packaging_type") ? (refusal()?.text ?? null) : null}
+          />
         </Show>
         <Show when={!rowsFill(["value", "productId"])}>
-          <form.Field name={`value.productId`}>
-            {(field) => (
-              <RecordSelect
-                label="product id"
-                options={valueProductIdOptions().rows}
-                optionValue={(row) => String(row.id)}
-                optionLabel={(row) => String(row.productCode)}
-                value={field().state.value == null ? null : String(field().state.value)}
-                onChange={(value) => field().handleChange(value ?? "")}
-                onSearch={(text) => {
-                  setValueProductIdSearch(text);
-                  void readValueProductIdOptions(null);
-                }}
-                hasNextPage={hasNextPage(valueProductIdOptions())}
-                onNextPage={() => void readValueProductIdOptions(valueProductIdOptions().cursor)}
-                readRow={readValueProductIdRecord}
-                error={refusalMarks(refusal()?.member ?? null, "value.product_id") ? (refusal()?.text ?? null) : null}
-              />
-            )}
-          </form.Field>
+          <RecordSelect
+            label="product id"
+            options={valueProductIdOptions().rows}
+            optionValue={(row) => String(row.id)}
+            optionLabel={(row) => String(row.productCode)}
+            value={valueProductIdValue() == null ? null : String(valueProductIdValue())}
+            onChange={(value) => setValueProductIdValue(value ?? "")}
+            onSearch={(text) => {
+              setValueProductIdSearch(text);
+              void readValueProductIdOptions(null);
+            }}
+            hasNextPage={hasNextPage(valueProductIdOptions())}
+            onNextPage={() => void readValueProductIdOptions(valueProductIdOptions().cursor)}
+            readRow={readValueProductIdRecord}
+            error={refusalMarks(refusal()?.member ?? null, "value.product_id") ? (refusal()?.text ?? null) : null}
+          />
         </Show>
         <Show when={!rowsFill(["value", "quantity"])}>
-          <form.Field name={`value.quantity`}>
-            {(field) => (
-              <TextField
-                label="quantity"
-                type="text"
-                value={String(field().state.value ?? "")}
-                onInput={(value) => field().handleChange(value)}
-                error={refusalMarks(refusal()?.member ?? null, "value.quantity") ? (refusal()?.text ?? null) : null}
-              />
-            )}
-          </form.Field>
+          <TextField
+            label="quantity"
+            type="text"
+            value={String(valueQuantityValue() ?? "")}
+            onInput={(value) => setValueQuantityValue(value)}
+            error={refusalMarks(refusal()?.member ?? null, "value.quantity") ? (refusal()?.text ?? null) : null}
+          />
         </Show>
         <Show when={!rowsFill(["value", "sourcePackagingId"])}>
-          <form.Field name={`value.sourcePackagingId`}>
-            {(field) => (
-              <RecordSelect
-                label="source packaging id"
-                options={valueSourcePackagingIdOptions().rows}
-                optionValue={(row) => String(row.id)}
-                optionLabel={(row) => String(row.packagingCode)}
-                value={field().state.value == null ? null : String(field().state.value)}
-                onChange={(value) => field().handleChange(value ?? "")}
-                onRow={(row) => setValueSourcePackagingIdRevision(row?.rowVersion ?? null)}
-                onSearch={(text) => {
-                  setValueSourcePackagingIdSearch(text);
-                  void readValueSourcePackagingIdOptions(null);
-                }}
-                hasNextPage={hasNextPage(valueSourcePackagingIdOptions())}
-                onNextPage={() => void readValueSourcePackagingIdOptions(valueSourcePackagingIdOptions().cursor)}
-                readRow={readValueSourcePackagingIdRecord}
-                error={refusalMarks(refusal()?.member ?? null, "value.source_packaging_id") ? (refusal()?.text ?? null) : null}
-              />
-            )}
-          </form.Field>
+          <RecordSelect
+            label="source packaging id"
+            options={valueSourcePackagingIdOptions().rows}
+            optionValue={(row) => String(row.id)}
+            optionLabel={(row) => String(row.packagingCode)}
+            value={valueSourcePackagingIdValue() == null ? null : String(valueSourcePackagingIdValue())}
+            onChange={(value) => setValueSourcePackagingIdValue(value ?? "")}
+            onRow={(row) => setValueSourcePackagingIdRevision(row?.rowVersion ?? null)}
+            onSearch={(text) => {
+              setValueSourcePackagingIdSearch(text);
+              void readValueSourcePackagingIdOptions(null);
+            }}
+            hasNextPage={hasNextPage(valueSourcePackagingIdOptions())}
+            onNextPage={() => void readValueSourcePackagingIdOptions(valueSourcePackagingIdOptions().cursor)}
+            readRow={readValueSourcePackagingIdRecord}
+            error={refusalMarks(refusal()?.member ?? null, "value.source_packaging_id") ? (refusal()?.text ?? null) : null}
+          />
         </Show>
         <Show when={!rowsFill(["value", "status"])}>
-          <form.Field name={`value.status`}>
-            {(field) => (
-              <ChoiceField
-                label="status"
-                allowEmpty={false}
-                choices={[
-                  { value: "available", text: "available" },
-                  { value: "held", text: "held" },
-                ]}
-                value={String(field().state.value ?? "")}
-                onChange={(value) => field().handleChange(value as "available" | "held")}
-                error={refusalMarks(refusal()?.member ?? null, "value.status") ? (refusal()?.text ?? null) : null}
-              />
-            )}
-          </form.Field>
+          <ChoiceField
+            label="status"
+            allowEmpty={false}
+            choices={[
+              { value: "available", text: "available" },
+              { value: "held", text: "held" },
+            ]}
+            value={String(valueStatusValue() ?? "")}
+            onChange={(value) => setValueStatusValue(value as "available" | "held")}
+            error={refusalMarks(refusal()?.member ?? null, "value.status") ? (refusal()?.text ?? null) : null}
+          />
         </Show>
         <Show when={!rowsFill(["value", "toLocationId"])}>
-          <form.Field name={`value.toLocationId`}>
-            {(field) => (
-              <RecordSelect
-                label="to location id"
-                options={valueToLocationIdOptions().rows}
-                optionValue={(row) => String(row.id)}
-                optionLabel={(row) => String(row.locationCode)}
-                value={field().state.value == null ? null : String(field().state.value)}
-                onChange={(value) => field().handleChange(value ?? "")}
-                onSearch={(text) => {
-                  setValueToLocationIdSearch(text);
-                  void readValueToLocationIdOptions(null);
-                }}
-                hasNextPage={hasNextPage(valueToLocationIdOptions())}
-                onNextPage={() => void readValueToLocationIdOptions(valueToLocationIdOptions().cursor)}
-                readRow={readValueToLocationIdRecord}
-                error={refusalMarks(refusal()?.member ?? null, "value.to_location_id") ? (refusal()?.text ?? null) : null}
-              />
-            )}
-          </form.Field>
+          <RecordSelect
+            label="to location id"
+            options={valueToLocationIdOptions().rows}
+            optionValue={(row) => String(row.id)}
+            optionLabel={(row) => String(row.locationCode)}
+            value={valueToLocationIdValue() == null ? null : String(valueToLocationIdValue())}
+            onChange={(value) => setValueToLocationIdValue(value ?? "")}
+            onSearch={(text) => {
+              setValueToLocationIdSearch(text);
+              void readValueToLocationIdOptions(null);
+            }}
+            hasNextPage={hasNextPage(valueToLocationIdOptions())}
+            onNextPage={() => void readValueToLocationIdOptions(valueToLocationIdOptions().cursor)}
+            readRow={readValueToLocationIdRecord}
+            error={refusalMarks(refusal()?.member ?? null, "value.to_location_id") ? (refusal()?.text ?? null) : null}
+          />
         </Show>
       </FieldGroup>
       <FormActions>
