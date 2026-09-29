@@ -36,8 +36,6 @@ pub const WAL_BUCKET: &str = "wamn-backups";
 pub const OBJECT_STORE_SECRET: &str = "wamn-object-store";
 /// The in-cluster MinIO S3 endpoint (the deploy/infra/minio.yaml `Service`).
 pub const MINIO_ENDPOINT: &str = "http://minio.wamn-system.svc:9000";
-/// The namespace backup CRs live in (alongside the clusters + object store).
-const NAMESPACE: &str = "wamn-system";
 
 /// The `ObjectStore` CR name for a cluster: `<cluster>-store`.
 pub fn object_store_name(cluster: &str) -> String {
@@ -66,13 +64,13 @@ fn backup_labels(cluster: &str) -> Value {
 /// → the shared object-store [`Secret`](OBJECT_STORE_SECRET); `spec.retentionPolicy`
 /// = the env policy's `wal_retention` (the PITR-SLA knob, D18 — sized by the
 /// owner env's policy, not a closed tier). WAL is gzip-compressed.
-pub fn render_object_store(cluster: &str, policy: &EnvPolicy) -> Value {
+pub fn render_object_store(cluster: &str, namespace: &str, policy: &EnvPolicy) -> Value {
     json!({
         "apiVersion": "barmancloud.cnpg.io/v1",
         "kind": "ObjectStore",
         "metadata": {
             "name": object_store_name(cluster),
-            "namespace": NAMESPACE,
+            "namespace": namespace,
             "labels": backup_labels(cluster),
         },
         "spec": {
@@ -111,13 +109,13 @@ pub fn cluster_backup_plugin(object_store: &str) -> Value {
 /// `backup_cadence` (a 6-field CNPG cron; D18 — sized by the owner env's policy).
 /// `immediate: true` takes one at creation so the window opens without waiting for
 /// the first scheduled tick.
-pub fn render_scheduled_backup(cluster: &str, policy: &EnvPolicy) -> Value {
+pub fn render_scheduled_backup(cluster: &str, namespace: &str, policy: &EnvPolicy) -> Value {
     json!({
         "apiVersion": "postgresql.cnpg.io/v1",
         "kind": "ScheduledBackup",
         "metadata": {
             "name": scheduled_backup_name(cluster),
-            "namespace": NAMESPACE,
+            "namespace": namespace,
             "labels": backup_labels(cluster),
         },
         "spec": {
@@ -147,7 +145,7 @@ mod tests {
 
     #[test]
     fn object_store_targets_minio_with_a_per_cluster_prefix_and_policy_retention() {
-        let os = render_object_store("acme-prod", &EnvPolicy::prod());
+        let os = render_object_store("acme-prod", "wamn-system", &EnvPolicy::prod());
         assert_eq!(os["apiVersion"], "barmancloud.cnpg.io/v1");
         assert_eq!(os["kind"], "ObjectStore");
         assert_eq!(os["metadata"]["name"], "acme-prod-store");
@@ -161,7 +159,8 @@ mod tests {
             "s3://wamn-backups/wal/acme-prod"
         );
         assert_ne!(
-            render_object_store("acme-canary", &EnvPolicy::prod())["spec"]["configuration"]["destinationPath"],
+            render_object_store("acme-canary", "wamn-system", &EnvPolicy::prod())["spec"]["configuration"]
+                ["destinationPath"],
             os["spec"]["configuration"]["destinationPath"]
         );
         // Points at the in-cluster MinIO with the shared object-store credentials.
@@ -189,7 +188,7 @@ mod tests {
 
     #[test]
     fn scheduled_backup_uses_the_plugin_method_at_the_policy_cadence() {
-        let sb = render_scheduled_backup("acme-prod", &EnvPolicy::prod());
+        let sb = render_scheduled_backup("acme-prod", "wamn-system", &EnvPolicy::prod());
         assert_eq!(sb["apiVersion"], "postgresql.cnpg.io/v1");
         assert_eq!(sb["kind"], "ScheduledBackup");
         assert_eq!(sb["metadata"]["name"], "acme-prod-backup");

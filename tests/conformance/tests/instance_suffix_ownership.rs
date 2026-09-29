@@ -30,7 +30,7 @@ fn stored_instance_suffix_owns_every_cluster_global_project_env_name() {
         .find("let instance = record_project_env(")
         .expect("ordinary provisioning reads or mints the stored suffix");
     let render = provision
-        .find("let db_cr = render_project_env_database(&triple, &instance,")
+        .find("let db_cr = render_project_env_database( &triple, &instance,")
         .expect("ordinary provisioning renders with the stored suffix");
     assert!(
         record < render,
@@ -41,7 +41,7 @@ fn stored_instance_suffix_owns_every_cluster_global_project_env_name() {
             .contains("let db_name = project_env_database_name(org, project, env, &instance);")
     );
     assert!(provision.contains(
-        "render_project_env_database(&triple, &instance, &cluster, args.connection_limit)"
+        "render_project_env_database( &triple, &instance, &cluster, &args.cluster_namespace, args.connection_limit, )"
     ));
     let workload = compact(&source(
         "crates/control/lib/src/provision_project_env/workload.rs",

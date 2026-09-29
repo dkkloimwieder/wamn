@@ -22,8 +22,6 @@ use crate::name::{DB_OWNER_ROLE, project_env_database_name};
 
 /// The CNPG API group/version the `Database` CRD lives under.
 const API_VERSION: &str = "postgresql.cnpg.io/v1";
-/// The namespace project-env `Database` resources live in (alongside the clusters).
-const NAMESPACE: &str = "wamn-system";
 
 /// Render the CNPG `Database` CR for a project-env database.
 ///
@@ -35,6 +33,8 @@ const NAMESPACE: &str = "wamn-system";
 /// * `cluster` — the target CNPG `Cluster` name, chosen by the caller from the
 ///   org's placement via [`cluster_of`](wamn_control_registry::cluster_of) (D18): a
 ///   dedicated org's `<org>-<owner(env)>`, or the shared pool for a pooled org.
+/// * `namespace` — the namespace of the CNPG `Cluster`, which the `Database`
+///   must share (`--cluster-namespace`).
 /// * `connection_limit` — the per-project-env `CONNECTION LIMIT`
 ///   (noisy-neighbour governance *within* a cluster); `None` ⇒ no limit (`-1`).
 ///
@@ -67,6 +67,7 @@ pub fn render_project_env_database(
     triple: &Triple,
     instance: &str,
     cluster: &str,
+    namespace: &str,
     connection_limit: Option<i64>,
 ) -> Value {
     let name =
@@ -86,7 +87,7 @@ pub fn render_project_env_database(
         "kind": "Database",
         "metadata": {
             "name": name,
-            "namespace": NAMESPACE,
+            "namespace": namespace,
             "labels": {
                 "app.kubernetes.io/managed-by": "wamn",
                 "app.kubernetes.io/component": "project-env-database",
@@ -106,7 +107,7 @@ mod tests {
     #[test]
     fn database_cr_names_the_db_owner_and_target_cluster() {
         let t = Triple::new("acme", "billing", "dev");
-        let cr = render_project_env_database(&t, "k3m9x2p7", "acme-dev", None);
+        let cr = render_project_env_database(&t, "k3m9x2p7", "acme-dev", "platform", None);
         assert_eq!(cr["apiVersion"], "postgresql.cnpg.io/v1");
         assert_eq!(cr["kind"], "Database");
         assert_eq!(
@@ -114,7 +115,8 @@ mod tests {
             "wamn-db-acme--billing--dev--k3m9x2p7"
         );
         assert_eq!(cr["spec"]["name"], "wamn-db-acme--billing--dev--k3m9x2p7");
-        assert_eq!(cr["metadata"]["namespace"], "wamn-system");
+        // The Database shares the namespace of its Cluster, the caller's value.
+        assert_eq!(cr["metadata"]["namespace"], "platform");
         // Owned by the NOLOGIN title role — never by the role guest-authored SQL
         // executes as, and never by a superuser (R9).
         assert_eq!(cr["spec"]["owner"], "wamn_db_owner");
@@ -137,7 +139,7 @@ mod tests {
         // Deleting the CR must NOT drop the tenant database (shared-cluster
         // guardrail): the reclaim policy is `retain`, never `delete`.
         let t = Triple::new("acme", "billing", "prod");
-        let cr = render_project_env_database(&t, "k3m9x2p7", "acme-prod", None);
+        let cr = render_project_env_database(&t, "k3m9x2p7", "acme-prod", "wamn-system", None);
         assert_eq!(cr["spec"]["databaseReclaimPolicy"], "retain");
     }
 
@@ -145,10 +147,10 @@ mod tests {
     fn connection_limit_is_omitted_by_default_and_set_when_given() {
         let t = Triple::new("acme", "billing", "prod");
         // Default: no CONNECTION LIMIT (the field is absent → operator uses -1).
-        let cr = render_project_env_database(&t, "k3m9x2p7", "acme-prod", None);
+        let cr = render_project_env_database(&t, "k3m9x2p7", "acme-prod", "wamn-system", None);
         assert!(cr["spec"]["connectionLimit"].is_null());
         // Set: per-project-env noisy-neighbour cap.
-        let cr = render_project_env_database(&t, "k3m9x2p7", "acme-prod", Some(20));
+        let cr = render_project_env_database(&t, "k3m9x2p7", "acme-prod", "wamn-system", Some(20));
         assert_eq!(cr["spec"]["connectionLimit"], 20);
     }
 
@@ -161,18 +163,21 @@ mod tests {
             &Triple::new("acme", "billing", "prod"),
             "k3m9x2p7",
             "acme-prod",
+            "wamn-system",
             None,
         );
         let cr_canary = render_project_env_database(
             &Triple::new("acme", "billing", "canary"),
             "k3m9x2p7",
             "acme-prod",
+            "wamn-system",
             None,
         );
         let cr_dev = render_project_env_database(
             &Triple::new("acme", "billing", "dev"),
             "k3m9x2p7",
             "acme-dev",
+            "wamn-system",
             None,
         );
         assert_eq!(cr_prod["spec"]["cluster"]["name"], "acme-prod");

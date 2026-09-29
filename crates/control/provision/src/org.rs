@@ -26,9 +26,6 @@ use wamn_control_registry::{Env, EnvPolicy, Org, Placement};
 
 use crate::error::ProvisionError;
 
-/// The namespace org clusters live in (alongside the guardrailed clusters).
-const NAMESPACE: &str = "wamn-system";
-
 /// The `max_slot_wal_keep_size` WAL-retention bound every rendered cluster carries.
 ///
 /// The §11 sharp edge (docs/archive/events/event-plane-jetstream.md): a forgotten CDC logical
@@ -85,6 +82,7 @@ pub struct OrgClusters {
 pub fn render_org_cluster_set(
     org: &Org,
     policies: &[EnvPolicy],
+    namespace: &str,
 ) -> Result<OrgClusters, ProvisionError> {
     if let Placement::Pooled { pool } = &org.placement {
         return Err(ProvisionError::OrgIsPooled { pool: pool.clone() });
@@ -116,8 +114,10 @@ pub fn render_org_cluster_set(
         let name = format!("{}-{}", org.id, owner);
         #[cfg(feature = "ops")]
         let backup_object_store = if policy.has_scheduled_backup() {
-            object_stores.push(crate::backup::render_object_store(&name, policy));
-            scheduled_backups.push(crate::backup::render_scheduled_backup(&name, policy));
+            object_stores.push(crate::backup::render_object_store(&name, namespace, policy));
+            scheduled_backups.push(crate::backup::render_scheduled_backup(
+                &name, namespace, policy,
+            ));
             Some(crate::backup::object_store_name(&name))
         } else {
             None
@@ -128,6 +128,7 @@ pub fn render_org_cluster_set(
             &org.id,
             owner,
             &name,
+            namespace,
             policy,
             backup_object_store.as_deref(),
         ));
@@ -182,12 +183,13 @@ pub(crate) fn render_cluster(
     org: &str,
     owner: &Env,
     name: &str,
+    namespace: &str,
     policy: &EnvPolicy,
     backup_object_store: Option<&str>,
 ) -> Value {
     let mut metadata = json!({
         "name": name,
-        "namespace": NAMESPACE,
+        "namespace": namespace,
         "labels": cluster_labels(org, owner),
     });
     let mut spec = json!({
@@ -276,7 +278,12 @@ mod tests {
 
     #[test]
     fn dedicated_org_renders_a_cluster_per_recovery_domain_sized_by_policy() {
-        let set = render_org_cluster_set(&Org::dedicated("acme"), &EnvPolicy::defaults()).unwrap();
+        let set = render_org_cluster_set(
+            &Org::dedicated("acme"),
+            &EnvPolicy::defaults(),
+            "wamn-system",
+        )
+        .unwrap();
         // Two owners for the default set: dev + prod.
         assert_eq!(set.clusters.len(), 2);
         let dev = cluster_named(&set, "acme-dev");
@@ -294,8 +301,12 @@ mod tests {
     #[test]
     fn canary_sharing_prod_collapses_onto_the_prod_cluster() {
         // canary shared-with prod → still two clusters (no <org>-canary).
-        let set = render_org_cluster_set(&Org::dedicated("acme"), &policies_with_shared_canary())
-            .unwrap();
+        let set = render_org_cluster_set(
+            &Org::dedicated("acme"),
+            &policies_with_shared_canary(),
+            "wamn-system",
+        )
+        .unwrap();
         let names: Vec<_> = set
             .clusters
             .iter()
@@ -316,7 +327,7 @@ mod tests {
             promotion_rank: 20,
             ..EnvPolicy::prod()
         });
-        let set = render_org_cluster_set(&Org::dedicated("acme"), &ps).unwrap();
+        let set = render_org_cluster_set(&Org::dedicated("acme"), &ps, "wamn-system").unwrap();
         let names: Vec<_> = set
             .clusters
             .iter()
@@ -333,7 +344,12 @@ mod tests {
 
     #[test]
     fn ha_and_hibernation_are_policy_driven() {
-        let set = render_org_cluster_set(&Org::dedicated("acme"), &EnvPolicy::defaults()).unwrap();
+        let set = render_org_cluster_set(
+            &Org::dedicated("acme"),
+            &EnvPolicy::defaults(),
+            "wamn-system",
+        )
+        .unwrap();
         let dev = cluster_named(&set, "acme-dev");
         let prod = cluster_named(&set, "acme-prod");
         // prod (instances 3): HA anti-affinity, NOT hibernated.
@@ -349,7 +365,12 @@ mod tests {
         // §11 sharp edge: `max_slot_wal_keep_size` is ALWAYS-ON — a forgotten CDC
         // slot must never be able to pin WAL unbounded, on single- OR
         // multi-instance clusters.
-        let set = render_org_cluster_set(&Org::dedicated("acme"), &EnvPolicy::defaults()).unwrap();
+        let set = render_org_cluster_set(
+            &Org::dedicated("acme"),
+            &EnvPolicy::defaults(),
+            "wamn-system",
+        )
+        .unwrap();
         assert!(!set.clusters.is_empty());
         for c in &set.clusters {
             assert_eq!(
@@ -364,7 +385,12 @@ mod tests {
         // dev (instances 1): the WAL bound, but NO failover-slot-sync config —
         // there is no standby to sync a slot to (the "single-instance pools need
         // only the WAL bound" decision).
-        let set = render_org_cluster_set(&Org::dedicated("acme"), &EnvPolicy::defaults()).unwrap();
+        let set = render_org_cluster_set(
+            &Org::dedicated("acme"),
+            &EnvPolicy::defaults(),
+            "wamn-system",
+        )
+        .unwrap();
         let dev = cluster_named(&set, "acme-dev");
         let params = &dev["spec"]["postgresql"]["parameters"];
         assert_eq!(params["max_slot_wal_keep_size"], "1GB");
@@ -378,7 +404,12 @@ mod tests {
     fn multi_instance_cluster_gets_the_failover_slot_sync_config() {
         // prod (instances 3): failover-slot continuity — HA slot sync + the GUCs
         // that keep a synced logical slot alive across switchover (D19 v3 §4).
-        let set = render_org_cluster_set(&Org::dedicated("acme"), &EnvPolicy::defaults()).unwrap();
+        let set = render_org_cluster_set(
+            &Org::dedicated("acme"),
+            &EnvPolicy::defaults(),
+            "wamn-system",
+        )
+        .unwrap();
         let prod = cluster_named(&set, "acme-prod");
         let ha = &prod["spec"]["replicationSlots"]["highAvailability"];
         assert_eq!(ha["enabled"], true);
@@ -392,7 +423,12 @@ mod tests {
 
     #[test]
     fn all_clusters_have_no_cpu_limit_and_superuser_access() {
-        let set = render_org_cluster_set(&Org::dedicated("acme"), &EnvPolicy::defaults()).unwrap();
+        let set = render_org_cluster_set(
+            &Org::dedicated("acme"),
+            &EnvPolicy::defaults(),
+            "wamn-system",
+        )
+        .unwrap();
         for c in &set.clusters {
             // Requests only — NO limits (the S2 CFS lesson).
             assert_eq!(c["spec"]["resources"]["requests"]["cpu"], "200m");
@@ -414,7 +450,12 @@ mod tests {
     #[test]
     fn backup_enabled_clusters_carry_the_plugin_and_get_backup_crs() {
         // Default set: prod is backed (has a cadence), dev is not.
-        let set = render_org_cluster_set(&Org::dedicated("acme"), &EnvPolicy::defaults()).unwrap();
+        let set = render_org_cluster_set(
+            &Org::dedicated("acme"),
+            &EnvPolicy::defaults(),
+            "wamn-system",
+        )
+        .unwrap();
         let prod = cluster_named(&set, "acme-prod");
         assert_eq!(
             prod["spec"]["plugins"][0]["name"],
@@ -438,8 +479,12 @@ mod tests {
 
     #[test]
     fn a_pooled_org_renders_no_clusters() {
-        let err = render_org_cluster_set(&Org::pooled("try", "wamn-pg"), &EnvPolicy::defaults())
-            .unwrap_err();
+        let err = render_org_cluster_set(
+            &Org::pooled("try", "wamn-pg"),
+            &EnvPolicy::defaults(),
+            "wamn-system",
+        )
+        .unwrap_err();
         assert!(matches!(
             err,
             ProvisionError::OrgIsPooled { pool } if pool == "wamn-pg"

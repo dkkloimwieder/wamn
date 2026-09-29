@@ -99,6 +99,7 @@ pub fn render_recovery_cluster(
     owner: &Env,
     policies: &[EnvPolicy],
     target: &str,
+    namespace: &str,
     target_time: Option<&str>,
 ) -> Result<RecoveredCluster, ProvisionError> {
     if let wamn_control_registry::Placement::Pooled { pool } = &org.placement {
@@ -118,8 +119,12 @@ pub fn render_recovery_cluster(
     // into the stream it was restored from, and a promoted restore keeps backups.
     let (object_store, scheduled_backup, own_store) = if policy.has_scheduled_backup() {
         (
-            Some(crate::backup::render_object_store(target, policy)),
-            Some(crate::backup::render_scheduled_backup(target, policy)),
+            Some(crate::backup::render_object_store(
+                target, namespace, policy,
+            )),
+            Some(crate::backup::render_scheduled_backup(
+                target, namespace, policy,
+            )),
             Some(object_store_name(target)),
         )
     } else {
@@ -128,8 +133,14 @@ pub fn render_recovery_cluster(
 
     // Sized exactly as the source is sized, then the initdb bootstrap is REPLACED
     // by the recovery bootstrap (CNPG accepts one bootstrap method, not both).
-    let mut cluster =
-        crate::org::render_cluster(&org.id, owner, target, policy, own_store.as_deref());
+    let mut cluster = crate::org::render_cluster(
+        &org.id,
+        owner,
+        target,
+        namespace,
+        policy,
+        own_store.as_deref(),
+    );
     cluster["spec"]["bootstrap"] = recovery_bootstrap(&source, target_time);
     cluster["spec"]["externalClusters"] = json!([recovery_external_cluster(&source)]);
     cluster["metadata"]["labels"]["wamn.recovered-from"] = json!(source);
@@ -159,6 +170,7 @@ mod tests {
             &Env::new("prod"),
             &policies,
             "acme-prod-restore",
+            "wamn-system",
             None,
         )
         .expect("dedicated org with a prod policy");
@@ -216,6 +228,7 @@ mod tests {
             &Env::new("prod"),
             &policies,
             "acme-prod-restore",
+            "wamn-system",
             None,
         )
         .unwrap();
@@ -236,6 +249,7 @@ mod tests {
             &Env::new("prod"),
             &EnvPolicy::defaults(),
             "acme-prod-restore",
+            "wamn-system",
             Some("2026-09-16T14:31:00Z"),
         )
         .unwrap();
@@ -253,6 +267,7 @@ mod tests {
             &Env::new("prod"),
             &EnvPolicy::defaults(),
             "acme-prod",
+            "wamn-system",
             None,
         )
         .unwrap_err();
@@ -274,6 +289,7 @@ mod tests {
             &Env::new("dev"),
             &EnvPolicy::defaults(),
             "acme-dev-restore",
+            "wamn-system",
             None,
         )
         .unwrap();
@@ -290,6 +306,7 @@ mod tests {
             &Env::new("prod"),
             &EnvPolicy::defaults(),
             "acme-prod-restore",
+            "wamn-system",
             None,
         )
         .unwrap_err();

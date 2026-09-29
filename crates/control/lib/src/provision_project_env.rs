@@ -161,7 +161,10 @@ pub struct ProvisionProjectEnvRequest {
     /// Per-project-env `CONNECTION LIMIT`. Absent means no limit (`-1`).
     pub connection_limit: Option<i64>,
 
-    /// Namespace the rendered `Database` CR + `Secret` are applied to.
+    /// Namespace of the CNPG `Cluster`, which the rendered `Database` shares.
+    pub cluster_namespace: String,
+
+    /// Namespace the rendered credential `Secret` is applied to.
     pub namespace: String,
 
     /// Secret namespace to RECORD in the registry `SecretRef`. Absent records
@@ -452,7 +455,13 @@ pub async fn provision_project_env(
     let db_name = project_env_database_name(org, project, env, &instance);
 
     // Render the artifacts the runbook applies.
-    let db_cr = render_project_env_database(&triple, &instance, &cluster, args.connection_limit);
+    let db_cr = render_project_env_database(
+        &triple,
+        &instance,
+        &cluster,
+        &args.cluster_namespace,
+        args.connection_limit,
+    );
     // Ordinary provisioning establishes cluster roles before it creates the
     // database. The shared-login drain is an operator finalizer and is emitted
     // only by a successful App-generation prepare after every carrier has a

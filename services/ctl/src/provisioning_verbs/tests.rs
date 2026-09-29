@@ -807,9 +807,12 @@ fn every_template_arg_names_a_shipped_template() {
 #[cfg(feature = "ops")]
 fn render_path_emits_lists() {
     let (org, _) = Template::standard().stamp("acme", "wamn-pg");
-    let set =
-        wamn_control_provision::org::render_org_cluster_set(&org, &Template::standard().policies)
-            .unwrap();
+    let set = wamn_control_provision::org::render_org_cluster_set(
+        &org,
+        &Template::standard().policies,
+        "wamn-system",
+    )
+    .unwrap();
     let clusters = k8s_list(&set.clusters);
     assert_eq!(clusters["kind"], "List");
     assert_eq!(clusters["items"][0]["kind"], "Cluster");

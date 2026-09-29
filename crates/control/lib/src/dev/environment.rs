@@ -223,6 +223,7 @@ fn provisioning_args(
         system_database_url: Some(system_url.to_owned()),
         cluster: Some("route-auth-pg18".to_owned()),
         connection_limit: None,
+        cluster_namespace: "wamn-system".to_owned(),
         namespace: "wamn-system".to_owned(),
         secret_namespace: None,
         emit_database: Some(root.join("database.json")),
@@ -399,6 +400,7 @@ pub async fn provision_journey_control(system_url: &str, admin: &Client) -> anyh
         template: Template::trials(),
         pool: "route-auth-pg18".to_owned(),
         system_database_url: Some(system_url.to_owned()),
+        cluster_namespace: "wamn-system".to_owned(),
     })
     .await
     .context("stamp the journey org and environment policies through provision-org")

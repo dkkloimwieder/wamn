@@ -102,7 +102,12 @@ pub struct ProvisionProjectEnvArgs {
     #[arg(long)]
     pub connection_limit: Option<i64>,
 
-    /// Namespace the emitted `Database` CR + `Secret` are applied to.
+    /// Namespace of the CNPG `Cluster`. Everything that lives beside it (the
+    /// `Database`, the `ObjectStore`, the `ScheduledBackup`) shares it.
+    #[arg(long, env = "WAMN_CLUSTER_NAMESPACE", default_value = "wamn-system")]
+    pub cluster_namespace: String,
+
+    /// Namespace the emitted credential `Secret` is applied to.
     #[arg(long, env = "WAMN_NAMESPACE", default_value = "wamn-system")]
     pub namespace: String,
 
@@ -655,6 +660,7 @@ fn provisioning_request(
         system_database_url: args.system_database_url,
         cluster: args.cluster,
         connection_limit: args.connection_limit,
+        cluster_namespace: args.cluster_namespace,
         namespace: args.namespace,
         secret_namespace: args.secret_namespace,
         emit_database: args.emit_database,
@@ -937,6 +943,11 @@ pub struct ProvisionOrgArgs {
     #[arg(long, env = "WAMN_SYSTEM_ADMIN_URL")]
     pub system_database_url: Option<String>,
 
+    /// Namespace of the CNPG `Cluster`. Everything that lives beside it (the
+    /// `Database`, the `ObjectStore`, the `ScheduledBackup`) shares it.
+    #[arg(long, env = "WAMN_CLUSTER_NAMESPACE", default_value = "wamn-system")]
+    pub cluster_namespace: String,
+
     /// Write the rendered `Cluster` CRs (a JSON `List`) here; `-` = stdout
     /// (default). Empty for a pooled org (no owned clusters).
     #[arg(long)]
@@ -963,6 +974,7 @@ pub async fn provision_org(args: ProvisionOrgArgs) -> anyhow::Result<()> {
         template: args.template.template(),
         pool: args.pool,
         system_database_url: args.system_database_url,
+        cluster_namespace: args.cluster_namespace,
     })
     .await?;
     print_provisioned_org(&provisioned);
@@ -1021,6 +1033,11 @@ pub struct RecoverOrgClusterArgs {
     #[arg(long = "at")]
     pub target_time: Option<String>,
 
+    /// Namespace of the CNPG `Cluster`. Everything that lives beside it (the
+    /// `Database`, the `ObjectStore`, the `ScheduledBackup`) shares it.
+    #[arg(long, env = "WAMN_CLUSTER_NAMESPACE", default_value = "wamn-system")]
+    pub cluster_namespace: String,
+
     /// Write the recovery `Cluster` CR here; `-` = stdout (default).
     #[arg(long)]
     pub emit_cluster: Option<PathBuf>,
@@ -1054,6 +1071,7 @@ pub fn recover_org_cluster(args: RecoverOrgClusterArgs) -> anyhow::Result<()> {
         &owner,
         &template.policies,
         &target,
+        &args.cluster_namespace,
         args.target_time.as_deref(),
     )?;
 

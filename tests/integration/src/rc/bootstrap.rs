@@ -76,6 +76,7 @@ pub(super) async fn run(resources: &Resources) -> anyhow::Result<()> {
         template: wamn_control_registry::Template::trials(),
         pool: "rc-pg".into(),
         system_database_url: Some(system_url.clone()),
+        cluster_namespace: "wamn-system".into(),
     })
     .await?;
     save(
@@ -99,6 +100,7 @@ pub(super) async fn run(resources: &Resources) -> anyhow::Result<()> {
         system_database_url: Some(system_url),
         cluster: Some("rc-pg".into()),
         connection_limit: None,
+        cluster_namespace: "wamn-system".into(),
         namespace: NAMESPACE.into(),
         secret_namespace: None,
         emit_database: Some(database_path.clone()),

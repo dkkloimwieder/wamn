@@ -64,6 +64,9 @@ pub struct ProvisionOrgRequest {
     /// and its policy rows are recorded and read back (for cluster sizing).
     /// Absent to render or plan only, with the template's policies.
     pub system_database_url: Option<String>,
+
+    /// Namespace of the rendered `Cluster` CRs and of the backup CRs beside them.
+    pub cluster_namespace: String,
 }
 
 /// What one org provisioning run recorded and rendered.
@@ -132,7 +135,12 @@ pub async fn provision_org(request: ProvisionOrgRequest) -> anyhow::Result<Provi
         // Dedicated: render one cluster per recovery-domain owner, sized by the
         // org's policy for the owner env.
         wamn_control_registry::Placement::Dedicated => Some(
-            wamn_control_provision::org::render_org_cluster_set(&org, &policies).map_err(|e| {
+            wamn_control_provision::org::render_org_cluster_set(
+                &org,
+                &policies,
+                &request.cluster_namespace,
+            )
+            .map_err(|e| {
                 // The org row is already written here, and the caller prints
                 // only after this function returns, so the error is the one
                 // place that can still say the org exists.
@@ -274,7 +282,8 @@ mod tests {
         assert!(
             wamn_control_provision::org::render_org_cluster_set(
                 &pooled,
-                &Template::trials().policies
+                &Template::trials().policies,
+                "wamn-system"
             )
             .is_err()
         );
@@ -284,6 +293,7 @@ mod tests {
         let set = wamn_control_provision::org::render_org_cluster_set(
             &std_org,
             &Template::standard().policies,
+            "wamn-system",
         )
         .unwrap();
         assert_eq!(set.clusters.len(), 2, "standard: canary shares prod (T2)");
@@ -292,6 +302,7 @@ mod tests {
         let set = wamn_control_provision::org::render_org_cluster_set(
             &ded_org,
             &Template::dedicated().policies,
+            "wamn-system",
         )
         .unwrap();
         assert_eq!(
