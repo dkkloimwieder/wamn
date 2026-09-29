@@ -9,13 +9,17 @@ license.workspace = true
 # The canonical `timestamptz` spelling that a request is compared by.
 chrono = { workspace = true, features = ["std"] }
 serde = { workspace = true, features = ["derive"] }
-# `canonical_json_bytes` is `serde_json::to_vec`, so its determinism is this
-# feature set: NEVER enable `preserve_order` (it swaps the key-sorted
-# `BTreeMap` for insertion order and silently changes every persisted digest),
-# and keep `float_roundtrip` so a parsed f64 re-serializes to the same bytes.
+# `canonical_json_bytes` sorts object keys itself, so `preserve_order` from any
+# other crate of a build does not change it. Keep `float_roundtrip` so a parsed
+# f64 re-serializes to the same bytes.
 serde_json = { workspace = true, features = ["float_roundtrip"] }
 schemars = { workspace = true }
 sha2 = { workspace = true }
+
+[dev-dependencies]
+# The tests run with `preserve_order` on, as a build that joins jsonata-core
+# does (wamn-g1jd), so they show that canonical bytes do not depend on it.
+serde_json = { workspace = true, features = ["float_roundtrip", "preserve_order"] }
 
 [lints]
 workspace = true

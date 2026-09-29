@@ -33,10 +33,12 @@ pub enum RowTenant<'a> {
 /// sees `null` either way in v1; the distinction becomes load-bearing only
 /// with old-image conditions (l5i9.31).
 pub fn event_context(envelope: &Envelope) -> Value {
+    // The members stand in sorted order, so the context serializes the same
+    // with or without serde_json/preserve_order (wamn-g1jd).
     json!({
-        "op": envelope.op.as_str(),
-        "old": envelope.old.clone().map_or(Value::Null, Value::Object),
         "new": envelope.new.clone().map_or(Value::Null, Value::Object),
+        "old": envelope.old.clone().map_or(Value::Null, Value::Object),
+        "op": envelope.op.as_str(),
     })
 }
 
@@ -48,9 +50,9 @@ pub fn event_context(envelope: &Envelope) -> Value {
 /// from WAL.
 pub fn derived_event_context(event: &DerivedEvent) -> Value {
     json!({
-        "op": event.op.as_str(),
-        "old": Value::Null,
         "new": event.payload,
+        "old": Value::Null,
+        "op": event.op.as_str(),
     })
 }
 

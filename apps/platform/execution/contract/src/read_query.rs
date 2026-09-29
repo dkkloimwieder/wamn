@@ -47,8 +47,11 @@ impl std::error::Error for ReadQueryError {}
 /// An item with no members gives the empty string.
 pub fn encode_read_query(item: &Map<String, Value>) -> String {
     let mut query = String::new();
-    // A serde_json map is a BTreeMap, so its keys iterate in byte order.
-    for (name, value) in item {
+    // Sort the names here: with `preserve_order` a serde_json map keeps
+    // insertion order (wamn-g1jd).
+    let mut members: Vec<_> = item.iter().collect();
+    members.sort_unstable_by_key(|(name, _)| *name);
+    for (name, value) in members {
         if !query.is_empty() {
             query.push('&');
         }

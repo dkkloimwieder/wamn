@@ -63,12 +63,14 @@ pub fn canonical_json_sha256(value: &Value) -> String {
 
 /// Canonical bytes for an arbitrary JSON value.
 ///
-/// Determinism comes from `serde_json` itself: without the `preserve_order`
-/// feature a `serde_json::Map` is a `BTreeMap`, so object keys always serialize
-/// in one order regardless of insertion order, and `float_roundtrip` keeps a
-/// parsed `f64` exact so re-serializing reproduces the same bytes. The crate
-/// manifest pins both conditions and
-/// `canonical_json_hash_ignores_object_insertion_order` guards the first.
+/// Object keys serialize in sorted order at every depth, and this function
+/// sorts them itself. Canonical bytes are record identity, so they must not
+/// depend on the `serde_json` features that a build unifies: a crate that
+/// turns on `preserve_order` (jsonata-core does) makes a `serde_json::Map`
+/// keep insertion order in every crate of that build (wamn-g1jd). The
+/// contract crate's dev-dependencies turn `preserve_order` on, so its tests
+/// run under that condition. `float_roundtrip` keeps a parsed `f64` exact, so
+/// re-serializing reproduces the same bytes.
 ///
 /// wamn-0h0g.26.5 replaced a hand-rolled RFC 8785 canonicalizer with this:
 /// every model that enters a digest is already `BTreeMap`/`BTreeSet`-shaped
@@ -76,7 +78,35 @@ pub fn canonical_json_sha256(value: &Value) -> String {
 /// verifier of any digest exists in this workspace, so the extra spelling rules
 /// bought nothing the type layer was not already buying.
 pub fn canonical_json_bytes(value: &Value) -> Vec<u8> {
-    serde_json::to_vec(value).expect("a serde_json::Value always serializes")
+    serde_json::to_vec(&SortedKeys(value)).expect("a serde_json::Value always serializes")
+}
+
+/// A `Value` that serializes its object keys in sorted order at every depth.
+struct SortedKeys<'a>(&'a Value);
+
+impl serde::Serialize for SortedKeys<'_> {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        use serde::ser::{SerializeMap, SerializeSeq};
+        match self.0 {
+            Value::Object(map) => {
+                let mut entries: Vec<_> = map.iter().collect();
+                entries.sort_unstable_by_key(|(key, _)| *key);
+                let mut object = serializer.serialize_map(Some(entries.len()))?;
+                for (key, value) in entries {
+                    object.serialize_entry(key, &SortedKeys(value))?;
+                }
+                object.end()
+            }
+            Value::Array(items) => {
+                let mut array = serializer.serialize_seq(Some(items.len()))?;
+                for item in items {
+                    array.serialize_element(&SortedKeys(item))?;
+                }
+                array.end()
+            }
+            scalar => scalar.serialize(serializer),
+        }
+    }
 }
 
 #[cfg(test)]
