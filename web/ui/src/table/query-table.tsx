@@ -105,8 +105,16 @@ export interface QueryTableProps<TRow extends object, TResult = unknown> {
 export const SET_NEEDS_FULL_SET =
   "Filters, search, grouping, totals and CSV export show when every row is read. Raise the cap to read every row.";
 
-/** The id of the last column, which holds the buttons of each row. */
+/** The id of the column that holds the buttons of each row. */
 const ACTIONS_COLUMN = "rowActions";
+
+/**
+ * The width of the row buttons, so every button shows in full: each label at
+ * 7.2 px a character (Fira Code at text-xs), 22 px of padding and border for
+ * each button, 8 px between buttons, and 24 px of cell padding.
+ */
+const actionsWidth = (labels: readonly string[]): number =>
+  Math.ceil(labels.reduce((width, label) => width + label.length * 7.2 + 22, 0) + 8 * (labels.length - 1) + 24);
 
 type Member = { readonly [name: string]: unknown };
 
@@ -242,6 +250,11 @@ export function QueryTable<TRow extends object, TResult = unknown>(props: QueryT
     return { ...shown, cell: (value: unknown) => <>{labels(value as string | null)}</> };
   });
 
+  // The labels of the buttons the page shows: the actions it takes.
+  const shownActions = definition.actions
+    .filter((action) => (action.opens === "record" ? props.onOpen : props.onFill)?.[action.operation])
+    .map((action) => action.label);
+
   // The buttons of one row: each operation it opens, when the page takes it.
   const rowActions = (row: TRow) => (
     <div class="flex gap-2">
@@ -266,11 +279,15 @@ export function QueryTable<TRow extends object, TResult = unknown>(props: QueryT
     </div>
   );
 
-  // The columns as the grid renders them: the row selection, the child tables'
-  // expand, the row edit, the declared columns, and the row buttons.
+  // The columns as the grid renders them: the child tables' expand, the row
+  // buttons, the row selection, the row edit, and the declared columns. The
+  // row buttons come first, or second after the expand, so no scroll hides them.
   const columns: readonly BuiltColumn<TRow>[] = [
-    ...bulk.columns(),
     ...(childTables.length === 0 ? [] : [expandColumn<TRow>(areas)]),
+    ...(shownActions.length === 0
+      ? []
+      : [{ id: ACTIONS_COLUMN, size: actionsWidth(shownActions), header: () => "", cell: rowActions }]),
+    ...bulk.columns(),
     ...edits.columns(),
     ...declaredColumns.map((declared): BuiltColumn<TRow> => ({
       id: declared.field,
@@ -278,12 +295,11 @@ export function QueryTable<TRow extends object, TResult = unknown>(props: QueryT
       size: startWidth(declared.type),
       cell: edits.cell(declared, (row) => declared.cell?.(row[declared.field]) ?? shownText(row[declared.field])),
     })),
-    ...(definition.actions.length === 0 ? [] : [{ id: ACTIONS_COLUMN, size: 150, header: () => "", cell: rowActions }]),
   ];
 
   const view = state.view;
   const loaded = load.state;
-  const gridClass = "h-auto min-h-0 flex-1 [&_tr:has([data-slot=table-row-conflict])]:bg-destructive/10";
+  const gridClass = "h-auto min-h-0 flex-initial [&_tr:has([data-slot=table-row-conflict])]:bg-destructive/10";
 
   /** The set table's module loads when the table first reads a complete set. */
   const [setTable, setSetTable] = createSignal<typeof SetTableComponent>();

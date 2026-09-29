@@ -48,8 +48,9 @@ describe("the generated table for a page", () => {
     expect(document.querySelectorAll("[data-slot=table-total]")).toHaveLength(WIDGET_QUERY_TABLE.columns.length);
     // The definition's columns are the headers, in contract order. A column
     // whose model authors a label reads that text, and one that does not keeps
-    // its field name with spaces. The row edit leads and the row buttons end,
-    // each a column with no header text.
+    // its field name with spaces. The row edit leads, a column with no header
+    // text. This page takes no row action, so no row button column shows
+    // (wamn-po31).
     expect(screen.getAllByRole("columnheader").map((header) => header.textContent)).toEqual([
       "",
       "Widget code",
@@ -58,8 +59,25 @@ describe("the generated table for a page", () => {
       "id",
       "maker id",
       "Operator note",
-      "",
     ]);
+  });
+
+  it("shows the row buttons in the first column, wide enough for each button (wamn-po31)", async () => {
+    const { transport } = stub([page(["a", "b"], null)]);
+    render(() => (
+      <WidgetQueryTable
+        transport={transport}
+        onOpen={{ "platform-fixture:widget/get@1.0.0": () => undefined }}
+        onFill={{ "platform-fixture:widget/archive@1.0.0": () => undefined }}
+      />
+    ));
+    await waitFor(() => expect(screen.getAllByRole("button", { name: "get" })).toHaveLength(2));
+    const first = screen.getAllByRole("row")[1]!.querySelector("td")!;
+    expect(within(first).getByRole("button", { name: "get" })).toBeDefined();
+    expect(within(first).getByRole("button", { name: "archive" })).toBeDefined();
+    // "get" and "archive": 7.2 px a character, 22 px a button, 8 between, 24 of cell.
+    const table = screen.getAllByRole("columnheader")[0]!.closest("table")!;
+    expect(table.style.getPropertyValue("--header-rowActions-size")).toBe(String(Math.ceil(10 * 7.2 + 2 * 22 + 8 + 24)));
   });
 
   it("shows the maker a widget names by its name, reading each maker once (wamn-zrrg)", async () => {

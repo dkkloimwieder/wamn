@@ -81,8 +81,10 @@ describe("the query table", () => {
     const grid = section.querySelector<HTMLElement>('[data-slot="data-grid"]')!;
     const body = grid.querySelector('[data-slot="scroll-area-viewport"]')!;
     expect(section.classList).toContain("h-full");
-    // The grid takes the height the toolbar leaves, in place of its fixed one.
-    expect(grid.classList).toContain("flex-1");
+    // The grid takes the height of its rows, at most the height the toolbar
+    // leaves, in place of its fixed one. Its scroll bar then sits under the
+    // last row (wamn-n9ha).
+    expect(grid.classList).toContain("flex-initial");
     expect(grid.classList).toContain("min-h-0");
     expect(grid.classList).not.toContain("h-[32rem]");
     expect(toolbar.contains(body)).toBe(false);

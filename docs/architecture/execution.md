@@ -567,7 +567,8 @@ A header sort of rows that the load did not read in full starts a new load in th
 The row id of the table is the key that the read states in `lists`: one result field, or several whose values together name one row.
 Generation refuses a projection that answers a list of rows and states no `lists` key, because a row position names no row.
 A `lists` that names a model also lets a selector offer the rows as records of that model.
-Each row link and row form is a button in the last column, when the page passes a handler for its operation.
+Each row link and row form is a button in the first column, or the second after the expand of child tables, when the page passes a handler for its operation.
+That column is as wide as its buttons, and a page that passes no handler has no such column.
 A table that holds more than 100 rows renders only the rows in view of its box.
 The definition also names the served update of the table's relation, with the columns it writes that the plan does not supply.
 The update contract states the column that each writable input writes, so no name is compared.
