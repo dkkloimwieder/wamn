@@ -20,7 +20,10 @@ use wamn_catalog::OperationKind;
 use wamn_run_state::IntentStore;
 use wamn_run_state::intent_store::{Begun, Intent, IntentId, StoredOutcome};
 
-use super::{ApplicationHost, OperationCall, node_types, run_export};
+use super::invocation_policy::{InvocationPolicy as _, ItemCommitFailure, ItemTransaction as _};
+use super::{
+    ApplicationHost, OperationCall, application_of, component_id_of, node_types, run_export,
+};
 
 /// The item error of a key that began and never finished.
 pub const INTENT_UNCERTAIN: &str = "intent-uncertain";
@@ -190,6 +193,8 @@ pub(super) async fn invoke_logged<H: ApplicationHost>(
             )));
         }
     };
+    let application = application_of(host, call.closure).await?;
+    let component_id = component_id_of(&application, call.component)?;
     // The items share the deadline of the call.
     let deadline = tokio::time::Instant::now() + Duration::from_millis(call.deadline_ms);
     let mut answers = Vec::with_capacity(items.len());
@@ -204,101 +209,69 @@ pub(super) async fn invoke_logged<H: ApplicationHost>(
         let deadline_ms = u64::try_from(remaining.as_millis())
             .unwrap_or(u64::MAX)
             .max(1);
-        let begun = intent
-            .store
-            .begin(&Intent {
-                tenant: intent.tenant,
-                release: intent.release,
-                package: intent.package,
-                operation: call.operation,
-                idempotency_key: item.key,
-                input_hash: &item_input_hash(item.value, intent.participation),
-                deadline_ms,
-            })
+        // The item's host transaction begins before its claim, so an operation
+        // with SQL claims in it (`docs/plan/host-transaction.md` 4.2).
+        let transaction = application
+            .policy
+            .begin_item(component_id, call.operation, &call.facts)
             .await?;
-        let id = match begun {
-            Begun::New(id) => id,
-            Begun::Finished(StoredOutcome(body)) => {
-                answers.push(body);
-                continue;
+        let facts = match &transaction {
+            Some(transaction) => application.policy.item_facts(&call.facts, transaction),
+            None => call.facts.clone(),
+        };
+        let item_call = OperationCall {
+            closure: call.closure,
+            component: call.component,
+            operation: call.operation,
+            context: node_types::NodeContext {
+                deadline_ms: Some(deadline_ms),
+                ..call.context.clone()
+            },
+            input: call.input,
+            deadline_ms,
+            facts,
+        };
+        let settled = settle_item(host, item_call, intent, item, transaction.is_some()).await?;
+        let (body, id, commit) = match settled {
+            Settled::Cancelled | Settled::Failed(_) => {
+                if let Some(transaction) = &transaction {
+                    transaction.rollback().await?;
+                }
+                return Ok(Err(match settled {
+                    Settled::Failed(error) => error,
+                    _ => node_types::NodeError::Cancelled,
+                }));
             }
-            Begun::Uncertain(id) => {
-                answers.push(uncertain(&id));
-                continue;
-            }
-            Begun::Resolved { id, basis } => {
-                answers.push(refusal(
-                    INTENT_RESOLVED,
-                    format!(
-                        "an operator resolved intent {} by {basis}; send a new key",
-                        id.0
-                    ),
-                    json!({"intent": id.0, "basis": basis.as_str()}),
-                ));
-                continue;
-            }
-            Begun::Conflict(id) => {
-                answers.push(refusal(
-                    IDEMPOTENCY_CONFLICT,
-                    format!("the key {} repeats with another input", item.key),
-                    json!({"field": intent.key_field.unwrap_or(REQUEST_ID), "intent": id.0}),
-                ));
-                continue;
+            Settled::Answer {
+                body,
+                id,
+                commit,
+                port: item_port,
+            } => {
+                if item_port.is_some() {
+                    port = item_port;
+                }
+                (body, id, commit)
             }
         };
-        let one = Value::Array(vec![item.value.clone()]);
-        let outcome = run_export(
-            host,
-            OperationCall {
-                closure: call.closure,
-                component: call.component,
-                operation: call.operation,
-                context: node_types::NodeContext {
-                    deadline_ms: Some(deadline_ms),
-                    ..call.context.clone()
-                },
-                input: &one,
-                deadline_ms,
-                facts: call.facts.clone(),
-            },
-        )
-        .await?;
-        match outcome {
-            Err(node_types::NodeError::Cancelled) => {
-                return Ok(Err(node_types::NodeError::Cancelled));
-            }
-            Err(error) => {
-                intent.store.release(&id).await?;
-                // A call of one item answers as an unlogged call does.
-                if items.len() == 1 {
-                    return Ok(Err(error));
-                }
-                answers.push(failed_body(&error));
-            }
-            Ok(emission) => {
-                let results: Vec<Map<String, Value>> = serde_json::from_str(&emission.payload)
-                    .context("a logged call emitted no item list")?;
-                let body = results.into_iter().find_map(|mut result| {
-                    let request_id = result.remove(REQUEST_ID)?;
-                    (request_id.as_str() == Some(item.request_id)).then_some(Value::Object(result))
-                });
-                // An item the export answered nothing for stays uncertain.
-                let Some(body) = body else {
-                    answers.push(uncertain(&id));
-                    continue;
-                };
-                if body.get("error").is_some() {
-                    intent.store.release(&id).await?;
-                } else {
-                    intent
-                        .store
-                        .finish(&id, &StoredOutcome(body.clone()))
-                        .await?;
-                }
-                answers.push(body);
-                port = emission.port;
-            }
+        let Some(transaction) = transaction else {
+            answers.push(body);
+            continue;
+        };
+        if !commit {
+            transaction.rollback().await?;
+            answers.push(body);
+            continue;
         }
+        answers.push(match transaction.commit().await {
+            Ok(()) => body,
+            Err(ItemCommitFailure::Uncertain { .. }) => {
+                uncertain(&id.context("a committed item has an intent")?)
+            }
+            Err(ItemCommitFailure::RolledBack { code, message }) => {
+                json!({"error": {"code": code, "message": message}})
+            }
+        });
     }
     let merged = items
         .iter()
@@ -316,6 +289,129 @@ pub(super) async fn invoke_logged<H: ApplicationHost>(
         payload: serde_json::to_string(&Value::Array(merged))?,
         port,
     }))
+}
+
+/// How one item of a logged call settled.
+enum Settled {
+    /// The item's answer. `commit` says whether its host transaction commits.
+    Answer {
+        body: Value,
+        /// The intent that a commit with an unknown outcome leaves uncertain.
+        id: Option<IntentId>,
+        commit: bool,
+        port: Option<String>,
+    },
+    /// The call was cancelled.
+    Cancelled,
+    /// The one item of a one-item call failed, which answers as an unlogged
+    /// call does.
+    Failed(node_types::NodeError),
+}
+
+/// Claim one item's key, run the item when the key is new, and record its
+/// outcome. `call.input` is the whole call's input, and the guest gets the
+/// item alone.
+async fn settle_item<H: ApplicationHost>(
+    host: &H,
+    call: OperationCall<'_, H::Policy>,
+    intent: IntentContext<'_>,
+    item: &Item<'_>,
+    transacted: bool,
+) -> anyhow::Result<Settled> {
+    let answer = |body| Settled::Answer {
+        body,
+        id: None,
+        commit: false,
+        port: None,
+    };
+    let begun = intent
+        .store
+        .begin(&Intent {
+            tenant: intent.tenant,
+            release: intent.release,
+            package: intent.package,
+            operation: call.operation,
+            idempotency_key: item.key,
+            input_hash: &item_input_hash(item.value, intent.participation),
+            deadline_ms: call.deadline_ms,
+        })
+        .await?;
+    let id = match begun {
+        Begun::New(id) => id,
+        Begun::Finished(StoredOutcome(body)) => return Ok(answer(body)),
+        Begun::Uncertain(id) => return Ok(answer(uncertain(&id))),
+        Begun::Resolved { id, basis } => {
+            return Ok(answer(refusal(
+                INTENT_RESOLVED,
+                format!(
+                    "an operator resolved intent {} by {basis}; send a new key",
+                    id.0
+                ),
+                json!({"intent": id.0, "basis": basis.as_str()}),
+            )));
+        }
+        Begun::Conflict(id) => {
+            return Ok(answer(refusal(
+                IDEMPOTENCY_CONFLICT,
+                format!("the key {} repeats with another input", item.key),
+                json!({"field": intent.key_field.unwrap_or(REQUEST_ID), "intent": id.0}),
+            )));
+        }
+    };
+    let whole = call.input.as_array().map_or(0, Vec::len);
+    let one = Value::Array(vec![item.value.clone()]);
+    let outcome = run_export(
+        host,
+        OperationCall {
+            input: &one,
+            ..call
+        },
+    )
+    .await?;
+    let emission = match outcome {
+        Err(node_types::NodeError::Cancelled) => return Ok(Settled::Cancelled),
+        Err(error) => {
+            intent.store.release(&id).await?;
+            if whole == 1 {
+                return Ok(Settled::Failed(error));
+            }
+            return Ok(answer(failed_body(&error)));
+        }
+        Ok(emission) => emission,
+    };
+    let results: Vec<Map<String, Value>> =
+        serde_json::from_str(&emission.payload).context("a logged call emitted no item list")?;
+    let body = results.into_iter().find_map(|mut result| {
+        let request_id = result.remove(REQUEST_ID)?;
+        (request_id.as_str() == Some(item.request_id)).then_some(Value::Object(result))
+    });
+    let Some(body) = body else {
+        // Without a host transaction, the export may have changed records, so
+        // the item stays uncertain. With one, the rollback undoes the work.
+        if !transacted {
+            return Ok(answer(uncertain(&id)));
+        }
+        intent.store.release(&id).await?;
+        return Ok(answer(refusal(
+            "internal_error",
+            format!("the export answered nothing for item {}", item.request_id),
+            Value::Null,
+        )));
+    };
+    if body.get("error").is_some() {
+        intent.store.release(&id).await?;
+        return Ok(answer(body));
+    }
+    intent
+        .store
+        .finish(&id, &StoredOutcome(body.clone()))
+        .await?;
+    Ok(Settled::Answer {
+        body,
+        id: Some(id),
+        commit: true,
+        port: emission.port,
+    })
 }
 
 #[cfg(test)]

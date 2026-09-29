@@ -18,7 +18,8 @@ use wamn_runtime::plugins::wamn_blobstore::plugin::{
 };
 use wamn_runtime::plugins::wamn_logging::{WAMN_LOGGING_ID, WamnLogging};
 use wamn_runtime::plugins::wamn_postgres::{
-    PreparedStatementSet, UnprovisionedPrincipal, WAMN_POSTGRES_ID, WamnPostgres,
+    OperationTransaction, PreparedStatementSet, UnprovisionedPrincipal, WAMN_POSTGRES_ID,
+    WamnPostgres,
 };
 use wash_runtime::engine::workload::WorkloadItem;
 use wash_runtime::plugin::{HostPlugin, WitInterfaces};
@@ -68,6 +69,8 @@ struct ComponentPolicy {
 pub struct NativeFacts {
     pub(super) acquisition: NodeAcquisition,
     pub(super) caller: Option<AuthenticatedCaller>,
+    /// The host transaction of a logged item, which activation binds.
+    pub(super) item: Option<OperationTransaction>,
 }
 
 impl std::fmt::Debug for NativeFacts {
@@ -85,6 +88,7 @@ impl NativeFacts {
         Self {
             acquisition,
             caller,
+            item: None,
         }
     }
 }
@@ -137,9 +141,126 @@ pub(super) fn new_native_policy(
     }))
 }
 
+impl NativePolicy {
+    /// Admit one call of `operation` on `component_id`: the component, the
+    /// caller's identity and the caller's permissions. It returns the
+    /// component's policy.
+    fn admit(
+        &self,
+        component_id: &str,
+        operation: &str,
+        facts: &NativeFacts,
+    ) -> anyhow::Result<Arc<ComponentPolicy>> {
+        let acquisition = &facts.acquisition;
+        let bindings = self
+            .bindings
+            .read()
+            .expect("native component bindings lock poisoned");
+        let component = bindings
+            .get(component_id)
+            .context("native invocation component is not admitted")?;
+        let fact = &component.fact;
+        anyhow::ensure!(
+            fact.scope.tenant_id == acquisition.claims.tenant
+                && fact.scope.package_id == acquisition.invocation.package_id
+                && fact.component == acquisition.invocation.component
+                && fact.component_digest == acquisition.invocation.component_digest
+                && acquisition.invocation.operation == operation
+                && acquisition.claims.project.as_deref() == Some(self.resources.project.as_str()),
+            "native-invocation-component-identity-mismatch"
+        );
+        anyhow::ensure!(
+            fact.operation(operation).is_some(),
+            "native invocation operation is not admitted"
+        );
+        let released = component
+            .operations
+            .get(operation)
+            .context("native invocation operation is not released")?;
+        authorize_released_operation(facts.caller.as_ref(), released)?;
+        Ok(Arc::clone(component))
+    }
+
+    /// Bind the claims of one call to `scope`.
+    ///
+    /// Every claims transaction binds its executing principal as
+    /// `app.user_id` and the admitted operation token as `app.operation`,
+    /// which the record-history triggers record.
+    ///
+    /// The bind also reads the executing principal's `app_system.users` row in
+    /// the tenant and refuses a principal that owns none. That refusal is an
+    /// authorization fact, so it reaches the caller as the `permission-denied`
+    /// the operation vocabulary already carries, not as a host failure.
+    async fn bind_claims(
+        &self,
+        scope: &str,
+        operation: &str,
+        facts: &NativeFacts,
+    ) -> anyhow::Result<()> {
+        let claims = facts.acquisition.executing_claims(facts.caller.as_ref());
+        let Err(error) = self
+            .resources
+            .postgres
+            .bind_session_claims(scope, &claims)
+            .await
+        else {
+            return Ok(());
+        };
+        if error.downcast_ref::<UnprovisionedPrincipal>().is_some() {
+            tracing::warn!(
+                error = %format_args!("{error:#}"),
+                "native invocation refused: the executing principal is not provisioned"
+            );
+            return Err(
+                OperationRefusal::new(OperationRefusalKind::PermissionDenied, operation).into(),
+            );
+        }
+        Err(error)
+    }
+}
+
 impl InvocationPolicy for NativePolicy {
     type Facts = NativeFacts;
     type Authority = NativeAuthorityGuard;
+    type ItemTransaction = OperationTransaction;
+
+    /// Begin the item's transaction under the claims of the call, on a scope
+    /// of its own that ends when the `BEGIN` batch has run.
+    async fn begin_item(
+        &self,
+        component_id: &str,
+        operation: &str,
+        facts: &NativeFacts,
+    ) -> anyhow::Result<Option<OperationTransaction>> {
+        let component = self.admit(component_id, operation, facts)?;
+        if component
+            .operations
+            .get(operation)
+            .is_none_or(|released| released.statements.is_empty())
+        {
+            return Ok(None);
+        }
+        let postgres = &self.resources.postgres;
+        let scope = wamn_engine::operation::next_scope("native-item");
+        let begun = async {
+            self.bind_claims(&scope, operation, facts).await?;
+            postgres.set_current_run(&scope, facts.acquisition.causation.clone());
+            postgres
+                .begin_operation_transaction(&scope)
+                .await
+                .map_err(|error| anyhow::anyhow!("begin the item transaction: {error:?}"))
+        }
+        .await;
+        postgres.revoke_session_claims(&scope);
+        begun.map(Some)
+    }
+
+    fn item_facts(&self, facts: &NativeFacts, transaction: &OperationTransaction) -> NativeFacts {
+        NativeFacts {
+            item: Some(transaction.clone()),
+            ..facts.clone()
+        }
+    }
 
     /// Grant authority after native initialization, with rollback on every partial failure.
     async fn activate(
@@ -152,7 +273,6 @@ impl InvocationPolicy for NativePolicy {
         let scope = invocation_scope.id.as_ref();
         let operation = request.operation.as_str();
         let acquisition = &request.facts.acquisition;
-        let caller = request.facts.caller.as_ref();
         let deadline = request.deadline;
         anyhow::ensure!(Instant::now() < deadline, "native-node-deadline-exceeded");
         // Admission is read TWICE, around the claim bind, because that bind now
@@ -160,67 +280,13 @@ impl InvocationPolicy for NativePolicy {
         // second read is the one the invariant below needs: it covers every
         // registry install, and a shutdown that lands in between clears the map
         // so the second lookup refuses instead of installing late.
-        {
-            let bindings = self
-                .bindings
-                .read()
-                .expect("native component bindings lock poisoned");
-            let component = bindings
-                .get(component_id)
-                .context("native invocation component is not admitted")?;
-            let fact = &component.fact;
-            anyhow::ensure!(
-                fact.scope.tenant_id == acquisition.claims.tenant
-                    && fact.scope.package_id == acquisition.invocation.package_id
-                    && fact.component == acquisition.invocation.component
-                    && fact.component_digest == acquisition.invocation.component_digest
-                    && acquisition.invocation.operation == operation
-                    && acquisition.claims.project.as_deref()
-                        == Some(self.resources.project.as_str()),
-                "native-invocation-component-identity-mismatch"
-            );
-            anyhow::ensure!(
-                fact.operation(operation).is_some(),
-                "native invocation operation is not admitted"
-            );
-            let released = component
-                .operations
-                .get(operation)
-                .context("native invocation operation is not released")?;
-            authorize_released_operation(caller, released)?;
-        }
+        self.admit(component_id, operation, &request.facts)?;
         let guard = NativeAuthorityGuard {
             policy: self.clone(),
             scope: scope.to_owned(),
         };
         let resources = &self.resources;
-        // Every claims transaction binds its executing principal as
-        // `app.user_id` and the admitted operation token as `app.operation`,
-        // which the record-history triggers record.
-        //
-        // The bind also reads the executing principal's `app_system.users` row
-        // in the tenant and refuses a principal that owns none. That refusal is
-        // an authorization fact, so it reaches the caller as the
-        // `permission-denied` the operation vocabulary already carries, not as
-        // a host failure.
-        if let Err(error) = resources
-            .postgres
-            .bind_session_claims(scope, &acquisition.executing_claims(caller))
-            .await
-        {
-            if error.downcast_ref::<UnprovisionedPrincipal>().is_some() {
-                tracing::warn!(
-                    error = %format_args!("{error:#}"),
-                    "native invocation refused: the executing principal is not provisioned"
-                );
-                return Err(OperationRefusal::new(
-                    OperationRefusalKind::PermissionDenied,
-                    operation,
-                )
-                .into());
-            }
-            return Err(error);
-        }
+        self.bind_claims(scope, operation, &request.facts).await?;
         // Serialize late activation with caller cancellation. No await follows
         // this lock, so cancellation cannot leave a newly installed authority.
         let closed = invocation_scope
@@ -260,6 +326,11 @@ impl InvocationPolicy for NativePolicy {
             .postgres
             .activate_statement_operation(scope, operation)?;
         resources.postgres.bind_transaction_scope(scope, deadline)?;
+        if let Some(transaction) = &request.facts.item {
+            resources
+                .postgres
+                .bind_operation_transaction(scope, transaction)?;
+        }
         if let Some(participant) = component
             .operations
             .get(operation)
@@ -324,6 +395,7 @@ impl InvocationPolicy for NativePolicy {
 
     fn revoke(&self, scope: &str) {
         self.resources.postgres.revoke_transaction_scope(scope);
+        self.resources.postgres.revoke_operation_transaction(scope);
         self.traces.revoke(scope);
         self.invocations
             .lock()

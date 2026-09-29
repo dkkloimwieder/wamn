@@ -6,9 +6,9 @@
 )]
 mod bindings {
     wit_bindgen::generate!({
-        world: "wamn:postgres-statements/postgres-statements@0.2.0",
+        world: "wamn:postgres-statements/postgres-statements@0.3.0",
         path: [
-            "../../../../crates/platform/runtime/wit/deps/wamn-postgres-0.2",
+            "../../../../crates/platform/runtime/wit/deps/wamn-postgres-0.3",
             "wit",
         ],
         generate_all,
@@ -277,7 +277,8 @@ impl Connection {
         })
     }
 
-    /// Begin one explicit host-owned transaction.
+    /// Begin one explicit host-owned transaction. Inside an operation that
+    /// has a host transaction, it refuses: use [`operation_transaction`].
     pub async fn begin(&mut self) -> Result<Transaction, StatementError> {
         host::begin()
             .await
@@ -383,6 +384,17 @@ impl Transaction {
             .await
             .map_err(StatementError::from_wire)
     }
+}
+
+/// The transaction that the host began for this operation
+/// (`docs/plan/host-transaction.md` 4.1). The host commits or rolls it back
+/// after the call, so its `commit` and `rollback` refuse, and dropping it
+/// leaves it open.
+pub async fn operation_transaction() -> Result<Transaction, StatementError> {
+    host::operation_transaction()
+        .await
+        .map(|inner| Transaction { inner })
+        .map_err(StatementError::from_wire)
 }
 
 /// Exact participant selected by the admitted caller for the current command.

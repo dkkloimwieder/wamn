@@ -109,6 +109,22 @@ pub struct PgTransaction {
     cursor_seq: u32,
     /// Row limit of the project this transaction's connection belongs to.
     pub(super) row_limit: u64,
+    /// A guest handle of an operation transaction that the host owns. It never
+    /// finishes the transaction, and dropping it leaves the connection open.
+    pub(super) lent: bool,
+}
+
+impl PgTransaction {
+    /// A handle of this transaction that the host lends to the guest.
+    pub(super) fn lent(&self) -> Self {
+        Self {
+            state: Arc::clone(&self.state),
+            destroyed: Arc::clone(&self.destroyed),
+            cursor_seq: 0,
+            row_limit: self.row_limit,
+            lent: true,
+        }
+    }
 }
 
 /// Host side of a `wamn:postgres/statements.transaction`.
@@ -131,6 +147,10 @@ impl std::fmt::Debug for PgStatementTransaction {
 
 impl Drop for PgTransaction {
     fn drop(&mut self) {
+        // The owner of an operation transaction finishes it.
+        if self.lent {
+            return;
+        }
         let mut st = match self.state.lock() {
             Ok(g) => g,
             Err(poisoned) => poisoned.into_inner(),
@@ -464,6 +484,7 @@ async fn begin_transaction(
         destroyed: plugin.destroyed.clone(),
         cursor_seq: 0,
         row_limit: pp.row_limit,
+        lent: false,
     })
 }
 
@@ -506,6 +527,7 @@ pub(super) async fn begin_statement_transaction(
         destroyed: Arc::clone(&plugin.destroyed),
         cursor_seq: 0,
         row_limit: policy.row_limit,
+        lent: false,
     })
 }
 
@@ -1262,6 +1284,14 @@ impl<T: 'static + Send> statement_wit::HostWithStore<T> for SharedCtx {
         })?;
         trace
             .run(async move {
+                // The work of an operation with a host transaction runs in it.
+                if plugin.operation_transaction_for(&component_id).is_some() {
+                    return Ok(Err(StatementError::Postgres(PgError::QueryError((
+                        super::operation_transaction::BEGIN_REFUSED.to_owned(),
+                        "the operation runs in its host transaction, so begin is refused"
+                            .to_owned(),
+                    )))));
+                }
                 let project = plugin.project_for(&component_id);
                 let statements = plugin.active_statement_set(&component_id);
                 let span = db_span_for_project(&plugin, &component_id, &project, "statement.begin");
@@ -1425,7 +1455,7 @@ async fn statement_txn_finish<T: 'static>(
     rep: Resource<PgStatementTransaction>,
     verb: &'static str,
 ) -> wash_runtime::wasmtime::Result<Result<(), StatementError>> {
-    let (plugin, component_id, trace, state, destroyed) = accessor.with(|mut access| {
+    let (plugin, component_id, trace, state, destroyed, lent) = accessor.with(|mut access| {
         let ctx = access.get();
         let transaction = ctx.table.get(&rep)?;
         wash_runtime::wasmtime::ensure!(
@@ -1438,8 +1468,16 @@ async fn statement_txn_finish<T: 'static>(
             wamn_engine::invocation_trace::invocation_trace(&ctx),
             Arc::clone(&transaction.transaction.state),
             Arc::clone(&transaction.transaction.destroyed),
+            transaction.transaction.lent,
         ))
     })?;
+    // The host commits or rolls back the transaction it owns.
+    if lent {
+        return Ok(Err(StatementError::Postgres(PgError::QueryError((
+            super::operation_transaction::FINISH_REFUSED.to_owned(),
+            "the host finishes the operation transaction".to_owned(),
+        )))));
+    }
     trace
         .run(async move {
             let project = plugin.project_for(&component_id);

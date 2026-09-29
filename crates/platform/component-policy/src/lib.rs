@@ -145,10 +145,11 @@ pub const CAPABILITY_REGISTRY: [CapabilityRow; 9] = [
         version: "0.1.0",
         posture: Posture::Effect,
     },
-    // 0.2.0 adds `statements.run-stream` and keeps every 0.1.0 call.
+    // 0.3.0 adds `statements.run-stream` and `statements.operation-transaction`
+    // and keeps every 0.1.0 call.
     CapabilityRow {
         package: "wamn:postgres",
-        version: "0.2.0",
+        version: "0.3.0",
         posture: Posture::Effect,
     },
     CapabilityRow {

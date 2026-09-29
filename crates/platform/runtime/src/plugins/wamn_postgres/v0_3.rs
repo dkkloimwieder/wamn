@@ -1,7 +1,8 @@
-//! `wamn:postgres@0.2.0`: every 0.1.0 call, served by the 0.1.0 host
-//! implementation, plus `statements.run-stream` (owner ruling on `wamn-utci`).
+//! `wamn:postgres@0.3.0`: every 0.1.0 call, served by the 0.1.0 host
+//! implementation, plus `statements.run-stream` (owner ruling on `wamn-utci`)
+//! and `statements.operation-transaction` (`docs/plan/host-transaction.md`).
 //!
-//! The 0.2.0 types interface and the four resources are the 0.1.0 Rust types,
+//! The 0.3.0 types interface and the four resources are the 0.1.0 Rust types,
 //! so a value or a handle crosses both versions unchanged. Only the error
 //! records that `statements` declares itself are distinct types, and
 //! [`statement_error`] converts them.
@@ -37,7 +38,7 @@ use super::{
 
 mod bindings {
     wash_runtime::wasmtime::component::bindgen!({
-        world: "postgres-plugin-v0-2",
+        world: "postgres-plugin-v0-3",
         imports: { default: async | trappable | tracing },
         with: {
             "wamn:postgres/types": super::super::bindings::wamn::postgres0_1_0::types,
@@ -50,8 +51,8 @@ mod bindings {
     });
 }
 
-use bindings::wamn::postgres0_2_0::client as client_v2;
-use bindings::wamn::postgres0_2_0::statements as statements_v2;
+use bindings::wamn::postgres0_3_0::client as client_v3;
+use bindings::wamn::postgres0_3_0::statements as statements_v3;
 
 type WasmResult<T> = wash_runtime::wasmtime::Result<T>;
 
@@ -63,20 +64,20 @@ const STREAM_BATCH_ROWS: u32 = 500;
 /// is enough.
 const STREAM_CURSOR: &str = "wamn_stream";
 
-/// Link the 0.2.0 client and statements interfaces on `linker`.
+/// Link the 0.3.0 client and statements interfaces on `linker`.
 pub(super) fn add_to_linker(
     linker: &mut wash_runtime::wasmtime::component::Linker<SharedCtx>,
     client: bool,
     statements: bool,
 ) -> WasmResult<()> {
     if client {
-        client_v2::add_to_linker::<_, SharedCtx>(
+        client_v3::add_to_linker::<_, SharedCtx>(
             linker,
             wash_runtime::engine::ctx::extract_active_ctx,
         )?;
     }
     if statements {
-        statements_v2::add_to_linker::<_, SharedCtx>(
+        statements_v3::add_to_linker::<_, SharedCtx>(
             linker,
             wash_runtime::engine::ctx::extract_active_ctx,
         )?;
@@ -84,24 +85,24 @@ pub(super) fn add_to_linker(
     Ok(())
 }
 
-/// The same failure in the 0.2.0 vocabulary, which repeats the 0.1.0 one.
-fn statement_error(error: StatementError) -> statements_v2::StatementError {
+/// The same failure in the 0.3.0 vocabulary, which repeats the 0.1.0 one.
+fn statement_error(error: StatementError) -> statements_v3::StatementError {
     match error {
         StatementError::UnknownStatement(digest) => {
-            statements_v2::StatementError::UnknownStatement(digest)
+            statements_v3::StatementError::UnknownStatement(digest)
         }
         StatementError::StatementContractMismatch(mismatch) => {
-            let shape = |shape: statement_wit::ValueShape| statements_v2::ValueShape {
+            let shape = |shape: statement_wit::ValueShape| statements_v3::ValueShape {
                 count: shape.count,
                 types: shape.types,
             };
-            statements_v2::StatementError::StatementContractMismatch(
-                statements_v2::ContractMismatch {
+            statements_v3::StatementError::StatementContractMismatch(
+                statements_v3::ContractMismatch {
                     statement_digest: mismatch.statement_digest,
                     part: match mismatch.part {
-                        statement_wit::ContractPart::Binds => statements_v2::ContractPart::Binds,
+                        statement_wit::ContractPart::Binds => statements_v3::ContractPart::Binds,
                         statement_wit::ContractPart::Columns => {
-                            statements_v2::ContractPart::Columns
+                            statements_v3::ContractPart::Columns
                         }
                     },
                     expected: shape(mismatch.expected),
@@ -109,27 +110,27 @@ fn statement_error(error: StatementError) -> statements_v2::StatementError {
                 },
             )
         }
-        StatementError::Postgres(error) => statements_v2::StatementError::Postgres(error),
+        StatementError::Postgres(error) => statements_v3::StatementError::Postgres(error),
     }
 }
 
 fn converted<T>(
     result: WasmResult<Result<T, StatementError>>,
-) -> WasmResult<Result<T, statements_v2::StatementError>> {
+) -> WasmResult<Result<T, statements_v3::StatementError>> {
     result.map(|result| result.map_err(statement_error))
 }
 
-impl statements_v2::Host for ActiveCtx<'_> {}
+impl statements_v3::Host for ActiveCtx<'_> {}
 
-impl<T: 'static + Send> statements_v2::HostWithStore<T> for SharedCtx {
+impl<T: 'static + Send> statements_v3::HostWithStore<T> for SharedCtx {
     async fn selected_participation(
         accessor: &Accessor<T, Self>,
-    ) -> WasmResult<Result<Option<statements_v2::Participation>, statements_v2::StatementError>>
+    ) -> WasmResult<Result<Option<statements_v3::Participation>, statements_v3::StatementError>>
     {
         converted(<Self as statement_wit::HostWithStore<T>>::selected_participation(accessor).await)
             .map(|result| {
                 result.map(|selected| {
-                    selected.map(|selected| statements_v2::Participation {
+                    selected.map(|selected| statements_v3::Participation {
                         operation: selected.operation,
                         intent: selected.intent,
                     })
@@ -139,7 +140,7 @@ impl<T: 'static + Send> statements_v2::HostWithStore<T> for SharedCtx {
 
     async fn participant_view(
         accessor: &Accessor<T, Self>,
-    ) -> WasmResult<Result<Resource<PgTransactionView>, statements_v2::StatementError>> {
+    ) -> WasmResult<Result<Resource<PgTransactionView>, statements_v3::StatementError>> {
         converted(<Self as statement_wit::HostWithStore<T>>::participant_view(accessor).await)
     }
 
@@ -147,7 +148,7 @@ impl<T: 'static + Send> statements_v2::HostWithStore<T> for SharedCtx {
         accessor: &Accessor<T, Self>,
         statement_digest: String,
         binds: Vec<SqlValue>,
-    ) -> WasmResult<Result<RowSet, statements_v2::StatementError>> {
+    ) -> WasmResult<Result<RowSet, statements_v3::StatementError>> {
         converted(
             <Self as statement_wit::HostWithStore<T>>::run(accessor, statement_digest, binds).await,
         )
@@ -162,9 +163,9 @@ impl<T: 'static + Send> statements_v2::HostWithStore<T> for SharedCtx {
             (
                 Vec<Column>,
                 StreamReader<Vec<SqlValue>>,
-                FutureReader<Result<(), statements_v2::StatementError>>,
+                FutureReader<Result<(), statements_v3::StatementError>>,
             ),
-            statements_v2::StatementError,
+            statements_v3::StatementError,
         >,
     > {
         let (plugin, component_id, trace) = accessor.with(|mut access| {
@@ -260,8 +261,36 @@ impl<T: 'static + Send> statements_v2::HostWithStore<T> for SharedCtx {
 
     async fn begin(
         accessor: &Accessor<T, Self>,
-    ) -> WasmResult<Result<Resource<PgStatementTransaction>, statements_v2::StatementError>> {
+    ) -> WasmResult<Result<Resource<PgStatementTransaction>, statements_v3::StatementError>> {
         converted(<Self as statement_wit::HostWithStore<T>>::begin(accessor).await)
+    }
+
+    #[expect(
+        clippy::unused_async_trait_impl,
+        reason = "the async WIT method lends only a local resource"
+    )]
+    async fn operation_transaction(
+        accessor: &Accessor<T, Self>,
+    ) -> WasmResult<Result<Resource<PgStatementTransaction>, statements_v3::StatementError>> {
+        accessor.with(|mut access| {
+            let ctx = access.get();
+            let plugin = plugin_of(&ctx)?;
+            let component_id = ctx.component_id.to_string();
+            let Some(transaction) = plugin.operation_transaction_for(&component_id) else {
+                return Ok(Err(statements_v3::StatementError::Postgres(
+                    PgError::PermissionDenied,
+                )));
+            };
+            let statements = plugin.active_statement_set(&component_id);
+            ctx.table
+                .push(PgStatementTransaction {
+                    transaction: transaction.lend(),
+                    owner_scope: component_id,
+                    statements,
+                })
+                .map(Ok)
+                .map_err(Into::into)
+        })
     }
 }
 
@@ -404,12 +433,12 @@ impl<D> StreamProducer<D> for RowBatches {
     }
 }
 
-impl<T: 'static + Send> statements_v2::HostTransactionWithStore<T> for SharedCtx {
+impl<T: 'static + Send> statements_v3::HostTransactionWithStore<T> for SharedCtx {
     async fn select_participant(
         accessor: &Accessor<T, Self>,
         rep: Resource<PgStatementTransaction>,
         participant_operation: String,
-    ) -> WasmResult<Result<(), statements_v2::StatementError>> {
+    ) -> WasmResult<Result<(), statements_v3::StatementError>> {
         converted(
             <Self as statement_wit::HostTransactionWithStore<T>>::select_participant(
                 accessor,
@@ -425,7 +454,7 @@ impl<T: 'static + Send> statements_v2::HostTransactionWithStore<T> for SharedCtx
         rep: Resource<PgStatementTransaction>,
         statement_digest: String,
         binds: Vec<SqlValue>,
-    ) -> WasmResult<Result<RowSet, statements_v2::StatementError>> {
+    ) -> WasmResult<Result<RowSet, statements_v3::StatementError>> {
         converted(
             <Self as statement_wit::HostTransactionWithStore<T>>::run(
                 accessor,
@@ -440,33 +469,33 @@ impl<T: 'static + Send> statements_v2::HostTransactionWithStore<T> for SharedCtx
     async fn commit(
         accessor: &Accessor<T, Self>,
         rep: Resource<PgStatementTransaction>,
-    ) -> WasmResult<Result<(), statements_v2::StatementError>> {
+    ) -> WasmResult<Result<(), statements_v3::StatementError>> {
         converted(<Self as statement_wit::HostTransactionWithStore<T>>::commit(accessor, rep).await)
     }
 
     async fn rollback(
         accessor: &Accessor<T, Self>,
         rep: Resource<PgStatementTransaction>,
-    ) -> WasmResult<Result<(), statements_v2::StatementError>> {
+    ) -> WasmResult<Result<(), statements_v3::StatementError>> {
         converted(
             <Self as statement_wit::HostTransactionWithStore<T>>::rollback(accessor, rep).await,
         )
     }
 }
 
-impl statements_v2::HostTransaction for ActiveCtx<'_> {
+impl statements_v3::HostTransaction for ActiveCtx<'_> {
     async fn drop(&mut self, rep: Resource<PgStatementTransaction>) -> WasmResult<()> {
         statement_wit::HostTransaction::drop(self, rep).await
     }
 }
 
-impl<T: 'static + Send> statements_v2::HostTransactionViewWithStore<T> for SharedCtx {
+impl<T: 'static + Send> statements_v3::HostTransactionViewWithStore<T> for SharedCtx {
     async fn run(
         accessor: &Accessor<T, Self>,
         rep: Resource<PgTransactionView>,
         statement_digest: String,
         binds: Vec<SqlValue>,
-    ) -> WasmResult<Result<RowSet, statements_v2::StatementError>> {
+    ) -> WasmResult<Result<RowSet, statements_v3::StatementError>> {
         converted(
             <Self as statement_wit::HostTransactionViewWithStore<T>>::run(
                 accessor,
@@ -479,15 +508,15 @@ impl<T: 'static + Send> statements_v2::HostTransactionViewWithStore<T> for Share
     }
 }
 
-impl statements_v2::HostTransactionView for ActiveCtx<'_> {
+impl statements_v3::HostTransactionView for ActiveCtx<'_> {
     async fn drop(&mut self, rep: Resource<PgTransactionView>) -> WasmResult<()> {
         statement_wit::HostTransactionView::drop(self, rep).await
     }
 }
 
-impl client_v2::Host for ActiveCtx<'_> {}
+impl client_v3::Host for ActiveCtx<'_> {}
 
-impl<T: 'static + Send> client_v2::HostWithStore<T> for SharedCtx {
+impl<T: 'static + Send> client_v3::HostWithStore<T> for SharedCtx {
     async fn query(
         accessor: &Accessor<T, Self>,
         sql: String,
@@ -511,7 +540,7 @@ impl<T: 'static + Send> client_v2::HostWithStore<T> for SharedCtx {
     }
 }
 
-impl<T: 'static + Send> client_v2::HostTransactionWithStore<T> for SharedCtx {
+impl<T: 'static + Send> client_v3::HostTransactionWithStore<T> for SharedCtx {
     async fn query(
         accessor: &Accessor<T, Self>,
         rep: Resource<PgTransaction>,
@@ -554,7 +583,7 @@ impl<T: 'static + Send> client_v2::HostTransactionWithStore<T> for SharedCtx {
     }
 }
 
-impl<T: 'static + Send> client_v2::HostCursorWithStore<T> for SharedCtx {
+impl<T: 'static + Send> client_v3::HostCursorWithStore<T> for SharedCtx {
     async fn fetch(
         accessor: &Accessor<T, Self>,
         rep: Resource<PgCursor>,
@@ -564,13 +593,13 @@ impl<T: 'static + Send> client_v2::HostCursorWithStore<T> for SharedCtx {
     }
 }
 
-impl client_v2::HostTransaction for ActiveCtx<'_> {
+impl client_v3::HostTransaction for ActiveCtx<'_> {
     async fn drop(&mut self, rep: Resource<PgTransaction>) -> WasmResult<()> {
         client::HostTransaction::drop(self, rep).await
     }
 }
 
-impl client_v2::HostCursor for ActiveCtx<'_> {
+impl client_v3::HostCursor for ActiveCtx<'_> {
     async fn drop(&mut self, rep: Resource<PgCursor>) -> WasmResult<()> {
         client::HostCursor::drop(self, rep).await
     }

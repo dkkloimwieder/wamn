@@ -61,13 +61,14 @@ mod claims;
 mod credential_exactness;
 /// Host admission of an event-started workflow run.
 mod event_admission;
+mod operation_transaction;
 mod pool;
 mod production_claim;
 mod resources;
 mod statements;
 mod transaction_views;
 mod types;
-mod v0_2;
+mod v0_3;
 mod wiring_resolution;
 
 pub use wiring_resolution::{
@@ -87,6 +88,7 @@ pub use credential_exactness::{
     MembershipExpectation, MembershipMode, credential_exactness_probe, explicit_credential_source,
 };
 pub use event_admission::{EventRunAdmission, EventRunAdmitted};
+pub use operation_transaction::{CommitFailure, OperationTransaction};
 pub use pool::{
     CheckoutProbe, ClassCredentials, CredentialProvider, K8sSecretProvider, ProjectConfig,
     ResolvedCredential, StaticCredentialProvider, WamnPostgresConfig,
@@ -198,7 +200,7 @@ pub const WAMN_POSTGRES_ID: &str = "wamn-postgres";
 pub fn add_to_linker(linker: &mut Linker<SharedCtx>) -> wash_runtime::wasmtime::Result<()> {
     client::add_to_linker::<_, SharedCtx>(linker, extract_active_ctx)?;
     statement_wit::add_to_linker::<_, SharedCtx>(linker, extract_active_ctx)?;
-    v0_2::add_to_linker(linker, true, true)
+    v0_3::add_to_linker(linker, true, true)
 }
 
 /// Per-workload config key carrying the tenant identity (plumbed end-to-end
@@ -367,7 +369,7 @@ impl WamnPostgres {
             if has_statements {
                 statement_wit::add_to_linker::<_, SharedCtx>(linker, extract_active_ctx)?;
             }
-            v0_2::add_to_linker(linker, has_client, has_statements)?;
+            v0_3::add_to_linker(linker, has_client, has_statements)?;
         }
 
         #[cfg(feature = "wasm_component_model_implements")]
@@ -395,7 +397,7 @@ impl WamnPostgres {
             if has_statements {
                 statement_wit::add_to_linker::<_, SharedCtx>(linker, extract_active_ctx)?;
             }
-            v0_2::add_to_linker(linker, has_unnamed, has_statements)?;
+            v0_3::add_to_linker(linker, has_unnamed, has_statements)?;
             if !named.is_empty() {
                 bindings::named_imports::wamn::postgres0_1_0::client::add_to_linker::<_, SharedCtx>(
                     linker,
@@ -441,9 +443,9 @@ impl HostPlugin for WamnPostgres {
                 WitInterface::from("wamn:postgres/types@0.1.0"),
                 WitInterface::from("wamn:postgres/client@0.1.0"),
                 WitInterface::from("wamn:postgres/statements@0.1.0"),
-                WitInterface::from("wamn:postgres/types@0.2.0"),
-                WitInterface::from("wamn:postgres/client@0.2.0"),
-                WitInterface::from("wamn:postgres/statements@0.2.0"),
+                WitInterface::from("wamn:postgres/types@0.3.0"),
+                WitInterface::from("wamn:postgres/client@0.3.0"),
+                WitInterface::from("wamn:postgres/statements@0.3.0"),
             ]),
             exports: HashSet::new(),
         }

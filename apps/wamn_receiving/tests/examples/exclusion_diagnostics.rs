@@ -99,7 +99,7 @@ async fn main() -> anyhow::Result<()> {
             "-z",
             "apps",
             "crates/platform/runtime/wit/deps/wamn-postgres",
-            "crates/platform/runtime/wit/deps/wamn-postgres-0.2",
+            "crates/platform/runtime/wit/deps/wamn-postgres-0.3",
             "rust-toolchain.toml",
         ])
         .output()?;

@@ -152,6 +152,9 @@ pub struct WamnPostgres {
     /// scope. The active scope is host-selected; a guest can only name a digest
     /// inside it.
     pub(super) transaction_views: std::sync::Mutex<super::transaction_views::TransactionViews>,
+    /// The host transaction of each scope whose operation item has one.
+    pub(super) operation_transactions:
+        std::sync::Mutex<super::operation_transaction::OperationTransactions>,
     pub(super) statement_scopes: std::sync::RwLock<StatementScopes>,
     /// Connections destroyed instead of repooled (chaos-gate observability).
     pub(super) destroyed: Arc<AtomicU64>,
@@ -811,6 +814,7 @@ impl WamnPostgres {
             invocations: std::sync::RwLock::new(HashMap::new()),
             statement_scopes: std::sync::RwLock::new(StatementScopes::default()),
             transaction_views: std::sync::Mutex::default(),
+            operation_transactions: std::sync::Mutex::default(),
             destroyed: Arc::new(AtomicU64::new(0)),
             bind_counters: super::BindCounters::default(),
         }

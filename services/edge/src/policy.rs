@@ -11,7 +11,9 @@ use anyhow::Context as _;
 use tokio::time::Instant;
 use wamn_catalog::{AdmittedComponent, ServingComponentOperation};
 use wamn_engine::flow_http_routing::AuthenticatedCaller;
-use wamn_engine::operation::invocation_policy::{InvocationPolicy, InvocationScope};
+use wamn_engine::operation::invocation_policy::{
+    InvocationPolicy, InvocationScope, NoItemTransaction,
+};
 use wamn_engine::operation::native_call::{NativeCallFailure, NativeInvocation};
 use wamn_engine::operation::native_workload::native_component_name;
 use wamn_engine::release_manifest::LoadedRelease;
@@ -127,6 +129,21 @@ impl InvocationPolicy for EdgePolicy {
     type Facts = EdgeFacts;
     /// No capability is bound, so nothing is revoked.
     type Authority = ();
+    /// The edge has no SQL.
+    type ItemTransaction = NoItemTransaction;
+
+    fn begin_item(
+        &self,
+        _component_id: &str,
+        _operation: &str,
+        _facts: &EdgeFacts,
+    ) -> impl Future<Output = anyhow::Result<Option<NoItemTransaction>>> + Send {
+        std::future::ready(Ok(None))
+    }
+
+    fn item_facts(&self, _facts: &EdgeFacts, transaction: &NoItemTransaction) -> EdgeFacts {
+        match *transaction {}
+    }
 
     fn activate(
         &self,

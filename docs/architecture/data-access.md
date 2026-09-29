@@ -177,7 +177,8 @@ A query that names an undeclared sort refuses with `invalid_input` on the field 
 Native SQLx tests compile the exact files that guest execution names.
 Guests send statement identities and arguments through `wamn:postgres`.
 The `statements` interface uses native async calls for execution, transaction creation, commit, and rollback.
-Version 0.2.0 repeats every 0.1.0 declaration and adds `run-stream`, and one host plugin serves both versions.
+Version 0.3.0 repeats every 0.1.0 declaration and adds `run-stream` and `operation-transaction`, and one host plugin serves both versions.
+The host begins the transaction of one logged operation item, and `operation-transaction` gives it to the guest. Inside that operation, `begin` refuses with SQLSTATE `25001`, and `commit` or `rollback` of the host transaction refuses with `2D000` ([host-owned transaction](../plan/host-transaction.md)).
 The host resolves those identities to admitted SQL bytes and the operation's allowed statements.
 Generation refuses PostgreSQL values that the production `wamn:postgres` type contract cannot represent.
 SQLx metadata is compilation data, not the SQL or package contract.
@@ -312,7 +313,7 @@ The generated `query` action declares a `limit` that defaults to 100 and accepts
 The query's codec fills the default and refuses a limit below 1.
 The host holds the maximum of each reply shape and refuses a larger limit before the query runs.
 The engine gathers the rows and the cursor into one page outcome for a caller that reads one outcome, such as a route or a wiring node.
-A query reads through `statements.run-stream` of `wamn:postgres` 0.2.0.
+A query reads through `statements.run-stream` of `wamn:postgres` 0.3.0.
 The host begins one transaction with the claims of `run`, declares one cursor over the exact statement, and fetches 500 rows at a time.
 Dropping the stream rolls the transaction back, which ends the query.
 The cursor reads the snapshot that the statement took when it started, so a write that commits during a load does not show in it.

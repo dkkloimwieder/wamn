@@ -21,7 +21,9 @@ pub mod native_call;
 pub mod native_workload;
 
 pub use intent::{IntentContext, logs_intent};
-pub use invocation_policy::{ApplicationHost, InvocationPolicy};
+pub use invocation_policy::{
+    ApplicationHost, InvocationPolicy, ItemCommitFailure, ItemTransaction, NoItemTransaction,
+};
 use native_call::{NativeInput, NativeInvocation, NativeOutcome, RowBatches, invoke_owned};
 pub use native_workload::NativeApplication;
 
@@ -99,7 +101,8 @@ pub async fn invoke_operation<H: ApplicationHost>(
     intent: Option<IntentContext<'_>>,
 ) -> anyhow::Result<Result<node_types::Emission, node_types::NodeError>> {
     match intent.filter(|intent| logs_intent(intent.kind)) {
-        Some(intent) => intent::invoke_logged(host, call, intent).await,
+        // The per-item loop holds a large future, so it lives on the heap.
+        Some(intent) => Box::pin(intent::invoke_logged(host, call, intent)).await,
         None => run_export(host, call).await,
     }
 }
@@ -137,16 +140,8 @@ async fn call_export<H: ApplicationHost>(
 ) -> anyhow::Result<NativeOutcome> {
     let deadline = tokio::time::Instant::now() + Duration::from_millis(call.deadline_ms);
     tokio::time::timeout_at(deadline, async {
-        let application = match call.closure {
-            OperationClosure::Released(components) => host.released_application(components).await?,
-            OperationClosure::Candidate(application) => Arc::clone(application),
-        };
-        let id = application
-            .workload
-            .facts_by_component_id
-            .iter()
-            .find_map(|(id, fact)| (fact == call.component).then_some(id))
-            .context("native-node-component-fact-missing")?;
+        let application = application_of(host, call.closure).await?;
+        let id = component_id_of(&application, call.component)?;
         let target = application
             .workload
             .dispatch_target(id, application.policy.id())
@@ -167,6 +162,30 @@ async fn call_export<H: ApplicationHost>(
     })
     .await
     .context("native node enclosing deadline elapsed")?
+}
+
+/// The loaded application that a call's closure names.
+async fn application_of<H: ApplicationHost>(
+    host: &H,
+    closure: OperationClosure<'_, H::Policy>,
+) -> anyhow::Result<Arc<NativeApplication<H::Policy>>> {
+    match closure {
+        OperationClosure::Released(components) => host.released_application(components).await,
+        OperationClosure::Candidate(application) => Ok(Arc::clone(application)),
+    }
+}
+
+/// The native component id of `component` in `application`.
+fn component_id_of<'a, P: InvocationPolicy>(
+    application: &'a NativeApplication<P>,
+    component: &AdmittedComponent,
+) -> anyhow::Result<&'a str> {
+    application
+        .workload
+        .facts_by_component_id
+        .iter()
+        .find_map(|(id, fact)| (fact == component).then_some(id.as_str()))
+        .context("native-node-component-fact-missing")
 }
 
 /// Unique process-local application and invocation scope identifiers.
