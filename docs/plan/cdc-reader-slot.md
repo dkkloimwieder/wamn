@@ -59,7 +59,7 @@ Postgres removes the WAL segments that the invalidated slot held (`invalidation_
 3. The gap end is the first position of the next slot. The recovery verb records it, because only that verb creates the slot.
 4. Every 30 seconds, on the cadence of the slot monitor, the reader reads the gap record of its slot. When `resync_at` is set, it resumes capture on the new slot, with no restart. A new slot alone does not start capture again.
 
-The reader has no readiness probe today, in `deploy/gcp/cdc-reader.yaml` or `deploy/gcp/cdc-reader-wms.yaml`. The pod keeps that readiness, and this spec adds no probe endpoint. The stopped state is in the `CDC_CAPTURE_GAP` event.
+The reader has no readiness probe, in `deploy/gcp/cdc-reader.yaml` or `deploy/gcp/cdc-reader-wms.yaml`, and this spec adds none. The reader stays running and stopped. The gap shows in the `CDC_CAPTURE_GAP` event and in `pg_replication_slots`, and `recover-capture-gap` writes the row.
 
 The gap record is one row per gap in `registry.capture_gap`: `slot`, `start_lsn`, `start_at`, `reason`, `detected_at`, `end_lsn`, `resync_at`. The reader reads it as it reads `registry.event_readers` today. Two verbs write it with the control credential:
 
@@ -72,7 +72,7 @@ Section 6.3 of the operations page names these two verbs and nothing else.
 
 Section 3.1 shows a second cause of loss. An active reader on a database with no writes never moves its slot, because it confirms only at a commit. The WAL of the whole cluster then counts against that slot. At the measured 94 MB per hour, an idle WMS loses its slot about 11 hours after its last write, with its reader running. On 2026-09-29 the WMS slot had 738 MB of headroom at 16:42 UTC. That runs out at about 00:30 UTC, before the guard stops the cluster at 07:00 UTC.
 
-The fix: when no transaction is open and every publish is acknowledged, the reader confirms the `wal_end` of a keepalive. Up to that position, the reader published every change of this database. The rule "the position advances only past acknowledged events" therefore still holds. One live test: an idle environment's slot follows the writes of another database.
+The fix has two parts. The fork `dkkloimwieder/pg-walstream` changes only so that `next_event` returns a keepalive as an event with its `wal_end`. The reader applies the rule, because only the reader knows that every publish was acknowledged. With no transaction open and the last returned commit acknowledged, the reader confirms the keepalive's `wal_end`. Up to that position, the reader published every change of this database. The rule "the position advances only past acknowledged events" therefore still holds. One live test: an idle environment's slot follows the writes of another database.
 
 ### 4.5 `max_slot_wal_keep_size` on wamn-dev
 
@@ -90,7 +90,7 @@ A true gap has one of three causes: a slot limit passed, a slot dropped by hand,
 
 One branch per issue, in the order 1, 3, 2. Workspace tests only, with live tests on a disposable database.
 
-1. The idle slot (section 4.4). With nothing open and nothing unacknowledged, the reader confirms a keepalive position. Live test: two databases, the idle one's `confirmed_flush_lsn` advances with the writes of the other.
+1. The idle slot (section 4.4). The fork returns a keepalive from `next_event`, and the reader confirms its `wal_end` with no transaction open and the last commit acknowledged. Live test: two databases, the idle one's `confirmed_flush_lsn` advances with the writes of the other.
 2. The gap stop and report (section 4.3). The `CDC_CAPTURE_GAP` event with its boundaries, `registry.capture_gap`, the two verbs, and the reader's wait for `resync_at` without a restart. Live tests: an invalidated slot gives one event with the start position. The test sets `max_slot_wal_keep_size` low and writes past it. A missing slot gives one event too. The reader does not capture on a new slot until `close-capture-gap` sets `resync_at`, and then it resumes in the same process.
 3. The limit on wamn-dev (section 4.5). Applied on 2026-09-29 in commit `90c7e336d`: the server shows `4GB`, and the WMS slot's `safe_wal_size` rose from 738097816 to 3942627736 bytes. Section 6.3 of the operations page is rewritten for the two verbs with issue 2.
 
@@ -107,7 +107,8 @@ Owner rulings of 2026-09-29:
 
 - No operator write to save the WMS slot, and no recorded loss. The 4 GB limit applies at once (issue 3), with no restart.
 - The keepalive confirm is issue 1 and comes first. It is the common cause, and the limit passed only because of it.
-- A reader with a gap stays running, not ready. It logs `CDC_CAPTURE_GAP` once and reads the gap record every 30 seconds. After `resync_at` is set, it resumes with no restart. The pod keeps the readiness it has today, and no probe endpoint is added.
+- A reader with a gap stays running and stopped. It logs `CDC_CAPTURE_GAP` once and reads the gap record every 30 seconds. After `resync_at` is set, it resumes with no restart. No readiness probe exists and none is added. The gap shows in the event and in `pg_replication_slots`.
 - 4 GB is right, with the disk cost of section 4.5.
 - The definition of the resync is in section 6. Its build is out of scope.
 - The names: `registry.capture_gap`, `wamn-ctl recover-capture-gap` and `wamn-ctl close-capture-gap`.
+- The keepalive confirm is split (2026-09-29). The fork returns a keepalive from `next_event` as an event with its `wal_end`, and nothing more. The reader applies the confirm rule. The new fork rev is pinned in `Cargo.toml`. A reader that raises its flushed position while idle and relies on the library's cap is out.
