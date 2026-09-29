@@ -25,7 +25,7 @@ spec:
     pg_hba:
       - host all all all scram-sha-256
     parameters:
-      max_slot_wal_keep_size: "1GB"
+      max_slot_wal_keep_size: "4GB"
   bootstrap:
     initdb:
       database: wamn_system

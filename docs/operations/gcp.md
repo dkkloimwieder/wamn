@@ -1402,6 +1402,16 @@ kubectl -n platform patch pvc wamn-pg-1 --type merge -p '{"spec":{"resources":{"
 
 On 2026-09-28 the apply alone did not grow the claim in 408 seconds. The patch grew it in 32 seconds, and Postgres was ready 167 seconds later. Only the two live CDC slots existed, so no slot was dropped (finding `wamn-6jit`).
 
+The slot limit `max_slot_wal_keep_size` is 4 GB in the same file (plan `docs/plan/cdc-reader-slot.md` section 4.5). Apply it and read it back. It takes effect without a restart:
+
+```bash
+kubectl apply -f deploy/gcp/cnpg-cluster.yaml
+kubectl -n platform exec wamn-pg-1 -c postgres -- psql -U postgres -Atc "show max_slot_wal_keep_size"
+kubectl -n platform exec wamn-pg-1 -c postgres -- psql -U postgres -Atc "select slot_name, wal_status, safe_wal_size from pg_replication_slots"
+```
+
+On 2026-09-29 the apply took 1 second, and the server showed `4GB` with no restart. The WMS slot's `safe_wal_size` rose from 738097816 to 3942627736 bytes.
+
 Restart identity and the CDC readers after an outage of Postgres. Do not restart the host groups while they run: two host pods do not fit on the two nodes, and the new pods wait in `Pending`. If that happens, run `kubectl -n hosts rollout undo deploy/<name>`.
 
 ### 6.3 CDC slot lost
