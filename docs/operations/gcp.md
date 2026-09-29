@@ -1126,6 +1126,14 @@ WMS uses org `dkk`, project `wms`, env `dev` and tenant `wms`. A tenant is one p
 
 Run the commands of sections 3.7, 3.8 and 3.11 with `--project wms --tenant wms` and the WMS database `wamn-db-dkk--wms--dev--0nk1lrpr`. Name the guest Secret `wamn-host-db-wms`, because `wamn-host-db` belongs to Receiving in the same namespace. Prepare the session target of section 3.10 with `--project wms --tenant wms`, and apply it in `identity`. Add its Secret `wamn-session-role-reader-dkk--wms--dev` to `sessionTargetSecrets` in [values-identity.yaml](../../deploy/gcp/values-identity.yaml), and upgrade identity as in section 3.10. Without it, the sign-in page lists only Receiving, and the WMS host refuses the Receiving session with `You are not signed in.` On 2026-09-27 this step was first left out, and the upgrade then took 5 seconds.
 
+After `apply-package`, run `reconcile-replica-identity` as [deployment](deployment.md) states, because the workflow `movement_label` compares the old location of `wms.packaging`:
+
+```bash
+target/debug/wamn-ctl reconcile-replica-identity --admin-database-url "$T" --package apps/wamn_wms
+```
+
+On 2026-09-29 this step was first left out. The first move then wrote no label, and the host logged `REFUSED registration=wamn_wms::movement_label ... reason=OldImageAbsent`. The verb took 1 second.
+
 On 2026-09-27 the project environment took 3 seconds and its apply 9 seconds. `reconcile-run-plane`, `apply-package` and `reconcile-package-data-access` took 12, 37 and 9 seconds. The session target took 21 seconds and the five host credentials 108 seconds.
 
 ### 5.3 WMS components, wiring and release
@@ -1304,6 +1312,8 @@ kubectl -n hosts logs -l app.kubernetes.io/instance=wamn-host --all-containers -
 ```
 
 On 2026-09-27 the owner moved one pallet. The movement `8743151e-e335-491e-ac80-258072b2503d` was written at 17:35:45.416 UTC. The host started the `wamn_wms::movement_label` run 111 milliseconds later. The label `wms/8743151e-e335-491e-ac80-258072b2503d` is a 276 byte ZPL document, written in the same second. The row action `move` of the Pallets table was out of reach, because the table cuts off its last columns (finding `wamn-po31`).
+
+On 2026-09-29, on the new environments, the owner signed in at both hosts with the role `admin`. At Receiving the lists of purchase orders, receipts and suppliers answered 200. The owner moved `PAL-000006` at 13:28:21.644 UTC, and the host started the `wamn_wms::movement_label` run 250 milliseconds later. The label `wms/252da141-b014-fe2f-ebe0-103105cd75cc/2` is a 282 byte ZPL document. On main the object name is the packaging id and its row version. The move also showed the toast `query: uncertain` for a list refresh that the page cancelled itself (finding `wamn-v43a`).
 
 ## 6. Benchmark
 
