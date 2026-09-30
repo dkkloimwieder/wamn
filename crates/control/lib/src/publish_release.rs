@@ -93,13 +93,13 @@ INSERT INTO catalog.release_components (\
      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)";
 const SELECT_RELEASE_SNAPSHOT_SQL: &str = "\
 SELECT manifest_digest, canonical_bytes \
-  FROM catalog.release_manifest_v3_snapshots \
+  FROM catalog.release_manifest_snapshots \
  WHERE tenant_id = $1 AND effective_release_id = $2 FOR SHARE";
 const READ_RELEASE_SNAPSHOT_SQL: &str = "\
-SELECT canonical_bytes FROM catalog.release_manifest_v3_snapshots \
+SELECT canonical_bytes FROM catalog.release_manifest_snapshots \
  WHERE tenant_id = $1 AND effective_release_id = $2";
 const INSERT_RELEASE_SNAPSHOT_SQL: &str = "\
-INSERT INTO catalog.release_manifest_v3_snapshots (\
+INSERT INTO catalog.release_manifest_snapshots (\
        tenant_id, effective_release_id, manifest_digest, canonical_bytes\
      ) VALUES ($1, $2, $3, $4)";
 

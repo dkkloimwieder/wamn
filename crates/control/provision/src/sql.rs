@@ -208,7 +208,7 @@ pub const EXECUTOR_PLATFORM_CATALOG_RELATIONS: [&str; 9] = [
     "connection_generations",
     "effective_release_packages",
     "release_components",
-    "release_manifest_v3_snapshots",
+    "release_manifest_snapshots",
 ];
 
 /// Every `runs` column the executor-platform family WRITES, and no other
@@ -1101,7 +1101,7 @@ mod tests {
              GRANT SELECT ON TABLE catalog.\"effective_release_packages\" \
              TO \"wamn_executor_platform\"; \
              GRANT SELECT ON TABLE catalog.\"release_components\" TO \"wamn_executor_platform\"; \
-             GRANT SELECT ON TABLE catalog.\"release_manifest_v3_snapshots\" \
+             GRANT SELECT ON TABLE catalog.\"release_manifest_snapshots\" \
              TO \"wamn_executor_platform\"; \
              GRANT SELECT ON TABLE \"wamn_run\".\"runs\" TO \"wamn_executor_platform\"; \
              GRANT UPDATE (\"status\", \"terminal_reason\", \"fail_type\", \"result_json\", \

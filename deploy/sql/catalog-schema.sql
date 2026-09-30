@@ -443,17 +443,17 @@ CREATE UNIQUE INDEX release_components_route_key
                                    route_component, route_operation)
     WHERE route_operation IS NOT NULL;
 
-CREATE TABLE catalog.release_manifest_v3_snapshots (
+CREATE TABLE catalog.release_manifest_snapshots (
     tenant_id            text  NOT NULL CHECK (tenant_id <> ''),
     effective_release_id int   NOT NULL CHECK (effective_release_id > 0),
     manifest_digest      text  NOT NULL CHECK (manifest_digest ~ '^sha256:[0-9a-f]{64}$'),
     canonical_bytes      bytea NOT NULL CHECK (octet_length(canonical_bytes) > 0),
-    CONSTRAINT release_manifest_v3_snapshots_pkey
+    CONSTRAINT release_manifest_snapshots_pkey
         PRIMARY KEY (tenant_id, effective_release_id),
-    CONSTRAINT release_manifest_v3_snapshots_release_fkey
+    CONSTRAINT release_manifest_snapshots_release_fkey
         FOREIGN KEY (tenant_id, effective_release_id)
         REFERENCES catalog.effective_releases (tenant_id, effective_release_id),
-    CONSTRAINT release_manifest_v3_snapshots_exact_hash
+    CONSTRAINT release_manifest_snapshots_exact_hash
         CHECK (manifest_digest = 'sha256:' || encode(sha256(canonical_bytes), 'hex'))
 );
 
@@ -467,7 +467,7 @@ BEGIN
        AND effective_release_id = NEW.effective_release_id
      FOR UPDATE;
     IF EXISTS (
-        SELECT 1 FROM catalog.release_manifest_v3_snapshots
+        SELECT 1 FROM catalog.release_manifest_snapshots
          WHERE tenant_id = NEW.tenant_id
            AND effective_release_id = NEW.effective_release_id
     ) THEN
@@ -507,7 +507,7 @@ BEGIN
         'connection_instances',
         'connection_generations', 'connection_bindings', 'wirings',
         'wiring_tombstones', 'wiring_activation', 'wiring_activation_events',
-        'release_components', 'release_manifest_v3_snapshots',
+        'release_components', 'release_manifest_snapshots',
         'event_registrations'
     ] LOOP
         EXECUTE format('ALTER TABLE catalog.%I ENABLE ROW LEVEL SECURITY', relation_name);
@@ -541,7 +541,7 @@ BEGIN
         'connection_requirements', 'connection_generations',
         'connection_bindings', 'wirings', 'wiring_tombstones',
         'wiring_activation_events', 'release_components',
-        'release_manifest_v3_snapshots'
+        'release_manifest_snapshots'
     ] LOOP
         EXECUTE format(
             'CREATE TRIGGER %I BEFORE UPDATE OR DELETE ON catalog.%I FOR EACH ROW EXECUTE FUNCTION catalog.reject_immutable_row_change()',
@@ -566,7 +566,7 @@ GRANT SELECT ON catalog.packages,
     catalog.wiring_activation,
     catalog.wiring_activation_events,
     catalog.release_components,
-    catalog.release_manifest_v3_snapshots,
+    catalog.release_manifest_snapshots,
     catalog.event_registrations
 TO wamn_app;
 

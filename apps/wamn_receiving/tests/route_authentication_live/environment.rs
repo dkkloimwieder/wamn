@@ -634,7 +634,7 @@ pub(super) async fn mint_journey_release(
     );
     let digest: String = project
         .query_one(
-            "SELECT manifest_digest FROM catalog.release_manifest_v3_snapshots \
+            "SELECT manifest_digest FROM catalog.release_manifest_snapshots \
              WHERE tenant_id = $1 AND effective_release_id = $2",
             &[&TENANT, &release_id.cast_signed()],
         )
@@ -643,7 +643,7 @@ pub(super) async fn mint_journey_release(
         .get(0);
     if let Some(candidate) = wamn_control::delivery::Candidate::from_env()? {
         let bytes: Vec<u8> = project.query_one(
-            "SELECT canonical_bytes FROM catalog.release_manifest_v3_snapshots WHERE tenant_id = $1 AND effective_release_id = $2",
+            "SELECT canonical_bytes FROM catalog.release_manifest_snapshots WHERE tenant_id = $1 AND effective_release_id = $2",
             &[&TENANT, &release_id.cast_signed()],
         ).await?.get(0);
         let (manifest, _) = wamn_catalog::ServingManifest::from_canonical_bytes(&bytes)?;

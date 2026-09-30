@@ -295,7 +295,7 @@ async fn executor_platform_surface_live() -> anyhow::Result<()> {
              VALUES ('{TENANT}',{EFFECTIVE_RELEASE_ID},'{PACKAGE_ID}','{PACKAGE_VERSION}', \
                      '{WIRING_ID}',{WIRING_VERSION},'node','{PACKAGE_ID}','{PACKAGE_VERSION}', \
                      '{component_digest}'); \
-             INSERT INTO catalog.release_manifest_v3_snapshots \
+             INSERT INTO catalog.release_manifest_snapshots \
                (tenant_id,effective_release_id,manifest_digest,canonical_bytes) \
              SELECT '{TENANT}',{EFFECTIVE_RELEASE_ID}, \
                     'sha256:' || encode(sha256(bytes), 'hex'), bytes \
@@ -343,7 +343,7 @@ async fn executor_platform_surface_live() -> anyhow::Result<()> {
 
     let manifest_digest: String = admin
         .query_one(
-            "SELECT manifest_digest FROM catalog.release_manifest_v3_snapshots \
+            "SELECT manifest_digest FROM catalog.release_manifest_snapshots \
               WHERE tenant_id=$1 AND effective_release_id=$2",
             &[&TENANT, &EFFECTIVE_RELEASE_ID],
         )

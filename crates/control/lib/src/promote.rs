@@ -32,7 +32,7 @@ use crate::publish_release::{
 const COMPONENT_FETCH_TIMEOUT: Duration = Duration::from_secs(30);
 const CLAIM_TENANT_SQL: &str = "SELECT set_config('app.tenant', $1, true)";
 const SELECT_SOURCE_SNAPSHOT_SQL: &str = "\
-SELECT manifest_digest, canonical_bytes FROM catalog.release_manifest_v3_snapshots \
+SELECT manifest_digest, canonical_bytes FROM catalog.release_manifest_snapshots \
  WHERE tenant_id = $1 AND effective_release_id = $2";
 const SELECT_RELEASE_PACKAGES_SQL: &str = "\
 SELECT package_id, package_version FROM catalog.effective_release_packages \

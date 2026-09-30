@@ -24,7 +24,7 @@ struct QueueState {
 
 /// The release a start reads its wiring from: the snapshot publish wrote.
 const READ_RELEASE_SNAPSHOT_SQL: &str = "\
-SELECT canonical_bytes FROM catalog.release_manifest_v3_snapshots \
+SELECT canonical_bytes FROM catalog.release_manifest_snapshots \
  WHERE tenant_id = $1 AND effective_release_id = $2";
 
 /// The workflow contract over one tenant and environment.

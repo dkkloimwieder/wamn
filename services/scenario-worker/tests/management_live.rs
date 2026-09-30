@@ -724,7 +724,7 @@ async fn stored_wiring(project: &Client) -> Option<(String, u32, String, serde_j
 async fn minted_release_snapshot_count(project: &Client) -> i64 {
     project
         .query_one(
-            "SELECT count(*) FROM catalog.release_manifest_v3_snapshots WHERE tenant_id = $1",
+            "SELECT count(*) FROM catalog.release_manifest_snapshots WHERE tenant_id = $1",
             &[&TENANT],
         )
         .await

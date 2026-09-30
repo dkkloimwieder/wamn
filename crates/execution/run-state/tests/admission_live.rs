@@ -274,7 +274,7 @@ run_queue:DELETE,run_queue:SELECT,runs:SELECT', \
              'component_library:SELECT,connection_bindings:SELECT,\
 connection_generations:SELECT,connection_instances:SELECT,connection_requirements:SELECT,\
 effective_release_packages:SELECT,release_components:SELECT,\
-release_manifest_v3_snapshots:SELECT,wirings:SELECT', \
+release_manifest_snapshots:SELECT,wirings:SELECT', \
                   'catalog TABLE grain drifted: ' || coalesce(actual, '<none>'); \
            SELECT string_agg(a.attname, ',' ORDER BY a.attname) INTO actual \
              FROM pg_catalog.pg_attribute AS a \

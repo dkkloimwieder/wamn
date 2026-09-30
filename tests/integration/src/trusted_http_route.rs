@@ -735,7 +735,7 @@ async fn seed_with_client(
     let manifest_digest = release.release().manifest_digest.as_str();
     client
         .execute(
-            "INSERT INTO catalog.release_manifest_v3_snapshots (\
+            "INSERT INTO catalog.release_manifest_snapshots (\
                  tenant_id, effective_release_id, manifest_digest, canonical_bytes\
              ) VALUES ($1, $2, $3, $4)",
             &[

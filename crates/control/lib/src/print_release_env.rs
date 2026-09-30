@@ -3,7 +3,7 @@
 //! The operator path that shipped with `wamn-cdky` is manual: read the digest
 //! off `publish-release` stdout and hand-edit the template. This reader removes
 //! the transcription step and nothing else. It reads the frozen
-//! `catalog.release_manifest_v3_snapshots` row and re-derives release identity
+//! `catalog.release_manifest_snapshots` row and re-derives release identity
 //! from those exact bytes. It writes no manifest and mutates
 //! nothing; a pod reading its own digest out of PostgreSQL is explicitly
 //! refused (`wamn-duyl`) because it would roll a release without a rollout.

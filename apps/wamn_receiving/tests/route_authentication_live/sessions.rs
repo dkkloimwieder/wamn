@@ -52,7 +52,7 @@ pub(super) async fn prepare_session_host_fixture(
         .query_one(
             "SELECT releases.verified_publisher_principal, snapshots.canonical_bytes \
              FROM catalog.effective_releases AS releases \
-             JOIN catalog.release_manifest_v3_snapshots AS snapshots \
+             JOIN catalog.release_manifest_snapshots AS snapshots \
                USING (tenant_id, effective_release_id) \
              WHERE releases.tenant_id = $1 AND releases.effective_release_id = $2",
             &[&TENANT, &RELEASE_ID.cast_signed()],
@@ -317,7 +317,7 @@ pub(super) async fn assert_nested_session(
     let previous = project.query_one(
         "SELECT releases.verified_publisher_principal, snapshots.canonical_bytes \
          FROM catalog.effective_releases AS releases \
-         JOIN catalog.release_manifest_v3_snapshots AS snapshots USING (tenant_id, effective_release_id) \
+         JOIN catalog.release_manifest_snapshots AS snapshots USING (tenant_id, effective_release_id) \
          WHERE releases.tenant_id = $1 AND releases.effective_release_id = 1",
         &[&TENANT],
     ).await?;
@@ -342,7 +342,7 @@ pub(super) async fn assert_nested_session(
     let digests = released_component_digests(&previous, &inputs.route_host)?;
     let deployed_bytes: Vec<u8> = project
         .query_one(
-            "SELECT canonical_bytes FROM catalog.release_manifest_v3_snapshots \
+            "SELECT canonical_bytes FROM catalog.release_manifest_snapshots \
          WHERE tenant_id = $1 AND effective_release_id = 2",
             &[&TENANT],
         )
@@ -418,7 +418,7 @@ pub(super) async fn assert_nested_session(
     );
     let after: Vec<u8> = project
         .query_one(
-            "SELECT canonical_bytes FROM catalog.release_manifest_v3_snapshots \
+            "SELECT canonical_bytes FROM catalog.release_manifest_snapshots \
          WHERE tenant_id = $1 AND effective_release_id = 2",
             &[&TENANT],
         )

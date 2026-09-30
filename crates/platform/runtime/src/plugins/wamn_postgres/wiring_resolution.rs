@@ -19,7 +19,7 @@ pub const RELEASE_WIRING_SQL: &str = "\
 WITH release_scope AS MATERIALIZED ( \
     SELECT snapshot.effective_release_id, member.package_version, \
            convert_from(snapshot.canonical_bytes, 'UTF8')::jsonb AS manifest \
-      FROM catalog.release_manifest_v3_snapshots AS snapshot \
+      FROM catalog.release_manifest_snapshots AS snapshot \
       JOIN catalog.effective_release_packages AS member \
         ON member.tenant_id = snapshot.tenant_id \
        AND member.effective_release_id = snapshot.effective_release_id \
@@ -134,7 +134,7 @@ pub const RELEASE_COMPONENTS_SQL: &str = "\
 WITH release_scope AS MATERIALIZED ( \
     SELECT snapshot.effective_release_id, \
            convert_from(snapshot.canonical_bytes, 'UTF8')::jsonb AS manifest \
-      FROM catalog.release_manifest_v3_snapshots AS snapshot \
+      FROM catalog.release_manifest_snapshots AS snapshot \
      WHERE snapshot.tenant_id = $1 \
        AND snapshot.effective_release_id = $3 \
        AND snapshot.manifest_digest = $4 \
@@ -1179,7 +1179,7 @@ mod tests {
 
     #[test]
     fn queued_query_uses_release_snapshot_and_never_the_active_pointer() {
-        assert!(RELEASE_WIRING_SQL.contains("release_manifest_v3_snapshots"));
+        assert!(RELEASE_WIRING_SQL.contains("release_manifest_snapshots"));
         assert!(RELEASE_WIRING_SQL.contains("effective_release_packages"));
         assert!(RELEASE_WIRING_SQL.contains("release_components"));
         assert!(!RELEASE_WIRING_SQL.contains("wiring_activation"));

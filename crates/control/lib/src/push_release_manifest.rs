@@ -4,7 +4,7 @@
 //! exact retry pulls and verifies the existing artifact and performs no push.
 //! A tag holding any other layout or bytes refuses instead of being replaced.
 //!
-//! The bytes come only from the `catalog.release_manifest_v3_snapshots` row the
+//! The bytes come only from the `catalog.release_manifest_snapshots` row the
 //! mint froze. Publication therefore cannot attest caller-supplied bytes that
 //! were never verified against the release identity.
 

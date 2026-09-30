@@ -301,7 +301,7 @@ pub(super) async fn test_prior_commit(test: PriorCommitTest<'_>) -> anyhow::Resu
     let digest: String = test
         .project
         .query_one(
-            "SELECT manifest_digest FROM catalog.release_manifest_v3_snapshots \
+            "SELECT manifest_digest FROM catalog.release_manifest_snapshots \
          WHERE tenant_id = $1 AND effective_release_id = 4",
             &[&TENANT],
         )
@@ -701,7 +701,7 @@ async fn release_snapshots(project: &Client) -> anyhow::Result<Vec<(i32, Vec<u8>
     Ok(project
         .query(
             "SELECT effective_release_id, canonical_bytes \
-        FROM catalog.release_manifest_v3_snapshots WHERE tenant_id = $1 \
+        FROM catalog.release_manifest_snapshots WHERE tenant_id = $1 \
         AND effective_release_id BETWEEN 1 AND 3 ORDER BY effective_release_id",
             &[&TENANT],
         )

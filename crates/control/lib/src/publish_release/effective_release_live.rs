@@ -482,7 +482,7 @@ async fn fresh_base_and_overlay_mint_byte_identically_and_refuse_drift() {
 
     let stored: Vec<u8> = project
         .query_one(
-            "SELECT canonical_bytes FROM catalog.release_manifest_v3_snapshots \
+            "SELECT canonical_bytes FROM catalog.release_manifest_snapshots \
              WHERE tenant_id = $1 AND effective_release_id = $2",
             &[&TENANT, &RELEASE_ID],
         )
@@ -492,7 +492,7 @@ async fn fresh_base_and_overlay_mint_byte_identically_and_refuse_drift() {
     assert_eq!(stored, first.canonical_bytes);
     let snapshot_count: i64 = project
         .query_one(
-            "SELECT count(*) FROM catalog.release_manifest_v3_snapshots \
+            "SELECT count(*) FROM catalog.release_manifest_snapshots \
              WHERE tenant_id = $1",
             &[&TENANT],
         )

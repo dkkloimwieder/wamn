@@ -18,7 +18,7 @@ const INDEX_CACHE: &str = "no-cache";
 /// names. `select-release` and `promote` write the head.
 const SELECT_HEADS: &str = "SELECT s.manifest_digest \
      FROM catalog.effective_release_heads AS h \
-     JOIN catalog.release_manifest_v3_snapshots AS s USING (tenant_id, effective_release_id)";
+     JOIN catalog.release_manifest_snapshots AS s USING (tenant_id, effective_release_id)";
 
 /// Web client commands.
 #[derive(Debug, Args)]
@@ -322,7 +322,7 @@ mod tests {
             .execute(&[&format!(
                 "INSERT INTO catalog.effective_releases (tenant_id, effective_release_id, environment) \
                  VALUES ('t', 1, 'dev'); \
-                 INSERT INTO catalog.release_manifest_v3_snapshots \
+                 INSERT INTO catalog.release_manifest_snapshots \
                  (tenant_id, effective_release_id, manifest_digest, canonical_bytes) \
                  VALUES ('t', 1, '{head}', '{bytes}'::bytea); \
                  INSERT INTO catalog.effective_release_heads (tenant_id, environment, effective_release_id) \

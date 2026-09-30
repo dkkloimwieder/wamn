@@ -579,7 +579,7 @@ pub async fn publish(
     if let Some(candidate) = wamn_control::delivery::Candidate::from_env()? {
         let (project, task) = connect(&route.database_url).await?;
         let snapshot = project.query_one(
-            "SELECT canonical_bytes FROM catalog.release_manifest_v3_snapshots WHERE tenant_id = $1 AND effective_release_id = $2",
+            "SELECT canonical_bytes FROM catalog.release_manifest_snapshots WHERE tenant_id = $1 AND effective_release_id = $2",
             &[&TENANT, &RELEASE_ID.cast_signed()],
         ).await;
         drop(project);

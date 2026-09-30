@@ -228,7 +228,7 @@ async fn run_automation(mode: Mode) -> anyhow::Result<()> {
         &canonical,
         "automation-live",
     )?);
-    admin.execute("INSERT INTO catalog.release_manifest_v3_snapshots (tenant_id,effective_release_id,manifest_digest,canonical_bytes) VALUES ($1,1,$2,$3)",
+    admin.execute("INSERT INTO catalog.release_manifest_snapshots (tenant_id,effective_release_id,manifest_digest,canonical_bytes) VALUES ($1,1,$2,$3)",
         &[&TENANT,&release.release().manifest_digest.as_str(),&canonical]).await?;
     let mut credentials = ClassCredentials::default();
     let db_name: String = admin

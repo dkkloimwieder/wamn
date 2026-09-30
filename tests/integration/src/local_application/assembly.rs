@@ -279,7 +279,7 @@ pub(super) async fn assemble(
         &canonical,
         "local application",
     )?);
-    project.execute("INSERT INTO catalog.release_manifest_v3_snapshots (tenant_id,effective_release_id,manifest_digest,canonical_bytes) VALUES ($1,$2,$3,$4)", &[&input.tenant,&RELEASE_ID,&release.release().manifest_digest.as_str(),&canonical]).await?;
+    project.execute("INSERT INTO catalog.release_manifest_snapshots (tenant_id,effective_release_id,manifest_digest,canonical_bytes) VALUES ($1,$2,$3,$4)", &[&input.tenant,&RELEASE_ID,&release.release().manifest_digest.as_str(),&canonical]).await?;
 
     let project_config = ProjectConfig {
         credentials,

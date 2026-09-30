@@ -425,7 +425,7 @@ fn expected_executor_grants() -> Vec<String> {
         "connection_requirements",
         "effective_release_packages",
         "release_components",
-        "release_manifest_v3_snapshots",
+        "release_manifest_snapshots",
         "wirings",
     ] {
         rows.push(format!("relation|catalog|{relation}|SELECT"));
@@ -861,7 +861,7 @@ fn the_http_admitter_role_adds_exactly_the_fresh_permission_reads() {
         "catalog.packages",
         "catalog.effective_release_heads",
         "catalog.wiring_activation",
-        "catalog.release_manifest_v3_snapshots",
+        "catalog.release_manifest_snapshots",
     ] {
         for privilege in ["SELECT", "INSERT", "UPDATE", "DELETE"] {
             writeln!(

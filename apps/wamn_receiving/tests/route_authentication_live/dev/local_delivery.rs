@@ -262,7 +262,7 @@ async fn require_local_facts(
     let publications = target
         .query_one(
             "SELECT \
-             (SELECT count(*) FROM catalog.release_manifest_v3_snapshots WHERE tenant_id=$1), \
+             (SELECT count(*) FROM catalog.release_manifest_snapshots WHERE tenant_id=$1), \
              (SELECT count(*) FROM catalog.component_library WHERE tenant_id=$1), \
              (SELECT count(*) FROM catalog.wirings WHERE tenant_id=$1), \
              (SELECT count(*) FROM catalog.release_components WHERE tenant_id=$1)",
