@@ -16,6 +16,7 @@ pub mod component_declaration;
 pub mod copy_project_env;
 #[cfg(feature = "ops")]
 pub mod create_human;
+pub mod delete_project_env;
 pub mod delivery;
 pub mod dev;
 pub mod enable_cdc_project_env;

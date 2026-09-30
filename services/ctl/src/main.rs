@@ -70,6 +70,8 @@ enum Command {
     RecoverCaptureGap(provisioning_verbs::RecoverCaptureGapArgs),
     /// Set resync_at on the newest capture gap of a CDC reader, which lets it resume (wamn-59z6)
     CloseCaptureGap(provisioning_verbs::CloseCaptureGapArgs),
+    /// Delete one project environment and everything its instance names, so the next provision mints a new suffix (wamn-psss)
+    DeleteProjectEnv(provisioning_verbs::DeleteProjectEnvArgs),
     /// Apply one exact package-owned migration stream to a project database.
     ApplyPackage(package_verbs::ApplyPackageArgs),
     /// Reconcile generated package data privileges after apply-package.
@@ -138,6 +140,7 @@ async fn main() -> anyhow::Result<()> {
         Command::EnableCdcProjectEnv(args) => provisioning_verbs::enable_cdc(args).await,
         Command::RecoverCaptureGap(args) => provisioning_verbs::recover_capture_gap(args).await,
         Command::CloseCaptureGap(args) => provisioning_verbs::close_capture_gap(args).await,
+        Command::DeleteProjectEnv(args) => provisioning_verbs::delete_project_env(args).await,
         Command::ApplyPackage(args) => package_verbs::apply(args).await,
         Command::BindConnection(args) => component_verbs::bind(args).await,
         Command::ReconcilePackageDataAccess(args) => {
