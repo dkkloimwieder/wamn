@@ -1,0 +1,1469 @@
+# Platform UI
+
+**Design baseline:** `main` at `3a81dcfec`  
+**Repository when Revision 9 was prepared:** `main` at `8a5182be3`  
+**Revision:** 9, after the 2026-09-29 reviews and owner rulings  
+**Status:** architecture accepted. Platform UI implementation remains gated on the accepted and completed `kind` → `type` precursor.
+
+Section 3 records the reviewed `3a81dcfec` baseline deliberately. `main` has moved since, including `wamn-4afx` moving operation transaction ownership into the host. Issue 1 remeasures Section 3 against the `main` it starts from and commits that factual delta before changing behavior.
+
+## 0. Required precursor — `kind` → `type`
+
+The platform-wide `kind` → `type` migration is a **separate contract-migration epic and a hard dependency of this work**. It lands before Platform UI implementation begins.
+
+The naming rule is platform-wide. Product vocabulary, Rust names, serialized fields and WAMN-owned schema columns use `type`, not `kind`, including the current `OperationKind`, `AttachmentKind`, `CredentialKind`, `FailureKind`, `principal_kind`, `placement_kind` and `*ErrorKind` families where WAMN owns the name.
+
+This is a real contract migration, not a textual cleanup. `kind` occurs in authored and generated serialized surfaces, including `wamn.json`, generated source maps and attachment definitions. Renaming it changes canonical bytes and may therefore change definition hashes, artifact digests and package/release contents.
+
+That cost is accepted.
+
+The migration does **not** relax immutability or pinned-digest rules:
+
+- an already sealed package coordinate is never rewritten;
+- an immutable artifact is never replaced under its existing digest;
+- old releases retain their old bytes and identities;
+- affected applications are regenerated and republished under new immutable package/artifact/release identities as required;
+- fixtures and frozen contract evidence are regenerated for the new vocabulary.
+
+Before an agent implements the precursor, that epic gets its own accepted specification in the same form as this one. It must settle at least:
+
+- every authored, generated, wire and persisted WAMN-owned surface that carries `kind`;
+- which serialized changes move definition hashes, package/artifact digests or release bytes;
+- which package versions must change;
+- base/overlay regeneration order;
+- the republish order for installed wamn-dev environments;
+- database-column migrations;
+- compatibility with already sealed releases and artifacts;
+- whether the `*ErrorKind` Rust families migrate in the same epic or in a separately bounded step;
+- the proofs that no immutable coordinate or artifact is rewritten.
+
+The cost and ordering are accepted. The detailed migration shape is not delegated to an agent until that precursor specification is reviewed.
+
+The remainder of this specification assumes the post-migration `type` vocabulary.
+
+---
+
+## 1. Goal
+
+One administration surface at three levels, using the same contract, router, client IR, screen plan and shell architecture as applications:
+
+- **Org** — people, projects, org admins, invitations.
+- **Project** — environments, members, project admins.
+- **Application** — users, roles, the operations each role holds, and the roles each user holds.
+
+At the application level:
+
+> `admin` is the one built-in role and means all current application authority. Every other role is authored data containing a selected set of stable operation references.
+
+At the hierarchy above it:
+
+> Org and project administrative authority is represented by **real stored grants at every level it covers**, not by an authorization rule inferred at call time.
+
+---
+
+## 2. Fixed rules
+
+### 2.1 Common UI and authorization
+
+Every admin function is an operation in a contract and is served through the router.
+
+Generated operation components remain the primitive UI. Composite screens may be hand-authored over those generated operations; they do not bypass the operation contracts.
+
+Server authorization is authoritative. The UI may hide unavailable actions, but the router or host handler always enforces authority.
+
+Every admin write runs in the host. `wamn_app` remains SELECT-only on:
+
+```text
+app_system.users
+app_system.roles
+app_system.user_roles
+app_system.permissions
+```
+
+No guest component writes an authorization relation. No guest component receives a `wamn_system` connection.
+
+### 2.2 Application roles
+
+`admin` is the only built-in application role.
+
+It has no permission rows. A current `admin` holder holds **every operation the current release serves, including the fixed application-administration operations**.
+
+Every other role:
+
+- is authored per tenant;
+- starts empty;
+- is identified by a role slug;
+- contains stable operation references, not package-version-sealed operation ids;
+- may contain several directly selected permissions;
+- may hold additional permissions required by those selected operations;
+- may be held alongside other roles.
+
+A user may hold no application role.
+
+`operator` is removed.
+
+### 2.3 Permission identity and closure
+
+A stored permission reference is:
+
+```text
+<package>:<interface>/<operation>
+```
+
+It is the versionless reference returned by `sealed_operation_reference`.
+
+Package versions remain in the serving release and sealed runtime operation ids. They do not live in authored grant identity.
+
+The existing router security invariant remains unchanged:
+
+> **The caller must hold every operation the released call graph reaches.**
+
+`authorize_released_operation` continues to check:
+
+```text
+entry operation
++
+every permission folded into that released operation
+```
+
+The Platform UI permission model therefore materializes the required permission closure **in storage**, rather than synthesizing missing grants at request admission.
+
+Conceptually one stored effective grant has:
+
+```text
+role
+permission
+required_by
+```
+
+where:
+
+- `permission` is the effective stable operation reference the role holds;
+- `required_by` is the directly selected root operation that requires it;
+- `permission == required_by` means that permission was selected directly.
+
+Example:
+
+```text
+grant X
+→ X required_by X
+→ Y required_by X
+→ Z required_by X
+```
+
+If another selected operation `Q` also requires `Y`:
+
+```text
+Y required_by X
+Y required_by Q
+```
+
+If `Y` itself is explicitly selected:
+
+```text
+Y required_by Y
+```
+
+Authorization reads the **distinct effective `permission` references** and resolves each one to its exact sealed operation id in the current serving release:
+
+```text
+current user roles
+    ↓
+distinct stored effective references
+    ↓
+current serving release
+    ↓
+current sealed operation ids
+    ↓
+AuthenticatedCaller
+    ↓
+authorize_released_operation
+```
+
+Admission does not add another permission closure.
+
+The table therefore states what the caller is allowed to execute, while the router independently verifies the released call graph.
+
+A stored reference that the current release does not serve grants nothing.
+
+### 2.4 Permission grant and revoke
+
+`permission.grant X`:
+
+1. requires an existing authored role;
+2. requires `X` to be a grantable operation in the current serving release;
+3. reads `X`'s released permission closure;
+4. writes `X required_by X`;
+5. writes each required operation reference with `required_by X`.
+
+The operation is idempotent.
+
+`permission.revoke X` removes the direct selection `X required_by X` and every closure row owned by that selection (`required_by X`).
+
+If another selected root still requires an affected permission, that permission remains effective through the other root and the reply says so.
+
+Example:
+
+```text
+X selected
+X requires Y
+Y selected
+
+revoke Y
+→ remove Y required_by Y
+→ preserve Y required_by X
+→ reply: Y remains effective because X requires it
+
+revoke X
+→ remove X required_by X
+→ remove Y required_by X
+→ Y disappears unless another selected root still requires it
+```
+
+A revoke refuses only when the named permission is **not directly selected at all** and therefore has no `permission = required_by` row to remove.
+
+Example:
+
+```text
+X selected
+X requires Y
+Y is not directly selected
+
+revoke Y
+→ refuse: Y is not directly granted; it is required by X
+```
+
+If several selected roots require it, the refusal names those roots.
+
+This makes direct selection, effective authority, the administration grid and runtime authorization agree.
+
+### 2.5 Non-grantable operations
+
+The fixed application-administration operations are **not grantable** to authored roles.
+
+`permission.grant` refuses them.
+
+`admin` receives them because `admin` holds every operation the release serves.
+
+`permission.mine` is the exception: it is readable by any authenticated application session and is not itself an authored permission.
+
+### 2.6 Grant timing
+
+For a human session:
+
+- permission-row changes take effect on the next request;
+- role revocation takes effect on the next request because current `user_roles` still intersects the signed role names;
+- role grant takes effect at renewal or new sign-in because the new role name is not in the existing token.
+
+For a PAT caller, current roles are read per request, so grant and revoke both take effect on the next request.
+
+### 2.7 Org membership and no-access users
+
+A principal remains global, but org membership is explicit.
+
+Add:
+
+```text
+identity.org_memberships
+    principal_id
+    org
+    status        active | inactive
+```
+
+with primary key `(principal_id, org)`.
+
+An invitation creates or reuses the global principal and creates an active org membership.
+
+An active org member may have:
+
+- no project membership;
+- project/environment membership but no role;
+- application roles;
+- `project-admin`;
+- `org-admin`.
+
+A valid account with no effective audience is **not an authentication error**.
+
+After password authentication, `/password/environments` returns only audiences in which the person currently has effective access. If that list is empty, the shell renders only:
+
+> **No access has been granted.**
+
+No project, environment, package, screen or administration metadata is shown. No application session is minted.
+
+### 2.8 Materialized administrative hierarchy
+
+There is no implied authorization.
+
+An `org-admin` grant creates actual lower-level grants:
+
+```text
+identity.org_roles: org-admin
+        ↓
+identity.project_roles: project-admin
+        ↓
+identity.project_env_memberships
+        ↓
+app_system.user_roles: admin
+```
+
+for every existing project and environment in the org.
+
+A `project-admin` grant creates actual lower-level grants:
+
+```text
+identity.project_roles: project-admin
+        ↓
+identity.project_env_memberships
+        ↓
+app_system.user_roles: admin
+```
+
+for every existing environment of that project.
+
+New projects and environments materialize the corresponding grants for already-existing higher-level admins.
+
+`reconcile-run-plane` repairs these stored projections.
+
+Authorization never asks:
+
+```text
+is this person an org admin?
+→ pretend they are an application admin
+```
+
+The lower grant row exists.
+
+### 2.9 Downward revocation
+
+Revocation flows downward. It never flows upward.
+
+Revoking `org-admin` removes:
+
+```text
+org-admin
+→ project-admin in that org
+→ application admin in that org
+```
+
+It does not revoke ordinary authored application roles or ordinary project/environment membership.
+
+Revoking `project-admin` removes:
+
+```text
+project-admin
+→ application admin in that project
+```
+
+It does not revoke org membership, ordinary environment membership or authored application roles.
+
+Because lower administrative grants are materialized, a lower-level revoke is refused while a covering higher-level administrative role still exists:
+
+```text
+org-admin present
+→ project-admin cannot be independently revoked
+
+org-admin or project-admin present
+→ covered application admin cannot be independently revoked
+```
+
+Revoke at the scope that owns the authority.
+
+Downward administrative revocation is deliberately destructive for the subordinate administrative grant. If a lower-level administrative grant should remain independently, it is granted again explicitly after the higher-level revoke.
+
+### 2.10 Scoped person deactivation
+
+Deactivating a person at the org level removes all authority below that org:
+
+```text
+application users / roles
+project-env memberships
+project roles
+org roles
+```
+
+The global principal is not disabled and access in another org is untouched.
+
+This direction is one-way:
+
+```text
+org deactivation
+→ project + application access removed
+
+project/environment removal
+↛ org deactivation
+```
+
+Reactivation restores only the active org membership. It does **not** restore previous project memberships or roles.
+
+The person sees:
+
+> **No access has been granted.**
+
+until access is explicitly granted again.
+
+Revocation is performed from the leaves upward. A failed partial revoke may temporarily remove too much access, never retain lower application access after the higher authority has been reported successfully revoked.
+
+### 2.11 Provisioning boundary
+
+Ordinary org, project and application administration is handled through these contracts.
+
+Infrastructure provisioning remains outside the router's credentials.
+
+The router never receives Kubernetes provisioning authority.
+
+Lifecycle requests that require infrastructure write a provisioning saga. A dedicated control worker executes it with narrowly scoped provisioning credentials.
+
+---
+
+## 3. Reviewed repository baseline
+
+This section records the repository state reviewed at `main` `3a81dcfec`. It is a **design baseline, not a claim about current `main`**.
+
+By Revision 9, `main` had advanced to `8a5182be3`, including `wamn-4afx` work that moved operation transaction ownership into the host. The mandatory `kind` → `type` precursor will move further contracts before Platform UI Issue 1 begins.
+
+Issue 1 therefore remeasures this entire table against its starting `main` and commits the factual delta as its first commit, before making Platform UI behavior changes.
+
+| Place | Reviewed baseline at `3a81dcfec` |
+| --- | --- |
+| Application authority | `app_system.users`, `roles`, `user_roles`, `permissions`. `wamn_app` has SELECT only. |
+| Permission row | `permissions.permission` is text. Its only FK is `(tenant_id, role_name) → roles`. |
+| Operation identity | `canonical_operation_identity` includes package version. `sealed_operation_reference` already removes the `@version`. |
+| Built-in roles | `USER_ROLE_NAMES = [operator, admin]`. `apply-package` writes every public operation into both. |
+| Role changes | `grant-role` / `revoke-role` accept only the two `USER_ROLE_NAMES`. |
+| Application permission check | Session authorization intersects token roles with current `user_roles`; PAT authorization reads current roles. Both produce exact operation grants. |
+| Call-graph authorization | Publish folds every operation reached by an export into `ServingComponentOperation.permissions`; `authorize_released_operation` requires the caller to hold every one. |
+| Session target | A normal session target is one project-environment audience. |
+| Serving route | A route names a component export. Application routes execute in a guest. |
+| Operation type | The reviewed code calls it `OperationKind`; it is semantic: get, query, create, update, delete, command, projection, event handler. |
+| Tenant | One project-env database may contain several packages of one effective application. |
+| System identity | `identity.principals` is global. `identity.project_env_memberships` and `identity.project_roles` exist. There is no org-membership or org-role relation. |
+| Project roles | Existing slugs include `project-author` and `project-admin`; meaning is attached by the management boundary. |
+| Invitation | Invitation credentials are issued only for active humans that have not yet enrolled a password. |
+| Run-plane mirror | `reconcile-run-plane` creates application `users` rows from system identity but does not remove stale person rows. |
+| Shell | Environment choice, invitation/recovery/reset, and application screens. No administration route. |
+| Provisioning | Environment creation and release installation are CLI/runbook operations with infrastructure credentials. |
+| Installed schema changes | No general installed-schema upgrade verb exists. Hand-applied wamn-dev statements are recorded in `docs/operations/gcp.md` §7 under `wamn-o8b9`. |
+
+---
+
+## 4. Design
+
+## 4.1 Authored application roles
+
+The existing application authority tables remain the storage model, with the permission relation extended to preserve direct-selection provenance.
+
+Changes:
+
+1. `admin` becomes the only built-in role.
+2. `operator` disappears.
+3. `admin` has no permission rows.
+4. Authored permission rows contain stable operation references.
+5. Effective permission rows retain the directly selected root in `required_by`.
+6. Any existing role name may be assigned by `grant-role`.
+7. Administration writes are host-owned.
+
+Conceptual permission key:
+
+```text
+tenant_id
+role_name
+permission
+required_by
+```
+
+The exact DDL is owned by Issue 1, but the invariant is fixed:
+
+> More than one selected root may require the same permission, and removing one root must not remove authority still required by another.
+
+CLI operations:
+
+```text
+wamn-ctl create-role
+wamn-ctl delete-role
+wamn-ctl grant-permission
+wamn-ctl revoke-permission
+wamn-ctl grant-role
+wamn-ctl revoke-role
+```
+
+`admin` cannot be created or deleted.
+
+Role names use the same canonical slug rule everywhere:
+
+```text
+lowercase letters
+digits
+inner hyphens
+maximum 64 bytes
+```
+
+The application schema gains the corresponding CHECK so storage cannot contain a role name that identity later refuses.
+
+### Release reconciliation
+
+`apply-package` no longer owns complete permission reconciliation.
+
+It may create the built-in `admin` row if absent, but it cannot know the complete serving set when a package has been removed.
+
+A candidate effective serving release is reconciled **before activation**.
+
+For every authored role:
+
+1. read its directly selected roots (`permission = required_by`);
+2. remove a selected root the candidate release no longer serves;
+3. recompute each surviving root's permission closure from the candidate serving release;
+4. insert newly required closure rows;
+5. remove closure rows no longer required by that root.
+
+If reconciliation fails, activation fails with that error.
+
+Only after reconciliation succeeds may the candidate release activate.
+
+Therefore:
+
+```text
+package version changes
+→ direct selected reference unchanged
+→ closure reconciled against candidate
+
+operation dependency changes
+→ required rows updated before activation
+
+operation disappears
+→ selected root and its required rows removed
+
+whole package disappears
+→ its selected roots and required rows removed
+
+admin
+→ no permission rows to migrate
+```
+
+There is no window where a newly activated operation calls another operation the role was not granted.
+
+Acceptance:
+
+- authored role survives package application;
+- version bump preserves its selected roots;
+- newly added call-graph dependency adds its required permission before activation;
+- removed dependency removes its no-longer-required row;
+- a shared dependency remains while another selected root requires it;
+- removing a direct grant preserves authority still required through another root;
+- attempting to revoke a dependency that was never directly selected refuses and names its requiring roots;
+- removed operation loses its root and closure rows;
+- removed package loses its root and closure rows;
+- stale unknown references grant nothing;
+- `admin` reaches every current application operation without permission rows;
+- `authorize_released_operation` remains unchanged and continues to verify every exact sealed operation in the released call graph.
+
+---
+
+## 4.2 Host-run routes
+
+A serving route gains an execution target orthogonal to `OperationType`.
+
+Conceptually:
+
+```text
+route.target =
+    component { component, operation }
+  | host      { handler }
+```
+
+`OperationType` remains semantic and unchanged by execution location.
+
+A host-run route retains the normal:
+
+- operation contract;
+- request envelope;
+- result and refusal shapes;
+- request limits;
+- CSRF treatment;
+- client IR;
+- screen plan;
+- generated client/component behavior.
+
+Only execution changes.
+
+The router dispatches the operation to a fixed host handler instead of invoking a guest component.
+
+The implementation uses the host transaction model present on the `main` Issue 1 starts from; it does not recreate a separate administration transaction path.
+
+### Application host routes
+
+The fixed application-administration contract is inserted into every application serving release as host-run routes.
+
+Those handlers target that project-env database.
+
+### Platform control routes
+
+Org/project administration is not an application release.
+
+The platform therefore has one immutable **control serving root**, built and versioned with the platform and loaded by the normal router stack independently of any application release.
+
+It contains the `wamn_control` contracts and host route definitions, but:
+
+- no application models;
+- no component artifact;
+- no project-env database;
+- no guest connection.
+
+This is the route source for the control UI.
+
+---
+
+## 4.3 Control authentication
+
+Control sessions are org-scoped.
+
+The UI may label the destination simply **Control**, but the wire audience is unique per org, for example:
+
+```text
+urn:wamn:control:<org>
+```
+
+This preserves the existing session claim that carries one org and avoids making one token authoritative over every org of a principal.
+
+Identity discovery returns a control audience only when the principal currently holds:
+
+```text
+org-admin in that org
+or
+project-admin in at least one project of that org
+```
+
+`project-author` and any other opaque project-role slug do **not** grant access to the Platform UI.
+
+A control session carries no application roles.
+
+Every control request rechecks current `wamn_system` authority:
+
+```text
+control session principal
++ token org
++ requested project when applicable
+→ current org-admin/project-admin check
+→ handler
+```
+
+The request cannot select another org than the token's org.
+
+Revoking a control-plane role therefore takes effect on the next request.
+
+### `control.mine`
+
+One member-readable control operation returns the caller's current control authority.
+
+Conceptually:
+
+```text
+org_admin: true | false
+
+projects:
+  - project: receiving
+    project_admin: true
+  - project: wms
+    project_admin: true
+```
+
+It is available to every valid control session.
+
+The shell uses it only for presentation:
+
+```text
+org-admin
+→ org screens + all project administration screens
+
+project-admin only
+→ administration screens for the named projects only
+```
+
+Each actual control operation independently repeats its authoritative role check. `control.mine` never grants authority.
+
+---
+
+## 4.4 Org level
+
+Add:
+
+```text
+identity.org_memberships (
+    principal_id,
+    org,
+    status
+)
+
+identity.org_roles (
+    principal_id,
+    org,
+    role
+)
+```
+
+Initial org role vocabulary:
+
+```text
+org-admin
+```
+
+`provision-org` writes the owner's active org membership and `org-admin`.
+
+### Org operations
+
+```text
+person.list
+person.invite
+person.activate
+person.deactivate
+
+project.list
+
+org_admin.grant
+org_admin.revoke
+
+control.mine
+```
+
+### `person.list`
+
+Returns active and inactive memberships of the org.
+
+The global principal remains an identity fact; membership status is org-local.
+
+### `person.invite`
+
+Input names:
+
+- email;
+- display name;
+- optional project-env memberships;
+- optional `org-admin`;
+- optional `project-admin` grants;
+- optional direct application roles.
+
+All role lists may be empty.
+
+The operation resolves the email globally.
+
+#### New principal
+
+If no principal exists:
+
+```text
+create global human principal
+→ create active org membership
+→ write requested system grants
+→ converge environment/application grants
+→ issue invitation credential
+→ mail invitation
+```
+
+#### Existing enrolled principal
+
+If the human principal already exists and already has a password credential:
+
+```text
+reuse principal
+→ create/reactivate org membership
+→ write requested system grants
+→ converge environment/application grants
+→ send no mail
+```
+
+This is the normal second-org case.
+
+No invitation credential or informational email is sent.
+
+#### Existing unenrolled principal
+
+If the principal exists but has no password credential:
+
+```text
+reuse principal
+→ create/reactivate org membership
+→ write requested system grants
+→ converge environment/application grants
+→ issue invitation credential
+→ mail invitation
+```
+
+Principal existence alone therefore does not suppress enrollment.
+
+Only email and display name identify the global human. Org membership and access remain org-local.
+
+An invitation with no effective role is valid. After enrollment the person sees:
+
+> **No access has been granted.**
+
+`wamn-ctl invite` accepts the same logical input and follows the same principal/enrollment rules.
+
+### `person.deactivate`
+
+Revokes from the leaves upward:
+
+1. application user/access rows for every environment in the org;
+2. project-env memberships;
+3. project roles;
+4. org roles;
+5. mark the org membership inactive.
+
+It does not disable the global principal.
+
+The operation reports success only after the downward access has been removed.
+
+`reconcile-run-plane` can repair an interrupted convergence, but a successful deactivation never depends on eventual cleanup to close access.
+
+### `person.activate`
+
+Marks the org membership active.
+
+It restores no project, environment or role access.
+
+### `org_admin.grant`
+
+Requires an active org member.
+
+Writes the actual `org-admin` row, then materializes:
+
+```text
+project-admin in every existing project
+membership in every existing environment
+admin in every existing application
+```
+
+A later project/environment creation performs the same materialization for all current org admins.
+
+### `org_admin.revoke`
+
+Removes application `admin` throughout the org, then project-admin rows throughout the org, then the `org-admin` row.
+
+Ordinary memberships and authored application roles remain.
+
+If lower administrative authority is still wanted after the revoke, it is explicitly granted again.
+
+---
+
+## 4.5 Project level
+
+Project authority uses the existing:
+
+```text
+identity.project_roles
+```
+
+with the existing administrative spelling:
+
+```text
+project-admin
+```
+
+Project operations:
+
+```text
+environment.list
+
+member.list
+member.grant
+member.revoke
+
+project_admin.grant
+project_admin.revoke
+```
+
+### Membership
+
+`member.grant` requires an active org membership.
+
+It writes `identity.project_env_memberships` and converges the person row into the target application's `app_system.users`.
+
+`member.revoke` removes the target environment membership and deletes that person's application `users` row. Existing FKs cascade its application role assignments.
+
+It does not affect the person's org membership or another environment.
+
+If the person still holds `org-admin` or `project-admin` covering that environment, `member.revoke` refuses. The covering authority must be revoked first.
+
+`reconcile-run-plane` converges human membership in both directions:
+
+```text
+system membership exists + person row absent
+→ add person row
+
+person row exists + system membership absent
+→ remove stale person row
+```
+
+This removal applies only to human/person rows. Service and platform rows retain their separate authoritative sources.
+
+### `project_admin.grant`
+
+Requires an active org member.
+
+Writes an actual `project-admin` row and then materializes:
+
+```text
+membership in every existing project environment
+admin in every existing application
+```
+
+A later environment creation performs the same materialization for every current project admin.
+
+### `project_admin.revoke`
+
+Refuses while the person remains `org-admin`.
+
+Otherwise it removes application `admin` from every environment in the project, then removes `project-admin`.
+
+Ordinary environment membership and authored application roles remain.
+
+---
+
+## 4.6 Application level
+
+One fixed platform contract is served under every application audience:
+
+```text
+wamn_control:application/...
+```
+
+It is one contract for the whole effective application, not one per package.
+
+Host-run operations:
+
+```text
+user.list
+
+role.list
+role.create
+role.delete
+
+permission.list
+permission.grant
+permission.revoke
+
+user_role.grant
+user_role.revoke
+
+permission.mine
+```
+
+All except `permission.mine` require `admin`.
+
+### Users
+
+`user.list` reads current human application users.
+
+A person reaches this relation through project-env membership.
+
+Membership remains authoritative; application administration cannot manufacture a user.
+
+### Roles
+
+`role.create` creates one empty authored role.
+
+`role.delete` deletes an authored role and its assignments/grants through the existing FKs.
+
+`admin` cannot be deleted.
+
+### Permissions
+
+`permission.list` reports for a role:
+
+- every directly selected root;
+- every effective permission row;
+- the root or roots requiring each effective permission;
+- whether each current operation is grantable;
+- whether an operation is fixed admin-only.
+
+Example:
+
+```text
+receiving.record_receipt
+    selected
+
+purchase_order.get
+    required by receiving.record_receipt
+
+inventory.query
+    selected
+    required by another_operation
+```
+
+`permission.grant` selects a root and materializes its current release closure.
+
+`permission.revoke` removes that root's direct selection and the closure rows owned by it.
+
+If an affected permission is also required by another root, it remains effective and the operation reports that fact.
+
+A dependency that was never directly selected has no direct grant to revoke; attempting to revoke it refuses and names the roots requiring it.
+
+Fixed administration operations are shown but disabled for authored roles.
+
+### User roles
+
+`user_role.grant` and `user_role.revoke` operate on current application roles.
+
+A direct `admin` grant is permitted.
+
+An `admin` revoke refuses while a covering `project-admin` or `org-admin` remains. Revoke the higher-level authority first.
+
+### `permission.mine`
+
+Returns the caller's effective current permission set for this application.
+
+For an authored role, this is the distinct effective permission set already stored after release reconciliation.
+
+For `admin`, it is every operation the current release serves.
+
+It is an authenticated-member utility, not an authored grant.
+
+---
+
+## 4.7 Administration screens
+
+Generated operation screens remain available individually and remain the TUI baseline.
+
+The web UI additionally has two composite screens in `web/ui`, built only from the operations above.
+
+### Role grid
+
+For one role:
+
+```text
+all current grantable operations
+grouped by interface
+search
+directly selected state
+effective state
+required-by roots
+one toggle per directly selectable operation
+```
+
+A dependency row that is effective only through another root is visible but has no direct selection to remove.
+
+If a directly selected operation is also required through another root, its direct toggle can be turned off; the row remains effective and explains which root still requires it.
+
+This makes:
+
+> Why does this role have this permission?
+
+answerable directly from the screen.
+
+### Person grid
+
+For one person:
+
+```text
+all application roles
+current role assignments
+effective permission set
+```
+
+A lower administrative role covered by a higher-level grant is shown as hierarchy-controlled rather than independently revocable.
+
+No grid writes a database directly.
+
+---
+
+## 4.8 Shell
+
+The shell remains responsible only for:
+
+```text
+sign-in
+audience choice
+/invite
+/recover
+/reset
+/:aud/<screen>
+```
+
+After credential validation:
+
+- application audiences with no effective role are not offered;
+- control audiences are offered only for current `org-admin` or `project-admin` authority;
+- if no audience is available, the entire authenticated result is:
+
+> **No access has been granted.**
+
+No inaccessible environment names or screens are displayed.
+
+Within an application audience, the shell reads `permission.mine` once and shows only screens/actions the caller can actually use.
+
+Within a control audience, it reads `control.mine` once and shows:
+
+```text
+org administration
+→ only for org-admin
+
+project administration
+→ only for projects where the caller is project-admin
+```
+
+This is presentation only. Server refusal remains authoritative.
+
+---
+
+## 4.9 Consistency and convergence
+
+System and project databases cannot participate in one PostgreSQL transaction.
+
+The hierarchy therefore uses a safe ordering.
+
+### Grant
+
+Authority is written from the source downward:
+
+```text
+higher-level authority
+→ lower system grants
+→ environment memberships
+→ application grants
+```
+
+An interrupted grant may temporarily provide less access than requested. It never grants a lower authority without its authoritative higher-level source having committed first.
+
+### Revoke / deactivate
+
+Authority is removed from the leaves upward:
+
+```text
+application access
+→ environment membership / project authority
+→ org authority or org membership
+```
+
+An interrupted revoke may temporarily remove too much access. It must not report success while stale lower access remains.
+
+`reconcile-run-plane` and the control reconciliation functions repair interrupted projection, but they are not the security mechanism for a successfully reported revoke.
+
+Every write carries normal record-history attribution and an administrative operation identity.
+
+---
+
+## 5. Lifecycle — second epic
+
+Lifecycle work begins only after the administration epic closes and teardown has a supported verb.
+
+## 5.1 Project creation
+
+`project.create` creates the control-plane project record.
+
+It creates no infrastructure.
+
+Existing org admins receive actual `project-admin` grants for the new project.
+
+## 5.2 Environment creation
+
+`environment.create` writes one provisioning saga.
+
+The worker performs the existing supported chain, conceptually:
+
+```text
+provision-project-env
+enable-cdc-project-env
+
+apply selected packages
+reconcile package data access
+push required components
+publish candidate release
+reconcile authored role permission closures
+activate release
+reconcile run plane
+upload selected client UI
+
+materialize current org/project admin grants
+```
+
+The request names package/release inputs, not arbitrary executable provisioning commands.
+
+`environment.list` exposes the saga and its steps.
+
+## 5.3 Environment copy
+
+`environment.copy` creates a new empty environment from the source's reusable installation inputs:
+
+- selected package coordinates;
+- component/artifact selections;
+- reusable bindings;
+- authored role definitions;
+- directly selected stable permission roots;
+- selected UI artifact/input.
+
+It does **not** copy derived `required_by` rows. Those are recomputed against the target's candidate serving release.
+
+It also does **not** copy:
+
+- application data;
+- users;
+- session state;
+- the source serving-manifest bytes;
+- environment-specific release identity.
+
+The target builds and publishes its own serving release.
+
+Current org/project admins are materialized normally after creation.
+
+## 5.4 Environment state
+
+Add an environment status:
+
+```text
+active
+inactive
+```
+
+Inactive means:
+
+- identity does not offer or mint its application audience;
+- router serves none of its application routes;
+- shell does not list it;
+- CDC remains attached and its slot remains maintained;
+- data remains;
+- activation is reversible.
+
+`project.inactivate` inactivates every environment of the project.
+
+It does not deactivate the person's org membership or alter org/project role rows.
+
+## 5.5 Provisioning worker
+
+`wamn-ctl serve` is the initial executable surface for a long-running provisioning worker.
+
+Architecturally it is a service, not an interactive CLI holding an operator's omnibus credentials.
+
+It receives a dedicated workload identity with the minimum provisioning capabilities required for the saga steps.
+
+It:
+
+- reads open `provisioning.sagas`;
+- runs the same control-library functions as the CLI verbs;
+- serializes one saga per org;
+- records each completed step;
+- leaves a failure at the failed step with its error;
+- supports resume and abandon.
+
+The router never receives these credentials.
+
+---
+
+## 6. Work sequence
+
+One branch, one agent per issue. Workspace proofs first; cluster proofs are explicit exit gates where required.
+
+### Required precursor
+
+**P0. Specify platform `kind` → `type`.**
+
+Before implementation, write and accept the dedicated migration specification required by Section 0.
+
+It fixes:
+
+- serialized surfaces;
+- digest consequences;
+- package-version changes;
+- base/overlay ordering;
+- wamn-dev republish sequence;
+- installed-schema changes;
+- compatibility with sealed history;
+- the `*ErrorKind` decision;
+- acceptance proofs.
+
+**P1. Implement platform `kind` → `type`.**
+
+Separate contract-migration epic and hard dependency.
+
+It:
+
+- implements the accepted P0 specification;
+- changes the WAMN-owned vocabulary;
+- migrates authored and generated serialization;
+- preserves already sealed coordinates/artifacts;
+- regenerates and republishes affected applications under new immutable identities as specified;
+- regenerates frozen evidence;
+- closes before Platform UI Issue 1 begins.
+
+The migration cost is accepted.
+
+### Administration epic
+
+**1. Application authority model.**
+
+The **first commit** of Issue 1 changes no Platform UI behavior. It remeasures Section 3 against the then-current `main`, including changes landed since `3a81dcfec`, and commits the factual baseline delta. Implementation proceeds from that measured state.
+
+Then:
+
+- remove `operator`;
+- `admin` without permission rows;
+- stable stored operation references;
+- permission-root provenance;
+- stored released permission closure;
+- authored roles;
+- role-name CHECK;
+- candidate-release closure reconciliation before activation;
+- CLI role/permission verbs;
+- dev-loop and service-principal migration.
+
+Installed wamn-dev databases are migrated by hand because no general installed-schema migration path exists yet.
+
+For **both installed application environments**, Issue 1 owns the required statements to:
+
+- delete `operator` role/assignment/grant rows as required by the final DDL;
+- delete `admin` permission rows;
+- rewrite surviving authored permissions from sealed ids to stable references;
+- add `required_by`;
+- populate the direct and closure provenance required by the new model;
+- apply any accompanying role-name CHECK/schema change.
+
+Every statement actually applied to wamn-dev is recorded with date and finding in:
+
+```text
+docs/operations/gcp.md
+§7 Schema changes applied by hand
+```
+
+under the `wamn-o8b9` installed-schema-upgrade finding.
+
+Exit includes:
+
+- baseline remeasurement;
+- version bump;
+- added dependency;
+- removed dependency;
+- shared dependency;
+- direct grant removed while dependency remains effective;
+- non-selected dependency revoke refusal;
+- removed operation;
+- removed package;
+- unchanged `authorize_released_operation`;
+- admin-without-row proofs.
+
+**2. Host-run routes and control serving root.**
+
+- route execution target;
+- host dispatch using the current host transaction path;
+- fixed control serving root;
+- application host routes;
+- org-scoped control session target;
+- only `org-admin` / `project-admin` admission;
+- `control.mine`;
+- one fixture operation;
+- session/PAT/CSRF tests.
+
+**3. Org membership and org administration.**
+
+- `identity.org_memberships`;
+- `identity.org_roles`;
+- provisioning owner rows;
+- invitation with optional zero access;
+- new / enrolled / unenrolled existing-principal cases;
+- no-access login state;
+- person activation/deactivation;
+- org-admin materialization and downward revoke;
+- `wamn-ctl invite` parity.
+
+Issue 3 owns the hand-applied wamn-dev `wamn_system` statements needed to add:
+
+```text
+identity.org_memberships
+identity.org_roles
+```
+
+and their required constraints/grants.
+
+Those statements are recorded in `docs/operations/gcp.md` §7 against `wamn-o8b9`.
+
+**4. Project administration and convergence.**
+
+- member operations;
+- project-admin operations;
+- real lower-level grants;
+- forward grant and leaf-first revoke ordering;
+- `reconcile-run-plane` person deletion;
+- future-project/environment materialization.
+
+**5. Application administration contract.**
+
+- fixed contract in every application release;
+- non-grantable admin operations;
+- `permission.mine`;
+- role/user/permission operations;
+- closure provenance in permission reads;
+- fixture proof through generated clients/components.
+
+**6. Web administration grids.**
+
+- role grid;
+- direct-vs-effective permission state;
+- required-by display;
+- person grid;
+- hierarchy-controlled administrative grant display.
+
+**7. Shell.**
+
+- control destinations;
+- `control.mine`;
+- `permission.mine`;
+- empty-audience **No access has been granted** state;
+- browser proof through control and application surfaces;
+- architecture and `web-operator-client.md` updates.
+
+### Lifecycle epic
+
+Starts after the administration epic and the supported teardown verb.
+
+**8. Environment status.**
+
+- active/inactive schema and behavior across identity, router, shell and CDC;
+- project-level inactivation.
+
+Issue 8 owns the hand-applied wamn-dev `wamn_system` statement adding the environment status column and any accompanying constraint/default required by the accepted DDL.
+
+The statement is recorded in `docs/operations/gcp.md` §7 against `wamn-o8b9`.
+
+**9. Provisioning worker and environment creation.**
+
+Dedicated worker identity, saga execution, resume/abandon, status UI, live proof.
+
+**10. Project creation and environment copy.**
+
+New-project grant materialization and deterministic empty-environment copy from reusable release inputs.
+
+---
+
+## 7. Out of scope
+
+- Org creation and issuer creation through the UI.
+- Global principal disable from an org screen.
+- Restoring old project/application grants automatically after org reactivation.
+- Per-user permission rows.
+- A permission-policy expression language.
+- A second built-in application role.
+- A second built-in project administrative role.
+- `project-author` access to the Platform UI.
+- Package/release management as a general standalone UI.
+- Copying application data between environments.
+- Copying derived permission-closure rows between environments.
+- Service principals and PAT management in the UI.
+- A control audience for a PAT. Control sessions are browser sessions only; `wamn-ctl` is the machine path.
+- Performance/metrics screens.
+- Making session role grants visible before renewal.
+- Giving the router Kubernetes or provisioning credentials.
+- Sending an informational email when an already enrolled principal is added to another org or receives additional access.
+
+---
+
+## 8. Accepted decisions
+
+1. **Permission model — accepted.** Stable operation references are stored for application roles, with directly selected roots and their released permission closure materialized as provenance-bearing rows. Candidate-release reconciliation updates that closure before activation. Request admission resolves the resulting stored effective references to exact sealed ids. `authorize_released_operation` remains unchanged. Removing a direct selection does not remove authority still required by another selected root.
+
+2. **Hierarchy — accepted.** `org-admin → project-admin → admin` is materialized as real grants. Higher-level role revocation removes subordinate administrative grants; org-person deactivation removes all lower access; lower-level changes never revoke higher authority.
+
+3. **Org membership — accepted.** `identity.org_memberships` allows an invited person to exist in an org with zero effective access and gives org-local activation/deactivation without misusing global `identity.principals.status`.
+
+4. **Control session — accepted.** The control audience is org-scoped and available only to `org-admin` and `project-admin`. Every org/project action rechecks current `wamn_system` roles. `control.mine` supplies the shell's current control view.
+
+5. **Provisioning worker — accepted.** `wamn-ctl serve` is the initial binary surface for a dedicated, narrowly credentialed saga worker. The router remains unable to provision infrastructure.
+
+6. **Naming precursor — accepted owner ruling.** The platform-wide `kind` → `type` contract migration is mandatory and completes before Platform UI Issue 1 begins. Its implementation is itself gated on an accepted dedicated migration specification.
+
+7. **Baseline discipline — accepted.** Section 3 is the reviewed `3a81dcfec` baseline, not a permanent statement about `main`. Issue 1 remeasures it against its starting `main` in its first commit before changing Platform UI behavior.
