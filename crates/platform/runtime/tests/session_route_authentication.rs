@@ -18,7 +18,7 @@ use wamn_control_provision::{
     CredentialGeneration, WorkloadRoleFamily, WorkloadRoleScope, sql, workload_generation_role,
 };
 use wamn_engine::flow_http_routing::{
-    AuthenticatedCaller, CredentialKind, FlowHttpRouting, RouteInFlightLimit,
+    AuthenticatedCaller, CredentialType, FlowHttpRouting, RouteInFlightLimit,
 };
 use wamn_engine::release_manifest::LoadedRelease;
 use wamn_runtime::plugins::route_authentication::{
@@ -383,8 +383,8 @@ async fn sessions_use_one_fresh_scoped_permission_union_and_preserve_the_signed_
     let before = statements(&admin, &generation).await?;
     let admitted = accepted(&route, &first).await;
     assert_eq!(admitted.principal_id(), first["sub"].as_str().unwrap());
-    assert_eq!(admitted.credential_kind(), CredentialKind::Session);
-    assert_eq!(admitted.clone().credential_kind(), CredentialKind::Session);
+    assert_eq!(admitted.credential_type(), CredentialType::Session);
+    assert_eq!(admitted.clone().credential_type(), CredentialType::Session);
     assert!(admitted.permits(READ) && admitted.permits(WRITE));
     assert!(
         !admitted.permits(OTHER_TENANT),
@@ -394,8 +394,8 @@ async fn sessions_use_one_fresh_scoped_permission_union_and_preserve_the_signed_
     assert_eq!(other.principal_id(), SECOND_PRINCIPAL);
     assert!(other.permits(READ) && !other.permits(WRITE));
     assert_eq!(
-        accepted(&mixed, &first).await.credential_kind(),
-        CredentialKind::Session
+        accepted(&mixed, &first).await.credential_type(),
+        CredentialType::Session
     );
     for roles in [json!([]), json!(["unknown-role"])] {
         let mut empty = first.clone();
@@ -421,7 +421,7 @@ async fn sessions_use_one_fresh_scoped_permission_union_and_preserve_the_signed_
         .expect("a cookie with its CSRF header is admitted")
         .expect("host-owned caller");
     assert_eq!(by_cookie.principal_id(), first["sub"].as_str().unwrap());
-    assert_eq!(by_cookie.credential_kind(), CredentialKind::Session);
+    assert_eq!(by_cookie.credential_type(), CredentialType::Session);
     assert!(by_cookie.permits(READ) && by_cookie.permits(WRITE));
     assert_eq!(
         route
@@ -445,7 +445,7 @@ async fn sessions_use_one_fresh_scoped_permission_union_and_preserve_the_signed_
         .await
         .expect("a cookie read without its CSRF header is admitted")
         .expect("host-owned caller");
-    assert_eq!(read.credential_kind(), CredentialKind::Session);
+    assert_eq!(read.credential_type(), CredentialType::Session);
     assert_eq!(
         route
             .authenticate_headers_for_test(WRITE_ROUTE, &[("cookie", &cookie)])

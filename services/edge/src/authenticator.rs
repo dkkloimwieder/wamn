@@ -9,7 +9,7 @@
 use std::sync::Arc;
 
 use wamn_engine::flow_http_routing::{
-    AuthRejection, AuthenticatedCaller, AuthenticationRequest, CredentialKind, RouteAuthenticator,
+    AuthRejection, AuthenticatedCaller, AuthenticationRequest, CredentialType, RouteAuthenticator,
     RouteCredential, authentication_unavailable, check_csrf, route_credential, unauthorized,
 };
 use wamn_session::file_keys::FileKeys;
@@ -61,7 +61,7 @@ impl RouteAuthenticator for EdgeAuthenticator {
         Ok(AuthenticatedCaller::new(
             request.attachment_id,
             claims.sub.as_str(),
-            CredentialKind::Session,
+            CredentialType::Session,
             self.release
                 .grants()
                 .permissions(&claims.roles)

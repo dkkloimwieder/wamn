@@ -13,7 +13,7 @@ use wamn_control_provision::{
     CredentialGeneration, WorkloadRoleFamily, WorkloadRoleScope, sql, workload_generation_role,
 };
 use wamn_engine::flow_http_routing::{
-    AuthenticatedCaller, CredentialKind, FlowHttpRouting, RouteInFlightLimit,
+    AuthenticatedCaller, CredentialType, FlowHttpRouting, RouteInFlightLimit,
 };
 use wamn_engine::release_manifest::LoadedRelease;
 use wamn_runtime::plugins::route_authentication::{
@@ -317,7 +317,7 @@ async fn authenticated_as(
         caller.principal_id(),
         body["sub"].as_str().expect("signed principal")
     );
-    assert_eq!(caller.credential_kind(), CredentialKind::Session);
+    assert_eq!(caller.credential_type(), CredentialType::Session);
     assert!(caller.permits(ROOT));
     assert_eq!(caller.permits(CHILD), child_grant);
     caller
@@ -784,7 +784,7 @@ fn native_warm_alternating_callers_and_fresh_only_grant() {
             )
             .await
             .expect("real PAT caller");
-            assert_eq!(pat.credential_kind(), CredentialKind::Pat);
+            assert_eq!(pat.credential_type(), CredentialType::Pat);
             for caller in [&pat, &pat] {
                 let mut request = fresh_only.request(Instant::now() + CLEANUP);
                 request.facts.caller = Some(caller.clone());

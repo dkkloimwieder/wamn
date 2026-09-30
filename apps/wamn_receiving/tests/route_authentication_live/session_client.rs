@@ -379,7 +379,7 @@ fn assert_kind(
     let invocations = trace_component_invocations(&spans, &trace);
     anyhow::ensure!(
         invocations.len() == 1
-            && span_attribute(invocations[0], "wamn.caller_credential_kind").as_deref()
+            && span_attribute(invocations[0], "wamn.caller_credential_type").as_deref()
                 == Some(kind),
         "actual guest invocation lost the selected credential kind"
     );

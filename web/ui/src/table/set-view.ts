@@ -3,7 +3,7 @@
  * The refine filters, the search, the group levels and the chosen aggregates.
  * On a set that is not fully read, the table keeps them and applies none.
  *
- * A refine filter is `pallets.filter.<field>=<kind>:<value>`.
+ * A refine filter is `pallets.filter.<field>=<type>:<value>`.
  */
 
 import { type Aggregate, type Bucket, BUCKETS } from "./aggregate";
@@ -38,7 +38,7 @@ export const defaultSetView = (
 });
 
 function filterText(filter: SetFilter): string {
-  switch (filter.kind) {
+  switch (filter.type) {
     case "contains":
       return `contains:${filter.text}`;
     case "equals":
@@ -48,28 +48,28 @@ function filterText(filter: SetFilter): string {
     case "is":
       return `is:${filter.value}`;
     default:
-      return filter.kind;
+      return filter.type;
   }
 }
 
 function readFilter(text: string): SetFilter | null {
   const colon = text.indexOf(":");
-  const kind = colon < 0 ? text : text.slice(0, colon);
+  const type = colon < 0 ? text : text.slice(0, colon);
   const value = colon < 0 ? null : text.slice(colon + 1);
-  switch (kind) {
+  switch (type) {
     case "contains":
-      return value === null ? null : { kind, text: value };
+      return value === null ? null : { type, text: value };
     case "equals":
-      return value === null ? null : { kind, value };
+      return value === null ? null : { type, value };
     case "range": {
       const bounds = value?.split(",");
-      return bounds?.length === 2 ? { kind, min: bounds[0]!, max: bounds[1]! } : null;
+      return bounds?.length === 2 ? { type, min: bounds[0]!, max: bounds[1]! } : null;
     }
     case "is":
-      return value === "true" || value === "false" ? { kind, value: value === "true" } : null;
+      return value === "true" || value === "false" ? { type, value: value === "true" } : null;
     case "empty":
     case "not-empty":
-      return value === null ? { kind } : null;
+      return value === null ? { type } : null;
     default:
       return null;
   }

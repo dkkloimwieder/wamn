@@ -21,7 +21,7 @@ use wamn_catalog::{
 };
 use wamn_control_registry::identifiers::valid_runner;
 use wamn_engine::artifact_source::ArtifactSource;
-use wamn_engine::flow_http_routing::{AuthenticatedCaller, CredentialKind};
+use wamn_engine::flow_http_routing::{AuthenticatedCaller, CredentialType};
 use wamn_engine::release_manifest::{LoadedRelease, validate_component_in_release};
 use wamn_engine::router_delivery::bounded_node_deadline_ms;
 use wamn_event_wire::Causation;
@@ -222,18 +222,18 @@ pub fn invocation_span(
         wamn.node_id = %site.node_id,
         wamn.operation = %site.operation,
         wamn.caller_principal_id = tracing::field::Empty,
-        wamn.caller_credential_kind = tracing::field::Empty,
+        wamn.caller_credential_type = tracing::field::Empty,
         wamn.input_port = tracing::field::Empty,
         wamn.attachment_id = tracing::field::Empty,
     );
     if let Some(caller) = site.caller {
         span.record("wamn.caller_principal_id", caller.principal_id());
         span.record(
-            "wamn.caller_credential_kind",
-            match caller.credential_kind() {
-                CredentialKind::Pat => "pat",
-                CredentialKind::Session => "session",
-                CredentialKind::QueuedService => "queued-service",
+            "wamn.caller_credential_type",
+            match caller.credential_type() {
+                CredentialType::Pat => "pat",
+                CredentialType::Session => "session",
+                CredentialType::QueuedService => "queued-service",
             },
         );
     }

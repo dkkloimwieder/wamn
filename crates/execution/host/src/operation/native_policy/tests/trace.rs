@@ -53,7 +53,7 @@ impl TraceCapture {
                 wamn.operation = ROOT,
                 wamn.component_digest = %fixture.root.component_digest,
                 wamn.caller_principal_id = caller.principal_id(),
-                wamn.caller_credential_kind = "session",
+                wamn.caller_credential_type = "session",
             )
         });
         root.set_parent(opentelemetry::Context::new().with_remote_span_context(incoming.clone()))
@@ -118,7 +118,7 @@ impl TraceCapture {
                 Some(caller.principal_id())
             );
             assert_eq!(
-                attribute(invocation, "wamn.caller_credential_kind"),
+                attribute(invocation, "wamn.caller_credential_type"),
                 Some("session")
             );
         }

@@ -283,7 +283,7 @@ pub struct OrgEnvPolicy {
 /// closed `Tier`. It couples placement to nothing but "shared pool vs. own
 /// clusters"; sizing / HA / backup are [`EnvPolicy`] knobs.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "kind", rename_all = "kebab-case")]
+#[serde(tag = "type", rename_all = "kebab-case")]
 pub enum Placement {
     /// Every env shares the given pool cluster (the T3-style shared pool).
     Pooled { pool: String },
@@ -665,7 +665,7 @@ mod tests {
     }
 
     /// A registry round-trips through JSON, and `env` serializes as a bare slug,
-    /// placement as a `{kind, ...}` object, policies as per-org rows.
+    /// placement as a `{type, ...}` object, policies as per-org rows.
     #[test]
     fn registry_json_round_trips() {
         let reg = Registry {
@@ -685,9 +685,9 @@ mod tests {
         let back = Registry::from_json(&json).expect("parses");
         assert_eq!(reg, back);
         // Placement is tagged; pooled carries its pool.
-        assert!(json.contains("\"kind\": \"pooled\""));
+        assert!(json.contains("\"type\": \"pooled\""));
         assert!(json.contains("\"pool\": \"wamn-pg\""));
-        assert!(json.contains("\"kind\": \"dedicated\""));
+        assert!(json.contains("\"type\": \"dedicated\""));
         // env-policies are org-scoped rows with kebab-case wire keys.
         assert!(json.contains("\"env-policies\""));
         assert!(json.contains("\"org\": \"acme\""));

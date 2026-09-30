@@ -6,8 +6,8 @@ use std::path::Path;
 use serde_json::{Value, json};
 use wamn_runtime::connection_authority::{AuthorityError, DnsResolver, NetworkPolicy};
 use wamn_runtime::connection_generation::{
-    ClusterNetworkPolicySnapshot, ConnectionContractSnapshot, CredentialKind,
-    CredentialKindSnapshot, GenerationValidationErrorKind, GenerationValidationSnapshot,
+    ClusterNetworkPolicySnapshot, ConnectionContractSnapshot, CredentialType,
+    CredentialTypeSnapshot, GenerationValidationErrorKind, GenerationValidationSnapshot,
     HTTP_CONNECTION_CONTRACT, HTTP_CONNECTION_TYPE, PlatformHostPolicySnapshot,
     StagedConnectionGeneration, ValidationInputIdentity, definition_hash,
     validate_staged_connection_generation,
@@ -126,7 +126,7 @@ fn host_adapter_and_trusted_runner_worlds_pin_the_authority_split() {
 
 struct Fixture {
     contract: ConnectionContractSnapshot,
-    credential: CredentialKindSnapshot,
+    credential: CredentialTypeSnapshot,
     hosts: Vec<AllowedHost>,
     network: ExactNetwork,
     dns: FixedDns,
@@ -141,12 +141,12 @@ impl Fixture {
                 identity: identity("http-contract", "descriptor-v1"),
                 requirement_type: HTTP_CONNECTION_TYPE.into(),
                 contract: HTTP_CONNECTION_CONTRACT.into(),
-                allowed_credential_kinds: [CredentialKind::HttpHeader].into(),
+                allowed_credential_types: [CredentialType::HttpHeader].into(),
             },
-            credential: CredentialKindSnapshot {
+            credential: CredentialTypeSnapshot {
                 identity: identity("erp-api", "kind-rev-7"),
                 handle: "erp-api".into(),
-                kind: CredentialKind::HttpHeader,
+                kind: CredentialType::HttpHeader,
             },
             hosts: vec![
                 allowed("https://erp.example"),
@@ -162,13 +162,13 @@ impl Fixture {
 
     fn snapshot<'a>(
         &'a self,
-        credential: Option<&'a CredentialKindSnapshot>,
+        credential: Option<&'a CredentialTypeSnapshot>,
         hosts: &'a [AllowedHost],
         network: &'a ExactNetwork,
     ) -> GenerationValidationSnapshot<'a, ExactNetwork> {
         GenerationValidationSnapshot {
             connection_contract: &self.contract,
-            credential_kind: credential,
+            credential_type: credential,
             platform_host_policy: PlatformHostPolicySnapshot {
                 identity: identity("platform-host-policy", "host-rev-11"),
                 allowed_hosts: hosts,
@@ -258,7 +258,7 @@ async fn compatible_generation_records_every_validated_input_identity() {
         "descriptor-v1"
     );
     assert_eq!(
-        validated.credential_kind_input.revision.as_ref(),
+        validated.credential_type_input.revision.as_ref(),
         "kind-rev-7"
     );
     assert_eq!(
@@ -400,10 +400,10 @@ async fn credential_validation_uses_kind_metadata_only() {
         GenerationValidationErrorKind::CredentialMissing
     );
 
-    let wrong_kind = CredentialKindSnapshot {
+    let wrong_kind = CredentialTypeSnapshot {
         identity: identity("erp-api", "kind-rev-8"),
         handle: "erp-api".into(),
-        kind: CredentialKind::OAuth2Bearer,
+        kind: CredentialType::OAuth2Bearer,
     };
     let mismatch = validate_staged_connection_generation(
         &candidate(&definition),
@@ -414,7 +414,7 @@ async fn credential_validation_uses_kind_metadata_only() {
     .expect_err("contract-forbidden credential kind must fail");
     assert_eq!(
         mismatch.kind(),
-        GenerationValidationErrorKind::CredentialKindMismatch
+        GenerationValidationErrorKind::CredentialTypeMismatch
     );
 }
 

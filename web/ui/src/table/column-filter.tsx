@@ -23,12 +23,12 @@ import type { SetFeatures } from "./set-table";
 
 /** The filter of one column, as the table state holds it. */
 export type SetFilter =
-  | { readonly kind: "contains"; readonly text: string }
-  | { readonly kind: "range"; readonly min: string; readonly max: string }
-  | { readonly kind: "is"; readonly value: boolean }
-  | { readonly kind: "equals"; readonly value: string }
-  | { readonly kind: "empty" }
-  | { readonly kind: "not-empty" };
+  | { readonly type: "contains"; readonly text: string }
+  | { readonly type: "range"; readonly min: string; readonly max: string }
+  | { readonly type: "is"; readonly value: boolean }
+  | { readonly type: "equals"; readonly value: string }
+  | { readonly type: "empty" }
+  | { readonly type: "not-empty" };
 
 /** The value filter a column type offers, beside empty and not empty. */
 type ValueFilter = "contains" | "number" | "time" | "is" | "equals" | null;
@@ -56,7 +56,7 @@ function valueFilter(type: TableColumnType): ValueFilter {
 
 /** True when a row value of one column type passes the filter. */
 export function filterMatches(type: TableColumnType, value: unknown, filter: SetFilter): boolean {
-  switch (filter.kind) {
+  switch (filter.type) {
     case "empty":
       return isEmpty(value);
     case "not-empty":
@@ -81,7 +81,7 @@ export function filterMatches(type: TableColumnType, value: unknown, filter: Set
 
 /** The text of a filter's chip, after the column label. */
 export function filterText(type: TableColumnType, filter: SetFilter): string {
-  switch (filter.kind) {
+  switch (filter.type) {
     case "empty":
       return "is empty";
     case "not-empty":
@@ -102,7 +102,7 @@ export function filterText(type: TableColumnType, filter: SetFilter): string {
   }
 }
 
-const isValue = (filter: SetFilter | undefined, value: boolean) => filter?.kind === "is" && filter.value === value;
+const isValue = (filter: SetFilter | undefined, value: boolean) => filter?.type === "is" && filter.value === value;
 
 /** One labeled input of a filter control. */
 function FilterInput(props: {
@@ -135,15 +135,15 @@ export function ColumnFilter<TRow extends object>(props: {
   const set = (filter: SetFilter | undefined) => props.column.setFilterValue(filter);
   const range = () => {
     const filter = current();
-    return filter?.kind === "range" ? filter : { kind: "range" as const, min: "", max: "" };
+    return filter?.type === "range" ? filter : { type: "range" as const, min: "", max: "" };
   };
   const setRange = (min: string, max: string) =>
-    set(min === "" && max === "" ? undefined : { kind: "range", min, max });
+    set(min === "" && max === "" ? undefined : { type: "range", min, max });
   const text = (kind: "contains" | "equals") => {
     const filter = current();
-    return filter?.kind === "contains" && kind === "contains"
+    return filter?.type === "contains" && kind === "contains"
       ? filter.text
-      : filter?.kind === "equals" && kind === "equals"
+      : filter?.type === "equals" && kind === "equals"
         ? filter.value
         : "";
   };
@@ -165,7 +165,7 @@ export function ColumnFilter<TRow extends object>(props: {
               label="contains"
               type="text"
               value={text("contains")}
-              onInput={(value) => set(value === "" ? undefined : { kind: "contains", text: value })}
+              onInput={(value) => set(value === "" ? undefined : { type: "contains", text: value })}
             />
           </Match>
           <Match when={valueFilter(props.type) === "equals"}>
@@ -173,7 +173,7 @@ export function ColumnFilter<TRow extends object>(props: {
               label="equals"
               type="text"
               value={text("equals")}
-              onInput={(value) => set(value === "" ? undefined : { kind: "equals", value })}
+              onInput={(value) => set(value === "" ? undefined : { type: "equals", value })}
             />
           </Match>
           <Match when={valueFilter(props.type) === "number" || valueFilter(props.type) === "time"}>
@@ -200,7 +200,7 @@ export function ColumnFilter<TRow extends object>(props: {
                     type="button"
                     size="sm"
                     variant={isValue(current(), value) ? "default" : "outline"}
-                    onClick={() => set({ kind: "is", value })}
+                    onClick={() => set({ type: "is", value })}
                   >
                     {String(value)}
                   </Button>
@@ -213,16 +213,16 @@ export function ColumnFilter<TRow extends object>(props: {
           <Button
             type="button"
             size="sm"
-            variant={current()?.kind === "empty" ? "default" : "outline"}
-            onClick={() => set({ kind: "empty" })}
+            variant={current()?.type === "empty" ? "default" : "outline"}
+            onClick={() => set({ type: "empty" })}
           >
             is empty
           </Button>
           <Button
             type="button"
             size="sm"
-            variant={current()?.kind === "not-empty" ? "default" : "outline"}
-            onClick={() => set({ kind: "not-empty" })}
+            variant={current()?.type === "not-empty" ? "default" : "outline"}
+            onClick={() => set({ type: "not-empty" })}
           >
             is not empty
           </Button>

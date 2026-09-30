@@ -105,7 +105,7 @@ fn request_trace(
                 && text("wamn.environment") == environment
                 && hex_identifier(digest, 32)
                 && digest.bytes().all(|byte| !byte.is_ascii_uppercase())
-                && text("wamn.caller_credential_kind") == "pat"
+                && text("wamn.caller_credential_type") == "pat"
                 && route != workflow
                 && ["wamn.operation", "wamn.caller_principal_id"]
                     .iter()

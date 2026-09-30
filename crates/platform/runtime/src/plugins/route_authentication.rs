@@ -11,7 +11,7 @@ use std::sync::Arc;
 
 use tracing::Instrument as _;
 use wamn_engine::flow_http_routing::{
-    AuthRejection, AuthenticatedCaller, AuthenticationRequest, CredentialKind, Header,
+    AuthRejection, AuthenticatedCaller, AuthenticationRequest, CredentialType, Header,
     RouteAuthenticator, RouteCredential, authentication_unavailable, check_csrf,
     required_bearer_token, route_credential, unauthorized,
 };
@@ -54,7 +54,7 @@ pub async fn queued_service_caller(
     Ok(AuthenticatedCaller::new(
         "automation",
         principal,
-        CredentialKind::QueuedService,
+        CredentialType::QueuedService,
         permissions,
     ))
 }
@@ -239,7 +239,7 @@ impl PlatformRouteAuthenticator {
         Ok(AuthenticatedCaller::new(
             attachment_id,
             session.claims().sub.as_str(),
-            CredentialKind::Session,
+            CredentialType::Session,
             permissions.into_iter().collect(),
         ))
     }
@@ -324,7 +324,7 @@ impl RouteAuthenticator for PlatformRouteAuthenticator {
             Ok(AuthenticatedCaller::new(
                 attachment_id,
                 principal.id().as_str(),
-                CredentialKind::Pat,
+                CredentialType::Pat,
                 permissions.into_iter().collect(),
             ))
         }

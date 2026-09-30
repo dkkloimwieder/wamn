@@ -16,7 +16,7 @@ use chrono::{SecondsFormat, Utc};
 use serde_json::json;
 use tokio::sync::{mpsc, watch};
 use tokio::task::JoinHandle;
-use wamn_engine::flow_http_routing::{AuthenticatedCaller, CredentialKind};
+use wamn_engine::flow_http_routing::{AuthenticatedCaller, CredentialType};
 use wamn_engine::operation::logs_intent;
 use wamn_engine::router_delivery::{DeliveryOutcome, SourceRef};
 
@@ -65,7 +65,7 @@ pub fn start(
     let caller = AuthenticatedCaller::new(
         config.attachment.as_str(),
         config.principal.as_str(),
-        CredentialKind::QueuedService,
+        CredentialType::QueuedService,
         release
             .grants()
             .permissions(std::slice::from_ref(&config.role))

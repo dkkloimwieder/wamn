@@ -29,7 +29,7 @@ pub const HTTP_CONNECTION_CONTRACT: &str = "wamn:connection/http@0.1.0";
 
 /// Credential kinds recognized by connection-contract snapshots.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub enum CredentialKind {
+pub enum CredentialType {
     HttpHeader,
     OAuth2Bearer,
 }
@@ -47,15 +47,15 @@ pub struct ConnectionContractSnapshot {
     pub identity: ValidationInputIdentity,
     pub requirement_type: Box<str>,
     pub contract: Box<str>,
-    pub allowed_credential_kinds: Box<[CredentialKind]>,
+    pub allowed_credential_types: Box<[CredentialType]>,
 }
 
 /// Non-secret credential metadata captured for validation.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct CredentialKindSnapshot {
+pub struct CredentialTypeSnapshot {
     pub identity: ValidationInputIdentity,
     pub handle: Box<str>,
-    pub kind: CredentialKind,
+    pub kind: CredentialType,
 }
 
 /// Platform-host policy captured for validation.
@@ -85,7 +85,7 @@ pub struct StagedConnectionGeneration<'a> {
 #[derive(Debug)]
 pub struct GenerationValidationSnapshot<'a, N> {
     pub connection_contract: &'a ConnectionContractSnapshot,
-    pub credential_kind: Option<&'a CredentialKindSnapshot>,
+    pub credential_type: Option<&'a CredentialTypeSnapshot>,
     pub platform_host_policy: PlatformHostPolicySnapshot<'a>,
     pub cluster_network_policy: ClusterNetworkPolicySnapshot<'a, N>,
 }
@@ -100,7 +100,7 @@ pub struct ValidatedConnectionGeneration {
     pub failover_authorities: Box<[CanonicalAuthority]>,
     pub proxy_authority: Option<CanonicalAuthority>,
     pub connection_contract_input: ValidationInputIdentity,
-    pub credential_kind_input: ValidationInputIdentity,
+    pub credential_type_input: ValidationInputIdentity,
     pub platform_host_policy_input: ValidationInputIdentity,
     pub cluster_network_policy_input: ValidationInputIdentity,
 }
@@ -124,7 +124,7 @@ pub enum GenerationValidationErrorKind {
     ProxyMismatch,
     UnsupportedTransport,
     CredentialMissing,
-    CredentialKindMismatch,
+    CredentialTypeMismatch,
     InvalidInputIdentity,
     PlatformHostPolicyDenied,
     ClusterNetworkPolicyDenied,
@@ -220,28 +220,28 @@ where
     }
 
     let parsed = parse_definition(candidate.definition)?;
-    let credential = snapshot.credential_kind.ok_or_else(|| {
+    let credential = snapshot.credential_type.ok_or_else(|| {
         GenerationValidationError::field(
             GenerationValidationErrorKind::CredentialMissing,
             "credential-set-handle",
             "referenced credential set does not exist",
         )
     })?;
-    validate_identity(&credential.identity, "credential-kind")?;
+    validate_identity(&credential.identity, "credential-type")?;
     if credential.handle.as_ref() != parsed.credential_handle.as_ref() {
         return Err(GenerationValidationError::field(
             GenerationValidationErrorKind::CredentialMissing,
             "credential-set-handle",
-            "credential-kind snapshot does not identify the referenced handle",
+            "credential-type snapshot does not identify the referenced handle",
         ));
     }
     if !snapshot
         .connection_contract
-        .allowed_credential_kinds
+        .allowed_credential_types
         .contains(&credential.kind)
     {
         return Err(GenerationValidationError::field(
-            GenerationValidationErrorKind::CredentialKindMismatch,
+            GenerationValidationErrorKind::CredentialTypeMismatch,
             "credential-set-handle",
             "credential kind is not permitted by the exact connection contract",
         ));
@@ -264,7 +264,7 @@ where
             .collect(),
         proxy_authority: parsed.primary.proxy_authority().cloned(),
         connection_contract_input: snapshot.connection_contract.identity.clone(),
-        credential_kind_input: credential.identity.clone(),
+        credential_type_input: credential.identity.clone(),
         platform_host_policy_input: snapshot.platform_host_policy.identity.clone(),
         cluster_network_policy_input: snapshot.cluster_network_policy.identity.clone(),
     })

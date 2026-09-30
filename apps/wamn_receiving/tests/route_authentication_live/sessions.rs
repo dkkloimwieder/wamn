@@ -753,7 +753,7 @@ pub(super) async fn assert_nested_session(
         );
         let direct_invocations = trace_component_invocations(&direct_spans, &direct_pat_trace);
         anyhow::ensure!(
-            span_attribute(direct_invocations[0], "wamn.caller_credential_kind").as_deref()
+            span_attribute(direct_invocations[0], "wamn.caller_credential_type").as_deref()
                 == Some("pat"),
             "the direct fresh-only operation lost the originating PAT kind"
         );
@@ -885,7 +885,7 @@ pub(super) async fn assert_nested_session(
         );
     } else {
         println!(
-            "HOST_SESSION_NESTED result=pass credential_kind=session invocations=2 fixture_release=3 manifest_format=1"
+            "HOST_SESSION_NESTED result=pass credential_type=session invocations=2 fixture_release=3 manifest_format=1"
         );
     }
     Ok(())

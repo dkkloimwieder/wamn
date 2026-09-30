@@ -654,7 +654,7 @@ fn assert_counter_trace(
         test.human_id,
     );
     anyhow::ensure!(
-        span_attribute(parent, "wamn.caller_credential_kind").as_deref() == Some(credential)
+        span_attribute(parent, "wamn.caller_credential_type").as_deref() == Some(credential)
             && span_attribute(parent, "wamn.tenant").as_deref() == Some(TENANT),
         "counter wiring changed the original credential kind or tenant"
     );

@@ -32,7 +32,7 @@ use wash_runtime::wasmtime::component::{
 use wash_runtime::wit::{WitInterface, WitWorld};
 
 use crate::engine::MAX_HOST_CALL_DURATION;
-use crate::flow_http_routing::{AuthenticatedCaller, CredentialKind};
+use crate::flow_http_routing::{AuthenticatedCaller, CredentialType};
 use crate::operation::node_types;
 use crate::route_bindings::wamn::router_delivery::delivery;
 /// The wire types of `wamn:router-delivery` that a host and the wiring layer
@@ -562,7 +562,7 @@ pub fn authorize_registered_operation(
         .ok_or_else(|| OperationRefusal::new(OperationRefusalKind::PermissionDenied, operation))?;
     // Human sessions now receive a current authority check at request admission.
     // This does not widen the separately admitted queued-service contract.
-    if fresh_only && caller.credential_kind() == CredentialKind::QueuedService {
+    if fresh_only && caller.credential_type() == CredentialType::QueuedService {
         return Err(OperationRefusal::new(
             OperationRefusalKind::FreshCredentialRequired,
             operation,

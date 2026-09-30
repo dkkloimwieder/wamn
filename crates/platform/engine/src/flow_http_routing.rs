@@ -388,13 +388,13 @@ fn compile_input_schema(hash: &str, schema: Value) -> InputSchemaValidator {
 pub struct AuthenticatedCaller {
     attachment_id: Box<str>,
     principal_id: Box<str>,
-    credential_kind: CredentialKind,
+    credential_type: CredentialType,
     permissions: Arc<HashSet<String>>,
 }
 
 /// The credential that authenticated the original request, owned by the host.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum CredentialKind {
+pub enum CredentialType {
     /// A freshly authenticated platform access token.
     Pat,
     /// Signed identity and roles within the approved session lifetime.
@@ -409,7 +409,7 @@ impl std::fmt::Debug for AuthenticatedCaller {
             .debug_struct("AuthenticatedCaller")
             .field("attachment_id", &self.attachment_id)
             .field("principal_id", &self.principal_id)
-            .field("credential_kind", &self.credential_kind)
+            .field("credential_type", &self.credential_type)
             .field("permission_count", &self.permissions.len())
             .finish_non_exhaustive()
     }
@@ -420,13 +420,13 @@ impl AuthenticatedCaller {
     pub fn new(
         attachment_id: impl Into<Box<str>>,
         principal_id: impl Into<Box<str>>,
-        credential_kind: CredentialKind,
+        credential_type: CredentialType,
         permissions: HashSet<String>,
     ) -> Self {
         Self {
             attachment_id: attachment_id.into(),
             principal_id: principal_id.into(),
-            credential_kind,
+            credential_type,
             permissions: Arc::new(permissions),
         }
     }
@@ -442,8 +442,8 @@ impl AuthenticatedCaller {
     }
 
     /// Return the original credential kind, unchanged across nested calls.
-    pub fn credential_kind(&self) -> CredentialKind {
-        self.credential_kind
+    pub fn credential_type(&self) -> CredentialType {
+        self.credential_type
     }
 
     /// Check one exact registered-operation token.
@@ -2054,7 +2054,7 @@ mod tests {
         let caller = AuthenticatedCaller {
             attachment_id: "widget-http".into(),
             principal_id: "11111111-1111-4111-8111-111111111111".into(),
-            credential_kind: CredentialKind::Pat,
+            credential_type: CredentialType::Pat,
             permissions: Arc::new(HashSet::from([
                 "platform-fixture:widget/get@1.0.0".to_string()
             ])),
@@ -2067,14 +2067,14 @@ mod tests {
         assert!(caller.permits("platform-fixture:widget/get@1.0.0"));
         assert!(!caller.permits("platform-fixture:widget/query@1.0.0"));
         assert!(!caller.permits("widget.get"));
-        assert_eq!(caller.credential_kind(), CredentialKind::Pat);
-        for kind in [CredentialKind::Pat, CredentialKind::Session] {
+        assert_eq!(caller.credential_type(), CredentialType::Pat);
+        for kind in [CredentialType::Pat, CredentialType::Session] {
             let caller = AuthenticatedCaller {
-                credential_kind: kind,
+                credential_type: kind,
                 ..caller.clone()
             };
             let nested = caller.clone();
-            assert_eq!(nested.credential_kind(), kind);
+            assert_eq!(nested.credential_type(), kind);
             assert_eq!(nested.principal_id(), caller.principal_id());
             assert!(nested.permits("platform-fixture:widget/get@1.0.0"));
         }

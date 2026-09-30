@@ -75,8 +75,8 @@ fn json_round_trip_is_structurally_stable() {
     assert!(json.contains("\"instance-suffix\": \"k3m9x2p7\""));
     // env serializes as a bare lowercase string; placement is a tagged object.
     assert!(json.contains("\"env\": \"prod\""));
-    assert!(json.contains("\"kind\": \"dedicated\""));
-    assert!(json.contains("\"kind\": \"pooled\""));
+    assert!(json.contains("\"type\": \"dedicated\""));
+    assert!(json.contains("\"type\": \"pooled\""));
     // recovery-domain shared-with is the {"shared-with": ...} shape.
     assert!(json.contains("\"shared-with\": \"prod\""));
 }

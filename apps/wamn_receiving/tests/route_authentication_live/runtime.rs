@@ -186,7 +186,7 @@ pub(super) fn assert_nested_record_receipt_trace(
     trace_id: &str,
     overlay_digest: &str,
     caller_principal_id: &str,
-    credential_kind: &str,
+    credential_type: &str,
 ) {
     let components = trace_component_invocations(spans, trace_id);
     assert_eq!(
@@ -204,8 +204,8 @@ pub(super) fn assert_nested_record_receipt_trace(
         caller_principal_id,
     );
     assert_eq!(
-        span_attribute(overlay, "wamn.caller_credential_kind").as_deref(),
-        Some(credential_kind),
+        span_attribute(overlay, "wamn.caller_credential_type").as_deref(),
+        Some(credential_type),
         "trace {trace_id} did not preserve the originating credential kind"
     );
     assert_postgres_descendants(spans, trace_id, overlay);

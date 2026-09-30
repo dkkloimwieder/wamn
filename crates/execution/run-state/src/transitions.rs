@@ -54,7 +54,8 @@ authority AS ( \
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub struct StoredCallerOutcome {
-    pub kind: String,
+    #[serde(rename = "type")]
+    pub type_: String,
     pub body: Value,
     pub http_status: Option<u16>,
     pub release_node_id: Option<String>,
@@ -74,7 +75,7 @@ impl StoredCallerOutcome {
         release_node_id: Option<&str>,
         hash: &str,
     ) -> bool {
-        self.kind == kind
+        self.type_ == kind
             && &self.body == body
             && self.http_status == http_status
             && self.release_node_id.as_deref() == release_node_id
@@ -107,7 +108,7 @@ impl CallerReleaseResult {
         match code {
             "released" => Some(CallerReleaseResult::Released),
             "already-released" => Some(CallerReleaseResult::AlreadyReleased(StoredCallerOutcome {
-                kind: kind?,
+                type_: kind?,
                 body: body?,
                 http_status,
                 release_node_id,
@@ -305,7 +306,7 @@ mod tests {
         assert_eq!(
             result,
             Some(CallerReleaseResult::AlreadyReleased(StoredCallerOutcome {
-                kind: "responded".to_string(),
+                type_: "responded".to_string(),
                 body: json!({"ok": true}),
                 http_status: Some(200),
                 release_node_id: Some("respond".to_string()),
@@ -317,7 +318,7 @@ mod tests {
     #[test]
     fn caller_replay_identity_requires_exact_body_node_and_hash() {
         let stored = StoredCallerOutcome {
-            kind: "responded".to_string(),
+            type_: "responded".to_string(),
             body: json!({"a": 1, "b": 2}),
             http_status: Some(200),
             release_node_id: Some("respond".to_string()),
