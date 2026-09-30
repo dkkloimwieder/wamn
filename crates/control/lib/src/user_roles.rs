@@ -63,7 +63,15 @@ enum Change {
 }
 
 async fn change_role(request: &UserRoleRequest, change: Change) -> anyhow::Result<UserRoleOutcome> {
-    let (mut client, connection) = connect_target(request).await?;
+    let (mut client, connection) = connect_target(&EnvironmentTarget {
+        system_database_url: request.system_database_url.clone(),
+        admin_database_url: request.admin_database_url.clone(),
+        org: request.org.clone(),
+        project: request.project.clone(),
+        env: request.env.clone(),
+        tenant: request.tenant.clone(),
+    })
+    .await?;
     let result = change_user_role(
         &mut client,
         &request.tenant,
@@ -181,10 +189,29 @@ async fn resolve_user(
     }
 }
 
+/// One environment named in the registry, with the administrative URLs of the
+/// role and permission verbs.
+#[derive(Debug, Clone)]
+pub struct EnvironmentTarget {
+    /// Administrative Postgres URL to the system registry.
+    pub system_database_url: String,
+    /// Administrative Postgres URL to the registry-derived project database.
+    /// It must be SUPERUSER or BYPASSRLS, because the tables force RLS.
+    pub admin_database_url: String,
+    /// Registry organization.
+    pub org: String,
+    /// Registry project.
+    pub project: String,
+    /// Registry environment.
+    pub env: String,
+    /// Tenant of the environment.
+    pub tenant: String,
+}
+
 /// Connect to the project database and make sure that it is the database the
 /// registry records for the environment.
-async fn connect_target(
-    request: &UserRoleRequest,
+pub(crate) async fn connect_target(
+    request: &EnvironmentTarget,
 ) -> anyhow::Result<(
     Client,
     tokio::task::JoinHandle<Result<(), tokio_postgres::Error>>,

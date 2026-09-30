@@ -64,6 +64,14 @@ enum Command {
     GrantRole(role_verbs::UserRoleArgs),
     /// Take one role from a person or a service in one environment.
     RevokeRole(role_verbs::UserRoleArgs),
+    /// Create an empty authored role in one environment.
+    CreateRole(role_verbs::RoleArgs),
+    /// Delete an authored role with its assignments and permissions.
+    DeleteRole(role_verbs::RoleArgs),
+    /// Select an operation for an authored role, with the operations it requires.
+    GrantPermission(role_verbs::PermissionArgs),
+    /// Remove the selection of an operation from an authored role.
+    RevokePermission(role_verbs::PermissionArgs),
     /// Overlay CDC capture onto a provisioned project-env: publication + failover slot + replication role/Secret + reader registration (wamn-l5i9.9, D19 v3)
     EnableCdcProjectEnv(provisioning_verbs::EnableCdcProjectEnvArgs),
     /// Drop a lost CDC slot, create it again under the same name, and record the capture gap (wamn-59z6)
@@ -139,6 +147,10 @@ async fn main() -> anyhow::Result<()> {
         Command::Invite(args) => identity_verbs::invite(args).await,
         Command::GrantRole(args) => role_verbs::grant(args).await,
         Command::RevokeRole(args) => role_verbs::revoke(args).await,
+        Command::CreateRole(args) => role_verbs::create_role(args).await,
+        Command::DeleteRole(args) => role_verbs::delete_role(args).await,
+        Command::GrantPermission(args) => role_verbs::grant_permission(args).await,
+        Command::RevokePermission(args) => role_verbs::revoke_permission(args).await,
         Command::EnableCdcProjectEnv(args) => provisioning_verbs::enable_cdc(args).await,
         Command::RecoverCaptureGap(args) => provisioning_verbs::recover_capture_gap(args).await,
         Command::CloseCaptureGap(args) => provisioning_verbs::close_capture_gap(args).await,

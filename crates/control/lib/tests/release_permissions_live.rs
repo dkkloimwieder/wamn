@@ -11,9 +11,10 @@ use std::collections::{BTreeMap, BTreeSet};
 use tokio_postgres::{Client, NoTls};
 use wamn_catalog::{ArtifactHash, ServingComponent, ServingComponentOperation};
 use wamn_control::role_permissions::{
-    ReleaseClosures, ReleasePermissionOutcome, reconcile_release_permissions,
+    ReleaseClosures, ReleasePermissionOutcome, create_role, delete_role, grant_permission,
+    reconcile_release_permissions, revoke_permission,
 };
-use wamn_test_infrastructure::locked_database;
+use wamn_test_infrastructure::locked_database::{self, LockedDatabase};
 
 const RECORD_HISTORY: &str = include_str!("../../../../deploy/sql/record-history.sql");
 const RECORD_HISTORY_APP_GRANTS: &str =
@@ -76,14 +77,10 @@ async fn rows(client: &Client) -> BTreeSet<String> {
         .collect()
 }
 
-fn set(items: &[&str]) -> BTreeSet<String> {
-    items.iter().map(|item| (*item).to_owned()).collect()
-}
-
-#[tokio::test]
-async fn authored_roles_follow_the_candidate_release() {
+/// Connect to a disposable database with the application schema installed.
+async fn install() -> (LockedDatabase, Client) {
     let url = locked_database::database(wamn_test_postgres::database);
-    let (mut client, connection) = tokio_postgres::connect(&url, NoTls).await.unwrap();
+    let (client, connection) = tokio_postgres::connect(&url, NoTls).await.unwrap();
     tokio::spawn(async move {
         let _ = connection.await;
     });
@@ -97,6 +94,16 @@ async fn authored_roles_follow_the_candidate_release() {
         ))
         .await
         .expect("install the application schema");
+    (url, client)
+}
+
+fn set(items: &[&str]) -> BTreeSet<String> {
+    items.iter().map(|item| (*item).to_owned()).collect()
+}
+
+#[tokio::test]
+async fn authored_roles_follow_the_candidate_release() {
+    let (_database, mut client) = install().await;
     // clerk selects four roots and one reference that no release serves.
     client
         .batch_execute(&format!(
@@ -192,4 +199,176 @@ async fn authored_roles_follow_the_candidate_release() {
         ReleasePermissionOutcome::default(),
         "a second reconciliation of the same release changes nothing"
     );
+}
+
+/// Run one change in its own transaction and return its result.
+macro_rules! change {
+    ($client:expr, |$tx:ident| $body:expr) => {{
+        let $tx = $client.transaction().await.unwrap();
+        let result = $body.await;
+        if result.is_ok() {
+            $tx.commit().await.unwrap();
+        }
+        result
+    }};
+}
+
+#[tokio::test]
+async fn permission_grants_and_revokes_keep_roots_and_closures_apart() {
+    let (_database, mut client) = install().await;
+    // report/run requires line/list, and order/create requires line/list too.
+    let current = ReleaseClosures::from_components(&[component(
+        "shop",
+        &[
+            ("shop:report/run@1.0.0", &["shop:line/list@1.0.0"]),
+            ("shop:order/create@1.0.0", &["shop:line/list@1.0.0"]),
+            ("shop:line/list@1.0.0", &[]),
+        ],
+    )]);
+
+    let refused = change!(client, |tx| create_role(&tx, "t1", "admin")).unwrap_err();
+    assert!(format!("{refused:#}").contains("built-in"), "{refused:#}");
+    let refused = change!(client, |tx| create_role(&tx, "t1", "Clerk")).unwrap_err();
+    assert!(
+        format!("{refused:#}").contains("not a role name"),
+        "{refused:#}"
+    );
+    assert!(change!(client, |tx| create_role(&tx, "t1", "clerk")).unwrap());
+    assert!(!change!(client, |tx| create_role(&tx, "t1", "clerk")).unwrap());
+
+    let refused = change!(client, |tx| grant_permission(
+        &tx,
+        "t1",
+        "admin",
+        "shop:line/list",
+        &current
+    ))
+    .unwrap_err();
+    assert!(
+        format!("{refused:#}").contains("no permission"),
+        "{refused:#}"
+    );
+    let refused = change!(client, |tx| grant_permission(
+        &tx,
+        "t1",
+        "clerk",
+        "shop:order/delete",
+        &current
+    ))
+    .unwrap_err();
+    assert!(
+        format!("{refused:#}").contains("does not serve"),
+        "{refused:#}"
+    );
+
+    let granted = change!(client, |tx| grant_permission(
+        &tx,
+        "t1",
+        "clerk",
+        "shop:report/run",
+        &current
+    ))
+    .unwrap();
+    assert_eq!(granted.rows_added, 2);
+    let again = change!(client, |tx| grant_permission(
+        &tx,
+        "t1",
+        "clerk",
+        "shop:report/run",
+        &current
+    ))
+    .unwrap();
+    assert_eq!(again.rows_added, 0, "a second grant writes nothing");
+    change!(client, |tx| grant_permission(
+        &tx,
+        "t1",
+        "clerk",
+        "shop:order/create",
+        &current
+    ))
+    .unwrap();
+    change!(client, |tx| grant_permission(
+        &tx,
+        "t1",
+        "clerk",
+        "shop:line/list",
+        &current
+    ))
+    .unwrap();
+    assert_eq!(
+        rows(&client).await,
+        set(&[
+            "shop:report/run by shop:report/run",
+            "shop:line/list by shop:report/run",
+            "shop:order/create by shop:order/create",
+            "shop:line/list by shop:order/create",
+            "shop:line/list by shop:line/list",
+        ])
+    );
+
+    // The direct grant of line/list goes, and line/list stays through the
+    // two roots that require it.
+    let revoked = change!(client, |tx| revoke_permission(
+        &tx,
+        "t1",
+        "clerk",
+        "shop:line/list"
+    ))
+    .unwrap();
+    assert_eq!(
+        revoked.still_required_by,
+        ["shop:order/create", "shop:report/run"]
+    );
+    let refused = change!(client, |tx| revoke_permission(
+        &tx,
+        "t1",
+        "clerk",
+        "shop:line/list"
+    ))
+    .unwrap_err();
+    assert_eq!(
+        format!("{refused:#}"),
+        "shop:line/list is not directly granted to role clerk; it is required by \
+         shop:order/create, shop:report/run"
+    );
+
+    // Revoking report/run removes its closure row and keeps order/create's.
+    let revoked = change!(client, |tx| revoke_permission(
+        &tx,
+        "t1",
+        "clerk",
+        "shop:report/run"
+    ))
+    .unwrap();
+    assert!(revoked.still_required_by.is_empty());
+    assert_eq!(
+        rows(&client).await,
+        set(&[
+            "shop:order/create by shop:order/create",
+            "shop:line/list by shop:order/create",
+        ])
+    );
+    let refused = change!(client, |tx| revoke_permission(
+        &tx,
+        "t1",
+        "clerk",
+        "shop:report/run"
+    ))
+    .unwrap_err();
+    assert!(
+        format!("{refused:#}").contains("does not hold"),
+        "{refused:#}"
+    );
+
+    let refused = change!(client, |tx| delete_role(&tx, "t1", "admin")).unwrap_err();
+    assert!(
+        format!("{refused:#}").contains("cannot be deleted"),
+        "{refused:#}"
+    );
+    assert!(change!(client, |tx| delete_role(&tx, "t1", "clerk")).unwrap());
+    assert!(
+        rows(&client).await.is_empty(),
+        "the role took its rows with it"
+    );
+    assert!(!change!(client, |tx| delete_role(&tx, "t1", "clerk")).unwrap());
 }

@@ -275,6 +275,31 @@ The user needs its tenant `users` row, which `reconcile-run-plane` writes, so ru
 The operator service of an environment, `wamn-operator-<org>--<project>--<env>`, has the email `<subject>@<platform domain>`.
 Its PAT comes from `provision-project-env --emit-operator-pat-secret`.
 
+### Authored roles
+
+Create an authored role with `wamn-ctl create-role`, and delete it with `wamn-ctl delete-role`.
+The delete also removes the role's assignments and permissions.
+The verbs take the same environment flags as `grant-role`, and `--role` names the role.
+A role name has lowercase letters, digits, and hyphens after the first character, and at most 64 bytes.
+The verbs refuse `admin`.
+
+Select an operation for an authored role with `wamn-ctl grant-permission`:
+
+```bash
+wamn-ctl grant-permission --system-database-url "$WAMN_SYSTEM_ADMIN_URL" --admin-database-url "$WAMN_PG_ADMIN_URL" \
+  --org <org> --project <project> --env <env> --tenant <tenant> --role <role> \
+  --operation <package>:<interface>/<operation>
+```
+
+The operation must be served by the current serving release of the environment, which `select-release` or `promote` sets.
+The grant also writes each operation that the selected operation requires in that release, and it prints them.
+`wamn-ctl revoke-permission` removes the selection and the operations that it required.
+An operation that another selected operation of the role requires stays effective, and the verb names that operation.
+The verb refuses an operation that the role holds only because another selected operation requires it.
+
+Before a release becomes current, `promote`, `select-release`, and the dev loop update these rows from the new release.
+A selection that the new release does not serve is removed.
+
 ## Mailbox-loss recovery
 
 An authorized administrator approves the replacement email and updates the existing human principal.

@@ -10,7 +10,8 @@ use wamn_catalog::SERVING_MANIFEST_FORMAT_VERSION;
 use wamn_control::apply_package::{self, ApplyPackageRequest};
 use wamn_control::project_env_membership::{self, ProjectEnvMembershipRequest};
 use wamn_control::provision_project_env::{self, secret_value};
-use wamn_control::user_roles::{self, UserRoleRequest};
+use wamn_control::role_permissions;
+use wamn_control::user_roles::{self, EnvironmentTarget, UserRoleRequest};
 use wamn_control_provision::{SystemReader, WorkloadRoleFamily, parse_system_reader_url};
 use wamn_engine::flow_http_routing::{FlowHttpRouting, RouteInFlightLimit};
 use wamn_engine::release_manifest::LoadedRelease;
@@ -1230,6 +1231,44 @@ async fn role_verbs_grant_and_revoke_existing_roles() {
     assert!(!unchanged.changed, "a repeated revoke removed a row");
     assert_eq!(held("person@example.invalid").await, [ITEM_READER]);
     assert!(held("service@example.invalid").await.is_empty());
+
+    // The authored-role verbs reach the same registry-checked database.
+    let target = EnvironmentTarget {
+        system_database_url: admin_url.clone(),
+        admin_database_url: route.database_url.clone(),
+        org: ORG.to_owned(),
+        project: PROJECT.to_owned(),
+        env: ENVIRONMENT.to_owned(),
+        tenant: TENANT.to_owned(),
+    };
+    assert!(
+        role_permissions::create_role_in(&target, "clerk")
+            .await
+            .expect("create an authored role")
+    );
+    user_roles::grant_role(&request("service@example.invalid", "clerk"))
+        .await
+        .expect("grant the created role");
+    let error = role_permissions::grant_permission_in(&target, "clerk", OPERATION_REFERENCE)
+        .await
+        .expect_err("a grant needs a current serving release");
+    assert!(
+        format!("{error:#}").contains("has no current serving release"),
+        "{error:#}"
+    );
+    let error = role_permissions::revoke_permission_in(&target, "clerk", OPERATION_REFERENCE)
+        .await
+        .expect_err("a revoke of an unheld permission refuses");
+    assert!(format!("{error:#}").contains("does not hold"), "{error:#}");
+    assert!(
+        role_permissions::delete_role_in(&target, "clerk")
+            .await
+            .expect("delete the authored role")
+    );
+    assert!(
+        held("service@example.invalid").await.is_empty(),
+        "the deleted role kept its assignment"
+    );
 
     drop(project);
     project_task.abort();

@@ -10,6 +10,10 @@ const MVP_VERBS: &[&str] = &[
     "reconcile-run-plane",
     "grant-role",
     "revoke-role",
+    "create-role",
+    "delete-role",
+    "grant-permission",
+    "revoke-permission",
     "terminalize-effect-uncertain",
 ];
 
