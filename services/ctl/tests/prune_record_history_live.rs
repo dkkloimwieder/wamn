@@ -362,7 +362,7 @@ async fn assert_authority(admin: &Client, credential_url: &str) {
         .map(|row| {
             format!(
                 "{} {}.{} {}",
-                row.get::<_, String>("object_kind"),
+                row.get::<_, String>("object_type"),
                 row.get::<_, String>("schema_name"),
                 row.get::<_, String>("object_name"),
                 row.get::<_, String>("privilege_type"),
@@ -613,7 +613,7 @@ async fn prune_removes_only_the_expired_prefix_of_each_row() {
             admin
                 .query_opt(
                     &format!(
-                        "SELECT kind FROM {SCHEMA}.shipment_history \
+                        "SELECT type FROM {SCHEMA}.shipment_history \
                           WHERE row_key = jsonb_build_object('id', $1::text::uuid) \
                           ORDER BY position LIMIT 1"
                     ),

@@ -786,8 +786,8 @@ async fn gate_wiring(test: &PriorCommitTest<'_>, wiring: &Value) -> anyhow::Resu
             .post(format!("http://{}/authoring", gate.bind()))
             .bearer_auth(pat.token())
             .json(
-                &json!({"document": "request", "body": {"schema-version": "0.1",
-                "command-id": "gate-prior-commit-fixture", "command": {"kind": "gate", "input": {
+                &json!({"document": "request", "body": {"schema-version": "0.2",
+                "command-id": "gate-prior-commit-fixture", "command": {"type": "gate", "input": {
                     "scope": {"project-id": PROJECT, "environment": ENVIRONMENT},
                     "package-id": PACKAGE, "package-version": VERSION, "document": wiring
                 }}}}),
