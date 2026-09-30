@@ -34,7 +34,13 @@ fn main() -> anyhow::Result<()> {
     let wiring = serde_json::to_string(&document)?;
     let request = gate_document(
         &GateInput {
-            command_id: format!("gate-{}-{wiring_id}", package.package_id()),
+            // The version keeps a gate of a new package version apart from the
+            // recorded gate of the old one (docs/plan/kind-to-type.md §3.1 A11).
+            command_id: format!(
+                "gate-{}-{}-{wiring_id}",
+                package.package_id(),
+                package.package_version()
+            ),
             package,
             scope: AuthoringScope {
                 project_id: arguments[2].clone(),

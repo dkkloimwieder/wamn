@@ -261,7 +261,7 @@ mod tests {
 
     fn gate_input() -> GateInput {
         GateInput {
-            command_id: "gate-wamn_wms-inventory_move_and_label".into(),
+            command_id: "gate-wamn_wms-2.0.0-inventory_move_and_label".into(),
             package: PackageCoordinate::new("wamn_wms", "2.0.0").unwrap(),
             scope: AuthoringScope {
                 project_id: "fixture".into(),
