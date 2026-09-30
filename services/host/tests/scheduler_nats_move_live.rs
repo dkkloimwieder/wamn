@@ -1,16 +1,22 @@
-//! Scheduler NATS move test for the rebuilt host (docs/plan/nats-outage.md,
+//! Scheduler NATS outage tests for the rebuilt host (docs/plan/nats-outage.md,
 //! issue 1).
 //!
-//! The ignored test runs NATS in a Docker container on its own network, under
+//! The ignored tests run NATS in a Docker container on its own network, under
 //! the alias `nats` and with TLS as the runtime-operator chart configures it.
 //! The host runs in a second container on that network against
-//! `nats://nats:4222`. The test stops and removes the NATS container, parks a
-//! placeholder on its address, and starts a new NATS container under the same
-//! alias, so the name resolves to a new IP. It then requires a heartbeat RPC
-//! through the new server with no host restart, and a debug line with the cause
-//! of each failed attempt. It requires Docker, the images below and a new
-//! evidence directory. It starts no PostgreSQL, operator or guest workload.
+//! `nats://nats:4222`. The move case stops and removes the NATS container,
+//! parks a placeholder on its address, and starts a new NATS container under
+//! the same alias, so the name resolves to a new IP. The pause case first
+//! pauses the server, which keeps its connections open and answers nothing,
+//! measures what the client does, unpauses it, and then moves it. Each case
+//! requires a heartbeat RPC through the new server with no host restart, and a
+//! debug line with the cause of each failed attempt. They require Docker, the
+//! images below and an evidence directory outside the source tree, in which
+//! each case creates its own new directory. They start no PostgreSQL, operator
+//! or guest workload.
 
+use std::collections::BTreeMap;
+use std::fmt::Write as _;
 use std::fs;
 use std::os::unix::fs::DirBuilderExt as _;
 use std::path::{Path, PathBuf};
@@ -310,54 +316,67 @@ async fn heartbeat_rpc(
     .context("heartbeat RPC did not answer before its deadline")?
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "requires: Docker, nats:2.12.8-alpine, debian:trixie-slim, WAMN_HOST_LIVE_EVIDENCE_DIR"]
-async fn host_connects_again_after_scheduler_nats_moves() -> anyhow::Result<()> {
+/// One case: its evidence directory, its certificates, its containers, and a
+/// ready host connected to the first NATS container.
+struct Case {
+    evidence: PathBuf,
+    certs: Certificates,
+    fixture: Fixture,
+    network: String,
+    host: String,
+    probe_port: u16,
+    host_id: String,
+    nats: String,
+    nats_ip: String,
+    nats_port: u16,
+}
+
+const HOST_NAME: &str = "nats-move-host";
+
+/// Creates `<WAMN_HOST_LIVE_EVIDENCE_DIR>/<case>`, which must be new, starts
+/// the first NATS container and the host, and waits for a heartbeat RPC.
+async fn start_case(case: &str) -> anyhow::Result<Case> {
     wamn_test_postgres::require_prerequisites(&["WAMN_HOST_LIVE_EVIDENCE_DIR"]);
     // The host installs its provider through wash-runtime; this process has two.
     let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
-    let evidence =
-        PathBuf::from(std::env::var_os("WAMN_HOST_LIVE_EVIDENCE_DIR").context(
-            "set WAMN_HOST_LIVE_EVIDENCE_DIR to a fresh directory outside the source tree",
-        )?);
-    ensure!(
-        evidence.is_absolute(),
-        "evidence directory must be absolute"
+    let parent = PathBuf::from(
+        std::env::var_os("WAMN_HOST_LIVE_EVIDENCE_DIR")
+            .context("set WAMN_HOST_LIVE_EVIDENCE_DIR to a directory outside the source tree")?,
     );
+    ensure!(parent.is_absolute(), "evidence directory must be absolute");
+    fs::DirBuilder::new()
+        .recursive(true)
+        .mode(0o700)
+        .create(&parent)?;
     let repository = Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .and_then(Path::parent)
         .context("host crate must be beneath services/")?
         .canonicalize()?;
     ensure!(
-        !evidence
-            .parent()
-            .context("evidence directory needs a parent")?
-            .canonicalize()?
-            .starts_with(repository),
+        !parent.canonicalize()?.starts_with(repository),
         "evidence must remain outside the source tree"
     );
+    let evidence = parent.join(case);
     fs::DirBuilder::new()
         .mode(0o700)
         .create(&evidence)
-        .context("create the fresh evidence directory")?;
+        .context("create the fresh case evidence directory")?;
     fs::create_dir(evidence.join("nats-cert"))?;
     fs::create_dir(evidence.join("runtime-cert"))?;
     fs::write(evidence.join("nats-server.conf"), NATS_CONFIG)?;
     let certs = certificates(&evidence.join("nats-cert"), &evidence.join("runtime-cert"))?;
 
     let mut fixture = Fixture {
-        prefix: format!("wamn-nats-move-{}", std::process::id()),
+        prefix: format!("wamn-nats-move-{}-{case}", std::process::id()),
         containers: Vec::new(),
     };
     let network = fixture.network();
     docker(&["network", "create", &network]).await?;
-    let (first_nats, first_port) =
-        start_nats(&mut fixture, "nats-first", &evidence, &certs).await?;
-    let first_ip = container_ip(&first_nats, &network).await?;
+    let (nats, nats_port) = start_nats(&mut fixture, "nats-first", &evidence, &certs).await?;
+    let nats_ip = container_ip(&nats, &network).await?;
 
     let host = fixture.container("host");
-    let host_name = "nats-move-host";
     let binary_mount = format!("{}:/wamn-host:ro", env!("CARGO_BIN_EXE_wamn-host"));
     let cert_mount = format!(
         "{}:/runtime-cert:ro",
@@ -383,7 +402,7 @@ async fn host_connects_again_after_scheduler_nats_moves() -> anyhow::Result<()> 
         "/wamn-host",
         "host",
         "--host-name",
-        host_name,
+        HOST_NAME,
         "--host-group",
         "nats-move-test",
         "--environment",
@@ -430,85 +449,203 @@ async fn host_connects_again_after_scheduler_nats_moves() -> anyhow::Result<()> 
     };
     fs::write(
         evidence.join("heartbeat-before.json"),
-        heartbeat_rpc(&certs, first_port, &host_id, host_name, STARTUP_BUDGET).await?,
+        heartbeat_rpc(&certs, nats_port, &host_id, HOST_NAME, STARTUP_BUDGET).await?,
     )?;
+    Ok(Case {
+        evidence,
+        certs,
+        fixture,
+        network,
+        host,
+        probe_port,
+        host_id,
+        nats,
+        nats_ip,
+        nats_port,
+    })
+}
 
-    // The move: the old server goes, its address is taken, and a new server
-    // answers under the same alias on another address.
-    docker(&["stop", &first_nats]).await?;
-    docker(&["rm", &first_nats]).await?;
+async fn expect_live(case: &Case) -> anyhow::Result<()> {
+    ensure!(
+        probe(case.probe_port, "/livez").await? == (200, "ok\n".to_owned()),
+        "host liveness failed while scheduler NATS was unavailable"
+    );
+    Ok(())
+}
+
+/// The move: the old server goes, a placeholder takes its address, and a new
+/// server answers under the same alias on another address. Returns the result
+/// lines of the move.
+async fn move_nats(case: &mut Case) -> anyhow::Result<String> {
+    docker(&["stop", &case.nats]).await?;
+    docker(&["rm", &case.nats]).await?;
     let stopped = Instant::now();
-    let placeholder = fixture.container("placeholder");
+    let placeholder = case.fixture.container("placeholder");
     docker(&[
         "run",
         "-d",
         "--name",
         &placeholder,
         "--network",
-        &network,
+        &case.network,
         HOST_IMAGE,
         "sleep",
         "infinity",
     ])
     .await?;
     while stopped.elapsed() < NATS_OUTAGE {
-        ensure!(
-            probe(probe_port, "/livez").await? == (200, "ok\n".to_owned()),
-            "host liveness failed while scheduler NATS was unavailable"
-        );
+        expect_live(case).await?;
         sleep(Duration::from_millis(500)).await;
     }
-    let (second_nats, second_port) =
-        start_nats(&mut fixture, "nats-second", &evidence, &certs).await?;
-    let second_ip = container_ip(&second_nats, &network).await?;
+    let (second_nats, second_port) = start_nats(
+        &mut case.fixture,
+        "nats-second",
+        &case.evidence,
+        &case.certs,
+    )
+    .await?;
+    let second_ip = container_ip(&second_nats, &case.network).await?;
     ensure!(
-        first_ip != second_ip,
-        "the new NATS container kept the address {first_ip}"
+        case.nats_ip != second_ip,
+        "the new NATS container kept the address {}",
+        case.nats_ip
     );
     let restarted = Instant::now();
-
-    let recovery = heartbeat_rpc(&certs, second_port, &host_id, host_name, RECOVERY_BUDGET).await;
+    let recovery = heartbeat_rpc(
+        &case.certs,
+        second_port,
+        &case.host_id,
+        HOST_NAME,
+        RECOVERY_BUDGET,
+    )
+    .await;
     let recovered_after = restarted.elapsed();
-    let log = save_host_log(&host, &evidence).await?;
-    let attempts: Vec<&str> = log
+    let lines = format!(
+        "move_first_ip={}\nmove_second_ip={second_ip}\nmove_outage_ms={}\nmove_recovered={}\nmove_recovered_after_ms={}\n",
+        case.nats_ip,
+        restarted.duration_since(stopped).as_millis(),
+        recovery.is_ok(),
+        recovered_after.as_millis(),
+    );
+    fs::write(case.evidence.join("result-move.txt"), &lines)?;
+    fs::write(case.evidence.join("heartbeat-after.json"), recovery?)?;
+    Ok(lines)
+}
+
+/// The failed attempts of the log, counted by cause.
+fn causes(log: &str) -> BTreeMap<String, usize> {
+    let mut causes = BTreeMap::new();
+    for line in log
         .lines()
         .filter(|line| line.contains("connection attempt failed"))
-        .collect();
-    let client_errors = log
-        .lines()
-        .filter(|line| line.contains("scheduler NATS client error"))
-        .count();
-    fs::write(
-        evidence.join("result.txt"),
-        format!(
-            "first_ip={first_ip}\nsecond_ip={second_ip}\noutage_ms={}\nrecovered={}\nrecovered_after_ms={}\nfailed_attempt_lines={}\nclient_error_lines={client_errors}\n",
-            restarted.duration_since(stopped).as_millis(),
-            recovery.is_ok(),
-            recovered_after.as_millis(),
-            attempts.len(),
-        ),
-    )?;
+    {
+        let cause = line
+            .split_once("error=")
+            .map_or("<no cause>", |(_, cause)| cause);
+        *causes.entry(cause.to_owned()).or_insert(0) += 1;
+    }
+    causes
+}
+
+/// Every failed attempt names its cause, every scheduler client line names its
+/// client, and the host never restarted.
+async fn finish(case: &Case, result: String) -> anyhow::Result<()> {
+    let log = save_host_log(&case.host, &case.evidence).await?;
+    let causes = causes(&log);
+    let mut result = result;
+    for (cause, count) in &causes {
+        writeln!(result, "cause {count} x {cause}")?;
+    }
+    fs::write(case.evidence.join("result.txt"), result)?;
     ensure!(
-        !attempts.is_empty() && attempts.iter().all(|line| line.contains("error=")),
+        !causes.is_empty() && !causes.contains_key("<no cause>"),
         "the host log did not name the cause of each failed attempt; see host.log"
     );
     ensure!(
         log.lines()
             .filter(|line| line.contains("scheduler NATS client error"))
-            .all(|line| line.contains(&format!("client={host_name}"))),
+            .all(|line| line.contains(&format!("client={HOST_NAME}"))),
         "a scheduler client error line did not name its client"
     );
-    fs::write(evidence.join("heartbeat-after.json"), recovery?)?;
     ensure!(
         docker(&[
             "inspect",
             "-f",
             "{{.RestartCount}} {{.State.Running}}",
-            &host
+            &case.host
         ])
         .await?
             == "0 true",
         "the host container restarted or stopped"
     );
     Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires: Docker, nats:2.12.8-alpine, debian:trixie-slim, WAMN_HOST_LIVE_EVIDENCE_DIR"]
+async fn host_connects_again_after_scheduler_nats_moves() -> anyhow::Result<()> {
+    let mut case = start_case("move").await?;
+    let result = move_nats(&mut case).await?;
+    finish(&case, result).await
+}
+
+/// How long the case waits for the client to notice a server that holds its
+/// connection open and answers nothing. The async-nats defaults are a ping
+/// every 60 s and two outstanding pings.
+const PAUSE_DETECT_BUDGET: Duration = Duration::from_secs(240);
+
+/// A paused server keeps its TCP connections open and answers nothing, as a
+/// node that vanishes does. The case measures when the client notices, what
+/// its attempts meet, and whether it connects again on unpause, then moves.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires: Docker, nats:2.12.8-alpine, debian:trixie-slim, WAMN_HOST_LIVE_EVIDENCE_DIR"]
+async fn host_connects_again_after_scheduler_nats_pauses() -> anyhow::Result<()> {
+    let mut case = start_case("pause").await?;
+    let disconnects = |log: &str| {
+        log.lines()
+            .filter(|line| line.contains("disconnected from scheduler NATS"))
+            .count()
+    };
+    let before = disconnects(&save_host_log(&case.host, &case.evidence).await?);
+    docker(&["pause", &case.nats]).await?;
+    let paused = Instant::now();
+    let detected = loop {
+        expect_live(&case).await?;
+        if disconnects(&save_host_log(&case.host, &case.evidence).await?) > before {
+            break Some(paused.elapsed());
+        }
+        if paused.elapsed() > PAUSE_DETECT_BUDGET {
+            break None;
+        }
+        sleep(Duration::from_secs(1)).await;
+    };
+    let noticed = Instant::now();
+    while detected.is_some() && noticed.elapsed() < NATS_OUTAGE {
+        expect_live(&case).await?;
+        sleep(Duration::from_millis(500)).await;
+    }
+    let paused_log = save_host_log(&case.host, &case.evidence).await?;
+    fs::write(case.evidence.join("host-paused.log"), &paused_log)?;
+    let paused_attempts: usize = causes(&paused_log).values().sum();
+
+    docker(&["unpause", &case.nats]).await?;
+    let unpaused = Instant::now();
+    let rejoined = heartbeat_rpc(
+        &case.certs,
+        case.nats_port,
+        &case.host_id,
+        HOST_NAME,
+        RECOVERY_BUDGET,
+    )
+    .await;
+    let rejoined_after = unpaused.elapsed();
+    let mut result = format!(
+        "pause_disconnect_noticed_after_ms={}\npause_failed_attempts={paused_attempts}\nunpause_heartbeat={}\nunpause_heartbeat_after_ms={}\n",
+        detected.map_or("none".to_owned(), |after| after.as_millis().to_string()),
+        rejoined.is_ok(),
+        rejoined_after.as_millis(),
+    );
+    fs::write(case.evidence.join("result-pause.txt"), &result)?;
+    result.push_str(&move_nats(&mut case).await?);
+    finish(&case, result).await
 }

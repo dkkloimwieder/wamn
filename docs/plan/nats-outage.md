@@ -54,6 +54,18 @@ The source is the local checkout `f9b37fc`, whose chart and app versions read 2.
 
 The first-connect crash-loop follows from the source. The exit with code 0, 64 to 133 s into an outage, does not. Code 0 means the manager stopped on a signal, which is an outside SIGTERM, for example from the kubelet. The source fails liveness only on a closed connection, which `MaxReconnects(-1)` prevents. `docs/architecture/native-alignment.md:55-57` records it as the unresolved fault-time liveness delay. The results of that run under `~/.cache/wamn-sweeps/as5u` no longer exist.
 
+### 3.3 Measured outage behavior of the host
+
+Measured on 2026-09-29 by `services/host/tests/scheduler_nats_move_live.rs` at `0d5c962cc` and later, on one machine with Docker. NATS 2.12.8 runs with TLS as in the chart, under the alias `nats`. The host runs in a container on the same network.
+
+| Case | What the host does |
+| --- | --- |
+| Move | NATS stops, its container goes, and a new one starts under the alias on a new IP after about 20 s. Each failed attempt logs its cause: `DNS error: ... Temporary failure in name resolution` while no container has the alias, then `IO error: Connection refused (os error 111)`. The host connects again 0.3 to 0.5 s after the new server is up, with no restart, and a heartbeat RPC answers. |
+| Pause | NATS is paused, so it keeps its TCP connections open and answers nothing. The host logs nothing for 180.5 s. Then the client closes the connection, because three pings are outstanding: a ping goes every 60 s (`ping_interval`, `options.rs:111`), and more than two outstanding pings end the connection (`lib.rs:235`, `:513`). After that, each attempt reads `timed out` after the 5 s `connection_timeout` (`options.rs:104`), one every 5 s. On unpause, the next attempt connects, and a heartbeat RPC answers 5 ms later. The move that follows behaves as in the move case. |
+| Both | `/livez` answers 200 during the outage, and the host container does not restart. |
+
+Neither case reproduces the stuck client of GKE. The GKE log showed `IO error` every 4 s for 30 minutes. That is a fast refusal, not the `timed out` of a server that does not answer. A hypothesis, not established: the Service had no ready endpoint, and such a Service answers with a reset. `wamn-gdex` lists what to capture at the next real move.
+
 ## 4. Design
 
 ### 4.1 The host names the cause
@@ -86,7 +98,7 @@ The operator is upstream code, and the no-fork rule holds. Three changes stay in
 
 One branch. Each issue lands with its tests. Only workspace tests run.
 
-1. The cause. The host builds its scheduler client as in 4.1. A live workspace test starts NATS in a Docker container on its own network with the alias `nats` and TLS like the chart, and it starts the host against `nats://nats:4222`. It stops the container, removes it, and starts a new one with the same alias, which gets a new IP. The test then checks that the host connects again and that the debug log names each failed attempt. If the test reproduces the stuck client, the log names the cause.
+1. The cause. The host builds its scheduler client as in 4.1. A live workspace test starts NATS in a Docker container on its own network with the alias `nats` and TLS like the chart, and it starts the host against `nats://nats:4222`. It stops the container, removes it, and starts a new one with the same alias, which gets a new IP. The test then checks that the host connects again and that the debug log names each failed attempt. If the test reproduces the stuck client, the log names the cause. A second case pauses the server first, measures what the client does with a dead but open connection, unpauses it, and then moves it. Section 3.3 gives the results.
 2. The fix. After issue 1 names the cause: the setting that removes it, or else the candidate of 4.2. The same live test passes with no host restart, and a heartbeat RPC answers after the new container is up.
 3. The operator. It waits, and no cluster run is part of it. At the next scheduler NATS move on `wamn-dev`, the operator log, the kubelet events and the probe results are kept, so the code 0 exit gets its evidence from a real move. `wamn-ifh7` lists what to capture.
 4. Closeout. `docs/architecture/native-alignment.md` and `docs/operations/cluster-tests.md` describe the reconnect. `docs/operations/gcp.md` loses the host delete of the NATS move workaround. Cluster stages are noted as pending.
