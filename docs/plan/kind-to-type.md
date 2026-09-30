@@ -210,3 +210,11 @@ Rule: a name that quotes another system's term keeps that term. `resource_kind` 
 - The WAMN enum `ErrorKind` in `connection_http/transport.rs` is in scope. It goes with the `*ErrorKind` decision in wamn-sfea.6.
 - `SetFilter.kind` (W9) becomes `type`. It is a rename only, because the word is not on the wire.
 - `DeliveryAdvisory` (W7) already sends `type`. Only its Rust names change.
+
+## 6. `*ErrorKind` families
+
+Owner ruling, 2026-09-29 (wamn-sfea.6): the `*ErrorKind` rename is part of this migration epic.
+
+- `NodeErrorKind` is the one `*ErrorKind` family that derives serde, so its wire bytes move. It migrates with the serialized surfaces.
+- The other 73 families, including the WAMN enum `ErrorKind` in `connection_http/transport.rs`, leave the process only as `code` strings. They move no bytes.
+- These 73 families rename in one commit. That commit is the last issue of the implementation epic, after every serialized surface lands. It can merge alone.
