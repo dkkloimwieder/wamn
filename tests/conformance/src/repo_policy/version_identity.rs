@@ -24,11 +24,10 @@ struct GovernedLiteral {
 // search for version-looking text. Upstream identities and refusal/mutation fixtures
 // must remain free to carry the foreign versions they show are rejected.
 const GOVERNED_LITERALS: &[GovernedLiteral] = &[
-    GovernedLiteral {
-        path: "crates/authoring/model/src/lib.rs",
-        exact: r#"pub const SCHEMA_VERSION: &str = "0.1";"#,
-        expected_count: 1,
-    },
+    // RETIRED `crates/authoring/model/src/lib.rs` / `SCHEMA_VERSION`: the
+    // authoring contract moved to 0.2 with the kind → type rename
+    // (wamn-ld93.4, docs/plan/kind-to-type.md §3.1 A4), and the decoder
+    // refuses 0.1 by name, so the MVP 0.1 line no longer governs it.
     GovernedLiteral {
         path: "crates/control/registry/src/types.rs",
         exact: r#"pub const SCHEMA_VERSION: &str = "0.1";"#,
