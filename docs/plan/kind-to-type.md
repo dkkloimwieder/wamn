@@ -397,7 +397,7 @@ tools/build-components all
 **A5. Other wire surfaces.** One commit per surface.
 
 - W5 router tap (§5.4 ruling 6): `source_kind` becomes `source_type` on `RouterTapWire` and `RouterTapRecord`, with the key `source-type` (`crates/platform/runtime/src/plugins/wamn_jetstream.rs:251`, `:277`). The writer writes format 3 (`wamn_jetstream.rs:577`). The reader accepts 3 only. Formats 1 and 2 refuse with `unsupported router-tap format-version` (`wamn_jetstream.rs:186` to `:190`). The `ctl dev` observation decoder follows (`crates/control/lib/src/dev/observations.rs:437`).
-- `wamn web upload` (§5.4 ruling 4): the upload writes every object create-only, with no switch. It reads the current release of the environment from the control database, the way `push-release-manifest` reads its release there (`crates/control/lib/src/push_release_manifest.rs:231` to `:246`). It refuses a `--release` that is not that release, before the build (`services/ctl/src/web.rs:56`, `:125`).
+- `wamn web upload` (§5.4 ruling 4): the upload writes every object create-only, with no switch. It reads the head of the environment, `catalog.effective_release_heads` in the project-env database (`deploy/sql/catalog-schema.sql:178`). `delivery select` writes that row on the project-env connection (`crates/control/lib/src/delivery/deployment.rs:22`, `:69` to `:83`), and `promote` writes it too (`crates/control/lib/src/promote.rs:75`). The control copy of the table (`deploy/sql/control-portable-store.sql:144`) is not what `delivery select` writes, so the upload does not read it. It refuses a `--release` that is not that head, before the build (`services/ctl/src/web.rs:56`, `:125`). An existence check is not enough, because it lets an old client be published over the current one. `push-release-manifest` keeps its existence check (`crates/control/lib/src/push_release_manifest.rs:231` to `:246`), because pushing a manifest is not serving it.
 - W6, W8, W9, W11, W12 and G12.
 - Proof: `cargo test --locked --offline -p wamn-runtime -p wamn-control -p wamn-ctl`, `cd web/runtime && pnpm test`, with the tests of §5.3.
 
@@ -618,16 +618,18 @@ The event users and consumers need no change. The consumer names come from the p
 
 **B9. Web clients and edge. The hosts are still stopped.**
 
+0. Set the head of each environment to release 2 with `wamn-ctl delivery select` (`services/ctl/src/delivery_verbs.rs:298`, `crates/control/lib/src/delivery/deployment.rs:62`). This writes `catalog.effective_release_heads` in each project-env database. wamn-dev writes heads from this cutover on. Proof: `SELECT tenant_id, environment, effective_release_id FROM catalog.effective_release_heads` prints release 2 on the Receiving database and on the WMS database.
+
 1. Upload both clients of release 2 (`gcp.md:922`, `:1383`):
 
    ```bash
    target/debug/wamn web upload apps/wamn_receiving --release <Receiving release 2 digest> --bucket gs://wamn-dev-web/clients --org dkk \
-     --control-database-url "$SYS" --tenant dev --environment dev
+     --database-url <Receiving database URL> --tenant dev --environment dev
    target/debug/wamn web upload apps/wamn_wms --release <WMS release 2 digest> --bucket gs://wamn-dev-web/clients --org dkk \
-     --control-database-url "$SYS" --tenant wms --environment dev
+     --database-url <WMS database URL> --tenant wms --environment dev
    ```
 
-   The upload is create-only and checks that the digest is the current release of the environment (A5, §5.4 ruling 4). Release 2 is current after B7 step 5 and B8 step 7, and its path is new, so both uploads pass. `--control-database-url` and `--tenant` are the flags of `push-release-manifest` (`gcp.md:1296`). `--environment` is new. A5 fixes the exact flags.
+   The upload is create-only and refuses a digest that is not the head of the environment (A5, §5.4 ruling 4). Release 2 is the head after step 0, and its path is new, so both uploads pass. `--database-url` names the project-env database that holds the head. A5 fixes the exact flags.
 
 2. Write the two new digest hex values into `deploy/gcp/values-edge.yaml:13`, `:16` and the six rewrites of `deploy/gcp/url-map.yaml:47` to `:93`.
 3. `helm upgrade wamn-edge deploy/platform/edge -n edge -f deploy/gcp/values-edge.yaml --wait --timeout 3m` and `gcloud compute url-maps import wamn-edge --global --project wamn-dev --source deploy/gcp/url-map.yaml --quiet` (`gcp.md:1391`, `:1392`). The Services `hosts/flow-http` and `hosts/wms-flow-http` still exist, so the edge starts (`gcp.md` §4.1).
@@ -1535,7 +1537,7 @@ Drain (ruling 2). The records of §3.2 "Drain" hold each answer of the open-run 
 1. **Component key.** The key `UNIQUE (tenant_id, component_digest)` of `catalog.component_library` (`deploy/sql/catalog-schema.sql:210`) is a defect. It refuses an unchanged component under the next version of its own package with `component-fact-conflict` (`crates/control/lib/src/push_component.rs:1985`). A component that does not change keeps its digest across versions of its package, so the key becomes `(package, version, digest)`. The old key protects one owner per digest, because it is the target of the connection-requirement key. So a digest under a different package stays refused, through the new table `catalog.component_digest_owners`. §4.3.6 states the constraint and the statements, for fresh installs and, under `wamn-o8b9`, for the installed project-env databases and the control copy in wamn_system. §3.2 B8 step 2 depends on it.
 2. **The stop drains first.** Ingress goes off. Dispatched and running runs finish within 15 minutes, observed once a minute with the open-run query. `terminalize-effect-uncertain` settles what stays uncertain. Only then do the workloads stop and the cutover run. Nothing is stranded. The query must answer zero open runs before B1 (§3.2 "Drain").
 3. **Snapshot table.** `catalog.release_manifest_v3_snapshots` becomes `catalog.release_manifest_snapshots`. The table name holds no format. Each row states its format in the `format-version` of its bytes, and new rows say 4. Fresh-install DDL, a hand statement under `wamn-o8b9` (§4.3.6, §4.8), and the 22 files of the §4.5 snapshot groups, in A7.
-4. **Web upload.** `wamn web upload` becomes create-only, with no switch. It refuses a `--release` that is not the current release of the environment, read from the control database the way `push-release-manifest` reads its release (`crates/control/lib/src/push_release_manifest.rs:231` to `:246`). A5 carries it.
+4. **Web upload.** `wamn web upload` becomes create-only, with no switch. It refuses a `--release` that is not the head of the environment in `catalog.effective_release_heads` of the project-env database, the row that `delivery select` writes. The cutover sets the head with `delivery select` (§3.2 B9 step 0), so wamn-dev writes heads from then on. `push-release-manifest` keeps its existence check, because pushing a manifest is not serving it. A5 carries it.
 5. **Authoring contract version.** The authoring and management decoders check the contract version first and answer the named refusal `unsupported-contract-version` with a body. Today the version is checked only after a full strict decode (`crates/authoring/model/src/lib.rs:572` to `:585`), and an old body gets a bare 400 (`services/scenario-worker/src/management.rs:774`). The body shape moved, so the contract version moves from `0.1` to `0.2` (`lib.rs:19`). A4 carries it (W1, W2).
 6. **Router tap.** `source-kind` becomes `source-type`, and the tap format moves to 3. The reader accepts 3 only. The records live 5 minutes in memory, so nothing migrates (S17). A5 carries it (W5).
 7. **Local targets.** A disposable `ctl dev` target is not a sealed coordinate, so its local-target exception is outside the rules of platform-ui.md §0 (R16). platform-ui.md §0 says so.
