@@ -94,7 +94,7 @@ Database names: `wamn_system` is the control database (`SYSTEM_SCHEMA_SQL` and `
 | P12 | project-env | `wamn_run.operator_run_actions` | `action_kind`, `principal_kind`, `operator_run_actions_kind_check`, `operator_run_actions_principal_kind_check` | yes | `deploy/sql/run-state.sql:795`, `crates/schema/control/src/run_plane/declarations.rs:377`, `:401` |
 | P13 | edge SQLite | intent store | `outcome_kind` with a check. Retired upstream at `78d02a6d8` (wamn-4afx.1), which removed the column. No longer in scope | yes | `crates/execution/run-state-sqlite/src/lib.rs:30` |
 | P14 | none | Query result aliases | `AS relation_kind`, `AS object_kind` and similar. These are not persisted but are WAMN names | yes | `crates/schema/introspection/src/postgres.rs:305`, `crates/control/provision/src/sql/database_grants.rs:68` |
-| P15 | Kubernetes Secrets | PAT Secrets of `provision-project-env` | Annotation `wamn.io/principal-kind` (value `service`). Installed Secrets carry it. Pending an owner ruling (§4.9) | yes | `crates/control/lib/src/provision_project_env/pat_secrets.rs:267`, read by `deploy/mvp/bootstrap.sh:118` |
+| P15 | Kubernetes Secrets | PAT Secrets of `provision-project-env` | Annotation `wamn.io/principal-kind` (value `service`). Installed Secrets carry it. Becomes `wamn.io/principal-type` (§4.9 ruling 4) | yes | `crates/control/lib/src/provision_project_env/pat_secrets.rs:267`, read by `deploy/mvp/bootstrap.sh:118` |
 
 Counts: matching lines in `deploy/sql` are 79 (system-schema 43, run-state 17, catalog-schema 5, record-history 5, control-portable-store 3, ops-schema 3, app-schema 2, postgres-init 1). The postgres-init line is prose about the kind cluster. Rust code names these persisted columns 222 times. P14 has 20 aliases. Re-measured for wamn-sfea.4 at `2d9700969`: the Rust count is 218, because `crates/schema/control/src/run_plane/tests.rs` lost 4 references. The `deploy/sql` line counts and the P14 count are unchanged.
 
@@ -341,29 +341,31 @@ Draft from wamn-sfea.4. Measured on `worktree-table` at `31eac2d05`, re-verified
 
 ### 4.1 Names
 
-§1.8 rules the history column only. The other names below apply the same rule, `kind` becomes `type` inside the name. The owner must confirm them (question 1 in §4.9).
+One pattern holds everywhere (§4.9 ruling 1). A column `kind` becomes `type`. A column `<x>_kind` becomes `<x>_type`. Every constraint name follows its column.
 
-PostgreSQL 18 runs every wamn-dev database (`deploy/gcp/cnpg-cluster.yaml:14`). PostgreSQL 18 records each `NOT NULL` as a named constraint, `<table>_<column>_not_null` by default. A column rename keeps every generated name. So the installed statements also rename each generated name that holds the old column name. After that, an installed database and a fresh install have the same names.
+PostgreSQL 18 runs every wamn-dev database (`deploy/gcp/cnpg-cluster.yaml:14`). PostgreSQL 18 records each `NOT NULL` as a named constraint, `<table>_<column>_not_null` by default. A column rename keeps every generated name. An installed database must match a fresh install name for name (§4.9 ruling 2). So every path of §4.3 also renames each generated name that holds the old column name: `_not_null`, `_key`, `_fkey` and one-column `_check`.
 
-| Row | Database | Table | Column | Constraints renamed (old → new) |
-|---|---|---|---|---|
-| P1 | wamn_system | `registry.orgs` | `placement_kind` → `placement_type` | `orgs_placement_kind_check`, `orgs_placement_kind_not_null` |
-| P2 | wamn_system | `identity.principals` | `kind` → `type` | `principals_kind_check`, `principals_kind_not_null`, `principals_id_kind_key`, `principals_kind_subject_key` |
-| P3 | wamn_system | `identity.pats` | `principal_kind` → `principal_type` | `pats_principal_kind_check`, `pats_principal_kind_not_null`, `pats_principal_id_principal_kind_fkey` |
-| P4 | wamn_system | `identity.password_credentials`, `identity.password_tokens`, `identity.password_logins` | `principal_kind` → `principal_type` | per table: `<table>_principal_kind_check`, `<table>_principal_kind_not_null`, `<table>_principal_id_principal_kind_fkey` |
-| P4 | wamn_system | `identity.project_env_memberships` | `principal_kind` → `principal_type` | `project_env_memberships_principal_kind_not_null`, `project_env_memberships_principal_id_principal_kind_fkey`. `project_env_memberships_human_check` keeps its name |
-| P5 | wamn_system | `provisioning.sagas` | `kind` → `type` | `sagas_kind_check`, `sagas_kind_not_null` |
-| P6 | wamn_system | `provisioning.copy_sagas` | `kind` → `type` | `copy_sagas_kind_check`, `copy_sagas_kind_not_null` |
-| P7 | wamn_system | `catalog.authoring_command_audit` | `command_kind` → `command_type`, `principal_kind` → `principal_type` | `authoring_command_audit_command_kind_check`, `authoring_command_audit_command_kind_not_null`, `authoring_command_audit_principal_kind_check`, `authoring_command_audit_principal_kind_not_null` |
-| P8 | project-env | `catalog.package_definition_owners` | `definition_kind` → `definition_type` | `package_definition_owners_definition_kind_check`, `package_definition_owners_definition_kind_not_null`. The primary key keeps its name |
-| P9 | project-env | every `<relation>_history` | `kind` → `type` | `<history>_kind_check`, `<history>_kind_not_null` |
-| P10 | project-env | `wamn_run.runs` | `caller_outcome_kind` → `caller_outcome_type`, `fail_kind` → `fail_type` | `runs_caller_outcome_kind_check`, `runs_fail_kind_check`. Both columns are nullable, so no `NOT NULL` name |
-| P11 | project-env | `wamn_run.effect_attempts` | `generation_fact_kind` → `generation_fact_type` | `effect_attempts_generation_fact_kind_not_null`. `effect_attempts_generation_fact_check` and `effect_attempts_generation_values_check` keep their names |
-| P12 | project-env | `wamn_run.operator_run_actions` | `action_kind` → `action_type`, `principal_kind` → `principal_type` | `operator_run_actions_kind_check` → `operator_run_actions_type_check`, `operator_run_actions_action_kind_not_null`, `operator_run_actions_principal_kind_check`, `operator_run_actions_principal_kind_not_null` |
+The constraint column lists the old names. Each new name is the old name with `kind` replaced by `type`. The **Path** column says which part of §4.3 applies the row.
+
+| Row | Database | Table | Column | Constraints renamed | Path |
+|---|---|---|---|---|---|
+| P1 | wamn_system | `registry.orgs` | `placement_kind` → `placement_type` | `orgs_placement_kind_check`, `orgs_placement_kind_not_null` | hand |
+| P2 | wamn_system | `identity.principals` | `kind` → `type` | `principals_kind_check`, `principals_kind_not_null`, `principals_id_kind_key`, `principals_kind_subject_key` | hand |
+| P3 | wamn_system | `identity.pats` | `principal_kind` → `principal_type` | `pats_principal_kind_check`, `pats_principal_kind_not_null`, `pats_principal_id_principal_kind_fkey` | hand |
+| P4 | wamn_system | `identity.password_credentials`, `identity.password_tokens`, `identity.password_logins` | `principal_kind` → `principal_type` | per table: `<table>_principal_kind_check`, `<table>_principal_kind_not_null`, `<table>_principal_id_principal_kind_fkey` | hand |
+| P4 | wamn_system | `identity.project_env_memberships` | `principal_kind` → `principal_type` | `project_env_memberships_principal_kind_not_null`, `project_env_memberships_principal_id_principal_kind_fkey`. `project_env_memberships_human_check` keeps its name | hand |
+| P5 | wamn_system | `provisioning.sagas` | `kind` → `type` | `sagas_kind_check`, `sagas_kind_not_null` | hand |
+| P6 | wamn_system | `provisioning.copy_sagas` | `kind` → `type` | `copy_sagas_kind_check`, `copy_sagas_kind_not_null` | hand |
+| P7 | wamn_system | `catalog.authoring_command_audit` | `command_kind` → `command_type`, `principal_kind` → `principal_type` | `authoring_command_audit_command_kind_check`, `authoring_command_audit_command_kind_not_null`, `authoring_command_audit_principal_kind_check`, `authoring_command_audit_principal_kind_not_null` | hand |
+| P8 | project-env | `catalog.package_definition_owners` | `definition_kind` → `definition_type` | `package_definition_owners_definition_kind_check`, `package_definition_owners_definition_kind_not_null`. The primary key keeps its name | `reconcile-run-plane` |
+| P9 | project-env | every `<relation>_history` | `kind` → `type` | `<history>_kind_check`, `<history>_kind_not_null` | hand |
+| P10 | project-env | `wamn_run.runs` | `caller_outcome_kind` → `caller_outcome_type`, `fail_kind` → `fail_type` | `runs_caller_outcome_kind_check`, `runs_fail_kind_check`. Both columns are nullable, so no `NOT NULL` name | `reconcile-run-plane` |
+| P11 | project-env | `wamn_run.effect_attempts` | `generation_fact_kind` → `generation_fact_type` | `effect_attempts_generation_fact_kind_not_null`. `effect_attempts_generation_fact_check` and `effect_attempts_generation_values_check` keep their names | `reconcile-run-plane` |
+| P12 | project-env | `wamn_run.operator_run_actions` | `action_kind` → `action_type`, `principal_kind` → `principal_type` | `operator_run_actions_kind_check` (new name `operator_run_actions_type_check`), `operator_run_actions_action_kind_not_null`, `operator_run_actions_principal_kind_check`, `operator_run_actions_principal_kind_not_null` | `reconcile-run-plane` |
 
 Every other constraint that reads one of these columns keeps its name. Examples are `orgs_pool_cluster_check`, `principals_subject_check`, `principals_email_check`, `principals_platform_principal_check`, `package_definition_owners_relation_shape_check`, `package_definition_owners_extensibility_check` and `runs_check6` to `runs_check8`.
 
-The auto-generated names in the table follow the PostgreSQL rules: `<table>_<column>_check` for a check that reads one column, `<table>_<columns>_key` for a unique key and `<table>_<columns>_fkey` for a foreign key. The pre-check in §4.3 confirms them on each database before any statement runs.
+The auto-generated names in the table follow the PostgreSQL rules: `<table>_<column>_check` for a check that reads one column, `<table>_<columns>_key` for a unique key, `<table>_<columns>_fkey` for a foreign key and `<table>_<column>_not_null` for a `NOT NULL`. The check query in §4.3 confirms them on each database before anything runs. The table is complete. No index outside a unique key holds a renamed name (§1.4). Every other check on these tables either has an explicit name without `kind` or reads more than one column, so its generated name holds no column name.
 
 P14 aliases are not persisted and need no DDL. `AS outcome_kind` (`crates/execution/run-state/src/transitions.rs:178`) and `AS definition_kind` (`crates/control/lib/src/apply_package/definition_ownership.rs:48`) name WAMN columns and follow them. The aliases in `crates/schema/introspection/src/postgres.rs` quote PostgreSQL catalog columns such as `relkind` and `contype`, so the §1.8 rule keeps them.
 
@@ -424,29 +426,34 @@ Column grants name columns in Rust. They change with the DDL:
 - `crates/control/provision/src/identity_issuer.rs:26`, `:37`. The issuer reads `principals.type` and inserts `pats.principal_type`.
 - `crates/control/provision/src/sql.rs:242`, `:247`. The executor updates `runs.fail_type` and `runs.caller_outcome_type`.
 
-### 4.3 Installed-database statements
+### 4.3 Installed databases
 
-Every statement in this section is metadata-only in PostgreSQL. `ALTER TABLE ... RENAME COLUMN` and `ALTER TABLE ... RENAME CONSTRAINT` change catalog rows only. No table is rewritten and no row changes. `CREATE OR REPLACE FUNCTION` changes the stored function text only. Each `ALTER TABLE` takes an `ACCESS EXCLUSIVE` lock until the transaction commits, so the statements run with the workloads stopped (§4.7).
+Four paths change installed state. A verb carries every change that a verb already knows how to make. Hand statements carry only what no verb can do (§4.9 ruling 3).
+
+| Path | Rows | Where |
+|---|---|---|
+| `reconcile-run-plane` | P8, P10, P11, P12 | Each project-env database, by the new verb |
+| Hand statements | P1 to P7, and the P9 functions | wamn_system |
+| Hand statements | P9 tables and functions | Each project-env database |
+| `kubectl annotate` | P15 | Each installed PAT Secret |
+
+Every database change here is metadata-only in PostgreSQL. `ALTER TABLE ... RENAME COLUMN` and `ALTER TABLE ... RENAME CONSTRAINT` change catalog rows only. No table is rewritten and no row changes. `CREATE OR REPLACE FUNCTION` changes the stored function text only. Each `ALTER TABLE` takes an `ACCESS EXCLUSIVE` lock until its transaction commits, so the changes run with the workloads stopped (§4.7).
 
 What follows a rename by itself, because PostgreSQL stores it by column number and not by name:
 
 - check expressions, foreign keys, unique keys and their indexes, and column defaults
-- column grants, such as the issuer grants of §4.2 and the column grant at `app-schema.sql:525`
+- column grants, such as the issuer grants of §4.2, the executor grants at `crates/control/provision/src/sql.rs:242` and the column grant at `app-schema.sql:525`
 - row security policies. No policy reads a renamed column (`git grep -n -i 'CREATE POLICY' -- deploy/sql` finds none that names one)
 - trigger `WHEN` clauses and `UPDATE OF` column lists. None names a renamed column
 - publications. The CDC publication is `FOR TABLES IN SCHEMA <schema>` with no column list (`crates/control/provision/src/sql/cdc.rs:82`)
 
 What does not follow a rename, because PostgreSQL stores it as text:
 
-- PL/pgSQL function bodies. Three name a renamed column: `wamn_history.create_history_table` (`record-history.sql:117`, `:135`), `wamn_history.log_row_change` (`record-history.sql:240`) and `identity.lock_password_principal` (`system-schema.sql:752`). The statements replace all three in the same transaction as the renames. Without that, every write to a logged relation fails, and every password login fails.
+- PL/pgSQL function bodies. Three name a renamed column: `wamn_history.create_history_table` (`record-history.sql:117`, `:135`), `wamn_history.log_row_change` (`record-history.sql:240`) and `identity.lock_password_principal` (`system-schema.sql:752`). The hand statements replace all three in the same transaction as the renames. Without that, every write to a logged relation fails, and every password login fails.
 
 No view, materialized view, rule, statistics object or event trigger exists in `deploy/sql` or in SQL that Rust creates. The other functions in `deploy/sql` and in `crates/schema/control/src/run_plane/declarations.rs:431` to `:527` name no renamed column.
 
-`CREATE OR REPLACE FUNCTION` keeps the owner, the `SECURITY DEFINER` setting and the grants of the function. So the statements run as the `postgres` superuser with no `SET ROLE`. They create no object, so no ownership question arises.
-
-Order. Foreign keys and unique keys follow the rename by column number, so the order inside one transaction does not affect correctness. The statements rename the referenced table first, then the referencing tables, so that a reader can check them against §4.1 row by row. Each database takes one transaction, and `ON_ERROR_STOP` rolls the whole transaction back on the first wrong name.
-
-**Pre-check and post-check.** Run this on each database before and after. Before, the result must be exactly the names of §4.1 for that database. After, it must be empty.
+**Check query.** Run it on each database before and after. Before, the result must be exactly the names of §4.1 for that database, plus the function bodies above. After, it must be empty.
 
 ```sql
 SELECT 'column' AS object, n.nspname, c.relname, a.attname AS name
@@ -468,6 +475,96 @@ SELECT 'function', n.nspname, p.proname, p.oid::regprocedure::text
  WHERE p.prosrc ~ '\mkind\M' AND n.nspname NOT IN ('pg_catalog', 'information_schema')
 ORDER BY 1, 2, 3, 4;
 ```
+
+#### 4.3.1 What `reconcile-run-plane` changes today
+
+The verb already changes installed schema in code. Its scope is the `--schema` project-env schema plus the `catalog` schema of the same database (`crates/control/lib/src/reconcile_run_plane.rs:41`). It observes the live tables, columns, checks and foreign keys (`crates/schema/control/src/run_plane/observation_sql.rs:350`, `:360`) and the `catalog` columns (`crates/control/lib/src/reconcile_run_plane.rs:1140` to `:1153`). It plans against the schema of record, which is `deploy/sql` itself (`crates/schema/control/src/run_plane.rs:18`). The changes it makes to installed schema today:
+
+- It adds a missing record column (`crates/schema/control/src/run_plane/plan.rs:651`, `:910`).
+- It drops and re-adds a drifted check, and drops a check that the record does not have (`plan.rs:1052`, `:1076`).
+- It runs named cutovers that remove retired columns and indexes, for example the rerun-lineage cutover (`crates/schema/control/src/run_plane/schema_changes.rs:1006`, `:1014`).
+- It alters the installed `catalog.release_components` in place (`schema_changes.rs:24`, planned at `plan.rs:487` from the probe at `reconcile_run_plane.rs:1152`).
+
+It applies as a role with `SUPERUSER` or `BYPASSRLS` (`reconcile_run_plane.rs:795` to `:810`). Each action is one `batch_execute` (`reconcile_run_plane.rs:824`, `:832`). PostgreSQL runs a multi-statement batch without its own `BEGIN` as one implicit transaction, so each action is atomic.
+
+The verb has no rename today. Without one, the new verb does the wrong thing on an unrenamed database. It adds `fail_type` and `caller_outcome_type` as new empty columns and reports `fail_kind` and `caller_outcome_kind` as unknown extra columns (`plan.rs:960`). It drops `runs_fail_kind_check` and the other old checks as extra (`plan.rs:1076`). Its `ADD COLUMN generation_fact_type text NOT NULL` fails on a table with rows. So the rename is a new cutover that runs before every other action.
+
+#### 4.3.2 Code changes in `reconcile-run-plane`
+
+P8, P10, P11 and P12 move into the verb. Nothing of them stays a hand statement. P8 is in the `catalog` schema, which is inside the verb's scope, and the verb already alters an installed `catalog` table.
+
+- **Observation.** The verb already reads the columns of `runs`, `effect_attempts` and `operator_run_actions`, and the `catalog` columns. Add one flag beside `release_components_without_routes` (`reconcile_run_plane.rs:1152`, `crates/schema/control/src/run_plane/observation.rs:139`): whether `catalog.package_definition_owners` has `definition_kind`.
+- **Detection.** If any old column of §4.1 rows P8, P10, P11 or P12 exists, the plan needs the cutover. If a table has both the old and the new column, or an old check of §4.1 is missing, the cutover refuses with SQLSTATE 55000. Those states have no safe rename.
+- **Action.** A new action in `RunPlaneActionKind` (`crates/schema/control/src/run_plane.rs:146`), working name `TypeColumnCutover`, is the first action of the plan. Its SQL is one batch, so it is one transaction. The SQL is below, with `wamn_run` rewritten to `--schema` by `rewrite_schema` as for every run-plane section.
+- **Planning after the cutover.** The planner plans the other actions against the observation with the new names applied. So the same run adds no column and drops no check for the renamed objects. The existing cutovers set this precedent: the planner already skips the objects that a cutover owns (`plan.rs:916` to `:959`, `:1063` to `:1074`). A second run then plans nothing, which is the verb's idempotence rule (`crates/schema/control/src/run_plane.rs:235`).
+- **Records.** `declarations.rs` and `run-state.sql` take the new names (§4.2). `CheckOrigin::Inline` names the new columns.
+- **Tests.** A unit plan case in `crates/schema/control/src/run_plane/tests.rs`. A live case in `crates/control/lib/tests/run_plane_live/` builds a database from the old `run-state.sql` and `catalog-schema.sql`, reconciles it, and shows that the check query of §4.3 is empty for these tables and that a second plan is a no-op.
+
+The verb does not observe `NOT NULL` constraints. It reads `contype` `c` and `f` only (`observation_sql.rs:350`, `:360`). So the cutover renames the `NOT NULL` names by name, inside a guard. The checks are renamed in plain statements, because the verb observes them and the detection refuses before the batch when one is missing.
+
+```sql
+LOCK TABLE wamn_run.runs, wamn_run.effect_attempts, wamn_run.operator_run_actions,
+           catalog.package_definition_owners IN ACCESS EXCLUSIVE MODE;
+-- P8
+ALTER TABLE catalog.package_definition_owners RENAME COLUMN definition_kind TO definition_type;
+ALTER TABLE catalog.package_definition_owners RENAME CONSTRAINT package_definition_owners_definition_kind_check TO package_definition_owners_definition_type_check;
+-- P10
+ALTER TABLE wamn_run.runs RENAME COLUMN caller_outcome_kind TO caller_outcome_type;
+ALTER TABLE wamn_run.runs RENAME CONSTRAINT runs_caller_outcome_kind_check TO runs_caller_outcome_type_check;
+ALTER TABLE wamn_run.runs RENAME COLUMN fail_kind TO fail_type;
+ALTER TABLE wamn_run.runs RENAME CONSTRAINT runs_fail_kind_check TO runs_fail_type_check;
+-- P11
+ALTER TABLE wamn_run.effect_attempts RENAME COLUMN generation_fact_kind TO generation_fact_type;
+-- P12
+ALTER TABLE wamn_run.operator_run_actions RENAME COLUMN action_kind TO action_type;
+ALTER TABLE wamn_run.operator_run_actions RENAME CONSTRAINT operator_run_actions_kind_check TO operator_run_actions_type_check;
+ALTER TABLE wamn_run.operator_run_actions RENAME COLUMN principal_kind TO principal_type;
+ALTER TABLE wamn_run.operator_run_actions RENAME CONSTRAINT operator_run_actions_principal_kind_check TO operator_run_actions_principal_type_check;
+-- The NOT NULL names of P8, P11 and P12.
+DO $type_column_not_null$
+DECLARE
+    renamed record;
+BEGIN
+    FOR renamed IN
+        SELECT * FROM (VALUES
+            ('catalog', 'package_definition_owners', 'package_definition_owners_definition_kind_not_null', 'package_definition_owners_definition_type_not_null'),
+            ('wamn_run', 'effect_attempts', 'effect_attempts_generation_fact_kind_not_null', 'effect_attempts_generation_fact_type_not_null'),
+            ('wamn_run', 'operator_run_actions', 'operator_run_actions_action_kind_not_null', 'operator_run_actions_action_type_not_null'),
+            ('wamn_run', 'operator_run_actions', 'operator_run_actions_principal_kind_not_null', 'operator_run_actions_principal_type_not_null')
+        ) AS names (schema_name, table_name, old_name, new_name)
+    LOOP
+        IF EXISTS (SELECT FROM pg_catalog.pg_constraint AS con
+                     JOIN pg_catalog.pg_class AS c ON c.oid = con.conrelid
+                     JOIN pg_catalog.pg_namespace AS n ON n.oid = c.relnamespace
+                    WHERE n.nspname = renamed.schema_name AND c.relname = renamed.table_name
+                      AND con.conname = renamed.old_name) THEN
+            EXECUTE format('ALTER TABLE %I.%I RENAME CONSTRAINT %I TO %I',
+                           renamed.schema_name, renamed.table_name,
+                           renamed.old_name, renamed.new_name);
+        END IF;
+    END LOOP;
+END
+$type_column_not_null$;
+```
+
+#### 4.3.3 Why the rest stays by hand
+
+- **wamn_system (P1 to P7, the P9 functions).** `provision-system` installs `CONTROL_BOOTSTRAP_SQL` once and refuses a database that already has the schema `registry` (`crates/control/lib/src/provision_system.rs:8`, `:51` to `:63`). No other verb changes installed wamn_system schema. This is the `wamn-o8b9` finding.
+- **P9 in project-env.** No verb changes an installed history table or the installed record-history functions. `reconcile-run-plane` never alters application or floor tables (`reconcile_run_plane.rs:41` to `:44`). It installs `app-schema.sql` only when `app_system` is absent (`reconcile_run_plane.rs:628`), and `record-history.sql` only inside `CATALOG_SCHEMA_SQL` when `catalog` is absent (`plan.rs:496`). apply-package skips a history table that exists (`crates/control/lib/src/apply_package/record_history.rs:51`).
+
+#### 4.3.4 Hand statements
+
+Run them as the `postgres` superuser with no `SET ROLE`. `CREATE OR REPLACE FUNCTION` keeps the owner, the `SECURITY DEFINER` setting and the grants of the function. Nothing new is created, so no ownership question arises. Each database takes one transaction, and `ON_ERROR_STOP` rolls it back on the first wrong name. Foreign keys and unique keys follow the rename by column number, so the order inside the transaction does not affect correctness. The statements rename the referenced table first, so that a reader can check them against §4.1 row by row.
+
+`deploy/sql/record-history.sql` is idempotent: `CREATE SCHEMA IF NOT EXISTS`, `CREATE OR REPLACE FUNCTION`, and grants that the database already holds (`record-history.sql:37` to `:286`). It carries no transaction of its own (`record-history.sql:4`). So each script appends the file of the migration commit before `COMMIT`, and the installed functions become the fresh-install functions.
+
+**ops-schema.sql.** `provision-system` installs `CONTROL_BOOTSTRAP_SQL`, which is `SYSTEM_SCHEMA_SQL` and `CONTROL_PORTABLE_STORE_SQL` (`crates/control/provision/src/lib.rs:166`, `crates/control/lib/src/provision_system.rs:84`). It does not install `ops-schema.sql`. Only `wamn-ctl-ops copy-project-env` installs it (`crates/control/lib/src/copy_project_env.rs:488`, `crates/control/lib/src/ops_schema.rs:21`), and `docs/operations/gcp.md` records no run of that verb. So the operations page does not say whether P6 exists on wamn-dev. The deployment agent answers it on wamn_system before the apply, and the record states the answer:
+
+```sql
+SELECT to_regclass('provisioning.copy_sagas') IS NOT NULL AS ops_schema_installed;
+```
+
+When the answer is false, leave the three P6 lines out of the script. The script names P6 without `IF EXISTS`, so a wrong answer fails loudly.
 
 **wamn_system.** Save as `$P/kind-to-type-system.sql`:
 
@@ -508,10 +605,10 @@ ALTER TABLE identity.project_env_memberships RENAME CONSTRAINT project_env_membe
 ALTER TABLE provisioning.sagas RENAME COLUMN kind TO type;
 ALTER TABLE provisioning.sagas RENAME CONSTRAINT sagas_kind_check TO sagas_type_check;
 ALTER TABLE provisioning.sagas RENAME CONSTRAINT sagas_kind_not_null TO sagas_type_not_null;
--- P6. ops-schema.sql is an optional extension, so the table may be absent.
-ALTER TABLE IF EXISTS provisioning.copy_sagas RENAME COLUMN kind TO type;
-ALTER TABLE IF EXISTS provisioning.copy_sagas RENAME CONSTRAINT copy_sagas_kind_check TO copy_sagas_type_check;
-ALTER TABLE IF EXISTS provisioning.copy_sagas RENAME CONSTRAINT copy_sagas_kind_not_null TO copy_sagas_type_not_null;
+-- P6. Only when the ops-schema query answered true.
+ALTER TABLE provisioning.copy_sagas RENAME COLUMN kind TO type;
+ALTER TABLE provisioning.copy_sagas RENAME CONSTRAINT copy_sagas_kind_check TO copy_sagas_type_check;
+ALTER TABLE provisioning.copy_sagas RENAME CONSTRAINT copy_sagas_kind_not_null TO copy_sagas_type_not_null;
 -- P7
 ALTER TABLE catalog.authoring_command_audit RENAME COLUMN command_kind TO command_type;
 ALTER TABLE catalog.authoring_command_audit RENAME CONSTRAINT authoring_command_audit_command_kind_check TO authoring_command_audit_command_type_check;
@@ -533,33 +630,12 @@ $$;
 COMMIT;
 ```
 
-`deploy/sql/record-history.sql` is idempotent: `CREATE SCHEMA IF NOT EXISTS`, `CREATE OR REPLACE FUNCTION`, and grants that the database already holds (`record-history.sql:37` to `:286`). It carries no transaction of its own (`record-history.sql:4`). So the apply appends the file from the migration commit before `COMMIT`, and the installed functions become byte for byte the fresh-install functions.
+wamn_system holds the record-history functions (`SYSTEM_SCHEMA_SQL`, `crates/control/provision/src/lib.rs:151`) but no history table. Its identity relations carry stamp triggers only (`system-schema.sql:296` and the other `wamn_record_history_stamp` triggers), and `record-history-app-grants.sql:6` says the system database never applies the app grants. So P9 in wamn_system is the function replacement only.
 
-wamn_system holds the record-history functions (`SYSTEM_SCHEMA_SQL`, `crates/control/provision/src/lib.rs:151`) but no history table. Its identity relations carry stamp triggers only (`system-schema.sql:296` and the other `wamn_record_history_stamp` triggers), and `record-history-app-grants.sql:6` says the system database never applies the app grants. So P9 in wamn_system is the function replacement only. The history DO block below may run there too, and it then renames nothing.
-
-**Each project-env database.** In wamn-dev these are `wamn-db-dkk--receiving--dev--4pqjfmli` and `wamn-db-dkk--wms--dev--0nk1lrpr` (`docs/operations/gcp.md` §3.18 and §5.4). `SELECT datname FROM pg_database WHERE datname LIKE 'wamn-db-%'` confirms the list. Save as `$P/kind-to-type-project-env.sql`:
+**Each project-env database, P9 only.** In wamn-dev these are `wamn-db-dkk--receiving--dev--4pqjfmli` and `wamn-db-dkk--wms--dev--0nk1lrpr` (`docs/operations/gcp.md` §3.18 and §5.4). `SELECT datname FROM pg_database WHERE datname LIKE 'wamn-db-%'` confirms the list. Save as `$P/kind-to-type-project-env.sql`:
 
 ```sql
 BEGIN;
--- P8
-ALTER TABLE catalog.package_definition_owners RENAME COLUMN definition_kind TO definition_type;
-ALTER TABLE catalog.package_definition_owners RENAME CONSTRAINT package_definition_owners_definition_kind_check TO package_definition_owners_definition_type_check;
-ALTER TABLE catalog.package_definition_owners RENAME CONSTRAINT package_definition_owners_definition_kind_not_null TO package_definition_owners_definition_type_not_null;
--- P10
-ALTER TABLE wamn_run.runs RENAME COLUMN caller_outcome_kind TO caller_outcome_type;
-ALTER TABLE wamn_run.runs RENAME CONSTRAINT runs_caller_outcome_kind_check TO runs_caller_outcome_type_check;
-ALTER TABLE wamn_run.runs RENAME COLUMN fail_kind TO fail_type;
-ALTER TABLE wamn_run.runs RENAME CONSTRAINT runs_fail_kind_check TO runs_fail_type_check;
--- P11
-ALTER TABLE wamn_run.effect_attempts RENAME COLUMN generation_fact_kind TO generation_fact_type;
-ALTER TABLE wamn_run.effect_attempts RENAME CONSTRAINT effect_attempts_generation_fact_kind_not_null TO effect_attempts_generation_fact_type_not_null;
--- P12
-ALTER TABLE wamn_run.operator_run_actions RENAME COLUMN action_kind TO action_type;
-ALTER TABLE wamn_run.operator_run_actions RENAME CONSTRAINT operator_run_actions_kind_check TO operator_run_actions_type_check;
-ALTER TABLE wamn_run.operator_run_actions RENAME CONSTRAINT operator_run_actions_action_kind_not_null TO operator_run_actions_action_type_not_null;
-ALTER TABLE wamn_run.operator_run_actions RENAME COLUMN principal_kind TO principal_type;
-ALTER TABLE wamn_run.operator_run_actions RENAME CONSTRAINT operator_run_actions_principal_kind_check TO operator_run_actions_principal_type_check;
-ALTER TABLE wamn_run.operator_run_actions RENAME CONSTRAINT operator_run_actions_principal_kind_not_null TO operator_run_actions_principal_type_not_null;
 -- P9 tables. The set varies by package, so the block finds each history table
 -- by the check constraint that create_history_table gave it.
 DO $rename_history$
@@ -594,9 +670,28 @@ COMMIT;
 
 `create_history_table` names both constraints, `<history>_kind_check` and `<history>_kind_not_null` (`record-history.sql:106`, `:139`). The block therefore finds every history table, in `app_system` (`app-schema.sql:435`) and in each package schema (`crates/control/lib/src/apply_package/record_history.rs:57`). It prints one notice per table. In wamn-dev the expected tables are the six `app_system` tables in both databases, `receiving.purchase_order_history` and `receiving.purchase_order_line_history` in Receiving, and `wms.packaging_history` in WMS. These come from the generated data-access overlays. The notices are the evidence to record.
 
-apply-package never creates a history table again once it exists (`crates/control/lib/src/apply_package/record_history.rs:51`). So the new platform does not repair an old history table, and the DO block is the only path for installed tables.
-
 No history entry holds a renamed key. The `before` and `after` images copy the columns of the logged relation. No logged relation has a renamed column: the P1 to P8 and P10 to P12 tables carry no log trigger, and no application relation has a `kind` column (the only `kind` in `apps/*/wamn.json` outside A1 is the history column, A5).
+
+#### 4.3.5 PAT Secret annotations (P15)
+
+The code change: `crates/control/lib/src/provision_project_env/pat_secrets.rs:267` writes `wamn.io/principal-type`, and the template at `deploy/mvp/bootstrap.sh:118` reads it. The value stays `service`, which `bootstrap.sh:161` checks. The fixtures in `crates/control/lib/src/provision_project_env/tests.rs:117` and `deploy/mvp/tests/bootstrap.sh` follow.
+
+The installed Secrets carry the label `app.kubernetes.io/component=project-env-pat` (`pat_secrets.rs:259`). List them:
+
+```bash
+kubectl get secret --all-namespaces -l app.kubernetes.io/component=project-env-pat \
+  -o custom-columns=NAMESPACE:.metadata.namespace,NAME:.metadata.name --no-headers
+```
+
+Then run one command per Secret. It sets the new key and removes the old key in one patch:
+
+```bash
+kubectl -n <namespace> annotate secret <name> wamn.io/principal-type=service wamn.io/principal-kind-
+```
+
+The wamn-dev listing is possibly empty. `docs/operations/gcp.md` §3.16 writes the management-author PAT Secret to a file that is not applied (`gcp.md:758`), and §6.4 copies the operator PAT file to the bench client. The listing answers it, and the record states the count.
+
+`bootstrap.sh` reads one annotation key, so the transition matters. When the principal annotation is missing or is not `service`, it classifies a Secret that has a PAT prefix as `invalid` (`bootstrap.sh:161`, `:176` to `:179`). For an `invalid` Secret it issues a new PAT and revokes the old prefix (`bootstrap.sh:317` to `:322`, `:436`, `:437`). So an old `bootstrap.sh` run against a re-annotated Secret, or a new one run against an old Secret, rotates that PAT without an error. §4.7 therefore allows no `bootstrap.sh` run from the stop of the workloads until the new `bootstrap.sh` is deployed, and requires every Secret to be re-annotated before the new `bootstrap.sh` runs.
 
 ### 4.4 Edge SQLite
 
@@ -614,6 +709,8 @@ The 218 Rust references of §1.4 (222 at the §1 commit) and the bare `kind` col
 | Package ownership | P8 | `crates/control/lib/src/apply_package/definition_ownership.rs`, `crates/control/lib/src/apply_package/error.rs`, `crates/control/lib/src/apply_package/package_version.rs`, `crates/control/lib/src/apply_package.rs` |
 | Record history | P9 | `deploy/sql/record-history.sql`, `deploy/sql/app-schema.sql`, `apps/platform/data/record-history/src/lib.rs` (`HISTORY_COLUMNS`, the name check, and the fold that reads `HistoryRow.kind` at `:118`, `:265`), `apps/wamn_receiving/query/load_purchase_order_history.sql:12`, `apps/wamn_receiving/data/src/read.rs`, and everything the generator derives from `HISTORY_COLUMNS` (`crates/schema/generator/src/data_access.rs:624`, `:749`, `generate/contracts.rs:1341`, `generate/validation.rs:841`, `:974`) |
 | Run plane | P10, P11, P12 | `crates/schema/control/src/run_plane/declarations.rs`, `schema_changes.rs`, `crates/execution/run-state/src/transitions.rs`, `run_store.rs`, `sql.rs`, `queue/sql.rs`, `operator_action.rs`, `crates/execution/workflow/src/queue.rs`, `router_action.rs`, `crates/platform/runtime/src/plugins/wamn_postgres/production_claim.rs`, `crates/control/lib/src/terminalize_effect_uncertain.rs`, `crates/control/provision/src/sql.rs:242`, `:247`, `:1107` |
+| `reconcile-run-plane` cutover | P8, P10, P11, P12 | `crates/schema/control/src/run_plane.rs` (the new action), `crates/schema/control/src/run_plane/schema_changes.rs` (detection and SQL), `plan.rs` (first action, planning against the renamed observation), `observation.rs` and `crates/control/lib/src/reconcile_run_plane.rs` (the `definition_kind` probe), `crates/schema/control/src/run_plane/tests.rs`, `crates/control/lib/tests/run_plane_live/` (§4.3.2) |
+| PAT Secret annotation | P15 | `crates/control/lib/src/provision_project_env/pat_secrets.rs:267`, `crates/control/lib/src/provision_project_env/tests.rs:117`, `deploy/mvp/bootstrap.sh:118`, `deploy/mvp/tests/bootstrap.sh` |
 | Regenerated | P9 | Every `apps/*/generated/` file of §2.4, the three `generated/platform-policy/data-access.json` overlays (`wamn_receiving`, `wamn_wms`, `platform_fixture`), and `apps/wamn_receiving/tests/.sqlx/query-04951d1d….json`. That is the only SQLx query file that names a renamed column (`git grep -l -E '_kind\|\bkind\b' -- '*/.sqlx/*'`) |
 | Tests and fixtures | all | The live and unit tests that the §1.7 command lists, including `crates/control/provision/tests/deploy_sql_authority.rs`, `control_storage.rs`, `control_portable_store.rs`, `identity_issuer_live.rs`, `crates/identity/platform/tests/`, `crates/identity/project-state/tests/`, `crates/control/lib/tests/run_plane_live/`, `crates/schema/control/src/run_plane/tests.rs`, `tests/conformance/src/schema_drift.rs`, `crates/schema/generator/tests/generation.rs`, `crates/platform/runtime/tests/support/session_fixture.rs:220`, and the `registry.orgs` fixture inserts across `crates/`, `services/` and `tests/integration/` |
 | Scripts | P1 | `tools/identity-jwks-journey-run:428` inserts `placement_kind` |
@@ -637,26 +734,28 @@ A renamed column breaks every old binary that names it. The old host and runtime
 
 The constraint that §3 must honor:
 
-1. Stop every workload that reads wamn_system or a project-env database with the old names: the hosts, the identity service, the scenario-worker and the HTTP and materializer workloads. The CDC readers may keep running (§4.6).
-2. Apply the wamn_system script and then each project-env script, each in one transaction, before any new binary starts.
-3. Start the new binaries and run the republish of the 2.0.0 packages (§2.5) after the statements. The new apply-package writes `definition_type`, and the new scenario-worker writes `command_type`, so the republish cannot come first.
-4. Do not run the old `reconcile-run-plane` against a renamed database. It would find the declared checks missing.
+1. Stop every workload that reads wamn_system or a project-env database with the old names: the hosts, the identity service, the scenario-worker and the HTTP and materializer workloads. The CDC readers keep running (§4.6). Run no `bootstrap.sh` from here until step 6 deploys the new one.
+2. Apply the wamn_system hand script. The new `reconcile-run-plane` reads `principals.type` in wamn_system (`crates/control/lib/src/reconcile_run_plane.rs:407`, `:422`), so this step comes before step 4.
+3. Apply the project-env hand script (P9) to each project-env database.
+4. Run the new `reconcile-run-plane` for each project-env. Its cutover renames P8, P10, P11 and P12 (§4.3.2). Never run the old verb against a renamed database. The old verb finds the declared checks missing and the new columns unknown.
+5. Re-annotate every installed PAT Secret (§4.3.5).
+6. Start the new binaries, deploy the new `bootstrap.sh`, and run the republish of the 2.0.0 packages (§2.5). The new apply-package writes `definition_type`, and the new scenario-worker writes `command_type`, so the republish cannot come before steps 2 to 4.
 
 The republish order itself belongs to wamn-sfea.3.
 
-Rollback runs the same statements with the names swapped and appends `deploy/sql/record-history.sql` from the old commit. It is also metadata-only.
+Rollback swaps the names back. It runs the hand statements with the names swapped and appends `deploy/sql/record-history.sql` of the old commit. It renames P8 and P10 to P12 back with the statements of §4.3.2, names swapped, because the old verb has no rename. It swaps the annotation keys back. All of it is metadata-only.
 
 ### 4.8 Record for gcp.md §7
 
-`docs/operations/gcp.md:1728` is §7 "Schema changes applied by hand". When the statements run, add this entry to it, in the form of its `registry.capture_gap` entry. The angle-bracket fields are filled in at apply time.
+`docs/operations/gcp.md:1728` is §7 "Schema changes applied by hand". When the changes run, add this entry to it, in the form of its `registry.capture_gap` entry. The entry records the hand statements, the verb run that applied P8 and P10 to P12, and the annotations. Before the apply, the deployment agent runs the ops-schema query of §4.3.4 on wamn_system and the Secret listing of §4.3.5, and the entry states both answers. The angle-bracket fields are filled in at apply time.
 
 ````markdown
-On <date> (`wamn-sfea`, `wamn-o8b9`), the `kind` → `type` renames of `docs/plan/kind-to-type.md` §4.3 went into `wamn_system`, `wamn-db-dkk--receiving--dev--4pqjfmli` and `wamn-db-dkk--wms--dev--0nk1lrpr`, with the workloads stopped. Write the wamn_system script of §4.3 into `$P/kind-to-type-system.sql` and the project-env script into `$P/kind-to-type-project-env.sql`. Put `deploy/sql/record-history.sql` of commit <commit> before the `COMMIT;` of each. Apply them as the superuser:
+On <date> (`wamn-sfea`, `wamn-o8b9`), the `kind` → `type` renames of `docs/plan/kind-to-type.md` §4.3 went into `wamn_system`, `wamn-db-dkk--receiving--dev--4pqjfmli` and `wamn-db-dkk--wms--dev--0nk1lrpr`, with the workloads stopped. On wamn_system, `SELECT to_regclass('provisioning.copy_sagas') IS NOT NULL` answered <true|false>, so the script <kept|left out> the three `provisioning.copy_sagas` lines. Write the wamn_system script of §4.3.4 into `$P/kind-to-type-system.sql` and the project-env script into `$P/kind-to-type-project-env.sql`. Put `deploy/sql/record-history.sql` of commit <commit> before the `COMMIT;` of each. Apply them as the superuser:
 
 ```sql
 BEGIN;
 ALTER TABLE registry.orgs RENAME COLUMN placement_kind TO placement_type;
--- ... the other renames of §4.3 ...
+-- ... the other renames of §4.3.4 ...
 CREATE OR REPLACE FUNCTION identity.lock_password_principal(principal uuid) ...;
 -- deploy/sql/record-history.sql
 COMMIT;
@@ -669,16 +768,31 @@ for db in wamn-db-dkk--receiving--dev--4pqjfmli wamn-db-dkk--wms--dev--0nk1lrpr;
 done
 ```
 
-The applies took <n> seconds. The history notices named <tables>. The check query of §4.3 returned no row in any of the three databases afterwards.
+The applies took <n> seconds. The history notices named <tables>.
+
+`reconcile-run-plane` of commit <commit> then applied P8 and P10 to P12 by its `TypeColumnCutover` action. Run it for each project-env as in sections 3.8 and 5.2:
+
+```bash
+target/debug/wamn-ctl reconcile-run-plane --system-database-url "$WAMN_SYSTEM_ADMIN_URL" --admin-database-url "$T" \
+  --org dkk --project <project> --tenant <tenant> --env dev --schema wamn_run
+```
+
+It reported <actions> for Receiving and <actions> for WMS, and a second run reported no action. The check query of §4.3 returned no row in any of the three databases afterwards.
+
+The listing of PAT Secrets with the label `app.kubernetes.io/component=project-env-pat` returned <count> Secrets. Each took one command:
+
+```bash
+kubectl -n <namespace> annotate secret <name> wamn.io/principal-type=service wamn.io/principal-kind-
+```
 ````
 
-### 4.9 Questions for the owner
+### 4.9 Owner rulings, 2026-09-30
 
-1. §1.8 rules the history column only. Are the other names of §4.1 right? In particular `principals.type`, `fail_type`, `action_type` and `operator_run_actions_type_check`.
-2. Should the installed statements rename the generated names too (`_not_null`, `_key`, `_fkey`, one-column `_check`)? Nothing in the code reads them. Renaming keeps an installed database equal to a fresh install. §4.3 assumes yes.
-3. `reconcile-run-plane` already carries in-code changes for retired run-schema structures (`crates/schema/control/src/run_plane/schema_changes.rs:24`). Should P10 to P12 go there instead of into hand statements? §4.3 assumes hand statements under `wamn-o8b9`.
-4. P15, the Kubernetes annotation `wamn.io/principal-kind` on PAT Secrets: does it rename to `wamn.io/principal-type`? If yes, `pat_secrets.rs:267` and `deploy/mvp/bootstrap.sh:118` change together, and the installed PAT Secrets need the new annotation.
-5. Is `ops-schema.sql` installed in wamn-dev? The P6 statements use `IF EXISTS`, so they work either way.
+1. One pattern holds everywhere. A column `kind` becomes `type`, a column `<x>_kind` becomes `<x>_type`, and every check follows its column: `principal_type`, `fail_type`, `action_type`, `operator_run_actions_type_check`.
+2. Installed databases match a fresh install name for name. The installed changes also rename PostgreSQL's automatic constraint names (`_not_null`, `_key`, `_fkey`, `_check`).
+3. Where `reconcile-run-plane` already changes installed run-plane schema in code, P10 to P12 go into that verb, and the operations page records that the verb applied them. Hand statements are only for what no verb can do. §4.3.1 shows what the verb changes today. §4.3.2 moves P8 and P10 to P12 into it. §4.3.3 says why the rest stays by hand.
+4. The PAT Secret annotation becomes `wamn.io/principal-type`. Installed Secrets are re-annotated by one recorded `kubectl annotate` per Secret under gcp.md §7 (§4.3.5, §4.8).
+5. Whether `ops-schema.sql` is installed on wamn-dev is not guessed. The operations page does not say, so the deployment agent answers it with the query of §4.3.4 before the apply, and the record states the answer.
 
 ## 6. `*ErrorKind` families
 
