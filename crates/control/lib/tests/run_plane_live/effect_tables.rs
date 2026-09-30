@@ -58,7 +58,7 @@ async fn create_old_frame_identity_tables(su: &Client, effect: bool, populated: 
             "CREATE TABLE {SCHEMA}.effect_attempts ( \
                tenant_id text NOT NULL, attempt_id uuid NOT NULL, run_id text NOT NULL, \
                node_id text NOT NULL, occurrence int NOT NULL, seq int NOT NULL, \
-               generation_fact_kind text NOT NULL, attempt_started_at timestamptz NOT NULL, \
+               generation_fact_type text NOT NULL, attempt_started_at timestamptz NOT NULL, \
                attempt_deadline_at timestamptz NOT NULL, attempt_input_ref text NOT NULL, \
                PRIMARY KEY (tenant_id,attempt_id), \
                UNIQUE (tenant_id,attempt_id,attempt_started_at), \
@@ -70,7 +70,7 @@ async fn create_old_frame_identity_tables(su: &Client, effect: bool, populated: 
         if populated {
             su.batch_execute(&format!(
                 "INSERT INTO {SCHEMA}.effect_attempts \
-                   (tenant_id,attempt_id,run_id,node_id,occurrence,seq,generation_fact_kind, \
+                   (tenant_id,attempt_id,run_id,node_id,occurrence,seq,generation_fact_type, \
                     attempt_started_at,attempt_deadline_at,attempt_input_ref) \
                  VALUES ('t1','00000000-0000-0000-0000-000000000413','r1','n1',0,0, \
                          'not-required','2026-01-01 UTC','2026-01-02 UTC','sha256:input');"
@@ -161,7 +161,7 @@ pub(super) async fn frame_identity_cutover_leg(su: &Client) {
              INSERT INTO {SCHEMA}.effect_attempts \
                (tenant_id,attempt_id,run_id,root_plan_hash,current_plan_hash,frame_id, \
                 local_node_id,source_artifact_hash,requirement_name,occurrence,seq, \
-                generation_fact_kind,attempt_deadline_at,attempt_input_ref) \
+                generation_fact_type,attempt_deadline_at,attempt_input_ref) \
              VALUES ('t1','00000000-0000-0000-0000-000000000413',$${label}$$, \
                      $${EMPTY_EXECUTION_BUNDLE_HASH}$$,$${EMPTY_EXECUTION_BUNDLE_HASH}$$,0, \
                      'n',$${EMPTY_EXECUTION_BUNDLE_HASH}$$,'manager',0,0, \
@@ -641,7 +641,7 @@ pub(super) async fn effect_table_populated_refusal_leg(su: &Client) {
                     "INSERT INTO {SCHEMA}.effect_attempts \
                        (tenant_id,attempt_id,run_id,root_plan_hash,current_plan_hash,frame_id, \
                         local_node_id,source_artifact_hash,requirement_name,occurrence,seq, \
-                        generation_fact_kind,attempt_deadline_at,attempt_input_ref) \
+                        generation_fact_type,attempt_deadline_at,attempt_input_ref) \
                      VALUES ('t1','00000000-0000-0000-0000-000000000491','r', \
                         $${EMPTY_EXECUTION_BUNDLE_HASH}$$,$${EMPTY_EXECUTION_BUNDLE_HASH}$$,0, \
                         'n',$${EMPTY_EXECUTION_BUNDLE_HASH}$$,'manager',0,1, \

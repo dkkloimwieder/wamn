@@ -426,7 +426,7 @@ async fn production_claim_live() -> anyhow::Result<()> {
                 "INSERT INTO {SCHEMA}.effect_attempts \
                    (tenant_id,run_id,root_plan_hash,current_plan_hash,frame_id, \
                     local_node_id,source_artifact_hash,requirement_name,occurrence,seq, \
-                    generation_fact_kind,attempt_deadline_at,attempt_input_ref) \
+                    generation_fact_type,attempt_deadline_at,attempt_input_ref) \
                  VALUES ($1,'standard-effect',$2,$2,0,'effect-node',$2,'manager',0,1, \
                          'not-required','2099-01-01T00:00:00Z','sha256:claim-live-effect-input')"
             ),

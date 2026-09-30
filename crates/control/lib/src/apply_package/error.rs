@@ -1,6 +1,6 @@
 use std::fmt;
 
-use wamn_schema_introspection::migration_policy::DefinitionKind;
+use wamn_schema_introspection::migration_policy::DefinitionType;
 
 /// Stable apply-package refusal prefix.
 pub const APPLY_PACKAGE_REFUSAL: &str = "apply-package-refused";
@@ -60,7 +60,7 @@ pub struct ApplyPackageError {
     pub(super) path: Option<String>,
     pub(super) schema: Option<String>,
     pub(super) relation: Option<String>,
-    pub(super) definition_kind: Option<DefinitionKind>,
+    pub(super) definition_type: Option<DefinitionType>,
     pub(super) definition: Option<String>,
     pub(super) owner_package: Option<String>,
     pub(super) detail: String,
@@ -130,7 +130,7 @@ impl fmt::Display for ApplyPackageError {
         if let Some(relation) = &self.relation {
             write!(formatter, "; relation={relation}")?;
         }
-        if let Some(kind) = self.definition_kind {
+        if let Some(kind) = self.definition_type {
             write!(formatter, "; definition-kind={}", kind.as_str())?;
         }
         if let Some(definition) = &self.definition {

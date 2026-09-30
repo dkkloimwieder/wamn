@@ -96,11 +96,11 @@ fn runs_stand_in() -> String {
         admission_context_version text NOT NULL DEFAULT '0.1', \
         platform_revision text NOT NULL DEFAULT 'legacy', \
         idempotency_key text, \
-        caller_outcome_kind text, caller_outcome_json jsonb, \
+        caller_outcome_type text, caller_outcome_json jsonb, \
         caller_http_status int, caller_release_node_id text, caller_outcome_hash text, \
         caller_released_at timestamptz, response_deadline_at timestamptz, \
         run_deadline_at timestamptz, terminal_reason text, \
-        fail_kind text, \
+        fail_type text, \
         created_at timestamptz NOT NULL DEFAULT now(), \
         updated_at timestamptz NOT NULL DEFAULT now(), \
         CHECK (capture_mode <> 'full' OR trigger_source IS NOT DISTINCT FROM 'scenario-draft'), \

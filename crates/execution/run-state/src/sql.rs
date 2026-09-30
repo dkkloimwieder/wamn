@@ -120,7 +120,7 @@ mod tests {
             "input_json",
             "result_json",
             "state_json",
-            "fail_kind",
+            "fail_type",
             "updated_at",
         ] {
             assert!(ddl.contains(col), "runs column {col} missing from DDL");

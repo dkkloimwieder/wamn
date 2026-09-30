@@ -53,8 +53,8 @@ async fn seed_failure_detail_run(su: &Client, run_id: &str) {
         &format!(
             "INSERT INTO {SCHEMA}.runs \
                (tenant_id,run_id,flow_id,flow_version,package_id,effective_release_id, \
-                environment,status,fail_kind,terminal_reason, \
-                caller_outcome_kind,caller_outcome_json,caller_http_status, \
+                environment,status,fail_type,terminal_reason, \
+                caller_outcome_type,caller_outcome_json,caller_http_status, \
                 caller_released_at,fail_node,fail_reason) \
              VALUES ('failure-detail',$1,'f',1,'cat',1,'dev','failed','terminal', \
                      'typed-caller-failure','failed', \
@@ -71,7 +71,7 @@ async fn assert_retained_failure_record(su: &Client, run_id: &str) {
     let row = su
         .query_one(
             &format!(
-                "SELECT fail_kind,terminal_reason,caller_outcome_kind, \
+                "SELECT fail_type,terminal_reason,caller_outcome_type, \
                         caller_outcome_json::text,caller_http_status,status \
                    FROM {SCHEMA}.runs \
                   WHERE tenant_id='failure-detail' AND run_id=$1"
@@ -247,7 +247,7 @@ pub(super) async fn shared_runner_legacy_leg(su: &Client) {
              ('dispatched','running','completed','failed','infrastructure-failure','effect-uncertain')), \
            trigger_source text, input_json jsonb, result_json jsonb, state_json jsonb, \
            idempotency_key text, replay_of text, root_run_id text, \
-           fail_kind text CHECK (fail_kind IN \
+           fail_type text CHECK (fail_type IN \
              ('terminal','retry-exhausted','invalid-input','runaway-budget')), \
            created_at timestamptz NOT NULL DEFAULT now(), \
            updated_at timestamptz NOT NULL DEFAULT now(), PRIMARY KEY (tenant_id,run_id)); \
@@ -821,7 +821,7 @@ pub(super) async fn persisted_literal_check_drift_leg(su: &Client) {
     su.batch_execute(CATALOG_SCHEMA_SQL)
         .await
         .expect("apply catalog-schema");
-    // Provision the CURRENT run plane (fresh 5-literal fail_kind CHECK)…
+    // Provision the CURRENT run plane (fresh 5-literal fail_type CHECK)…
     su.batch_execute(&rewrite_schema(RUN_STATE_SQL, &schema))
         .await
         .expect("apply run-state");
@@ -832,9 +832,9 @@ pub(super) async fn persisted_literal_check_drift_leg(su: &Client) {
     // node-error vocabulary that stood beside it left CHECK_SPECS with the
     // projection (wamn-0h0g.26.3.1, 204220e8).
     su.batch_execute(&format!(
-        "ALTER TABLE {SCHEMA}.runs DROP CONSTRAINT runs_fail_kind_check; \
-         ALTER TABLE {SCHEMA}.runs ADD CONSTRAINT runs_fail_kind_check \
-             CHECK (fail_kind IN ('terminal', 'retry-exhausted', 'invalid-input'));"
+        "ALTER TABLE {SCHEMA}.runs DROP CONSTRAINT runs_fail_type_check; \
+         ALTER TABLE {SCHEMA}.runs ADD CONSTRAINT runs_fail_type_check \
+             CHECK (fail_type IN ('terminal', 'retry-exhausted', 'invalid-input'));"
     ))
     .await
     .expect("regress the persisted failure vocabulary");
@@ -852,7 +852,7 @@ pub(super) async fn persisted_literal_check_drift_leg(su: &Client) {
     let rejected = su
         .execute(
             &format!(
-                "UPDATE {SCHEMA}.runs SET fail_kind = 'runaway-budget' \
+                "UPDATE {SCHEMA}.runs SET fail_type = 'runaway-budget' \
                  WHERE tenant_id = 't1' AND run_id = 'r-budget'"
             ),
             &[],
@@ -863,7 +863,7 @@ pub(super) async fn persisted_literal_check_drift_leg(su: &Client) {
         "legacy 3-literal CHECK rejects the runaway verdict"
     );
 
-    // Reconcile: exactly the fail_kind CHECK repair is planned + applied.
+    // Reconcile: exactly the fail_type CHECK repair is planned + applied.
     let plan = reconcile_run_plane::reconcile(su, &schema, true)
         .await
         .expect("reconcile applies");
@@ -871,8 +871,8 @@ pub(super) async fn persisted_literal_check_drift_leg(su: &Client) {
         plan.actions
             .iter()
             .any(|a| a.kind == RunPlaneActionKind::RepairConstraint
-                && a.target == "runs.runs_fail_kind_check"),
-        "the fail_kind CHECK repair is planned: {:#?}",
+                && a.target == "runs.runs_fail_type_check"),
+        "the fail_type CHECK repair is planned: {:#?}",
         plan.actions
     );
 
@@ -883,11 +883,11 @@ pub(super) async fn persisted_literal_check_drift_leg(su: &Client) {
              JOIN pg_class c ON c.oid = con.conrelid \
              JOIN pg_namespace n ON n.oid = c.relnamespace \
              WHERE n.nspname = $1 AND c.relname = 'runs' \
-               AND con.conname = 'runs_fail_kind_check'",
+               AND con.conname = 'runs_fail_type_check'",
             &[&SCHEMA],
         )
         .await
-        .expect("read fail_kind constraintdef")
+        .expect("read fail_type constraintdef")
         .get(0);
     assert!(
         def.contains("runaway-budget"),
@@ -898,7 +898,7 @@ pub(super) async fn persisted_literal_check_drift_leg(su: &Client) {
     let updated = su
         .execute(
             &format!(
-                "UPDATE {SCHEMA}.runs SET fail_kind = 'runaway-budget' \
+                "UPDATE {SCHEMA}.runs SET fail_type = 'runaway-budget' \
                  WHERE tenant_id = 't1' AND run_id = 'r-budget'"
             ),
             &[],

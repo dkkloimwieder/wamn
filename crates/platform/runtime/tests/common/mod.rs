@@ -69,7 +69,7 @@ pub async fn insert_effect_attempt(
                 "INSERT INTO {SCHEMA}.effect_attempts \
                    (tenant_id,run_id,root_plan_hash,current_plan_hash,frame_id, \
                     local_node_id,source_artifact_hash,requirement_name,occurrence,seq, \
-                    generation_fact_kind,attempt_deadline_at,attempt_input_ref) \
+                    generation_fact_type,attempt_deadline_at,attempt_input_ref) \
                  VALUES ($1,$2,$3,$3,0,$4,$3,'manager',0,1, \
                          'not-required','2099-01-01T00:00:00Z','sha256:claim-live-effect-input')"
             ),
@@ -329,7 +329,7 @@ pub async fn install_prior_caller_winner(client: &Client, run_id: &str) -> anyho
         .execute(
             &format!(
                 "UPDATE {SCHEMA}.runs \
-                    SET trigger_source='http', caller_outcome_kind='responded', \
+                    SET trigger_source='http', caller_outcome_type='responded', \
                         caller_outcome_json='{{\"winner\":\"prior\"}}', \
                         caller_http_status=207, caller_release_node_id='prior-node', \
                         caller_outcome_hash=$3, \
@@ -375,7 +375,7 @@ pub async fn caller_fields(client: &Client, run_id: &str) -> anyhow::Result<Valu
         .query_one(
             &format!(
                 "SELECT jsonb_build_object( \
-                    'kind',caller_outcome_kind, 'body',caller_outcome_json, \
+                    'kind',caller_outcome_type, 'body',caller_outcome_json, \
                     'status',caller_http_status, 'node',caller_release_node_id, \
                     'hash',caller_outcome_hash, 'released-at',caller_released_at)::text \
                    FROM {SCHEMA}.runs WHERE tenant_id=$1 AND run_id=$2"

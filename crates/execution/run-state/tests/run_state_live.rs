@@ -309,7 +309,7 @@ fn run_state_live() {
                    'responded'::text,'{{\"ok\":true}}'::text,200::int, \
                    'respond'::text,'sha256:one'::text,'{released_at}'::timestamptz; \
            ASSERT released.result_code = 'released', 'caller released'; \
-           ASSERT (SELECT caller_outcome_kind FROM runs WHERE run_id='release-1') = 'responded', \
+           ASSERT (SELECT caller_outcome_type FROM runs WHERE run_id='release-1') = 'responded', \
                   'caller outcome persisted'; \
            ASSERT (SELECT caller_released_at FROM runs WHERE run_id='release-1') \
                   = '{released_at}'::timestamptz, \
@@ -330,7 +330,7 @@ fn run_state_live() {
                    'responded'::text,'{{\"ok\":true}}'::text,200::int, \
                    'respond'::text,'sha256:one'::text,'{released_at}'::timestamptz; \
            ASSERT replayed.result_code = 'already-released', 'duplicate is replay'; \
-           ASSERT replayed.outcome_kind = 'responded', 'stored kind returned'; \
+           ASSERT replayed.outcome_type = 'responded', 'stored kind returned'; \
          END $test$; COMMIT;",
         executor_preamble(),
         release
@@ -374,7 +374,7 @@ fn run_state_live() {
          INSERT INTO wamn_run.runs \
            (tenant_id,run_id,flow_id,flow_version,package_id,effective_release_id,environment, \
             wiring_id,wiring_version,attachment_id,status,trigger_source, \
-            caller_outcome_kind,caller_outcome_json,caller_http_status,caller_release_node_id, \
+            caller_outcome_type,caller_outcome_json,caller_http_status,caller_release_node_id, \
             caller_outcome_hash,caller_released_at) VALUES \
            ('t1','terminal-http-released','f',1,'cat',1,'prod', \
             'fixture-wiring',1,'http-released','running','http', \
@@ -681,7 +681,7 @@ fn run_state_live() {
         &url,
         "INSERT INTO wamn_run.effect_attempts \
            (tenant_id,run_id,root_plan_hash,current_plan_hash,frame_id,local_node_id, \
-            source_artifact_hash,requirement_name,occurrence,seq,generation_fact_kind, \
+            source_artifact_hash,requirement_name,occurrence,seq,generation_fact_type, \
             attempt_deadline_at,attempt_input_ref) \
          VALUES ('t1','record-effect', \
            'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a', \
@@ -728,7 +728,7 @@ fn run_state_live() {
           WHERE run_id = 'record-standard-effect'; \
          INSERT INTO wamn_run.effect_attempts \
            (tenant_id,run_id,root_plan_hash,current_plan_hash,frame_id,local_node_id, \
-            source_artifact_hash,requirement_name,occurrence,seq,generation_fact_kind, \
+            source_artifact_hash,requirement_name,occurrence,seq,generation_fact_type, \
             attempt_deadline_at,attempt_input_ref) \
          VALUES ('t1','record-standard-effect', \
            'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a', \
@@ -1067,7 +1067,7 @@ fn run_state_live() {
                   = 'infrastructure-failure', 'the reap did not persist terminal status'; \
            ASSERT NOT EXISTS (SELECT FROM run_queue WHERE run_id='reap-exhausted'), \
                   'the reap did not dequeue atomically'; \
-           ASSERT (SELECT caller_outcome_kind FROM runs WHERE run_id='reap-exhausted') \
+           ASSERT (SELECT caller_outcome_type FROM runs WHERE run_id='reap-exhausted') \
                   = 'failed', 'the reap left an attached caller unreleased'; \
            ASSERT (SELECT caller_http_status FROM runs WHERE run_id='reap-exhausted') = 500, \
                   'the reap stored the wrong caller status'; \

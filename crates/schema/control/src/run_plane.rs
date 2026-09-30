@@ -60,6 +60,7 @@
 mod declarations;
 mod plan;
 mod schema_changes;
+mod type_column;
 
 #[doc(inline)]
 pub use plan::plan_run_plane;
@@ -144,6 +145,9 @@ pub const SCENARIO_AUTHOR_ROLE: &str = "wamn_scenario_author";
 /// What one plan action does (for reporting; the SQL is on the action).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RunPlaneActionKind {
+    /// Rename the `kind` columns of an installed database to `type`, before
+    /// every other action (docs/plan/kind-to-type.md §4.3.2).
+    TypeColumnCutover,
     /// Create or harden the host-only `wamn_scenario_author` NOLOGIN role.
     EnsureScenarioAuthorRole,
     /// `CREATE SCHEMA IF NOT EXISTS` + role usage grant (the run-state.sql

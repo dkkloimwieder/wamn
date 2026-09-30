@@ -9,7 +9,7 @@ use wamn_control_provision::{
     CredentialGeneration, WorkloadRoleFamily, WorkloadRoleScope, sql as provision_sql,
     workload_generation_role,
 };
-use wamn_run_state::{EffectUncertainFailure, FailKind, RunStatus};
+use wamn_run_state::{EffectUncertainFailure, FailType, RunStatus};
 
 // ---- status vocabularies ---------------------------------------------------
 
@@ -23,8 +23,8 @@ fn status_sql_literals_round_trip() {
             s
         );
     }
-    for k in FailKind::ALL {
-        assert_eq!(FailKind::from_sql(k.as_sql()), Some(k));
+    for k in FailType::ALL {
+        assert_eq!(FailType::from_sql(k.as_sql()), Some(k));
     }
     assert_eq!(RunStatus::from_sql("nope"), None);
     assert!(serde_json::from_value::<RunStatus>(json!("nope")).is_err());
@@ -35,8 +35,8 @@ fn status_sql_literals_round_trip() {
     );
     assert_eq!(RunStatus::EffectUncertain.as_sql(), "effect-uncertain");
     assert!(!RunStatus::EffectUncertain.is_terminal());
-    assert_eq!(FailKind::RetryExhausted.as_sql(), "retry-exhausted");
-    assert_eq!(FailKind::RunawayBudget.as_sql(), "runaway-budget");
+    assert_eq!(FailType::RetryExhausted.as_sql(), "retry-exhausted");
+    assert_eq!(FailType::RunawayBudget.as_sql(), "runaway-budget");
 }
 
 #[test]
@@ -56,12 +56,12 @@ fn persisted_fail_kind_vocabulary_is_exact_and_alias_free() {
         "unbound-requirement",
     ];
 
-    assert_eq!(FailKind::ALL.map(FailKind::as_sql), EXPECTED);
+    assert_eq!(FailType::ALL.map(FailType::as_sql), EXPECTED);
     for literal in EXPECTED {
-        let kind = FailKind::from_sql(literal).expect("frozen fail_kind literal parses");
+        let kind = FailType::from_sql(literal).expect("frozen fail_type literal parses");
         assert_eq!(serde_json::to_value(kind).unwrap(), json!(literal));
         assert_eq!(
-            serde_json::from_value::<FailKind>(json!(literal)).unwrap(),
+            serde_json::from_value::<FailType>(json!(literal)).unwrap(),
             kind
         );
     }
@@ -79,9 +79,9 @@ fn persisted_fail_kind_vocabulary_is_exact_and_alias_free() {
         "contract-incompatible",
         "requirement-unbound",
     ] {
-        assert_eq!(FailKind::from_sql(alias), None, "alias {alias:?} parsed");
+        assert_eq!(FailType::from_sql(alias), None, "alias {alias:?} parsed");
         assert!(
-            serde_json::from_value::<FailKind>(json!(alias)).is_err(),
+            serde_json::from_value::<FailType>(json!(alias)).is_err(),
             "wire alias {alias:?} parsed"
         );
     }
@@ -161,8 +161,8 @@ fn live_database(url: &str) -> String {
 /// Apply `deploy/sql/run-state.sql` to a test database and assert the tenant RLS
 /// isolates rows, the idempotency index dedupes, and the INSTALLED run-status CHECK
 /// admits exactly the crate's [`RunStatus`] vocabulary while refusing the retired
-/// run-level `parked`. The installed `fail_kind` CHECK admits exactly
-/// [`FailKind::ALL`], and the server answers each [`RUN_RECORD_CHECKS`] arm. The test runs as the superuser (the harness prepares an App
+/// run-level `parked`. The installed `fail_type` CHECK admits exactly
+/// [`FailType::ALL`], and the server answers each [`RUN_RECORD_CHECKS`] arm. The test runs as the superuser (the harness prepares an App
 /// generation) and holds the process lock, because it changes cluster-wide roles.
 #[test]
 fn run_state_schema_applies_and_isolates_on_postgres() {
@@ -340,7 +340,7 @@ fn run_state_schema_applies_and_isolates_on_postgres() {
          ) AS installed;"
     )
     .expect("writing to a String cannot fail");
-    // The installed fail_kind CHECK, asked for its literal set like the status one.
+    // The installed fail_type CHECK, asked for its literal set like the status one.
     script.push_str(
         "SELECT 'fail-kind-installed ' || string_agg(DISTINCT literal, ' ' ORDER BY literal)\n\
          FROM (\n\
@@ -353,7 +353,7 @@ fn run_state_schema_applies_and_isolates_on_postgres() {
            WHERE con.conrelid = 'wamn_run.runs'::regclass\n\
              AND con.contype = 'c'\n\
              AND cardinality(con.conkey) = 1\n\
-             AND col.attname = 'fail_kind'\n\
+             AND col.attname = 'fail_type'\n\
          ) AS installed;\n",
     );
     script.push_str(RUN_RECORD_CHECKS);
@@ -457,12 +457,12 @@ fn run_state_schema_applies_and_isolates_on_postgres() {
         "the installed runs status CHECK admits a different vocabulary than RunStatus::ALL"
     );
 
-    let mut fail_vocabulary = FailKind::ALL.map(FailKind::as_sql);
+    let mut fail_vocabulary = FailType::ALL.map(FailType::as_sql);
     fail_vocabulary.sort_unstable();
     assert_eq!(
         fail_kinds.as_deref(),
         Some(fail_vocabulary.join(" ").as_str()),
-        "the installed runs fail_kind CHECK admits a different vocabulary than FailKind::ALL"
+        "the installed runs fail_type CHECK admits a different vocabulary than FailType::ALL"
     );
 }
 

@@ -42,7 +42,7 @@ authority AS ( \
              ELSE 'ready' \
            END AS result_code, \
            r.tenant_id, r.run_id, r.status, \
-           r.caller_outcome_kind, r.caller_outcome_json, \
+           r.caller_outcome_type, r.caller_outcome_json, \
            r.caller_http_status, r.caller_release_node_id, \
            r.caller_outcome_hash, r.caller_released_at, r.run_deadline_at \
       FROM input AS i \
@@ -152,14 +152,14 @@ pub fn release_caller_sql() -> String {
                       ELSE 'ready' \
                     END AS result_code, \
                     a.tenant_id, a.run_id, a.status, \
-                    a.caller_outcome_kind, a.caller_outcome_json, \
+                    a.caller_outcome_type, a.caller_outcome_json, \
                     a.caller_http_status, a.caller_release_node_id, \
                     a.caller_outcome_hash, a.caller_released_at \
                FROM authority AS a \
          ), \
          released AS ( \
              UPDATE runs AS r \
-                SET caller_outcome_kind = $5, \
+                SET caller_outcome_type = $5, \
                     caller_outcome_json = $6::text::jsonb, \
                     caller_http_status = $7, \
                     caller_release_node_id = $8, \
@@ -169,14 +169,14 @@ pub fn release_caller_sql() -> String {
                FROM classified AS c \
               WHERE c.result_code = 'ready' \
                 AND r.tenant_id = c.tenant_id AND r.run_id = c.run_id \
-             RETURNING r.status, r.caller_outcome_kind, r.caller_outcome_json, \
+             RETURNING r.status, r.caller_outcome_type, r.caller_outcome_json, \
                        r.caller_http_status, r.caller_release_node_id, \
                        r.caller_outcome_hash \
          ) \
          SELECT CASE WHEN x.status IS NOT NULL THEN 'released' ELSE c.result_code END \
                     AS result_code, \
                 COALESCE(x.status, c.status) AS run_status, \
-                COALESCE(x.caller_outcome_kind, c.caller_outcome_kind) AS outcome_kind, \
+                COALESCE(x.caller_outcome_type, c.caller_outcome_type) AS outcome_type, \
                 COALESCE(x.caller_outcome_json, c.caller_outcome_json)::text AS outcome_json, \
                 COALESCE(x.caller_http_status, c.caller_http_status) AS http_status, \
                 COALESCE(x.caller_release_node_id, c.caller_release_node_id) \
@@ -260,7 +260,7 @@ pub fn terminalize_sql() -> String {
          terminalized AS ( \
              UPDATE runs AS r \
                 SET status = $5, terminal_reason = $6, \
-                    result_json = $7::text::jsonb, fail_kind = $8, \
+                    result_json = $7::text::jsonb, fail_type = $8, \
                     updated_at = $9::timestamptz \
                FROM classified AS c \
               WHERE c.result_code = 'ready' \
@@ -414,7 +414,7 @@ mod tests {
         assert!(!terminal.contains("run_dead_letters"));
         assert!(!terminal.contains("partition_key"));
         assert!(!terminal.contains("partition_policy"));
-        assert!(terminal.contains("fail_kind = $8"));
+        assert!(terminal.contains("fail_type = $8"));
         assert!(!terminal.contains("execution_bundle_hash"));
     }
 
@@ -429,7 +429,7 @@ mod tests {
             "event_source_run_id",
             "event_root_run_id",
             "event_depth",
-            "caller_outcome_kind",
+            "caller_outcome_type",
             "caller_outcome_json",
             "caller_http_status",
             "caller_release_node_id",

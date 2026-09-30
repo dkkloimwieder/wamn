@@ -528,7 +528,7 @@ async fn write_identity(client: &Client) -> Vec<String> {
                  FROM catalog.package_migrations WHERE tenant_id = $1 \
                UNION ALL \
                SELECT 'definition:' || schema_name || ':' || relation_name || ':' || \
-                      definition_kind || ':' || definition_name || ':' || \
+                      definition_type || ':' || definition_name || ':' || \
                       owner_package_id || ':' || client_field_extensible::text || ':' || xmin::text \
                  FROM catalog.package_definition_owners WHERE tenant_id = $1 \
                UNION ALL \
@@ -952,17 +952,17 @@ async fn exact_runner_commits_once_refuses_drift_and_rolls_back_a_failing_suffix
     assert_eq!(
         client
             .query(
-                "SELECT definition_kind, definition_name, owner_package_id, \
+                "SELECT definition_type, definition_name, owner_package_id, \
                         client_field_extensible \
                    FROM catalog.package_definition_owners \
                   WHERE tenant_id = $1 AND schema_name = 'inventory' \
                     AND relation_name = 'panel' \
-                    AND ((definition_kind = 'relation' AND definition_name = 'panel') \
-                      OR (definition_kind = 'field' AND definition_name IN \
+                    AND ((definition_type = 'relation' AND definition_name = 'panel') \
+                      OR (definition_type = 'field' AND definition_name IN \
                           ('status', 'overlay_inspection_required', 'overlay_quality_status')) \
-                      OR (definition_kind = 'constraint' AND definition_name = \
+                      OR (definition_type = 'constraint' AND definition_name = \
                           'panel_overlay_quality_status_check')) \
-                  ORDER BY definition_kind, definition_name COLLATE \"C\"",
+                  ORDER BY definition_type, definition_name COLLATE \"C\"",
                 &[&TENANT],
             )
             .await
@@ -2444,7 +2444,7 @@ async fn apply_created_then_added(relation: &str) {
     let owned: bool = client
         .query_one(
             "SELECT count(*) = 1 FROM catalog.package_definition_owners \
-             WHERE relation_name = $1 AND definition_kind = 'field' \
+             WHERE relation_name = $1 AND definition_type = 'field' \
                AND definition_name = 'note' AND owner_package_id = 'wamn_inventory'",
             &[&relation],
         )

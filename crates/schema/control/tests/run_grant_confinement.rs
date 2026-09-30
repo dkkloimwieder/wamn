@@ -45,7 +45,7 @@ const CANONICAL_RUN_COLUMNS: &[&str] = &[
     "admission_context_version",
     "platform_revision",
     "idempotency_key",
-    "caller_outcome_kind",
+    "caller_outcome_type",
     "caller_outcome_json",
     "caller_http_status",
     "caller_release_node_id",
@@ -54,7 +54,7 @@ const CANONICAL_RUN_COLUMNS: &[&str] = &[
     "response_deadline_at",
     "run_deadline_at",
     "terminal_reason",
-    "fail_kind",
+    "fail_type",
     "created_at",
     "updated_at",
 ];

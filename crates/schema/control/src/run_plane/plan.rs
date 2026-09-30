@@ -42,6 +42,7 @@ use super::schema_changes::{
     run_wiring_identity_contract_complete, stored_suite_cutover_needed, stored_suite_cutover_sql,
     wiring_identity_cutover_sql,
 };
+use super::type_column::{TypeColumnCutover, type_column_cutover};
 
 pub(super) fn environment_policy_row_security_at_record() -> RowSecurityObservation {
     RowSecurityObservation {
@@ -238,6 +239,29 @@ fn run_capture_privileges_drifted(schema: &BareSchemaName, obs: &RunPlaneObserva
 /// driver read; the returned plan is what it should execute, in order.
 pub fn plan_run_plane(schema: &BareSchemaName, obs: &RunPlaneObservation) -> RunPlanePlan {
     let mut plan = RunPlanePlan::default();
+    // The column cutover runs first, and the rest of the plan sees the new
+    // names, so the same run adds no column and drops no check for them.
+    let renamed;
+    let obs = match type_column_cutover(schema, obs) {
+        TypeColumnCutover::None => obs,
+        TypeColumnCutover::Refuse(sql) => {
+            plan.actions.push(RunPlaneAction {
+                kind: RunPlaneActionKind::TypeColumnCutover,
+                target: "type-columns".to_string(),
+                sql,
+            });
+            return plan;
+        }
+        TypeColumnCutover::Rename { sql, renamed: next } => {
+            plan.actions.push(RunPlaneAction {
+                kind: RunPlaneActionKind::TypeColumnCutover,
+                target: "type-columns".to_string(),
+                sql,
+            });
+            renamed = next;
+            &*renamed
+        }
+    };
     if obs.tables.contains_key("node_runs") {
         let target = schema.quoted();
         plan.actions.push(RunPlaneAction {

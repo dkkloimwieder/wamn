@@ -48,7 +48,7 @@
 //! - **rerun-lineage cutover**: populated runs retain their payload and trusted
 //!   event causation while only `replay_of`, `root_run_id`, and the exact
 //!   `runs_root` index disappear. A same-name foreign index refuses atomically.
-//! - **failure-detail cutover**: populated runs retain `fail_kind` and their
+//! - **failure-detail cutover**: populated runs retain `fail_type` and their
 //!   typed caller outcome while retired per-node detail is deliberately
 //!   discarded. A dependent view refuses with `2BP01` before role bootstrap.
 //! - **stored-test cutover**: all five retired tables and both helper functions
@@ -66,7 +66,7 @@
 //! - **retired effect-disposition cutover**: empty parent/child tables are
 //!   locked and removed child-first; populated history refuses atomically with
 //!   the exact archive-or-reprovision diagnostic.
-//! - **fail_kind CHECK drift** (wamn-fqg.16): a schema whose `runs.fail_kind`
+//! - **fail_type CHECK drift** (wamn-fqg.16): a schema whose `runs.fail_type`
 //!   CHECK predates cjv.4's `'runaway-budget'` literal REJECTS a runaway
 //!   `mark_failed` UPDATE. The verb drops the observed CHECK and re-adds the
 //!   5-literal record form; the runaway UPDATE then succeeds and a re-run is a
@@ -82,6 +82,8 @@ mod partition;
 mod run_history;
 #[path = "run_plane_live/target_identity.rs"]
 mod target_identity;
+#[path = "run_plane_live/type_columns.rs"]
+mod type_columns;
 
 use partition::{
     partition_plane_active_lease_refusal_leg, partition_plane_authored_ordering_refusal_leg,
@@ -1979,7 +1981,7 @@ async fn effect_disposition_security_drift_leg(su: &Client) {
             &format!(
                 "INSERT INTO {SCHEMA}.effect_attempts \
                    (tenant_id,attempt_id,run_id,root_plan_hash,current_plan_hash,frame_id, \
-                    local_node_id,source_artifact_hash,requirement_name,occurrence,seq,generation_fact_kind, \
+                    local_node_id,source_artifact_hash,requirement_name,occurrence,seq,generation_fact_type, \
                     attempt_started_at,attempt_deadline_at,attempt_input_ref) \
                  VALUES ('t1','00000000-0000-0000-0000-000000000509', \
                          'forged',$${EMPTY_EXECUTION_BUNDLE_HASH}$$,$${EMPTY_EXECUTION_BUNDLE_HASH}$$,0, \
@@ -2053,7 +2055,7 @@ async fn effect_disposition_security_drift_leg(su: &Client) {
     su.batch_execute(&format!(
         "INSERT INTO {SCHEMA}.effect_attempts \
              (tenant_id,attempt_id,run_id,root_plan_hash,current_plan_hash,frame_id, \
-              local_node_id,source_artifact_hash,requirement_name,occurrence,seq,generation_fact_kind, \
+              local_node_id,source_artifact_hash,requirement_name,occurrence,seq,generation_fact_type, \
               attempt_started_at,attempt_deadline_at,attempt_input_ref) \
              VALUES \
              ('t1','00000000-0000-0000-0000-000000000530', \

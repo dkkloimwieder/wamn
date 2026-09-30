@@ -283,8 +283,8 @@ release_manifest_v3_snapshots:SELECT,wirings:SELECT', \
               AND pg_catalog.has_column_privilege( \
                     'wamn_executor_platform', a.attrelid, a.attnum, 'UPDATE'); \
            ASSERT actual = \
-             'caller_http_status,caller_outcome_hash,caller_outcome_json,caller_outcome_kind,\
-caller_release_node_id,caller_released_at,deadline_adjustments_json,fail_kind,manifest_digest,\
+             'caller_http_status,caller_outcome_hash,caller_outcome_json,caller_outcome_type,\
+caller_release_node_id,caller_released_at,deadline_adjustments_json,fail_type,manifest_digest,\
 result_json,state_json,status,terminal_reason,updated_at', \
                   'runs UPDATE columns drifted: ' || coalesce(actual, '<none>'); \
            SELECT string_agg(a.attname, ',' ORDER BY a.attname) INTO actual \

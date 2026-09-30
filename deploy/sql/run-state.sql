@@ -301,7 +301,7 @@ GRANT SELECT ON TABLE wamn_run.environment_policies TO wamn_app;
 -- payload; `result_json` is the last node's output on
 -- completion; `state_json` carries transient run state such as bounded-retry
 -- scheduling and execution context. `idempotency_key` dedupes at-least-once
--- redelivery of the same trigger (a partial-unique index). `fail_kind` mirrors
+-- redelivery of the same trigger (a partial-unique index). `fail_type` mirrors
 -- the engine `FailKind` so history can
 -- flag an upstream bug (`invalid-input`) apart from a terminal error or an
 -- exhausted retry budget. Status values are exactly wamn_run_store::RunStatus
@@ -374,8 +374,8 @@ CREATE TABLE wamn_run.runs (
         CHECK (admission_context_version = '0.1'),
     platform_revision text NOT NULL DEFAULT 'legacy',
     idempotency_key text,
-    caller_outcome_kind text
-        CHECK (caller_outcome_kind IN ('responded', 'failed')),
+    caller_outcome_type text
+        CHECK (caller_outcome_type IN ('responded', 'failed')),
     caller_outcome_json jsonb,
     caller_http_status int CHECK (caller_http_status BETWEEN 100 AND 599),
     caller_release_node_id text,
@@ -384,7 +384,7 @@ CREATE TABLE wamn_run.runs (
     response_deadline_at timestamptz,
     run_deadline_at timestamptz,
     terminal_reason text,
-    fail_kind       text CHECK (fail_kind IN ('terminal', 'retry-exhausted', 'invalid-input',
+    fail_type       text CHECK (fail_type IN ('terminal', 'retry-exhausted', 'invalid-input',
                                               'runaway-budget', 'effect-uncertain', 'depth-budget',
                                               'dispatch-budget', 'unresolvable-name',
                                               'hash-invalid-bytes', 'foreign-revision',
@@ -416,11 +416,11 @@ CREATE TABLE wamn_run.runs (
     CONSTRAINT runs_updated_after_created
         CHECK (updated_at >= created_at),
     CONSTRAINT runs_check6
-        CHECK ((caller_released_at IS NULL) = (caller_outcome_kind IS NULL)),
+        CHECK ((caller_released_at IS NULL) = (caller_outcome_type IS NULL)),
     CONSTRAINT runs_check7
-        CHECK (caller_outcome_kind IS NULL OR caller_outcome_json IS NOT NULL),
+        CHECK (caller_outcome_type IS NULL OR caller_outcome_json IS NOT NULL),
     CONSTRAINT runs_check8
-        CHECK (caller_outcome_kind <> 'responded' OR caller_release_node_id IS NOT NULL),
+        CHECK (caller_outcome_type <> 'responded' OR caller_release_node_id IS NOT NULL),
     CONSTRAINT runs_check9
         CHECK (response_deadline_at IS NULL OR run_deadline_at IS NULL
                OR response_deadline_at <= run_deadline_at),
@@ -600,7 +600,7 @@ CREATE TABLE wamn_run.effect_attempts (
     requirement_name text NOT NULL,
     occurrence      int NOT NULL,
     seq             int NOT NULL,
-    generation_fact_kind text NOT NULL,
+    generation_fact_type text NOT NULL,
     connection_name text,
     connection_generation text,
     credential_generation text,
@@ -630,13 +630,13 @@ CREATE TABLE wamn_run.effect_attempts (
     CONSTRAINT effect_attempts_occurrence_check CHECK (occurrence >= 0),
     CONSTRAINT effect_attempts_seq_check CHECK (seq >= 0),
     CONSTRAINT effect_attempts_generation_fact_check
-        CHECK (generation_fact_kind IN ('not-required', 'attested')),
+        CHECK (generation_fact_type IN ('not-required', 'attested')),
     CONSTRAINT effect_attempts_generation_values_check CHECK (
-        (generation_fact_kind = 'not-required'
+        (generation_fact_type = 'not-required'
          AND connection_name IS NULL
          AND connection_generation IS NULL AND credential_generation IS NULL)
         OR
-        (generation_fact_kind = 'attested'
+        (generation_fact_type = 'attested'
          AND connection_name IS NOT NULL AND connection_name <> ''
          AND connection_generation IS NOT NULL AND connection_generation <> ''
          AND credential_generation IS NOT NULL AND credential_generation <> '')
@@ -792,11 +792,11 @@ CREATE TABLE wamn_run.operator_run_actions (
     action_id       uuid NOT NULL DEFAULT gen_random_uuid(),
     correlation_id  text NOT NULL,
     run_id          text NOT NULL,
-    action_kind     text NOT NULL,
+    action_type     text NOT NULL,
     basis           text NOT NULL,
     evidence_ref    text NOT NULL,
     principal       text NOT NULL,
-    principal_kind  text NOT NULL,
+    principal_type  text NOT NULL,
     prior_run_status text NOT NULL,
     prior_started_node_frame_id bigint,
     prior_started_node_local_node_id text,
@@ -806,15 +806,15 @@ CREATE TABLE wamn_run.operator_run_actions (
     CONSTRAINT operator_run_actions_tenant_check CHECK (tenant_id <> ''),
     CONSTRAINT operator_run_actions_correlation_check CHECK (correlation_id <> ''),
     CONSTRAINT operator_run_actions_run_check CHECK (run_id <> ''),
-    CONSTRAINT operator_run_actions_kind_check
-        CHECK (action_kind = 'terminalize-effect-uncertain'),
+    CONSTRAINT operator_run_actions_type_check
+        CHECK (action_type = 'terminalize-effect-uncertain'),
     CONSTRAINT operator_run_actions_basis_check
         CHECK (basis IN ('external-evidence', 'counterparty-confirmation',
                          'operator-judgment')),
     CONSTRAINT operator_run_actions_evidence_check CHECK (evidence_ref <> ''),
     CONSTRAINT operator_run_actions_principal_check CHECK (principal <> ''),
-    CONSTRAINT operator_run_actions_principal_kind_check
-        CHECK (principal_kind = 'database-role'),
+    CONSTRAINT operator_run_actions_principal_type_check
+        CHECK (principal_type = 'database-role'),
     CONSTRAINT operator_run_actions_prior_run_status_check
         CHECK (prior_run_status = 'effect-uncertain'),
     CONSTRAINT operator_run_actions_prior_node_check CHECK (

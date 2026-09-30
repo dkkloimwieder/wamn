@@ -1057,7 +1057,7 @@ pub(super) fn failure_detail_cutover_sql(schema: &BareSchemaName) -> String {
         r"LOCK TABLE {target}.runs IN ACCESS EXCLUSIVE MODE;
 -- wamn-0h0g.12.173/.12.175: populated retired failure-detail values are
 -- deliberately discarded, not archived. fail_node names a deleted plan
--- coordinate, and fail_reason is superseded by fail_kind plus the typed caller
+-- coordinate, and fail_reason is superseded by fail_type plus the typed caller
 -- outcome; retaining either would preserve a dangling or duplicate record.
 ALTER TABLE {target}.runs
     DROP COLUMN IF EXISTS fail_node RESTRICT,

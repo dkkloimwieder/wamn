@@ -24,7 +24,7 @@ use std::sync::Arc;
 
 use serde_json::{Value, json};
 use wamn_run_state::queue::serialize_effect_intent_sql;
-use wamn_run_state::{FailKind, RunStatus, RunStore as _};
+use wamn_run_state::{FailType, RunStatus, RunStore as _};
 use wamn_runtime::plugins::wamn_postgres::{ProductionClaimResult, ProductionReapResult};
 
 mod common;
@@ -127,7 +127,7 @@ async fn production_claim_durable_live() -> anyhow::Result<()> {
         ProductionClaimResult::Terminalized {
             run_id: "effect-race".into(),
             status: RunStatus::EffectUncertain,
-            fail_kind: FailKind::EffectUncertain,
+            fail_type: FailType::EffectUncertain,
         }
     );
     let effect = admin
@@ -164,7 +164,7 @@ async fn production_claim_durable_live() -> anyhow::Result<()> {
         ProductionClaimResult::Terminalized {
             run_id: "effect-callerless".into(),
             status: RunStatus::EffectUncertain,
-            fail_kind: FailKind::EffectUncertain,
+            fail_type: FailType::EffectUncertain,
         }
     );
     assert_callerless_terminal(admin, "effect-callerless", "effect-uncertain").await?;
@@ -180,7 +180,7 @@ async fn production_claim_durable_live() -> anyhow::Result<()> {
         ProductionClaimResult::Terminalized {
             run_id: "effect-winner".into(),
             status: RunStatus::EffectUncertain,
-            fail_kind: FailKind::EffectUncertain,
+            fail_type: FailType::EffectUncertain,
         }
     );
     assert_prior_winner_terminal(admin, "effect-winner", "effect-uncertain", &effect_winner)
@@ -216,7 +216,7 @@ async fn production_claim_durable_live() -> anyhow::Result<()> {
                 "INSERT INTO {SCHEMA}.effect_attempts \
                    (tenant_id,run_id,root_plan_hash,current_plan_hash,frame_id, \
                     local_node_id,source_artifact_hash,requirement_name,occurrence,seq, \
-                    generation_fact_kind,attempt_deadline_at,attempt_input_ref) \
+                    generation_fact_type,attempt_deadline_at,attempt_input_ref) \
                  VALUES ($1,'effect-pin',$2,$2,0,'a-node',$2,'manager',0,1, \
                          'not-required','2099-01-01T00:00:00Z','sha256:claim-live-effect-input')"
             ),

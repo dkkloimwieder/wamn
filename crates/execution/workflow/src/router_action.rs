@@ -1,7 +1,7 @@
 //! Map a terminal router outcome onto the production run-store boundary.
 
 use wamn_router::{FailureKind as RouterFailureKind, Outcome, Verdict, WalkStatus};
-use wamn_run_state::FailKind;
+use wamn_run_state::FailType;
 use wamn_run_state::run_store::{
     ProductionCallerOutcome, ProductionClaimError, ProductionClaimErrorKind, ProductionCompletion,
 };
@@ -148,7 +148,7 @@ fn production_router_action_with_mode(
                     "router-failed-without-failure",
                 )
             })?;
-            let fail_kind = persisted_router_failure(failure.kind);
+            let fail_type = persisted_router_failure(failure.kind);
             let code = failure
                 .detail
                 .code
@@ -179,7 +179,7 @@ fn production_router_action_with_mode(
                 ProductionCallerOutcome::failed(body.clone(), 500, Some(failure.node.clone()))
             });
             Ok(ProductionRouterAction::Complete(
-                ProductionCompletion::failed(body, fail_kind, caller),
+                ProductionCompletion::failed(body, fail_type, caller),
             ))
         }
         WalkStatus::Cancelled => Ok(ProductionRouterAction::Cancelled),
@@ -187,16 +187,16 @@ fn production_router_action_with_mode(
     }
 }
 
-fn persisted_router_failure(kind: RouterFailureKind) -> FailKind {
+fn persisted_router_failure(kind: RouterFailureKind) -> FailType {
     match kind {
-        RouterFailureKind::RetryExhausted => FailKind::RetryExhausted,
-        RouterFailureKind::InvalidInput => FailKind::InvalidInput,
-        RouterFailureKind::HopLimit => FailKind::RunawayBudget,
+        RouterFailureKind::RetryExhausted => FailType::RetryExhausted,
+        RouterFailureKind::InvalidInput => FailType::InvalidInput,
+        RouterFailureKind::HopLimit => FailType::RunawayBudget,
         RouterFailureKind::Terminal
         | RouterFailureKind::UnreleasedCaller
         | RouterFailureKind::MissingDedupId
         | RouterFailureKind::RespondWithoutCaller
-        | RouterFailureKind::SecondVerdict => FailKind::Terminal,
+        | RouterFailureKind::SecondVerdict => FailType::Terminal,
     }
 }
 
@@ -325,7 +325,7 @@ mod tests {
             panic!("failed walk must complete the run");
         };
         assert_eq!(completion.status(), RunStatus::Failed);
-        assert_eq!(completion.fail_kind(), Some(FailKind::InvalidInput));
+        assert_eq!(completion.fail_type(), Some(FailType::InvalidInput));
         assert_eq!(completion.result()["error"]["code"], "bad-order");
         assert_eq!(completion.result()["error"]["node"], "validate");
         let caller = completion.caller().expect("attached caller gets failure");
@@ -348,7 +348,7 @@ mod tests {
             panic!("discard must complete the run");
         };
         assert_eq!(completion.status(), RunStatus::Completed);
-        assert_eq!(completion.fail_kind(), None);
+        assert_eq!(completion.fail_type(), None);
         assert_eq!(completion.caller(), None);
     }
 

@@ -22,7 +22,7 @@ use wamn_run_state::transitions::{
     CallerReleaseResult, TerminalizeResult, release_caller_sql, terminalize_sql,
 };
 use wamn_run_state::{
-    AuthorityClass, DurabilityClass, EffectUncertainFailure, FailKind, RunStatus,
+    AuthorityClass, DurabilityClass, EffectUncertainFailure, FailType, RunStatus,
 };
 
 use super::{CandidateBindingWorld, ReleaseIdentity, WamnPostgres};
@@ -49,7 +49,7 @@ pub enum ProductionClaimResult {
     Terminalized {
         run_id: String,
         status: RunStatus,
-        fail_kind: FailKind,
+        fail_type: FailType,
     },
 }
 
@@ -735,7 +735,7 @@ async fn complete_in_transaction(
             error.to_string(),
         )
     })?;
-    let fail_kind = completion.fail_kind().map(FailKind::as_sql);
+    let fail_type = completion.fail_type().map(FailType::as_sql);
     let sql = terminalize_sql();
     let statement = connection
         .prepare_cached(&sql)
@@ -752,7 +752,7 @@ async fn complete_in_transaction(
                 &completion.status().as_sql(),
                 &completion.terminal_reason(),
                 &result_json,
-                &fail_kind,
+                &fail_type,
                 &completed_at,
             ],
         )
@@ -1201,7 +1201,7 @@ async fn terminalize_effect_uncertain(
     Ok(ProductionClaimResult::Terminalized {
         run_id: selected.run_id.clone(),
         status: RunStatus::EffectUncertain,
-        fail_kind: FailKind::EffectUncertain,
+        fail_type: FailType::EffectUncertain,
     })
 }
 

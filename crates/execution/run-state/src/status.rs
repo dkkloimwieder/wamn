@@ -154,7 +154,7 @@ where
 /// failures owned by claim-time resolution.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
-pub enum FailKind {
+pub enum FailType {
     Terminal,
     RetryExhausted,
     InvalidInput,
@@ -180,41 +180,41 @@ pub enum FailKind {
     UnboundRequirement,
 }
 
-impl FailKind {
-    pub const ALL: [FailKind; 12] = [
-        FailKind::Terminal,
-        FailKind::RetryExhausted,
-        FailKind::InvalidInput,
-        FailKind::RunawayBudget,
-        FailKind::EffectUncertain,
-        FailKind::DepthBudget,
-        FailKind::DispatchBudget,
-        FailKind::UnresolvableName,
-        FailKind::HashInvalidBytes,
-        FailKind::ForeignRevision,
-        FailKind::IncompatibleContract,
-        FailKind::UnboundRequirement,
+impl FailType {
+    pub const ALL: [FailType; 12] = [
+        FailType::Terminal,
+        FailType::RetryExhausted,
+        FailType::InvalidInput,
+        FailType::RunawayBudget,
+        FailType::EffectUncertain,
+        FailType::DepthBudget,
+        FailType::DispatchBudget,
+        FailType::UnresolvableName,
+        FailType::HashInvalidBytes,
+        FailType::ForeignRevision,
+        FailType::IncompatibleContract,
+        FailType::UnboundRequirement,
     ];
 
     pub fn as_sql(self) -> &'static str {
         match self {
-            FailKind::Terminal => "terminal",
-            FailKind::RetryExhausted => "retry-exhausted",
-            FailKind::InvalidInput => "invalid-input",
-            FailKind::RunawayBudget => "runaway-budget",
-            FailKind::EffectUncertain => "effect-uncertain",
-            FailKind::DepthBudget => "depth-budget",
-            FailKind::DispatchBudget => "dispatch-budget",
-            FailKind::UnresolvableName => "unresolvable-name",
-            FailKind::HashInvalidBytes => "hash-invalid-bytes",
-            FailKind::ForeignRevision => "foreign-revision",
-            FailKind::IncompatibleContract => "incompatible-contract",
-            FailKind::UnboundRequirement => "unbound-requirement",
+            FailType::Terminal => "terminal",
+            FailType::RetryExhausted => "retry-exhausted",
+            FailType::InvalidInput => "invalid-input",
+            FailType::RunawayBudget => "runaway-budget",
+            FailType::EffectUncertain => "effect-uncertain",
+            FailType::DepthBudget => "depth-budget",
+            FailType::DispatchBudget => "dispatch-budget",
+            FailType::UnresolvableName => "unresolvable-name",
+            FailType::HashInvalidBytes => "hash-invalid-bytes",
+            FailType::ForeignRevision => "foreign-revision",
+            FailType::IncompatibleContract => "incompatible-contract",
+            FailType::UnboundRequirement => "unbound-requirement",
         }
     }
 
-    pub fn from_sql(s: &str) -> Option<FailKind> {
-        FailKind::ALL.into_iter().find(|v| v.as_sql() == s)
+    pub fn from_sql(s: &str) -> Option<FailType> {
+        FailType::ALL.into_iter().find(|v| v.as_sql() == s)
     }
 }
 

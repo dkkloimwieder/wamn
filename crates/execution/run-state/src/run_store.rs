@@ -9,7 +9,7 @@ use std::fmt::{Display, Formatter};
 
 use async_trait::async_trait;
 
-use crate::{FailKind, RunStatus};
+use crate::{FailType, RunStatus};
 
 /// The queued-run lifecycle: claim, lease renewal, completion with caller
 /// release, the exhausted-run reap, and deadline reports.
@@ -189,7 +189,7 @@ pub struct ProductionCompletion {
     status: RunStatus,
     terminal_reason: &'static str,
     result: serde_json::Value,
-    fail_kind: Option<FailKind>,
+    fail_type: Option<FailType>,
     caller: Option<ProductionCallerOutcome>,
 }
 
@@ -200,7 +200,7 @@ impl ProductionCompletion {
             status: RunStatus::Completed,
             terminal_reason: "router-completed",
             result,
-            fail_kind: None,
+            fail_type: None,
             caller,
         }
     }
@@ -208,14 +208,14 @@ impl ProductionCompletion {
     /// A failed router walk and its persisted failure class.
     pub fn failed(
         result: serde_json::Value,
-        fail_kind: FailKind,
+        fail_type: FailType,
         caller: Option<ProductionCallerOutcome>,
     ) -> Self {
         Self {
             status: RunStatus::Failed,
             terminal_reason: "router-failed",
             result,
-            fail_kind: Some(fail_kind),
+            fail_type: Some(fail_type),
             caller,
         }
     }
@@ -236,8 +236,8 @@ impl ProductionCompletion {
     }
 
     /// The persisted failure class of a failed walk.
-    pub fn fail_kind(&self) -> Option<FailKind> {
-        self.fail_kind
+    pub fn fail_type(&self) -> Option<FailType> {
+        self.fail_type
     }
 
     /// The caller outcome released with the run, if a caller is attached.

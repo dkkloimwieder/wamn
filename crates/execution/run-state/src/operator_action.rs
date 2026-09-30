@@ -106,7 +106,7 @@ pub fn lock_operator_actions_sql() -> &'static str {
 
 /// Lock the exact run before reading any mutable projections.
 pub fn lock_operator_run_sql() -> &'static str {
-    "SELECT status, fail_kind FROM runs \
+    "SELECT status, fail_type FROM runs \
       WHERE tenant_id = $1 AND run_id = $2 FOR UPDATE"
 }
 
@@ -132,8 +132,8 @@ pub fn lock_operator_queue_fact_sql() -> &'static str {
 /// admits this shape.
 pub fn insert_operator_action_sql() -> &'static str {
     "INSERT INTO operator_run_actions (\
-         tenant_id, correlation_id, run_id, action_kind, basis, evidence_ref, \
-         principal, principal_kind, prior_run_status, prior_started_node_frame_id, \
+         tenant_id, correlation_id, run_id, action_type, basis, evidence_ref, \
+         principal, principal_type, prior_run_status, prior_started_node_frame_id, \
          prior_started_node_local_node_id, prior_started_node_occurrence, \
          prior_started_node_status) \
      VALUES ($1, $2, $3, 'terminalize-effect-uncertain', $4, $5, \
@@ -152,7 +152,7 @@ pub fn terminalize_operator_run_sql() -> &'static str {
             terminal_reason = 'operator-terminalized-effect-uncertain', \
             updated_at = $3::timestamptz \
       WHERE tenant_id = $1 AND run_id = $2 \
-        AND status = 'effect-uncertain' AND fail_kind = 'effect-uncertain'"
+        AND status = 'effect-uncertain' AND fail_type = 'effect-uncertain'"
 }
 
 #[cfg(test)]
@@ -222,14 +222,14 @@ mod tests {
 
         let run = terminalize_operator_run_sql();
         assert!(run.contains("status = 'effect-uncertain'"));
-        assert!(run.contains("fail_kind = 'effect-uncertain'"));
+        assert!(run.contains("fail_type = 'effect-uncertain'"));
         assert!(run.contains("operator-terminalized-effect-uncertain"));
         for preserved in [
             "caller_outcome",
             "state_json",
             "result_json",
             "input_json",
-            "fail_kind = 'effect-uncertain',",
+            "fail_type = 'effect-uncertain',",
         ] {
             assert!(!run.contains(preserved), "run update rewrites {preserved}");
         }

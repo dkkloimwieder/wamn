@@ -443,13 +443,13 @@ fn execution_bundle_retirement_locks_and_drops_direct_carriers_before_the_table(
 }
 
 /// The multi-line `runs.status` CHECK parses whole (paren-depth), and
-/// `fail_kind` — the fqg.16 sibling — is present as a column.
+/// `fail_type` — the fqg.16 sibling — is present as a column.
 #[test]
 fn multi_line_column_definitions_parse_whole() {
     let cols = record_columns(RUN_STATE_SQL, "wamn_run", "runs");
     let names: Vec<&str> = cols.iter().map(|(c, _)| c.as_str()).collect();
     assert!(names.contains(&"status"));
-    assert!(names.contains(&"fail_kind"));
+    assert!(names.contains(&"fail_type"));
     assert!(
         !names.contains(&"'infrastructure-failure',"),
         "continuation line misparsed"
@@ -476,12 +476,12 @@ fn runs_failure_and_outcome_check_mirrors_are_exact_and_frozen() {
         );
     }
 
-    let expected_fail_kind = "CHECK (fail_kind = ANY (ARRAY['terminal'::text, 'retry-exhausted'::text, 'invalid-input'::text, 'runaway-budget'::text, 'effect-uncertain'::text, 'depth-budget'::text, 'dispatch-budget'::text, 'unresolvable-name'::text, 'hash-invalid-bytes'::text, 'foreign-revision'::text, 'incompatible-contract'::text, 'unbound-requirement'::text]))";
-    let fail_kind = CHECK_SPECS
+    let expected_fail_kind = "CHECK (fail_type = ANY (ARRAY['terminal'::text, 'retry-exhausted'::text, 'invalid-input'::text, 'runaway-budget'::text, 'effect-uncertain'::text, 'depth-budget'::text, 'dispatch-budget'::text, 'unresolvable-name'::text, 'hash-invalid-bytes'::text, 'foreign-revision'::text, 'incompatible-contract'::text, 'unbound-requirement'::text]))";
+    let fail_type = CHECK_SPECS
         .iter()
-        .find(|spec| spec.table == "runs" && spec.name == "runs_fail_kind_check")
-        .expect("runs.fail_kind CHECK mirror exists");
-    assert_eq!(fail_kind.definition, expected_fail_kind);
+        .find(|spec| spec.table == "runs" && spec.name == "runs_fail_type_check")
+        .expect("runs.fail_type CHECK mirror exists");
+    assert_eq!(fail_type.definition, expected_fail_kind);
 
     let status = CHECK_SPECS
         .iter()
@@ -494,11 +494,11 @@ fn runs_failure_and_outcome_check_mirrors_are_exact_and_frozen() {
 
     let caller_outcome = CHECK_SPECS
         .iter()
-        .find(|spec| spec.table == "runs" && spec.name == "runs_caller_outcome_kind_check")
-        .expect("runs.caller_outcome_kind CHECK mirror exists");
+        .find(|spec| spec.table == "runs" && spec.name == "runs_caller_outcome_type_check")
+        .expect("runs.caller_outcome_type CHECK mirror exists");
     assert_eq!(
         caller_outcome.definition,
-        "CHECK (caller_outcome_kind = ANY (ARRAY['responded'::text, 'failed'::text]))"
+        "CHECK (caller_outcome_type = ANY (ARRAY['responded'::text, 'failed'::text]))"
     );
 }
 
@@ -686,6 +686,190 @@ fn failure_detail_cutover_leads_without_poisoning_following_acl_repairs() {
             repair.sql
         );
     }
+}
+
+/// Old and new names of the renamed columns or checks of one table.
+type Renames = &'static [(&'static str, &'static str)];
+
+/// The kind → type renames of one run-plane table: its columns and its checks.
+const TYPE_COLUMN_TABLES: [(&str, Renames, Renames); 3] = [
+    (
+        "runs",
+        &[
+            ("caller_outcome_kind", "caller_outcome_type"),
+            ("fail_kind", "fail_type"),
+        ],
+        &[
+            (
+                "runs_caller_outcome_kind_check",
+                "runs_caller_outcome_type_check",
+            ),
+            ("runs_fail_kind_check", "runs_fail_type_check"),
+        ],
+    ),
+    (
+        "effect_attempts",
+        &[("generation_fact_kind", "generation_fact_type")],
+        &[],
+    ),
+    (
+        "operator_run_actions",
+        &[
+            ("action_kind", "action_type"),
+            ("principal_kind", "principal_type"),
+        ],
+        &[
+            (
+                "operator_run_actions_kind_check",
+                "operator_run_actions_type_check",
+            ),
+            (
+                "operator_run_actions_principal_kind_check",
+                "operator_run_actions_principal_type_check",
+            ),
+        ],
+    ),
+];
+
+/// Put one run-plane table of an at-record observation back to its old names.
+fn with_old_type_columns(obs: &mut RunPlaneObservation, table: &str) {
+    let (_, columns, checks) = TYPE_COLUMN_TABLES
+        .iter()
+        .find(|(name, _, _)| *name == table)
+        .expect("a renamed table");
+    let live = obs.tables.get_mut(table).expect("record table");
+    for (old, new) in *columns {
+        assert!(live.remove(*new), "{table}.{new} is at record");
+        live.insert((*old).to_string());
+    }
+    for (old, new) in *checks {
+        let mut definition = obs
+            .checks
+            .remove(&(table.to_string(), (*new).to_string()))
+            .unwrap_or_else(|| panic!("{new} is at record"));
+        for (old_column, new_column) in *columns {
+            definition = definition.replace(new_column, old_column);
+        }
+        obs.checks
+            .insert((table.to_string(), (*old).to_string()), definition);
+    }
+    for set in [&mut obs.non_nullable_columns, &mut obs.defaulted_columns] {
+        for (old, new) in *columns {
+            if set.remove(&(table.to_string(), (*new).to_string())) {
+                set.insert((table.to_string(), (*old).to_string()));
+            }
+        }
+    }
+    for (old, new) in *columns {
+        if let Some(column_type) = obs
+            .column_types
+            .remove(&(table.to_string(), (*new).to_string()))
+        {
+            obs.column_types
+                .insert((table.to_string(), (*old).to_string()), column_type);
+        }
+    }
+}
+
+fn old_type_column_database() -> RunPlaneObservation {
+    let mut obs = observation_at_record();
+    for (table, _, _) in TYPE_COLUMN_TABLES {
+        with_old_type_columns(&mut obs, table);
+    }
+    obs.definition_owners_kind_column = true;
+    obs.definition_owners_type_column = false;
+    obs
+}
+
+#[test]
+fn type_column_cutover_renames_old_tables_skips_new_ones_and_refuses_half_renamed_ones() {
+    // Old: every table is renamed first, and the rest of the plan sees the
+    // new names, so it adds no column and drops no check.
+    let plan = plan_run_plane(&schema("demo"), &old_type_column_database());
+    assert_eq!(plan.actions.len(), 1, "actions: {:#?}", plan.actions);
+    let cutover = &plan.actions[0];
+    assert_eq!(cutover.kind, RunPlaneActionKind::TypeColumnCutover);
+    assert!(cutover.sql.starts_with(
+        "LOCK TABLE catalog.package_definition_owners, demo.runs, demo.effect_attempts, \
+         demo.operator_run_actions IN ACCESS EXCLUSIVE MODE;"
+    ));
+    for (table, columns, checks) in TYPE_COLUMN_TABLES {
+        for (old, new) in columns.iter().chain(checks.iter()) {
+            assert!(
+                cutover.sql.contains(&format!("demo.{table} RENAME"))
+                    && cutover.sql.contains(&format!("{old} TO {new};")),
+                "{table}: {old} is not renamed in {}",
+                cutover.sql
+            );
+        }
+    }
+    assert!(
+        cutover
+            .sql
+            .contains("RENAME COLUMN definition_kind TO definition_type;")
+    );
+    assert!(!cutover.sql.contains("wamn_run."), "{}", cutover.sql);
+
+    // New: an at-record database plans no cutover.
+    assert!(plan_run_plane(&schema("demo"), &observation_at_record()).is_noop());
+
+    // Some tables new: only the old ones are in the batch.
+    let mut partial = observation_at_record();
+    with_old_type_columns(&mut partial, "runs");
+    let plan = plan_run_plane(&schema("demo"), &partial);
+    assert_eq!(plan.actions.len(), 1, "actions: {:#?}", plan.actions);
+    assert!(
+        plan.actions[0]
+            .sql
+            .contains("demo.runs RENAME COLUMN fail_kind")
+    );
+    assert!(!plan.actions[0].sql.contains("effect_attempts RENAME"));
+    assert!(
+        !plan.actions[0]
+            .sql
+            .contains("package_definition_owners RENAME COLUMN")
+    );
+
+    // Half renamed: one refusal, and nothing else runs.
+    let mut mixed = observation_at_record();
+    mixed
+        .tables
+        .get_mut("runs")
+        .expect("record runs")
+        .insert("fail_kind".to_string());
+    let plan = plan_run_plane(&schema("demo"), &mixed);
+    assert_eq!(plan.actions.len(), 1, "actions: {:#?}", plan.actions);
+    assert_eq!(plan.actions[0].kind, RunPlaneActionKind::TypeColumnCutover);
+    assert!(plan.actions[0].sql.contains("ERRCODE = '55000'"));
+    assert!(
+        plan.actions[0]
+            .sql
+            .contains("type-column-cutover: runs is half renamed")
+    );
+    let mut owners = observation_at_record();
+    owners.definition_owners_kind_column = true;
+    owners.definition_owners_type_column = true;
+    assert!(
+        plan_run_plane(&schema("demo"), &owners).actions[0]
+            .sql
+            .contains("package_definition_owners is half renamed")
+    );
+}
+
+#[test]
+fn type_column_cutover_refuses_a_missing_old_check() {
+    let mut legacy = old_type_column_database();
+    legacy
+        .checks
+        .remove(&("runs".to_string(), "runs_fail_kind_check".to_string()));
+    let plan = plan_run_plane(&schema("demo"), &legacy);
+    assert_eq!(plan.actions.len(), 1, "actions: {:#?}", plan.actions);
+    assert!(plan.actions[0].sql.contains("ERRCODE = '55000'"));
+    assert!(
+        plan.actions[0]
+            .sql
+            .contains("type-column-cutover: runs_fail_kind_check is missing")
+    );
 }
 
 #[test]
@@ -2290,8 +2474,8 @@ fn stale_scenario_author_reads_are_revoked_without_regrant() {
 fn drifted_and_missing_checks_plan_exact_repairs() {
     let mut obs = observation_at_record();
     obs.checks.insert(
-        ("runs".to_string(), "runs_fail_kind_check".to_string()),
-        "CHECK (fail_kind = 'terminal'::text)".to_string(),
+        ("runs".to_string(), "runs_fail_type_check".to_string()),
+        "CHECK (fail_type = 'terminal'::text)".to_string(),
     );
     obs.checks.remove(&(
         "effect_attempts".to_string(),
@@ -2310,10 +2494,10 @@ fn drifted_and_missing_checks_plan_exact_repairs() {
         "only the two drifted checks: {repairs:#?}"
     );
     assert!(repairs.iter().any(|action| {
-        action.target == "runs.runs_fail_kind_check"
+        action.target == "runs.runs_fail_type_check"
             && action
                 .sql
-                .contains("DROP CONSTRAINT \"runs_fail_kind_check\"")
+                .contains("DROP CONSTRAINT \"runs_fail_type_check\"")
             && action.sql.contains("effect-uncertain")
     }));
     assert!(repairs.iter().any(|action| {

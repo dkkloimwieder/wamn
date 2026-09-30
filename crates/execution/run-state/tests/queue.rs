@@ -329,7 +329,7 @@ fn crash_evidence_advances_in_a_statement_the_grant_cannot_roll_back() {
 fn effect_uncertain_terminalization_dequeues_and_persists_exact_attached_shape() {
     let sql = terminalize_effect_uncertain_claim_sql();
     assert!(sql.contains("status = 'effect-uncertain'"));
-    assert!(sql.contains("fail_kind = 'effect-uncertain'"));
+    assert!(sql.contains("fail_type = 'effect-uncertain'"));
     assert!(sql.contains("THEN $2::text::jsonb"));
     assert!(sql.contains("THEN 500"));
     assert!(sql.contains("THEN NULL"));

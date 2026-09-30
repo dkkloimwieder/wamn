@@ -498,7 +498,7 @@ FOREACH t IN ARRAY ARRAY['t1','t2'] LOOP
   a := gen_random_uuid();
   INSERT INTO wamn_run.effect_attempts
     (tenant_id, attempt_id, run_id, root_plan_hash, current_plan_hash, local_node_id,
-     source_artifact_hash, requirement_name, occurrence, seq, generation_fact_kind,
+     source_artifact_hash, requirement_name, occurrence, seq, generation_fact_type,
      attempt_started_at, attempt_deadline_at, attempt_input_ref)
     VALUES (t, a, 'r1', 'sha256:'||repeat('a',64), 'sha256:'||repeat('b',64), 'n1',
             'sha256:'||repeat('d',64), 'req', 0, 0, 'not-required',

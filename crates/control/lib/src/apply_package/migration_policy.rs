@@ -7,7 +7,7 @@ use wamn_record_history::{HISTORY_TABLE_SUFFIX, is_history_table_name};
 use wamn_schema_control::PackageDirectory;
 use wamn_schema_generator::{ModelDeclaration, PackageManifest};
 use wamn_schema_introspection::migration_policy::{
-    DefinitionAction, DefinitionKind, MigrationPolicyError, MigrationPolicyErrorKind,
+    DefinitionAction, DefinitionType, MigrationPolicyError, MigrationPolicyErrorKind,
     inspect_migration_definition_mutations,
 };
 
@@ -253,7 +253,7 @@ async fn preflight_create_relation(
         tenant,
         mutation.schema(),
         mutation.relation(),
-        DefinitionKind::Relation,
+        DefinitionType::Relation,
         mutation.relation(),
     )
     .await?
@@ -276,7 +276,7 @@ async fn preflight_create_relation(
         tx,
         mutation.schema(),
         mutation.relation(),
-        DefinitionKind::Relation,
+        DefinitionType::Relation,
         mutation.relation(),
     )
     .await?
@@ -320,7 +320,7 @@ async fn preflight_add_definition(
         tenant,
         mutation.schema(),
         mutation.relation(),
-        DefinitionKind::Relation,
+        DefinitionType::Relation,
         mutation.relation(),
     )
     .await?;
@@ -495,12 +495,12 @@ async fn preflight_existing_definition_mutation(
 
 fn explicit_definition_owner<'a>(
     model: &'a ModelDeclaration,
-    kind: DefinitionKind,
+    kind: DefinitionType,
     definition: &str,
 ) -> Option<&'a str> {
     match kind {
-        DefinitionKind::Relation => Some(model.owner.as_str()),
-        DefinitionKind::Field => model.field_owners.get(definition).map(String::as_str),
-        DefinitionKind::Constraint => model.constraint_owners.get(definition).map(String::as_str),
+        DefinitionType::Relation => Some(model.owner.as_str()),
+        DefinitionType::Field => model.field_owners.get(definition).map(String::as_str),
+        DefinitionType::Constraint => model.constraint_owners.get(definition).map(String::as_str),
     }
 }

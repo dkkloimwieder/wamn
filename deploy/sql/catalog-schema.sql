@@ -56,21 +56,21 @@ CREATE TABLE catalog.package_definition_owners (
         CHECK (schema_name ~ '^[a-z][a-z0-9]*(_[a-z0-9]+)*$'),
     relation_name          text    NOT NULL
         CHECK (relation_name ~ '^[a-z][a-z0-9]*(_[a-z0-9]+)*$'),
-    definition_kind        text    NOT NULL
-        CHECK (definition_kind IN ('relation', 'field', 'constraint')),
+    definition_type        text    NOT NULL
+        CHECK (definition_type IN ('relation', 'field', 'constraint')),
     definition_name        text    NOT NULL
         CHECK (definition_name ~ '^[a-z][a-z0-9]*(_[a-z0-9]+)*$'),
     owner_package_id       text    NOT NULL
         CHECK (owner_package_id ~ '^[a-z][a-z0-9]*(_[a-z0-9]+)*$'),
     client_field_extensible boolean NOT NULL DEFAULT false,
     CONSTRAINT package_definition_owners_pkey PRIMARY KEY (
-        tenant_id, schema_name, relation_name, definition_kind, definition_name
+        tenant_id, schema_name, relation_name, definition_type, definition_name
     ),
     CONSTRAINT package_definition_owners_relation_shape_check CHECK (
-        definition_kind <> 'relation' OR definition_name = relation_name
+        definition_type <> 'relation' OR definition_name = relation_name
     ),
     CONSTRAINT package_definition_owners_extensibility_check CHECK (
-        definition_kind = 'relation' OR NOT client_field_extensible
+        definition_type = 'relation' OR NOT client_field_extensible
     )
 );
 

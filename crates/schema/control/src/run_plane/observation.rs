@@ -137,6 +137,12 @@ pub struct RunPlaneObservation {
     /// Whether `catalog.release_components` exists without its route columns,
     /// so every member still binds a wiring node.
     pub release_components_without_routes: bool,
+    /// Whether `catalog.package_definition_owners` has the old column
+    /// `definition_kind` (docs/plan/kind-to-type.md §4.3.2).
+    pub definition_owners_kind_column: bool,
+    /// Whether `catalog.package_definition_owners` has the new column
+    /// `definition_type`.
+    pub definition_owners_type_column: bool,
     /// Every CHECK constraint on a record table, keyed by `(table, name)`, with
     /// PostgreSQL's canonical `pg_get_constraintdef(..., true)` definition.
     pub checks: BTreeMap<(String, String), String>,

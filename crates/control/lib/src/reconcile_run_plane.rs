@@ -109,7 +109,8 @@ use wamn_schema_control::{
 /// 2. A non-allowlisted push interleaved AHEAD of allowlisted ones — the loop
 ///    consumes a PREFIX, so the first non-member truncates it and silently
 ///    strips the pre-bootstrap property from every allowlisted action behind it.
-const PRE_ROLE_BOOTSTRAP_ACTIONS: [RunPlaneActionKind; 11] = [
+const PRE_ROLE_BOOTSTRAP_ACTIONS: [RunPlaneActionKind; 12] = [
+    RunPlaneActionKind::TypeColumnCutover,
     RunPlaneActionKind::RetireNodeRuns,
     RunPlaneActionKind::RetireExecutionBundles,
     RunPlaneActionKind::FrameIdentityCutover,
@@ -1147,6 +1148,12 @@ async fn observe(
             if table == "release_components" && column == "route_operation" {
                 route_columns = true;
             }
+            if table == "package_definition_owners" && column == "definition_kind" {
+                obs.definition_owners_kind_column = true;
+            }
+            if table == "package_definition_owners" && column == "definition_type" {
+                obs.definition_owners_type_column = true;
+            }
             obs.catalog_tables.insert(table.clone());
         }
         obs.release_components_without_routes =
@@ -1203,6 +1210,7 @@ mod tests {
         assert_eq!(
             PRE_ROLE_BOOTSTRAP_ACTIONS,
             [
+                RunPlaneActionKind::TypeColumnCutover,
                 RunPlaneActionKind::RetireNodeRuns,
                 RunPlaneActionKind::RetireExecutionBundles,
                 RunPlaneActionKind::FrameIdentityCutover,

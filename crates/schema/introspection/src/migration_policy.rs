@@ -43,13 +43,13 @@ pub enum MigrationPolicyErrorKind {
 
 /// Managed PostgreSQL definition addressed by a migration statement.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum DefinitionKind {
+pub enum DefinitionType {
     Relation,
     Field,
     Constraint,
 }
 
-impl DefinitionKind {
+impl DefinitionType {
     /// Stable catalog spelling for the ownership record.
     pub const fn as_str(self) -> &'static str {
         match self {
@@ -73,7 +73,7 @@ pub enum DefinitionAction {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DefinitionMutation {
     action: DefinitionAction,
-    kind: DefinitionKind,
+    kind: DefinitionType,
     schema: Box<str>,
     relation: Box<str>,
     definition: Box<str>,
@@ -87,7 +87,7 @@ impl DefinitionMutation {
     }
 
     /// Definition grain addressed by the statement.
-    pub const fn kind(&self) -> DefinitionKind {
+    pub const fn kind(&self) -> DefinitionType {
         self.kind
     }
 
@@ -292,7 +292,7 @@ fn definition_mutation(
             tokens,
             2,
             DefinitionAction::Create,
-            DefinitionKind::Relation,
+            DefinitionType::Relation,
             None,
             configured_schemas,
             path,
@@ -309,7 +309,7 @@ fn definition_mutation(
             tokens,
             relation_index,
             DefinitionAction::Drop,
-            DefinitionKind::Relation,
+            DefinitionType::Relation,
             None,
             configured_schemas,
             path,
@@ -321,16 +321,16 @@ fn definition_mutation(
     }
 
     let (action, kind, definition_index) = if words(tokens, 5, &["add", "column"]) {
-        (DefinitionAction::Add, DefinitionKind::Field, Some(7))
+        (DefinitionAction::Add, DefinitionType::Field, Some(7))
     } else if words(tokens, 5, &["add", "constraint"]) {
-        (DefinitionAction::Add, DefinitionKind::Constraint, Some(7))
+        (DefinitionAction::Add, DefinitionType::Constraint, Some(7))
     } else if words(tokens, 5, &["drop", "column"]) {
         let index = if words(tokens, 7, &["if", "exists"]) {
             9
         } else {
             7
         };
-        (DefinitionAction::Drop, DefinitionKind::Field, Some(index))
+        (DefinitionAction::Drop, DefinitionType::Field, Some(index))
     } else if words(tokens, 5, &["drop", "constraint"]) {
         let index = if words(tokens, 7, &["if", "exists"]) {
             9
@@ -339,17 +339,17 @@ fn definition_mutation(
         };
         (
             DefinitionAction::Drop,
-            DefinitionKind::Constraint,
+            DefinitionType::Constraint,
             Some(index),
         )
     } else if words(tokens, 5, &["alter", "column"]) || words(tokens, 5, &["rename", "column"]) {
-        (DefinitionAction::Alter, DefinitionKind::Field, Some(7))
+        (DefinitionAction::Alter, DefinitionType::Field, Some(7))
     } else if words(tokens, 5, &["alter", "constraint"])
         || words(tokens, 5, &["rename", "constraint"])
     {
-        (DefinitionAction::Alter, DefinitionKind::Constraint, Some(7))
+        (DefinitionAction::Alter, DefinitionType::Constraint, Some(7))
     } else {
-        (DefinitionAction::Alter, DefinitionKind::Relation, None)
+        (DefinitionAction::Alter, DefinitionType::Relation, None)
     };
     qualified_definition_mutation(
         tokens,
@@ -371,7 +371,7 @@ fn qualified_definition_mutation(
     tokens: &[Token<'_>],
     relation_index: usize,
     action: DefinitionAction,
-    kind: DefinitionKind,
+    kind: DefinitionType,
     definition_index: Option<usize>,
     configured_schemas: &[&str],
     path: &Path,

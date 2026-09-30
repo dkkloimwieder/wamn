@@ -74,7 +74,7 @@ pub use durability::{DURABLE_CLASS_SQL_PREDICATE, DurabilityClass};
 pub use intent_store::IntentStore;
 pub use run_store::RunStore;
 pub use status::{
-    EffectUncertainFailure, FailKind, InvalidEffectUncertainRunId, NodeErrorKind, NodeRunStatus,
+    EffectUncertainFailure, FailType, InvalidEffectUncertainRunId, NodeErrorKind, NodeRunStatus,
     RunStatus,
 };
 #[cfg(feature = "tenant-key")]

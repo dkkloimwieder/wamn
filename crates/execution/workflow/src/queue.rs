@@ -10,7 +10,7 @@ use wash_runtime::host::probes::Liveness;
 use wamn_engine::release_manifest::LoadedRelease;
 use wamn_event_wire::Causation;
 use wamn_project_state::PlatformComponent;
-use wamn_run_state::{FailKind, RunStore as _};
+use wamn_run_state::{FailType, RunStore as _};
 use wamn_runtime::plugins::wamn_jetstream::{DerivedPublishRequest, WamnJetstream};
 use wamn_runtime::plugins::wamn_postgres::{
     ProductionClaimResult, ProductionCompletionResult, ProductionLeaseRenewal,
@@ -281,12 +281,12 @@ async fn drain_one(
         ProductionClaimResult::Terminalized {
             run_id,
             status,
-            fail_kind,
+            fail_type,
         } => {
             tracing::info!(
                 run_id,
                 status = status.as_sql(),
-                fail_kind = fail_kind.as_sql(),
+                fail_type = fail_type.as_sql(),
                 "executor terminalized queue claim without execution"
             );
             Ok(true)
@@ -474,11 +474,11 @@ async fn drive_claim(
             let Some((wiring_id, wiring_version)) = candidate_coordinate else {
                 return Err(error);
             };
-            let fail_kind = match refusal.kind() {
-                CandidateExecutionRefusalKind::Identity => FailKind::ForeignRevision,
-                CandidateExecutionRefusalKind::Definition => FailKind::IncompatibleContract,
-                CandidateExecutionRefusalKind::Binding => FailKind::UnboundRequirement,
-                CandidateExecutionRefusalKind::Artifact => FailKind::HashInvalidBytes,
+            let fail_type = match refusal.kind() {
+                CandidateExecutionRefusalKind::Identity => FailType::ForeignRevision,
+                CandidateExecutionRefusalKind::Definition => FailType::IncompatibleContract,
+                CandidateExecutionRefusalKind::Binding => FailType::UnboundRequirement,
+                CandidateExecutionRefusalKind::Artifact => FailType::HashInvalidBytes,
             };
             let result = serde_json::json!({
                 "error": {
@@ -498,7 +498,7 @@ async fn drive_claim(
                 run_id,
                 lease_generation,
                 &wamn_runtime::plugins::wamn_postgres::ProductionCompletion::failed(
-                    result, fail_kind, None,
+                    result, fail_type, None,
                 ),
             )
             .await?;

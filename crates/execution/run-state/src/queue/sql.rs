@@ -235,10 +235,10 @@ pub fn terminalize_effect_uncertain_claim_sql() -> String {
     format!(
         "WITH updated AS ( \
              UPDATE runs AS r \
-                SET status = '{uncertain}', fail_kind = '{uncertain}', \
-                    caller_outcome_kind = CASE \
+                SET status = '{uncertain}', fail_type = '{uncertain}', \
+                    caller_outcome_type = CASE \
                         WHEN {unreleased_attached} THEN 'failed' \
-                        ELSE r.caller_outcome_kind END, \
+                        ELSE r.caller_outcome_type END, \
                     caller_outcome_json = CASE \
                         WHEN {unreleased_attached} THEN $2::text::jsonb \
                         ELSE r.caller_outcome_json END, \
@@ -328,9 +328,9 @@ pub fn terminalize_exhausted_production_sql() -> String {
                 result_json = CASE \
                     WHEN {candidate_result} THEN $2::text::jsonb \
                     ELSE r.result_json END, \
-                caller_outcome_kind = CASE \
+                caller_outcome_type = CASE \
                     WHEN {unreleased_attached} THEN 'failed' \
-                    ELSE r.caller_outcome_kind END, \
+                    ELSE r.caller_outcome_type END, \
                 caller_outcome_json = CASE \
                     WHEN {unreleased_attached} THEN $2::text::jsonb \
                     ELSE r.caller_outcome_json END, \

@@ -221,12 +221,12 @@ pub const EXECUTOR_PLATFORM_CATALOG_RELATIONS: [&str; 9] = [
 /// * `queue::sql::clear_pre_effect_state_sql` — `state_json`, `manifest_digest`
 /// * `queue::sql::grant_production_claim_sql` — `status`, `manifest_digest`
 /// * `queue::sql::terminalize_effect_uncertain_claim_sql` — `status`,
-///   `fail_kind`, the caller-outcome family, `updated_at`
+///   `fail_type`, the caller-outcome family, `updated_at`
 /// * `queue::sql::terminalize_exhausted_production_sql` — `status`,
 ///   `result_json`, the caller-outcome family, `updated_at`
 /// * `transitions::release_caller_sql` — the caller-outcome family, `updated_at`
 /// * `transitions::terminalize_sql` — `status`, `terminal_reason`,
-///   `result_json`, `fail_kind`, `updated_at`
+///   `result_json`, `fail_type`, `updated_at`
 /// * `transitions::record_deadline_adjustments_sql` writes `deadline_adjustments_json`.
 ///
 /// The SELECT side is deliberately NOT column-scoped: `transitions::FENCED_PREFIX`
@@ -239,12 +239,12 @@ pub const EXECUTOR_PLATFORM_CATALOG_RELATIONS: [&str; 9] = [
 pub const EXECUTOR_PLATFORM_RUN_UPDATE_COLUMNS: [&str; 14] = [
     "status",
     "terminal_reason",
-    "fail_kind",
+    "fail_type",
     "result_json",
     "deadline_adjustments_json",
     "state_json",
     "manifest_digest",
-    "caller_outcome_kind",
+    "caller_outcome_type",
     "caller_outcome_json",
     "caller_http_status",
     "caller_release_node_id",
@@ -1104,8 +1104,8 @@ mod tests {
              GRANT SELECT ON TABLE catalog.\"release_manifest_v3_snapshots\" \
              TO \"wamn_executor_platform\"; \
              GRANT SELECT ON TABLE \"wamn_run\".\"runs\" TO \"wamn_executor_platform\"; \
-             GRANT UPDATE (\"status\", \"terminal_reason\", \"fail_kind\", \"result_json\", \
-             \"deadline_adjustments_json\", \"state_json\", \"manifest_digest\", \"caller_outcome_kind\", \
+             GRANT UPDATE (\"status\", \"terminal_reason\", \"fail_type\", \"result_json\", \
+             \"deadline_adjustments_json\", \"state_json\", \"manifest_digest\", \"caller_outcome_type\", \
              \"caller_outcome_json\", \"caller_http_status\", \"caller_release_node_id\", \
              \"caller_outcome_hash\", \"caller_released_at\", \"updated_at\") \
              ON TABLE \"wamn_run\".\"runs\" TO \"wamn_executor_platform\"; \

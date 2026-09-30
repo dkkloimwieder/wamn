@@ -217,7 +217,7 @@ async fn terminalize_in_transaction(
         return Ok(OperatorTerminalizeResult::RunNotFound);
     };
     let run_status: String = run.get(0);
-    let fail_kind: Option<String> = run.get(1);
+    let fail_type: Option<String> = run.get(1);
 
     let attempt_rows = transaction
         .query(
@@ -236,7 +236,7 @@ async fn terminalize_in_transaction(
     if run_status != "effect-uncertain" {
         return Ok(OperatorTerminalizeResult::NotEffectUncertain);
     }
-    if fail_kind.as_deref() != Some("effect-uncertain") || attempt_rows.is_empty() || queue_present
+    if fail_type.as_deref() != Some("effect-uncertain") || attempt_rows.is_empty() || queue_present
     {
         return Ok(OperatorTerminalizeResult::RunStateInvariant);
     }

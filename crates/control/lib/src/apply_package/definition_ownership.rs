@@ -2,7 +2,7 @@ use anyhow::Context as _;
 use tokio_postgres::Transaction;
 use wamn_schema_generator::{ModelDeclaration, PackageManifest};
 use wamn_schema_introspection::migration_policy::{
-    DefinitionAction, DefinitionKind, DefinitionMutation,
+    DefinitionAction, DefinitionMutation, DefinitionType,
 };
 
 use super::error::{ApplyPackageError, ApplyPackageErrorKind};
@@ -11,13 +11,13 @@ const SELECT_DEFINITION_OWNER_SQL: &str = "\
 SELECT owner_package_id, client_field_extensible \
   FROM catalog.package_definition_owners \
  WHERE tenant_id = $1 AND schema_name = $2 AND relation_name = $3 \
-   AND definition_kind = $4 AND definition_name = $5";
+   AND definition_type = $4 AND definition_name = $5";
 const INSERT_DEFINITION_OWNER_SQL: &str = "\
 INSERT INTO catalog.package_definition_owners \
-    (tenant_id, schema_name, relation_name, definition_kind, definition_name, \
+    (tenant_id, schema_name, relation_name, definition_type, definition_name, \
      owner_package_id, client_field_extensible) \
 VALUES ($1, $2, $3, $4, $5, $6, $7) \
-ON CONFLICT (tenant_id, schema_name, relation_name, definition_kind, definition_name) \
+ON CONFLICT (tenant_id, schema_name, relation_name, definition_type, definition_name) \
 DO NOTHING";
 pub(super) const SELECT_RELATION_PRESENT_SQL: &str = "\
 SELECT EXISTS (\
@@ -44,8 +44,8 @@ SELECT EXISTS (\
       AND definition.contype IN ('p', 'u', 'f', 'c')\
 )";
 const SELECT_RELATION_DEFINITIONS_SQL: &str = "\
-SELECT definition_kind, definition_name FROM (\
-    SELECT 'field'::text AS definition_kind, field.attname::text AS definition_name, \
+SELECT definition_type, definition_name FROM (\
+    SELECT 'field'::text AS definition_type, field.attname::text AS definition_name, \
            field.attnum::int AS ordering \
       FROM pg_catalog.pg_attribute AS field \
       JOIN pg_catalog.pg_class AS relation ON relation.oid = field.attrelid \
@@ -59,7 +59,7 @@ SELECT definition_kind, definition_name FROM (\
       JOIN pg_catalog.pg_namespace AS namespace ON namespace.oid = relation.relnamespace \
      WHERE namespace.nspname = $1 AND relation.relname = $2 \
        AND relation.relkind = 'r' AND definition.contype IN ('p', 'u', 'f', 'c')\
-) AS definitions ORDER BY ordering, definition_kind, definition_name COLLATE \"C\"";
+) AS definitions ORDER BY ordering, definition_type, definition_name COLLATE \"C\"";
 
 #[derive(Debug)]
 pub(super) struct PlannedDefinitionMutation {
@@ -96,7 +96,7 @@ pub(super) async fn reconcile_definition_ownership(
                     tenant,
                     coordinate,
                     planned,
-                    DefinitionKind::Relation,
+                    DefinitionType::Relation,
                     mutation.relation(),
                     package_id,
                     extensible,
@@ -111,8 +111,8 @@ pub(super) async fn reconcile_definition_ownership(
                     .context("read server-derived relation definitions")?
                 {
                     let kind = match row.get::<_, String>(0).as_str() {
-                        "field" => DefinitionKind::Field,
-                        "constraint" => DefinitionKind::Constraint,
+                        "field" => DefinitionType::Field,
+                        "constraint" => DefinitionType::Constraint,
                         value => unreachable!("closed server definition kind {value}"),
                     };
                     let definition = row.get::<_, String>(1);
@@ -188,7 +188,7 @@ async fn insert_definition_owner(
     tenant: &str,
     coordinate: &str,
     planned: &PlannedDefinitionMutation,
-    kind: DefinitionKind,
+    kind: DefinitionType,
     definition: &str,
     package_id: &str,
     client_field_extensible: bool,
@@ -245,7 +245,7 @@ pub(super) async fn load_definition_owner(
     tenant: &str,
     schema: &str,
     relation: &str,
-    kind: DefinitionKind,
+    kind: DefinitionType,
     definition: &str,
 ) -> anyhow::Result<Option<StoredDefinitionOwner>> {
     tx.query_opt(
@@ -266,19 +266,19 @@ pub(super) async fn definition_present(
     tx: &Transaction<'_>,
     schema: &str,
     relation: &str,
-    kind: DefinitionKind,
+    kind: DefinitionType,
     definition: &str,
 ) -> anyhow::Result<bool> {
     let row = match kind {
-        DefinitionKind::Relation => {
+        DefinitionType::Relation => {
             tx.query_one(SELECT_RELATION_PRESENT_SQL, &[&schema, &relation])
                 .await
         }
-        DefinitionKind::Field => {
+        DefinitionType::Field => {
             tx.query_one(SELECT_FIELD_PRESENT_SQL, &[&schema, &relation, &definition])
                 .await
         }
-        DefinitionKind::Constraint => {
+        DefinitionType::Constraint => {
             tx.query_one(
                 SELECT_CONSTRAINT_PRESENT_SQL,
                 &[&schema, &relation, &definition],
@@ -323,7 +323,7 @@ fn definition_error_for_parts(
     kind: ApplyPackageErrorKind,
     coordinate: &str,
     planned: &PlannedDefinitionMutation,
-    definition_kind: DefinitionKind,
+    definition_type: DefinitionType,
     definition: &str,
     owner_package: Option<&str>,
     detail: impl Into<String>,
@@ -336,7 +336,7 @@ fn definition_error_for_parts(
         path: Some(planned.relative_path.to_string()),
         schema: Some(planned.mutation.schema().to_owned()),
         relation: Some(planned.mutation.relation().to_owned()),
-        definition_kind: Some(definition_kind),
+        definition_type: Some(definition_type),
         definition: Some(definition.to_owned()),
         owner_package: owner_package.map(str::to_owned),
         detail: detail.into(),

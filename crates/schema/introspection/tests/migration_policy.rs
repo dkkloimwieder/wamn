@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use wamn_schema_introspection::migration_policy::{
-    DefinitionAction, DefinitionKind, MigrationPolicyError, MigrationPolicyErrorKind,
+    DefinitionAction, DefinitionType, MigrationPolicyError, MigrationPolicyErrorKind,
     inspect_migration_definition_mutations, validate_migration_file,
     validate_migration_file_for_schemas,
 };
@@ -178,7 +178,7 @@ DROP TABLE inventory.widget_maker;
         vec![
             (
                 DefinitionAction::Create,
-                DefinitionKind::Relation,
+                DefinitionType::Relation,
                 "inventory",
                 "quality_inspection",
                 "quality_inspection",
@@ -186,7 +186,7 @@ DROP TABLE inventory.widget_maker;
             ),
             (
                 DefinitionAction::Add,
-                DefinitionKind::Field,
+                DefinitionType::Field,
                 "inventory",
                 "widget_maker",
                 "overlay_flag",
@@ -194,7 +194,7 @@ DROP TABLE inventory.widget_maker;
             ),
             (
                 DefinitionAction::Add,
-                DefinitionKind::Constraint,
+                DefinitionType::Constraint,
                 "inventory",
                 "widget_maker",
                 "widget_maker_overlay_flag_check",
@@ -202,7 +202,7 @@ DROP TABLE inventory.widget_maker;
             ),
             (
                 DefinitionAction::Alter,
-                DefinitionKind::Field,
+                DefinitionType::Field,
                 "inventory",
                 "widget_maker",
                 "status",
@@ -210,7 +210,7 @@ DROP TABLE inventory.widget_maker;
             ),
             (
                 DefinitionAction::Drop,
-                DefinitionKind::Constraint,
+                DefinitionType::Constraint,
                 "inventory",
                 "widget_maker",
                 "widget_maker_name_check",
@@ -218,7 +218,7 @@ DROP TABLE inventory.widget_maker;
             ),
             (
                 DefinitionAction::Drop,
-                DefinitionKind::Relation,
+                DefinitionType::Relation,
                 "inventory",
                 "widget_maker",
                 "widget_maker",

@@ -101,9 +101,9 @@ pub(super) const CHECK_SPECS: &[CheckSpec] = &[
     },
     CheckSpec {
         table: "runs",
-        name: "runs_caller_outcome_kind_check",
-        definition: "CHECK (caller_outcome_kind = ANY (ARRAY['responded'::text, 'failed'::text]))",
-        origin: CheckOrigin::Inline("caller_outcome_kind"),
+        name: "runs_caller_outcome_type_check",
+        definition: "CHECK (caller_outcome_type = ANY (ARRAY['responded'::text, 'failed'::text]))",
+        origin: CheckOrigin::Inline("caller_outcome_type"),
     },
     CheckSpec {
         table: "runs",
@@ -113,9 +113,9 @@ pub(super) const CHECK_SPECS: &[CheckSpec] = &[
     },
     CheckSpec {
         table: "runs",
-        name: "runs_fail_kind_check",
-        definition: "CHECK (fail_kind = ANY (ARRAY['terminal'::text, 'retry-exhausted'::text, 'invalid-input'::text, 'runaway-budget'::text, 'effect-uncertain'::text, 'depth-budget'::text, 'dispatch-budget'::text, 'unresolvable-name'::text, 'hash-invalid-bytes'::text, 'foreign-revision'::text, 'incompatible-contract'::text, 'unbound-requirement'::text]))",
-        origin: CheckOrigin::Inline("fail_kind"),
+        name: "runs_fail_type_check",
+        definition: "CHECK (fail_type = ANY (ARRAY['terminal'::text, 'retry-exhausted'::text, 'invalid-input'::text, 'runaway-budget'::text, 'effect-uncertain'::text, 'depth-budget'::text, 'dispatch-budget'::text, 'unresolvable-name'::text, 'hash-invalid-bytes'::text, 'foreign-revision'::text, 'incompatible-contract'::text, 'unbound-requirement'::text]))",
+        origin: CheckOrigin::Inline("fail_type"),
     },
     CheckSpec {
         table: "runs",
@@ -144,7 +144,7 @@ pub(super) const CHECK_SPECS: &[CheckSpec] = &[
     CheckSpec {
         table: "runs",
         name: "runs_check6",
-        definition: "CHECK ((caller_released_at IS NULL) = (caller_outcome_kind IS NULL))",
+        definition: "CHECK ((caller_released_at IS NULL) = (caller_outcome_type IS NULL))",
         origin: CheckOrigin::Table,
     },
     CheckSpec {
@@ -159,13 +159,13 @@ pub(super) const CHECK_SPECS: &[CheckSpec] = &[
     CheckSpec {
         table: "runs",
         name: "runs_check7",
-        definition: "CHECK (caller_outcome_kind IS NULL OR caller_outcome_json IS NOT NULL)",
+        definition: "CHECK (caller_outcome_type IS NULL OR caller_outcome_json IS NOT NULL)",
         origin: CheckOrigin::Table,
     },
     CheckSpec {
         table: "runs",
         name: "runs_check8",
-        definition: "CHECK (caller_outcome_kind <> 'responded'::text OR caller_release_node_id IS NOT NULL)",
+        definition: "CHECK (caller_outcome_type <> 'responded'::text OR caller_release_node_id IS NOT NULL)",
         origin: CheckOrigin::Table,
     },
     CheckSpec {
@@ -273,13 +273,13 @@ pub(super) const CHECK_SPECS: &[CheckSpec] = &[
     CheckSpec {
         table: "effect_attempts",
         name: "effect_attempts_generation_fact_check",
-        definition: "CHECK (generation_fact_kind = ANY (ARRAY['not-required'::text, 'attested'::text]))",
+        definition: "CHECK (generation_fact_type = ANY (ARRAY['not-required'::text, 'attested'::text]))",
         origin: CheckOrigin::Table,
     },
     CheckSpec {
         table: "effect_attempts",
         name: "effect_attempts_generation_values_check",
-        definition: "CHECK (generation_fact_kind = 'not-required'::text AND connection_name IS NULL AND connection_generation IS NULL AND credential_generation IS NULL OR generation_fact_kind = 'attested'::text AND connection_name IS NOT NULL AND connection_name <> ''::text AND connection_generation IS NOT NULL AND connection_generation <> ''::text AND credential_generation IS NOT NULL AND credential_generation <> ''::text)",
+        definition: "CHECK (generation_fact_type = 'not-required'::text AND connection_name IS NULL AND connection_generation IS NULL AND credential_generation IS NULL OR generation_fact_type = 'attested'::text AND connection_name IS NOT NULL AND connection_name <> ''::text AND connection_generation IS NOT NULL AND connection_generation <> ''::text AND credential_generation IS NOT NULL AND credential_generation <> ''::text)",
         origin: CheckOrigin::Table,
     },
     CheckSpec {
@@ -374,8 +374,8 @@ pub(super) const CHECK_SPECS: &[CheckSpec] = &[
     },
     CheckSpec {
         table: "operator_run_actions",
-        name: "operator_run_actions_kind_check",
-        definition: "CHECK (action_kind = 'terminalize-effect-uncertain'::text)",
+        name: "operator_run_actions_type_check",
+        definition: "CHECK (action_type = 'terminalize-effect-uncertain'::text)",
         origin: CheckOrigin::Table,
     },
     CheckSpec {
@@ -398,8 +398,8 @@ pub(super) const CHECK_SPECS: &[CheckSpec] = &[
     },
     CheckSpec {
         table: "operator_run_actions",
-        name: "operator_run_actions_principal_kind_check",
-        definition: "CHECK (principal_kind = 'database-role'::text)",
+        name: "operator_run_actions_principal_type_check",
+        definition: "CHECK (principal_type = 'database-role'::text)",
         origin: CheckOrigin::Table,
     },
     CheckSpec {

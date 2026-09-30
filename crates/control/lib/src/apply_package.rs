@@ -449,7 +449,7 @@ async fn execute(
             path: None,
             schema: None,
             relation: None,
-            definition_kind: None,
+            definition_type: None,
             definition: None,
             owner_package: None,
             detail: "already belongs to an effective release; create and apply a new package version for additional migrations".into(),
