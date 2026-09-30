@@ -2,6 +2,7 @@
 
 These pages describe unbuilt work and its limits. Current behavior belongs in [architecture](../architecture/README.md), and Beads records decisions and implementation status.
 
+- [Component pull](component-pull.md): Design for the GKE host to pull with a Workload Identity token in place of the registry token CronJob (finding `wamn-i87m`).
 - [Delivery](delivery.md): Deferred CI-provider configuration and conditional delivery extensions.
 - [Environment teardown](environment-teardown.md): Design for `delete-project-env`, the verb that deletes one project environment (finding `wamn-psss`).
 - [Identity](identity.md): External login providers within the existing identity authority.
