@@ -744,6 +744,15 @@ async fn promote_target(
     .context("mint target format-4 release snapshot")?;
     let expected = read_expected_environment(&tx, run_schema, &args.tenant).await?;
     verify_provisioned_environment(expected.as_deref(), &minted.manifest.release, run_schema)?;
+    // Authored roles take the closures of the candidate before it becomes the
+    // head, so no activated operation calls one its roles were not granted.
+    crate::role_permissions::reconcile_release_permissions(
+        &tx,
+        &args.tenant,
+        &crate::role_permissions::ReleaseClosures::from_manifest(&minted.manifest),
+    )
+    .await
+    .context("reconcile the authored role permissions with the candidate release")?;
     tx.execute(
         UPSERT_HEAD_SQL,
         &[&args.tenant, &args.target_environment, &target_release_id],

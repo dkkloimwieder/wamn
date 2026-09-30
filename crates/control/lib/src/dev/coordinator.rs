@@ -1085,6 +1085,28 @@ impl ProductionDevStageRunner {
         Ok(())
     }
 
+    /// Reconcile the authored roles of the target with the closures of the
+    /// release that the Release stage minted, before it activates.
+    async fn reconcile_role_permissions(&self) -> Result<(), ProductionDevStageError> {
+        let snapshot = self.read_handle.snapshot();
+        let release = snapshot.release().ok_or_else(|| {
+            ProductionDevStageError::invalid(
+                "reconcile authored role permissions",
+                "the Release stage produced no manifest",
+            )
+        })?;
+        let closures = crate::role_permissions::ReleaseClosures::from_manifest(release.manifest());
+        crate::role_permissions::reconcile_release_permissions_at(
+            self.config.target_database_url(),
+            &self.config.activation_identity().tenant,
+            &closures,
+        )
+        .await
+        .map_err(|source| {
+            ProductionDevStageError::owner("reconcile authored role permissions", source)
+        })
+    }
+
     async fn release(&mut self) -> Result<(), ProductionDevStageError> {
         self.clear_after(DevStage::Release);
         let principal = self.reauthenticate_publisher().await?;
@@ -1273,6 +1295,7 @@ impl ProductionDevStageRunner {
             )
         })?;
         self.reconcile_local_grants(grants, true).await?;
+        self.reconcile_role_permissions().await?;
         self.acl_input_digest = Some(grants.input_digest.clone());
         self.clear_after(DevStage::Activate);
         let release = self.release.as_ref().ok_or_else(|| {
