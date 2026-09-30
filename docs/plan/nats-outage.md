@@ -1,6 +1,6 @@
 # Scheduler NATS outage
 
-Updated through: 2026-09-29, `main` at `4db74cb1c`. Draft for owner review. No code is written against it.
+Updated through: 2026-09-29, `main` at `4db74cb1c`. Accepted by the owner on 2026-09-29, with the rulings recorded on `wamn-gdex` and `wamn-ifh7`.
 
 ## 1. Goal
 
@@ -61,18 +61,18 @@ The first-connect crash-loop follows from the source. The exit with code 0, 64 t
 The host builds its scheduler client itself, with async-nats 0.49.1, which is already a direct dependency (`services/host/Cargo.toml:22`). It keeps every option that `connect_nats` sets today and adds three:
 
 1. `name`, set to the host name, so the NATS server's connection list shows which host is which.
-2. An event callback that also records the time of the last `Connected` event and counts the failed passes since then.
+2. An event callback that logs under its own tracing target with the client `name`, so its line no longer reads the same as the one of the `wasmcloud:nats` plugin. It also records the time of the last `Connected` event and counts the failed passes since then.
 3. The default log filter of the host gains `async_nats::connector=debug`, so each failed attempt logs its server and its error.
 
 After this, one outage run shows the cause. It is the first step, because the fix depends on it.
 
 ### 4.2 The host connects again
 
-The host keeps the connect capability: the URL and the TLS file paths. A supervisor task watches the recorded state. When the scheduler client has not connected for a bound while a fresh test connection to the same URL with the same TLS files succeeds, the held client is stuck.
+This section is a candidate, not the design. No supervisor and no swap is built until issue 1 names the cause. If a setting removes the cause, the setting is the fix and this section is dropped.
+
+The candidate: the host keeps the connect capability: the URL and the TLS file paths. A supervisor task watches the recorded state. When the scheduler client has not connected for a bound while a fresh test connection to the same URL with the same TLS files succeeds, the held client is stuck.
 
 What the host then does depends on what `ClusterHostBuilder` allows at the pinned revision. If the client can be replaced in the running host, the host opens a new client and swaps it in. This is the `wamn-fwzc` pattern: open again from the kept capability, with no restart. If the builder cannot take a new client, a swap needs an upstream change, and the owner decides (section 5).
-
-If the cause in 4.1 is one that a setting removes, for example a TLS option, the setting is the fix, and the supervisor stays only as the check that the client connected again.
 
 ### 4.3 The operator stays up
 
@@ -80,15 +80,15 @@ The operator is upstream code, and the no-fork rule holds. Three changes stay in
 
 1. The operator runs as today. At runtime it already reconnects forever, so a new pod IP behind the Service reaches it.
 2. The unexplained exit with code 0 is measured before anything changes: one outage with the kubelet events, the probe results and the operator log kept.
-3. The first-connect exit is the `wamn-10yt.76` gap. With no patch and no override, only an upstream release that retries a network timeout removes it. Until then, the kubelet restarts the operator with its back-off, and each restart tries again.
+3. The first-connect exit is the `wamn-10yt.76` gap. With no patch and no override, only an upstream release that retries a network timeout removes it. Until that release, the operator keeps the kubelet restart with its back-off, and each restart tries again (owner ruling 2026-09-29). `wamn-ifh7` records the upstream version that fixes it when one appears.
 
 ## 5. Issues
 
 One branch. Each issue lands with its tests. Only workspace tests run.
 
 1. The cause. The host builds its scheduler client as in 4.1. A live workspace test starts NATS in a Docker container on its own network with the alias `nats` and TLS like the chart, and it starts the host against `nats://nats:4222`. It stops the container, removes it, and starts a new one with the same alias, which gets a new IP. The test then checks that the host connects again and that the debug log names each failed attempt. If the test reproduces the stuck client, the log names the cause.
-2. The fix. As 4.2 describes, after issue 1 names the cause. The same live test passes with no host restart, and a heartbeat RPC answers after the new container is up.
-3. The operator. It measures the code 0 exit as 4.3 says. The operator needs a Kubernetes API server, so a workspace test cannot run it (section 6).
+2. The fix. After issue 1 names the cause: the setting that removes it, or else the candidate of 4.2. The same live test passes with no host restart, and a heartbeat RPC answers after the new container is up.
+3. The operator. It waits, and no cluster run is part of it. At the next scheduler NATS move on `wamn-dev`, the operator log, the kubelet events and the probe results are kept, so the code 0 exit gets its evidence from a real move. `wamn-ifh7` lists what to capture.
 4. Closeout. `docs/architecture/native-alignment.md` and `docs/operations/cluster-tests.md` describe the reconnect. `docs/operations/gcp.md` loses the host delete of the NATS move workaround. Cluster stages are noted as pending.
 
 ## 6. Out of scope
