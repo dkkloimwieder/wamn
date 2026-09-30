@@ -11,7 +11,7 @@ spec:
       hostInterfaces:
       - namespace: wamn
         package: postgres
-        version: 0.1.0
+        version: 0.3.0
         interfaces:
         - types
         - client
@@ -35,7 +35,7 @@ spec:
         - routing
       - namespace: wamn
         package: router-delivery
-        version: 0.1.0
+        version: 0.2.0
         interfaces:
         - delivery
       service:

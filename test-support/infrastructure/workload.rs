@@ -1065,8 +1065,8 @@ fn validate_materializer(deployment: &Value, expected: &MaterializerInput) -> an
                 {"namespace":"wamn","package":"flow-http-routing","version":"0.1.0","interfaces":["routing"]},
                 {"namespace":"wamn","package":"jetstream","version":"0.1.0","interfaces":["types","registration"]},
                 {"namespace":"wasmcloud","package":"nats","version":"0.1.0","name":"events","interfaces":["types","jetstream"]},
-                {"namespace":"wamn","package":"postgres","version":"0.1.0","interfaces":["types","client"]},
-                {"namespace":"wamn","package":"router-delivery","version":"0.1.0","interfaces":["delivery"]}
+                {"namespace":"wamn","package":"postgres","version":"0.3.0","interfaces":["types","client"]},
+                {"namespace":"wamn","package":"router-delivery","version":"0.2.0","interfaces":["delivery"]}
             ]),
         "accepted materializer interfaces differ from the native declaration"
     );
