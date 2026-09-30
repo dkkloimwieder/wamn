@@ -471,7 +471,6 @@ pub async fn mint_local(
     MintedReleaseManifest,
     wamn_runtime::local_application::LocalApplicationFacts,
 )> {
-    use wamn_runtime::local_application::{LocalApplicationFacts, LocalWiringFacts};
     wamn_runtime::local_application::require_local_target(
         &args.database_url,
         &args.tenant,
@@ -499,6 +498,70 @@ pub async fn mint_local(
         .checked_add(1)
         .context("local release identity exhausted")?
         .max(args.effective_release_id);
+    let assembled = assemble_local_release(&args, admissions, documents)?;
+    let request = assembled.request(&args);
+    let run_schema = args.verified_run_schema()?;
+    let policy = crate::verification_policy::read_authoritative_environment_policy(
+        &args.control_database_url,
+        &args.org,
+        &args.environment,
+        false,
+    )
+    .await?;
+    let projected =
+        read_projected_environment_policy(&transaction, &run_schema, &args.tenant).await?;
+    verify_projected_environment_policy(
+        projected.as_ref(),
+        &policy,
+        &assembled.minted.manifest.release,
+        &run_schema,
+    )?;
+    // The retained run-plane FK needs only this session-local identity and
+    // package membership. No immutable component slots or publication facts.
+    establish_release(&transaction, &request).await?;
+    transaction.commit().await?;
+    drop(client);
+    driver.abort();
+    Ok((assembled.minted, assembled.facts))
+}
+
+/// A local release assembled from its package files and admitted components.
+#[derive(Debug)]
+pub struct AssembledLocalRelease {
+    pub minted: MintedReleaseManifest,
+    pub facts: wamn_runtime::local_application::LocalApplicationFacts,
+    effective_release_id: i32,
+    packages: BTreeSet<PackageCoordinate>,
+    wirings: BTreeSet<ReleaseWiringTarget>,
+    attachments: BTreeMap<String, ServingAttachment>,
+}
+
+impl AssembledLocalRelease {
+    /// The identity that [`mint_local`] records for this release.
+    fn request<'a>(&'a self, args: &'a PublishReleaseRequest) -> MintReleaseManifest<'a> {
+        MintReleaseManifest {
+            tenant_id: &args.tenant,
+            effective_release_id: self.effective_release_id,
+            environment: &args.environment,
+            verified_publisher_principal: &args.verified_publisher_principal,
+            packages: &self.packages,
+            wirings: &self.wirings,
+            attachments: &self.attachments,
+            environment_is_disposable: true,
+        }
+    }
+}
+
+/// Assemble the manifest and local facts of a local release from its package
+/// files and admitted components, as [`mint_local`] does once it holds the
+/// release identity. It reads no database, so the two database URLs of `args`
+/// go unused.
+pub fn assemble_local_release(
+    args: &PublishReleaseRequest,
+    admissions: &[crate::push_component::ComponentAdmission],
+    documents: Vec<(ComponentPackageScope, WiringDocument)>,
+) -> anyhow::Result<AssembledLocalRelease> {
+    use wamn_runtime::local_application::{LocalApplicationFacts, LocalWiringFacts};
     let authored = read_package_attachments(&args.attachments, &args.package_manifests)?;
     let (package_manifests, _, route_contracts) = read_package_manifests(&args.package_manifests)?;
     let attachments =
@@ -654,36 +717,18 @@ pub async fn mint_local(
         requirements,
         bindings: Vec::new(),
     };
-    let run_schema = args.verified_run_schema()?;
-    let policy = crate::verification_policy::read_authoritative_environment_policy(
-        &args.control_database_url,
-        &args.org,
-        &args.environment,
-        false,
-    )
-    .await?;
-    let projected =
-        read_projected_environment_policy(&transaction, &run_schema, &args.tenant).await?;
-    verify_projected_environment_policy(
-        projected.as_ref(),
-        &policy,
-        &manifest.release,
-        &run_schema,
-    )?;
-    // The retained run-plane FK needs only this session-local identity and
-    // package membership. No immutable component slots or publication facts.
-    establish_release(&transaction, &request).await?;
-    transaction.commit().await?;
-    drop(client);
-    driver.abort();
-    Ok((
-        MintedReleaseManifest {
+    Ok(AssembledLocalRelease {
+        minted: MintedReleaseManifest {
             manifest,
             digest,
             canonical_bytes,
         },
         facts,
-    ))
+        effective_release_id: i32::try_from(args.effective_release_id)?,
+        packages,
+        wirings: targets,
+        attachments,
+    })
 }
 
 async fn mint_candidate(

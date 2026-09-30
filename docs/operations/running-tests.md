@@ -117,20 +117,16 @@ WAMN_FLOW_HTTP_COMPONENT="$PWD/apps/target/wasm32-wasip2/debug/http_route.wasm" 
     --lib local_business:: -- --ignored --test-threads=1
 ```
 
-Run the edge route, device and forward tests.
-They need the edge release bundle of [`apps/edge_device`](../../apps/edge_device/README.md), which carries its component and the `http-route` guest.
+The edge route, device and forward tests run in the workspace run.
+Each test binary builds the edge release bundle of [`apps/edge_device`](../../apps/edge_device/README.md) once, when its first test starts.
+`tools/build-components` builds the component, and Cargo builds the `http-route` guest as the Dockerfile does. The guest must match its pin.
+The dev loop's bundle writer admits the component and writes the bundle, with no session.
 The tests sign their own sessions.
 The device test writes scale frames into a pseudo-terminal pair, which is its virtual serial port.
 The forward test runs the `wamn-edge` binary as a child, kills it with SIGKILL twice, and serves an HTTPS platform with its own certificate authority.
 
-To write the bundle, start a [developer session](development-loop.md) with `--package` and `--overlay-root` set to `apps/edge_device`.
-When the session serves its route, write the bundle into a new directory, then stop the session:
-
 ```bash
-wamn dev edge-bundle --config <environment>/dev.json --out <bundle directory>
-WAMN_EDGE_DEVICE_BUNDLE=<bundle directory> \
-  cargo test --locked --offline -p wamn-edge --test route --test device --test forward -- --ignored \
-  --skip samples_reach_a_live_platform
+cargo test --locked --offline -p wamn-edge --test route --test device --test forward
 ```
 
 The test `samples_reach_a_live_platform_once_across_kills` forwards to a real platform: the `sample.record` route of [`apps/edge_samples`](../../apps/edge_samples/README.md) on a [developer session](development-loop.md).
@@ -141,7 +137,6 @@ Write the token of `operator-pat.json` in the environment directory to a file wi
 Then run the test with the proxy address and the certificate authority of the proxy:
 
 ```bash
-WAMN_EDGE_DEVICE_BUNDLE=<bundle directory> \
 WAMN_EDGE_LIVE_URL="https://127.0.0.1:<proxy port>/sample/record" \
 WAMN_EDGE_LIVE_TOKEN_FILE=<token file> WAMN_EDGE_LIVE_CA_FILE=<proxy CA file> \
   cargo test --locked --offline -p wamn-edge --test forward \

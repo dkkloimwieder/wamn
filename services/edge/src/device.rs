@@ -120,7 +120,7 @@ async fn run(
             return;
         };
         let sample_key = uuid::Uuid::new_v4().to_string();
-        let captured_at = Utc::now().to_rfc3339_opts(SecondsFormat::Millis, true);
+        let captured_at = Utc::now().to_rfc3339_opts(SecondsFormat::Micros, true);
         let input = json!([{
             "request_id": sample_key,
             "value": {"frame": frame, "captured_at": captured_at},

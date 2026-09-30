@@ -65,6 +65,11 @@ const ROUTE_LABEL: &str = "wamn.attachment.id";
 pub struct RouteInFlightLimit(NonZeroUsize);
 
 impl RouteInFlightLimit {
+    /// A limit of `limit` requests in flight.
+    pub const fn new(limit: NonZeroUsize) -> Self {
+        Self(limit)
+    }
+
     fn get(self) -> usize {
         self.0.get()
     }

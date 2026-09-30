@@ -9,11 +9,16 @@
 
 use std::collections::HashMap;
 use std::net::SocketAddr;
+use std::num::NonZeroUsize;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use anyhow::Context as _;
 use wamn_catalog::edge_bundle::file_digest;
-use wamn_engine::engine::build_engine;
+use wamn_engine::engine::{
+    build_engine_with_host_memory_and_compilation_cache, core_instances_of_component,
+    host_memory_budgets,
+};
 use wamn_engine::expected_router::expected_host_router;
 use wamn_engine::flow_http_routing::{FlowHttpRouting, RouteInFlightLimit};
 use wamn_engine::router_delivery::RouterDelivery;
@@ -103,6 +108,55 @@ impl EdgeHost {
     }
 }
 
+/// The memory cap of one guest memory on the box (docs/plan/edge.md 4.9).
+const EDGE_MEMORY_CAP_BYTES: usize = 256 << 20;
+/// The route requests the box serves at once (docs/plan/edge.md 4.9). It
+/// bounds the route limit and sizes the pool.
+const EDGE_REQUESTS_IN_FLIGHT: NonZeroUsize = NonZeroUsize::new(4).expect("four is not zero");
+/// The compile cache directory, beside the run-state file.
+const COMPILE_CACHE_DIR: &str = "compile-cache";
+
+/// The engine of the box, with its own memory budgets instead of the cloud
+/// host's. Each caller takes a pool slot for each core module that it
+/// starts: a route request starts the ingress and every component of the
+/// release, and the device loop starts the components. The pool holds
+/// [`EDGE_REQUESTS_IN_FLIGHT`] route requests and the device loop.
+fn edge_engine(release: &EdgeRelease, db: &Path) -> anyhow::Result<wash_runtime::engine::Engine> {
+    let ingress = core_instances_of_component(release.ingress())
+        .context("count the core modules of the route guest")?;
+    let mut application = 0;
+    for component in release.native_components() {
+        application += core_instances_of_component(&component.bytes).with_context(|| {
+            format!(
+                "count the core modules of {}",
+                component.fact.component_digest
+            )
+        })?;
+    }
+    let requests = u32::try_from(EDGE_REQUESTS_IN_FLIGHT.get())?;
+    let core_instances = requests * (ingress + application) + application;
+    tracing::info!(
+        ingress,
+        application,
+        core_instances,
+        "the edge sizes its pool"
+    );
+    build_engine_with_host_memory_and_compilation_cache(
+        &[],
+        host_memory_budgets(EDGE_MEMORY_CAP_BYTES, core_instances)?,
+        &compile_cache_dir(db)?,
+    )
+}
+
+/// The compile cache of the box, an absolute path beside `db`.
+fn compile_cache_dir(db: &Path) -> anyhow::Result<PathBuf> {
+    let db = std::path::absolute(db).context("resolve the run-state file path")?;
+    Ok(db
+        .parent()
+        .context("the run-state file has no directory")?
+        .join(COMPILE_CACHE_DIR))
+}
+
 /// Load the pinned release, serve its routes, and run the device loop when
 /// the configuration names a device.
 pub async fn serve(config: EdgeConfig) -> anyhow::Result<EdgeHost> {
@@ -111,7 +165,7 @@ pub async fn serve(config: EdgeConfig) -> anyhow::Result<EdgeHost> {
             .await
             .context("load the release bundle")?,
     );
-    let engine = Arc::new(build_engine(&[]).context("build the engine")?);
+    let engine = Arc::new(edge_engine(&release, &config.store.db).context("build the engine")?);
     let keys = FileKeys::load(&config.session.keys, &config.session.issuer)
         .context("load the session key file")?;
     let verifier = SessionVerifier::new(keys, &config.session.org, &config.session.audience)
@@ -127,7 +181,7 @@ pub async fn serve(config: EdgeConfig) -> anyhow::Result<EdgeHost> {
 
     let routing = FlowHttpRouting::new(
         Some(Arc::clone(release.release())),
-        RouteInFlightLimit::default(),
+        RouteInFlightLimit::new(EDGE_REQUESTS_IN_FLIGHT),
     )
     .with_authenticator(Arc::new(EdgeAuthenticator::new(
         verifier,

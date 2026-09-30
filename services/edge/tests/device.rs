@@ -1,9 +1,8 @@
 //! The device loop reads frames from a pseudo-terminal, the virtual serial
 //! port of spec 4.10, and stores one sample for each frame.
 //!
-//! The test needs the `apps/edge_device` bundle, as the route tests do:
-//! `WAMN_EDGE_DEVICE_BUNDLE` names its directory
-//! (docs/operations/running-tests.md).
+//! The support module builds the `apps/edge_device` bundle, as for the route
+//! tests.
 
 mod support;
 
@@ -53,7 +52,6 @@ async fn pending(samples: &SampleStore, count: usize) -> Vec<Sample> {
 /// none, a trailing carriage return is dropped, and a blank frame, which the
 /// component refuses, stores no sample.
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "requires: WAMN_EDGE_DEVICE_BUNDLE"]
 async fn each_frame_is_one_call_one_intent_and_one_sample() {
     let (_, public) = key("key-one", 1);
     let (directory, digest) = bundle("device", &public);

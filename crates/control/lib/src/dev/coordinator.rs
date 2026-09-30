@@ -50,11 +50,11 @@ const RUN_SCHEMA: &str = "wamn_run";
 
 /// Stable code for the notice a run emits when it built past an authored pin.
 pub const BASE_PIN_STALE_NOTICE: &str = "pin stale";
-const PACKAGE_ATTACHMENTS: &str = "publication/attachments.json";
-const PACKAGE_COMPONENTS: &str = "publication/components";
+pub(super) const PACKAGE_ATTACHMENTS: &str = "publication/attachments.json";
+pub(super) const PACKAGE_COMPONENTS: &str = "publication/components";
 const PACKAGE_WIRINGS: &str = "publication/wirings";
-const NODE_CAPABILITY: &str = "wamn:node";
-const POSTGRES_CAPABILITY: &str = "wamn:postgres";
+pub(super) const NODE_CAPABILITY: &str = "wamn:node";
+pub(super) const POSTGRES_CAPABILITY: &str = "wamn:postgres";
 
 static TEMPORARY_FILE_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
@@ -2497,10 +2497,10 @@ fn require_command_success(
 }
 
 #[derive(Debug)]
-struct TemporaryFile(PathBuf);
+pub(super) struct TemporaryFile(PathBuf);
 
 impl TemporaryFile {
-    fn write(bytes: &[u8]) -> anyhow::Result<Self> {
+    pub(super) fn write(bytes: &[u8]) -> anyhow::Result<Self> {
         let sequence = TEMPORARY_FILE_SEQUENCE.fetch_add(1, Ordering::Relaxed);
         let path =
             std::env::temp_dir().join(format!("wamn-dev-{}-{sequence}.json", std::process::id()));
@@ -2516,7 +2516,7 @@ impl TemporaryFile {
         Ok(Self(path))
     }
 
-    fn path(&self) -> &Path {
+    pub(super) fn path(&self) -> &Path {
         &self.0
     }
 }

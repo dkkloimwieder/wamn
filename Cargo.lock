@@ -5898,6 +5898,7 @@ dependencies = [
  "tracing-subscriber",
  "uuid",
  "wamn-catalog",
+ "wamn-control",
  "wamn-engine",
  "wamn-run-state",
  "wamn-run-state-sqlite",

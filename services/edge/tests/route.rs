@@ -1,8 +1,7 @@
 //! The edge serves the route of the `apps/edge_device` bundle through the
 //! http-route guest, and logs one intent for each item of a write.
 //!
-//! The tests need the bundle: `WAMN_EDGE_DEVICE_BUNDLE` names the directory
-//! that `wamn dev edge-bundle` wrote (docs/operations/running-tests.md).
+//! The support module builds the bundle when the tests start.
 
 mod support;
 
@@ -23,7 +22,7 @@ use support::{
 };
 
 /// The capture time of every item.
-const CAPTURED_AT: &str = "2026-09-25T12:00:00.000Z";
+const CAPTURED_AT: &str = "2026-09-25T12:00:00.000000Z";
 
 /// POST `body` to the route and return the status and the response body.
 async fn post(addr: SocketAddr, token: Option<&str>, body: &str) -> (u16, String) {
@@ -81,7 +80,6 @@ fn dechunk(mut body: &str) -> String {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "requires: WAMN_EDGE_DEVICE_BUNDLE"]
 async fn the_edge_serves_a_route_to_a_session_whose_role_grants_it() {
     let (known, public) = key("key-one", 1);
     let (unknown, _) = key("key-other", 2);
@@ -153,7 +151,6 @@ async fn begin(store: &SqliteIntentStore, release: &str, item: &Value) -> Intent
 /// runs. The operator lists and resolves the uncertain intent with the edge
 /// stopped.
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "requires: WAMN_EDGE_DEVICE_BUNDLE"]
 async fn a_write_logs_one_intent_per_item_and_runs_only_new_items() {
     let (pair, public) = key("key-one", 1);
     let (directory, digest) = bundle("intents", &public);

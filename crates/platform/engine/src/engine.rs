@@ -53,6 +53,22 @@ pub fn host_memory_budgets(
         .map_err(anyhow::Error::msg)
 }
 
+/// The pool slots one instantiation of `component_bytes` takes: one for each
+/// core module it instantiates, nested components included.
+pub fn core_instances_of_component(component_bytes: &[u8]) -> anyhow::Result<u32> {
+    let mut core_instances = 0_u32;
+    for payload in wasmparser::Parser::new(0).parse_all(component_bytes) {
+        if let wasmparser::Payload::InstanceSection(section) = payload? {
+            for instance in section {
+                if let wasmparser::Instance::Instantiate { .. } = instance? {
+                    core_instances += 1;
+                }
+            }
+        }
+    }
+    Ok(core_instances)
+}
+
 /// WAMN's compiled default host-memory configuration.
 pub fn default_host_memory_budgets() -> HostMemoryBudgets {
     host_memory_budgets(MEMORY_CAP_BYTES, DEFAULT_CORE_INSTANCES)
