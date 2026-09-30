@@ -9,7 +9,7 @@ use ring::signature::{ED25519, UnparsedPublicKey};
 use serde::{Deserialize, Serialize};
 
 use crate::keys::{PublicSessionKey, decode_public_key};
-use crate::{SessionError, SessionErrorKind};
+use crate::{SessionError, SessionErrorType};
 
 /// Owner-approved maximum lifetime, in seconds.
 pub const MAXIMUM_LIFETIME: i64 = 900;
@@ -214,5 +214,5 @@ fn decode_header(encoded: &str) -> Result<SessionHeader, SessionError> {
 
 /// The one public refusal of a token.
 pub(crate) fn refused() -> SessionError {
-    SessionError::new(SessionErrorKind::Refused, "session token refused")
+    SessionError::new(SessionErrorType::Refused, "session token refused")
 }

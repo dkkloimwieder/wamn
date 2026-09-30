@@ -76,7 +76,7 @@ use wamn_catalog::{
 
 /// Stable classification for a refused release load.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ReleaseLoadErrorKind {
+pub enum ReleaseLoadErrorType {
     /// The manifest file is missing or unreadable.
     ManifestUnreadable,
     /// The manifest bytes failed parsing, validation, or canonicality.
@@ -88,21 +88,21 @@ pub enum ReleaseLoadErrorKind {
 /// A fail-closed release load error.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ReleaseLoadError {
-    kind: ReleaseLoadErrorKind,
+    type_: ReleaseLoadErrorType,
     detail: Box<str>,
 }
 
 impl ReleaseLoadError {
-    fn new(kind: ReleaseLoadErrorKind, detail: impl Into<Box<str>>) -> Self {
+    fn new(kind: ReleaseLoadErrorType, detail: impl Into<Box<str>>) -> Self {
         Self {
-            kind,
+            type_: kind,
             detail: detail.into(),
         }
     }
 
     /// The stable classification of this refusal.
-    pub fn kind(&self) -> ReleaseLoadErrorKind {
-        self.kind
+    pub fn kind(&self) -> ReleaseLoadErrorType {
+        self.type_
     }
 }
 
@@ -159,7 +159,7 @@ impl LoadedRelease {
         let manifest_path = manifest_root.join(RELEASE_MANIFEST_FILE_NAME);
         let bytes = std::fs::read(&manifest_path).map_err(|error| {
             ReleaseLoadError::new(
-                ReleaseLoadErrorKind::ManifestUnreadable,
+                ReleaseLoadErrorType::ManifestUnreadable,
                 format!("read serving manifest {}: {error}", manifest_path.display()),
             )
         })?;
@@ -177,7 +177,7 @@ impl LoadedRelease {
         let (manifest, manifest_digest) =
             ServingManifest::from_canonical_bytes(bytes).map_err(|error| {
                 ReleaseLoadError::new(
-                    ReleaseLoadErrorKind::ManifestRejected,
+                    ReleaseLoadErrorType::ManifestRejected,
                     format!("serving manifest {origin} refused: {error}"),
                 )
             })?;
@@ -185,7 +185,7 @@ impl LoadedRelease {
         let effective_release_id = i32::try_from(manifest.release.effective_release_id.get())
             .map_err(|error| {
                 ReleaseLoadError::new(
-                    ReleaseLoadErrorKind::ManifestRejected,
+                    ReleaseLoadErrorType::ManifestRejected,
                     format!(
                         "serving manifest {origin} names effective release {} which the run plane \
                          cannot record: {error}",
@@ -394,7 +394,7 @@ mod tests {
 
         assert_eq!(
             mounts.load().expect_err("absent manifest refuses").kind(),
-            ReleaseLoadErrorKind::ManifestUnreadable
+            ReleaseLoadErrorType::ManifestUnreadable
         );
     }
 
@@ -405,7 +405,7 @@ mod tests {
 
         assert_eq!(
             mounts.load().expect_err("garbage refuses").kind(),
-            ReleaseLoadErrorKind::ManifestRejected
+            ReleaseLoadErrorType::ManifestRejected
         );
     }
 
@@ -419,7 +419,7 @@ mod tests {
         let error = mounts
             .load()
             .expect_err("unsupported format refuses at the loaded release");
-        assert_eq!(error.kind(), ReleaseLoadErrorKind::ManifestRejected);
+        assert_eq!(error.kind(), ReleaseLoadErrorType::ManifestRejected);
         assert!(
             error
                 .to_string()
@@ -440,7 +440,7 @@ mod tests {
         // digest naming content nobody shipped.
         assert_eq!(
             mounts.load().expect_err("trailing newline refuses").kind(),
-            ReleaseLoadErrorKind::ManifestRejected
+            ReleaseLoadErrorType::ManifestRejected
         );
     }
 
@@ -456,7 +456,7 @@ mod tests {
         // digest it would not derive.
         assert_eq!(
             mounts.load().expect_err("non-canonical refuses").kind(),
-            ReleaseLoadErrorKind::ManifestRejected
+            ReleaseLoadErrorType::ManifestRejected
         );
     }
 

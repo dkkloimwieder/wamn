@@ -73,7 +73,7 @@ use wamn_catalog::{
     WiringDocument, WiringNode, WiringTerminal,
 };
 use wamn_control::apply_package::{self, ApplyPackageRequest};
-use wamn_control::author_wiring::{AuthorWiringErrorKind, AuthorWiringRequest, author_wiring};
+use wamn_control::author_wiring::{AuthorWiringErrorType, AuthorWiringRequest, author_wiring};
 use wamn_control::push_component::admitted_projection_hash;
 
 const TENANT: &str = "gate-report-tenant";
@@ -329,7 +329,7 @@ async fn a_wiring_is_authored_only_under_a_green_report_for_its_own_hash() {
     let refusal = author(&control, &mut project, &ungated)
         .await
         .expect_err("a document with no gate report refuses");
-    assert_eq!(refusal.kind(), AuthorWiringErrorKind::Report);
+    assert_eq!(refusal.kind(), AuthorWiringErrorType::Report);
     assert_eq!(stored_wirings(&project, "ungated").await, 0);
 
     // 2. Gated and REFUSED. The row exists under this document's own hash and
@@ -339,7 +339,7 @@ async fn a_wiring_is_authored_only_under_a_green_report_for_its_own_hash() {
     let refusal = author(&control, &mut project, &rejected)
         .await
         .expect_err("a document its gate refused refuses");
-    assert_eq!(refusal.kind(), AuthorWiringErrorKind::Report);
+    assert_eq!(refusal.kind(), AuthorWiringErrorType::Report);
     assert_eq!(stored_wirings(&project, "rejected").await, 0);
 
     // 3. A GREEN report exists — for other bytes. This is the arm the hash
@@ -352,7 +352,7 @@ async fn a_wiring_is_authored_only_under_a_green_report_for_its_own_hash() {
     let refusal = author(&control, &mut project, &borrowed)
         .await
         .expect_err("another document's green report does not authorize this one");
-    assert_eq!(refusal.kind(), AuthorWiringErrorKind::Report);
+    assert_eq!(refusal.kind(), AuthorWiringErrorType::Report);
     assert_eq!(stored_wirings(&project, "borrowed").await, 0);
 
     // 4. A green report for this document's own hash — in another tenant. The
@@ -362,7 +362,7 @@ async fn a_wiring_is_authored_only_under_a_green_report_for_its_own_hash() {
     let refusal = author(&control, &mut project, &foreign)
         .await
         .expect_err("another tenant's green report does not authorize this tenant");
-    assert_eq!(refusal.kind(), AuthorWiringErrorKind::Report);
+    assert_eq!(refusal.kind(), AuthorWiringErrorType::Report);
     assert_eq!(stored_wirings(&project, "foreign").await, 0);
 
     // 5. A green report covering this document's own hash. Only now is the
@@ -394,7 +394,7 @@ async fn a_wiring_is_authored_only_under_a_green_report_for_its_own_hash() {
     let refusal = author(&control, &mut project, &changed)
         .await
         .expect_err("a changed document under an authored identity refuses");
-    assert_eq!(refusal.kind(), AuthorWiringErrorKind::Conflict);
+    assert_eq!(refusal.kind(), AuthorWiringErrorType::Conflict);
     let kept: String = project
         .query_one(
             "SELECT wiring_hash FROM catalog.wirings \

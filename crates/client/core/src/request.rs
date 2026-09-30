@@ -31,7 +31,7 @@ impl BuiltRequest {
 
 /// Why a request cannot be built from the draft.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum RequestErrorKind {
+pub enum RequestErrorType {
     RequiredField,
     NullNotAllowed,
     UnknownField,
@@ -46,15 +46,15 @@ pub enum RequestErrorKind {
 /// A request refusal with its field path and original parsing cause.
 #[derive(Debug, Clone)]
 pub struct RequestError {
-    kind: RequestErrorKind,
+    type_: RequestErrorType,
     path: String,
     detail: String,
     source: Option<Arc<dyn Error + Send + Sync>>,
 }
 
 impl RequestError {
-    pub const fn kind(&self) -> RequestErrorKind {
-        self.kind
+    pub const fn kind(&self) -> RequestErrorType {
+        self.type_
     }
 
     pub fn path(&self) -> &str {
@@ -115,7 +115,7 @@ pub fn validate_schema(schema: &Value, value: &Value) -> Result<(), RequestError
     let mut schemas = Schemas::new();
     let invalid_schema = |error: boon::CompileError| {
         request_error(
-            RequestErrorKind::InvalidSchema,
+            RequestErrorType::InvalidSchema,
             "$schema",
             error.to_string(),
         )
@@ -128,7 +128,7 @@ pub fn validate_schema(schema: &Value, value: &Value) -> Result<(), RequestError
         .map_err(invalid_schema)?;
     schemas.validate(value, index).map_err(|error| {
         request_error(
-            RequestErrorKind::SchemaViolation,
+            RequestErrorType::SchemaViolation,
             format!("${}", error.instance_location),
             format!("{error:#}"),
         )
@@ -140,7 +140,7 @@ struct LocalSchemaOnly;
 impl UrlLoader for LocalSchemaOnly {
     fn load(&self, url: &str) -> Result<Value, Box<dyn Error>> {
         Err(Box::new(request_error(
-            RequestErrorKind::InvalidSchema,
+            RequestErrorType::InvalidSchema,
             "$schema",
             format!("external schema resource is not available: {url}"),
         )))
@@ -176,7 +176,7 @@ fn validate_result_object(
             Some(value) => opaque |= validate_result_field(field, value, &member_path)?,
             None if field.required => {
                 return Err(request_error(
-                    RequestErrorKind::RequiredField,
+                    RequestErrorType::RequiredField,
                     member_path,
                     "the required result field is absent",
                 ));
@@ -197,7 +197,7 @@ fn validate_result_field(
             Ok(!primitive(field.field.type_name) && field.children.is_empty())
         } else {
             Err(request_error(
-                RequestErrorKind::NullNotAllowed,
+                RequestErrorType::NullNotAllowed,
                 path,
                 "the result field does not admit null",
             ))
@@ -263,7 +263,7 @@ fn supported_fields(fields: &[FieldSchema]) -> Result<(), RequestError> {
         };
         if !supported {
             return Err(request_error(
-                RequestErrorKind::UnsupportedType,
+                RequestErrorType::UnsupportedType,
                 field.field.path,
                 format!(
                     "input type {:?} requires composition",
@@ -288,7 +288,7 @@ fn canonical_object(
     for name in input.keys() {
         if !fields.iter().any(|field| member_name(field) == name) {
             return Err(request_error(
-                RequestErrorKind::UnknownField,
+                RequestErrorType::UnknownField,
                 format!("{path}.{name}"),
                 "the input field is not declared",
             ));
@@ -301,7 +301,7 @@ fn canonical_object(
         let Some(value) = input.get(name) else {
             if field.required {
                 return Err(request_error(
-                    RequestErrorKind::RequiredField,
+                    RequestErrorType::RequiredField,
                     member_path,
                     "the required input field is absent",
                 ));
@@ -330,7 +330,7 @@ fn canonical_field(
             Ok(Value::Null)
         } else {
             Err(request_error(
-                RequestErrorKind::NullNotAllowed,
+                RequestErrorType::NullNotAllowed,
                 path,
                 "the input field does not admit null",
             ))
@@ -377,7 +377,7 @@ fn canonical_field(
         },
         _ => {
             return Err(request_error(
-                RequestErrorKind::UnsupportedType,
+                RequestErrorType::UnsupportedType,
                 path,
                 "input type requires composition",
             ));
@@ -389,7 +389,7 @@ fn canonical_field(
             .map_or_else(|| result.to_string(), str::to_owned);
         if !field.field.values.contains(&literal.as_str()) {
             return Err(request_error(
-                RequestErrorKind::ClosedValue,
+                RequestErrorType::ClosedValue,
                 path,
                 "the value is outside the declared choices",
             ));
@@ -435,7 +435,7 @@ fn bounded_array<'a>(
         || field.maximum.is_some_and(|maximum| count > maximum)
     {
         return Err(request_error(
-            RequestErrorKind::Bounds,
+            RequestErrorType::Bounds,
             path,
             format!("array length {count} is outside the declared bounds"),
         ));
@@ -533,7 +533,7 @@ fn string<'a>(value: &'a Value, path: &str) -> Result<&'a str, RequestError> {
 }
 
 fn invalid(path: &str, detail: &str) -> RequestError {
-    request_error(RequestErrorKind::InvalidValue, path, detail)
+    request_error(RequestErrorType::InvalidValue, path, detail)
 }
 
 fn caused(path: &str, detail: &str, source: impl Error + Send + Sync + 'static) -> RequestError {
@@ -544,12 +544,12 @@ fn caused(path: &str, detail: &str, source: impl Error + Send + Sync + 'static) 
 }
 
 fn request_error(
-    kind: RequestErrorKind,
+    type_: RequestErrorType,
     path: impl Into<String>,
     detail: impl Into<String>,
 ) -> RequestError {
     RequestError {
-        kind,
+        type_,
         path: path.into(),
         detail: detail.into(),
         source: None,

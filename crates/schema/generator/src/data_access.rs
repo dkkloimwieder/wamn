@@ -11,7 +11,7 @@ use wamn_schema_introspection::ir::CatalogIr;
 
 use crate::generate::logged_history_tables;
 use crate::manifest::{DeleteMode, TombstoneColumn};
-use crate::{CrudAction, GenerateError, GenerateErrorKind, PackageManifest};
+use crate::{CrudAction, GenerateError, GenerateErrorType, PackageManifest};
 
 /// Package-relative canonical data-access evidence artifact.
 pub const DATA_ACCESS_OVERLAY_PATH: &str = "generated/platform-policy/data-access.json";
@@ -101,7 +101,7 @@ impl DataAccessOverlay {
     pub fn from_slice(bytes: &[u8]) -> Result<Self, GenerateError> {
         let overlay: Self = serde_json::from_slice(bytes).map_err(|source| {
             GenerateError::with_source(
-                GenerateErrorKind::InvalidManifest,
+                GenerateErrorType::InvalidManifest,
                 "data-access overlay does not match the closed generated shape",
                 source,
             )
@@ -109,7 +109,7 @@ impl DataAccessOverlay {
         overlay.validate()?;
         if overlay.canonical_bytes() != bytes {
             return Err(GenerateError::new(
-                GenerateErrorKind::InvalidManifest,
+                GenerateErrorType::InvalidManifest,
                 "data-access overlay must use canonical compact JSON",
             ));
         }
@@ -163,7 +163,7 @@ impl DataAccessOverlay {
             || self.schemas.is_empty() != self.relations.is_empty()
         {
             return Err(GenerateError::new(
-                GenerateErrorKind::InvalidManifest,
+                GenerateErrorType::InvalidManifest,
                 "data-access overlay identity or carrier is invalid",
             ));
         }
@@ -171,14 +171,14 @@ impl DataAccessOverlay {
         for schema in &self.schemas {
             if !valid_identifier(schema) || !schemas.insert(schema.as_str()) {
                 return Err(GenerateError::new(
-                    GenerateErrorKind::InvalidManifest,
+                    GenerateErrorType::InvalidManifest,
                     "data-access overlay schemas must be unique singular snake_case",
                 ));
             }
         }
         if !self.schemas.windows(2).all(|pair| pair[0] < pair[1]) {
             return Err(GenerateError::new(
-                GenerateErrorKind::InvalidManifest,
+                GenerateErrorType::InvalidManifest,
                 "data-access overlay schemas must use canonical order",
             ));
         }
@@ -190,13 +190,13 @@ impl DataAccessOverlay {
                 || relation.all_fields.is_empty()
             {
                 return Err(GenerateError::new(
-                    GenerateErrorKind::InvalidManifest,
+                    GenerateErrorType::InvalidManifest,
                     "data-access overlay relation identity is invalid or repeated",
                 ));
             }
             if !relation.all_fields.windows(2).all(|pair| pair[0] < pair[1]) {
                 return Err(GenerateError::new(
-                    GenerateErrorKind::InvalidManifest,
+                    GenerateErrorType::InvalidManifest,
                     "data-access overlay relation fields must use canonical order",
                 ));
             }
@@ -212,7 +212,7 @@ impl DataAccessOverlay {
                     .all(|field| valid_identifier(field))
             {
                 return Err(GenerateError::new(
-                    GenerateErrorKind::InvalidManifest,
+                    GenerateErrorType::InvalidManifest,
                     "data-access overlay relation fields are invalid or repeated",
                 ));
             }
@@ -231,7 +231,7 @@ impl DataAccessOverlay {
                         .filter(|field| unique.contains(field)))
                 {
                     return Err(GenerateError::new(
-                        GenerateErrorKind::InvalidManifest,
+                        GenerateErrorType::InvalidManifest,
                         "data-access privilege fields must follow canonical relation-field order",
                     ));
                 }
@@ -247,7 +247,7 @@ impl DataAccessOverlay {
                 || expected_carrier.flatten() != relation.lock_update_field
             {
                 return Err(GenerateError::new(
-                    GenerateErrorKind::InvalidManifest,
+                    GenerateErrorType::InvalidManifest,
                     "data-access row lock must document its deterministic UPDATE carrier",
                 ));
             }
@@ -258,7 +258,7 @@ impl DataAccessOverlay {
             .all(|pair| (&pair[0].schema, &pair[0].table) < (&pair[1].schema, &pair[1].table))
         {
             return Err(GenerateError::new(
-                GenerateErrorKind::InvalidManifest,
+                GenerateErrorType::InvalidManifest,
                 "data-access overlay relations must use canonical order",
             ));
         }
@@ -381,7 +381,7 @@ pub fn validate_data_access_contribution(
         Ok(())
     } else {
         Err(GenerateError::new(
-            GenerateErrorKind::InvalidManifest,
+            GenerateErrorType::InvalidManifest,
             "generated data-access contribution does not match its recorded package manifest",
         ))
     }
@@ -394,7 +394,7 @@ pub fn derive_effective_data_access(
 ) -> Result<EffectiveDataAccess, GenerateError> {
     if overlays.is_empty() {
         return Err(GenerateError::new(
-            GenerateErrorKind::InvalidManifest,
+            GenerateErrorType::InvalidManifest,
             "installed data-access set must contain at least one package contribution",
         ));
     }
@@ -405,7 +405,7 @@ pub fn derive_effective_data_access(
         overlay.validate()?;
         if !packages.insert(overlay.package()) {
             return Err(GenerateError::new(
-                GenerateErrorKind::InvalidManifest,
+                GenerateErrorType::InvalidManifest,
                 "installed data-access set repeats a package coordinate",
             ));
         }
@@ -424,7 +424,7 @@ pub fn derive_effective_data_access(
                 .is_some()
         {
             return Err(GenerateError::new(
-                GenerateErrorKind::InvalidManifest,
+                GenerateErrorType::InvalidManifest,
                 "live installed-set relation list repeats a relation",
             ));
         }
@@ -432,7 +432,7 @@ pub fn derive_effective_data_access(
     for schema in &schemas {
         if !desired.keys().any(|(candidate, _)| candidate == schema) {
             return Err(GenerateError::for_object(
-                GenerateErrorKind::UnknownRelation,
+                GenerateErrorType::UnknownRelation,
                 "installed data-access schema has no ordinary relations",
                 schema.as_str(),
             ));
@@ -444,7 +444,7 @@ pub fn derive_effective_data_access(
             let key = (relation.schema().to_owned(), relation.table().to_owned());
             let target = desired.get_mut(&key).ok_or_else(|| {
                 GenerateError::for_object(
-                    GenerateErrorKind::UnknownRelation,
+                    GenerateErrorType::UnknownRelation,
                     "generated data-access contribution references a relation absent from the installed set",
                     format!("{}.{}", relation.schema(), relation.table()),
                 )
@@ -473,7 +473,7 @@ pub fn render_effective_data_access_sql(
         || effective.schemas.is_empty() != effective.relations.is_empty()
     {
         return Err(GenerateError::new(
-            GenerateErrorKind::InvalidManifest,
+            GenerateErrorType::InvalidManifest,
             "effective data-access authority is empty or uses the wrong carrier",
         ));
     }
@@ -560,7 +560,7 @@ impl EffectiveDesiredRelation {
             .find(|field| !self.all_fields.contains(*field))
         {
             return Err(GenerateError::for_object(
-                GenerateErrorKind::UnknownColumn,
+                GenerateErrorType::UnknownColumn,
                 "generated data-access contribution references a field absent from the installed set",
                 format!("{}.{}.{}", relation.schema(), relation.table(), field),
             ));
@@ -665,7 +665,7 @@ fn derive_data_access_overlay_for_manifest(
                 .is_some()
         {
             return Err(GenerateError::for_object(
-                GenerateErrorKind::InvalidManifest,
+                GenerateErrorType::InvalidManifest,
                 "live data-access relation list repeats a relation",
                 format!("{}.{}", relation.schema, relation.table),
             ));
@@ -674,7 +674,7 @@ fn derive_data_access_overlay_for_manifest(
     for schema in &schemas {
         if !desired.keys().any(|(candidate, _)| candidate == schema) {
             return Err(GenerateError::for_object(
-                GenerateErrorKind::UnknownRelation,
+                GenerateErrorType::UnknownRelation,
                 "application schema has no ordinary relations",
                 schema.as_str(),
             ));
@@ -732,7 +732,7 @@ fn derive_data_access_overlay_for_manifest(
                     }
                     None => {
                         return Err(GenerateError::new(
-                            GenerateErrorKind::InvalidOperation,
+                            GenerateErrorType::InvalidOperation,
                             "generated data-access overlay has a delete without a delete mode",
                         ));
                     }
@@ -808,7 +808,7 @@ pub(crate) fn application_schemas(
     }
     if schemas.is_empty() || !schemas.iter().all(|schema| valid_identifier(schema)) {
         return Err(GenerateError::new(
-            GenerateErrorKind::InvalidManifest,
+            GenerateErrorType::InvalidManifest,
             "data-access manifest must name at least one valid application schema",
         ));
     }
@@ -824,7 +824,7 @@ fn desired_relation<'a>(
         .get_mut(&(schema.to_owned(), table.to_owned()))
         .ok_or_else(|| {
             GenerateError::for_object(
-                GenerateErrorKind::UnknownRelation,
+                GenerateErrorType::UnknownRelation,
                 "data-access declaration references an unknown relation",
                 format!("{schema}.{table}"),
             )
@@ -840,7 +840,7 @@ impl DataAccessRelationFields {
             || !self.fields.windows(2).all(|pair| pair[0] < pair[1])
         {
             return Err(GenerateError::for_object(
-                GenerateErrorKind::InvalidManifest,
+                GenerateErrorType::InvalidManifest,
                 "live data-access relation fields are invalid",
                 format!("{}.{}", self.schema, self.table),
             ));
@@ -886,7 +886,7 @@ impl DesiredRelation {
             .find(|field| !self.all_fields.contains(*field))
         {
             return Err(GenerateError::for_object(
-                GenerateErrorKind::UnknownColumn,
+                GenerateErrorType::UnknownColumn,
                 "data-access declaration references an unknown field",
                 format!("{schema}.{table}.{field}"),
             ));
@@ -910,7 +910,7 @@ impl DesiredRelation {
                     .cloned()
                     .ok_or_else(|| {
                         GenerateError::for_object(
-                            GenerateErrorKind::InvalidOperation,
+                            GenerateErrorType::InvalidOperation,
                             "row-locked relation has no deterministic UPDATE carrier column",
                             format!("{schema}.{table}"),
                         )

@@ -8,7 +8,7 @@
 
 use wamn_postgres_statements::{Numeric, TimestampTz, Uuid};
 
-use crate::error::{AccessError, AccessErrorKind};
+use crate::error::{AccessError, AccessErrorType};
 
 /// The packaging status a command refuses to work on: a consumed packaging is
 /// history, not live stock (`inventory_aggregate.sql` says why).
@@ -18,13 +18,13 @@ pub(crate) fn uuid(field: &str, value: &str) -> Result<Uuid, AccessError> {
     value
         .parse::<uuid::Uuid>()
         .map(|parsed| Uuid(parsed.hyphenated().to_string()))
-        .map_err(|_| AccessError::field(AccessErrorKind::InvalidInput, field))
+        .map_err(|_| AccessError::field(AccessErrorType::InvalidInput, field))
 }
 
 pub(crate) fn timestamp(field: &str, value: &str) -> Result<TimestampTz, AccessError> {
     wamn_execution_contract::canonical_timestamptz(value)
         .map(TimestampTz)
-        .ok_or_else(|| AccessError::field(AccessErrorKind::InvalidInput, field))
+        .ok_or_else(|| AccessError::field(AccessErrorType::InvalidInput, field))
 }
 
 /// A positive quantity, RE-SPELLED as PostgreSQL's own text for the same
@@ -39,7 +39,7 @@ pub(crate) fn numeric(field: &str, value: &str) -> Result<Numeric, AccessError> 
     wamn_execution_contract::canonical_numeric(value)
         .filter(|respelled| positive && !respelled.starts_with('-'))
         .map(Numeric)
-        .ok_or_else(|| AccessError::field(AccessErrorKind::InvalidInput, field))
+        .ok_or_else(|| AccessError::field(AccessErrorType::InvalidInput, field))
 }
 
 /// A counted quantity: zero or positive, RE-SPELLED as [`numeric`] does. A
@@ -48,7 +48,7 @@ pub(crate) fn count(field: &str, value: &str) -> Result<Numeric, AccessError> {
     wamn_execution_contract::canonical_numeric(value)
         .filter(|respelled| !respelled.starts_with('-'))
         .map(Numeric)
-        .ok_or_else(|| AccessError::field(AccessErrorKind::InvalidInput, field))
+        .ok_or_else(|| AccessError::field(AccessErrorType::InvalidInput, field))
 }
 
 /// Whether a re-spelled quantity is zero at any scale.
@@ -63,7 +63,7 @@ pub(crate) fn is_zero(quantity: &Numeric) -> bool {
 pub(crate) fn packaging_type(field: &str, value: &str) -> Result<String, AccessError> {
     match value {
         "pallet" | "tote" | "bin" | "case" | "loose" => Ok(value.to_owned()),
-        _ => Err(AccessError::field(AccessErrorKind::InvalidInput, field)),
+        _ => Err(AccessError::field(AccessErrorType::InvalidInput, field)),
     }
 }
 
@@ -72,7 +72,7 @@ pub(crate) fn packaging_type(field: &str, value: &str) -> Result<String, AccessE
 pub(crate) fn quantity_status(field: &str, value: &str) -> Result<String, AccessError> {
     match value {
         "available" | "held" => Ok(value.to_owned()),
-        _ => Err(AccessError::field(AccessErrorKind::InvalidInput, field)),
+        _ => Err(AccessError::field(AccessErrorType::InvalidInput, field)),
     }
 }
 

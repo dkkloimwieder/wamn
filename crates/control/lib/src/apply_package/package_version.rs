@@ -7,7 +7,7 @@ use wamn_schema_control::{
     plan_package_registration,
 };
 
-use super::error::{ApplyPackageError, ApplyPackageErrorKind};
+use super::error::{ApplyPackageError, ApplyPackageErrorType};
 
 pub const LOCK_PACKAGE_SQL: &str = "SELECT pg_advisory_xact_lock(hashtextextended(\
      'wamn.package.lineage:' || $1 || ':' || $2, 0))";
@@ -95,7 +95,7 @@ pub(super) fn predecessor_not_current_error(
     current_version: &str,
 ) -> ApplyPackageError {
     ApplyPackageError {
-        kind: ApplyPackageErrorKind::PredecessorNotCurrent,
+        type_: ApplyPackageErrorType::PredecessorNotCurrent,
         coordinate: coordinate.to_owned(),
         predecessor_version: declared_version.map(str::to_owned),
         current_version: Some(current_version.to_owned()),
@@ -129,7 +129,7 @@ pub(super) fn predecessor_prefix_error(
         |source| format!("declared predecessor does not match the cumulative prefix: {source}"),
     );
     ApplyPackageError {
-        kind: ApplyPackageErrorKind::PredecessorPrefixMismatch,
+        type_: ApplyPackageErrorType::PredecessorPrefixMismatch,
         coordinate: coordinate.to_owned(),
         predecessor_version: Some(predecessor_version.to_owned()),
         current_version: None,

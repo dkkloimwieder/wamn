@@ -10,7 +10,7 @@
 use serde_json::{Value, json};
 use wamn_event_wire::Op;
 use wamn_router::{
-    ApplyErrorKind, DEDUP_ID_FIELD, Delivery, ErrorDetail, FailureKind, NodeError, NodeOutcome,
+    ApplyErrorType, DEDUP_ID_FIELD, Delivery, ErrorDetail, FailureKind, NodeError, NodeOutcome,
     Step, Terminal, Verdict, Walk, WalkStatus, Wiring, WiringEdge, WiringNode,
 };
 
@@ -147,7 +147,7 @@ fn respond_with_no_caller_attached_is_rejected_and_leaves_the_walk_untouched() {
 
     assert_eq!(
         error.kind(),
-        &ApplyErrorKind::RespondWithoutCaller("a".to_string())
+        &ApplyErrorType::RespondWithoutCaller("a".to_string())
     );
     assert_eq!(walk, before, "a rejected verdict must not mutate the walk");
 }
@@ -178,7 +178,7 @@ fn a_second_terminal_node_is_rejected() {
 
     assert_eq!(
         error.kind(),
-        &ApplyErrorKind::SecondVerdict("b".to_string())
+        &ApplyErrorType::SecondVerdict("b".to_string())
     );
     assert_eq!(
         walk.verdict(),

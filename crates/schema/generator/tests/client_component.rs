@@ -1,7 +1,7 @@
 use std::collections::BTreeSet;
 
 use wamn_schema_generator::GeneratedFile;
-use wamn_schema_generator::client_component::{ClientComponentErrorKind, emit_ts_components};
+use wamn_schema_generator::client_component::{ClientComponentErrorType, emit_ts_components};
 use wamn_schema_generator::client_ir::ClientContractIr;
 use wamn_schema_generator::client_plan::ClientPlan;
 
@@ -528,7 +528,7 @@ fn a_command_sends_the_revision_of_the_record_it_names() {
         fixture::client_release_of(&fixture::generate_with(&fixture::catalog(), &undeclared));
     let error = emit_ts_components(&ClientPlan::from_ir(&release))
         .expect_err("a revision that names no record is refused");
-    assert_eq!(error.kind(), ClientComponentErrorKind::UnsuppliedRevision);
+    assert_eq!(error.kind(), ClientComponentErrorType::UnsuppliedRevision);
     assert!(
         error.to_string().contains(
             "platform-fixture:widget/archive@1.0.0 sends the revision expected_edit_version"

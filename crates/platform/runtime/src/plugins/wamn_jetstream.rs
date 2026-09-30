@@ -100,7 +100,7 @@ pub struct DerivedPublishAck {
 
 /// Stable host classification for derived publication failures.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum DerivedPublishErrorKind {
+pub enum DerivedPublishErrorType {
     UnboundScope,
     InvalidInput,
     ConnectionUnavailable,
@@ -112,20 +112,20 @@ pub enum DerivedPublishErrorKind {
 /// Contextual failure returned by the native derived-event publisher seam.
 #[derive(Debug)]
 pub struct DerivedPublishError {
-    kind: DerivedPublishErrorKind,
+    type_: DerivedPublishErrorType,
     detail: Box<str>,
 }
 
 impl DerivedPublishError {
-    fn new(kind: DerivedPublishErrorKind, detail: impl Into<Box<str>>) -> Self {
+    fn new(kind: DerivedPublishErrorType, detail: impl Into<Box<str>>) -> Self {
         Self {
-            kind,
+            type_: kind,
             detail: detail.into(),
         }
     }
 
-    pub fn kind(&self) -> DerivedPublishErrorKind {
-        self.kind
+    pub fn kind(&self) -> DerivedPublishErrorType {
+        self.type_
     }
 }
 
@@ -700,7 +700,7 @@ fn require_event_coordinates(coordinates: &EventCoordinates) -> Result<(), Deriv
     ] {
         if value.is_empty() || value.trim() != value || subject_token(value) != value {
             return Err(DerivedPublishError::new(
-                DerivedPublishErrorKind::UnboundScope,
+                DerivedPublishErrorType::UnboundScope,
                 format!("event coordinate {name} is absent or not one NATS subject token"),
             ));
         }
@@ -738,7 +738,7 @@ fn prepare_derived_publication(
     require_event_coordinates(coordinates)?;
     if claim.environment != coordinates.environment {
         return Err(DerivedPublishError::new(
-            DerivedPublishErrorKind::UnboundScope,
+            DerivedPublishErrorType::UnboundScope,
             "derived event environment differs from the platform event binding",
         ));
     }
@@ -747,25 +747,25 @@ fn prepare_derived_publication(
         || request.package_id.as_bytes().contains(&0)
     {
         return Err(DerivedPublishError::new(
-            DerivedPublishErrorKind::InvalidInput,
+            DerivedPublishErrorType::InvalidInput,
             "derived event package-id is empty or noncanonical",
         ));
     }
     if request.entity.is_empty() || request.entity.trim() != request.entity {
         return Err(DerivedPublishError::new(
-            DerivedPublishErrorKind::InvalidInput,
+            DerivedPublishErrorType::InvalidInput,
             "derived event entity is empty or noncanonical",
         ));
     }
     if request.dedup_id.is_empty() {
         return Err(DerivedPublishError::new(
-            DerivedPublishErrorKind::InvalidInput,
+            DerivedPublishErrorType::InvalidInput,
             "derived event dedup-id is empty",
         ));
     }
     if request.causation.run.is_empty() || request.causation.root.is_empty() {
         return Err(DerivedPublishError::new(
-            DerivedPublishErrorKind::InvalidInput,
+            DerivedPublishErrorType::InvalidInput,
             "derived event causation is incomplete",
         ));
     }
@@ -804,7 +804,7 @@ fn prepare_derived_publication(
     );
     let body = serde_json::to_vec(&event).map_err(|error| {
         DerivedPublishError::new(
-            DerivedPublishErrorKind::Serialization,
+            DerivedPublishErrorType::Serialization,
             format!("serialize derived event: {error}"),
         )
     })?;
@@ -1008,7 +1008,7 @@ impl WamnJetstream {
         ] {
             if value.is_empty() || value.trim() != value || subject_token(value) != value {
                 return Err(DerivedPublishError::new(
-                    DerivedPublishErrorKind::InvalidInput,
+                    DerivedPublishErrorType::InvalidInput,
                     format!("derived event {field} claim is empty or not one NATS subject token"),
                 ));
             }
@@ -1053,7 +1053,7 @@ impl WamnJetstream {
             .cloned()
             .ok_or_else(|| {
                 DerivedPublishError::new(
-                    DerivedPublishErrorKind::UnboundScope,
+                    DerivedPublishErrorType::UnboundScope,
                     "derived-event-scope-unbound",
                 )
             })?;
@@ -1064,7 +1064,7 @@ impl WamnJetstream {
         ] {
             if value.is_empty() || value.trim() != value || subject_token(value) != value {
                 return Err(DerivedPublishError::new(
-                    DerivedPublishErrorKind::UnboundScope,
+                    DerivedPublishErrorType::UnboundScope,
                     "derived-event-scope-incomplete-or-invalid",
                 ));
             }
@@ -1156,7 +1156,7 @@ impl WamnJetstream {
         let result = async {
             let ctx = self.ensure_ctx().await.map_err(|error| {
                 DerivedPublishError::new(
-                    DerivedPublishErrorKind::ConnectionUnavailable,
+                    DerivedPublishErrorType::ConnectionUnavailable,
                     format!("derived event JetStream unavailable: {error:?}"),
                 )
             })?;
@@ -1167,20 +1167,20 @@ impl WamnJetstream {
                 .await
                 .map_err(|error| {
                     DerivedPublishError::new(
-                        DerivedPublishErrorKind::PublishRejected,
+                        DerivedPublishErrorType::PublishRejected,
                         format!("send derived event: {error}"),
                     )
                 })?
                 .await
                 .map_err(|error| {
                     DerivedPublishError::new(
-                        DerivedPublishErrorKind::PublishRejected,
+                        DerivedPublishErrorType::PublishRejected,
                         format!("store derived event: {error}"),
                     )
                 })?;
             if ack.stream != publication.expected_stream {
                 return Err(DerivedPublishError::new(
-                    DerivedPublishErrorKind::UnexpectedStream,
+                    DerivedPublishErrorType::UnexpectedStream,
                     format!(
                         "derived event stored in stream {:?}, expected {:?}",
                         ack.stream, publication.expected_stream
@@ -1719,7 +1719,7 @@ mod tests {
         };
         let error = prepare_derived_publication(claim, &coordinates, request)
             .expect_err("a noncanonical package identity must refuse");
-        assert_eq!(error.kind(), DerivedPublishErrorKind::InvalidInput);
+        assert_eq!(error.kind(), DerivedPublishErrorType::InvalidInput);
     }
 
     #[test]
@@ -1730,7 +1730,7 @@ mod tests {
                 .required_derived_claim("component-1")
                 .unwrap_err()
                 .kind(),
-            DerivedPublishErrorKind::UnboundScope
+            DerivedPublishErrorType::UnboundScope
         );
         plugin.set_claim("component-1", Some("fixture"), Some("app"), None);
         assert_eq!(
@@ -1738,7 +1738,7 @@ mod tests {
                 .required_derived_claim("component-1")
                 .unwrap_err()
                 .kind(),
-            DerivedPublishErrorKind::UnboundScope
+            DerivedPublishErrorType::UnboundScope
         );
         plugin.set_claim(
             "component-1",
@@ -1751,7 +1751,7 @@ mod tests {
                 .required_derived_claim("component-1")
                 .unwrap_err()
                 .kind(),
-            DerivedPublishErrorKind::UnboundScope
+            DerivedPublishErrorType::UnboundScope
         );
         assert!(
             plugin
@@ -1808,7 +1808,7 @@ mod tests {
                 .publish_derived(derived_request("component-1", "author:orders:7"))
                 .await
                 .expect_err("missing or foreign event coordinates must refuse before connection");
-            assert_eq!(error.kind(), DerivedPublishErrorKind::UnboundScope);
+            assert_eq!(error.kind(), DerivedPublishErrorType::UnboundScope);
         }
     }
 

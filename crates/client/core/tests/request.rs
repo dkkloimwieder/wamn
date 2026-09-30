@@ -2,7 +2,7 @@
 
 use serde_json::{Value, json};
 use wamn_client::descriptor::{FieldDescriptor, FieldSchema};
-use wamn_client::request::{RequestErrorKind, build_request, validate_result, validate_schema};
+use wamn_client::request::{RequestErrorType, build_request, validate_result, validate_schema};
 
 const fn scalar(
     path: &'static str,
@@ -32,7 +32,7 @@ fn required_and_nullable_form_four_independent_presence_contracts() {
         if required {
             assert_eq!(
                 absent.expect_err("required field is absent").kind(),
-                RequestErrorKind::RequiredField
+                RequestErrorType::RequiredField
             );
         } else {
             assert_eq!(absent.expect("optional field stays absent").body(), b"[{}]");
@@ -46,7 +46,7 @@ fn required_and_nullable_form_four_independent_presence_contracts() {
         } else {
             assert_eq!(
                 null.expect_err("null is not allowed").kind(),
-                RequestErrorKind::NullNotAllowed
+                RequestErrorType::NullNotAllowed
             );
         }
         assert_eq!(
@@ -81,7 +81,7 @@ fn code_omission_stays_absent_while_explicit_null_is_refused() {
     item["change"]["code"] = Value::Null;
     let error =
         build_request(FIELDS, &item, Some(schema)).expect_err("explicit null is invalid_input");
-    assert_eq!(error.kind(), RequestErrorKind::NullNotAllowed);
+    assert_eq!(error.kind(), RequestErrorType::NullNotAllowed);
     assert_eq!(error.path(), "$.change.code");
 }
 
@@ -155,18 +155,18 @@ fn nested_arrays_enforce_bounds_and_required_child_fields() {
         build_request(BATCH_FIELDS, &item, None)
             .expect_err("too few lines")
             .kind(),
-        RequestErrorKind::Bounds
+        RequestErrorType::Bounds
     );
     item["value"]["line"] = json!([{}, {}, {}]);
     assert_eq!(
         build_request(BATCH_FIELDS, &item, None)
             .expect_err("too many lines")
             .kind(),
-        RequestErrorKind::Bounds
+        RequestErrorType::Bounds
     );
     item["value"]["line"] = json!([{}]);
     let error = build_request(BATCH_FIELDS, &item, None).expect_err("missing nested field");
-    assert_eq!(error.kind(), RequestErrorKind::RequiredField);
+    assert_eq!(error.kind(), RequestErrorType::RequiredField);
     assert_eq!(error.path(), "$.value.line[0].widget_id");
 }
 
@@ -197,7 +197,7 @@ fn integer_carriers_follow_the_served_schema() {
         )
         .expect_err("served maximum is enforced")
         .kind(),
-        RequestErrorKind::SchemaViolation
+        RequestErrorType::SchemaViolation
     );
     assert!(
         build_request(
@@ -248,7 +248,7 @@ fn optional_unknown_types_block_and_unknown_keys_are_not_silently_dropped() {
             None,
         )
         .expect_err("an omitted unsupported input still requires composition");
-        assert_eq!(error.kind(), RequestErrorKind::UnsupportedType);
+        assert_eq!(error.kind(), RequestErrorType::UnsupportedType);
     }
     let error = build_request(
         &[scalar("known", "text", false, false)],
@@ -256,7 +256,7 @@ fn optional_unknown_types_block_and_unknown_keys_are_not_silently_dropped() {
         None,
     )
     .expect_err("unknown fields are refused");
-    assert_eq!(error.kind(), RequestErrorKind::UnknownField);
+    assert_eq!(error.kind(), RequestErrorType::UnknownField);
     assert_eq!(error.path(), "$.extra");
 }
 
@@ -284,7 +284,7 @@ fn repeated_scalar_fields_enforce_their_closed_domain() {
         build_request(FIELDS, &json!({"status":["other"]}), None)
             .expect_err("unknown choice")
             .kind(),
-        RequestErrorKind::ClosedValue
+        RequestErrorType::ClosedValue
     );
 }
 
@@ -296,21 +296,21 @@ fn schema_validation_enforces_constraints_and_never_loads_external_resources() {
         validate_schema(&schema, &json!("no"))
             .expect_err("minLength is enforced")
             .kind(),
-        RequestErrorKind::SchemaViolation
+        RequestErrorType::SchemaViolation
     );
     for reference in ["https://example.invalid/schema.json", "file:///etc/passwd"] {
         assert_eq!(
             validate_schema(&json!({"$ref":reference}), &Value::Null)
                 .expect_err("external resource loading is disabled")
                 .kind(),
-            RequestErrorKind::InvalidSchema
+            RequestErrorType::InvalidSchema
         );
     }
     assert_eq!(
         validate_schema(&json!({"type":"not-a-type"}), &Value::Null)
             .expect_err("invalid schema is not a value refusal")
             .kind(),
-        RequestErrorKind::InvalidSchema
+        RequestErrorType::InvalidSchema
     );
 }
 

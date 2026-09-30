@@ -19,7 +19,7 @@
 use serde::Deserialize;
 use wamn_postgres_statements::{Numeric, TimestampTz, Transaction, Uuid};
 
-use crate::error::{self, AccessError, AccessErrorKind};
+use crate::error::{self, AccessError, AccessErrorType};
 use crate::scalar;
 use crate::statements::wamn::inventory_split as sql;
 
@@ -61,7 +61,7 @@ struct Parsed {
 fn parse(command: &SplitCommand) -> Result<Parsed, AccessError> {
     if command.new_packaging_code.is_empty() {
         return Err(AccessError::field(
-            AccessErrorKind::InvalidInput,
+            AccessErrorType::InvalidInput,
             "value.new_packaging_code",
         ));
     }
@@ -104,7 +104,7 @@ async fn run(
     // THE SERIALIZATION POINT.
     let not_found = || {
         AccessError::missing(
-            AccessErrorKind::PackagingNotFound,
+            AccessErrorType::PackagingNotFound,
             "value.source_packaging_id",
             &parsed.source_packaging_id.0,
         )
@@ -128,7 +128,7 @@ async fn run(
         .map_err(|e| error::from_statement(&e))?
         .ok_or_else(|| {
             AccessError::missing(
-                AccessErrorKind::LocationNotFound,
+                AccessErrorType::LocationNotFound,
                 "value.to_location_id",
                 &parsed.to_location_id.0,
             )
@@ -146,7 +146,7 @@ async fn run(
     .map_err(|e| error::from_statement(&e))?
     .ok_or_else(|| {
         AccessError::missing(
-            AccessErrorKind::QuantityNotFound,
+            AccessErrorType::QuantityNotFound,
             "value.product_id",
             &parsed.product_id.0,
         )

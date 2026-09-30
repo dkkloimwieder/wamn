@@ -70,10 +70,10 @@ pub use retry::{RetryPolicy, ThrottleKey};
 pub use terminal::{DEDUP_ID_FIELD, Terminal, Verdict};
 #[doc(inline)]
 pub use walk::{
-    ApplyError, ApplyErrorKind, Delivery, Failure, FailureKind, NodeCall, Step, Walk, WalkStatus,
+    ApplyError, ApplyErrorType, Delivery, Failure, FailureKind, NodeCall, Step, Walk, WalkStatus,
 };
 #[doc(inline)]
-pub use wiring::{DEFAULT_HOP_LIMIT, Wiring, WiringEdge, WiringError, WiringErrorKind, WiringNode};
+pub use wiring::{DEFAULT_HOP_LIMIT, Wiring, WiringEdge, WiringError, WiringErrorType, WiringNode};
 
 /// The seam a node invocation crosses. `invoke` is where the typed
 /// node-operation WIT binding lands; the clock methods are host services the

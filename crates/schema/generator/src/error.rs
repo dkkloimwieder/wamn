@@ -3,7 +3,7 @@ use std::fmt;
 
 /// Stable classification of generation refusals.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum GenerateErrorKind {
+pub enum GenerateErrorType {
     InvalidManifest,
     InvalidIdentity,
     UnknownRelation,
@@ -22,7 +22,7 @@ pub enum GenerateErrorKind {
 /// A deterministic generation refusal with stable class and object context.
 #[derive(Debug)]
 pub struct GenerateError {
-    kind: GenerateErrorKind,
+    type_: GenerateErrorType,
     context: Box<str>,
     object: Option<Box<str>>,
     path: Option<Box<str>>,
@@ -31,8 +31,8 @@ pub struct GenerateError {
 
 impl GenerateError {
     /// Stable refusal class for callers that must not match display text.
-    pub const fn kind(&self) -> GenerateErrorKind {
-        self.kind
+    pub const fn kind(&self) -> GenerateErrorType {
+        self.type_
     }
 
     /// Package, model, operation, field, or path that caused the refusal.
@@ -50,9 +50,9 @@ impl GenerateError {
         self.path.as_deref()
     }
 
-    pub(crate) fn new(kind: GenerateErrorKind, context: impl Into<Box<str>>) -> Self {
+    pub(crate) fn new(kind: GenerateErrorType, context: impl Into<Box<str>>) -> Self {
         Self {
-            kind,
+            type_: kind,
             context: context.into(),
             object: None,
             path: None,
@@ -61,12 +61,12 @@ impl GenerateError {
     }
 
     pub(crate) fn for_object(
-        kind: GenerateErrorKind,
+        type_: GenerateErrorType,
         context: impl Into<Box<str>>,
         object: impl Into<Box<str>>,
     ) -> Self {
         Self {
-            kind,
+            type_,
             context: context.into(),
             object: Some(object.into()),
             path: None,
@@ -75,12 +75,12 @@ impl GenerateError {
     }
 
     pub(crate) fn for_path(
-        kind: GenerateErrorKind,
+        type_: GenerateErrorType,
         context: impl Into<Box<str>>,
         path: impl Into<Box<str>>,
     ) -> Self {
         Self {
-            kind,
+            type_,
             context: context.into(),
             object: None,
             path: Some(path.into()),
@@ -89,12 +89,12 @@ impl GenerateError {
     }
 
     pub(crate) fn with_source(
-        kind: GenerateErrorKind,
+        type_: GenerateErrorType,
         context: impl Into<Box<str>>,
         source: impl Error + Send + Sync + 'static,
     ) -> Self {
         Self {
-            kind,
+            type_,
             context: context.into(),
             object: None,
             path: None,
@@ -105,7 +105,7 @@ impl GenerateError {
 
 impl fmt::Display for GenerateError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(formatter, "{:?}: {}", self.kind, self.context)
+        write!(formatter, "{:?}: {}", self.type_, self.context)
     }
 }
 

@@ -139,7 +139,7 @@ async fn record_receipt_execute_with_context(
 }
 
 fn map_participant_error(error: wamn::node::types::NodeError) -> receipt::RecordReceiptError {
-    use receipt::RecordReceiptErrorKind as Kind;
+    use receipt::RecordReceiptErrorType as Kind;
 
     match error {
         NodeError::InvalidInput(detail) => {

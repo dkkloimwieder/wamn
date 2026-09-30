@@ -3,11 +3,11 @@
 use std::error::Error;
 use std::fmt;
 
-use wamn_postgres_statements::{StatementError, StatementErrorKind};
+use wamn_postgres_statements::{StatementError, StatementErrorType};
 
 /// Stable operation-contract literal for one refusal.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum AccessErrorKind {
+pub enum AccessErrorType {
     /// The body was not what the input contract admits.
     InvalidInput,
     /// A read named a row that does not exist.
@@ -24,7 +24,7 @@ pub enum AccessErrorKind {
     InternalError,
 }
 
-impl AccessErrorKind {
+impl AccessErrorType {
     /// Frozen operation-contract literal.
     #[must_use]
     pub const fn literal(self) -> &'static str {
@@ -43,27 +43,30 @@ impl AccessErrorKind {
 /// One refusal, with the structured detail its literal declares.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct AccessError {
-    kind: AccessErrorKind,
+    type_: AccessErrorType,
     detail: serde_json::Value,
 }
 
 impl AccessError {
     /// A refusal carrying the detail members its literal requires.
     #[must_use]
-    pub fn new(kind: AccessErrorKind, detail: serde_json::Value) -> Self {
-        Self { kind, detail }
+    pub fn new(kind: AccessErrorType, detail: serde_json::Value) -> Self {
+        Self {
+            type_: kind,
+            detail,
+        }
     }
 
     /// A refusal naming the offending field.
     #[must_use]
-    pub fn field(kind: AccessErrorKind, field: &str) -> Self {
+    pub fn field(kind: AccessErrorType, field: &str) -> Self {
         Self::new(kind, serde_json::json!({ "field": field }))
     }
 
     /// What went wrong.
     #[must_use]
-    pub const fn kind(&self) -> AccessErrorKind {
-        self.kind
+    pub const fn kind(&self) -> AccessErrorType {
+        self.type_
     }
 
     /// The declared detail members.
@@ -75,7 +78,7 @@ impl AccessError {
 
 impl fmt::Display for AccessError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(formatter, "{}", self.kind.literal())
+        write!(formatter, "{}", self.type_.literal())
     }
 }
 
@@ -88,12 +91,12 @@ impl Error for AccessError {}
 #[must_use]
 pub fn from_statement(error: &StatementError) -> AccessError {
     let kind = match error.kind() {
-        StatementErrorKind::SerializationFailure | StatementErrorKind::ConnectionUnavailable => {
-            AccessErrorKind::Retry
+        StatementErrorType::SerializationFailure | StatementErrorType::ConnectionUnavailable => {
+            AccessErrorType::Retry
         }
-        StatementErrorKind::StatementTimeout => AccessErrorKind::Timeout,
-        StatementErrorKind::PermissionDenied => AccessErrorKind::PermissionDenied,
-        _ => AccessErrorKind::InternalError,
+        StatementErrorType::StatementTimeout => AccessErrorType::Timeout,
+        StatementErrorType::PermissionDenied => AccessErrorType::PermissionDenied,
+        _ => AccessErrorType::InternalError,
     };
     AccessError::new(kind, serde_json::json!({}))
 }

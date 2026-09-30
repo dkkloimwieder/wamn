@@ -13,7 +13,7 @@ use wamn_catalog::{
     EffectiveReleaseId, PackageCoordinate, RELEASE_MANIFEST_FILE_NAME, ServingComponent,
     ServingComponentOperation, ServingManifest, ServingRelease,
 };
-use wamn_edge::release::{EdgeRelease, EdgeReleaseErrorKind};
+use wamn_edge::release::{EdgeRelease, EdgeReleaseErrorType};
 
 const TENANT: &str = "t1";
 const PACKAGE: &str = "scale";
@@ -144,7 +144,7 @@ fn write(directory: &Path, name: &str, bytes: &[u8]) {
     std::fs::write(directory.join(name), bytes).expect("write a bundle file");
 }
 
-async fn refusal(directory: &Path, digest: &str) -> EdgeReleaseErrorKind {
+async fn refusal(directory: &Path, digest: &str) -> EdgeReleaseErrorType {
     EdgeRelease::load(directory, digest)
         .await
         .expect_err("the bundle is refused")
@@ -173,7 +173,7 @@ async fn a_changed_file_does_not_match_its_pin() {
     let (directory, digest) = Bundle::valid().write();
     assert_eq!(
         refusal(&directory, &file_digest(b"another bundle")).await,
-        EdgeReleaseErrorKind::Mismatch
+        EdgeReleaseErrorType::Mismatch
     );
     for name in [
         RELEASE_MANIFEST_FILE_NAME,
@@ -187,7 +187,7 @@ async fn a_changed_file_does_not_match_its_pin() {
         write(&directory, name, &bytes);
         assert_eq!(
             refusal(&directory, &digest).await,
-            EdgeReleaseErrorKind::Mismatch,
+            EdgeReleaseErrorType::Mismatch,
             "{name}"
         );
     }
@@ -196,7 +196,7 @@ async fn a_changed_file_does_not_match_its_pin() {
     write(&directory, &format!("{tag}.wasm"), b"other component bytes");
     assert_eq!(
         refusal(&directory, &digest).await,
-        EdgeReleaseErrorKind::Mismatch
+        EdgeReleaseErrorType::Mismatch
     );
 }
 
@@ -220,7 +220,7 @@ async fn component_facts_must_match_the_manifest_one_to_one() {
         let (directory, digest) = bundle.write();
         assert_eq!(
             refusal(&directory, &digest).await,
-            EdgeReleaseErrorKind::Rejected
+            EdgeReleaseErrorType::Rejected
         );
     }
 }
@@ -239,7 +239,7 @@ async fn grants_name_only_permissions_the_release_requires() {
         let (directory, digest) = bundle.write();
         assert_eq!(
             refusal(&directory, &digest).await,
-            EdgeReleaseErrorKind::Rejected,
+            EdgeReleaseErrorType::Rejected,
             "{grants}"
         );
     }

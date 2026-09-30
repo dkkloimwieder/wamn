@@ -53,7 +53,7 @@ pub fn operation_grant_floor_check_sql() -> String {
 
 /// Stable class for a package-operation reconciliation refusal.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum OperationGrantErrorKind {
+pub enum OperationGrantErrorType {
     /// The supplied tenant key is empty.
     InvalidTenant,
     /// The manifest is not the strict public package-manifest shape.
@@ -63,35 +63,35 @@ pub enum OperationGrantErrorKind {
 /// Contextual package-operation reconciliation refusal.
 #[derive(Debug)]
 pub struct OperationGrantError {
-    kind: OperationGrantErrorKind,
+    type_: OperationGrantErrorType,
     context: Box<str>,
     source: Option<wamn_schema_generator::GenerateError>,
 }
 
 impl OperationGrantError {
-    fn new(kind: OperationGrantErrorKind, context: impl Into<Box<str>>) -> Self {
+    fn new(kind: OperationGrantErrorType, context: impl Into<Box<str>>) -> Self {
         Self {
-            kind,
+            type_: kind,
             context: context.into(),
             source: None,
         }
     }
 
     fn with_source(
-        kind: OperationGrantErrorKind,
+        type_: OperationGrantErrorType,
         context: impl Into<Box<str>>,
         source: wamn_schema_generator::GenerateError,
     ) -> Self {
         Self {
-            kind,
+            type_,
             context: context.into(),
             source: Some(source),
         }
     }
 
     /// Return the stable refusal class.
-    pub const fn kind(&self) -> OperationGrantErrorKind {
-        self.kind
+    pub const fn kind(&self) -> OperationGrantErrorType {
+        self.type_
     }
 
     /// Human-readable context naming the refused grant input.
@@ -177,14 +177,14 @@ fn manifest_operation_grants(
 ) -> Result<ManifestOperationGrants, OperationGrantError> {
     let manifest = PackageManifest::from_slice(manifest_bytes).map_err(|source| {
         OperationGrantError::with_source(
-            OperationGrantErrorKind::InvalidManifest,
+            OperationGrantErrorType::InvalidManifest,
             "operation-grant manifest does not match the strict package shape",
             source,
         )
     })?;
     let mut local_tokens = validate_operation_vocabulary(&manifest).map_err(|source| {
         OperationGrantError::with_source(
-            OperationGrantErrorKind::InvalidManifest,
+            OperationGrantErrorType::InvalidManifest,
             "operation-grant manifest has an invalid operation vocabulary",
             source,
         )
@@ -197,7 +197,7 @@ fn manifest_operation_grants(
     });
     let coordinate_prefix = canonical_operation_prefix(&manifest.package).map_err(|source| {
         OperationGrantError::with_source(
-            OperationGrantErrorKind::InvalidManifest,
+            OperationGrantErrorType::InvalidManifest,
             "operation-grant manifest has an invalid package coordinate",
             source,
         )
@@ -209,7 +209,7 @@ fn manifest_operation_grants(
         .collect::<Result<BTreeSet<_>, _>>()
         .map_err(|source| {
             OperationGrantError::with_source(
-                OperationGrantErrorKind::InvalidManifest,
+                OperationGrantErrorType::InvalidManifest,
                 "operation-grant manifest has an invalid canonical operation identity",
                 source,
             )
@@ -252,7 +252,7 @@ pub fn reconcile_operation_grants_sql(
 ) -> Result<String, OperationGrantError> {
     if tenant.is_empty() {
         return Err(OperationGrantError::new(
-            OperationGrantErrorKind::InvalidTenant,
+            OperationGrantErrorType::InvalidTenant,
             "operation-grant tenant must not be empty",
         ));
     }
@@ -385,7 +385,7 @@ mod tests {
         manifest["invented_grant_grammar"] = serde_json::Value::Bool(true);
         let bytes = serde_json::to_vec(&manifest).expect("serialize mutated fixture");
         let error = operation_grant_tokens(&bytes).expect_err("unknown field was accepted");
-        assert_eq!(error.kind(), OperationGrantErrorKind::InvalidManifest);
+        assert_eq!(error.kind(), OperationGrantErrorType::InvalidManifest);
         assert!(
             error.source().is_some(),
             "strict parser refusal lost source"
@@ -400,13 +400,13 @@ mod tests {
             serde_json::json!("missing");
         let bytes = serde_json::to_vec(&manifest).expect("serialize mutated fixture");
         let error = operation_grant_tokens(&bytes).expect_err("unknown operation was granted");
-        assert_eq!(error.kind(), OperationGrantErrorKind::InvalidManifest);
+        assert_eq!(error.kind(), OperationGrantErrorType::InvalidManifest);
         assert_eq!(
             error
                 .source()
                 .and_then(|source| source.downcast_ref::<wamn_schema_generator::GenerateError>())
                 .map(wamn_schema_generator::GenerateError::kind),
-            Some(wamn_schema_generator::GenerateErrorKind::InvalidComponent)
+            Some(wamn_schema_generator::GenerateErrorType::InvalidComponent)
         );
     }
 
@@ -417,13 +417,13 @@ mod tests {
         manifest["package"]["id"] = serde_json::json!("platform-Fixture");
         let bytes = serde_json::to_vec(&manifest).expect("serialize mutated fixture");
         let error = operation_grant_tokens(&bytes).expect_err("invalid package id was granted");
-        assert_eq!(error.kind(), OperationGrantErrorKind::InvalidManifest);
+        assert_eq!(error.kind(), OperationGrantErrorType::InvalidManifest);
         assert_eq!(
             error
                 .source()
                 .and_then(|source| source.downcast_ref::<wamn_schema_generator::GenerateError>())
                 .map(wamn_schema_generator::GenerateError::kind),
-            Some(wamn_schema_generator::GenerateErrorKind::InvalidIdentity)
+            Some(wamn_schema_generator::GenerateErrorType::InvalidIdentity)
         );
     }
 

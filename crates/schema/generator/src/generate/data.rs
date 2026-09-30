@@ -718,7 +718,7 @@ fn emit_error(
     let violation = |literal, kind: &str, names: &str| {
         if has(literal) {
             format!(
-                "StatementErrorKind::{kind} => named(constraints.{names}, |constraint| Self::{} {{ constraint }}),\n",
+                "StatementErrorType::{kind} => named(constraints.{names}, |constraint| Self::{} {{ constraint }}),\n",
                 variant(literal)
             )
         } else {
@@ -758,7 +758,7 @@ fn emit_error(
          // The one refusal of the generated operations: the contract's literal and\n\
          // the detail members its error contract declares.\n\n\
          use std::fmt;\n\n\
-         use wamn_postgres_statements::{{StatementError, StatementErrorKind}};\n\n\
+         use wamn_postgres_statements::{{StatementError, StatementErrorType}};\n\n\
          /// One refusal, with the detail members its literal declares.\n\
          #[derive(Clone, Debug, Eq, PartialEq)]\n\
          pub enum Error {{\n{variants}}}\n\n\
@@ -783,12 +783,12 @@ fn emit_error(
          /// [`Error::from_statement`] over the kind and the constraint of a\n\
          /// statement failure.\n\
          #[must_use]\n\
-         pub fn from_parts(kind: StatementErrorKind, constraint: Option<&str>, constraints: &Constraints, operation: &str) -> Self {{\n\
+         pub fn from_parts(kind: StatementErrorType, constraint: Option<&str>, constraints: &Constraints, operation: &str) -> Self {{\n\
          {named}\
          match kind {{\n\
-         StatementErrorKind::SerializationFailure | StatementErrorKind::ConnectionUnavailable => Self::Retry,\n\
-         StatementErrorKind::StatementTimeout => Self::Timeout,\n\
-         StatementErrorKind::PermissionDenied => Self::PermissionDenied {{ operation: operation.to_owned() }},\n\
+         StatementErrorType::SerializationFailure | StatementErrorType::ConnectionUnavailable => Self::Retry,\n\
+         StatementErrorType::StatementTimeout => Self::Timeout,\n\
+         StatementErrorType::PermissionDenied => Self::PermissionDenied {{ operation: operation.to_owned() }},\n\
          {statement_arms}\
          _ => Self::InternalError,\n\
          }}\n\

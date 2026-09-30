@@ -10,7 +10,7 @@ use async_trait::async_trait;
 use serde_json::json;
 
 use crate::IntentStore;
-use crate::intent_store::{Begun, Intent, IntentId, StoreErrorKind, StoredOutcome};
+use crate::intent_store::{Begun, Intent, IntentId, StoreErrorType, StoredOutcome};
 use crate::operator_action::OperatorActionBasis;
 
 /// The stores of one case: a store for a tenant that no other case uses, and
@@ -135,7 +135,7 @@ pub async fn a_released_key_is_new_again(fixture: &dyn IntentStoreFixture) {
         .release(&id)
         .await
         .expect_err("a released intent does not release again");
-    assert_eq!(error.kind(), StoreErrorKind::Contract);
+    assert_eq!(error.kind(), StoreErrorType::Contract);
     let again = new_id(
         store
             .begin(&intent(&tenant, "k1", "h2"))
@@ -150,7 +150,7 @@ pub async fn a_released_key_is_new_again(fixture: &dyn IntentStoreFixture) {
         .release(&again)
         .await
         .expect_err("a finished intent does not release");
-    assert_eq!(error.kind(), StoreErrorKind::Contract);
+    assert_eq!(error.kind(), StoreErrorType::Contract);
 }
 
 pub async fn a_begun_key_is_uncertain_and_never_new_again(fixture: &dyn IntentStoreFixture) {
@@ -232,12 +232,12 @@ pub async fn finish_closes_an_intent_once(fixture: &dyn IntentStoreFixture) {
         .finish(&id, &outcome)
         .await
         .expect_err("a finished intent does not finish again");
-    assert_eq!(error.kind(), StoreErrorKind::Contract);
+    assert_eq!(error.kind(), StoreErrorType::Contract);
     let error = store
         .finish(&IntentId("999999".into()), &outcome)
         .await
         .expect_err("an unknown intent does not finish");
-    assert_eq!(error.kind(), StoreErrorKind::Contract);
+    assert_eq!(error.kind(), StoreErrorType::Contract);
 }
 
 pub async fn uncertain_lists_open_intents_oldest_first_up_to_the_limit(
@@ -317,12 +317,12 @@ pub async fn a_resolved_intent_leaves_the_list_and_answers_its_basis(
         .resolve(&id, OperatorActionBasis::OperatorJudgment)
         .await
         .expect_err("a resolved intent does not resolve again");
-    assert_eq!(error.kind(), StoreErrorKind::Contract);
+    assert_eq!(error.kind(), StoreErrorType::Contract);
     let error = store
         .finish(&id, &StoredOutcome(json!(1)))
         .await
         .expect_err("a resolved intent does not finish");
-    assert_eq!(error.kind(), StoreErrorKind::Contract);
+    assert_eq!(error.kind(), StoreErrorType::Contract);
 }
 
 pub async fn a_finished_intent_does_not_resolve(fixture: &dyn IntentStoreFixture) {
@@ -342,5 +342,5 @@ pub async fn a_finished_intent_does_not_resolve(fixture: &dyn IntentStoreFixture
         .resolve(&id, OperatorActionBasis::ExternalEvidence)
         .await
         .expect_err("a finished intent is not uncertain");
-    assert_eq!(error.kind(), StoreErrorKind::Contract);
+    assert_eq!(error.kind(), StoreErrorType::Contract);
 }

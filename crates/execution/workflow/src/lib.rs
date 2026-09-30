@@ -42,7 +42,7 @@ mod wiring_lowering;
 pub use wamn_router::Verdict;
 
 pub use contract::{
-    PostgresWorkflows, StartRequest, Trigger, WorkflowError, WorkflowErrorKind, WorkflowRun,
+    PostgresWorkflows, StartRequest, Trigger, WorkflowError, WorkflowErrorType, WorkflowRun,
     Workflows,
 };
 pub use queue::{DEFAULT_QUEUE_LEASE_TTL_MS, QueueService, QueueServiceConfig};
@@ -53,7 +53,7 @@ pub use router_driver::{
     WIRING_CACHE_CAPACITY_ENV, WiringCacheCapacity,
 };
 pub use wiring_lowering::{
-    GatedActiveWiring, ScopedWiringOperationFacts, WiringLoweringError, WiringLoweringErrorKind,
+    GatedActiveWiring, ScopedWiringOperationFacts, WiringLoweringError, WiringLoweringErrorType,
     WiringOperationFact, WiringParameterFact, WiringScope, lower_active_wiring,
     lower_resolved_wiring, project_component_operations,
 };

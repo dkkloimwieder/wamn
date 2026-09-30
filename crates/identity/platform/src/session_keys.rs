@@ -15,7 +15,7 @@ use tokio_postgres::{Client, GenericClient};
 
 use wamn_session::keys::{PublicSessionKey, SessionJwks, decode_public_key};
 
-use crate::{IdentityError, IdentityErrorKind};
+use crate::{IdentityError, IdentityErrorType};
 
 /// Public overlap after the signing cutoff: 900-second lifetime plus 30 seconds.
 pub const KEY_RETENTION_SECONDS: i64 = 930;
@@ -29,7 +29,7 @@ pub async fn publish_session_key(
 ) -> Result<PublicSessionKey, IdentityError> {
     validate_issuer(issuer)?;
     let document = Ed25519KeyPair::generate_pkcs8(&SystemRandom::new()).map_err(|_| {
-        IdentityError::new(IdentityErrorKind::Entropy, "generate session signing key")
+        IdentityError::new(IdentityErrorType::Entropy, "generate session signing key")
     })?;
     let pair = Ed25519KeyPair::from_pkcs8(document.as_ref()).map_err(|_| corrupt_key())?;
     let transaction = client.transaction().await.map_err(key_database_error)?;
@@ -202,7 +202,7 @@ async fn lock_issuer(
     ).await.map_err(key_database_error)?;
     row.map(|row| row.get(0)).ok_or_else(|| {
         IdentityError::new(
-            IdentityErrorKind::NotFound,
+            IdentityErrorType::NotFound,
             "session issuer is not published",
         )
     })
@@ -228,7 +228,7 @@ fn validate_issuer(issuer: &str) -> Result<(), IdentityError> {
 
 fn corrupt_key() -> IdentityError {
     IdentityError::new(
-        IdentityErrorKind::CorruptData,
+        IdentityErrorType::CorruptData,
         "stored session signing key is invalid",
     )
 }
@@ -241,7 +241,7 @@ pub(crate) fn key_database_error(error: tokio_postgres::Error) -> IdentityError 
     // PostgreSQL DETAIL can contain rejected row values, including private
     // PKCS#8 bytes. Retain only the safe SQLSTATE, never the database message.
     IdentityError::new(
-        IdentityErrorKind::Database,
+        IdentityErrorType::Database,
         format!(
             "session key database operation failed (SQLSTATE {})",
             error
@@ -252,5 +252,5 @@ pub(crate) fn key_database_error(error: tokio_postgres::Error) -> IdentityError 
 }
 
 fn invalid(message: &'static str) -> IdentityError {
-    IdentityError::new(IdentityErrorKind::InvalidInput, message)
+    IdentityError::new(IdentityErrorType::InvalidInput, message)
 }

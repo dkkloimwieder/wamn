@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 
 use serde_json::{Value, json};
-use wamn_schema_generator::{GenerateErrorKind, PackageManifest};
+use wamn_schema_generator::{GenerateErrorType, PackageManifest};
 
 use super::{artifact, fixture};
 
@@ -219,7 +219,7 @@ fn crud_refuses_authored_protocol_metadata_but_custom_business_errors_remain_aut
             .expect_err("obsolete CRUD protocol metadata was accepted");
         assert_eq!(
             error.kind(),
-            GenerateErrorKind::InvalidManifest,
+            GenerateErrorType::InvalidManifest,
             "{action}.{field}"
         );
     }
@@ -233,7 +233,7 @@ fn crud_refuses_authored_protocol_metadata_but_custom_business_errors_remain_aut
         PackageManifest::from_slice(&serde_json::to_vec(&envelope).unwrap())
             .expect_err("obsolete fixed envelope protocol was accepted")
             .kind(),
-        GenerateErrorKind::InvalidManifest
+        GenerateErrorType::InvalidManifest
     );
 
     let package = fixture::generate_fixture();

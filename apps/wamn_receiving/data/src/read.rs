@@ -200,7 +200,7 @@ fn parse_history_id(id: &Uuid) -> Result<uuid::Uuid, AccessError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::AccessErrorKind;
+    use crate::AccessErrorType;
     use serde_json::Value;
     use wamn_postgres_statements::TimestampTz;
 
@@ -271,7 +271,7 @@ mod tests {
         for current in [None, Some("[]")] {
             let error = history_value(row(current), &record)
                 .expect_err("a null or malformed image refuses");
-            assert_eq!(error.kind(), AccessErrorKind::InternalError);
+            assert_eq!(error.kind(), AccessErrorType::InternalError);
         }
     }
 
@@ -292,9 +292,9 @@ mod tests {
         assert_eq!(history_position(Some(&cursor), &record).unwrap(), 7);
         let error = history_position(Some(&cursor), &other)
             .expect_err("a cursor of another record refuses");
-        assert_eq!(error.kind(), AccessErrorKind::InvalidInput);
+        assert_eq!(error.kind(), AccessErrorType::InvalidInput);
         let error = history_position(Some("not-a-cursor"), &record)
             .expect_err("a malformed cursor refuses");
-        assert_eq!(error.kind(), AccessErrorKind::InvalidInput);
+        assert_eq!(error.kind(), AccessErrorType::InvalidInput);
     }
 }

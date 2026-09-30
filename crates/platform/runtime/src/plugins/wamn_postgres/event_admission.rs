@@ -12,7 +12,7 @@ use wamn_run_state::queue::{insert_event_run_sql, insert_run_queue_sql, select_e
 
 use super::WamnPostgres;
 use super::production_claim::{
-    ProductionClaimError, ProductionClaimErrorKind, finish_queue_transaction,
+    ProductionClaimError, ProductionClaimErrorType, finish_queue_transaction,
     require_executor_authority, storage,
 };
 use crate::plugins::wamn_postgres::AuthorityClass;
@@ -58,7 +58,7 @@ impl WamnPostgres {
     ) -> Result<EventRunAdmitted, ProductionClaimError> {
         let tenant = self.tenant_for(component_id).ok_or_else(|| {
             ProductionClaimError::new(
-                ProductionClaimErrorKind::Identity,
+                ProductionClaimErrorType::Identity,
                 "resolve event admission tenant",
                 "component has no host-injected tenant",
             )
@@ -73,7 +73,7 @@ impl WamnPostgres {
             .await
             .map_err(|error| {
                 ProductionClaimError::new(
-                    ProductionClaimErrorKind::Storage,
+                    ProductionClaimErrorType::Storage,
                     "checkout event admission connection",
                     format!("{error:?}"),
                 )
@@ -95,7 +95,7 @@ impl WamnPostgres {
         {
             self.destroy(connection);
             return Err(ProductionClaimError::new(
-                ProductionClaimErrorKind::Storage,
+                ProductionClaimErrorType::Storage,
                 "begin event admission transaction",
                 format!("{error:?}"),
             ));
@@ -108,7 +108,7 @@ impl WamnPostgres {
                 .map_err(|error| storage("read the environment policy", &error))?
                 .ok_or_else(|| {
                     ProductionClaimError::new(
-                        ProductionClaimErrorKind::Contract,
+                        ProductionClaimErrorType::Contract,
                         "read the environment policy",
                         "the environment policy is absent",
                     )

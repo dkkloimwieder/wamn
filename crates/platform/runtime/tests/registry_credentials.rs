@@ -2,7 +2,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use wamn_runtime::registry_credentials::{
-    RegistryCredentialsErrorKind, read_metadata_registry_credentials, read_registry_credentials,
+    RegistryCredentialsErrorType, read_metadata_registry_credentials, read_registry_credentials,
 };
 
 #[path = "support/metadata_server.rs"]
@@ -71,7 +71,7 @@ fn missing_or_partial_registry_entry_refuses_without_fallback() {
     );
     let missing = read_registry_credentials(missing_fixture.path(), REGISTRY)
         .expect_err("scheme-bearing alias must not satisfy exact authority");
-    assert_eq!(missing.kind(), RegistryCredentialsErrorKind::Rejected);
+    assert_eq!(missing.kind(), RegistryCredentialsErrorType::Rejected);
     assert_eq!(missing.refusal(), "registry-credentials-not-found");
 
     let partial_fixture =
@@ -125,19 +125,19 @@ async fn a_failed_or_unusable_metadata_answer_refuses_by_name_without_the_token(
         (
             500,
             "{}",
-            RegistryCredentialsErrorKind::Unreadable,
+            RegistryCredentialsErrorType::Unreadable,
             "registry-token-metadata-unavailable",
         ),
         (
             200,
             r#"{"token":"private-value""#,
-            RegistryCredentialsErrorKind::Rejected,
+            RegistryCredentialsErrorType::Rejected,
             "registry-token-metadata-malformed",
         ),
         (
             200,
             r#"{"access_token":""}"#,
-            RegistryCredentialsErrorKind::Rejected,
+            RegistryCredentialsErrorType::Rejected,
             "registry-token-metadata-incomplete",
         ),
     ] {

@@ -7,7 +7,7 @@ use wamn_router::{
     DEDUP_ID_FIELD, Delivery, NodeCall, NodeOutcome, Step, Terminal, Verdict, WalkStatus, Wiring,
 };
 use wamn_workflow::{
-    GatedActiveWiring, ScopedWiringOperationFacts, WiringLoweringErrorKind, WiringOperationFact,
+    GatedActiveWiring, ScopedWiringOperationFacts, WiringLoweringErrorType, WiringOperationFact,
     WiringParameterFact, WiringScope, lower_active_wiring,
 };
 
@@ -336,13 +336,13 @@ fn explicit_target_port_is_required_only_when_the_target_has_multiple_inputs() {
     let omitted = document(None);
     assert_eq!(
         lower(&omitted, &operations).unwrap_err().kind(),
-        WiringLoweringErrorKind::AmbiguousInputPort
+        WiringLoweringErrorType::AmbiguousInputPort
     );
 
     let unknown = document(Some("missing"));
     assert_eq!(
         lower(&unknown, &operations).unwrap_err().kind(),
-        WiringLoweringErrorKind::UnknownInputPort
+        WiringLoweringErrorType::UnknownInputPort
     );
 }
 
@@ -354,28 +354,28 @@ fn component_interface_operation_and_port_drift_each_refuse() {
     missing_component[0].component = "other".to_owned();
     assert_eq!(
         lower(&document, &missing_component).unwrap_err().kind(),
-        WiringLoweringErrorKind::MissingComponent
+        WiringLoweringErrorType::MissingComponent
     );
 
     let mut interface_drift = operations();
     interface_drift[0].interface_version = "0.2.0".to_owned();
     assert_eq!(
         lower(&document, &interface_drift).unwrap_err().kind(),
-        WiringLoweringErrorKind::IncompatibleInterfaceVersion
+        WiringLoweringErrorType::IncompatibleInterfaceVersion
     );
 
     let mut operation_drift = operations();
     operation_drift[0].operation = "decode".to_owned();
     assert_eq!(
         lower(&document, &operation_drift).unwrap_err().kind(),
-        WiringLoweringErrorKind::MissingOperation
+        WiringLoweringErrorType::MissingOperation
     );
 
     let mut output_drift = operations();
     output_drift[0].output_ports = BTreeSet::from(["main".to_owned()]);
     assert_eq!(
         lower(&document, &output_drift).unwrap_err().kind(),
-        WiringLoweringErrorKind::UnknownOutputPort
+        WiringLoweringErrorType::UnknownOutputPort
     );
 }
 
@@ -387,7 +387,7 @@ fn parameter_and_scope_facts_cannot_drift_one_side_of_the_boundary() {
     undeclared[0].parameters.clear();
     assert_eq!(
         lower(&document, &undeclared).unwrap_err().kind(),
-        WiringLoweringErrorKind::UndeclaredParameter
+        WiringLoweringErrorType::UndeclaredParameter
     );
 
     let mut required = operations();
@@ -397,7 +397,7 @@ fn parameter_and_scope_facts_cannot_drift_one_side_of_the_boundary() {
     );
     assert_eq!(
         lower(&document, &required).unwrap_err().kind(),
-        WiringLoweringErrorKind::MissingRequiredParameter
+        WiringLoweringErrorType::MissingRequiredParameter
     );
 
     let operations = operations();
@@ -416,7 +416,7 @@ fn parameter_and_scope_facts_cannot_drift_one_side_of_the_boundary() {
     .unwrap_err();
     assert_eq!(
         environment_drift.kind(),
-        WiringLoweringErrorKind::ScopeMismatch
+        WiringLoweringErrorType::ScopeMismatch
     );
 
     let version_drift = lower_active_wiring(
@@ -434,6 +434,6 @@ fn parameter_and_scope_facts_cannot_drift_one_side_of_the_boundary() {
     .unwrap_err();
     assert_eq!(
         version_drift.kind(),
-        WiringLoweringErrorKind::PackageVersionMismatch
+        WiringLoweringErrorType::PackageVersionMismatch
     );
 }

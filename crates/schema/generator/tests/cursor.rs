@@ -1,7 +1,7 @@
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use wamn_schema_generator::{
-    CursorDirection, CursorErrorKind, CursorV1, CursorValue, decode_cursor, encode_cursor,
+    CursorDirection, CursorErrorType, CursorV1, CursorValue, decode_cursor, encode_cursor,
 };
 use wamn_schema_introspection::ir::ColumnType;
 
@@ -82,7 +82,7 @@ fn malformed_or_mismatched_cursor_is_typed_invalid_input() {
     ];
     for (encoded, field, direction) in cases {
         let error = decode_cursor(&encoded, field, direction, ColumnType::Timestamptz).unwrap_err();
-        assert_eq!(error.kind(), CursorErrorKind::InvalidInput);
+        assert_eq!(error.kind(), CursorErrorType::InvalidInput);
     }
 }
 
@@ -102,7 +102,7 @@ fn noncanonical_json_and_unknown_version_never_reset_to_first_page() {
             ColumnType::Timestamptz,
         )
         .unwrap_err();
-        assert_eq!(error.kind(), CursorErrorKind::InvalidInput);
+        assert_eq!(error.kind(), CursorErrorType::InvalidInput);
     }
 }
 
@@ -120,7 +120,7 @@ fn noncanonical_timestamps_and_numeric_spellings_refuse() {
             ID,
         ))
         .unwrap_err();
-        assert_eq!(error.kind(), CursorErrorKind::InvalidInput);
+        assert_eq!(error.kind(), CursorErrorType::InvalidInput);
     }
     // Input normalization accepts values such as 01.0 and 1. before serialization.
     // Cursor validation refuses them so the opaque v1 value is never rewritten.
@@ -132,6 +132,6 @@ fn noncanonical_timestamps_and_numeric_spellings_refuse() {
             ID,
         ))
         .unwrap_err();
-        assert_eq!(error.kind(), CursorErrorKind::InvalidInput);
+        assert_eq!(error.kind(), CursorErrorType::InvalidInput);
     }
 }

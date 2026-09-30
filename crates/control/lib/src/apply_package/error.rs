@@ -22,7 +22,7 @@ pub const DEFINITION_NOT_FOUND_REFUSAL: &str = "definition-not-found";
 
 /// Remedy-distinct apply-package refusal.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ApplyPackageErrorKind {
+pub enum ApplyPackageErrorType {
     PackageVersionSealed,
     PredecessorNotCurrent,
     PredecessorPrefixMismatch,
@@ -33,13 +33,13 @@ pub enum ApplyPackageErrorKind {
     DefinitionNotFound,
 }
 
-impl ApplyPackageErrorKind {
+impl ApplyPackageErrorType {
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::PackageVersionSealed => PACKAGE_VERSION_SEALED_REFUSAL,
             Self::PredecessorNotCurrent => PREDECESSOR_NOT_CURRENT_REFUSAL,
             Self::PredecessorPrefixMismatch => {
-                wamn_schema_control::PackageMigrationErrorKind::PredecessorPrefixMismatch.as_str()
+                wamn_schema_control::PackageMigrationErrorType::PredecessorPrefixMismatch.as_str()
             }
             Self::BaseDefinitionMutation => BASE_DEFINITION_MUTATION_REFUSAL,
             Self::RelationNotClientExtensible => RELATION_NOT_CLIENT_EXTENSIBLE_REFUSAL,
@@ -53,7 +53,7 @@ impl ApplyPackageErrorKind {
 /// Contextual failure at the package application boundary.
 #[derive(Debug)]
 pub struct ApplyPackageError {
-    pub(super) kind: ApplyPackageErrorKind,
+    pub(super) type_: ApplyPackageErrorType,
     pub(super) coordinate: String,
     pub(super) predecessor_version: Option<String>,
     pub(super) current_version: Option<String>,
@@ -68,8 +68,8 @@ pub struct ApplyPackageError {
 }
 
 impl ApplyPackageError {
-    pub const fn kind(&self) -> ApplyPackageErrorKind {
-        self.kind
+    pub const fn kind(&self) -> ApplyPackageErrorType {
+        self.type_
     }
 
     pub fn coordinate(&self) -> &str {
@@ -110,12 +110,12 @@ impl fmt::Display for ApplyPackageError {
         write!(
             formatter,
             "{APPLY_PACKAGE_REFUSAL} ({}): coordinate={}",
-            self.kind.as_str(),
+            self.type_.as_str(),
             self.coordinate
         )?;
         if let Some(predecessor) = &self.predecessor_version {
             write!(formatter, "; predecessor-version={predecessor}")?;
-        } else if self.kind == ApplyPackageErrorKind::PredecessorNotCurrent {
+        } else if self.type_ == ApplyPackageErrorType::PredecessorNotCurrent {
             formatter.write_str("; predecessor-version=<none>")?;
         }
         if let Some(current) = &self.current_version {

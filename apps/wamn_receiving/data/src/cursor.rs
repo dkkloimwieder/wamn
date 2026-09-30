@@ -211,7 +211,7 @@ mod tests {
     use chrono::TimeZone as _;
 
     use super::*;
-    use crate::error::AccessErrorKind;
+    use crate::error::AccessErrorType;
 
     const ID: &str = "01234567-89ab-cdef-0123-456789abcdef";
 
@@ -273,20 +273,20 @@ mod tests {
                 decode_cursor::<Box<str>>(&encoded, "status", CursorDirection::Ascending)
                     .unwrap_err()
                     .kind(),
-                AccessErrorKind::InvalidInput
+                AccessErrorType::InvalidInput
             );
         }
         assert_eq!(
             decode_cursor::<Box<str>>(&valid, "created_at", CursorDirection::Ascending)
                 .unwrap_err()
                 .kind(),
-            AccessErrorKind::InvalidInput
+            AccessErrorType::InvalidInput
         );
         assert_eq!(
             decode_cursor::<Box<str>>(&valid, "status", CursorDirection::Descending)
                 .unwrap_err()
                 .kind(),
-            AccessErrorKind::InvalidInput
+            AccessErrorType::InvalidInput
         );
     }
 
@@ -303,7 +303,7 @@ mod tests {
             )
             .unwrap_err()
             .kind(),
-            AccessErrorKind::InvalidInput
+            AccessErrorType::InvalidInput
         );
     }
 }

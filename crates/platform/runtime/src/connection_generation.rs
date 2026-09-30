@@ -8,7 +8,7 @@ use wamn_execution_contract::node_contract::normalize_portable_http_target;
 use wash_runtime::host::allowed_hosts::AllowedHost;
 
 use crate::connection_authority::{
-    AuthorityErrorKind, CanonicalAuthority, DnsResolver, HttpConnectionAuthority, NetworkPolicy,
+    AuthorityErrorType, CanonicalAuthority, DnsResolver, HttpConnectionAuthority, NetworkPolicy,
     TlsPolicy, parse_http_connection_authority, resolve_http_request,
 };
 
@@ -107,7 +107,7 @@ pub struct ValidatedConnectionGeneration {
 
 /// Stable classification for one refused staged generation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum GenerationValidationErrorKind {
+pub enum GenerationValidationErrorType {
     UnsupportedType,
     UnsupportedContract,
     StaleContractSnapshot,
@@ -134,34 +134,34 @@ pub enum GenerationValidationErrorKind {
 /// Typed, fail-closed generation validation error.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GenerationValidationError {
-    kind: GenerationValidationErrorKind,
+    type_: GenerationValidationErrorType,
     field: Option<Box<str>>,
     detail: Box<str>,
 }
 
 impl GenerationValidationError {
-    fn new(kind: GenerationValidationErrorKind, detail: impl Into<Box<str>>) -> Self {
+    fn new(kind: GenerationValidationErrorType, detail: impl Into<Box<str>>) -> Self {
         Self {
-            kind,
+            type_: kind,
             field: None,
             detail: detail.into(),
         }
     }
 
     fn field(
-        kind: GenerationValidationErrorKind,
+        type_: GenerationValidationErrorType,
         field: &str,
         detail: impl Into<Box<str>>,
     ) -> Self {
         Self {
-            kind,
+            type_,
             field: Some(field.into()),
             detail: detail.into(),
         }
     }
 
-    pub fn kind(&self) -> GenerationValidationErrorKind {
-        self.kind
+    pub fn kind(&self) -> GenerationValidationErrorType {
+        self.type_
     }
 
     pub fn field_name(&self) -> Option<&str> {
@@ -214,7 +214,7 @@ where
     let actual_hash = definition_hash(candidate.definition);
     if candidate.definition_hash != actual_hash {
         return Err(GenerationValidationError::new(
-            GenerationValidationErrorKind::DefinitionHashMismatch,
+            GenerationValidationErrorType::DefinitionHashMismatch,
             "staged definition hash does not identify the supplied immutable definition",
         ));
     }
@@ -222,7 +222,7 @@ where
     let parsed = parse_definition(candidate.definition)?;
     let credential = snapshot.credential_type.ok_or_else(|| {
         GenerationValidationError::field(
-            GenerationValidationErrorKind::CredentialMissing,
+            GenerationValidationErrorType::CredentialMissing,
             "credential-set-handle",
             "referenced credential set does not exist",
         )
@@ -230,7 +230,7 @@ where
     validate_identity(&credential.identity, "credential-type")?;
     if credential.handle.as_ref() != parsed.credential_handle.as_ref() {
         return Err(GenerationValidationError::field(
-            GenerationValidationErrorKind::CredentialMissing,
+            GenerationValidationErrorType::CredentialMissing,
             "credential-set-handle",
             "credential-type snapshot does not identify the referenced handle",
         ));
@@ -241,7 +241,7 @@ where
         .contains(&credential.kind)
     {
         return Err(GenerationValidationError::field(
-            GenerationValidationErrorKind::CredentialTypeMismatch,
+            GenerationValidationErrorType::CredentialTypeMismatch,
             "credential-set-handle",
             "credential kind is not permitted by the exact connection contract",
         ));
@@ -282,13 +282,13 @@ fn validate_contract(
 ) -> Result<(), GenerationValidationError> {
     if candidate.requirement_type != HTTP_CONNECTION_TYPE {
         return Err(GenerationValidationError::new(
-            GenerationValidationErrorKind::UnsupportedType,
+            GenerationValidationErrorType::UnsupportedType,
             "staged generation has an unsupported connection type",
         ));
     }
     if candidate.contract != HTTP_CONNECTION_CONTRACT {
         return Err(GenerationValidationError::new(
-            GenerationValidationErrorKind::UnsupportedContract,
+            GenerationValidationErrorType::UnsupportedContract,
             "staged generation has an unsupported connection contract",
         ));
     }
@@ -296,7 +296,7 @@ fn validate_contract(
         || contract.contract.as_ref() != HTTP_CONNECTION_CONTRACT
     {
         return Err(GenerationValidationError::new(
-            GenerationValidationErrorKind::StaleContractSnapshot,
+            GenerationValidationErrorType::StaleContractSnapshot,
             "connection-contract snapshot is not the exact supported HTTP contract",
         ));
     }
@@ -309,7 +309,7 @@ fn validate_identity(
 ) -> Result<(), GenerationValidationError> {
     if identity.id.is_empty() || identity.revision.is_empty() {
         Err(GenerationValidationError::new(
-            GenerationValidationErrorKind::InvalidInputIdentity,
+            GenerationValidationErrorType::InvalidInputIdentity,
             format!("{label} snapshot identity and revision must be non-empty"),
         ))
     } else {
@@ -320,7 +320,7 @@ fn validate_identity(
 fn parse_definition(definition: &Value) -> Result<ParsedDefinition, GenerationValidationError> {
     let object = definition.as_object().ok_or_else(|| {
         GenerationValidationError::new(
-            GenerationValidationErrorKind::DefinitionNotObject,
+            GenerationValidationErrorType::DefinitionNotObject,
             "staged connection definition must be a JSON object",
         )
     })?;
@@ -336,7 +336,7 @@ fn parse_definition(definition: &Value) -> Result<ParsedDefinition, GenerationVa
     let credential_handle = string_field(object, "credential-set-handle")?;
     if credential_handle.is_empty() {
         return Err(GenerationValidationError::field(
-            GenerationValidationErrorKind::InvalidField,
+            GenerationValidationErrorType::InvalidField,
             "credential-set-handle",
             "credential-set-handle must be non-empty",
         ));
@@ -385,7 +385,7 @@ fn validate_fields(object: &Map<String, Value>) -> Result<(), GenerationValidati
     for field in REQUIRED {
         if !object.contains_key(field) {
             return Err(GenerationValidationError::field(
-                GenerationValidationErrorKind::MissingField,
+                GenerationValidationErrorType::MissingField,
                 field,
                 format!("staged connection definition is missing {field:?}"),
             ));
@@ -394,14 +394,14 @@ fn validate_fields(object: &Map<String, Value>) -> Result<(), GenerationValidati
     for field in object.keys() {
         if FORBIDDEN.contains(&field.as_str()) {
             return Err(GenerationValidationError::field(
-                GenerationValidationErrorKind::ForbiddenField,
+                GenerationValidationErrorType::ForbiddenField,
                 field,
                 format!("field {field:?} is not environment-owned"),
             ));
         }
         if !REQUIRED.contains(&field.as_str()) && !OPTIONAL.contains(&field.as_str()) {
             return Err(GenerationValidationError::field(
-                GenerationValidationErrorKind::UnknownField,
+                GenerationValidationErrorType::UnknownField,
                 field,
                 format!("unknown staged connection field {field:?}"),
             ));
@@ -416,7 +416,7 @@ fn string_field<'a>(
 ) -> Result<&'a str, GenerationValidationError> {
     object[field].as_str().ok_or_else(|| {
         GenerationValidationError::field(
-            GenerationValidationErrorKind::InvalidField,
+            GenerationValidationErrorType::InvalidField,
             field,
             format!("field {field:?} must be a string"),
         )
@@ -431,7 +431,7 @@ fn optional_string_field<'a>(
         None | Some(Value::Null) => Ok(None),
         Some(Value::String(value)) if !value.is_empty() => Ok(Some(value)),
         Some(_) => Err(GenerationValidationError::field(
-            GenerationValidationErrorKind::InvalidField,
+            GenerationValidationErrorType::InvalidField,
             field,
             format!("field {field:?} must be a non-empty string or null"),
         )),
@@ -444,7 +444,7 @@ fn string_array_field<'a>(
 ) -> Result<Vec<&'a str>, GenerationValidationError> {
     let values = object[field].as_array().ok_or_else(|| {
         GenerationValidationError::field(
-            GenerationValidationErrorKind::InvalidField,
+            GenerationValidationErrorType::InvalidField,
             field,
             format!("field {field:?} must be an array of strings"),
         )
@@ -457,7 +457,7 @@ fn string_array_field<'a>(
                 .filter(|value| !value.is_empty())
                 .ok_or_else(|| {
                     GenerationValidationError::field(
-                        GenerationValidationErrorKind::InvalidField,
+                        GenerationValidationErrorType::InvalidField,
                         field,
                         format!("field {field:?} must contain only non-empty strings"),
                     )
@@ -471,7 +471,7 @@ fn parse_tls(value: &str) -> Result<TlsPolicy, GenerationValidationError> {
         "disabled" => Ok(TlsPolicy::Disabled),
         "verify-authority" => Ok(TlsPolicy::VerifyAuthority),
         _ => Err(GenerationValidationError::field(
-            GenerationValidationErrorKind::TlsIdentityMismatch,
+            GenerationValidationErrorType::TlsIdentityMismatch,
             "tls-verification",
             "TLS verification must be disabled or verify-authority",
         )),
@@ -483,7 +483,7 @@ fn validate_redirect(value: &str) -> Result<(), GenerationValidationError> {
         Ok(())
     } else {
         Err(GenerationValidationError::field(
-            GenerationValidationErrorKind::RedirectPolicyMismatch,
+            GenerationValidationErrorType::RedirectPolicyMismatch,
             "redirect-policy",
             "HTTP redirect policy must be deny or same-authority",
         ))
@@ -501,14 +501,14 @@ fn validate_proxy_transport(
     };
     if !coherent {
         return Err(GenerationValidationError::field(
-            GenerationValidationErrorKind::ProxyMismatch,
+            GenerationValidationErrorType::ProxyMismatch,
             "proxy-transport",
             "proxy transport must be connect exactly when a proxy authority is configured",
         ));
     }
     if proxy.is_some() {
         return Err(GenerationValidationError::field(
-            GenerationValidationErrorKind::UnsupportedTransport,
+            GenerationValidationErrorType::UnsupportedTransport,
             "proxy-transport",
             "HTTP connection v1 supports direct transport only",
         ));
@@ -524,7 +524,7 @@ fn parse_canonical(
 ) -> Result<HttpConnectionAuthority, GenerationValidationError> {
     let authority = parse_http_connection_authority(value, tls, proxy).map_err(|error| {
         GenerationValidationError::field(
-            GenerationValidationErrorKind::NonCanonicalAuthority,
+            GenerationValidationErrorType::NonCanonicalAuthority,
             field,
             error.to_string(),
         )
@@ -533,7 +533,7 @@ fn parse_canonical(
         || proxy.is_some_and(|value| authority.canonical_proxy_url() != Some(value))
     {
         return Err(GenerationValidationError::field(
-            GenerationValidationErrorKind::NonCanonicalAuthority,
+            GenerationValidationErrorType::NonCanonicalAuthority,
             field,
             format!("field {field:?} is not in canonical URL form"),
         ));
@@ -550,7 +550,7 @@ fn validate_unique_authorities(
     for failover in failovers {
         if !unique.insert(failover.authority()) {
             return Err(GenerationValidationError::field(
-                GenerationValidationErrorKind::DuplicateAuthority,
+                GenerationValidationErrorType::DuplicateAuthority,
                 "failover-authorities",
                 "primary and failover authorities must be unique",
             ));
@@ -578,7 +578,7 @@ fn validate_tls_names(
                 .all(|(authority, name)| authority.authority().host() == *name && name.is_ascii()))
     {
         return Err(GenerationValidationError::field(
-            GenerationValidationErrorKind::TlsIdentityMismatch,
+            GenerationValidationErrorType::TlsIdentityMismatch,
             "tls-names",
             "TLS names must exactly match each HTTPS primary/failover authority in order",
         ));
@@ -608,16 +608,16 @@ where
     .map(|_| ())
     .map_err(|error| {
         let kind = match error.kind() {
-            AuthorityErrorKind::PlatformHostDenied => {
-                GenerationValidationErrorKind::PlatformHostPolicyDenied
+            AuthorityErrorType::PlatformHostDenied => {
+                GenerationValidationErrorType::PlatformHostPolicyDenied
             }
-            AuthorityErrorKind::NetworkDenied => {
-                GenerationValidationErrorKind::ClusterNetworkPolicyDenied
+            AuthorityErrorType::NetworkDenied => {
+                GenerationValidationErrorType::ClusterNetworkPolicyDenied
             }
-            AuthorityErrorKind::DnsResolutionFailed => {
-                GenerationValidationErrorKind::PolicyResolutionFailed
+            AuthorityErrorType::DnsResolutionFailed => {
+                GenerationValidationErrorType::PolicyResolutionFailed
             }
-            _ => GenerationValidationErrorKind::NonCanonicalAuthority,
+            _ => GenerationValidationErrorType::NonCanonicalAuthority,
         };
         GenerationValidationError::new(kind, error.to_string())
     })

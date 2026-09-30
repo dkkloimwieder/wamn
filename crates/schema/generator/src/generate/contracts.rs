@@ -9,7 +9,7 @@ use super::{
     AccessOperationErrorLiteral, BTreeMap, BTreeSet, CREATE_KEY_FIELD, CREATE_STATEMENT,
     CURSOR_VERSION, CatalogIr, ColumnType, ConstraintType, ContractFieldDeclaration, CrudAction,
     CustomOperationDeclaration, CustomOperationResultDeclaration, CustomOperationType, DeleteMode,
-    FieldText, GenerateError, GenerateErrorKind, ModelDeclaration, OperationDeclaration,
+    FieldText, GenerateError, GenerateErrorType, ModelDeclaration, OperationDeclaration,
     OperationErrorDetailDeclaration, PackageManifest, Projection, ProjectionContents,
     RequiredConstraint, RequiredField, RequiredSchemaContract, RequiredTable, ResultClass,
     StatementContract, StatementTransactionality, StatementValueContract, Table, Value, WamnApi,
@@ -385,7 +385,7 @@ fn statement_contract(
     let parameters = crate::sql_lex::parameter_count(bytes);
     if usize::try_from(parameters).ok() != Some(binds.len()) {
         return Err(GenerateError::for_path(
-            GenerateErrorKind::InvalidOperation,
+            GenerateErrorType::InvalidOperation,
             format!(
                 "{path} takes {parameters} parameters, but its generated accessor {name} binds {}",
                 binds.len()
@@ -633,7 +633,7 @@ fn emit_operation_sql(
             insert_bytes(files, &path, bytes.clone())?;
             if sql_corpus.insert(path.clone(), bytes).is_some() {
                 return Err(GenerateError::for_path(
-                    GenerateErrorKind::DuplicatePath,
+                    GenerateErrorType::DuplicatePath,
                     "generated SQL collides with the corpus",
                     path,
                 ));
@@ -664,7 +664,7 @@ fn emit_operation_sql(
     insert_bytes(files, &path, bytes.clone())?;
     if sql_corpus.insert(path.clone(), bytes).is_some() {
         return Err(GenerateError::for_path(
-            GenerateErrorKind::DuplicatePath,
+            GenerateErrorType::DuplicatePath,
             "generated SQL collides with the corpus",
             path,
         ));

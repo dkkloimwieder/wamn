@@ -114,7 +114,7 @@ pub enum ExitState {
 
 /// The local boundary that refused a screen action.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ScreenErrorKind {
+pub enum ScreenErrorType {
     Availability,
     ConfirmationRequired,
     Binding,
@@ -126,15 +126,15 @@ pub enum ScreenErrorKind {
 /// A screen refusal with its original validation or lifecycle cause.
 #[derive(Debug)]
 pub struct ScreenError {
-    kind: ScreenErrorKind,
+    type_: ScreenErrorType,
     detail: String,
     source: Option<Box<dyn std::error::Error + Send + Sync>>,
 }
 
 impl ScreenError {
     #[must_use]
-    pub const fn kind(&self) -> ScreenErrorKind {
-        self.kind
+    pub const fn kind(&self) -> ScreenErrorType {
+        self.type_
     }
 
     #[must_use]
@@ -142,9 +142,9 @@ impl ScreenError {
         &self.detail
     }
 
-    fn new(kind: ScreenErrorKind, detail: impl Into<String>) -> Self {
+    fn new(kind: ScreenErrorType, detail: impl Into<String>) -> Self {
         Self {
-            kind,
+            type_: kind,
             detail: detail.into(),
             source: None,
         }
@@ -166,7 +166,7 @@ impl std::error::Error for ScreenError {
 impl From<DraftError> for ScreenError {
     fn from(source: DraftError) -> Self {
         Self {
-            kind: ScreenErrorKind::Draft,
+            type_: ScreenErrorType::Draft,
             detail: source.to_string(),
             source: Some(Box::new(source)),
         }
@@ -176,7 +176,7 @@ impl From<DraftError> for ScreenError {
 impl From<RequestError> for ScreenError {
     fn from(source: RequestError) -> Self {
         Self {
-            kind: ScreenErrorKind::Request,
+            type_: ScreenErrorType::Request,
             detail: source.to_string(),
             source: Some(Box::new(source)),
         }
@@ -186,7 +186,7 @@ impl From<RequestError> for ScreenError {
 impl From<SubmissionError> for ScreenError {
     fn from(source: SubmissionError) -> Self {
         Self {
-            kind: ScreenErrorKind::Submission,
+            type_: ScreenErrorType::Submission,
             detail: source.to_string(),
             source: Some(Box::new(source)),
         }
@@ -362,7 +362,7 @@ impl Screen {
         let availability = self.availability();
         if availability != Availability::Ready {
             return Err(ScreenError::new(
-                ScreenErrorKind::Availability,
+                ScreenErrorType::Availability,
                 self.definition_error
                     .clone()
                     .unwrap_or_else(|| availability.to_string()),
@@ -370,7 +370,7 @@ impl Screen {
         }
         if self.spec.type_ == "delete" && !delete_confirmed {
             return Err(ScreenError::new(
-                ScreenErrorKind::ConfirmationRequired,
+                ScreenErrorType::ConfirmationRequired,
                 "confirm deletion before submitting",
             ));
         }
@@ -600,19 +600,19 @@ impl Screen {
     fn ensure_editable(&self) -> Result<(), ScreenError> {
         if !self.submission.available() {
             return Err(ScreenError::new(
-                ScreenErrorKind::Availability,
+                ScreenErrorType::Availability,
                 Availability::Unavailable.to_string(),
             ));
         }
         match self.submission.state() {
             State::Pending => Err(ScreenError::new(
-                ScreenErrorKind::Availability,
+                ScreenErrorType::Availability,
                 Availability::Pending.to_string(),
             )),
             State::Editable | State::Refused(_) => Ok(()),
             _ if self.is_read() => Ok(()),
             _ => Err(ScreenError::new(
-                ScreenErrorKind::Availability,
+                ScreenErrorType::Availability,
                 self.availability().to_string(),
             )),
         }
@@ -761,7 +761,7 @@ impl Screen {
 }
 
 fn binding_error(detail: &str) -> ScreenError {
-    ScreenError::new(ScreenErrorKind::Binding, detail)
+    ScreenError::new(ScreenErrorType::Binding, detail)
 }
 
 fn pointer(path: &str) -> String {

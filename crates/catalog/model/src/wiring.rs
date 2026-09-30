@@ -146,7 +146,7 @@ pub struct WiringNode {
     /// Several nodes may declare one. Exclusive branches each ending the
     /// delivery their own way is a legitimate graph; *two verdicts in one
     /// delivery* is a refusal the walk makes on the path actually taken
-    /// (`wamn_router::ApplyErrorKind::SecondVerdict`), which a document cannot
+    /// (`wamn_router::ApplyErrorType::SecondVerdict`), which a document cannot
     /// decide by shape.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub terminal: Option<WiringTerminal>,
@@ -204,7 +204,7 @@ pub struct WiringDocument {
     /// Required, and checked against [`WiringDocument::nodes`] here, so a graph
     /// the router could not enter is refused at authoring rather than in the
     /// serving path — where the same refusal is
-    /// `wamn_router::WiringErrorKind::UnresolvedEntry`, one activation and one
+    /// `wamn_router::WiringErrorType::UnresolvedEntry`, one activation and one
     /// cache miss too late.
     pub entry: String,
     /// The graph's nodes, keyed by node id. The router resolves the active

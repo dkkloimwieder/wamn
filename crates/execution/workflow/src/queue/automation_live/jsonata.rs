@@ -13,7 +13,7 @@ use super::{
     Node, QUEUE_CLAIM_SCOPE, QueueScope, RouterDriver, SERVICE, TENANT, WamnJetstream,
     WamnPostgres, drain_one,
 };
-use crate::{PostgresWorkflows, StartRequest, Trigger, WorkflowErrorKind, Workflows as _};
+use crate::{PostgresWorkflows, StartRequest, Trigger, WorkflowErrorType, Workflows as _};
 
 /// The node's declaration template, as publish renders it.
 const DECLARATION: &str =
@@ -206,7 +206,7 @@ async fn event_run(
     );
     assert_eq!(
         workflows.park(&run).await.unwrap_err().kind(),
-        WorkflowErrorKind::NotParkable
+        WorkflowErrorType::NotParkable
     );
     Ok(())
 }

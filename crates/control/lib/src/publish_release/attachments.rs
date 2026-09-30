@@ -1,7 +1,7 @@
 //! Package attachment documents and deployment route preparation.
 
 use super::{
-    AuthoredHttpRoute, BTreeMap, BTreeSet, MintManifestError, MintManifestErrorKind, PathBuf,
+    AuthoredHttpRoute, BTreeMap, BTreeSet, MintManifestError, MintManifestErrorType, PathBuf,
     RouteContracts, ServingAttachment, canonical_http_route_template, normalize_http_route,
 };
 use wamn_catalog::AttachmentTarget;
@@ -37,7 +37,7 @@ fn package_owners(
     for path in package_manifests {
         let bytes = std::fs::read(path).map_err(|error| {
             MintManifestError::with_source(
-                MintManifestErrorKind::PackageManifest,
+                MintManifestErrorType::PackageManifest,
                 format!("read package manifest {}", path.display()),
                 error,
             )
@@ -45,7 +45,7 @@ fn package_owners(
         let package =
             wamn_schema_generator::OperationOwners::from_slice(&bytes).map_err(|error| {
                 MintManifestError::with_source(
-                    MintManifestErrorKind::PackageManifest,
+                    MintManifestErrorType::PackageManifest,
                     format!("parse package manifest {}", path.display()),
                     error,
                 )
@@ -69,7 +69,7 @@ fn resolve_generated_input_schemas(
     for path in package_manifests {
         let bytes = std::fs::read(path).map_err(|error| {
             MintManifestError::with_source(
-                MintManifestErrorKind::PackageManifest,
+                MintManifestErrorType::PackageManifest,
                 format!("read package manifest {}", path.display()),
                 error,
             )
@@ -77,7 +77,7 @@ fn resolve_generated_input_schemas(
         let manifest =
             wamn_schema_generator::PackageManifest::from_slice(&bytes).map_err(|error| {
                 MintManifestError::with_source(
-                    MintManifestErrorKind::PackageManifest,
+                    MintManifestErrorType::PackageManifest,
                     format!("parse package manifest {}", path.display()),
                     error,
                 )
@@ -91,7 +91,7 @@ fn resolve_generated_input_schemas(
         }
         let root = roots.get(&attachment.package_id).ok_or_else(|| {
             MintManifestError::new(
-                MintManifestErrorKind::Document,
+                MintManifestErrorType::Document,
                 format!(
                     "attachment {attachment_id:?} names a generated input schema of package {:?}, and the release presents no wamn.json for it",
                     attachment.package_id
@@ -107,7 +107,7 @@ fn resolve_generated_input_schemas(
         )
         .map_err(|error| {
             MintManifestError::with_source(
-                MintManifestErrorKind::Document,
+                MintManifestErrorType::Document,
                 format!("attachment {attachment_id:?} input schema"),
                 error,
             )
@@ -122,7 +122,7 @@ fn read_authored_attachments(
 ) -> Result<BTreeMap<String, ServingAttachment>, MintManifestError> {
     if paths.is_empty() {
         return Err(MintManifestError::new(
-            MintManifestErrorKind::Document,
+            MintManifestErrorType::Document,
             "publish-release requires at least one package-owned --attachments document",
         ));
     }
@@ -130,14 +130,14 @@ fn read_authored_attachments(
     for path in paths {
         let bytes = std::fs::read(path).map_err(|error| {
             MintManifestError::with_source(
-                MintManifestErrorKind::Document,
+                MintManifestErrorType::Document,
                 format!("read package attachments {}", path.display()),
                 error,
             )
         })?;
         let parse = |error| {
             MintManifestError::with_source(
-                MintManifestErrorKind::Document,
+                MintManifestErrorType::Document,
                 format!("parse package attachments {}", path.display()),
                 error,
             )
@@ -153,7 +153,7 @@ fn read_authored_attachments(
                 .unwrap_or_default();
             let package = owners.get(package_id).ok_or_else(|| {
                 MintManifestError::new(
-                    MintManifestErrorKind::Document,
+                    MintManifestErrorType::Document,
                     format!(
                         "attachment {attachment_id:?} names package {package_id:?}, and the release presents no wamn.json for it"
                     ),
@@ -166,7 +166,7 @@ fn read_authored_attachments(
             )
             .map_err(|error| {
                 MintManifestError::with_source(
-                    MintManifestErrorKind::Document,
+                    MintManifestErrorType::Document,
                     format!("package attachments {}", path.display()),
                     error,
                 )
@@ -190,7 +190,7 @@ fn read_authored_attachments(
         .and_then(wamn_schema_generator::route_schema::generated_attachments)
         .map_err(|error| {
             MintManifestError::with_source(
-                MintManifestErrorKind::Document,
+                MintManifestErrorType::Document,
                 format!("read the generated attachments beside {}", path.display()),
                 error,
             )
@@ -214,7 +214,7 @@ pub(super) fn merge_package_attachment_documents(
         for (attachment_id, attachment) in attachments {
             if let Some(first_path) = sources.get(&attachment_id) {
                 return Err(MintManifestError::new(
-                    MintManifestErrorKind::DuplicateAttachmentId,
+                    MintManifestErrorType::DuplicateAttachmentId,
                     format!(
                         "attachment {attachment_id:?} occurs in package documents {} and {}; keep exactly one package owner",
                         first_path.display(),
@@ -242,7 +242,7 @@ pub(super) fn validate_attachment_definition_hashes(
         let derived = wamn_execution_contract::canonical_json_sha256(&attachment.definition);
         if attachment.definition_hash.as_str() != derived {
             return Err(MintManifestError::new(
-                MintManifestErrorKind::Document,
+                MintManifestErrorType::Document,
                 format!(
                     "attachment {attachment_id:?} definition-hash {} differs from canonical definition hash {derived}",
                     attachment.definition_hash.as_str(),
@@ -274,7 +274,7 @@ pub(super) fn resolve_route_host_overlay(
     };
     let route_host = route_host.filter(|host| !host.is_empty()).ok_or_else(|| {
         MintManifestError::new(
-            MintManifestErrorKind::RouteHostUnbound,
+            MintManifestErrorType::RouteHostUnbound,
             format!(
                 "attachment {first_attachment_id:?} requires deployment route host; pass --route-host"
             ),
@@ -284,7 +284,7 @@ pub(super) fn resolve_route_host_overlay(
         && (route_host.contains('/') || route_host.chars().any(char::is_whitespace))
     {
         return Err(MintManifestError::new(
-            MintManifestErrorKind::Document,
+            MintManifestErrorType::Document,
             format!("deployment route host {route_host:?} is invalid"),
         ));
     }
@@ -306,7 +306,7 @@ pub(super) fn resolve_route_host_overlay(
             .and_then(serde_json::Value::as_object_mut)
             .ok_or_else(|| {
                 MintManifestError::new(
-                    MintManifestErrorKind::Document,
+                    MintManifestErrorType::Document,
                     format!("attachment {attachment_id:?} carries no route object"),
                 )
             })?;
@@ -315,7 +315,7 @@ pub(super) fn resolve_route_host_overlay(
         ))
         .map_err(|error| {
             MintManifestError::with_source(
-                MintManifestErrorKind::Document,
+                MintManifestErrorType::Document,
                 format!(
                     "attachment {attachment_id:?} route must contain exactly a string path field"
                 ),
@@ -331,7 +331,7 @@ pub(super) fn resolve_route_host_overlay(
         )
         .map_err(|error| {
             MintManifestError::with_source(
-                MintManifestErrorKind::Document,
+                MintManifestErrorType::Document,
                 format!("attachment {attachment_id:?} carries an invalid route"),
                 error,
             )
@@ -341,7 +341,7 @@ pub(super) fn resolve_route_host_overlay(
             normalized.method,
         )) {
             return Err(MintManifestError::new(
-                MintManifestErrorKind::Document,
+                MintManifestErrorType::Document,
                 format!(
                     "attachment {attachment_id:?} duplicates another attachment's canonical path and method"
                 ),
@@ -378,7 +378,7 @@ fn route_method(
         .map(|contract| contract.kind.http_method())
         .ok_or_else(|| {
             MintManifestError::new(
-                MintManifestErrorKind::GeneratedPackageMetadata,
+                MintManifestErrorType::GeneratedPackageMetadata,
                 format!(
                     "route attachment {attachment_id:?} calls operation {operation:?}, which has no generated contract kind; regenerate the package evidence"
                 ),
@@ -395,7 +395,7 @@ fn validate_authored_attachment_routes(
     for (attachment_id, attachment) in authored {
         if attachment.definition.pointer("/route/host").is_some() {
             return Err(MintManifestError::new(
-                MintManifestErrorKind::Document,
+                MintManifestErrorType::Document,
                 format!(
                     "attachment {attachment_id:?} authors route.host; remove it and pass --route-host"
                 ),
@@ -407,7 +407,7 @@ fn validate_authored_attachment_routes(
         ) && attachment.definition.pointer("/route/method").is_some()
         {
             return Err(MintManifestError::new(
-                MintManifestErrorKind::Document,
+                MintManifestErrorType::Document,
                 format!(
                     "attachment {attachment_id:?} authors route.method; remove it, because the method follows from the operation kind"
                 ),

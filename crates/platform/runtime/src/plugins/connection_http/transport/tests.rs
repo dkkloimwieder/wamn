@@ -927,9 +927,9 @@ fn error_display_and_debug_do_not_expose_sources() {
     assert!(!format!("{error:?}").contains("secret"));
     assert!(error.source().is_some());
     assert!(error.is_before_dispatch());
-    let timeout = TransportError::new(ErrorKind::Timeout, Phase::AwaitingHead, "deadline");
+    let timeout = TransportError::new(ErrorType::Timeout, Phase::AwaitingHead, "deadline");
     assert!(timeout.is_timeout());
-    let body_timeout = TransportError::new(ErrorKind::Timeout, Phase::ResponseBody, "deadline");
+    let body_timeout = TransportError::new(ErrorType::Timeout, Phase::ResponseBody, "deadline");
     assert!(body_timeout.is_response_lost());
     assert!(!body_timeout.is_timeout());
 }

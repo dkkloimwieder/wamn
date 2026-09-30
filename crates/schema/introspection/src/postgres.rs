@@ -12,12 +12,12 @@ use wamn_record_history::{
 use crate::ir::{
     CatalogIr, Column, ColumnGeneration, Constraint, Exclusion, ExclusionAccessMethod,
     ExclusionElement, ExclusionKey, ForeignKeyAction, ForeignKeyColumn, IdentityMode, Index,
-    IndexColumn, IndexDirection, IrError, IrErrorKind, Table, postgres_default, postgres_type,
+    IndexColumn, IndexDirection, IrError, IrErrorType, Table, postgres_default, postgres_type,
 };
 
 /// Stable class of PostgreSQL catalog refusal.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum PostgresIntrospectionErrorKind {
+pub enum PostgresIntrospectionErrorType {
     Database,
     MissingSchema,
     UnsupportedTable,
@@ -41,7 +41,7 @@ pub enum PostgresIntrospectionErrorKind {
     UnsupportedSequence,
 }
 
-impl PostgresIntrospectionErrorKind {
+impl PostgresIntrospectionErrorType {
     const fn code(self) -> &'static str {
         match self {
             Self::Database => "database",
@@ -72,7 +72,7 @@ impl PostgresIntrospectionErrorKind {
 /// Contextual refusal at the PostgreSQL catalog boundary.
 #[derive(Debug)]
 pub struct PostgresIntrospectionError {
-    kind: PostgresIntrospectionErrorKind,
+    type_: PostgresIntrospectionErrorType,
     schema: Option<Box<str>>,
     object: Option<Box<str>>,
     detail: Box<str>,
@@ -81,8 +81,8 @@ pub struct PostgresIntrospectionError {
 
 impl PostgresIntrospectionError {
     /// Stable refusal class.
-    pub const fn kind(&self) -> PostgresIntrospectionErrorKind {
-        self.kind
+    pub const fn kind(&self) -> PostgresIntrospectionErrorType {
+        self.type_
     }
 
     /// Configured schema involved in the refusal, if any.
@@ -106,7 +106,7 @@ impl fmt::Display for PostgresIntrospectionError {
         write!(
             formatter,
             "PostgreSQL introspection refused ({})",
-            self.kind.code()
+            self.type_.code()
         )?;
         if let Some(schema) = &self.schema {
             write!(formatter, " in schema `{schema}`")?;
@@ -674,13 +674,13 @@ SELECT namespace.nspname::text AS schema_name,
 ";
 
 fn refusal(
-    kind: PostgresIntrospectionErrorKind,
+    type_: PostgresIntrospectionErrorType,
     schema: Option<&str>,
     object: Option<&str>,
     detail: impl Into<Box<str>>,
 ) -> PostgresIntrospectionError {
     PostgresIntrospectionError {
-        kind,
+        type_,
         schema: schema.map(Into::into),
         object: object.map(Into::into),
         detail: detail.into(),
@@ -693,7 +693,7 @@ fn database_error(
     source: tokio_postgres::Error,
 ) -> PostgresIntrospectionError {
     PostgresIntrospectionError {
-        kind: PostgresIntrospectionErrorKind::Database,
+        type_: PostgresIntrospectionErrorType::Database,
         schema: None,
         object: None,
         detail: context.into(),
@@ -703,9 +703,9 @@ fn database_error(
 
 fn ir_error(schema: &str, object: &str, error: &IrError) -> PostgresIntrospectionError {
     let kind = match error.kind() {
-        IrErrorKind::EmptyName => PostgresIntrospectionErrorKind::UnsupportedConstraint,
-        IrErrorKind::UnsupportedType => PostgresIntrospectionErrorKind::UnsupportedColumnType,
-        IrErrorKind::UnsupportedDefault => PostgresIntrospectionErrorKind::UnsupportedColumnDefault,
+        IrErrorType::EmptyName => PostgresIntrospectionErrorType::UnsupportedConstraint,
+        IrErrorType::UnsupportedType => PostgresIntrospectionErrorType::UnsupportedColumnType,
+        IrErrorType::UnsupportedDefault => PostgresIntrospectionErrorType::UnsupportedColumnDefault,
     };
     refusal(kind, Some(schema), Some(object), error.to_string())
 }
@@ -733,7 +733,7 @@ async fn validate_schemas(
         let schema = row.get::<_, String>("schema_name");
         if !row.get::<_, bool>("present") {
             return Err(refusal(
-                PostgresIntrospectionErrorKind::MissingSchema,
+                PostgresIntrospectionErrorType::MissingSchema,
                 Some(&schema),
                 None,
                 "configured application schema does not exist",
@@ -741,7 +741,7 @@ async fn validate_schemas(
         }
         if row.get::<_, bool>("has_acl") {
             return Err(refusal(
-                PostgresIntrospectionErrorKind::UnsupportedAcl,
+                PostgresIntrospectionErrorType::UnsupportedAcl,
                 Some(&schema),
                 None,
                 "schema has an explicit ACL",
@@ -785,7 +785,7 @@ fn validate_relations(
             "r" => {
                 if relation.persistence != "p" {
                     return Err(refusal(
-                        PostgresIntrospectionErrorKind::UnsupportedTable,
+                        PostgresIntrospectionErrorType::UnsupportedTable,
                         Some(&relation.schema),
                         Some(&relation.name),
                         format!(
@@ -796,7 +796,7 @@ fn validate_relations(
                 }
                 if relation.access_method.as_deref() != Some("heap") {
                     return Err(refusal(
-                        PostgresIntrospectionErrorKind::UnsupportedTable,
+                        PostgresIntrospectionErrorType::UnsupportedTable,
                         Some(&relation.schema),
                         Some(&relation.name),
                         format!(
@@ -807,7 +807,7 @@ fn validate_relations(
                 }
                 if relation.has_inheritance {
                     return Err(refusal(
-                        PostgresIntrospectionErrorKind::UnsupportedTable,
+                        PostgresIntrospectionErrorType::UnsupportedTable,
                         Some(&relation.schema),
                         Some(&relation.name),
                         "table inheritance is not supported",
@@ -815,7 +815,7 @@ fn validate_relations(
                 }
                 if relation.row_security || relation.force_row_security {
                     return Err(refusal(
-                        PostgresIntrospectionErrorKind::UnsupportedPolicy,
+                        PostgresIntrospectionErrorType::UnsupportedPolicy,
                         Some(&relation.schema),
                         Some(&relation.name),
                         "row-level security state is not supported",
@@ -823,7 +823,7 @@ fn validate_relations(
                 }
                 if relation.has_acl {
                     return Err(refusal(
-                        PostgresIntrospectionErrorKind::UnsupportedAcl,
+                        PostgresIntrospectionErrorType::UnsupportedAcl,
                         Some(&relation.schema),
                         Some(&relation.name),
                         "table has an explicit ACL",
@@ -842,7 +842,7 @@ fn validate_relations(
             "i" | "S" | "c" => {}
             "v" => {
                 return Err(refusal(
-                    PostgresIntrospectionErrorKind::UnsupportedView,
+                    PostgresIntrospectionErrorType::UnsupportedView,
                     Some(&relation.schema),
                     Some(&relation.name),
                     "views are outside the supported catalog set",
@@ -850,7 +850,7 @@ fn validate_relations(
             }
             "m" => {
                 return Err(refusal(
-                    PostgresIntrospectionErrorKind::UnsupportedMaterializedView,
+                    PostgresIntrospectionErrorType::UnsupportedMaterializedView,
                     Some(&relation.schema),
                     Some(&relation.name),
                     "materialized views are outside the supported catalog set",
@@ -858,7 +858,7 @@ fn validate_relations(
             }
             "f" => {
                 return Err(refusal(
-                    PostgresIntrospectionErrorKind::UnsupportedForeignTable,
+                    PostgresIntrospectionErrorType::UnsupportedForeignTable,
                     Some(&relation.schema),
                     Some(&relation.name),
                     "foreign tables are outside the supported catalog set",
@@ -866,7 +866,7 @@ fn validate_relations(
             }
             "p" => {
                 return Err(refusal(
-                    PostgresIntrospectionErrorKind::UnsupportedTable,
+                    PostgresIntrospectionErrorType::UnsupportedTable,
                     Some(&relation.schema),
                     Some(&relation.name),
                     "partitioned tables are outside the supported catalog set",
@@ -874,7 +874,7 @@ fn validate_relations(
             }
             "I" => {
                 return Err(refusal(
-                    PostgresIntrospectionErrorKind::UnsupportedIndex,
+                    PostgresIntrospectionErrorType::UnsupportedIndex,
                     Some(&relation.schema),
                     Some(&relation.name),
                     "partitioned indexes are outside the supported catalog set",
@@ -882,7 +882,7 @@ fn validate_relations(
             }
             unsupported => {
                 return Err(refusal(
-                    PostgresIntrospectionErrorKind::UnsupportedRelation,
+                    PostgresIntrospectionErrorType::UnsupportedRelation,
                     Some(&relation.schema),
                     Some(&relation.name),
                     format!("unsupported pg_class relkind `{unsupported}`"),
@@ -917,7 +917,7 @@ async fn refuse_routines(
         other => other,
     };
     Err(refusal(
-        PostgresIntrospectionErrorKind::UnsupportedRoutine,
+        PostgresIntrospectionErrorType::UnsupportedRoutine,
         Some(&schema),
         Some(&format!("{name}({arguments})")),
         format!("{kind} is outside the supported catalog set"),
@@ -956,7 +956,7 @@ async fn refuse_triggers(
     let table = row.get::<_, String>("table_name");
     let trigger = row.get::<_, String>("trigger_name");
     Err(refusal(
-        PostgresIntrospectionErrorKind::UnsupportedTrigger,
+        PostgresIntrospectionErrorType::UnsupportedTrigger,
         Some(&schema),
         Some(&format!("{table}.{trigger}")),
         "user-defined triggers are outside the supported catalog set",
@@ -985,7 +985,7 @@ async fn refuse_rules(
     let relation = row.get::<_, String>("relation_name");
     let rule = row.get::<_, String>("rule_name");
     Err(refusal(
-        PostgresIntrospectionErrorKind::UnsupportedRule,
+        PostgresIntrospectionErrorType::UnsupportedRule,
         Some(&schema),
         Some(&format!("{relation}.{rule}")),
         "rules are outside the supported catalog set",
@@ -1014,7 +1014,7 @@ async fn refuse_policies(
     let table = row.get::<_, String>("table_name");
     let policy = row.get::<_, String>("policy_name");
     Err(refusal(
-        PostgresIntrospectionErrorKind::UnsupportedPolicy,
+        PostgresIntrospectionErrorType::UnsupportedPolicy,
         Some(&schema),
         Some(&format!("{table}.{policy}")),
         "row-level security policies are outside the supported catalog set",
@@ -1060,7 +1060,7 @@ async fn validate_types(
         if is_table_row || is_table_row_array {
             if row.get::<_, bool>("has_acl") {
                 return Err(refusal(
-                    PostgresIntrospectionErrorKind::UnsupportedAcl,
+                    PostgresIntrospectionErrorType::UnsupportedAcl,
                     Some(&schema),
                     Some(&name),
                     "table row type has an explicit ACL",
@@ -1074,7 +1074,7 @@ async fn validate_types(
 
         let kind = row.get::<_, String>("type_kind");
         return Err(refusal(
-            PostgresIntrospectionErrorKind::UnsupportedCustomType,
+            PostgresIntrospectionErrorType::UnsupportedCustomType,
             Some(&schema),
             Some(&name),
             format!("custom pg_type kind `{kind}` is outside the supported catalog set"),
@@ -1098,7 +1098,7 @@ async fn refuse_default_acls(
     let owner = row.get::<_, String>("owner_name");
     let object_kind = row.get::<_, String>("object_kind");
     Err(refusal(
-        PostgresIntrospectionErrorKind::UnsupportedAcl,
+        PostgresIntrospectionErrorType::UnsupportedAcl,
         Some(&schema),
         Some(&owner),
         format!("default ACL for object kind `{object_kind}` is not supported"),
@@ -1141,7 +1141,7 @@ fn map_columns(
         let object = format!("{}.{}", row.table, row.name);
         if row.has_acl {
             return Err(refusal(
-                PostgresIntrospectionErrorKind::UnsupportedAcl,
+                PostgresIntrospectionErrorType::UnsupportedAcl,
                 Some(&row.schema),
                 Some(&object),
                 "column has an explicit ACL",
@@ -1149,7 +1149,7 @@ fn map_columns(
         }
         if !row.default_collation {
             return Err(refusal(
-                PostgresIntrospectionErrorKind::UnsupportedColumnCollation,
+                PostgresIntrospectionErrorType::UnsupportedColumnCollation,
                 Some(&row.schema),
                 Some(&object),
                 "column must use its PostgreSQL type default collation",
@@ -1171,7 +1171,7 @@ fn map_columns(
             ("a", "") => {
                 if row.nullable {
                     return Err(refusal(
-                        PostgresIntrospectionErrorKind::UnsupportedIdentity,
+                        PostgresIntrospectionErrorType::UnsupportedIdentity,
                         Some(&row.schema),
                         Some(&object),
                         "identity columns must be NOT NULL",
@@ -1187,7 +1187,7 @@ fn map_columns(
             ("d", "") => {
                 if row.nullable {
                     return Err(refusal(
-                        PostgresIntrospectionErrorKind::UnsupportedIdentity,
+                        PostgresIntrospectionErrorType::UnsupportedIdentity,
                         Some(&row.schema),
                         Some(&object),
                         "identity columns must be NOT NULL",
@@ -1203,7 +1203,7 @@ fn map_columns(
             ("", "s") => {
                 let Some(expression) = &row.default_expression else {
                     return Err(refusal(
-                        PostgresIntrospectionErrorKind::UnsupportedGeneratedColumn,
+                        PostgresIntrospectionErrorType::UnsupportedGeneratedColumn,
                         Some(&row.schema),
                         Some(&object),
                         "stored generated column has no pg_attrdef expression",
@@ -1213,7 +1213,7 @@ fn map_columns(
             }
             ("", "v") => {
                 return Err(refusal(
-                    PostgresIntrospectionErrorKind::UnsupportedGeneratedColumn,
+                    PostgresIntrospectionErrorType::UnsupportedGeneratedColumn,
                     Some(&row.schema),
                     Some(&object),
                     "virtual generated columns are not supported",
@@ -1221,7 +1221,7 @@ fn map_columns(
             }
             (identity, generated) => {
                 return Err(refusal(
-                    PostgresIntrospectionErrorKind::UnsupportedGeneratedColumn,
+                    PostgresIntrospectionErrorType::UnsupportedGeneratedColumn,
                     Some(&row.schema),
                     Some(&object),
                     format!(
@@ -1234,7 +1234,7 @@ fn map_columns(
         let key = (row.schema.clone(), row.table.clone());
         let Some(table) = tables.get_mut(&key) else {
             return Err(refusal(
-                PostgresIntrospectionErrorKind::UnsupportedRelation,
+                PostgresIntrospectionErrorType::UnsupportedRelation,
                 Some(&row.schema),
                 Some(&row.table),
                 "column belongs to a relation that is not an ordinary table",
@@ -1307,7 +1307,7 @@ fn validate_sequences(
     for row in rows {
         let Some(table_schema) = &row.table_schema else {
             return Err(refusal(
-                PostgresIntrospectionErrorKind::UnsupportedSequence,
+                PostgresIntrospectionErrorType::UnsupportedSequence,
                 Some(&row.schema),
                 Some(&row.name),
                 "standalone sequences are outside the supported catalog set",
@@ -1315,7 +1315,7 @@ fn validate_sequences(
         };
         let Some(table) = &row.table else {
             return Err(refusal(
-                PostgresIntrospectionErrorKind::UnsupportedSequence,
+                PostgresIntrospectionErrorType::UnsupportedSequence,
                 Some(&row.schema),
                 Some(&row.name),
                 "sequence dependency has no table",
@@ -1323,7 +1323,7 @@ fn validate_sequences(
         };
         let Some(column) = &row.column else {
             return Err(refusal(
-                PostgresIntrospectionErrorKind::UnsupportedSequence,
+                PostgresIntrospectionErrorType::UnsupportedSequence,
                 Some(&row.schema),
                 Some(&row.name),
                 "sequence dependency has no column",
@@ -1334,7 +1334,7 @@ fn validate_sequences(
             || !matches!(row.column_identity.as_deref(), Some("a" | "d"))
         {
             return Err(refusal(
-                PostgresIntrospectionErrorKind::UnsupportedSequence,
+                PostgresIntrospectionErrorType::UnsupportedSequence,
                 Some(&row.schema),
                 Some(&row.name),
                 "only internally-owned identity sequences are supported",
@@ -1342,7 +1342,7 @@ fn validate_sequences(
         }
         if !configured.contains(table_schema.as_str()) || row.schema != *table_schema {
             return Err(refusal(
-                PostgresIntrospectionErrorKind::UnsupportedIdentity,
+                PostgresIntrospectionErrorType::UnsupportedIdentity,
                 Some(table_schema),
                 Some(&object),
                 "identity sequence must share its configured table schema",
@@ -1354,7 +1354,7 @@ fn validate_sequences(
             "bigint" => i64::MAX,
             unsupported => {
                 return Err(refusal(
-                    PostgresIntrospectionErrorKind::UnsupportedIdentity,
+                    PostgresIntrospectionErrorType::UnsupportedIdentity,
                     Some(table_schema),
                     Some(&object),
                     format!("unsupported identity sequence type `{unsupported}`"),
@@ -1369,7 +1369,7 @@ fn validate_sequences(
             || row.cycle
         {
             return Err(refusal(
-                PostgresIntrospectionErrorKind::UnsupportedIdentity,
+                PostgresIntrospectionErrorType::UnsupportedIdentity,
                 Some(table_schema),
                 Some(&object),
                 "custom identity sequence options are not supported",
@@ -1380,7 +1380,7 @@ fn validate_sequences(
 
     if let Some((schema, table, column)) = expected.difference(&seen).next() {
         return Err(refusal(
-            PostgresIntrospectionErrorKind::UnsupportedIdentity,
+            PostgresIntrospectionErrorType::UnsupportedIdentity,
             Some(schema),
             Some(&format!("{table}.{column}")),
             "identity column has no internally-owned sequence",
@@ -1475,7 +1475,7 @@ fn index_row(row: &Row) -> IndexRow {
 }
 
 fn names_for_attributes(
-    kind: PostgresIntrospectionErrorKind,
+    type_: PostgresIntrospectionErrorType,
     schema: &str,
     table: &str,
     object: &str,
@@ -1490,7 +1490,7 @@ fn names_for_attributes(
                 .cloned()
                 .ok_or_else(|| {
                     refusal(
-                        kind,
+                        type_,
                         Some(schema),
                         Some(object),
                         format!("catalog key references unsupported attribute number `{number}`"),
@@ -1501,7 +1501,7 @@ fn names_for_attributes(
 }
 
 fn validate_authored_name(
-    kind: PostgresIntrospectionErrorKind,
+    type_: PostgresIntrospectionErrorType,
     schema: &str,
     table: &str,
     name: &str,
@@ -1511,7 +1511,7 @@ fn validate_authored_name(
 ) -> Result<(), PostgresIntrospectionError> {
     if name.is_empty() {
         return Err(refusal(
-            kind,
+            type_,
             Some(schema),
             Some(table),
             "catalog object name is empty",
@@ -1521,7 +1521,7 @@ fn validate_authored_name(
     let mut ordered_numbers = column_numbers.to_vec();
     ordered_numbers.sort_unstable();
     ordered_numbers.dedup();
-    let columns = names_for_attributes(kind, schema, table, name, &ordered_numbers, attributes)?;
+    let columns = names_for_attributes(type_, schema, table, name, &ordered_numbers, attributes)?;
     let expected = if columns.is_empty() {
         format!("{table}_{suffix}")
     } else {
@@ -1533,7 +1533,7 @@ fn validate_authored_name(
     // pg_catalog cannot reconstruct that authored spelling.
     if expected.len() < 64 && name != expected {
         return Err(refusal(
-            kind,
+            type_,
             Some(schema),
             Some(name),
             format!("name must use the authored convention `{expected}`"),
@@ -1554,7 +1554,7 @@ fn validate_constraint_shape(row: &ConstraintRow) -> Result<(), PostgresIntrospe
         || row.parent
     {
         return Err(refusal(
-            PostgresIntrospectionErrorKind::UnsupportedConstraint,
+            PostgresIntrospectionErrorType::UnsupportedConstraint,
             Some(&row.schema),
             Some(&row.name),
             "deferred, unenforced, unvalidated, inherited, NO INHERIT check/not-null, and temporal constraint shapes are not supported",
@@ -1566,7 +1566,7 @@ fn validate_constraint_shape(row: &ConstraintRow) -> Result<(), PostgresIntrospe
 fn validate_constraint_index(row: &ConstraintRow) -> Result<(), PostgresIntrospectionError> {
     let supporting_column_count = i16::try_from(row.columns.len()).map_err(|_| {
         refusal(
-            PostgresIntrospectionErrorKind::UnsupportedConstraint,
+            PostgresIntrospectionErrorType::UnsupportedConstraint,
             Some(&row.schema),
             Some(&row.name),
             "constraint has more columns than PostgreSQL can represent",
@@ -1582,7 +1582,7 @@ fn validate_constraint_index(row: &ConstraintRow) -> Result<(), PostgresIntrospe
         || row.supporting_index_predicate
     {
         return Err(refusal(
-            PostgresIntrospectionErrorKind::UnsupportedConstraint,
+            PostgresIntrospectionErrorType::UnsupportedConstraint,
             Some(&row.schema),
             Some(&row.name),
             "primary and unique constraints require a plain btree index over exactly their named columns",
@@ -1602,7 +1602,7 @@ fn foreign_key_action(
         "n" => Ok(ForeignKeyAction::SetNull),
         "d" => Ok(ForeignKeyAction::SetDefault),
         unsupported => Err(refusal(
-            PostgresIntrospectionErrorKind::UnsupportedConstraint,
+            PostgresIntrospectionErrorType::UnsupportedConstraint,
             Some(&row.schema),
             Some(&row.name),
             format!("unsupported foreign-key action `{unsupported}`"),
@@ -1630,7 +1630,7 @@ fn map_exclusion(
 ) -> Result<Exclusion, PostgresIntrospectionError> {
     let refuse = |detail: String| {
         refusal(
-            PostgresIntrospectionErrorKind::UnsupportedConstraint,
+            PostgresIntrospectionErrorType::UnsupportedConstraint,
             Some(&row.schema),
             Some(&row.name),
             detail,
@@ -1662,7 +1662,7 @@ fn map_exclusion(
     }
     if !row.columns.contains(&0) {
         validate_authored_name(
-            PostgresIntrospectionErrorKind::UnsupportedConstraint,
+            PostgresIntrospectionErrorType::UnsupportedConstraint,
             &row.schema,
             &row.table,
             &row.name,
@@ -1683,7 +1683,7 @@ fn map_exclusion(
             ExclusionElement::expression(definition.clone())
         } else {
             let name = names_for_attributes(
-                PostgresIntrospectionErrorKind::UnsupportedConstraint,
+                PostgresIntrospectionErrorType::UnsupportedConstraint,
                 &row.schema,
                 &row.table,
                 &row.name,
@@ -1702,7 +1702,7 @@ fn map_exclusion(
     // the dependency that blocks `DROP COLUMN`. Reading it is how the column
     // behind `tstzrange(starts_at, ends_at)` is known without parsing SQL.
     let columns = names_for_attributes(
-        PostgresIntrospectionErrorKind::UnsupportedConstraint,
+        PostgresIntrospectionErrorType::UnsupportedConstraint,
         &row.schema,
         &row.table,
         &row.name,
@@ -1731,7 +1731,7 @@ fn table_parts<'a>(
         .get_mut(&(row.schema.clone(), row.table.clone()))
         .ok_or_else(|| {
             refusal(
-                PostgresIntrospectionErrorKind::UnsupportedConstraint,
+                PostgresIntrospectionErrorType::UnsupportedConstraint,
                 Some(&row.schema),
                 Some(&row.name),
                 "constraint belongs to a relation that is not an ordinary table",
@@ -1756,7 +1756,7 @@ fn map_constraints(
         }
 
         let columns = names_for_attributes(
-            PostgresIntrospectionErrorKind::UnsupportedConstraint,
+            PostgresIntrospectionErrorType::UnsupportedConstraint,
             &row.schema,
             &row.table,
             &row.name,
@@ -1767,14 +1767,14 @@ fn map_constraints(
             "p" => {
                 if columns.is_empty() {
                     return Err(refusal(
-                        PostgresIntrospectionErrorKind::UnsupportedConstraint,
+                        PostgresIntrospectionErrorType::UnsupportedConstraint,
                         Some(&row.schema),
                         Some(&row.name),
                         "primary key has no columns",
                     ));
                 }
                 validate_authored_name(
-                    PostgresIntrospectionErrorKind::UnsupportedConstraint,
+                    PostgresIntrospectionErrorType::UnsupportedConstraint,
                     &row.schema,
                     &row.table,
                     &row.name,
@@ -1789,14 +1789,14 @@ fn map_constraints(
             "u" => {
                 if columns.is_empty() {
                     return Err(refusal(
-                        PostgresIntrospectionErrorKind::UnsupportedConstraint,
+                        PostgresIntrospectionErrorType::UnsupportedConstraint,
                         Some(&row.schema),
                         Some(&row.name),
                         "unique constraint has no columns",
                     ));
                 }
                 validate_authored_name(
-                    PostgresIntrospectionErrorKind::UnsupportedConstraint,
+                    PostgresIntrospectionErrorType::UnsupportedConstraint,
                     &row.schema,
                     &row.table,
                     &row.name,
@@ -1811,7 +1811,7 @@ fn map_constraints(
             "f" => {
                 if columns.is_empty() || columns.len() != row.referenced_columns.len() {
                     return Err(refusal(
-                        PostgresIntrospectionErrorKind::UnsupportedConstraint,
+                        PostgresIntrospectionErrorType::UnsupportedConstraint,
                         Some(&row.schema),
                         Some(&row.name),
                         "foreign key has missing or mismatched column pairs",
@@ -1819,7 +1819,7 @@ fn map_constraints(
                 }
                 if row.match_type != "s" || row.delete_column_subset {
                     return Err(refusal(
-                        PostgresIntrospectionErrorKind::UnsupportedConstraint,
+                        PostgresIntrospectionErrorType::UnsupportedConstraint,
                         Some(&row.schema),
                         Some(&row.name),
                         "only MATCH SIMPLE foreign keys acting on every local column are supported",
@@ -1827,7 +1827,7 @@ fn map_constraints(
                 }
                 let Some(referenced_schema) = &row.referenced_schema else {
                     return Err(refusal(
-                        PostgresIntrospectionErrorKind::UnsupportedConstraint,
+                        PostgresIntrospectionErrorType::UnsupportedConstraint,
                         Some(&row.schema),
                         Some(&row.name),
                         "foreign key has no referenced schema",
@@ -1835,7 +1835,7 @@ fn map_constraints(
                 };
                 let Some(referenced_table) = &row.referenced_table else {
                     return Err(refusal(
-                        PostgresIntrospectionErrorKind::UnsupportedConstraint,
+                        PostgresIntrospectionErrorType::UnsupportedConstraint,
                         Some(&row.schema),
                         Some(&row.name),
                         "foreign key has no referenced table",
@@ -1843,14 +1843,14 @@ fn map_constraints(
                 };
                 if !tables.contains_key(&(referenced_schema.clone(), referenced_table.clone())) {
                     return Err(refusal(
-                        PostgresIntrospectionErrorKind::UnsupportedConstraint,
+                        PostgresIntrospectionErrorType::UnsupportedConstraint,
                         Some(&row.schema),
                         Some(&row.name),
                         "foreign keys must reference an ordinary table in the configured schemas",
                     ));
                 }
                 let referenced_columns = names_for_attributes(
-                    PostgresIntrospectionErrorKind::UnsupportedConstraint,
+                    PostgresIntrospectionErrorType::UnsupportedConstraint,
                     referenced_schema,
                     referenced_table,
                     &row.name,
@@ -1858,7 +1858,7 @@ fn map_constraints(
                     attributes,
                 )?;
                 validate_authored_name(
-                    PostgresIntrospectionErrorKind::UnsupportedConstraint,
+                    PostgresIntrospectionErrorType::UnsupportedConstraint,
                     &row.schema,
                     &row.table,
                     &row.name,
@@ -1884,14 +1884,14 @@ fn map_constraints(
             "c" => {
                 let Some(expression) = &row.expression else {
                     return Err(refusal(
-                        PostgresIntrospectionErrorKind::UnsupportedConstraint,
+                        PostgresIntrospectionErrorType::UnsupportedConstraint,
                         Some(&row.schema),
                         Some(&row.name),
                         "check constraint has no server expression",
                     ));
                 };
                 validate_authored_name(
-                    PostgresIntrospectionErrorKind::UnsupportedConstraint,
+                    PostgresIntrospectionErrorType::UnsupportedConstraint,
                     &row.schema,
                     &row.table,
                     &row.name,
@@ -1904,7 +1904,7 @@ fn map_constraints(
             }
             unsupported => {
                 return Err(refusal(
-                    PostgresIntrospectionErrorKind::UnsupportedConstraint,
+                    PostgresIntrospectionErrorType::UnsupportedConstraint,
                     Some(&row.schema),
                     Some(&row.name),
                     format!("unsupported pg_constraint contype `{unsupported}`"),
@@ -1951,7 +1951,7 @@ fn map_indexes(
             || row.default_collations.contains(&false)
         {
             return Err(refusal(
-                PostgresIntrospectionErrorKind::UnsupportedIndex,
+                PostgresIntrospectionErrorType::UnsupportedIndex,
                 Some(&row.schema),
                 Some(&row.name),
                 "only valid non-unique btree indexes over distinct named columns with default operator classes, collations, and null ordering are supported",
@@ -1959,7 +1959,7 @@ fn map_indexes(
         }
 
         validate_authored_name(
-            PostgresIntrospectionErrorKind::UnsupportedIndex,
+            PostgresIntrospectionErrorType::UnsupportedIndex,
             &row.schema,
             &row.table,
             &row.name,
@@ -1968,7 +1968,7 @@ fn map_indexes(
             attributes,
         )?;
         let names = names_for_attributes(
-            PostgresIntrospectionErrorKind::UnsupportedIndex,
+            PostgresIntrospectionErrorType::UnsupportedIndex,
             &row.schema,
             &row.table,
             &row.name,
@@ -1982,7 +1982,7 @@ fn map_indexes(
                 3 => IndexDirection::Desc,
                 unsupported => {
                     return Err(refusal(
-                        PostgresIntrospectionErrorKind::UnsupportedIndex,
+                        PostgresIntrospectionErrorType::UnsupportedIndex,
                         Some(&row.schema),
                         Some(&row.name),
                         format!("unsupported btree ordering option `{unsupported}`"),
@@ -1993,7 +1993,7 @@ fn map_indexes(
         }
         let index = Index::new(row.name.clone(), columns).map_err(|error| {
             refusal(
-                PostgresIntrospectionErrorKind::UnsupportedIndex,
+                PostgresIntrospectionErrorType::UnsupportedIndex,
                 Some(&row.schema),
                 Some(&row.name),
                 error.to_string(),
@@ -2001,7 +2001,7 @@ fn map_indexes(
         })?;
         let Some(table) = tables.get_mut(&(row.schema.clone(), row.table.clone())) else {
             return Err(refusal(
-                PostgresIntrospectionErrorKind::UnsupportedIndex,
+                PostgresIntrospectionErrorType::UnsupportedIndex,
                 Some(&row.schema),
                 Some(&row.name),
                 "index belongs to a relation that is not an ordinary table",

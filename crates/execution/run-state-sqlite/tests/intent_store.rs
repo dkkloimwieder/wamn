@@ -9,7 +9,7 @@ use std::sync::atomic::{AtomicU32, Ordering};
 
 use wamn_run_state::IntentStore;
 use wamn_run_state::intent_cases::{self, CaseStores, IntentStoreFixture};
-use wamn_run_state::intent_store::{Begun, Intent, IntentId, StoreErrorKind};
+use wamn_run_state::intent_store::{Begun, Intent, IntentId, StoreErrorType};
 use wamn_run_state_sqlite::SqliteIntentStore;
 
 /// The child reads the database path from this variable.
@@ -151,7 +151,7 @@ async fn reopen_after_kill_finds_the_uncertain_intent() {
 
     let error = SqliteIntentStore::open(&path)
         .expect_err("the child holds the file, so a second open fails");
-    assert_eq!(error.kind(), StoreErrorKind::Storage);
+    assert_eq!(error.kind(), StoreErrorType::Storage);
 
     // `Child::kill` sends SIGKILL on Unix: no destructor and no close runs.
     child.kill().expect("kill the child");

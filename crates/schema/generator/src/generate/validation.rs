@@ -3,7 +3,7 @@
 use super::{
     AuthoredSql, AuthoredSqlDeclaration, BTreeMap, BTreeSet, CatalogIr, Column, ColumnType,
     Constraint, ConstraintType, CrudAction, CursorDirection, CustomOperationDeclaration,
-    DeleteMode, GenerateError, GenerateErrorKind, GenerationInput, ModelDeclaration,
+    DeleteMode, GenerateError, GenerateErrorType, GenerationInput, ModelDeclaration,
     OperationDeclaration, PackageManifest, QUERY_LIMIT, RecordHistoryColumn, ResultClass,
     SortDeclaration, Table, TombstoneColumn, column, contains_schema_qualified_reference,
     custom_operation_constraint_origin, logged_history_tables, relation, rust_identifier,
@@ -19,7 +19,7 @@ use wamn_record_history::HISTORY_COLUMNS;
 fn validate_client_package_name(package: &str, name: &str) -> Result<(), GenerateError> {
     let refuse = |reason: &str| {
         Err(GenerateError::new(
-            GenerateErrorKind::InvalidClientPackage,
+            GenerateErrorType::InvalidClientPackage,
             format!("{package} declares client package name {name:?}: {reason}"),
         ))
     };
@@ -66,7 +66,7 @@ fn validate_count_text(
     };
     if envelope.label.is_some() || envelope.description.is_some() {
         return Err(GenerateError::new(
-            GenerateErrorKind::InvalidOperation,
+            GenerateErrorType::InvalidOperation,
             format!(
                 "{operation_name} states screen text on its envelope bound, which has no screen. \
                  The line bound carries the repeated group's text."
@@ -88,14 +88,14 @@ pub(super) fn validate(
     for value in [input.provenance.generator, input.provenance.toolchain] {
         if value.is_empty() {
             return Err(GenerateError::new(
-                GenerateErrorKind::InvalidIdentity,
+                GenerateErrorType::InvalidIdentity,
                 "generation provenance values must not be empty",
             ));
         }
     }
     if manifest.models.is_empty() && !manifest.declares_no_sql() {
         return Err(GenerateError::new(
-            GenerateErrorKind::InvalidManifest,
+            GenerateErrorType::InvalidManifest,
             "manifest must declare at least one model",
         ));
     }
@@ -114,7 +114,7 @@ pub(super) fn validate(
             .any(|table| table.schema() == relation.schema && table.name() == relation.table)
         {
             return Err(GenerateError::for_object(
-                GenerateErrorKind::UnknownRelation,
+                GenerateErrorType::UnknownRelation,
                 format!(
                     "CDC-excluded relation {relation_name} references unknown {}.{}",
                     relation.schema, relation.table
@@ -153,7 +153,7 @@ fn validate_lists(
 ) -> Result<(), GenerateError> {
     let refuse = |message: String| {
         Err(GenerateError::new(
-            GenerateErrorKind::InvalidOperation,
+            GenerateErrorType::InvalidOperation,
             message,
         ))
     };
@@ -208,7 +208,7 @@ fn validate_model(
     validate_identifier(&model.owner, "owner")?;
     let table = relation(catalog, model).ok_or_else(|| {
         GenerateError::for_object(
-            GenerateErrorKind::UnknownRelation,
+            GenerateErrorType::UnknownRelation,
             format!(
                 "{model_name} references unknown {}.{}",
                 model.schema, model.table
@@ -222,7 +222,7 @@ fn validate_model(
         .find(|column| rust_identifier(column.name()).is_none())
     {
         return Err(GenerateError::for_object(
-            GenerateErrorKind::InvalidIdentity,
+            GenerateErrorType::InvalidIdentity,
             "model column has no lossless Rust 2024 identifier spelling",
             format!("{}.{}.{}", model.schema, model.table, column.name()),
         ));
@@ -238,7 +238,7 @@ fn validate_model(
     validate_definition_owner(model_name, "relation", &model.owner, &admitted_owners)?;
     if model.client_field_extensible && model.owner != manifest.package.id {
         return Err(GenerateError::new(
-            GenerateErrorKind::InvalidModel,
+            GenerateErrorType::InvalidModel,
             format!(
                 "{model_name} may declare client field extensibility only for its own relation"
             ),
@@ -259,7 +259,7 @@ fn validate_model(
                 .any(|candidate| candidate.name() == constraint)
         {
             return Err(GenerateError::for_object(
-                GenerateErrorKind::InvalidModel,
+                GenerateErrorType::InvalidModel,
                 format!("{model_name} owns unknown constraint {constraint}"),
                 format!("{}.{}.{}", model.schema, model.table, constraint),
             ));
@@ -271,7 +271,7 @@ fn validate_model(
         validate_field(table, model_name, field)?;
         if !seen.insert(field) {
             return Err(GenerateError::new(
-                GenerateErrorKind::InvalidModel,
+                GenerateErrorType::InvalidModel,
                 format!("{model_name} repeats server-owned field {field}"),
             ));
         }
@@ -282,14 +282,14 @@ fn validate_model(
         let column = validate_field(table, model_name, field)?;
         if column.column_type() != ColumnType::Text || values.is_empty() {
             return Err(GenerateError::new(
-                GenerateErrorKind::InvalidModel,
+                GenerateErrorType::InvalidModel,
                 format!("{model_name}.{field} enum must be nonempty text"),
             ));
         }
         let unique = values.iter().collect::<BTreeSet<_>>();
         if unique.len() != values.len() || values.iter().any(String::is_empty) {
             return Err(GenerateError::new(
-                GenerateErrorKind::InvalidModel,
+                GenerateErrorType::InvalidModel,
                 format!("{model_name}.{field} enum values must be unique and nonempty"),
             ));
         }
@@ -298,7 +298,7 @@ fn validate_model(
         let column = validate_field(table, model_name, field)?;
         if column.column_type() != ColumnType::Text || *minimum == 0 {
             return Err(GenerateError::new(
-                GenerateErrorKind::InvalidModel,
+                GenerateErrorType::InvalidModel,
                 format!("{model_name}.{field} minimum length must be at least 1 on a text column"),
             ));
         }
@@ -310,7 +310,7 @@ fn validate_model(
         });
         if !guarded {
             return Err(GenerateError::for_object(
-                GenerateErrorKind::InvalidModel,
+                GenerateErrorType::InvalidModel,
                 format!(
                     "{model_name}.{field} declares minimum length {minimum}; the table needs CHECK {expression}"
                 ),
@@ -328,7 +328,7 @@ fn validate_model(
         .collect::<BTreeSet<_>>();
     if revisions.len() > 1 {
         return Err(GenerateError::new(
-            GenerateErrorKind::InvalidModel,
+            GenerateErrorType::InvalidModel,
             format!("{model_name} operations name more than one revision field"),
         ));
     }
@@ -349,7 +349,7 @@ fn validate_definition_owner(
         Ok(())
     } else {
         Err(GenerateError::new(
-            GenerateErrorKind::InvalidModel,
+            GenerateErrorType::InvalidModel,
             format!("{model}.{definition} owner {owner} is not the package or a declared base"),
         ))
     }
@@ -371,13 +371,13 @@ fn validate_operation(
         let column = validate_field(table, model_name, field)?;
         if !writable.insert(field) {
             return Err(GenerateError::new(
-                GenerateErrorKind::InvalidOperation,
+                GenerateErrorType::InvalidOperation,
                 format!("{context} repeats writable field {field}"),
             ));
         }
         if server_owned.contains(&field.as_str()) || column.generation().is_some() {
             return Err(GenerateError::new(
-                GenerateErrorKind::InvalidOperation,
+                GenerateErrorType::InvalidOperation,
                 format!("{context} exposes server-owned field {field}"),
             ));
         }
@@ -393,7 +393,7 @@ fn validate_operation(
             || !declared.is_some_and(|declared| values.iter().all(|value| declared.contains(value)))
         {
             return Err(GenerateError::new(
-                GenerateErrorKind::InvalidOperation,
+                GenerateErrorType::InvalidOperation,
                 format!(
                     "{context} values for {field} must be a create's writable enum field, narrowed to distinct values the model declares"
                 ),
@@ -409,13 +409,13 @@ fn validate_operation(
             || column.nullable()
         {
             return Err(GenerateError::new(
-                GenerateErrorKind::InvalidOperation,
+                GenerateErrorType::InvalidOperation,
                 format!("{context} revision field must be a non-null int32 or int64"),
             ));
         }
         if writable.contains(revision_field) {
             return Err(GenerateError::new(
-                GenerateErrorKind::InvalidOperation,
+                GenerateErrorType::InvalidOperation,
                 format!("{context} revision field cannot be writable"),
             ));
         }
@@ -434,7 +434,7 @@ fn validate_operation(
             require_result(&context, operation.result, &[ResultClass::Page])?;
             if !operation.writable_fields.is_empty() {
                 return Err(GenerateError::new(
-                    GenerateErrorKind::InvalidOperation,
+                    GenerateErrorType::InvalidOperation,
                     format!("{context} query cannot declare mutation fields"),
                 ));
             }
@@ -452,7 +452,7 @@ fn validate_operation(
             require_result(&context, operation.result, &[ResultClass::One])?;
             if !operation.writable_fields.is_empty() {
                 return Err(GenerateError::new(
-                    GenerateErrorKind::InvalidOperation,
+                    GenerateErrorType::InvalidOperation,
                     format!("{context} delete cannot declare writable fields"),
                 ));
             }
@@ -471,7 +471,7 @@ fn require_result(
         Ok(())
     } else {
         Err(GenerateError::new(
-            GenerateErrorKind::InvalidOperation,
+            GenerateErrorType::InvalidOperation,
             format!("{context} has an incompatible result class"),
         ))
     }
@@ -492,7 +492,7 @@ fn require_read_shape(
         || operation.authored_sql.is_some()
     {
         return Err(GenerateError::new(
-            GenerateErrorKind::InvalidOperation,
+            GenerateErrorType::InvalidOperation,
             format!("{context} carries fields outside its operation shape"),
         ));
     }
@@ -517,7 +517,7 @@ fn require_mutation_shape(
             && operation.writable_fields.is_empty())
     {
         return Err(GenerateError::new(
-            GenerateErrorKind::InvalidOperation,
+            GenerateErrorType::InvalidOperation,
             format!("{context} carries fields outside its mutation shape"),
         ));
     }
@@ -525,7 +525,7 @@ fn require_mutation_shape(
 }
 
 fn require_column(
-    kind: GenerateErrorKind,
+    type_: GenerateErrorType,
     context: &str,
     table: &Table,
     name: &str,
@@ -537,7 +537,7 @@ fn require_column(
         Ok(())
     } else {
         Err(GenerateError::for_object(
-            kind,
+            type_,
             format!("{context} must carry non-null {name} {}", ty.as_str()),
             format!("{}.{}.{name}", table.schema(), table.name()),
         ))
@@ -569,7 +569,7 @@ fn validate_audit_log_columns(
             RecordHistoryColumn::CreatedBy | RecordHistoryColumn::UpdatedBy => ColumnType::Uuid,
         };
         require_column(
-            GenerateErrorKind::InvalidModel,
+            GenerateErrorType::InvalidModel,
             &context,
             table,
             selection.as_str(),
@@ -585,7 +585,7 @@ fn validate_audit_log_columns(
             && !base_column_under_overlay
         {
             return Err(GenerateError::for_object(
-                GenerateErrorKind::InvalidModel,
+                GenerateErrorType::InvalidModel,
                 format!("{context} must select reserved column {name}"),
                 format!("{}.{}.{name}", table.schema(), table.name()),
             ));
@@ -598,7 +598,7 @@ fn validate_audit_log_columns(
             .any(|constraint| matches!(constraint.kind(), ConstraintType::PrimaryKey { .. }))
     {
         return Err(GenerateError::for_object(
-            GenerateErrorKind::InvalidModel,
+            GenerateErrorType::InvalidModel,
             format!("{context} keeps a log, so its relation must have a primary key"),
             format!("{}.{}", table.schema(), table.name()),
         ));
@@ -632,7 +632,7 @@ fn validate_tombstone_columns(
                 .is_some_and(|column| column.column_type() == ty && column.nullable());
             if !valid {
                 return Err(GenerateError::for_object(
-                    GenerateErrorKind::InvalidModel,
+                    GenerateErrorType::InvalidModel,
                     format!("{context} must carry nullable {name} {}", ty.as_str()),
                     format!("{}.{}.{name}", table.schema(), table.name()),
                 ));
@@ -646,7 +646,7 @@ fn validate_tombstone_columns(
             model.owner != manifest.package.id && model.field_owner(name) != manifest.package.id;
         if column(table, name).is_some() && !base_column_under_overlay {
             return Err(GenerateError::for_object(
-                GenerateErrorKind::InvalidModel,
+                GenerateErrorType::InvalidModel,
                 format!("{model_name} carries reserved column {name} without a tombstone delete"),
                 format!("{}.{}.{name}", table.schema(), table.name()),
             ));
@@ -699,7 +699,7 @@ fn validate_query(
             || filter.default.is_some_and(|default| default.last_days == 0)
         {
             return Err(GenerateError::new(
-                GenerateErrorKind::InvalidOperation,
+                GenerateErrorType::InvalidOperation,
                 format!(
                     "{context} filter {} is required or has a default, which only a range on a timestamptz field that is required takes, with a default of at least one day",
                     filter.field
@@ -708,7 +708,7 @@ fn validate_query(
         }
         if let Some((false, which)) = takes {
             return Err(GenerateError::new(
-                GenerateErrorKind::InvalidOperation,
+                GenerateErrorType::InvalidOperation,
                 format!(
                     "{context} filter {} matches by {}, which {which} it",
                     filter.field,
@@ -718,7 +718,7 @@ fn validate_query(
         }
         if !filter_fields.insert(filter.field.as_str()) {
             return Err(GenerateError::new(
-                GenerateErrorKind::InvalidOperation,
+                GenerateErrorType::InvalidOperation,
                 format!("{context} repeats filter field {}", filter.field),
             ));
         }
@@ -727,7 +727,7 @@ fn validate_query(
         let mut fields = BTreeSet::new();
         if search.fields.is_empty() {
             return Err(GenerateError::new(
-                GenerateErrorKind::InvalidOperation,
+                GenerateErrorType::InvalidOperation,
                 format!("{context} search names no field"),
             ));
         }
@@ -740,7 +740,7 @@ fn validate_query(
                 .any(|column| column.name() == field && column.column_type() == ColumnType::Text);
             if !text || !fields.insert(field.as_str()) {
                 return Err(GenerateError::new(
-                    GenerateErrorKind::InvalidOperation,
+                    GenerateErrorType::InvalidOperation,
                     format!("{context} search field {field} must be a text field named once"),
                 ));
             }
@@ -753,7 +753,7 @@ fn validate_query(
             || sort.directions.iter().collect::<BTreeSet<_>>().len() != sort.directions.len()
         {
             return Err(GenerateError::new(
-                GenerateErrorKind::InvalidOperation,
+                GenerateErrorType::InvalidOperation,
                 format!("{context} sort must be a nonempty finite product"),
             ));
         }
@@ -763,19 +763,19 @@ fn validate_query(
     }
     let limit = operation.limit.as_ref().ok_or_else(|| {
         GenerateError::new(
-            GenerateErrorKind::InvalidOperation,
+            GenerateErrorType::InvalidOperation,
             format!("{context} requires an explicit limit contract"),
         )
     })?;
     if limit.default != QUERY_LIMIT || limit.minimum != 1 || limit.maximum != QUERY_LIMIT {
         return Err(GenerateError::new(
-            GenerateErrorKind::InvalidOperation,
+            GenerateErrorType::InvalidOperation,
             format!("{context} limit must default to 100 and accept exactly 1..=100"),
         ));
     }
     let pagination = operation.pagination.as_ref().ok_or_else(|| {
         GenerateError::new(
-            GenerateErrorKind::InvalidOperation,
+            GenerateErrorType::InvalidOperation,
             format!("{context} requires keyset pagination"),
         )
     })?;
@@ -788,7 +788,7 @@ fn validate_query(
         })
     {
         return Err(GenerateError::new(
-            GenerateErrorKind::InvalidOperation,
+            GenerateErrorType::InvalidOperation,
             format!("{context} requires opaque v1 cursor, created_at ASC, id tie-breaker"),
         ));
     }
@@ -800,14 +800,14 @@ fn validate_query(
         || id.nullable()
     {
         return Err(GenerateError::new(
-            GenerateErrorKind::InvalidOperation,
+            GenerateErrorType::InvalidOperation,
             format!("{context} keyset fields must be non-null timestamptz and uuid"),
         ));
     }
     if let Some(authored) = &operation.authored_sql {
         let sort = operation.sort.as_ref().ok_or_else(|| {
             GenerateError::new(
-                GenerateErrorKind::InvalidOperation,
+                GenerateErrorType::InvalidOperation,
                 format!("{context} authored variants require an explicit sort declaration"),
             )
         })?;
@@ -845,7 +845,7 @@ fn validate_custom_operation_sql(
             }
             None => {
                 return Err(GenerateError::for_object(
-                    GenerateErrorKind::UnknownRelation,
+                    GenerateErrorType::UnknownRelation,
                     format!("{operation} references an unknown relation"),
                     format!("{}.{}", relation.schema, relation.table),
                 ));
@@ -861,7 +861,7 @@ fn validate_custom_operation_sql(
         for name in &relation.constraints {
             if !constraints.contains(name.as_str()) {
                 return Err(GenerateError::for_object(
-                    GenerateErrorKind::InvalidOperation,
+                    GenerateErrorType::InvalidOperation,
                     format!("{operation} requires named constraint {name}"),
                     format!("{}.{}", relation.schema, relation.table),
                 ));
@@ -883,7 +883,7 @@ fn validate_static_sql_relation_fields(
         .find(|field| !columns.contains(field.as_str()))
     {
         return Err(GenerateError::for_object(
-            GenerateErrorKind::UnknownColumn,
+            GenerateErrorType::UnknownColumn,
             format!("{operation} privilege declaration names an unknown column"),
             format!("{}.{}.{}", relation.schema, relation.table, field),
         ));
@@ -899,7 +899,7 @@ fn validate_constraint_error_mappings(
     for name in declaration.constraint_errors.keys() {
         custom_operation_constraint_origin(catalog, declaration, name).ok_or_else(|| {
             GenerateError::for_object(
-                GenerateErrorKind::InvalidOperation,
+                GenerateErrorType::InvalidOperation,
                 format!("{operation} maps undeclared constraint {name}"),
                 name.clone(),
             )
@@ -934,7 +934,7 @@ fn validate_delete_target(
         None => "is not a declared model",
     };
     Err(GenerateError::for_path(
-        GenerateErrorKind::InvalidOperation,
+        GenerateErrorType::InvalidOperation,
         format!("{operation} SQL deletes from {target}, which {refusal}"),
         path,
     ))
@@ -989,7 +989,7 @@ fn validate_static_sql_relation_access(
         let statement_access = crate::sql_lex::relation_access(source.bytes, &relation_fields)
             .map_err(|detail| {
                 GenerateError::for_path(
-                    GenerateErrorKind::InvalidOperation,
+                    GenerateErrorType::InvalidOperation,
                     format!(
                         "{} cannot derive exact relation access: {detail}",
                         statement.path
@@ -999,7 +999,7 @@ fn validate_static_sql_relation_access(
             })?;
         let deleted = crate::sql_lex::delete_targets(source.bytes).map_err(|detail| {
             GenerateError::for_path(
-                GenerateErrorKind::InvalidOperation,
+                GenerateErrorType::InvalidOperation,
                 format!("{}: {detail}", statement.path),
                 statement.path.as_str(),
             )
@@ -1027,7 +1027,7 @@ fn validate_static_sql_relation_access(
         };
         if observed != declared {
             return Err(GenerateError::for_object(
-                GenerateErrorKind::InvalidOperation,
+                GenerateErrorType::InvalidOperation,
                 format!(
                     "{operation} {}.{} privilege declaration does not match verified SQL reads, writes, and row locks.\n\
                      Verified SQL: {}\n\
@@ -1056,7 +1056,7 @@ fn validate_static_sql_relation_access(
     }
     if let Some(table) = actual.keys().next() {
         return Err(GenerateError::for_object(
-            GenerateErrorKind::InvalidOperation,
+            GenerateErrorType::InvalidOperation,
             format!("{operation} SQL reaches undeclared relation {table}"),
             table.clone(),
         ));
@@ -1078,7 +1078,7 @@ fn validate_sort_field(
         )
     {
         Err(GenerateError::new(
-            GenerateErrorKind::InvalidOperation,
+            GenerateErrorType::InvalidOperation,
             format!("{context} cannot keyset-sort nullable or unsupported field {field}"),
         ))
     } else {
@@ -1094,7 +1094,7 @@ fn validate_authored_variants(
     let variant_count = sort.fields.len() * sort.directions.len();
     if !safe_sql_path(&authored.default) || authored.variants.len() != variant_count {
         return Err(GenerateError::new(
-            GenerateErrorKind::InvalidOperation,
+            GenerateErrorType::InvalidOperation,
             format!(
                 "{context} authored SQL must provide {variant_count} safe package-relative variants"
             ),
@@ -1113,7 +1113,7 @@ fn validate_authored_variants(
             || !paths.insert(variant.path.as_str())
         {
             return Err(GenerateError::new(
-                GenerateErrorKind::InvalidOperation,
+                GenerateErrorType::InvalidOperation,
                 format!("{context} authored variants must follow declared field/direction order"),
             ));
         }
@@ -1123,7 +1123,7 @@ fn validate_authored_variants(
     });
     if default_variant.map(|variant| variant.path.as_str()) != Some(authored.default.as_str()) {
         return Err(GenerateError::new(
-            GenerateErrorKind::InvalidOperation,
+            GenerateErrorType::InvalidOperation,
             format!("{context} default SQL must be the created_at ascending variant"),
         ));
     }
@@ -1133,7 +1133,7 @@ fn validate_authored_variants(
 fn validate_connections(manifest: &PackageManifest) -> Result<(), GenerateError> {
     if manifest.connections.is_empty() && !manifest.declares_no_sql() {
         return Err(GenerateError::new(
-            GenerateErrorKind::InvalidConnection,
+            GenerateErrorType::InvalidConnection,
             "manifest declares no database connection",
         ));
     }
@@ -1152,7 +1152,7 @@ fn validate_authored_sources(
     for source in authored_sql {
         if !safe_sql_path(source.path) || !supplied.insert(source.path) {
             return Err(GenerateError::for_path(
-                GenerateErrorKind::DuplicatePath,
+                GenerateErrorType::DuplicatePath,
                 "authored SQL path is unsafe or repeated",
                 source.path,
             ));
@@ -1160,14 +1160,14 @@ fn validate_authored_sources(
     }
     if let Some(path) = expected.difference(&supplied).next() {
         return Err(GenerateError::for_path(
-            GenerateErrorKind::MissingAuthoredSql,
+            GenerateErrorType::MissingAuthoredSql,
             "manifest-authored SQL path was not supplied",
             *path,
         ));
     }
     if let Some(path) = supplied.difference(&expected).next() {
         return Err(GenerateError::for_path(
-            GenerateErrorKind::UnexpectedAuthoredSql,
+            GenerateErrorType::UnexpectedAuthoredSql,
             "supplied SQL path is not referenced by the manifest",
             *path,
         ));
@@ -1187,7 +1187,7 @@ fn validate_authored_sources(
         for schema in &schemas {
             if contains_schema_qualified_reference(source.bytes, schema) {
                 return Err(GenerateError::for_path(
-                    GenerateErrorKind::SchemaQualifiedSql,
+                    GenerateErrorType::SchemaQualifiedSql,
                     format!(
                         "{} selects schema `{schema}`; the corpus must inherit the host search path",
                         source.path
@@ -1244,7 +1244,7 @@ fn validate_authored_query_filters(
                         ),
                     };
                     return Err(GenerateError::for_path(
-                        GenerateErrorKind::InvalidOperation,
+                        GenerateErrorType::InvalidOperation,
                         refusal,
                         path,
                     ));
@@ -1288,7 +1288,7 @@ pub(super) fn authored_sql_map(
             .is_some()
         {
             return Err(GenerateError::for_path(
-                GenerateErrorKind::DuplicatePath,
+                GenerateErrorType::DuplicatePath,
                 "authored SQL path is repeated",
                 source.path,
             ));
@@ -1304,7 +1304,7 @@ fn validate_field<'a>(
 ) -> Result<&'a Column, GenerateError> {
     column(table, field).ok_or_else(|| {
         GenerateError::for_object(
-            GenerateErrorKind::UnknownColumn,
+            GenerateErrorType::UnknownColumn,
             format!("{model_name} references unknown field {field}"),
             field,
         )

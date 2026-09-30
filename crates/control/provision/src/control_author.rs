@@ -74,7 +74,7 @@ pub fn control_author_generation_role(
 
 /// Which predicate refused a control authoring connection input.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ControlAuthoringUrlErrorKind {
+pub enum ControlAuthoringUrlErrorType {
     /// No connection input was supplied at all.
     Absent,
     /// The input is not a parseable URL, or names no host.
@@ -89,7 +89,7 @@ pub enum ControlAuthoringUrlErrorKind {
     Extra,
 }
 
-impl ControlAuthoringUrlErrorKind {
+impl ControlAuthoringUrlErrorType {
     /// Stable label for logs and tests.
     pub const fn as_str(self) -> &'static str {
         match self {
@@ -109,14 +109,14 @@ impl ControlAuthoringUrlErrorKind {
 /// input holds a password, so neither `Debug` nor `Display` may echo it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ControlAuthoringUrlError {
-    kind: ControlAuthoringUrlErrorKind,
+    type_: ControlAuthoringUrlErrorType,
     reason: &'static str,
 }
 
 impl ControlAuthoringUrlError {
     /// Which predicate refused the input.
-    pub const fn kind(&self) -> ControlAuthoringUrlErrorKind {
-        self.kind
+    pub const fn kind(&self) -> ControlAuthoringUrlErrorType {
+        self.type_
     }
 
     /// The fixed reason this predicate refuses for.
@@ -130,7 +130,7 @@ impl fmt::Display for ControlAuthoringUrlError {
         write!(
             formatter,
             "WAMN_CONTROL_AUTHORING_PG_URL is out of scope ({}): {}",
-            self.kind.as_str(),
+            self.type_.as_str(),
             self.reason
         )
     }
@@ -138,8 +138,11 @@ impl fmt::Display for ControlAuthoringUrlError {
 
 impl std::error::Error for ControlAuthoringUrlError {}
 
-fn refuse(kind: ControlAuthoringUrlErrorKind, reason: &'static str) -> ControlAuthoringUrlError {
-    ControlAuthoringUrlError { kind, reason }
+fn refuse(kind: ControlAuthoringUrlErrorType, reason: &'static str) -> ControlAuthoringUrlError {
+    ControlAuthoringUrlError {
+        type_: kind,
+        reason,
+    }
 }
 
 /// The scoped control-database author connection one management process holds.
@@ -198,19 +201,19 @@ pub fn parse_control_authoring_url(
 ) -> Result<ControlAuthoringConnection, ControlAuthoringUrlError> {
     if url.is_empty() {
         return Err(refuse(
-            ControlAuthoringUrlErrorKind::Absent,
+            ControlAuthoringUrlErrorType::Absent,
             "the control authoring connection input is required and has no fallback",
         ));
     }
     let parsed = Url::parse(url).map_err(|_| {
         refuse(
-            ControlAuthoringUrlErrorKind::Malformed,
+            ControlAuthoringUrlErrorType::Malformed,
             "the control authoring connection input is not a URL",
         )
     })?;
     if !matches!(parsed.scheme(), "postgres" | "postgresql") {
         return Err(refuse(
-            ControlAuthoringUrlErrorKind::Scheme,
+            ControlAuthoringUrlErrorType::Scheme,
             "the control authoring connection input must be a postgres URL",
         ));
     }
@@ -218,20 +221,20 @@ pub fn parse_control_authoring_url(
     // (`postgres:///db`) and reports `Some("")` rather than `None`.
     if parsed.host_str().is_none_or(str::is_empty) {
         return Err(refuse(
-            ControlAuthoringUrlErrorKind::Malformed,
+            ControlAuthoringUrlErrorType::Malformed,
             "the control authoring connection input names no host",
         ));
     }
     if parsed.query().is_some() || parsed.fragment().is_some() {
         return Err(refuse(
-            ControlAuthoringUrlErrorKind::Extra,
+            ControlAuthoringUrlErrorType::Extra,
             "the control authoring connection input must carry no query or fragment",
         ));
     }
     let database = parsed.path().strip_prefix('/').unwrap_or(parsed.path());
     if database.is_empty() || database.contains('/') {
         return Err(refuse(
-            ControlAuthoringUrlErrorKind::Database,
+            ControlAuthoringUrlErrorType::Database,
             "the control authoring connection input must name exactly one database",
         ));
     }
@@ -247,7 +250,7 @@ pub fn parse_control_authoring_url(
         .find(|(_, role)| role.as_str() == presented)
     else {
         return Err(refuse(
-            ControlAuthoringUrlErrorKind::Role,
+            ControlAuthoringUrlErrorType::Role,
             "the control authoring connection input does not authenticate as this \
              org/project/environment's control-author generation",
         ));
@@ -347,15 +350,15 @@ mod tests {
     fn every_out_of_scope_connection_input_fails_closed_by_predicate() {
         let admitted = role(CredentialGeneration::A);
         for (input, expected) in [
-            ("", ControlAuthoringUrlErrorKind::Absent),
-            ("not a url", ControlAuthoringUrlErrorKind::Malformed),
+            ("", ControlAuthoringUrlErrorType::Absent),
+            ("not a url", ControlAuthoringUrlErrorType::Malformed),
             (
                 "postgres:///only-a-path",
-                ControlAuthoringUrlErrorKind::Malformed,
+                ControlAuthoringUrlErrorType::Malformed,
             ),
             (
                 "mysql://wamn_control_author_x_a:secret@control.invalid/wamn-system",
-                ControlAuthoringUrlErrorKind::Scheme,
+                ControlAuthoringUrlErrorType::Scheme,
             ),
         ] {
             let error = parse_control_authoring_url(input, ORG, PROJECT, ENVIRONMENT)
@@ -370,7 +373,7 @@ mod tests {
                     .expect_err("a non-database path must refuse");
             assert_eq!(
                 error.kind(),
-                ControlAuthoringUrlErrorKind::Database,
+                ControlAuthoringUrlErrorType::Database,
                 "{path:?}"
             );
         }
@@ -386,7 +389,7 @@ mod tests {
             .expect_err("a decorated connection input must refuse");
             assert_eq!(
                 error.kind(),
-                ControlAuthoringUrlErrorKind::Extra,
+                ControlAuthoringUrlErrorType::Extra,
                 "{suffix:?}"
             );
         }
@@ -404,7 +407,7 @@ mod tests {
             let error =
                 parse_control_authoring_url(&url(user, DATABASE), ORG, PROJECT, ENVIRONMENT)
                     .expect_err("an out-of-scope identity must refuse");
-            assert_eq!(error.kind(), ControlAuthoringUrlErrorKind::Role, "{user}");
+            assert_eq!(error.kind(), ControlAuthoringUrlErrorType::Role, "{user}");
         }
 
         // The project database with this scope's control role: the database name
@@ -416,7 +419,7 @@ mod tests {
             ENVIRONMENT,
         )
         .expect_err("a project-database URL must refuse");
-        assert_eq!(error.kind(), ControlAuthoringUrlErrorKind::Role);
+        assert_eq!(error.kind(), ControlAuthoringUrlErrorType::Role);
     }
 
     #[test]

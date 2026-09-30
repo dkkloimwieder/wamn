@@ -35,7 +35,7 @@ const RESET_PREFIX: &str = "wamn_reset_";
 
 /// Failure classes inside the password owner, not HTTP or WIT outcomes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum PasswordErrorKind {
+pub enum PasswordErrorType {
     /// Enrollment input violates password policy.
     Policy,
     /// The credential or principal cannot perform this operation.
@@ -78,7 +78,7 @@ impl fmt::Display for RefusalCause {
 
 /// Password failure with fixed context and an optional internal source.
 pub struct PasswordError {
-    kind: PasswordErrorKind,
+    type_: PasswordErrorType,
     operation: &'static str,
     cause: Option<RefusalCause>,
     reason: Option<&'static str>,
@@ -86,8 +86,8 @@ pub struct PasswordError {
 }
 impl PasswordError {
     /// Return the internal failure class.
-    pub fn kind(&self) -> PasswordErrorKind {
-        self.kind
+    pub fn kind(&self) -> PasswordErrorType {
+        self.type_
     }
     /// Return the cause of a policy or refused failure.
     pub fn cause(&self) -> Option<RefusalCause> {
@@ -107,7 +107,7 @@ impl fmt::Display for PasswordError {
 impl fmt::Debug for PasswordError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("PasswordError")
-            .field("kind", &self.kind)
+            .field("kind", &self.type_)
             .field("operation", &self.operation)
             .field("cause", &self.cause)
             .field("reason", &self.reason)
@@ -121,9 +121,9 @@ impl Error for PasswordError {
             .map(|source| source as &(dyn Error + 'static))
     }
 }
-fn failure(kind: PasswordErrorKind, operation: &'static str) -> PasswordError {
+fn failure(kind: PasswordErrorType, operation: &'static str) -> PasswordError {
     PasswordError {
-        kind,
+        type_: kind,
         operation,
         cause: None,
         reason: None,
@@ -139,12 +139,12 @@ fn refused_because(
     reason: Option<&'static str>,
 ) -> PasswordError {
     let kind = if cause == RefusalCause::PasswordRule {
-        PasswordErrorKind::Policy
+        PasswordErrorType::Policy
     } else {
-        PasswordErrorKind::Refused
+        PasswordErrorType::Refused
     };
     PasswordError {
-        kind,
+        type_: kind,
         operation,
         cause: Some(cause),
         reason,
@@ -156,7 +156,7 @@ fn infrastructure(
     source: impl Error + Send + Sync + 'static,
 ) -> PasswordError {
     PasswordError {
-        kind: PasswordErrorKind::Infrastructure,
+        type_: PasswordErrorType::Infrastructure,
         operation,
         cause: None,
         reason: None,
@@ -222,7 +222,7 @@ impl PasswordWork {
             .permits
             .clone()
             .try_acquire_owned()
-            .map_err(|_| failure(PasswordErrorKind::Busy, "password workers busy"))?;
+            .map_err(|_| failure(PasswordErrorType::Busy, "password workers busy"))?;
         tokio::task::spawn_blocking(move || {
             // Cancellation of the async caller must not free this budget while
             // the blocking worker still runs.
@@ -237,7 +237,7 @@ impl PasswordWork {
             let mut salt = [0u8; 16];
             SystemRandom::new().fill(&mut salt).map_err(|_| {
                 failure(
-                    PasswordErrorKind::Infrastructure,
+                    PasswordErrorType::Infrastructure,
                     "password salt generation failed",
                 )
             })?;
@@ -262,7 +262,7 @@ impl PasswordWork {
                 || hash.hash.is_none()
             {
                 return Err(failure(
-                    PasswordErrorKind::Infrastructure,
+                    PasswordErrorType::Infrastructure,
                     "stored password profile refused",
                 ));
             }
@@ -388,7 +388,7 @@ async fn issue_token(
     let mut bytes = [0u8; 32];
     SystemRandom::new().fill(&mut bytes).map_err(|_| {
         failure(
-            PasswordErrorKind::Infrastructure,
+            PasswordErrorType::Infrastructure,
             "email credential entropy failed",
         )
     })?;
@@ -616,7 +616,7 @@ mod tests {
                 .await
                 .unwrap_err()
                 .kind(),
-            PasswordErrorKind::Infrastructure
+            PasswordErrorType::Infrastructure
         );
         let wrong_version = hash.replace("v=19", "v=16");
         assert!(
@@ -653,7 +653,7 @@ mod tests {
         }
         assert_eq!(
             work.run(|| Ok(())).await.unwrap_err().kind(),
-            PasswordErrorKind::Busy
+            PasswordErrorType::Busy
         );
         for release in releases {
             release.send(()).unwrap();

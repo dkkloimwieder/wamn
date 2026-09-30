@@ -84,7 +84,7 @@ pub use claims::{
 };
 pub use credential_exactness::{
     AclExpectation, AclTarget, AmbientCredentialState, CredentialConnectionKind,
-    CredentialExactnessProbe, CredentialProbeError, CredentialProbeErrorKind,
+    CredentialExactnessProbe, CredentialProbeError, CredentialProbeErrorType,
     CredentialProbePredicate, ExpectedCredentialIdentity, ExplicitCredentialSource,
     MembershipExpectation, MembershipMode, credential_exactness_probe, explicit_credential_source,
 };
@@ -95,7 +95,7 @@ pub use pool::{
     ResolvedCredential, StaticCredentialProvider, WamnPostgresConfig,
 };
 pub use production_claim::{
-    ProductionCallerOutcome, ProductionCandidate, ProductionClaimError, ProductionClaimErrorKind,
+    ProductionCallerOutcome, ProductionCandidate, ProductionClaimError, ProductionClaimErrorType,
     ProductionClaimResult, ProductionCompletion, ProductionCompletionResult,
     ProductionLeaseRenewal, ProductionReapResult,
 };

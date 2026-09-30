@@ -23,7 +23,7 @@ use tokio::io::unix::AsyncFd;
 use tokio::process::Command;
 use wamn_schema_generator::PackageManifest;
 
-pub use crate::git_source::{GitSourceError, GitSourceErrorKind, GitSourceSnapshot};
+pub use crate::git_source::{GitSourceError, GitSourceErrorType, GitSourceSnapshot};
 
 use super::{DevInvalidation, DevInvalidationSource, DevStage};
 
@@ -84,11 +84,11 @@ pub(super) async fn git_ignored(
         .kill_on_drop(true)
         .spawn()
         .map_err(|source| {
-            GitSourceError::io(GitSourceErrorKind::Inspect, OPERATION, repository, source)
+            GitSourceError::io(GitSourceErrorType::Inspect, OPERATION, repository, source)
         })?;
     let mut stdin = child.stdin.take().ok_or_else(|| {
         GitSourceError::output(
-            GitSourceErrorKind::Inspect,
+            GitSourceErrorType::Inspect,
             OPERATION,
             repository,
             "Git did not accept a path list on standard input",
@@ -104,10 +104,10 @@ pub(super) async fn git_ignored(
         child.wait_with_output()
     );
     written.map_err(|source| {
-        GitSourceError::io(GitSourceErrorKind::Inspect, OPERATION, repository, source)
+        GitSourceError::io(GitSourceErrorType::Inspect, OPERATION, repository, source)
     })?;
     let output = output.map_err(|source| {
-        GitSourceError::io(GitSourceErrorKind::Inspect, OPERATION, repository, source)
+        GitSourceError::io(GitSourceErrorType::Inspect, OPERATION, repository, source)
     })?;
     match output.status.code() {
         // Git echoes each ignored path back exactly as it was given, so the
@@ -120,7 +120,7 @@ pub(super) async fn git_ignored(
             .collect()),
         Some(1) => Ok(BTreeSet::new()),
         _ => Err(GitSourceError::command(
-            GitSourceErrorKind::Inspect,
+            GitSourceErrorType::Inspect,
             OPERATION,
             repository,
             &output,
@@ -130,7 +130,7 @@ pub(super) async fn git_ignored(
 
 /// Stable category of a filesystem invalidation failure.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum FilesystemInvalidationErrorKind {
+pub enum FilesystemInvalidationErrorType {
     PackageRoot,
     ComponentRoot,
     Watch,
@@ -141,7 +141,7 @@ pub enum FilesystemInvalidationErrorKind {
 /// Failure to configure or read the production filesystem invalidation source.
 #[derive(Debug)]
 pub struct FilesystemInvalidationError {
-    kind: FilesystemInvalidationErrorKind,
+    type_: FilesystemInvalidationErrorType,
     path: PathBuf,
     detail: Box<str>,
     source: Option<Box<dyn Error + Send + Sync>>,
@@ -149,12 +149,12 @@ pub struct FilesystemInvalidationError {
 
 impl FilesystemInvalidationError {
     fn new(
-        kind: FilesystemInvalidationErrorKind,
+        type_: FilesystemInvalidationErrorType,
         path: impl Into<PathBuf>,
         detail: impl Into<Box<str>>,
     ) -> Self {
         Self {
-            kind,
+            type_,
             path: path.into(),
             detail: detail.into(),
             source: None,
@@ -162,13 +162,13 @@ impl FilesystemInvalidationError {
     }
 
     fn with_source(
-        kind: FilesystemInvalidationErrorKind,
+        type_: FilesystemInvalidationErrorType,
         path: impl Into<PathBuf>,
         detail: impl Into<Box<str>>,
         source: impl Error + Send + Sync + 'static,
     ) -> Self {
         Self {
-            kind,
+            type_,
             path: path.into(),
             detail: detail.into(),
             source: Some(Box::new(source)),
@@ -176,8 +176,8 @@ impl FilesystemInvalidationError {
     }
 
     /// Stable error category.
-    pub const fn kind(&self) -> FilesystemInvalidationErrorKind {
-        self.kind
+    pub const fn kind(&self) -> FilesystemInvalidationErrorType {
+        self.type_
     }
 }
 
@@ -210,7 +210,7 @@ impl PackageRoot {
     fn read(root: &Path) -> Result<Self, FilesystemInvalidationError> {
         let root = root.canonicalize().map_err(|source| {
             FilesystemInvalidationError::with_source(
-                FilesystemInvalidationErrorKind::PackageRoot,
+                FilesystemInvalidationErrorType::PackageRoot,
                 root,
                 "cannot resolve package root",
                 source,
@@ -219,7 +219,7 @@ impl PackageRoot {
         let manifest_path = root.join("wamn.json");
         let manifest_bytes = fs::read(&manifest_path).map_err(|source| {
             FilesystemInvalidationError::with_source(
-                FilesystemInvalidationErrorKind::PackageRoot,
+                FilesystemInvalidationErrorType::PackageRoot,
                 &manifest_path,
                 "cannot read package manifest",
                 source,
@@ -227,7 +227,7 @@ impl PackageRoot {
         })?;
         let manifest = PackageManifest::from_slice(&manifest_bytes).map_err(|source| {
             FilesystemInvalidationError::with_source(
-                FilesystemInvalidationErrorKind::PackageRoot,
+                FilesystemInvalidationErrorType::PackageRoot,
                 &manifest_path,
                 "cannot parse package manifest",
                 source,
@@ -413,7 +413,7 @@ fn native_output_files(
     while let Some(path) = pending.pop() {
         let read_error = |source| {
             FilesystemInvalidationError::with_source(
-                FilesystemInvalidationErrorKind::Read,
+                FilesystemInvalidationErrorType::Read,
                 &path,
                 "cannot snapshot generated native input",
                 source,
@@ -442,7 +442,7 @@ fn native_output_files(
             files.insert(path, bytes);
         } else {
             return Err(FilesystemInvalidationError::new(
-                FilesystemInvalidationErrorKind::Read,
+                FilesystemInvalidationErrorType::Read,
                 &path,
                 "generated native input must be a regular file or directory",
             ));
@@ -475,7 +475,7 @@ impl WatchRoots {
         for package in &packages {
             if !package.root.starts_with(git.repository_root()) {
                 return Err(FilesystemInvalidationError::new(
-                    FilesystemInvalidationErrorKind::PackageRoot,
+                    FilesystemInvalidationErrorType::PackageRoot,
                     &package.root,
                     "package root is outside the originating Git worktree",
                 ));
@@ -486,7 +486,7 @@ impl WatchRoots {
             .map(|root| {
                 root.canonicalize().map_err(|source| {
                     FilesystemInvalidationError::with_source(
-                        FilesystemInvalidationErrorKind::ComponentRoot,
+                        FilesystemInvalidationErrorType::ComponentRoot,
                         &root,
                         "cannot resolve component build root",
                         source,
@@ -497,7 +497,7 @@ impl WatchRoots {
         for root in &component_build_roots {
             if !root.starts_with(git.repository_root()) {
                 return Err(FilesystemInvalidationError::new(
-                    FilesystemInvalidationErrorKind::ComponentRoot,
+                    FilesystemInvalidationErrorType::ComponentRoot,
                     root,
                     "component build root is outside the originating Git worktree",
                 ));
@@ -525,7 +525,7 @@ impl WatchRoots {
             .map(|path| {
                 let directory = path.canonicalize().map_err(|source| {
                     FilesystemInvalidationError::with_source(
-                        FilesystemInvalidationErrorKind::ComponentRoot,
+                        FilesystemInvalidationErrorType::ComponentRoot,
                         &path,
                         "cannot resolve native build root",
                         source,
@@ -533,7 +533,7 @@ impl WatchRoots {
                 })?;
                 if !directory.starts_with(repository) || !directory.is_dir() {
                     return Err(FilesystemInvalidationError::new(
-                        FilesystemInvalidationErrorKind::ComponentRoot,
+                        FilesystemInvalidationErrorType::ComponentRoot,
                         &path,
                         "native build root is not a directory inside the originating Git worktree",
                     ));
@@ -547,7 +547,7 @@ impl WatchRoots {
                 || path.is_dir()
             {
                 return Err(FilesystemInvalidationError::new(
-                    FilesystemInvalidationErrorKind::ComponentRoot,
+                    FilesystemInvalidationErrorType::ComponentRoot,
                     &path,
                     "native build file is not an exact file inside the originating Git worktree",
                 ));
@@ -556,7 +556,7 @@ impl WatchRoots {
                 .expect("the originating repository exists");
             let resolved = existing.canonicalize().map_err(|source| {
                 FilesystemInvalidationError::with_source(
-                    FilesystemInvalidationErrorKind::ComponentRoot,
+                    FilesystemInvalidationErrorType::ComponentRoot,
                     &path,
                     "cannot resolve native build file parent",
                     source,
@@ -564,7 +564,7 @@ impl WatchRoots {
             })?;
             if !resolved.starts_with(repository) {
                 return Err(FilesystemInvalidationError::new(
-                    FilesystemInvalidationErrorKind::ComponentRoot,
+                    FilesystemInvalidationErrorType::ComponentRoot,
                     &path,
                     "native build file resolves outside the originating Git worktree",
                 ));
@@ -741,7 +741,7 @@ impl FilesystemInvalidationSource {
         let descriptor =
             inotify::init(CreateFlags::CLOEXEC | CreateFlags::NONBLOCK).map_err(|source| {
                 FilesystemInvalidationError::with_source(
-                    FilesystemInvalidationErrorKind::Watch,
+                    FilesystemInvalidationErrorType::Watch,
                     git.repository_root(),
                     "cannot initialize filesystem notification",
                     errno_to_io(source),
@@ -749,7 +749,7 @@ impl FilesystemInvalidationSource {
             })?;
         let inotify = AsyncFd::new(descriptor).map_err(|source| {
             FilesystemInvalidationError::with_source(
-                FilesystemInvalidationErrorKind::Watch,
+                FilesystemInvalidationErrorType::Watch,
                 git.repository_root(),
                 "cannot register filesystem notification with the async runtime",
                 source,
@@ -816,7 +816,7 @@ impl FilesystemInvalidationSource {
                     || path.is_dir()
                 {
                     return Err(FilesystemInvalidationError::new(
-                        FilesystemInvalidationErrorKind::ComponentRoot,
+                        FilesystemInvalidationErrorType::ComponentRoot,
                         &path,
                         "local configuration input must name an exact absolute file",
                     ));
@@ -870,7 +870,7 @@ impl FilesystemInvalidationSource {
             .await
             .map_err(|source| {
                 FilesystemInvalidationError::with_source(
-                    FilesystemInvalidationErrorKind::Git,
+                    FilesystemInvalidationErrorType::Git,
                     self.git.repository_root(),
                     "cannot read the ignore rules that bound the watch",
                     source,
@@ -901,7 +901,7 @@ impl FilesystemInvalidationSource {
         )
         .map_err(|source| {
             FilesystemInvalidationError::with_source(
-                FilesystemInvalidationErrorKind::Watch,
+                FilesystemInvalidationErrorType::Watch,
                 directory,
                 "cannot watch directory",
                 errno_to_io(source),
@@ -916,7 +916,7 @@ impl FilesystemInvalidationSource {
         let changes = loop {
             let mut readiness = self.inotify.readable().await.map_err(|source| {
                 FilesystemInvalidationError::with_source(
-                    FilesystemInvalidationErrorKind::Read,
+                    FilesystemInvalidationErrorType::Read,
                     self.git.repository_root(),
                     "cannot await filesystem notification",
                     source,
@@ -928,7 +928,7 @@ impl FilesystemInvalidationSource {
                 Ok(changes) => {
                     break changes.map_err(|source| {
                         FilesystemInvalidationError::with_source(
-                            FilesystemInvalidationErrorKind::Read,
+                            FilesystemInvalidationErrorType::Read,
                             self.git.repository_root(),
                             "cannot read filesystem notification",
                             source,
@@ -1068,7 +1068,7 @@ fn read_changes(
 fn read_subdirectories(directory: &Path) -> Result<Vec<PathBuf>, FilesystemInvalidationError> {
     let entries = fs::read_dir(directory).map_err(|source| {
         FilesystemInvalidationError::with_source(
-            FilesystemInvalidationErrorKind::Watch,
+            FilesystemInvalidationErrorType::Watch,
             directory,
             "cannot enumerate watched directory",
             source,
@@ -1078,7 +1078,7 @@ fn read_subdirectories(directory: &Path) -> Result<Vec<PathBuf>, FilesystemInval
     for entry in entries {
         let entry = entry.map_err(|source| {
             FilesystemInvalidationError::with_source(
-                FilesystemInvalidationErrorKind::Watch,
+                FilesystemInvalidationErrorType::Watch,
                 directory,
                 "cannot read watched directory entry",
                 source,
@@ -1086,7 +1086,7 @@ fn read_subdirectories(directory: &Path) -> Result<Vec<PathBuf>, FilesystemInval
         })?;
         let file_type = entry.file_type().map_err(|source| {
             FilesystemInvalidationError::with_source(
-                FilesystemInvalidationErrorKind::Watch,
+                FilesystemInvalidationErrorType::Watch,
                 entry.path(),
                 "cannot inspect watched directory entry",
                 source,

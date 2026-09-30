@@ -43,7 +43,7 @@ pub struct Uuid(pub String);
 
 /// Stable classification of a statement-capability failure.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum StatementErrorKind {
+pub enum StatementErrorType {
     UnknownStatement,
     StatementContractMismatch,
     SerializationFailure,
@@ -85,7 +85,7 @@ pub struct ContractMismatch {
 /// Contextual failure returned by the statement capability or row decoder.
 #[derive(Debug)]
 pub struct StatementError {
-    kind: StatementErrorKind,
+    type_: StatementErrorType,
     statement_digest: Option<Box<str>>,
     constraint: Option<Box<str>>,
     // Boxed to keep `StatementError` small enough for a by-value `Result`.
@@ -95,8 +95,8 @@ pub struct StatementError {
 
 impl StatementError {
     /// Stable failure class; callers must not match display text.
-    pub const fn kind(&self) -> StatementErrorKind {
-        self.kind
+    pub const fn kind(&self) -> StatementErrorType {
+        self.type_
     }
 
     /// Statement identity supplied by the host or local decoder, when available.
@@ -116,7 +116,7 @@ impl StatementError {
 
     fn invalid_result(statement_digest: &str, context: impl Into<Box<str>>) -> Self {
         Self {
-            kind: StatementErrorKind::InvalidResult,
+            type_: StatementErrorType::InvalidResult,
             statement_digest: Some(statement_digest.into()),
             constraint: None,
             contract_mismatch: None,
@@ -127,7 +127,7 @@ impl StatementError {
     fn from_wire(source: host::StatementError) -> Self {
         match source {
             host::StatementError::UnknownStatement(statement_digest) => Self {
-                kind: StatementErrorKind::UnknownStatement,
+                type_: StatementErrorType::UnknownStatement,
                 statement_digest: Some(statement_digest.into()),
                 constraint: None,
                 contract_mismatch: None,
@@ -150,7 +150,7 @@ impl StatementError {
                     },
                 };
                 Self {
-                    kind: StatementErrorKind::StatementContractMismatch,
+                    type_: StatementErrorType::StatementContractMismatch,
                     statement_digest: Some(mismatch.statement_digest.clone()),
                     constraint: None,
                     contract_mismatch: Some(Box::new(mismatch)),
@@ -164,58 +164,58 @@ impl StatementError {
     fn from_postgres(source: wire::PgError) -> Self {
         let (kind, constraint, context) = match source {
             wire::PgError::SerializationFailure => (
-                StatementErrorKind::SerializationFailure,
+                StatementErrorType::SerializationFailure,
                 None,
                 "serialization failure",
             ),
             wire::PgError::ConnectionUnavailable => (
-                StatementErrorKind::ConnectionUnavailable,
+                StatementErrorType::ConnectionUnavailable,
                 None,
                 "database connection unavailable",
             ),
             wire::PgError::StatementTimeout => (
-                StatementErrorKind::StatementTimeout,
+                StatementErrorType::StatementTimeout,
                 None,
                 "statement timeout",
             ),
             wire::PgError::RowLimitExceeded(_) => (
-                StatementErrorKind::RowLimitExceeded,
+                StatementErrorType::RowLimitExceeded,
                 None,
                 "statement row limit exceeded",
             ),
             wire::PgError::UniqueViolation(name) => (
-                StatementErrorKind::UniqueViolation,
+                StatementErrorType::UniqueViolation,
                 Some(name.into_boxed_str()),
                 "unique constraint violation",
             ),
             wire::PgError::ForeignKeyViolation(name) => (
-                StatementErrorKind::ForeignKeyViolation,
+                StatementErrorType::ForeignKeyViolation,
                 Some(name.into_boxed_str()),
                 "foreign-key constraint violation",
             ),
             wire::PgError::CheckViolation(name) => (
-                StatementErrorKind::CheckViolation,
+                StatementErrorType::CheckViolation,
                 Some(name.into_boxed_str()),
                 "check constraint violation",
             ),
             wire::PgError::ExclusionViolation(name) => (
-                StatementErrorKind::ExclusionViolation,
+                StatementErrorType::ExclusionViolation,
                 Some(name.into_boxed_str()),
                 "exclusion constraint violation",
             ),
             wire::PgError::PermissionDenied => (
-                StatementErrorKind::PermissionDenied,
+                StatementErrorType::PermissionDenied,
                 None,
                 "database permission denied",
             ),
             wire::PgError::QueryError(_) => (
-                StatementErrorKind::QueryError,
+                StatementErrorType::QueryError,
                 None,
                 "database query failed",
             ),
         };
         Self {
-            kind,
+            type_: kind,
             statement_digest: None,
             constraint,
             contract_mismatch: None,

@@ -1,6 +1,6 @@
 use super::{
     CLI_ENV, CLI_INSTANCE, CLI_ORG, CLI_PROJECT, Client, RECONCILE_TARGET_REFUSAL_PREFIX,
-    ReconcileRunPlaneRequest, ReconcileTargetError, ReconcileTargetErrorKind, SCHEMA,
+    ReconcileRunPlaneRequest, ReconcileTargetError, ReconcileTargetErrorType, SCHEMA,
     SYSTEM_IDENTITY_FIXTURE_SQL, connect, database_url, drop_database, locked_database,
     project_env_database_name, project_environment_policy, reconcile_run_plane, recreate_database,
     reset, schema,
@@ -191,7 +191,7 @@ async fn reconcile_target_identity_guard_live() {
             CLI_PROJECT,
             CLI_ENV,
             unrelated_url.as_str(),
-            ReconcileTargetErrorKind::DatabaseTarget,
+            ReconcileTargetErrorType::DatabaseTarget,
             Some(primary_database.as_str()),
             Some(unrelated_database),
         ),
@@ -200,7 +200,7 @@ async fn reconcile_target_identity_guard_live() {
             CLI_PROJECT,
             CLI_ENV,
             spoofed_unrelated_url.as_str(),
-            ReconcileTargetErrorKind::DatabaseTarget,
+            ReconcileTargetErrorType::DatabaseTarget,
             Some(primary_database.as_str()),
             Some(unrelated_database),
         ),
@@ -209,7 +209,7 @@ async fn reconcile_target_identity_guard_live() {
             "accounts",
             CLI_ENV,
             primary_url.as_str(),
-            ReconcileTargetErrorKind::DatabaseTarget,
+            ReconcileTargetErrorType::DatabaseTarget,
             Some(sibling_project_database.as_str()),
             Some(primary_database.as_str()),
         ),
@@ -218,7 +218,7 @@ async fn reconcile_target_identity_guard_live() {
             CLI_PROJECT,
             "prod",
             primary_url.as_str(),
-            ReconcileTargetErrorKind::DatabaseTarget,
+            ReconcileTargetErrorType::DatabaseTarget,
             Some(sibling_environment_database.as_str()),
             Some(primary_database.as_str()),
         ),
@@ -227,7 +227,7 @@ async fn reconcile_target_identity_guard_live() {
             "absent",
             CLI_ENV,
             primary_url.as_str(),
-            ReconcileTargetErrorKind::RegistryTarget,
+            ReconcileTargetErrorType::RegistryTarget,
             None,
             None,
         ),
@@ -252,12 +252,12 @@ async fn reconcile_target_identity_guard_live() {
             assert_eq!(refusal.kind(), kind, "{label}, dry_run={dry_run}");
             assert_eq!(
                 refusal.is_registry_target(),
-                kind == ReconcileTargetErrorKind::RegistryTarget,
+                kind == ReconcileTargetErrorType::RegistryTarget,
                 "{label}, dry_run={dry_run}"
             );
             assert_eq!(
                 refusal.is_database_target(),
-                kind == ReconcileTargetErrorKind::DatabaseTarget,
+                kind == ReconcileTargetErrorType::DatabaseTarget,
                 "{label}, dry_run={dry_run}"
             );
             assert_eq!(
@@ -279,7 +279,7 @@ async fn reconcile_target_identity_guard_live() {
                 !message.contains(&*system_url) && !message.contains(target_url),
                 "{label} leaked a database URL: {message}"
             );
-            if kind == ReconcileTargetErrorKind::RegistryTarget {
+            if kind == ReconcileTargetErrorType::RegistryTarget {
                 assert!(
                     std::error::Error::source(refusal).is_some(),
                     "{label} discarded the registry lookup source"

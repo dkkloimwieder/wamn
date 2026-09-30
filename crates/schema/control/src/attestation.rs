@@ -67,7 +67,7 @@ pub fn check_projected_identity(
         Ok(())
     } else {
         Err(AttestationError {
-            kind: AttestationErrorKind::IdentityProjectionConflict,
+            type_: AttestationErrorType::IdentityProjectionConflict,
             coordinate: identity_coordinate(identity),
             driver: String::new(),
         })
@@ -80,7 +80,7 @@ pub fn translate_projection_failure(
     reported: &str,
 ) -> AttestationError {
     AttestationError {
-        kind: AttestationErrorKind::Storage,
+        type_: AttestationErrorType::Storage,
         coordinate: identity_coordinate(identity),
         driver: reported.to_owned(),
     }
@@ -162,7 +162,7 @@ pub fn check_attestation(
         Ok(())
     } else {
         Err(AttestationError {
-            kind: AttestationErrorKind::ContentConflict,
+            type_: AttestationErrorType::ContentConflict,
             coordinate: coordinate(attestation),
             driver: String::new(),
         })
@@ -172,7 +172,7 @@ pub fn check_attestation(
 /// Preserve the actual database failure at the deployment boundary.
 pub fn translate_failure(attestation: &Attestation<'_>, reported: &str) -> AttestationError {
     AttestationError {
-        kind: AttestationErrorKind::Storage,
+        type_: AttestationErrorType::Storage,
         coordinate: coordinate(attestation),
         driver: reported.to_owned(),
     }
@@ -180,7 +180,7 @@ pub fn translate_failure(attestation: &Attestation<'_>, reported: &str) -> Attes
 
 /// Stable predicate that refused a deployment-attestation write.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum AttestationErrorKind {
+pub enum AttestationErrorType {
     /// The coordinate is already attested with a DIFFERENT
     /// `deployed_manifest_hash`. Not a retry: the remedy is to find out which
     /// bytes actually deployed, never to re-publish over the recorded fact.
@@ -193,7 +193,7 @@ pub enum AttestationErrorKind {
     Storage,
 }
 
-impl AttestationErrorKind {
+impl AttestationErrorType {
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::ContentConflict => CONTENT_CONFLICT,
@@ -207,14 +207,14 @@ impl AttestationErrorKind {
 /// and the driver failure it was translated from.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct AttestationError {
-    kind: AttestationErrorKind,
+    type_: AttestationErrorType,
     coordinate: String,
     driver: String,
 }
 
 impl AttestationError {
-    pub const fn kind(&self) -> AttestationErrorKind {
-        self.kind
+    pub const fn kind(&self) -> AttestationErrorType {
+        self.type_
     }
 
     /// The six-part coordinate the write was refused at.
@@ -230,7 +230,7 @@ impl AttestationError {
 
 impl fmt::Display for AttestationError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}: {}", self.kind.as_str(), self.coordinate)?;
+        write!(f, "{}: {}", self.type_.as_str(), self.coordinate)?;
         if !self.driver.is_empty() {
             write!(f, ": {}", self.driver)?;
         }
@@ -299,7 +299,7 @@ mod tests {
     fn a_conflicting_re_attestation_translates_to_the_routines_own_refusal() {
         let error = check_attestation(&attestation(), "different hash", Some("0123456789abcdef"))
             .unwrap_err();
-        assert_eq!(error.kind(), AttestationErrorKind::ContentConflict);
+        assert_eq!(error.kind(), AttestationErrorType::ContentConflict);
         assert_eq!(
             error.coordinate(),
             "tenant-a/instance-a/7 -> acme/billing/prod"
@@ -319,7 +319,7 @@ mod tests {
             &attestation(),
             "db error: ERROR: insert or update violates foreign key constraint",
         );
-        assert_eq!(error.kind(), AttestationErrorKind::Storage);
+        assert_eq!(error.kind(), AttestationErrorType::Storage);
         assert!(!error.to_string().contains(CONTENT_CONFLICT));
         assert!(error.driver().contains("foreign key"));
     }
@@ -331,13 +331,13 @@ mod tests {
             &attestation(),
             "db error: ERROR: duplicate key value violates unique constraint \"packages_pkey\"",
         );
-        assert_eq!(error.kind(), AttestationErrorKind::Storage);
+        assert_eq!(error.kind(), AttestationErrorType::Storage);
     }
 
     #[test]
     fn a_failure_that_never_reached_the_server_is_storage() {
         let error = translate_failure(&attestation(), "connection closed");
-        assert_eq!(error.kind(), AttestationErrorKind::Storage);
+        assert_eq!(error.kind(), AttestationErrorType::Storage);
     }
 
     /// Every part distinct, so a swapped pair cannot hide behind an equal value.
@@ -371,7 +371,7 @@ mod tests {
         let error = check_projected_identity(&identity(), "dev").unwrap_err();
         assert_eq!(
             error.kind(),
-            AttestationErrorKind::IdentityProjectionConflict
+            AttestationErrorType::IdentityProjectionConflict
         );
         assert_eq!(error.coordinate(), "tenant-a/7 in \"prod\"");
         assert!(
@@ -387,13 +387,13 @@ mod tests {
             &identity(),
             "db error: ERROR: deployment-attestation-content-conflict",
         );
-        assert_eq!(error.kind(), AttestationErrorKind::Storage);
+        assert_eq!(error.kind(), AttestationErrorType::Storage);
     }
 
     #[test]
     fn a_projection_failure_that_never_reached_the_server_is_storage() {
         let error = translate_projection_failure(&identity(), "connection closed");
-        assert_eq!(error.kind(), AttestationErrorKind::Storage);
+        assert_eq!(error.kind(), AttestationErrorType::Storage);
     }
     #[test]
     fn exact_retries_preserve_optional_source_provenance() {

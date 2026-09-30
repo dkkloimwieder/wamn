@@ -1,7 +1,7 @@
 use std::error::Error;
 use std::fmt;
 
-use wamn_postgres_statements::{StatementError, StatementErrorKind};
+use wamn_postgres_statements::{StatementError, StatementErrorType};
 
 /// Exact exclusion names an operation contract permits callers to observe.
 #[derive(Clone, Copy, Debug)]
@@ -19,7 +19,7 @@ impl AllowedConstraints {
 
 /// Stable operation-level failure class.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum AccessErrorKind {
+pub enum AccessErrorType {
     InvalidInput,
     NotFound,
     ConcurrencyConflict,
@@ -30,7 +30,7 @@ pub enum AccessErrorKind {
     InternalError,
 }
 
-impl AccessErrorKind {
+impl AccessErrorType {
     /// Frozen operation-contract literal for this failure.
     pub const fn literal(self) -> &'static str {
         match self {
@@ -49,7 +49,7 @@ impl AccessErrorKind {
 /// Contextual data-access failure translated once at the operation boundary.
 #[derive(Debug)]
 pub struct AccessError {
-    kind: AccessErrorKind,
+    type_: AccessErrorType,
     context: Box<str>,
     constraint: Option<Box<str>>,
     field: Option<&'static str>,
@@ -58,8 +58,8 @@ pub struct AccessError {
 
 impl AccessError {
     /// Stable class; callers do not match display text.
-    pub const fn kind(&self) -> AccessErrorKind {
-        self.kind
+    pub const fn kind(&self) -> AccessErrorType {
+        self.type_
     }
 
     /// Stable contextual description for the node error boundary.
@@ -84,7 +84,7 @@ impl AccessError {
 
     pub(crate) fn invalid(context: impl Into<Box<str>>, field: &'static str) -> Self {
         Self {
-            kind: AccessErrorKind::InvalidInput,
+            type_: AccessErrorType::InvalidInput,
             context: context.into(),
             constraint: None,
             field: Some(field),
@@ -93,7 +93,7 @@ impl AccessError {
     }
 
     pub(crate) fn not_found(context: impl Into<Box<str>>) -> Self {
-        Self::new(AccessErrorKind::NotFound, context)
+        Self::new(AccessErrorType::NotFound, context)
     }
 
     pub(crate) fn concurrency_conflict(
@@ -101,7 +101,7 @@ impl AccessError {
         observed_row_version: i32,
     ) -> Self {
         Self {
-            kind: AccessErrorKind::ConcurrencyConflict,
+            type_: AccessErrorType::ConcurrencyConflict,
             context: context.into(),
             constraint: None,
             field: None,
@@ -110,7 +110,7 @@ impl AccessError {
     }
 
     pub(crate) fn internal(context: impl Into<Box<str>>) -> Self {
-        Self::new(AccessErrorKind::InternalError, context)
+        Self::new(AccessErrorType::InternalError, context)
     }
 
     pub(crate) fn from_statement(context: impl Into<Box<str>>, source: &StatementError) -> Self {
@@ -132,19 +132,19 @@ impl AccessError {
 
     pub(crate) fn from_statement_parts(
         context: impl Into<Box<str>>,
-        kind: StatementErrorKind,
+        type_: StatementErrorType,
         constraint: Option<&str>,
         allowed_constraints: AllowedConstraints,
     ) -> Self {
-        let (kind, constraint) = classify(kind, constraint, allowed_constraints);
+        let (kind, constraint) = classify(type_, constraint, allowed_constraints);
         let mut error = Self::new(kind, context);
         error.constraint = constraint;
         error
     }
 
-    fn new(kind: AccessErrorKind, context: impl Into<Box<str>>) -> Self {
+    fn new(kind: AccessErrorType, context: impl Into<Box<str>>) -> Self {
         Self {
-            kind,
+            type_: kind,
             context: context.into(),
             constraint: None,
             field: None,
@@ -155,70 +155,70 @@ impl AccessError {
 
 impl fmt::Display for AccessError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(formatter, "{}: {}", self.kind.literal(), self.context)
+        write!(formatter, "{}: {}", self.type_.literal(), self.context)
     }
 }
 
 impl Error for AccessError {}
 
 fn classify(
-    kind: StatementErrorKind,
+    type_: StatementErrorType,
     constraint: Option<&str>,
     allowed_constraints: AllowedConstraints,
-) -> (AccessErrorKind, Option<Box<str>>) {
-    match kind {
-        StatementErrorKind::SerializationFailure | StatementErrorKind::ConnectionUnavailable => {
-            (AccessErrorKind::Retry, None)
+) -> (AccessErrorType, Option<Box<str>>) {
+    match type_ {
+        StatementErrorType::SerializationFailure | StatementErrorType::ConnectionUnavailable => {
+            (AccessErrorType::Retry, None)
         }
-        StatementErrorKind::StatementTimeout => (AccessErrorKind::Timeout, None),
-        StatementErrorKind::PermissionDenied => (AccessErrorKind::PermissionDenied, None),
-        StatementErrorKind::ExclusionViolation
+        StatementErrorType::StatementTimeout => (AccessErrorType::Timeout, None),
+        StatementErrorType::PermissionDenied => (AccessErrorType::PermissionDenied, None),
+        StatementErrorType::ExclusionViolation
             if constraint.is_some_and(|name| allowed_constraints.permits_exclusion(name)) =>
         {
             (
-                AccessErrorKind::ExclusionViolation,
+                AccessErrorType::ExclusionViolation,
                 Some(constraint.expect("guarded").into()),
             )
         }
-        StatementErrorKind::UnknownStatement
-        | StatementErrorKind::StatementContractMismatch
-        | StatementErrorKind::RowLimitExceeded
-        | StatementErrorKind::UniqueViolation
-        | StatementErrorKind::ForeignKeyViolation
-        | StatementErrorKind::CheckViolation
-        | StatementErrorKind::ExclusionViolation
-        | StatementErrorKind::QueryError
-        | StatementErrorKind::InvalidResult => (AccessErrorKind::InternalError, None),
+        StatementErrorType::UnknownStatement
+        | StatementErrorType::StatementContractMismatch
+        | StatementErrorType::RowLimitExceeded
+        | StatementErrorType::UniqueViolation
+        | StatementErrorType::ForeignKeyViolation
+        | StatementErrorType::CheckViolation
+        | StatementErrorType::ExclusionViolation
+        | StatementErrorType::QueryError
+        | StatementErrorType::InvalidResult => (AccessErrorType::InternalError, None),
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{AccessErrorKind, AllowedConstraints, classify};
-    use wamn_postgres_statements::StatementErrorKind;
+    use super::{AccessErrorType, AllowedConstraints, classify};
+    use wamn_postgres_statements::StatementErrorType;
 
     #[test]
     fn only_contractual_database_classes_cross_the_boundary() {
         for (source, expected) in [
             (
-                StatementErrorKind::SerializationFailure,
-                AccessErrorKind::Retry,
+                StatementErrorType::SerializationFailure,
+                AccessErrorType::Retry,
             ),
             (
-                StatementErrorKind::ConnectionUnavailable,
-                AccessErrorKind::Retry,
+                StatementErrorType::ConnectionUnavailable,
+                AccessErrorType::Retry,
             ),
             (
-                StatementErrorKind::StatementTimeout,
-                AccessErrorKind::Timeout,
+                StatementErrorType::StatementTimeout,
+                AccessErrorType::Timeout,
             ),
             (
-                StatementErrorKind::PermissionDenied,
-                AccessErrorKind::PermissionDenied,
+                StatementErrorType::PermissionDenied,
+                AccessErrorType::PermissionDenied,
             ),
             (
-                StatementErrorKind::CheckViolation,
-                AccessErrorKind::InternalError,
+                StatementErrorType::CheckViolation,
+                AccessErrorType::InternalError,
             ),
         ] {
             assert_eq!(
@@ -235,35 +235,35 @@ mod tests {
         };
         assert_eq!(
             classify(
-                StatementErrorKind::ExclusionViolation,
+                StatementErrorType::ExclusionViolation,
                 Some("allowed_exclusion"),
                 allowed
             ),
             (
-                AccessErrorKind::ExclusionViolation,
+                AccessErrorType::ExclusionViolation,
                 Some("allowed_exclusion".into())
             )
         );
         for constraint in [None, Some("hidden_exclusion"), Some("ALLOWED_EXCLUSION")] {
             assert_eq!(
-                classify(StatementErrorKind::ExclusionViolation, constraint, allowed),
-                (AccessErrorKind::InternalError, None)
+                classify(StatementErrorType::ExclusionViolation, constraint, allowed),
+                (AccessErrorType::InternalError, None)
             );
         }
         for kind in [
-            StatementErrorKind::UniqueViolation,
-            StatementErrorKind::ForeignKeyViolation,
-            StatementErrorKind::CheckViolation,
-            StatementErrorKind::ExclusionViolation,
+            StatementErrorType::UniqueViolation,
+            StatementErrorType::ForeignKeyViolation,
+            StatementErrorType::CheckViolation,
+            StatementErrorType::ExclusionViolation,
         ] {
             assert_eq!(
                 classify(kind, Some("allowed_exclusion"), AllowedConstraints::NONE),
-                (AccessErrorKind::InternalError, None)
+                (AccessErrorType::InternalError, None)
             );
-            if kind != StatementErrorKind::ExclusionViolation {
+            if kind != StatementErrorType::ExclusionViolation {
                 assert_eq!(
                     classify(kind, Some("allowed_exclusion"), allowed),
-                    (AccessErrorKind::InternalError, None)
+                    (AccessErrorType::InternalError, None)
                 );
             }
         }

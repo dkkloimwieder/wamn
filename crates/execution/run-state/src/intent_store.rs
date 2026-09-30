@@ -83,7 +83,7 @@ pub struct UncertainIntent {
 
 /// Stable category for an intent-store failure.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum StoreErrorKind {
+pub enum StoreErrorType {
     /// The backing store failed.
     Storage,
     /// Stored data or a store result violated the intent contract.
@@ -93,24 +93,24 @@ pub enum StoreErrorKind {
 /// Contextual failure from an intent store.
 #[derive(Debug)]
 pub struct StoreError {
-    kind: StoreErrorKind,
+    type_: StoreErrorType,
     operation: &'static str,
     detail: String,
 }
 
 impl StoreError {
     /// Build a failure of `kind` for the named `operation`.
-    pub fn new(kind: StoreErrorKind, operation: &'static str, detail: impl Into<String>) -> Self {
+    pub fn new(kind: StoreErrorType, operation: &'static str, detail: impl Into<String>) -> Self {
         Self {
-            kind,
+            type_: kind,
             operation,
             detail: detail.into(),
         }
     }
 
     /// Return the stable failure category.
-    pub fn kind(&self) -> StoreErrorKind {
-        self.kind
+    pub fn kind(&self) -> StoreErrorType {
+        self.type_
     }
 
     /// Return the operation that failed.

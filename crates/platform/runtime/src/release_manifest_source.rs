@@ -41,7 +41,7 @@ const REGISTRY_IO_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Stable classification of a refused release-manifest pull.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ReleaseManifestFetchErrorKind {
+pub enum ReleaseManifestFetchErrorType {
     /// The configured base or the named digest cannot form an immutable reference.
     InvalidReference,
     /// The registry credential could not be loaded for this registry.
@@ -58,15 +58,15 @@ pub enum ReleaseManifestFetchErrorKind {
 
 /// Contextual refusal from the release-manifest transfer boundary.
 pub struct ReleaseManifestFetchError {
-    kind: ReleaseManifestFetchErrorKind,
+    type_: ReleaseManifestFetchErrorType,
     reference: Option<Box<str>>,
     refusal: &'static str,
 }
 
 impl ReleaseManifestFetchError {
     /// Stable refusal class for callers that must not match display text.
-    pub fn kind(&self) -> ReleaseManifestFetchErrorKind {
-        self.kind
+    pub fn kind(&self) -> ReleaseManifestFetchErrorType {
+        self.type_
     }
 
     /// Stable literal naming the exact refused invariant or transfer phase.
@@ -76,7 +76,7 @@ impl ReleaseManifestFetchError {
 
     fn invalid_reference() -> Self {
         Self {
-            kind: ReleaseManifestFetchErrorKind::InvalidReference,
+            type_: ReleaseManifestFetchErrorType::InvalidReference,
             reference: None,
             refusal: "release-manifest-artifact-reference-invalid",
         }
@@ -84,7 +84,7 @@ impl ReleaseManifestFetchError {
 
     fn credential(refusal: &'static str) -> Self {
         Self {
-            kind: ReleaseManifestFetchErrorKind::Credential,
+            type_: ReleaseManifestFetchErrorType::Credential,
             reference: None,
             refusal,
         }
@@ -92,7 +92,7 @@ impl ReleaseManifestFetchError {
 
     fn trust_anchor() -> Self {
         Self {
-            kind: ReleaseManifestFetchErrorKind::TrustAnchor,
+            type_: ReleaseManifestFetchErrorType::TrustAnchor,
             reference: None,
             refusal: "release-manifest-artifact-ca-bundle-unreadable",
         }
@@ -101,7 +101,7 @@ impl ReleaseManifestFetchError {
     /// The bundles were readable but at least one is not usable as a trust root.
     fn registry_client() -> Self {
         Self {
-            kind: ReleaseManifestFetchErrorKind::RegistryClient,
+            type_: ReleaseManifestFetchErrorType::RegistryClient,
             reference: None,
             refusal: "release-manifest-artifact-registry-client-unusable",
         }
@@ -109,7 +109,7 @@ impl ReleaseManifestFetchError {
 
     fn mismatched(reference: &str, refusal: &'static str) -> Self {
         Self {
-            kind: ReleaseManifestFetchErrorKind::Mismatched,
+            type_: ReleaseManifestFetchErrorType::Mismatched,
             reference: Some(reference.into()),
             refusal,
         }
@@ -122,7 +122,7 @@ impl ReleaseManifestFetchError {
     /// taxonomy to an `oci-client` version. `wamn-0h0g.19.17` reversed that: the
     /// body pull now asks [`transport_is_mismatched`] first, and a registry that
     /// served bytes the named digest does not address is refused as
-    /// [`ReleaseManifestFetchErrorKind::Mismatched`], not as absence.
+    /// [`ReleaseManifestFetchErrorType::Mismatched`], not as absence.
     /// `wamn-0h0g.19.18` applied the same split to the manifest pull.
     ///
     /// The version coupling is real and is accepted, because it was already
@@ -134,7 +134,7 @@ impl ReleaseManifestFetchError {
     /// that makes pulling by digest mean anything.
     fn unavailable(reference: &str, refusal: &'static str) -> Self {
         Self {
-            kind: ReleaseManifestFetchErrorKind::Unavailable,
+            type_: ReleaseManifestFetchErrorType::Unavailable,
             reference: Some(reference.into()),
             refusal,
         }
@@ -147,7 +147,7 @@ impl fmt::Debug for ReleaseManifestFetchError {
         // safe to log without emitting response bodies or future auth context.
         formatter
             .debug_struct("ReleaseManifestFetchError")
-            .field("kind", &self.kind)
+            .field("kind", &self.type_)
             .field("reference", &self.reference)
             .field("refusal", &self.refusal)
             .finish_non_exhaustive()
@@ -463,7 +463,7 @@ mod tests {
         )
         .expect_err("a descriptor declaring more bytes than were served refuses");
 
-        assert_eq!(error.kind(), ReleaseManifestFetchErrorKind::Mismatched);
+        assert_eq!(error.kind(), ReleaseManifestFetchErrorType::Mismatched);
         assert_eq!(
             error.refusal(),
             "release-manifest-artifact-body-size-mismatch"
@@ -484,7 +484,7 @@ mod tests {
         let error = verify_transferred_body(served, exact, &component_digest(canonical), REFERENCE)
             .expect_err("a body the named digest does not address refuses");
 
-        assert_eq!(error.kind(), ReleaseManifestFetchErrorKind::Mismatched);
+        assert_eq!(error.kind(), ReleaseManifestFetchErrorType::Mismatched);
         assert_eq!(
             error.refusal(),
             "release-manifest-artifact-body-digest-mismatch"

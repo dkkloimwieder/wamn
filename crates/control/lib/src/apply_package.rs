@@ -39,7 +39,7 @@ mod roles;
 mod tests;
 
 pub use error::{
-    APPLY_PACKAGE_REFUSAL, ApplyPackageError, ApplyPackageErrorKind,
+    APPLY_PACKAGE_REFUSAL, ApplyPackageError, ApplyPackageErrorType,
     BASE_DEFINITION_MUTATION_REFUSAL, DEFINITION_NOT_FOUND_REFUSAL,
     DEFINITION_OWNER_CONFLICT_REFUSAL, DEFINITION_OWNER_DECLARATION_MISSING_REFUSAL,
     PACKAGE_VERSION_SEALED_REFUSAL, PREDECESSOR_NOT_CURRENT_REFUSAL,
@@ -442,7 +442,7 @@ async fn execute(
     match result {
         Ok(()) => Ok(()),
         Err(source) if is_package_version_sealed(&source) => Err(ApplyPackageError {
-            kind: ApplyPackageErrorKind::PackageVersionSealed,
+            type_: ApplyPackageErrorType::PackageVersionSealed,
             coordinate: coordinate.to_owned(),
             predecessor_version: None,
             current_version: None,

@@ -8,7 +8,7 @@ use tokio_postgres::{Client, NoTls};
 use wamn_control::apply_package::{self, ApplyPackageRequest};
 use wamn_control_provision::PlatformComponent;
 use wamn_control_provision::operation_grants::{OPERATION_GRANT_LOCK_SQL, operation_grant_tokens};
-use wamn_schema_introspection::migration_policy::{MigrationPolicyError, MigrationPolicyErrorKind};
+use wamn_schema_introspection::migration_policy::{MigrationPolicyError, MigrationPolicyErrorType};
 use wamn_test_infrastructure::locked_database;
 
 const CATALOG_SCHEMA: &str = wamn_catalog::CATALOG_SCHEMA_SQL;
@@ -843,7 +843,7 @@ async fn exact_runner_commits_once_refuses_drift_and_rolls_back_a_failing_suffix
         .expect("base field alteration is a typed ownership refusal");
     assert_eq!(
         alter_error.kind(),
-        apply_package::ApplyPackageErrorKind::BaseDefinitionMutation
+        apply_package::ApplyPackageErrorType::BaseDefinitionMutation
     );
     assert_eq!(alter_error.schema(), Some("inventory"));
     assert_eq!(alter_error.relation(), Some("panel"));
@@ -884,7 +884,7 @@ async fn exact_runner_commits_once_refuses_drift_and_rolls_back_a_failing_suffix
         .expect("base field removal is a typed ownership refusal");
     assert_eq!(
         drop_error.kind(),
-        apply_package::ApplyPackageErrorKind::BaseDefinitionMutation
+        apply_package::ApplyPackageErrorType::BaseDefinitionMutation
     );
     assert_eq!(drop_error.definition(), Some("status"));
     assert_eq!(write_identity(&client).await, first_identity);
@@ -922,7 +922,7 @@ async fn exact_runner_commits_once_refuses_drift_and_rolls_back_a_failing_suffix
         .expect("missing extensibility is a typed ownership refusal");
     assert_eq!(
         nonextensible_error.kind(),
-        apply_package::ApplyPackageErrorKind::RelationNotClientExtensible
+        apply_package::ApplyPackageErrorType::RelationNotClientExtensible
     );
     assert_eq!(write_identity(&client).await, first_identity);
 
@@ -1287,7 +1287,7 @@ async fn exact_runner_commits_once_refuses_drift_and_rolls_back_a_failing_suffix
         .expect("the server seal is translated at the apply-package boundary");
     assert_eq!(
         sealed.kind(),
-        apply_package::ApplyPackageErrorKind::PackageVersionSealed
+        apply_package::ApplyPackageErrorType::PackageVersionSealed
     );
     assert_eq!(sealed.coordinate(), "wamn_inventory@1.0.0");
     assert!(
@@ -1338,7 +1338,7 @@ async fn exact_runner_commits_once_refuses_drift_and_rolls_back_a_failing_suffix
         .expect("an undeclared predecessor is a typed apply-package refusal");
     assert_eq!(
         undeclared.kind(),
-        apply_package::ApplyPackageErrorKind::PredecessorNotCurrent
+        apply_package::ApplyPackageErrorType::PredecessorNotCurrent
     );
     assert_eq!(undeclared.coordinate(), "wamn_inventory@1.0.1");
     assert_eq!(undeclared.predecessor_version(), None);
@@ -1354,7 +1354,7 @@ async fn exact_runner_commits_once_refuses_drift_and_rolls_back_a_failing_suffix
         .expect("an absent predecessor is a typed apply-package refusal");
     assert_eq!(
         absent.kind(),
-        apply_package::ApplyPackageErrorKind::PredecessorNotCurrent
+        apply_package::ApplyPackageErrorType::PredecessorNotCurrent
     );
     assert_eq!(absent.coordinate(), "wamn_inventory@1.0.1");
     assert_eq!(absent.predecessor_version(), Some("0.9.0"));
@@ -1373,7 +1373,7 @@ async fn exact_runner_commits_once_refuses_drift_and_rolls_back_a_failing_suffix
         .expect("a divergent predecessor is a typed apply-package refusal");
     assert_eq!(
         mismatch.kind(),
-        apply_package::ApplyPackageErrorKind::PredecessorPrefixMismatch
+        apply_package::ApplyPackageErrorType::PredecessorPrefixMismatch
     );
     assert_eq!(mismatch.predecessor_version(), Some("1.0.0"));
     assert_eq!(mismatch.path(), Some("migrations/0001_initial.sql"));
@@ -1615,7 +1615,7 @@ async fn record_history_triggers_follow_the_declaration() {
         refused
             .downcast_ref::<MigrationPolicyError>()
             .map(MigrationPolicyError::kind),
-        Some(MigrationPolicyErrorKind::RuledOperation),
+        Some(MigrationPolicyErrorType::RuledOperation),
         "unexpected migration refusal: {refused:#}"
     );
     assert_eq!(inventory_triggers(&client).await, upgraded);
@@ -2002,7 +2002,7 @@ fn manifest_sha256(package: &Path) -> String {
 
 fn package_migration_error(
     error: &anyhow::Error,
-) -> wamn_schema_control::PackageMigrationErrorKind {
+) -> wamn_schema_control::PackageMigrationErrorType {
     error
         .downcast_ref::<wamn_schema_control::PackageMigrationError>()
         .unwrap_or_else(|| panic!("not a package migration refusal: {error:#}"))
@@ -2127,7 +2127,7 @@ async fn a_local_target_takes_an_appended_migration_and_a_changed_manifest() {
         .expect_err("plain apply-package refuses the changed manifest on a marked target");
     assert_eq!(
         package_migration_error(&refused),
-        wamn_schema_control::PackageMigrationErrorKind::ManifestDrift
+        wamn_schema_control::PackageMigrationErrorType::ManifestDrift
     );
     let outcome = apply_local()
         .await
@@ -2222,7 +2222,7 @@ async fn a_local_target_takes_an_appended_migration_and_a_changed_manifest() {
             .downcast_ref::<apply_package::ApplyPackageError>()
             .expect("the seal is translated at the apply-package boundary")
             .kind(),
-        apply_package::ApplyPackageErrorKind::PackageVersionSealed
+        apply_package::ApplyPackageErrorType::PackageVersionSealed
     );
     std::fs::remove_dir_all(&first_bytes_package).expect("remove first-bytes fixture");
 
@@ -2258,7 +2258,7 @@ async fn a_local_target_takes_an_appended_migration_and_a_changed_manifest() {
         .expect_err("an edited applied migration refuses on a marked target");
     assert_eq!(
         package_migration_error(&edited),
-        wamn_schema_control::PackageMigrationErrorKind::MigrationDrift
+        wamn_schema_control::PackageMigrationErrorType::MigrationDrift
     );
     std::fs::write(&edited_path, edited_bytes).expect("restore the edited migration");
     let removed_path = package.join("migrations/0003_dock_note.sql");
@@ -2269,7 +2269,7 @@ async fn a_local_target_takes_an_appended_migration_and_a_changed_manifest() {
         .expect_err("a removed applied migration refuses on a marked target");
     assert_eq!(
         package_migration_error(&removed),
-        wamn_schema_control::PackageMigrationErrorKind::MigrationDrift
+        wamn_schema_control::PackageMigrationErrorType::MigrationDrift
     );
     std::fs::write(&removed_path, removed_bytes).expect("restore the removed migration");
     assert_eq!(
@@ -2295,7 +2295,7 @@ async fn a_local_target_takes_an_appended_migration_and_a_changed_manifest() {
             .expect_err("an unmarked target refuses the changed manifest");
         assert_eq!(
             package_migration_error(&unmarked),
-            wamn_schema_control::PackageMigrationErrorKind::ManifestDrift
+            wamn_schema_control::PackageMigrationErrorType::ManifestDrift
         );
     }
     assert!(!inventory_column_present(&client, "dock", "code").await);

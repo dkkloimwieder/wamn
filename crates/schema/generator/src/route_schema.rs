@@ -36,7 +36,7 @@ const REFERENCE: &str = "$ref";
 
 /// Stable category of a route schema failure.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum RouteSchemaErrorKind {
+pub enum RouteSchemaErrorType {
     /// A reference names a file outside the generated route schemas.
     Reference,
     /// The named file could not be read.
@@ -52,16 +52,16 @@ pub enum RouteSchemaErrorKind {
 /// Contextual failure to resolve a generated route schema.
 #[derive(Debug)]
 pub struct RouteSchemaError {
-    kind: RouteSchemaErrorKind,
+    type_: RouteSchemaErrorType,
     subject: Box<str>,
     detail: Box<str>,
     source: Option<Box<dyn Error + Send + Sync>>,
 }
 
 impl RouteSchemaError {
-    fn new(kind: RouteSchemaErrorKind, subject: &str, detail: impl Into<Box<str>>) -> Self {
+    fn new(kind: RouteSchemaErrorType, subject: &str, detail: impl Into<Box<str>>) -> Self {
         Self {
-            kind,
+            type_: kind,
             subject: subject.into(),
             detail: detail.into(),
             source: None,
@@ -69,36 +69,36 @@ impl RouteSchemaError {
     }
 
     fn with_source(
-        kind: RouteSchemaErrorKind,
+        type_: RouteSchemaErrorType,
         subject: &str,
         source: impl Error + Send + Sync + 'static,
     ) -> Self {
         Self {
             source: Some(Box::new(source)),
-            ..Self::new(kind, subject, "")
+            ..Self::new(type_, subject, "")
         }
     }
 
     /// A reference to a schema that generation did not produce.
     pub fn unknown(reference: &str) -> Self {
         Self::new(
-            RouteSchemaErrorKind::Reference,
+            RouteSchemaErrorType::Reference,
             reference,
             "names no route schema that generation produced",
         )
     }
 
     /// Stable failure category.
-    pub const fn kind(&self) -> RouteSchemaErrorKind {
-        self.kind
+    pub const fn kind(&self) -> RouteSchemaErrorType {
+        self.type_
     }
 }
 
 impl fmt::Display for RouteSchemaError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self.kind {
-            RouteSchemaErrorKind::Read => write!(formatter, "read {}", self.subject),
-            RouteSchemaErrorKind::Parse if self.detail.is_empty() => {
+        match self.type_ {
+            RouteSchemaErrorType::Read => write!(formatter, "read {}", self.subject),
+            RouteSchemaErrorType::Parse if self.detail.is_empty() => {
                 write!(formatter, "parse {}", self.subject)
             }
             _ => write!(formatter, "{} {}", self.subject, self.detail),
@@ -145,7 +145,7 @@ fn checked(reference: &str) -> Result<&str, RouteSchemaError> {
         Ok(reference)
     } else {
         Err(RouteSchemaError::new(
-            RouteSchemaErrorKind::Reference,
+            RouteSchemaErrorType::Reference,
             reference,
             format!("must name a {GENERATED_ROUTES}<model>/<action>.json file of its package"),
         ))
@@ -165,7 +165,7 @@ pub fn read_from_package(package_root: &Path, reference: &str) -> Result<Value, 
 fn read_json(path: &Path) -> Result<Value, RouteSchemaError> {
     let subject = path.display().to_string();
     let bytes = std::fs::read(path).map_err(|error| {
-        RouteSchemaError::with_source(RouteSchemaErrorKind::Read, &subject, error)
+        RouteSchemaError::with_source(RouteSchemaErrorType::Read, &subject, error)
     })?;
     parse(&subject, &bytes)
 }
@@ -177,7 +177,7 @@ fn read_json(path: &Path) -> Result<Value, RouteSchemaError> {
 /// [`RouteSchemaError`] when the bytes are not JSON.
 pub fn parse(subject: &str, bytes: &[u8]) -> Result<Value, RouteSchemaError> {
     serde_json::from_slice(bytes)
-        .map_err(|error| RouteSchemaError::with_source(RouteSchemaErrorKind::Parse, subject, error))
+        .map_err(|error| RouteSchemaError::with_source(RouteSchemaErrorType::Parse, subject, error))
 }
 
 /// Replace one schema value by the generated schema it names.
@@ -227,7 +227,7 @@ pub fn resolve_attachment(
     let authored = wamn_execution_contract::canonical_json_sha256(&attachment.definition);
     if attachment.definition_hash.as_str() != authored {
         return Err(RouteSchemaError::new(
-            RouteSchemaErrorKind::DefinitionHash,
+            RouteSchemaErrorType::DefinitionHash,
             &format!("attachment {attachment_id:?}"),
             format!(
                 "definition-hash {} differs from canonical definition hash {authored}",
@@ -320,7 +320,7 @@ pub fn generated_attachments(
         |document| {
             serde_json::from_value(document).map_err(|error| {
                 RouteSchemaError::with_source(
-                    RouteSchemaErrorKind::Parse,
+                    RouteSchemaErrorType::Parse,
                     GENERATED_ATTACHMENTS,
                     error,
                 )
@@ -371,7 +371,7 @@ pub fn merge_operations(
         .and_then(Value::as_object_mut)
     else {
         return Err(RouteSchemaError::new(
-            RouteSchemaErrorKind::Parse,
+            RouteSchemaErrorType::Parse,
             "component declaration",
             "has no operations object",
         ));
@@ -387,7 +387,7 @@ pub fn merge_operations(
 
 fn duplicate(subject: &str) -> RouteSchemaError {
     RouteSchemaError::new(
-        RouteSchemaErrorKind::Duplicate,
+        RouteSchemaErrorType::Duplicate,
         subject,
         "is generated; remove it from the authored document",
     )
@@ -409,9 +409,9 @@ pub fn read_package_attachments(
         &path,
         crate::operation_reference::AuthoredDocument::Attachments,
     )
-    .map_err(|error| RouteSchemaError::with_source(RouteSchemaErrorKind::Read, &subject, error))?;
+    .map_err(|error| RouteSchemaError::with_source(RouteSchemaErrorType::Read, &subject, error))?;
     let mut attachments = serde_json::from_value(document).map_err(|error| {
-        RouteSchemaError::with_source(RouteSchemaErrorKind::Parse, &subject, error)
+        RouteSchemaError::with_source(RouteSchemaErrorType::Parse, &subject, error)
     })?;
     merge_attachments(
         &mut attachments,
@@ -448,14 +448,14 @@ mod tests {
             BTreeMap::from([("m-get-http".to_owned(), attachment)]),
         )
         .expect_err("a repeated attachment id refuses");
-        assert_eq!(error.kind(), RouteSchemaErrorKind::Duplicate);
+        assert_eq!(error.kind(), RouteSchemaErrorType::Duplicate);
         assert!(error.to_string().contains("m-get-http"), "{error}");
 
         let mut declaration = json!({"component": "c", "operations": {"p:m/get@1.0.0": {}}});
         let generated = json!({"c": {"p:m/get@1.0.0": {}}});
         let error = merge_operations(&mut declaration, Some(&generated))
             .expect_err("a repeated operation refuses");
-        assert_eq!(error.kind(), RouteSchemaErrorKind::Duplicate);
+        assert_eq!(error.kind(), RouteSchemaErrorType::Duplicate);
         assert!(error.to_string().contains("p:m/get@1.0.0"), "{error}");
     }
 
@@ -475,7 +475,7 @@ mod tests {
         ] {
             assert_eq!(
                 checked(escaping).expect_err(escaping).kind(),
-                RouteSchemaErrorKind::Reference
+                RouteSchemaErrorType::Reference
             );
         }
     }

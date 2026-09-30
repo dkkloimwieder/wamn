@@ -4,7 +4,7 @@ use std::sync::Mutex;
 
 use wamn_execution_contract::node_contract::{CanonicalHttpTarget, normalize_portable_http_target};
 use wamn_runtime::connection_authority::{
-    AuthorityError, AuthorityErrorKind, DnsResolver, HttpScheme, NetworkPolicy, TlsIdentity,
+    AuthorityError, AuthorityErrorType, DnsResolver, HttpScheme, NetworkPolicy, TlsIdentity,
     TlsPolicy, TransportDecision, parse_http_connection_authority, resolve_http_redirect,
     resolve_http_request,
 };
@@ -185,7 +185,7 @@ async fn request_authority_and_base_path_injection_fail_before_dns() {
         assert!(
             matches!(
                 error.kind(),
-                AuthorityErrorKind::InvalidRequestTarget | AuthorityErrorKind::BasePathEscape
+                AuthorityErrorType::InvalidRequestTarget | AuthorityErrorType::BasePathEscape
             ),
             "unexpected failure for {spelling}: {error:?}"
         );
@@ -222,7 +222,7 @@ async fn dns_rebinding_cannot_change_an_already_pinned_transport_address() {
     let error = resolve_http_request(&connection, &request, &policy, &network, &dns)
         .await
         .expect_err("rebound address is outside the network ceiling");
-    assert_eq!(error.kind(), AuthorityErrorKind::NetworkDenied);
+    assert_eq!(error.kind(), AuthorityErrorType::NetworkDenied);
     assert_eq!(
         first_endpoint.address, admitted,
         "first decision remains pinned"
@@ -249,7 +249,7 @@ async fn both_outer_policy_ceiling_denials_are_final() {
     )
     .await
     .expect_err("host ceiling denies");
-    assert_eq!(host_error.kind(), AuthorityErrorKind::PlatformHostDenied);
+    assert_eq!(host_error.kind(), AuthorityErrorType::PlatformHostDenied);
 
     let network_error = resolve_http_request(
         &connection,
@@ -260,7 +260,7 @@ async fn both_outer_policy_ceiling_denials_are_final() {
     )
     .await
     .expect_err("network ceiling denies");
-    assert_eq!(network_error.kind(), AuthorityErrorKind::NetworkDenied);
+    assert_eq!(network_error.kind(), AuthorityErrorType::NetworkDenied);
 }
 
 #[tokio::test]
@@ -352,7 +352,7 @@ async fn redirects_reenter_policy_and_cannot_change_authority_or_base_path() {
         assert!(
             matches!(
                 error.kind(),
-                AuthorityErrorKind::RedirectDenied | AuthorityErrorKind::BasePathEscape
+                AuthorityErrorType::RedirectDenied | AuthorityErrorType::BasePathEscape
             ),
             "unexpected failure for {location}: {error:?}"
         );

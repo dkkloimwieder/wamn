@@ -44,7 +44,7 @@ pub use ports::{ERROR_PORT, EntryKind, MAIN_PORT};
 pub use read_query::{ReadQueryError, decode_read_query, encode_read_query};
 pub use status::WiringFailureKind;
 pub use test_set::{
-    MAX_TEST_SET_CASES, TestSetCase, TestSetCasesError, TestSetCasesErrorKind, validate_cases,
+    MAX_TEST_SET_CASES, TestSetCase, TestSetCasesError, TestSetCasesErrorType, validate_cases,
 };
 
 /// `sha256:<hex>` over the canonical representation of arbitrary JSON.

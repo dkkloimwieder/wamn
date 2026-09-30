@@ -34,20 +34,20 @@ use crate::manifest::{rust_identifier, rust_type_identifier};
 /// Why a client could not be emitted.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ClientRustError {
-    kind: ClientRustErrorKind,
+    type_: ClientRustErrorType,
     detail: String,
 }
 
 /// What went wrong.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ClientRustErrorKind {
+pub enum ClientRustErrorType {
     /// A contract type has no Rust spelling.
     UnknownType,
     /// A contract name cannot be a Rust identifier.
     UnnameableIdentifier,
 }
 
-impl ClientRustErrorKind {
+impl ClientRustErrorType {
     /// Stable wire code.
     #[must_use]
     pub const fn code(self) -> &'static str {
@@ -59,23 +59,23 @@ impl ClientRustErrorKind {
 }
 
 impl ClientRustError {
-    fn new(kind: ClientRustErrorKind, detail: impl Into<String>) -> Self {
+    fn new(kind: ClientRustErrorType, detail: impl Into<String>) -> Self {
         Self {
-            kind,
+            type_: kind,
             detail: detail.into(),
         }
     }
 
     /// What went wrong.
     #[must_use]
-    pub const fn kind(&self) -> ClientRustErrorKind {
-        self.kind
+    pub const fn kind(&self) -> ClientRustErrorType {
+        self.type_
     }
 }
 
 impl core::fmt::Display for ClientRustError {
     fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        write!(formatter, "{}: {}", self.kind.code(), self.detail)
+        write!(formatter, "{}: {}", self.type_.code(), self.detail)
     }
 }
 
@@ -357,7 +357,7 @@ fn emit_operation(
     .expect("write");
     let function = rust_identifier(&operation.name).ok_or_else(|| {
         ClientRustError::new(
-            ClientRustErrorKind::UnnameableIdentifier,
+            ClientRustErrorType::UnnameableIdentifier,
             format!(
                 "operation name {:?} is not a Rust identifier",
                 operation.name
@@ -403,7 +403,7 @@ fn write_struct(
         }
         let member = rust_identifier(leaf).ok_or_else(|| {
             ClientRustError::new(
-                ClientRustErrorKind::UnnameableIdentifier,
+                ClientRustErrorType::UnnameableIdentifier,
                 format!("field {:?} is not a Rust identifier", field.path),
             )
         })?;
@@ -521,7 +521,7 @@ fn rust_type(type_name: &str) -> Result<&'static str, ClientRustError> {
     let column: ColumnType =
         serde_json::from_value(serde_json::Value::String(type_name.to_owned())).map_err(|_| {
             ClientRustError::new(
-                ClientRustErrorKind::UnknownType,
+                ClientRustErrorType::UnknownType,
                 format!("contract type {type_name:?} has no Rust spelling"),
             )
         })?;
@@ -628,7 +628,7 @@ mod tests {
     #[test]
     fn an_unknown_contract_type_refuses_by_name() {
         let refusal = rust_type("geography").expect_err("an unmapped type refuses");
-        assert_eq!(refusal.kind(), ClientRustErrorKind::UnknownType);
+        assert_eq!(refusal.kind(), ClientRustErrorType::UnknownType);
         assert!(refusal.to_string().contains("geography"), "{refusal}");
     }
 }

@@ -19,7 +19,7 @@ use wamn_control_provision::{PlatformComponent, identity_issuer::IdentityIssuerC
 use wamn_platform_identity::{
     PrincipalId,
     password::{
-        Password, PasswordError, PasswordErrorKind, PasswordWork, RefusalCause,
+        Password, PasswordError, PasswordErrorType, PasswordWork, RefusalCause,
         authenticate_password, enroll_password, issue_invitation, issue_reset, password_work,
         reset_password,
     },
@@ -840,9 +840,9 @@ async fn enrollment_refusal(
 
 fn password_failure(error: &PasswordError) -> Response<Full<Bytes>> {
     match error.kind() {
-        PasswordErrorKind::Busy => throttled(),
-        PasswordErrorKind::Infrastructure => unavailable(),
-        PasswordErrorKind::Policy | PasswordErrorKind::Refused => invalid(),
+        PasswordErrorType::Busy => throttled(),
+        PasswordErrorType::Infrastructure => unavailable(),
+        PasswordErrorType::Policy | PasswordErrorType::Refused => invalid(),
     }
 }
 fn invalid() -> Response<Full<Bytes>> {

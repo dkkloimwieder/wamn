@@ -27,7 +27,7 @@ pub use component_library::{
     AdmittedComponent, AdmittedComponentEffect, AdmittedComponentFacts, AdmittedComponentOperation,
     AdmittedComponentParameter, AdmittedComponentPort, ComponentConnection,
     ComponentConnectionType, ComponentDeclaration, ComponentEffectProvenance, ComponentFactError,
-    ComponentFactErrorKind, ComponentOperationDeclaration, ComponentOperationDependency,
+    ComponentFactErrorType, ComponentOperationDeclaration, ComponentOperationDependency,
     ComponentPackageScope, ComponentParameterDeclaration, ComponentPortDeclaration,
     ComponentSchema, ComponentSqlField, ComponentSqlStatement, ComponentSqlValueType,
     bind_component_statement_facts, component_sql_digest, normalize_component_fact,
@@ -56,12 +56,12 @@ pub use wiring::{
     WiringOperationDependency, WiringResponse, WiringTerminal, partial_response_schema,
 };
 pub use wiring_activation::{
-    WiringActivationError, WiringActivationErrorKind, WiringActivationFacts, activation_facts,
+    WiringActivationError, WiringActivationErrorType, WiringActivationFacts, activation_facts,
     flip_activation, previous_confirmed_definition, record_activation_event,
     validate_wiring_activation,
 };
 pub use wiring_compatibility::{
-    WiringCompatibilityError, WiringCompatibilityErrorKind, validate_resolved_wiring_compatibility,
+    WiringCompatibilityError, WiringCompatibilityErrorType, validate_resolved_wiring_compatibility,
     validate_wiring_compatibility,
 };
 

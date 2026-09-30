@@ -9,7 +9,7 @@ use wamn_catalog::{
     WiringTerminal, partial_response_schema,
 };
 
-use crate::client_ir::{ClientIrError, ClientIrErrorKind, read_authored};
+use crate::client_ir::{ClientIrError, ClientIrErrorType, read_authored};
 use crate::operation_reference::AuthoredDocument;
 
 #[derive(Debug, Default)]
@@ -280,14 +280,14 @@ fn read_schema(path: &Path, field: &str, schema: &Value) -> Result<Value, Client
 
 fn malformed(path: &Path, detail: impl std::fmt::Display) -> ClientIrError {
     ClientIrError::new(
-        ClientIrErrorKind::MalformedContract,
+        ClientIrErrorType::MalformedContract,
         format!("{}: {detail}", path.display()),
     )
 }
 
 fn unreadable(path: &Path, error: &std::io::Error) -> ClientIrError {
     ClientIrError::new(
-        ClientIrErrorKind::UnreadableProjection,
+        ClientIrErrorType::UnreadableProjection,
         format!("read {}: {error}", path.display()),
     )
 }
@@ -301,7 +301,7 @@ mod tests {
     use wamn_catalog::{AttachmentTarget, ServingAttachment, WiringDocument};
 
     use super::{evidence, response_node};
-    use crate::client_ir::ClientIrErrorKind;
+    use crate::client_ir::ClientIrErrorType;
 
     struct Publication(PathBuf);
 
@@ -546,7 +546,7 @@ mod tests {
         attachment.definition["input-schema"] = json!([]);
         let error = evidence(&fixture.attachments(), &attachment, None)
             .expect_err("refuse malformed schema");
-        assert_eq!(error.kind(), ClientIrErrorKind::MalformedContract);
+        assert_eq!(error.kind(), ClientIrErrorType::MalformedContract);
         assert!(error.to_string().contains("attachments.json"));
         attachment.definition["input-schema"] = json!(true);
         let mut wiring = direct_wiring(&attachment);
@@ -554,7 +554,7 @@ mod tests {
         fixture.write("wirings/invalid.json", &wiring);
         let error = evidence(&fixture.attachments(), &attachment, None)
             .expect_err("refuse malformed wiring");
-        assert_eq!(error.kind(), ClientIrErrorKind::MalformedContract);
+        assert_eq!(error.kind(), ClientIrErrorType::MalformedContract);
         assert!(error.to_string().contains("invalid.json"));
     }
 

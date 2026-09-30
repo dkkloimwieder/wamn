@@ -165,7 +165,7 @@ impl PrincipalType {
             "service" => Ok(Self::Service),
             "platform" => Ok(Self::Platform),
             other => Err(IdentityError::new(
-                IdentityErrorKind::CorruptData,
+                IdentityErrorType::CorruptData,
                 format!("unknown stored principal kind {other:?}"),
             )),
         }
@@ -201,7 +201,7 @@ impl PrincipalStatus {
             "active" => Ok(Self::Active),
             "disabled" => Ok(Self::Disabled),
             other => Err(IdentityError::new(
-                IdentityErrorKind::CorruptData,
+                IdentityErrorType::CorruptData,
                 format!("unknown stored principal status {other:?}"),
             )),
         }
@@ -239,7 +239,7 @@ impl std::str::FromStr for PrincipalId {
         let value = value.to_ascii_lowercase();
         if !wamn_session::token::is_principal_id(&value) {
             return Err(IdentityError::new(
-                IdentityErrorKind::InvalidInput,
+                IdentityErrorType::InvalidInput,
                 "principal ID must be a hyphenated UUID",
             ));
         }
@@ -432,7 +432,7 @@ impl fmt::Debug for IssuedPat {
 
 /// Stable classes of identity-core failure.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum IdentityErrorKind {
+pub enum IdentityErrorType {
     /// Caller input violated a local invariant.
     InvalidInput,
     /// A principal with the same kind and subject already exists.
@@ -450,21 +450,21 @@ pub enum IdentityErrorKind {
 /// Canonical identity-core error with a stable kind and diagnostic message.
 #[derive(Debug)]
 pub struct IdentityError {
-    kind: IdentityErrorKind,
+    type_: IdentityErrorType,
     message: Box<str>,
 }
 
 impl IdentityError {
-    fn new(kind: IdentityErrorKind, message: impl Into<Box<str>>) -> Self {
+    fn new(kind: IdentityErrorType, message: impl Into<Box<str>>) -> Self {
         Self {
-            kind,
+            type_: kind,
             message: message.into(),
         }
     }
 
     /// Return the stable failure class.
-    pub const fn kind(&self) -> IdentityErrorKind {
-        self.kind
+    pub const fn kind(&self) -> IdentityErrorType {
+        self.type_
     }
 }
 
@@ -479,7 +479,7 @@ impl std::error::Error for IdentityError {}
 /// A session refusal keeps its message and is invalid input to this crate.
 impl From<wamn_session::SessionError> for IdentityError {
     fn from(source: wamn_session::SessionError) -> Self {
-        Self::new(IdentityErrorKind::InvalidInput, source.to_string())
+        Self::new(IdentityErrorType::InvalidInput, source.to_string())
     }
 }
 
@@ -564,7 +564,7 @@ pub async fn disable_principal(
         .await
         .map_err(|error| database_error(&error))?
         .ok_or_else(|| {
-            IdentityError::new(IdentityErrorKind::NotFound, "principal does not exist")
+            IdentityError::new(IdentityErrorType::NotFound, "principal does not exist")
         })?;
     decode_principal(&row)
 }
@@ -600,7 +600,7 @@ pub async fn issue_pat(
         .map_err(|error| database_error(&error))?
         .ok_or_else(|| {
             IdentityError::new(
-                IdentityErrorKind::NotFound,
+                IdentityErrorType::NotFound,
                 "principal does not exist or is disabled",
             )
         })?;
@@ -647,7 +647,7 @@ fn decide_pat(
     // for one is corrupt data. It never authenticates.
     if principal.kind == PrincipalType::Platform {
         return Err(IdentityError::new(
-            IdentityErrorKind::CorruptData,
+            IdentityErrorType::CorruptData,
             "stored token names a platform principal",
         ));
     }
@@ -681,7 +681,7 @@ pub async fn revoke_pat(
         .query_opt(REVOKE_PAT_SQL, &[&prefix])
         .await
         .map_err(|error| database_error(&error))?
-        .ok_or_else(|| IdentityError::new(IdentityErrorKind::NotFound, "token does not exist"))?;
+        .ok_or_else(|| IdentityError::new(IdentityErrorType::NotFound, "token does not exist"))?;
     decode_pat(&row)
 }
 
@@ -921,13 +921,13 @@ fn mint_token(marker: &str) -> Result<(String, String), IdentityError> {
     let rng = SystemRandom::new();
     rng.fill(&mut lookup).map_err(|_| {
         IdentityError::new(
-            IdentityErrorKind::Entropy,
+            IdentityErrorType::Entropy,
             "operating system could not supply token lookup entropy",
         )
     })?;
     rng.fill(&mut secret).map_err(|_| {
         IdentityError::new(
-            IdentityErrorKind::Entropy,
+            IdentityErrorType::Entropy,
             "operating system could not supply token secret entropy",
         )
     })?;
@@ -968,7 +968,7 @@ fn checked_pat_label(value: &str) -> Result<String, IdentityError> {
     let value = value.trim();
     if value.is_empty() || value.len() > MAX_PAT_LABEL_LEN {
         return Err(IdentityError::new(
-            IdentityErrorKind::InvalidInput,
+            IdentityErrorType::InvalidInput,
             "token label must contain 1 to 200 bytes",
         ));
     }
@@ -978,7 +978,7 @@ fn checked_pat_label(value: &str) -> Result<String, IdentityError> {
 fn checked_pat_ttl(ttl: Duration) -> Result<i64, IdentityError> {
     if ttl.as_secs() == 0 || ttl > MAX_PAT_TTL {
         return Err(IdentityError::new(
-            IdentityErrorKind::InvalidInput,
+            IdentityErrorType::InvalidInput,
             "token lifetime must be 1 second to 365 days",
         ));
     }
@@ -989,7 +989,7 @@ fn checked_pat_ttl(ttl: Duration) -> Result<i64, IdentityError> {
 fn checked_pat_prefix(value: &str) -> Result<&str, IdentityError> {
     if value.len() != TOKEN_LOOKUP_BYTES * 2 || !is_lower_hex(value) {
         return Err(IdentityError::new(
-            IdentityErrorKind::InvalidInput,
+            IdentityErrorType::InvalidInput,
             "token prefix must be 16 lowercase hex digits",
         ));
     }
@@ -1007,7 +1007,7 @@ fn canonical_subject(value: &str) -> Result<String, IdentityError> {
         })
     {
         return Err(IdentityError::new(
-            IdentityErrorKind::InvalidInput,
+            IdentityErrorType::InvalidInput,
             "principal subject must be a lowercase identity token of at most 254 bytes",
         ));
     }
@@ -1047,7 +1047,7 @@ fn checked_email(value: &str) -> Result<String, IdentityError> {
 
 fn invalid_email() -> IdentityError {
     IdentityError::new(
-        IdentityErrorKind::InvalidInput,
+        IdentityErrorType::InvalidInput,
         "email must be a local part, an @, and a dotted domain, in at most 254 bytes",
     )
 }
@@ -1056,7 +1056,7 @@ fn checked_display_name(value: &str) -> Result<String, IdentityError> {
     let value = value.trim();
     if value.is_empty() || value.len() > MAX_DISPLAY_NAME_LEN {
         return Err(IdentityError::new(
-            IdentityErrorKind::InvalidInput,
+            IdentityErrorType::InvalidInput,
             "display name must contain 1 to 200 bytes",
         ));
     }
@@ -1067,7 +1067,7 @@ fn checked_scope_segment(name: &str, value: &str) -> Result<String, IdentityErro
     let value = value.trim();
     if value.is_empty() || value.len() > 40 {
         return Err(IdentityError::new(
-            IdentityErrorKind::InvalidInput,
+            IdentityErrorType::InvalidInput,
             format!("{name} must contain 1 to 40 bytes"),
         ));
     }
@@ -1078,7 +1078,7 @@ fn canonical_role(value: &str) -> Result<String, IdentityError> {
     let value = value.trim().to_ascii_lowercase();
     if !wamn_session::token::is_role_slug(&value) {
         return Err(IdentityError::new(
-            IdentityErrorKind::InvalidInput,
+            IdentityErrorType::InvalidInput,
             "role must be a lowercase slug of at most 64 bytes",
         ));
     }
@@ -1087,9 +1087,9 @@ fn canonical_role(value: &str) -> Result<String, IdentityError> {
 
 fn database_error(error: &tokio_postgres::Error) -> IdentityError {
     let kind = match error.code() {
-        Some(code) if code == &SqlState::UNIQUE_VIOLATION => IdentityErrorKind::Conflict,
-        Some(code) if code == &SqlState::FOREIGN_KEY_VIOLATION => IdentityErrorKind::NotFound,
-        _ => IdentityErrorKind::Database,
+        Some(code) if code == &SqlState::UNIQUE_VIOLATION => IdentityErrorType::Conflict,
+        Some(code) if code == &SqlState::FOREIGN_KEY_VIOLATION => IdentityErrorType::NotFound,
+        _ => IdentityErrorType::Database,
     };
     // `tokio_postgres::Error` displays as the bare string "db error", so the
     // readable half is taken from its database error. That value's own Display
@@ -1130,7 +1130,7 @@ mod tests {
         ] {
             assert_eq!(
                 invalid.parse::<PrincipalId>().unwrap_err().kind(),
-                IdentityErrorKind::InvalidInput,
+                IdentityErrorType::InvalidInput,
                 "accepted invalid principal ID {invalid:?}"
             );
         }
@@ -1188,7 +1188,7 @@ mod tests {
         assert_eq!(PrincipalType::Platform.as_str(), "platform");
         assert_eq!(
             PrincipalType::parse("robot").unwrap_err().kind(),
-            IdentityErrorKind::CorruptData
+            IdentityErrorType::CorruptData
         );
     }
 

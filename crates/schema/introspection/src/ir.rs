@@ -638,7 +638,7 @@ pub enum IndexDirection {
 
 /// Stable class of IR construction refusal.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum IrErrorKind {
+pub enum IrErrorType {
     EmptyName,
     UnsupportedType,
     UnsupportedDefault,
@@ -647,15 +647,15 @@ pub enum IrErrorKind {
 /// Typed IR construction refusal with the offending PostgreSQL input.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct IrError {
-    kind: IrErrorKind,
+    type_: IrErrorType,
     input: Box<str>,
     column_type: Option<ColumnType>,
 }
 
 impl IrError {
     /// Stable refusal class.
-    pub const fn kind(&self) -> IrErrorKind {
-        self.kind
+    pub const fn kind(&self) -> IrErrorType {
+        self.type_
     }
 
     /// PostgreSQL input, or the object class whose name was empty.
@@ -671,12 +671,12 @@ impl IrError {
 
 impl fmt::Display for IrError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self.kind {
-            IrErrorKind::EmptyName => write!(formatter, "{} name must not be empty", self.input),
-            IrErrorKind::UnsupportedType => {
+        match self.type_ {
+            IrErrorType::EmptyName => write!(formatter, "{} name must not be empty", self.input),
+            IrErrorType::UnsupportedType => {
                 write!(formatter, "unsupported PostgreSQL type `{}`", self.input)
             }
-            IrErrorKind::UnsupportedDefault => write!(
+            IrErrorType::UnsupportedDefault => write!(
                 formatter,
                 "unsupported PostgreSQL default `{}` for wamn:postgres type `{}`",
                 self.input,
@@ -704,7 +704,7 @@ pub fn postgres_type(postgres_name: &str) -> Result<ColumnType, IrError> {
         "jsonb" => Ok(ColumnType::Json),
         "uuid" => Ok(ColumnType::Uuid),
         unsupported => Err(IrError {
-            kind: IrErrorKind::UnsupportedType,
+            type_: IrErrorType::UnsupportedType,
             input: unsupported.into(),
             column_type: None,
         }),
@@ -723,7 +723,7 @@ pub fn postgres_default(
 ) -> Result<ColumnDefault, IrError> {
     let normalized = expression.trim();
     let refuse = || IrError {
-        kind: IrErrorKind::UnsupportedDefault,
+        type_: IrErrorType::UnsupportedDefault,
         input: normalized.into(),
         column_type: Some(column_type),
     };
@@ -825,7 +825,7 @@ fn nonempty_name(name: impl Into<Box<str>>, object: &'static str) -> Result<Box<
     let name = name.into();
     if name.is_empty() {
         return Err(IrError {
-            kind: IrErrorKind::EmptyName,
+            type_: IrErrorType::EmptyName,
             input: object.into(),
             column_type: None,
         });

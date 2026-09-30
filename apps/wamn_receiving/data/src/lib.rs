@@ -11,7 +11,7 @@ pub mod read;
 pub mod record_receipt;
 mod statements;
 
-pub use error::{AccessError, AccessErrorKind};
+pub use error::{AccessError, AccessErrorType};
 
 /// The generated operations, one module for each model, and their refusal.
 pub mod generated {

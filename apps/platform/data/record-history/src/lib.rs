@@ -152,7 +152,7 @@ impl RowImage {
 
 /// The reason that the fold refuses the rows of a history read.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum FoldErrorKind {
+pub enum FoldErrorType {
     /// The rows carry different head positions, so they come from different reads of a changed row.
     HeadMismatch,
     /// The positions of the rows do not rise.
@@ -170,18 +170,21 @@ pub enum FoldErrorKind {
 /// A history read that the fold refuses, with the position of the row at fault.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FoldError {
-    kind: FoldErrorKind,
+    type_: FoldErrorType,
     position: i64,
 }
 
 impl FoldError {
-    const fn new(kind: FoldErrorKind, position: i64) -> Self {
-        Self { kind, position }
+    const fn new(kind: FoldErrorType, position: i64) -> Self {
+        Self {
+            type_: kind,
+            position,
+        }
     }
 
     /// The reason for the refusal.
-    pub const fn kind(&self) -> FoldErrorKind {
-        self.kind
+    pub const fn kind(&self) -> FoldErrorType {
+        self.type_
     }
 
     /// The position of the row at fault.
@@ -195,7 +198,7 @@ impl fmt::Display for FoldError {
         write!(
             formatter,
             "the history read cannot fold at position {}: {:?}",
-            self.position, self.kind
+            self.position, self.type_
         )
     }
 }
@@ -221,16 +224,16 @@ pub fn state_at(rows: &[HistoryRow<'_>], position: i64) -> Result<RowState, Fold
     let mut kinds = Vec::with_capacity(rows.len());
     for (index, row) in rows.iter().enumerate() {
         if row.head_position != newest.head_position {
-            return Err(FoldError::new(FoldErrorKind::HeadMismatch, row.position));
+            return Err(FoldError::new(FoldErrorType::HeadMismatch, row.position));
         }
         if index > 0 && rows[index - 1].position >= row.position {
-            return Err(FoldError::new(FoldErrorKind::PositionOrder, row.position));
+            return Err(FoldError::new(FoldErrorType::PositionOrder, row.position));
         }
         kinds.push(kind(row)?);
     }
     if newest.position != newest.head_position {
         return Err(FoldError::new(
-            FoldErrorKind::IncompleteRead,
+            FoldErrorType::IncompleteRead,
             newest.position,
         ));
     }
@@ -255,7 +258,7 @@ pub fn state_at(rows: &[HistoryRow<'_>], position: i64) -> Result<RowState, Fold
                     .extend(image(row.before, row.position)?.columns);
                 Some(after)
             }
-            _ => return Err(FoldError::new(FoldErrorKind::BrokenChain, row.position)),
+            _ => return Err(FoldError::new(FoldErrorType::BrokenChain, row.position)),
         };
     }
     Ok(state.map_or(RowState::Absent, RowState::Present))
@@ -266,7 +269,7 @@ fn kind(row: &HistoryRow<'_>) -> Result<Kind, FoldError> {
         "insert" => Ok(Kind::Insert),
         "update" => Ok(Kind::Update),
         "delete" => Ok(Kind::Delete),
-        _ => Err(FoldError::new(FoldErrorKind::UnknownKind, row.position)),
+        _ => Err(FoldError::new(FoldErrorType::UnknownKind, row.position)),
     }
 }
 
@@ -294,7 +297,7 @@ fn image(text: &str, position: i64) -> Result<RowImage, FoldError> {
     members(text, |name, _, value| {
         columns.insert(name, value.to_owned());
     })
-    .ok_or(FoldError::new(FoldErrorKind::MalformedImage, position))?;
+    .ok_or(FoldError::new(FoldErrorType::MalformedImage, position))?;
     Ok(RowImage { columns })
 }
 

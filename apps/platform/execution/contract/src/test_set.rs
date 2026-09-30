@@ -22,7 +22,7 @@ pub struct TestSetCase {
 
 /// Stable classification for a refused `cases` array.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum TestSetCasesErrorKind {
+pub enum TestSetCasesErrorType {
     EmptyCases,
     CaseCountOverflow,
     EmptyCaseId,
@@ -33,21 +33,21 @@ pub enum TestSetCasesErrorKind {
 /// Why a `cases` array is refused.
 #[derive(Debug)]
 pub struct TestSetCasesError {
-    kind: TestSetCasesErrorKind,
+    type_: TestSetCasesErrorType,
     detail: Box<str>,
 }
 
 impl TestSetCasesError {
-    fn new(kind: TestSetCasesErrorKind, detail: impl Into<Box<str>>) -> Self {
+    fn new(kind: TestSetCasesErrorType, detail: impl Into<Box<str>>) -> Self {
         Self {
-            kind,
+            type_: kind,
             detail: detail.into(),
         }
     }
 
     /// Stable failure classification.
-    pub const fn kind(&self) -> TestSetCasesErrorKind {
-        self.kind
+    pub const fn kind(&self) -> TestSetCasesErrorType {
+        self.type_
     }
 }
 
@@ -62,20 +62,20 @@ impl std::error::Error for TestSetCasesError {}
 /// Validate every non-vacuous cardinality and expectation bound.
 ///
 /// A caller that requires a test set calls this directly and gets
-/// [`TestSetCasesErrorKind::EmptyCases`] for an empty slice. [`crate::Flow`]
+/// [`TestSetCasesErrorType::EmptyCases`] for an empty slice. [`crate::Flow`]
 /// does not: `cases` is an optional document array whose absent and empty
 /// forms are the same bytes, so flow validation applies these bounds only to a
 /// flow that carries at least one case.
 pub fn validate_cases(cases: &[TestSetCase]) -> Result<(), TestSetCasesError> {
     if cases.is_empty() {
         return Err(TestSetCasesError::new(
-            TestSetCasesErrorKind::EmptyCases,
+            TestSetCasesErrorType::EmptyCases,
             "flow document cases must not be empty",
         ));
     }
     if cases.len() > MAX_TEST_SET_CASES {
         return Err(TestSetCasesError::new(
-            TestSetCasesErrorKind::CaseCountOverflow,
+            TestSetCasesErrorType::CaseCountOverflow,
             format!(
                 "flow document has {} cases; maximum is {MAX_TEST_SET_CASES}",
                 cases.len()
@@ -87,19 +87,19 @@ pub fn validate_cases(cases: &[TestSetCase]) -> Result<(), TestSetCasesError> {
     for case in cases {
         if case.case_id.is_empty() {
             return Err(TestSetCasesError::new(
-                TestSetCasesErrorKind::EmptyCaseId,
+                TestSetCasesErrorType::EmptyCaseId,
                 "case-id must not be empty",
             ));
         }
         if !case_ids.insert(case.case_id.as_str()) {
             return Err(TestSetCasesError::new(
-                TestSetCasesErrorKind::DuplicateCaseId,
+                TestSetCasesErrorType::DuplicateCaseId,
                 format!("duplicate case-id {:?}", case.case_id),
             ));
         }
         if let Err(error) = case.expect.validate() {
             return Err(TestSetCasesError::new(
-                TestSetCasesErrorKind::InvalidExpect,
+                TestSetCasesErrorType::InvalidExpect,
                 format!("case {:?} expect is invalid: {error}", case.case_id),
             ));
         }
@@ -111,7 +111,7 @@ pub fn validate_cases(cases: &[TestSetCase]) -> Result<(), TestSetCasesError> {
 mod tests {
     use serde_json::json;
 
-    use super::{MAX_TEST_SET_CASES, TestSetCase, TestSetCasesErrorKind, validate_cases};
+    use super::{MAX_TEST_SET_CASES, TestSetCase, TestSetCasesErrorType, validate_cases};
     use crate::expect::{Expect, ExpectedOutcome};
     use crate::status::WiringFailureKind;
 
@@ -128,7 +128,7 @@ mod tests {
         }
     }
 
-    fn refusal(cases: &[TestSetCase], expected_kind: TestSetCasesErrorKind) -> String {
+    fn refusal(cases: &[TestSetCase], expected_kind: TestSetCasesErrorType) -> String {
         let error = validate_cases(cases).expect_err("cases must be refused");
         assert_eq!(error.kind(), expected_kind);
         error.to_string()
@@ -144,19 +144,19 @@ mod tests {
 
     #[test]
     fn rejects_empty_overflowing_and_duplicate_cardinalities() {
-        refusal(&[], TestSetCasesErrorKind::EmptyCases);
+        refusal(&[], TestSetCasesErrorType::EmptyCases);
 
         let too_many: Vec<TestSetCase> = (0..=MAX_TEST_SET_CASES)
             .map(|ordinal| case(&format!("case-{ordinal}")))
             .collect();
-        let detail = refusal(&too_many, TestSetCasesErrorKind::CaseCountOverflow);
+        let detail = refusal(&too_many, TestSetCasesErrorType::CaseCountOverflow);
         assert!(detail.contains("257 cases"));
         assert!(detail.contains("maximum is 256"));
 
-        refusal(&[case("")], TestSetCasesErrorKind::EmptyCaseId);
+        refusal(&[case("")], TestSetCasesErrorType::EmptyCaseId);
         let duplicate = refusal(
             &[case("same"), case("same")],
-            TestSetCasesErrorKind::DuplicateCaseId,
+            TestSetCasesErrorType::DuplicateCaseId,
         );
         assert!(duplicate.contains("same"));
     }
@@ -167,7 +167,7 @@ mod tests {
         invalid.expect.failure_code = Some(WiringFailureKind::Terminal);
         let detail = refusal(
             std::slice::from_ref(&invalid),
-            TestSetCasesErrorKind::InvalidExpect,
+            TestSetCasesErrorType::InvalidExpect,
         );
         assert!(detail.contains("bad"));
         assert!(detail.contains("forbids failure-code"));

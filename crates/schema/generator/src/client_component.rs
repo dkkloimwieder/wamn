@@ -31,13 +31,13 @@ use crate::generate::GeneratedFile;
 /// Why a component could not be emitted.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ClientComponentError {
-    kind: ClientComponentErrorKind,
+    type_: ClientComponentErrorType,
     detail: String,
 }
 
 /// What went wrong.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ClientComponentErrorKind {
+pub enum ClientComponentErrorType {
     /// A screen states a role whose component this emitter does not write yet.
     UnwrittenRole,
     /// A table column that a table definition cannot state: it is not a member
@@ -48,7 +48,7 @@ pub enum ClientComponentErrorKind {
     UnsuppliedRevision,
 }
 
-impl ClientComponentErrorKind {
+impl ClientComponentErrorType {
     /// Stable wire code.
     #[must_use]
     pub const fn code(self) -> &'static str {
@@ -61,23 +61,23 @@ impl ClientComponentErrorKind {
 }
 
 impl ClientComponentError {
-    fn new(kind: ClientComponentErrorKind, detail: impl Into<String>) -> Self {
+    fn new(kind: ClientComponentErrorType, detail: impl Into<String>) -> Self {
         Self {
-            kind,
+            type_: kind,
             detail: detail.into(),
         }
     }
 
     /// What went wrong.
     #[must_use]
-    pub const fn kind(&self) -> ClientComponentErrorKind {
-        self.kind
+    pub const fn kind(&self) -> ClientComponentErrorType {
+        self.type_
     }
 }
 
 impl core::fmt::Display for ClientComponentError {
     fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        write!(formatter, "{}: {}", self.kind.code(), self.detail)
+        write!(formatter, "{}: {}", self.type_.code(), self.detail)
     }
 }
 
@@ -300,7 +300,7 @@ fn emit_model(
             }
             role @ Role::Unsupported(_) => {
                 return Err(ClientComponentError::new(
-                    ClientComponentErrorKind::UnwrittenRole,
+                    ClientComponentErrorType::UnwrittenRole,
                     format!(
                         "{} states the role {role:?}, which gets no component",
                         screen.contract.operation
@@ -651,7 +651,7 @@ fn write_table_definition(
     // Generation refuses a table read that states no row key.
     let lists = operation.lists.as_ref().ok_or_else(|| {
         ClientComponentError::new(
-            ClientComponentErrorKind::UnwrittenRole,
+            ClientComponentErrorType::UnwrittenRole,
             format!(
                 "{} is a table read with no `lists` key",
                 operation.operation
@@ -671,7 +671,7 @@ fn write_table_definition(
         crate::client_plan::Rows::List { key: "rows" } => "rows",
         _ => {
             return Err(ClientComponentError::new(
-                ClientComponentErrorKind::UnwrittenRole,
+                ClientComponentErrorType::UnwrittenRole,
                 format!(
                     "{} states the table role, but neither `item` rows with a cursor nor bounded `rows`",
                     operation.operation
@@ -1072,7 +1072,7 @@ fn write_table_definition(
 fn column_member(path: &str, operation: &str) -> Result<String, ClientComponentError> {
     if path.contains('.') {
         return Err(ClientComponentError::new(
-            ClientComponentErrorKind::UnwrittenColumn,
+            ClientComponentErrorType::UnwrittenColumn,
             format!("{operation} table column {path:?} is not a member of its row"),
         ));
     }
@@ -1087,7 +1087,7 @@ fn column_type(field: &FieldIr, operation: &str) -> Result<(), ClientComponentEr
         .map(|_| ())
         .map_err(|_| {
             ClientComponentError::new(
-                ClientComponentErrorKind::UnwrittenColumn,
+                ClientComponentErrorType::UnwrittenColumn,
                 format!(
                     "{operation} table column {:?} has type {:?}, which is not a sql-value type",
                     field.path, field.type_name
@@ -1106,7 +1106,7 @@ fn emit_detail(
     ui.extend(["DetailItem", "DetailList", "FieldError", "announceOutcome"]);
     let stem = crate::client_ts::type_stem(screen.model, screen.name);
     let function = crate::client_ts::function_name(screen.name).map_err(|error| {
-        ClientComponentError::new(ClientComponentErrorKind::UnwrittenRole, error.to_string())
+        ClientComponentError::new(ClientComponentErrorType::UnwrittenRole, error.to_string())
     })?;
     runtime.extend([
         "afterWrites",
@@ -1473,7 +1473,7 @@ fn emit_form(
 ) -> Result<(), ClientComponentError> {
     let stem = crate::client_ts::type_stem(screen.model, screen.name);
     let function = crate::client_ts::function_name(screen.name).map_err(|error| {
-        ClientComponentError::new(ClientComponentErrorKind::UnwrittenRole, error.to_string())
+        ClientComponentError::new(ClientComponentErrorType::UnwrittenRole, error.to_string())
     })?;
     // A form sends a revision read from the record a declared path names:
     // the record its bound read returns, or the row that fills the input
@@ -1485,7 +1485,7 @@ fn emit_form(
             .find(|revision| chosen(screen, revision).is_none())
     {
         return Err(ClientComponentError::new(
-            ClientComponentErrorKind::UnsuppliedRevision,
+            ClientComponentErrorType::UnsuppliedRevision,
             format!(
                 "{} sends the revision {revision}, and no bound read or chosen record supplies it; state the reference input it guards as its \"revision\"",
                 screen.contract.operation
@@ -1614,7 +1614,7 @@ fn emit_form(
         let read = crate::client_ts::function_name(local_name(binding.read_operation)).map_err(
             |error| {
                 ClientComponentError::new(
-                    ClientComponentErrorKind::UnwrittenRole,
+                    ClientComponentErrorType::UnwrittenRole,
                     error.to_string(),
                 )
             },
@@ -1760,7 +1760,7 @@ fn emit_form(
         let list_function =
             crate::client_ts::function_name(populated.list_name).map_err(|error| {
                 ClientComponentError::new(
-                    ClientComponentErrorKind::UnwrittenRole,
+                    ClientComponentErrorType::UnwrittenRole,
                     error.to_string(),
                 )
             })?;
@@ -1776,7 +1776,7 @@ fn emit_form(
         if let Some(read) = populated.read {
             let read_function = crate::client_ts::function_name(read.name).map_err(|error| {
                 ClientComponentError::new(
-                    ClientComponentErrorKind::UnwrittenRole,
+                    ClientComponentErrorType::UnwrittenRole,
                     error.to_string(),
                 )
             })?;
@@ -2445,7 +2445,7 @@ fn emit_delete(
 ) -> Result<(), ClientComponentError> {
     let stem = crate::client_ts::type_stem(screen.model, screen.name);
     let function = crate::client_ts::function_name(screen.name).map_err(|error| {
-        ClientComponentError::new(ClientComponentErrorKind::UnwrittenRole, error.to_string())
+        ClientComponentError::new(ClientComponentErrorType::UnwrittenRole, error.to_string())
     })?;
     runtime.extend([
         "newRequestId",

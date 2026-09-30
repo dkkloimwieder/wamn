@@ -1,6 +1,6 @@
 use serde_json::{Value, json};
 use wamn_schema_generator::{
-    DATA_ACCESS_OVERLAY_PATH, DataAccessOverlay, GenerateErrorKind, validate_operation_vocabulary,
+    DATA_ACCESS_OVERLAY_PATH, DataAccessOverlay, GenerateErrorType, validate_operation_vocabulary,
 };
 use wamn_schema_introspection::ir::{CatalogIr, Constraint, Table};
 
@@ -44,7 +44,7 @@ fn custom_error_details_preserve_business_and_constraint_meanings() {
             validate_operation_vocabulary(&parsed(&manifest))
                 .expect_err(path)
                 .kind(),
-            GenerateErrorKind::InvalidOperation
+            GenerateErrorType::InvalidOperation
         );
     }
     let mut repeated = baseline.clone();
@@ -54,7 +54,7 @@ fn custom_error_details_preserve_business_and_constraint_meanings() {
         validate_operation_vocabulary(&parsed(&repeated))
             .unwrap_err()
             .kind(),
-        GenerateErrorKind::InvalidOperation
+        GenerateErrorType::InvalidOperation
     );
     let mut missing_permission = baseline;
     missing_permission["custom_operations"]["widget.archive"]["errors"]
@@ -65,7 +65,7 @@ fn custom_error_details_preserve_business_and_constraint_meanings() {
         validate_operation_vocabulary(&parsed(&missing_permission))
             .unwrap_err()
             .kind(),
-        GenerateErrorKind::InvalidOperation
+        GenerateErrorType::InvalidOperation
     );
 }
 
@@ -113,7 +113,7 @@ fn custom_constraints_follow_catalog_identity_and_kind() {
         if replacement.is_none() {
             assert_eq!(
                 result.unwrap_err().kind(),
-                GenerateErrorKind::InvalidOperation
+                GenerateErrorType::InvalidOperation
             );
         } else {
             let errors = artifact(
@@ -136,28 +136,28 @@ fn custom_constraints_follow_catalog_identity_and_kind() {
         fixture::try_generate_with(&catalog, &missing_field)
             .unwrap_err()
             .kind(),
-        GenerateErrorKind::UnknownColumn
+        GenerateErrorType::UnknownColumn
     );
 }
 
 #[test]
 fn custom_visibility_permissions_and_components_remain_closed() {
     for (field, value, kind) in [
-        ("component", json!(""), GenerateErrorKind::InvalidComponent),
+        ("component", json!(""), GenerateErrorType::InvalidComponent),
         (
             "permission",
             json!("widget.other"),
-            GenerateErrorKind::InvalidOperation,
+            GenerateErrorType::InvalidOperation,
         ),
         (
             "registration",
             json!({"source_package": "platform_fixture", "entity": "widget", "ops": ["insert"]}),
-            GenerateErrorKind::InvalidOperation,
+            GenerateErrorType::InvalidOperation,
         ),
         (
             "visibility",
             json!("private"),
-            GenerateErrorKind::InvalidOperation,
+            GenerateErrorType::InvalidOperation,
         ),
     ] {
         let mut manifest = fixture::manifest();
@@ -189,7 +189,7 @@ fn custom_visibility_permissions_and_components_remain_closed() {
         validate_operation_vocabulary(&parsed(&projection))
             .unwrap_err()
             .kind(),
-        GenerateErrorKind::InvalidOperation
+        GenerateErrorType::InvalidOperation
     );
 }
 
@@ -235,7 +235,7 @@ fn pre_commit_generation_and_canonical_authority_use_platform_declarations() {
         DataAccessOverlay::from_slice(&noncanonical)
             .unwrap_err()
             .kind(),
-        GenerateErrorKind::InvalidManifest
+        GenerateErrorType::InvalidManifest
     );
     let mut read_only = fixture::manifest();
     read_only["models"]["widget"]["operations"] = json!({});
@@ -335,5 +335,5 @@ fn an_optional_pre_commit_slot_generates_its_no_op_participant() {
         .unwrap(),
     )
     .expect_err("a required slot without a pre_commit was accepted");
-    assert_eq!(error.kind(), GenerateErrorKind::InvalidOperation);
+    assert_eq!(error.kind(), GenerateErrorType::InvalidOperation);
 }

@@ -349,7 +349,7 @@ pub struct AdmittedComponentFacts {
 
 /// Stable classification for component-fact normalization refusal.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ComponentFactErrorKind {
+pub enum ComponentFactErrorType {
     EmptyIdentity,
     EmptyOperationSet,
     NonCanonicalIdentity,
@@ -378,19 +378,19 @@ pub enum ComponentFactErrorKind {
 /// Refusal to mint a complete normalized component-library fact.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ComponentFactError {
-    kind: ComponentFactErrorKind,
+    type_: ComponentFactErrorType,
     detail: Box<str>,
 }
 
 impl ComponentFactError {
     /// Stable refusal class for callers that must not match display text.
-    pub fn kind(&self) -> ComponentFactErrorKind {
-        self.kind
+    pub fn kind(&self) -> ComponentFactErrorType {
+        self.type_
     }
 
-    fn new(kind: ComponentFactErrorKind, detail: impl Into<Box<str>>) -> Self {
+    fn new(kind: ComponentFactErrorType, detail: impl Into<Box<str>>) -> Self {
         Self {
-            kind,
+            type_: kind,
             detail: detail.into(),
         }
     }
@@ -423,7 +423,7 @@ pub fn normalize_component_fact(
     )
     .map_err(|error| {
         ComponentFactError::new(
-            ComponentFactErrorKind::NonCanonicalIdentity,
+            ComponentFactErrorType::NonCanonicalIdentity,
             error.to_string(),
         )
     })?;
@@ -431,13 +431,13 @@ pub fn normalize_component_fact(
     validate_identity(&declaration.interface_version, "interface-version")?;
     if declaration.operations.is_empty() {
         return Err(ComponentFactError::new(
-            ComponentFactErrorKind::EmptyOperationSet,
+            ComponentFactErrorType::EmptyOperationSet,
             "component operations must not be empty",
         ));
     }
     if !valid_digest(&component_digest) {
         return Err(ComponentFactError::new(
-            ComponentFactErrorKind::InvalidComponentDigest,
+            ComponentFactErrorType::InvalidComponentDigest,
             "component-digest must be sha256:<64 lowercase hex digits>",
         ));
     }
@@ -468,12 +468,12 @@ pub fn normalize_component_fact(
         let dependencies = normalize_operation_dependencies(operation.dependencies)?;
         let input_ports = normalize_ports(
             operation.input_ports,
-            ComponentFactErrorKind::DuplicateInputPort,
+            ComponentFactErrorType::DuplicateInputPort,
             "input-port",
         )?;
         let output_ports = normalize_ports(
             operation.output_ports,
-            ComponentFactErrorKind::DuplicateOutputPort,
+            ComponentFactErrorType::DuplicateOutputPort,
             "output-port",
         )?;
         let parameters = normalize_parameters(operation.parameters)?;
@@ -548,13 +548,13 @@ pub fn verify_stored_effect_projection(
     )
     .map_err(|error| {
         ComponentFactError::new(
-            ComponentFactErrorKind::NonCanonicalIdentity,
+            ComponentFactErrorType::NonCanonicalIdentity,
             error.to_string(),
         )
     })?;
     if component.operations.is_empty() {
         return Err(ComponentFactError::new(
-            ComponentFactErrorKind::EmptyOperationSet,
+            ComponentFactErrorType::EmptyOperationSet,
             "component operations must not be empty",
         ));
     }
@@ -579,7 +579,7 @@ pub fn verify_stored_effect_projection(
         let dependencies = normalize_operation_dependencies(operation.dependencies.clone())?;
         if dependencies != operation.dependencies {
             return Err(ComponentFactError::new(
-                ComponentFactErrorKind::InvalidOperationDependency,
+                ComponentFactErrorType::InvalidOperationDependency,
                 format!("operation {export:?} dependencies are not normalized"),
             ));
         }
@@ -626,7 +626,7 @@ pub fn bind_component_statement_facts(
         let missing = registered.difference(&supplied).collect::<Vec<_>>();
         let extra = supplied.difference(&exported).collect::<Vec<_>>();
         return Err(ComponentFactError::new(
-            ComponentFactErrorKind::UnexpectedOperationStatements,
+            ComponentFactErrorType::UnexpectedOperationStatements,
             format!(
                 "statement operation set differs from component exports: missing-public={missing:?}, extra={extra:?}"
             ),
@@ -654,7 +654,7 @@ pub(crate) fn validate_operation_statement_facts(
     for (digest, statement) in statements {
         if !valid_digest(digest) || component_sql_digest(statement.sql.as_bytes()) != *digest {
             return Err(ComponentFactError::new(
-                ComponentFactErrorKind::InvalidStatementFact,
+                ComponentFactErrorType::InvalidStatementFact,
                 format!(
                     "operation {export:?} statement {:?} digest disagrees with its SQL bytes",
                     statement.name
@@ -664,7 +664,7 @@ pub(crate) fn validate_operation_statement_facts(
         validate_identity(&statement.name, "statement name")?;
         if !is_safe_statement_path(&statement.path) {
             return Err(ComponentFactError::new(
-                ComponentFactErrorKind::InvalidStatementFact,
+                ComponentFactErrorType::InvalidStatementFact,
                 format!(
                     "operation {export:?} statement {:?} path is not a canonical package-relative SQL path",
                     statement.name
@@ -673,7 +673,7 @@ pub(crate) fn validate_operation_statement_facts(
         }
         if !names.insert(&statement.name) || !paths.insert(&statement.path) {
             return Err(ComponentFactError::new(
-                ComponentFactErrorKind::InvalidStatementFact,
+                ComponentFactErrorType::InvalidStatementFact,
                 format!("operation {export:?} repeats a statement name or path"),
             ));
         }
@@ -694,7 +694,7 @@ fn validate_statement_fields(
         validate_identity(&field.name, field_kind)?;
         if !names.insert(&field.name) {
             return Err(ComponentFactError::new(
-                ComponentFactErrorKind::DuplicateStatementField,
+                ComponentFactErrorType::DuplicateStatementField,
                 format!(
                     "operation {export:?} statement {statement:?} repeats {field_kind} {:?}",
                     field.name
@@ -747,7 +747,7 @@ fn validate_registered_operation_scope(
     let Some(operation) = operation else {
         if fresh_only {
             return Err(ComponentFactError::new(
-                ComponentFactErrorKind::RegisteredOperationMismatch,
+                ComponentFactErrorType::RegisteredOperationMismatch,
                 format!("unregistered export {export:?} must not require a fresh credential"),
             ));
         }
@@ -756,13 +756,13 @@ fn validate_registered_operation_scope(
     validate_canonical_operation_for_package(operation, &scope.package_id, &scope.package_version)
         .map_err(|error| {
             ComponentFactError::new(
-                ComponentFactErrorKind::NonCanonicalIdentity,
+                ComponentFactErrorType::NonCanonicalIdentity,
                 error.to_string(),
             )
         })?;
     if operation != export {
         return Err(ComponentFactError::new(
-            ComponentFactErrorKind::RegisteredOperationMismatch,
+            ComponentFactErrorType::RegisteredOperationMismatch,
             format!("registered operation {operation:?} must equal exported operation {export:?}"),
         ));
     }
@@ -777,7 +777,7 @@ fn validate_pre_commit(
 ) -> Result<(), ComponentFactError> {
     if pre_commit_required && pre_commit.is_none() {
         return Err(ComponentFactError::new(
-            ComponentFactErrorKind::InvalidOperationDependency,
+            ComponentFactErrorType::InvalidOperationDependency,
             "a required pre-commit needs a pre-commit interface",
         ));
     }
@@ -789,13 +789,13 @@ fn validate_pre_commit(
         )
         .map_err(|error| {
             ComponentFactError::new(
-                ComponentFactErrorKind::InvalidOperationDependency,
+                ComponentFactErrorType::InvalidOperationDependency,
                 error.to_string(),
             )
         })?;
         if pre_commit == export {
             return Err(ComponentFactError::new(
-                ComponentFactErrorKind::InvalidOperationDependency,
+                ComponentFactErrorType::InvalidOperationDependency,
                 "pre-commit interface must differ from the operation export",
             ));
         }
@@ -812,13 +812,13 @@ fn normalize_operation_dependencies(
         let coordinate = PackageCoordinate::new(&declaration.package, &declaration.version)
             .map_err(|error| {
                 ComponentFactError::new(
-                    ComponentFactErrorKind::InvalidOperationDependency,
+                    ComponentFactErrorType::InvalidOperationDependency,
                     error.to_string(),
                 )
             })?;
         if !valid_digest(&declaration.digest) {
             return Err(ComponentFactError::new(
-                ComponentFactErrorKind::InvalidOperationDependency,
+                ComponentFactErrorType::InvalidOperationDependency,
                 "operation dependency digest must be sha256:<64 lowercase hex digits>",
             ));
         }
@@ -829,13 +829,13 @@ fn normalize_operation_dependencies(
         )
         .map_err(|error| {
             ComponentFactError::new(
-                ComponentFactErrorKind::InvalidOperationDependency,
+                ComponentFactErrorType::InvalidOperationDependency,
                 error.to_string(),
             )
         })?;
         if !seen.insert(declaration.operation.clone()) {
             return Err(ComponentFactError::new(
-                ComponentFactErrorKind::DuplicateOperationDependency,
+                ComponentFactErrorType::DuplicateOperationDependency,
                 format!(
                     "operation dependency {:?} is duplicated",
                     declaration.operation
@@ -867,7 +867,7 @@ fn validate_operation_dependency_imports(
             .copied()
             .collect::<Vec<_>>();
         return Err(ComponentFactError::new(
-            ComponentFactErrorKind::OperationDependencyMismatch,
+            ComponentFactErrorType::OperationDependencyMismatch,
             format!(
                 "declared operation dependencies differ from audited imports: missing={missing:?}, extra={extra:?}"
             ),
@@ -890,7 +890,7 @@ fn operation_dependency_imports(
                 || existing.digest != dependency.digest)
         {
             return Err(ComponentFactError::new(
-                ComponentFactErrorKind::ConflictingOperationDependency,
+                ComponentFactErrorType::ConflictingOperationDependency,
                 format!(
                     "operation dependency {:?} carries conflicting package, version, or digest pins",
                     dependency.operation
@@ -910,7 +910,7 @@ fn operation_dependency_imports(
                 && !operations.contains_key(participant)
             {
                 return Err(ComponentFactError::new(
-                    ComponentFactErrorKind::InvalidOperationDependency,
+                    ComponentFactErrorType::InvalidOperationDependency,
                     format!("participant {participant:?} is not a local operation"),
                 ));
             }
@@ -968,7 +968,7 @@ fn normalize_effects(
                         || dependency_imports.contains(interface.as_str())
                     {
                         return Err(ComponentFactError::new(
-                            ComponentFactErrorKind::UnimportedEffect,
+                            ComponentFactErrorType::UnimportedEffect,
                             format!(
                                 "effect interface {interface:?} is not an audited platform-capability import"
                             ),
@@ -979,7 +979,7 @@ fn normalize_effects(
             ComponentEffectProvenance::Inherited => {
                 if !interfaces.is_empty() {
                     return Err(ComponentFactError::new(
-                        ComponentFactErrorKind::InheritedEffectInterfaces,
+                        ComponentFactErrorType::InheritedEffectInterfaces,
                         format!(
                             "inherited effect {:?} carries interfaces {interfaces:?}, and a \
                              dependency declares none for this component",
@@ -1016,7 +1016,7 @@ fn normalize_effects(
                     .any(|interface| interface == import)
         }) {
             return Err(ComponentFactError::new(
-                ComponentFactErrorKind::UnprojectedEffect,
+                ComponentFactErrorType::UnprojectedEffect,
                 format!("audited import {import:?} is absent from the effect projection"),
             ));
         }
@@ -1035,14 +1035,14 @@ fn normalize_connections(
         validate_identity(&declaration.store_alias, "store-alias")?;
         if !seen.insert(declaration.store_alias.clone()) {
             return Err(ComponentFactError::new(
-                ComponentFactErrorKind::DuplicateConnection,
+                ComponentFactErrorType::DuplicateConnection,
                 format!("store-alias {:?} is duplicated", declaration.store_alias),
             ));
         }
         let package = declaration.requirement_type.import_package();
         if !effects.iter().any(|effect| effect.package == package) {
             return Err(ComponentFactError::new(
-                ComponentFactErrorKind::UnimportedConnection,
+                ComponentFactErrorType::UnimportedConnection,
                 format!(
                     "store-alias {:?} requires package {package:?}, which these bytes do not import",
                     declaration.store_alias
@@ -1064,7 +1064,7 @@ fn normalize_connections(
                 .any(|connection| connection.requirement_type == connection_type)
         {
             return Err(ComponentFactError::new(
-                ComponentFactErrorKind::UndeclaredConnection,
+                ComponentFactErrorType::UndeclaredConnection,
                 format!("package {package:?} is imported but no store-alias declares it"),
             ));
         }
@@ -1074,7 +1074,7 @@ fn normalize_connections(
 
 fn normalize_ports(
     declarations: Vec<ComponentPortDeclaration>,
-    duplicate_kind: ComponentFactErrorKind,
+    duplicate_kind: ComponentFactErrorType,
     field: &'static str,
 ) -> Result<Vec<AdmittedComponentPort>, ComponentFactError> {
     let mut seen = BTreeSet::new();
@@ -1105,7 +1105,7 @@ fn normalize_parameters(
         validate_identity(&declaration.name, "parameter")?;
         if !seen.insert(declaration.name.clone()) {
             return Err(ComponentFactError::new(
-                ComponentFactErrorKind::DuplicateParameter,
+                ComponentFactErrorType::DuplicateParameter,
                 format!("parameter {:?} is duplicated", declaration.name),
             ));
         }
@@ -1128,14 +1128,14 @@ pub(crate) fn validate_committed_result_schema(
     };
     if registered_operation.is_none() {
         return Err(ComponentFactError::new(
-            ComponentFactErrorKind::RegisteredOperationMismatch,
+            ComponentFactErrorType::RegisteredOperationMismatch,
             "only a registered operation can declare a committed result",
         ));
     }
     let normalized = normalize_schema(schema.schema.clone(), "committed-result")?;
     if normalized != *schema {
         return Err(ComponentFactError::new(
-            ComponentFactErrorKind::InvalidSchema,
+            ComponentFactErrorType::InvalidSchema,
             "committed-result schema digest differs from its schema",
         ));
     }
@@ -1150,13 +1150,13 @@ pub(crate) fn normalize_schema(
         && declared.as_str() != Some(JSON_SCHEMA_2020_12)
     {
         return Err(ComponentFactError::new(
-            ComponentFactErrorKind::InvalidSchema,
+            ComponentFactErrorType::InvalidSchema,
             format!("{field} schema must use JSON Schema draft 2020-12"),
         ));
     }
     if has_remote_ref(&schema) {
         return Err(ComponentFactError::new(
-            ComponentFactErrorKind::RemoteSchemaReference,
+            ComponentFactErrorType::RemoteSchemaReference,
             format!("{field} schema may only use document-local references"),
         ));
     }
@@ -1167,7 +1167,7 @@ pub(crate) fn normalize_schema(
         .add_resource(SCHEMA_URI, schema.clone())
         .map_err(|error| {
             ComponentFactError::new(
-                ComponentFactErrorKind::InvalidSchema,
+                ComponentFactErrorType::InvalidSchema,
                 format!("{field} schema is invalid: {error}"),
             )
         })?;
@@ -1176,7 +1176,7 @@ pub(crate) fn normalize_schema(
         .compile(SCHEMA_URI, &mut schemas)
         .map_err(|error| {
             ComponentFactError::new(
-                ComponentFactErrorKind::InvalidSchema,
+                ComponentFactErrorType::InvalidSchema,
                 format!("{field} schema is invalid: {error}"),
             )
         })?;
@@ -1205,13 +1205,13 @@ fn has_remote_ref(value: &Value) -> bool {
 fn validate_identity(value: &str, field: &str) -> Result<(), ComponentFactError> {
     if value.is_empty() {
         return Err(ComponentFactError::new(
-            ComponentFactErrorKind::EmptyIdentity,
+            ComponentFactErrorType::EmptyIdentity,
             format!("{field} is empty"),
         ));
     }
     if value.trim() != value || value.as_bytes().contains(&0) {
         return Err(ComponentFactError::new(
-            ComponentFactErrorKind::NonCanonicalIdentity,
+            ComponentFactErrorType::NonCanonicalIdentity,
             format!("{field} is not in canonical form"),
         ));
     }
@@ -1402,7 +1402,7 @@ mod tests {
             )
             .unwrap_err()
             .kind(),
-            ComponentFactErrorKind::OperationDependencyMismatch
+            ComponentFactErrorType::OperationDependencyMismatch
         );
 
         let mut invalid_digest = declaration();
@@ -1418,7 +1418,7 @@ mod tests {
             )
             .unwrap_err()
             .kind(),
-            ComponentFactErrorKind::InvalidOperationDependency
+            ComponentFactErrorType::InvalidOperationDependency
         );
 
         let mut mismatched_coordinate = declaration();
@@ -1434,7 +1434,7 @@ mod tests {
             )
             .unwrap_err()
             .kind(),
-            ComponentFactErrorKind::InvalidOperationDependency
+            ComponentFactErrorType::InvalidOperationDependency
         );
 
         let mut duplicate = declaration();
@@ -1448,7 +1448,7 @@ mod tests {
             )
             .unwrap_err()
             .kind(),
-            ComponentFactErrorKind::DuplicateOperationDependency
+            ComponentFactErrorType::DuplicateOperationDependency
         );
 
         let mut conflicting = declaration();
@@ -1466,7 +1466,7 @@ mod tests {
             )
             .unwrap_err()
             .kind(),
-            ComponentFactErrorKind::ConflictingOperationDependency
+            ComponentFactErrorType::ConflictingOperationDependency
         );
     }
 
@@ -1484,7 +1484,7 @@ mod tests {
             )
             .unwrap_err()
             .kind(),
-            ComponentFactErrorKind::RegisteredOperationMismatch,
+            ComponentFactErrorType::RegisteredOperationMismatch,
         );
 
         let registered = "orders:widget/create@1.2.0";
@@ -1522,17 +1522,17 @@ mod tests {
             verify_stored_effect_projection(&corrupted)
                 .unwrap_err()
                 .kind(),
-            ComponentFactErrorKind::InvalidSchema
+            ComponentFactErrorType::InvalidSchema
         );
 
         for (schema, kind) in [
             (
                 json!({"type": "not-a-type"}),
-                ComponentFactErrorKind::InvalidSchema,
+                ComponentFactErrorType::InvalidSchema,
             ),
             (
                 json!({"$ref": "https://example.invalid/schema"}),
-                ComponentFactErrorKind::RemoteSchemaReference,
+                ComponentFactErrorType::RemoteSchemaReference,
             ),
         ] {
             palette
@@ -1593,13 +1593,13 @@ mod tests {
             )
             .unwrap_err()
             .kind(),
-            ComponentFactErrorKind::RegisteredOperationMismatch
+            ComponentFactErrorType::RegisteredOperationMismatch
         );
         let mut stored = migration_defaulted_fact(&[]);
         stored.operations.get_mut("map").unwrap().fresh_only = true;
         assert_eq!(
             verify_stored_effect_projection(&stored).unwrap_err().kind(),
-            ComponentFactErrorKind::RegisteredOperationMismatch
+            ComponentFactErrorType::RegisteredOperationMismatch
         );
     }
 
@@ -1653,7 +1653,7 @@ mod tests {
             )
             .unwrap_err()
             .kind(),
-            ComponentFactErrorKind::NonCanonicalIdentity
+            ComponentFactErrorType::NonCanonicalIdentity
         );
 
         for operation in ["other:widget/get@1.2.0", "orders:widget/get@2.0.0"] {
@@ -1668,7 +1668,7 @@ mod tests {
                 )
                 .unwrap_err()
                 .kind(),
-                ComponentFactErrorKind::NonCanonicalIdentity
+                ComponentFactErrorType::NonCanonicalIdentity
             );
         }
 
@@ -1684,7 +1684,7 @@ mod tests {
             )
             .unwrap_err()
             .kind(),
-            ComponentFactErrorKind::RegisteredOperationMismatch
+            ComponentFactErrorType::RegisteredOperationMismatch
         );
 
         let mut stored = migration_defaulted_fact(&[]);
@@ -1695,7 +1695,7 @@ mod tests {
             .registered_operation = Some("other:widget/get@1.2.0".into());
         assert_eq!(
             verify_stored_effect_projection(&stored).unwrap_err().kind(),
-            ComponentFactErrorKind::NonCanonicalIdentity
+            ComponentFactErrorType::NonCanonicalIdentity
         );
     }
 
@@ -1744,7 +1744,7 @@ mod tests {
         let error = verify_stored_effect_projection(&stored)
             .expect_err("an underived purity claim is refused");
 
-        assert_eq!(error.kind(), ComponentFactErrorKind::UnprojectedEffect);
+        assert_eq!(error.kind(), ComponentFactErrorType::UnprojectedEffect);
     }
 
     /// The other half of the same guard: a row whose `'[]'` happens to be the
@@ -1769,7 +1769,7 @@ mod tests {
         )
         .expect_err("an under-claimed projection is refused at admission");
 
-        assert_eq!(error.kind(), ComponentFactErrorKind::UnprojectedEffect);
+        assert_eq!(error.kind(), ComponentFactErrorType::UnprojectedEffect);
     }
 
     #[test]
@@ -1808,7 +1808,7 @@ mod tests {
             )
             .unwrap_err()
             .kind(),
-            ComponentFactErrorKind::UndeclaredConnection
+            ComponentFactErrorType::UndeclaredConnection
         );
 
         // Declared authority the bytes never import.
@@ -1821,7 +1821,7 @@ mod tests {
             )
             .unwrap_err()
             .kind(),
-            ComponentFactErrorKind::UnimportedConnection
+            ComponentFactErrorType::UnimportedConnection
         );
 
         let mut duplicate = declared;
@@ -1839,7 +1839,7 @@ mod tests {
             )
             .unwrap_err()
             .kind(),
-            ComponentFactErrorKind::DuplicateConnection
+            ComponentFactErrorType::DuplicateConnection
         );
     }
 
@@ -1858,7 +1858,7 @@ mod tests {
             )
             .unwrap_err()
             .kind(),
-            ComponentFactErrorKind::UnimportedEffect
+            ComponentFactErrorType::UnimportedEffect
         );
     }
 
@@ -1909,7 +1909,7 @@ mod tests {
             )
             .unwrap_err()
             .kind(),
-            ComponentFactErrorKind::InheritedEffectInterfaces
+            ComponentFactErrorType::InheritedEffectInterfaces
         );
     }
 
@@ -2008,7 +2008,7 @@ mod tests {
             )
             .unwrap_err()
             .kind(),
-            ComponentFactErrorKind::EmptyOperationSet
+            ComponentFactErrorType::EmptyOperationSet
         );
 
         let mut duplicate = declaration();
@@ -2025,7 +2025,7 @@ mod tests {
             )
             .unwrap_err()
             .kind(),
-            ComponentFactErrorKind::DuplicateInputPort
+            ComponentFactErrorType::DuplicateInputPort
         );
 
         let mut remote = declaration();
@@ -2040,7 +2040,7 @@ mod tests {
             )
             .unwrap_err()
             .kind(),
-            ComponentFactErrorKind::RemoteSchemaReference
+            ComponentFactErrorType::RemoteSchemaReference
         );
     }
 
@@ -2127,7 +2127,7 @@ mod tests {
             )
             .unwrap_err()
             .kind(),
-            ComponentFactErrorKind::UnexpectedOperationStatements
+            ComponentFactErrorType::UnexpectedOperationStatements
         );
 
         let operation = component.operations.get_mut("map").expect("map operation");
@@ -2138,7 +2138,7 @@ mod tests {
             verify_stored_effect_projection(&component)
                 .unwrap_err()
                 .kind(),
-            ComponentFactErrorKind::RegisteredOperationMismatch
+            ComponentFactErrorType::RegisteredOperationMismatch
         );
 
         let operation = component.operations.remove("map").expect("map operation");
@@ -2149,7 +2149,7 @@ mod tests {
             verify_stored_effect_projection(&component)
                 .unwrap_err()
                 .kind(),
-            ComponentFactErrorKind::InvalidStatementFact
+            ComponentFactErrorType::InvalidStatementFact
         );
 
         let operation = component
@@ -2163,7 +2163,7 @@ mod tests {
             verify_stored_effect_projection(&component)
                 .unwrap_err()
                 .kind(),
-            ComponentFactErrorKind::DuplicateStatementField
+            ComponentFactErrorType::DuplicateStatementField
         );
     }
 }

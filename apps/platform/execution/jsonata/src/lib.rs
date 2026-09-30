@@ -38,7 +38,7 @@ use jsonata_core::value::JValue;
 
 /// Why an evaluation failed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum EvaluationErrorKind {
+pub enum EvaluationErrorType {
     /// The expression does not parse.
     Expression,
     /// The expression parsed and failed on this input.
@@ -48,13 +48,13 @@ pub enum EvaluationErrorKind {
 /// A failed evaluation, with the engine's message.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EvaluationError {
-    kind: EvaluationErrorKind,
+    type_: EvaluationErrorType,
     message: String,
 }
 
 impl EvaluationError {
-    pub fn kind(&self) -> EvaluationErrorKind {
-        self.kind
+    pub fn kind(&self) -> EvaluationErrorType {
+        self.type_
     }
 
     pub fn message(&self) -> &str {
@@ -65,18 +65,18 @@ impl EvaluationError {
 /// Evaluate `expression` on `input` and return the result as JSON text.
 pub fn evaluate(expression: &str, input: &serde_json::Value) -> Result<String, EvaluationError> {
     let ast = parser::parse(expression).map_err(|error| EvaluationError {
-        kind: EvaluationErrorKind::Expression,
+        type_: EvaluationErrorType::Expression,
         message: error.to_string(),
     })?;
     let data = JValue::from(input.clone());
     let result = Evaluator::new()
         .evaluate(&ast, &data)
         .map_err(|error| EvaluationError {
-            kind: EvaluationErrorKind::Evaluation,
+            type_: EvaluationErrorType::Evaluation,
             message: error.message().to_owned(),
         })?;
     result.to_json_string().map_err(|error| EvaluationError {
-        kind: EvaluationErrorKind::Evaluation,
+        type_: EvaluationErrorType::Evaluation,
         message: format!("the result is not JSON: {error}"),
     })
 }
@@ -108,11 +108,11 @@ impl Guest for Component {
             })
             .transpose()?;
         let payload = evaluate(expression, &input).map_err(|error| match error.kind() {
-            EvaluationErrorKind::Expression => terminal(
+            EvaluationErrorType::Expression => terminal(
                 "invalid_expression",
                 format!("the expression does not parse: {}", error.message()),
             ),
-            EvaluationErrorKind::Evaluation => {
+            EvaluationErrorType::Evaluation => {
                 terminal("evaluation_failed", error.message().to_owned())
             }
         })?;
@@ -152,7 +152,7 @@ bindings::export!(Component with_types_in bindings);
 mod tests {
     use serde_json::{Value, json};
 
-    use super::{EvaluationErrorKind, evaluate, is_item_array};
+    use super::{EvaluationErrorType, evaluate, is_item_array};
 
     /// The WMS label workflow's shape expression (docs/plan/workflow-feature.md
     /// 4.4): a move row becomes one label-render item keyed by its command,
@@ -202,13 +202,13 @@ mod tests {
     #[test]
     fn an_expression_that_does_not_parse_is_an_expression_fault() {
         let error = evaluate("new.[", &json!({})).unwrap_err();
-        assert_eq!(error.kind(), EvaluationErrorKind::Expression);
+        assert_eq!(error.kind(), EvaluationErrorType::Expression);
     }
 
     #[test]
     fn a_failure_on_the_input_is_an_evaluation_fault() {
         let error = evaluate("new.id + 1", &json!({"new": {"id": "m-1"}})).unwrap_err();
-        assert_eq!(error.kind(), EvaluationErrorKind::Evaluation);
+        assert_eq!(error.kind(), EvaluationErrorType::Evaluation);
         assert!(!error.message().is_empty());
     }
 }

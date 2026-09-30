@@ -3,7 +3,7 @@
 use std::time::Duration;
 
 use tokio_postgres::{Client, IsolationLevel, NoTls};
-use wamn_catalog::{WiringActivationError, WiringActivationErrorKind};
+use wamn_catalog::{WiringActivationError, WiringActivationErrorType};
 
 use super::{CLAIM_TENANT_SQL, PromoteRequest, activate_once};
 
@@ -111,7 +111,7 @@ async fn refuses_unreleased_absent_and_foreign_definitions(
             .expect("Rust activation error");
         assert_eq!(
             refusal.kind(),
-            WiringActivationErrorKind::DefinitionNotInRelease
+            WiringActivationErrorType::DefinitionNotInRelease
         );
         assert!(
             refusal
@@ -133,7 +133,7 @@ async fn refuses_unreleased_absent_and_foreign_definitions(
             .downcast_ref::<WiringActivationError>()
             .expect("Rust refusal")
             .kind(),
-        WiringActivationErrorKind::DefinitionNotInRelease
+        WiringActivationErrorType::DefinitionNotInRelease
     );
     tx.rollback().await.expect("rollback foreign claim");
     assert_eq!(counts(client).await, (0, 0));
@@ -202,7 +202,7 @@ async fn retirement_refuses_change_but_keeps_exact_retry(
             .downcast_ref::<WiringActivationError>()
             .expect("Rust refusal")
             .kind(),
-        WiringActivationErrorKind::Tombstoned
+        WiringActivationErrorType::Tombstoned
     );
     tx.rollback().await.expect("rollback retirement refusal");
     assert_eq!(counts(client).await, (1, 1));

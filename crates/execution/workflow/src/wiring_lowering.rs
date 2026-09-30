@@ -113,7 +113,7 @@ pub fn project_component_operations(
 
 /// Stable classification for a refused catalog-to-router lowering.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum WiringLoweringErrorKind {
+pub enum WiringLoweringErrorType {
     ScopeMismatch,
     PackageVersionMismatch,
     MissingComponent,
@@ -132,23 +132,23 @@ pub enum WiringLoweringErrorKind {
 /// A fail-closed catalog-to-router lowering error.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WiringLoweringError {
-    kind: WiringLoweringErrorKind,
+    type_: WiringLoweringErrorType,
     detail: Box<str>,
     source: Option<WiringError>,
 }
 
 impl WiringLoweringError {
-    fn new(kind: WiringLoweringErrorKind, detail: impl Into<Box<str>>) -> Self {
+    fn new(kind: WiringLoweringErrorType, detail: impl Into<Box<str>>) -> Self {
         Self {
-            kind,
+            type_: kind,
             detail: detail.into(),
             source: None,
         }
     }
 
     /// The stable classification of this refusal.
-    pub fn kind(&self) -> WiringLoweringErrorKind {
-        self.kind
+    pub fn kind(&self) -> WiringLoweringErrorType {
+        self.type_
     }
 }
 
@@ -169,7 +169,7 @@ impl std::error::Error for WiringLoweringError {
 impl From<WiringError> for WiringLoweringError {
     fn from(source: WiringError) -> Self {
         Self {
-            kind: WiringLoweringErrorKind::RouterRejected,
+            type_: WiringLoweringErrorType::RouterRejected,
             detail: format!("router refused lowered wiring: {source}").into_boxed_str(),
             source: Some(source),
         }
@@ -255,7 +255,7 @@ pub fn lower_active_wiring(
             .expect("a validated wiring edge source resolves");
         if edge.from_port != ERROR_PORT && !source.output_ports.contains(&edge.from_port) {
             return Err(WiringLoweringError::new(
-                WiringLoweringErrorKind::UnknownOutputPort,
+                WiringLoweringErrorType::UnknownOutputPort,
                 format!(
                     "wiring node {:?} operation {:?} does not declare output port {:?}",
                     edge.from, source.operation, edge.from_port
@@ -289,7 +289,7 @@ fn validate_scope(
 ) -> Result<(), WiringLoweringError> {
     if active.scope != facts.scope {
         return Err(WiringLoweringError::new(
-            WiringLoweringErrorKind::ScopeMismatch,
+            WiringLoweringErrorType::ScopeMismatch,
             format!(
                 "active wiring scope ({:?}, {:?}, {:?}) differs from operation-fact scope ({:?}, {:?}, {:?})",
                 active.scope.tenant_id,
@@ -303,7 +303,7 @@ fn validate_scope(
     }
     if active.package_version != facts.package_version {
         return Err(WiringLoweringError::new(
-            WiringLoweringErrorKind::PackageVersionMismatch,
+            WiringLoweringErrorType::PackageVersionMismatch,
             format!(
                 "active wiring belongs to package version {:?}, but operation facts are from {:?}",
                 active.package_version, facts.package_version
@@ -324,7 +324,7 @@ fn resolve_operation<'a>(
         .collect();
     if component_matches.is_empty() {
         return Err(WiringLoweringError::new(
-            WiringLoweringErrorKind::MissingComponent,
+            WiringLoweringErrorType::MissingComponent,
             format!(
                 "wiring node {node_id:?} names missing component {:?}",
                 node.component
@@ -338,7 +338,7 @@ fn resolve_operation<'a>(
         .collect();
     if interface_matches.is_empty() {
         return Err(WiringLoweringError::new(
-            WiringLoweringErrorKind::IncompatibleInterfaceVersion,
+            WiringLoweringErrorType::IncompatibleInterfaceVersion,
             format!(
                 "wiring node {node_id:?} component {:?} has no interface version {:?}",
                 node.component, node.interface_version
@@ -351,7 +351,7 @@ fn resolve_operation<'a>(
         .filter(|fact| fact.operation == node.operation);
     let Some(operation) = operation_matches.next() else {
         return Err(WiringLoweringError::new(
-            WiringLoweringErrorKind::MissingOperation,
+            WiringLoweringErrorType::MissingOperation,
             format!(
                 "wiring node {node_id:?} component {:?} interface {:?} has no operation {:?}",
                 node.component, node.interface_version, node.operation
@@ -360,7 +360,7 @@ fn resolve_operation<'a>(
     };
     if operation_matches.next().is_some() {
         return Err(WiringLoweringError::new(
-            WiringLoweringErrorKind::DuplicateOperationFact,
+            WiringLoweringErrorType::DuplicateOperationFact,
             format!(
                 "wiring node {node_id:?} resolves more than one fact for {:?} {:?} {:?}",
                 node.component, node.interface_version, node.operation
@@ -381,7 +381,7 @@ fn validate_parameters(
         .find(|parameter| !fact.parameters.contains_key(*parameter))
     {
         return Err(WiringLoweringError::new(
-            WiringLoweringErrorKind::UndeclaredParameter,
+            WiringLoweringErrorType::UndeclaredParameter,
             format!("wiring node {node_id:?} supplies undeclared parameter {parameter:?}"),
         ));
     }
@@ -389,7 +389,7 @@ fn validate_parameters(
         (parameter.required && !node.params.contains_key(name)).then_some(name)
     }) {
         return Err(WiringLoweringError::new(
-            WiringLoweringErrorKind::MissingRequiredParameter,
+            WiringLoweringErrorType::MissingRequiredParameter,
             format!("wiring node {node_id:?} omits required parameter {parameter:?}"),
         ));
     }
@@ -404,7 +404,7 @@ fn resolve_target_port(
     match authored_port {
         Some(port) if fact.input_ports.contains(port) => Ok(port.to_owned()),
         Some(port) => Err(WiringLoweringError::new(
-            WiringLoweringErrorKind::UnknownInputPort,
+            WiringLoweringErrorType::UnknownInputPort,
             format!(
                 "wiring target {node_id:?} operation {:?} does not declare input port {port:?}",
                 fact.operation
@@ -416,14 +416,14 @@ fn resolve_target_port(
             .expect("a singleton input-port set has one member")
             .clone()),
         None if fact.input_ports.is_empty() => Err(WiringLoweringError::new(
-            WiringLoweringErrorKind::MissingInputPort,
+            WiringLoweringErrorType::MissingInputPort,
             format!(
                 "wiring target {node_id:?} operation {:?} declares no input port",
                 fact.operation
             ),
         )),
         None => Err(WiringLoweringError::new(
-            WiringLoweringErrorKind::AmbiguousInputPort,
+            WiringLoweringErrorType::AmbiguousInputPort,
             format!(
                 "wiring target {node_id:?} operation {:?} declares {} input ports; to-port is required",
                 fact.operation,

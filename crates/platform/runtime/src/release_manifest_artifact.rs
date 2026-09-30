@@ -150,7 +150,7 @@ pub fn verify_release_manifest_artifact_layout<'a>(
 
 #[cfg(test)]
 mod tests {
-    use wamn_engine::component_artifact::ComponentArtifactReferenceErrorKind;
+    use wamn_engine::component_artifact::ComponentArtifactReferenceErrorType;
 
     use super::*;
 
@@ -204,7 +204,7 @@ mod tests {
                 release_manifest_artifact_reference(base, &digest)
                     .expect_err("invalid release artifact base refuses")
                     .kind(),
-                ComponentArtifactReferenceErrorKind::InvalidBase,
+                ComponentArtifactReferenceErrorType::InvalidBase,
                 "accepted {base:?}"
             );
         }

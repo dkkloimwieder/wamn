@@ -29,7 +29,7 @@ mod tests {
 
     use super::*;
     use crate::connection_authority::{
-        AuthorityError, AuthorityErrorKind, DnsResolver, TlsPolicy, TransportDecision,
+        AuthorityError, AuthorityErrorType, DnsResolver, TlsPolicy, TransportDecision,
         parse_http_connection_authority, resolve_http_redirect, resolve_http_request,
     };
 
@@ -101,7 +101,7 @@ mod tests {
             resolve_http_request(&connection, &target, &hosts, &ConnectionNetworkPolicy, &dns)
                 .await
                 .unwrap_err();
-        assert_eq!(error.kind(), AuthorityErrorKind::NetworkDenied);
+        assert_eq!(error.kind(), AuthorityErrorType::NetworkDenied);
         assert_eq!(origin.address, allowed);
         let error = resolve_http_redirect(
             &connection,
@@ -113,6 +113,6 @@ mod tests {
         )
         .await
         .unwrap_err();
-        assert_eq!(error.kind(), AuthorityErrorKind::NetworkDenied);
+        assert_eq!(error.kind(), AuthorityErrorType::NetworkDenied);
     }
 }

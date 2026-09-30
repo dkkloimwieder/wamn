@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 
 use serde_json::{Value, json};
 
-use crate::{GenerateError, GenerateErrorKind, OperationOwners, resolve_operation_reference};
+use crate::{GenerateError, GenerateErrorType, OperationOwners, resolve_operation_reference};
 
 /// The package manifest file at a package root.
 pub const PACKAGE_MANIFEST: &str = "wamn.json";
@@ -34,7 +34,7 @@ pub fn package_owners_of(document: &Path) -> Result<(PathBuf, OperationOwners), 
         .find(|directory| directory.join(PACKAGE_MANIFEST).is_file())
         .ok_or_else(|| {
             GenerateError::new(
-                GenerateErrorKind::InvalidManifest,
+                GenerateErrorType::InvalidManifest,
                 format!(
                     "{} is outside a package: no ancestor holds {PACKAGE_MANIFEST}",
                     document.display()
@@ -44,7 +44,7 @@ pub fn package_owners_of(document: &Path) -> Result<(PathBuf, OperationOwners), 
     let path = root.join(PACKAGE_MANIFEST);
     let bytes = std::fs::read(&path).map_err(|error| {
         GenerateError::with_source(
-            GenerateErrorKind::InvalidManifest,
+            GenerateErrorType::InvalidManifest,
             format!("read {}", path.display()),
             error,
         )
@@ -73,14 +73,14 @@ pub enum AuthoredDocument {
 pub fn read_authored_document(path: &Path, kind: AuthoredDocument) -> Result<Value, GenerateError> {
     let bytes = std::fs::read(path).map_err(|error| {
         GenerateError::with_source(
-            GenerateErrorKind::InvalidManifest,
+            GenerateErrorType::InvalidManifest,
             format!("read {}", path.display()),
             error,
         )
     })?;
     let mut document: Value = serde_json::from_slice(&bytes).map_err(|error| {
         GenerateError::with_source(
-            GenerateErrorKind::InvalidManifest,
+            GenerateErrorType::InvalidManifest,
             format!("parse {}", path.display()),
             error,
         )
@@ -169,7 +169,7 @@ pub fn resolve_declaration_document(
     if let Some(scope) = document.get_mut("scope").and_then(Value::as_object_mut) {
         if scope.contains_key("package-version") {
             return Err(GenerateError::new(
-                GenerateErrorKind::InvalidIdentity,
+                GenerateErrorType::InvalidIdentity,
                 "a declaration must not author scope.package-version; \
                  the version is authored once, as package.version in wamn.json",
             ));
@@ -238,13 +238,13 @@ fn resolve_member(
     };
     let Some(reference) = slot.as_str() else {
         return Err(GenerateError::new(
-            GenerateErrorKind::InvalidIdentity,
+            GenerateErrorType::InvalidIdentity,
             format!("{context}: {member} must be an operation reference"),
         ));
     };
     let sealed = resolve_reference(owners, reference).map_err(|error| {
         GenerateError::new(
-            GenerateErrorKind::InvalidIdentity,
+            GenerateErrorType::InvalidIdentity,
             format!("{context}: {member}: {}", error.context()),
         )
     })?;

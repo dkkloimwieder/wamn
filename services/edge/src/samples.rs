@@ -20,7 +20,7 @@ use serde_json::Value;
 use tokio::sync::Notify;
 use wamn_run_state::IntentStore;
 use wamn_run_state::intent_store::{
-    Begun, Intent, IntentId, StoreError, StoreErrorKind, StoredOutcome, UncertainIntent,
+    Begun, Intent, IntentId, StoreError, StoreErrorType, StoredOutcome, UncertainIntent,
 };
 use wamn_run_state::operator_action::OperatorActionBasis;
 use wamn_run_state_sqlite::{SqliteIntentStore, finish_in};
@@ -143,7 +143,7 @@ impl SampleStore {
                         captured_at,
                         body: serde_json::from_str(&body).map_err(|error| {
                             StoreError::new(
-                                StoreErrorKind::Contract,
+                                StoreErrorType::Contract,
                                 "pending",
                                 format!("stored sample is not JSON: {error}"),
                             )
@@ -218,7 +218,7 @@ impl SampleStore {
                     .map_err(storage(operation))?;
                 if changed == 0 {
                     return Err(StoreError::new(
-                        StoreErrorKind::Contract,
+                        StoreErrorType::Contract,
                         operation,
                         format!("sample {sample_key} is not pending"),
                     ));
@@ -274,7 +274,7 @@ impl SampleStore {
                     .map_err(storage("resolve sample"))?;
                 if changed == 0 {
                     return Err(StoreError::new(
-                        StoreErrorKind::Contract,
+                        StoreErrorType::Contract,
                         "resolve sample",
                         format!("sample {sample_key} is not refused and open"),
                     ));
@@ -311,7 +311,7 @@ impl IntentStore for SampleIntents<'_> {
     async fn finish(&self, id: &IntentId, outcome: &StoredOutcome) -> Result<(), StoreError> {
         let body = outcome.0.get("value").ok_or_else(|| {
             StoreError::new(
-                StoreErrorKind::Contract,
+                StoreErrorType::Contract,
                 "finish",
                 "the device operation returned an item without a value",
             )
@@ -354,9 +354,9 @@ fn now_ms(operation: &'static str) -> Result<i64, StoreError> {
         .duration_since(UNIX_EPOCH)
         .ok()
         .and_then(|elapsed| i64::try_from(elapsed.as_millis()).ok())
-        .ok_or_else(|| StoreError::new(StoreErrorKind::Storage, operation, "clock out of range"))
+        .ok_or_else(|| StoreError::new(StoreErrorType::Storage, operation, "clock out of range"))
 }
 
 fn storage(operation: &'static str) -> impl Fn(rusqlite::Error) -> StoreError {
-    move |error| StoreError::new(StoreErrorKind::Storage, operation, error.to_string())
+    move |error| StoreError::new(StoreErrorType::Storage, operation, error.to_string())
 }

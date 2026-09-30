@@ -2,7 +2,7 @@
 
 use wamn_postgres_statements::{Connection, StatementError, Transaction};
 
-use crate::error::{AccessError, AccessErrorKind, Constraints};
+use crate::error::{AccessError, AccessErrorType, Constraints};
 use crate::scalar;
 use crate::statements::wamn::{widget_archive, widget_list, widget_record_batch as batch_sql};
 
@@ -101,7 +101,7 @@ pub async fn record_batch(
     lines.sort();
     if lines.windows(2).any(|pair| pair[0].0 == pair[1].0) {
         return Err(AccessError::field(
-            AccessErrorKind::InvalidInput,
+            AccessErrorType::InvalidInput,
             "value.line[].widget_id",
         ));
     }

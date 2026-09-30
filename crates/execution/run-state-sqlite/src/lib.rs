@@ -20,7 +20,7 @@ use async_trait::async_trait;
 use rusqlite::{Connection, OptionalExtension as _, Transaction, TransactionBehavior, params};
 use wamn_run_state::IntentStore;
 use wamn_run_state::intent_store::{
-    Begun, Intent, IntentId, StoreError, StoreErrorKind, StoredOutcome, UncertainIntent,
+    Begun, Intent, IntentId, StoreError, StoreErrorType, StoredOutcome, UncertainIntent,
 };
 use wamn_run_state::operator_action::OperatorActionBasis;
 
@@ -79,7 +79,7 @@ impl StoreClosed {
 impl SqliteIntentStore {
     /// Open or create the intent log at `path` and hold it for this process.
     ///
-    /// Fails with [`StoreErrorKind::Storage`] when another process holds the
+    /// Fails with [`StoreErrorType::Storage`] when another process holds the
     /// file.
     pub fn open(path: impl AsRef<Path>) -> Result<Self, StoreError> {
         let storage = storage("open");
@@ -96,7 +96,7 @@ impl SqliteIntentStore {
             .map_err(&storage)?;
         if !mode.eq_ignore_ascii_case("wal") {
             return Err(StoreError::new(
-                StoreErrorKind::Storage,
+                StoreErrorType::Storage,
                 "open",
                 format!("journal mode is {mode}, not wal"),
             ));
@@ -132,12 +132,12 @@ impl SqliteIntentStore {
         let writer = Arc::clone(&self.writer);
         tokio::task::spawn_blocking(move || {
             let mut connection = writer.connection.lock().map_err(|_| {
-                StoreError::new(StoreErrorKind::Storage, operation, "writer lock poisoned")
+                StoreError::new(StoreErrorType::Storage, operation, "writer lock poisoned")
             })?;
             call(&mut connection)
         })
         .await
-        .map_err(|error| StoreError::new(StoreErrorKind::Storage, operation, error.to_string()))?
+        .map_err(|error| StoreError::new(StoreErrorType::Storage, operation, error.to_string()))?
     }
 
     /// Run `call` in one immediate transaction on the writer connection, and
@@ -366,15 +366,15 @@ fn row_id(operation: &'static str, id: &IntentId) -> Result<i64, StoreError> {
 fn now_ms(operation: &'static str) -> Result<i64, StoreError> {
     let elapsed = SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .map_err(|error| StoreError::new(StoreErrorKind::Storage, operation, error.to_string()))?;
+        .map_err(|error| StoreError::new(StoreErrorType::Storage, operation, error.to_string()))?;
     i64::try_from(elapsed.as_millis())
-        .map_err(|_| StoreError::new(StoreErrorKind::Storage, operation, "clock out of range"))
+        .map_err(|_| StoreError::new(StoreErrorType::Storage, operation, "clock out of range"))
 }
 
 fn storage(operation: &'static str) -> impl Fn(rusqlite::Error) -> StoreError {
-    move |error| StoreError::new(StoreErrorKind::Storage, operation, error.to_string())
+    move |error| StoreError::new(StoreErrorType::Storage, operation, error.to_string())
 }
 
 fn contract(operation: &'static str, detail: String) -> StoreError {
-    StoreError::new(StoreErrorKind::Contract, operation, detail)
+    StoreError::new(StoreErrorType::Contract, operation, detail)
 }

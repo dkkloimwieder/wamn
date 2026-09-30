@@ -90,7 +90,7 @@ impl fmt::Debug for DevActivationRequest<'_> {
 
 /// Stable category of an activation failure.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum DevActivationErrorKind {
+pub enum DevActivationErrorType {
     InvalidInput,
     SchedulerUnavailable,
     HostProcess,
@@ -100,7 +100,7 @@ pub enum DevActivationErrorKind {
     CleanupFailed,
 }
 
-impl DevActivationErrorKind {
+impl DevActivationErrorType {
     /// Stable diagnostic code for this category.
     pub const fn as_str(self) -> &'static str {
         match self {
@@ -118,16 +118,16 @@ impl DevActivationErrorKind {
 /// Contextual activation failure translated once at the development boundary.
 #[derive(Debug)]
 pub struct DevActivationError {
-    kind: DevActivationErrorKind,
+    type_: DevActivationErrorType,
     step: &'static str,
     detail: Box<str>,
     source: Option<Box<dyn Error + Send + Sync>>,
 }
 
 impl DevActivationError {
-    fn new(kind: DevActivationErrorKind, step: &'static str, detail: impl Into<Box<str>>) -> Self {
+    fn new(kind: DevActivationErrorType, step: &'static str, detail: impl Into<Box<str>>) -> Self {
         Self {
-            kind,
+            type_: kind,
             step,
             detail: detail.into(),
             source: None,
@@ -135,13 +135,13 @@ impl DevActivationError {
     }
 
     fn with_source(
-        kind: DevActivationErrorKind,
+        type_: DevActivationErrorType,
         step: &'static str,
         detail: impl Into<Box<str>>,
         source: impl Error + Send + Sync + 'static,
     ) -> Self {
         Self {
-            kind,
+            type_,
             step,
             detail: detail.into(),
             source: Some(Box::new(source)),
@@ -149,8 +149,8 @@ impl DevActivationError {
     }
 
     /// Stable error category.
-    pub const fn kind(&self) -> DevActivationErrorKind {
-        self.kind
+    pub const fn kind(&self) -> DevActivationErrorType {
+        self.type_
     }
 
     /// Exact activation step that failed.
@@ -169,7 +169,7 @@ impl fmt::Display for DevActivationError {
         write!(
             formatter,
             "{} at {}: {}",
-            self.kind.as_str(),
+            self.type_.as_str(),
             self.step,
             self.detail
         )
@@ -320,7 +320,7 @@ impl NativeActivationBackend {
             .await
             .map_err(|source| {
                 DevActivationError::with_source(
-                    DevActivationErrorKind::SchedulerUnavailable,
+                    DevActivationErrorType::SchedulerUnavailable,
                     "connect-scheduler",
                     "scheduler connection deadline expired",
                     source,
@@ -328,7 +328,7 @@ impl NativeActivationBackend {
             })?
             .map_err(|source| {
                 DevActivationError::with_source(
-                    DevActivationErrorKind::SchedulerUnavailable,
+                    DevActivationErrorType::SchedulerUnavailable,
                     "connect-scheduler",
                     "scheduler refused the NATS connection",
                     source,
@@ -511,7 +511,7 @@ pub(super) fn prepare_local(request: &DevActivationRequest<'_>) -> Result<(), De
     let local = request.config.local_artifacts();
     let stage_error = |source| {
         DevActivationError::with_source(
-            DevActivationErrorKind::InvalidInput,
+            DevActivationErrorType::InvalidInput,
             "local-flow-http",
             "cannot stage the explicit local flow-http component",
             source,
@@ -530,7 +530,7 @@ pub(super) fn prepare_local(request: &DevActivationRequest<'_>) -> Result<(), De
         != request.local_admission_digest
     {
         return Err(DevActivationError::new(
-            DevActivationErrorKind::InvalidInput,
+            DevActivationErrorType::InvalidInput,
             "local-admission",
             "local admission bytes changed after validation",
         ));
@@ -552,7 +552,7 @@ pub(super) fn prepare_local(request: &DevActivationRequest<'_>) -> Result<(), De
     })();
     checked.map_err(|source| {
         DevActivationError::with_source(
-            DevActivationErrorKind::InvalidInput,
+            DevActivationErrorType::InvalidInput,
             "local-flow-http",
             format!("local flow-http bytes failed native component validation: {source:#}"),
             NativeBackendError::from(source),
@@ -575,7 +575,7 @@ pub(super) fn prepare_local(request: &DevActivationRequest<'_>) -> Result<(), De
     component.image_pull_policy = v2::ImagePullPolicy::Never.into();
     let bytes = serde_json::to_vec(&workload).map_err(|source| {
         DevActivationError::with_source(
-            DevActivationErrorKind::InvalidInput,
+            DevActivationErrorType::InvalidInput,
             "local-flow-http",
             "cannot encode the local workload",
             source,
@@ -583,7 +583,7 @@ pub(super) fn prepare_local(request: &DevActivationRequest<'_>) -> Result<(), De
     })?;
     std::fs::write(local.directory.join("flow-http.json"), bytes).map_err(|source| {
         DevActivationError::with_source(
-            DevActivationErrorKind::InvalidInput,
+            DevActivationErrorType::InvalidInput,
             "local-flow-http",
             "cannot stage the local workload",
             source,
@@ -617,7 +617,7 @@ fn validate_request(request: &DevActivationRequest<'_>) -> Result<(), DevActivat
     ] {
         if value.is_empty() {
             return Err(DevActivationError::new(
-                DevActivationErrorKind::InvalidInput,
+                DevActivationErrorType::InvalidInput,
                 "validate-identity",
                 format!("supply the required activation identity {field}"),
             ));
@@ -625,21 +625,21 @@ fn validate_request(request: &DevActivationRequest<'_>) -> Result<(), DevActivat
     }
     if request.release.artifact_base.is_empty() {
         return Err(DevActivationError::new(
-            DevActivationErrorKind::InvalidInput,
+            DevActivationErrorType::InvalidInput,
             "validate-release",
             "supply the release artifact base",
         ));
     }
     if request.host_binary.as_os_str().is_empty() {
         return Err(DevActivationError::new(
-            DevActivationErrorKind::InvalidInput,
+            DevActivationErrorType::InvalidInput,
             "validate-host",
             "supply the wamn-host executable path",
         ));
     }
     if request.wasmtime_cache_dir.as_os_str().is_empty() {
         return Err(DevActivationError::new(
-            DevActivationErrorKind::InvalidInput,
+            DevActivationErrorType::InvalidInput,
             "validate-host",
             "supply the Wasmtime cache directory",
         ));
@@ -893,7 +893,7 @@ where
     let spec = host_process_spec(&request);
     backend.spawn_host(&spec).await.map_err(|source| {
         DevActivationError::with_source(
-            DevActivationErrorKind::HostProcess,
+            DevActivationErrorType::HostProcess,
             "spawn-host",
             "local wamn-host could not start",
             source,
@@ -997,7 +997,7 @@ where
             .await
             .map_err(|source| {
                 DevActivationError::with_source(
-                    DevActivationErrorKind::HeartbeatUnavailable,
+                    DevActivationErrorType::HeartbeatUnavailable,
                     "wait-heartbeat",
                     "the exact local host did not publish before the deadline",
                     source,
@@ -1005,7 +1005,7 @@ where
             })?
             .ok_or_else(|| {
                 DevActivationError::new(
-                    DevActivationErrorKind::HeartbeatUnavailable,
+                    DevActivationErrorType::HeartbeatUnavailable,
                     "wait-heartbeat",
                     "the native heartbeat subscription closed",
                 )
@@ -1021,7 +1021,7 @@ where
                 .filter(|port| *port != 0)
                 .ok_or_else(|| {
                     DevActivationError::new(
-                        DevActivationErrorKind::ProtocolViolation,
+                        DevActivationErrorType::ProtocolViolation,
                         "wait-heartbeat",
                         format!(
                             "the supervised HTTP host reported invalid port {}",
@@ -1067,7 +1067,7 @@ where
 {
     let payload = serde_json::to_vec(request).map_err(|source| {
         DevActivationError::with_source(
-            DevActivationErrorKind::ProtocolViolation,
+            DevActivationErrorType::ProtocolViolation,
             step,
             "encode the pinned native v2 request",
             source,
@@ -1094,7 +1094,7 @@ where
 {
     serde_json::from_slice(payload).map_err(|source| {
         DevActivationError::with_source(
-            DevActivationErrorKind::ProtocolViolation,
+            DevActivationErrorType::ProtocolViolation,
             step,
             detail,
             source,
@@ -1109,14 +1109,14 @@ fn require_running(
 ) -> Result<(), DevActivationError> {
     let status = status.ok_or_else(|| {
         DevActivationError::new(
-            DevActivationErrorKind::ProtocolViolation,
+            DevActivationErrorType::ProtocolViolation,
             step,
             "response omitted workload_status",
         )
     })?;
     if status.workload_id != workload_id {
         return Err(DevActivationError::new(
-            DevActivationErrorKind::ProtocolViolation,
+            DevActivationErrorType::ProtocolViolation,
             step,
             format!(
                 "response named workload {:?}, expected {workload_id:?}",
@@ -1126,7 +1126,7 @@ fn require_running(
     }
     let state = v2::WorkloadState::try_from(status.workload_state).map_err(|_| {
         DevActivationError::new(
-            DevActivationErrorKind::ProtocolViolation,
+            DevActivationErrorType::ProtocolViolation,
             step,
             format!(
                 "response carried unknown workload state {}",
@@ -1136,7 +1136,7 @@ fn require_running(
     })?;
     if state != v2::WorkloadState::Running {
         return Err(DevActivationError::new(
-            DevActivationErrorKind::WorkloadRefused,
+            DevActivationErrorType::WorkloadRefused,
             step,
             format!(
                 "{workload_id} reached {}: {}",
@@ -1176,7 +1176,7 @@ where
     if let Err(source) = backend.terminate_host().await {
         first_error.get_or_insert_with(|| {
             DevActivationError::with_source(
-                DevActivationErrorKind::CleanupFailed,
+                DevActivationErrorType::CleanupFailed,
                 "terminate-host",
                 "send SIGTERM to the local host",
                 source,
@@ -1193,7 +1193,7 @@ where
         Err(source) => {
             first_error.get_or_insert_with(|| {
                 DevActivationError::with_source(
-                    DevActivationErrorKind::CleanupFailed,
+                    DevActivationErrorType::CleanupFailed,
                     "wait-host",
                     "wait for local host after SIGTERM",
                     source,
@@ -1207,7 +1207,7 @@ where
         if let Err(source) = backend.kill_host().await {
             first_error.get_or_insert_with(|| {
                 DevActivationError::with_source(
-                    DevActivationErrorKind::CleanupFailed,
+                    DevActivationErrorType::CleanupFailed,
                     "kill-host",
                     "kill the unresponsive local host",
                     source,
@@ -1217,7 +1217,7 @@ where
         if let Err(source) = backend.reap_host(Instant::now() + HOST_REAP_TIMEOUT).await {
             first_error.get_or_insert_with(|| {
                 DevActivationError::with_source(
-                    DevActivationErrorKind::CleanupFailed,
+                    DevActivationErrorType::CleanupFailed,
                     "reap-host",
                     "reap the killed local host before the deadline",
                     source,
@@ -1235,21 +1235,21 @@ fn require_stopped(
 ) -> Result<(), DevActivationError> {
     let status = status.ok_or_else(|| {
         DevActivationError::new(
-            DevActivationErrorKind::ProtocolViolation,
+            DevActivationErrorType::ProtocolViolation,
             "stop-workload",
             "response omitted workload_status",
         )
     })?;
     if status.workload_id != workload_id {
         return Err(DevActivationError::new(
-            DevActivationErrorKind::ProtocolViolation,
+            DevActivationErrorType::ProtocolViolation,
             "stop-workload",
             "response named a different workload",
         ));
     }
     let state = v2::WorkloadState::try_from(status.workload_state).map_err(|_| {
         DevActivationError::new(
-            DevActivationErrorKind::ProtocolViolation,
+            DevActivationErrorType::ProtocolViolation,
             "stop-workload",
             "response carried an unknown workload state",
         )
@@ -1261,7 +1261,7 @@ fn require_stopped(
         Ok(())
     } else {
         Err(DevActivationError::new(
-            DevActivationErrorKind::CleanupFailed,
+            DevActivationErrorType::CleanupFailed,
             "stop-workload",
             format!("workload stop reached {}", state.as_str_name()),
         ))
@@ -1273,7 +1273,7 @@ fn backend_error(
     source: impl Error + Send + Sync + 'static,
 ) -> DevActivationError {
     DevActivationError::with_source(
-        DevActivationErrorKind::SchedulerUnavailable,
+        DevActivationErrorType::SchedulerUnavailable,
         step,
         "native runtime NATS operation failed",
         source,
@@ -2127,7 +2127,7 @@ mod tests {
             .await
             .expect_err("a zero HTTP port is not a usable endpoint");
 
-        assert_eq!(error.kind(), DevActivationErrorKind::ProtocolViolation);
+        assert_eq!(error.kind(), DevActivationErrorType::ProtocolViolation);
         assert!(
             error.to_string().contains("invalid port 0"),
             "{error} must name the refused port"
@@ -2156,7 +2156,7 @@ mod tests {
             panic!("missing exact identity must refuse")
         };
 
-        assert_eq!(error.kind(), DevActivationErrorKind::InvalidInput);
+        assert_eq!(error.kind(), DevActivationErrorType::InvalidInput);
         assert_eq!(error.step(), "validate-identity");
         assert!(error.detail().contains("org"));
         assert!(

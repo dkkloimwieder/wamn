@@ -45,13 +45,13 @@ use crate::generate::GeneratedFile;
 /// Why a TypeScript client could not be emitted.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ClientTsError {
-    kind: ClientTsErrorKind,
+    type_: ClientTsErrorType,
     detail: String,
 }
 
 /// What went wrong.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ClientTsErrorKind {
+pub enum ClientTsErrorType {
     /// A contract type has no TypeScript spelling.
     UnknownType,
     /// A contract name cannot be a TypeScript identifier.
@@ -62,7 +62,7 @@ pub enum ClientTsErrorKind {
     NameCollision,
 }
 
-impl ClientTsErrorKind {
+impl ClientTsErrorType {
     /// Stable wire code.
     #[must_use]
     pub const fn code(self) -> &'static str {
@@ -76,23 +76,23 @@ impl ClientTsErrorKind {
 }
 
 impl ClientTsError {
-    pub(crate) fn new(kind: ClientTsErrorKind, detail: impl Into<String>) -> Self {
+    pub(crate) fn new(kind: ClientTsErrorType, detail: impl Into<String>) -> Self {
         Self {
-            kind,
+            type_: kind,
             detail: detail.into(),
         }
     }
 
     /// What went wrong.
     #[must_use]
-    pub const fn kind(&self) -> ClientTsErrorKind {
-        self.kind
+    pub const fn kind(&self) -> ClientTsErrorType {
+        self.type_
     }
 }
 
 impl core::fmt::Display for ClientTsError {
     fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        write!(formatter, "{}: {}", self.kind.code(), self.detail)
+        write!(formatter, "{}: {}", self.type_.code(), self.detail)
     }
 }
 
@@ -123,7 +123,7 @@ pub fn ts_type(type_name: &str) -> Result<&'static str, ClientTsError> {
     let column: ColumnType =
         serde_json::from_value(serde_json::Value::String(type_name.to_owned())).map_err(|_| {
             ClientTsError::new(
-                ClientTsErrorKind::UnknownType,
+                ClientTsErrorType::UnknownType,
                 format!("contract type {type_name:?} has no TypeScript spelling"),
             )
         })?;
@@ -294,7 +294,7 @@ pub fn emit_ts_client(ir: &ClientContractIr) -> Result<Vec<GeneratedFile>, Clien
         let namespace = ts_name(&model.name)?;
         if !namespaces.insert(namespace.clone()) {
             return Err(ClientTsError::new(
-                ClientTsErrorKind::NameCollision,
+                ClientTsErrorType::NameCollision,
                 format!(
                     "model {:?} takes a TypeScript name another model took",
                     model.name
@@ -381,7 +381,7 @@ fn emit_model(package: &str, model: &ModelIr) -> Result<String, ClientTsError> {
         let function = ts_name(&operation.name)?;
         if !names.insert(function.clone()) {
             return Err(ClientTsError::new(
-                ClientTsErrorKind::NameCollision,
+                ClientTsErrorType::NameCollision,
                 format!(
                     "operation {:?} takes the TypeScript name {function:?}, which another operation took",
                     operation.name
@@ -977,7 +977,7 @@ fn check_reversible(name: &str, subject: &str) -> Result<(), ClientTsError> {
         return Ok(());
     }
     Err(ClientTsError::new(
-        ClientTsErrorKind::IrreversibleName,
+        ClientTsErrorType::IrreversibleName,
         format!("{subject} takes the member {member:?}, which maps back to {back:?}"),
     ))
 }
@@ -1012,7 +1012,7 @@ fn identifier(name: &str, subject: &str) -> Result<String, ClientTsError> {
         Ok(member)
     } else {
         Err(ClientTsError::new(
-            ClientTsErrorKind::UnnameableIdentifier,
+            ClientTsErrorType::UnnameableIdentifier,
             format!("{subject:?} is not a TypeScript identifier"),
         ))
     }
@@ -1056,7 +1056,7 @@ mod tests {
     #[test]
     fn an_unknown_contract_type_refuses_by_name() {
         let refusal = ts_type("geography").expect_err("an unmapped type refuses");
-        assert_eq!(refusal.kind(), ClientTsErrorKind::UnknownType);
+        assert_eq!(refusal.kind(), ClientTsErrorType::UnknownType);
         assert!(refusal.to_string().contains("geography"), "{refusal}");
         assert!(
             refusal.to_string().starts_with("unknown_type: "),

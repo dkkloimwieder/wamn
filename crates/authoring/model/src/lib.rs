@@ -584,7 +584,7 @@ pub fn decode_document(input: &str) -> Result<AuthoringDocument, ContractDecodeE
 
 /// Stable decode failure classification.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ContractDecodeErrorKind {
+pub enum ContractDecodeErrorType {
     Json,
     UnsupportedContractVersion,
 }
@@ -592,7 +592,7 @@ pub enum ContractDecodeErrorKind {
 /// Decode failure before application dispatch.
 #[derive(Debug)]
 pub struct ContractDecodeError {
-    kind: ContractDecodeErrorKind,
+    type_: ContractDecodeErrorType,
     requested: Option<Box<str>>,
     source: Option<serde_json::Error>,
 }
@@ -600,7 +600,7 @@ pub struct ContractDecodeError {
 impl ContractDecodeError {
     fn json(source: serde_json::Error) -> Self {
         Self {
-            kind: ContractDecodeErrorKind::Json,
+            type_: ContractDecodeErrorType::Json,
             requested: None,
             source: Some(source),
         }
@@ -608,14 +608,14 @@ impl ContractDecodeError {
 
     fn unsupported(requested: String) -> Self {
         Self {
-            kind: ContractDecodeErrorKind::UnsupportedContractVersion,
+            type_: ContractDecodeErrorType::UnsupportedContractVersion,
             requested: Some(requested.into_boxed_str()),
             source: None,
         }
     }
 
-    pub const fn kind(&self) -> ContractDecodeErrorKind {
-        self.kind
+    pub const fn kind(&self) -> ContractDecodeErrorType {
+        self.type_
     }
 
     pub fn requested(&self) -> Option<&str> {
@@ -625,15 +625,15 @@ impl ContractDecodeError {
 
 impl fmt::Display for ContractDecodeError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self.kind {
-            ContractDecodeErrorKind::Json => write!(
+        match self.type_ {
+            ContractDecodeErrorType::Json => write!(
                 formatter,
                 "invalid authoring document: {}",
                 self.source
                     .as_ref()
                     .expect("JSON decode error retains its source")
             ),
-            ContractDecodeErrorKind::UnsupportedContractVersion => write!(
+            ContractDecodeErrorType::UnsupportedContractVersion => write!(
                 formatter,
                 "unsupported authoring contract version {}; supported version is {SCHEMA_VERSION}",
                 self.requested

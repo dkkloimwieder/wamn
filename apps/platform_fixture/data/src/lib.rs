@@ -10,7 +10,7 @@ mod statements;
 pub mod widget;
 pub mod widget_maker;
 
-pub use error::{AccessError, AccessErrorKind};
+pub use error::{AccessError, AccessErrorType};
 
 /// The generated operations, one module for each model, and their refusal.
 pub mod generated {

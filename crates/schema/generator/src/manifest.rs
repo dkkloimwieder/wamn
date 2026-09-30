@@ -6,7 +6,7 @@ use wamn_record_history::{
     is_log_retention,
 };
 
-use crate::{GenerateError, GenerateErrorKind};
+use crate::{GenerateError, GenerateErrorType};
 
 pub(crate) const CONTROL_OWNED_RELATION_TABLES: [&str; 2] =
     ["wamn_entities", "wamn_cdc_exclusions"];
@@ -617,7 +617,7 @@ impl PackageManifest {
     pub fn from_slice(bytes: &[u8]) -> Result<Self, GenerateError> {
         let manifest: Self = serde_json::from_slice(bytes).map_err(|source| {
             GenerateError::with_source(
-                GenerateErrorKind::InvalidManifest,
+                GenerateErrorType::InvalidManifest,
                 "wamn.json does not match the closed manifest vocabulary",
                 source,
             )
@@ -629,7 +629,7 @@ impl PackageManifest {
             .is_some_and(str::is_empty)
         {
             return Err(GenerateError::new(
-                GenerateErrorKind::InvalidManifest,
+                GenerateErrorType::InvalidManifest,
                 "package predecessor version must not be empty",
             ));
         }
@@ -637,7 +637,7 @@ impl PackageManifest {
             == Some(manifest.package.version.as_str())
         {
             return Err(GenerateError::new(
-                GenerateErrorKind::InvalidManifest,
+                GenerateErrorType::InvalidManifest,
                 "package predecessor version must differ from the package version",
             ));
         }
@@ -689,7 +689,7 @@ pub fn validate_operation_vocabulary(
             let identity = format!("{model_name}.{}", action.as_str());
             if operation.permission != identity {
                 return Err(GenerateError::new(
-                    GenerateErrorKind::InvalidOperation,
+                    GenerateErrorType::InvalidOperation,
                     format!(
                         "{identity} permission must equal its package-local operation identity"
                     ),
@@ -697,7 +697,7 @@ pub fn validate_operation_vocabulary(
             }
             if !declared.insert(identity.clone()) {
                 return Err(GenerateError::new(
-                    GenerateErrorKind::InvalidOperation,
+                    GenerateErrorType::InvalidOperation,
                     format!("manifest repeats declared operation {identity}"),
                 ));
             }
@@ -712,7 +712,7 @@ pub fn validate_operation_vocabulary(
             format!("custom operation {operation_name}"),
         ) {
             return Err(GenerateError::new(
-                GenerateErrorKind::InvalidOperation,
+                GenerateErrorType::InvalidOperation,
                 format!(
                     "{existing} and custom operation {operation_name} collide at generated/source-map/{artifact}.json"
                 ),
@@ -721,7 +721,7 @@ pub fn validate_operation_vocabulary(
         validate_custom_operation(manifest, operation_name, operation)?;
         if !declared.insert(operation_name.clone()) {
             return Err(GenerateError::new(
-                GenerateErrorKind::InvalidOperation,
+                GenerateErrorType::InvalidOperation,
                 format!("manifest repeats declared operation {operation_name}"),
             ));
         }
@@ -739,7 +739,7 @@ fn validate_audit_log(
     model: &ModelDeclaration,
 ) -> Result<(), GenerateError> {
     let refuse =
-        |message: String| Err(GenerateError::new(GenerateErrorKind::InvalidModel, message));
+        |message: String| Err(GenerateError::new(GenerateErrorType::InvalidModel, message));
     let Some(audit_log) = &model.audit_log else {
         if model.owner == manifest.package.id {
             return refuse(format!(
@@ -783,7 +783,7 @@ fn validate_audit_log(
     }
     if model.log_retention().is_some() && !history_object_names_fit(&model.table) {
         return Err(GenerateError::for_object(
-            GenerateErrorKind::InvalidModel,
+            GenerateErrorType::InvalidModel,
             format!(
                 "{model_name} logs {}.{}, and a history object name of that relation has 64 bytes or more",
                 model.schema, model.table
@@ -806,7 +806,7 @@ fn validate_delete_mode(
     model: &ModelDeclaration,
 ) -> Result<(), GenerateError> {
     let refuse =
-        |message: String| Err(GenerateError::new(GenerateErrorKind::InvalidModel, message));
+        |message: String| Err(GenerateError::new(GenerateErrorType::InvalidModel, message));
     let declares_delete = model.operations.contains_key(&CrudAction::Delete);
     if model.owner != manifest.package.id {
         if model.delete_mode.is_some() {
@@ -834,7 +834,7 @@ fn validate_internal_relation_vocabulary(manifest: &PackageManifest) -> Result<(
     for (model_id, model) in &manifest.models {
         if CONTROL_OWNED_RELATION_TABLES.contains(&model.table.as_str()) {
             return Err(GenerateError::new(
-                GenerateErrorKind::InvalidManifest,
+                GenerateErrorType::InvalidManifest,
                 format!(
                     "model {model_id} uses reserved control relation {}.{}",
                     model.schema, model.table
@@ -853,7 +853,7 @@ fn validate_internal_relation_vocabulary(manifest: &PackageManifest) -> Result<(
             format!("model {model_id}"),
         ) {
             return Err(GenerateError::new(
-                GenerateErrorKind::InvalidManifest,
+                GenerateErrorType::InvalidManifest,
                 format!(
                     "{existing} and model {model_id} classify the same relation {}.{}",
                     model.schema, model.table
@@ -867,7 +867,7 @@ fn validate_internal_relation_vocabulary(manifest: &PackageManifest) -> Result<(
         validate_identifier(&relation.table, "internal relation table")?;
         if CONTROL_OWNED_RELATION_TABLES.contains(&relation.table.as_str()) {
             return Err(GenerateError::new(
-                GenerateErrorKind::InvalidManifest,
+                GenerateErrorType::InvalidManifest,
                 format!(
                     "internal relation {relation_id} uses reserved control relation {}.{}",
                     relation.schema, relation.table
@@ -884,7 +884,7 @@ fn validate_internal_relation_vocabulary(manifest: &PackageManifest) -> Result<(
         }
         if manifest.models.contains_key(relation_id) {
             return Err(GenerateError::new(
-                GenerateErrorKind::InvalidManifest,
+                GenerateErrorType::InvalidManifest,
                 format!("relation {relation_id} cannot be both a model and CDC-excluded"),
             ));
         }
@@ -893,7 +893,7 @@ fn validate_internal_relation_vocabulary(manifest: &PackageManifest) -> Result<(
             format!("CDC-excluded relation {relation_id}"),
         ) {
             return Err(GenerateError::new(
-                GenerateErrorKind::InvalidManifest,
+                GenerateErrorType::InvalidManifest,
                 format!(
                     "{existing} and CDC-excluded relation {relation_id} classify the same relation {}.{}",
                     relation.schema, relation.table
@@ -907,7 +907,7 @@ fn validate_internal_relation_vocabulary(manifest: &PackageManifest) -> Result<(
 /// Refuse an authored name that ends with the reserved history suffix.
 fn reserved_history_name(subject: &str, schema: &str, table: &str) -> GenerateError {
     GenerateError::for_object(
-        GenerateErrorKind::InvalidManifest,
+        GenerateErrorType::InvalidManifest,
         format!(
             "{subject} uses {schema}.{table}, but the {HISTORY_TABLE_SUFFIX} suffix is reserved for history tables"
         ),
@@ -918,7 +918,7 @@ fn reserved_history_name(subject: &str, schema: &str, table: &str) -> GenerateEr
 fn validate_routes(routes: &RoutesDeclaration) -> Result<(), GenerateError> {
     let invalid = |detail: String| {
         Err(GenerateError::new(
-            GenerateErrorKind::InvalidManifest,
+            GenerateErrorType::InvalidManifest,
             detail,
         ))
     };
@@ -970,7 +970,7 @@ fn validate_component_groups(
 ) -> Result<(), GenerateError> {
     if manifest.components.is_empty() {
         return Err(GenerateError::new(
-            GenerateErrorKind::InvalidComponent,
+            GenerateErrorType::InvalidComponent,
             "manifest declares no component requirements",
         ));
     }
@@ -979,14 +979,14 @@ fn validate_component_groups(
     for (name, component) in &manifest.components {
         if name.is_empty() {
             return Err(GenerateError::new(
-                GenerateErrorKind::InvalidComponent,
+                GenerateErrorType::InvalidComponent,
                 "component name must not be empty",
             ));
         }
         validate_identifier(name, "component")?;
         if component.connections.is_empty() && !manifest.declares_no_sql() {
             return Err(GenerateError::new(
-                GenerateErrorKind::InvalidComponent,
+                GenerateErrorType::InvalidComponent,
                 format!("{name} must declare connections"),
             ));
         }
@@ -997,21 +997,21 @@ fn validate_component_groups(
             .collect::<BTreeSet<_>>();
         if requirements.len() != component.connections.len() {
             return Err(GenerateError::new(
-                GenerateErrorKind::InvalidComponent,
+                GenerateErrorType::InvalidComponent,
                 format!("{name} repeats a connection requirement"),
             ));
         }
         for connection in &requirements {
             if !manifest.connections.contains(*connection) {
                 return Err(GenerateError::new(
-                    GenerateErrorKind::InvalidComponent,
+                    GenerateErrorType::InvalidComponent,
                     format!("{name} references unknown connection {connection}"),
                 ));
             }
         }
         if let Some(existing) = requirement_sets.insert(requirements, name) {
             return Err(GenerateError::new(
-                GenerateErrorKind::InvalidComponent,
+                GenerateErrorType::InvalidComponent,
                 format!("components {existing} and {name} have identical requirement sets"),
             ));
         }
@@ -1028,7 +1028,7 @@ fn validate_component_groups(
         let component = match requested {
             Some("") => {
                 return Err(GenerateError::new(
-                    GenerateErrorKind::InvalidComponent,
+                    GenerateErrorType::InvalidComponent,
                     format!("operation {operation} component must not be empty"),
                 ));
             }
@@ -1038,7 +1038,7 @@ fn validate_component_groups(
             }
             None => implicit.map(String::as_str).ok_or_else(|| {
                 GenerateError::new(
-                    GenerateErrorKind::InvalidComponent,
+                    GenerateErrorType::InvalidComponent,
                     format!(
                         "operation {operation} must name a component when the manifest declares multiple components"
                     ),
@@ -1047,7 +1047,7 @@ fn validate_component_groups(
         };
         let Some(count) = grouped.get_mut(component) else {
             return Err(GenerateError::new(
-                GenerateErrorKind::InvalidComponent,
+                GenerateErrorType::InvalidComponent,
                 format!("operation {operation} references unknown component {component}"),
             ));
         };
@@ -1055,7 +1055,7 @@ fn validate_component_groups(
     }
     if let Some((component, _)) = grouped.iter().find(|(_, count)| **count == 0) {
         return Err(GenerateError::new(
-            GenerateErrorKind::InvalidComponent,
+            GenerateErrorType::InvalidComponent,
             format!("component {component} groups no operations"),
         ));
     }
@@ -1069,7 +1069,7 @@ fn validate_custom_operation(
 ) -> Result<(), GenerateError> {
     if operation.fresh_only && operation.visibility != OperationVisibility::Public {
         return Err(GenerateError::new(
-            GenerateErrorKind::InvalidOperation,
+            GenerateErrorType::InvalidOperation,
             format!("private operation {operation_name} must not require a fresh credential"),
         ));
     }
@@ -1077,7 +1077,7 @@ fn validate_custom_operation(
         (OperationVisibility::Public, Some(permission)) if permission == operation_name => {}
         (OperationVisibility::Public, _) => {
             return Err(GenerateError::new(
-                GenerateErrorKind::InvalidOperation,
+                GenerateErrorType::InvalidOperation,
                 format!(
                     "public operation {operation_name} permission must equal its package-local identity"
                 ),
@@ -1086,7 +1086,7 @@ fn validate_custom_operation(
         (OperationVisibility::Private, None) => {}
         (OperationVisibility::Private, Some(_)) => {
             return Err(GenerateError::new(
-                GenerateErrorKind::InvalidOperation,
+                GenerateErrorType::InvalidOperation,
                 format!("private operation {operation_name} must not declare a permission"),
             ));
         }
@@ -1102,7 +1102,7 @@ fn validate_custom_operation(
             || pre_commit.line.is_some()
         {
             return Err(GenerateError::new(
-                GenerateErrorKind::InvalidOperation,
+                GenerateErrorType::InvalidOperation,
                 format!(
                     "command {operation_name} pre_commit requires a claim and typed fields without envelope or line bounds"
                 ),
@@ -1111,7 +1111,7 @@ fn validate_custom_operation(
         validate_custom_operation_input(operation_name, pre_commit)?;
     } else if operation.pre_commit_required {
         return Err(GenerateError::new(
-            GenerateErrorKind::InvalidOperation,
+            GenerateErrorType::InvalidOperation,
             format!("command {operation_name} pre_commit_required requires a pre_commit"),
         ));
     }
@@ -1120,7 +1120,7 @@ fn validate_custom_operation(
         // the generated query, which checks its cursor, limit and envelope.
         if result.class == ResultClass::Page {
             return Err(GenerateError::new(
-                GenerateErrorKind::InvalidOperation,
+                GenerateErrorType::InvalidOperation,
                 format!(
                     "{} {operation_name} must not declare result class page; page belongs to the generated query",
                     operation.kind()
@@ -1142,14 +1142,14 @@ fn validate_custom_operation_kind(
         CustomOperationType::Projection => {
             if operation.result.is_none() {
                 return Err(GenerateError::new(
-                    GenerateErrorKind::InvalidOperation,
+                    GenerateErrorType::InvalidOperation,
                     format!("projection {operation_name} must declare a typed result"),
                 ));
             }
             refuse_command_only_fields(operation_name, operation)?;
             if operation.registration.is_some() {
                 return Err(GenerateError::new(
-                    GenerateErrorKind::InvalidOperation,
+                    GenerateErrorType::InvalidOperation,
                     format!("projection {operation_name} must not declare a registration"),
                 ));
             }
@@ -1161,7 +1161,7 @@ fn validate_custom_operation_kind(
                 .any(|field| field.path == "request_id")
             {
                 return Err(GenerateError::new(
-                    GenerateErrorKind::InvalidOperation,
+                    GenerateErrorType::InvalidOperation,
                     format!(
                         "projection {operation_name} must not declare request_id: a read carries no request identity"
                     ),
@@ -1174,7 +1174,7 @@ fn validate_custom_operation_kind(
                     || relation.lock
             }) {
                 return Err(GenerateError::new(
-                    GenerateErrorKind::InvalidOperation,
+                    GenerateErrorType::InvalidOperation,
                     format!("projection {operation_name} must be read-only"),
                 ));
             }
@@ -1186,7 +1186,7 @@ fn validate_custom_operation_kind(
                 || operation.registration.is_some()
             {
                 return Err(GenerateError::new(
-                    GenerateErrorKind::InvalidOperation,
+                    GenerateErrorType::InvalidOperation,
                     format!(
                         "command {operation_name} must declare a result unless it is an execution-only participant, and must declare no registration"
                     ),
@@ -1204,7 +1204,7 @@ fn validate_custom_operation_kind(
                     || operation.input.line.is_some())
             {
                 return Err(GenerateError::new(
-                    GenerateErrorKind::InvalidOperation,
+                    GenerateErrorType::InvalidOperation,
                     format!(
                         "participant command {operation_name} must be public with its own permission, plain typed input, inherited idempotence, and no result or automatic_retry"
                     ),
@@ -1214,7 +1214,7 @@ fn validate_custom_operation_kind(
                 && operation.transaction != Some(CommandTransaction::ExplicitPerInput)
             {
                 return Err(GenerateError::new(
-                    GenerateErrorKind::InvalidOperation,
+                    GenerateErrorType::InvalidOperation,
                     format!(
                         "command {operation_name} is idempotent by claim; declare transaction: explicit_per_input and automatic_retry: false so the claim and its work commit together"
                     ),
@@ -1233,13 +1233,13 @@ fn validate_custom_operation_kind(
                 | (false, None, None) => {}
                 (true, Some(_), Some(true)) => {
                     return Err(GenerateError::new(
-                        GenerateErrorKind::InvalidOperation,
+                        GenerateErrorType::InvalidOperation,
                         format!("command {operation_name} must not retry automatically"),
                     ));
                 }
                 _ => {
                     return Err(GenerateError::new(
-                        GenerateErrorKind::InvalidOperation,
+                        GenerateErrorType::InvalidOperation,
                         format!(
                             "command {operation_name} transaction and automatic_retry must be declared together"
                         ),
@@ -1248,7 +1248,7 @@ fn validate_custom_operation_kind(
             }
             if !has_local_sql && operation.canonicalization.is_some() {
                 return Err(GenerateError::new(
-                    GenerateErrorKind::InvalidOperation,
+                    GenerateErrorType::InvalidOperation,
                     format!(
                         "composition-only command {operation_name} must not declare local canonicalization"
                     ),
@@ -1262,7 +1262,7 @@ fn validate_custom_operation_kind(
         CustomOperationType::EventHandler => {
             if operation.visibility != OperationVisibility::Private || operation.result.is_some() {
                 return Err(GenerateError::new(
-                    GenerateErrorKind::InvalidOperation,
+                    GenerateErrorType::InvalidOperation,
                     format!(
                         "event handler {operation_name} must be private and have no outward result"
                     ),
@@ -1271,7 +1271,7 @@ fn validate_custom_operation_kind(
             refuse_command_only_fields(operation_name, operation)?;
             let registration = operation.registration.as_ref().ok_or_else(|| {
                 GenerateError::new(
-                    GenerateErrorKind::InvalidOperation,
+                    GenerateErrorType::InvalidOperation,
                     format!("event handler {operation_name} must declare a registration"),
                 )
             })?;
@@ -1299,13 +1299,13 @@ fn validate_participant_reference(
         || !operation.statements.is_empty()
     {
         return Err(GenerateError::new(
-            GenerateErrorKind::InvalidOperation,
+            GenerateErrorType::InvalidOperation,
             format!("composing command {operation_name} with a participant must not own local SQL"),
         ));
     }
     let Some(CommandIdempotence::Inherited(wrapper_inherited)) = &operation.idempotent_by else {
         return Err(GenerateError::new(
-            GenerateErrorKind::InvalidOperation,
+            GenerateErrorType::InvalidOperation,
             format!(
                 "composing command {operation_name} with a participant must inherit its base claim"
             ),
@@ -1316,13 +1316,13 @@ fn validate_participant_reference(
         .get(participant_name)
         .ok_or_else(|| {
             GenerateError::new(
-                GenerateErrorKind::InvalidOperation,
+                GenerateErrorType::InvalidOperation,
                 format!("command {operation_name} names unknown participant {participant_name}"),
             )
         })?;
     if participant.transaction != Some(CommandTransaction::Participant) {
         return Err(GenerateError::new(
-            GenerateErrorKind::InvalidOperation,
+            GenerateErrorType::InvalidOperation,
             format!(
                 "command {operation_name} participant {participant_name} is not execution-only"
             ),
@@ -1332,7 +1332,7 @@ fn validate_participant_reference(
         != Some(&CommandIdempotence::Inherited(wrapper_inherited.clone()))
     {
         return Err(GenerateError::new(
-            GenerateErrorKind::InvalidOperation,
+            GenerateErrorType::InvalidOperation,
             format!(
                 "command {operation_name} and participant {participant_name} must inherit the same base operation"
             ),
@@ -1360,7 +1360,7 @@ fn validate_command_idempotence(
 ) -> Result<(), GenerateError> {
     let Some(idempotent_by) = &operation.idempotent_by else {
         return Err(GenerateError::new(
-            GenerateErrorKind::InvalidOperation,
+            GenerateErrorType::InvalidOperation,
             format!(
                 "command {operation_name} must declare idempotent_by as exactly one of four. \
                  \"claim\": the generated codec claims the key of a non-null text \
@@ -1382,7 +1382,7 @@ fn validate_command_idempotence(
                 || !operation.statements.is_empty()
             {
                 return Err(GenerateError::new(
-                    GenerateErrorKind::InvalidOperation,
+                    GenerateErrorType::InvalidOperation,
                     format!(
                         "command {operation_name} is stateless and declares SQL; a command with \
                          SQL declares idempotent_by as claim, state or inherited"
@@ -1393,7 +1393,7 @@ fn validate_command_idempotence(
         CommandIdempotence::Claim => {
             if operation.idempotency_key_field().is_none() {
                 return Err(GenerateError::new(
-                    GenerateErrorKind::InvalidOperation,
+                    GenerateErrorType::InvalidOperation,
                     format!(
                         "command {operation_name} is idempotent by claim and declares no non-null \
                          text idempotency_key or value.idempotency_key input"
@@ -1411,7 +1411,7 @@ fn validate_command_idempotence(
             }
             let dependency = manifest.base_dependencies.get(&inherited.base).ok_or_else(|| {
                 GenerateError::new(
-                    GenerateErrorKind::InvalidOperation,
+                    GenerateErrorType::InvalidOperation,
                     format!(
                         "command {operation_name} inherits a claim from undeclared base dependency {}",
                         inherited.base
@@ -1420,7 +1420,7 @@ fn validate_command_idempotence(
             })?;
             if !dependency.operations.contains(&inherited.operation) {
                 return Err(GenerateError::new(
-                    GenerateErrorKind::InvalidOperation,
+                    GenerateErrorType::InvalidOperation,
                     format!(
                         "command {operation_name} inherits a claim from {}, which base dependency {} does not declare",
                         inherited.operation, inherited.base
@@ -1444,7 +1444,7 @@ fn validate_state_guards(
 ) -> Result<(), GenerateError> {
     if state.guards.is_empty() {
         return Err(GenerateError::new(
-            GenerateErrorKind::InvalidOperation,
+            GenerateErrorType::InvalidOperation,
             format!("command {operation_name} is idempotent by state and guards no relation"),
         ));
     }
@@ -1455,7 +1455,7 @@ fn validate_state_guards(
             .any(|candidate| candidate.table == *relation)
         {
             return Err(GenerateError::new(
-                GenerateErrorKind::InvalidOperation,
+                GenerateErrorType::InvalidOperation,
                 format!(
                     "command {operation_name} guards {relation}, which is not one of its declared relations"
                 ),
@@ -1468,7 +1468,7 @@ fn validate_state_guards(
             .any(|candidate| candidate.path == *field)
         {
             return Err(GenerateError::new(
-                GenerateErrorKind::InvalidOperation,
+                GenerateErrorType::InvalidOperation,
                 format!(
                     "command {operation_name} guards {relation} with {field}, which is not one of its input fields"
                 ),
@@ -1500,7 +1500,7 @@ fn refuse_minted_identity(
         .find(|relation| !relation.insert_fields.is_empty())
     {
         return Err(GenerateError::new(
-            GenerateErrorKind::InvalidOperation,
+            GenerateErrorType::InvalidOperation,
             format!(
                 "command {operation_name} is idempotent by {declared} and inserts into {}.{}. A command that writes its own row writes state under an identity it owns, so declare idempotent_by claim",
                 relation.schema, relation.table
@@ -1522,7 +1522,7 @@ fn refuse_command_only_fields(
         || operation.participant.is_some()
     {
         Err(GenerateError::new(
-            GenerateErrorKind::InvalidOperation,
+            GenerateErrorType::InvalidOperation,
             format!(
                 "{operation_name} declares command-only transaction, idempotence or canonicalization"
             ),
@@ -1558,14 +1558,14 @@ fn validate_registration(
     validate_identifier(&registration.entity, "event entity")?;
     if registration.ops.is_empty() {
         return Err(GenerateError::new(
-            GenerateErrorKind::InvalidOperation,
+            GenerateErrorType::InvalidOperation,
             format!("{subject} registration must declare at least one op"),
         ));
     }
     for (index, op) in registration.ops.iter().enumerate() {
         if registration.ops[..index].contains(op) {
             return Err(GenerateError::new(
-                GenerateErrorKind::InvalidOperation,
+                GenerateErrorType::InvalidOperation,
                 format!("{subject} registration repeats op {:?}", op.as_str()),
             ));
         }
@@ -1579,7 +1579,7 @@ fn validate_registration(
         Ok(())
     } else {
         Err(GenerateError::new(
-            GenerateErrorKind::InvalidOperation,
+            GenerateErrorType::InvalidOperation,
             format!(
                 "{subject} source package {} is not installed by the manifest",
                 registration.source_package
@@ -1602,13 +1602,13 @@ fn validate_custom_operation_input(
         && !envelope_fields.iter().all(|present| *present)
     {
         return Err(GenerateError::new(
-            GenerateErrorKind::InvalidOperation,
+            GenerateErrorType::InvalidOperation,
             format!("{operation_name} public-envelope bounds must be declared as one complete set"),
         ));
     }
     if input.raw_body_maximum == Some(0) {
         return Err(GenerateError::new(
-            GenerateErrorKind::InvalidOperation,
+            GenerateErrorType::InvalidOperation,
             format!("{operation_name} raw body maximum must be positive"),
         ));
     }
@@ -1617,7 +1617,7 @@ fn validate_custom_operation_input(
             && (limit.minimum == 0 || limit.maximum < limit.minimum)
         {
             return Err(GenerateError::new(
-                GenerateErrorKind::InvalidOperation,
+                GenerateErrorType::InvalidOperation,
                 format!("{operation_name} {name} bounds must be a positive closed interval"),
             ));
         }
@@ -1632,7 +1632,7 @@ fn validate_contract_fields(
 ) -> Result<(), GenerateError> {
     if fields.is_empty() {
         return Err(GenerateError::new(
-            GenerateErrorKind::InvalidOperation,
+            GenerateErrorType::InvalidOperation,
             format!("{operation_name} {contract} must declare at least one typed field"),
         ));
     }
@@ -1641,7 +1641,7 @@ fn validate_contract_fields(
         validate_contract_path(&field.path, operation_name)?;
         if !paths.insert(field.path.as_str()) {
             return Err(GenerateError::new(
-                GenerateErrorKind::InvalidOperation,
+                GenerateErrorType::InvalidOperation,
                 format!("{operation_name} {contract} repeats field {}", field.path),
             ));
         }
@@ -1651,7 +1651,7 @@ fn validate_contract_fields(
                 || field.values.iter().collect::<BTreeSet<_>>().len() != field.values.len())
         {
             return Err(GenerateError::new(
-                GenerateErrorKind::InvalidOperation,
+                GenerateErrorType::InvalidOperation,
                 format!(
                     "{operation_name} {contract} field {} has invalid closed text values",
                     field.path
@@ -1668,7 +1668,7 @@ fn validate_contract_fields(
             )
         {
             return Err(GenerateError::new(
-                GenerateErrorKind::InvalidOperation,
+                GenerateErrorType::InvalidOperation,
                 format!(
                     "{operation_name} {contract} field {} marks a revision that is neither int32 nor int64",
                     field.path
@@ -1683,7 +1683,7 @@ fn validate_contract_fields(
                 .any(|named| named.path == record && named.references.is_some())
         {
             return Err(GenerateError::new(
-                GenerateErrorKind::InvalidOperation,
+                GenerateErrorType::InvalidOperation,
                 format!(
                     "{operation_name} {contract} field {} is the revision of {record}, which must name an input that references a model",
                     field.path
@@ -1704,7 +1704,7 @@ fn validate_contract_path(path: &str, operation_name: &str) -> Result<(), Genera
         Ok(())
     } else {
         Err(GenerateError::new(
-            GenerateErrorKind::InvalidOperation,
+            GenerateErrorType::InvalidOperation,
             format!("{operation_name} has invalid contract field path {path}"),
         ))
     }
@@ -1723,7 +1723,7 @@ fn validate_command_canonicalization(
     let declares_lines = canonicalization.line_order.is_some();
     if declares_lines != operation.input.line.is_some() {
         return Err(GenerateError::new(
-            GenerateErrorKind::InvalidOperation,
+            GenerateErrorType::InvalidOperation,
             format!(
                 "{operation_name} declares a canonical line profile without a line input, or a line input without one"
             ),
@@ -1738,7 +1738,7 @@ fn validate_command_canonicalization(
         });
         if !orders {
             return Err(GenerateError::new(
-                GenerateErrorKind::InvalidOperation,
+                GenerateErrorType::InvalidOperation,
                 format!(
                     "{operation_name} canonical line profile orders by {}, which is not a non-null line input that can order",
                     order.ascending_by
@@ -1753,7 +1753,7 @@ fn validate_command_canonicalization(
             });
             if !numeric {
                 return Err(GenerateError::new(
-                    GenerateErrorKind::InvalidOperation,
+                    GenerateErrorType::InvalidOperation,
                     format!(
                         "{operation_name} canonical line profile keeps {positive} positive, which is not a non-null numeric line input"
                     ),
@@ -1777,7 +1777,7 @@ fn validate_command_canonicalization(
         || !excluded.is_subset(&input_paths)
     {
         return Err(GenerateError::new(
-            GenerateErrorKind::InvalidOperation,
+            GenerateErrorType::InvalidOperation,
             format!("{operation_name} canonicalization must name unique declared input exclusions"),
         ));
     }
@@ -1801,14 +1801,14 @@ fn validate_custom_operation_errors(
         .collect::<BTreeSet<_>>();
     if errors.is_empty() || errors.len() != operation.errors.len() {
         return Err(GenerateError::new(
-            GenerateErrorKind::InvalidOperation,
+            GenerateErrorType::InvalidOperation,
             format!("{operation_name} errors must be nonempty and unique"),
         ));
     }
     let has_permission_refusal = errors.contains("permission_denied");
     if has_permission_refusal != (operation.visibility == OperationVisibility::Public) {
         return Err(GenerateError::new(
-            GenerateErrorKind::InvalidOperation,
+            GenerateErrorType::InvalidOperation,
             format!(
                 "{operation_name} permission_denied must be present exactly for public visibility"
             ),
@@ -1830,7 +1830,7 @@ fn validate_custom_operation_errors(
         != authored_errors
     {
         return Err(GenerateError::new(
-            GenerateErrorKind::InvalidOperation,
+            GenerateErrorType::InvalidOperation,
             format!(
                 "{operation_name} error details must contain exactly its business error set; platform error details are derived"
             ),
@@ -1858,7 +1858,7 @@ fn validate_custom_operation_errors(
         validate_identifier(constraint, "custom-operation constraint")?;
         if !errors.contains(error.as_str()) {
             return Err(GenerateError::new(
-                GenerateErrorKind::InvalidOperation,
+                GenerateErrorType::InvalidOperation,
                 format!(
                     "{operation_name} constraint {constraint} maps to undeclared error {error}"
                 ),
@@ -1876,7 +1876,7 @@ fn validate_custom_operation_errors(
                 | "internal_error"
         ) {
             return Err(GenerateError::new(
-                GenerateErrorKind::InvalidOperation,
+                GenerateErrorType::InvalidOperation,
                 format!(
                     "{operation_name} constraint {constraint} must not redefine reserved error {error}"
                 ),
@@ -1884,7 +1884,7 @@ fn validate_custom_operation_errors(
         }
         if !mapped_errors.insert(error.as_str()) {
             return Err(GenerateError::new(
-                GenerateErrorKind::InvalidOperation,
+                GenerateErrorType::InvalidOperation,
                 format!("{operation_name} maps more than one constraint to error {error}"),
             ));
         }
@@ -1957,7 +1957,7 @@ fn validate_unconstrained_detail_keys(
         Ok(())
     } else {
         Err(GenerateError::new(
-            GenerateErrorKind::InvalidOperation,
+            GenerateErrorType::InvalidOperation,
             format!("{operation} error {code} repeats or conflicts structured-detail keys"),
         ))
     }
@@ -1983,7 +1983,7 @@ fn validate_static_sql_declarations(
         .count();
     if matching_dependencies > 1 {
         return Err(GenerateError::new(
-            GenerateErrorKind::InvalidOperation,
+            GenerateErrorType::InvalidOperation,
             format!(
                 "{operation_name} is ambiguous across {matching_dependencies} base dependencies"
             ),
@@ -1997,7 +1997,7 @@ fn validate_static_sql_declarations(
             return Ok(());
         }
         return Err(GenerateError::new(
-            GenerateErrorKind::InvalidOperation,
+            GenerateErrorType::InvalidOperation,
             format!(
                 "{operation_name} must declare local static SQL or an exact same-operation dependency composition"
             ),
@@ -2005,7 +2005,7 @@ fn validate_static_sql_declarations(
     }
     if !(has_connection && has_relations && has_statements) {
         return Err(GenerateError::new(
-            GenerateErrorKind::InvalidOperation,
+            GenerateErrorType::InvalidOperation,
             format!(
                 "{operation_name} local SQL connection, relations, and statements must be declared together"
             ),
@@ -2018,7 +2018,7 @@ fn validate_static_sql_declarations(
     validate_identifier(connection, "custom-operation connection")?;
     if !manifest.connections.contains(connection) {
         return Err(GenerateError::new(
-            GenerateErrorKind::InvalidOperation,
+            GenerateErrorType::InvalidOperation,
             format!("{operation_name} references unknown connection {connection}"),
         ));
     }
@@ -2028,7 +2028,7 @@ fn validate_static_sql_declarations(
         validate_identifier(&relation.table, "static SQL relation table")?;
         if CONTROL_OWNED_RELATION_TABLES.contains(&relation.table.as_str()) {
             return Err(GenerateError::new(
-                GenerateErrorKind::InvalidOperation,
+                GenerateErrorType::InvalidOperation,
                 format!(
                     "{operation_name} references reserved control relation {}.{}",
                     relation.schema, relation.table
@@ -2043,7 +2043,7 @@ fn validate_static_sql_declarations(
                 || relation.lock)
         {
             return Err(GenerateError::for_object(
-                GenerateErrorKind::InvalidOperation,
+                GenerateErrorType::InvalidOperation,
                 format!(
                     "{operation_name} declares a write or a row lock on {}.{}, but the {HISTORY_TABLE_SUFFIX} suffix is reserved for history tables, which only the log trigger writes",
                     relation.schema, relation.table
@@ -2053,7 +2053,7 @@ fn validate_static_sql_declarations(
         }
         if !relations.insert((relation.schema.as_str(), relation.table.as_str())) {
             return Err(GenerateError::new(
-                GenerateErrorKind::InvalidOperation,
+                GenerateErrorType::InvalidOperation,
                 format!(
                     "{operation_name} repeats relation {}.{}",
                     relation.schema, relation.table
@@ -2075,7 +2075,7 @@ fn validate_static_sql_declarations(
             && !relation.lock
         {
             return Err(GenerateError::new(
-                GenerateErrorKind::InvalidOperation,
+                GenerateErrorType::InvalidOperation,
                 format!(
                     "{operation_name} relation {}.{} declares no SQL access",
                     relation.schema, relation.table
@@ -2090,14 +2090,14 @@ fn validate_static_sql_declarations(
         validate_identifier(name, "static SQL statement")?;
         if rust_identifier(name).is_none() {
             return Err(GenerateError::new(
-                GenerateErrorKind::InvalidIdentity,
+                GenerateErrorType::InvalidIdentity,
                 format!("static SQL statement `{name}` is not a usable Rust identifier"),
             ));
         }
         let row_symbol = format!("{}Row", rust_type_identifier(name));
         if let Some(existing) = row_symbols.insert(row_symbol.clone(), name.as_str()) {
             return Err(GenerateError::new(
-                GenerateErrorKind::InvalidOperation,
+                GenerateErrorType::InvalidOperation,
                 format!(
                     "{operation_name} statements {existing} and {name} collide at Rust row {row_symbol}"
                 ),
@@ -2105,7 +2105,7 @@ fn validate_static_sql_declarations(
         }
         if !statement_paths.insert(statement.path.as_str()) {
             return Err(GenerateError::new(
-                GenerateErrorKind::InvalidOperation,
+                GenerateErrorType::InvalidOperation,
                 format!(
                     "{operation_name} repeats static SQL path {}",
                     statement.path
@@ -2120,7 +2120,7 @@ fn validate_static_sql_declarations(
                 fixture_symbols.insert(fixture.clone(), format!("{name}.{}", parameter.name))
             {
                 return Err(GenerateError::new(
-                    GenerateErrorKind::InvalidOperation,
+                    GenerateErrorType::InvalidOperation,
                     format!(
                         "{operation_name} parameter pairs {existing} and {name}.{} collide at Rust fixture {fixture}",
                         parameter.name
@@ -2130,7 +2130,7 @@ fn validate_static_sql_declarations(
         }
         if statement.row.is_empty() {
             return Err(GenerateError::new(
-                GenerateErrorKind::InvalidOperation,
+                GenerateErrorType::InvalidOperation,
                 format!("{operation_name}.{name} must declare a typed result row"),
             ));
         }
@@ -2146,7 +2146,7 @@ fn validate_named_values(
     let unique = values.iter().collect::<BTreeSet<_>>();
     if unique.len() != values.len() {
         return Err(GenerateError::new(
-            GenerateErrorKind::InvalidOperation,
+            GenerateErrorType::InvalidOperation,
             format!("{operation} repeats a declared {kind} name"),
         ));
     }
@@ -2167,7 +2167,7 @@ fn validate_static_sql_values(
         validate_identifier(&value.name, kind)?;
         if rust_identifier(&value.name).is_none() {
             return Err(GenerateError::new(
-                GenerateErrorKind::InvalidIdentity,
+                GenerateErrorType::InvalidIdentity,
                 format!(
                     "{operation}.{statement} {kind} `{}` is not a usable Rust identifier",
                     value.name
@@ -2176,7 +2176,7 @@ fn validate_static_sql_values(
         }
         if !names.insert(value.name.as_str()) {
             return Err(GenerateError::new(
-                GenerateErrorKind::InvalidOperation,
+                GenerateErrorType::InvalidOperation,
                 format!("{operation}.{statement} repeats {kind} {}", value.name),
             ));
         }
@@ -2232,7 +2232,7 @@ fn validate_detail_keys(
         Ok(())
     } else {
         Err(GenerateError::new(
-            GenerateErrorKind::InvalidOperation,
+            GenerateErrorType::InvalidOperation,
             format!("{operation} error {code} must declare its exact structured-detail keys"),
         ))
     }
@@ -2282,7 +2282,7 @@ pub fn resolve_operation_reference(
 ) -> Result<String, GenerateError> {
     let refuse = |reason: &str| {
         GenerateError::new(
-            GenerateErrorKind::InvalidIdentity,
+            GenerateErrorType::InvalidIdentity,
             format!("operation reference {reference:?} {reason}"),
         )
     };
@@ -2328,7 +2328,7 @@ fn validate_package_identity(package: &PackageIdentity) -> Result<(), GenerateEr
     // The platform owns the `wamn:` operation-token namespace.
     if package.id == "wamn" {
         return Err(GenerateError::new(
-            GenerateErrorKind::InvalidIdentity,
+            GenerateErrorType::InvalidIdentity,
             "package id `wamn` is reserved for the platform",
         ));
     }
@@ -2345,7 +2345,7 @@ fn validate_package_coordinate(package: &str, version: &str) -> Result<(), Gener
         || version.contains('/')
     {
         return Err(GenerateError::new(
-            GenerateErrorKind::InvalidIdentity,
+            GenerateErrorType::InvalidIdentity,
             "package version must be canonical text without native operation-token separators",
         ));
     }
@@ -2359,13 +2359,13 @@ fn validate_base_dependencies(manifest: &PackageManifest) -> Result<(), Generate
         validate_package_coordinate(&requirement.package, &requirement.version)?;
         if requirement.package == manifest.package.id {
             return Err(GenerateError::new(
-                GenerateErrorKind::InvalidIdentity,
+                GenerateErrorType::InvalidIdentity,
                 format!("base dependency {alias} must not name the owning package"),
             ));
         }
         if !packages.insert(requirement.package.as_str()) {
             return Err(GenerateError::new(
-                GenerateErrorKind::InvalidIdentity,
+                GenerateErrorType::InvalidIdentity,
                 format!(
                     "base package {} has more than one alias",
                     requirement.package
@@ -2377,13 +2377,13 @@ fn validate_base_dependencies(manifest: &PackageManifest) -> Result<(), Generate
                 || matches!(byte, b'*' | b'^' | b'~' | b'<' | b'>' | b'=' | b',' | b'|')
         }) {
             return Err(GenerateError::new(
-                GenerateErrorKind::InvalidIdentity,
+                GenerateErrorType::InvalidIdentity,
                 format!("base dependency {alias} version must be exact, not a range"),
             ));
         }
         let Some(digest) = requirement.digest.strip_prefix("sha256:") else {
             return Err(GenerateError::new(
-                GenerateErrorKind::InvalidIdentity,
+                GenerateErrorType::InvalidIdentity,
                 format!("base dependency {alias} digest must be lowercase sha256"),
             ));
         };
@@ -2393,13 +2393,13 @@ fn validate_base_dependencies(manifest: &PackageManifest) -> Result<(), Generate
                 .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
         {
             return Err(GenerateError::new(
-                GenerateErrorKind::InvalidIdentity,
+                GenerateErrorType::InvalidIdentity,
                 format!("base dependency {alias} digest must be lowercase sha256"),
             ));
         }
         if requirement.operations.is_empty() {
             return Err(GenerateError::new(
-                GenerateErrorKind::InvalidOperation,
+                GenerateErrorType::InvalidOperation,
                 format!("base dependency {alias} must require at least one operation"),
             ));
         }
@@ -2408,7 +2408,7 @@ fn validate_base_dependencies(manifest: &PackageManifest) -> Result<(), Generate
             validate_operation_identity(operation)?;
             if !operations.insert(operation) {
                 return Err(GenerateError::new(
-                    GenerateErrorKind::InvalidOperation,
+                    GenerateErrorType::InvalidOperation,
                     format!("base dependency {alias} repeats operation {operation}"),
                 ));
             }
@@ -2420,13 +2420,13 @@ fn validate_base_dependencies(manifest: &PackageManifest) -> Result<(), Generate
 fn validate_operation_identity(value: &str) -> Result<(), GenerateError> {
     let Some((module, operation)) = value.split_once('.') else {
         return Err(GenerateError::new(
-            GenerateErrorKind::InvalidIdentity,
+            GenerateErrorType::InvalidIdentity,
             format!("operation `{value}` must have canonical module.operation form"),
         ));
     };
     if operation.contains('.') {
         return Err(GenerateError::new(
-            GenerateErrorKind::InvalidIdentity,
+            GenerateErrorType::InvalidIdentity,
             format!("operation `{value}` must contain exactly one module separator"),
         ));
     }
@@ -2443,7 +2443,7 @@ pub(crate) fn validate_identifier(value: &str, object: &str) -> Result<(), Gener
         Ok(())
     } else {
         Err(GenerateError::new(
-            GenerateErrorKind::InvalidIdentity,
+            GenerateErrorType::InvalidIdentity,
             format!("{object} `{value}` must be singular snake_case"),
         ))
     }
@@ -2571,7 +2571,7 @@ impl OperationOwners {
     pub fn from_slice(bytes: &[u8]) -> Result<Self, GenerateError> {
         serde_json::from_slice(bytes).map_err(|source| {
             GenerateError::with_source(
-                GenerateErrorKind::InvalidManifest,
+                GenerateErrorType::InvalidManifest,
                 "wamn.json names no package identity",
                 source,
             )

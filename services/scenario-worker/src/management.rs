@@ -35,7 +35,7 @@ use wamn_authoring_model::{
     AuthoringCommand, AuthoringDocument, AuthoringOutcome, AuthoringQuery, AuthoringQueryOutcome,
     AuthoringQueryRequest, AuthoringQueryResponse, AuthoringQuerySuccess, AuthoringRequest,
     AuthoringRequestEnvelope, AuthoringResponse, AuthoringResponseEnvelope, AuthoringSuccess,
-    CommandRefusal, CommitProvenance, ContractDecodeErrorKind, GateRefusal, GateResult,
+    CommandRefusal, CommitProvenance, ContractDecodeErrorType, GateRefusal, GateResult,
     GetReportRefusal, PublishRefusal, PublishedWiringIdentity, QueryRefusal, ReportProjection,
     SCHEMA_VERSION, ValidatedDraftRef, decode_document,
 };
@@ -760,7 +760,7 @@ async fn authoring_command(
     };
     let document = match decode_document(text) {
         Ok(document) => document,
-        Err(error) if error.kind() == ContractDecodeErrorKind::UnsupportedContractVersion => {
+        Err(error) if error.kind() == ContractDecodeErrorType::UnsupportedContractVersion => {
             return Ok(json(
                 StatusCode::BAD_REQUEST,
                 &serde_json::json!({

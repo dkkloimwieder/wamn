@@ -16,7 +16,7 @@ use wamn_session::token::{
 };
 
 use crate::{
-    IdentityError, IdentityErrorKind,
+    IdentityError, IdentityErrorType,
     session_keys::{key_database_error, sign_message},
 };
 
@@ -130,7 +130,7 @@ fn unix_seconds() -> Result<i64, IdentityError> {
 }
 
 fn refused() -> IdentityError {
-    IdentityError::new(IdentityErrorKind::InvalidInput, "session token refused")
+    IdentityError::new(IdentityErrorType::InvalidInput, "session token refused")
 }
 
 /// Check current session authority and membership without caching an approval.

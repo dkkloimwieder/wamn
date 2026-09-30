@@ -44,7 +44,7 @@ pub async fn reset(configuration: &Path) -> anyhow::Result<String> {
 
 /// Stable category of a target-database lifecycle failure.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum TargetDatabaseErrorKind {
+pub enum TargetDatabaseErrorType {
     InvalidConfiguration,
     StaleStandup,
     LeaseUnavailable,
@@ -56,7 +56,7 @@ pub enum TargetDatabaseErrorKind {
     AclFailed,
 }
 
-impl TargetDatabaseErrorKind {
+impl TargetDatabaseErrorType {
     /// Stable diagnostic code for this error category.
     pub const fn as_str(self) -> &'static str {
         match self {
@@ -75,7 +75,7 @@ impl TargetDatabaseErrorKind {
 
 /// One refusal from the run-scoped target-database lifecycle.
 pub struct TargetDatabaseError {
-    kind: TargetDatabaseErrorKind,
+    type_: TargetDatabaseErrorType,
     remedy: &'static str,
     source: Option<Box<dyn Error + Send + Sync>>,
 }
@@ -84,16 +84,16 @@ impl fmt::Debug for TargetDatabaseError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
             .debug_struct("TargetDatabaseError")
-            .field("kind", &self.kind)
+            .field("kind", &self.type_)
             .field("remedy", &self.remedy)
             .finish_non_exhaustive()
     }
 }
 
 impl TargetDatabaseError {
-    fn new(kind: TargetDatabaseErrorKind, remedy: &'static str) -> Self {
+    fn new(kind: TargetDatabaseErrorType, remedy: &'static str) -> Self {
         Self {
-            kind,
+            type_: kind,
             remedy,
             source: None,
         }
@@ -105,8 +105,8 @@ impl TargetDatabaseError {
     }
 
     /// Stable refusal category.
-    pub const fn kind(&self) -> TargetDatabaseErrorKind {
-        self.kind
+    pub const fn kind(&self) -> TargetDatabaseErrorType {
+        self.type_
     }
 
     /// Operator action that clears this refusal.
@@ -117,7 +117,7 @@ impl TargetDatabaseError {
 
 impl fmt::Display for TargetDatabaseError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(formatter, "{}: {}", self.kind.as_str(), self.remedy)
+        write!(formatter, "{}: {}", self.type_.as_str(), self.remedy)
     }
 }
 
@@ -140,14 +140,14 @@ impl TargetSpec {
         let mut maintenance =
             PostgresConfig::from_str(config.target_database_url()).map_err(|source| {
                 TargetDatabaseError::new(
-                    TargetDatabaseErrorKind::InvalidConfiguration,
+                    TargetDatabaseErrorType::InvalidConfiguration,
                     "set target_database_url to a valid PostgreSQL URL with an explicit database",
                 )
                 .with_source(source)
             })?;
         let database = maintenance.get_dbname().ok_or_else(|| {
             TargetDatabaseError::new(
-                TargetDatabaseErrorKind::InvalidConfiguration,
+                TargetDatabaseErrorType::InvalidConfiguration,
                 "set target_database_url to a valid PostgreSQL URL with an explicit database",
             )
         })?;
@@ -156,13 +156,13 @@ impl TargetSpec {
         // by another path.
         if POSTGRES_SYSTEM_DATABASES.contains(&database) {
             return Err(TargetDatabaseError::new(
-                TargetDatabaseErrorKind::InvalidConfiguration,
+                TargetDatabaseErrorType::InvalidConfiguration,
                 "set target_database_url to a disposable database, never a PostgreSQL system database",
             ));
         }
         let database = Identifier::new(database.to_owned()).map_err(|source| {
             TargetDatabaseError::new(
-                TargetDatabaseErrorKind::InvalidConfiguration,
+                TargetDatabaseErrorType::InvalidConfiguration,
                 "set target_database_url to a database name PostgreSQL can quote",
             )
             .with_source(source)
@@ -216,7 +216,7 @@ pub fn database_name(url: &str) -> Option<String> {
 /// longer names.
 fn read_database_acl(path: &Path) -> Result<String, TargetDatabaseError> {
     std::fs::read_to_string(path).map_err(|source| {
-        TargetDatabaseError::new(TargetDatabaseErrorKind::StaleStandup, STALE_STANDUP_REMEDY)
+        TargetDatabaseError::new(TargetDatabaseErrorType::StaleStandup, STALE_STANDUP_REMEDY)
             .with_source(source)
     })
 }
@@ -298,7 +298,7 @@ impl TargetLease {
             .await
             .map_err(|source| {
                 TargetDatabaseError::new(
-                    TargetDatabaseErrorKind::LeaseFailed,
+                    TargetDatabaseErrorType::LeaseFailed,
                     "restart the development session after its exclusive target lease was lost",
                 )
                 .with_source(source)
@@ -401,7 +401,7 @@ impl TargetLease {
         let selected = TargetSpec::from_config(config)?;
         if selected.database != self.spec.database {
             return Err(TargetDatabaseError::new(
-                TargetDatabaseErrorKind::InvalidConfiguration,
+                TargetDatabaseErrorType::InvalidConfiguration,
                 "the target configuration must name the database held by this session",
             ));
         }
@@ -409,7 +409,7 @@ impl TargetLease {
         let template =
             Identifier::new(config.target_template_database().to_owned()).map_err(|source| {
                 TargetDatabaseError::new(
-                    TargetDatabaseErrorKind::InvalidConfiguration,
+                    TargetDatabaseErrorType::InvalidConfiguration,
                     "set target_template_database to a database name PostgreSQL can quote",
                 )
                 .with_source(source)
@@ -417,7 +417,7 @@ impl TargetLease {
         let acl = read_database_acl(config.target_database_acl_file())?;
         let system_database = database_name(config.system_database_url()).ok_or_else(|| {
             TargetDatabaseError::new(
-                TargetDatabaseErrorKind::InvalidConfiguration,
+                TargetDatabaseErrorType::InvalidConfiguration,
                 "set system_database_url to a PostgreSQL URL with an explicit database",
             )
         })?;
@@ -445,7 +445,7 @@ impl TargetLease {
             .await
             .map_err(|source| {
                 TargetDatabaseError::new(
-                    TargetDatabaseErrorKind::CreateFailed,
+                    TargetDatabaseErrorType::CreateFailed,
                     "stamp the owned local target before serving the application",
                 )
                 .with_source(source)
@@ -459,7 +459,7 @@ pub async fn acquire(config: &DevConfig) -> Result<TargetLease, TargetDatabaseEr
     let spec = TargetSpec::from_config(config)?;
     let (client, connection) = spec.maintenance.connect(NoTls).await.map_err(|source| {
         TargetDatabaseError::new(
-            TargetDatabaseErrorKind::InvalidConfiguration,
+            TargetDatabaseErrorType::InvalidConfiguration,
             "make the PostgreSQL maintenance database reachable with the target credential",
         )
         .with_source(source)
@@ -476,13 +476,13 @@ pub async fn acquire(config: &DevConfig) -> Result<TargetLease, TargetDatabaseEr
         "SELECT pg_catalog.pg_try_advisory_lock(pg_catalog.hashtextextended($1, 0))",
         &[&lease.spec.database.as_str()],
     ).await.map(|row| row.get(0)).map_err(|source| {
-        TargetDatabaseError::new(TargetDatabaseErrorKind::LeaseFailed,
+        TargetDatabaseError::new(TargetDatabaseErrorType::LeaseFailed,
             "ensure the target credential can acquire session advisory locks on the postgres maintenance database")
             .with_source(source)
     })?;
     if !acquired {
         return Err(TargetDatabaseError::new(
-            TargetDatabaseErrorKind::LeaseUnavailable,
+            TargetDatabaseErrorType::LeaseUnavailable,
             "stop the active wamn dev session before resetting or reusing this target",
         ));
     }
@@ -519,12 +519,12 @@ async fn replace_database(
         .await
         .map(|row| row.get(0))
         .map_err(|source| {
-            TargetDatabaseError::new(TargetDatabaseErrorKind::StaleStandup, STALE_STANDUP_REMEDY)
+            TargetDatabaseError::new(TargetDatabaseErrorType::StaleStandup, STALE_STANDUP_REMEDY)
                 .with_source(source)
         })?;
     if !present {
         return Err(TargetDatabaseError::new(
-            TargetDatabaseErrorKind::TemplateMissing,
+            TargetDatabaseErrorType::TemplateMissing,
             STALE_STANDUP_REMEDY,
         ));
     }
@@ -541,12 +541,12 @@ async fn replace_database(
         .await
         .map(|row| row.get(0))
         .map_err(|source| {
-            TargetDatabaseError::new(TargetDatabaseErrorKind::StaleStandup, STALE_STANDUP_REMEDY)
+            TargetDatabaseError::new(TargetDatabaseErrorType::StaleStandup, STALE_STANDUP_REMEDY)
                 .with_source(source)
         })?;
     if stamped.as_deref() != Some(fingerprint) {
         return Err(TargetDatabaseError::new(
-            TargetDatabaseErrorKind::TemplateForeign,
+            TargetDatabaseErrorType::TemplateForeign,
             STALE_STANDUP_REMEDY,
         ));
     }
@@ -559,7 +559,7 @@ async fn replace_database(
         .await
         .map_err(|source| {
             TargetDatabaseError::new(
-                TargetDatabaseErrorKind::DropFailed,
+                TargetDatabaseErrorType::DropFailed,
                 "grant the target credential authority to drop its disposable database",
             )
             .with_source(source)
@@ -577,7 +577,7 @@ async fn replace_database(
         .await
         .map_err(|source| {
             TargetDatabaseError::new(
-                TargetDatabaseErrorKind::CreateFailed,
+                TargetDatabaseErrorType::CreateFailed,
                 "grant the target credential CREATEDB authority for its disposable database",
             )
             .with_source(source)
@@ -587,7 +587,7 @@ async fn replace_database(
     // thing to re-issue.
     client.batch_execute(acl).await.map_err(|source| {
         TargetDatabaseError::new(
-            TargetDatabaseErrorKind::AclFailed,
+            TargetDatabaseErrorType::AclFailed,
             "re-emit the environment database ACL with wamn dev up",
         )
         .with_source(source)
@@ -601,7 +601,7 @@ async fn replace_database(
         .map(|row| row.get(0))
         .map_err(|source| {
             TargetDatabaseError::new(
-                TargetDatabaseErrorKind::CreateFailed,
+                TargetDatabaseErrorType::CreateFailed,
                 "grant the target credential CREATEDB authority for its disposable database",
             )
             .with_source(source)
@@ -739,7 +739,7 @@ mod tests {
         let lease = acquire(&config).await?;
         assert_eq!(
             acquire(&config).await.unwrap_err().kind(),
-            TargetDatabaseErrorKind::LeaseUnavailable
+            TargetDatabaseErrorType::LeaseUnavailable
         );
         let first = lease.recreate(&config).await?;
         let identity = config.activation_identity();
@@ -773,7 +773,7 @@ mod tests {
         );
         assert_eq!(
             recreate(&config).await.unwrap_err().kind(),
-            TargetDatabaseErrorKind::LeaseUnavailable
+            TargetDatabaseErrorType::LeaseUnavailable
         );
         std::fs::write(&acl, "REVOKE ALL ON DATABASE target FROM PUBLIC;")?;
         let prepared_configuration = prepare_configuration(&config)?;

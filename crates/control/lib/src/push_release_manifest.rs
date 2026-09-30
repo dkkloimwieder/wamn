@@ -38,7 +38,7 @@ pub const RELEASE_MANIFEST_PUBLISH_REFUSAL: &str = "release-manifest-publish-ref
 
 /// Stable classification of a release-manifest publication refusal.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ReleaseManifestPublishErrorKind {
+pub enum ReleaseManifestPublishErrorType {
     Document,
     Reference,
     Credential,
@@ -47,7 +47,7 @@ pub enum ReleaseManifestPublishErrorKind {
     Conflict,
 }
 
-impl ReleaseManifestPublishErrorKind {
+impl ReleaseManifestPublishErrorType {
     const fn as_str(self) -> &'static str {
         match self {
             Self::Document => "document",
@@ -63,7 +63,7 @@ impl ReleaseManifestPublishErrorKind {
 /// Contextual refusal from the release-manifest OCI boundary.
 #[derive(Debug)]
 pub struct ReleaseManifestPublishError {
-    kind: ReleaseManifestPublishErrorKind,
+    type_: ReleaseManifestPublishErrorType,
     refusal: &'static str,
     detail: String,
     source: Option<Box<dyn std::error::Error + Send + Sync>>,
@@ -71,8 +71,8 @@ pub struct ReleaseManifestPublishError {
 
 impl ReleaseManifestPublishError {
     /// Stable refusal class for callers that must not match display text.
-    pub const fn kind(&self) -> ReleaseManifestPublishErrorKind {
-        self.kind
+    pub const fn kind(&self) -> ReleaseManifestPublishErrorType {
+        self.type_
     }
 
     /// Stable literal naming the rejected invariant.
@@ -81,12 +81,12 @@ impl ReleaseManifestPublishError {
     }
 
     fn new(
-        kind: ReleaseManifestPublishErrorKind,
+        type_: ReleaseManifestPublishErrorType,
         refusal: &'static str,
         detail: impl Into<String>,
     ) -> Self {
         Self {
-            kind,
+            type_,
             refusal,
             detail: detail.into(),
             source: None,
@@ -94,13 +94,13 @@ impl ReleaseManifestPublishError {
     }
 
     fn with_source(
-        kind: ReleaseManifestPublishErrorKind,
+        type_: ReleaseManifestPublishErrorType,
         refusal: &'static str,
         detail: impl Into<String>,
         source: impl std::error::Error + Send + Sync + 'static,
     ) -> Self {
         Self {
-            kind,
+            type_,
             refusal,
             detail: detail.into(),
             source: Some(Box::new(source)),
@@ -113,7 +113,7 @@ impl fmt::Display for ReleaseManifestPublishError {
         write!(
             formatter,
             "{RELEASE_MANIFEST_PUBLISH_REFUSAL} ({}; {}): {}",
-            self.kind.as_str(),
+            self.type_.as_str(),
             self.refusal,
             self.detail
         )
@@ -333,7 +333,7 @@ pub async fn publish_release_manifest(
     let (admitted, digest) =
         ServingManifest::from_canonical_bytes(canonical_bytes).map_err(|source| {
             ReleaseManifestPublishError::with_source(
-                ReleaseManifestPublishErrorKind::Document,
+                ReleaseManifestPublishErrorType::Document,
                 "release-manifest-document-refused",
                 "input is not canonical format-1 ServingManifest JSON",
                 source,
@@ -343,7 +343,7 @@ pub async fn publish_release_manifest(
     let artifact =
         release_manifest_artifact_reference(artifact_base, digest.as_str()).map_err(|source| {
             ReleaseManifestPublishError::with_source(
-                ReleaseManifestPublishErrorKind::Reference,
+                ReleaseManifestPublishErrorType::Reference,
                 "release-manifest-artifact-reference-refused",
                 "artifact base or manifest digest cannot form an immutable OCI reference",
                 source,
@@ -352,7 +352,7 @@ pub async fn publish_release_manifest(
     let credentials =
         read_registry_credentials(registry_auth_file, artifact.registry()).map_err(|source| {
             ReleaseManifestPublishError::with_source(
-                ReleaseManifestPublishErrorKind::Credential,
+                ReleaseManifestPublishErrorType::Credential,
                 "release-manifest-registry-credential-refused",
                 format!("load push credential for registry {}", artifact.registry()),
                 source,
@@ -365,7 +365,7 @@ pub async fn publish_release_manifest(
     );
     let ca_bundles = read_ca_bundles(oci_ca_paths).map_err(|source| {
         ReleaseManifestPublishError::with_source(
-            ReleaseManifestPublishErrorKind::TrustAnchor,
+            ReleaseManifestPublishErrorType::TrustAnchor,
             "release-manifest-ca-bundle-unreadable",
             format!("read CA bundles for registry {}", artifact.registry()),
             source,
@@ -394,7 +394,7 @@ pub async fn publish_release_manifest(
         .await
         .map_err(|source| {
             ReleaseManifestPublishError::with_source(
-                ReleaseManifestPublishErrorKind::Transport,
+                ReleaseManifestPublishErrorType::Transport,
                 "release-manifest-artifact-push-failed",
                 format!("push release-manifest artifact {reference}"),
                 source,
@@ -403,7 +403,7 @@ pub async fn publish_release_manifest(
 
     if !probe_exact_artifact(&client, &reference, &auth, canonical_bytes, &digest).await? {
         return Err(ReleaseManifestPublishError::new(
-            ReleaseManifestPublishErrorKind::Transport,
+            ReleaseManifestPublishErrorType::Transport,
             "release-manifest-artifact-not-visible",
             format!("pushed release-manifest artifact {reference} is not readable"),
         ));
@@ -456,7 +456,7 @@ fn registry_client(
     })
     .map_err(|source| {
         ReleaseManifestPublishError::with_source(
-            ReleaseManifestPublishErrorKind::TrustAnchor,
+            ReleaseManifestPublishErrorType::TrustAnchor,
             "release-manifest-registry-client-unusable",
             format!("build the push client for registry {registry}"),
             source,
@@ -483,7 +483,7 @@ async fn probe_exact_artifact(
         Err(source) if artifact_is_absent(&source) => return Ok(false),
         Err(source) => {
             return Err(ReleaseManifestPublishError::with_source(
-                ReleaseManifestPublishErrorKind::Transport,
+                ReleaseManifestPublishErrorType::Transport,
                 "release-manifest-artifact-probe-failed",
                 format!("probe release-manifest artifact {reference}"),
                 source,
@@ -503,7 +503,7 @@ async fn probe_exact_artifact(
         .await
         .map_err(|source| {
             ReleaseManifestPublishError::with_source(
-                ReleaseManifestPublishErrorKind::Transport,
+                ReleaseManifestPublishErrorType::Transport,
                 "release-manifest-artifact-body-unavailable",
                 format!("pull release-manifest body {reference}"),
                 source,
@@ -522,7 +522,7 @@ async fn probe_exact_artifact(
         .await
         .map_err(|source| {
             ReleaseManifestPublishError::with_source(
-                ReleaseManifestPublishErrorKind::Transport,
+                ReleaseManifestPublishErrorType::Transport,
                 "release-manifest-artifact-config-unavailable",
                 format!("pull release-manifest config {reference}"),
                 source,
@@ -569,7 +569,7 @@ fn artifact_is_absent(error: &OciDistributionError) -> bool {
 
 fn conflict(reference: &Reference, refusal: &'static str) -> ReleaseManifestPublishError {
     ReleaseManifestPublishError::new(
-        ReleaseManifestPublishErrorKind::Conflict,
+        ReleaseManifestPublishErrorType::Conflict,
         refusal,
         format!("existing release-manifest artifact {reference} is not exact"),
     )
@@ -653,7 +653,7 @@ mod tests {
             &fixture_reference(),
         )
         .expect_err("foreign layer layout refuses");
-        assert_eq!(error.kind(), ReleaseManifestPublishErrorKind::Conflict);
+        assert_eq!(error.kind(), ReleaseManifestPublishErrorType::Conflict);
         assert_eq!(error.refusal(), "release-manifest-artifact-layer-mismatch");
 
         let duplicate = manifest.layers[0].clone();

@@ -39,7 +39,7 @@ pub mod verifier;
 
 /// Stable classes of session failure.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SessionErrorKind {
+pub enum SessionErrorType {
     /// A token failed its profile, signature, scope, or age. Every refusal
     /// has the same public message.
     Refused,
@@ -52,21 +52,21 @@ pub enum SessionErrorKind {
 /// A session failure with a stable kind and a diagnostic message.
 #[derive(Debug)]
 pub struct SessionError {
-    kind: SessionErrorKind,
+    type_: SessionErrorType,
     message: Box<str>,
 }
 
 impl SessionError {
-    fn new(kind: SessionErrorKind, message: impl Into<Box<str>>) -> Self {
+    fn new(kind: SessionErrorType, message: impl Into<Box<str>>) -> Self {
         Self {
-            kind,
+            type_: kind,
             message: message.into(),
         }
     }
 
     /// Return the stable failure class.
-    pub const fn kind(&self) -> SessionErrorKind {
-        self.kind
+    pub const fn kind(&self) -> SessionErrorType {
+        self.type_
     }
 }
 

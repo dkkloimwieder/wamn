@@ -7,7 +7,7 @@
 
 use exports::client_acme_receiving::receiving::record_receipt::Guest as RecordReceipt;
 use wamn::node::types::{Emission, ErrorDetail, NodeContext, NodeError};
-use wamn_client_acme_receiving_data_access::{AccessError, AccessErrorKind};
+use wamn_client_acme_receiving_data_access::{AccessError, AccessErrorType};
 
 #[cfg(test)]
 mod codecs;
@@ -82,27 +82,27 @@ fn emission(payload: String) -> Emission {
 fn private_node_error(error: &AccessError) -> NodeError {
     let kind = error.kind();
     let code = match kind {
-        AccessErrorKind::InvalidInput => "invalid_input",
-        AccessErrorKind::Retry => "retry",
-        AccessErrorKind::Timeout => "timeout",
-        AccessErrorKind::NotFound
-        | AccessErrorKind::ConcurrencyConflict
-        | AccessErrorKind::ExclusionViolation
-        | AccessErrorKind::PermissionDenied
-        | AccessErrorKind::InternalError => "internal_error",
+        AccessErrorType::InvalidInput => "invalid_input",
+        AccessErrorType::Retry => "retry",
+        AccessErrorType::Timeout => "timeout",
+        AccessErrorType::NotFound
+        | AccessErrorType::ConcurrencyConflict
+        | AccessErrorType::ExclusionViolation
+        | AccessErrorType::PermissionDenied
+        | AccessErrorType::InternalError => "internal_error",
     };
     let detail = ErrorDetail {
         message: error.context().to_owned(),
         code: Some(code.to_owned()),
     };
     match kind {
-        AccessErrorKind::InvalidInput => NodeError::InvalidInput(detail),
-        AccessErrorKind::Retry | AccessErrorKind::Timeout => NodeError::Retryable(detail),
-        AccessErrorKind::NotFound
-        | AccessErrorKind::ConcurrencyConflict
-        | AccessErrorKind::ExclusionViolation
-        | AccessErrorKind::PermissionDenied
-        | AccessErrorKind::InternalError => NodeError::Terminal(detail),
+        AccessErrorType::InvalidInput => NodeError::InvalidInput(detail),
+        AccessErrorType::Retry | AccessErrorType::Timeout => NodeError::Retryable(detail),
+        AccessErrorType::NotFound
+        | AccessErrorType::ConcurrencyConflict
+        | AccessErrorType::ExclusionViolation
+        | AccessErrorType::PermissionDenied
+        | AccessErrorType::InternalError => NodeError::Terminal(detail),
     }
 }
 
@@ -116,11 +116,11 @@ fn access_detail(
     match key {
         "field" => error.field().map(str::to_owned).or_else(|| {
             not_found
-                .filter(|_| error.kind() == AccessErrorKind::NotFound)
+                .filter(|_| error.kind() == AccessErrorType::NotFound)
                 .map(|(field, _)| field.to_owned())
         }),
         "id" => not_found
-            .filter(|_| error.kind() == AccessErrorKind::NotFound)
+            .filter(|_| error.kind() == AccessErrorType::NotFound)
             .map(|(_, id)| id.to_owned()),
         "expected_row_version" => expected_row_version.map(|value| value.to_string()),
         "observed_row_version" => error.observed_row_version().map(|value| value.to_string()),

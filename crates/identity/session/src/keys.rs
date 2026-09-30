@@ -3,7 +3,7 @@
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use serde::{Deserialize, Serialize};
 
-use crate::{SessionError, SessionErrorKind};
+use crate::{SessionError, SessionErrorType};
 
 /// The fixed-profile public JWK; private and unknown parameters are refused.
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -51,5 +51,5 @@ pub fn decode_public_key(key: &PublicSessionKey) -> Result<[u8; 32], SessionErro
 }
 
 fn invalid(message: &'static str) -> SessionError {
-    SessionError::new(SessionErrorKind::InvalidKey, message)
+    SessionError::new(SessionErrorType::InvalidKey, message)
 }

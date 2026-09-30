@@ -93,7 +93,7 @@ pub struct ComponentArtifactConfig {
 
 /// Stable classification for an invalid component artifact reference.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ComponentArtifactReferenceErrorKind {
+pub enum ComponentArtifactReferenceErrorType {
     InvalidBase,
     InvalidDigest,
 }
@@ -101,18 +101,21 @@ pub enum ComponentArtifactReferenceErrorKind {
 /// Refusal to derive an immutable component artifact reference.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ComponentArtifactReferenceError {
-    kind: ComponentArtifactReferenceErrorKind,
+    type_: ComponentArtifactReferenceErrorType,
     reason: &'static str,
 }
 
 impl ComponentArtifactReferenceError {
     /// Stable refusal class for callers that must not match display text.
-    pub fn kind(&self) -> ComponentArtifactReferenceErrorKind {
-        self.kind
+    pub fn kind(&self) -> ComponentArtifactReferenceErrorType {
+        self.type_
     }
 
-    fn new(kind: ComponentArtifactReferenceErrorKind, reason: &'static str) -> Self {
-        Self { kind, reason }
+    fn new(kind: ComponentArtifactReferenceErrorType, reason: &'static str) -> Self {
+        Self {
+            type_: kind,
+            reason,
+        }
     }
 }
 
@@ -210,7 +213,7 @@ pub fn parse_component_artifact_base(
 ) -> Result<ComponentArtifactBase, ComponentArtifactReferenceError> {
     let invalid_base = |reason| {
         ComponentArtifactReferenceError::new(
-            ComponentArtifactReferenceErrorKind::InvalidBase,
+            ComponentArtifactReferenceErrorType::InvalidBase,
             reason,
         )
     };
@@ -267,7 +270,7 @@ pub fn component_digest_tag(
         })
         .ok_or_else(|| {
             ComponentArtifactReferenceError::new(
-                ComponentArtifactReferenceErrorKind::InvalidDigest,
+                ComponentArtifactReferenceErrorType::InvalidDigest,
                 "expected sha256:<64 lowercase hex digits>",
             )
         })
@@ -397,7 +400,7 @@ mod tests {
                 component_artifact_reference(base, &digest)
                     .expect_err("invalid base refuses")
                     .kind(),
-                ComponentArtifactReferenceErrorKind::InvalidBase,
+                ComponentArtifactReferenceErrorType::InvalidBase,
                 "accepted {base:?}"
             );
         }

@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context as _, ensure};
 use serde_json::{Value, json};
 use wamn_control::apply_package::{
-    self, ApplyPackageError, ApplyPackageErrorKind, ApplyPackageRequest,
+    self, ApplyPackageError, ApplyPackageErrorType, ApplyPackageRequest,
 };
 use wamn_engine::component_admission::component_digest;
 use wamn_gate_harness::journey::{BaseCandidate, CompatibilityPhase};
@@ -402,7 +402,7 @@ async fn breaking_install(base: &Path, database_url: &str) -> anyhow::Result<Val
         let before = project.query_one("SELECT count(*) FROM catalog.packages WHERE tenant_id = $1", &[&TENANT]).await?.get::<_, i64>(0);
         let error = apply(super::overlay_package_root()).await.err().context("unchanged overlay must refuse a base-owned field collision")?;
         let refusal = error.downcast_ref::<ApplyPackageError>().context("breaking combination must produce a typed package refusal")?;
-        ensure!(refusal.kind() == ApplyPackageErrorKind::BaseDefinitionMutation
+        ensure!(refusal.kind() == ApplyPackageErrorType::BaseDefinitionMutation
             && refusal.schema() == Some("receiving") && refusal.relation() == Some("purchase_order")
             && refusal.definition() == Some(CONFLICT_FIELD) && refusal.owner_package() == Some(BASE_PACKAGE_ID),
             "breaking combination refused for a different reason: {refusal}");

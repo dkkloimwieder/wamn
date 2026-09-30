@@ -4,11 +4,11 @@ use std::error::Error;
 use std::fmt;
 
 use serde_json::{Value, json};
-use wamn_postgres_statements::{StatementError, StatementErrorKind};
+use wamn_postgres_statements::{StatementError, StatementErrorType};
 
 /// Stable operation-contract literal for one refusal.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum AccessErrorKind {
+pub enum AccessErrorType {
     /// The body was not what the input contract admits.
     InvalidInput,
     /// The named row does not exist.
@@ -35,7 +35,7 @@ pub enum AccessErrorKind {
     InternalError,
 }
 
-impl AccessErrorKind {
+impl AccessErrorType {
     /// Frozen operation-contract literal.
     #[must_use]
     pub const fn literal(self) -> &'static str {
@@ -59,15 +59,15 @@ impl AccessErrorKind {
 /// One refusal, with the structured detail its literal declares.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct AccessError {
-    kind: AccessErrorKind,
+    type_: AccessErrorType,
     detail: Value,
 }
 
 impl AccessError {
     /// What went wrong.
     #[must_use]
-    pub const fn kind(&self) -> AccessErrorKind {
-        self.kind
+    pub const fn kind(&self) -> AccessErrorType {
+        self.type_
     }
 
     /// The declared detail members.
@@ -76,13 +76,13 @@ impl AccessError {
         &self.detail
     }
 
-    pub(crate) fn field(kind: AccessErrorKind, field: &str) -> Self {
+    pub(crate) fn field(kind: AccessErrorType, field: &str) -> Self {
         Self::new(kind, json!({ "field": field }))
     }
 
     pub(crate) fn range(field: &str, minimum: i64, maximum: i64, observed: i64) -> Self {
         Self::new(
-            AccessErrorKind::InvalidInput,
+            AccessErrorType::InvalidInput,
             json!({
                 "field": field,
                 "minimum": minimum.to_string(),
@@ -94,7 +94,7 @@ impl AccessError {
 
     pub(crate) fn conflict(expected: i64, observed: i64) -> Self {
         Self::new(
-            AccessErrorKind::ConcurrencyConflict,
+            AccessErrorType::ConcurrencyConflict,
             json!({
                 "expected_row_version": expected,
                 "observed_row_version": observed,
@@ -103,7 +103,7 @@ impl AccessError {
     }
 
     pub(crate) fn internal() -> Self {
-        Self::new(AccessErrorKind::InternalError, json!({}))
+        Self::new(AccessErrorType::InternalError, json!({}))
     }
 
     /// The one translation of a statement failure into the contract vocabulary.
@@ -115,7 +115,7 @@ impl AccessError {
     }
 
     fn from_statement_parts(
-        kind: StatementErrorKind,
+        type_: StatementErrorType,
         constraint: Option<&str>,
         constraints: Constraints,
     ) -> Self {
@@ -124,40 +124,43 @@ impl AccessError {
             Some(constraint) => Self::new(kind, json!({ "constraint": constraint })),
             None => Self::internal(),
         };
-        match kind {
-            StatementErrorKind::SerializationFailure
-            | StatementErrorKind::ConnectionUnavailable => {
-                Self::new(AccessErrorKind::Retry, json!({}))
+        match type_ {
+            StatementErrorType::SerializationFailure
+            | StatementErrorType::ConnectionUnavailable => {
+                Self::new(AccessErrorType::Retry, json!({}))
             }
-            StatementErrorKind::StatementTimeout => Self::new(AccessErrorKind::Timeout, json!({})),
-            StatementErrorKind::PermissionDenied => {
-                Self::new(AccessErrorKind::PermissionDenied, json!({}))
+            StatementErrorType::StatementTimeout => Self::new(AccessErrorType::Timeout, json!({})),
+            StatementErrorType::PermissionDenied => {
+                Self::new(AccessErrorType::PermissionDenied, json!({}))
             }
-            StatementErrorKind::UniqueViolation => {
-                violation(AccessErrorKind::UniqueViolation, constraints.unique)
+            StatementErrorType::UniqueViolation => {
+                violation(AccessErrorType::UniqueViolation, constraints.unique)
             }
-            StatementErrorKind::ForeignKeyViolation => violation(
-                AccessErrorKind::ForeignKeyViolation,
+            StatementErrorType::ForeignKeyViolation => violation(
+                AccessErrorType::ForeignKeyViolation,
                 constraints.foreign_key,
             ),
-            StatementErrorKind::CheckViolation => {
-                violation(AccessErrorKind::CheckViolation, constraints.check)
+            StatementErrorType::CheckViolation => {
+                violation(AccessErrorType::CheckViolation, constraints.check)
             }
-            StatementErrorKind::ExclusionViolation => {
-                violation(AccessErrorKind::ExclusionViolation, constraints.exclusion)
+            StatementErrorType::ExclusionViolation => {
+                violation(AccessErrorType::ExclusionViolation, constraints.exclusion)
             }
             _ => Self::internal(),
         }
     }
 
-    fn new(kind: AccessErrorKind, detail: Value) -> Self {
-        Self { kind, detail }
+    fn new(kind: AccessErrorType, detail: Value) -> Self {
+        Self {
+            type_: kind,
+            detail,
+        }
     }
 }
 
 impl fmt::Display for AccessError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str(self.kind.literal())
+        formatter.write_str(self.type_.literal())
     }
 }
 
@@ -183,7 +186,7 @@ impl Constraints {
 
 #[cfg(test)]
 mod tests {
-    use wamn_postgres_statements::StatementErrorKind;
+    use wamn_postgres_statements::StatementErrorType;
 
     use crate::generated::error::{Constraints, Error};
     use crate::generated::widget::sql;
@@ -210,7 +213,7 @@ mod tests {
             exclusion: sql::UPDATE_EXCLUSION_CONSTRAINTS,
         };
         let error = Error::from_parts(
-            StatementErrorKind::ExclusionViolation,
+            StatementErrorType::ExclusionViolation,
             Some(constraint),
             &update,
             "widget.update",

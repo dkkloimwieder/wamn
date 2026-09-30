@@ -108,7 +108,7 @@ pub fn system_reader_generation_role(
 
 /// Which predicate refused a system-reader connection input.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SystemReaderUrlErrorKind {
+pub enum SystemReaderUrlErrorType {
     /// No connection input was supplied at all.
     Absent,
     /// The input is not a parseable URL, or names no host.
@@ -123,7 +123,7 @@ pub enum SystemReaderUrlErrorKind {
     Extra,
 }
 
-impl SystemReaderUrlErrorKind {
+impl SystemReaderUrlErrorType {
     /// Stable label for logs and tests.
     pub const fn as_str(self) -> &'static str {
         match self {
@@ -144,7 +144,7 @@ impl SystemReaderUrlErrorKind {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SystemReaderUrlError {
     reader: SystemReader,
-    kind: SystemReaderUrlErrorKind,
+    type_: SystemReaderUrlErrorType,
     reason: &'static str,
 }
 
@@ -155,8 +155,8 @@ impl SystemReaderUrlError {
     }
 
     /// Which predicate refused the input.
-    pub const fn kind(&self) -> SystemReaderUrlErrorKind {
-        self.kind
+    pub const fn kind(&self) -> SystemReaderUrlErrorType {
+        self.type_
     }
 
     /// The fixed reason this predicate refuses for.
@@ -171,7 +171,7 @@ impl fmt::Display for SystemReaderUrlError {
             formatter,
             "WAMN_SYSTEM_URL is out of scope for the {} ({}): {}",
             self.reader,
-            self.kind.as_str(),
+            self.type_.as_str(),
             self.reason
         )
     }
@@ -181,12 +181,12 @@ impl std::error::Error for SystemReaderUrlError {}
 
 fn refuse(
     reader: SystemReader,
-    kind: SystemReaderUrlErrorKind,
+    type_: SystemReaderUrlErrorType,
     reason: &'static str,
 ) -> SystemReaderUrlError {
     SystemReaderUrlError {
         reader,
-        kind,
+        type_,
         reason,
     }
 }
@@ -257,21 +257,21 @@ pub fn parse_system_reader_url(
     if url.is_empty() {
         return Err(refuse(
             reader,
-            SystemReaderUrlErrorKind::Absent,
+            SystemReaderUrlErrorType::Absent,
             "the system read connection input is required and has no fallback",
         ));
     }
     let parsed = Url::parse(url).map_err(|_| {
         refuse(
             reader,
-            SystemReaderUrlErrorKind::Malformed,
+            SystemReaderUrlErrorType::Malformed,
             "the system read connection input is not a URL",
         )
     })?;
     if !matches!(parsed.scheme(), "postgres" | "postgresql") {
         return Err(refuse(
             reader,
-            SystemReaderUrlErrorKind::Scheme,
+            SystemReaderUrlErrorType::Scheme,
             "the system read connection input must be a postgres URL",
         ));
     }
@@ -280,14 +280,14 @@ pub fn parse_system_reader_url(
     if parsed.host_str().is_none_or(str::is_empty) {
         return Err(refuse(
             reader,
-            SystemReaderUrlErrorKind::Malformed,
+            SystemReaderUrlErrorType::Malformed,
             "the system read connection input names no host",
         ));
     }
     if parsed.query().is_some() || parsed.fragment().is_some() {
         return Err(refuse(
             reader,
-            SystemReaderUrlErrorKind::Extra,
+            SystemReaderUrlErrorType::Extra,
             "the system read connection input must carry no query or fragment",
         ));
     }
@@ -295,7 +295,7 @@ pub fn parse_system_reader_url(
     if database.is_empty() || database.contains('/') {
         return Err(refuse(
             reader,
-            SystemReaderUrlErrorKind::Database,
+            SystemReaderUrlErrorType::Database,
             "the system read connection input must name exactly one database",
         ));
     }
@@ -312,7 +312,7 @@ pub fn parse_system_reader_url(
     else {
         return Err(refuse(
             reader,
-            SystemReaderUrlErrorKind::Role,
+            SystemReaderUrlErrorType::Role,
             "the system read connection input does not authenticate as this \
              org/project/environment's system-reader generation",
         ));
@@ -361,7 +361,7 @@ mod tests {
         for reader in SystemReader::ALL {
             let error = parse(reader, &url("wamn_system", DATABASE))
                 .expect_err("the unconfined owner credential was accepted");
-            assert_eq!(error.kind(), SystemReaderUrlErrorKind::Role);
+            assert_eq!(error.kind(), SystemReaderUrlErrorType::Role);
             assert_eq!(error.reader(), reader);
             // The refusal must not echo the input: it carries a password.
             assert!(!format!("{error}").contains("secret"));
@@ -400,7 +400,7 @@ mod tests {
                 &url(&role(other, CredentialGeneration::A), DATABASE),
             )
             .expect_err("a reader accepted the other reader's credential");
-            assert_eq!(error.kind(), SystemReaderUrlErrorKind::Role);
+            assert_eq!(error.kind(), SystemReaderUrlErrorType::Role);
         }
     }
 
@@ -418,7 +418,7 @@ mod tests {
         );
         let error = parse(SystemReader::Identity, &url(&foreign, DATABASE))
             .expect_err("another environment's credential was accepted");
-        assert_eq!(error.kind(), SystemReaderUrlErrorKind::Role);
+        assert_eq!(error.kind(), SystemReaderUrlErrorType::Role);
     }
 
     /// The database name is inside the digest, so a URL that names a different
@@ -433,30 +433,30 @@ mod tests {
             ),
         )
         .expect_err("a project-database URL was accepted");
-        assert_eq!(error.kind(), SystemReaderUrlErrorKind::Role);
+        assert_eq!(error.kind(), SystemReaderUrlErrorType::Role);
     }
 
     #[test]
     fn the_shape_predicates_refuse_before_the_role_predicate_is_reached() {
         let good = role(SystemReader::Registry, CredentialGeneration::A);
         for (input, kind) in [
-            (String::new(), SystemReaderUrlErrorKind::Absent),
-            ("not a url".to_owned(), SystemReaderUrlErrorKind::Malformed),
+            (String::new(), SystemReaderUrlErrorType::Absent),
+            ("not a url".to_owned(), SystemReaderUrlErrorType::Malformed),
             (
                 format!("postgres://{good}:secret@/{DATABASE}"),
-                SystemReaderUrlErrorKind::Malformed,
+                SystemReaderUrlErrorType::Malformed,
             ),
             (
                 format!("mysql://{good}:secret@sysdb.invalid:5432/{DATABASE}"),
-                SystemReaderUrlErrorKind::Scheme,
+                SystemReaderUrlErrorType::Scheme,
             ),
             (
                 format!("postgres://{good}:secret@sysdb.invalid:5432/{DATABASE}?sslmode=require"),
-                SystemReaderUrlErrorKind::Extra,
+                SystemReaderUrlErrorType::Extra,
             ),
             (
                 format!("postgres://{good}:secret@sysdb.invalid:5432/"),
-                SystemReaderUrlErrorKind::Database,
+                SystemReaderUrlErrorType::Database,
             ),
         ] {
             let error = parse(SystemReader::Registry, &input)

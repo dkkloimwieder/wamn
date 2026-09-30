@@ -4,7 +4,7 @@ use serde_json::json;
 use wamn_schema_generator::client_ir::{ClientContractIr, ResponseIr, RouteIr};
 use wamn_schema_generator::client_rust::emit_rust_client;
 use wamn_schema_generator::client_tui::{
-    ClientTuiErrorKind, component_contract, emit_tui, read_operator, read_tui_workspace,
+    ClientTuiErrorType, component_contract, emit_tui, read_operator, read_tui_workspace,
 };
 use wamn_schema_generator::{GeneratedFile, PackageManifest};
 
@@ -601,7 +601,7 @@ fn invalid_paths_and_generated_module_collisions_are_refused() {
             emit_tui(&ir, directory, None, "../../../..")
                 .unwrap_err()
                 .kind(),
-            ClientTuiErrorKind::InvalidName
+            ClientTuiErrorType::InvalidName
         );
     }
     let mut collision = ir.clone();
@@ -610,7 +610,7 @@ fn invalid_paths_and_generated_module_collisions_are_refused() {
         emit_tui(&collision, "example", None, "../../../..")
             .unwrap_err()
             .kind(),
-        ClientTuiErrorKind::NameCollision
+        ClientTuiErrorType::NameCollision
     );
     let mut invalid = ir;
     invalid.models[0].operations[0].name = "self".into();
@@ -618,7 +618,7 @@ fn invalid_paths_and_generated_module_collisions_are_refused() {
         emit_tui(&invalid, "example", None, "../../../..")
             .unwrap_err()
             .kind(),
-        ClientTuiErrorKind::InvalidName
+        ClientTuiErrorType::InvalidName
     );
 }
 

@@ -45,7 +45,7 @@ pub fn input_kind(schema: &FieldSchema) -> InputKind {
 
 /// Why an editor operation could not be applied.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum DraftErrorKind {
+pub enum DraftErrorType {
     InvalidPointer,
     UnknownField,
     UnsupportedField,
@@ -58,14 +58,14 @@ pub enum DraftErrorKind {
 /// An editor refusal with the affected JSON Pointer.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DraftError {
-    kind: DraftErrorKind,
+    type_: DraftErrorType,
     path: String,
 }
 
 impl DraftError {
     #[must_use]
-    pub const fn kind(&self) -> DraftErrorKind {
-        self.kind
+    pub const fn kind(&self) -> DraftErrorType {
+        self.type_
     }
 
     #[must_use]
@@ -76,14 +76,14 @@ impl DraftError {
 
 impl fmt::Display for DraftError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let reason = match self.kind {
-            DraftErrorKind::InvalidPointer => "expected a JSON Pointer to a field",
-            DraftErrorKind::UnknownField => "field is not declared",
-            DraftErrorKind::UnsupportedField => "field requires a composed editor",
-            DraftErrorKind::Protected => "field is supplied by a binding",
-            DraftErrorKind::InvalidShape => "value does not support this editor operation",
-            DraftErrorKind::RowBounds => "row count would exceed the declared bounds",
-            DraftErrorKind::RowIndex => "row index is outside the array",
+        let reason = match self.type_ {
+            DraftErrorType::InvalidPointer => "expected a JSON Pointer to a field",
+            DraftErrorType::UnknownField => "field is not declared",
+            DraftErrorType::UnsupportedField => "field requires a composed editor",
+            DraftErrorType::Protected => "field is supplied by a binding",
+            DraftErrorType::InvalidShape => "value does not support this editor operation",
+            DraftErrorType::RowBounds => "row count would exceed the declared bounds",
+            DraftErrorType::RowIndex => "row index is outside the array",
         };
         write!(formatter, "{}: {reason}", self.path)
     }
@@ -91,9 +91,9 @@ impl fmt::Display for DraftError {
 
 impl std::error::Error for DraftError {}
 
-fn refusal(kind: DraftErrorKind, path: &str) -> DraftError {
+fn refusal(kind: DraftErrorType, path: &str) -> DraftError {
     DraftError {
-        kind,
+        type_: kind,
         path: path.to_owned(),
     }
 }
@@ -193,14 +193,14 @@ impl Draft {
     pub fn edit(&mut self, pointer: &str, state: FieldState) -> Result<(), DraftError> {
         let (path, schema) = self.resolve(pointer)?;
         if schema.kind() == InputKind::Unsupported {
-            return Err(refusal(DraftErrorKind::UnsupportedField, pointer));
+            return Err(refusal(DraftErrorType::UnsupportedField, pointer));
         }
         if self
             .protected
             .iter()
             .any(|bound| bound.starts_with(&path) || path.starts_with(bound))
         {
-            return Err(refusal(DraftErrorKind::Protected, pointer));
+            return Err(refusal(DraftErrorType::Protected, pointer));
         }
         let mut item = self.item.clone();
         write(&mut item, self.fields, &path, state, pointer)?;
@@ -235,13 +235,13 @@ impl Draft {
         let array = item
             .pointer_mut(pointer)
             .and_then(Value::as_array_mut)
-            .ok_or_else(|| refusal(DraftErrorKind::InvalidShape, pointer))?;
+            .ok_or_else(|| refusal(DraftErrorType::InvalidShape, pointer))?;
         if index > array.len() {
-            return Err(refusal(DraftErrorKind::RowIndex, pointer));
+            return Err(refusal(DraftErrorType::RowIndex, pointer));
         }
         let count = u64::try_from(array.len()).expect("array length fits u64");
         if schema.maximum.is_some_and(|maximum| count >= maximum) {
-            return Err(refusal(DraftErrorKind::RowBounds, pointer));
+            return Err(refusal(DraftErrorType::RowBounds, pointer));
         }
         array.insert(index, value);
         self.item = item;
@@ -258,13 +258,13 @@ impl Draft {
             .item
             .pointer_mut(pointer)
             .and_then(Value::as_array_mut)
-            .ok_or_else(|| refusal(DraftErrorKind::InvalidShape, pointer))?;
+            .ok_or_else(|| refusal(DraftErrorType::InvalidShape, pointer))?;
         if index >= array.len() {
-            return Err(refusal(DraftErrorKind::RowIndex, pointer));
+            return Err(refusal(DraftErrorType::RowIndex, pointer));
         }
         let count = u64::try_from(array.len()).expect("array length fits u64");
         if schema.minimum.is_some_and(|minimum| count <= minimum) {
-            return Err(refusal(DraftErrorKind::RowBounds, pointer));
+            return Err(refusal(DraftErrorType::RowBounds, pointer));
         }
         array.remove(index);
         Ok(())
@@ -281,7 +281,7 @@ impl Draft {
     fn resolve(&self, pointer: &str) -> Result<(Vec<String>, Schema), DraftError> {
         let path = pointer_path(pointer)?;
         let schema = schema_at(self.fields, &path)
-            .ok_or_else(|| refusal(DraftErrorKind::UnknownField, pointer))?;
+            .ok_or_else(|| refusal(DraftErrorType::UnknownField, pointer))?;
         Ok((path, schema))
     }
 
@@ -291,13 +291,13 @@ impl Draft {
         index: usize,
     ) -> Result<(Vec<String>, &'static FieldSchema), DraftError> {
         let (path, Schema::Field(schema)) = self.resolve(pointer)? else {
-            return Err(refusal(DraftErrorKind::InvalidShape, pointer));
+            return Err(refusal(DraftErrorType::InvalidShape, pointer));
         };
         if schema.field.type_name != "array" {
-            return Err(refusal(DraftErrorKind::InvalidShape, pointer));
+            return Err(refusal(DraftErrorType::InvalidShape, pointer));
         }
         if input_kind(schema) == InputKind::Unsupported {
-            return Err(refusal(DraftErrorKind::UnsupportedField, pointer));
+            return Err(refusal(DraftErrorType::UnsupportedField, pointer));
         }
         for bound in &self.protected {
             if path.starts_with(bound)
@@ -307,7 +307,7 @@ impl Draft {
                         .and_then(|segment| row_index(segment))
                         .is_some_and(|bound_index| index <= bound_index))
             {
-                return Err(refusal(DraftErrorKind::Protected, pointer));
+                return Err(refusal(DraftErrorType::Protected, pointer));
             }
         }
         Ok((path, schema))
@@ -341,7 +341,7 @@ fn row_index(segment: &str) -> Option<usize> {
 fn pointer_path(pointer: &str) -> Result<Vec<String>, DraftError> {
     let suffix = pointer
         .strip_prefix('/')
-        .ok_or_else(|| refusal(DraftErrorKind::InvalidPointer, pointer))?;
+        .ok_or_else(|| refusal(DraftErrorType::InvalidPointer, pointer))?;
     suffix
         .split('/')
         .map(|segment| {
@@ -352,7 +352,7 @@ fn pointer_path(pointer: &str) -> Result<Vec<String>, DraftError> {
                     match chars.next() {
                         Some('0') => '~',
                         Some('1') => '/',
-                        _ => return Err(refusal(DraftErrorKind::InvalidPointer, pointer)),
+                        _ => return Err(refusal(DraftErrorType::InvalidPointer, pointer)),
                     }
                 } else {
                     character
@@ -414,7 +414,7 @@ fn write(
                     let initial = match schema_at(fields, &path[..=depth]).map(Schema::kind) {
                         Some(InputKind::Object) => Value::Object(Map::new()),
                         Some(InputKind::Repeated) => Value::Array(Vec::new()),
-                        _ => return Err(refusal(DraftErrorKind::InvalidShape, pointer)),
+                        _ => return Err(refusal(DraftErrorType::InvalidShape, pointer)),
                     };
                     object.insert(segment.clone(), initial);
                 }
@@ -422,8 +422,8 @@ fn write(
             }
             Value::Array(array) => row_index(segment)
                 .and_then(|index| array.get_mut(index))
-                .ok_or_else(|| refusal(DraftErrorKind::RowIndex, pointer))?,
-            _ => return Err(refusal(DraftErrorKind::InvalidShape, pointer)),
+                .ok_or_else(|| refusal(DraftErrorType::RowIndex, pointer))?,
+            _ => return Err(refusal(DraftErrorType::InvalidShape, pointer)),
         };
     }
     let leaf = path.last().expect("JSON Pointer has a segment");
@@ -441,16 +441,16 @@ fn write(
         },
         Value::Array(array) => {
             let value = match state {
-                FieldState::Absent => return Err(refusal(DraftErrorKind::InvalidShape, pointer)),
+                FieldState::Absent => return Err(refusal(DraftErrorType::InvalidShape, pointer)),
                 FieldState::Null => Value::Null,
                 FieldState::Value(value) => value,
             };
             let slot = row_index(leaf)
                 .and_then(|index| array.get_mut(index))
-                .ok_or_else(|| refusal(DraftErrorKind::RowIndex, pointer))?;
+                .ok_or_else(|| refusal(DraftErrorType::RowIndex, pointer))?;
             *slot = value;
         }
-        _ => return Err(refusal(DraftErrorKind::InvalidShape, pointer)),
+        _ => return Err(refusal(DraftErrorType::InvalidShape, pointer)),
     }
     Ok(())
 }

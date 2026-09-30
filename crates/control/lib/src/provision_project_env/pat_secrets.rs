@@ -3,7 +3,7 @@
 use anyhow::Context as _;
 
 use super::{
-    Client, Duration, IdentityErrorKind, NoTls, PatClient, Path, PathBuf, Principal,
+    Client, Duration, IdentityErrorType, NoTls, PatClient, Path, PathBuf, Principal,
     PrincipalStatus, PrincipalType, Triple, Value, assign_project_role, authenticate_pat,
     create_service, json, operator_subject, provisioning_transaction, resolve_subject, revoke_pat,
     write_secret_json,
@@ -199,7 +199,7 @@ async fn resolve_or_create_service(
                 .context("commit service principal")?;
             Ok(principal)
         }
-        Err(error) if error.kind() == IdentityErrorKind::Conflict => {
+        Err(error) if error.kind() == IdentityErrorType::Conflict => {
             transaction
                 .rollback()
                 .await

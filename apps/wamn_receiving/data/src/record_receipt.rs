@@ -14,7 +14,7 @@ use uuid::Uuid;
 use wamn_execution_contract::canonical_json_bytes;
 use wamn_postgres_statements::{Json, StatementError, TimestampTz, Transaction, Uuid as WamnUuid};
 
-use crate::error::{AccessError, AccessErrorKind, AllowedConstraints};
+use crate::error::{AccessError, AccessErrorType, AllowedConstraints};
 use crate::statements::wamn::receiving_record_receipt as generated;
 
 /// Maximum number of receipt facts in one command item.
@@ -85,7 +85,7 @@ impl PurchaseOrderStatus {
 
 /// Stable command-level refusal class.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum RecordReceiptErrorKind {
+pub enum RecordReceiptErrorType {
     InvalidInput,
     PurchaseOrderNotFound,
     PurchaseOrderNotOpen,
@@ -101,7 +101,7 @@ pub enum RecordReceiptErrorKind {
     InternalError,
 }
 
-impl RecordReceiptErrorKind {
+impl RecordReceiptErrorType {
     /// Frozen manifest-owned error literal.
     pub const fn literal(self) -> &'static str {
         match self {
@@ -125,7 +125,7 @@ impl RecordReceiptErrorKind {
 /// Contextual command failure translated once by the owning operation adapter.
 #[derive(Debug)]
 pub struct RecordReceiptError {
-    kind: RecordReceiptErrorKind,
+    type_: RecordReceiptErrorType,
     context: Box<str>,
     field: Option<&'static str>,
     id: Option<Box<str>>,
@@ -149,10 +149,10 @@ impl RecordReceiptError {
 
     /// Translate a participant execution failure without collapsing its retry semantics.
     pub fn participation_failed(
-        kind: RecordReceiptErrorKind,
+        type_: RecordReceiptErrorType,
         context: impl Into<Box<str>>,
     ) -> Self {
-        Self::new(kind, context)
+        Self::new(type_, context)
     }
 
     /// Classify failure to read trusted participation metadata.
@@ -165,8 +165,8 @@ impl RecordReceiptError {
     }
 
     /// Stable class; callers must not match display text.
-    pub const fn kind(&self) -> RecordReceiptErrorKind {
-        self.kind
+    pub const fn kind(&self) -> RecordReceiptErrorType {
+        self.type_
     }
 
     /// Non-wire diagnostic for logs and tests.
@@ -213,9 +213,9 @@ impl RecordReceiptError {
         self.constraint
     }
 
-    fn new(kind: RecordReceiptErrorKind, context: impl Into<Box<str>>) -> Self {
+    fn new(kind: RecordReceiptErrorType, context: impl Into<Box<str>>) -> Self {
         Self {
-            kind,
+            type_: kind,
             context: context.into(),
             field: None,
             id: None,
@@ -226,7 +226,7 @@ impl RecordReceiptError {
     }
 
     fn invalid(context: impl Into<Box<str>>, field: &'static str) -> Self {
-        let mut error = Self::new(RecordReceiptErrorKind::InvalidInput, context);
+        let mut error = Self::new(RecordReceiptErrorType::InvalidInput, context);
         error.field = Some(field);
         error
     }
@@ -248,7 +248,7 @@ impl RecordReceiptError {
     }
 
     fn internal(context: impl Into<Box<str>>) -> Self {
-        Self::new(RecordReceiptErrorKind::InternalError, context)
+        Self::new(RecordReceiptErrorType::InternalError, context)
     }
 
     fn from_statement(
@@ -261,26 +261,26 @@ impl RecordReceiptError {
     }
 
     fn from_classified_statement(
-        classified: AccessErrorKind,
+        classified: AccessErrorType,
         context: &'static str,
         source: StatementError,
     ) -> Self {
         let kind = match classified {
-            AccessErrorKind::Retry => RecordReceiptErrorKind::Retry,
-            AccessErrorKind::Timeout => RecordReceiptErrorKind::Timeout,
-            AccessErrorKind::PermissionDenied => RecordReceiptErrorKind::PermissionDenied,
-            AccessErrorKind::InvalidInput
-            | AccessErrorKind::NotFound
-            | AccessErrorKind::ConcurrencyConflict
-            | AccessErrorKind::IdempotencyConflict
-            | AccessErrorKind::UniqueViolation
-            | AccessErrorKind::ForeignKeyViolation
-            | AccessErrorKind::CheckViolation
-            | AccessErrorKind::ExclusionViolation
-            | AccessErrorKind::InternalError => RecordReceiptErrorKind::InternalError,
+            AccessErrorType::Retry => RecordReceiptErrorType::Retry,
+            AccessErrorType::Timeout => RecordReceiptErrorType::Timeout,
+            AccessErrorType::PermissionDenied => RecordReceiptErrorType::PermissionDenied,
+            AccessErrorType::InvalidInput
+            | AccessErrorType::NotFound
+            | AccessErrorType::ConcurrencyConflict
+            | AccessErrorType::IdempotencyConflict
+            | AccessErrorType::UniqueViolation
+            | AccessErrorType::ForeignKeyViolation
+            | AccessErrorType::CheckViolation
+            | AccessErrorType::ExclusionViolation
+            | AccessErrorType::InternalError => RecordReceiptErrorType::InternalError,
         };
         Self {
-            kind,
+            type_: kind,
             context: context.into(),
             field: None,
             id: None,
@@ -291,13 +291,13 @@ impl RecordReceiptError {
     }
 
     fn with_constraint_source(
-        kind: RecordReceiptErrorKind,
+        type_: RecordReceiptErrorType,
         context: &'static str,
         constraint: &'static str,
         source: StatementError,
     ) -> Self {
         Self {
-            kind,
+            type_,
             context: context.into(),
             field: None,
             id: None,
@@ -308,22 +308,22 @@ impl RecordReceiptError {
     }
 
     fn domain(
-        kind: RecordReceiptErrorKind,
+        type_: RecordReceiptErrorType,
         context: impl Into<Box<str>>,
         field: &'static str,
     ) -> Self {
-        let mut error = Self::new(kind, context);
+        let mut error = Self::new(type_, context);
         error.field = Some(field);
         error
     }
 
     fn domain_id(
-        kind: RecordReceiptErrorKind,
+        type_: RecordReceiptErrorType,
         context: impl Into<Box<str>>,
         field: &'static str,
         id: impl Into<Box<str>>,
     ) -> Self {
-        let mut error = Self::domain(kind, context, field);
+        let mut error = Self::domain(type_, context, field);
         error.id = Some(id.into());
         error
     }
@@ -331,7 +331,7 @@ impl RecordReceiptError {
 
 impl fmt::Display for RecordReceiptError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(formatter, "{}: {}", self.kind.literal(), self.context)
+        write!(formatter, "{}: {}", self.type_.literal(), self.context)
     }
 }
 
@@ -469,14 +469,14 @@ where
             .map_err(|source| sql_error("lock purchase_order", source))?
             .ok_or_else(|| {
                 RecordReceiptError::domain(
-                    RecordReceiptErrorKind::PurchaseOrderNotFound,
+                    RecordReceiptErrorType::PurchaseOrderNotFound,
                     "purchase_order does not exist",
                     "value.purchase_order_id",
                 )
             })?;
     if purchase_order.status != "open" {
         return Err(RecordReceiptError::domain(
-            RecordReceiptErrorKind::PurchaseOrderNotOpen,
+            RecordReceiptErrorType::PurchaseOrderNotOpen,
             "purchase_order is not open",
             "value.purchase_order_id",
         ));
@@ -513,11 +513,11 @@ where
     .await
     .map_err(|source| {
         let error = AccessError::from_statement("insert receipt", &source, receipt_constraints);
-        if error.kind() == AccessErrorKind::UniqueViolation
+        if error.kind() == AccessErrorType::UniqueViolation
             && error.constraint() == Some("receipt_purchase_order_id_receipt_reference_key")
         {
             RecordReceiptError::with_constraint_source(
-                RecordReceiptErrorKind::ReceiptReferenceConflict,
+                RecordReceiptErrorType::ReceiptReferenceConflict,
                 "receipt_reference already exists for purchase_order",
                 "receipt_purchase_order_id_receipt_reference_key",
                 source,
@@ -583,19 +583,19 @@ fn refuse_line_outcome(outcome: &str, id: Option<WamnUuid>) -> Result<(), Record
     let (kind, field) = match outcome {
         "ready" => return Ok(()),
         "purchase_order_line_not_found" => (
-            RecordReceiptErrorKind::PurchaseOrderLineNotFound,
+            RecordReceiptErrorType::PurchaseOrderLineNotFound,
             "value.line[].purchase_order_line_id",
         ),
         "purchase_order_line_mismatch" => (
-            RecordReceiptErrorKind::PurchaseOrderLineMismatch,
+            RecordReceiptErrorType::PurchaseOrderLineMismatch,
             "value.line[].purchase_order_line_id",
         ),
         "location_not_found" => (
-            RecordReceiptErrorKind::LocationNotFound,
+            RecordReceiptErrorType::LocationNotFound,
             "value.line[].location_id",
         ),
         "quantity_exceeds_remaining" => (
-            RecordReceiptErrorKind::QuantityExceedsRemaining,
+            RecordReceiptErrorType::QuantityExceedsRemaining,
             "value.line[].quantity",
         ),
         _ => {
@@ -803,7 +803,7 @@ mod tests {
         input.occurred_at = "yesterday".into();
         assert_eq!(
             prepare(&input).unwrap_err().kind(),
-            RecordReceiptErrorKind::InvalidInput
+            RecordReceiptErrorType::InvalidInput
         );
     }
 
@@ -836,7 +836,7 @@ mod tests {
             "private database diagnostic",
         )));
 
-        assert_eq!(error.kind(), RecordReceiptErrorKind::InternalError);
+        assert_eq!(error.kind(), RecordReceiptErrorType::InternalError);
         assert!(error.source().is_some());
         assert!(!error.to_string().contains("private database diagnostic"));
     }
@@ -853,25 +853,25 @@ mod tests {
                 )
                 .unwrap_err()
                 .kind(),
-                RecordReceiptErrorKind::InvalidInput
+                RecordReceiptErrorType::InvalidInput
             );
         }
         let duplicate = command(vec![line(FIRST_LINE_ID, "1.0"), line(FIRST_LINE_ID, "2.0")]);
         assert_eq!(
             prepare(&duplicate).unwrap_err().kind(),
-            RecordReceiptErrorKind::InvalidInput
+            RecordReceiptErrorType::InvalidInput
         );
         for quantity in ["", ".", "0", "0.0000", "-1", "1e2", "1,5"] {
             assert_eq!(
                 prepare(&command(vec![line(FIRST_LINE_ID, quantity)]))
                     .unwrap_err()
                     .kind(),
-                RecordReceiptErrorKind::InvalidInput
+                RecordReceiptErrorType::InvalidInput
             );
         }
         assert_eq!(
             prepare(&command(Vec::new())).unwrap_err().kind(),
-            RecordReceiptErrorKind::InvalidInput
+            RecordReceiptErrorType::InvalidInput
         );
     }
 }

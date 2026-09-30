@@ -11,7 +11,7 @@ use wamn_catalog::ServingManifest;
 use wamn_catalog::edge_bundle::{EdgeGrants, GRANTS_FILE_NAME};
 use wamn_session::token::is_role_slug;
 
-use crate::release::{EdgeReleaseError, EdgeReleaseErrorKind};
+use crate::release::{EdgeReleaseError, EdgeReleaseErrorType};
 
 /// The permissions of each role, checked against one release.
 #[derive(Clone, Debug)]
@@ -67,5 +67,5 @@ impl Grants {
 }
 
 fn rejected(detail: String) -> EdgeReleaseError {
-    EdgeReleaseError::new(EdgeReleaseErrorKind::Rejected, detail)
+    EdgeReleaseError::new(EdgeReleaseErrorType::Rejected, detail)
 }

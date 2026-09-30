@@ -6,7 +6,7 @@ use tokio_postgres::error::SqlState;
 use tokio_postgres::{Client, Transaction};
 use wamn_control_provision::{PlatformComponent, SYSTEM_SCHEMA_SQL, bind_platform_principal_sql};
 use wamn_platform_identity::{
-    IdentityErrorKind, PrincipalId, PrincipalType, authenticate_pat, create_human, create_service,
+    IdentityErrorType, PrincipalId, PrincipalType, authenticate_pat, create_human, create_service,
     disable_principal, issue_pat, list_pats, revoke_pat,
 };
 use wamn_session::PAT_TOKEN_PREFIX;
@@ -154,7 +154,7 @@ async fn platform_pat_round_trip_on_postgres() {
             .await
             .expect_err("the library revocation also needs a bound actor")
             .kind(),
-        IdentityErrorKind::Database
+        IdentityErrorType::Database
     );
 
     // Revocation is a one-way stamp and repeating it changes nothing. It
@@ -241,7 +241,7 @@ async fn platform_pat_round_trip_on_postgres() {
             .await
             .expect_err("unknown prefix must not revoke")
             .kind(),
-        IdentityErrorKind::NotFound
+        IdentityErrorType::NotFound
     );
 
     // Service principals get tokens through the same trusted-context path.
@@ -289,7 +289,7 @@ async fn platform_pat_round_trip_on_postgres() {
             .await
             .expect_err("disabled principals must not gain tokens")
             .kind(),
-        IdentityErrorKind::NotFound
+        IdentityErrorType::NotFound
     );
 
     client
@@ -361,7 +361,7 @@ async fn platform_principal_cannot_hold_a_token(client: &Client, provisioning: &
             .await
             .expect_err("a platform principal must not gain a token")
             .kind(),
-        IdentityErrorKind::Database
+        IdentityErrorType::Database
     );
     for (kind, code) in [
         ("platform", SqlState::CHECK_VIOLATION),

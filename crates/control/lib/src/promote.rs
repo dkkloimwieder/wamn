@@ -100,13 +100,13 @@ VALUES ($1, $2, $3, $4, true, $5, $6, $7, $8)";
 pub const PROMOTION_REFUSAL: &str = "promotion-refused";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum PromotionErrorKind {
+pub enum PromotionErrorType {
     PackageNotApplied,
     PackageManifestMismatch,
     PackageMigrationRecordMismatch,
 }
 
-impl PromotionErrorKind {
+impl PromotionErrorType {
     const fn as_str(self) -> &'static str {
         match self {
             Self::PackageNotApplied => "package-not-applied",
@@ -118,18 +118,18 @@ impl PromotionErrorKind {
 
 #[derive(Debug)]
 pub struct PromotionError {
-    kind: PromotionErrorKind,
+    type_: PromotionErrorType,
     detail: String,
 }
 
 impl PromotionError {
-    pub const fn kind(&self) -> PromotionErrorKind {
-        self.kind
+    pub const fn kind(&self) -> PromotionErrorType {
+        self.type_
     }
 
-    fn new(kind: PromotionErrorKind, detail: impl Into<String>) -> Self {
+    fn new(kind: PromotionErrorType, detail: impl Into<String>) -> Self {
         Self {
-            kind,
+            type_: kind,
             detail: detail.into(),
         }
     }
@@ -140,7 +140,7 @@ impl fmt::Display for PromotionError {
         write!(
             formatter,
             "{PROMOTION_REFUSAL} ({}): {}",
-            self.kind.as_str(),
+            self.type_.as_str(),
             self.detail
         )
     }
@@ -811,7 +811,7 @@ fn compare_target_package(
     let coordinate = &expected.coordinate;
     let Some(target) = target else {
         return Err(PromotionError::new(
-            PromotionErrorKind::PackageNotApplied,
+            PromotionErrorType::PackageNotApplied,
             format!(
                 "target lacks {}@{}; run wamn-ctl apply-package for this exact package directory against the target",
                 coordinate.package_id(),
@@ -821,7 +821,7 @@ fn compare_target_package(
     };
     if target.manifest_sha256 != expected.manifest_sha256 {
         return Err(PromotionError::new(
-            PromotionErrorKind::PackageManifestMismatch,
+            PromotionErrorType::PackageManifestMismatch,
             format!(
                 "{}@{} source manifest {} differs from target {}",
                 coordinate.package_id(),
@@ -833,7 +833,7 @@ fn compare_target_package(
     }
     if target.predecessor_version != expected.predecessor_version.as_deref() {
         return Err(PromotionError::new(
-            PromotionErrorKind::PackageManifestMismatch,
+            PromotionErrorType::PackageManifestMismatch,
             format!(
                 "{}@{} source predecessor {:?} differs from target {:?}",
                 coordinate.package_id(),
@@ -845,7 +845,7 @@ fn compare_target_package(
     }
     if target.migrations != expected.migrations {
         return Err(PromotionError::new(
-            PromotionErrorKind::PackageMigrationRecordMismatch,
+            PromotionErrorType::PackageMigrationRecordMismatch,
             format!(
                 "{}@{} has different complete ordered migration records; promote never applies migrations",
                 coordinate.package_id(),
@@ -1037,7 +1037,7 @@ mod tests {
         let package = package();
         let error = compare_target_package(&package, None)
             .expect_err("promotion cannot create an absent package");
-        assert_eq!(error.kind(), PromotionErrorKind::PackageNotApplied);
+        assert_eq!(error.kind(), PromotionErrorType::PackageNotApplied);
         let rendered = error.to_string();
         assert!(rendered.contains("platform_fixture@1.1.0"));
         assert!(rendered.contains("run wamn-ctl apply-package"));
@@ -1057,7 +1057,7 @@ mod tests {
         .expect_err("a different raw manifest identity must refuse");
         assert_eq!(
             manifest_error.kind(),
-            PromotionErrorKind::PackageManifestMismatch
+            PromotionErrorType::PackageManifestMismatch
         );
 
         let predecessor_error = compare_target_package(
@@ -1070,7 +1070,7 @@ mod tests {
         .expect_err("a different predecessor identity must refuse");
         assert_eq!(
             predecessor_error.kind(),
-            PromotionErrorKind::PackageManifestMismatch
+            PromotionErrorType::PackageManifestMismatch
         );
     }
 
@@ -1095,7 +1095,7 @@ mod tests {
             .expect_err("the complete target records must be byte-exact");
             assert_eq!(
                 error.kind(),
-                PromotionErrorKind::PackageMigrationRecordMismatch
+                PromotionErrorType::PackageMigrationRecordMismatch
             );
         }
     }

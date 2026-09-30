@@ -25,7 +25,7 @@
 use serde::Deserialize;
 use wamn_postgres_statements::{TimestampTz, Transaction, Uuid};
 
-use crate::error::{self, AccessError, AccessErrorKind};
+use crate::error::{self, AccessError, AccessErrorType};
 use crate::scalar;
 use crate::statements::wamn::inventory_move as sql;
 
@@ -87,7 +87,7 @@ fn live_packaging(
         .filter(|row| row.status != scalar::CONSUMED)
         .ok_or_else(|| {
             AccessError::missing(
-                AccessErrorKind::PackagingNotFound,
+                AccessErrorType::PackagingNotFound,
                 "value.packaging_id",
                 packaging_id,
             )
@@ -117,7 +117,7 @@ async fn run(
     // Nothing to move: the packaging is already at the destination.
     if locked.location_id == parsed.to_location_id {
         return Err(AccessError::field(
-            AccessErrorKind::InvalidInput,
+            AccessErrorType::InvalidInput,
             "value.to_location_id",
         ));
     }
@@ -127,7 +127,7 @@ async fn run(
         .map_err(|e| error::from_statement(&e))?
         .ok_or_else(|| {
             AccessError::missing(
-                AccessErrorKind::LocationNotFound,
+                AccessErrorType::LocationNotFound,
                 "value.to_location_id",
                 &command.to_location_id,
             )
@@ -183,7 +183,7 @@ mod tests {
         }
         for row in [None, Some(locked("consumed"))] {
             let error = live_packaging(row, PACKAGING).unwrap_err();
-            assert_eq!(error.kind(), AccessErrorKind::PackagingNotFound);
+            assert_eq!(error.kind(), AccessErrorType::PackagingNotFound);
             assert_eq!(error.detail()["field"], "value.packaging_id");
             assert_eq!(error.detail()["id"], PACKAGING);
         }

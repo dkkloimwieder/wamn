@@ -5,13 +5,13 @@
 
 use wamn_postgres_statements::{Numeric, Uuid};
 
-use crate::error::{AccessError, AccessErrorKind};
+use crate::error::{AccessError, AccessErrorType};
 
 pub(crate) fn uuid(field: &str, value: &str) -> Result<Uuid, AccessError> {
     value
         .parse::<uuid::Uuid>()
         .map(|parsed| Uuid(parsed.hyphenated().to_string()))
-        .map_err(|_| AccessError::field(AccessErrorKind::InvalidInput, field))
+        .map_err(|_| AccessError::field(AccessErrorType::InvalidInput, field))
 }
 
 /// A positive numeric, re-spelled as PostgreSQL's own text for the same datum.
@@ -31,7 +31,7 @@ pub(crate) fn positive_numeric(field: &str, value: &str) -> Result<Numeric, Acce
         .chain(fraction.unwrap_or_default().bytes())
         .any(|byte| byte != b'0');
     if !digits(whole) || !fraction.is_none_or(digits) || !positive {
-        return Err(AccessError::field(AccessErrorKind::InvalidInput, field));
+        return Err(AccessError::field(AccessErrorType::InvalidInput, field));
     }
     let whole = match whole.trim_start_matches('0') {
         "" => "0",

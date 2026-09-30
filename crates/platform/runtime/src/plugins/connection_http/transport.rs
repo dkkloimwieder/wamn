@@ -198,7 +198,7 @@ impl HttpTransport {
             let mut bytes = BytesMut::new();
             while let Some(frame) = body.frame().await {
                 let frame = frame.map_err(|error| {
-                    TransportError::new(ErrorKind::Transport, phase, "HTTP response body lost")
+                    TransportError::new(ErrorType::Transport, phase, "HTTP response body lost")
                         .with_source(error)
                 })?;
                 if let Some(data) = frame.data_ref() {
@@ -214,7 +214,7 @@ impl HttpTransport {
         match result {
             Ok(result) => result,
             Err(error) => Err(TransportError::new(
-                ErrorKind::Timeout,
+                ErrorType::Timeout,
                 phase,
                 "HTTP transport deadline exceeded",
             )
@@ -312,7 +312,7 @@ enum Phase {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum ErrorKind {
+enum ErrorType {
     Input,
     Limit,
     Timeout,
@@ -320,16 +320,16 @@ enum ErrorKind {
 }
 
 pub(crate) struct TransportError {
-    kind: ErrorKind,
+    type_: ErrorType,
     phase: Phase,
     detail: &'static str,
     source: Option<BoxError>,
 }
 
 impl TransportError {
-    fn new(kind: ErrorKind, phase: Phase, detail: &'static str) -> Self {
+    fn new(kind: ErrorType, phase: Phase, detail: &'static str) -> Self {
         Self {
-            kind,
+            type_: kind,
             phase,
             detail,
             source: None,
@@ -346,7 +346,7 @@ impl TransportError {
     }
 
     pub(crate) fn is_timeout(&self) -> bool {
-        self.kind == ErrorKind::Timeout && self.phase != Phase::ResponseBody
+        self.type_ == ErrorType::Timeout && self.phase != Phase::ResponseBody
     }
 
     pub(crate) fn is_response_lost(&self) -> bool {
@@ -357,7 +357,7 @@ impl TransportError {
 impl fmt::Debug for TransportError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("TransportError")
-            .field("kind", &self.kind)
+            .field("kind", &self.type_)
             .field("phase", &self.phase)
             .field("detail", &self.detail)
             .finish_non_exhaustive()
@@ -381,17 +381,17 @@ fn acquire(
     detail: &'static str,
 ) -> Result<OwnedSemaphorePermit, TransportError> {
     Arc::clone(semaphore).try_acquire_owned().map_err(|error| {
-        TransportError::new(ErrorKind::Limit, Phase::BeforeDispatch, detail).with_source(error)
+        TransportError::new(ErrorType::Limit, Phase::BeforeDispatch, detail).with_source(error)
     })
 }
 
 fn input(detail: &'static str) -> TransportError {
-    TransportError::new(ErrorKind::Input, Phase::BeforeDispatch, detail)
+    TransportError::new(ErrorType::Input, Phase::BeforeDispatch, detail)
 }
 
 fn head_error(error: hyper_util::client::legacy::Error) -> TransportError {
     let mut phase = Phase::AwaitingHead;
-    let mut kind = ErrorKind::Transport;
+    let mut kind = ErrorType::Transport;
     let mut source: Option<&(dyn StdError + 'static)> = Some(&error);
     while let Some(current) = source {
         if let Some(transport) = current.downcast_ref::<TransportError>() {
@@ -399,7 +399,7 @@ fn head_error(error: hyper_util::client::legacy::Error) -> TransportError {
                 phase = Phase::BeforeDispatch;
             }
             if transport.is_timeout() {
-                kind = ErrorKind::Timeout;
+                kind = ErrorType::Timeout;
             }
         }
         source = current.source();
@@ -461,7 +461,7 @@ fn header_budget(
             .saturating_add(4);
         if count > MAX_HEADERS || bytes > MAX_HEADER_BYTES {
             return Err(TransportError::new(
-                ErrorKind::Limit,
+                ErrorType::Limit,
                 phase,
                 "HTTP header limit exceeded",
             ));
@@ -529,7 +529,7 @@ impl Service<Uri> for PinnedConnector {
                     .await
                     .map_err(|error| {
                         TransportError::new(
-                            ErrorKind::Transport,
+                            ErrorType::Transport,
                             Phase::AwaitingHead,
                             "HTTP connect failed",
                         )
@@ -537,7 +537,7 @@ impl Service<Uri> for PinnedConnector {
                     })?;
                 let peer = tcp.peer_addr().map_err(|error| {
                     TransportError::new(
-                        ErrorKind::Transport,
+                        ErrorType::Transport,
                         Phase::AwaitingHead,
                         "HTTP peer unavailable",
                     )
@@ -554,7 +554,7 @@ impl Service<Uri> for PinnedConnector {
                         .await
                         .map_err(|error| {
                             TransportError::new(
-                                ErrorKind::Transport,
+                                ErrorType::Transport,
                                 Phase::AwaitingHead,
                                 "HTTP TLS failed",
                             )
@@ -577,7 +577,7 @@ impl Service<Uri> for PinnedConnector {
             .await;
             connected.map_err(|error| {
                 TransportError::new(
-                    ErrorKind::Timeout,
+                    ErrorType::Timeout,
                     Phase::AwaitingHead,
                     "HTTP connect deadline exceeded",
                 )

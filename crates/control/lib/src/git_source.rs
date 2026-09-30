@@ -17,7 +17,7 @@ use tokio::process::Command;
 
 /// Stable category of a Git source-state failure.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum GitSourceErrorKind {
+pub enum GitSourceErrorType {
     Discover,
     Inspect,
 }
@@ -25,7 +25,7 @@ pub enum GitSourceErrorKind {
 /// Failure to discover or inspect one originating Git repository.
 #[derive(Debug)]
 pub struct GitSourceError {
-    kind: GitSourceErrorKind,
+    type_: GitSourceErrorType,
     operation: &'static str,
     repository: PathBuf,
     detail: Box<str>,
@@ -35,13 +35,13 @@ pub struct GitSourceError {
 impl GitSourceError {
     /// A Git process that could not be executed at all.
     pub fn io(
-        kind: GitSourceErrorKind,
+        type_: GitSourceErrorType,
         operation: &'static str,
         repository: &Path,
         source: io::Error,
     ) -> Self {
         Self {
-            kind,
+            type_,
             operation,
             repository: repository.to_owned(),
             detail: "Git process could not be executed".into(),
@@ -51,7 +51,7 @@ impl GitSourceError {
 
     /// A Git process that ran and refused, rendered from its own diagnostics.
     pub fn command(
-        kind: GitSourceErrorKind,
+        type_: GitSourceErrorType,
         operation: &'static str,
         repository: &Path,
         output: &Output,
@@ -63,7 +63,7 @@ impl GitSourceError {
             detail.into_owned()
         };
         Self {
-            kind,
+            type_,
             operation,
             repository: repository.to_owned(),
             detail: detail.into_boxed_str(),
@@ -73,13 +73,13 @@ impl GitSourceError {
 
     /// A Git process that succeeded and returned output this reader cannot use.
     pub fn output(
-        kind: GitSourceErrorKind,
+        type_: GitSourceErrorType,
         operation: &'static str,
         repository: &Path,
         detail: impl Into<Box<str>>,
     ) -> Self {
         Self {
-            kind,
+            type_,
             operation,
             repository: repository.to_owned(),
             detail: detail.into(),
@@ -88,8 +88,8 @@ impl GitSourceError {
     }
 
     /// Stable error category.
-    pub const fn kind(&self) -> GitSourceErrorKind {
-        self.kind
+    pub const fn kind(&self) -> GitSourceErrorType {
+        self.type_
     }
 }
 
@@ -152,7 +152,7 @@ pub async fn discover_repository_root(path: &Path) -> Result<PathBuf, GitSourceE
     git_path_output(
         path,
         &["rev-parse", "--path-format=absolute", "--show-toplevel"],
-        GitSourceErrorKind::Discover,
+        GitSourceErrorType::Discover,
         "discover worktree root",
     )
     .await
@@ -169,7 +169,7 @@ pub async fn read_status(repository_root: &Path) -> Result<GitSourceSnapshot, Gi
             "--untracked-files=normal",
             "--ignored=no",
         ],
-        GitSourceErrorKind::Inspect,
+        GitSourceErrorType::Inspect,
         "read whole-worktree state",
     )
     .await?;
@@ -180,7 +180,7 @@ pub async fn read_status(repository_root: &Path) -> Result<GitSourceSnapshot, Gi
         .filter(|commit| !commit.is_empty() && *commit != b"(initial)")
         .ok_or_else(|| {
             GitSourceError::output(
-                GitSourceErrorKind::Inspect,
+                GitSourceErrorType::Inspect,
                 "read HEAD",
                 repository_root,
                 "Git status did not return a committed HEAD",
@@ -188,7 +188,7 @@ pub async fn read_status(repository_root: &Path) -> Result<GitSourceSnapshot, Gi
         })?;
     let source_commit = std::str::from_utf8(source_commit).map_err(|_| {
         GitSourceError::output(
-            GitSourceErrorKind::Inspect,
+            GitSourceErrorType::Inspect,
             "read HEAD",
             repository_root,
             "Git returned a non-UTF-8 commit identity",
@@ -213,18 +213,18 @@ pub async fn read_status(repository_root: &Path) -> Result<GitSourceSnapshot, Gi
 async fn git_path_output(
     repository: &Path,
     args: &[&str],
-    kind: GitSourceErrorKind,
+    type_: GitSourceErrorType,
     operation: &'static str,
 ) -> Result<PathBuf, GitSourceError> {
-    let output = git_output(repository, args, kind, operation).await?;
-    let bytes = one_output_line(&output.stdout, kind, operation, repository)?;
+    let output = git_output(repository, args, type_, operation).await?;
+    let bytes = one_output_line(&output.stdout, type_, operation, repository)?;
     Ok(PathBuf::from(OsString::from_vec(bytes.to_vec())))
 }
 
 async fn git_output(
     repository: &Path,
     args: &[&str],
-    kind: GitSourceErrorKind,
+    type_: GitSourceErrorType,
     operation: &'static str,
 ) -> Result<Output, GitSourceError> {
     let output = Command::new("git")
@@ -235,26 +235,26 @@ async fn git_output(
         .kill_on_drop(true)
         .output()
         .await
-        .map_err(|source| GitSourceError::io(kind, operation, repository, source))?;
+        .map_err(|source| GitSourceError::io(type_, operation, repository, source))?;
     if output.status.success() {
         Ok(output)
     } else {
         Err(GitSourceError::command(
-            kind, operation, repository, &output,
+            type_, operation, repository, &output,
         ))
     }
 }
 
 fn one_output_line<'a>(
     output: &'a [u8],
-    kind: GitSourceErrorKind,
+    type_: GitSourceErrorType,
     operation: &'static str,
     repository: &Path,
 ) -> Result<&'a [u8], GitSourceError> {
     let line = trim_ascii(output);
     if line.is_empty() || line.contains(&b'\n') || line.contains(&b'\r') {
         Err(GitSourceError::output(
-            kind,
+            type_,
             operation,
             repository,
             "Git did not return exactly one nonempty line",

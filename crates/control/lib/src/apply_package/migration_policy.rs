@@ -7,7 +7,7 @@ use wamn_record_history::{HISTORY_TABLE_SUFFIX, is_history_table_name};
 use wamn_schema_control::PackageDirectory;
 use wamn_schema_generator::{ModelDeclaration, PackageManifest};
 use wamn_schema_introspection::migration_policy::{
-    DefinitionAction, DefinitionType, MigrationPolicyError, MigrationPolicyErrorKind,
+    DefinitionAction, DefinitionType, MigrationPolicyError, MigrationPolicyErrorType,
     inspect_migration_definition_mutations,
 };
 
@@ -15,7 +15,7 @@ use super::definition_ownership::{
     PlannedDefinitionMutation, StoredDefinitionOwner, definition_error, definition_present,
     load_definition_owner, model_for_relation,
 };
-use super::error::{ApplyPackageErrorKind, DEFINITION_OWNER_DECLARATION_MISSING_REFUSAL};
+use super::error::{ApplyPackageErrorType, DEFINITION_OWNER_DECLARATION_MISSING_REFUSAL};
 
 #[derive(Debug)]
 pub(super) struct DeferredMigrationPolicyError {
@@ -76,7 +76,7 @@ pub(super) fn validate_migration_policy(
         match validation {
             Ok(()) => {}
             Err(source)
-                if source.kind() == MigrationPolicyErrorKind::UnsupportedStatement
+                if source.kind() == MigrationPolicyErrorType::UnsupportedStatement
                     && inspected.iter().any(|mutation| {
                         matches!(
                             mutation.action(),
@@ -259,9 +259,9 @@ async fn preflight_create_relation(
     .await?
     {
         let kind = if owner.package_id == package_id {
-            ApplyPackageErrorKind::DefinitionOwnerConflict
+            ApplyPackageErrorType::DefinitionOwnerConflict
         } else {
-            ApplyPackageErrorKind::BaseDefinitionMutation
+            ApplyPackageErrorType::BaseDefinitionMutation
         };
         return Err(definition_error(
             kind,
@@ -282,7 +282,7 @@ async fn preflight_create_relation(
     .await?
     {
         return Err(definition_error(
-            ApplyPackageErrorKind::DefinitionOwnerConflict,
+            ApplyPackageErrorType::DefinitionOwnerConflict,
             coordinate,
             planned,
             None,
@@ -294,7 +294,7 @@ async fn preflight_create_relation(
         && model.owner != package_id
     {
         return Err(definition_error(
-            ApplyPackageErrorKind::DefinitionOwnerDeclarationMissing,
+            ApplyPackageErrorType::DefinitionOwnerDeclarationMissing,
             coordinate,
             planned,
             Some(model.owner.as_str()),
@@ -340,7 +340,7 @@ async fn preflight_add_definition(
         },
         None => {
             return Err(definition_error(
-                ApplyPackageErrorKind::DefinitionOwnerConflict,
+                ApplyPackageErrorType::DefinitionOwnerConflict,
                 coordinate,
                 planned,
                 None,
@@ -353,7 +353,7 @@ async fn preflight_add_definition(
     if relation_owner.package_id != package_id {
         if !relation_owner.client_field_extensible {
             return Err(definition_error(
-                ApplyPackageErrorKind::RelationNotClientExtensible,
+                ApplyPackageErrorType::RelationNotClientExtensible,
                 coordinate,
                 planned,
                 Some(relation_owner.package_id.as_str()),
@@ -364,7 +364,7 @@ async fn preflight_add_definition(
         let Some(model) = model_for_relation(manifest, mutation.schema(), mutation.relation())
         else {
             return Err(definition_error(
-                ApplyPackageErrorKind::DefinitionOwnerDeclarationMissing,
+                ApplyPackageErrorType::DefinitionOwnerDeclarationMissing,
                 coordinate,
                 planned,
                 Some(relation_owner.package_id.as_str()),
@@ -377,7 +377,7 @@ async fn preflight_add_definition(
                 != Some(package_id)
         {
             return Err(definition_error(
-                ApplyPackageErrorKind::DefinitionOwnerDeclarationMissing,
+                ApplyPackageErrorType::DefinitionOwnerDeclarationMissing,
                 coordinate,
                 planned,
                 Some(relation_owner.package_id.as_str()),
@@ -390,7 +390,7 @@ async fn preflight_add_definition(
             .is_some_and(|owner| owner != package_id)
     {
         return Err(definition_error(
-            ApplyPackageErrorKind::DefinitionOwnerDeclarationMissing,
+            ApplyPackageErrorType::DefinitionOwnerDeclarationMissing,
             coordinate,
             planned,
             explicit_definition_owner(model, mutation.kind(), mutation.definition()),
@@ -410,9 +410,9 @@ async fn preflight_add_definition(
     .await?
     {
         let kind = if owner.package_id == package_id {
-            ApplyPackageErrorKind::DefinitionOwnerConflict
+            ApplyPackageErrorType::DefinitionOwnerConflict
         } else {
-            ApplyPackageErrorKind::BaseDefinitionMutation
+            ApplyPackageErrorType::BaseDefinitionMutation
         };
         return Err(definition_error(
             kind,
@@ -433,7 +433,7 @@ async fn preflight_add_definition(
     .await?
     {
         return Err(definition_error(
-            ApplyPackageErrorKind::DefinitionOwnerConflict,
+            ApplyPackageErrorType::DefinitionOwnerConflict,
             coordinate,
             planned,
             None,
@@ -464,7 +464,7 @@ async fn preflight_existing_definition_mutation(
     {
         if owner.package_id != package_id {
             return Err(definition_error(
-                ApplyPackageErrorKind::BaseDefinitionMutation,
+                ApplyPackageErrorType::BaseDefinitionMutation,
                 coordinate,
                 planned,
                 Some(owner.package_id.as_str()),
@@ -482,7 +482,7 @@ async fn preflight_existing_definition_mutation(
     .await?
     {
         return Err(definition_error(
-            ApplyPackageErrorKind::DefinitionOwnerConflict,
+            ApplyPackageErrorType::DefinitionOwnerConflict,
             coordinate,
             planned,
             None,

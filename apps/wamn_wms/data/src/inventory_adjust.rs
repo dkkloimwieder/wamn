@@ -18,7 +18,7 @@
 use serde::Deserialize;
 use wamn_postgres_statements::{Numeric, TimestampTz, Transaction, Uuid};
 
-use crate::error::{self, AccessError, AccessErrorKind};
+use crate::error::{self, AccessError, AccessErrorType};
 use crate::scalar;
 use crate::statements::wamn::inventory_adjust as sql;
 
@@ -57,7 +57,7 @@ struct Parsed {
 fn parse(command: &AdjustCommand) -> Result<Parsed, AccessError> {
     if command.reason_code.is_empty() {
         return Err(AccessError::field(
-            AccessErrorKind::InvalidInput,
+            AccessErrorType::InvalidInput,
             "value.reason_code",
         ));
     }
@@ -92,7 +92,7 @@ async fn run(
     // THE SERIALIZATION POINT.
     let not_found = || {
         AccessError::missing(
-            AccessErrorKind::PackagingNotFound,
+            AccessErrorType::PackagingNotFound,
             "value.packaging_id",
             &parsed.packaging_id.0,
         )
@@ -113,7 +113,7 @@ async fn run(
 
     let quantity_not_found = || {
         AccessError::missing(
-            AccessErrorKind::QuantityNotFound,
+            AccessErrorType::QuantityNotFound,
             "value.product_id",
             &parsed.product_id.0,
         )
@@ -140,7 +140,7 @@ async fn run(
     )
     .await
     .map_err(|e| error::from_statement(&e))?
-    .ok_or_else(|| AccessError::field(AccessErrorKind::InvalidInput, "value.quantity"))?;
+    .ok_or_else(|| AccessError::field(AccessErrorType::InvalidInput, "value.quantity"))?;
 
     // A balance row means stock is present, so a count of zero deletes it.
     let adjusted_quantity = if scalar::is_zero(&parsed.quantity) {

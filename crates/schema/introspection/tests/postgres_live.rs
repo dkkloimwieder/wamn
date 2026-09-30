@@ -22,7 +22,7 @@ use wamn_schema_introspection::migration_policy::{
     validate_migration_bytes_for_schemas, validate_migration_file,
 };
 use wamn_schema_introspection::postgres::{
-    DATA_ACCESS_ROLE, PostgresIntrospectionError, PostgresIntrospectionErrorKind, read_catalog,
+    DATA_ACCESS_ROLE, PostgresIntrospectionError, PostgresIntrospectionErrorType, read_catalog,
     read_catalog_excluding_relations,
 };
 
@@ -364,7 +364,7 @@ async fn assert_control_owned_relations_are_outside_package_ir(client: &Client) 
         .expect_err("raw catalog reader admitted a host-owned oid column");
     assert_eq!(
         unscoped.kind(),
-        PostgresIntrospectionErrorKind::UnsupportedColumnType
+        PostgresIntrospectionErrorType::UnsupportedColumnType
     );
 
     let excluded = [
@@ -683,7 +683,7 @@ async fn refusal_case(
     create_sql: &str,
     server_probe_sql: &str,
     cleanup_sql: &str,
-    expected: PostgresIntrospectionErrorKind,
+    expected: PostgresIntrospectionErrorType,
 ) -> Option<PostgresIntrospectionError> {
     matrix.ran += 1;
     if let Err(error) = matrix.admin.batch_execute(create_sql).await {
@@ -740,7 +740,7 @@ async fn assert_refusal_matrix(admin: &Client, reader: &Client) {
           WHERE n.nspname='inventory' AND c.relname='refused_unlogged' \
           AND c.relkind='r'",
         "DROP TABLE inventory.refused_unlogged",
-        PostgresIntrospectionErrorKind::UnsupportedTable,
+        PostgresIntrospectionErrorType::UnsupportedTable,
     )
     .await;
     refusal_case(
@@ -751,7 +751,7 @@ async fn assert_refusal_matrix(admin: &Client, reader: &Client) {
           ON n.oid=c.relnamespace WHERE n.nspname='inventory' AND c.relname='refused_view' \
           AND c.relkind='v')",
         "DROP VIEW inventory.refused_view",
-        PostgresIntrospectionErrorKind::UnsupportedView,
+        PostgresIntrospectionErrorType::UnsupportedView,
     )
     .await;
     refusal_case(
@@ -762,7 +762,7 @@ async fn assert_refusal_matrix(admin: &Client, reader: &Client) {
           ON n.oid=c.relnamespace WHERE n.nspname='inventory' \
           AND c.relname='refused_materialized' AND c.relkind='m')",
         "DROP MATERIALIZED VIEW inventory.refused_materialized",
-        PostgresIntrospectionErrorKind::UnsupportedMaterializedView,
+        PostgresIntrospectionErrorType::UnsupportedMaterializedView,
     )
     .await;
     refusal_case(
@@ -776,7 +776,7 @@ async fn assert_refusal_matrix(admin: &Client, reader: &Client) {
           AND c.relkind='f')",
         "DROP FOREIGN TABLE inventory.refused_foreign; \
          DROP SERVER wamn_refused_server; DROP FOREIGN DATA WRAPPER wamn_refused_fdw",
-        PostgresIntrospectionErrorKind::UnsupportedForeignTable,
+        PostgresIntrospectionErrorType::UnsupportedForeignTable,
     )
     .await;
     refusal_case(
@@ -787,7 +787,7 @@ async fn assert_refusal_matrix(admin: &Client, reader: &Client) {
           ON n.oid=p.pronamespace WHERE n.nspname='inventory' \
           AND p.proname='refused_function' AND p.prokind='f')",
         "DROP FUNCTION inventory.refused_function()",
-        PostgresIntrospectionErrorKind::UnsupportedRoutine,
+        PostgresIntrospectionErrorType::UnsupportedRoutine,
     )
     .await;
     refusal_case(
@@ -798,7 +798,7 @@ async fn assert_refusal_matrix(admin: &Client, reader: &Client) {
           ON n.oid=p.pronamespace WHERE n.nspname='inventory' \
           AND p.proname='refused_procedure' AND p.prokind='p')",
         "DROP PROCEDURE inventory.refused_procedure()",
-        PostgresIntrospectionErrorKind::UnsupportedRoutine,
+        PostgresIntrospectionErrorType::UnsupportedRoutine,
     )
     .await;
     refusal_case(
@@ -813,7 +813,7 @@ async fn assert_refusal_matrix(admin: &Client, reader: &Client) {
           WHERE n.nspname='inventory' AND t.tgname='refused_trigger' AND NOT t.tgisinternal)",
         "DROP TRIGGER refused_trigger ON inventory.widget; \
          DROP FUNCTION wamn_introspection_fixture.trigger_function()",
-        PostgresIntrospectionErrorKind::UnsupportedTrigger,
+        PostgresIntrospectionErrorType::UnsupportedTrigger,
     )
     .await;
     refusal_case(
@@ -824,7 +824,7 @@ async fn assert_refusal_matrix(admin: &Client, reader: &Client) {
           ON c.oid=r.ev_class JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace \
           WHERE n.nspname='inventory' AND r.rulename='refused_rule')",
         "DROP RULE refused_rule ON inventory.widget",
-        PostgresIntrospectionErrorKind::UnsupportedRule,
+        PostgresIntrospectionErrorType::UnsupportedRule,
     )
     .await;
     refusal_case(
@@ -835,7 +835,7 @@ async fn assert_refusal_matrix(admin: &Client, reader: &Client) {
           ON c.oid=p.polrelid JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace \
           WHERE n.nspname='inventory' AND p.polname='refused_policy')",
         "DROP POLICY refused_policy ON inventory.widget",
-        PostgresIntrospectionErrorKind::UnsupportedPolicy,
+        PostgresIntrospectionErrorType::UnsupportedPolicy,
     )
     .await;
     refusal_case(
@@ -846,7 +846,7 @@ async fn assert_refusal_matrix(admin: &Client, reader: &Client) {
           ON n.oid=t.typnamespace WHERE n.nspname='inventory' \
           AND t.typname='refused_domain' AND t.typtype='d')",
         "DROP DOMAIN inventory.refused_domain",
-        PostgresIntrospectionErrorKind::UnsupportedCustomType,
+        PostgresIntrospectionErrorType::UnsupportedCustomType,
     )
     .await;
     refusal_case(
@@ -857,7 +857,7 @@ async fn assert_refusal_matrix(admin: &Client, reader: &Client) {
           ON n.oid=t.typnamespace WHERE n.nspname='inventory' \
           AND t.typname='refused_enum' AND t.typtype='e')",
         "DROP TYPE inventory.refused_enum",
-        PostgresIntrospectionErrorKind::UnsupportedCustomType,
+        PostgresIntrospectionErrorType::UnsupportedCustomType,
     )
     .await;
     refusal_case(
@@ -868,7 +868,7 @@ async fn assert_refusal_matrix(admin: &Client, reader: &Client) {
         "SELECT c.relacl IS NOT NULL FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n \
           ON n.oid=c.relnamespace WHERE n.nspname='inventory' AND c.relname='refused_acl'",
         "DROP TABLE inventory.refused_acl",
-        PostgresIntrospectionErrorKind::UnsupportedAcl,
+        PostgresIntrospectionErrorType::UnsupportedAcl,
     )
     .await;
     refusal_case(
@@ -881,7 +881,7 @@ async fn assert_refusal_matrix(admin: &Client, reader: &Client) {
             pg_catalog.pg_get_serial_sequence( \
               'inventory.widget_maker', 'refused_identity')::pg_catalog.regclass",
         "ALTER TABLE inventory.widget_maker DROP COLUMN refused_identity",
-        PostgresIntrospectionErrorKind::UnsupportedIdentity,
+        PostgresIntrospectionErrorType::UnsupportedIdentity,
     )
     .await;
     refusal_case(
@@ -894,7 +894,7 @@ async fn assert_refusal_matrix(admin: &Client, reader: &Client) {
           JOIN pg_catalog.pg_type t ON t.oid=a.atttypid WHERE n.nspname='inventory' \
           AND c.relname='widget' AND a.attname='refused_collation'",
         "ALTER TABLE inventory.widget DROP COLUMN refused_collation",
-        PostgresIntrospectionErrorKind::UnsupportedColumnCollation,
+        PostgresIntrospectionErrorType::UnsupportedColumnCollation,
     )
     .await;
     refusal_case(
@@ -906,7 +906,7 @@ async fn assert_refusal_matrix(admin: &Client, reader: &Client) {
           JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='inventory' \
           AND c.relname='widget' AND a.attname='refused_date'",
         "ALTER TABLE inventory.widget DROP COLUMN refused_date",
-        PostgresIntrospectionErrorKind::UnsupportedColumnType,
+        PostgresIntrospectionErrorType::UnsupportedColumnType,
     )
     .await;
     // A text LITERAL default is supported since wamn-frru, and the supported
@@ -926,7 +926,7 @@ async fn assert_refusal_matrix(admin: &Client, reader: &Client) {
           JOIN pg_catalog.pg_attribute a ON a.attrelid=d.adrelid AND a.attnum=d.adnum \
           WHERE n.nspname='inventory' AND c.relname='widget_maker' AND a.attname='name'",
         "ALTER TABLE inventory.widget_maker ALTER COLUMN name DROP DEFAULT",
-        PostgresIntrospectionErrorKind::UnsupportedColumnDefault,
+        PostgresIntrospectionErrorType::UnsupportedColumnDefault,
     )
     .await;
     refusal_case(
@@ -939,7 +939,7 @@ async fn assert_refusal_matrix(admin: &Client, reader: &Client) {
           ON n.oid=c.relnamespace WHERE n.nspname='inventory' \
           AND c.relname='widget_maker' AND a.attname='refused_virtual'",
         "ALTER TABLE inventory.widget_maker DROP COLUMN refused_virtual",
-        PostgresIntrospectionErrorKind::UnsupportedGeneratedColumn,
+        PostgresIntrospectionErrorType::UnsupportedGeneratedColumn,
     )
     .await;
     refusal_case(
@@ -950,7 +950,7 @@ async fn assert_refusal_matrix(admin: &Client, reader: &Client) {
         "SELECT i.indexprs IS NOT NULL FROM pg_catalog.pg_index i JOIN pg_catalog.pg_class c \
           ON c.oid=i.indexrelid WHERE c.relname='widget_maker_name_expression_idx'",
         "DROP INDEX inventory.widget_maker_name_expression_idx",
-        PostgresIntrospectionErrorKind::UnsupportedIndex,
+        PostgresIntrospectionErrorType::UnsupportedIndex,
     )
     .await;
     let wrong_index_name = refusal_case(
@@ -960,7 +960,7 @@ async fn assert_refusal_matrix(admin: &Client, reader: &Client) {
         "SELECT EXISTS (SELECT 1 FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n \
           ON n.oid=c.relnamespace WHERE n.nspname='inventory' AND c.relname='refused_name')",
         "DROP INDEX inventory.refused_name",
-        PostgresIntrospectionErrorKind::UnsupportedIndex,
+        PostgresIntrospectionErrorType::UnsupportedIndex,
     )
     .await;
     if let Some(error) = &wrong_index_name
@@ -980,7 +980,7 @@ async fn assert_refusal_matrix(admin: &Client, reader: &Client) {
           FROM pg_catalog.pg_index i JOIN pg_catalog.pg_class c \
           ON c.oid=i.indexrelid WHERE c.relname='widget_maker_name_name_idx'",
         "DROP INDEX inventory.widget_maker_name_name_idx",
-        PostgresIntrospectionErrorKind::UnsupportedIndex,
+        PostgresIntrospectionErrorType::UnsupportedIndex,
     )
     .await;
     if let Some(error) = &repeated_index_column
@@ -997,7 +997,7 @@ async fn assert_refusal_matrix(admin: &Client, reader: &Client) {
         "ALTER TABLE inventory.widget ADD CONSTRAINT refused_name CHECK (code <> '')",
         "SELECT EXISTS (SELECT 1 FROM pg_catalog.pg_constraint WHERE conname='refused_name')",
         "ALTER TABLE inventory.widget DROP CONSTRAINT refused_name",
-        PostgresIntrospectionErrorKind::UnsupportedConstraint,
+        PostgresIntrospectionErrorType::UnsupportedConstraint,
     )
     .await;
     if let Some(error) = &wrong_constraint_name
@@ -1016,7 +1016,7 @@ async fn assert_refusal_matrix(admin: &Client, reader: &Client) {
           ON n.oid=c.relnamespace WHERE n.nspname='inventory' \
           AND c.relname='refused_sequence' AND c.relkind='S')",
         "DROP SEQUENCE inventory.refused_sequence",
-        PostgresIntrospectionErrorKind::UnsupportedSequence,
+        PostgresIntrospectionErrorType::UnsupportedSequence,
     )
     .await;
 
@@ -1144,7 +1144,7 @@ async fn assert_platform_grants_are_skipped(admin: &Client, reader: &Client, oth
         .await
         .expect("remove the other role");
     let error = refused.expect_err("a schema grant to another role refuses");
-    assert_eq!(error.kind(), PostgresIntrospectionErrorKind::UnsupportedAcl);
+    assert_eq!(error.kind(), PostgresIntrospectionErrorType::UnsupportedAcl);
 }
 
 async fn run_gate(admin_config: Config, fixture: Fixture) {
@@ -1595,7 +1595,7 @@ async fn assert_the_naming_law_binds_column_keys(admin: &Client, reader: &Client
         "SELECT EXISTS (SELECT 1 FROM pg_catalog.pg_constraint AS c \
            WHERE c.conname='dock_reservation_no_double_booking' AND c.contype='x')",
         "DROP TABLE inventory.dock_reservation",
-        PostgresIntrospectionErrorKind::UnsupportedConstraint,
+        PostgresIntrospectionErrorType::UnsupportedConstraint,
     )
     .await;
     assert!(matrix.failures.is_empty(), "{}", matrix.failures.join("\n"));
@@ -1621,7 +1621,7 @@ async fn assert_unsupported_exclusion_shapes_refuse(admin: &Client, reader: &Cli
            JOIN pg_catalog.pg_am AS method ON method.oid=i.relam \
           WHERE c.conname='refused_btree_exclusion_excl' AND c.contype='x'",
         "DROP TABLE inventory.refused_btree_exclusion",
-        PostgresIntrospectionErrorKind::UnsupportedConstraint,
+        PostgresIntrospectionErrorType::UnsupportedConstraint,
     )
     .await;
     refusal_case(
@@ -1638,7 +1638,7 @@ async fn assert_unsupported_exclusion_shapes_refuse(admin: &Client, reader: &Cli
            JOIN pg_catalog.pg_index AS i ON i.indexrelid=c.conindid \
           WHERE c.conname='refused_partial_exclusion_excl' AND c.contype='x'",
         "DROP TABLE inventory.refused_partial_exclusion",
-        PostgresIntrospectionErrorKind::UnsupportedConstraint,
+        PostgresIntrospectionErrorType::UnsupportedConstraint,
     )
     .await;
     refusal_case(
@@ -1651,7 +1651,7 @@ async fn assert_unsupported_exclusion_shapes_refuse(admin: &Client, reader: &Cli
         "SELECT c.condeferred FROM pg_catalog.pg_constraint AS c \
           WHERE c.conname='refused_deferred_exclusion_excl' AND c.contype='x'",
         "DROP TABLE inventory.refused_deferred_exclusion",
-        PostgresIntrospectionErrorKind::UnsupportedConstraint,
+        PostgresIntrospectionErrorType::UnsupportedConstraint,
     )
     .await;
 

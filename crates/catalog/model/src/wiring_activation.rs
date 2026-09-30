@@ -20,7 +20,7 @@ pub struct WiringActivationFacts {
 
 /// The reason that an enabled activation was refused.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum WiringActivationErrorKind {
+pub enum WiringActivationErrorType {
     Tombstoned,
     DefinitionNotInRelease,
 }
@@ -28,7 +28,7 @@ pub enum WiringActivationErrorKind {
 /// A refused activation and its package, environment, and wiring.
 #[derive(Debug)]
 pub struct WiringActivationError {
-    kind: WiringActivationErrorKind,
+    type_: WiringActivationErrorType,
     package_id: String,
     environment: String,
     wiring_id: String,
@@ -36,16 +36,16 @@ pub struct WiringActivationError {
 
 impl WiringActivationError {
     /// Return the refusal reason without parsing its text.
-    pub fn kind(&self) -> WiringActivationErrorKind {
-        self.kind
+    pub fn kind(&self) -> WiringActivationErrorType {
+        self.type_
     }
 }
 
 impl fmt::Display for WiringActivationError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let refusal = match self.kind {
-            WiringActivationErrorKind::Tombstoned => "wiring-activation-tombstoned",
-            WiringActivationErrorKind::DefinitionNotInRelease => {
+        let refusal = match self.type_ {
+            WiringActivationErrorType::Tombstoned => "wiring-activation-tombstoned",
+            WiringActivationErrorType::DefinitionNotInRelease => {
                 "wiring-activation-definition-not-in-effective-release"
             }
         };
@@ -70,14 +70,14 @@ pub fn validate_wiring_activation(
     let kind = if !enabled {
         return Ok(());
     } else if facts.tombstoned {
-        WiringActivationErrorKind::Tombstoned
+        WiringActivationErrorType::Tombstoned
     } else if !facts.definition_in_release {
-        WiringActivationErrorKind::DefinitionNotInRelease
+        WiringActivationErrorType::DefinitionNotInRelease
     } else {
         return Ok(());
     };
     Err(WiringActivationError {
-        kind,
+        type_: kind,
         package_id: package_id.to_owned(),
         environment: environment.to_owned(),
         wiring_id: wiring_id.to_owned(),
@@ -166,7 +166,7 @@ SELECT confirmed_definition_hash \
 
 #[cfg(test)]
 mod tests {
-    use super::{WiringActivationErrorKind, WiringActivationFacts, validate_wiring_activation};
+    use super::{WiringActivationErrorType, WiringActivationFacts, validate_wiring_activation};
 
     #[test]
     fn disabled_activation_accepts_each_retirement_and_membership_state() {
@@ -200,7 +200,7 @@ mod tests {
             },
         )
         .expect_err("a retired wiring cannot be enabled");
-        assert_eq!(error.kind(), WiringActivationErrorKind::Tombstoned);
+        assert_eq!(error.kind(), WiringActivationErrorType::Tombstoned);
         assert_eq!(
             error.to_string(),
             "wiring-activation-tombstoned: shop/prod/orders-create"

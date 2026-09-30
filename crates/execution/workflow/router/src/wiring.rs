@@ -51,12 +51,12 @@ pub struct WiringEdge {
 /// Why a wiring could not be compiled into a walkable graph.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WiringError {
-    kind: WiringErrorKind,
+    type_: WiringErrorType,
 }
 
 /// The structural precondition a wiring broke.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum WiringErrorKind {
+pub enum WiringErrorType {
     /// Two nodes share an id.
     DuplicateNode(String),
     /// The named entry node is not in the wiring.
@@ -67,19 +67,19 @@ pub enum WiringErrorKind {
 
 impl WiringError {
     /// What the wiring broke.
-    pub fn kind(&self) -> &WiringErrorKind {
-        &self.kind
+    pub fn kind(&self) -> &WiringErrorType {
+        &self.type_
     }
 }
 
 impl std::fmt::Display for WiringError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match &self.kind {
-            WiringErrorKind::DuplicateNode(id) => write!(f, "duplicate node id {id:?}"),
-            WiringErrorKind::UnresolvedEntry(id) => {
+        match &self.type_ {
+            WiringErrorType::DuplicateNode(id) => write!(f, "duplicate node id {id:?}"),
+            WiringErrorType::UnresolvedEntry(id) => {
                 write!(f, "entry node {id:?} is not in the wiring")
             }
-            WiringErrorKind::UnresolvedEndpoint { from, endpoint } => {
+            WiringErrorType::UnresolvedEndpoint { from, endpoint } => {
                 write!(f, "edge from {from:?} names unknown node {endpoint:?}")
             }
         }
@@ -113,13 +113,13 @@ impl Wiring {
             let id = node.id.clone();
             if by_id.insert(id.clone(), node).is_some() {
                 return Err(WiringError {
-                    kind: WiringErrorKind::DuplicateNode(id),
+                    type_: WiringErrorType::DuplicateNode(id),
                 });
             }
         }
         if !by_id.contains_key(&entry) {
             return Err(WiringError {
-                kind: WiringErrorKind::UnresolvedEntry(entry),
+                type_: WiringErrorType::UnresolvedEntry(entry),
             });
         }
 
@@ -128,7 +128,7 @@ impl Wiring {
             for endpoint in [&edge.from, &edge.to] {
                 if !by_id.contains_key(endpoint) {
                     return Err(WiringError {
-                        kind: WiringErrorKind::UnresolvedEndpoint {
+                        type_: WiringErrorType::UnresolvedEndpoint {
                             from: edge.from.clone(),
                             endpoint: endpoint.clone(),
                         },

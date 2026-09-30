@@ -23,7 +23,7 @@ pub use model::{EventRegistration, RegistrationInput, SCHEMA_VERSION};
 pub use oldref::{condition_references_old, references_old};
 pub use reconcile::{
     CatalogRegistrationProjection, CatalogRegistrationRow, DELETE_STALE_CATALOG_REGISTRATIONS_SQL,
-    RegistrationProjectionError, RegistrationProjectionErrorKind, UPSERT_CATALOG_REGISTRATION_SQL,
+    RegistrationProjectionError, RegistrationProjectionErrorType, UPSERT_CATALOG_REGISTRATION_SQL,
     project_catalog_registrations,
 };
 pub use validate::{RegistrationIssue, validate};

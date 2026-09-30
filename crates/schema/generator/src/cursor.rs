@@ -100,22 +100,22 @@ impl CursorV1 {
 
 /// Stable cursor refusal class exposed to operation input translation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum CursorErrorKind {
+pub enum CursorErrorType {
     InvalidInput,
 }
 
 /// Cursor refusal translated to the frozen `invalid_input` operation literal.
 #[derive(Debug)]
 pub struct CursorError {
-    kind: CursorErrorKind,
+    type_: CursorErrorType,
     context: Box<str>,
     source: Option<Box<dyn Error + Send + Sync + 'static>>,
 }
 
 impl CursorError {
     /// Stable refusal class; malformed cursors never become first-page requests.
-    pub const fn kind(&self) -> CursorErrorKind {
-        self.kind
+    pub const fn kind(&self) -> CursorErrorType {
+        self.type_
     }
 
     /// Non-wire diagnostic for the package implementation.
@@ -125,7 +125,7 @@ impl CursorError {
 
     fn invalid(context: impl Into<Box<str>>) -> Self {
         Self {
-            kind: CursorErrorKind::InvalidInput,
+            type_: CursorErrorType::InvalidInput,
             context: context.into(),
             source: None,
         }
@@ -136,7 +136,7 @@ impl CursorError {
         source: impl Error + Send + Sync + 'static,
     ) -> Self {
         Self {
-            kind: CursorErrorKind::InvalidInput,
+            type_: CursorErrorType::InvalidInput,
             context: context.into(),
             source: Some(Box::new(source)),
         }

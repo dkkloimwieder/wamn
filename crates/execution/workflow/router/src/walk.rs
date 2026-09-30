@@ -73,11 +73,11 @@ pub enum FailureKind {
     /// dedup the publish on. Routed to the node's error edge if it has one.
     MissingDedupId,
     /// A [`Terminal::Respond`] node was reached by a delivery with no caller
-    /// attached ([`ApplyErrorKind::RespondWithoutCaller`]) — an authored wiring
+    /// attached ([`ApplyErrorType::RespondWithoutCaller`]) — an authored wiring
     /// meeting an ingress path it does not fit.
     RespondWithoutCaller,
     /// A second terminal node emitted after this delivery already had a verdict
-    /// ([`ApplyErrorKind::SecondVerdict`]). The first verdict stands and the
+    /// ([`ApplyErrorType::SecondVerdict`]). The first verdict stands and the
     /// second node is the failure.
     SecondVerdict,
 }
@@ -224,12 +224,12 @@ pub struct NodeCall {
 /// A walk transition was applied against the wrong state boundary.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ApplyError {
-    kind: ApplyErrorKind,
+    type_: ApplyErrorType,
 }
 
 /// Which boundary the transition broke.
 #[derive(Debug, Clone, PartialEq)]
-pub enum ApplyErrorKind {
+pub enum ApplyErrorType {
     /// The walk already reached this terminal status.
     Terminal(WalkStatus),
     /// Nothing is active to apply an outcome to.
@@ -246,47 +246,47 @@ pub enum ApplyErrorKind {
 
 impl ApplyError {
     /// Which boundary the transition broke.
-    pub fn kind(&self) -> &ApplyErrorKind {
-        &self.kind
+    pub fn kind(&self) -> &ApplyErrorType {
+        &self.type_
     }
 
     /// The walk failure this refusal folds into, with its stable code, or `None`
     /// when it cannot be folded at all.
     ///
     /// The split is the whole point of the two groups.
-    /// [`ApplyErrorKind::RespondWithoutCaller`] and
-    /// [`ApplyErrorKind::SecondVerdict`] are an authored wiring meeting a
+    /// [`ApplyErrorType::RespondWithoutCaller`] and
+    /// [`ApplyErrorType::SecondVerdict`] are an authored wiring meeting a
     /// delivery it does not fit. Both are DATA, so they end ONE delivery.
     /// The other three describe a driver feeding back an outcome the walk never
     /// handed out — a defect in the driver, which no wiring can recover from
     /// and which [`route`](crate::route) therefore still panics on.
     fn node_data_failure(&self) -> Option<(FailureKind, &'static str)> {
-        match &self.kind {
-            ApplyErrorKind::RespondWithoutCaller(_) => {
+        match &self.type_ {
+            ApplyErrorType::RespondWithoutCaller(_) => {
                 Some((FailureKind::RespondWithoutCaller, "respond-without-caller"))
             }
-            ApplyErrorKind::SecondVerdict(_) => {
+            ApplyErrorType::SecondVerdict(_) => {
                 Some((FailureKind::SecondVerdict, "second-verdict"))
             }
-            ApplyErrorKind::Terminal(_)
-            | ApplyErrorKind::NoActiveNode
-            | ApplyErrorKind::MismatchedNode { .. } => None,
+            ApplyErrorType::Terminal(_)
+            | ApplyErrorType::NoActiveNode
+            | ApplyErrorType::MismatchedNode { .. } => None,
         }
     }
 }
 
 impl std::fmt::Display for ApplyError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match &self.kind {
-            ApplyErrorKind::Terminal(status) => write!(f, "walk is already terminal: {status:?}"),
-            ApplyErrorKind::NoActiveNode => write!(f, "walk has no active node"),
-            ApplyErrorKind::MismatchedNode { expected, actual } => {
+        match &self.type_ {
+            ApplyErrorType::Terminal(status) => write!(f, "walk is already terminal: {status:?}"),
+            ApplyErrorType::NoActiveNode => write!(f, "walk has no active node"),
+            ApplyErrorType::MismatchedNode { expected, actual } => {
                 write!(f, "active node is {expected:?}, not {actual:?}")
             }
-            ApplyErrorKind::RespondWithoutCaller(node) => {
+            ApplyErrorType::RespondWithoutCaller(node) => {
                 write!(f, "node {node:?} responds, but no caller is attached")
             }
-            ApplyErrorKind::SecondVerdict(node) => {
+            ApplyErrorType::SecondVerdict(node) => {
                 write!(f, "node {node:?} is a second terminal for this delivery")
             }
         }
@@ -431,15 +431,15 @@ impl Wiring {
     ) -> Result<(), ApplyError> {
         if walk.status.is_terminal() {
             return Err(ApplyError {
-                kind: ApplyErrorKind::Terminal(walk.status),
+                type_: ApplyErrorType::Terminal(walk.status),
             });
         }
         let active = walk.current.as_ref().ok_or(ApplyError {
-            kind: ApplyErrorKind::NoActiveNode,
+            type_: ApplyErrorType::NoActiveNode,
         })?;
         if active.node != call.node {
             return Err(ApplyError {
-                kind: ApplyErrorKind::MismatchedNode {
+                type_: ApplyErrorType::MismatchedNode {
                     expected: active.node.clone(),
                     actual: call.node.clone(),
                 },
@@ -609,12 +609,12 @@ fn terminal_verdict(
 ) -> Result<Option<Verdict>, ApplyError> {
     if walk.verdict.is_some() {
         return Err(ApplyError {
-            kind: ApplyErrorKind::SecondVerdict(node.to_string()),
+            type_: ApplyErrorType::SecondVerdict(node.to_string()),
         });
     }
     match terminal {
         Terminal::Respond if !walk.caller_attached => Err(ApplyError {
-            kind: ApplyErrorKind::RespondWithoutCaller(node.to_string()),
+            type_: ApplyErrorType::RespondWithoutCaller(node.to_string()),
         }),
         Terminal::Respond => Ok(Some(Verdict::Respond {
             payload: payload.clone(),

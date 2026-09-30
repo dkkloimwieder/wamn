@@ -11,7 +11,7 @@ use wamn_run_state::queue::{
 };
 use wamn_runtime::plugins::route_authentication::queued_service_caller;
 
-use super::{StartRequest, Trigger, WorkflowError, WorkflowErrorKind, WorkflowRun, Workflows};
+use super::{StartRequest, Trigger, WorkflowError, WorkflowErrorType, WorkflowRun, Workflows};
 
 /// Why a park or a release changed nothing: the run's status, whether a queue
 /// row exists, whether it is parked, and whether a replica holds a live lease.
@@ -85,7 +85,7 @@ impl PostgresWorkflows {
             .map_err(|error| WorkflowError::storage("read the release snapshot", error))?
             .ok_or_else(|| {
                 WorkflowError::new(
-                    WorkflowErrorKind::Refused,
+                    WorkflowErrorType::Refused,
                     format!("release {release_id} has no minted snapshot"),
                 )
             })?
@@ -93,7 +93,7 @@ impl PostgresWorkflows {
             .map_err(|error| WorkflowError::storage("read the release bytes", error))?;
         let (manifest, _) = ServingManifest::from_canonical_bytes(&bytes).map_err(|error| {
             WorkflowError::with_source(
-                WorkflowErrorKind::Refused,
+                WorkflowErrorType::Refused,
                 "the release snapshot does not parse",
                 error,
             )
@@ -102,7 +102,7 @@ impl PostgresWorkflows {
             || manifest.release.environment != self.environment()
         {
             return Err(WorkflowError::new(
-                WorkflowErrorKind::Refused,
+                WorkflowErrorType::Refused,
                 format!("release {release_id} belongs to another tenant or environment"),
             ));
         }
@@ -129,7 +129,7 @@ impl PostgresWorkflows {
         release_id: i32,
         request: &StartRequest,
     ) -> Result<(String, String), WorkflowError> {
-        let refused = |message: String| WorkflowError::new(WorkflowErrorKind::Refused, message);
+        let refused = |message: String| WorkflowError::new(WorkflowErrorType::Refused, message);
         let release = self.release(transaction, release_id).await?;
         let wiring = release
             .workflow
@@ -196,7 +196,7 @@ impl PostgresWorkflows {
             .and_then(|graph| WiringDocument::parse(&graph).map_err(anyhow::Error::from))
             .map_err(|error| {
                 WorkflowError::with_source(
-                    WorkflowErrorKind::Refused,
+                    WorkflowErrorType::Refused,
                     "the catalog wiring does not parse",
                     error,
                 )
@@ -242,7 +242,7 @@ impl Workflows for PostgresWorkflows {
     async fn start(&self, request: &StartRequest) -> Result<String, WorkflowError> {
         if request.idempotency_key.is_empty() {
             return Err(WorkflowError::new(
-                WorkflowErrorKind::Refused,
+                WorkflowErrorType::Refused,
                 "the idempotency key is empty",
             ));
         }
@@ -251,13 +251,13 @@ impl Workflows for PostgresWorkflows {
         } = &request.trigger;
         let release_id = i32::try_from(request.effective_release_id).map_err(|_| {
             WorkflowError::new(
-                WorkflowErrorKind::Refused,
+                WorkflowErrorType::Refused,
                 "the effective release id does not fit",
             )
         })?;
         let version = i32::try_from(request.wiring_version).map_err(|_| {
             WorkflowError::new(
-                WorkflowErrorKind::Refused,
+                WorkflowErrorType::Refused,
                 "the wiring version does not fit",
             )
         })?;
@@ -274,7 +274,7 @@ impl Workflows for PostgresWorkflows {
             .await
             .map_err(|error| {
                 WorkflowError::with_source(
-                    WorkflowErrorKind::Refused,
+                    WorkflowErrorType::Refused,
                     "the service principal does not admit the start",
                     error,
                 )
@@ -329,7 +329,7 @@ impl Workflows for PostgresWorkflows {
                 .map_err(|error| WorkflowError::storage("read the first run", error))?
                 .ok_or_else(|| {
                     WorkflowError::new(
-                        WorkflowErrorKind::Conflict,
+                        WorkflowErrorType::Conflict,
                         "the idempotency key was used for a different request",
                     )
                 })?
@@ -358,7 +358,7 @@ impl Workflows for PostgresWorkflows {
             match self.queue_state(&transaction, run_id).await? {
                 None => {
                     return Err(WorkflowError::new(
-                        WorkflowErrorKind::NotFound,
+                        WorkflowErrorType::NotFound,
                         format!("run {run_id} does not exist"),
                     ));
                 }
@@ -381,7 +381,7 @@ impl Workflows for PostgresWorkflows {
                         "not dispatched"
                     };
                     return Err(WorkflowError::new(
-                        WorkflowErrorKind::NotParkable,
+                        WorkflowErrorType::NotParkable,
                         format!(
                             "run {run_id} is {state} (status {status}), so it cannot be parked"
                         ),
@@ -409,11 +409,11 @@ impl Workflows for PostgresWorkflows {
         if released.is_none() {
             return Err(match self.queue_state(&transaction, run_id).await? {
                 None => WorkflowError::new(
-                    WorkflowErrorKind::NotFound,
+                    WorkflowErrorType::NotFound,
                     format!("run {run_id} does not exist"),
                 ),
                 Some(_) => WorkflowError::new(
-                    WorkflowErrorKind::NotParked,
+                    WorkflowErrorType::NotParked,
                     format!("run {run_id} is not parked"),
                 ),
             });
@@ -448,14 +448,14 @@ impl Workflows for PostgresWorkflows {
                     wiring_id: row.try_get(2).map_err(decode)?,
                     wiring_version: u32::try_from(version).map_err(|_| {
                         WorkflowError::new(
-                            WorkflowErrorKind::Storage,
+                            WorkflowErrorType::Storage,
                             "a wiring version is negative",
                         )
                     })?,
                     trigger_source: row.try_get(4).map_err(decode)?,
                     status: RunStatus::from_sql(&status).ok_or_else(|| {
                         WorkflowError::new(
-                            WorkflowErrorKind::Storage,
+                            WorkflowErrorType::Storage,
                             format!("run status {status:?} is unknown"),
                         )
                     })?,

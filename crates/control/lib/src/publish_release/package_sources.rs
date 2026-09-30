@@ -5,7 +5,7 @@ use std::path::Path;
 use wamn_record_history::{HISTORY_TABLE_SUFFIX, is_history_table_name};
 
 use super::{
-    BTreeMap, BTreeSet, MintManifestError, MintManifestErrorKind, OperationType, PathBuf,
+    BTreeMap, BTreeSet, MintManifestError, MintManifestErrorType, OperationType, PathBuf,
     RouteCanonicalization, RouteContract, RouteContracts, ServingRelation, ServingRoute, sha256,
 };
 
@@ -26,7 +26,7 @@ pub(super) fn read_package_manifests(
     for path in paths {
         let bytes = std::fs::read(path).map_err(|error| {
             MintManifestError::with_source(
-                MintManifestErrorKind::PackageManifest,
+                MintManifestErrorType::PackageManifest,
                 format!("read package manifest {}", path.display()),
                 error,
             )
@@ -34,21 +34,21 @@ pub(super) fn read_package_manifests(
         let manifest =
             wamn_schema_generator::PackageManifest::from_slice(&bytes).map_err(|error| {
                 MintManifestError::with_source(
-                    MintManifestErrorKind::PackageManifest,
+                    MintManifestErrorType::PackageManifest,
                     format!("parse package manifest {}", path.display()),
                     error,
                 )
             })?;
         wamn_schema_generator::validate_operation_vocabulary(&manifest).map_err(|error| {
             MintManifestError::with_source(
-                MintManifestErrorKind::PackageManifest,
+                MintManifestErrorType::PackageManifest,
                 format!("validate package manifest {}", path.display()),
                 error,
             )
         })?;
         let root = path.parent().ok_or_else(|| {
             MintManifestError::new(
-                MintManifestErrorKind::GeneratedPackageMetadata,
+                MintManifestErrorType::GeneratedPackageMetadata,
                 format!(
                     "package manifest {} has no package directory; pass package-owned wamn.json",
                     path.display()
@@ -58,7 +58,7 @@ pub(super) fn read_package_manifests(
         let metadata_path = root.join("generated/package-weld.json");
         let metadata_bytes = std::fs::read(&metadata_path).map_err(|error| {
             MintManifestError::with_source(
-                MintManifestErrorKind::GeneratedPackageMetadata,
+                MintManifestErrorType::GeneratedPackageMetadata,
                 format!(
                     "package {}@{} requires generated/package-weld.json at {}; regenerate the package evidence",
                     manifest.package.id,
@@ -70,7 +70,7 @@ pub(super) fn read_package_manifests(
         })?;
         let metadata = wamn_schema_generator::GeneratedPackageMetadata::from_slice(&metadata_bytes).map_err(|error| {
             MintManifestError::with_source(
-                MintManifestErrorKind::GeneratedPackageMetadata,
+                MintManifestErrorType::GeneratedPackageMetadata,
                 format!(
                     "package {}@{} carries an invalid generated/package-weld.json; regenerate the package evidence",
                     manifest.package.id, manifest.package.version
@@ -83,7 +83,7 @@ pub(super) fn read_package_manifests(
         contracts.insert(package_id.clone(), read_operation_contracts(root)?);
         if manifests.insert(package_id.clone(), manifest).is_some() {
             return Err(MintManifestError::new(
-                MintManifestErrorKind::PackageManifest,
+                MintManifestErrorType::PackageManifest,
                 format!("more than one package manifest names {package_id:?}"),
             ));
         }
@@ -95,7 +95,7 @@ pub(super) fn read_package_manifests(
             let route = resolve_claim(&manifests[package_id], contract, |base| {
                 contracts.get(base).map(Vec::as_slice).ok_or_else(|| {
                     MintManifestError::new(
-                        MintManifestErrorKind::PackageManifest,
+                        MintManifestErrorType::PackageManifest,
                         format!(
                             "package {package_id:?} inherits a claim from package {base:?}, which the release does not carry"
                         ),
@@ -127,7 +127,7 @@ pub fn package_route(
 ) -> Result<ServingRoute, MintManifestError> {
     let unassembled = |package: &str| {
         MintManifestError::new(
-            MintManifestErrorKind::PackageManifest,
+            MintManifestErrorType::PackageManifest,
             format!("package {package:?} is not assembled"),
         )
     };
@@ -139,7 +139,7 @@ pub fn package_route(
         .find(|contract| contract.operation == operation)
         .ok_or_else(|| {
             MintManifestError::new(
-                MintManifestErrorKind::GeneratedPackageMetadata,
+                MintManifestErrorType::GeneratedPackageMetadata,
                 format!(
                     "no generated contract of package {package_id:?} declares operation {operation:?}; regenerate the package evidence"
                 ),
@@ -149,7 +149,7 @@ pub fn package_route(
         let path = root.join("wamn.json");
         let bytes = std::fs::read(&path).map_err(|error| {
             MintManifestError::with_source(
-                MintManifestErrorKind::PackageManifest,
+                MintManifestErrorType::PackageManifest,
                 format!("read package manifest {}", path.display()),
                 error,
             )
@@ -157,7 +157,7 @@ pub fn package_route(
         let manifest =
             wamn_schema_generator::PackageManifest::from_slice(&bytes).map_err(|error| {
                 MintManifestError::with_source(
-                    MintManifestErrorKind::PackageManifest,
+                    MintManifestErrorType::PackageManifest,
                     format!("parse package manifest {}", path.display()),
                     error,
                 )
@@ -210,7 +210,7 @@ fn resolve_claim<B: std::borrow::Borrow<[PackageContract]>>(
         return Ok(contract.route.clone());
     };
     let refused = |detail: String| {
-        MintManifestError::new(MintManifestErrorKind::GeneratedPackageMetadata, detail)
+        MintManifestError::new(MintManifestErrorType::GeneratedPackageMetadata, detail)
     };
     let dependency = manifest
         .base_dependencies
@@ -276,7 +276,7 @@ fn read_operation_contracts(root: &Path) -> Result<Vec<PackageContract>, MintMan
     }
     let unreadable = |path: &Path, error: std::io::Error| {
         MintManifestError::with_source(
-            MintManifestErrorKind::GeneratedPackageMetadata,
+            MintManifestErrorType::GeneratedPackageMetadata,
             format!("read generated contracts {}", path.display()),
             error,
         )
@@ -301,7 +301,7 @@ fn read_operation_contracts(root: &Path) -> Result<Vec<PackageContract>, MintMan
             let bytes = std::fs::read(&path).map_err(|error| unreadable(&path, error))?;
             let contract: Contract = serde_json::from_slice(&bytes).map_err(|error| {
                 MintManifestError::with_source(
-                    MintManifestErrorKind::GeneratedPackageMetadata,
+                    MintManifestErrorType::GeneratedPackageMetadata,
                     format!(
                         "generated contract {} names no operation kind; regenerate the package evidence",
                         path.display()
@@ -385,7 +385,7 @@ fn read_input_identity(
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok((None, None)),
         Err(error) => {
             return Err(MintManifestError::with_source(
-                MintManifestErrorKind::GeneratedPackageMetadata,
+                MintManifestErrorType::GeneratedPackageMetadata,
                 format!("read generated contract {}", input_path.display()),
                 error,
             ));
@@ -393,7 +393,7 @@ fn read_input_identity(
     };
     let contract = serde_json::from_slice(&bytes).map_err(|error| {
         MintManifestError::with_source(
-            MintManifestErrorKind::GeneratedPackageMetadata,
+            MintManifestErrorType::GeneratedPackageMetadata,
             format!(
                 "generated contract {} is not JSON; regenerate the package evidence",
                 input_path.display()
@@ -414,7 +414,7 @@ pub(super) fn validate_package_metadata(
     let coordinate = format!("{}@{}", manifest.package.id, manifest.package.version);
     if metadata.required_platform_policy_contract() != &manifest.required_platform_policy_contract {
         return Err(MintManifestError::new(
-            MintManifestErrorKind::GeneratedPackageMetadata,
+            MintManifestErrorType::GeneratedPackageMetadata,
             format!(
                 "package {coordinate} manifest and generated package contract disagree on the required platform policy contract; regenerate the package evidence"
             ),
@@ -422,7 +422,7 @@ pub(super) fn validate_package_metadata(
     }
     if !metadata.promotion_eligible() {
         return Err(MintManifestError::new(
-            MintManifestErrorKind::PolicyContractUnsatisfied,
+            MintManifestErrorType::PolicyContractUnsatisfied,
             format!(
                 "package {coordinate} requires platform policy contract {:?} in state unsatisfied; reconcile its generated policy and regenerate with state satisfied",
                 manifest.required_platform_policy_contract.id

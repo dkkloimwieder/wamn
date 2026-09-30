@@ -29,7 +29,7 @@ pub enum CredentialConnectionKind {
 
 /// Stable failure category for the exact-credential boundary.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum CredentialProbeErrorKind {
+pub enum CredentialProbeErrorType {
     SourceConflict,
     InvalidSource,
     ProbeUnavailable,
@@ -52,35 +52,35 @@ pub enum CredentialProbePredicate {
 /// error detail.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct CredentialProbeError {
-    kind: CredentialProbeErrorKind,
+    type_: CredentialProbeErrorType,
     predicate: CredentialProbePredicate,
     connection_kind: Option<CredentialConnectionKind>,
 }
 
 impl CredentialProbeError {
-    fn source(kind: CredentialProbeErrorKind, predicate: CredentialProbePredicate) -> Self {
+    fn source(kind: CredentialProbeErrorType, predicate: CredentialProbePredicate) -> Self {
         Self {
-            kind,
+            type_: kind,
             predicate,
             connection_kind: None,
         }
     }
 
     fn connection(
-        kind: CredentialProbeErrorKind,
+        type_: CredentialProbeErrorType,
         predicate: CredentialProbePredicate,
         connection_kind: CredentialConnectionKind,
     ) -> Self {
         Self {
-            kind,
+            type_,
             predicate,
             connection_kind: Some(connection_kind),
         }
     }
 
     /// Return the stable refusal category.
-    pub fn kind(&self) -> CredentialProbeErrorKind {
-        self.kind
+    pub fn kind(&self) -> CredentialProbeErrorType {
+        self.type_
     }
 
     /// Return the exact predicate that refused.
@@ -99,7 +99,7 @@ impl Display for CredentialProbeError {
         write!(
             formatter,
             "database credential exactness refused: {:?}/{:?}",
-            self.kind, self.predicate
+            self.type_, self.predicate
         )
     }
 }
@@ -143,26 +143,26 @@ pub fn explicit_credential_source(
 ) -> Result<ExplicitCredentialSource, CredentialProbeError> {
     if ambient == AmbientCredentialState::Present {
         return Err(CredentialProbeError::source(
-            CredentialProbeErrorKind::SourceConflict,
+            CredentialProbeErrorType::SourceConflict,
             CredentialProbePredicate::CredentialSource,
         ));
     }
     let tenant_binding = tenant_binding.into();
     if tenant_binding.is_empty() {
         return Err(CredentialProbeError::source(
-            CredentialProbeErrorKind::InvalidSource,
+            CredentialProbeErrorType::InvalidSource,
             CredentialProbePredicate::TenantBinding,
         ));
     }
     let config = database_url.parse::<Config>().map_err(|_| {
         CredentialProbeError::source(
-            CredentialProbeErrorKind::InvalidSource,
+            CredentialProbeErrorType::InvalidSource,
             CredentialProbePredicate::CredentialSource,
         )
     })?;
     if config.get_user().is_none() || config.get_dbname().is_none() {
         return Err(CredentialProbeError::source(
-            CredentialProbeErrorKind::InvalidSource,
+            CredentialProbeErrorType::InvalidSource,
             CredentialProbePredicate::CredentialSource,
         ));
     }
@@ -309,19 +309,19 @@ pub fn credential_exactness_probe(
 ) -> Result<CredentialExactnessProbe, CredentialProbeError> {
     if source.config.get_user() != Some(expected.session_user.as_ref()) {
         return Err(CredentialProbeError::source(
-            CredentialProbeErrorKind::PredicateMismatch,
+            CredentialProbeErrorType::PredicateMismatch,
             CredentialProbePredicate::SessionUser,
         ));
     }
     if source.config.get_dbname() != Some(expected.database.as_ref()) {
         return Err(CredentialProbeError::source(
-            CredentialProbeErrorKind::PredicateMismatch,
+            CredentialProbeErrorType::PredicateMismatch,
             CredentialProbePredicate::Database,
         ));
     }
     if source.tenant_binding != expected.tenant_binding {
         return Err(CredentialProbeError::source(
-            CredentialProbeErrorKind::PredicateMismatch,
+            CredentialProbeErrorType::PredicateMismatch,
             CredentialProbePredicate::TenantBinding,
         ));
     }
@@ -432,7 +432,7 @@ fn verify_identity(
     ] {
         if !matches {
             return Err(CredentialProbeError::connection(
-                CredentialProbeErrorKind::PredicateMismatch,
+                CredentialProbeErrorType::PredicateMismatch,
                 predicate,
                 connection_kind,
             ));
@@ -451,7 +451,7 @@ fn verify_boolean(
         Ok(())
     } else {
         Err(CredentialProbeError::connection(
-            CredentialProbeErrorKind::PredicateMismatch,
+            CredentialProbeErrorType::PredicateMismatch,
             predicate,
             connection_kind,
         ))
@@ -463,7 +463,7 @@ fn unavailable(
     predicate: CredentialProbePredicate,
 ) -> CredentialProbeError {
     CredentialProbeError::connection(
-        CredentialProbeErrorKind::ProbeUnavailable,
+        CredentialProbeErrorType::ProbeUnavailable,
         predicate,
         connection_kind,
     )
@@ -668,7 +668,7 @@ mod tests {
         predicate: CredentialProbePredicate,
         connection_kind: Option<CredentialConnectionKind>,
     ) {
-        assert_eq!(error.kind(), CredentialProbeErrorKind::PredicateMismatch);
+        assert_eq!(error.kind(), CredentialProbeErrorType::PredicateMismatch);
         assert_eq!(error.predicate(), predicate);
         assert_eq!(error.connection_kind(), connection_kind);
     }
@@ -677,7 +677,7 @@ mod tests {
     fn exact_source_rejects_an_ambient_conflict_without_disclosure() {
         let error = explicit_credential_source(URL, "tenant-a", AmbientCredentialState::Present)
             .unwrap_err();
-        assert_eq!(error.kind(), CredentialProbeErrorKind::SourceConflict);
+        assert_eq!(error.kind(), CredentialProbeErrorType::SourceConflict);
         assert_eq!(
             error.predicate(),
             CredentialProbePredicate::CredentialSource

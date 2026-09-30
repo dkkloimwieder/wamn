@@ -104,7 +104,7 @@ impl PackageMigrationPlan {
 
 /// Stable package migration refusal class.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum PackageMigrationErrorKind {
+pub enum PackageMigrationErrorType {
     InvalidManifest,
     InvalidDirectory,
     ManifestDrift,
@@ -117,7 +117,7 @@ pub enum PackageMigrationErrorKind {
     PredecessorNotCurrent,
 }
 
-impl PackageMigrationErrorKind {
+impl PackageMigrationErrorType {
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::InvalidManifest => "invalid-manifest",
@@ -137,7 +137,7 @@ impl PackageMigrationErrorKind {
 /// Contextual package migration refusal.
 #[derive(Debug)]
 pub struct PackageMigrationError {
-    kind: PackageMigrationErrorKind,
+    type_: PackageMigrationErrorType,
     // Boxed strings (M-BOX-DST): the context is written once and only read
     // back, and the narrower fields keep the whole error inside the size every
     // `Result` in this module carries (`clippy::result_large_err`).
@@ -150,8 +150,8 @@ pub struct PackageMigrationError {
 }
 
 impl PackageMigrationError {
-    pub const fn kind(&self) -> PackageMigrationErrorKind {
-        self.kind
+    pub const fn kind(&self) -> PackageMigrationErrorType {
+        self.type_
     }
 
     pub fn context(&self) -> &str {
@@ -174,9 +174,9 @@ impl PackageMigrationError {
         self.actual_hash.as_deref()
     }
 
-    fn new(kind: PackageMigrationErrorKind, context: impl Into<String>) -> Self {
+    fn new(kind: PackageMigrationErrorType, context: impl Into<String>) -> Self {
         Self {
-            kind,
+            type_: kind,
             context: context.into().into_boxed_str(),
             coordinate: None,
             path: None,
@@ -187,13 +187,13 @@ impl PackageMigrationError {
     }
 
     fn with_source(
-        kind: PackageMigrationErrorKind,
+        type_: PackageMigrationErrorType,
         context: impl Into<String>,
         source: impl Error + Send + Sync + 'static,
     ) -> Self {
         Self {
             source: Some(Box::new(source)),
-            ..Self::new(kind, context)
+            ..Self::new(type_, context)
         }
     }
 
@@ -203,7 +203,7 @@ impl PackageMigrationError {
     }
 
     fn drift(
-        kind: PackageMigrationErrorKind,
+        type_: PackageMigrationErrorType,
         context: impl Into<String>,
         coordinate: &PackageCoordinate,
         path: impl Into<String>,
@@ -211,7 +211,7 @@ impl PackageMigrationError {
         actual_hash: impl Into<String>,
     ) -> Self {
         Self {
-            kind,
+            type_,
             context: context.into().into_boxed_str(),
             coordinate: Some(coordinate_text(coordinate).into_boxed_str()),
             path: Some(path.into().into_boxed_str()),
@@ -264,7 +264,7 @@ pub fn plan_package_registration(
     if let Some((recorded_hash, recorded_predecessor)) = recorded {
         if recorded_hash != manifest_sha256 {
             return Err(PackageMigrationError::new(
-                PackageMigrationErrorKind::CoordinateContentConflict,
+                PackageMigrationErrorType::CoordinateContentConflict,
                 format!(
                     "package-coordinate-content-conflict: coordinate={} recorded-sha256={recorded_hash} presented-sha256={manifest_sha256}",
                     coordinate_text(coordinate)
@@ -273,7 +273,7 @@ pub fn plan_package_registration(
         }
         if recorded_predecessor != predecessor_version {
             return Err(PackageMigrationError::new(
-                PackageMigrationErrorKind::CoordinatePredecessorConflict,
+                PackageMigrationErrorType::CoordinatePredecessorConflict,
                 format!(
                     "package-coordinate-predecessor-conflict: coordinate={} recorded-predecessor={} presented-predecessor={}",
                     coordinate_text(coordinate),
@@ -288,7 +288,7 @@ pub fn plan_package_registration(
         && predecessor_version != Some(current)
     {
         return Err(PackageMigrationError::new(
-            PackageMigrationErrorKind::PredecessorNotCurrent,
+            PackageMigrationErrorType::PredecessorNotCurrent,
             format!(
                 "predecessor-not-current: declared={} current={current}",
                 predecessor_version.unwrap_or("<none>")
@@ -305,7 +305,7 @@ pub fn plan_package_migrations(
 ) -> Result<PackageMigrationPlan, PackageMigrationError> {
     let manifest = PackageManifest::from_slice(&directory.manifest_bytes).map_err(|source| {
         PackageMigrationError::with_source(
-            PackageMigrationErrorKind::InvalidManifest,
+            PackageMigrationErrorType::InvalidManifest,
             "wamn.json does not match the strict package manifest",
             source,
         )
@@ -313,7 +313,7 @@ pub fn plan_package_migrations(
     })?;
     validate_operation_vocabulary(&manifest).map_err(|source| {
         PackageMigrationError::with_source(
-            PackageMigrationErrorKind::InvalidManifest,
+            PackageMigrationErrorType::InvalidManifest,
             "wamn.json has an invalid semantic manifest vocabulary",
             source,
         )
@@ -322,7 +322,7 @@ pub fn plan_package_migrations(
     let coordinate = PackageCoordinate::new(&manifest.package.id, &manifest.package.version)
         .map_err(|source| {
             PackageMigrationError::with_source(
-                PackageMigrationErrorKind::InvalidManifest,
+                PackageMigrationErrorType::InvalidManifest,
                 "wamn.json package coordinate is invalid",
                 source,
             )
@@ -331,7 +331,7 @@ pub fn plan_package_migrations(
     if let Some(predecessor) = manifest.package.predecessor_version.as_deref() {
         PackageCoordinate::new(&manifest.package.id, predecessor).map_err(|source| {
             PackageMigrationError::with_source(
-                PackageMigrationErrorKind::InvalidManifest,
+                PackageMigrationErrorType::InvalidManifest,
                 "wamn.json predecessor package coordinate is invalid",
                 source,
             )
@@ -347,7 +347,7 @@ pub fn plan_package_migrations(
         }
         if existing.manifest_sha256 != manifest_sha256 {
             return Err(PackageMigrationError::drift(
-                PackageMigrationErrorKind::ManifestDrift,
+                PackageMigrationErrorType::ManifestDrift,
                 PACKAGE_MANIFEST_DRIFT_REFUSAL,
                 &coordinate,
                 PACKAGE_MANIFEST_PATH,
@@ -376,7 +376,7 @@ pub fn plan_package_migrations(
         ] {
             if !snake_identifier(value) {
                 return Err(PackageMigrationError::new(
-                    PackageMigrationErrorKind::InvalidManifest,
+                    PackageMigrationErrorType::InvalidManifest,
                     format!("wamn.json {field} {value:?} is not singular snake_case"),
                 )
                 .at_path(PACKAGE_MANIFEST_PATH));
@@ -449,7 +449,7 @@ fn plan_package_migrations_from_predecessor(
         || declared_predecessor != Some(predecessor.coordinate.package_version())
     {
         return Err(PackageMigrationError {
-            kind: PackageMigrationErrorKind::PredecessorPrefixMismatch,
+            type_: PackageMigrationErrorType::PredecessorPrefixMismatch,
             context: format!(
                 "{PREDECESSOR_PREFIX_MISMATCH_REFUSAL}: applied coordinate {} is not the declared predecessor of {}",
                 coordinate_text(&predecessor.coordinate),
@@ -464,7 +464,7 @@ fn plan_package_migrations_from_predecessor(
     }
     if predecessor.migrations.is_empty() {
         return Err(PackageMigrationError {
-            kind: PackageMigrationErrorKind::PredecessorPrefixMismatch,
+            type_: PackageMigrationErrorType::PredecessorPrefixMismatch,
             context: format!(
                 "{PREDECESSOR_PREFIX_MISMATCH_REFUSAL}: declared predecessor has no applied migration prefix"
             ).into_boxed_str(),
@@ -481,7 +481,7 @@ fn plan_package_migrations_from_predecessor(
             let recorded_hash = source.recorded_hash.clone();
             let actual_hash = source.actual_hash.clone();
             PackageMigrationError {
-                kind: PackageMigrationErrorKind::PredecessorPrefixMismatch,
+                type_: PackageMigrationErrorType::PredecessorPrefixMismatch,
                 context: format!(
                     "{PREDECESSOR_PREFIX_MISMATCH_REFUSAL}: {} does not equal the cumulative prefix of {}",
                     coordinate_text(&predecessor.coordinate),
@@ -533,7 +533,7 @@ fn normalized_migrations(
 ) -> Result<Vec<NormalizedMigration<'_>>, PackageMigrationError> {
     if sources.is_empty() {
         return Err(PackageMigrationError::new(
-            PackageMigrationErrorKind::Gap,
+            PackageMigrationErrorType::Gap,
             format!("{PACKAGE_MIGRATION_GAP_REFUSAL}: package has no 0001 migration"),
         ));
     }
@@ -560,7 +560,7 @@ fn normalized_migrations(
             || (index > 0 && migrations[index - 1].ordinal == migration.ordinal)
         {
             return Err(PackageMigrationError::new(
-                PackageMigrationErrorKind::Duplicate,
+                PackageMigrationErrorType::Duplicate,
                 format!(
                     "{PACKAGE_MIGRATION_DUPLICATE_REFUSAL}: ordinal or path occurs more than once"
                 ),
@@ -570,7 +570,7 @@ fn normalized_migrations(
         let expected = u32::try_from(index + 1).expect("migration count fits u32");
         if migration.ordinal != expected {
             return Err(PackageMigrationError::new(
-                PackageMigrationErrorKind::Gap,
+                PackageMigrationErrorType::Gap,
                 format!(
                     "{PACKAGE_MIGRATION_GAP_REFUSAL}: expected ordinal {expected:04}, found {:04}",
                     migration.ordinal
@@ -603,7 +603,7 @@ fn migration_ordinal(path: &str) -> Result<u32, PackageMigrationError> {
     }
     digits.parse::<u32>().map_err(|source| {
         PackageMigrationError::with_source(
-            PackageMigrationErrorKind::InvalidDirectory,
+            PackageMigrationErrorType::InvalidDirectory,
             "migration ordinal is invalid",
             source,
         )
@@ -613,7 +613,7 @@ fn migration_ordinal(path: &str) -> Result<u32, PackageMigrationError> {
 
 fn invalid_path(path: &str) -> PackageMigrationError {
     PackageMigrationError::new(
-        PackageMigrationErrorKind::InvalidDirectory,
+        PackageMigrationErrorType::InvalidDirectory,
         "migration path must be migrations/NNNN_snake_case.sql",
     )
     .at_path(path)
@@ -630,7 +630,7 @@ fn validate_recorded_prefix(
             || (index > 0 && recorded[index - 1].ordinal == row.ordinal)
         {
             return Err(PackageMigrationError::new(
-                PackageMigrationErrorKind::Duplicate,
+                PackageMigrationErrorType::Duplicate,
                 format!(
                     "{PACKAGE_MIGRATION_DUPLICATE_REFUSAL}: recorded ordinal or path occurs more than once"
                 ),
@@ -640,7 +640,7 @@ fn validate_recorded_prefix(
         let expected = u32::try_from(index + 1).expect("migration count fits u32");
         if row.ordinal != expected {
             return Err(PackageMigrationError::new(
-                PackageMigrationErrorKind::Gap,
+                PackageMigrationErrorType::Gap,
                 format!(
                     "{PACKAGE_MIGRATION_GAP_REFUSAL}: migration records expected ordinal {expected:04}, found {:04}",
                     row.ordinal
@@ -652,7 +652,7 @@ fn validate_recorded_prefix(
     if recorded.len() > actual.len() {
         let missing = &recorded[actual.len()];
         return Err(PackageMigrationError::drift(
-            PackageMigrationErrorKind::MigrationDrift,
+            PackageMigrationErrorType::MigrationDrift,
             PACKAGE_MIGRATION_DRIFT_REFUSAL,
             coordinate,
             &missing.relative_path,
@@ -667,7 +667,7 @@ fn validate_recorded_prefix(
             || row.sha256 != migration.sha256
         {
             return Err(PackageMigrationError::drift(
-                PackageMigrationErrorKind::MigrationDrift,
+                PackageMigrationErrorType::MigrationDrift,
                 PACKAGE_MIGRATION_DRIFT_REFUSAL,
                 coordinate,
                 &row.relative_path,
@@ -693,7 +693,7 @@ fn transaction_statements(
     for migration in pending {
         let sql = std::str::from_utf8(&migration.source.bytes).map_err(|source| {
             PackageMigrationError::with_source(
-                PackageMigrationErrorKind::InvalidDirectory,
+                PackageMigrationErrorType::InvalidDirectory,
                 "migration SQL is not UTF-8",
                 source,
             )
@@ -725,7 +725,7 @@ fn record_migration_statement(
             Value::Text(coordinate.package_version().into()),
             Value::Int(i32::try_from(migration.ordinal).map_err(|source| {
                 PackageMigrationError::with_source(
-                    PackageMigrationErrorKind::InvalidDirectory,
+                    PackageMigrationErrorType::InvalidDirectory,
                     "migration ordinal exceeds PostgreSQL integer",
                     source,
                 )
@@ -845,7 +845,7 @@ mod tests {
                 Some("1.0.0"),
                 Some(("hash", Some("1.0.0"))),
                 None,
-                PackageMigrationErrorKind::CoordinateContentConflict,
+                PackageMigrationErrorType::CoordinateContentConflict,
                 "package-coordinate-content-conflict",
             ),
             (
@@ -853,7 +853,7 @@ mod tests {
                 None,
                 Some(("hash", Some("1.0.0"))),
                 None,
-                PackageMigrationErrorKind::CoordinatePredecessorConflict,
+                PackageMigrationErrorType::CoordinatePredecessorConflict,
                 "package-coordinate-predecessor-conflict",
             ),
             (
@@ -861,7 +861,7 @@ mod tests {
                 Some("1.0.0"),
                 Some(("hash", None)),
                 None,
-                PackageMigrationErrorKind::CoordinatePredecessorConflict,
+                PackageMigrationErrorType::CoordinatePredecessorConflict,
                 "package-coordinate-predecessor-conflict",
             ),
             (
@@ -869,7 +869,7 @@ mod tests {
                 None,
                 None,
                 Some("1.0.0"),
-                PackageMigrationErrorKind::PredecessorNotCurrent,
+                PackageMigrationErrorType::PredecessorNotCurrent,
                 "predecessor-not-current",
             ),
             (
@@ -877,7 +877,7 @@ mod tests {
                 Some("0.9.0"),
                 None,
                 Some("1.0.0"),
-                PackageMigrationErrorKind::PredecessorNotCurrent,
+                PackageMigrationErrorType::PredecessorNotCurrent,
                 "predecessor-not-current",
             ),
         ] {
@@ -942,7 +942,7 @@ mod tests {
 
         let error = plan_package_migrations(&directory, None)
             .expect_err("package application admitted a private permission");
-        assert_eq!(error.kind(), PackageMigrationErrorKind::InvalidManifest);
+        assert_eq!(error.kind(), PackageMigrationErrorType::InvalidManifest);
         assert!(
             error
                 .to_string()
@@ -1028,7 +1028,7 @@ mod tests {
             .expect_err("a short cumulative prefix refuses");
         assert_eq!(
             error.kind(),
-            PackageMigrationErrorKind::PredecessorPrefixMismatch
+            PackageMigrationErrorType::PredecessorPrefixMismatch
         );
         assert_eq!(error.path(), Some("migrations/0002_add_tag.sql"));
 
@@ -1043,7 +1043,7 @@ mod tests {
             .expect_err("a divergent cumulative prefix refuses");
         assert_eq!(
             error.kind(),
-            PackageMigrationErrorKind::PredecessorPrefixMismatch
+            PackageMigrationErrorType::PredecessorPrefixMismatch
         );
         assert_eq!(error.path(), Some("migrations/0001_initial.sql"));
     }
@@ -1058,7 +1058,7 @@ mod tests {
             migrations: Vec::new(),
         };
         let error = plan_package_migrations(&directory(), Some(&applied)).unwrap_err();
-        assert_eq!(error.kind(), PackageMigrationErrorKind::ManifestDrift);
+        assert_eq!(error.kind(), PackageMigrationErrorType::ManifestDrift);
         assert_eq!(error.coordinate(), Some("orders@1.0.0"));
         assert_eq!(error.path(), Some(PACKAGE_MANIFEST_PATH));
         assert_eq!(error.recorded_hash(), Some("sha256:recorded"));
@@ -1072,7 +1072,7 @@ mod tests {
             .retain(|migration| migration.relative_path == "migrations/0002_add_tag.sql");
         assert_eq!(
             plan_package_migrations(&gap, None).unwrap_err().kind(),
-            PackageMigrationErrorKind::Gap
+            PackageMigrationErrorType::Gap
         );
 
         let mut duplicate = directory();
@@ -1083,7 +1083,7 @@ mod tests {
             plan_package_migrations(&duplicate, None)
                 .unwrap_err()
                 .kind(),
-            PackageMigrationErrorKind::Duplicate
+            PackageMigrationErrorType::Duplicate
         );
 
         let first = plan_package_migrations(&directory(), None).unwrap();
@@ -1098,7 +1098,7 @@ mod tests {
             }],
         };
         let error = plan_package_migrations(&directory(), Some(&applied)).unwrap_err();
-        assert_eq!(error.kind(), PackageMigrationErrorKind::MigrationDrift);
+        assert_eq!(error.kind(), PackageMigrationErrorType::MigrationDrift);
         assert_eq!(error.path(), Some("migrations/0001_initial.sql"));
         assert_eq!(error.recorded_hash(), Some("sha256:changed"));
         assert!(error.actual_hash().unwrap().starts_with("sha256:"));
@@ -1118,7 +1118,7 @@ mod tests {
                         sha256: first.pending[1].sha256.clone(),
                     },
                 ],
-                PackageMigrationErrorKind::Duplicate,
+                PackageMigrationErrorType::Duplicate,
             ),
             (
                 vec![RecordedMigration {
@@ -1126,7 +1126,7 @@ mod tests {
                     relative_path: "migrations/0002_add_tag.sql".into(),
                     sha256: first.pending[1].sha256.clone(),
                 }],
-                PackageMigrationErrorKind::Gap,
+                PackageMigrationErrorType::Gap,
             ),
         ] {
             let applied = AppliedPackage {
@@ -1179,7 +1179,7 @@ mod tests {
 
             let error = plan_package_migrations(&refused, None)
                 .expect_err("noncanonical model relation identity refuses");
-            assert_eq!(error.kind(), PackageMigrationErrorKind::InvalidManifest);
+            assert_eq!(error.kind(), PackageMigrationErrorType::InvalidManifest);
             assert_eq!(error.path(), Some(PACKAGE_MANIFEST_PATH));
         }
     }

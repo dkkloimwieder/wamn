@@ -1,7 +1,7 @@
 use super::register_package;
 use tokio_postgres::{Client, NoTls};
 use wamn_catalog::PackageCoordinate;
-use wamn_schema_control::{PackageMigrationError, PackageMigrationErrorKind};
+use wamn_schema_control::{PackageMigrationError, PackageMigrationErrorType};
 
 const TENANT: &str = "package-registration";
 
@@ -37,7 +37,7 @@ async fn register(
     Ok(inserted)
 }
 
-fn refusal(error: &anyhow::Error, kind: PackageMigrationErrorKind) {
+fn refusal(error: &anyhow::Error, kind: PackageMigrationErrorType) {
     let error = error.downcast_ref::<PackageMigrationError>().unwrap();
     assert_eq!(error.kind(), kind);
     assert!(error.context().starts_with(kind.as_str()));
@@ -74,13 +74,13 @@ async fn registration_serializes_replay_conflicts_successors_and_rollback() {
             &register(&mut second, "1.0.0", &other_hash, None)
                 .await
                 .unwrap_err(),
-            PackageMigrationErrorKind::CoordinateContentConflict,
+            PackageMigrationErrorType::CoordinateContentConflict,
         );
         refusal(
             &register(&mut second, "1.0.0", &hash, Some("0.9.0"))
                 .await
                 .unwrap_err(),
-            PackageMigrationErrorKind::CoordinatePredecessorConflict,
+            PackageMigrationErrorType::CoordinatePredecessorConflict,
         );
 
         // Each contender reaches the actual caller while the winning transaction holds its lineage lock.
@@ -90,13 +90,13 @@ async fn registration_serializes_replay_conflicts_successors_and_rollback() {
                 "3.0.0",
                 "3.0.0",
                 other_hash.as_str(),
-                Some(PackageMigrationErrorKind::CoordinateContentConflict),
+                Some(PackageMigrationErrorType::CoordinateContentConflict),
             ),
             (
                 "4.0.0",
                 "4.1.0",
                 hash.as_str(),
-                Some(PackageMigrationErrorKind::PredecessorNotCurrent),
+                Some(PackageMigrationErrorType::PredecessorNotCurrent),
             ),
         ] {
             let predecessor = match winner {

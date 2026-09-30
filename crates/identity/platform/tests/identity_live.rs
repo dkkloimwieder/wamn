@@ -5,7 +5,7 @@ use std::time::Duration;
 use tokio_postgres::error::SqlState;
 use wamn_control_provision::{PlatformComponent, SYSTEM_SCHEMA_SQL};
 use wamn_platform_identity::{
-    IdentityErrorKind, PreparedIdentityReads, Principal, PrincipalId, PrincipalStatus,
+    IdentityErrorType, PreparedIdentityReads, Principal, PrincipalId, PrincipalStatus,
     PrincipalType, assign_project_role, create_human, create_service, disable_principal,
     grant_project_env_membership, has_project_env_membership, issue_pat, project_roles,
     resolve_principal, resolve_subject, revoke_project_env_membership,
@@ -82,7 +82,7 @@ async fn platform_identity_round_trip_on_postgres() {
     )
     .await
     .expect_err("duplicate human identity must fail");
-    assert_eq!(duplicate.kind(), IdentityErrorKind::Conflict);
+    assert_eq!(duplicate.kind(), IdentityErrorType::Conflict);
 
     one_address_admits_one_human(&client).await;
 
@@ -93,7 +93,7 @@ async fn platform_identity_round_trip_on_postgres() {
     let duplicate_service = create_service(&client, "agent-ci", "Second CI Agent")
         .await
         .expect_err("one subject admits one service");
-    assert_eq!(duplicate_service.kind(), IdentityErrorKind::Conflict);
+    assert_eq!(duplicate_service.kind(), IdentityErrorType::Conflict);
     assert!(
         resolve_subject(&client, PrincipalType::Service, "agent-ci")
             .await
@@ -197,7 +197,7 @@ async fn one_address_admits_one_human(client: &tokio_postgres::Client) {
     )
     .await
     .expect_err("one address admits one human");
-    assert_eq!(second.kind(), IdentityErrorKind::Conflict);
+    assert_eq!(second.kind(), IdentityErrorType::Conflict);
 }
 
 /// A project delete takes the project's roles and environment memberships with
@@ -395,7 +395,7 @@ async fn project_environment_membership_round_trip(
             .await
             .expect_err("service cannot hold a human membership")
             .kind(),
-        IdentityErrorKind::NotFound
+        IdentityErrorType::NotFound
     );
     let service_insert = client
         .execute(
@@ -415,7 +415,7 @@ async fn project_environment_membership_round_trip(
             .await
             .expect_err("unregistered environment cannot receive a membership")
             .kind(),
-        IdentityErrorKind::NotFound
+        IdentityErrorType::NotFound
     );
 
     for (principal, org, project, env) in other_memberships {

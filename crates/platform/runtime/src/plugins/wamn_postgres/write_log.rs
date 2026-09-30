@@ -19,7 +19,7 @@ use tokio_postgres::Row;
 use tokio_postgres::types::ToSql;
 use wamn_run_state::IntentStore;
 use wamn_run_state::intent_store::{
-    Begun, Intent, IntentId, StoreError, StoreErrorKind, StoredOutcome, UncertainIntent,
+    Begun, Intent, IntentId, StoreError, StoreErrorType, StoredOutcome, UncertainIntent,
 };
 use wamn_run_state::operator_action::OperatorActionBasis;
 
@@ -76,7 +76,7 @@ fn claim_of<'a>(
 ) -> Result<(&'a str, &'a str), StoreError> {
     id.0.split_once('#').ok_or_else(|| {
         StoreError::new(
-            StoreErrorKind::Contract,
+            StoreErrorType::Contract,
             operation,
             format!("intent id {:?} is not a write log claim", id.0),
         )
@@ -84,11 +84,11 @@ fn claim_of<'a>(
 }
 
 fn storage(operation: &'static str) -> impl Fn(PgError) -> StoreError {
-    move |error| StoreError::new(StoreErrorKind::Storage, operation, format!("{error:?}"))
+    move |error| StoreError::new(StoreErrorType::Storage, operation, format!("{error:?}"))
 }
 
 fn contract(operation: &'static str, detail: String) -> StoreError {
-    StoreError::new(StoreErrorKind::Contract, operation, detail)
+    StoreError::new(StoreErrorType::Contract, operation, detail)
 }
 
 /// Run one write log statement on `run`, and answer the begin of `intent`.

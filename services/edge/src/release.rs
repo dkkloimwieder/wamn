@@ -94,7 +94,7 @@ impl EdgeRelease {
         let mut bodies = Vec::with_capacity(components.len());
         for component in &components {
             bodies.push(source.pull_verified(component).await.map_err(|error| {
-                EdgeReleaseError::new(EdgeReleaseErrorKind::Mismatch, error.to_string())
+                EdgeReleaseError::new(EdgeReleaseErrorType::Mismatch, error.to_string())
             })?);
         }
 
@@ -194,14 +194,14 @@ fn read_pinned(directory: &Path, name: &str, pinned: &str) -> Result<Vec<u8>, Ed
     let path = directory.join(name);
     let bytes = std::fs::read(&path).map_err(|error| {
         EdgeReleaseError::new(
-            EdgeReleaseErrorKind::Unreadable,
+            EdgeReleaseErrorType::Unreadable,
             format!("read {}: {error}", path.display()),
         )
     })?;
     let digest = file_digest(&bytes);
     if digest != pinned {
         return Err(EdgeReleaseError::new(
-            EdgeReleaseErrorKind::Mismatch,
+            EdgeReleaseErrorType::Mismatch,
             format!("{name} has digest {digest}, and the release pins {pinned}"),
         ));
     }
@@ -210,7 +210,7 @@ fn read_pinned(directory: &Path, name: &str, pinned: &str) -> Result<Vec<u8>, Ed
 
 /// Stable classification for a refused edge release.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum EdgeReleaseErrorKind {
+pub enum EdgeReleaseErrorType {
     /// A bundle file is missing or unreadable.
     Unreadable,
     /// A file's bytes do not match the digest that pins them.
@@ -222,21 +222,21 @@ pub enum EdgeReleaseErrorKind {
 /// A refused edge release, with the file and the reason.
 #[derive(Debug)]
 pub struct EdgeReleaseError {
-    kind: EdgeReleaseErrorKind,
+    type_: EdgeReleaseErrorType,
     detail: Box<str>,
 }
 
 impl EdgeReleaseError {
-    pub(crate) fn new(kind: EdgeReleaseErrorKind, detail: impl Into<Box<str>>) -> Self {
+    pub(crate) fn new(kind: EdgeReleaseErrorType, detail: impl Into<Box<str>>) -> Self {
         Self {
-            kind,
+            type_: kind,
             detail: detail.into(),
         }
     }
 
     /// Return the stable failure class.
-    pub fn kind(&self) -> EdgeReleaseErrorKind {
-        self.kind
+    pub fn kind(&self) -> EdgeReleaseErrorType {
+        self.type_
     }
 }
 
@@ -249,5 +249,5 @@ impl fmt::Display for EdgeReleaseError {
 impl std::error::Error for EdgeReleaseError {}
 
 fn rejected(detail: String) -> EdgeReleaseError {
-    EdgeReleaseError::new(EdgeReleaseErrorKind::Rejected, detail)
+    EdgeReleaseError::new(EdgeReleaseErrorType::Rejected, detail)
 }

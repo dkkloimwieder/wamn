@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use serde_json::{Value, json};
-use wamn_schema_generator::client_ir::{ClientContractIr, ClientIrErrorKind, RouteIr, leaf_fields};
+use wamn_schema_generator::client_ir::{ClientContractIr, ClientIrErrorType, RouteIr, leaf_fields};
 
 use super::fixture;
 
@@ -142,7 +142,7 @@ fn private_operations_are_excluded_but_malformed_public_operations_refuse() {
     let refusal =
         ClientContractIr::from_release_contracts("platform_fixture", &malformed, &BTreeMap::new())
             .expect_err("a public operation without a grant refuses");
-    assert_eq!(refusal.kind(), ClientIrErrorKind::MissingMember);
+    assert_eq!(refusal.kind(), ClientIrErrorType::MissingMember);
     assert!(refusal.to_string().contains("grant"), "{refusal}");
 }
 
@@ -273,13 +273,13 @@ fn attachment_routes_refuse_ambiguity_and_an_authored_method() {
     let refusal = files
         .project()
         .expect_err("one operation at two paths refuses");
-    assert_eq!(refusal.kind(), ClientIrErrorKind::AmbiguousRoute);
+    assert_eq!(refusal.kind(), ClientIrErrorType::AmbiguousRoute);
     assert!(refusal.to_string().contains("/v2/widget/get"), "{refusal}");
 
     files.published.remove(&format!("{id}-alias"));
     files.published.get_mut(&id).unwrap()["definition"]["route"]["method"] = json!("GET");
     let refusal = files.project().expect_err("an authored method refuses");
-    assert_eq!(refusal.kind(), ClientIrErrorKind::UnnormalizedRoute);
+    assert_eq!(refusal.kind(), ClientIrErrorType::UnnormalizedRoute);
     assert!(refusal.to_string().contains("route.method"), "{refusal}");
 }
 

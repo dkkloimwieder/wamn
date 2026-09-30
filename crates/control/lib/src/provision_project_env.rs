@@ -84,7 +84,7 @@ use wamn_control_provision::{
 use wamn_control_registry::{Org, Placement, Triple, cluster_of};
 use wamn_pg_core::quote_ident;
 use wamn_platform_identity::{
-    IdentityErrorKind, Principal, PrincipalStatus, PrincipalType, assign_project_role,
+    IdentityErrorType, Principal, PrincipalStatus, PrincipalType, assign_project_role,
     authenticate_pat, create_service, operator_subject, resolve_subject, revoke_pat,
 };
 

@@ -197,7 +197,7 @@ async fn generated_code_contract_preserves_absence_and_value_on_the_wire_and_blo
         .expect_err("the generated code field refuses null");
     assert_eq!(
         error.kind(),
-        wamn_client::request::RequestErrorKind::NullNotAllowed
+        wamn_client::request::RequestErrorType::NullNotAllowed
     );
     assert_eq!(error.path(), "$.change.code");
     assert_eq!(transport.requests.lock().expect("read sent count").len(), 1);

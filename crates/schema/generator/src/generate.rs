@@ -35,7 +35,7 @@ use crate::manifest::{
 };
 use crate::sql;
 use crate::sql_lex::contains_schema_qualified_reference;
-use crate::{GenerateError, GenerateErrorKind};
+use crate::{GenerateError, GenerateErrorType};
 
 const QUERY_LIMIT: u32 = 100;
 const CURSOR_VERSION: u8 = 1;
@@ -211,7 +211,7 @@ impl GeneratedPackageMetadata {
     pub fn from_slice(bytes: &[u8]) -> Result<Self, GenerateError> {
         let metadata: Self = serde_json::from_slice(bytes).map_err(|source| {
             GenerateError::with_source(
-                GenerateErrorKind::InvalidManifest,
+                GenerateErrorType::InvalidManifest,
                 "package-weld.json does not match the package contract",
                 source,
             )
@@ -221,7 +221,7 @@ impl GeneratedPackageMetadata {
         );
         if canonical != bytes {
             return Err(GenerateError::new(
-                GenerateErrorKind::InvalidManifest,
+                GenerateErrorType::InvalidManifest,
                 "package-weld.json is not canonical compact JSON",
             ));
         }
@@ -237,7 +237,7 @@ impl GeneratedPackageMetadata {
         ] {
             if !valid_sha256(value) {
                 return Err(GenerateError::new(
-                    GenerateErrorKind::InvalidManifest,
+                    GenerateErrorType::InvalidManifest,
                     format!("package-weld.json {field} is not sha256:<64 lowercase hex>"),
                 ));
             }
@@ -248,7 +248,7 @@ impl GeneratedPackageMetadata {
         };
         if metadata.promotion_state != expected_promotion_state {
             return Err(GenerateError::new(
-                GenerateErrorKind::InvalidManifest,
+                GenerateErrorType::InvalidManifest,
                 "package-weld.json promotion_state disagrees with required_platform_policy_contract.state",
             ));
         }
@@ -1015,7 +1015,7 @@ pub(crate) fn insert_bytes(
 ) -> Result<(), GenerateError> {
     if files.insert(path.to_owned(), bytes).is_some() {
         Err(GenerateError::for_path(
-            GenerateErrorKind::DuplicatePath,
+            GenerateErrorType::DuplicatePath,
             "generated artifact path is repeated",
             path,
         ))

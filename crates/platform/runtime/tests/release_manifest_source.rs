@@ -22,7 +22,7 @@ use wamn_runtime::release_manifest_artifact::{
     RELEASE_MANIFEST_CONFIG_MEDIA_TYPE, release_manifest_artifact_layout,
     verify_release_manifest_artifact_layout,
 };
-use wamn_runtime::release_manifest_source::{ReleaseManifestFetchErrorKind, ReleaseManifestSource};
+use wamn_runtime::release_manifest_source::{ReleaseManifestFetchErrorType, ReleaseManifestSource};
 
 #[path = "support/metadata_server.rs"]
 mod metadata;
@@ -146,7 +146,7 @@ fn a_mutable_or_ambient_base_refuses_before_any_transport() {
             .expect_err("a base that cannot name an immutable artifact refuses");
         assert_eq!(
             error.kind(),
-            ReleaseManifestFetchErrorKind::InvalidReference,
+            ReleaseManifestFetchErrorType::InvalidReference,
             "accepted {base:?}"
         );
     }
@@ -159,7 +159,7 @@ fn a_missing_pull_credential_refuses_before_any_transport() {
     let error = ReleaseManifestSource::new(ARTIFACT_BASE, true, &credential.absent())
         .expect_err("an absent pull credential refuses");
 
-    assert_eq!(error.kind(), ReleaseManifestFetchErrorKind::Credential);
+    assert_eq!(error.kind(), ReleaseManifestFetchErrorType::Credential);
 }
 
 #[tokio::test]
@@ -178,7 +178,7 @@ async fn a_digest_that_cannot_name_an_artifact_refuses_before_any_transport() {
             .expect_err("a digest that is not `sha256:<64 lowercase hex>` refuses");
         assert_eq!(
             error.kind(),
-            ReleaseManifestFetchErrorKind::InvalidReference,
+            ReleaseManifestFetchErrorType::InvalidReference,
             "accepted {digest:?}"
         );
     }
@@ -279,7 +279,7 @@ async fn a_published_release_pulls_back_byte_exact_and_loads_the_release_it_name
             .await
             .expect_err("a digest the repository does not hold refuses")
             .kind(),
-        ReleaseManifestFetchErrorKind::Unavailable
+        ReleaseManifestFetchErrorType::Unavailable
     );
 }
 
@@ -478,7 +478,7 @@ async fn a_served_body_the_descriptor_undercounts_refuses_the_pull() {
         .await
         .expect_err("a body the descriptor undercounts refuses");
 
-    assert_eq!(error.kind(), ReleaseManifestFetchErrorKind::Mismatched);
+    assert_eq!(error.kind(), ReleaseManifestFetchErrorType::Mismatched);
     assert_eq!(
         error.refusal(),
         "release-manifest-artifact-body-size-mismatch"
@@ -525,7 +525,7 @@ async fn a_served_body_the_named_digest_does_not_address_refuses_the_pull() {
         .await
         .expect_err("a body the named digest does not address refuses");
 
-    assert_eq!(error.kind(), ReleaseManifestFetchErrorKind::Mismatched);
+    assert_eq!(error.kind(), ReleaseManifestFetchErrorType::Mismatched);
     assert_eq!(
         error.refusal(),
         "release-manifest-artifact-body-digest-mismatch"
@@ -550,7 +550,7 @@ async fn a_manifest_the_registry_cannot_parse_refuses_as_a_contradiction() {
         .await
         .expect_err("a manifest the registry cannot parse refuses");
 
-    assert_eq!(error.kind(), ReleaseManifestFetchErrorKind::Mismatched);
+    assert_eq!(error.kind(), ReleaseManifestFetchErrorType::Mismatched);
     assert_eq!(
         error.refusal(),
         "release-manifest-artifact-envelope-mismatch"
@@ -621,7 +621,7 @@ async fn a_failed_token_request_refuses_the_pull_before_any_registry_transport()
         .pull_verified(&digest)
         .await
         .expect_err("a pull without a token refuses");
-    assert_eq!(error.kind(), ReleaseManifestFetchErrorKind::Credential);
+    assert_eq!(error.kind(), ReleaseManifestFetchErrorType::Credential);
     assert_eq!(error.refusal(), "registry-token-metadata-unavailable");
     assert_eq!(registry.request_count(), 0);
 }

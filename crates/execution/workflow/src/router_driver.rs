@@ -12,7 +12,7 @@ use crate::wiring_lowering::{WiringScope, lower_resolved_wiring};
 use anyhow::Context as _;
 use tracing::Instrument as _;
 use wamn_catalog::{AdmittedComponent, DefinitionHash, ServingManifest, ServingWiring};
-use wamn_engine::artifact_source::ComponentArtifactFetchErrorKind;
+use wamn_engine::artifact_source::ComponentArtifactFetchErrorType;
 use wamn_engine::flow_http_routing::AuthenticatedCaller;
 use wamn_engine::operation::native_workload::NativeComponent;
 use wamn_engine::operation::{
@@ -891,7 +891,7 @@ impl RouterDriver {
                 Ok(bytes) => {
                     bytes_by_digest.insert(component.component_digest.clone(), bytes);
                 }
-                Err(error) if error.kind() == ComponentArtifactFetchErrorKind::Unavailable => {
+                Err(error) if error.kind() == ComponentArtifactFetchErrorType::Unavailable => {
                     return Err(error.into());
                 }
                 Err(error) => {

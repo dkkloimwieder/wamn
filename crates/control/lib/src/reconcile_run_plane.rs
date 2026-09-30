@@ -172,7 +172,7 @@ pub struct ReconcileRunPlaneOutcome {
 
 /// Stable class for a run-plane target-identity refusal.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ReconcileTargetErrorKind {
+pub enum ReconcileTargetErrorType {
     /// The trusted triple could not resolve to one recorded registry target.
     RegistryTarget,
     /// The connected database did not match the registry-derived target identity.
@@ -185,7 +185,7 @@ pub const RECONCILE_TARGET_REFUSAL_PREFIX: &str = "reconcile-run-plane target re
 /// Contextual refusal raised before any run-plane or policy mutation.
 #[derive(Debug)]
 pub struct ReconcileTargetError {
-    kind: ReconcileTargetErrorKind,
+    type_: ReconcileTargetErrorType,
     context: String,
     expected_database: Option<String>,
     actual_database: Option<String>,
@@ -194,12 +194,12 @@ pub struct ReconcileTargetError {
 
 impl ReconcileTargetError {
     fn with_source(
-        kind: ReconcileTargetErrorKind,
+        type_: ReconcileTargetErrorType,
         context: impl Into<String>,
         source: impl Into<anyhow::Error>,
     ) -> Self {
         Self {
-            kind,
+            type_,
             context: format!("{RECONCILE_TARGET_REFUSAL_PREFIX}: {}", context.into()),
             expected_database: None,
             actual_database: None,
@@ -209,7 +209,7 @@ impl ReconcileTargetError {
 
     fn mismatch(triple: &Triple, expected_database: String, actual_database: String) -> Self {
         Self {
-            kind: ReconcileTargetErrorKind::DatabaseTarget,
+            type_: ReconcileTargetErrorType::DatabaseTarget,
             context: format!(
                 "{RECONCILE_TARGET_REFUSAL_PREFIX}: database target mismatch for registry triple {triple}: expected {expected_database:?}, actual {actual_database:?}"
             ),
@@ -220,18 +220,18 @@ impl ReconcileTargetError {
     }
 
     /// Return the stable refusal class.
-    pub const fn kind(&self) -> ReconcileTargetErrorKind {
-        self.kind
+    pub const fn kind(&self) -> ReconcileTargetErrorType {
+        self.type_
     }
 
     /// Whether the trusted triple failed to resolve in the registry.
     pub const fn is_registry_target(&self) -> bool {
-        matches!(self.kind, ReconcileTargetErrorKind::RegistryTarget)
+        matches!(self.type_, ReconcileTargetErrorType::RegistryTarget)
     }
 
     /// Whether the connected database failed the exact target check.
     pub const fn is_database_target(&self) -> bool {
-        matches!(self.kind, ReconcileTargetErrorKind::DatabaseTarget)
+        matches!(self.type_, ReconcileTargetErrorType::DatabaseTarget)
     }
 
     /// The exact registry-derived database name, when target comparison ran.
@@ -269,7 +269,7 @@ pub async fn reconcile_run_plane(
     let triple = Triple::new(&args.org, &args.project, args.env.as_str());
     validate_project_env(&args.org, &args.project, &args.env).map_err(|source| {
         ReconcileTargetError::with_source(
-            ReconcileTargetErrorKind::RegistryTarget,
+            ReconcileTargetErrorType::RegistryTarget,
             format!("registry target identity {triple} is invalid"),
             source,
         )
@@ -279,7 +279,7 @@ pub async fn reconcile_run_plane(
             .await
             .map_err(|source| {
                 ReconcileTargetError::with_source(
-                    ReconcileTargetErrorKind::RegistryTarget,
+                    ReconcileTargetErrorType::RegistryTarget,
                     format!("registry target {triple} has no usable recorded instance"),
                     source,
                 )
@@ -290,7 +290,7 @@ pub async fn reconcile_run_plane(
         .await
         .map_err(|source| {
             ReconcileTargetError::with_source(
-                ReconcileTargetErrorKind::DatabaseTarget,
+                ReconcileTargetErrorType::DatabaseTarget,
                 format!("database target for registry triple {triple} did not connect"),
                 source,
             )
@@ -302,7 +302,7 @@ pub async fn reconcile_run_plane(
         .map(|row| row.get::<_, String>(0))
         .map_err(|source| {
             ReconcileTargetError::with_source(
-                ReconcileTargetErrorKind::DatabaseTarget,
+                ReconcileTargetErrorType::DatabaseTarget,
                 format!("database target for registry triple {triple} did not identify itself"),
                 source,
             )

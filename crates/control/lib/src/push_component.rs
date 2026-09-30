@@ -34,7 +34,7 @@ use wamn_runtime::component_artifact_source::{
 };
 use wamn_runtime::registry_credentials::{RegistryCredentials, read_registry_credentials};
 use wamn_schema_control::connections::ComponentConnectionRequirement;
-use wamn_schema_control::{PackageDirectory, PackageMigrationErrorKind, plan_package_migrations};
+use wamn_schema_control::{PackageDirectory, PackageMigrationErrorType, plan_package_migrations};
 
 /// Bound each registry connect/read phase without adding a second deployment knob.
 const REGISTRY_IO_TIMEOUT: Duration = Duration::from_secs(30);
@@ -149,7 +149,7 @@ pub const COMPONENT_PROJECTION_REFUSAL: &str = "component-projection-refused";
 
 /// Remedy-distinct projector refusal.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ComponentProjectionErrorKind {
+pub enum ComponentProjectionErrorType {
     PackageCoordinateMismatch,
     SourcePackageNotApplied,
     PackageManifestMismatch,
@@ -166,7 +166,7 @@ pub enum ComponentProjectionErrorKind {
     StatementCorpusMismatch,
 }
 
-impl ComponentProjectionErrorKind {
+impl ComponentProjectionErrorType {
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::PackageCoordinateMismatch => "package-coordinate-mismatch",
@@ -190,20 +190,20 @@ impl ComponentProjectionErrorKind {
 /// Contextual refusal from the dual-plane projection boundary.
 #[derive(Debug)]
 pub struct ComponentProjectionError {
-    kind: ComponentProjectionErrorKind,
+    type_: ComponentProjectionErrorType,
     detail: String,
 }
 
 impl ComponentProjectionError {
-    fn new(kind: ComponentProjectionErrorKind, detail: impl Into<String>) -> Self {
+    fn new(kind: ComponentProjectionErrorType, detail: impl Into<String>) -> Self {
         Self {
-            kind,
+            type_: kind,
             detail: detail.into(),
         }
     }
 
-    pub const fn kind(&self) -> ComponentProjectionErrorKind {
-        self.kind
+    pub const fn kind(&self) -> ComponentProjectionErrorType {
+        self.type_
     }
 
     pub fn detail(&self) -> &str {
@@ -216,7 +216,7 @@ impl fmt::Display for ComponentProjectionError {
         write!(
             formatter,
             "{COMPONENT_PROJECTION_REFUSAL} ({}): {}",
-            self.kind.as_str(),
+            self.type_.as_str(),
             self.detail
         )
     }
@@ -577,7 +577,7 @@ pub async fn publish_admitted_component(
         || project.projection_hash != admission.projection_hash.as_ref()
     {
         return Err(ComponentProjectionError::new(
-            ComponentProjectionErrorKind::PlaneContentMismatch,
+            ComponentProjectionErrorType::PlaneContentMismatch,
             format!(
                 "{}@{} verification manifest/projection ({}, {}) disagrees with control ({}, {}) or admitted projection {}",
                 admitted.scope.package_id,
@@ -661,7 +661,7 @@ fn load_component_statement_facts(
 ) -> Result<BTreeMap<String, BTreeMap<String, ComponentSqlStatement>>, ComponentProjectionError> {
     wamn_schema_generator::validate_operation_vocabulary(manifest).map_err(|error| {
         ComponentProjectionError::new(
-            ComponentProjectionErrorKind::StatementContractInvalid,
+            ComponentProjectionErrorType::StatementContractInvalid,
             format!("package operation vocabulary is invalid: {error}"),
         )
     })?;
@@ -670,7 +670,7 @@ fn load_component_statement_facts(
         validate_component_operation_assignment(manifest, component, &expected)?;
     let canonical_root = package_root.canonicalize().map_err(|error| {
         ComponentProjectionError::new(
-            ComponentProjectionErrorKind::StatementPathInvalid,
+            ComponentProjectionErrorType::StatementPathInvalid,
             format!(
                 "cannot resolve package root {} while reading statement evidence: {error}",
                 package_root.display()
@@ -691,7 +691,7 @@ fn load_component_statement_facts(
         let contract: GeneratedOperationContract = serde_json::from_slice(&contract_bytes)
             .map_err(|error| {
                 ComponentProjectionError::new(
-                    ComponentProjectionErrorKind::StatementContractInvalid,
+                    ComponentProjectionErrorType::StatementContractInvalid,
                     format!(
                         "generated operation contract {} has invalid statement shape: {error}",
                         package_root.join(contract_path).display()
@@ -700,7 +700,7 @@ fn load_component_statement_facts(
             })?;
         if contract.operation != *operation || contract.fresh_only != expected_contract.fresh_only {
             return Err(ComponentProjectionError::new(
-                ComponentProjectionErrorKind::StatementOperationMismatch,
+                ComponentProjectionErrorType::StatementOperationMismatch,
                 format!(
                     "generated operation contract {} names {:?} with fresh_only={}, expected {operation:?} with fresh_only={}",
                     package_root.join(contract_path).display(),
@@ -726,7 +726,7 @@ fn load_component_statement_facts(
                 || declared_participants != expected_participant.into_iter().collect::<Vec<_>>()
             {
                 return Err(ComponentProjectionError::new(
-                    ComponentProjectionErrorKind::StatementOperationMismatch,
+                    ComponentProjectionErrorType::StatementOperationMismatch,
                     format!(
                         "operation {operation:?} participation differs from its generated contract"
                     ),
@@ -754,7 +754,7 @@ fn load_component_statement_facts(
     let metadata = wamn_schema_generator::GeneratedPackageMetadata::from_slice(&metadata_bytes)
         .map_err(|error| {
             ComponentProjectionError::new(
-                ComponentProjectionErrorKind::StatementCorpusMismatch,
+                ComponentProjectionErrorType::StatementCorpusMismatch,
                 format!(
                     "generated package contract {} is invalid: {error}",
                     package_root.join(metadata_path).display()
@@ -768,7 +768,7 @@ fn load_component_statement_facts(
     );
     if observed_corpus != metadata.application_sql_corpus_identity() {
         return Err(ComponentProjectionError::new(
-            ComponentProjectionErrorKind::StatementCorpusMismatch,
+            ComponentProjectionErrorType::StatementCorpusMismatch,
             format!(
                 "generated statement corpus is {observed_corpus}, but package contract records {}",
                 metadata.application_sql_corpus_identity()
@@ -828,7 +828,7 @@ fn validate_component_operation_assignment(
             return Ok(BTreeSet::new());
         }
         return Err(ComponentProjectionError::new(
-            ComponentProjectionErrorKind::StatementComponentMismatch,
+            ComponentProjectionErrorType::StatementComponentMismatch,
             format!(
                 "component {:?} is absent from the package manifest yet registers manifest operations: {registered:?}",
                 component.component
@@ -846,7 +846,7 @@ fn validate_component_operation_assignment(
         .collect::<Vec<_>>();
     if !misassigned.is_empty() {
         return Err(ComponentProjectionError::new(
-            ComponentProjectionErrorKind::StatementComponentMismatch,
+            ComponentProjectionErrorType::StatementComponentMismatch,
             format!(
                 "component {:?} exports manifest operations assigned elsewhere: {misassigned:?}",
                 component.component
@@ -880,7 +880,7 @@ fn validate_component_operation_assignment(
         .collect::<Vec<_>>();
     if !missing.is_empty() || !unexpected_public.is_empty() {
         return Err(ComponentProjectionError::new(
-            ComponentProjectionErrorKind::StatementOperationMismatch,
+            ComponentProjectionErrorType::StatementOperationMismatch,
             format!(
                 "component {:?} differs from its manifest operation set: missing={missing:?}, unexpected-public={unexpected_public:?}",
                 component.component
@@ -894,7 +894,7 @@ fn validate_component_operation_assignment(
             || declared.fresh_only != expected[operation].fresh_only
         {
             return Err(ComponentProjectionError::new(
-                ComponentProjectionErrorKind::StatementOperationMismatch,
+                ComponentProjectionErrorType::StatementOperationMismatch,
                 format!(
                     "component {:?} export {operation:?} registered-operation is {:?} with fresh-only={}, expected {expected_registration:?} with fresh-only={}",
                     component.component,
@@ -956,7 +956,7 @@ fn insert_expected_operation(
 ) -> Result<(), ComponentProjectionError> {
     let component = component.ok_or_else(|| {
         ComponentProjectionError::new(
-            ComponentProjectionErrorKind::StatementOperationMismatch,
+            ComponentProjectionErrorType::StatementOperationMismatch,
             format!("operation {local_operation:?} has no component assignment"),
         )
     })?;
@@ -964,13 +964,13 @@ fn insert_expected_operation(
         wamn_schema_generator::canonical_operation_identity(&manifest.package, local_operation)
             .map_err(|error| {
                 ComponentProjectionError::new(
-                    ComponentProjectionErrorKind::StatementOperationMismatch,
+                    ComponentProjectionErrorType::StatementOperationMismatch,
                     format!("operation {local_operation:?} is not canonical: {error}"),
                 )
             })?;
     let (module, action) = local_operation.split_once('.').ok_or_else(|| {
         ComponentProjectionError::new(
-            ComponentProjectionErrorKind::StatementOperationMismatch,
+            ComponentProjectionErrorType::StatementOperationMismatch,
             format!("operation {local_operation:?} has no module/action boundary"),
         )
     })?;
@@ -988,7 +988,7 @@ fn insert_expected_operation(
         .is_some()
     {
         return Err(ComponentProjectionError::new(
-            ComponentProjectionErrorKind::StatementOperationMismatch,
+            ComponentProjectionErrorType::StatementOperationMismatch,
             format!("operation {operation:?} occurs more than once in the package manifest"),
         ));
     }
@@ -1009,7 +1009,7 @@ fn load_operation_statements(
         validate_generated_statement_shape(operation, &statement)?;
         if !names.insert(statement.name.clone()) || !paths.insert(statement.path.clone()) {
             return Err(ComponentProjectionError::new(
-                ComponentProjectionErrorKind::StatementContractInvalid,
+                ComponentProjectionErrorType::StatementContractInvalid,
                 format!("operation {operation:?} repeats a statement name or path"),
             ));
         }
@@ -1023,7 +1023,7 @@ fn load_operation_statements(
         let observed_digest = component_sql_digest(&bytes);
         if statement.digest != observed_digest {
             return Err(ComponentProjectionError::new(
-                ComponentProjectionErrorKind::StatementDigestMismatch,
+                ComponentProjectionErrorType::StatementDigestMismatch,
                 format!(
                     "operation {operation:?} statement {:?} records {}, exact bytes are {observed_digest}",
                     statement.name, statement.digest
@@ -1034,7 +1034,7 @@ fn load_operation_statements(
             .map(str::to_owned)
             .map_err(|error| {
                 ComponentProjectionError::new(
-                    ComponentProjectionErrorKind::StatementContractInvalid,
+                    ComponentProjectionErrorType::StatementContractInvalid,
                     format!(
                         "operation {operation:?} statement {:?} is not UTF-8 SQL: {error}",
                         statement.name
@@ -1051,7 +1051,7 @@ fn load_operation_statements(
         };
         if admitted.insert(statement.digest.clone(), fact).is_some() {
             return Err(ComponentProjectionError::new(
-                ComponentProjectionErrorKind::StatementContractInvalid,
+                ComponentProjectionErrorType::StatementContractInvalid,
                 format!(
                     "operation {operation:?} repeats statement digest {:?}",
                     statement.digest
@@ -1061,7 +1061,7 @@ fn load_operation_statements(
         if let Some(existing) = corpus.get(&statement.path) {
             if existing != &bytes {
                 return Err(ComponentProjectionError::new(
-                    ComponentProjectionErrorKind::StatementCorpusMismatch,
+                    ComponentProjectionErrorType::StatementCorpusMismatch,
                     format!(
                         "package SQL path {:?} resolves to different bytes across operation contracts",
                         statement.path
@@ -1081,7 +1081,7 @@ fn validate_generated_statement_shape(
 ) -> Result<(), ComponentProjectionError> {
     if !canonical_text(&statement.name) {
         return Err(ComponentProjectionError::new(
-            ComponentProjectionErrorKind::StatementContractInvalid,
+            ComponentProjectionErrorType::StatementContractInvalid,
             format!("operation {operation:?} carries an empty or non-canonical statement name"),
         ));
     }
@@ -1090,7 +1090,7 @@ fn validate_generated_statement_shape(
         for field in fields {
             if !canonical_text(&field.name) || !names.insert(field.name.as_str()) {
                 return Err(ComponentProjectionError::new(
-                    ComponentProjectionErrorKind::StatementContractInvalid,
+                    ComponentProjectionErrorType::StatementContractInvalid,
                     format!(
                         "operation {operation:?} statement {:?} carries an empty, non-canonical, or duplicate {kind}",
                         statement.name
@@ -1133,7 +1133,7 @@ fn read_package_owned_file(
             != relative_path
     {
         return Err(ComponentProjectionError::new(
-            ComponentProjectionErrorKind::StatementPathInvalid,
+            ComponentProjectionErrorType::StatementPathInvalid,
             format!(
                 "{subject} path {relative_path:?} is not a canonical package-relative .{extension} path"
             ),
@@ -1142,31 +1142,31 @@ fn read_package_owned_file(
     let candidate = package_root.join(path);
     let metadata = std::fs::symlink_metadata(&candidate).map_err(|error| {
         ComponentProjectionError::new(
-            ComponentProjectionErrorKind::StatementPathInvalid,
+            ComponentProjectionErrorType::StatementPathInvalid,
             format!("{subject} cannot inspect path {relative_path:?}: {error}"),
         )
     })?;
     if metadata.file_type().is_symlink() || !metadata.is_file() {
         return Err(ComponentProjectionError::new(
-            ComponentProjectionErrorKind::StatementPathInvalid,
+            ComponentProjectionErrorType::StatementPathInvalid,
             format!("{subject} path {relative_path:?} is not a package-owned regular file"),
         ));
     }
     let canonical_candidate = candidate.canonicalize().map_err(|error| {
         ComponentProjectionError::new(
-            ComponentProjectionErrorKind::StatementPathInvalid,
+            ComponentProjectionErrorType::StatementPathInvalid,
             format!("{subject} cannot resolve path {relative_path:?}: {error}"),
         )
     })?;
     if !canonical_candidate.starts_with(canonical_root) {
         return Err(ComponentProjectionError::new(
-            ComponentProjectionErrorKind::StatementPathInvalid,
+            ComponentProjectionErrorType::StatementPathInvalid,
             format!("{subject} path {relative_path:?} escapes the package"),
         ));
     }
     std::fs::read(&canonical_candidate).map_err(|error| {
         ComponentProjectionError::new(
-            ComponentProjectionErrorKind::StatementPathInvalid,
+            ComponentProjectionErrorType::StatementPathInvalid,
             format!("{subject} cannot read path {relative_path:?}: {error}"),
         )
     })
@@ -1279,7 +1279,7 @@ fn ensure_component_package_matches(
         || component.scope.package_version != package.package_version()
     {
         return Err(ComponentProjectionError::new(
-            ComponentProjectionErrorKind::PackageCoordinateMismatch,
+            ComponentProjectionErrorType::PackageCoordinateMismatch,
             format!(
                 "declaration names {}@{} but package directory names {}@{}",
                 component.scope.package_id,
@@ -1382,7 +1382,7 @@ async fn require_exact_verification_projection_with_client(
         require_exact_applied_package(&transaction, component, directory, package_path).await?;
     if observed_manifest != manifest_sha256 {
         return Err(ComponentProjectionError::new(
-            ComponentProjectionErrorKind::PackageManifestMismatch,
+            ComponentProjectionErrorType::PackageManifestMismatch,
             format!(
                 "verification-project {}@{} recorded-sha256={} admitted-sha256={manifest_sha256}",
                 component.scope.package_id, component.scope.package_version, observed_manifest
@@ -1433,7 +1433,7 @@ async fn require_exact_verification_projection_with_client(
         let (kind, detail) = observed.map_or_else(
             || {
                 (
-                    ComponentProjectionErrorKind::VerificationProjectionMissing,
+                    ComponentProjectionErrorType::VerificationProjectionMissing,
                     format!(
                         "verification-project lacks {}@{} component={}; project the admission before publication",
                         component.scope.package_id,
@@ -1444,7 +1444,7 @@ async fn require_exact_verification_projection_with_client(
             },
             |observed_hash| {
                 (
-                    ComponentProjectionErrorKind::ComponentFactConflict,
+                    ComponentProjectionErrorType::ComponentFactConflict,
                     format!(
                         "verification-project {}@{} component={} recorded-projection={} admitted-projection={projection_hash}",
                         component.scope.package_id,
@@ -1578,13 +1578,13 @@ async fn persist_with_client(
                 .is_some_and(|error| {
                     matches!(
                         error.kind(),
-                        PackageMigrationErrorKind::CoordinateContentConflict
-                            | PackageMigrationErrorKind::CoordinatePredecessorConflict
+                        PackageMigrationErrorType::CoordinateContentConflict
+                            | PackageMigrationErrorType::CoordinatePredecessorConflict
                     )
                 })
             {
                 anyhow::Error::from(ComponentProjectionError::new(
-                    ComponentProjectionErrorKind::PackageManifestMismatch,
+                    ComponentProjectionErrorType::PackageManifestMismatch,
                     format!(
                         "control {}@{}: {source}",
                         component.scope.package_id, component.scope.package_version
@@ -1664,7 +1664,7 @@ async fn require_exact_applied_package(
 ) -> anyhow::Result<String> {
     let presented = plan_package_migrations(directory, None).map_err(|error| {
         ComponentProjectionError::new(
-            ComponentProjectionErrorKind::SourcePackageMigrationMismatch,
+            ComponentProjectionErrorType::SourcePackageMigrationMismatch,
             format!("package directory is invalid: {error}"),
         )
     })?;
@@ -1678,7 +1678,7 @@ async fn require_exact_applied_package(
     .await?
     else {
         return Err(ComponentProjectionError::new(
-            ComponentProjectionErrorKind::SourcePackageNotApplied,
+            ComponentProjectionErrorType::SourcePackageNotApplied,
             format!(
                 "source-project lacks {}@{}; run wamn-ctl apply-package --package {} against the source project before push-component",
                 component.scope.package_id,
@@ -1690,7 +1690,7 @@ async fn require_exact_applied_package(
     };
     if applied.predecessor_version.as_deref() != presented.predecessor_version.as_deref() {
         return Err(ComponentProjectionError::new(
-            ComponentProjectionErrorKind::PackageManifestMismatch,
+            ComponentProjectionErrorType::PackageManifestMismatch,
             format!(
                 "source-project {}@{} recorded-predecessor={:?} presented-predecessor={:?}",
                 component.scope.package_id,
@@ -1702,16 +1702,16 @@ async fn require_exact_applied_package(
         .into());
     }
     let exact = plan_package_migrations(directory, Some(&applied)).map_err(|error| {
-        let kind = if error.kind() == PackageMigrationErrorKind::ManifestDrift {
-            ComponentProjectionErrorKind::PackageManifestMismatch
+        let kind = if error.kind() == PackageMigrationErrorType::ManifestDrift {
+            ComponentProjectionErrorType::PackageManifestMismatch
         } else {
-            ComponentProjectionErrorKind::SourcePackageMigrationMismatch
+            ComponentProjectionErrorType::SourcePackageMigrationMismatch
         };
         ComponentProjectionError::new(kind, error.to_string())
     })?;
     if let Some(pending) = exact.pending.first() {
         return Err(ComponentProjectionError::new(
-            ComponentProjectionErrorKind::SourcePackageMigrationMismatch,
+            ComponentProjectionErrorType::SourcePackageMigrationMismatch,
             format!(
                 "source-project {}@{} is missing local migration {} (sha256={}); run apply-package before push-component",
                 component.scope.package_id,
@@ -1747,7 +1747,7 @@ async fn require_exact_package(
     let Some(row) = row else {
         let (kind, remedy) = if plane == ProjectionPlane::SourceProject {
             (
-                ComponentProjectionErrorKind::SourcePackageNotApplied,
+                ComponentProjectionErrorType::SourcePackageNotApplied,
                 format!(
                     "run wamn-ctl apply-package --package {} against the source project before push-component",
                     package_path.display()
@@ -1755,7 +1755,7 @@ async fn require_exact_package(
             )
         } else {
             (
-                ComponentProjectionErrorKind::PlaneContentMismatch,
+                ComponentProjectionErrorType::PlaneContentMismatch,
                 "control package projection did not persist its package root".to_owned(),
             )
         };
@@ -1772,7 +1772,7 @@ async fn require_exact_package(
     let recorded_predecessor: Option<String> = row.get(1);
     if recorded != manifest_sha256 || recorded_predecessor.as_deref() != predecessor_version {
         return Err(ComponentProjectionError::new(
-            ComponentProjectionErrorKind::PackageManifestMismatch,
+            ComponentProjectionErrorType::PackageManifestMismatch,
             format!(
                 "{plane} {}@{} recorded-sha256={} presented-sha256={manifest_sha256} recorded-predecessor={recorded_predecessor:?} presented-predecessor={predecessor_version:?}",
                 component.scope.package_id, component.scope.package_version, recorded
@@ -1841,7 +1841,7 @@ async fn append_or_verify_requirement(
         .get(0);
     if !exact {
         return Err(ComponentProjectionError::new(
-            ComponentProjectionErrorKind::ConnectionFactConflict,
+            ComponentProjectionErrorType::ConnectionFactConflict,
             format!(
                 "component={} store-alias={} collides with different requirement bytes",
                 requirement.component_digest(),
@@ -1869,7 +1869,7 @@ async fn verify_requirements(
         let hash = requirement.requirement_hash();
         if expected.insert(alias.clone(), hash).is_some() {
             return Err(ComponentProjectionError::new(
-                ComponentProjectionErrorKind::ConnectionFactConflict,
+                ComponentProjectionErrorType::ConnectionFactConflict,
                 format!(
                     "component={component_digest} repeats store-alias={alias} in its admitted projection"
                 ),
@@ -1898,7 +1898,7 @@ async fn verify_requirements(
     .collect::<BTreeMap<_, _>>();
     if observed != expected {
         return Err(ComponentProjectionError::new(
-            ComponentProjectionErrorKind::ConnectionFactConflict,
+            ComponentProjectionErrorType::ConnectionFactConflict,
             format!(
                 "component={component_digest} requirements differ: expected={expected:?} observed={observed:?}"
             ),
@@ -2028,7 +2028,7 @@ async fn append_or_verify_admitted_component_count(
     };
     if owner != component.scope.package_id {
         return Err(ComponentProjectionError::new(
-            ComponentProjectionErrorKind::ComponentFactConflict,
+            ComponentProjectionErrorType::ComponentFactConflict,
             format!(
                 "{}@{} component={} digest {} belongs to package {owner}",
                 component.scope.package_id,
@@ -2062,7 +2062,7 @@ async fn append_or_verify_admitted_component_count(
             .get(0);
         if !exact {
             return Err(ComponentProjectionError::new(
-                ComponentProjectionErrorKind::ComponentFactConflict,
+                ComponentProjectionErrorType::ComponentFactConflict,
                 format!(
                     "{}@{} component={} interface-version={} collides with different admitted facts",
                     component.scope.package_id,
@@ -2283,7 +2283,7 @@ mod tests {
                 let error = assignment.expect_err("authored and component flags differ");
                 assert_eq!(
                     error.kind(),
-                    ComponentProjectionErrorKind::StatementOperationMismatch
+                    ComponentProjectionErrorType::StatementOperationMismatch
                 );
                 assert!(error.to_string().contains("fresh-only="));
             }
@@ -2291,7 +2291,7 @@ mod tests {
                 .expect_err("at least one of the three freshness declarations differs");
             assert_eq!(
                 error.kind(),
-                ComponentProjectionErrorKind::StatementOperationMismatch
+                ComponentProjectionErrorType::StatementOperationMismatch
             );
             if authored == declared {
                 assert!(error.to_string().contains("fresh_only=false"));
@@ -2331,7 +2331,7 @@ mod tests {
         .expect_err("a path traversal was admitted");
         assert_eq!(
             path_error.kind(),
-            ComponentProjectionErrorKind::StatementPathInvalid
+            ComponentProjectionErrorType::StatementPathInvalid
         );
 
         let mut corpus = BTreeMap::new();
@@ -2352,7 +2352,7 @@ mod tests {
         .expect_err("statement digest drift was admitted");
         assert_eq!(
             digest_error.kind(),
-            ComponentProjectionErrorKind::StatementDigestMismatch
+            ComponentProjectionErrorType::StatementDigestMismatch
         );
     }
 
@@ -2439,7 +2439,7 @@ mod tests {
 
         assert_eq!(
             error.kind(),
-            ComponentProjectionErrorKind::StatementComponentMismatch
+            ComponentProjectionErrorType::StatementComponentMismatch
         );
     }
 
@@ -2528,7 +2528,7 @@ mod tests {
 
         assert_eq!(
             error.kind(),
-            ComponentProjectionErrorKind::StatementComponentMismatch
+            ComponentProjectionErrorType::StatementComponentMismatch
         );
         assert!(
             error
@@ -2690,7 +2690,7 @@ mod tests {
                 .downcast_ref::<ComponentProjectionError>()
                 .expect("missing package is a typed refusal")
                 .kind(),
-            ComponentProjectionErrorKind::SourcePackageNotApplied
+            ComponentProjectionErrorType::SourcePackageNotApplied
         );
         project
             .execute(
@@ -2714,7 +2714,7 @@ mod tests {
                 .downcast_ref::<ComponentProjectionError>()
                 .expect("incomplete migration records cause a typed refusal")
                 .kind(),
-            ComponentProjectionErrorKind::SourcePackageMigrationMismatch
+            ComponentProjectionErrorType::SourcePackageMigrationMismatch
         );
         let mut manifest_drift = directory.clone();
         manifest_drift.manifest_bytes.push(b'\n');
@@ -2731,7 +2731,7 @@ mod tests {
                 .downcast_ref::<ComponentProjectionError>()
                 .expect("manifest drift is a typed refusal")
                 .kind(),
-            ComponentProjectionErrorKind::PackageManifestMismatch
+            ComponentProjectionErrorType::PackageManifestMismatch
         );
         for migration in &package.pending {
             let ordinal = i32::try_from(migration.ordinal).expect("migration ordinal fits i32");
@@ -2770,7 +2770,7 @@ mod tests {
                 .downcast_ref::<ComponentProjectionError>()
                 .expect("migration drift is a typed refusal")
                 .kind(),
-            ComponentProjectionErrorKind::SourcePackageMigrationMismatch
+            ComponentProjectionErrorType::SourcePackageMigrationMismatch
         );
 
         let unverified = publish_admitted_component(&admission, publish_args())
@@ -2781,7 +2781,7 @@ mod tests {
                 .downcast_ref::<ComponentProjectionError>()
                 .expect("missing verification projection is a typed refusal")
                 .kind(),
-            ComponentProjectionErrorKind::VerificationProjectionMissing
+            ComponentProjectionErrorType::VerificationProjectionMissing
         );
 
         project_admitted_component_for_verification(&admission, verification_url.as_str())
@@ -2923,7 +2923,7 @@ mod tests {
                 .downcast_ref::<ComponentProjectionError>()
                 .expect("extra requirements return a typed refusal")
                 .kind(),
-            ComponentProjectionErrorKind::ConnectionFactConflict
+            ComponentProjectionErrorType::ConnectionFactConflict
         );
 
         let unexpected_project = ComponentConnectionRequirement::new(
@@ -2960,7 +2960,7 @@ mod tests {
                 .downcast_ref::<ComponentProjectionError>()
                 .expect("verification drift is a typed refusal")
                 .kind(),
-            ComponentProjectionErrorKind::ConnectionFactConflict
+            ComponentProjectionErrorType::ConnectionFactConflict
         );
 
         drop(project);
@@ -3034,7 +3034,7 @@ mod tests {
                 .expect("a typed refusal");
             assert_eq!(
                 refusal.kind(),
-                ComponentProjectionErrorKind::ComponentFactConflict
+                ComponentProjectionErrorType::ComponentFactConflict
             );
             assert!(
                 error
@@ -3053,7 +3053,7 @@ mod tests {
                     .downcast_ref::<ComponentProjectionError>()
                     .expect("a typed refusal")
                     .kind(),
-                ComponentProjectionErrorKind::ComponentFactConflict
+                ComponentProjectionErrorType::ComponentFactConflict
             );
             assert_eq!(count(&client, "component_library").await, 2);
         }
@@ -3216,7 +3216,7 @@ mod tests {
                 .downcast_ref::<ComponentProjectionError>()
                 .expect("a moved digest is a typed refusal")
                 .kind(),
-            ComponentProjectionErrorKind::ComponentFactConflict
+            ComponentProjectionErrorType::ComponentFactConflict
         );
 
         // ARM TWO: projected, and DURABLE. The refusal is unchanged.
@@ -3229,7 +3229,7 @@ mod tests {
                 .downcast_ref::<ComponentProjectionError>()
                 .expect("a moved digest is a typed refusal")
                 .kind(),
-            ComponentProjectionErrorKind::ComponentFactConflict
+            ComponentProjectionErrorType::ComponentFactConflict
         );
         assert_eq!(stored_digest("").await, first.component_digest);
 
@@ -3247,7 +3247,7 @@ mod tests {
                 .downcast_ref::<ComponentProjectionError>()
                 .expect("a moved digest is a typed refusal")
                 .kind(),
-            ComponentProjectionErrorKind::ComponentFactConflict
+            ComponentProjectionErrorType::ComponentFactConflict
         );
         assert_eq!(stored_digest("").await, first.component_digest);
 
@@ -3281,7 +3281,7 @@ mod tests {
                 .downcast_ref::<ComponentProjectionError>()
                 .expect("a moved digest is a typed refusal")
                 .kind(),
-            ComponentProjectionErrorKind::ComponentFactConflict
+            ComponentProjectionErrorType::ComponentFactConflict
         );
 
         drop(control);

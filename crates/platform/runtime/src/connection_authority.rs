@@ -136,7 +136,7 @@ struct ProxyAuthority {
 
 /// Stable classification for a refused authority decision.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum AuthorityErrorKind {
+pub enum AuthorityErrorType {
     InvalidDefinition,
     UnsupportedScheme,
     InvalidTlsPolicy,
@@ -151,25 +151,25 @@ pub enum AuthorityErrorKind {
 /// A fail-closed authority resolution error.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AuthorityError {
-    kind: AuthorityErrorKind,
+    type_: AuthorityErrorType,
     detail: Box<str>,
 }
 
 impl AuthorityError {
-    fn new(kind: AuthorityErrorKind, detail: impl Into<Box<str>>) -> Self {
+    fn new(kind: AuthorityErrorType, detail: impl Into<Box<str>>) -> Self {
         Self {
-            kind,
+            type_: kind,
             detail: detail.into(),
         }
     }
 
-    pub fn kind(&self) -> AuthorityErrorKind {
-        self.kind
+    pub fn kind(&self) -> AuthorityErrorType {
+        self.type_
     }
 
     /// Construct a DNS failure from a resolver implementation.
     pub fn dns_resolution_failed(detail: impl Into<Box<str>>) -> Self {
-        Self::new(AuthorityErrorKind::DnsResolutionFailed, detail)
+        Self::new(AuthorityErrorType::DnsResolutionFailed, detail)
     }
 }
 
@@ -212,7 +212,7 @@ impl DnsResolver for TokioDnsResolver {
                 .map(std::iter::Iterator::collect)
                 .map_err(|error| {
                     AuthorityError::new(
-                        AuthorityErrorKind::DnsResolutionFailed,
+                        AuthorityErrorType::DnsResolutionFailed,
                         format!("DNS resolution failed for {host}:{port}: {error}"),
                     )
                 })
@@ -231,7 +231,7 @@ pub fn parse_http_connection_authority(
     validate_tls(authority.scheme, tls, "connection")?;
     if base_url.query().is_some() {
         return Err(AuthorityError::new(
-            AuthorityErrorKind::InvalidDefinition,
+            AuthorityErrorType::InvalidDefinition,
             "connection base URL cannot contain a query",
         ));
     }
@@ -263,7 +263,7 @@ where
     validate_relative_target(target.as_str())?;
     let target = connection.base_url.join(target.as_str()).map_err(|error| {
         AuthorityError::new(
-            AuthorityErrorKind::InvalidRequestTarget,
+            AuthorityErrorType::InvalidRequestTarget,
             format!("invalid relative HTTP target: {error}"),
         )
     })?;
@@ -283,22 +283,22 @@ where
     R: DnsResolver,
     N: NetworkPolicy,
 {
-    reject_ambiguous_target(location, AuthorityErrorKind::RedirectDenied)?;
+    reject_ambiguous_target(location, AuthorityErrorType::RedirectDenied)?;
     let previous = Url::parse(previous_logical_url).map_err(|error| {
         AuthorityError::new(
-            AuthorityErrorKind::RedirectDenied,
+            AuthorityErrorType::RedirectDenied,
             format!("invalid previous redirect URL: {error}"),
         )
     })?;
     let target = previous.join(location).map_err(|error| {
         AuthorityError::new(
-            AuthorityErrorKind::RedirectDenied,
+            AuthorityErrorType::RedirectDenied,
             format!("invalid redirect location: {error}"),
         )
     })?;
     if canonical_authority(&target)? != connection.authority {
         return Err(AuthorityError::new(
-            AuthorityErrorKind::RedirectDenied,
+            AuthorityErrorType::RedirectDenied,
             "redirect changes the connection authority",
         ));
     }
@@ -342,7 +342,7 @@ fn parse_absolute_url(value: &str, label: &str) -> Result<Url, AuthorityError> {
         let raw_authority = &remainder[..authority_end];
         if raw_authority.contains(['%', '\\']) {
             return Err(AuthorityError::new(
-                AuthorityErrorKind::InvalidDefinition,
+                AuthorityErrorType::InvalidDefinition,
                 format!("{label} contains an ambiguous authority encoding"),
             ));
         }
@@ -354,28 +354,28 @@ fn parse_absolute_url(value: &str, label: &str) -> Result<Url, AuthorityError> {
             let raw_path = &path_and_suffix[..path_end];
             if raw_path.contains('\\') {
                 return Err(AuthorityError::new(
-                    AuthorityErrorKind::InvalidDefinition,
+                    AuthorityErrorType::InvalidDefinition,
                     format!("{label} contains an ambiguous path separator"),
                 ));
             }
-            validate_path(raw_path, AuthorityErrorKind::InvalidDefinition)?;
+            validate_path(raw_path, AuthorityErrorType::InvalidDefinition)?;
         }
     }
     let url = Url::parse(value).map_err(|error| {
         AuthorityError::new(
-            AuthorityErrorKind::InvalidDefinition,
+            AuthorityErrorType::InvalidDefinition,
             format!("invalid {label}: {error}"),
         )
     })?;
     if !url.username().is_empty() || url.password().is_some() {
         return Err(AuthorityError::new(
-            AuthorityErrorKind::InvalidDefinition,
+            AuthorityErrorType::InvalidDefinition,
             format!("{label} cannot contain user-info"),
         ));
     }
     if url.fragment().is_some() {
         return Err(AuthorityError::new(
-            AuthorityErrorKind::InvalidDefinition,
+            AuthorityErrorType::InvalidDefinition,
             format!("{label} cannot contain a fragment"),
         ));
     }
@@ -388,14 +388,14 @@ fn canonical_authority(url: &Url) -> Result<CanonicalAuthority, AuthorityError> 
         "https" => HttpScheme::Https,
         scheme => {
             return Err(AuthorityError::new(
-                AuthorityErrorKind::UnsupportedScheme,
+                AuthorityErrorType::UnsupportedScheme,
                 format!("unsupported HTTP connection scheme {scheme:?}"),
             ));
         }
     };
     let host = url.host().ok_or_else(|| {
         AuthorityError::new(
-            AuthorityErrorKind::InvalidDefinition,
+            AuthorityErrorType::InvalidDefinition,
             "HTTP connection authority has no host",
         )
     })?;
@@ -406,13 +406,13 @@ fn canonical_authority(url: &Url) -> Result<CanonicalAuthority, AuthorityError> 
     };
     if !host.is_ascii() {
         return Err(AuthorityError::new(
-            AuthorityErrorKind::InvalidDefinition,
+            AuthorityErrorType::InvalidDefinition,
             "canonical HTTP host is not ASCII",
         ));
     }
     let port = url.port_or_known_default().ok_or_else(|| {
         AuthorityError::new(
-            AuthorityErrorKind::InvalidDefinition,
+            AuthorityErrorType::InvalidDefinition,
             "HTTP connection authority has no effective port",
         )
     })?;
@@ -432,14 +432,14 @@ fn validate_tls(scheme: HttpScheme, tls: TlsPolicy, label: &str) -> Result<(), A
         Ok(())
     } else {
         Err(AuthorityError::new(
-            AuthorityErrorKind::InvalidTlsPolicy,
+            AuthorityErrorType::InvalidTlsPolicy,
             format!("{label} TLS policy is inconsistent with its scheme"),
         ))
     }
 }
 
 fn canonical_base_path(path: &str) -> Result<String, AuthorityError> {
-    validate_path(path, AuthorityErrorKind::InvalidDefinition)?;
+    validate_path(path, AuthorityErrorType::InvalidDefinition)?;
     let mut path = path.to_owned();
     if !path.ends_with('/') {
         path.push('/');
@@ -451,7 +451,7 @@ fn parse_proxy(value: &str) -> Result<ProxyAuthority, AuthorityError> {
     let url = parse_absolute_url(value, "proxy URL")?;
     if url.query().is_some() || url.path() != "/" {
         return Err(AuthorityError::new(
-            AuthorityErrorKind::InvalidDefinition,
+            AuthorityErrorType::InvalidDefinition,
             "proxy URL cannot contain a path or query",
         ));
     }
@@ -467,14 +467,14 @@ fn parse_proxy(value: &str) -> Result<ProxyAuthority, AuthorityError> {
 fn validate_relative_target(value: &str) -> Result<(), AuthorityError> {
     if Url::parse(value).is_ok() {
         return Err(AuthorityError::new(
-            AuthorityErrorKind::InvalidRequestTarget,
+            AuthorityErrorType::InvalidRequestTarget,
             "HTTP request target must be connection-relative",
         ));
     }
-    reject_ambiguous_target(value, AuthorityErrorKind::InvalidRequestTarget)
+    reject_ambiguous_target(value, AuthorityErrorType::InvalidRequestTarget)
 }
 
-fn reject_ambiguous_target(value: &str, kind: AuthorityErrorKind) -> Result<(), AuthorityError> {
+fn reject_ambiguous_target(value: &str, kind: AuthorityErrorType) -> Result<(), AuthorityError> {
     if value.contains('\\') || value.contains('#') {
         return Err(AuthorityError::new(kind, "ambiguous HTTP target encoding"));
     }
@@ -482,7 +482,7 @@ fn reject_ambiguous_target(value: &str, kind: AuthorityErrorKind) -> Result<(), 
     validate_path(path, kind)
 }
 
-fn validate_path(path: &str, kind: AuthorityErrorKind) -> Result<(), AuthorityError> {
+fn validate_path(path: &str, kind: AuthorityErrorType) -> Result<(), AuthorityError> {
     for segment in path.split('/') {
         if segment == "." || segment == ".." {
             return Err(AuthorityError::new(
@@ -531,19 +531,19 @@ fn validate_target_url(
 ) -> Result<(), AuthorityError> {
     if !target.username().is_empty() || target.password().is_some() || target.fragment().is_some() {
         return Err(AuthorityError::new(
-            AuthorityErrorKind::InvalidRequestTarget,
+            AuthorityErrorType::InvalidRequestTarget,
             "resolved HTTP target contains user-info or a fragment",
         ));
     }
     if canonical_authority(target)? != connection.authority {
         return Err(AuthorityError::new(
-            AuthorityErrorKind::RedirectDenied,
+            AuthorityErrorType::RedirectDenied,
             "resolved HTTP target changes the connection authority",
         ));
     }
     if !target.path().starts_with(connection.base_path.as_ref()) {
         return Err(AuthorityError::new(
-            AuthorityErrorKind::BasePathEscape,
+            AuthorityErrorType::BasePathEscape,
             "resolved HTTP target escapes the connection base path",
         ));
     }
@@ -553,7 +553,7 @@ fn validate_target_url(
 fn require_host_policy(url: &Url, platform_hosts: &[AllowedHost]) -> Result<(), AuthorityError> {
     let uri: Uri = url.as_str().parse().map_err(|error| {
         AuthorityError::new(
-            AuthorityErrorKind::InvalidDefinition,
+            AuthorityErrorType::InvalidDefinition,
             format!("canonical HTTP URL is not a valid URI: {error}"),
         )
     })?;
@@ -561,7 +561,7 @@ fn require_host_policy(url: &Url, platform_hosts: &[AllowedHost]) -> Result<(), 
         Ok(())
     } else {
         Err(AuthorityError::new(
-            AuthorityErrorKind::PlatformHostDenied,
+            AuthorityErrorType::PlatformHostDenied,
             format!("platform host policy denies {uri}"),
         ))
     }
@@ -593,7 +593,7 @@ where
         .find(|address| address.port() == authority.port && network.allows(*address))
         .ok_or_else(|| {
             AuthorityError::new(
-                AuthorityErrorKind::NetworkDenied,
+                AuthorityErrorType::NetworkDenied,
                 format!(
                     "cluster network policy denies every resolved address for {}:{}",
                     authority.host, authority.port
@@ -659,6 +659,6 @@ mod tests {
         let error = resolve_target(&connection, outside, &[], &DenyNetwork, &EmptyDns)
             .await
             .expect_err("resolved target escaped its configured base");
-        assert_eq!(error.kind(), AuthorityErrorKind::BasePathEscape);
+        assert_eq!(error.kind(), AuthorityErrorType::BasePathEscape);
     }
 }

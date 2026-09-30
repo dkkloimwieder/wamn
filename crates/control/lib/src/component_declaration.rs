@@ -21,7 +21,7 @@ pub const PACKAGE_MANIFEST: &str = "wamn.json";
 
 /// Stable category of a component declaration failure.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum ComponentDeclarationErrorKind {
+pub enum ComponentDeclarationErrorType {
     /// The manifest or template file could not be read.
     Read,
     /// The manifest or template file is not JSON.
@@ -35,7 +35,7 @@ pub enum ComponentDeclarationErrorKind {
 /// Contextual failure to read authored digests or render a declaration.
 #[derive(Debug)]
 pub struct ComponentDeclarationError {
-    kind: ComponentDeclarationErrorKind,
+    type_: ComponentDeclarationErrorType,
     path: PathBuf,
     detail: Box<str>,
     source: Option<Box<dyn Error + Send + Sync>>,
@@ -44,7 +44,7 @@ pub struct ComponentDeclarationError {
 impl ComponentDeclarationError {
     fn read(path: &Path, source: std::io::Error) -> Self {
         Self {
-            kind: ComponentDeclarationErrorKind::Read,
+            type_: ComponentDeclarationErrorType::Read,
             path: path.to_owned(),
             detail: "".into(),
             source: Some(Box::new(source)),
@@ -53,7 +53,7 @@ impl ComponentDeclarationError {
 
     fn parse(path: &Path, source: serde_json::Error) -> Self {
         Self {
-            kind: ComponentDeclarationErrorKind::Parse,
+            type_: ComponentDeclarationErrorType::Parse,
             path: path.to_owned(),
             detail: "".into(),
             source: Some(Box::new(source)),
@@ -61,12 +61,12 @@ impl ComponentDeclarationError {
     }
 
     fn invalid(
-        kind: ComponentDeclarationErrorKind,
+        type_: ComponentDeclarationErrorType,
         path: &Path,
         detail: impl Into<Box<str>>,
     ) -> Self {
         Self {
-            kind,
+            type_,
             path: path.to_owned(),
             detail: detail.into(),
             source: None,
@@ -74,8 +74,8 @@ impl ComponentDeclarationError {
     }
 
     /// Stable failure category.
-    pub const fn kind(&self) -> ComponentDeclarationErrorKind {
-        self.kind
+    pub const fn kind(&self) -> ComponentDeclarationErrorType {
+        self.type_
     }
 
     /// The manifest or template this failure names.
@@ -86,15 +86,15 @@ impl ComponentDeclarationError {
 
 impl fmt::Display for ComponentDeclarationError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self.kind {
-            ComponentDeclarationErrorKind::Read => {
+        match self.type_ {
+            ComponentDeclarationErrorType::Read => {
                 write!(formatter, "read {}", self.path.display())
             }
-            ComponentDeclarationErrorKind::Parse => {
+            ComponentDeclarationErrorType::Parse => {
                 write!(formatter, "parse {}", self.path.display())
             }
-            ComponentDeclarationErrorKind::ManifestInvalid
-            | ComponentDeclarationErrorKind::TemplateInvalid => {
+            ComponentDeclarationErrorType::ManifestInvalid
+            | ComponentDeclarationErrorType::TemplateInvalid => {
                 write!(formatter, "{} {}", self.path.display(), self.detail)
             }
         }
@@ -141,7 +141,7 @@ pub fn authored_base_digests(
             (coordinate, dependency.get("digest").and_then(Value::as_str))
         else {
             return Err(ComponentDeclarationError::invalid(
-                ComponentDeclarationErrorKind::ManifestInvalid,
+                ComponentDeclarationErrorType::ManifestInvalid,
                 &manifest,
                 format!("base dependency {alias} must carry a package, version and digest"),
             ));
@@ -178,7 +178,7 @@ pub fn render_declaration_document(
         .map_err(|source| ComponentDeclarationError::parse(template, source))?;
     let invalid = |detail: String| {
         ComponentDeclarationError::invalid(
-            ComponentDeclarationErrorKind::TemplateInvalid,
+            ComponentDeclarationErrorType::TemplateInvalid,
             template,
             detail,
         )

@@ -7,7 +7,7 @@ use http_body_util::{BodyExt as _, Full, Limited};
 use hyper::{Request, Response, StatusCode, body::Incoming};
 use serde::{Deserialize, Serialize};
 use wamn_control_provision::{PlatformComponent, bind_platform_principal_sql};
-use wamn_platform_identity::{IdentityErrorKind, IssuedPat, PrincipalId, issue_pat};
+use wamn_platform_identity::{IdentityErrorType, IssuedPat, PrincipalId, issue_pat};
 
 use crate::{IO_TIMEOUT, Inner, response, unavailable};
 
@@ -100,7 +100,7 @@ async fn issue(inner: &Inner, request: Request<Incoming>) -> Response<Full<Bytes
         Ok(token) => token,
         Err(error) => {
             return match error.kind() {
-                IdentityErrorKind::InvalidInput | IdentityErrorKind::NotFound => invalid_request(),
+                IdentityErrorType::InvalidInput | IdentityErrorType::NotFound => invalid_request(),
                 _ => unavailable(),
             };
         }

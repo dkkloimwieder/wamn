@@ -5,7 +5,7 @@ use wamn_schema_introspection::migration_policy::{
     DefinitionAction, DefinitionMutation, DefinitionType,
 };
 
-use super::error::{ApplyPackageError, ApplyPackageErrorKind};
+use super::error::{ApplyPackageError, ApplyPackageErrorType};
 
 const SELECT_DEFINITION_OWNER_SQL: &str = "\
 SELECT owner_package_id, client_field_extensible \
@@ -169,7 +169,7 @@ async fn ensure_definition_present(
         Ok(())
     } else {
         Err(definition_error(
-            ApplyPackageErrorKind::DefinitionNotFound,
+            ApplyPackageErrorType::DefinitionNotFound,
             coordinate,
             planned,
             None,
@@ -228,7 +228,7 @@ async fn insert_definition_owner(
         Ok(false)
     } else {
         Err(definition_error_for_parts(
-            ApplyPackageErrorKind::DefinitionOwnerConflict,
+            ApplyPackageErrorType::DefinitionOwnerConflict,
             coordinate,
             planned,
             kind,
@@ -302,14 +302,14 @@ pub(super) fn model_for_relation<'a>(
 }
 
 pub(super) fn definition_error(
-    kind: ApplyPackageErrorKind,
+    type_: ApplyPackageErrorType,
     coordinate: &str,
     planned: &PlannedDefinitionMutation,
     owner_package: Option<&str>,
     detail: impl Into<String>,
 ) -> ApplyPackageError {
     definition_error_for_parts(
-        kind,
+        type_,
         coordinate,
         planned,
         planned.mutation.kind(),
@@ -320,7 +320,7 @@ pub(super) fn definition_error(
 }
 
 fn definition_error_for_parts(
-    kind: ApplyPackageErrorKind,
+    type_: ApplyPackageErrorType,
     coordinate: &str,
     planned: &PlannedDefinitionMutation,
     definition_type: DefinitionType,
@@ -329,7 +329,7 @@ fn definition_error_for_parts(
     detail: impl Into<String>,
 ) -> ApplyPackageError {
     ApplyPackageError {
-        kind,
+        type_,
         coordinate: coordinate.to_owned(),
         predecessor_version: None,
         current_version: None,

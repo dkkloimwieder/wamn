@@ -13,7 +13,7 @@ use crate::workload_role::{WorkloadRoleFamily, WorkloadRoleScope, workload_gener
 
 /// Which predicate refused a session role-reader credential.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SessionRoleReaderUrlErrorKind {
+pub enum SessionRoleReaderUrlErrorType {
     Absent,
     Malformed,
     Scheme,
@@ -25,14 +25,14 @@ pub enum SessionRoleReaderUrlErrorKind {
 /// A fixed credential refusal that contains no input or secret material.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SessionRoleReaderUrlError {
-    kind: SessionRoleReaderUrlErrorKind,
+    type_: SessionRoleReaderUrlErrorType,
     reason: &'static str,
 }
 
 impl SessionRoleReaderUrlError {
     /// The predicate that refused the credential.
-    pub const fn kind(&self) -> SessionRoleReaderUrlErrorKind {
-        self.kind
+    pub const fn kind(&self) -> SessionRoleReaderUrlErrorType {
+        self.type_
     }
 }
 
@@ -48,8 +48,11 @@ impl fmt::Display for SessionRoleReaderUrlError {
 
 impl std::error::Error for SessionRoleReaderUrlError {}
 
-fn refuse(kind: SessionRoleReaderUrlErrorKind, reason: &'static str) -> SessionRoleReaderUrlError {
-    SessionRoleReaderUrlError { kind, reason }
+fn refuse(kind: SessionRoleReaderUrlErrorType, reason: &'static str) -> SessionRoleReaderUrlError {
+    SessionRoleReaderUrlError {
+        type_: kind,
+        reason,
+    }
 }
 
 /// A credential checked against the provisioner-controlled environment target.
@@ -113,7 +116,7 @@ pub fn parse_session_role_reader_url(
     environment: &str,
     database: &str,
 ) -> Result<SessionRoleReaderConnection, SessionRoleReaderUrlError> {
-    use SessionRoleReaderUrlErrorKind as Kind;
+    use SessionRoleReaderUrlErrorType as Kind;
 
     if raw.is_empty() {
         return Err(refuse(
@@ -227,7 +230,7 @@ mod tests {
                 parse(&url(family, SCOPE, CredentialGeneration::A))
                     .unwrap_err()
                     .kind(),
-                SessionRoleReaderUrlErrorKind::Role
+                SessionRoleReaderUrlErrorType::Role
             );
         }
         for role in [
@@ -238,7 +241,7 @@ mod tests {
         ] {
             let raw = format!("postgres://{role}:fixture-password@database.invalid/{DATABASE}");
             let error = parse(&raw).unwrap_err();
-            assert_eq!(error.kind(), SessionRoleReaderUrlErrorKind::Role);
+            assert_eq!(error.kind(), SessionRoleReaderUrlErrorType::Role);
             assert!(!format!("{error:?} {error}").contains("fixture-password"));
         }
     }
@@ -269,7 +272,7 @@ mod tests {
         changed.set_path("/wamn-db-acme--widgets--dev--z9z9z9z9");
         assert_eq!(
             parse(changed.as_str()).unwrap_err().kind(),
-            SessionRoleReaderUrlErrorKind::Database
+            SessionRoleReaderUrlErrorType::Database
         );
     }
 
@@ -281,31 +284,31 @@ mod tests {
             CredentialGeneration::A,
         );
         for (input, kind) in [
-            (String::new(), SessionRoleReaderUrlErrorKind::Absent),
+            (String::new(), SessionRoleReaderUrlErrorType::Absent),
             (
                 "fixture-password".to_owned(),
-                SessionRoleReaderUrlErrorKind::Malformed,
+                SessionRoleReaderUrlErrorType::Malformed,
             ),
             (
                 raw.replacen("postgres:", "https:", 1),
-                SessionRoleReaderUrlErrorKind::Scheme,
+                SessionRoleReaderUrlErrorType::Scheme,
             ),
             (
                 raw.replace("database.invalid", ""),
-                SessionRoleReaderUrlErrorKind::Malformed,
+                SessionRoleReaderUrlErrorType::Malformed,
             ),
             (
                 format!("{raw}?options=fixture-password"),
-                SessionRoleReaderUrlErrorKind::Extra,
+                SessionRoleReaderUrlErrorType::Extra,
             ),
             (
                 format!("{raw}#fixture-password"),
-                SessionRoleReaderUrlErrorKind::Extra,
+                SessionRoleReaderUrlErrorType::Extra,
             ),
-            (format!(" {raw}"), SessionRoleReaderUrlErrorKind::Malformed),
+            (format!(" {raw}"), SessionRoleReaderUrlErrorType::Malformed),
             (
                 format!("{raw}/extra"),
-                SessionRoleReaderUrlErrorKind::Database,
+                SessionRoleReaderUrlErrorType::Database,
             ),
         ] {
             let error = parse(&input).unwrap_err();

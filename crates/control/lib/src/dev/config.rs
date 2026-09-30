@@ -135,7 +135,7 @@ struct DevConfigDocument {
 
 /// Stable category of a development configuration refusal.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum DevConfigErrorKind {
+pub enum DevConfigErrorType {
     MalformedDocument,
     UnknownKey,
     MissingKey,
@@ -144,7 +144,7 @@ pub enum DevConfigErrorKind {
     EndpointUnreachable,
 }
 
-impl DevConfigErrorKind {
+impl DevConfigErrorType {
     /// Stable diagnostic code for this error category.
     pub const fn as_str(self) -> &'static str {
         match self {
@@ -161,7 +161,7 @@ impl DevConfigErrorKind {
 /// Refusal to load or preflight the deployment-owned development config.
 #[derive(Debug)]
 pub struct DevConfigError {
-    kind: DevConfigErrorKind,
+    type_: DevConfigErrorType,
     key: Box<str>,
     endpoint: Option<Box<str>>,
     detail: &'static str,
@@ -169,9 +169,9 @@ pub struct DevConfigError {
 }
 
 impl DevConfigError {
-    fn new(kind: DevConfigErrorKind, key: impl Into<Box<str>>, detail: &'static str) -> Self {
+    fn new(kind: DevConfigErrorType, key: impl Into<Box<str>>, detail: &'static str) -> Self {
         Self {
-            kind,
+            type_: kind,
             key: key.into(),
             endpoint: None,
             detail,
@@ -180,13 +180,13 @@ impl DevConfigError {
     }
 
     fn endpoint(
-        kind: DevConfigErrorKind,
+        type_: DevConfigErrorType,
         key: &'static str,
         endpoint: impl Into<Box<str>>,
         detail: &'static str,
     ) -> Self {
         Self {
-            kind,
+            type_,
             key: key.into(),
             endpoint: Some(endpoint.into()),
             detail,
@@ -200,8 +200,8 @@ impl DevConfigError {
     }
 
     /// Stable refusal category.
-    pub const fn kind(&self) -> DevConfigErrorKind {
-        self.kind
+    pub const fn kind(&self) -> DevConfigErrorType {
+        self.type_
     }
 
     /// Exact JSON key that owns the refusal.
@@ -220,7 +220,7 @@ impl fmt::Display for DevConfigError {
         write!(
             formatter,
             "{} at config key {:?}",
-            self.kind.as_str(),
+            self.type_.as_str(),
             self.key
         )?;
         if let Some(endpoint) = &self.endpoint {
@@ -240,14 +240,14 @@ impl Error for DevConfigError {
 
 /// Stable category of a package-source or component-integrity refusal.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum DevPackageErrorKind {
+pub enum DevPackageErrorType {
     ManifestRead,
     ManifestInvalid,
     BaseDependencyMissing,
     BaseDependencyAmbiguous,
 }
 
-impl DevPackageErrorKind {
+impl DevPackageErrorType {
     /// Stable diagnostic code for this error category.
     pub const fn as_str(self) -> &'static str {
         match self {
@@ -262,7 +262,7 @@ impl DevPackageErrorKind {
 /// Refusal to resolve a manifest-declared package.
 #[derive(Debug)]
 pub struct DevPackageError {
-    kind: DevPackageErrorKind,
+    type_: DevPackageErrorType,
     manifest_path: Option<PathBuf>,
     coordinate: Option<Box<str>>,
     dependency_digest: Option<Box<str>>,
@@ -272,12 +272,12 @@ pub struct DevPackageError {
 
 impl DevPackageError {
     fn manifest(
-        kind: DevPackageErrorKind,
+        type_: DevPackageErrorType,
         manifest_path: PathBuf,
         source: impl Error + Send + Sync + 'static,
     ) -> Self {
         Self {
-            kind,
+            type_,
             manifest_path: Some(manifest_path),
             coordinate: None,
             dependency_digest: None,
@@ -287,13 +287,13 @@ impl DevPackageError {
     }
 
     fn dependency(
-        kind: DevPackageErrorKind,
+        type_: DevPackageErrorType,
         coordinate: impl Into<Box<str>>,
         dependency_digest: impl Into<Box<str>>,
         searched_roots: &[PathBuf],
     ) -> Self {
         Self {
-            kind,
+            type_,
             manifest_path: None,
             coordinate: Some(coordinate.into()),
             dependency_digest: Some(dependency_digest.into()),
@@ -303,8 +303,8 @@ impl DevPackageError {
     }
 
     /// Stable refusal category.
-    pub const fn kind(&self) -> DevPackageErrorKind {
-        self.kind
+    pub const fn kind(&self) -> DevPackageErrorType {
+        self.type_
     }
 
     /// Manifest path that could not be read or parsed.
@@ -330,7 +330,7 @@ impl DevPackageError {
 
 impl fmt::Display for DevPackageError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str(self.kind.as_str())?;
+        formatter.write_str(self.type_.as_str())?;
         if let Some(path) = &self.manifest_path {
             write!(formatter, " at {}", path.display())?;
         }
@@ -342,9 +342,9 @@ impl fmt::Display for DevPackageError {
         }
         if !self.searched_roots.is_empty()
             || matches!(
-                self.kind,
-                DevPackageErrorKind::BaseDependencyMissing
-                    | DevPackageErrorKind::BaseDependencyAmbiguous
+                self.type_,
+                DevPackageErrorType::BaseDependencyMissing
+                    | DevPackageErrorType::BaseDependencyAmbiguous
             )
         {
             write!(formatter, "; searched roots={:?}", self.searched_roots)?;
@@ -802,7 +802,7 @@ pub fn dev_config_schema_bytes() -> Vec<u8> {
 pub fn parse_config(bytes: &[u8]) -> Result<DevConfig, DevConfigError> {
     let document: Value = serde_json::from_slice(bytes).map_err(|source| {
         DevConfigError::new(
-            DevConfigErrorKind::MalformedDocument,
+            DevConfigErrorType::MalformedDocument,
             DOCUMENT_KEY,
             "expected one JSON object",
         )
@@ -810,7 +810,7 @@ pub fn parse_config(bytes: &[u8]) -> Result<DevConfig, DevConfigError> {
     })?;
     let object = document.as_object().ok_or_else(|| {
         DevConfigError::new(
-            DevConfigErrorKind::MalformedDocument,
+            DevConfigErrorType::MalformedDocument,
             DOCUMENT_KEY,
             "expected one JSON object",
         )
@@ -818,7 +818,7 @@ pub fn parse_config(bytes: &[u8]) -> Result<DevConfig, DevConfigError> {
     validate_config_document_shape(object)?;
     let input: DevConfigDocument = serde_json::from_value(document).map_err(|source| {
         DevConfigError::new(
-            DevConfigErrorKind::MalformedDocument,
+            DevConfigErrorType::MalformedDocument,
             DOCUMENT_KEY,
             "document disagrees with its generated schema",
         )
@@ -886,7 +886,7 @@ pub fn parse_config(bytes: &[u8]) -> Result<DevConfig, DevConfigError> {
         .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
     {
         return Err(DevConfigError::new(
-            DevConfigErrorKind::InvalidValue,
+            DevConfigErrorType::InvalidValue,
             EVENT_NATS_USERNAME,
             "event username must be one broker token",
         ));
@@ -895,14 +895,14 @@ pub fn parse_config(bytes: &[u8]) -> Result<DevConfig, DevConfigError> {
         nonempty_path(event_nats_password_file, EVENT_NATS_PASSWORD_FILE)?;
     if !(1..=5).contains(&stream_replicas) {
         return Err(DevConfigError::new(
-            DevConfigErrorKind::InvalidValue,
+            DevConfigErrorType::InvalidValue,
             STREAM_REPLICAS,
             "NATS stream copies must be between one and five",
         ));
     }
     if dup_window_secs == 0 {
         return Err(DevConfigError::new(
-            DevConfigErrorKind::InvalidValue,
+            DevConfigErrorType::InvalidValue,
             DUP_WINDOW_SECS,
             "source-stream duplicate window must be positive",
         ));
@@ -919,7 +919,7 @@ pub fn parse_config(bytes: &[u8]) -> Result<DevConfig, DevConfigError> {
     {
         if !path.is_absolute() {
             return Err(DevConfigError::new(
-                DevConfigErrorKind::InvalidValue,
+                DevConfigErrorType::InvalidValue,
                 LOCAL_ARTIFACTS,
                 "local artifact paths must be absolute",
             ));
@@ -937,7 +937,7 @@ pub fn parse_config(bytes: &[u8]) -> Result<DevConfig, DevConfigError> {
     let route_host = nonempty_string(route_host, ROUTE_HOST)?;
     wamn_control_provision::validate_platform_domain(&platform_domain).map_err(|source| {
         DevConfigError::new(
-            DevConfigErrorKind::InvalidValue,
+            DevConfigErrorType::InvalidValue,
             PLATFORM_DOMAIN,
             "expected a domain name",
         )
@@ -1060,7 +1060,7 @@ pub fn parse_config(bytes: &[u8]) -> Result<DevConfig, DevConfigError> {
                 && identity.ca.is_absolute();
         if !valid {
             return Err(DevConfigError::new(
-                DevConfigErrorKind::MalformedDocument,
+                DevConfigErrorType::MalformedDocument,
                 "session_identity",
                 "issuer, instance suffix, or absolute CA path refused",
             ));
@@ -1108,7 +1108,7 @@ pub async fn preflight_config(config: &DevConfig) -> Result<(), DevConfigError> 
             Ok(Ok(stream)) => drop(stream),
             Ok(Err(source)) => {
                 return Err(DevConfigError::endpoint(
-                    DevConfigErrorKind::EndpointUnreachable,
+                    DevConfigErrorType::EndpointUnreachable,
                     probe.key,
                     probe.sanitized_endpoint.clone(),
                     "endpoint did not accept a connection",
@@ -1117,7 +1117,7 @@ pub async fn preflight_config(config: &DevConfig) -> Result<(), DevConfigError> 
             }
             Err(_) => {
                 return Err(DevConfigError::endpoint(
-                    DevConfigErrorKind::EndpointUnreachable,
+                    DevConfigErrorType::EndpointUnreachable,
                     probe.key,
                     probe.sanitized_endpoint.clone(),
                     "startup reachability budget expired",
@@ -1174,7 +1174,7 @@ pub fn resolve_dev_packages(
         let source = match matches.as_slice() {
             [] => {
                 return Err(DevPackageError::dependency(
-                    DevPackageErrorKind::BaseDependencyMissing,
+                    DevPackageErrorType::BaseDependencyMissing,
                     coordinate,
                     dependency.digest.as_str(),
                     &config.package_sources,
@@ -1183,7 +1183,7 @@ pub fn resolve_dev_packages(
             [source] => *source,
             _ => {
                 return Err(DevPackageError::dependency(
-                    DevPackageErrorKind::BaseDependencyAmbiguous,
+                    DevPackageErrorType::BaseDependencyAmbiguous,
                     coordinate,
                     dependency.digest.as_str(),
                     &config.package_sources,
@@ -1214,10 +1214,10 @@ pub fn resolve_dev_packages(
 pub(super) fn read_package_manifest(root: &Path) -> Result<PackageManifest, DevPackageError> {
     let path = root.join(PACKAGE_MANIFEST_FILE);
     let bytes = fs::read(&path).map_err(|source| {
-        DevPackageError::manifest(DevPackageErrorKind::ManifestRead, path.clone(), source)
+        DevPackageError::manifest(DevPackageErrorType::ManifestRead, path.clone(), source)
     })?;
     PackageManifest::from_slice(&bytes).map_err(|source| {
-        DevPackageError::manifest(DevPackageErrorKind::ManifestInvalid, path, source)
+        DevPackageError::manifest(DevPackageErrorType::ManifestInvalid, path, source)
     })
 }
 
@@ -1229,7 +1229,7 @@ fn validate_package_manifest(
         .map(|_| ())
         .map_err(|source| {
             DevPackageError::manifest(
-                DevPackageErrorKind::ManifestInvalid,
+                DevPackageErrorType::ManifestInvalid,
                 root.join(PACKAGE_MANIFEST_FILE),
                 source,
             )
@@ -1255,7 +1255,7 @@ fn validate_config_document_shape(
     for key in object.keys() {
         if !properties.contains_key(key) {
             return Err(DevConfigError::new(
-                DevConfigErrorKind::UnknownKey,
+                DevConfigErrorType::UnknownKey,
                 key.as_str(),
                 "remove the unknown key",
             ));
@@ -1271,7 +1271,7 @@ fn validate_config_document_shape(
             .expect("derived dev config required properties are strings");
         if !object.contains_key(key) {
             return Err(DevConfigError::new(
-                DevConfigErrorKind::MissingKey,
+                DevConfigErrorType::MissingKey,
                 key,
                 "supply the required deployment value",
             ));
@@ -1281,7 +1281,7 @@ fn validate_config_document_shape(
         if key == "session_identity" {
             serde_json::from_value::<Option<SessionIdentity>>(value.clone()).map_err(|_| {
                 DevConfigError::new(
-                    DevConfigErrorKind::InvalidValue,
+                    DevConfigErrorType::InvalidValue,
                     key.as_str(),
                     "session identity requires issuer, ca, and instance_suffix",
                 )
@@ -1291,7 +1291,7 @@ fn validate_config_document_shape(
         if key == LOCAL_ARTIFACTS {
             serde_json::from_value::<LocalArtifacts>(value.clone()).map_err(|_| {
                 DevConfigError::new(
-                    DevConfigErrorKind::InvalidValue,
+                    DevConfigErrorType::InvalidValue,
                     key.as_str(),
                     "local artifacts require only directory and flow_http_component paths",
                 )
@@ -1305,7 +1305,7 @@ fn validate_config_document_shape(
             value,
         ) {
             return Err(DevConfigError::new(
-                DevConfigErrorKind::InvalidValue,
+                DevConfigErrorType::InvalidValue,
                 key.as_str(),
                 "value does not match the generated dev config schema",
             ));
@@ -1355,7 +1355,7 @@ fn nonempty_string(value: String, key: &'static str) -> Result<Box<str>, DevConf
 fn validate_nonempty_string(value: &str, key: &'static str) -> Result<(), DevConfigError> {
     if value.is_empty() {
         return Err(DevConfigError::new(
-            DevConfigErrorKind::InvalidValue,
+            DevConfigErrorType::InvalidValue,
             key,
             "expected a non-empty string",
         ));
@@ -1366,7 +1366,7 @@ fn validate_nonempty_string(value: &str, key: &'static str) -> Result<(), DevCon
 fn nonempty_path(value: PathBuf, key: &'static str) -> Result<PathBuf, DevConfigError> {
     if value.as_os_str().is_empty() {
         return Err(DevConfigError::new(
-            DevConfigErrorKind::InvalidValue,
+            DevConfigErrorType::InvalidValue,
             key,
             "expected a non-empty path",
         ));
@@ -1379,7 +1379,7 @@ fn validate_route_host(route_host: &str) -> Result<(), DevConfigError> {
         && (route_host.contains('/') || route_host.chars().any(char::is_whitespace))
     {
         return Err(DevConfigError::new(
-            DevConfigErrorKind::InvalidValue,
+            DevConfigErrorType::InvalidValue,
             ROUTE_HOST,
             "expected a hostname without a path or whitespace",
         ));
@@ -1398,7 +1398,7 @@ fn database_probe(
         .any(|(name, _)| POSTGRES_ROUTING_QUERY_KEYS.contains(&name.as_ref()))
     {
         return Err(DevConfigError::endpoint(
-            DevConfigErrorKind::InvalidValue,
+            DevConfigErrorType::InvalidValue,
             key,
             probe.sanitized_endpoint.clone(),
             "remove host, hostaddr, port, dbname, and user query overrides; use the URL authority and path",
@@ -1407,7 +1407,7 @@ fn database_probe(
     let database_path = parsed.path().strip_prefix('/').unwrap_or_default();
     if database_path.is_empty() || database_path.contains('/') {
         return Err(DevConfigError::endpoint(
-            DevConfigErrorKind::InvalidValue,
+            DevConfigErrorType::InvalidValue,
             key,
             probe.sanitized_endpoint.clone(),
             "expected one explicit database name",
@@ -1415,7 +1415,7 @@ fn database_probe(
     }
     let postgres = PostgresConfig::from_str(raw).map_err(|_| {
         DevConfigError::endpoint(
-            DevConfigErrorKind::InvalidValue,
+            DevConfigErrorType::InvalidValue,
             key,
             probe.sanitized_endpoint.clone(),
             "expected a PostgreSQL connection URL",
@@ -1424,7 +1424,7 @@ fn database_probe(
     let database = postgres.get_dbname().unwrap_or_default();
     if database.is_empty() || database.contains('/') {
         return Err(DevConfigError::endpoint(
-            DevConfigErrorKind::InvalidValue,
+            DevConfigErrorType::InvalidValue,
             key,
             probe.sanitized_endpoint.clone(),
             "expected one explicit database name",
@@ -1432,7 +1432,7 @@ fn database_probe(
     }
     Identifier::new(database).map_err(|_| {
         DevConfigError::endpoint(
-            DevConfigErrorKind::InvalidValue,
+            DevConfigErrorType::InvalidValue,
             key,
             probe.sanitized_endpoint.clone(),
             "set an explicit database name of at most 63 bytes without NUL",
@@ -1441,7 +1441,7 @@ fn database_probe(
     let user = postgres.get_user().unwrap_or_default();
     if user.is_empty() {
         return Err(DevConfigError::endpoint(
-            DevConfigErrorKind::InvalidValue,
+            DevConfigErrorType::InvalidValue,
             key,
             probe.sanitized_endpoint.clone(),
             "expected one explicit database role",
@@ -1466,7 +1466,7 @@ fn validate_disposable_target_database(
 ) -> Result<(), DevConfigError> {
     if POSTGRES_SYSTEM_DATABASES.contains(&target.database.as_ref()) {
         return Err(DevConfigError::endpoint(
-            DevConfigErrorKind::DatabaseCollision,
+            DevConfigErrorType::DatabaseCollision,
             TARGET_DATABASE_URL,
             probe.sanitized_endpoint.clone(),
             "set target_database_url to a disposable database other than postgres, template0, or template1",
@@ -1488,7 +1488,7 @@ fn validate_runtime_database_credentials(
             .any(|(_, prior)| identity.same_credential(prior));
         if collides_with_privileged || collides_with_runtime {
             return Err(DevConfigError::endpoint(
-                DevConfigErrorKind::DatabaseCollision,
+                DevConfigErrorType::DatabaseCollision,
                 probe.key,
                 probe.sanitized_endpoint.clone(),
                 "runtime role must use its own database credential",
@@ -1512,7 +1512,7 @@ fn url_probe(
 fn parse_url(key: &'static str, raw: &str, schemes: &[&str]) -> Result<Url, DevConfigError> {
     let parsed = Url::parse(raw).map_err(|source| {
         DevConfigError::endpoint(
-            DevConfigErrorKind::InvalidValue,
+            DevConfigErrorType::InvalidValue,
             key,
             "<malformed>",
             "endpoint URL is malformed",
@@ -1521,7 +1521,7 @@ fn parse_url(key: &'static str, raw: &str, schemes: &[&str]) -> Result<Url, DevC
     })?;
     if !schemes.contains(&parsed.scheme()) {
         return Err(DevConfigError::endpoint(
-            DevConfigErrorKind::InvalidValue,
+            DevConfigErrorType::InvalidValue,
             key,
             sanitized_url(&parsed, true, 0),
             "endpoint URL uses an unsupported scheme",
@@ -1538,7 +1538,7 @@ fn probe_from_url(
 ) -> Result<ReachabilityProbe, DevConfigError> {
     let host = parsed.host_str().ok_or_else(|| {
         DevConfigError::endpoint(
-            DevConfigErrorKind::InvalidValue,
+            DevConfigErrorType::InvalidValue,
             key,
             "<malformed>",
             "endpoint URL has no host",
@@ -1701,7 +1701,7 @@ pub(crate) mod tests {
             document[OPERATOR_BEARER_TOKEN] = invalid;
             assert_eq!(
                 parse(&document).unwrap_err().kind(),
-                DevConfigErrorKind::InvalidValue
+                DevConfigErrorType::InvalidValue
             );
         }
     }
@@ -1730,7 +1730,7 @@ pub(crate) mod tests {
             invalid[key] = value;
             let error = parse_config(&serde_json::to_vec(&invalid).unwrap()).unwrap_err();
             assert_eq!(error.key(), key);
-            assert_eq!(error.kind(), DevConfigErrorKind::InvalidValue);
+            assert_eq!(error.kind(), DevConfigErrorType::InvalidValue);
         }
         for key in [
             EVENT_NATS_USERNAME,
@@ -1742,7 +1742,7 @@ pub(crate) mod tests {
             missing.as_object_mut().unwrap().remove(key);
             let error = parse_config(&serde_json::to_vec(&missing).unwrap()).unwrap_err();
             assert_eq!(error.key(), key);
-            assert_eq!(error.kind(), DevConfigErrorKind::MissingKey);
+            assert_eq!(error.kind(), DevConfigErrorType::MissingKey);
         }
     }
 
@@ -1818,7 +1818,7 @@ pub(crate) mod tests {
             .remove(PACKAGE_SOURCES);
         let error = parse_config(&serde_json::to_vec(&missing).expect("serialize missing key"))
             .expect_err("package_sources is required");
-        assert_eq!(error.kind(), DevConfigErrorKind::MissingKey);
+        assert_eq!(error.kind(), DevConfigErrorType::MissingKey);
         assert_eq!(error.key(), PACKAGE_SOURCES);
 
         let mut malformed = complete_document(&addresses);
@@ -1827,7 +1827,7 @@ pub(crate) mod tests {
             &serde_json::to_vec(&malformed).expect("serialize malformed package sources"),
         )
         .expect_err("package source entries must be paths");
-        assert_eq!(error.kind(), DevConfigErrorKind::InvalidValue);
+        assert_eq!(error.kind(), DevConfigErrorType::InvalidValue);
         assert_eq!(error.key(), PACKAGE_SOURCES);
 
         let config = parse_config(
@@ -1858,7 +1858,7 @@ pub(crate) mod tests {
                 &serde_json::to_vec(&missing).expect("serialize missing required input"),
             )
             .expect_err("every identity and local-host input is required");
-            assert_eq!(error.kind(), DevConfigErrorKind::MissingKey);
+            assert_eq!(error.kind(), DevConfigErrorType::MissingKey);
             assert_eq!(error.key(), key);
         }
 
@@ -1868,7 +1868,7 @@ pub(crate) mod tests {
             &serde_json::to_vec(&invalid_domain).expect("serialize invalid platform domain"),
         )
         .expect_err("the platform domain must be a domain name");
-        assert_eq!(error.kind(), DevConfigErrorKind::InvalidValue);
+        assert_eq!(error.kind(), DevConfigErrorType::InvalidValue);
         assert_eq!(error.key(), PLATFORM_DOMAIN);
 
         let mut zero_release = complete_document(&addresses);
@@ -1877,7 +1877,7 @@ pub(crate) mod tests {
             &serde_json::to_vec(&zero_release).expect("serialize zero release identity"),
         )
         .expect_err("effective release identity must be positive");
-        assert_eq!(error.kind(), DevConfigErrorKind::InvalidValue);
+        assert_eq!(error.kind(), DevConfigErrorType::InvalidValue);
         assert_eq!(error.key(), EFFECTIVE_RELEASE_ID);
     }
 
@@ -1974,7 +1974,7 @@ pub(crate) mod tests {
         .expect("missing source is a resolution concern");
         let error = resolve_dev_packages(&missing_config, &overlay_root)
             .expect_err("zero coordinate matches must refuse");
-        assert_eq!(error.kind(), DevPackageErrorKind::BaseDependencyMissing);
+        assert_eq!(error.kind(), DevPackageErrorType::BaseDependencyMissing);
         assert_eq!(error.coordinate(), Some("platform_fixture@1.0.0"));
         assert_eq!(error.dependency_digest(), Some(expected.digest.as_str()));
         assert_eq!(error.searched_roots(), std::slice::from_ref(&overlay_root));
@@ -1991,7 +1991,7 @@ pub(crate) mod tests {
             &repository_package(wamn_fixture_package::OVERLAY_PACKAGE_ID),
         )
         .expect_err("multiple coordinate matches must refuse");
-        assert_eq!(error.kind(), DevPackageErrorKind::BaseDependencyAmbiguous);
+        assert_eq!(error.kind(), DevPackageErrorType::BaseDependencyAmbiguous);
         assert_eq!(error.coordinate(), Some("platform_fixture@1.0.0"));
         assert_eq!(error.dependency_digest(), Some(expected.digest.as_str()));
         assert_eq!(
@@ -2021,7 +2021,7 @@ pub(crate) mod tests {
         let error = resolve_dev_packages(&config, overlay.root())
             .expect_err("unknown package fields must refuse");
 
-        assert_eq!(error.kind(), DevPackageErrorKind::ManifestInvalid);
+        assert_eq!(error.kind(), DevPackageErrorType::ManifestInvalid);
         assert_eq!(
             error.manifest_path(),
             Some(overlay.root().join(PACKAGE_MANIFEST_FILE).as_path())
@@ -2081,7 +2081,7 @@ pub(crate) mod tests {
             .expect("local refusal stays within the startup bound")
             .expect_err("closed endpoint must refuse");
 
-        assert_eq!(error.kind(), DevConfigErrorKind::EndpointUnreachable);
+        assert_eq!(error.kind(), DevConfigErrorType::EndpointUnreachable);
         assert_eq!(error.key(), TARGET_DATABASE_URL);
         assert_eq!(
             error.sanitized_endpoint(),
@@ -2099,7 +2099,7 @@ pub(crate) mod tests {
         malformed[TARGET_DATABASE_URL] = json!("postgresql://user:secret@[");
         let error = parse_config(&serde_json::to_vec(&malformed).expect("serialize malformed"))
             .expect_err("malformed endpoint must refuse");
-        assert_eq!(error.kind(), DevConfigErrorKind::InvalidValue);
+        assert_eq!(error.kind(), DevConfigErrorType::InvalidValue);
         assert_eq!(error.key(), TARGET_DATABASE_URL);
         assert_eq!(error.sanitized_endpoint(), Some("<malformed>"));
         assert!(!error.to_string().contains("secret"));
@@ -2108,7 +2108,7 @@ pub(crate) mod tests {
         unknown["project_database_url"] = json!("postgresql://ignored:secret@invalid/db");
         let error = parse_config(&serde_json::to_vec(&unknown).expect("serialize unknown"))
             .expect_err("unknown key must refuse");
-        assert_eq!(error.kind(), DevConfigErrorKind::UnknownKey);
+        assert_eq!(error.kind(), DevConfigErrorType::UnknownKey);
         assert_eq!(error.key(), "project_database_url");
         assert!(!error.to_string().contains("ignored"));
 
@@ -2121,7 +2121,7 @@ pub(crate) mod tests {
             &serde_json::to_vec(&missing_endpoint).expect("serialize missing endpoint"),
         )
         .expect_err("missing endpoint must refuse");
-        assert_eq!(error.kind(), DevConfigErrorKind::MissingKey);
+        assert_eq!(error.kind(), DevConfigErrorType::MissingKey);
         assert_eq!(error.key(), SCHEDULER_NATS_URL);
 
         for key in [TEMPO_QUERY_URL, OTEL_EXPORTER_OTLP_ENDPOINT] {
@@ -2135,7 +2135,7 @@ pub(crate) mod tests {
                     .expect("serialize missing observability endpoint"),
             )
             .expect_err("observability endpoints are required");
-            assert_eq!(error.kind(), DevConfigErrorKind::MissingKey);
+            assert_eq!(error.kind(), DevConfigErrorType::MissingKey);
             assert_eq!(error.key(), key);
         }
 
@@ -2148,7 +2148,7 @@ pub(crate) mod tests {
             &serde_json::to_vec(&missing_local_artifacts).expect("serialize missing local input"),
         )
         .expect_err("missing local artifacts must refuse");
-        assert_eq!(error.kind(), DevConfigErrorKind::MissingKey);
+        assert_eq!(error.kind(), DevConfigErrorType::MissingKey);
         assert_eq!(error.key(), LOCAL_ARTIFACTS);
 
         let mut missing_runtime_role = complete_document(&addresses);
@@ -2160,7 +2160,7 @@ pub(crate) mod tests {
             &serde_json::to_vec(&missing_runtime_role).expect("serialize missing runtime role"),
         )
         .expect_err("missing role-exact credential must refuse");
-        assert_eq!(error.kind(), DevConfigErrorKind::MissingKey);
+        assert_eq!(error.kind(), DevConfigErrorType::MissingKey);
         assert_eq!(error.key(), EVENT_MATERIALIZER_DATABASE_URL);
 
         let mut tls_scheduler = complete_document(&addresses);
@@ -2169,7 +2169,7 @@ pub(crate) mod tests {
             &serde_json::to_vec(&tls_scheduler).expect("serialize unsupported TLS endpoint"),
         )
         .expect_err("TLS without trust configuration must refuse");
-        assert_eq!(error.kind(), DevConfigErrorKind::InvalidValue);
+        assert_eq!(error.kind(), DevConfigErrorType::InvalidValue);
         assert_eq!(error.key(), SCHEDULER_NATS_URL);
 
         for key in [TEMPO_QUERY_URL, OTEL_EXPORTER_OTLP_ENDPOINT] {
@@ -2180,7 +2180,7 @@ pub(crate) mod tests {
                     .expect("serialize unsupported observability endpoint"),
             )
             .expect_err("observability endpoints require HTTP or HTTPS");
-            assert_eq!(error.kind(), DevConfigErrorKind::InvalidValue);
+            assert_eq!(error.kind(), DevConfigErrorType::InvalidValue);
             assert_eq!(error.key(), key);
         }
     }
@@ -2198,7 +2198,7 @@ pub(crate) mod tests {
                 parse_config(&serde_json::to_vec(&document).expect("serialize routing override"))
                     .expect_err("routing query override must refuse");
 
-            assert_eq!(error.kind(), DevConfigErrorKind::InvalidValue);
+            assert_eq!(error.kind(), DevConfigErrorType::InvalidValue);
             assert_eq!(error.key(), TARGET_DATABASE_URL);
             assert!(error.to_string().contains("remove host, hostaddr, port"));
             assert!(!error.to_string().contains("override-secret"));
@@ -2217,7 +2217,7 @@ pub(crate) mod tests {
             &serde_json::to_vec(&privileged_reuse).expect("serialize privileged reuse"),
         )
         .expect_err("a runtime role must not reuse the target credential");
-        assert_eq!(error.kind(), DevConfigErrorKind::DatabaseCollision);
+        assert_eq!(error.kind(), DevConfigErrorType::DatabaseCollision);
         assert_eq!(error.key(), GUEST_DATABASE_URL);
         assert!(!error.to_string().contains("target-secret"));
 
@@ -2227,7 +2227,7 @@ pub(crate) mod tests {
         let error =
             parse_config(&serde_json::to_vec(&sibling_reuse).expect("serialize sibling reuse"))
                 .expect_err("runtime roles must not share one credential");
-        assert_eq!(error.kind(), DevConfigErrorKind::DatabaseCollision);
+        assert_eq!(error.kind(), DevConfigErrorType::DatabaseCollision);
         assert_eq!(error.key(), EVENT_MATERIALIZER_DATABASE_URL);
         assert!(!error.to_string().contains("platform-secret"));
     }
@@ -2236,7 +2236,7 @@ pub(crate) mod tests {
     fn malformed_json_refuses_without_inspecting_partial_credentials() {
         let error = parse_config(br#"{"gate_bearer_token":"secret""#)
             .expect_err("malformed JSON must refuse");
-        assert_eq!(error.kind(), DevConfigErrorKind::MalformedDocument);
+        assert_eq!(error.kind(), DevConfigErrorType::MalformedDocument);
         assert_eq!(error.key(), DOCUMENT_KEY);
         assert!(!error.to_string().contains("secret"));
     }

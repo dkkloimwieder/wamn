@@ -16,7 +16,7 @@ use exports::wamn_receiving::receiving::record_receipt_pre_commit::{
     Guest as RecordReceiptPreCommit, RecordReceiptPreCommitRequest,
 };
 use wamn::node::types::{Emission, ErrorDetail, NodeContext, NodeError};
-use wamn_client_acme_receiving_data_access::{AccessError, AccessErrorKind};
+use wamn_client_acme_receiving_data_access::{AccessError, AccessErrorType};
 
 wit_bindgen::generate!({
     world: "client-acme-receiving:participant/client-acme-receiving-participant@3.0.0",
@@ -49,34 +49,34 @@ fn emission(payload: String) -> Emission {
 fn private_node_error(error: &AccessError) -> NodeError {
     let kind = error.kind();
     let code = match kind {
-        AccessErrorKind::InvalidInput => "invalid_input",
-        AccessErrorKind::Retry => "retry",
-        AccessErrorKind::Timeout => "timeout",
-        AccessErrorKind::NotFound
-        | AccessErrorKind::ConcurrencyConflict
-        | AccessErrorKind::ExclusionViolation
-        | AccessErrorKind::PermissionDenied
-        | AccessErrorKind::InternalError => "internal_error",
+        AccessErrorType::InvalidInput => "invalid_input",
+        AccessErrorType::Retry => "retry",
+        AccessErrorType::Timeout => "timeout",
+        AccessErrorType::NotFound
+        | AccessErrorType::ConcurrencyConflict
+        | AccessErrorType::ExclusionViolation
+        | AccessErrorType::PermissionDenied
+        | AccessErrorType::InternalError => "internal_error",
     };
     let detail = ErrorDetail {
         message: error.context().to_owned(),
         code: Some(code.to_owned()),
     };
     match kind {
-        AccessErrorKind::InvalidInput => NodeError::InvalidInput(detail),
-        AccessErrorKind::Retry | AccessErrorKind::Timeout => NodeError::Retryable(detail),
-        AccessErrorKind::NotFound
-        | AccessErrorKind::ConcurrencyConflict
-        | AccessErrorKind::ExclusionViolation
-        | AccessErrorKind::PermissionDenied
-        | AccessErrorKind::InternalError => NodeError::Terminal(detail),
+        AccessErrorType::InvalidInput => NodeError::InvalidInput(detail),
+        AccessErrorType::Retry | AccessErrorType::Timeout => NodeError::Retryable(detail),
+        AccessErrorType::NotFound
+        | AccessErrorType::ConcurrencyConflict
+        | AccessErrorType::ExclusionViolation
+        | AccessErrorType::PermissionDenied
+        | AccessErrorType::InternalError => NodeError::Terminal(detail),
     }
 }
 
 fn participant_node_error(error: &AccessError) -> NodeError {
     match error.kind() {
-        AccessErrorKind::Timeout => NodeError::Cancelled,
-        AccessErrorKind::PermissionDenied => NodeError::Terminal(ErrorDetail {
+        AccessErrorType::Timeout => NodeError::Cancelled,
+        AccessErrorType::PermissionDenied => NodeError::Terminal(ErrorDetail {
             message: error.context().to_owned(),
             code: Some("permission_denied".to_owned()),
         }),

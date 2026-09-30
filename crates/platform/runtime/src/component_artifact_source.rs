@@ -423,7 +423,7 @@ mod tests {
     };
 
     use super::*;
-    use wamn_engine::artifact_source::ComponentArtifactFetchErrorKind;
+    use wamn_engine::artifact_source::ComponentArtifactFetchErrorType;
 
     fn admitted(bytes: &[u8]) -> AdmittedComponent {
         normalize_component_fact(
@@ -598,7 +598,7 @@ mod tests {
                 "registry.example/wamn/components:tag",
             )
             .expect_err("manifest drift refuses");
-            assert_eq!(error.kind(), ComponentArtifactFetchErrorKind::Mismatched);
+            assert_eq!(error.kind(), ComponentArtifactFetchErrorType::Mismatched);
             assert!(error.refusal().contains(case.split('-').next().unwrap()));
         }
     }
@@ -649,7 +649,7 @@ mod tests {
             .expect_err("invalid admitted digest refuses locally");
         assert_eq!(
             error.kind(),
-            ComponentArtifactFetchErrorKind::InvalidReference
+            ComponentArtifactFetchErrorType::InvalidReference
         );
         let rendered = format!("{error:?} {error}");
         assert!(!rendered.contains("private-context"));
@@ -711,7 +711,7 @@ mod tests {
             .pull_verified(&component)
             .await
             .expect_err("a pull without a token refuses");
-        assert_eq!(error.kind(), ComponentArtifactFetchErrorKind::Unavailable);
+        assert_eq!(error.kind(), ComponentArtifactFetchErrorType::Unavailable);
         assert_eq!(error.refusal(), "registry-token-metadata-unavailable");
     }
 }

@@ -47,7 +47,7 @@ pub struct ComponentAdmissionRequest {
 
 /// Stable classification for a refused component admission.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ComponentAdmissionErrorKind {
+pub enum ComponentAdmissionErrorType {
     InvalidComponentBytes,
     ImportPolicyRefused,
     OperationExportMismatch,
@@ -59,24 +59,24 @@ pub enum ComponentAdmissionErrorKind {
 /// Contextual refusal from the byte-to-catalog-fact boundary.
 #[derive(Debug)]
 pub struct ComponentAdmissionError {
-    kind: ComponentAdmissionErrorKind,
+    type_: ComponentAdmissionErrorType,
     component: Box<str>,
     source: anyhow::Error,
 }
 
 impl ComponentAdmissionError {
     /// Stable refusal class for callers that must not match display text.
-    pub fn kind(&self) -> ComponentAdmissionErrorKind {
-        self.kind
+    pub fn kind(&self) -> ComponentAdmissionErrorType {
+        self.type_
     }
 
     fn new(
-        kind: ComponentAdmissionErrorKind,
+        type_: ComponentAdmissionErrorType,
         component: &str,
         source: impl Into<anyhow::Error>,
     ) -> Self {
         Self {
-            kind,
+            type_,
             component: component.into(),
             source: source.into(),
         }
@@ -114,7 +114,7 @@ pub fn validate_component_admission(
     let component_name = request.declaration.component.clone();
     let component = Component::new(engine.inner(), component_bytes).map_err(|source| {
         ComponentAdmissionError::new(
-            ComponentAdmissionErrorKind::InvalidComponentBytes,
+            ComponentAdmissionErrorType::InvalidComponentBytes,
             &component_name,
             source,
         )
@@ -245,7 +245,7 @@ pub fn validate_component_admission(
     };
     let embedded = embedded_components(component_bytes).map_err(|source| {
         ComponentAdmissionError::new(
-            ComponentAdmissionErrorKind::InvalidComponentBytes,
+            ComponentAdmissionErrorType::InvalidComponentBytes,
             &component_name,
             source,
         )
@@ -269,7 +269,7 @@ pub fn validate_component_admission(
         .collect();
     if !missing.is_empty() || !extra.is_empty() {
         return Err(ComponentAdmissionError::new(
-            ComponentAdmissionErrorKind::OperationExportMismatch,
+            ComponentAdmissionErrorType::OperationExportMismatch,
             &component_name,
             anyhow::anyhow!(
                 "declared handler exports differ from component bytes: missing={missing:?}, extra={extra:?}"
@@ -302,7 +302,7 @@ pub fn validate_component_admission(
         .collect::<BTreeSet<_>>();
     if !missing_bases.is_empty() {
         return Err(ComponentAdmissionError::new(
-            ComponentAdmissionErrorKind::OperationDependencyMismatch,
+            ComponentAdmissionErrorType::OperationDependencyMismatch,
             &component_name,
             anyhow::anyhow!(
                 "declared operation dependencies are not composed into the component bytes: {missing_bases:?}"
@@ -335,7 +335,7 @@ pub fn validate_component_admission(
             .cloned()
             .collect::<Vec<_>>();
         return Err(ComponentAdmissionError::new(
-            ComponentAdmissionErrorKind::OperationDependencyMismatch,
+            ComponentAdmissionErrorType::OperationDependencyMismatch,
             &component_name,
             anyhow::anyhow!(
                 "declared operation dependencies differ from component imports: missing={missing:?}, extra={extra:?}"
@@ -351,7 +351,7 @@ pub fn validate_component_admission(
             .expect("the component import list contains the dependency");
         if let Err(error) = validate_handler_signature(dependency, item.ty, true) {
             return Err(ComponentAdmissionError::new(
-                ComponentAdmissionErrorKind::OperationSignatureMismatch,
+                ComponentAdmissionErrorType::OperationSignatureMismatch,
                 &component_name,
                 anyhow::anyhow!(
                     "operation dependency import {dependency:?} does not match {HANDLER_SIGNATURE}: {error}"
@@ -378,7 +378,7 @@ pub fn validate_component_admission(
     )
     .map_err(|source| {
         ComponentAdmissionError::new(
-            ComponentAdmissionErrorKind::ImportPolicyRefused,
+            ComponentAdmissionErrorType::ImportPolicyRefused,
             &component_name,
             source,
         )
@@ -393,7 +393,7 @@ pub fn validate_component_admission(
     )
     .map_err(|source| {
         ComponentAdmissionError::new(
-            ComponentAdmissionErrorKind::InvalidComponentFacts,
+            ComponentAdmissionErrorType::InvalidComponentFacts,
             &component_name,
             source,
         )
@@ -500,7 +500,7 @@ fn operation_signature_mismatch(
     detail: impl fmt::Display,
 ) -> ComponentAdmissionError {
     ComponentAdmissionError::new(
-        ComponentAdmissionErrorKind::OperationSignatureMismatch,
+        ComponentAdmissionErrorType::OperationSignatureMismatch,
         component,
         anyhow::anyhow!("operation export {export:?} does not match {HANDLER_SIGNATURE}: {detail}"),
     )
@@ -887,7 +887,7 @@ mod tests {
             .expect_err("missing declared handler export refuses");
         assert_eq!(
             error.kind(),
-            ComponentAdmissionErrorKind::OperationExportMismatch
+            ComponentAdmissionErrorType::OperationExportMismatch
         );
         assert!(error.to_string().contains("missing="));
 
@@ -904,7 +904,7 @@ mod tests {
             .expect_err("undeclared handler export refuses");
         assert_eq!(
             error.kind(),
-            ComponentAdmissionErrorKind::OperationExportMismatch
+            ComponentAdmissionErrorType::OperationExportMismatch
         );
         assert!(error.to_string().contains("extra="));
     }
@@ -923,7 +923,7 @@ mod tests {
             .expect_err("an export without the live handler signature refuses");
         assert_eq!(
             error.kind(),
-            ComponentAdmissionErrorKind::OperationSignatureMismatch
+            ComponentAdmissionErrorType::OperationSignatureMismatch
         );
         assert!(error.to_string().contains(OPERATION));
         assert!(error.to_string().contains(HANDLER_SIGNATURE));
@@ -936,7 +936,7 @@ mod tests {
             .expect_err("malformed bytes must refuse");
         assert_eq!(
             error.kind(),
-            ComponentAdmissionErrorKind::InvalidComponentBytes
+            ComponentAdmissionErrorType::InvalidComponentBytes
         );
     }
 
@@ -1061,7 +1061,7 @@ mod tests {
             } else {
                 assert_eq!(
                     result.unwrap_err().kind(),
-                    ComponentAdmissionErrorKind::OperationSignatureMismatch
+                    ComponentAdmissionErrorType::OperationSignatureMismatch
                 );
             }
         }
@@ -1146,7 +1146,7 @@ mod tests {
             .expect_err("socket import must refuse");
         assert_eq!(
             error.kind(),
-            ComponentAdmissionErrorKind::ImportPolicyRefused
+            ComponentAdmissionErrorType::ImportPolicyRefused
         );
         // Guard the guard. The refusal must NAME the socket import, or the
         // fixture stopped carrying it and this test shows nothing.
@@ -1191,7 +1191,7 @@ mod tests {
             .expect_err("an export of no embedded member refuses");
         assert_eq!(
             error.kind(),
-            ComponentAdmissionErrorKind::OperationExportMismatch
+            ComponentAdmissionErrorType::OperationExportMismatch
         );
     }
 
@@ -1247,7 +1247,7 @@ mod tests {
             .expect_err("a declared dependency whose base is not embedded refuses");
         assert_eq!(
             missing.kind(),
-            ComponentAdmissionErrorKind::OperationDependencyMismatch
+            ComponentAdmissionErrorType::OperationDependencyMismatch
         );
         assert!(missing.to_string().contains("not composed"));
 
@@ -1266,7 +1266,7 @@ mod tests {
         .expect_err("a base embedded under another digest refuses");
         assert_eq!(
             other.kind(),
-            ComponentAdmissionErrorKind::OperationDependencyMismatch
+            ComponentAdmissionErrorType::OperationDependencyMismatch
         );
 
         let mut imported_request = request();
@@ -1287,7 +1287,7 @@ mod tests {
         .expect_err("a dependency left as an import refuses");
         assert_eq!(
             imported.kind(),
-            ComponentAdmissionErrorKind::OperationDependencyMismatch
+            ComponentAdmissionErrorType::OperationDependencyMismatch
         );
         assert!(imported.to_string().contains("extra="));
     }
@@ -1312,7 +1312,7 @@ mod tests {
 
         assert_eq!(
             error.kind(),
-            ComponentAdmissionErrorKind::OperationSignatureMismatch
+            ComponentAdmissionErrorType::OperationSignatureMismatch
         );
         assert!(error.to_string().contains(WRONG_DEPENDENCY_OPERATION));
         assert!(error.to_string().contains(HANDLER_SIGNATURE));
@@ -1449,7 +1449,7 @@ mod tests {
             .expect_err("undeclared connection authority must refuse");
         assert_eq!(
             error.kind(),
-            ComponentAdmissionErrorKind::InvalidComponentFacts
+            ComponentAdmissionErrorType::InvalidComponentFacts
         );
     }
 }

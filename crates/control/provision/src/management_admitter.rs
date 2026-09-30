@@ -81,7 +81,7 @@ pub fn management_admitter_generation_role(
 
 /// Which predicate refused a management admission connection input.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ManagementAdmissionUrlErrorKind {
+pub enum ManagementAdmissionUrlErrorType {
     /// No connection input was supplied at all.
     Absent,
     /// The input is not a parseable URL, or names no host.
@@ -96,7 +96,7 @@ pub enum ManagementAdmissionUrlErrorKind {
     Extra,
 }
 
-impl ManagementAdmissionUrlErrorKind {
+impl ManagementAdmissionUrlErrorType {
     /// Stable label for logs and tests.
     pub const fn as_str(self) -> &'static str {
         match self {
@@ -116,14 +116,14 @@ impl ManagementAdmissionUrlErrorKind {
 /// input holds a password, so neither `Debug` nor `Display` may echo it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ManagementAdmissionUrlError {
-    kind: ManagementAdmissionUrlErrorKind,
+    type_: ManagementAdmissionUrlErrorType,
     reason: &'static str,
 }
 
 impl ManagementAdmissionUrlError {
     /// Which predicate refused the input.
-    pub const fn kind(&self) -> ManagementAdmissionUrlErrorKind {
-        self.kind
+    pub const fn kind(&self) -> ManagementAdmissionUrlErrorType {
+        self.type_
     }
 
     /// The fixed reason this predicate refuses for.
@@ -137,7 +137,7 @@ impl fmt::Display for ManagementAdmissionUrlError {
         write!(
             formatter,
             "WAMN_MANAGEMENT_ADMISSION_PG_URL is out of scope ({}): {}",
-            self.kind.as_str(),
+            self.type_.as_str(),
             self.reason
         )
     }
@@ -146,10 +146,10 @@ impl fmt::Display for ManagementAdmissionUrlError {
 impl std::error::Error for ManagementAdmissionUrlError {}
 
 fn refuse(
-    kind: ManagementAdmissionUrlErrorKind,
+    type_: ManagementAdmissionUrlErrorType,
     reason: &'static str,
 ) -> ManagementAdmissionUrlError {
-    ManagementAdmissionUrlError { kind, reason }
+    ManagementAdmissionUrlError { type_, reason }
 }
 
 /// The scoped project-database admission connection one management process holds.
@@ -206,19 +206,19 @@ pub fn parse_management_admission_url(
 ) -> Result<ManagementAdmissionConnection, ManagementAdmissionUrlError> {
     if url.is_empty() {
         return Err(refuse(
-            ManagementAdmissionUrlErrorKind::Absent,
+            ManagementAdmissionUrlErrorType::Absent,
             "the management admission connection input is required and has no fallback",
         ));
     }
     let parsed = Url::parse(url).map_err(|_| {
         refuse(
-            ManagementAdmissionUrlErrorKind::Malformed,
+            ManagementAdmissionUrlErrorType::Malformed,
             "the management admission connection input is not a URL",
         )
     })?;
     if !matches!(parsed.scheme(), "postgres" | "postgresql") {
         return Err(refuse(
-            ManagementAdmissionUrlErrorKind::Scheme,
+            ManagementAdmissionUrlErrorType::Scheme,
             "the management admission connection input must be a postgres URL",
         ));
     }
@@ -226,20 +226,20 @@ pub fn parse_management_admission_url(
     // (`postgres:///db`) and reports `Some("")` rather than `None`.
     if parsed.host_str().is_none_or(str::is_empty) {
         return Err(refuse(
-            ManagementAdmissionUrlErrorKind::Malformed,
+            ManagementAdmissionUrlErrorType::Malformed,
             "the management admission connection input names no host",
         ));
     }
     if parsed.query().is_some() || parsed.fragment().is_some() {
         return Err(refuse(
-            ManagementAdmissionUrlErrorKind::Extra,
+            ManagementAdmissionUrlErrorType::Extra,
             "the management admission connection input must carry no query or fragment",
         ));
     }
     let database = parsed.path().strip_prefix('/').unwrap_or(parsed.path());
     if database.is_empty() || database.contains('/') {
         return Err(refuse(
-            ManagementAdmissionUrlErrorKind::Database,
+            ManagementAdmissionUrlErrorType::Database,
             "the management admission connection input must name exactly one database",
         ));
     }
@@ -255,7 +255,7 @@ pub fn parse_management_admission_url(
         .find(|(_, role)| role.as_str() == presented)
     else {
         return Err(refuse(
-            ManagementAdmissionUrlErrorKind::Role,
+            ManagementAdmissionUrlErrorType::Role,
             "the management admission connection input does not authenticate as this \
              org/project/environment's management-admitter generation",
         ));
@@ -371,15 +371,15 @@ mod tests {
     fn every_out_of_scope_connection_input_fails_closed_by_predicate() {
         let admitted = role(CredentialGeneration::A);
         for (input, expected) in [
-            ("", ManagementAdmissionUrlErrorKind::Absent),
-            ("not a url", ManagementAdmissionUrlErrorKind::Malformed),
+            ("", ManagementAdmissionUrlErrorType::Absent),
+            ("not a url", ManagementAdmissionUrlErrorType::Malformed),
             (
                 "postgres:///only-a-path",
-                ManagementAdmissionUrlErrorKind::Malformed,
+                ManagementAdmissionUrlErrorType::Malformed,
             ),
             (
                 "mysql://wamn_mgmt_admitter_x_a:secret@project.invalid/wamn-db-x",
-                ManagementAdmissionUrlErrorKind::Scheme,
+                ManagementAdmissionUrlErrorType::Scheme,
             ),
         ] {
             let error = parse_management_admission_url(input, ORG, PROJECT, ENVIRONMENT)
@@ -394,7 +394,7 @@ mod tests {
                     .expect_err("a non-database path must refuse");
             assert_eq!(
                 error.kind(),
-                ManagementAdmissionUrlErrorKind::Database,
+                ManagementAdmissionUrlErrorType::Database,
                 "{path:?}"
             );
         }
@@ -410,7 +410,7 @@ mod tests {
             .expect_err("a decorated connection input must refuse");
             assert_eq!(
                 error.kind(),
-                ManagementAdmissionUrlErrorKind::Extra,
+                ManagementAdmissionUrlErrorType::Extra,
                 "{suffix:?}"
             );
         }
@@ -444,7 +444,7 @@ mod tests {
                     .expect_err("an out-of-scope identity must refuse");
             assert_eq!(
                 error.kind(),
-                ManagementAdmissionUrlErrorKind::Role,
+                ManagementAdmissionUrlErrorType::Role,
                 "{user}"
             );
         }
@@ -458,7 +458,7 @@ mod tests {
             ENVIRONMENT,
         )
         .expect_err("a control-database URL must refuse");
-        assert_eq!(error.kind(), ManagementAdmissionUrlErrorKind::Role);
+        assert_eq!(error.kind(), ManagementAdmissionUrlErrorType::Role);
     }
 
     #[test]

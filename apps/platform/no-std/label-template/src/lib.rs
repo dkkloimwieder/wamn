@@ -48,15 +48,15 @@ const LABEL_GEOMETRY: &str = "^PW812\n^LL1218\n^MD0\n";
 /// `node-error` exactly once, at that WIT boundary.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RenderError {
-    kind: RenderErrorKind,
+    type_: RenderErrorType,
     detail: String,
 }
 
 impl RenderError {
     /// Stable refusal class for callers that must not match display text.
     #[must_use]
-    pub const fn kind(&self) -> RenderErrorKind {
-        self.kind
+    pub const fn kind(&self) -> RenderErrorType {
+        self.type_
     }
 
     /// Human-readable context naming the template or field at fault.
@@ -68,19 +68,19 @@ impl RenderError {
     /// The wire code the guest reports for this refusal.
     #[must_use]
     pub const fn code(&self) -> &'static str {
-        self.kind.code()
+        self.type_.code()
     }
 }
 
 impl core::fmt::Display for RenderError {
     fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        write!(formatter, "{}: {}", self.kind.code(), self.detail)
+        write!(formatter, "{}: {}", self.type_.code(), self.detail)
     }
 }
 
 /// Stable classification for a refused render.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum RenderErrorKind {
+pub enum RenderErrorType {
     /// `template_id` is not one of [`TEMPLATE_IDS`].
     UnknownTemplate,
     /// The template requires a field the input did not supply.
@@ -90,7 +90,7 @@ pub enum RenderErrorKind {
     InvalidField,
 }
 
-impl RenderErrorKind {
+impl RenderErrorType {
     /// The frozen wire code for this class.
     #[must_use]
     pub const fn code(self) -> &'static str {
@@ -110,9 +110,9 @@ impl RenderErrorKind {
 ///
 /// # Errors
 ///
-/// Returns [`RenderErrorKind::UnknownTemplate`] for a template outside
-/// [`TEMPLATE_IDS`], [`RenderErrorKind::MissingField`] when a required field is
-/// absent, and [`RenderErrorKind::InvalidField`] when a field is not a
+/// Returns [`RenderErrorType::UnknownTemplate`] for a template outside
+/// [`TEMPLATE_IDS`], [`RenderErrorType::MissingField`] when a required field is
+/// absent, and [`RenderErrorType::InvalidField`] when a field is not a
 /// non-empty string free of ZPL control characters.
 pub fn render(template_id: &str, fields: &Value) -> Result<String, RenderError> {
     let spec = match template_id {
@@ -133,7 +133,7 @@ pub fn render(template_id: &str, fields: &Value) -> Result<String, RenderError> 
         },
         other => {
             return Err(RenderError {
-                kind: RenderErrorKind::UnknownTemplate,
+                type_: RenderErrorType::UnknownTemplate,
                 detail: format!("{other:?} is not one of {TEMPLATE_IDS:?}"),
             });
         }
@@ -199,25 +199,25 @@ fn label_of(name: &str) -> &'static str {
 fn field(fields: &Value, name: &str) -> Result<String, RenderError> {
     let Some(value) = fields.get(name) else {
         return Err(RenderError {
-            kind: RenderErrorKind::MissingField,
+            type_: RenderErrorType::MissingField,
             detail: format!("field {name:?} is required"),
         });
     };
     let Some(text) = value.as_str() else {
         return Err(RenderError {
-            kind: RenderErrorKind::InvalidField,
+            type_: RenderErrorType::InvalidField,
             detail: format!("field {name:?} must be a string"),
         });
     };
     if text.is_empty() {
         return Err(RenderError {
-            kind: RenderErrorKind::InvalidField,
+            type_: RenderErrorType::InvalidField,
             detail: format!("field {name:?} must not be empty"),
         });
     }
     if text.contains(['^', '~']) {
         return Err(RenderError {
-            kind: RenderErrorKind::InvalidField,
+            type_: RenderErrorType::InvalidField,
             detail: format!("field {name:?} must not contain a ZPL control character"),
         });
     }

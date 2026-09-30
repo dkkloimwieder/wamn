@@ -40,7 +40,7 @@ mod sql_lex;
 mod sqlx_metadata;
 /// The write log's three fixed statements.
 pub use cursor::{
-    CursorError, CursorErrorKind, CursorV1, CursorValue, decode_cursor, encode_cursor,
+    CursorError, CursorErrorType, CursorV1, CursorValue, decode_cursor, encode_cursor,
 };
 pub use data_access::{
     DATA_ACCESS_OVERLAY_PATH, DATA_ACCESS_ROLE, DataAccessOverlay, DataAccessRelation,
@@ -49,7 +49,7 @@ pub use data_access::{
     derive_effective_data_access, render_effective_data_access_sql,
     validate_data_access_contribution,
 };
-pub use error::{GenerateError, GenerateErrorKind};
+pub use error::{GenerateError, GenerateErrorType};
 pub use generate::{
     AuthoredSql, GeneratedFile, GeneratedPackage, GeneratedPackageMetadata, GenerationInput,
     GenerationProvenance, StatementTransactionality, corpus_sha256, generate,

@@ -2223,7 +2223,7 @@ mod tests {
             .expect("the refusal is the pure scope check, not a connection failure");
         assert_eq!(
             refusal.kind(),
-            wamn_control_provision::SystemReaderUrlErrorKind::Role
+            wamn_control_provision::SystemReaderUrlErrorType::Role
         );
         assert_eq!(refusal.reader(), SystemReader::Registry);
         // The refusal must not echo the input: it carries a password.

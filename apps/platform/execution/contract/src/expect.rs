@@ -27,7 +27,7 @@ pub enum ExpectedOutcome {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum ExpectErrorKind {
+pub(crate) enum ExpectErrorType {
     ResponseStatus,
     RespondedFailureCode,
     FailedResponseFields,
@@ -37,26 +37,26 @@ pub(crate) enum ExpectErrorKind {
 /// classification behind it is this crate's own concern.
 #[derive(Debug)]
 pub struct ExpectError {
-    kind: ExpectErrorKind,
+    type_: ExpectErrorType,
 }
 
 impl ExpectError {
     #[cfg(test)]
-    pub(crate) const fn kind(&self) -> ExpectErrorKind {
-        self.kind
+    pub(crate) const fn kind(&self) -> ExpectErrorType {
+        self.type_
     }
 }
 
 impl std::fmt::Display for ExpectError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self.kind {
-            ExpectErrorKind::ResponseStatus => {
+        match self.type_ {
+            ExpectErrorType::ResponseStatus => {
                 formatter.write_str("expected status must be in 100..=599")
             }
-            ExpectErrorKind::RespondedFailureCode => {
+            ExpectErrorType::RespondedFailureCode => {
                 formatter.write_str("a responded outcome forbids failure-code")
             }
-            ExpectErrorKind::FailedResponseFields => {
+            ExpectErrorType::FailedResponseFields => {
                 formatter.write_str("a failed outcome forbids status and body-subset")
             }
         }
@@ -73,16 +73,16 @@ impl Expect {
             .is_some_and(|status| !(100..=599).contains(&status))
         {
             return Err(ExpectError {
-                kind: ExpectErrorKind::ResponseStatus,
+                type_: ExpectErrorType::ResponseStatus,
             });
         }
         match self.outcome {
             ExpectedOutcome::Responded if self.failure_code.is_some() => Err(ExpectError {
-                kind: ExpectErrorKind::RespondedFailureCode,
+                type_: ExpectErrorType::RespondedFailureCode,
             }),
             ExpectedOutcome::Failed if self.status.is_some() || self.body_subset.is_some() => {
                 Err(ExpectError {
-                    kind: ExpectErrorKind::FailedResponseFields,
+                    type_: ExpectErrorType::FailedResponseFields,
                 })
             }
             _ => Ok(()),
@@ -94,7 +94,7 @@ impl Expect {
 mod tests {
     use serde_json::{Value, json};
 
-    use super::{Expect, ExpectErrorKind, ExpectedOutcome};
+    use super::{Expect, ExpectErrorType, ExpectedOutcome};
     use crate::status::WiringFailureKind;
 
     fn round_trip(expect: &Expect, wire: Value) {
@@ -166,7 +166,7 @@ mod tests {
             }
             .validate()
             .unwrap_err();
-            assert_eq!(error.kind(), ExpectErrorKind::ResponseStatus);
+            assert_eq!(error.kind(), ExpectErrorType::ResponseStatus);
         }
         assert_eq!(
             Expect {
@@ -178,7 +178,7 @@ mod tests {
             .validate()
             .unwrap_err()
             .kind(),
-            ExpectErrorKind::RespondedFailureCode
+            ExpectErrorType::RespondedFailureCode
         );
         for (status, body_subset) in [(Some(200), None), (None, Some(json!({})))] {
             assert_eq!(
@@ -191,7 +191,7 @@ mod tests {
                 .validate()
                 .unwrap_err()
                 .kind(),
-                ExpectErrorKind::FailedResponseFields
+                ExpectErrorType::FailedResponseFields
             );
         }
     }

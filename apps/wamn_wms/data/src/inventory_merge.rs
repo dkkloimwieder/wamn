@@ -25,7 +25,7 @@
 use serde::Deserialize;
 use wamn_postgres_statements::{TimestampTz, Transaction, Uuid};
 
-use crate::error::{self, AccessError, AccessErrorKind};
+use crate::error::{self, AccessError, AccessErrorType};
 use crate::scalar;
 use crate::statements::wamn::inventory_merge as sql;
 
@@ -70,7 +70,7 @@ fn parse(command: &MergeCommand) -> Result<Parsed, AccessError> {
     // A packaging merged into itself is refused here, before any statement.
     if parsed.source_packaging_id.0 == parsed.target_packaging_id.0 {
         return Err(AccessError::field(
-            AccessErrorKind::InvalidInput,
+            AccessErrorType::InvalidInput,
             "value.target_packaging_id",
         ));
     }
@@ -109,7 +109,7 @@ fn locked_target(
     }
     let live = |row: Option<sql::LockBothPackagingsRow>, field: &str, id: &Uuid| {
         row.filter(|row| row.status != scalar::CONSUMED)
-            .ok_or_else(|| AccessError::missing(AccessErrorKind::PackagingNotFound, field, &id.0))
+            .ok_or_else(|| AccessError::missing(AccessErrorType::PackagingNotFound, field, &id.0))
     };
     live(
         source,
@@ -151,7 +151,7 @@ async fn run(
         .map_err(|e| error::from_statement(&e))?;
     if quantities.is_empty() {
         return Err(AccessError::field(
-            AccessErrorKind::InvalidInput,
+            AccessErrorType::InvalidInput,
             "value.source_packaging_id",
         ));
     }
@@ -239,7 +239,7 @@ mod tests {
     #[test]
     fn a_packaging_merged_into_itself_is_invalid_input() {
         let error = parse(&command(SOURCE, SOURCE)).unwrap_err();
-        assert_eq!(error.kind(), AccessErrorKind::InvalidInput);
+        assert_eq!(error.kind(), AccessErrorType::InvalidInput);
         assert_eq!(error.detail()["field"], "value.target_packaging_id");
         assert!(parse(&command(SOURCE, TARGET)).is_ok());
     }
@@ -255,7 +255,7 @@ mod tests {
 
         let parsed = parse(&command(SOURCE, TARGET)).unwrap();
         let missing = locked_target(vec![row(SOURCE, "available")], &parsed).unwrap_err();
-        assert_eq!(missing.kind(), AccessErrorKind::PackagingNotFound);
+        assert_eq!(missing.kind(), AccessErrorType::PackagingNotFound);
         assert_eq!(missing.detail()["field"], "value.target_packaging_id");
         assert_eq!(missing.detail()["id"], TARGET);
 
@@ -264,7 +264,7 @@ mod tests {
             &parsed,
         )
         .unwrap_err();
-        assert_eq!(consumed.kind(), AccessErrorKind::PackagingNotFound);
+        assert_eq!(consumed.kind(), AccessErrorType::PackagingNotFound);
         assert_eq!(consumed.detail()["field"], "value.source_packaging_id");
     }
 }

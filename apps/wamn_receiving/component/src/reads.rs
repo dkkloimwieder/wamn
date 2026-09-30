@@ -1,7 +1,7 @@
 //! Typed read handlers over the existing application operations.
 
 use wamn_postgres_statements::{Connection, Uuid};
-use wamn_receiving_data_access::{AccessError, AccessErrorKind, read};
+use wamn_receiving_data_access::{AccessError, AccessErrorType, read};
 
 pub(super) fn error_detail(
     error: &AccessError,
@@ -11,7 +11,7 @@ pub(super) fn error_detail(
     expected: Option<i32>,
 ) -> Option<String> {
     match key {
-        "field" if error.kind() == AccessErrorKind::NotFound => {
+        "field" if error.kind() == AccessErrorType::NotFound => {
             id.map(|(field, _)| field.to_owned())
         }
         "field" => error.field().map(str::to_owned),

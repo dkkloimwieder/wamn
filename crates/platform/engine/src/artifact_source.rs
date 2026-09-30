@@ -28,7 +28,7 @@ pub trait ArtifactSource: Send + Sync {
 
 /// Stable classification of a refused component artifact pull.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ComponentArtifactFetchErrorKind {
+pub enum ComponentArtifactFetchErrorType {
     /// The supplied admitted digest cannot name an immutable artifact.
     InvalidReference,
     /// `oci-client` rejected the transport configuration, so no client exists.
@@ -41,15 +41,15 @@ pub enum ComponentArtifactFetchErrorKind {
 
 /// Contextual refusal from the component artifact transfer boundary.
 pub struct ComponentArtifactFetchError {
-    kind: ComponentArtifactFetchErrorKind,
+    type_: ComponentArtifactFetchErrorType,
     reference: Option<Box<str>>,
     refusal: &'static str,
 }
 
 impl ComponentArtifactFetchError {
     /// Stable refusal class for callers that must not match display text.
-    pub fn kind(&self) -> ComponentArtifactFetchErrorKind {
-        self.kind
+    pub fn kind(&self) -> ComponentArtifactFetchErrorType {
+        self.type_
     }
 
     /// Stable literal naming the exact refused invariant or transfer phase.
@@ -60,7 +60,7 @@ impl ComponentArtifactFetchError {
     /// The admitted digest cannot name an immutable artifact.
     pub fn invalid_reference() -> Self {
         Self {
-            kind: ComponentArtifactFetchErrorKind::InvalidReference,
+            type_: ComponentArtifactFetchErrorType::InvalidReference,
             reference: None,
             refusal: "component-artifact-digest-invalid",
         }
@@ -69,7 +69,7 @@ impl ComponentArtifactFetchError {
     /// The bundles were readable but at least one is not usable as a trust root.
     pub fn registry_client() -> Self {
         Self {
-            kind: ComponentArtifactFetchErrorKind::RegistryClient,
+            type_: ComponentArtifactFetchErrorType::RegistryClient,
             reference: None,
             refusal: "component-artifact-registry-client-unusable",
         }
@@ -78,7 +78,7 @@ impl ComponentArtifactFetchError {
     /// The artifact at `reference` is not currently available.
     pub fn unavailable(reference: &str, refusal: &'static str) -> Self {
         Self {
-            kind: ComponentArtifactFetchErrorKind::Unavailable,
+            type_: ComponentArtifactFetchErrorType::Unavailable,
             reference: Some(reference.into()),
             refusal,
         }
@@ -87,7 +87,7 @@ impl ComponentArtifactFetchError {
     /// The artifact at `reference` contradicts admission.
     pub fn mismatched(reference: &str, refusal: &'static str) -> Self {
         Self {
-            kind: ComponentArtifactFetchErrorKind::Mismatched,
+            type_: ComponentArtifactFetchErrorType::Mismatched,
             reference: Some(reference.into()),
             refusal,
         }
@@ -100,7 +100,7 @@ impl fmt::Debug for ComponentArtifactFetchError {
         // safe to log without emitting response bodies or future auth context.
         formatter
             .debug_struct("ComponentArtifactFetchError")
-            .field("kind", &self.kind)
+            .field("kind", &self.type_)
             .field("reference", &self.reference)
             .field("refusal", &self.refusal)
             .finish_non_exhaustive()
@@ -275,18 +275,18 @@ mod tests {
         std::fs::write(&path, b"changed-local-component").unwrap();
         assert_eq!(
             source.pull_verified(&component).await.unwrap_err().kind(),
-            ComponentArtifactFetchErrorKind::Mismatched
+            ComponentArtifactFetchErrorType::Mismatched
         );
         std::fs::remove_file(&path).unwrap();
         assert_eq!(
             source.pull_verified(&component).await.unwrap_err().kind(),
-            ComponentArtifactFetchErrorKind::Unavailable
+            ComponentArtifactFetchErrorType::Unavailable
         );
         let mut invalid = component;
         invalid.component_digest = "sha256:../../outside".to_owned();
         assert_eq!(
             source.pull_verified(&invalid).await.unwrap_err().kind(),
-            ComponentArtifactFetchErrorKind::InvalidReference
+            ComponentArtifactFetchErrorType::InvalidReference
         );
         std::fs::remove_dir(root).unwrap();
     }

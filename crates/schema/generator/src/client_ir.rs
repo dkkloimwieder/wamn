@@ -64,20 +64,20 @@ pub const SEARCH_INPUT: &str = "search";
 /// Why a contract projection could not be read as an IR.
 #[derive(Debug)]
 pub struct ClientIrError {
-    kind: ClientIrErrorKind,
+    type_: ClientIrErrorType,
     detail: String,
 }
 
 impl ClientIrError {
     /// Stable refusal class.
     #[must_use]
-    pub const fn kind(&self) -> ClientIrErrorKind {
-        self.kind
+    pub const fn kind(&self) -> ClientIrErrorType {
+        self.type_
     }
 
-    pub(super) fn new(kind: ClientIrErrorKind, detail: impl Into<String>) -> Self {
+    pub(super) fn new(kind: ClientIrErrorType, detail: impl Into<String>) -> Self {
         Self {
-            kind,
+            type_: kind,
             detail: detail.into(),
         }
     }
@@ -85,7 +85,7 @@ impl ClientIrError {
 
 impl std::fmt::Display for ClientIrError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(formatter, "{}: {}", self.kind.code(), self.detail)
+        write!(formatter, "{}: {}", self.type_.code(), self.detail)
     }
 }
 
@@ -93,7 +93,7 @@ impl std::error::Error for ClientIrError {}
 
 /// Stable classification for an IR refusal.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ClientIrErrorKind {
+pub enum ClientIrErrorType {
     /// The contract directory could not be read.
     UnreadableProjection,
     /// A contract file was not the JSON the projection declares.
@@ -106,7 +106,7 @@ pub enum ClientIrErrorKind {
     UnnormalizedRoute,
 }
 
-impl ClientIrErrorKind {
+impl ClientIrErrorType {
     /// Stable wire code.
     #[must_use]
     pub const fn code(self) -> &'static str {
@@ -618,7 +618,7 @@ impl ClientContractIr {
 
         let entries = std::fs::read_dir(contracts).map_err(|error| {
             ClientIrError::new(
-                ClientIrErrorKind::UnreadableProjection,
+                ClientIrErrorType::UnreadableProjection,
                 format!("read {}: {error}", contracts.display()),
             )
         })?;
@@ -672,7 +672,7 @@ impl ClientContractIr {
             let parse = |bytes: &[u8]| -> Result<Value, ClientIrError> {
                 serde_json::from_slice(bytes).map_err(|error| {
                     ClientIrError::new(
-                        ClientIrErrorKind::MalformedContract,
+                        ClientIrErrorType::MalformedContract,
                         format!("parse {relative}: {error}"),
                     )
                 })
@@ -771,7 +771,7 @@ fn unreadable_projection(
         .map(|source| format!(": {source}"))
         .unwrap_or_default();
     ClientIrError::new(
-        ClientIrErrorKind::UnreadableProjection,
+        ClientIrErrorType::UnreadableProjection,
         format!("{}: {error}{cause}", attachments.display()),
     )
 }
@@ -807,7 +807,7 @@ fn route_index(
         serde_json::from_value(read_authored(attachments, AuthoredDocument::Attachments)?).map_err(
             |error| {
                 ClientIrError::new(
-                    ClientIrErrorKind::MalformedContract,
+                    ClientIrErrorType::MalformedContract,
                     format!(
                         "{} is not a serving attachment map: {error}",
                         attachments.display()
@@ -854,14 +854,14 @@ fn route_index(
                 .map(str::to_owned)
                 .ok_or_else(|| {
                     ClientIrError::new(
-                        ClientIrErrorKind::MissingMember,
+                        ClientIrErrorType::MissingMember,
                         format!("http attachment {id:?} has no route {key:?}"),
                     )
                 })
         };
         if attachment.definition.pointer("/route/method").is_some() {
             return Err(ClientIrError::new(
-                ClientIrErrorKind::UnnormalizedRoute,
+                ClientIrErrorType::UnnormalizedRoute,
                 format!(
                     "attachment {id:?} authors route.method; remove it, because the method follows from the operation kind"
                 ),
@@ -901,7 +901,7 @@ fn route_index(
         };
         if route.template != normalized_template(&route.template) {
             return Err(ClientIrError::new(
-                ClientIrErrorKind::UnnormalizedRoute,
+                ClientIrErrorType::UnnormalizedRoute,
                 format!(
                     "attachment {id:?} publishes {:?}; author it as publication would \
                      normalize it, {:?}",
@@ -919,7 +919,7 @@ fn route_index(
             // and picking one silently would drop a published route, so this
             // refuses and the ambiguity is ruled rather than guessed.
             return Err(ClientIrError::new(
-                ClientIrErrorKind::AmbiguousRoute,
+                ClientIrErrorType::AmbiguousRoute,
                 format!(
                     "operation {operation:?} is published at both {:?} and {:?}",
                     existing.template, route.template
@@ -936,7 +936,7 @@ fn route_method(kind: &str, module: &str, name: &str) -> Result<&'static str, Cl
         .map(wamn_catalog::OperationType::http_method)
         .map_err(|error| {
             ClientIrError::new(
-                ClientIrErrorKind::MalformedContract,
+                ClientIrErrorType::MalformedContract,
                 format!("{module}/{name} kind {kind:?}: {error}"),
             )
         })
@@ -969,7 +969,7 @@ fn collect_module(
 ) -> Result<(), ClientIrError> {
     let entries = std::fs::read_dir(directory).map_err(|error| {
         ClientIrError::new(
-            ClientIrErrorKind::UnreadableProjection,
+            ClientIrErrorType::UnreadableProjection,
             format!("read {}: {error}", directory.display()),
         )
     })?;
@@ -1004,20 +1004,20 @@ fn split_contract_name(file_name: &str) -> Option<(&str, &str)> {
 /// Read one authored publication file with its operation references resolved.
 pub(crate) fn read_authored(path: &Path, kind: AuthoredDocument) -> Result<Value, ClientIrError> {
     crate::operation_reference::read_authored_document(path, kind).map_err(|error| {
-        ClientIrError::new(ClientIrErrorKind::MalformedContract, error.to_string())
+        ClientIrError::new(ClientIrErrorType::MalformedContract, error.to_string())
     })
 }
 
 fn read_json(path: &Path) -> Result<Value, ClientIrError> {
     let source = std::fs::read_to_string(path).map_err(|error| {
         ClientIrError::new(
-            ClientIrErrorKind::UnreadableProjection,
+            ClientIrErrorType::UnreadableProjection,
             format!("read {}: {error}", path.display()),
         )
     })?;
     serde_json::from_str(&source).map_err(|error| {
         ClientIrError::new(
-            ClientIrErrorKind::MalformedContract,
+            ClientIrErrorType::MalformedContract,
             format!("{} is not contract JSON: {error}", path.display()),
         )
     })
@@ -1091,7 +1091,7 @@ fn build_operation(
 ) -> Result<Option<OperationIr>, ClientIrError> {
     let operation = parts.operation.ok_or_else(|| {
         ClientIrError::new(
-            ClientIrErrorKind::MissingMember,
+            ClientIrErrorType::MissingMember,
             format!("{module}/{name} has no operation contract"),
         )
     })?;
@@ -1103,7 +1103,7 @@ fn build_operation(
         Some(Value::Bool(value)) => *value,
         Some(_) => {
             return Err(ClientIrError::new(
-                ClientIrErrorKind::MalformedContract,
+                ClientIrErrorType::MalformedContract,
                 format!("{module}/{name} fresh_only must be a boolean"),
             ));
         }
@@ -1111,7 +1111,7 @@ fn build_operation(
     if operation.get("visibility").and_then(Value::as_str) == Some("private") {
         if fresh_only {
             return Err(ClientIrError::new(
-                ClientIrErrorKind::MalformedContract,
+                ClientIrErrorType::MalformedContract,
                 format!("private operation {module}/{name} must not require a fresh credential"),
             ));
         }
@@ -1130,7 +1130,7 @@ fn build_operation(
             .map(str::to_owned)
             .ok_or_else(|| {
                 ClientIrError::new(
-                    ClientIrErrorKind::MissingMember,
+                    ClientIrErrorType::MissingMember,
                     format!("{module}/{name} operation contract has no {key:?}"),
                 )
             })
@@ -1161,7 +1161,7 @@ fn build_operation(
         .transpose()
         .map_err(|error| {
             ClientIrError::new(
-                ClientIrErrorKind::MalformedContract,
+                ClientIrErrorType::MalformedContract,
                 format!("{module}/{name} record: {error}"),
             )
         })?;
@@ -1213,7 +1213,7 @@ fn build_operation(
             .transpose()
             .map_err(|error| {
                 ClientIrError::new(
-                    ClientIrErrorKind::MalformedContract,
+                    ClientIrErrorType::MalformedContract,
                     format!("{module}/{name} lists: {error}"),
                 )
             })?,
@@ -1527,7 +1527,7 @@ mod tests {
                 &BTreeMap::new(),
             )
             .expect_err("private or malformed freshness policy is refused");
-            assert_eq!(error.kind(), ClientIrErrorKind::MalformedContract);
+            assert_eq!(error.kind(), ClientIrErrorType::MalformedContract);
         }
     }
 }

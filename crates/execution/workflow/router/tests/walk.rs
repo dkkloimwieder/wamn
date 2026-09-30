@@ -21,7 +21,7 @@ use serde_json::{Value, json};
 use wamn_router::invariants::{self, WalkState, WalkTrace};
 use wamn_router::{
     Delivery, ErrorDetail, FailureKind, NodeCall, NodeError, NodeOutcome, RateLimitDetail,
-    RetryPolicy, Step, ThrottleKey, Walk, WalkStatus, Wiring, WiringEdge, WiringErrorKind,
+    RetryPolicy, Step, ThrottleKey, Walk, WalkStatus, Wiring, WiringEdge, WiringErrorType,
     WiringNode,
 };
 
@@ -577,7 +577,7 @@ fn cancelled_is_terminal_without_failure_verdict_or_successor() {
 fn compile_rejects_an_unresolved_entry() {
     // entry points at a node that does not exist -> compile error.
     let err = Wiring::compile("missing", vec![node("a", "echo")], vec![]).unwrap_err();
-    assert!(matches!(err.kind(), WiringErrorKind::UnresolvedEntry(id) if id == "missing"));
+    assert!(matches!(err.kind(), WiringErrorType::UnresolvedEntry(id) if id == "missing"));
 }
 
 // ---- retry policy (unit) --------------------------------------------------

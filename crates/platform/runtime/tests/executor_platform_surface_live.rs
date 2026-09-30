@@ -35,8 +35,8 @@ use wamn_control_provision::{WorkloadRoleFamily, sql};
 use wamn_run_state::RunStore as _;
 use wamn_runtime::plugins::wamn_postgres::{
     AclExpectation, AclTarget, AmbientCredentialState, CANDIDATE_WIRING_SQL, ClassCredentials,
-    CredentialConnectionKind, CredentialProbeErrorKind, CredentialProbePredicate,
-    ExpectedCredentialIdentity, MembershipExpectation, MembershipMode, ProductionClaimErrorKind,
+    CredentialConnectionKind, CredentialProbeErrorType, CredentialProbePredicate,
+    ExpectedCredentialIdentity, MembershipExpectation, MembershipMode, ProductionClaimErrorType,
     ProductionClaimResult, ProductionCompletion, ProductionCompletionResult,
     ProductionLeaseRenewal, ProductionReapResult, RELEASE_COMPONENTS_SQL, RELEASE_WIRING_SQL,
     WamnPostgres, WamnPostgresConfig, credential_exactness_probe, explicit_credential_source,
@@ -597,7 +597,7 @@ async fn executor_platform_surface_live() -> anyhow::Result<()> {
         .expect_err("a connection on another database must be refused");
     assert_eq!(
         wrong_database.kind(),
-        CredentialProbeErrorKind::PredicateMismatch
+        CredentialProbeErrorType::PredicateMismatch
     );
     assert_eq!(
         wrong_database.predicate(),
@@ -632,7 +632,7 @@ async fn executor_platform_surface_live() -> anyhow::Result<()> {
     .expect_err("a membership the generation does not hold must be refused");
     assert_eq!(
         wrong_membership.kind(),
-        CredentialProbeErrorKind::PredicateMismatch
+        CredentialProbeErrorType::PredicateMismatch
     );
     assert_eq!(
         wrong_membership.predicate(),
@@ -690,7 +690,7 @@ async fn executor_platform_surface_live() -> anyhow::Result<()> {
     .expect_err("an ACL fact the family does not hold must be refused");
     assert_eq!(
         wrong_acl.kind(),
-        CredentialProbeErrorKind::PredicateMismatch
+        CredentialProbeErrorType::PredicateMismatch
     );
     assert_eq!(wrong_acl.predicate(), CredentialProbePredicate::Acl);
     assert_eq!(
@@ -719,7 +719,7 @@ async fn executor_platform_surface_live() -> anyhow::Result<()> {
     .expect_err("a credential paired with another tenant's expectation must be refused");
     assert_eq!(
         wrong_binding.kind(),
-        CredentialProbeErrorKind::PredicateMismatch
+        CredentialProbeErrorType::PredicateMismatch
     );
     assert_eq!(
         wrong_binding.predicate(),
@@ -780,7 +780,7 @@ async fn executor_platform_surface_live() -> anyhow::Result<()> {
             .map(|_| ()),
     ] {
         let error = result.expect_err("broad table grants must not replace executor membership");
-        assert_eq!(error.kind(), ProductionClaimErrorKind::Identity);
+        assert_eq!(error.kind(), ProductionClaimErrorType::Identity);
         assert_eq!(error.operation(), "check executor authority");
         assert!(
             error

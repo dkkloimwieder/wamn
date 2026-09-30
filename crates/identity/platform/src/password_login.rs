@@ -14,7 +14,7 @@ use tokio_postgres::{Row, Transaction};
 use zeroize::Zeroizing;
 
 use crate::{
-    AuthenticatedPrincipal, IdentityError, IdentityErrorKind, PrincipalId, resolve_principal,
+    AuthenticatedPrincipal, IdentityError, IdentityErrorType, PrincipalId, resolve_principal,
 };
 
 const PREFIX: &str = "wamn_renew_";
@@ -54,7 +54,7 @@ impl fmt::Debug for Renewal {
 
 fn database(error: &tokio_postgres::Error) -> IdentityError {
     IdentityError::new(
-        IdentityErrorKind::Database,
+        IdentityErrorType::Database,
         format!(
             "password login storage failed ({})",
             error.code().map_or("connection", |c| c.code())
@@ -84,7 +84,7 @@ async fn credential(tx: &Transaction<'_>, login: Login) -> Result<Renewal, Ident
     let mut bytes = Zeroizing::new([0; 32]);
     SystemRandom::new().fill(bytes.as_mut()).map_err(|_| {
         IdentityError::new(
-            IdentityErrorKind::Entropy,
+            IdentityErrorType::Entropy,
             "renewal credential generation failed",
         )
     })?;

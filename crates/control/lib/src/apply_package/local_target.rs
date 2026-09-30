@@ -7,7 +7,7 @@ use tokio_postgres::{NoTls, Transaction};
 use wamn_record_history::history_table_name;
 use wamn_runtime::local_application::{LocalTargetComment, read_local_target_comment};
 use wamn_schema_control::{
-    AppliedPackage, PackageDirectory, PackageMigrationErrorKind, plan_package_migrations,
+    AppliedPackage, PackageDirectory, PackageMigrationErrorType, plan_package_migrations,
 };
 use wamn_schema_generator::PackageManifest;
 
@@ -76,7 +76,7 @@ pub fn applied_migration_drift(
     };
     match plan_package_migrations(directory, Some(&accepted)) {
         Ok(_) => Ok(None),
-        Err(error) if error.kind() == PackageMigrationErrorKind::MigrationDrift => {
+        Err(error) if error.kind() == PackageMigrationErrorType::MigrationDrift => {
             Ok(Some(error.to_string()))
         }
         Err(error) => Err(error.into()),

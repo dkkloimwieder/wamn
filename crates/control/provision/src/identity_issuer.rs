@@ -135,7 +135,7 @@ pub const IDENTITY_ISSUER_PASSWORD_COLUMNS: &[(&str, &str, &[&str])] = &[
 
 /// Which input predicate refused an identity credential.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum IdentityIssuerUrlErrorKind {
+pub enum IdentityIssuerUrlErrorType {
     Issuer,
     Absent,
     Malformed,
@@ -148,14 +148,14 @@ pub enum IdentityIssuerUrlErrorKind {
 /// A refused input with a fixed reason and no credential material.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct IdentityIssuerUrlError {
-    kind: IdentityIssuerUrlErrorKind,
+    type_: IdentityIssuerUrlErrorType,
     reason: &'static str,
 }
 
 impl IdentityIssuerUrlError {
     /// The predicate that refused the input.
-    pub const fn kind(&self) -> IdentityIssuerUrlErrorKind {
-        self.kind
+    pub const fn kind(&self) -> IdentityIssuerUrlErrorType {
+        self.type_
     }
 }
 
@@ -171,15 +171,18 @@ impl fmt::Display for IdentityIssuerUrlError {
 
 impl std::error::Error for IdentityIssuerUrlError {}
 
-fn refuse(kind: IdentityIssuerUrlErrorKind, reason: &'static str) -> IdentityIssuerUrlError {
-    IdentityIssuerUrlError { kind, reason }
+fn refuse(kind: IdentityIssuerUrlErrorType, reason: &'static str) -> IdentityIssuerUrlError {
+    IdentityIssuerUrlError {
+        type_: kind,
+        reason,
+    }
 }
 
 /// Require an HTTPS issuer without user information, a query, or a fragment.
 pub fn validate_identity_issuer(issuer: &str) -> Result<(), IdentityIssuerUrlError> {
     let parsed = Url::parse(issuer).map_err(|_| {
         refuse(
-            IdentityIssuerUrlErrorKind::Issuer,
+            IdentityIssuerUrlErrorType::Issuer,
             "issuer must be an HTTPS URL",
         )
     })?;
@@ -192,7 +195,7 @@ pub fn validate_identity_issuer(issuer: &str) -> Result<(), IdentityIssuerUrlErr
         || issuer.chars().any(char::is_whitespace)
     {
         return Err(refuse(
-            IdentityIssuerUrlErrorKind::Issuer,
+            IdentityIssuerUrlErrorType::Issuer,
             "issuer must use HTTPS with no credentials, whitespace, query, or fragment",
         ));
     }
@@ -284,37 +287,37 @@ pub fn parse_identity_issuer_url(
     validate_identity_issuer(issuer)?;
     if raw.is_empty() {
         return Err(refuse(
-            IdentityIssuerUrlErrorKind::Absent,
+            IdentityIssuerUrlErrorType::Absent,
             "WAMN_IDENTITY_DATABASE_URL is required",
         ));
     }
     let parsed = Url::parse(raw).map_err(|_| {
         refuse(
-            IdentityIssuerUrlErrorKind::Malformed,
+            IdentityIssuerUrlErrorType::Malformed,
             "database credential must be a URL",
         )
     })?;
     if !matches!(parsed.scheme(), "postgres" | "postgresql") {
         return Err(refuse(
-            IdentityIssuerUrlErrorKind::Scheme,
+            IdentityIssuerUrlErrorType::Scheme,
             "database credential must use postgres or postgresql",
         ));
     }
     if parsed.host_str().is_none_or(str::is_empty) || raw.chars().any(char::is_whitespace) {
         return Err(refuse(
-            IdentityIssuerUrlErrorKind::Malformed,
+            IdentityIssuerUrlErrorType::Malformed,
             "database credential must name a host and contain no whitespace",
         ));
     }
     if parsed.query().is_some() || parsed.fragment().is_some() {
         return Err(refuse(
-            IdentityIssuerUrlErrorKind::Extra,
+            IdentityIssuerUrlErrorType::Extra,
             "database credential must carry no query or fragment",
         ));
     }
     if parsed.path() != "/wamn_system" {
         return Err(refuse(
-            IdentityIssuerUrlErrorKind::Database,
+            IdentityIssuerUrlErrorType::Database,
             "database credential must name wamn_system exactly",
         ));
     }
@@ -329,7 +332,7 @@ pub fn parse_identity_issuer_url(
         }
     }
     Err(refuse(
-        IdentityIssuerUrlErrorKind::Role,
+        IdentityIssuerUrlErrorType::Role,
         "database user must be this issuer's A or B login generation",
     ))
 }
@@ -430,7 +433,7 @@ pub fn retire_identity_issuer_generation_sql(
 #[cfg(test)]
 mod tests {
     use super::{
-        IdentityIssuerUrlErrorKind, grant_identity_issuer_surface_sql,
+        IdentityIssuerUrlErrorType, grant_identity_issuer_surface_sql,
         identity_issuer_generation_role, parse_identity_issuer_url, validate_identity_issuer,
     };
     use crate::CredentialGeneration;
@@ -498,42 +501,42 @@ mod tests {
             identity_issuer_generation_role("https://other.example", CredentialGeneration::A)
                 .unwrap();
         for (raw, kind) in [
-            (String::new(), IdentityIssuerUrlErrorKind::Absent),
+            (String::new(), IdentityIssuerUrlErrorType::Absent),
             (
                 "not-a-url-hidden-value".into(),
-                IdentityIssuerUrlErrorKind::Malformed,
+                IdentityIssuerUrlErrorType::Malformed,
             ),
             (
                 "postgres://wamn_system:hidden-value@sysdb/wamn_system".into(),
-                IdentityIssuerUrlErrorKind::Role,
+                IdentityIssuerUrlErrorType::Role,
             ),
             (
                 format!("postgres://{other}:hidden-value@sysdb/wamn_system"),
-                IdentityIssuerUrlErrorKind::Role,
+                IdentityIssuerUrlErrorType::Role,
             ),
             (
                 format!("postgres://{a}c:hidden-value@sysdb/wamn_system"),
-                IdentityIssuerUrlErrorKind::Role,
+                IdentityIssuerUrlErrorType::Role,
             ),
             (
                 format!("postgres://{a}:hidden-value@sysdb/other"),
-                IdentityIssuerUrlErrorKind::Database,
+                IdentityIssuerUrlErrorType::Database,
             ),
             (
                 format!("postgres://{a}:hidden-value@sysdb/%77amn_system"),
-                IdentityIssuerUrlErrorKind::Database,
+                IdentityIssuerUrlErrorType::Database,
             ),
             (
                 format!("postgres://{a}:hidden-value@sysdb/wamn_system?user=wamn_system"),
-                IdentityIssuerUrlErrorKind::Extra,
+                IdentityIssuerUrlErrorType::Extra,
             ),
             (
                 format!("postgres://{a}:hidden-value@sysdb/wamn_system#hidden-value"),
-                IdentityIssuerUrlErrorKind::Extra,
+                IdentityIssuerUrlErrorType::Extra,
             ),
             (
                 format!("https://{a}:hidden-value@sysdb/wamn_system"),
-                IdentityIssuerUrlErrorKind::Scheme,
+                IdentityIssuerUrlErrorType::Scheme,
             ),
         ] {
             let error = parse_identity_issuer_url(&raw, ISSUER).unwrap_err();

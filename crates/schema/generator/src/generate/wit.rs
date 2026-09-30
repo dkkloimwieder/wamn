@@ -6,7 +6,7 @@ use super::wit_adapters::{emit_error_mapper, emit_export_adapter, emit_row_adapt
 use super::{
     AccessOperationErrorLiteral, BTreeMap, Column, ColumnType, ContractFieldDeclaration,
     CrudAction, CustomOperationDeclaration, CustomOperationResultDeclaration, GenerateError,
-    GenerateErrorKind, ModelDeclaration, OperationDeclaration, OperationErrorDetailDeclaration,
+    GenerateErrorType, ModelDeclaration, OperationDeclaration, OperationErrorDetailDeclaration,
     PackageManifest, ResultClass, Table, binding_identifier, insert_bytes, rust_identifier,
     rust_type_identifier,
 };
@@ -1575,7 +1575,7 @@ pub(super) fn emit_custom_operation_wit(
     emit_codec_support(files)?;
     let (group, local_name) = operation_name.split_once('.').ok_or_else(|| {
         GenerateError::new(
-            GenerateErrorKind::InvalidOperation,
+            GenerateErrorType::InvalidOperation,
             "custom operation needs a group and local name",
         )
     })?;

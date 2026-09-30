@@ -87,7 +87,7 @@ pub use backup::{
     object_store_name, render_object_store, render_scheduled_backup, scheduled_backup_name,
 };
 pub use control_author::{
-    ControlAuthoringConnection, ControlAuthoringUrlError, ControlAuthoringUrlErrorKind,
+    ControlAuthoringConnection, ControlAuthoringUrlError, ControlAuthoringUrlErrorType,
     control_author_generation_role, control_author_scope_hash, parse_control_authoring_url,
 };
 #[cfg(feature = "ops")]
@@ -99,7 +99,7 @@ pub use copy::{
 pub use database::render_project_env_database;
 pub use error::{ProvisionError, check_tenant_environment_identity};
 pub use management_admitter::{
-    ManagementAdmissionConnection, ManagementAdmissionUrlError, ManagementAdmissionUrlErrorKind,
+    ManagementAdmissionConnection, ManagementAdmissionUrlError, ManagementAdmissionUrlErrorType,
     management_admitter_generation_role, management_admitter_scope_hash,
     parse_management_admission_url,
 };
@@ -123,7 +123,7 @@ pub use recovery::{
     RecoveredCluster, recovery_bootstrap, recovery_external_cluster, render_recovery_cluster,
 };
 pub use system_reader::{
-    SystemReader, SystemReaderConnection, SystemReaderUrlError, SystemReaderUrlErrorKind,
+    SystemReader, SystemReaderConnection, SystemReaderUrlError, SystemReaderUrlErrorType,
     parse_system_reader_url, system_reader_generation_role, system_reader_scope_hash,
 };
 

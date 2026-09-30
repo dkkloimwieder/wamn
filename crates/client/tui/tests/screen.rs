@@ -5,7 +5,7 @@ use wamn_client::descriptor::{FieldDescriptor, FieldSchema};
 use wamn_client::{HttpResponse, RouteMetadata};
 use wamn_client_tui::draft::FieldState;
 use wamn_client_tui::screen::{
-    Availability, ExitState, IntentValues, RecordLink, RevisionBinding, Screen, ScreenErrorKind,
+    Availability, ExitState, IntentValues, RecordLink, RevisionBinding, Screen, ScreenErrorType,
     ScreenSpec, SuppliedField, SuppliedType,
 };
 use wamn_client_tui::submission::{Replay, ResponseContract, SessionBinding, State};
@@ -223,7 +223,7 @@ fn selected_record_supplies_only_the_declared_key_and_waits_for_extra_read_input
         read.begin(&intent(), false)
             .expect_err("locale still required")
             .kind(),
-        ScreenErrorKind::Request
+        ScreenErrorType::Request
     );
     assert!(read.submission().captured().is_none());
     assert_eq!(
@@ -256,7 +256,7 @@ fn revision_transfer_requires_the_exact_successful_read_and_reserves_envelope_pa
                 .edit(path, FieldState::Value(json!("typed")))
                 .expect_err("reserved")
                 .kind(),
-            ScreenErrorKind::Draft
+            ScreenErrorType::Draft
         );
     }
     let mut page = Screen::new(&PAGE, binding("a"));
@@ -493,7 +493,7 @@ fn delete_needs_confirmation_and_pending_prevents_exit_or_draft_discard() {
             .begin(&intent(), false)
             .expect_err("confirmation")
             .kind(),
-        ScreenErrorKind::ConfirmationRequired
+        ScreenErrorType::ConfirmationRequired
     );
     assert!(command.submission().captured().is_none());
     let attempt = command.begin(&intent(), true).expect("confirmed deletion");
@@ -519,7 +519,7 @@ fn delete_needs_confirmation_and_pending_prevents_exit_or_draft_discard() {
             .begin(&intent(), false)
             .expect_err("each delete needs confirmation")
             .kind(),
-        ScreenErrorKind::ConfirmationRequired
+        ScreenErrorType::ConfirmationRequired
     );
 }
 

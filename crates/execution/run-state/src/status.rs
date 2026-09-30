@@ -251,42 +251,42 @@ impl NodeRunStatus {
 /// A completed node-run's classified failure kind for run history.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
-pub enum NodeErrorKind {
+pub enum NodeErrorType {
     Retryable,
     RateLimited,
     Terminal,
     InvalidInput,
 }
 
-impl NodeErrorKind {
-    pub const ALL: [NodeErrorKind; 4] = [
-        NodeErrorKind::Retryable,
-        NodeErrorKind::RateLimited,
-        NodeErrorKind::Terminal,
-        NodeErrorKind::InvalidInput,
+impl NodeErrorType {
+    pub const ALL: [NodeErrorType; 4] = [
+        NodeErrorType::Retryable,
+        NodeErrorType::RateLimited,
+        NodeErrorType::Terminal,
+        NodeErrorType::InvalidInput,
     ];
 
     pub fn as_sql(self) -> &'static str {
         match self {
-            NodeErrorKind::Retryable => "retryable",
-            NodeErrorKind::RateLimited => "rate-limited",
-            NodeErrorKind::Terminal => "terminal",
-            NodeErrorKind::InvalidInput => "invalid-input",
+            NodeErrorType::Retryable => "retryable",
+            NodeErrorType::RateLimited => "rate-limited",
+            NodeErrorType::Terminal => "terminal",
+            NodeErrorType::InvalidInput => "invalid-input",
         }
     }
 
-    pub fn from_sql(s: &str) -> Option<NodeErrorKind> {
-        NodeErrorKind::ALL.into_iter().find(|v| v.as_sql() == s)
+    pub fn from_sql(s: &str) -> Option<NodeErrorType> {
+        NodeErrorType::ALL.into_iter().find(|v| v.as_sql() == s)
     }
 }
 
-impl From<&NodeError> for NodeErrorKind {
-    fn from(e: &NodeError) -> NodeErrorKind {
+impl From<&NodeError> for NodeErrorType {
+    fn from(e: &NodeError) -> NodeErrorType {
         match e {
-            NodeError::Retryable(_) => NodeErrorKind::Retryable,
-            NodeError::RateLimited(_) => NodeErrorKind::RateLimited,
-            NodeError::Terminal(_) => NodeErrorKind::Terminal,
-            NodeError::InvalidInput(_) => NodeErrorKind::InvalidInput,
+            NodeError::Retryable(_) => NodeErrorType::Retryable,
+            NodeError::RateLimited(_) => NodeErrorType::RateLimited,
+            NodeError::Terminal(_) => NodeErrorType::Terminal,
+            NodeError::InvalidInput(_) => NodeErrorType::InvalidInput,
         }
     }
 }

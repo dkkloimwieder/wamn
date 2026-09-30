@@ -84,7 +84,7 @@ pub const WIRING_AUTHORSHIP_REFUSAL: &str = "wiring-authorship-refused";
 
 /// Stable predicate that refused one wiring authorship.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum AuthorWiringErrorKind {
+pub enum AuthorWiringErrorType {
     Storage,
     Document,
     Gate,
@@ -93,7 +93,7 @@ pub enum AuthorWiringErrorKind {
     Conflict,
 }
 
-impl AuthorWiringErrorKind {
+impl AuthorWiringErrorType {
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::Storage => "storage",
@@ -108,35 +108,35 @@ impl AuthorWiringErrorKind {
 /// Contextual refusal from the wiring-authorship boundary.
 #[derive(Debug)]
 pub struct AuthorWiringError {
-    kind: AuthorWiringErrorKind,
+    type_: AuthorWiringErrorType,
     detail: String,
     source: Option<Box<dyn std::error::Error + Send + Sync>>,
 }
 
 impl AuthorWiringError {
-    fn new(kind: AuthorWiringErrorKind, detail: impl Into<String>) -> Self {
+    fn new(kind: AuthorWiringErrorType, detail: impl Into<String>) -> Self {
         Self {
-            kind,
+            type_: kind,
             detail: detail.into(),
             source: None,
         }
     }
 
     fn with_source(
-        kind: AuthorWiringErrorKind,
+        type_: AuthorWiringErrorType,
         detail: impl Into<String>,
         source: impl std::error::Error + Send + Sync + 'static,
     ) -> Self {
         Self {
-            kind,
+            type_,
             detail: detail.into(),
             source: Some(Box::new(source)),
         }
     }
 
     /// Stable refusal class for callers that must not match display text.
-    pub const fn kind(&self) -> AuthorWiringErrorKind {
-        self.kind
+    pub const fn kind(&self) -> AuthorWiringErrorType {
+        self.type_
     }
 }
 
@@ -145,7 +145,7 @@ impl std::fmt::Display for AuthorWiringError {
         write!(
             formatter,
             "{WIRING_AUTHORSHIP_REFUSAL} ({}): {}",
-            self.kind.as_str(),
+            self.type_.as_str(),
             self.detail
         )
     }
@@ -282,14 +282,14 @@ pub fn read_wiring_document(path: &Path) -> Result<WiringDocument, AuthorWiringE
     )
     .map_err(|error| {
         AuthorWiringError::with_source(
-            AuthorWiringErrorKind::Document,
+            AuthorWiringErrorType::Document,
             format!("read wiring document {}", path.display()),
             error,
         )
     })?;
     WiringDocument::parse(&value).map_err(|error| {
         AuthorWiringError::with_source(
-            AuthorWiringErrorKind::Document,
+            AuthorWiringErrorType::Document,
             format!("wiring document {} is not a valid wiring", path.display()),
             error,
         )
@@ -307,7 +307,7 @@ pub fn gate_wiring_document(
 ) -> Result<DefinitionHash, AuthorWiringError> {
     validate_wiring_compatibility(document, scope, components).map_err(|error| {
         AuthorWiringError::with_source(
-            AuthorWiringErrorKind::Gate,
+            AuthorWiringErrorType::Gate,
             format!(
                 "wiring {:?} version {} is not compatible with package {}@{} component facts",
                 document.wiring_id, document.version, scope.package_id, scope.package_version
@@ -355,7 +355,7 @@ fn require_green_report(
     match verdict {
         Some(true) => Ok(()),
         Some(false) => Err(AuthorWiringError::new(
-            AuthorWiringErrorKind::Report,
+            AuthorWiringErrorType::Report,
             format!(
                 "wiring {:?} version {} was gated and REFUSED at {}",
                 document.wiring_id,
@@ -364,7 +364,7 @@ fn require_green_report(
             ),
         )),
         None => Err(AuthorWiringError::new(
-            AuthorWiringErrorKind::Report,
+            AuthorWiringErrorType::Report,
             format!(
                 "wiring {:?} version {} has no gate report at {}",
                 document.wiring_id,
@@ -400,7 +400,7 @@ pub async fn author_wiring(
         .await
         .map_err(|error| {
             AuthorWiringError::with_source(
-                AuthorWiringErrorKind::Storage,
+                AuthorWiringErrorType::Storage,
                 "read the gate scope's admitted component facts",
                 error,
             )
@@ -411,7 +411,7 @@ pub async fn author_wiring(
 
     let version = i32::try_from(request.document.version).map_err(|error| {
         AuthorWiringError::with_source(
-            AuthorWiringErrorKind::Document,
+            AuthorWiringErrorType::Document,
             format!(
                 "wiring {:?} version {} exceeds the catalog storage width",
                 request.document.wiring_id, request.document.version
@@ -441,7 +441,7 @@ pub async fn author_wiring(
         .get(0);
     if !exact {
         return Err(AuthorWiringError::new(
-            AuthorWiringErrorKind::Conflict,
+            AuthorWiringErrorType::Conflict,
             format!(
                 "wiring {:?} version {} is already authored with other facts",
                 request.document.wiring_id, request.document.version
@@ -452,7 +452,7 @@ pub async fn author_wiring(
 }
 
 fn storage(context: &'static str, error: tokio_postgres::Error) -> AuthorWiringError {
-    AuthorWiringError::with_source(AuthorWiringErrorKind::Storage, context, error)
+    AuthorWiringError::with_source(AuthorWiringErrorType::Storage, context, error)
 }
 
 #[cfg(test)]
@@ -525,7 +525,7 @@ mod tests {
     fn an_unreadable_document_refuses_before_any_connection() {
         let missing = read_wiring_document(Path::new("no-such-wiring-document.json"))
             .expect_err("an absent document refuses");
-        assert_eq!(missing.kind(), AuthorWiringErrorKind::Document);
+        assert_eq!(missing.kind(), AuthorWiringErrorType::Document);
         assert!(
             format!("{missing}").starts_with(WIRING_AUTHORSHIP_REFUSAL),
             "refusal is unlabelled: {missing}"
@@ -560,7 +560,7 @@ mod tests {
             read_wiring_document(&path).expect_err("a graph the router cannot enter refuses");
         std::fs::remove_dir_all(&package).expect("remove the wiring package");
 
-        assert_eq!(refusal.kind(), AuthorWiringErrorKind::Document);
+        assert_eq!(refusal.kind(), AuthorWiringErrorType::Document);
         let validator = refusal
             .source()
             .expect("the document refusal is carried verbatim")
@@ -582,7 +582,7 @@ mod tests {
         // component the gate scope has no admitted fact for.
         let refusal = gate_wiring_document(&document, &scope(), &[admitted("transform")])
             .expect_err("a wiring over absent component facts refuses");
-        assert_eq!(refusal.kind(), AuthorWiringErrorKind::Gate);
+        assert_eq!(refusal.kind(), AuthorWiringErrorType::Gate);
         let gate = refusal
             .source()
             .expect("the gate refusal is carried verbatim")
@@ -610,7 +610,7 @@ mod tests {
 
         let red = require_green_report(Some(false), &document, &hash)
             .expect_err("a report whose gate refused the document refuses authorship");
-        assert_eq!(red.kind(), AuthorWiringErrorKind::Report);
+        assert_eq!(red.kind(), AuthorWiringErrorType::Report);
         assert!(
             format!("{red}").starts_with(WIRING_AUTHORSHIP_REFUSAL),
             "refusal is unlabelled: {red}"
@@ -618,7 +618,7 @@ mod tests {
 
         let absent = require_green_report(None, &document, &hash)
             .expect_err("an ungated document refuses authorship");
-        assert_eq!(absent.kind(), AuthorWiringErrorKind::Report);
+        assert_eq!(absent.kind(), AuthorWiringErrorType::Report);
         assert_ne!(
             format!("{absent}"),
             format!("{red}"),

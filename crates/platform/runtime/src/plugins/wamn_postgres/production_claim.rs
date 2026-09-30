@@ -15,7 +15,7 @@ use wamn_run_state::queue::{
 };
 use wamn_run_state::run_store::RunStore;
 pub use wamn_run_state::run_store::{
-    ProductionCallerOutcome, ProductionClaimError, ProductionClaimErrorKind, ProductionCompletion,
+    ProductionCallerOutcome, ProductionClaimError, ProductionClaimErrorType, ProductionCompletion,
     ProductionCompletionResult, ProductionLeaseRenewal, ProductionReapResult,
 };
 use wamn_run_state::transitions::{
@@ -140,21 +140,21 @@ impl RunStore for WamnPostgres {
     ) -> Result<ProductionClaimResult, ProductionClaimError> {
         if !valid_package_scope(package_ids) || environment.is_empty() || lease_ttl_ms <= 0 {
             return Err(ProductionClaimError::new(
-                ProductionClaimErrorKind::Contract,
+                ProductionClaimErrorType::Contract,
                 "validate queue scope",
                 "a nonempty canonical package set, environment, and positive lease TTL are required",
             ));
         }
         let tenant = self.tenant_for(component_id).ok_or_else(|| {
             ProductionClaimError::new(
-                ProductionClaimErrorKind::Identity,
+                ProductionClaimErrorType::Identity,
                 "resolve tenant",
                 "component has no host-injected tenant",
             )
         })?;
         let runner = self.runner_for(component_id).ok_or_else(|| {
             ProductionClaimError::new(
-                ProductionClaimErrorKind::Identity,
+                ProductionClaimErrorType::Identity,
                 "resolve runner",
                 "component has no host-injected runner",
             )
@@ -169,7 +169,7 @@ impl RunStore for WamnPostgres {
             .await
             .map_err(|error| {
                 ProductionClaimError::new(
-                    ProductionClaimErrorKind::Storage,
+                    ProductionClaimErrorType::Storage,
                     "checkout project connection",
                     format!("{error:?}"),
                 )
@@ -191,7 +191,7 @@ impl RunStore for WamnPostgres {
         {
             self.destroy(connection);
             return Err(ProductionClaimError::new(
-                ProductionClaimErrorKind::Storage,
+                ProductionClaimErrorType::Storage,
                 "begin tenant transaction",
                 format!("{error:?}"),
             ));
@@ -211,7 +211,7 @@ impl RunStore for WamnPostgres {
                 if let Err(error) = connection.batch_execute("COMMIT").await {
                     self.destroy(connection);
                     return Err(ProductionClaimError::new(
-                        ProductionClaimErrorKind::Storage,
+                        ProductionClaimErrorType::Storage,
                         "commit production claim",
                         error.to_string(),
                     ));
@@ -251,21 +251,21 @@ impl RunStore for WamnPostgres {
     ) -> Result<ProductionReapResult, ProductionClaimError> {
         if !valid_package_scope(package_ids) || environment.is_empty() || grace_ms < 0 {
             return Err(ProductionClaimError::new(
-                ProductionClaimErrorKind::Contract,
+                ProductionClaimErrorType::Contract,
                 "validate janitor scope",
                 "a nonempty canonical package set, environment, and non-negative janitor grace are required",
             ));
         }
         let tenant = self.tenant_for(component_id).ok_or_else(|| {
             ProductionClaimError::new(
-                ProductionClaimErrorKind::Identity,
+                ProductionClaimErrorType::Identity,
                 "resolve janitor tenant",
                 "component has no host-injected tenant",
             )
         })?;
         let runner = self.runner_for(component_id).ok_or_else(|| {
             ProductionClaimError::new(
-                ProductionClaimErrorKind::Identity,
+                ProductionClaimErrorType::Identity,
                 "resolve janitor runner",
                 "component has no host-injected runner",
             )
@@ -279,7 +279,7 @@ impl RunStore for WamnPostgres {
             .await
             .map_err(|error| {
                 ProductionClaimError::new(
-                    ProductionClaimErrorKind::Storage,
+                    ProductionClaimErrorType::Storage,
                     "checkout janitor connection",
                     format!("{error:?}"),
                 )
@@ -301,7 +301,7 @@ impl RunStore for WamnPostgres {
         {
             self.destroy(connection);
             return Err(ProductionClaimError::new(
-                ProductionClaimErrorKind::Storage,
+                ProductionClaimErrorType::Storage,
                 "begin janitor transaction",
                 format!("{error:?}"),
             ));
@@ -313,7 +313,7 @@ impl RunStore for WamnPostgres {
                 if let Err(error) = connection.batch_execute("COMMIT").await {
                     self.destroy(connection);
                     return Err(ProductionClaimError::new(
-                        ProductionClaimErrorKind::Storage,
+                        ProductionClaimErrorType::Storage,
                         "commit janitor turn",
                         error.to_string(),
                     ));
@@ -344,21 +344,21 @@ impl RunStore for WamnPostgres {
     ) -> Result<ProductionLeaseRenewal, ProductionClaimError> {
         if lease_generation <= 0 || lease_ttl_ms <= 0 {
             return Err(ProductionClaimError::new(
-                ProductionClaimErrorKind::Contract,
+                ProductionClaimErrorType::Contract,
                 "validate production lease renewal",
                 "lease generation and TTL must be positive",
             ));
         }
         let tenant = self.tenant_for(component_id).ok_or_else(|| {
             ProductionClaimError::new(
-                ProductionClaimErrorKind::Identity,
+                ProductionClaimErrorType::Identity,
                 "resolve renewal tenant",
                 "component has no host-injected tenant",
             )
         })?;
         let runner = self.runner_for(component_id).ok_or_else(|| {
             ProductionClaimError::new(
-                ProductionClaimErrorKind::Identity,
+                ProductionClaimErrorType::Identity,
                 "resolve renewal runner",
                 "component has no host-injected runner",
             )
@@ -372,7 +372,7 @@ impl RunStore for WamnPostgres {
             .await
             .map_err(|error| {
                 ProductionClaimError::new(
-                    ProductionClaimErrorKind::Storage,
+                    ProductionClaimErrorType::Storage,
                     "checkout renewal connection",
                     format!("{error:?}"),
                 )
@@ -394,7 +394,7 @@ impl RunStore for WamnPostgres {
         {
             self.destroy(connection);
             return Err(ProductionClaimError::new(
-                ProductionClaimErrorKind::Storage,
+                ProductionClaimErrorType::Storage,
                 "begin renewal transaction",
                 format!("{error:?}"),
             ));
@@ -419,21 +419,21 @@ impl RunStore for WamnPostgres {
     ) -> Result<ProductionCompletionResult, ProductionClaimError> {
         if lease_generation <= 0 {
             return Err(ProductionClaimError::new(
-                ProductionClaimErrorKind::Contract,
+                ProductionClaimErrorType::Contract,
                 "validate production completion",
                 "lease generation must be positive",
             ));
         }
         let tenant = self.tenant_for(component_id).ok_or_else(|| {
             ProductionClaimError::new(
-                ProductionClaimErrorKind::Identity,
+                ProductionClaimErrorType::Identity,
                 "resolve completion tenant",
                 "component has no host-injected tenant",
             )
         })?;
         let runner = self.runner_for(component_id).ok_or_else(|| {
             ProductionClaimError::new(
-                ProductionClaimErrorKind::Identity,
+                ProductionClaimErrorType::Identity,
                 "resolve completion runner",
                 "component has no host-injected runner",
             )
@@ -447,7 +447,7 @@ impl RunStore for WamnPostgres {
             .await
             .map_err(|error| {
                 ProductionClaimError::new(
-                    ProductionClaimErrorKind::Storage,
+                    ProductionClaimErrorType::Storage,
                     "checkout completion connection",
                     format!("{error:?}"),
                 )
@@ -469,7 +469,7 @@ impl RunStore for WamnPostgres {
         {
             self.destroy(connection);
             return Err(ProductionClaimError::new(
-                ProductionClaimErrorKind::Storage,
+                ProductionClaimErrorType::Storage,
                 "begin completion transaction",
                 format!("{error:?}"),
             ));
@@ -491,21 +491,21 @@ impl RunStore for WamnPostgres {
     ) -> Result<bool, ProductionClaimError> {
         if lease_generation <= 0 {
             return Err(ProductionClaimError::new(
-                ProductionClaimErrorKind::Contract,
+                ProductionClaimErrorType::Contract,
                 "validate production deadline report",
                 "lease generation must be positive",
             ));
         }
         let tenant = self.tenant_for(component_id).ok_or_else(|| {
             ProductionClaimError::new(
-                ProductionClaimErrorKind::Identity,
+                ProductionClaimErrorType::Identity,
                 "resolve deadline report tenant",
                 "component has no host-injected tenant",
             )
         })?;
         let runner = self.runner_for(component_id).ok_or_else(|| {
             ProductionClaimError::new(
-                ProductionClaimErrorKind::Identity,
+                ProductionClaimErrorType::Identity,
                 "resolve deadline report runner",
                 "component has no host-injected runner",
             )
@@ -519,7 +519,7 @@ impl RunStore for WamnPostgres {
             .await
             .map_err(|error| {
                 ProductionClaimError::new(
-                    ProductionClaimErrorKind::Storage,
+                    ProductionClaimErrorType::Storage,
                     "checkout deadline report connection",
                     format!("{error:?}"),
                 )
@@ -541,7 +541,7 @@ impl RunStore for WamnPostgres {
         {
             self.destroy(connection);
             return Err(ProductionClaimError::new(
-                ProductionClaimErrorKind::Storage,
+                ProductionClaimErrorType::Storage,
                 "begin deadline report transaction",
                 format!("{error:?}"),
             ));
@@ -609,7 +609,7 @@ pub(super) async fn require_executor_authority(
     let allowed: bool = row_value(&row, 0, "executor authority membership")?;
     if !allowed {
         return Err(ProductionClaimError::new(
-            ProductionClaimErrorKind::Identity,
+            ProductionClaimErrorType::Identity,
             "check executor authority",
             "executor-platform-authority-required",
         ));
@@ -660,7 +660,7 @@ async fn complete_in_transaction(
     if let Some(caller) = completion.caller() {
         let body_json = serde_json::to_string(caller.body()).map_err(|error| {
             ProductionClaimError::new(
-                ProductionClaimErrorKind::Contract,
+                ProductionClaimErrorType::Contract,
                 "serialize production caller outcome",
                 error.to_string(),
             )
@@ -704,7 +704,7 @@ async fn complete_in_transaction(
                 ) => {}
             CallerReleaseResult::AlreadyReleased(_) => {
                 return Err(ProductionClaimError::new(
-                    ProductionClaimErrorKind::Contract,
+                    ProductionClaimErrorType::Contract,
                     "release production caller",
                     "production-caller-outcome-conflict",
                 ));
@@ -720,7 +720,7 @@ async fn complete_in_transaction(
             }
             CallerReleaseResult::CrossRunAuthority => {
                 return Err(ProductionClaimError::new(
-                    ProductionClaimErrorKind::Contract,
+                    ProductionClaimErrorType::Contract,
                     "release production caller",
                     "production-cross-run-authority",
                 ));
@@ -730,7 +730,7 @@ async fn complete_in_transaction(
 
     let result_json = serde_json::to_string(completion.result()).map_err(|error| {
         ProductionClaimError::new(
-            ProductionClaimErrorKind::Contract,
+            ProductionClaimErrorType::Contract,
             "serialize production result",
             error.to_string(),
         )
@@ -766,12 +766,12 @@ async fn complete_in_transaction(
         TerminalizeResult::FenceLost => Ok(ProductionCompletionResult::FenceLost),
         TerminalizeResult::NotFound => Ok(ProductionCompletionResult::NotFound),
         TerminalizeResult::CallerUnreleased => Err(ProductionClaimError::new(
-            ProductionClaimErrorKind::Contract,
+            ProductionClaimErrorType::Contract,
             "terminalize production run",
             "production-caller-unreleased",
         )),
         TerminalizeResult::CrossRunAuthority => Err(ProductionClaimError::new(
-            ProductionClaimErrorKind::Contract,
+            ProductionClaimErrorType::Contract,
             "terminalize production run",
             "production-cross-run-authority",
         )),
@@ -788,7 +788,7 @@ fn decode_caller_release(row: &Row) -> Result<CallerReleaseResult, ProductionCla
         .transpose()
         .map_err(|error| {
             ProductionClaimError::new(
-                ProductionClaimErrorKind::Contract,
+                ProductionClaimErrorType::Contract,
                 "decode production caller outcome",
                 error.to_string(),
             )
@@ -799,7 +799,7 @@ fn decode_caller_release(row: &Row) -> Result<CallerReleaseResult, ProductionCla
         .transpose()
         .map_err(|error| {
             ProductionClaimError::new(
-                ProductionClaimErrorKind::Contract,
+                ProductionClaimErrorType::Contract,
                 "decode production caller outcome",
                 error.to_string(),
             )
@@ -817,7 +817,7 @@ fn decode_caller_release(row: &Row) -> Result<CallerReleaseResult, ProductionCla
     )
     .ok_or_else(|| {
         ProductionClaimError::new(
-            ProductionClaimErrorKind::Contract,
+            ProductionClaimErrorType::Contract,
             "decode production caller release",
             format!("unknown or incomplete result {code:?}"),
         )
@@ -829,7 +829,7 @@ fn decode_terminalization(row: &Row) -> Result<TerminalizeResult, ProductionClai
     let status: Option<String> = row_value(row, 1, "terminalization run status")?;
     TerminalizeResult::from_parts(&code, status.as_deref().unwrap_or_default()).ok_or_else(|| {
         ProductionClaimError::new(
-            ProductionClaimErrorKind::Contract,
+            ProductionClaimErrorType::Contract,
             "decode production terminalization",
             format!("unknown or incomplete result {code:?}"),
         )
@@ -860,7 +860,7 @@ async fn claim_in_transaction(
     let selected = decode_selected_claim(&row)?;
     if !matches!(selected.status, RunStatus::Dispatched | RunStatus::Running) {
         return Err(ProductionClaimError::new(
-            ProductionClaimErrorKind::Contract,
+            ProductionClaimErrorType::Contract,
             "validate selected run",
             format!(
                 "queue row {} references non-runnable status {}",
@@ -979,7 +979,7 @@ async fn claim_in_transaction(
     };
     let row = granted.ok_or_else(|| {
         ProductionClaimError::new(
-            ProductionClaimErrorKind::Contract,
+            ProductionClaimErrorType::Contract,
             "grant production lease",
             "claiming effective release does not match the run admission pin",
         )
@@ -1021,7 +1021,7 @@ async fn reap_in_transaction(
     let status_text: String = row_value(&row, 2, "exhausted run status")?;
     let status = RunStatus::from_sql(&status_text).ok_or_else(|| {
         ProductionClaimError::new(
-            ProductionClaimErrorKind::Contract,
+            ProductionClaimErrorType::Contract,
             "decode exhausted candidate",
             format!("unknown run status {status_text:?}"),
         )
@@ -1048,7 +1048,7 @@ async fn reap_in_transaction(
         }
         _ => {
             return Err(ProductionClaimError::new(
-                ProductionClaimErrorKind::Contract,
+                ProductionClaimErrorType::Contract,
                 "decode exhausted candidate",
                 "run-execution-grain-corrupt",
             ));
@@ -1062,7 +1062,7 @@ async fn reap_in_transaction(
     };
     if !matches!(selected.status, RunStatus::Dispatched | RunStatus::Running) {
         return Err(ProductionClaimError::new(
-            ProductionClaimErrorKind::Contract,
+            ProductionClaimErrorType::Contract,
             "validate exhausted candidate",
             format!("non-runnable status {}", selected.status.as_sql()),
         ));
@@ -1112,7 +1112,7 @@ async fn reap_in_transaction(
         .map_err(|error| storage("terminalize exhausted run", &error))?
         .ok_or_else(|| {
             ProductionClaimError::new(
-                ProductionClaimErrorKind::Contract,
+                ProductionClaimErrorType::Contract,
                 "terminalize exhausted run",
                 "selected run or queue row disappeared while locked",
             )
@@ -1120,7 +1120,7 @@ async fn reap_in_transaction(
     let status: String = row_value(&row, 0, "exhausted terminal status")?;
     if status != RunStatus::InfrastructureFailure.as_sql() {
         return Err(ProductionClaimError::new(
-            ProductionClaimErrorKind::Contract,
+            ProductionClaimErrorType::Contract,
             "terminalize exhausted run",
             format!("unexpected status {status:?}"),
         ));
@@ -1145,7 +1145,7 @@ async fn serialize_effect_intent(
         .await
         .map_err(|error| {
             ProductionClaimError::new(
-                ProductionClaimErrorKind::Storage,
+                ProductionClaimErrorType::Storage,
                 "acquire effect-intent fence",
                 format!("{owner}: {error}"),
             )
@@ -1159,14 +1159,14 @@ async fn terminalize_effect_uncertain(
 ) -> Result<ProductionClaimResult, ProductionClaimError> {
     let failure = EffectUncertainFailure::new(selected.run_id.clone()).map_err(|error| {
         ProductionClaimError::new(
-            ProductionClaimErrorKind::Contract,
+            ProductionClaimErrorType::Contract,
             "build effect-uncertain outcome",
             error.to_string(),
         )
     })?;
     let body = serde_json::to_string(&failure.as_json()).map_err(|error| {
         ProductionClaimError::new(
-            ProductionClaimErrorKind::Contract,
+            ProductionClaimErrorType::Contract,
             "serialize effect-uncertain outcome",
             error.to_string(),
         )
@@ -1185,7 +1185,7 @@ async fn terminalize_effect_uncertain(
         .map_err(|error| storage("terminalize effect uncertainty", &error))?
         .ok_or_else(|| {
             ProductionClaimError::new(
-                ProductionClaimErrorKind::Contract,
+                ProductionClaimErrorType::Contract,
                 "terminalize effect uncertainty",
                 "selected run or queue row disappeared while locked",
             )
@@ -1193,7 +1193,7 @@ async fn terminalize_effect_uncertain(
     let status: String = row_value(&row, 0, "effect-uncertain status")?;
     if status != RunStatus::EffectUncertain.as_sql() {
         return Err(ProductionClaimError::new(
-            ProductionClaimErrorKind::Contract,
+            ProductionClaimErrorType::Contract,
             "terminalize effect uncertainty",
             format!("unexpected status {status:?}"),
         ));
@@ -1234,7 +1234,7 @@ fn generic_failure_outcome(
     let body_hash = wamn_execution_contract::canonical_json_sha256(&body);
     let body_json = serde_json::to_string(&body).map_err(|error| {
         ProductionClaimError::new(
-            ProductionClaimErrorKind::Contract,
+            ProductionClaimErrorType::Contract,
             "serialize generic failure outcome",
             error.to_string(),
         )
@@ -1246,7 +1246,7 @@ fn decode_selected_claim(row: &Row) -> Result<SelectedClaim, ProductionClaimErro
     let status: String = row_value(row, 2, "run status")?;
     let status = RunStatus::from_sql(&status).ok_or_else(|| {
         ProductionClaimError::new(
-            ProductionClaimErrorKind::Contract,
+            ProductionClaimErrorType::Contract,
             "decode production candidate",
             format!("unknown run status {status:?}"),
         )
@@ -1268,7 +1268,7 @@ fn decode_selected_claim(row: &Row) -> Result<SelectedClaim, ProductionClaimErro
     let payload_text: String = row_value(row, 3, "authoritative input")?;
     let payload = serde_json::from_str(&payload_text).map_err(|error| {
         ProductionClaimError::new(
-            ProductionClaimErrorKind::Contract,
+            ProductionClaimErrorType::Contract,
             "decode production candidate",
             format!("authoritative input: {error}"),
         )
@@ -1290,7 +1290,7 @@ fn decode_selected_claim(row: &Row) -> Result<SelectedClaim, ProductionClaimErro
             let binding_world = serde_json::from_str(&binding_world)
                 .map_err(|error| {
                     ProductionClaimError::new(
-                        ProductionClaimErrorKind::Contract,
+                        ProductionClaimErrorType::Contract,
                         "decode production candidate",
                         format!("candidate-binding-world-json-invalid: {error}"),
                     )
@@ -1298,7 +1298,7 @@ fn decode_selected_claim(row: &Row) -> Result<SelectedClaim, ProductionClaimErro
                 .and_then(|value| {
                     CandidateBindingWorld::from_json(value).map_err(|error| {
                         ProductionClaimError::new(
-                            ProductionClaimErrorKind::Contract,
+                            ProductionClaimErrorType::Contract,
                             "decode production candidate",
                             error.to_string(),
                         )
@@ -1312,7 +1312,7 @@ fn decode_selected_claim(row: &Row) -> Result<SelectedClaim, ProductionClaimErro
         }
         _ => {
             return Err(ProductionClaimError::new(
-                ProductionClaimErrorKind::Contract,
+                ProductionClaimErrorType::Contract,
                 "decode production candidate",
                 "run-execution-grain-corrupt",
             ));
@@ -1320,7 +1320,7 @@ fn decode_selected_claim(row: &Row) -> Result<SelectedClaim, ProductionClaimErro
     };
     if candidate.is_some() && (!router_caller_attached || durable_caller_attached) {
         return Err(ProductionClaimError::new(
-            ProductionClaimErrorKind::Contract,
+            ProductionClaimErrorType::Contract,
             "decode production candidate",
             "candidate-caller-grain-corrupt",
         ));
@@ -1360,14 +1360,14 @@ fn decode_wiring_identity(
         }
         (None, None) => {
             return Err(ProductionClaimError::new(
-                ProductionClaimErrorKind::WiringIdentity,
+                ProductionClaimErrorType::WiringIdentity,
                 "decode production candidate",
                 "run-wiring-identity-missing",
             ));
         }
         _ => {
             return Err(ProductionClaimError::new(
-                ProductionClaimErrorKind::WiringIdentity,
+                ProductionClaimErrorType::WiringIdentity,
                 "decode production candidate",
                 "run-wiring-identity-corrupt",
             ));
@@ -1382,7 +1382,7 @@ where
 {
     row.try_get(index).map_err(|error| {
         ProductionClaimError::new(
-            ProductionClaimErrorKind::Contract,
+            ProductionClaimErrorType::Contract,
             "decode production claim row",
             format!("{field}: {error}"),
         )
@@ -1402,7 +1402,7 @@ pub(super) fn storage(
         },
         None => error.to_string(),
     };
-    ProductionClaimError::new(ProductionClaimErrorKind::Storage, operation, detail)
+    ProductionClaimError::new(ProductionClaimErrorType::Storage, operation, detail)
 }
 
 #[cfg(test)]
@@ -1510,7 +1510,7 @@ mod tests {
                     .map(|_| ()),
             ] {
                 let error = result.expect_err("a different role must not enter executor work");
-                assert_eq!(error.kind(), ProductionClaimErrorKind::Identity);
+                assert_eq!(error.kind(), ProductionClaimErrorType::Identity);
                 assert_eq!(error.operation(), "check executor authority");
                 assert!(
                     error
@@ -1538,7 +1538,7 @@ mod tests {
         let missing = require_executor_authority(&connection)
             .await
             .expect_err("an absent role must return the native refusal");
-        assert_eq!(missing.kind(), ProductionClaimErrorKind::Identity);
+        assert_eq!(missing.kind(), ProductionClaimErrorType::Identity);
         assert!(
             missing
                 .to_string()
@@ -1553,7 +1553,7 @@ mod tests {
     #[test]
     fn missing_and_corrupt_wiring_identity_are_dedicated_stable_refusals() {
         let missing = decode_wiring_identity(None, None).unwrap_err();
-        assert_eq!(missing.kind(), ProductionClaimErrorKind::WiringIdentity);
+        assert_eq!(missing.kind(), ProductionClaimErrorType::WiringIdentity);
         assert!(missing.to_string().contains("run-wiring-identity-missing"));
 
         for corrupt in [
@@ -1563,7 +1563,7 @@ mod tests {
             decode_wiring_identity(Some("orders".into()), Some(0)),
         ] {
             let error = corrupt.unwrap_err();
-            assert_eq!(error.kind(), ProductionClaimErrorKind::WiringIdentity);
+            assert_eq!(error.kind(), ProductionClaimErrorType::WiringIdentity);
             assert!(error.to_string().contains("run-wiring-identity-corrupt"));
         }
     }

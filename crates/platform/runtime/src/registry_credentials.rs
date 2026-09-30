@@ -10,7 +10,7 @@ use serde::Deserialize;
 
 /// Stable classification of a refused registry credential file.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum RegistryCredentialsErrorKind {
+pub enum RegistryCredentialsErrorType {
     /// The projected credential file or the metadata server could not be read.
     Unreadable,
     /// The file did not carry one complete credential for the expected registry.
@@ -46,7 +46,7 @@ enum CredentialOrigin {
 /// Contextual refusal from the registry credential boundary.
 #[derive(Debug)]
 pub struct RegistryCredentialsError {
-    kind: RegistryCredentialsErrorKind,
+    type_: RegistryCredentialsErrorType,
     origin: CredentialOrigin,
     registry: Box<str>,
     refusal: &'static str,
@@ -55,8 +55,8 @@ pub struct RegistryCredentialsError {
 
 impl RegistryCredentialsError {
     /// Stable refusal class for startup and command boundaries.
-    pub fn kind(&self) -> RegistryCredentialsErrorKind {
-        self.kind
+    pub fn kind(&self) -> RegistryCredentialsErrorType {
+        self.type_
     }
 
     /// Stable literal naming the rejected invariant.
@@ -66,7 +66,7 @@ impl RegistryCredentialsError {
 
     fn unreadable(path: &Path, registry: &str, source: std::io::Error) -> Self {
         Self {
-            kind: RegistryCredentialsErrorKind::Unreadable,
+            type_: RegistryCredentialsErrorType::Unreadable,
             origin: CredentialOrigin::File(path.to_owned()),
             registry: registry.into(),
             refusal: "registry-credentials-unreadable",
@@ -76,7 +76,7 @@ impl RegistryCredentialsError {
 
     fn malformed(path: &Path, registry: &str, source: serde_json::Error) -> Self {
         Self {
-            kind: RegistryCredentialsErrorKind::Rejected,
+            type_: RegistryCredentialsErrorType::Rejected,
             origin: CredentialOrigin::File(path.to_owned()),
             registry: registry.into(),
             refusal: "registry-credentials-malformed",
@@ -86,7 +86,7 @@ impl RegistryCredentialsError {
 
     fn rejected(path: &Path, registry: &str, refusal: &'static str) -> Self {
         Self {
-            kind: RegistryCredentialsErrorKind::Rejected,
+            type_: RegistryCredentialsErrorType::Rejected,
             origin: CredentialOrigin::File(path.to_owned()),
             registry: registry.into(),
             refusal,
@@ -96,12 +96,12 @@ impl RegistryCredentialsError {
 
     fn metadata(
         registry: &str,
-        kind: RegistryCredentialsErrorKind,
+        type_: RegistryCredentialsErrorType,
         refusal: &'static str,
         source: Option<RegistryCredentialsErrorSource>,
     ) -> Self {
         Self {
-            kind,
+            type_,
             origin: CredentialOrigin::MetadataServer,
             registry: registry.into(),
             refusal,
@@ -250,7 +250,7 @@ pub async fn read_metadata_registry_credentials(
     let unavailable = |source| {
         RegistryCredentialsError::metadata(
             registry,
-            RegistryCredentialsErrorKind::Unreadable,
+            RegistryCredentialsErrorType::Unreadable,
             "registry-token-metadata-unavailable",
             Some(RegistryCredentialsErrorSource::Http(source)),
         )
@@ -274,7 +274,7 @@ pub async fn read_metadata_registry_credentials(
     let token: MetadataToken = serde_json::from_slice(&body).map_err(|source| {
         RegistryCredentialsError::metadata(
             registry,
-            RegistryCredentialsErrorKind::Rejected,
+            RegistryCredentialsErrorType::Rejected,
             "registry-token-metadata-malformed",
             Some(RegistryCredentialsErrorSource::Json(source)),
         )
@@ -282,7 +282,7 @@ pub async fn read_metadata_registry_credentials(
     if token.access_token.is_empty() {
         return Err(RegistryCredentialsError::metadata(
             registry,
-            RegistryCredentialsErrorKind::Rejected,
+            RegistryCredentialsErrorType::Rejected,
             "registry-token-metadata-incomplete",
             None,
         ));

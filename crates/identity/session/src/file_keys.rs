@@ -13,7 +13,7 @@ use async_trait::async_trait;
 use crate::keys::{PublicSessionKey, SessionJwks, decode_public_key};
 use crate::token::refused;
 use crate::verifier::{KeyEvidence, KeySource};
-use crate::{SessionError, SessionErrorKind};
+use crate::{SessionError, SessionErrorType};
 
 /// An issuer's public keys, read from a file at start.
 #[derive(Clone, Debug)]
@@ -42,7 +42,7 @@ impl FileKeys {
             let kid = key.kid.clone();
             if keys.insert(kid.clone(), FileKey(key)).is_some() {
                 return Err(SessionError::new(
-                    SessionErrorKind::InvalidKey,
+                    SessionErrorType::InvalidKey,
                     format!("key ID {kid} repeats in {}", path.display()),
                 ));
             }
@@ -83,5 +83,5 @@ impl KeyEvidence for FileKey {
 }
 
 fn key_file(message: impl Into<Box<str>>) -> SessionError {
-    SessionError::new(SessionErrorKind::KeyFile, message)
+    SessionError::new(SessionErrorType::KeyFile, message)
 }

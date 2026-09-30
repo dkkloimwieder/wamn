@@ -77,7 +77,7 @@ pub struct WorkflowRun {
 
 /// Why a contract call failed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum WorkflowErrorKind {
+pub enum WorkflowErrorType {
     /// No run with this id exists in the environment.
     NotFound,
     /// The release, the environment policy, or the service principal does
@@ -96,38 +96,38 @@ pub enum WorkflowErrorKind {
 /// A contract call failure, with its kind and context.
 #[derive(Debug)]
 pub struct WorkflowError {
-    kind: WorkflowErrorKind,
+    type_: WorkflowErrorType,
     message: String,
     source: Option<anyhow::Error>,
 }
 
 impl WorkflowError {
-    fn new(kind: WorkflowErrorKind, message: impl Into<String>) -> Self {
+    fn new(kind: WorkflowErrorType, message: impl Into<String>) -> Self {
         Self {
-            kind,
+            type_: kind,
             message: message.into(),
             source: None,
         }
     }
 
     fn with_source(
-        kind: WorkflowErrorKind,
+        type_: WorkflowErrorType,
         context: &str,
         source: impl Into<anyhow::Error>,
     ) -> Self {
         Self {
-            kind,
+            type_,
             message: context.to_owned(),
             source: Some(source.into()),
         }
     }
 
     fn storage(context: &str, source: impl Into<anyhow::Error>) -> Self {
-        Self::with_source(WorkflowErrorKind::Storage, context, source)
+        Self::with_source(WorkflowErrorType::Storage, context, source)
     }
 
-    pub fn kind(&self) -> WorkflowErrorKind {
-        self.kind
+    pub fn kind(&self) -> WorkflowErrorType {
+        self.type_
     }
 }
 

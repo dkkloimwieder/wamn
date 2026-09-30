@@ -106,7 +106,7 @@ use tokio_postgres::{Client, NoTls};
 
 use wamn_control::reconcile_run_plane::{
     self, RECONCILE_TARGET_REFUSAL_PREFIX, ReconcileRunPlaneRequest, ReconcileTargetError,
-    ReconcileTargetErrorKind,
+    ReconcileTargetErrorType,
 };
 use wamn_control::verification_policy::project_environment_policy;
 use wamn_control_provision::{

@@ -9,7 +9,7 @@ use wamn_control_provision::CONTROL_BOOTSTRAP_SQL;
 use wamn_engine::component_admission::{ComponentAdmissionRequest, validate_component_admission};
 
 use super::{
-    DependencyDigestRule, MintManifestErrorKind, MintReleaseManifest, MintedReleaseManifest,
+    DependencyDigestRule, MintManifestErrorType, MintReleaseManifest, MintedReleaseManifest,
     ReleaseWiringTarget, effect_free_operation_dependencies,
     mint_release_manifest_with_package_manifests, read_package_attachments, read_package_manifests,
     resolve_route_host_overlay, sha256, validate_package_metadata,
@@ -363,7 +363,7 @@ fn assert_typed_metadata_refusal(input: &PackageInput) {
         .expect_err("unsatisfied package metadata must refuse release mint");
     assert_eq!(
         refusal.kind(),
-        MintManifestErrorKind::PolicyContractUnsatisfied
+        MintManifestErrorType::PolicyContractUnsatisfied
     );
 }
 
@@ -519,7 +519,7 @@ async fn fresh_base_and_overlay_mint_byte_identically_and_refuse_drift() {
     )
     .await
     .expect_err("manifest bytes other than apply-package's exact input must refuse");
-    assert_eq!(refusal.kind(), MintManifestErrorKind::PackageManifest);
+    assert_eq!(refusal.kind(), MintManifestErrorType::PackageManifest);
     assert!(refusal.detail().contains(&format!(
         "{}@{PACKAGE_VERSION}",
         wamn_fixture_package::OVERLAY_PACKAGE_ID
@@ -547,7 +547,7 @@ async fn fresh_base_and_overlay_mint_byte_identically_and_refuse_drift() {
     )
     .await
     .expect_err("a one-node wiring must refuse");
-    assert_eq!(refusal.kind(), MintManifestErrorKind::Wiring);
+    assert_eq!(refusal.kind(), MintManifestErrorType::Wiring);
     assert!(refusal.detail().contains("has no edges"), "{refusal}");
     transaction
         .rollback()

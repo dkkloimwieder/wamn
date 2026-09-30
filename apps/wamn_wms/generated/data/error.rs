@@ -5,7 +5,7 @@
 
 use std::fmt;
 
-use wamn_postgres_statements::{StatementError, StatementErrorKind};
+use wamn_postgres_statements::{StatementError, StatementErrorType};
 
 /// One refusal, with the detail members its literal declares.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -151,7 +151,7 @@ impl Error {
     /// statement failure.
     #[must_use]
     pub fn from_parts(
-        kind: StatementErrorKind,
+        kind: StatementErrorType,
         constraint: Option<&str>,
         constraints: &Constraints,
         operation: &str,
@@ -163,24 +163,24 @@ impl Error {
             None => Self::InternalError,
         };
         match kind {
-            StatementErrorKind::SerializationFailure
-            | StatementErrorKind::ConnectionUnavailable => Self::Retry,
-            StatementErrorKind::StatementTimeout => Self::Timeout,
-            StatementErrorKind::PermissionDenied => Self::PermissionDenied {
+            StatementErrorType::SerializationFailure
+            | StatementErrorType::ConnectionUnavailable => Self::Retry,
+            StatementErrorType::StatementTimeout => Self::Timeout,
+            StatementErrorType::PermissionDenied => Self::PermissionDenied {
                 operation: operation.to_owned(),
             },
-            StatementErrorKind::UniqueViolation => named(constraints.unique, |constraint| {
+            StatementErrorType::UniqueViolation => named(constraints.unique, |constraint| {
                 Self::UniqueViolation { constraint }
             }),
-            StatementErrorKind::ForeignKeyViolation => {
+            StatementErrorType::ForeignKeyViolation => {
                 named(constraints.foreign_key, |constraint| {
                     Self::ForeignKeyViolation { constraint }
                 })
             }
-            StatementErrorKind::CheckViolation => named(constraints.check, |constraint| {
+            StatementErrorType::CheckViolation => named(constraints.check, |constraint| {
                 Self::CheckViolation { constraint }
             }),
-            StatementErrorKind::ExclusionViolation => named(constraints.exclusion, |constraint| {
+            StatementErrorType::ExclusionViolation => named(constraints.exclusion, |constraint| {
                 Self::ExclusionViolation { constraint }
             }),
             _ => Self::InternalError,

@@ -25,7 +25,7 @@ use crate::ir::postgres_type;
 
 /// Stable internal class for a refused migration artifact.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum MigrationPolicyErrorKind {
+pub enum MigrationPolicyErrorType {
     NotSqlArtifact,
     ArtifactRead,
     EmptyArtifact,
@@ -115,7 +115,7 @@ impl DefinitionMutation {
 /// Contextual refusal from the migration-artifact boundary.
 #[derive(Debug)]
 pub struct MigrationPolicyError {
-    kind: MigrationPolicyErrorKind,
+    type_: MigrationPolicyErrorType,
     path: PathBuf,
     statement_index: Option<usize>,
     detail: Box<str>,
@@ -124,8 +124,8 @@ pub struct MigrationPolicyError {
 
 impl MigrationPolicyError {
     /// Stable class for callers that must not match display text.
-    pub const fn kind(&self) -> MigrationPolicyErrorKind {
-        self.kind
+    pub const fn kind(&self) -> MigrationPolicyErrorType {
+        self.type_
     }
 
     /// SQL artifact that was refused.
@@ -145,7 +145,7 @@ impl fmt::Display for MigrationPolicyError {
         if let Some(statement_index) = self.statement_index {
             write!(formatter, " statement {statement_index}")?;
         }
-        write!(formatter, " refused ({:?}): {}", self.kind, self.detail)
+        write!(formatter, " refused ({:?}): {}", self.type_, self.detail)
     }
 }
 
@@ -173,7 +173,7 @@ pub fn validate_migration_file_for_schemas(
 ) -> Result<(), MigrationPolicyError> {
     let path = path.as_ref();
     let bytes = fs::read(path).map_err(|source| MigrationPolicyError {
-        kind: MigrationPolicyErrorKind::ArtifactRead,
+        type_: MigrationPolicyErrorType::ArtifactRead,
         path: path.to_path_buf(),
         statement_index: None,
         detail: "could not read migration SQL".into(),
@@ -238,7 +238,7 @@ fn artifact_statements<'a>(
 ) -> Result<Vec<Vec<Token<'a>>>, MigrationPolicyError> {
     if path.extension() != Some(OsStr::new("sql")) {
         return Err(policy_error(
-            MigrationPolicyErrorKind::NotSqlArtifact,
+            MigrationPolicyErrorType::NotSqlArtifact,
             path,
             None,
             "migration artifacts must have the .sql extension",
@@ -246,7 +246,7 @@ fn artifact_statements<'a>(
     }
 
     let sql = std::str::from_utf8(bytes).map_err(|_| MigrationPolicyError {
-        kind: MigrationPolicyErrorKind::ArtifactRead,
+        type_: MigrationPolicyErrorType::ArtifactRead,
         path: path.to_path_buf(),
         statement_index: None,
         detail: "could not read migration SQL as UTF-8".into(),
@@ -255,7 +255,7 @@ fn artifact_statements<'a>(
     let statements = lex_statements(sql, path)?;
     if statements.is_empty() {
         return Err(policy_error(
-            MigrationPolicyErrorKind::EmptyArtifact,
+            MigrationPolicyErrorType::EmptyArtifact,
             path,
             None,
             "migration contains no SQL statement",
@@ -263,7 +263,7 @@ fn artifact_statements<'a>(
     }
     if configured_schemas.is_empty() {
         return Err(policy_error(
-            MigrationPolicyErrorKind::CrossSchemaMutation,
+            MigrationPolicyErrorType::CrossSchemaMutation,
             path,
             None,
             "strict package manifest declares no application schema",
@@ -386,7 +386,7 @@ fn qualified_definition_mutation(
     };
     if !configured_schemas.contains(&schema) {
         return refuse_statement(
-            MigrationPolicyErrorKind::CrossSchemaMutation,
+            MigrationPolicyErrorType::CrossSchemaMutation,
             path,
             statement_index,
             format!(
@@ -414,13 +414,13 @@ fn qualified_definition_mutation(
 }
 
 fn policy_error(
-    kind: MigrationPolicyErrorKind,
+    type_: MigrationPolicyErrorType,
     path: &Path,
     statement_index: Option<usize>,
     detail: impl Into<Box<str>>,
 ) -> MigrationPolicyError {
     MigrationPolicyError {
-        kind,
+        type_,
         path: path.to_path_buf(),
         statement_index,
         detail: detail.into(),
@@ -436,27 +436,27 @@ fn validate_statement(
 ) -> Result<(), MigrationPolicyError> {
     let refusal = if is_role_switch(tokens) {
         Some((
-            MigrationPolicyErrorKind::SetRole,
+            MigrationPolicyErrorType::SetRole,
             "session authorization changes are forbidden",
         ))
     } else if is_grant_operation(tokens) {
         Some((
-            MigrationPolicyErrorKind::GrantOperation,
+            MigrationPolicyErrorType::GrantOperation,
             "grant and privilege operations are forbidden",
         ))
     } else if is_role_operation(tokens) {
         Some((
-            MigrationPolicyErrorKind::RoleOperation,
+            MigrationPolicyErrorType::RoleOperation,
             "role operations are forbidden",
         ))
     } else if is_nontransactional_operation(tokens) {
         Some((
-            MigrationPolicyErrorKind::NontransactionalOperation,
+            MigrationPolicyErrorType::NontransactionalOperation,
             "nontransactional SQL is forbidden",
         ))
     } else if is_ruled_operation(tokens) {
         Some((
-            MigrationPolicyErrorKind::RuledOperation,
+            MigrationPolicyErrorType::RuledOperation,
             "the statement operates on a refused object class",
         ))
     } else {
@@ -472,7 +472,7 @@ fn validate_statement(
         return validate_alter_table(tokens, configured_schemas, path, statement_index);
     }
     refuse_statement(
-        MigrationPolicyErrorKind::UnsupportedStatement,
+        MigrationPolicyErrorType::UnsupportedStatement,
         path,
         statement_index,
         "only demanded schema-qualified additive table DDL is admitted",
@@ -491,7 +491,7 @@ fn validate_alter_table(
         tokens.get(4).copied(),
     ) else {
         return refuse_statement(
-            MigrationPolicyErrorKind::CrossSchemaMutation,
+            MigrationPolicyErrorType::CrossSchemaMutation,
             path,
             statement_index,
             "ALTER TABLE must use an unquoted schema-qualified target",
@@ -499,7 +499,7 @@ fn validate_alter_table(
     };
     if !configured_schemas.contains(&schema_name) {
         return refuse_statement(
-            MigrationPolicyErrorKind::CrossSchemaMutation,
+            MigrationPolicyErrorType::CrossSchemaMutation,
             path,
             statement_index,
             format!(
@@ -518,7 +518,7 @@ fn validate_alter_table(
             || words(tokens, 6, &["foreign", "key"]))
     {
         return refuse_statement(
-            MigrationPolicyErrorKind::UnnamedConstraint,
+            MigrationPolicyErrorType::UnnamedConstraint,
             path,
             statement_index,
             format!("table {table_name:?} has an unnamed additive constraint"),
@@ -528,7 +528,7 @@ fn validate_alter_table(
         return validate_add_constraint(tokens, table_name, path, statement_index);
     }
     refuse_statement(
-        MigrationPolicyErrorKind::UnsupportedStatement,
+        MigrationPolicyErrorType::UnsupportedStatement,
         path,
         statement_index,
         "ALTER TABLE admits only one ADD COLUMN or one ADD CONSTRAINT action",
@@ -543,7 +543,7 @@ fn validate_add_column(
 ) -> Result<(), MigrationPolicyError> {
     let Some(Token::Word(column_name)) = tokens.get(7).copied() else {
         return refuse_statement(
-            MigrationPolicyErrorKind::UnsupportedStatement,
+            MigrationPolicyErrorType::UnsupportedStatement,
             path,
             statement_index,
             "ADD COLUMN requires one unquoted column name",
@@ -561,7 +561,7 @@ fn validate_add_column(
         Ok(())
     } else {
         refuse_statement(
-            MigrationPolicyErrorKind::UnsupportedStatement,
+            MigrationPolicyErrorType::UnsupportedStatement,
             path,
             statement_index,
             format!(
@@ -605,7 +605,7 @@ fn validate_add_constraint(
     validate_segment_constraint_names(&tokens[5..], table_name, path, statement_index)?;
     let Some(Token::Word(_constraint_name)) = tokens.get(7).copied() else {
         return refuse_statement(
-            MigrationPolicyErrorKind::UnnamedConstraint,
+            MigrationPolicyErrorType::UnnamedConstraint,
             path,
             statement_index,
             format!("table {table_name:?} requires an unquoted additive constraint name"),
@@ -613,7 +613,7 @@ fn validate_add_constraint(
     };
     if !word(tokens, 8, "check") || !matches!(tokens.get(9), Some(Token::Symbol(b'('))) {
         return refuse_statement(
-            MigrationPolicyErrorKind::UnsupportedStatement,
+            MigrationPolicyErrorType::UnsupportedStatement,
             path,
             statement_index,
             "ADD CONSTRAINT admits only the demanded named CHECK form",
@@ -639,7 +639,7 @@ fn validate_add_constraint(
         Ok(())
     } else {
         refuse_statement(
-            MigrationPolicyErrorKind::UnsupportedStatement,
+            MigrationPolicyErrorType::UnsupportedStatement,
             path,
             statement_index,
             "ADD CONSTRAINT must contain one complete CHECK expression",
@@ -659,7 +659,7 @@ fn validate_create_table(
         tokens.get(4).copied(),
     ) else {
         return refuse_statement(
-            MigrationPolicyErrorKind::CrossSchemaMutation,
+            MigrationPolicyErrorType::CrossSchemaMutation,
             path,
             statement_index,
             "CREATE TABLE must use an unquoted schema-qualified target",
@@ -667,7 +667,7 @@ fn validate_create_table(
     };
     if !configured_schemas.contains(&schema_name) {
         return refuse_statement(
-            MigrationPolicyErrorKind::CrossSchemaMutation,
+            MigrationPolicyErrorType::CrossSchemaMutation,
             path,
             statement_index,
             format!(
@@ -677,7 +677,7 @@ fn validate_create_table(
     }
     if !matches!(tokens.get(5), Some(Token::Symbol(b'('))) {
         return refuse_statement(
-            MigrationPolicyErrorKind::UnsupportedStatement,
+            MigrationPolicyErrorType::UnsupportedStatement,
             path,
             statement_index,
             "CREATE TABLE must define an ordinary table body",
@@ -702,7 +702,7 @@ fn validate_create_table(
 
     let Some(body_end) = body_end else {
         return refuse_statement(
-            MigrationPolicyErrorKind::InvalidSql,
+            MigrationPolicyErrorType::InvalidSql,
             path,
             statement_index,
             "unterminated CREATE TABLE body",
@@ -710,7 +710,7 @@ fn validate_create_table(
     };
     if body_end == 6 {
         return refuse_statement(
-            MigrationPolicyErrorKind::InvalidSql,
+            MigrationPolicyErrorType::InvalidSql,
             path,
             statement_index,
             "CREATE TABLE body is empty",
@@ -718,7 +718,7 @@ fn validate_create_table(
     }
     if contains_top_level_word(&tokens[6..body_end], "like") {
         return refuse_statement(
-            MigrationPolicyErrorKind::UnsupportedStatement,
+            MigrationPolicyErrorType::UnsupportedStatement,
             path,
             statement_index,
             "CREATE TABLE LIKE is not admitted",
@@ -727,7 +727,7 @@ fn validate_create_table(
     validate_constraint_names(&tokens[6..body_end], table_name, path, statement_index)?;
     if body_end + 1 != tokens.len() {
         return refuse_statement(
-            MigrationPolicyErrorKind::UnsupportedStatement,
+            MigrationPolicyErrorType::UnsupportedStatement,
             path,
             statement_index,
             "CREATE TABLE options outside the ordinary table body are not admitted",
@@ -737,12 +737,12 @@ fn validate_create_table(
 }
 
 fn refuse_statement<T>(
-    kind: MigrationPolicyErrorKind,
+    type_: MigrationPolicyErrorType,
     path: &Path,
     statement_index: usize,
     detail: impl Into<Box<str>>,
 ) -> Result<T, MigrationPolicyError> {
-    Err(policy_error(kind, path, Some(statement_index), detail))
+    Err(policy_error(type_, path, Some(statement_index), detail))
 }
 
 fn is_role_switch(tokens: &[Token<'_>]) -> bool {
@@ -908,7 +908,7 @@ fn validate_segment_constraint_names(
 ) -> Result<(), MigrationPolicyError> {
     if let Some((name, byte_len)) = overlength_constraint_name(segment) {
         return refuse_statement(
-            MigrationPolicyErrorKind::ConstraintNameTooLong,
+            MigrationPolicyErrorType::ConstraintNameTooLong,
             path,
             statement_index,
             format!(
@@ -925,7 +925,7 @@ fn validate_segment_constraint_names(
     ] {
         if unnamed_top_level_constraint(segment, words).is_some() {
             return refuse_statement(
-                MigrationPolicyErrorKind::UnnamedConstraint,
+                MigrationPolicyErrorType::UnnamedConstraint,
                 path,
                 statement_index,
                 format!("table {table_name:?} has an unnamed {constraint_kind} constraint"),
@@ -934,7 +934,7 @@ fn validate_segment_constraint_names(
     }
     if !has_table_foreign_key && unnamed_top_level_constraint(segment, &["references"]).is_some() {
         return refuse_statement(
-            MigrationPolicyErrorKind::UnnamedConstraint,
+            MigrationPolicyErrorType::UnnamedConstraint,
             path,
             statement_index,
             format!("table {table_name:?} has an unnamed foreign key constraint"),
@@ -1104,7 +1104,7 @@ fn lex_statements<'a>(
 
 fn lexical_error(path: &Path, statement_index: usize, detail: &str) -> MigrationPolicyError {
     policy_error(
-        MigrationPolicyErrorKind::InvalidSql,
+        MigrationPolicyErrorType::InvalidSql,
         path,
         Some(statement_index),
         detail,

@@ -17,13 +17,13 @@ use crate::client_rust::route_helper_names;
 use crate::generate::GeneratedFile;
 use crate::manifest::rust_identifier;
 use crate::{
-    GenerateError, GenerateErrorKind, PackageManifest, canonical_operation_identity,
+    GenerateError, GenerateErrorType, PackageManifest, canonical_operation_identity,
     validate_operation_vocabulary,
 };
 
 /// Why an operator crate could not be emitted.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ClientTuiErrorKind {
+pub enum ClientTuiErrorType {
     InvalidName,
     NameCollision,
 }
@@ -31,14 +31,14 @@ pub enum ClientTuiErrorKind {
 /// An emission refusal with the declared name that caused it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ClientTuiError {
-    kind: ClientTuiErrorKind,
+    type_: ClientTuiErrorType,
     name: String,
 }
 
 impl ClientTuiError {
     #[must_use]
-    pub const fn kind(&self) -> ClientTuiErrorKind {
-        self.kind
+    pub const fn kind(&self) -> ClientTuiErrorType {
+        self.type_
     }
 
     #[must_use]
@@ -49,9 +49,9 @@ impl ClientTuiError {
 
 impl core::fmt::Display for ClientTuiError {
     fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        let reason = match self.kind {
-            ClientTuiErrorKind::InvalidName => "name has no safe generated spelling",
-            ClientTuiErrorKind::NameCollision => {
+        let reason = match self.type_ {
+            ClientTuiErrorType::InvalidName => "name has no safe generated spelling",
+            ClientTuiErrorType::NameCollision => {
                 "name collides with a generated module or operation"
             }
         };
@@ -61,9 +61,9 @@ impl core::fmt::Display for ClientTuiError {
 
 impl std::error::Error for ClientTuiError {}
 
-fn error(kind: ClientTuiErrorKind, name: &str) -> ClientTuiError {
+fn error(kind: ClientTuiErrorType, name: &str) -> ClientTuiError {
     ClientTuiError {
-        kind,
+        type_: kind,
         name: name.to_owned(),
     }
 }
@@ -78,9 +78,9 @@ fn identifier(name: &str) -> Result<String, ClientTuiError> {
             .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'_')
         && name != "_";
     if valid {
-        rust_identifier(name).ok_or_else(|| error(ClientTuiErrorKind::InvalidName, name))
+        rust_identifier(name).ok_or_else(|| error(ClientTuiErrorType::InvalidName, name))
     } else {
-        Err(error(ClientTuiErrorKind::InvalidName, name))
+        Err(error(ClientTuiErrorType::InvalidName, name))
     }
 }
 
@@ -96,7 +96,7 @@ pub fn component_contract(
     validate_operation_vocabulary(manifest)?;
     if ir.package != manifest.package.id || !manifest.components.contains_key(component) {
         return Err(GenerateError::new(
-            GenerateErrorKind::InvalidComponent,
+            GenerateErrorType::InvalidComponent,
             format!(
                 "{component} must name a component declared by {}",
                 ir.package
@@ -347,7 +347,7 @@ pub fn emit_tui(
             byte.is_ascii_lowercase() || byte.is_ascii_digit() || matches!(byte, b'_' | b'-')
         })
     {
-        return Err(error(ClientTuiErrorKind::InvalidName, component));
+        return Err(error(ClientTuiErrorType::InvalidName, component));
     }
     let plan = ClientPlan::from_ir(ir);
     let slug = component.replace('_', "-");
@@ -378,7 +378,7 @@ pub fn emit_tui(
         let name = model.model.name.as_str();
         let module = identifier(name)?;
         if !names.insert(name) {
-            return Err(error(ClientTuiErrorKind::NameCollision, name));
+            return Err(error(ClientTuiErrorType::NameCollision, name));
         }
         writeln!(
             library,
@@ -449,7 +449,7 @@ fn emit_model(
         let operation = screen.contract;
         let function = identifier(screen.name)?;
         if !names.insert(screen.name) {
-            return Err(error(ClientTuiErrorKind::NameCollision, screen.name));
+            return Err(error(ClientTuiErrorType::NameCollision, screen.name));
         }
         let spec = format!("{}_SPEC", screen.name.to_uppercase());
         let fields = format!(

@@ -7,7 +7,7 @@ use serde_json::{Value, json};
 use wamn_runtime::connection_authority::{AuthorityError, DnsResolver, NetworkPolicy};
 use wamn_runtime::connection_generation::{
     ClusterNetworkPolicySnapshot, ConnectionContractSnapshot, CredentialType,
-    CredentialTypeSnapshot, GenerationValidationErrorKind, GenerationValidationSnapshot,
+    CredentialTypeSnapshot, GenerationValidationErrorType, GenerationValidationSnapshot,
     HTTP_CONNECTION_CONTRACT, HTTP_CONNECTION_TYPE, PlatformHostPolicySnapshot,
     StagedConnectionGeneration, ValidationInputIdentity, definition_hash,
     validate_staged_connection_generation,
@@ -190,7 +190,7 @@ fn candidate(definition: &Value) -> StagedConnectionGeneration<'_> {
     }
 }
 
-async fn error_for(fixture: &Fixture, definition: &Value) -> GenerationValidationErrorKind {
+async fn error_for(fixture: &Fixture, definition: &Value) -> GenerationValidationErrorType {
     validate_staged_connection_generation(
         &candidate(definition),
         &fixture.snapshot(Some(&fixture.credential), &fixture.hosts, &fixture.network),
@@ -280,12 +280,12 @@ async fn exact_type_contract_hash_and_field_ownership_fail_precisely() {
         (
             "postgres",
             HTTP_CONNECTION_CONTRACT,
-            GenerationValidationErrorKind::UnsupportedType,
+            GenerationValidationErrorType::UnsupportedType,
         ),
         (
             HTTP_CONNECTION_TYPE,
             "wamn:connection/http@0.2.0",
-            GenerationValidationErrorKind::UnsupportedContract,
+            GenerationValidationErrorType::UnsupportedContract,
         ),
     ] {
         let error = validate_staged_connection_generation(
@@ -317,26 +317,26 @@ async fn exact_type_contract_hash_and_field_ownership_fail_precisely() {
     .expect_err("definition hash mismatch must fail");
     assert_eq!(
         error.kind(),
-        GenerationValidationErrorKind::DefinitionHashMismatch
+        GenerationValidationErrorType::DefinitionHashMismatch
     );
 
     let mut missing = definition.clone();
     missing.as_object_mut().expect("object").remove("tls-names");
     assert_eq!(
         error_for(&fixture, &missing).await,
-        GenerationValidationErrorKind::MissingField
+        GenerationValidationErrorType::MissingField
     );
     let mut unknown = definition.clone();
     unknown["future-knob"] = json!(true);
     assert_eq!(
         error_for(&fixture, &unknown).await,
-        GenerationValidationErrorKind::UnknownField
+        GenerationValidationErrorType::UnknownField
     );
     let mut forbidden = definition.clone();
     forbidden["method"] = json!("POST");
     assert_eq!(
         error_for(&fixture, &forbidden).await,
-        GenerationValidationErrorKind::ForbiddenField
+        GenerationValidationErrorType::ForbiddenField
     );
 }
 
@@ -348,38 +348,38 @@ async fn canonical_authority_tls_redirect_and_proxy_coherence_are_closed() {
     noncanonical["primary-authority"] = json!("HTTPS://ERP.Example:443/api/");
     assert_eq!(
         error_for(&fixture, &noncanonical).await,
-        GenerationValidationErrorKind::NonCanonicalAuthority
+        GenerationValidationErrorType::NonCanonicalAuthority
     );
     let mut duplicate = definition();
     duplicate["failover-authorities"] = json!(["https://erp.example/api/"]);
     duplicate["tls-names"] = json!(["erp.example", "erp.example"]);
     assert_eq!(
         error_for(&fixture, &duplicate).await,
-        GenerationValidationErrorKind::DuplicateAuthority
+        GenerationValidationErrorType::DuplicateAuthority
     );
     let mut tls = definition();
     tls["tls-names"] = json!(["other.example", "erp-backup.example"]);
     assert_eq!(
         error_for(&fixture, &tls).await,
-        GenerationValidationErrorKind::TlsIdentityMismatch
+        GenerationValidationErrorType::TlsIdentityMismatch
     );
     let mut redirect = definition();
     redirect["redirect-policy"] = json!("cross-authority");
     assert_eq!(
         error_for(&fixture, &redirect).await,
-        GenerationValidationErrorKind::RedirectPolicyMismatch
+        GenerationValidationErrorType::RedirectPolicyMismatch
     );
     let mut proxy = definition();
     proxy["proxy-authority"] = json!("http://proxy.internal:8080/");
     assert_eq!(
         error_for(&fixture, &proxy).await,
-        GenerationValidationErrorKind::ProxyMismatch
+        GenerationValidationErrorType::ProxyMismatch
     );
 
     proxy["proxy-transport"] = json!("connect");
     assert_eq!(
         error_for(&fixture, &proxy).await,
-        GenerationValidationErrorKind::UnsupportedTransport
+        GenerationValidationErrorType::UnsupportedTransport
     );
 }
 
@@ -397,7 +397,7 @@ async fn credential_validation_uses_kind_metadata_only() {
     .expect_err("missing credential metadata must fail");
     assert_eq!(
         missing.kind(),
-        GenerationValidationErrorKind::CredentialMissing
+        GenerationValidationErrorType::CredentialMissing
     );
 
     let wrong_kind = CredentialTypeSnapshot {
@@ -414,7 +414,7 @@ async fn credential_validation_uses_kind_metadata_only() {
     .expect_err("contract-forbidden credential kind must fail");
     assert_eq!(
         mismatch.kind(),
-        GenerationValidationErrorKind::CredentialTypeMismatch
+        GenerationValidationErrorType::CredentialTypeMismatch
     );
 }
 
@@ -432,7 +432,7 @@ async fn both_snapshotted_outer_policy_ceiling_denials_are_typed() {
     .expect_err("platform host ceiling must deny");
     assert_eq!(
         host_error.kind(),
-        GenerationValidationErrorKind::PlatformHostPolicyDenied
+        GenerationValidationErrorType::PlatformHostPolicyDenied
     );
 
     let denied_network = ExactNetwork(Vec::new());
@@ -445,7 +445,7 @@ async fn both_snapshotted_outer_policy_ceiling_denials_are_typed() {
     .expect_err("cluster network ceiling must deny");
     assert_eq!(
         network_error.kind(),
-        GenerationValidationErrorKind::ClusterNetworkPolicyDenied
+        GenerationValidationErrorType::ClusterNetworkPolicyDenied
     );
 }
 

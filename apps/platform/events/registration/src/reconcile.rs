@@ -39,7 +39,7 @@ pub struct CatalogRegistrationProjection {
 
 /// Stable classification for an invalid generated registration projection.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum RegistrationProjectionErrorKind {
+pub enum RegistrationProjectionErrorType {
     EmptyPackageId,
     RegistrationKeyMismatch,
     RegistrationOwnerMismatch,
@@ -48,30 +48,30 @@ pub enum RegistrationProjectionErrorKind {
 /// Contextual failure to project a generated registration artifact.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RegistrationProjectionError {
-    kind: RegistrationProjectionErrorKind,
+    type_: RegistrationProjectionErrorType,
     registration_id: Option<String>,
     expected: String,
     actual: String,
 }
 
 impl RegistrationProjectionError {
-    pub fn kind(&self) -> RegistrationProjectionErrorKind {
-        self.kind
+    pub fn kind(&self) -> RegistrationProjectionErrorType {
+        self.type_
     }
 }
 
 impl fmt::Display for RegistrationProjectionError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self.kind {
-            RegistrationProjectionErrorKind::EmptyPackageId => {
+        match self.type_ {
+            RegistrationProjectionErrorType::EmptyPackageId => {
                 formatter.write_str("registration projection package id is empty")
             }
-            RegistrationProjectionErrorKind::RegistrationKeyMismatch => write!(
+            RegistrationProjectionErrorType::RegistrationKeyMismatch => write!(
                 formatter,
                 "registration artifact key {:?} disagrees with document id {:?}",
                 self.expected, self.actual
             ),
-            RegistrationProjectionErrorKind::RegistrationOwnerMismatch => write!(
+            RegistrationProjectionErrorType::RegistrationOwnerMismatch => write!(
                 formatter,
                 "registration {:?} owner {:?} disagrees with projected package {:?}",
                 self.registration_id.as_deref().unwrap_or_default(),
@@ -91,7 +91,7 @@ pub fn project_catalog_registrations(
 ) -> Result<CatalogRegistrationProjection, RegistrationProjectionError> {
     if package_id.is_empty() {
         return Err(RegistrationProjectionError {
-            kind: RegistrationProjectionErrorKind::EmptyPackageId,
+            type_: RegistrationProjectionErrorType::EmptyPackageId,
             registration_id: None,
             expected: String::new(),
             actual: String::new(),
@@ -102,7 +102,7 @@ pub fn project_catalog_registrations(
     for (artifact_key, registration) in declarations {
         if artifact_key != &registration.registration_id {
             return Err(RegistrationProjectionError {
-                kind: RegistrationProjectionErrorKind::RegistrationKeyMismatch,
+                type_: RegistrationProjectionErrorType::RegistrationKeyMismatch,
                 registration_id: Some(registration.registration_id.clone()),
                 expected: artifact_key.clone(),
                 actual: registration.registration_id.clone(),
@@ -110,7 +110,7 @@ pub fn project_catalog_registrations(
         }
         if registration.package_id != package_id {
             return Err(RegistrationProjectionError {
-                kind: RegistrationProjectionErrorKind::RegistrationOwnerMismatch,
+                type_: RegistrationProjectionErrorType::RegistrationOwnerMismatch,
                 registration_id: Some(registration.registration_id.clone()),
                 expected: package_id.to_owned(),
                 actual: registration.package_id.clone(),
@@ -176,14 +176,14 @@ mod tests {
             project_catalog_registrations("client_acme_receiving", &wrong_key)
                 .unwrap_err()
                 .kind(),
-            RegistrationProjectionErrorKind::RegistrationKeyMismatch
+            RegistrationProjectionErrorType::RegistrationKeyMismatch
         );
         let declarations = BTreeMap::from([(declaration.registration_id.clone(), declaration)]);
         assert_eq!(
             project_catalog_registrations("other", &declarations)
                 .unwrap_err()
                 .kind(),
-            RegistrationProjectionErrorKind::RegistrationOwnerMismatch
+            RegistrationProjectionErrorType::RegistrationOwnerMismatch
         );
     }
 }

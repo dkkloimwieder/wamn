@@ -14,7 +14,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::apply_package::{self, ApplyPackageRequest};
 use crate::component_declaration::{
-    ComponentDeclarationError, ComponentDeclarationErrorKind, PACKAGE_MANIFEST,
+    ComponentDeclarationError, ComponentDeclarationErrorType, PACKAGE_MANIFEST,
     authored_base_digests, render_declaration_document,
 };
 use crate::publish_release::{self, PublishReleaseRequest, ReleaseWiringTarget};
@@ -60,13 +60,13 @@ static TEMPORARY_FILE_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 /// Stable category of a concrete development-stage failure.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum ProductionDevStageErrorKind {
+pub enum ProductionDevStageErrorType {
     InvalidState,
     StageOwner,
     AuthenticationUnavailable,
 }
 
-impl ProductionDevStageErrorKind {
+impl ProductionDevStageErrorType {
     const fn as_str(self) -> &'static str {
         match self {
             Self::InvalidState => "dev-stage-state-invalid",
@@ -79,7 +79,7 @@ impl ProductionDevStageErrorKind {
 /// Contextual failure translated once at the production orchestration boundary.
 #[derive(Debug)]
 pub struct ProductionDevStageError {
-    kind: ProductionDevStageErrorKind,
+    type_: ProductionDevStageErrorType,
     operation: &'static str,
     endpoint: Option<Box<str>>,
     detail: Box<str>,
@@ -89,7 +89,7 @@ pub struct ProductionDevStageError {
 impl ProductionDevStageError {
     fn invalid(operation: &'static str, detail: impl Into<Box<str>>) -> Self {
         Self {
-            kind: ProductionDevStageErrorKind::InvalidState,
+            type_: ProductionDevStageErrorType::InvalidState,
             operation,
             endpoint: None,
             detail: detail.into(),
@@ -103,7 +103,7 @@ impl ProductionDevStageError {
         // refusal that actually stopped the stage (wamn-aij8).
         let detail = format!("{source:#}").into_boxed_str();
         Self {
-            kind: ProductionDevStageErrorKind::StageOwner,
+            type_: ProductionDevStageErrorType::StageOwner,
             operation,
             endpoint: None,
             detail,
@@ -117,7 +117,7 @@ impl ProductionDevStageError {
         detail: impl Into<Box<str>>,
     ) -> Self {
         Self {
-            kind: ProductionDevStageErrorKind::StageOwner,
+            type_: ProductionDevStageErrorType::StageOwner,
             operation,
             endpoint: Some(endpoint.into()),
             detail: detail.into(),
@@ -127,7 +127,7 @@ impl ProductionDevStageError {
 
     fn authentication_unavailable(endpoint: impl Into<Box<str>>, source: anyhow::Error) -> Self {
         Self {
-            kind: ProductionDevStageErrorKind::AuthenticationUnavailable,
+            type_: ProductionDevStageErrorType::AuthenticationUnavailable,
             operation: "re-authenticate publisher",
             endpoint: Some(endpoint.into()),
             detail: format!("the configured identity authority is unavailable: {source:#}")
@@ -137,8 +137,8 @@ impl ProductionDevStageError {
     }
 
     /// Stable failure category.
-    pub const fn kind(&self) -> ProductionDevStageErrorKind {
-        self.kind
+    pub const fn kind(&self) -> ProductionDevStageErrorType {
+        self.type_
     }
 
     /// Credential-free endpoint involved in this failure, when applicable.
@@ -149,7 +149,12 @@ impl ProductionDevStageError {
 
 impl fmt::Display for ProductionDevStageError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(formatter, "{} while {}", self.kind.as_str(), self.operation)?;
+        write!(
+            formatter,
+            "{} while {}",
+            self.type_.as_str(),
+            self.operation
+        )?;
         if let Some(endpoint) = &self.endpoint {
             write!(formatter, " at {endpoint}")?;
         }
@@ -1955,7 +1960,7 @@ impl DevStageRunner for ProductionDevStageRunner {
     }
 
     fn classify_error(&self, error: &Self::Error) -> DevStageFailure {
-        DevStageFailure::new(error.kind.as_str(), error.to_string(), None)
+        DevStageFailure::new(error.type_.as_str(), error.to_string(), None)
     }
 
     fn run_notices(&self) -> Vec<DevRunNotice> {
@@ -2436,11 +2441,11 @@ fn authoring_command_id(
 fn base_digests_stage_error(source: ComponentDeclarationError) -> ProductionDevStageError {
     const OPERATION: &str = "read authored base digests";
     match source.kind() {
-        ComponentDeclarationErrorKind::Read | ComponentDeclarationErrorKind::Parse => {
+        ComponentDeclarationErrorType::Read | ComponentDeclarationErrorType::Parse => {
             ProductionDevStageError::owner(OPERATION, source.into())
         }
-        ComponentDeclarationErrorKind::ManifestInvalid
-        | ComponentDeclarationErrorKind::TemplateInvalid => {
+        ComponentDeclarationErrorType::ManifestInvalid
+        | ComponentDeclarationErrorType::TemplateInvalid => {
             ProductionDevStageError::invalid(OPERATION, source.to_string())
         }
     }
@@ -2449,14 +2454,14 @@ fn base_digests_stage_error(source: ComponentDeclarationError) -> ProductionDevS
 /// Translate a failure to render a component declaration into its stage failure.
 fn declaration_stage_error(source: ComponentDeclarationError) -> ProductionDevStageError {
     match source.kind() {
-        ComponentDeclarationErrorKind::Read => {
+        ComponentDeclarationErrorType::Read => {
             ProductionDevStageError::owner("read component declaration template", source.into())
         }
-        ComponentDeclarationErrorKind::Parse => {
+        ComponentDeclarationErrorType::Parse => {
             ProductionDevStageError::owner("parse component declaration template", source.into())
         }
-        ComponentDeclarationErrorKind::ManifestInvalid
-        | ComponentDeclarationErrorKind::TemplateInvalid => {
+        ComponentDeclarationErrorType::ManifestInvalid
+        | ComponentDeclarationErrorType::TemplateInvalid => {
             ProductionDevStageError::invalid("render component declaration", source.to_string())
         }
     }

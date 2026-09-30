@@ -230,7 +230,7 @@ pub fn import_version(import_name: &str) -> Option<&str> {
 
 /// Stable classification for a refused tenant import list.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum TenantImportErrorKind {
+pub enum TenantImportErrorType {
     InvalidPlatformCapability,
     UnadmittedImport,
 }
@@ -238,15 +238,15 @@ pub enum TenantImportErrorKind {
 /// Refusal from the closed tenant import policy.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TenantImportError {
-    kind: TenantImportErrorKind,
+    type_: TenantImportErrorType,
     component: Box<str>,
     imports: Box<[String]>,
 }
 
 impl TenantImportError {
     /// Stable refusal class for callers that must not match display text.
-    pub fn kind(&self) -> TenantImportErrorKind {
-        self.kind
+    pub fn kind(&self) -> TenantImportErrorType {
+        self.type_
     }
 
     /// Exact registry entry or component imports that were refused.
@@ -257,13 +257,13 @@ impl TenantImportError {
 
 impl std::fmt::Display for TenantImportError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self.kind {
-            TenantImportErrorKind::InvalidPlatformCapability => write!(
+        match self.type_ {
+            TenantImportErrorType::InvalidPlatformCapability => write!(
                 formatter,
                 "component {:?} was given invalid platform capability package(s) {:?}",
                 self.component, self.imports
             ),
-            TenantImportErrorKind::UnadmittedImport => write!(
+            TenantImportErrorType::UnadmittedImport => write!(
                 formatter,
                 "component {:?} imports unadmitted package interface(s) {:?}",
                 self.component, self.imports
@@ -300,7 +300,7 @@ pub fn analyze_tenant(
         .collect();
     if !invalid_registry.is_empty() {
         return Err(TenantImportError {
-            kind: TenantImportErrorKind::InvalidPlatformCapability,
+            type_: TenantImportErrorType::InvalidPlatformCapability,
             component: label.into(),
             imports: invalid_registry.into_boxed_slice(),
         });
@@ -323,7 +323,7 @@ pub fn analyze_tenant(
         Ok(PolicyReport)
     } else {
         Err(TenantImportError {
-            kind: TenantImportErrorKind::UnadmittedImport,
+            type_: TenantImportErrorType::UnadmittedImport,
             component: label.into(),
             imports: denied.into_boxed_slice(),
         })
@@ -514,7 +514,7 @@ mod tests {
         let drifted = ComponentImports::new(["wasi:io/streams@0.2.9".to_string()]);
         let error = analyze_tenant(&drifted, &admitted, "tenant-node")
             .expect_err("a drifted WASI version must refuse");
-        assert_eq!(error.kind(), TenantImportErrorKind::UnadmittedImport);
+        assert_eq!(error.kind(), TenantImportErrorType::UnadmittedImport);
     }
 
     #[test]
@@ -530,7 +530,7 @@ mod tests {
 
         let error = analyze_tenant(&imports, &BTreeSet::new(), "tenant-node")
             .expect_err("unlisted packages must refuse");
-        assert_eq!(error.kind(), TenantImportErrorKind::UnadmittedImport);
+        assert_eq!(error.kind(), TenantImportErrorType::UnadmittedImport);
         assert_eq!(error.imports().len(), 6);
     }
 
@@ -629,7 +629,7 @@ mod tests {
         let effect = ComponentImports::new(["wamn:postgres/client@0.1.0".to_string()]);
         let error = analyze_tenant(&effect, &BTreeSet::new(), "tenant-node")
             .expect_err("an ungranted effect must refuse");
-        assert_eq!(error.kind(), TenantImportErrorKind::UnadmittedImport);
+        assert_eq!(error.kind(), TenantImportErrorType::UnadmittedImport);
 
         let granted = BTreeSet::from(["wamn:postgres".to_string()]);
         assert!(analyze_tenant(&effect, &granted, "tenant-node").is_ok());
@@ -650,7 +650,7 @@ mod tests {
                     .expect_err("the platform registry must contain exact package names");
             assert_eq!(
                 error.kind(),
-                TenantImportErrorKind::InvalidPlatformCapability
+                TenantImportErrorType::InvalidPlatformCapability
             );
         }
     }

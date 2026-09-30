@@ -4,7 +4,7 @@ use sha2::{Digest as _, Sha256};
 use tokio_postgres::{Client, error::SqlState};
 use wamn_control_provision::{PlatformComponent, test_database};
 use wamn_platform_identity::password::{
-    Password, PasswordErrorKind, RefusalCause, authenticate_password, enroll_password,
+    Password, PasswordErrorType, RefusalCause, authenticate_password, enroll_password,
     issue_invitation, password_work,
 };
 use wamn_platform_identity::{
@@ -279,7 +279,7 @@ async fn invitation_expiry_kind_purpose_and_transaction_rollback_refuse() {
         .await
         .unwrap_err()
         .kind(),
-        PasswordErrorKind::Infrastructure
+        PasswordErrorType::Infrastructure
     );
     assert_eq!(
         client
@@ -331,7 +331,7 @@ async fn concurrent_enrollment_creates_exactly_one_password() {
     assert_ne!(a.is_ok(), b.is_ok());
     assert_eq!(
         a.err().or(b.err()).unwrap().kind(),
-        PasswordErrorKind::Refused
+        PasswordErrorType::Refused
     );
     assert_eq!(
         left.query_one("SELECT count(*) FROM identity.password_credentials", &[])

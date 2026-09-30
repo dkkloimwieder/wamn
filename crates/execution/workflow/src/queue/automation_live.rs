@@ -28,7 +28,7 @@ use wash_runtime::host::probes::Liveness;
 
 use crate::{
     PostgresWorkflows, RouterDriver, RouterDriverConfig, StartRequest, Trigger,
-    WiringCacheCapacity, WorkflowErrorKind, Workflows as _,
+    WiringCacheCapacity, WorkflowErrorType, Workflows as _,
 };
 use wamn_execution_host::{OperationHost, OperationScope};
 use wamn_project_state::PlatformComponent;
@@ -410,14 +410,14 @@ async fn run_automation(mode: Mode) -> anyhow::Result<()> {
     request.input = json!({"different":true});
     assert_eq!(
         workflows.start(&request).await.unwrap_err().kind(),
-        WorkflowErrorKind::Conflict
+        WorkflowErrorType::Conflict
     );
     request.input = json!({"queued":true});
 
     // A parked run keeps its status, and no claim takes it until a release.
     assert_eq!(
         workflows.release(&run).await.unwrap_err().kind(),
-        WorkflowErrorKind::NotParked
+        WorkflowErrorType::NotParked
     );
     workflows.park(&run).await?;
     workflows.park(&run).await?;
@@ -432,7 +432,7 @@ async fn run_automation(mode: Mode) -> anyhow::Result<()> {
     assert!(!workflows.list(10).await?[0].parked);
     assert_eq!(
         workflows.park("absent").await.unwrap_err().kind(),
-        WorkflowErrorKind::NotFound
+        WorkflowErrorType::NotFound
     );
     let (_stop_first, stopped_first) = tokio::sync::watch::channel(true);
     first.serve(stopped_first).await?;
@@ -483,7 +483,7 @@ async fn run_automation(mode: Mode) -> anyhow::Result<()> {
     assert!(!listed[0].queued && !listed[0].parked);
     assert_eq!(
         workflows.park(&run).await.unwrap_err().kind(),
-        WorkflowErrorKind::NotParkable
+        WorkflowErrorType::NotParkable
     );
     let row = admin.query_one("SELECT status,result_json::text,service_principal_id::text,deadline_adjustments_json::text FROM wamn_run.runs WHERE run_id=$1",&[&run]).await?;
     assert_eq!(row.get::<_, String>(0), "completed");
@@ -564,7 +564,7 @@ async fn run_automation(mode: Mode) -> anyhow::Result<()> {
     request.idempotency_key = "inactive".to_owned();
     assert_eq!(
         workflows.start(&request).await.unwrap_err().kind(),
-        WorkflowErrorKind::Refused
+        WorkflowErrorType::Refused
     );
     second.revoke();
     Ok(())

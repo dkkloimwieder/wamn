@@ -1,7 +1,7 @@
 //! The fold over the rows of a history read, with rows in the shape that the
 //! log trigger and `wamn_history.row_image` write.
 
-use wamn_record_history::{FoldErrorKind, HistoryRow, RowState, retain_columns, state_at};
+use wamn_record_history::{FoldErrorType, HistoryRow, RowState, retain_columns, state_at};
 
 const INSERTED: &str =
     r#"{"id": 1, "note": "first", "amount": 12.3400, "updated_at": "2026-10-01T09:07:00.000000Z"}"#;
@@ -241,30 +241,30 @@ fn the_fold_refuses_rows_that_do_not_form_one_read() {
             row(1, "insert", "{}", CURRENT, 3),
             row(3, "update", "{}", CURRENT, 4)
         ]),
-        (FoldErrorKind::HeadMismatch, 1)
+        (FoldErrorType::HeadMismatch, 1)
     );
     assert_eq!(
         refusal(&[
             row(3, "insert", "{}", CURRENT, 3),
             row(3, "update", "{}", CURRENT, 3)
         ]),
-        (FoldErrorKind::PositionOrder, 3)
+        (FoldErrorType::PositionOrder, 3)
     );
     assert_eq!(
         refusal(&[row(1, "insert", "{}", CURRENT, 3)]),
-        (FoldErrorKind::IncompleteRead, 1)
+        (FoldErrorType::IncompleteRead, 1)
     );
     assert_eq!(
         refusal(&[row(1, "upsert", "{}", CURRENT, 1)]),
-        (FoldErrorKind::UnknownKind, 1)
+        (FoldErrorType::UnknownKind, 1)
     );
     assert_eq!(
         refusal(&[row(1, "update", "{}", "[1]", 1)]),
-        (FoldErrorKind::MalformedImage, 1)
+        (FoldErrorType::MalformedImage, 1)
     );
     assert_eq!(
         refusal(&[row(1, "update", "{}", r#"{"id": 1,}"#, 1)]),
-        (FoldErrorKind::MalformedImage, 1)
+        (FoldErrorType::MalformedImage, 1)
     );
     assert_eq!(
         refusal(&[
@@ -272,7 +272,7 @@ fn the_fold_refuses_rows_that_do_not_form_one_read() {
             row(2, "delete", CURRENT, "{}", 3),
             row(3, "delete", CURRENT, "{}", 3),
         ]),
-        (FoldErrorKind::BrokenChain, 2)
+        (FoldErrorType::BrokenChain, 2)
     );
 }
 

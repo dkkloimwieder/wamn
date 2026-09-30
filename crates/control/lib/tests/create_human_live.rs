@@ -16,7 +16,7 @@ use wamn_control::create_human::{CreateHumanRequest, create_human_principal};
 use wamn_control_provision::{
     PlatformComponent, SYSTEM_SCHEMA_SQL, bind_platform_principal_sql, sql,
 };
-use wamn_platform_identity::{IdentityError, IdentityErrorKind};
+use wamn_platform_identity::{IdentityError, IdentityErrorType};
 use wamn_test_infrastructure::locked_database;
 
 const EMAIL: &str = "a.person@example.test";
@@ -136,7 +136,7 @@ async fn one_email_address_names_one_principal() {
     let identity = error
         .downcast_ref::<IdentityError>()
         .expect("the refusal carries the identity error");
-    assert_eq!(identity.kind(), IdentityErrorKind::Conflict);
+    assert_eq!(identity.kind(), IdentityErrorType::Conflict);
 
     let rows: i64 = observer
         .query_one(

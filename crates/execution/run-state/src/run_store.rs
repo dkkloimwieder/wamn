@@ -68,7 +68,7 @@ pub trait RunStore: Send + Sync {
 
 /// Stable category for a production-claim failure.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ProductionClaimErrorKind {
+pub enum ProductionClaimErrorType {
     /// Required host identity or database role authority was absent.
     Identity,
     /// The admitted run has no complete, valid frozen wiring identity.
@@ -82,7 +82,7 @@ pub enum ProductionClaimErrorKind {
 /// Contextual failure from the host-only production claim boundary.
 #[derive(Debug)]
 pub struct ProductionClaimError {
-    kind: ProductionClaimErrorKind,
+    type_: ProductionClaimErrorType,
     operation: &'static str,
     detail: String,
 }
@@ -90,20 +90,20 @@ pub struct ProductionClaimError {
 impl ProductionClaimError {
     /// Build a failure of `kind` for the named `operation`.
     pub fn new(
-        kind: ProductionClaimErrorKind,
+        type_: ProductionClaimErrorType,
         operation: &'static str,
         detail: impl Into<String>,
     ) -> Self {
         Self {
-            kind,
+            type_,
             operation,
             detail: detail.into(),
         }
     }
 
     /// Return the stable failure category.
-    pub fn kind(&self) -> ProductionClaimErrorKind {
-        self.kind
+    pub fn kind(&self) -> ProductionClaimErrorType {
+        self.type_
     }
 
     /// Return the operation that failed.

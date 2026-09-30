@@ -14,7 +14,7 @@ const PARAMETER_SCHEMA_URI: &str = "mem://wamn-wiring-parameter.json";
 
 /// Stable classification for a refused wiring/component compatibility gate.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum WiringCompatibilityErrorKind {
+pub enum WiringCompatibilityErrorType {
     FactScopeMismatch,
     MissingComponent,
     IncompatibleInterfaceVersion,
@@ -33,19 +33,19 @@ pub enum WiringCompatibilityErrorKind {
 /// Contextual refusal from the gate-time wiring compatibility boundary.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WiringCompatibilityError {
-    kind: WiringCompatibilityErrorKind,
+    type_: WiringCompatibilityErrorType,
     detail: Box<str>,
 }
 
 impl WiringCompatibilityError {
     /// Stable refusal class for callers that must not match display text.
-    pub fn kind(&self) -> WiringCompatibilityErrorKind {
-        self.kind
+    pub fn kind(&self) -> WiringCompatibilityErrorType {
+        self.type_
     }
 
-    fn new(kind: WiringCompatibilityErrorKind, detail: impl Into<Box<str>>) -> Self {
+    fn new(kind: WiringCompatibilityErrorType, detail: impl Into<Box<str>>) -> Self {
         Self {
-            kind,
+            type_: kind,
             detail: detail.into(),
         }
     }
@@ -76,7 +76,7 @@ pub fn validate_wiring_compatibility(
         .find(|component| component.scope != *scope)
     {
         return Err(WiringCompatibilityError::new(
-            WiringCompatibilityErrorKind::FactScopeMismatch,
+            WiringCompatibilityErrorType::FactScopeMismatch,
             format!(
                 "component {:?} fact scope ({:?}, {:?}, {:?}) differs from wiring gate scope ({:?}, {:?}, {:?})",
                 component.component,
@@ -115,7 +115,7 @@ pub fn validate_resolved_wiring_compatibility(
     for (node_id, node) in &wiring.nodes {
         let component = components.get(node_id).ok_or_else(|| {
             WiringCompatibilityError::new(
-                WiringCompatibilityErrorKind::MissingComponent,
+                WiringCompatibilityErrorType::MissingComponent,
                 format!("wiring node {node_id:?} has no resolved component fact"),
             )
         })?;
@@ -123,7 +123,7 @@ pub fn validate_resolved_wiring_compatibility(
             || component.interface_version != node.interface_version
         {
             return Err(WiringCompatibilityError::new(
-                WiringCompatibilityErrorKind::MissingOperation,
+                WiringCompatibilityErrorType::MissingOperation,
                 format!(
                     "wiring node {node_id:?} tuple ({:?}, {:?}) differs from resolved component tuple ({:?}, {:?})",
                     node.component,
@@ -135,7 +135,7 @@ pub fn validate_resolved_wiring_compatibility(
         }
         let operation = component.operations.get(&node.operation).ok_or_else(|| {
             WiringCompatibilityError::new(
-                WiringCompatibilityErrorKind::MissingOperation,
+                WiringCompatibilityErrorType::MissingOperation,
                 format!(
                     "wiring node {node_id:?} component {:?} interface {:?} has no operation {:?}",
                     node.component, node.interface_version, node.operation
@@ -147,7 +147,7 @@ pub fn validate_resolved_wiring_compatibility(
     }
     if components.len() != resolved.len() {
         return Err(WiringCompatibilityError::new(
-            WiringCompatibilityErrorKind::DuplicateOperationFact,
+            WiringCompatibilityErrorType::DuplicateOperationFact,
             "resolved component facts contain a node absent from the wiring",
         ));
     }
@@ -168,14 +168,14 @@ fn validate_resolved_edges(
             .get(node_id)
             .ok_or_else(|| {
                 WiringCompatibilityError::new(
-                    WiringCompatibilityErrorKind::MissingOperation,
+                    WiringCompatibilityErrorType::MissingOperation,
                     format!("committed-result node {node_id:?} has no resolved operation"),
                 )
             })?
             .operation;
         if operation.committed_result_schema.is_none() {
             return Err(WiringCompatibilityError::new(
-                WiringCompatibilityErrorKind::MissingOperation,
+                WiringCompatibilityErrorType::MissingOperation,
                 format!(
                     "committed-result node {node_id:?} has no admitted committed result schema"
                 ),
@@ -187,7 +187,7 @@ fn validate_resolved_edges(
         )
         .map_err(|error| {
             WiringCompatibilityError::new(
-                WiringCompatibilityErrorKind::MissingOperation,
+                WiringCompatibilityErrorType::MissingOperation,
                 format!("committed-result node {node_id:?} has invalid admitted facts: {error}"),
             )
         })?;
@@ -219,7 +219,7 @@ fn validate_resolved_edges(
             .find(|port| port.name == edge.from_port)
         else {
             return Err(WiringCompatibilityError::new(
-                WiringCompatibilityErrorKind::UnknownOutputPort,
+                WiringCompatibilityErrorType::UnknownOutputPort,
                 format!(
                     "wiring node {:?} operation {:?} does not declare output port {:?}",
                     edge.from, wiring.nodes[&edge.from].operation, edge.from_port
@@ -228,7 +228,7 @@ fn validate_resolved_edges(
         };
         if !schema_digests_match(&source_port.schema, &target_port.schema) {
             return Err(WiringCompatibilityError::new(
-                WiringCompatibilityErrorKind::SchemaDigestMismatch,
+                WiringCompatibilityErrorType::SchemaDigestMismatch,
                 format!(
                     "wiring edge {:?}.{:?} -> {:?}.{:?} has schema digests {:?} and {:?}",
                     edge.from,
@@ -260,7 +260,7 @@ fn resolve_component_operation<'a>(
         .collect();
     if component_matches.is_empty() {
         return Err(WiringCompatibilityError::new(
-            WiringCompatibilityErrorKind::MissingComponent,
+            WiringCompatibilityErrorType::MissingComponent,
             format!(
                 "wiring node {node_id:?} names missing component {:?}",
                 node.component
@@ -273,7 +273,7 @@ fn resolve_component_operation<'a>(
         .collect();
     if interface_matches.is_empty() {
         return Err(WiringCompatibilityError::new(
-            WiringCompatibilityErrorKind::IncompatibleInterfaceVersion,
+            WiringCompatibilityErrorType::IncompatibleInterfaceVersion,
             format!(
                 "wiring node {node_id:?} component {:?} has no exact interface version {:?}",
                 node.component, node.interface_version
@@ -288,7 +288,7 @@ fn resolve_component_operation<'a>(
     });
     let Some(component) = operation_matches.next() else {
         return Err(WiringCompatibilityError::new(
-            WiringCompatibilityErrorKind::MissingOperation,
+            WiringCompatibilityErrorType::MissingOperation,
             format!(
                 "wiring node {node_id:?} component {:?} interface {:?} has no operation {:?}",
                 node.component, node.interface_version, node.operation
@@ -297,7 +297,7 @@ fn resolve_component_operation<'a>(
     };
     if operation_matches.next().is_some() {
         return Err(WiringCompatibilityError::new(
-            WiringCompatibilityErrorKind::DuplicateOperationFact,
+            WiringCompatibilityErrorType::DuplicateOperationFact,
             format!(
                 "wiring node {node_id:?} resolves more than one fact for {:?} {:?} {:?}",
                 node.component, node.interface_version, node.operation
@@ -319,7 +319,7 @@ fn validate_parameters(
             .find(|parameter| parameter.name == *name)
         else {
             return Err(WiringCompatibilityError::new(
-                WiringCompatibilityErrorKind::UndeclaredParameter,
+                WiringCompatibilityErrorType::UndeclaredParameter,
                 format!("wiring node {node_id:?} supplies undeclared parameter {name:?}"),
             ));
         };
@@ -331,7 +331,7 @@ fn validate_parameters(
         .find(|parameter| parameter.required && !node.params.contains_key(&parameter.name))
     {
         return Err(WiringCompatibilityError::new(
-            WiringCompatibilityErrorKind::MissingRequiredParameter,
+            WiringCompatibilityErrorType::MissingRequiredParameter,
             format!(
                 "wiring node {node_id:?} omits required parameter {:?}",
                 parameter.name
@@ -358,7 +358,7 @@ fn validate_parameter_value(
         .expect("an admitted component carries a compiled-valid schema");
     schemas.validate(value, schema_index).map_err(|error| {
         WiringCompatibilityError::new(
-            WiringCompatibilityErrorKind::InvalidParameter,
+            WiringCompatibilityErrorType::InvalidParameter,
             format!(
                 "wiring node {node_id:?} parameter {parameter:?} does not match schema digest {:?}: {error}",
                 schema.schema_digest
@@ -380,7 +380,7 @@ fn resolve_input_port<'a>(
             .find(|port| port.name == name)
             .ok_or_else(|| {
                 WiringCompatibilityError::new(
-                    WiringCompatibilityErrorKind::UnknownInputPort,
+                    WiringCompatibilityErrorType::UnknownInputPort,
                     format!(
                         "wiring target {node_id:?} operation {operation_name:?} does not declare input port {name:?}"
                     ),
@@ -388,11 +388,11 @@ fn resolve_input_port<'a>(
             }),
         None if operation.input_ports.len() == 1 => Ok(&operation.input_ports[0]),
         None if operation.input_ports.is_empty() => Err(WiringCompatibilityError::new(
-            WiringCompatibilityErrorKind::MissingInputPort,
+            WiringCompatibilityErrorType::MissingInputPort,
             format!("wiring target {node_id:?} operation {operation_name:?} declares no input port"),
         )),
         None => Err(WiringCompatibilityError::new(
-            WiringCompatibilityErrorKind::AmbiguousInputPort,
+            WiringCompatibilityErrorType::AmbiguousInputPort,
             format!(
                 "wiring target {node_id:?} operation {:?} declares {} input ports; to-port is required",
                 operation_name,
@@ -597,7 +597,7 @@ mod tests {
             validate_wiring_compatibility(&wiring(), &scope(), &source_digest)
                 .unwrap_err()
                 .kind(),
-            WiringCompatibilityErrorKind::SchemaDigestMismatch
+            WiringCompatibilityErrorType::SchemaDigestMismatch
         );
 
         let mut target_digest = components();
@@ -607,7 +607,7 @@ mod tests {
             validate_wiring_compatibility(&wiring(), &scope(), &target_digest)
                 .unwrap_err()
                 .kind(),
-            WiringCompatibilityErrorKind::SchemaDigestMismatch
+            WiringCompatibilityErrorType::SchemaDigestMismatch
         );
 
         let mut wrong_port = wiring();
@@ -616,7 +616,7 @@ mod tests {
             validate_wiring_compatibility(&wrong_port, &scope(), &components())
                 .unwrap_err()
                 .kind(),
-            WiringCompatibilityErrorKind::UnknownInputPort
+            WiringCompatibilityErrorType::UnknownInputPort
         );
     }
 
@@ -628,7 +628,7 @@ mod tests {
             validate_wiring_compatibility(&wiring(), &scope(), &stale)
                 .unwrap_err()
                 .kind(),
-            WiringCompatibilityErrorKind::FactScopeMismatch
+            WiringCompatibilityErrorType::FactScopeMismatch
         );
 
         let mut invalid = wiring();
@@ -638,7 +638,7 @@ mod tests {
             validate_wiring_compatibility(&invalid, &scope(), &components())
                 .unwrap_err()
                 .kind(),
-            WiringCompatibilityErrorKind::InvalidParameter
+            WiringCompatibilityErrorType::InvalidParameter
         );
 
         let mut missing = wiring();
@@ -647,7 +647,7 @@ mod tests {
             validate_wiring_compatibility(&missing, &scope(), &components())
                 .unwrap_err()
                 .kind(),
-            WiringCompatibilityErrorKind::MissingRequiredParameter
+            WiringCompatibilityErrorType::MissingRequiredParameter
         );
     }
 
@@ -663,7 +663,7 @@ mod tests {
             validate_wiring_compatibility(&wiring(), &scope(), &structurally_wider)
                 .unwrap_err()
                 .kind(),
-            WiringCompatibilityErrorKind::SchemaDigestMismatch
+            WiringCompatibilityErrorType::SchemaDigestMismatch
         );
     }
 
@@ -679,7 +679,7 @@ mod tests {
             validate_wiring_compatibility(&error, &scope(), &components())
                 .unwrap_err()
                 .kind(),
-            WiringCompatibilityErrorKind::UnknownInputPort
+            WiringCompatibilityErrorType::UnknownInputPort
         );
     }
 }

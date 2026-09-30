@@ -147,7 +147,7 @@ pub trait DevStageRunner {
     /// Translate an owner error once at the development-engine boundary.
     fn classify_error(&self, error: &Self::Error) -> DevStageFailure {
         DevStageFailure::new(
-            DevRunErrorKind::StageFailed.as_str(),
+            DevRunErrorType::StageFailed.as_str(),
             error.to_string(),
             None,
         )
@@ -189,11 +189,11 @@ pub trait DevStageRunner {
 
 /// Stable category of a failed development run.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum DevRunErrorKind {
+pub enum DevRunErrorType {
     StageFailed,
 }
 
-impl DevRunErrorKind {
+impl DevRunErrorType {
     /// Stable diagnostic code for this error category.
     pub const fn as_str(self) -> &'static str {
         match self {
@@ -243,7 +243,7 @@ impl DevStageFailure {
 /// Failure of one ordered development run.
 #[derive(Debug)]
 pub struct DevRunError {
-    kind: DevRunErrorKind,
+    type_: DevRunErrorType,
     stage: DevStage,
     source: Option<Box<dyn Error + Send + Sync>>,
 }
@@ -251,15 +251,15 @@ pub struct DevRunError {
 impl DevRunError {
     fn stage_failed(stage: DevStage, source: impl Error + Send + Sync + 'static) -> Self {
         Self {
-            kind: DevRunErrorKind::StageFailed,
+            type_: DevRunErrorType::StageFailed,
             stage,
             source: Some(Box::new(source)),
         }
     }
 
     /// Stable error category.
-    pub const fn kind(&self) -> DevRunErrorKind {
-        self.kind
+    pub const fn kind(&self) -> DevRunErrorType {
+        self.type_
     }
 
     /// Stage that failed or was refused before invocation.
@@ -270,7 +270,7 @@ impl DevRunError {
 
 impl fmt::Display for DevRunError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(formatter, "{} at {}", self.kind.as_str(), self.stage)?;
+        write!(formatter, "{} at {}", self.type_.as_str(), self.stage)?;
         if let Some(source) = &self.source {
             write!(formatter, ": {source}")?;
         }
@@ -824,7 +824,7 @@ mod tests {
             .await
             .expect_err("synthetic virtualization failure must stop the run");
 
-        assert_eq!(error.kind(), DevRunErrorKind::StageFailed);
+        assert_eq!(error.kind(), DevRunErrorType::StageFailed);
         assert_eq!(error.stage(), DevStage::Virtualize);
         assert_eq!(
             runner.invoked,
@@ -995,7 +995,7 @@ mod tests {
             .await
             .expect_err("a target that cannot be prepared must not run a stage against it");
 
-        assert_eq!(error.kind(), DevRunErrorKind::StageFailed);
+        assert_eq!(error.kind(), DevRunErrorType::StageFailed);
         assert_eq!(error.stage(), DevStage::Migrate);
         assert!(
             runner.invoked.is_empty(),
@@ -1113,7 +1113,7 @@ mod tests {
             .result()
             .as_ref()
             .expect_err("first run fails at the injected stage");
-        assert_eq!(first.kind(), DevRunErrorKind::StageFailed);
+        assert_eq!(first.kind(), DevRunErrorType::StageFailed);
         assert_eq!(first.stage(), DevStage::Gate);
         assert!(observer.outcomes[1].result().is_ok());
     }
