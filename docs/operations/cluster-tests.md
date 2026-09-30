@@ -155,3 +155,30 @@ Build `wamn-gates`, then inspect its plan before creating the declared cluster:
 The Rust owner uses `wamn-rc`, refuses existing resources, and runs the retained socket and trace Jobs.
 It preserves exact image assertions and removes only its owned resources.
 Local unit tests do not replace these deployed checks.
+
+### Deployed queue recovery on wamn-dev
+
+This case records what the durable queue does when a host crashes during a run. It ran on the deployed wamn-dev environment, not on a kind cluster. [Section 5.8 of the GCP page](gcp.md#58-wms-host-crash-during-a-queued-run) holds the commands. The run is the published WMS wiring `inventory_move_and_label` version 2. It runs no SQL. It shapes one pallet `update` event, renders a label and stores it in Cloud Storage. So nothing holds the run, and the kill must land while the run shows `running`. The SQL-bearing case is `interrupted_durable_queue_item_completes_after_host_restart` for a kind cluster.
+
+The kill is a SIGKILL of the `wamn-host` process of the WMS pod, sent from a node debug pod. A forced pod delete is an operator action, so the case does not use it. This query reads the run and its queue row once a second:
+
+```sql
+SELECT r.status, r.updated_at, q.lease_generation, q.attempts, q.lease_owner, q.lease_expires_at
+  FROM wamn_run.runs AS r
+  LEFT JOIN wamn_run.run_queue AS q USING (tenant_id, run_id)
+ WHERE r.run_id = '<run id>';
+```
+
+On 2026-09-30, at commit `5a2a0064d` with host image `wamn-host:src-91f318b6c6fe387c`, the first of up to five attempts landed inside the window. All times are UTC. The node clock and the database clock can differ by less than one second.
+
+| Time | Event |
+| --- | --- |
+| 21:10:56.924 | `workflow start` writes run `3e11ecc7-68d7-41d8-b31f-45b13bb3b53b`. |
+| 21:10:57.829 | The WMS host claims it: lease generation 1, lease until 21:11:27.829. |
+| 21:10:58.060 | SIGKILL of the host process. The container exits with code 137. |
+| 21:10:59 | The container starts again in the same pod, restart count 1. |
+| 21:11:13 | The pod is `Ready`. The host was down for 15 seconds. |
+| 21:11:27.870 | The restarted host claims the run again: lease generation 2, attempts 1. |
+| 21:11:28.365 | The run is `completed`. Its queue row is gone. |
+
+The run waited for its old lease to expire. The lease lasts 30 seconds (`DEFAULT_QUEUE_LEASE_TTL_MS`), and the restarted host claimed the run 41 milliseconds after the old lease expired. The run completed 30.3 seconds after the kill and 31.4 seconds after it was written. The same run without a crash took 1.2 seconds on 2026-09-29. The bucket holds one label object for the run, `gs://wamn-dev-labels/wms/82b2ffa1-142a-20e7-bc58-93751f88bd7d/1`, written at 21:11:28 by the second attempt. The bucket keeps a replaced generation for 7 days as soft-deleted, and `gcloud storage ls --soft-deleted` lists none for this object. So the killed attempt wrote no label, and the label was written once. The run is `completed` with no failure kind, and it needed no operator action.
