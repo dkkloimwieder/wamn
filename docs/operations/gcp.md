@@ -1631,77 +1631,49 @@ The tier table is in section 6.1 of [the deployment plan](../plan/gcp-deployment
 
 ### 6.7 Tear down an environment
 
-No verb deletes an environment (finding `wamn-psss`). This section is the interim procedure. It removes one environment and everything named by its instance, so that `provision-project-env` mints a new suffix. Set the names of the environment, for example the old Receiving environment:
+`wamn-ctl delete-project-env` deletes one environment and everything that its instance names, so that `provision-project-env` mints a new suffix (finding `wamn-psss`, plan `docs/plan/environment-teardown.md`). It deletes the source and advisory streams, the slot, the database, the CDC role, the generation roles of the nine instance families, the control rows of the tenant and the registry rows. The control-family roles, their `author_login_tenants` rows, the service principals and their PATs stay. Keep the port-forwards of sections 3.6 and 3.18, and set the names of the environment:
 
 ```bash
-ORG=dkk PROJECT=receiving ENV=dev TENANT=dev
-DB=wamn-db-dkk--receiving--dev--zf7o454t SLOT=wamn_cdc_dkk__receiving__dev__zf7o454t
-STREAM=EVT_3_dkk_9_receiving_3_dev
+ORG=dkk PROJECT=receiving ENV=dev
+export WAMN_PG_ADMIN_URL="${WAMN_SYSTEM_ADMIN_URL%/*}/postgres"
 ```
 
-Stop the CDC reader and the host group of the environment:
+Print the plan. Without `--confirm`, the verb changes nothing:
+
+```bash
+target/debug/wamn-ctl delete-project-env --org $ORG --project $PROJECT --env $ENV \
+  --nats-url nats://127.0.0.1:14222 --nats-username "$(cat $E/provisioning-username)" \
+  --nats-password-file $E/provisioning-password
+```
+
+The plan lists the Kubernetes objects first, as "delete before this run". The verb has no Kubernetes client, so you delete them. Delete the CloudNativePG `Database` first. It has `ensure: present`, so it creates the database again if it stays:
+
+```bash
+kubectl -n platform delete database <database of the plan>
+```
+
+Delete each Secret of the plan. The plan names the namespace of `wamn-db-` and `wamn-cdc-`. Each other Secret is in the namespace of the workload that reads it: `hosts` on wamn-dev, and `identity` for `wamn-session-role-reader-`:
+
+```bash
+kubectl -n <namespace> delete secret <Secret of the plan>
+```
+
+Stop every workload that reads one of these Secrets, for example the CDC reader and the host group of the environment:
 
 ```bash
 kubectl -n platform scale deploy/cdc-reader --replicas=0
 kubectl -n hosts scale deploy/hostgroup-default --replicas=0
 ```
 
-Drop the slot and the database. Then drop the CDC role and every generation role that can connect to the database, with one statement each. No verb retires these roles, because a retire needs a live replacement of the same scope, and the scope includes the database:
+Run the verb with `--confirm`. It refuses and changes nothing if the slot is active or the database has a session. The refusal names each login that is still connected, so stop the workload that uses it and run the verb again. The verb also refuses if the admin URL is not the `postgres` database of the org's cluster:
 
 ```bash
-kubectl -n platform exec wamn-pg-1 -c postgres -- psql -U postgres -d postgres -Atc \
-  "select a.grantee::regrole from pg_database d, aclexplode(d.datacl) a
-   where d.datname = '$DB' and a.privilege_type = 'CONNECT' and a.grantee::regrole::text ~ '_[ab]\$'"
-kubectl -n platform exec wamn-pg-1 -c postgres -- psql -U postgres -d postgres -v ON_ERROR_STOP=1 \
-  -c "SELECT pg_drop_replication_slot('$SLOT')" -c "DROP DATABASE \"$DB\" WITH (FORCE)" -c "DROP ROLE \"$SLOT\""
-kubectl -n platform exec wamn-pg-1 -c postgres -- psql -U postgres -d postgres -v ON_ERROR_STOP=1 -c 'DROP ROLE "<role>"'
+target/debug/wamn-ctl delete-project-env --org $ORG --project $PROJECT --env $ENV --confirm \
+  --nats-url nats://127.0.0.1:14222 --nats-username "$(cat $E/provisioning-username)" \
+  --nats-password-file $E/provisioning-password
 ```
 
-Run the first query before the drop, because the drop removes the grants it reads. Delete the CloudNativePG `Database` object. It has `ensure: present`, so it creates the database again if it stays:
-
-```bash
-kubectl -n platform delete database $DB
-```
-
-Delete the registry row and the tenant environment row in one transaction. A trigger records the old suffix in `registry.retired_project_envs`. The delete also removes the environment's memberships and its `registry.event_readers` row, so grant the memberships of section 4.5 again after the new provision:
-
-```bash
-kubectl -n platform exec wamn-pg-1 -c postgres -- psql -U postgres -d wamn_system -v ON_ERROR_STOP=1 -1 \
-  -c "DELETE FROM registry.project_envs WHERE org = '$ORG' AND project = '$PROJECT' AND env = '$ENV'" \
-  -c "DELETE FROM catalog.tenant_environments WHERE tenant_id = '$TENANT'"
-```
-
-Delete the control rows of the tenant in `wamn_system`. A trigger refuses every change to them, so turn the trigger off for its one statement only. If they stay, the next `push-component` refuses with `package-coordinate-content-conflict`, and the next gate refuses with `command-id-reuse`:
-
-```sql
-BEGIN;
-ALTER TABLE catalog.deployment_attestations DISABLE TRIGGER deployment_attestations_immutable;
-DELETE FROM catalog.deployment_attestations WHERE tenant_id = '<tenant>';
-ALTER TABLE catalog.deployment_attestations ENABLE TRIGGER deployment_attestations_immutable;
--- The same three statements for catalog.connection_requirements, catalog.component_library,
--- catalog.effective_releases, catalog.packages, catalog.authoring_command_audit and
--- wamn_run.gate_reports, in this order. Each trigger is <table>_immutable.
-COMMIT;
-```
-
-Delete the event stream as the provisioning user of the stream. The delete also removes the materializer consumers of the stream, so the next `enable-cdc-project-env` creates both with the current declaration. No NATS client is installed, so a short script sends the request through the port-forward of section 3.18. Each user may subscribe only to its own inbox prefix:
-
-```bash
-cat > jsapi.py <<'PY'
-#!/usr/bin/env python3
-# jsapi.py <user file> <password file> <subject>: one JetStream API request. INBOX is the user's inbox prefix.
-import json, os, socket, sys
-user, pw = (open(p).read().strip() for p in sys.argv[1:3])
-inbox = (os.environ["INBOX"] + ".jsapi").encode()
-s = socket.create_connection(("127.0.0.1", 14222), timeout=10); f = s.makefile("rb"); f.readline()
-s.sendall(b"CONNECT " + json.dumps({"user": user, "pass": pw, "verbose": False}).encode() + b"\r\n")
-s.sendall(b"SUB " + inbox + b" 1\r\nPUB " + sys.argv[3].encode() + b" " + inbox + b" 0\r\n\r\nPING\r\n")
-for line in iter(f.readline, b""):
-    if line.startswith(b"-ERR"): sys.exit(line.decode().strip())
-    if line.startswith(b"MSG"): print(f.read(int(line.split()[-1]) + 2).decode().strip()); break
-PY
-INBOX=_INBOX_provisioning_$STREAM python3 jsapi.py $E/provisioning-username $E/provisioning-password "\$JS.API.STREAM.DELETE.$STREAM"
-```
+A trigger records the old suffix in `registry.retired_project_envs`. The delete also removes the memberships of the environment and its `registry.event_readers` row, so grant the memberships of section 4.5 again after the new provision. A second run finds no registry row and refuses.
 
 No user may purge a stream, and a torn-down environment's stream is deleted, not purged. After `enable-cdc-project-env` runs again, run the tap-stream Job of section 3.5 again. Since finding `wamn-fipl`, the role SQL of every `enable-cdc-project-env` run sets the Secret's password and attributes on an existing role. The reader reads the Secret at start, so restart it after the Secret changes:
 
@@ -1711,6 +1683,8 @@ kubectl -n platform rollout status deploy/cdc-reader --timeout=180s
 ```
 
 On 2026-09-29 the Receiving run of section 3.18 took 1 second with a new password, and its apply took 2 seconds. The `passwd` of the role in `pg_authid` changed, and the attributes stayed the same. The reader restart took 4 seconds, and the new reader was `streaming` from 21:06:03 UTC with 0 restarts. The first attempt failed at 21:02, because the Spot node `gke-wamn-main-cb3380eb-bvs4` was preempted and `evt-nats-0` moved. The cluster recovered by 21:05.
+
+The records below used the hand procedure that the verb replaced. Its commands are in this section at commit `0d6c1cfd0`.
 
 On 2026-09-28 and 2026-09-29 this procedure removed Receiving `zf7o454t` and WMS `bnarqpnc`. The stop took 23 seconds, the slots and the databases 1 second, the 13 roles 1 second, the registry rows under 1 second, the control rows 1 second and the gate rows under 1 second. The WMS consumer was deleted by itself first, then both streams, each in under 1 second. The WMS stream held 51 events and the Receiving stream 581397. The new suffixes are `4pqjfmli` for Receiving and `0nk1lrpr` for WMS.
 
