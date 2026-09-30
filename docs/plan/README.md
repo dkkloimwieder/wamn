@@ -15,6 +15,7 @@ These pages describe unbuilt work and its limits. Current behavior belongs in [a
 - [Operation ids](operation-ids.md): Design for authoring the package version once, in `wamn.json`, and deriving each sealed operation id from it.
 - [Operator image](operator-image.md): Design for the image and the Jobs that run the verbs that call identity inside the cluster (findings `wamn-n5d1` and `wamn-lo7z`).
 - [Operator UI](operator-ui.md): Deferred client and screen capabilities.
+- [Schema upgrade](schema-upgrade.md): Design for `upgrade-schema`, the verb that applies a platform schema change to an installed database (finding `wamn-o8b9`).
 - [Upgrades](upgrades.md): Design for changing a schema after installation.
 - [Web deployment](web-deployment.md): Epic 20 rules for the web client host, and its remaining real deployment.
 - [Web operator client](web-operator-client.md): Generated browser UIs from the release contract, scoped one epic at a time.
