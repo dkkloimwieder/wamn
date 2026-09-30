@@ -556,10 +556,10 @@ pub async fn install_journey_platform_floor(
         .context("create the platform principal rows")
 }
 
-/// Give the operator service of one environment the `operator` role, as an
+/// Give the operator service of one environment the `admin` role, as an
 /// operator does with `wamn-ctl grant-role` after the first publish. The
 /// service's `users` row must exist, which `reconcile-run-plane` writes.
-pub async fn grant_operator_role(
+pub async fn grant_operator_admin_role(
     project_url: &str,
     org: &str,
     project: &str,
@@ -571,18 +571,18 @@ pub async fn grant_operator_role(
         .context("derive the operator subject")?;
     let (mut client, connection) = tokio_postgres::connect(project_url, NoTls)
         .await
-        .context("connect to grant the operator role")?;
+        .context("connect to grant the admin role")?;
     let connection = tokio::spawn(connection);
     let granted = crate::user_roles::grant_role_on(
         &mut client,
         tenant,
         &format!("{subject}@{platform_domain}"),
-        wamn_project_state::OPERATOR_ROLE,
+        wamn_project_state::ADMIN_ROLE,
     )
     .await;
     drop(client);
     let _ = connection.await;
-    granted.map(drop).context("grant the operator role")
+    granted.map(drop).context("grant the admin role")
 }
 
 pub async fn reconcile_journey_run_plane(

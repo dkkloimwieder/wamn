@@ -873,23 +873,32 @@ async fn authority(db: &Client, route: &Route, inputs: &Inputs, evidence: &mut F
         "authority",
     );
     let before = snapshot(db, &fixture).await?;
+    // The caller holds `admin`, which has no permission row to remove, so the
+    // fixture takes the role from its holders and gives it back after the
+    // denied call. A caller without a role holds no operation, and the denial
+    // names the route's own operation.
     let removed = db
-        .execute(
-            "DELETE FROM app_system.permissions \
-        WHERE tenant_id=$1 AND role_name=$2 AND permission=$3",
-            &[&inputs.tenant, &inputs.caller_role, &*RECEIPT_OPERATION],
+        .query(
+            "DELETE FROM app_system.user_roles WHERE tenant_id=$1 AND role_name=$2 \
+             RETURNING user_id::text",
+            &[&inputs.tenant, &inputs.caller_role],
         )
-        .await?;
+        .await?
+        .into_iter()
+        .map(|row| row.get::<_, String>(0))
+        .collect::<Vec<_>>();
     ensure!(
-        removed == 1,
-        "authority fixture removed {removed} permission rows"
+        !removed.is_empty(),
+        "authority fixture found no holder of {}",
+        inputs.caller_role
     );
     let denied = route.post(RECEIPT_PATH, &body).await;
     let denied_state = snapshot(db, &fixture).await;
     let restored = db
         .execute(
-            "INSERT INTO app_system.permissions(tenant_id,role_name,permission) VALUES($1,$2,$3)",
-            &[&inputs.tenant, &inputs.caller_role, &*RECEIPT_OPERATION],
+            "INSERT INTO app_system.user_roles(tenant_id,user_id,role_name) \
+             SELECT $1, holder::uuid, $2 FROM unnest($3::text[]) AS holder",
+            &[&inputs.tenant, &inputs.caller_role, &removed],
         )
         .await;
     let denied = denied?;

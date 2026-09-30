@@ -282,6 +282,7 @@ Service credentials retain their declared scope and cannot mint a human session.
 A session token carries the human roles selected at minting and its revocable authority.
 For each new request, the host reads the current principal, environment membership, and password login or source PAT.
 It intersects signed roles with current assignments and reads current permissions for the active tenant user.
+A caller that holds `admin` holds every operation of the serving release. Any other role holds its stored stable references `<package>:<interface>/<operation>`, and the host matches each sealed operation of the release by its reference (docs/plan/platform-ui.md §2.3).
 No active-session result is cached. Missing, revoked, expired, or mismatched authority returns 401.
 An unavailable identity read refuses admission with 503. The read has a five-second timeout.
 Logout, reset, account disablement, membership removal, and PAT revocation therefore affect the next admission.

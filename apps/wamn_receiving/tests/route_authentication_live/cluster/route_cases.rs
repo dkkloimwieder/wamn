@@ -36,7 +36,7 @@ async fn run_histories(evidence: &std::path::Path) -> anyhow::Result<()> {
         let inputs = serde_json::from_value(json!({
             "project_pg_url":route.database_url,"route_endpoint":endpoint,
             "route_host":cluster.inputs.route_host,"operator_secret":cluster.inputs.operator_secret_output,
-            "tenant":super::super::TENANT,"caller_role":"operator","evidence_file":path,
+            "tenant":super::super::TENANT,"caller_role":"admin","evidence_file":path,
             "source_commit":cluster.resources.source,"component_digests":digests,
             "corpus_sha256":package["application_sql_corpus_identity"],"seed":7701,"cases":16,"history":null,
         }))?;

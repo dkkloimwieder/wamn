@@ -60,9 +60,9 @@ enum Command {
     RevokeProjectEnvMembership(identity_verbs::ProjectEnvMembershipArgs),
     /// Ask identity to mail an invitation to one human principal.
     Invite(identity_verbs::InviteArgs),
-    /// Give a person or a service the role operator or admin in one environment.
+    /// Give a person or a service one existing role in one environment.
     GrantRole(role_verbs::UserRoleArgs),
-    /// Take the role operator or admin from a person or a service in one environment.
+    /// Take one role from a person or a service in one environment.
     RevokeRole(role_verbs::UserRoleArgs),
     /// Overlay CDC capture onto a provisioned project-env: publication + failover slot + replication role/Secret + reader registration (wamn-l5i9.9, D19 v3)
     EnableCdcProjectEnv(provisioning_verbs::EnableCdcProjectEnvArgs),

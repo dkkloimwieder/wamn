@@ -35,7 +35,7 @@ pub struct UserRoleArgs {
     #[arg(long)]
     pub user: String,
 
-    /// The role: `operator` or `admin`.
+    /// A role that exists in the tenant, such as `admin`.
     #[arg(long)]
     pub role: String,
 }

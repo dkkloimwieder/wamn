@@ -15,7 +15,9 @@ use clap::Args;
 use serde_json::{Value, json};
 use tokio_postgres::{Client, NoTls};
 use wamn_platform_identity::{PrincipalId, assign_project_role, create_human, issue_pat};
-use wamn_schema_generator::{PackageIdentity, canonical_operation_identity};
+use wamn_schema_generator::{
+    PackageIdentity, canonical_operation_identity, sealed_operation_reference,
+};
 
 const PURCHASE_ORDER_ID: &str = "00000000-0000-0000-0000-000000000301";
 /// The deployed Receiving package whose route this test drives.
@@ -197,7 +199,7 @@ async fn exercise(
     )
     .await
     .context("issue the test PAT through production identity")?;
-    assign_project_role(system, principal, &args.org, &args.project, "operator")
+    assign_project_role(system, principal, &args.org, &args.project, "admin")
         .await
         .context("assign the project role that must not imply membership")?;
     seed_tenant_role(args, project, principal, role).await?;
@@ -275,8 +277,8 @@ async fn seed_tenant_role(
     .await
     .context("seed the dedicated test role")?;
     tx.execute(
-        "INSERT INTO app_system.permissions (tenant_id, role_name, permission) \
-         VALUES ($1, $2, $3)",
+        "INSERT INTO app_system.permissions (tenant_id, role_name, permission, required_by) \
+         VALUES ($1, $2, $3, $3)",
         &[&args.tenant, &role, &operation_grant()?],
     )
     .await
@@ -426,15 +428,17 @@ async fn cleanup(
     Ok(())
 }
 
-/// The grant of the purchase-order get operation, built the way the generator
-/// builds every operation grant.
+/// The stable reference of the purchase-order get operation, built from the
+/// grant the generator builds, without its version.
 fn operation_grant() -> anyhow::Result<String> {
     let package = PackageIdentity {
         id: PACKAGE_ID.to_owned(),
         version: PACKAGE_VERSION.to_owned(),
         predecessor_version: None,
     };
-    canonical_operation_identity(&package, OPERATION).context("derive the purchase-order get grant")
+    let sealed = canonical_operation_identity(&package, OPERATION)
+        .context("derive the purchase-order get grant")?;
+    Ok(sealed_operation_reference(&sealed).to_owned())
 }
 
 #[cfg(test)]

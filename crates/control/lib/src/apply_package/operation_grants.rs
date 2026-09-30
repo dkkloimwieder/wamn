@@ -1,33 +1,25 @@
 use anyhow::Context as _;
 use tokio_postgres::Transaction;
 use wamn_control_provision::operation_grants::{
-    OPERATION_GRANT_LOCK_SQL, OPERATION_GRANT_TRANSACTION_PRELUDE_SQL,
-    OperationGrantReconcileResult, operation_grant_floor_check_sql, reconcile_operation_grants_sql,
+    ENSURE_ADMIN_ROLE_SQL, OPERATION_GRANT_LOCK_SQL, OPERATION_GRANT_TRANSACTION_PRELUDE_SQL,
+    operation_grant_floor_check_sql,
 };
 
-pub(super) async fn reconcile_package_operation_grants(
-    tx: &Transaction<'_>,
-    manifest_bytes: &[u8],
-    tenant: &str,
-) -> anyhow::Result<OperationGrantReconcileResult> {
+/// Create the tenant's built-in `admin` role when it is absent, and return
+/// whether a row was written. `admin` has no permission rows.
+pub(super) async fn ensure_admin_role(tx: &Transaction<'_>, tenant: &str) -> anyhow::Result<bool> {
     tx.query_one(OPERATION_GRANT_LOCK_SQL, &[&tenant])
         .await
         .context("lock the tenant operation-grant carrier")?;
     tx.batch_execute(OPERATION_GRANT_TRANSACTION_PRELUDE_SQL)
         .await
-        .context("disable row filtering for package operation-grant reconciliation")?;
+        .context("disable row filtering for the admin role write")?;
     tx.batch_execute(&operation_grant_floor_check_sql())
         .await
         .context("verify the application authorization floor")?;
-    let statement = reconcile_operation_grants_sql(manifest_bytes, tenant)
-        .context("derive exact package operation grants")?;
-    let row = tx
-        .query_one(&statement, &[])
+    let written = tx
+        .execute(ENSURE_ADMIN_ROLE_SQL, &[&tenant])
         .await
-        .context("reconcile exact package operation grants")?;
-    Ok(OperationGrantReconcileResult::new(
-        row.get("role_rows_changed"),
-        row.get("grants_added"),
-        row.get("grants_removed"),
-    ))
+        .context("create the admin role")?;
+    Ok(written > 0)
 }

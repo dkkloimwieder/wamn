@@ -140,13 +140,15 @@ async fn tenant_postgres(admin_url: &str) -> anyhow::Result<Arc<WamnPostgres>> {
             )
             .await?;
         admin.execute(
-            "INSERT INTO app_system.permissions (tenant_id, role_name, permission) VALUES ($1, $2, $3)",
+            "INSERT INTO app_system.permissions (tenant_id, role_name, permission, required_by) \
+             VALUES ($1, $2, regexp_replace($3, '@[^@]*$', ''), regexp_replace($3, '@[^@]*$', ''))",
             &[&TENANT, &role, &ROOT],
         ).await?;
     }
     for permission in [CHILD, PARTICIPANT] {
         admin.execute(
-            "INSERT INTO app_system.permissions (tenant_id, role_name, permission) VALUES ($1, 'native-child', $2)",
+            "INSERT INTO app_system.permissions (tenant_id, role_name, permission, required_by) \
+             VALUES ($1, 'native-child', regexp_replace($2, '@[^@]*$', ''), regexp_replace($2, '@[^@]*$', ''))",
             &[&TENANT, &permission],
         ).await?;
     }

@@ -298,37 +298,7 @@ pub(super) async fn verify_dev_target_package_and_acl_state(
         "wamn dev installed the wrong exact migration records: {observed_migrations:?}"
     );
 
-    let observed_permissions = project
-        .query(
-            "SELECT permission FROM app_system.permissions \
-             WHERE tenant_id = $1 AND role_name = $2 \
-             ORDER BY permission COLLATE \"C\"",
-            &[&TENANT, &OPERATOR_ROLE],
-        )
-        .await
-        .context("read product-command operation grants")?
-        .into_iter()
-        .map(|row| row.get::<_, String>(0))
-        .collect::<BTreeSet<_>>();
-    let expected_permissions = BASE_OPERATIONS
-        .iter()
-        .map(|(_, token)| sealed(token))
-        .chain(
-            OVERLAY_OPERATIONS
-                .iter()
-                .map(|(_, token)| sealed(token))
-                .filter(|token| {
-                    *token != sealed("client-acme-receiving:quality/create-inspection")
-                }),
-        )
-        .chain([sealed(
-            "client-acme-receiving:receiving/record-receipt-participant",
-        )])
-        .collect::<BTreeSet<_>>();
-    anyhow::ensure!(
-        observed_permissions == expected_permissions,
-        "wamn dev installed the wrong exact operation-grant union: {observed_permissions:?}"
-    );
+    verify_journey_operation_grants(project).await?;
 
     let observed_column_grants = project
         .query(

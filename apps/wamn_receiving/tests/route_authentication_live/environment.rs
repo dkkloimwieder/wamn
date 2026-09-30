@@ -161,29 +161,32 @@ pub(super) async fn reconcile_journey_data_access(
     .await
 }
 
+/// Applying the packages leaves the built-in `admin` role and no permission
+/// row: `admin` holds every served operation without rows, and no other role
+/// is authored yet (docs/plan/platform-ui.md §2.2).
 pub(super) async fn verify_journey_operation_grants(project: &Client) -> anyhow::Result<()> {
-    let observed = project
+    let roles = project
         .query(
-            "SELECT permission FROM app_system.permissions \
-             WHERE tenant_id = $1 AND role_name = $2 \
-             ORDER BY permission COLLATE \"C\"",
-            &[&TENANT, &OPERATOR_ROLE],
+            "SELECT name FROM app_system.roles WHERE tenant_id = $1 ORDER BY name COLLATE \"C\"",
+            &[&TENANT],
         )
         .await
-        .context("read the installed two-package operation-grant union")?
+        .context("read the installed roles")?
         .into_iter()
         .map(|row| row.get::<_, String>(0))
-        .collect::<BTreeSet<_>>();
-    let expected = BASE_OPERATIONS
-        .iter()
-        .chain(OVERLAY_OPERATIONS.iter())
-        .map(|(_, token)| sealed(token))
-        .filter(|token| *token != sealed("client-acme-receiving:quality/create-inspection"))
-        .chain([(*OVERLAY_RECEIPT_PARTICIPANT).to_owned()])
-        .collect::<BTreeSet<_>>();
+        .collect::<Vec<_>>();
+    let permissions: i64 = project
+        .query_one(
+            "SELECT count(*) FROM app_system.permissions WHERE tenant_id = $1",
+            &[&TENANT],
+        )
+        .await
+        .context("count the installed permission rows")?
+        .get(0);
     anyhow::ensure!(
-        observed == expected,
-        "installed packages projected the wrong operator grant union: {observed:?}"
+        roles == [ADMIN_ROLE] && permissions == 0,
+        "installed packages left roles {roles:?} and {permissions} permission rows, \
+         not admin alone without rows"
     );
     Ok(())
 }

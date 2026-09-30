@@ -379,7 +379,12 @@ fn compile_input_schema(hash: &str, schema: Value) -> InputSchemaValidator {
     }
 }
 
-/// Host-owned record of an originating caller and its exact operation grants.
+/// Host-owned record of an originating caller and its operation grants.
+///
+/// The grants are the stored application authority of the caller: whether it
+/// holds `admin`, and the distinct stable operation references
+/// (`<package>:<interface>/<operation>`) its other roles hold
+/// (docs/plan/platform-ui.md §2.3).
 ///
 /// The guest can hold only the resource handle. It cannot construct this value,
 /// inspect the grant set, or replace the principal while forwarding it to router
@@ -389,6 +394,7 @@ pub struct AuthenticatedCaller {
     attachment_id: Box<str>,
     principal_id: Box<str>,
     credential_type: CredentialType,
+    admin: bool,
     permissions: Arc<HashSet<String>>,
 }
 
@@ -410,6 +416,7 @@ impl std::fmt::Debug for AuthenticatedCaller {
             .field("attachment_id", &self.attachment_id)
             .field("principal_id", &self.principal_id)
             .field("credential_type", &self.credential_type)
+            .field("admin", &self.admin)
             .field("permission_count", &self.permissions.len())
             .finish_non_exhaustive()
     }
@@ -417,16 +424,22 @@ impl std::fmt::Debug for AuthenticatedCaller {
 
 impl AuthenticatedCaller {
     /// Record the caller that a host authenticated for one attachment.
+    ///
+    /// `admin` is whether the caller currently holds the built-in `admin`
+    /// role. `permissions` are the stable operation references of its other
+    /// roles.
     pub fn new(
         attachment_id: impl Into<Box<str>>,
         principal_id: impl Into<Box<str>>,
         credential_type: CredentialType,
+        admin: bool,
         permissions: HashSet<String>,
     ) -> Self {
         Self {
             attachment_id: attachment_id.into(),
             principal_id: principal_id.into(),
             credential_type,
+            admin,
             permissions: Arc::new(permissions),
         }
     }
@@ -446,10 +459,24 @@ impl AuthenticatedCaller {
         self.credential_type
     }
 
-    /// Check one exact registered-operation token.
+    /// Check one sealed registered-operation token of the serving release.
+    ///
+    /// `admin` holds every operation the release serves. Any other caller
+    /// holds the operation when it holds the token's stable reference, the
+    /// token without its `@<version>`. The caller asks only about tokens of
+    /// the serving release, so a stored reference the release does not serve
+    /// grants nothing.
     pub fn permits(&self, operation: &str) -> bool {
-        self.permissions.contains(operation)
+        self.admin || self.permissions.contains(operation_reference(operation))
     }
+}
+
+/// The stable reference of a sealed operation token: the token without its
+/// last `@<version>`.
+pub fn operation_reference(operation: &str) -> &str {
+    operation
+        .rsplit_once('@')
+        .map_or(operation, |(reference, _)| reference)
 }
 
 /// This process was given no release, so it can answer no route.
@@ -2050,23 +2077,35 @@ mod tests {
     }
 
     #[test]
-    fn originating_caller_keeps_exact_permissions_only() {
+    fn originating_caller_holds_its_references_or_admin() {
         let caller = AuthenticatedCaller {
             attachment_id: "widget-http".into(),
             principal_id: "11111111-1111-4111-8111-111111111111".into(),
             credential_type: CredentialType::Pat,
-            permissions: Arc::new(HashSet::from([
-                "platform-fixture:widget/get@1.0.0".to_string()
-            ])),
+            admin: false,
+            permissions: Arc::new(HashSet::from(["platform-fixture:widget/get".to_string()])),
         };
         assert_eq!(caller.attachment_id(), "widget-http");
         assert_eq!(
             caller.principal_id(),
             "11111111-1111-4111-8111-111111111111"
         );
+        // A stored reference holds the operation at any served version.
         assert!(caller.permits("platform-fixture:widget/get@1.0.0"));
+        assert!(caller.permits("platform-fixture:widget/get@2.0.0"));
         assert!(!caller.permits("platform-fixture:widget/query@1.0.0"));
+        assert!(!caller.permits("platform-fixture:widget-maker/get@1.0.0"));
         assert!(!caller.permits("widget.get"));
+        let admin = AuthenticatedCaller {
+            admin: true,
+            permissions: Arc::new(HashSet::new()),
+            ..caller.clone()
+        };
+        assert!(admin.permits("platform-fixture:widget/query@1.0.0"));
+        assert_eq!(
+            operation_reference("platform-fixture:widget/get@1.0.0"),
+            "platform-fixture:widget/get"
+        );
         assert_eq!(caller.credential_type(), CredentialType::Pat);
         for kind in [CredentialType::Pat, CredentialType::Session] {
             let caller = AuthenticatedCaller {

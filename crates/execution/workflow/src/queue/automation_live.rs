@@ -41,6 +41,8 @@ mod shutdown;
 const TENANT: &str = "automation-live";
 const SERVICE: &str = "00000000-0000-4000-8000-000000000074";
 const OPERATION: &str = "automation:echo/run@1.0.0";
+/// The stable reference that an authored role stores for [`OPERATION`].
+const REFERENCE: &str = "automation:echo/run";
 const HASH: &str = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
 
 const NODE_TYPES: &str = r#"
@@ -176,7 +178,7 @@ async fn run_automation(mode: Mode) -> anyhow::Result<()> {
     admin.batch_execute(&format!("INSERT INTO app_system.users (tenant_id,id,type,email) VALUES ('{TENANT}','{SERVICE}','service','automation@example.invalid');
       INSERT INTO app_system.roles (tenant_id,name) VALUES ('{TENANT}','automation');
       INSERT INTO app_system.user_roles (tenant_id,user_id,role_name) VALUES ('{TENANT}','{SERVICE}','automation');
-      INSERT INTO app_system.permissions (tenant_id,role_name,permission) VALUES ('{TENANT}','automation','{OPERATION}');
+      INSERT INTO app_system.permissions (tenant_id,role_name,permission,required_by) VALUES ('{TENANT}','automation','{REFERENCE}','{REFERENCE}');
       INSERT INTO wamn_run.environment_policies (tenant_id,expected_environment,durability_class) VALUES ('{TENANT}','test','standard');
       INSERT INTO catalog.packages (tenant_id,package_id,package_version,manifest_sha256) VALUES ('{TENANT}','automation','1.0.0','{HASH}');
       INSERT INTO catalog.effective_releases (tenant_id,effective_release_id,environment,verified_publisher_principal) VALUES ('{TENANT}',1,'test','automation-fixture');

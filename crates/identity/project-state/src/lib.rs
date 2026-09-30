@@ -239,17 +239,10 @@ pub const ROLES: Table = Table {
     columns: &["tenant_id", "name"],
 };
 
-/// The user role that holds every operation permission of the published
-/// packages. Publish writes it, and `wamn-ctl grant-role` gives it to a person
-/// or a service.
-pub const OPERATOR_ROLE: &str = "operator";
-
-/// The user role for administration. Publish writes it with the same
-/// permissions as [`OPERATOR_ROLE`] until an administration operation exists.
+/// The one built-in user role. It has no permission rows and holds every
+/// operation the current serving release serves (docs/plan/platform-ui.md
+/// §2.2). `apply-package` creates it. Every other role is authored.
 pub const ADMIN_ROLE: &str = "admin";
-
-/// The two user roles that publish writes and `wamn-ctl grant-role` accepts.
-pub const USER_ROLE_NAMES: [&str; 2] = [OPERATOR_ROLE, ADMIN_ROLE];
 
 /// The user↔role linkage (many-to-many).
 pub const USER_ROLES: Table = Table {
@@ -260,7 +253,7 @@ pub const USER_ROLES: Table = Table {
 /// Role → permission grants (read by 4.3 AuthZ).
 pub const PERMISSIONS: Table = Table {
     name: "permissions",
-    columns: &["tenant_id", "role_name", "permission"],
+    columns: &["tenant_id", "role_name", "permission", "required_by"],
 };
 
 /// Per-project application settings (opaque jsonb value).

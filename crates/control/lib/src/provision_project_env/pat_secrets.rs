@@ -42,7 +42,7 @@ pub(super) const OPERATOR: PatPurpose = PatPurpose {
     purpose: "operator",
     subject_stem: "wamn-operator",
     display_stem: "WAMN operator",
-    role: wamn_project_state::OPERATOR_ROLE,
+    role: wamn_project_state::ADMIN_ROLE,
     secret_stem: "wamn-pat-operator",
 };
 

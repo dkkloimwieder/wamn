@@ -1,13 +1,12 @@
 //! Disposable-PostgreSQL closure test for the exact-byte package runner.
 
-use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use tokio_postgres::{Client, NoTls};
 use wamn_control::apply_package::{self, ApplyPackageRequest};
 use wamn_control_provision::PlatformComponent;
-use wamn_control_provision::operation_grants::{OPERATION_GRANT_LOCK_SQL, operation_grant_tokens};
+use wamn_control_provision::operation_grants::OPERATION_GRANT_LOCK_SQL;
 use wamn_schema_introspection::migration_policy::{MigrationPolicyError, MigrationPolicyErrorType};
 use wamn_test_infrastructure::locked_database;
 
@@ -423,12 +422,6 @@ async fn assert_concurrent_package_grants_share_one_carrier(url: &str) {
         fixture_root().with_file_name(format!("apply-package-race-beta-{}", std::process::id()));
     copy_base_fixture_as(&alpha, "race_alpha", "race_alpha");
     copy_base_fixture_as(&beta, "race_beta", "race_beta");
-    let expected_grants = [&alpha, &beta]
-        .into_iter()
-        .flat_map(|package| {
-            operation_grant_tokens(&std::fs::read(package.join("wamn.json")).unwrap()).unwrap()
-        })
-        .collect::<BTreeSet<_>>();
 
     let mut blocker = connect(url).await;
     let observer = connect(url).await;
@@ -489,31 +482,27 @@ async fn assert_concurrent_package_grants_share_one_carrier(url: &str) {
     assert_eq!(
         observer
             .query_one(
-                "SELECT count(*) FROM app_system.roles \
-                  WHERE tenant_id = $1 AND name IN ('operator', 'admin')",
+                "SELECT string_agg(name, ',' ORDER BY name) FROM app_system.roles \
+                  WHERE tenant_id = $1",
                 &[&RACE_TENANT],
             )
             .await
             .expect("read the shared user roles")
-            .get::<_, i64>(0),
-        2
+            .get::<_, String>(0),
+        "admin",
+        "concurrent packages must leave exactly the built-in admin role"
     );
-    let actual_grants = observer
-        .query(
-            "SELECT permission FROM app_system.permissions \
-              WHERE tenant_id = $1 AND role_name = 'operator' \
-                AND (permission LIKE 'race-alpha:%@1.0.0' \
-                     OR permission LIKE 'race-beta:%@1.0.0')",
-            &[&RACE_TENANT],
-        )
-        .await
-        .expect("read both package grant sets")
-        .into_iter()
-        .map(|row| row.get::<_, String>(0))
-        .collect::<BTreeSet<_>>();
     assert_eq!(
-        actual_grants, expected_grants,
-        "concurrent packages must retain every declared grant"
+        observer
+            .query_one(
+                "SELECT count(*) FROM app_system.permissions WHERE tenant_id = $1",
+                &[&RACE_TENANT],
+            )
+            .await
+            .expect("read the tenant permission rows")
+            .get::<_, i64>(0),
+        0,
+        "admin has no permission rows"
     );
 }
 
@@ -667,14 +656,15 @@ async fn exact_runner_commits_once_refuses_drift_and_rolls_back_a_failing_suffix
              INSERT INTO app_system.users (tenant_id, id, type, email) \
                  VALUES ('{TENANT}', '{FIXTURE_PRINCIPAL}', 'person', 'fixture@example.invalid'); \
              INSERT INTO app_system.roles (tenant_id, name) \
-                 VALUES ('{TENANT}', 'operator'); \
-             INSERT INTO app_system.permissions (tenant_id, role_name, permission) VALUES \
-                 ('{TENANT}', 'operator', 'wamn-inventory:obsolete/operation@1.0.0'), \
-                 ('{TENANT}', 'operator', 'client-overlay:rack/get@1.0.0'); \
+                 VALUES ('{TENANT}', 'clerk'); \
+             INSERT INTO app_system.permissions (tenant_id, role_name, permission, required_by) VALUES \
+                 ('{TENANT}', 'clerk', 'wamn-inventory:obsolete/operation', \
+                  'wamn-inventory:obsolete/operation'), \
+                 ('{TENANT}', 'clerk', 'client-overlay:rack/get', 'client-overlay:rack/get'); \
              COMMIT;"
         ))
         .await
-        .expect("seed exact-coordinate grant residue and a sibling coordinate");
+        .expect("seed an authored role with two selected operations");
 
     apply(&url, &package)
         .await
@@ -714,52 +704,37 @@ async fn exact_runner_commits_once_refuses_drift_and_rolls_back_a_failing_suffix
         ownership.get::<_, bool>(0) && ownership.get::<_, bool>(1),
         "schema creation and exact package DDL must run as wamn_db_owner"
     );
-    let actual_grants = client
-        .query(
-            "SELECT permission FROM app_system.permissions \
-              WHERE tenant_id = $1 AND role_name = 'operator' \
-                AND permission LIKE 'wamn-inventory:%@1.0.0'",
-            &[&TENANT],
-        )
-        .await
-        .unwrap()
-        .into_iter()
-        .map(|row| row.get::<_, String>(0))
-        .collect::<BTreeSet<_>>();
-    let expected_grants = operation_grant_tokens(
-        &std::fs::read(package.join("wamn.json")).expect("read applied manifest"),
-    )
-    .expect("derive the declared package grants");
-    assert_eq!(actual_grants, expected_grants);
-    let admin_grants = client
-        .query(
-            "SELECT permission FROM app_system.permissions \
-              WHERE tenant_id = $1 AND role_name = 'admin' \
-                AND permission LIKE 'wamn-inventory:%@1.0.0'",
-            &[&TENANT],
-        )
-        .await
-        .unwrap()
-        .into_iter()
-        .map(|row| row.get::<_, String>(0))
-        .collect::<BTreeSet<_>>();
-    assert_eq!(
-        admin_grants, expected_grants,
-        "admin holds the operator set until an administration operation exists"
-    );
+    // apply-package writes the built-in admin role and no permission row. It
+    // leaves the rows of an authored role, which release reconciliation owns.
     assert_eq!(
         client
             .query_one(
-                "SELECT count(*) FROM app_system.permissions \
-                  WHERE tenant_id = $1 AND role_name = 'operator' \
-                    AND permission = 'client-overlay:rack/get@1.0.0'",
+                "SELECT string_agg(name, ',' ORDER BY name) FROM app_system.roles \
+                  WHERE tenant_id = $1",
                 &[&TENANT],
             )
             .await
             .unwrap()
-            .get::<_, i64>(0),
-        1,
-        "one package coordinate cannot delete a sibling package grant"
+            .get::<_, String>(0),
+        "admin,clerk"
+    );
+    assert_eq!(
+        client
+            .query(
+                "SELECT role_name || ' ' || permission FROM app_system.permissions \
+                  WHERE tenant_id = $1 ORDER BY 1",
+                &[&TENANT],
+            )
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|row| row.get::<_, String>(0))
+            .collect::<Vec<_>>(),
+        [
+            "clerk client-overlay:rack/get",
+            "clerk wamn-inventory:obsolete/operation"
+        ],
+        "apply-package changed an authored permission row"
     );
     assert!(
         client
@@ -1555,15 +1530,12 @@ async fn record_history_triggers_follow_the_declaration() {
         "one stamp trigger for the relation that selects columns, none for [], \
          and the declared log trigger"
     );
-    // Spec test 11: the operation grants stamp wamn:apply-package.
+    // Spec test 11: the admin role row stamps wamn:apply-package.
     let grant_stamps = client
         .query_one(
             "SELECT count(*), count(*) FILTER (WHERE created_by = $2::text::uuid \
                                                 AND updated_by = $2::text::uuid) \
-               FROM (SELECT created_by, updated_by FROM app_system.roles WHERE tenant_id = $1 \
-                     UNION ALL \
-                     SELECT created_by, updated_by FROM app_system.permissions \
-                      WHERE tenant_id = $1) AS grants",
+               FROM app_system.roles WHERE tenant_id = $1 AND name = 'admin'",
             &[
                 &TENANT,
                 &PlatformComponent::ApplyPackage.principal_id().to_string(),
@@ -1572,9 +1544,8 @@ async fn record_history_triggers_follow_the_declaration() {
         .await
         .expect("read the operation grant stamps");
     assert!(
-        grant_stamps.get::<_, i64>(0) > 1
-            && grant_stamps.get::<_, i64>(0) == grant_stamps.get::<_, i64>(1),
-        "every operation grant row must stamp wamn:apply-package"
+        grant_stamps.get::<_, i64>(0) == 1 && grant_stamps.get::<_, i64>(1) == 1,
+        "the admin role row must stamp wamn:apply-package"
     );
     apply(&url, &package)
         .await

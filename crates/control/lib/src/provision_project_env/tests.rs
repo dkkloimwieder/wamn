@@ -152,7 +152,7 @@ fn pat_literals_and_secret_documents_are_exact() {
     );
     assert_eq!(
         operator_secret["metadata"]["annotations"]["wamn.io/project-role"],
-        "operator"
+        "admin"
     );
 }
 

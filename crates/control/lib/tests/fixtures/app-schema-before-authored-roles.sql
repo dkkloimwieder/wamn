@@ -239,12 +239,9 @@ GRANT SELECT ON app_system.users TO wamn_app;
 -- ---------------------------------------------------------------------------
 -- Roles — named roles. `name` is the app.role value the 3.5 RLS builder compares
 -- (a role gate is COALESCE(app.role,'') IN ('r1', …)), so the NAME is the
--- load-bearing identity (the composite PK). `admin` is the one built-in role:
--- apply-package writes it, and it holds every operation the serving release
--- serves with no permission rows. Every other role is authored. A person or
--- service holds a role through `wamn-ctl grant-role`. `roles_name_check` is the
--- role slug of identity (`wamn_session::token::is_role_slug`), so no stored
--- role name is one that a session refuses.
+-- load-bearing identity (the composite PK). Publish writes the two user roles,
+-- `operator` and `admin`; a person or service holds one through `wamn-ctl
+-- grant-role`.
 -- ---------------------------------------------------------------------------
 CREATE TABLE app_system.roles (
     tenant_id   text NOT NULL CHECK (tenant_id <> ''),
@@ -254,9 +251,7 @@ CREATE TABLE app_system.roles (
     created_by  uuid NOT NULL,
     updated_at  timestamptz NOT NULL,
     updated_by  uuid NOT NULL,
-    PRIMARY KEY (tenant_id, name),
-    CONSTRAINT roles_name_check
-        CHECK (name ~ '^[a-z0-9][a-z0-9-]*$' AND octet_length(name) <= 64)
+    PRIMARY KEY (tenant_id, name)
 );
 CREATE TRIGGER wamn_record_history_stamp
     BEFORE INSERT OR UPDATE ON app_system.roles
@@ -314,35 +309,21 @@ CREATE INDEX user_roles_tkey
 GRANT SELECT ON app_system.user_roles TO wamn_app;
 
 -- ---------------------------------------------------------------------------
--- Permissions — the effective grants of an authored role
--- (docs/plan/platform-ui.md §2.3). `permission` is a stable operation
--- reference `<package>:<interface>/<operation>`, with no package version.
--- `required_by` is the directly selected root that requires it. A row with
--- `permission = required_by` is the direct selection. The other rows are the
--- released call-graph closure of that root, and `permissions_required_by_fkey`
--- removes them with it. Route admission reads the distinct `permission` values.
--- `admin` has no rows. FK to roles ON DELETE CASCADE within the tenant.
+-- Permissions — the grants a role carries (role → permission string, e.g.
+-- 'receipts:read'). 4.3 AuthZ reads role → permissions. FK to roles ON DELETE
+-- CASCADE within the tenant.
 -- ---------------------------------------------------------------------------
 CREATE TABLE app_system.permissions (
-    tenant_id   text NOT NULL CHECK (tenant_id <> ''),
-    role_name   text NOT NULL,
-    permission  text NOT NULL,
-    required_by text NOT NULL,
-    created_at  timestamptz NOT NULL,
-    created_by  uuid NOT NULL,
-    updated_at  timestamptz NOT NULL,
-    updated_by  uuid NOT NULL,
-    PRIMARY KEY (tenant_id, role_name, permission, required_by),
+    tenant_id  text NOT NULL CHECK (tenant_id <> ''),
+    role_name  text NOT NULL,
+    permission text NOT NULL,
+    created_at timestamptz NOT NULL,
+    created_by uuid NOT NULL,
+    updated_at timestamptz NOT NULL,
+    updated_by uuid NOT NULL,
+    PRIMARY KEY (tenant_id, role_name, permission),
     FOREIGN KEY (tenant_id, role_name)
-        REFERENCES app_system.roles (tenant_id, name) ON DELETE CASCADE,
-    CONSTRAINT permissions_required_by_fkey
-        FOREIGN KEY (tenant_id, role_name, required_by, required_by)
-        REFERENCES app_system.permissions (tenant_id, role_name, permission, required_by)
-        ON DELETE CASCADE,
-    CONSTRAINT permissions_admin_check CHECK (role_name <> 'admin'),
-    CONSTRAINT permissions_reference_check
-        CHECK (permission ~ '^[a-z][a-z0-9]*(-[a-z0-9]+)*:[a-z][a-z0-9]*(-[a-z0-9]+)*/[a-z][a-z0-9]*(-[a-z0-9]+)*$'
-           AND required_by ~ '^[a-z][a-z0-9]*(-[a-z0-9]+)*:[a-z][a-z0-9]*(-[a-z0-9]+)*/[a-z][a-z0-9]*(-[a-z0-9]+)*$')
+        REFERENCES app_system.roles (tenant_id, name) ON DELETE CASCADE
 );
 CREATE TRIGGER wamn_record_history_stamp
     BEFORE INSERT OR UPDATE ON app_system.permissions

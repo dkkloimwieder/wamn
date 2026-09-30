@@ -1,33 +1,32 @@
-//! Exact package-operation grants for the two user roles, `operator` and `admin`.
+//! The built-in role `admin` and the package-operation vocabulary.
 //!
-//! This is the pure half of reconciliation: it parses the package's strict
-//! manifest and emits the floor check plus one server-side convergence query.
-//! The effect owner runs both against the registry-verified project database
-//! and reads the query's final count row. The existing `app_system` floor is a
-//! precondition; this module never installs or redesigns that authority schema.
+//! `admin` has no permission rows and holds every operation the current
+//! serving release serves (docs/plan/platform-ui.md §2.2). `apply-package`
+//! only creates the `admin` row when it is absent. Every other role is
+//! authored, and its permission rows are reconciled against the candidate
+//! serving release before activation, not by `apply-package`. The existing
+//! `app_system` floor is a precondition; this module never installs or
+//! redesigns that authority schema.
 
 use std::collections::BTreeSet;
 use std::error::Error as StdError;
 
-use wamn_pg_core::quote_literal;
-use wamn_project_state::USER_ROLE_NAMES;
 use wamn_schema_generator::{
-    OperationVisibility, PackageManifest, canonical_operation_identity, canonical_operation_prefix,
+    OperationVisibility, PackageManifest, canonical_operation_identity,
     validate_operation_vocabulary,
 };
 
-/// Serialize the shared user roles within one tenant.
+/// Serialize the writes of the tenant's roles and permission rows.
 ///
-/// Package lineage remains independently locked per family. Grant
-/// reconciliation additionally shares this tenant-grain lock because the first
-/// package creates the role rows every package coordinate contributes to.
+/// Package lineage remains independently locked per family. Role and
+/// permission writes additionally share this tenant-grain lock.
 pub const OPERATION_GRANT_LOCK_SQL: &str = "SELECT pg_advisory_xact_lock(hashtextextended(\
      'wamn.operation-grants:' || $1, 0))";
 
 /// Stable refusal when the project database has not installed its auth floor.
 pub const APP_SYSTEM_FLOOR_MISSING: &str = "wamn-operation-grants-app-system-floor-missing";
 
-/// Required first statement inside the administrator-owned transaction.
+/// Required statement inside the administrator-owned transaction.
 ///
 /// A principal that cannot bypass forced RLS errors on the subsequent read or
 /// write instead of observing a silently filtered tenant+role grant set.
@@ -36,9 +35,8 @@ pub const OPERATION_GRANT_TRANSACTION_PRELUDE_SQL: &str = "SET LOCAL row_securit
 /// Refuse unless the existing application-authorization floor is installed.
 ///
 /// The effect owner executes this after acquiring [`OPERATION_GRANT_LOCK_SQL`]
-/// and applying [`OPERATION_GRANT_TRANSACTION_PRELUDE_SQL`], and before the
-/// single-row query from [`reconcile_operation_grants_sql`], all in one
-/// transaction.
+/// and applying [`OPERATION_GRANT_TRANSACTION_PRELUDE_SQL`], and before
+/// [`ENSURE_ADMIN_ROLE_SQL`], all in one transaction.
 pub fn operation_grant_floor_check_sql() -> String {
     format!(
         "DO $operation_grant_floor$ BEGIN \
@@ -54,8 +52,6 @@ pub fn operation_grant_floor_check_sql() -> String {
 /// Stable class for a package-operation reconciliation refusal.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OperationGrantErrorType {
-    /// The supplied tenant key is empty.
-    InvalidTenant,
     /// The manifest is not the strict public package-manifest shape.
     InvalidManifest,
 }
@@ -69,14 +65,6 @@ pub struct OperationGrantError {
 }
 
 impl OperationGrantError {
-    fn new(kind: OperationGrantErrorType, context: impl Into<Box<str>>) -> Self {
-        Self {
-            type_: kind,
-            context: context.into(),
-            source: None,
-        }
-    }
-
     fn with_source(
         type_: OperationGrantErrorType,
         context: impl Into<Box<str>>,
@@ -114,51 +102,6 @@ impl StdError for OperationGrantError {
     }
 }
 
-/// Counts returned by the final row of [`reconcile_operation_grants_sql`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct OperationGrantReconcileResult {
-    role_rows_changed: i64,
-    grants_added: i64,
-    grants_removed: i64,
-}
-
-struct ManifestOperationGrants {
-    coordinate_prefix: String,
-    coordinate_suffix: String,
-    tokens: BTreeSet<String>,
-}
-
-impl OperationGrantReconcileResult {
-    /// Construct from the three `bigint` columns PostgreSQL returned.
-    pub const fn new(role_rows_changed: i64, grants_added: i64, grants_removed: i64) -> Self {
-        Self {
-            role_rows_changed,
-            grants_added,
-            grants_removed,
-        }
-    }
-
-    /// Whether the server changed no role or grant row.
-    pub const fn is_noop(self) -> bool {
-        self.role_rows_changed == 0 && self.grants_added == 0 && self.grants_removed == 0
-    }
-
-    /// Number of role rows inserted.
-    pub const fn role_rows_changed(self) -> i64 {
-        self.role_rows_changed
-    }
-
-    /// Number of missing operation grants inserted.
-    pub const fn grants_added(self) -> i64 {
-        self.grants_added
-    }
-
-    /// Number of residual grants deleted.
-    pub const fn grants_removed(self) -> i64 {
-        self.grants_removed
-    }
-}
-
 /// Derive the package-qualified operation tokens from strict manifest bytes.
 ///
 /// Public component `operations` members are the package-local callable-operation
@@ -169,12 +112,6 @@ impl OperationGrantReconcileResult {
 pub fn operation_grant_tokens(
     manifest_bytes: &[u8],
 ) -> Result<BTreeSet<String>, OperationGrantError> {
-    Ok(manifest_operation_grants(manifest_bytes)?.tokens)
-}
-
-fn manifest_operation_grants(
-    manifest_bytes: &[u8],
-) -> Result<ManifestOperationGrants, OperationGrantError> {
     let manifest = PackageManifest::from_slice(manifest_bytes).map_err(|source| {
         OperationGrantError::with_source(
             OperationGrantErrorType::InvalidManifest,
@@ -195,15 +132,7 @@ fn manifest_operation_grants(
             .get(token)
             .is_none_or(|operation| operation.visibility() == OperationVisibility::Public)
     });
-    let coordinate_prefix = canonical_operation_prefix(&manifest.package).map_err(|source| {
-        OperationGrantError::with_source(
-            OperationGrantErrorType::InvalidManifest,
-            "operation-grant manifest has an invalid package coordinate",
-            source,
-        )
-    })?;
-    let coordinate_suffix = format!("@{}", manifest.package.version);
-    let tokens = local_tokens
+    local_tokens
         .into_iter()
         .map(|token| canonical_operation_identity(&manifest.package, &token))
         .collect::<Result<BTreeSet<_>, _>>()
@@ -213,109 +142,18 @@ fn manifest_operation_grants(
                 "operation-grant manifest has an invalid canonical operation identity",
                 source,
             )
-        })?;
-    Ok(ManifestOperationGrants {
-        coordinate_prefix,
-        coordinate_suffix,
-        tokens,
-    })
+        })
 }
 
-/// Emit one exact, transactional grant reconciliation for the user roles.
+/// Create the tenant's `admin` role when it is absent. `$1` is the tenant.
 ///
-/// After [`operation_grant_floor_check_sql`] checks that the existing `app_system`
-/// grant floor is present, this single data-modifying CTE:
-///
-/// 1. creates the `operator` and `admin` roles when they are absent;
-/// 2. deletes each role's same-coordinate permissions absent from the
-///    manifest;
-/// 3. inserts this manifest's missing package-qualified operation grants for
-///    both roles, so `admin` holds the `operator` set until an administration
-///    operation exists; and
-/// 4. returns `role_rows_changed`, `grants_added`, `grants_removed` as `bigint`.
-///
-/// The canonical `<package-id-kebab>:` prefix and `@<package-version>` suffix
-/// select one exact package coordinate, so reconciliation preserves every
-/// other package and version without a token mapping.
-///
-/// The caller owns the surrounding transaction: after target identity is
-/// verified, it begins, acquires the tenant-grain operation-grant lock, executes
-/// the prelude and floor check, queries this output, consumes the final row, and
-/// commits. Keeping transaction control out of the pure builders lets the
-/// effect owner use the driver's transaction object; requiring
-/// `row_security = off` turns a non-bypass administrator into an error instead
-/// of a silently filtered delete. A converged replay returns `0, 0, 0`, which
-/// maps to [`OperationGrantReconcileResult::is_noop`].
-pub fn reconcile_operation_grants_sql(
-    manifest_bytes: &[u8],
-    tenant: &str,
-) -> Result<String, OperationGrantError> {
-    if tenant.is_empty() {
-        return Err(OperationGrantError::new(
-            OperationGrantErrorType::InvalidTenant,
-            "operation-grant tenant must not be empty",
-        ));
-    }
-    let grants = manifest_operation_grants(manifest_bytes)?;
-    let desired = grants
-        .tokens
-        .iter()
-        .map(|grant| format!("({})", quote_literal(grant)))
-        .collect::<Vec<_>>()
-        .join(", ");
-    let desired = format!("VALUES {desired}");
-    let coordinate_prefix = quote_literal(&grants.coordinate_prefix);
-    let coordinate_suffix = quote_literal(&grants.coordinate_suffix);
-    let tenant = quote_literal(tenant);
-    let roles = USER_ROLE_NAMES
-        .iter()
-        .map(|role| quote_literal(role))
-        .collect::<Vec<_>>();
-    let role_rows = roles
-        .iter()
-        .map(|role| format!("({tenant}, {role})"))
-        .collect::<Vec<_>>()
-        .join(", ");
-    let role_names = roles.join(", ");
-
-    Ok(format!(
-        "WITH desired(permission) AS ({desired}), \
-         role_changed AS ( \
-           INSERT INTO app_system.roles (tenant_id, name) \
-           VALUES {role_rows} \
-           ON CONFLICT (tenant_id, name) DO NOTHING \
-           RETURNING tenant_id, name \
-         ), \
-         role_target AS MATERIALIZED ( \
-           SELECT tenant_id, name FROM role_changed \
-           UNION ALL \
-           SELECT tenant_id, name FROM app_system.roles \
-            WHERE tenant_id = {tenant} AND name IN ({role_names}) \
-              AND name NOT IN (SELECT name FROM role_changed) \
-         ), \
-         removed AS ( \
-           DELETE FROM app_system.permissions AS stored USING role_target \
-           WHERE stored.tenant_id = role_target.tenant_id \
-              AND stored.role_name = role_target.name \
-              AND pg_catalog.starts_with(stored.permission, {coordinate_prefix}) \
-              AND pg_catalog.right(stored.permission, pg_catalog.length({coordinate_suffix})) \
-                    = {coordinate_suffix} \
-              AND NOT EXISTS (SELECT FROM desired \
-                               WHERE desired.permission = stored.permission) \
-           RETURNING stored.permission \
-         ), \
-         added AS ( \
-           INSERT INTO app_system.permissions (tenant_id, role_name, permission) \
-           SELECT role_target.tenant_id, role_target.name, desired.permission \
-             FROM role_target CROSS JOIN desired \
-           ON CONFLICT (tenant_id, role_name, permission) DO NOTHING \
-           RETURNING permission \
-         ) \
-         SELECT (SELECT count(*) FROM role_changed)::bigint AS role_rows_changed, \
-                (SELECT count(*) FROM added)::bigint AS grants_added, \
-                (SELECT count(*) FROM removed)::bigint AS grants_removed;"
-    ))
-}
+/// The caller owns the surrounding transaction: it acquires
+/// [`OPERATION_GRANT_LOCK_SQL`], applies
+/// [`OPERATION_GRANT_TRANSACTION_PRELUDE_SQL`] and
+/// [`operation_grant_floor_check_sql`], then executes this statement. It
+/// changes one row or none.
+pub const ENSURE_ADMIN_ROLE_SQL: &str = "INSERT INTO app_system.roles (tenant_id, name) \
+     VALUES ($1, 'admin') ON CONFLICT (tenant_id, name) DO NOTHING";
 
 #[cfg(test)]
 mod tests {
@@ -425,11 +263,5 @@ mod tests {
                 .map(wamn_schema_generator::GenerateError::kind),
             Some(wamn_schema_generator::GenerateErrorType::InvalidIdentity)
         );
-    }
-
-    #[test]
-    fn server_counts_define_the_closing_predicate() {
-        assert!(!OperationGrantReconcileResult::new(1, 5, 1).is_noop());
-        assert!(OperationGrantReconcileResult::new(0, 0, 0).is_noop());
     }
 }

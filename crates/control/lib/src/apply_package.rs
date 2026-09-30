@@ -17,7 +17,7 @@ use entity_maps::reconcile_entity_maps;
 use migration_policy::{
     MigrationPolicyPlan, validate_definition_ownership_before_apply, validate_migration_policy,
 };
-use operation_grants::reconcile_package_operation_grants;
+use operation_grants::ensure_admin_role;
 use package_version::{
     current_package_version, predecessor_not_current_error, predecessor_prefix_error,
 };
@@ -318,8 +318,7 @@ async fn apply(
     let history_changed = create_history_tables(&tx, manifest).await?;
     reconcile_entity_maps(&tx, &plan, manifest).await?;
     let triggers_changed = reconcile_record_history_triggers(&tx, manifest).await?;
-    let operation_grants =
-        reconcile_package_operation_grants(&tx, &directory.manifest_bytes, tenant).await?;
+    let admin_role_changed = ensure_admin_role(&tx, tenant).await?;
     let registrations_changed =
         reconcile_package_registrations(&tx, tenant, &package_id, &registrations).await?;
     let comment_changed = match local_comment.as_mut() {
@@ -339,7 +338,7 @@ async fn apply(
             || ownership_changed
             || history_changed
             || triggers_changed
-            || !operation_grants.is_noop()
+            || admin_role_changed
             || registrations_changed
             || comment_changed,
     })
@@ -382,7 +381,7 @@ pub async fn reconcile_local_package_configuration(
     create_history_tables(tx, &manifest).await?;
     reconcile_entity_maps(tx, &plan, &manifest).await?;
     reconcile_record_history_triggers(tx, &manifest).await?;
-    reconcile_package_operation_grants(tx, &directory.manifest_bytes, tenant).await?;
+    ensure_admin_role(tx, tenant).await?;
     reconcile_package_registrations(
         tx,
         tenant,
@@ -394,7 +393,7 @@ pub async fn reconcile_local_package_configuration(
 }
 
 /// Bind `wamn:apply-package` as the actor and the operation of the
-/// transaction, so its writes, including operation grants, record that
+/// transaction, so its writes, including the admin role, record that
 /// component.
 async fn bind_apply_package_principal(tx: &Transaction<'_>) -> anyhow::Result<()> {
     tx.batch_execute(&bind_platform_principal_sql(

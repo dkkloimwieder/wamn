@@ -198,7 +198,7 @@ async fn receiving_release_journey(
     install_journey_project(inputs, project.as_ref(), &route.database_url, fresh_only).await?;
     verify_journey_operation_grants(project.as_ref()).await?;
     reconcile_journey_run_plane(&system_url, &route.database_url).await?;
-    wamn_control::dev::environment::grant_operator_role(
+    wamn_control::dev::environment::grant_operator_admin_role(
         &route.database_url,
         ORG,
         PROJECT,
@@ -767,12 +767,15 @@ async fn receiving_release_journey(
     ));
 
     // Ruling 71: the operator service holds every other grant, so only the missing
-    // history token refuses, before the component runs.
+    // history token refuses, before the component runs. `admin` has no rows to
+    // remove, so the service moves to an authored role that selects every
+    // operation, and the denial arms remove one selection each.
+    narrow_admins_to_authored_role(project.as_ref()).await?;
     let removed = project
         .execute(
             "DELETE FROM app_system.permissions \
              WHERE tenant_id = $1 AND role_name = $2 AND permission = $3",
-            &[&TENANT, &OPERATOR_ROLE, &*HISTORY_OPERATION],
+            &[&TENANT, &AUTHORED_ROLE, &reference_of(&HISTORY_OPERATION)],
         )
         .await
         .context("remove only the purchase order history permission")?;
@@ -805,7 +808,7 @@ async fn receiving_release_journey(
         .execute(
             "DELETE FROM app_system.permissions \
              WHERE tenant_id = $1 AND role_name = $2 AND permission = $3",
-            &[&TENANT, &OPERATOR_ROLE, &*BASE_RECORD_RECEIPT],
+            &[&TENANT, &AUTHORED_ROLE, &reference_of(&BASE_RECORD_RECEIPT)],
         )
         .await
         .context("remove only the pinned-base record_receipt permission")?;
@@ -963,20 +966,10 @@ async fn receiving_release_journey(
     assert_no_component_trace(&spans, &oversized_trace);
     assert_no_component_trace(&spans, &denied_history_trace);
 
-    // The denial arm mutates one operation grant deliberately. Its package is
-    // the author of that grant, so reapply the exact coordinate before handing
-    // this disposable release to the operator-managed materializer continuation.
-    let base_package = JOURNEY_PACKAGES
-        .into_iter()
-        .find(|package| package.id == BASE_PACKAGE_ID)
-        .context("find the base package in the journey release")?;
-    apply_package::apply_package(ApplyPackageRequest {
-        package: journey_package_root(base_package, Some(inputs)),
-        database_url: route.database_url.clone(),
-        tenant: TENANT.to_owned(),
-    })
-    .await
-    .context("restore the base package's exact operation grants")?;
+    // The denial arms removed selections of the authored role deliberately.
+    // Return its holders to `admin` before handing this disposable release to
+    // the operator-managed materializer continuation.
+    restore_admins_from_authored_role(project.as_ref()).await?;
     reconcile_journey_data_access(inputs, &route.database_url).await?;
     verify_journey_operation_grants(project.as_ref()).await?;
     seed_materializer_trigger_rows(project.as_ref()).await?;
@@ -1240,6 +1233,65 @@ async fn assert_route_history_read(
     Ok(())
 }
 
+/// The authored role that the denial arms narrow.
+const AUTHORED_ROLE: &str = "clerk";
+
+/// Give every `admin` holder the authored role [`AUTHORED_ROLE`] instead. The
+/// role selects each operation that `admin` reached through the installed
+/// packages, so the caller keeps its authority until a denial arm removes one
+/// selection.
+async fn narrow_admins_to_authored_role(project: &Client) -> anyhow::Result<()> {
+    let references = BASE_OPERATIONS
+        .iter()
+        .chain(OVERLAY_OPERATIONS.iter())
+        .map(|(_, token)| sealed(token))
+        .filter(|token| *token != sealed("client-acme-receiving:quality/create-inspection"))
+        .chain([(*OVERLAY_RECEIPT_PARTICIPANT).to_owned()])
+        .map(|token| reference_of(&token).to_owned())
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect::<Vec<_>>();
+    project
+        .execute(
+            "INSERT INTO app_system.roles (tenant_id, name) VALUES ($1, $2)",
+            &[&TENANT, &AUTHORED_ROLE],
+        )
+        .await
+        .context("create the authored denial role")?;
+    project
+        .execute(
+            "INSERT INTO app_system.permissions (tenant_id, role_name, permission, required_by) \
+             SELECT $1, $2, reference, reference FROM unnest($3::text[]) AS reference",
+            &[&TENANT, &AUTHORED_ROLE, &references],
+        )
+        .await
+        .context("select every installed operation for the authored role")?;
+    project
+        .batch_execute(&format!(
+            "INSERT INTO app_system.user_roles (tenant_id, user_id, role_name) \
+             SELECT tenant_id, user_id, '{AUTHORED_ROLE}' FROM app_system.user_roles \
+              WHERE tenant_id = '{TENANT}' AND role_name = '{ADMIN_ROLE}'; \
+             DELETE FROM app_system.user_roles \
+              WHERE tenant_id = '{TENANT}' AND role_name = '{ADMIN_ROLE}';"
+        ))
+        .await
+        .context("move the admin holders to the authored role")
+}
+
+/// Return every holder of [`AUTHORED_ROLE`] to `admin` and delete the role.
+async fn restore_admins_from_authored_role(project: &Client) -> anyhow::Result<()> {
+    project
+        .batch_execute(&format!(
+            "INSERT INTO app_system.user_roles (tenant_id, user_id, role_name) \
+             SELECT tenant_id, user_id, '{ADMIN_ROLE}' FROM app_system.user_roles \
+              WHERE tenant_id = '{TENANT}' AND role_name = '{AUTHORED_ROLE}'; \
+             DELETE FROM app_system.roles \
+              WHERE tenant_id = '{TENANT}' AND name = '{AUTHORED_ROLE}';"
+        ))
+        .await
+        .context("return the authored role holders to admin")
+}
+
 /// An unauthorized true no-op refuses before the operation runs, and the row
 /// keeps its revision and stamps.
 async fn assert_unauthorized_no_op_refuses(
@@ -1268,7 +1320,7 @@ async fn assert_unauthorized_no_op_refuses(
         .execute(
             "DELETE FROM app_system.permissions \
              WHERE tenant_id = $1 AND role_name = $2 AND permission = $3",
-            &[&TENANT, &OPERATOR_ROLE, &update_operation],
+            &[&TENANT, &AUTHORED_ROLE, &reference_of(&update_operation)],
         )
         .await
         .context("remove only the purchase_order.update permission")?;

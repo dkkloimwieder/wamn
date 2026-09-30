@@ -147,10 +147,13 @@ pub(super) async fn prepare_session_host_fixture(
             &[&TENANT, &SESSION_ROLE],
         )
         .await?;
-    project.execute(
-        "INSERT INTO app_system.permissions (tenant_id, role_name, permission) VALUES ($1, $2, $3)",
-        &[&TENANT, &SESSION_ROLE, &*OPERATION],
-    ).await?;
+    project
+        .execute(
+            "INSERT INTO app_system.permissions (tenant_id, role_name, permission, required_by) \
+         VALUES ($1, $2, regexp_replace($3, '@[^@]*$', ''), regexp_replace($3, '@[^@]*$', ''))",
+            &[&TENANT, &SESSION_ROLE, &*OPERATION],
+        )
+        .await?;
     project
         .execute(
             "INSERT INTO app_system.users (tenant_id, id, type, email, status) \
@@ -460,7 +463,8 @@ pub(super) async fn assert_nested_session(
     }
     for operation in permitted_operations {
         project.execute(
-            "INSERT INTO app_system.permissions (tenant_id, role_name, permission) VALUES ($1, $2, $3)",
+            "INSERT INTO app_system.permissions (tenant_id, role_name, permission, required_by) \
+         VALUES ($1, $2, regexp_replace($3, '@[^@]*$', ''), regexp_replace($3, '@[^@]*$', ''))",
             &[&TENANT, &ROLE, &operation],
         ).await?;
     }

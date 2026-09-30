@@ -1,8 +1,8 @@
-//! `grant-role` and `revoke-role`: give a person or a service one of the two
-//! user roles of an environment, or take it away.
+//! `grant-role` and `revoke-role`: give a person or a service one user role
+//! of an environment, or take it away.
 //!
-//! Publish writes the roles `operator` and `admin` with their permissions. This
-//! module writes only `app_system.user_roles`. The target is resolved in the
+//! `apply-package` writes the built-in role `admin`, and every other role is
+//! authored. This module writes only `app_system.user_roles`. The target is resolved in the
 //! registry the way `reconcile-run-plane` resolves it, because a role grant
 //! names an environment, not a database. The user is named by email and must
 //! already have its tenant `users` row, which `reconcile-run-plane` writes.
@@ -13,7 +13,6 @@ use wamn_control_provision::{
     PlatformComponent, bind_platform_principal_sql, project_env_database_name, validate_project_env,
 };
 use wamn_control_registry::Triple;
-use wamn_project_state::USER_ROLE_NAMES;
 
 /// One grant or revoke of a user role in one environment.
 #[derive(Debug, Clone)]
@@ -33,7 +32,7 @@ pub struct UserRoleRequest {
     pub tenant: String,
     /// Email of the person or service in the tenant `users` table.
     pub user: String,
-    /// `operator` or `admin`.
+    /// A role that exists in the tenant, such as `admin`.
     pub role: String,
 }
 
@@ -97,11 +96,7 @@ async fn change_user_role(
     role: &str,
     change: Change,
 ) -> anyhow::Result<UserRoleOutcome> {
-    anyhow::ensure!(
-        USER_ROLE_NAMES.contains(&role),
-        "role {role:?} is not a user role: the roles are {}",
-        USER_ROLE_NAMES.join(" and ")
-    );
+    anyhow::ensure!(!role.is_empty(), "--role must not be empty");
     anyhow::ensure!(!tenant.is_empty(), "--tenant must not be empty");
     anyhow::ensure!(!user.is_empty(), "--user must not be empty");
     let transaction = client
@@ -127,8 +122,8 @@ async fn change_user_role(
                 .is_some();
             anyhow::ensure!(
                 role_exists,
-                "role {role} does not exist in tenant {tenant}: publish writes it, so \
-                 publish a package to this environment first"
+                "role {role} does not exist in tenant {tenant}: apply-package writes \
+                 admin, and every other role is authored"
             );
             transaction
                 .execute(

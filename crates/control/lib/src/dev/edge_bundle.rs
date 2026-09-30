@@ -4,8 +4,8 @@
 //! component into its local artifacts directory. This writer copies those exact
 //! bytes into a new directory, adds the grants and the ingress guest, and pins
 //! every file in `edge-release.json` (docs/plan/edge.md section 4.6). The
-//! grants give the two user roles, `operator` and `admin`, the permissions of
-//! every operation that an attachment serves, as publish grants them in the
+//! grants give the built-in role `admin` the permissions of every operation
+//! that an attachment serves, as `admin` holds every served operation in the
 //! cloud.
 //!
 //! [`write_package`] writes the same bundle from one package and its built
@@ -22,7 +22,7 @@ use wamn_catalog::edge_bundle::{
 };
 use wamn_catalog::{PackageCoordinate, RELEASE_MANIFEST_FILE_NAME, ServingManifest};
 use wamn_engine::artifact_source::local_component_path;
-use wamn_project_state::USER_ROLE_NAMES;
+use wamn_project_state::ADMIN_ROLE;
 use wamn_runtime::local_application::{LOCAL_FACTS_FILE, LocalApplicationFacts};
 
 use super::coordinator::{
@@ -162,9 +162,7 @@ fn write_bundle(
         permissions.extend(operation.permissions.iter().cloned());
     }
     let mut grants = EdgeGrants::default();
-    for role in USER_ROLE_NAMES {
-        grants.roles.insert(role.to_owned(), permissions.clone());
-    }
+    grants.roles.insert(ADMIN_ROLE.to_owned(), permissions);
 
     let components = serde_json::to_vec(&facts.components).context("encode the facts")?;
     let grants = serde_json::to_vec(&grants).context("encode the grants")?;

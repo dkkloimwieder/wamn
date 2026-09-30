@@ -256,20 +256,21 @@ Use the [Receiving password login](development-loop.md#receiving-password-login)
 
 ## User roles
 
-Publish writes two user roles in each tenant, `operator` and `admin`, with the operation permissions of the published packages.
-`admin` holds the same permissions as `operator` until an administration operation exists.
-A person or a service reaches no route and no environment at sign-in until it holds one of them.
+`apply-package` writes the built-in role `admin` in each tenant.
+`admin` has no permission rows and holds every operation that the serving release serves.
+Every other role is authored in the tenant, and it holds the stable operation references `<package>:<interface>/<operation>` selected for it, with the operations that each selection requires (docs/plan/platform-ui.md §2.3).
+A person or a service reaches no route and no environment at sign-in until it holds a role.
 
 Give a role with `wamn-ctl grant-role`, and take it away with `wamn-ctl revoke-role`.
 Both verbs name the environment in the registry, as `reconcile-run-plane` does, and the user by email:
 
 ```bash
 wamn-ctl grant-role --system-database-url "$WAMN_SYSTEM_ADMIN_URL" --admin-database-url "$WAMN_PG_ADMIN_URL" \
-  --org <org> --project <project> --env <env> --tenant <tenant> --user <email> --role operator
+  --org <org> --project <project> --env <env> --tenant <tenant> --user <email> --role admin
 ```
 
 The admin URL must be SUPERUSER or BYPASSRLS.
-The verbs refuse a role other than `operator` and `admin`, an unknown email, and an email that names more than one user.
+The verbs refuse a role that does not exist in the tenant, an unknown email, and an email that names more than one user.
 The user needs its tenant `users` row, which `reconcile-run-plane` writes, so run that verb first after a new principal.
 The operator service of an environment, `wamn-operator-<org>--<project>--<env>`, has the email `<subject>@<platform domain>`.
 Its PAT comes from `provision-project-env --emit-operator-pat-secret`.

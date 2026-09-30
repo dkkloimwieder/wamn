@@ -397,7 +397,7 @@ pub(super) async fn test_prior_commit(test: PriorCommitTest<'_>) -> anyhow::Resu
             counter(&test, &counter_read).await? == 0,
             "counter must start at zero"
         );
-        let removed = test.project.query("DELETE FROM app_system.permissions WHERE tenant_id=$1 AND permission=$2 RETURNING role_name", &[&TENANT,&*BASE_RECORD_RECEIPT]).await?;
+        let removed = test.project.query("DELETE FROM app_system.permissions WHERE tenant_id=$1 AND permission=regexp_replace($2, '@[^@]*$', '') AND required_by=permission RETURNING role_name", &[&TENANT,&*BASE_RECORD_RECEIPT]).await?;
         anyhow::ensure!(!removed.is_empty(), "nested permission fixture requires a grant");
         let (trace, parent) = journey_trace(41);
         let client_items: Vec<Value> = serde_json::from_slice(&test.body)?;
@@ -448,7 +448,7 @@ pub(super) async fn test_prior_commit(test: PriorCommitTest<'_>) -> anyhow::Resu
         assert_counter_trace(&test, &trace, &parent_digest, "session", false)?;
         for row in removed {
             let role: String = row.get(0);
-            test.project.execute("INSERT INTO app_system.permissions (tenant_id,role_name,permission) VALUES ($1,$2,$3)", &[&TENANT,&role,&*BASE_RECORD_RECEIPT]).await?;
+            test.project.execute("INSERT INTO app_system.permissions (tenant_id,role_name,permission,required_by) VALUES ($1,$2,regexp_replace($3, '@[^@]*$', ''),regexp_replace($3, '@[^@]*$', ''))", &[&TENANT,&role,&*BASE_RECORD_RECEIPT]).await?;
         }
         let (trace, parent) = journey_trace(42);
         if let Some(client) = &client {

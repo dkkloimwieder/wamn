@@ -26,8 +26,8 @@ The public operations are declared in the manifest:
 | `location.list` | Read a bounded list of available locations. |
 | `receiving.load_purchase_order_history` | Read one page of the change log of a purchase order. |
 
-Each public operation has its own operation grant, and the `operator` and `admin` roles hold every grant.
-The history read has the grant `wamn-receiving:receiving/load-purchase-order-history@2.0.0`.
+Each public operation has its own operation grant. The built-in role `admin` holds every grant, and an authored role holds the stable reference of each grant selected for it.
+The history read has the grant `wamn-receiving:receiving/load-purchase-order-history@2.0.0`, and its stable reference is `wamn-receiving:receiving/load-purchase-order-history`.
 
 The query filters on `supplier_id` and `status`.
 Its declared sort fields are `purchase_order_number`, `status`, and `created_at`.

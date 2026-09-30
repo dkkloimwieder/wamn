@@ -233,9 +233,9 @@ async fn development_identity_survives_target_recreation_and_owned_teardown() {
             .execute("SELECT set_config('app.user_id', $1, false), set_config('app.operation', 'admin:seed-identity-fixture', false)", &[&actor])
             .await
             .unwrap();
-        project.execute("INSERT INTO app_system.roles (tenant_id,name) VALUES ($1,'operator') ON CONFLICT DO NOTHING",
+        project.execute("INSERT INTO app_system.roles (tenant_id,name) VALUES ($1,'admin') ON CONFLICT DO NOTHING",
             &[&wamn_control::dev::environment::TENANT]).await.unwrap();
-        project.execute("INSERT INTO app_system.user_roles (tenant_id,user_id,role_name) VALUES ($1,$2::text::uuid,'operator')",
+        project.execute("INSERT INTO app_system.user_roles (tenant_id,user_id,role_name) VALUES ($1,$2::text::uuid,'admin')",
             &[&wamn_control::dev::environment::TENANT, &person]).await.unwrap();
         task.abort();
     }
@@ -298,7 +298,7 @@ async fn development_identity_survives_target_recreation_and_owned_teardown() {
         .await
         .ok()
         .expect("grant environment membership");
-    assign_project_role(&*admin, human.id(), ORG, PROJECT, "operator")
+    assign_project_role(&*admin, human.id(), ORG, PROJECT, "admin")
         .await
         .ok()
         .expect("assign the existing application role");

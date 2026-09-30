@@ -127,7 +127,8 @@ async fn seed(admin: &Client) -> anyhow::Result<()> {
         (TENANT, "purchase-writer", WRITE),
         ("tenant-b", "purchase-reader", OTHER_TENANT),
     ] {
-        admin.execute("INSERT INTO app_system.permissions (tenant_id, role_name, permission) VALUES ($1, $2, $3)",
+        admin.execute("INSERT INTO app_system.permissions (tenant_id, role_name, permission, required_by) \
+             VALUES ($1, $2, regexp_replace($3, '@[^@]*$', ''), regexp_replace($3, '@[^@]*$', ''))",
             &[&tenant, &role, &permission]).await?;
     }
     for (principal, email) in [
@@ -263,11 +264,12 @@ fn assert_permission_reads(
     );
     let (query, calls) = changes[0];
     assert!(
-        query.starts_with("SELECT DISTINCT permission FROM app_system.permissions"),
+        query.starts_with("SELECT r.role_name, p.permission FROM app_system.users u"),
         "{query}"
     );
     assert!(
-        query.contains("tenant_id = $1 AND role_name = ANY($2::text[])"),
+        query.contains("u.tenant_id = $1 AND u.id = $3::text::uuid")
+            && query.contains("r.role_name = ANY($2::text[])"),
         "{query}"
     );
     assert_eq!(calls, expected, "one fresh permission read per request");
@@ -458,7 +460,8 @@ async fn sessions_use_one_fresh_scoped_permission_union_and_preserve_the_signed_
     let before = statements(&admin, &generation).await?;
     admin
         .execute(
-            "DELETE FROM app_system.permissions WHERE tenant_id = $1 AND permission = $2",
+            "DELETE FROM app_system.permissions \
+             WHERE tenant_id = $1 AND permission = regexp_replace($2, '@[^@]*$', '')",
             &[&TENANT, &WRITE],
         )
         .await?;
@@ -471,7 +474,8 @@ async fn sessions_use_one_fresh_scoped_permission_union_and_preserve_the_signed_
         admitted.permits(WRITE),
         "permission change does not cancel already-admitted work"
     );
-    admin.execute("INSERT INTO app_system.permissions (tenant_id, role_name, permission) VALUES ($1, 'purchase-writer', $2)", &[&TENANT, &WRITE]).await?;
+    admin.execute("INSERT INTO app_system.permissions (tenant_id, role_name, permission, required_by) \
+         VALUES ($1, 'purchase-writer', regexp_replace($2, '@[^@]*$', ''), regexp_replace($2, '@[^@]*$', ''))", &[&TENANT, &WRITE]).await?;
     admin
         .execute(
             "DELETE FROM app_system.user_roles WHERE tenant_id = $1",

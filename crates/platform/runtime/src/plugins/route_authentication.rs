@@ -16,6 +16,7 @@ use wamn_engine::flow_http_routing::{
     required_bearer_token, route_credential, unauthorized,
 };
 use wamn_platform_identity::{PreparedIdentityReads, PrincipalType};
+use wamn_project_state::ADMIN_ROLE;
 use wamn_session::verifier::SessionVerifier;
 
 use crate::session_keys::IssuerKeys;
@@ -28,7 +29,7 @@ pub async fn queued_service_caller(
 ) -> anyhow::Result<AuthenticatedCaller> {
     let rows = client
         .query(
-            "SELECT users.id::text, permissions.permission \
+            "SELECT users.id::text, user_roles.role_name, permissions.permission \
              FROM app_system.users AS users \
              LEFT JOIN app_system.user_roles AS user_roles \
                ON user_roles.tenant_id = users.tenant_id AND user_roles.user_id = users.id \
@@ -44,17 +45,17 @@ pub async fn queued_service_caller(
         .first()
         .ok_or_else(|| anyhow::anyhow!("queued service principal is absent or inactive"))?
         .try_get::<_, String>(0)?;
-    let permissions = rows
-        .iter()
-        .map(|row| row.try_get::<_, Option<String>>(1))
-        .collect::<Result<Vec<_>, _>>()?
-        .into_iter()
-        .flatten()
-        .collect();
+    let mut admin = false;
+    let mut permissions = std::collections::HashSet::new();
+    for row in &rows {
+        admin |= row.try_get::<_, Option<String>>(1)?.as_deref() == Some(ADMIN_ROLE);
+        permissions.extend(row.try_get::<_, Option<String>>(2)?);
+    }
     Ok(AuthenticatedCaller::new(
         "automation",
         principal,
         CredentialType::QueuedService,
+        admin,
         permissions,
     ))
 }
@@ -240,7 +241,8 @@ impl PlatformRouteAuthenticator {
             attachment_id,
             session.claims().sub.as_str(),
             CredentialType::Session,
-            permissions.into_iter().collect(),
+            permissions.admin,
+            permissions.references.into_iter().collect(),
         ))
     }
 }
@@ -287,7 +289,7 @@ impl RouteAuthenticator for PlatformRouteAuthenticator {
                     &authentication.org,
                     &authentication.project,
                     &manifest.release.environment,
-                    &wamn_project_state::USER_ROLE_NAMES,
+                    &[ADMIN_ROLE],
                 )
                 .instrument(tracing::info_span!("wamn.auth.identity"))
                 .await
@@ -325,7 +327,8 @@ impl RouteAuthenticator for PlatformRouteAuthenticator {
                 attachment_id,
                 principal.id().as_str(),
                 CredentialType::Pat,
-                permissions.into_iter().collect(),
+                permissions.admin,
+                permissions.references.into_iter().collect(),
             ))
         }
         .instrument(span)

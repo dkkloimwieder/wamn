@@ -116,7 +116,7 @@ use wamn_control::provision_project_env::{read_json, secret_value};
 use wamn_test_infrastructure::operations::{package_version, sealed};
 use wamn_test_infrastructure::scratch::ScratchRoot;
 
-const OPERATOR_ROLE: &str = "operator";
+const ADMIN_ROLE: &str = "admin";
 const BASE_PACKAGE_ID: &str = "wamn_receiving";
 /// The version of the base package, from its wamn.json.
 static BASE_PACKAGE_VERSION: LazyLock<&'static str> =

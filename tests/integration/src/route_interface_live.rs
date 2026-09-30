@@ -281,7 +281,7 @@ async fn start(
         project: "fixture",
         environment: "dev",
         schema: "inventory",
-        caller_role: "operator",
+        caller_role: "admin",
         route_host: "fixture.local.test",
         packages: &[LocalPackage {
             root: &app,

@@ -137,7 +137,7 @@ The configuration is one TOML file, which `wamn-edge --config <path>` or `WAMN_E
 | B | The edge pulls the release by digest from the platform over HTTPS. | A new platform endpoint, and the box needs a network path to the platform at start. |
 | C | A signed bundle. | New signing machinery. The platform signs no release today. |
 
-`wamn dev edge-bundle --config <environment>/dev.json --out <directory>` writes the bundle from the release that the dev loop published (`wamn-10nk`). It copies the canonical manifest, the admitted facts and the admitted component bytes of the loop's local release, and the ingress guest that the loop serves. `grants.json` gives the user roles `operator` and `admin` the permission of every operation that an attachment serves, as publish grants it in the cloud. The format lives in `wamn_catalog::edge_bundle`, which the writer and `EdgeRelease::load` share.
+`wamn dev edge-bundle --config <environment>/dev.json --out <directory>` writes the bundle from the release that the dev loop published (`wamn-10nk`). It copies the canonical manifest, the admitted facts and the admitted component bytes of the loop's local release, and the ingress guest that the loop serves. `grants.json` gives the built-in role `admin` the permission of every operation that an attachment serves, as `admin` holds every served operation in the cloud. The format lives in `wamn_catalog::edge_bundle`, which the writer and `EdgeRelease::load` share.
 
 Option A has the same trust as a cloud pod. There, the pod template names the manifest digest and the loader checks the bytes against it. Here, the edge configuration names the bundle digest.
 

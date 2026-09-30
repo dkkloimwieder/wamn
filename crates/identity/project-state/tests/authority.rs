@@ -105,7 +105,7 @@ SET app.operation = 'admin:seed-authority-fixture';
 INSERT INTO app_system.users (tenant_id, id, type, email) VALUES ('{TENANT}','{U1}','person','u1@t1');
 INSERT INTO app_system.roles (tenant_id, name) VALUES ('{TENANT}','admin'),('{TENANT}','auditor');
 INSERT INTO app_system.user_roles (tenant_id, user_id, role_name) VALUES ('{TENANT}','{U1}','admin');
-INSERT INTO app_system.permissions (tenant_id, role_name, permission) VALUES ('{TENANT}','admin','widgets:read');
+INSERT INTO app_system.permissions (tenant_id, role_name, permission, required_by) VALUES ('{TENANT}','auditor','platform-fixture:widget/get','platform-fixture:widget/get');
 INSERT INTO app_system.api_keys (tenant_id, user_id, name, key_hash, prefix) VALUES ('{TENANT}','{U1}','ci','hash-1','wk_a');
 INSERT INTO app_system.configurations (tenant_id, config_key, config_value) VALUES ('{TENANT}','theme','"dark"'::jsonb);"#
     )
@@ -202,8 +202,8 @@ BEGIN
     'INSERT INTO app_system.user_roles (tenant_id, user_id, role_name) VALUES (''{TENANT}'', ''{U1}'', ''auditor'')',
     'UPDATE app_system.user_roles SET role_name = ''admin''',
     'DELETE FROM app_system.user_roles',
-    'INSERT INTO app_system.permissions (tenant_id, role_name, permission) VALUES (''{TENANT}'', ''admin'', ''users:write'')',
-    'UPDATE app_system.permissions SET permission = ''users:write''',
+    'INSERT INTO app_system.permissions (tenant_id, role_name, permission, required_by) VALUES (''{TENANT}'', ''auditor'', ''platform-fixture:widget/list'', ''platform-fixture:widget/list'')',
+    'UPDATE app_system.permissions SET permission = ''platform-fixture:widget/list'', required_by = ''platform-fixture:widget/list''',
     'DELETE FROM app_system.permissions',
     'INSERT INTO app_system.api_keys (tenant_id, user_id, name, key_hash, prefix) VALUES (''{TENANT}'', ''{U1}'', ''forged'', ''hash-2'', ''wk_b'')',
     'UPDATE app_system.api_keys SET revoked_at = now()',
@@ -340,7 +340,7 @@ fn author_sql_appends_history_only_through_the_configurations_trigger() {
             "permissions_history",
             None,
             &format!(
-                r#"{{"role_name": "admin", "tenant_id": "{TENANT}", "permission": "widgets:read"}}"#
+                r#"{{"role_name": "auditor", "tenant_id": "{TENANT}", "permission": "platform-fixture:widget/get", "required_by": "platform-fixture:widget/get"}}"#
             ),
         ),
         entry(

@@ -31,14 +31,16 @@ use super::{DEFAULT_PROJECT, PgError, RowSet};
 mod pools;
 mod transactions;
 
-const SESSION_OPERATION_PERMISSIONS_SQL: &str = "SELECT DISTINCT permission \
-    FROM app_system.permissions \
-    WHERE tenant_id = $1 AND role_name = ANY($2::text[]) \
-    AND EXISTS (SELECT 1 FROM app_system.users u JOIN app_system.user_roles r \
-    ON r.tenant_id=u.tenant_id AND r.user_id=u.id \
-    WHERE u.tenant_id=$1 AND u.id=$3::text::uuid AND u.status='active' \
-    AND r.role_name=app_system.permissions.role_name) \
-    ORDER BY permission";
+/// Each signed role that the active user still holds, with each stored
+/// permission reference of that role. A role without permission rows, such as
+/// `admin`, yields one row with a null reference.
+const SESSION_OPERATION_PERMISSIONS_SQL: &str = "SELECT r.role_name, p.permission \
+    FROM app_system.users u JOIN app_system.user_roles r \
+    ON r.tenant_id = u.tenant_id AND r.user_id = u.id \
+    LEFT JOIN app_system.permissions p \
+    ON p.tenant_id = r.tenant_id AND p.role_name = r.role_name \
+    WHERE u.tenant_id = $1 AND u.id = $3::text::uuid AND u.status = 'active' \
+    AND r.role_name = ANY($2::text[])";
 
 /// One row of the bound principal, read under the tenant's own guest login.
 ///
@@ -48,15 +50,41 @@ const SESSION_OPERATION_PERMISSIONS_SQL: &str = "SELECT DISTINCT permission \
 const PROVISIONED_PRINCIPAL_SQL: &str = "SELECT 1 FROM app_system.users \
     WHERE tenant_id = $1 AND id = $2::text::uuid";
 
-const USER_OPERATION_PERMISSIONS_SQL: &str = "SELECT DISTINCT permissions.permission \
+/// Each role that the active user holds, with each stored permission
+/// reference of that role, as [`SESSION_OPERATION_PERMISSIONS_SQL`] reads them.
+const USER_OPERATION_PERMISSIONS_SQL: &str = "SELECT user_roles.role_name, permissions.permission \
     FROM app_system.users AS users \
     JOIN app_system.user_roles AS user_roles \
       ON user_roles.tenant_id = users.tenant_id AND user_roles.user_id = users.id \
-    JOIN app_system.permissions AS permissions \
+    LEFT JOIN app_system.permissions AS permissions \
       ON permissions.tenant_id = user_roles.tenant_id \
       AND permissions.role_name = user_roles.role_name \
-    WHERE users.tenant_id = $1 AND users.id = $2::text::uuid AND users.status = 'active' \
-    ORDER BY permissions.permission";
+    WHERE users.tenant_id = $1 AND users.id = $2::text::uuid AND users.status = 'active'";
+
+/// The application authority a caller holds now: whether it holds `admin`,
+/// and the distinct stable operation references of its other roles
+/// (docs/plan/platform-ui.md §2.3).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct HeldOperationGrants {
+    pub admin: bool,
+    pub references: BTreeSet<String>,
+}
+
+impl HeldOperationGrants {
+    /// Fold rows of `(role_name, permission)`, where a null permission is a
+    /// role without permission rows.
+    pub fn from_rows(rows: &[tokio_postgres::Row]) -> Result<Self, tokio_postgres::Error> {
+        let mut grants = Self::default();
+        for row in rows {
+            let role: String = row.try_get(0)?;
+            grants.admin |= role == wamn_project_state::ADMIN_ROLE;
+            if let Some(reference) = row.try_get::<_, Option<String>>(1)? {
+                grants.references.insert(reference);
+            }
+        }
+        Ok(grants)
+    }
+}
 
 /// Names the shape only: the credential provider and the live pools carry
 /// connection material that must not reach a log.
@@ -1752,7 +1780,7 @@ impl WamnPostgres {
         }
     }
 
-    /// Read the fresh permission union for roles from a verified session.
+    /// Read the fresh grants for roles from a verified session.
     ///
     /// This single tenant read uses the existing callable-HTTP authority.
     /// Signed roles contribute only while the active user still holds them.
@@ -1762,7 +1790,7 @@ impl WamnPostgres {
         tenant: &str,
         roles: &[String],
         principal: &wamn_platform_identity::PrincipalId,
-    ) -> anyhow::Result<BTreeSet<String>> {
+    ) -> anyhow::Result<HeldOperationGrants> {
         anyhow::ensure!(
             valid_project(project),
             "invalid operation-permission project"
@@ -1787,12 +1815,7 @@ impl WamnPostgres {
             .instrument(tracing::info_span!("wamn.auth.perm.query"))
             .await
             .context("read session operation permissions")?;
-        rows.into_iter()
-            .map(|row| {
-                row.try_get::<_, String>(0)
-                    .context("decode session operation permission")
-            })
-            .collect()
+        HeldOperationGrants::from_rows(&rows).context("decode session operation permission")
     }
 
     /// Resolve actors already returned by an authorized record read.
@@ -1859,7 +1882,7 @@ impl WamnPostgres {
         rows.into_iter().map(|row| Ok(row.try_get(0)?)).collect()
     }
 
-    /// Read the current permissions of an org-issued user in this tenant.
+    /// Read the current grants of an org-issued user in this tenant.
     ///
     /// Route authentication first requires membership in the release environment.
     /// This single tenant read uses the callable-HTTP authority, with no session claims.
@@ -1868,7 +1891,7 @@ impl WamnPostgres {
         project: &str,
         tenant: &str,
         principal_id: &wamn_platform_identity::PrincipalId,
-    ) -> anyhow::Result<BTreeSet<String>> {
+    ) -> anyhow::Result<HeldOperationGrants> {
         anyhow::ensure!(
             valid_project(project),
             "invalid operation-permission project"
@@ -1893,12 +1916,7 @@ impl WamnPostgres {
             .instrument(tracing::info_span!("wamn.auth.perm.query"))
             .await
             .context("read user operation permissions")?;
-        rows.into_iter()
-            .map(|row| {
-                row.try_get::<_, String>(0)
-                    .context("decode user operation permission")
-            })
-            .collect()
+        HeldOperationGrants::from_rows(&rows).context("decode user operation permission")
     }
 
     /// Refresh the identity and permissions of an operator-admitted queued service.

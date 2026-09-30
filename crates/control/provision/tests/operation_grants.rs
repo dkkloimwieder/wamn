@@ -1,18 +1,18 @@
-//! PostgreSQL 18 test for exact manifest-derived grants of the two user roles.
+//! PostgreSQL 18 test of the built-in `admin` role that `apply-package`
+//! writes, and of the permission rows of authored roles
+//! (docs/plan/platform-ui.md §2.2 to §2.4).
 //!
 //! The test uses a test database of the test PostgreSQL server as its superuser,
 //! and holds the process lock, because it creates cluster-wide roles.
-//! The test reads the mutation counts and final rows from PostgreSQL itself.
 
 use std::io::Write as _;
 use std::process::{Command, Stdio};
 
 use wamn_control_provision::operation_grants::{
-    APP_SYSTEM_FLOOR_MISSING, OPERATION_GRANT_TRANSACTION_PRELUDE_SQL,
-    OperationGrantReconcileResult, operation_grant_floor_check_sql, reconcile_operation_grants_sql,
+    APP_SYSTEM_FLOOR_MISSING, ENSURE_ADMIN_ROLE_SQL, OPERATION_GRANT_TRANSACTION_PRELUDE_SQL,
+    operation_grant_floor_check_sql,
 };
 use wamn_control_provision::{PlatformComponent, bind_platform_principal_sql};
-use wamn_project_state::{ADMIN_ROLE, OPERATOR_ROLE};
 
 const RECORD_HISTORY: &str = include_str!("../../../../deploy/sql/record-history.sql");
 const RECORD_HISTORY_APP_GRANTS: &str =
@@ -62,33 +62,34 @@ fn query(url: &str, statement: &str) -> String {
     run(url, "query server state", statement)
 }
 
-fn result(answer: &str) -> OperationGrantReconcileResult {
-    let counts = answer
-        .lines()
-        .last()
-        .expect("reconcile returned its final row")
-        .split('|')
-        .map(|value| value.parse::<i64>().expect("count is bigint"))
-        .collect::<Vec<_>>();
-    assert_eq!(counts.len(), 3, "reconcile answer has three counts");
-    OperationGrantReconcileResult::new(counts[0], counts[1], counts[2])
-}
-
-/// `PREPARE` shows the reconciliation query remains one extended-query
-/// statement, matching the production driver's `query_one` boundary. The
-/// transaction binds `wamn:apply-package`, as apply-package does.
-fn transaction(statement: &str) -> String {
+/// The transaction binds `wamn:apply-package`, as apply-package does, and
+/// runs the admin statement for tenant `t1`.
+fn transaction() -> String {
     let floor_check = operation_grant_floor_check_sql();
     let actor = bind_platform_principal_sql(PlatformComponent::ApplyPackage);
     format!(
         "BEGIN; {actor} {OPERATION_GRANT_TRANSACTION_PRELUDE_SQL}; {floor_check} \
-         PREPARE operation_grant_reconcile AS {statement} \
-         EXECUTE operation_grant_reconcile; COMMIT;"
+         PREPARE ensure_admin AS {ENSURE_ADMIN_ROLE_SQL}; \
+         EXECUTE ensure_admin('t1'); COMMIT;"
     )
 }
 
+/// Run `statement` as the fixture principal and return psql's error text, or
+/// `None` when it succeeded.
+fn refusal(url: &str, statement: &str) -> Option<String> {
+    let (ok, _, stderr) = psql(
+        url,
+        &format!(
+            "BEGIN; SELECT set_config('app.user_id', '{FIXTURE_PRINCIPAL}', true), \
+             set_config('app.operation', 'admin:operation-grant-fixture', true); \
+             {statement}; COMMIT;"
+        ),
+    );
+    (!ok).then_some(stderr)
+}
+
 #[test]
-fn user_role_grants_are_exact_residue_free_and_convergent_live() {
+fn admin_role_has_no_rows_and_authored_rows_follow_their_root_live() {
     let _serialized = wamn_test_postgres::lock();
     let test_database = wamn_test_postgres::database();
     let url = test_database.url().to_owned();
@@ -112,12 +113,11 @@ fn user_role_grants_are_exact_residue_free_and_convergent_live() {
          END $role$;",
     );
 
-    let reconcile_statement =
-        reconcile_operation_grants_sql(&wamn_fixture_package::manifest_bytes(), "t1")
-            .expect("build exact reconcile");
-    let reconcile = transaction(&reconcile_statement);
-    let (ok, _, missing_stderr) = psql(&url, &reconcile);
-    assert!(!ok, "reconcile installed its own missing app_system floor");
+    let (ok, _, missing_stderr) = psql(&url, &transaction());
+    assert!(
+        !ok,
+        "the admin write installed its own missing app_system floor"
+    );
     assert!(
         missing_stderr.contains("55000") && missing_stderr.contains(APP_SYSTEM_FLOOR_MISSING),
         "missing-floor refusal lost its SQLSTATE or literal:\n{missing_stderr}"
@@ -130,118 +130,82 @@ fn user_role_grants_are_exact_residue_free_and_convergent_live() {
     );
     run(
         &url,
-        "seed scoped role and grant residue",
+        "seed an authored role with one root and its closure",
         &format!(
             "BEGIN; SELECT set_config('app.user_id', '{FIXTURE_PRINCIPAL}', true), \
          set_config('app.operation', 'admin:seed-operation-grant-fixture', true); \
          INSERT INTO app_system.users (tenant_id, id, type, email) VALUES \
            ('t1', '{FIXTURE_PRINCIPAL}', 'person', 'fixture@example.invalid'); \
-         INSERT INTO app_system.roles (tenant_id, name) VALUES \
-           ('t1', 'operator'), \
-           ('t1', 'sibling-role'), \
-           ('t2', 'operator'); \
-         INSERT INTO app_system.permissions (tenant_id, role_name, permission) VALUES \
-           ('t1', 'operator', 'platform-fixture:widget/get@2.0.0'), \
-           ('t1', 'operator', 'platform-fixture:obsolete/operation@2.0.0'), \
-           ('t1', 'operator', 'platform-fixture:widget/get@1.1.0'), \
-           ('t1', 'operator', 'platform-fixture-overlay:widget/archive@3.0.0'), \
-           ('t1', 'sibling-role', 'residue.must.stay'), \
-           ('t2', 'operator', 'residue.must.stay'); COMMIT;"
+         INSERT INTO app_system.roles (tenant_id, name) VALUES ('t1', 'clerk'); \
+         INSERT INTO app_system.permissions (tenant_id, role_name, permission, required_by) VALUES \
+           ('t1', 'clerk', 'platform-fixture:widget/create', 'platform-fixture:widget/create'), \
+           ('t1', 'clerk', 'platform-fixture:widget/get', 'platform-fixture:widget/create'), \
+           ('t1', 'clerk', 'platform-fixture:widget/get', 'platform-fixture:widget/get'); COMMIT;"
         ),
     );
 
-    let changed = result(&run(&url, "reconcile operation grants", &reconcile));
+    run(&url, "write the admin role", &transaction());
+    run(&url, "replay the admin role", &transaction());
     assert_eq!(
-        changed.role_rows_changed(),
-        1,
-        "the absent admin role was not created"
+        query(
+            &url,
+            "SELECT string_agg(name, ',' ORDER BY name) FROM app_system.roles WHERE tenant_id = 't1'"
+        ),
+        "admin,clerk",
+        "apply-package did not leave admin beside the authored role"
     );
     assert_eq!(
-        changed.grants_added(),
-        11 + 12,
-        "missing grants of operator and admin were not exact"
-    );
-    assert_eq!(
-        changed.grants_removed(),
-        1,
-        "same-coordinate residue survived"
+        query(&url, "SELECT count(*) FROM app_system.permissions"),
+        "3",
+        "the admin write changed an authored permission row"
     );
 
-    for role in [OPERATOR_ROLE, ADMIN_ROLE] {
-        assert_eq!(
-            query(
-                &url,
-                &format!(
-                    "SELECT string_agg(permission, E'\\n' ORDER BY permission) \
-                   FROM app_system.permissions \
-                  WHERE tenant_id = 't1' AND role_name = '{role}' \
-                    AND starts_with(permission, 'platform-fixture:') \
-                    AND right(permission, length('@2.0.0')) = '@2.0.0'"
-                )
-            ),
-            [
-                "platform-fixture:widget-maker/get@2.0.0",
-                "platform-fixture:widget-maker/list@2.0.0",
-                "platform-fixture:widget-maker/query@2.0.0",
-                "platform-fixture:widget-tag/update@2.0.0",
-                "platform-fixture:widget/archive@2.0.0",
-                "platform-fixture:widget/create@2.0.0",
-                "platform-fixture:widget/delete@2.0.0",
-                "platform-fixture:widget/get@2.0.0",
-                "platform-fixture:widget/list@2.0.0",
-                "platform-fixture:widget/query@2.0.0",
-                "platform-fixture:widget/record-batch@2.0.0",
-                "platform-fixture:widget/update@2.0.0",
-            ]
-            .join("\n"),
-            "{role} did not hold exactly the manifest's twelve operation grants"
-        );
-        assert_eq!(
-            query(
-                &url,
-                &format!(
-                    "SELECT string_agg(permission, E'\\n' ORDER BY permission) \
-                   FROM app_system.permissions \
-                  WHERE tenant_id = 't1' AND role_name = '{role}' \
-                    AND NOT (starts_with(permission, 'platform-fixture:') \
-                             AND right(permission, length('@2.0.0')) = '@2.0.0')"
-                )
-            ),
-            if role == OPERATOR_ROLE {
-                [
-                    "platform-fixture-overlay:widget/archive@3.0.0",
-                    "platform-fixture:widget/get@1.1.0",
-                ]
-                .join("\n")
-            } else {
-                String::new()
-            },
-            "package reconciliation changed another coordinate's operation grants"
-        );
+    let admin_row = refusal(
+        &url,
+        "INSERT INTO app_system.permissions (tenant_id, role_name, permission, required_by) \
+         VALUES ('t1', 'admin', 'platform-fixture:widget/get', 'platform-fixture:widget/get')",
+    )
+    .expect("admin took a permission row");
+    assert!(admin_row.contains("permissions_admin_check"), "{admin_row}");
+    let sealed = refusal(
+        &url,
+        "INSERT INTO app_system.permissions (tenant_id, role_name, permission, required_by) \
+         VALUES ('t1', 'clerk', 'platform-fixture:widget/list@2.0.0', \
+                 'platform-fixture:widget/list@2.0.0')",
+    )
+    .expect("a sealed operation id was stored as a reference");
+    assert!(sealed.contains("permissions_reference_check"), "{sealed}");
+    let orphan = refusal(
+        &url,
+        "INSERT INTO app_system.permissions (tenant_id, role_name, permission, required_by) \
+         VALUES ('t1', 'clerk', 'platform-fixture:widget/list', 'platform-fixture:widget/query')",
+    )
+    .expect("a closure row without its selected root was stored");
+    assert!(orphan.contains("permissions_required_by_fkey"), "{orphan}");
+    for name in ["Clerk", "-clerk", "clerk role", &"a".repeat(65)] {
+        let refused = refusal(
+            &url,
+            &format!("INSERT INTO app_system.roles (tenant_id, name) VALUES ('t1', '{name}')"),
+        )
+        .unwrap_or_else(|| panic!("role name {name:?} was stored"));
+        assert!(refused.contains("roles_name_check"), "{refused}");
+    }
+
+    if let Some(error) = refusal(
+        &url,
+        "DELETE FROM app_system.permissions WHERE tenant_id = 't1' AND role_name = 'clerk' \
+         AND permission = 'platform-fixture:widget/create' \
+         AND required_by = 'platform-fixture:widget/create'",
+    ) {
+        panic!("revoke the root widget/create: {error}");
     }
     assert_eq!(
         query(
             &url,
-            "SELECT count(*) FROM app_system.permissions \
-              WHERE permission = 'residue.must.stay'"
+            "SELECT string_agg(permission || ' by ' || required_by, ',') FROM app_system.permissions"
         ),
-        "2",
-        "reconcile escaped its tenant+role scope"
-    );
-    assert_eq!(
-        query(
-            &url,
-            "SELECT string_agg(name, ',' ORDER BY name) FROM app_system.roles \
-              WHERE tenant_id = 't1'"
-        ),
-        "admin,operator,sibling-role",
-        "publish did not leave exactly the two user roles beside the sibling role"
-    );
-
-    let again = result(&run(&url, "replay operation grants", &reconcile));
-    assert!(
-        again.is_noop(),
-        "server changed rows on converged replay: {again:?}"
+        "platform-fixture:widget/get by platform-fixture:widget/get",
+        "the revoke of a root kept its closure row or removed another root"
     );
 
     run(

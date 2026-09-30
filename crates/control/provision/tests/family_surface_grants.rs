@@ -950,14 +950,14 @@ fn the_http_admitter_role_adds_exactly_the_fresh_permission_reads() {
              SELECT set_config('app.user_id', '00000000-0000-4000-8000-000000000001', true), \
                     set_config('app.operation', 'admin:seed-family-surface-fixture', true);\n\
              INSERT INTO app_system.roles (tenant_id, name) \
-             VALUES ('tenant-a', 'operator');\n\
+             VALUES ('tenant-a', 'widget-reader');\n\
              INSERT INTO app_system.users (tenant_id, id, type, email) \
              VALUES ('tenant-a', '00000000-0000-4000-8000-000000000001', 'person', 'caller@example.test');\n\
              INSERT INTO app_system.user_roles (tenant_id, user_id, role_name) \
-             VALUES ('tenant-a', '00000000-0000-4000-8000-000000000001', 'operator');\n\
-             INSERT INTO app_system.permissions (tenant_id, role_name, permission) \
-             VALUES ('tenant-a', 'operator', \
-                     'wamn-widgets:widget/get@1.0.0');\n\
+             VALUES ('tenant-a', '00000000-0000-4000-8000-000000000001', 'widget-reader');\n\
+             INSERT INTO app_system.permissions (tenant_id, role_name, permission, required_by) \
+             VALUES ('tenant-a', 'widget-reader', \
+                     'wamn-widgets:widget/get', 'wamn-widgets:widget/get');\n\
              COMMIT;\n"
         ),
     );
@@ -990,8 +990,8 @@ fn the_http_admitter_role_adds_exactly_the_fresh_permission_reads() {
         query(
             &as_login,
             "SELECT count(*) FROM app_system.permissions \
-              WHERE role_name = 'operator' \
-                AND permission = 'wamn-widgets:widget/get@1.0.0'"
+              WHERE role_name = 'widget-reader' \
+                AND permission = 'wamn-widgets:widget/get'"
         ),
         "1",
         "the callable-HTTP generation cannot read the exact operation grant"
@@ -1005,7 +1005,7 @@ fn the_http_admitter_role_adds_exactly_the_fresh_permission_reads() {
              WHERE u.tenant_id = 'tenant-a' AND u.id = '00000000-0000-4000-8000-000000000001' \
                AND u.status = 'active'"
         ),
-        "wamn-widgets:widget/get@1.0.0",
+        "wamn-widgets:widget/get",
         "the callable-HTTP generation cannot read the human user's fresh permission"
     );
 }

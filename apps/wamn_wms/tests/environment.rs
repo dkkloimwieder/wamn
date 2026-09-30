@@ -253,7 +253,7 @@ pub async fn prepare_project(
         tenant: TENANT.into(),
     })
     .await?;
-    wamn_control::dev::environment::grant_operator_role(
+    wamn_control::dev::environment::grant_operator_admin_role(
         &route.database_url,
         ORG,
         PROJECT,

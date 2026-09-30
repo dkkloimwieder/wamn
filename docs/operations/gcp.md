@@ -1187,7 +1187,7 @@ The first invitation showed a code for the terminal client, and the web client h
 kubectl -n identity port-forward svc/identity 8443:443
 ```
 
-Give the owner the role `admin` after the reconcile. Publish writes the roles `operator` and `admin` (see [deployment](deployment.md#user-roles)):
+Give the owner the role `admin` after the reconcile. `apply-package` writes the built-in role `admin` (see [deployment](deployment.md#user-roles)):
 
 ```bash
 target/debug/wamn-ctl grant-role --system-database-url "$WAMN_SYSTEM_ADMIN_URL" --admin-database-url "$T" \
@@ -1620,7 +1620,7 @@ target/debug/wamn-ctl close-capture-gap --org dkk --project wms --env dev
 
 ### 6.4 Bench client and PAT
 
-Mint the bench PAT as in section 3.16, with `--emit-operator-pat-secret <private dir>/operator-pat.json`. Then write the tenant `users` row of the service with `reconcile-run-plane` (section 4.5), and give it the role `operator` with `grant-role --user wamn-operator-dkk--receiving--dev@wamn.dev --role operator`. Use a forward to the pod, `kubectl -n platform port-forward pod/wamn-pg-1 15435:5432`, because the forward to the service closed the connections of the verb.
+Mint the bench PAT as in section 3.16, with `--emit-operator-pat-secret <private dir>/operator-pat.json`. Then write the tenant `users` row of the service with `reconcile-run-plane` (section 4.5), and give it the role `admin` with `grant-role --user wamn-operator-dkk--receiving--dev@wamn.dev --role admin`. Use a forward to the pod, `kubectl -n platform port-forward pod/wamn-pg-1 15435:5432`, because the forward to the service closed the connections of the verb.
 
 Make the client VM, copy the source of the commit and the PAT, and build:
 
