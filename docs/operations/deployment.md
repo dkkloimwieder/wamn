@@ -191,22 +191,26 @@ A CI completion order does not set deployment precedence.
 ## Web client files
 
 `wamn web upload` builds an application's web client with Vite and writes it to a bucket.
-Pass the manifest digest of the release that the client belongs to:
+Pass the manifest digest of the release that the client belongs to, and the project-environment database that holds the release head.
+The command refuses a release that is not the head, before the build. `select-release` sets the head.
 
 ```bash
 AWS_ENDPOINT=<object store URL> AWS_ACCESS_KEY_ID=<key> AWS_SECRET_ACCESS_KEY=<secret> \
-  wamn web upload apps/wamn_receiving --release sha256:<manifest digest> --bucket s3://<bucket>/<prefix>
+  wamn web upload apps/wamn_receiving --release sha256:<manifest digest> --bucket s3://<bucket>/<prefix> \
+    --org <org> --database-url <project-environment database URL>
 ```
 
 On Google Cloud, pass a `gs://` sink. The command then uses Application Default Credentials, which `gcloud auth application-default login` writes as a user OAuth token. No HMAC key exists:
 
 ```bash
-wamn web upload apps/wamn_receiving --release sha256:<manifest digest> --bucket gs://<bucket>/<prefix>
+wamn web upload apps/wamn_receiving --release sha256:<manifest digest> --bucket gs://<bucket>/<prefix> \
+  --org <org> --database-url <project-environment database URL>
 ```
 
 The files go to `<prefix>/<package id>/<digest hex>/`, so each release keeps its own path.
 Each object carries its Cache-Control: `assets/` is `public, max-age=31536000, immutable`, and `index.html` is `no-cache`.
 The command writes `index.html` last. The command refuses a built file that has no declared cache rule or content type.
+The command writes each object create-only. An object that already exists refuses the upload, and the command never replaces it.
 The bucket must allow reads without credentials.
 The edge chart in `deploy/platform/edge` serves a list of `applications`. Each entry names its public `host`, the route ingress `api` of its host group, and its upload path `bucketPath`. The edge passes the headers of each object on.
 In kind, the Receiving edge case uses the command. [Cluster tests](cluster-tests.md) describes that case.
