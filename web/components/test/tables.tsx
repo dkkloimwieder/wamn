@@ -32,6 +32,9 @@ export const statusText = () => document.querySelector('[data-slot="table-status
  * Waits until no load runs, and then for one more task, in which the set
  * table's module arrives over a complete set.
  */
+/** Waits for the first frame, after which a set table fills its totals (wamn-207q). */
+export const painted = () => new Promise((resolve) => requestAnimationFrame(() => setTimeout(resolve)));
+
 export const settled = async () => {
   await waitFor(() => {
     if (!/ended/.test(statusText()) || /Loading/.test(statusText())) {

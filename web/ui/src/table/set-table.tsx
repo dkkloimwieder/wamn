@@ -49,7 +49,7 @@ import {
 import ChevronDown from "lucide-solid/icons/chevron-down";
 import ChevronRight from "lucide-solid/icons/chevron-right";
 import X from "lucide-solid/icons/x";
-import { createMemo, createUniqueId, For, type JSX, mergeProps, Show } from "solid-js";
+import { createMemo, createSignal, createUniqueId, For, type JSX, mergeProps, onMount, Show } from "solid-js";
 
 import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
@@ -449,14 +449,24 @@ export function SetTable<TRow extends object>(props: SetTableProps<TRow>): JSX.E
    * The footer: each shown column's aggregate over every kept row, in the
    * order of the grid's cells. A control column has an empty cell, so each
    * total sits under its column.
+   *
+   * The totals read every kept row for each column, so they wait for the
+   * first frame: the rows paint first, and each total cell shows its
+   * aggregate's name until its value is in (wamn-207q).
    */
+  const [painted, setPainted] = createSignal(false);
+  onMount(() => requestAnimationFrame(() => setTimeout(() => setPainted(true))));
   const totals = createMemo(() => {
-    const rows = table.getFilteredRowModel().rows;
+    const rows = painted() ? table.getFilteredRowModel().rows : null;
     return table
       .getVisibleLeafColumns()
       .map((leaf) =>
         declared().some((candidate) => candidate.field === leaf.id)
-          ? { field: leaf.id, aggregate: aggregateOf(leaf.id), value: aggregateRows(leaf.id, rows) }
+          ? {
+              field: leaf.id,
+              aggregate: aggregateOf(leaf.id),
+              value: rows === null ? null : aggregateRows(leaf.id, rows),
+            }
           : { field: leaf.id, aggregate: null, value: null },
       );
   });
