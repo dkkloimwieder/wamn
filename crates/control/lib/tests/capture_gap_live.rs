@@ -155,6 +155,7 @@ async fn recover_and_close_record_each_capture_gap() {
                 &"wamn-cdc-cg0--app--dev",
                 &None::<&str>,
                 &true,
+                &"app",
             ],
         )
         .await

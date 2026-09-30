@@ -450,7 +450,7 @@ async fn reader_streams_one_project_env_to_the_evt_stream() {
     .await
     .expect("project-env row");
     let secret = format!("wamn-cdc-{ORG}--{PROJECT}--{ENV}");
-    let register = |enabled: bool| {
+    let register = |enabled: bool, schema: Option<&'static str>| {
         let (sys, cdc, stream, secret) = (&sys, &cdc_name, &stream_name, &secret);
         async move {
             sys.execute(
@@ -465,13 +465,14 @@ async fn reader_streams_one_project_env_to_the_evt_stream() {
                     secret,
                     &None::<&str>,
                     &enabled,
+                    &schema,
                 ],
             )
             .await
             .expect("event_readers row");
         }
     };
-    register(false).await;
+    register(false, Some("app")).await;
 
     sys.batch_execute(&sql::ensure_schema_sql("app"))
         .await
@@ -538,7 +539,22 @@ async fn reader_streams_one_project_env_to_the_evt_stream() {
     .expect_err("a disabled registration must refuse");
     assert!(err.to_string().contains("disabled"), "got: {err:#}");
 
-    register(true).await;
+    // A registration from before the schema column names no schema, and the
+    // reader refuses it by name before it connects anything (wamn-0h0g.19.21).
+    register(true, None).await;
+    let err = run_with_shutdown(
+        reader_args(&super_url, &cdc_name, proxied_nats.clone()),
+        ReaderShutdown::new(),
+    )
+    .await
+    .expect_err("a registration with no schema must refuse");
+    assert!(
+        err.to_string()
+            .contains(&format!("{ORG}/{PROJECT}/{ENV} names no schema")),
+        "{err:#}"
+    );
+
+    register(true, Some("app")).await;
     let err = run_with_shutdown(
         reader_args(&super_url, &cdc_name, proxied_nats.clone()),
         ReaderShutdown::new(),
@@ -565,6 +581,29 @@ async fn reader_streams_one_project_env_to_the_evt_stream() {
     js.create_stream(advisory_config)
         .await
         .expect("provision declared advisory stream");
+
+    // A publication of another schema than the registered one refuses, naming
+    // both schemas (wamn-0h0g.19.21).
+    register(true, Some("billing")).await;
+    let err = tokio::time::timeout(
+        Duration::from_secs(60),
+        run_with_shutdown(
+            reader_args(&super_url, &cdc_name, proxied_nats.clone()),
+            ReaderShutdown::new(),
+        ),
+    )
+    .await
+    .expect("the other-schema probe must terminate")
+    .expect_err("a publication of another schema must refuse");
+    assert!(
+        err.to_string().contains(&format!(
+            "{}: publication {cdc_name} differs from its declaration \
+             (publishes schema app, registered schema billing)",
+            wamn_cdc_reader::CAPTURE_SHAPE_DRIFT_REFUSAL
+        )),
+        "{err:#}"
+    );
+    register(true, Some("app")).await;
 
     // A missing slot is the capture-gap incident (wamn-59z6): the reader stays
     // running and stopped, and never creates the slot.

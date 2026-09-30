@@ -464,6 +464,7 @@ async fn provision(admin_url: &str) -> anyhow::Result<(Client, Client)> {
             &secret,
             &None::<&str>,
             &true,
+            &"app",
         ],
     )
     .await

@@ -183,14 +183,16 @@ pub fn upsert_project_env_sql() -> &'static str {
 /// re-enabling refreshes the names/stream/Secret reference and re-arms
 /// `enabled`). Params: `$1` org, `$2` project, `$3` env, `$4` publication, `$5`
 /// slot, `$6` stream, `$7` replication_secret_name, `$8`
-/// replication_secret_namespace (nullable), `$9` enabled.
+/// replication_secret_namespace (nullable), `$9` enabled, `$10` schema, the
+/// application schema that the publication covers.
 pub fn upsert_event_reader_sql() -> &'static str {
     "INSERT INTO registry.event_readers \
        (org, project, env, publication, slot, stream, \
-        replication_secret_name, replication_secret_namespace, enabled) \
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) \
+        replication_secret_name, replication_secret_namespace, enabled, schema) \
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) \
      ON CONFLICT (org, project, env) DO UPDATE SET \
        publication = EXCLUDED.publication, \
+       schema = EXCLUDED.schema, \
        slot = EXCLUDED.slot, \
        stream = EXCLUDED.stream, \
        replication_secret_name = EXCLUDED.replication_secret_name, \
@@ -249,10 +251,11 @@ pub fn close_capture_gap_sql() -> &'static str {
 /// Read one project-env's CDC reader registration — what the reader service
 /// (l5i9.10) streams by. Params: `$1` org, `$2` project, `$3` env. Columns:
 /// `publication, slot, stream, replication_secret_name,
-/// replication_secret_namespace, enabled`.
+/// replication_secret_namespace, enabled, schema` (`schema` is null on a row
+/// from before `migrations/system/0002_event_reader_schema.sql`).
 pub fn select_event_reader_sql() -> &'static str {
     "SELECT publication, slot, stream, \
-            replication_secret_name, replication_secret_namespace, enabled \
+            replication_secret_name, replication_secret_namespace, enabled, schema \
      FROM registry.event_readers \
      WHERE org = $1 AND project = $2 AND env = $3"
 }
