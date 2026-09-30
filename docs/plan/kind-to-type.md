@@ -1,6 +1,6 @@
 # Platform `kind` to `type` migration
 
-Status: Draft. Section 1 accepted 2026-09-29 (wamn-sfea.1). Section 2 accepted 2026-09-30 (wamn-sfea.2). Section 4 accepted 2026-09-30 (wamn-sfea.4). Section 3 is a draft from wamn-sfea.3. Section 5 is pending wamn-sfea.5. Section 6 holds an owner ruling (wamn-sfea.6).
+Status: Draft. Section 1 accepted 2026-09-29 (wamn-sfea.1). Section 2 accepted 2026-09-30 (wamn-sfea.2). Section 4 accepted 2026-09-30 (wamn-sfea.4). Section 3 is a draft from wamn-sfea.3. Section 5 is a draft from wamn-sfea.5. Section 6 holds an owner ruling (wamn-sfea.6).
 
 Measured on `main` at `1045b4fad`.
 
@@ -1083,6 +1083,167 @@ kubectl -n <namespace> annotate secret <name> wamn.io/principal-type=service wam
 5. Whether `ops-schema.sql` is installed on wamn-dev is not guessed. The operations page does not say, so the deployment agent answers it with the query of §4.3.4 before the apply, and the record states the answer.
 6. P8 goes into `reconcile-run-plane` with P10 to P12. A table that the verb already changes on an installed database is the verb's to rename.
 7. P9 stays a hand statement. A verb that renames history tables is the upgrade path of `wamn-o8b9` built sideways. The cost is recorded under `wamn-o8b9`: 15 history tables in two project-env databases (Receiving 8: six `app_system` and two `receiving`, WMS 7: six `app_system` and one `wms`), plus the record-history functions in wamn_system and both project-env databases.
+
+## 5. Sealed-history compatibility and immutability proofs
+
+Draft from wamn-sfea.5. Measured on `worktree-table` at `0dc04ec4e`. This section changes no code.
+
+The rule of this section: nothing old is read in two spellings. Each old byte has one of three fates. No reader touches it (inert). Or a reader refuses it with a named error. Or only a column name changed, and the reader never sees the word `kind`. §2.5 ruling 3 (format 4 only, no dual read) and ruling 5 (an old authoring command is refused, not replayed) apply throughout.
+
+### 5.1 Stored things that carry old `kind` bytes
+
+**Kept** means the stored bytes after the migration. **Reader after** names the new code that still reads the thing, or says that no reader touches it.
+
+| # | Stored thing | Where the old `kind` is | Kept | Reader after | Result |
+|---|---|---|---|---|---|
+| S1 | Sealed package rows `catalog.packages` | Only `manifest_sha256`, the hash of the old `wamn.json` (A1, A5). The row holds no `wamn.json` bytes | Row unchanged. `BEFORE UPDATE OR DELETE` trigger refuses any change (`deploy/sql/catalog-schema.sql:516` to `:537`, `deploy/sql/control-portable-store.sql:359` to `:384`, message `<table> is immutable` from `deploy/sql/reject-immutable-row-change.sql`) | apply-package reads the row of the current leaf to check `predecessor_version` (`crates/control/lib/src/apply_package/package_version.rs:44` to `:61`). It compares hashes and versions only. It never re-reads old `wamn.json` bytes | Works, no `kind` read |
+| S2 | Old `wamn.json` and `generated/` files | A1, A2, A5, G1 to G11 | Git history only. The tree moves to the 2.0.0 files (§2.3) | If an operator feeds an old file to a new verb: apply-package refuses `invalid-manifest` (`crates/schema/control/src/package_migrations.rs:306`, strict `CustomOperationDeclaration` with `deny_unknown_fields` at `crates/schema/generator/src/manifest.rs:56`). publish-release refuses `package-manifest` (`crates/control/lib/src/publish_release/package_sources.rs:35`) | Refused, named |
+| S3 | Package migrations `catalog.package_migrations` | None. Migration SQL holds no `kind` (§2.3) | Unchanged. Immutable trigger, and the seal trigger refuses a new migration under a sealed coordinate with `package-version-sealed` (`catalog-schema.sql:131` to `:170`) | apply-package reads them as the byte-identical prefix of each 2.0.0 stream (§2.1) | Works |
+| S4 | Definition owners `catalog.package_definition_owners` | Column name `definition_kind` (P8). Values `relation`, `field`, `constraint` | Rows unchanged. `reconcile-run-plane` renames the column only (§4.3.2). A rename fires no row trigger | apply-package reads the predecessor's rows under `definition_type` (`crates/control/lib/src/apply_package/definition_ownership.rs:48`) | Works, values unchanged |
+| S5 | Attachment definition hashes | `definition.kind` inside each hashed definition (A2, G1) | Stored only inside old release snapshots (S7). No catalog table holds them | None outside S7 | Inert |
+| S6 | Component artifacts in the OCI registry | None in the config blob. The config holds `format-version`, `component-digest`, `imports`, `imports-fingerprint` (`crates/platform/engine/src/component_artifact.rs:83`, `:281`). The wasm of `receiving`, `http-route` and `materializer` holds `kind` strings (§2.2 note) | Unchanged. The tag is the hex of the component digest (`crates/control/lib/src/push_component.rs:523`), and every blob is derived from the wasm bytes. New wasm gets a new tag | A host pulls only the digests its format-4 release names. Unchanged palette components keep their digest and are read as before, which is intended | Old changed digests inert. Unchanged digests work |
+| S7 | Release rows `catalog.release_manifest_v3_snapshots` | Format 3 bytes with G8 and G9 `kind` keys | Unchanged. Immutable trigger. `CHECK (manifest_digest = 'sha256:' \|\| encode(sha256(canonical_bytes), 'hex'))` (`catalog-schema.sql:442`) | Every decoder refuses format 3 (§5.2). `RELEASE_WIRING_SQL` and `RELEASE_COMPONENTS_SQL` read the jsonb without a format check. They bind the carried digest of the host's own release (§5.2 row R9). So a format-3 row never matches | Inert or refused |
+| S8 | Release membership `catalog.effective_release_packages`, `catalog.release_components`, `catalog.effective_releases` | None | Unchanged. Immutable trigger. The snapshot seal refuses a new component row after the mint (`catalog-schema.sql:447` to `:468`, message `effective-release-snapshot-already-sealed`) | Mint of a new release under an old id refuses `closure-conflict` (§5.2 row R6) | Inert |
+| S9 | Release manifest OCI artifacts (`.../wamn/releases`) | Format 3 bytes | Unchanged. The tag derives from the manifest digest. An existing tag with other bytes refuses `release-manifest-publish-refused` kind `conflict` (`crates/control/lib/src/push_release_manifest.rs:1` to `:5`, `:570`) | A host started with an old digest pulls it and refuses (§5.2 row R1) | Refused, named |
+| S10 | Run-state rows `wamn_run.runs`, `effect_attempts`, `operator_run_actions` | Column names only (P10 to P12). Values keep their spelling (§2.2 R rows) | Rows unchanged. The rename is metadata-only (§4.3). Admission pins are immutable (`deploy/sql/run-state.sql:195` to `:235`) | The new host reads them under the new names. `StoredCallerOutcome` is built from columns (`crates/execution/run-state/src/transitions.rs:109`) | Works. See Q1 for runs pinned to an old release |
+| S11 | Write log `app_system.write_log` | None. `request` is the item input hash (`crates/platform/engine/src/operation/intent.rs:139`). `result` is the operation's answer body | Unchanged | Read across releases on purpose, because the log key drops `@version` (`crates/platform/runtime/src/plugins/wamn_postgres/write_log.rs:11` to `:13`). No application input or command output has a platform `kind` field. The one `kind` output field is the history row of `load_purchase_order_history`, which is a projection and claims no write-log key | Works |
+| S12 | Authoring audit `catalog.authoring_command_audit` | `request_hash` over `kind`-tagged JSON. `outcome_bytes` hold `kind` tags (W1). Columns `command_kind`, `principal_kind` (P7) | Unchanged. Immutable trigger (`control-portable-store.sql:371`). Columns renamed by hand (§4.3.4) | The retry path reads `request_hash` and `outcome_bytes` (`services/scenario-worker/src/management.rs:93`). A replay needs an equal hash (`:259`). A new server hashes its own `type`-tagged encoding, so an old hash never matches and old `outcome_bytes` are never sent again | Inert. See §5.2 row R11 |
+| S13 | Gate reports `wamn_run.gate_reports` | None. `summary` is `{"cases": n}` (`services/scenario-worker/src/store/admission.rs:854`) | Unchanged. Immutable trigger | `get-report` returns the summary as stored (`services/scenario-worker/src/authoring.rs:393`) | Works |
+| S14 | Edge bundles on devices | `manifest.json` in format 3 | Unchanged on the device | An old `wamn-edge` binary keeps serving its old bundle. It needs no database. A new binary refuses the bundle (§5.2 row R4) | Old works, new refuses, named |
+| S15 | Web uploads `<prefix>/<package id>/<digest hex>/` | Generated client source (G7, W8) | Not enforced. A `wamn web upload` with an old digest replaces the files. See Q2 | The edge chart serves the path its `bucketPath` names. After the republish it names the new path | Inert, not enforced |
+| S16 | History rows `<relation>_history` | Column name `kind` (P9). Values `insert`, `update`, `delete`. `before` and `after` images hold no renamed key (§4.3.4) | Rows unchanged. Rename is metadata-only | The new `receiving` component reads them under `type` (`apps/wamn_receiving/query/load_purchase_order_history.sql:12`) | Works |
+| S17 | Router tap records, stream `WAMN_TAP` | `source-kind` key (W5) | Memory storage, `max_age` 5 minutes (`deploy/gcp/nats-jetstream.yaml:207`, `:210`) | `ctl dev` observations decode with `deny_unknown_fields` and fail the read on an old record (`crates/control/lib/src/dev/observations.rs:437`) | Gone 5 minutes after the old hosts stop. See Q5 |
+| S18 | Identity rows, provisioning sagas, registry orgs | Column names only (P1 to P6) | Rows unchanged | New services read the new names | Works |
+| S19 | PAT Secrets | Annotation key (P15) | Re-annotated (§4.3.5) | New `bootstrap.sh` | Works |
+
+No session token, OCI config blob or component-library fact carries a WAMN `kind` key. `catalog.component_library` holds `operations`, `imports` and `effects` with no `kind` (`crates/catalog/model/src/component_library.rs`). `catalog.wirings.graph_json` holds none (`git grep '"kind"' -- 'apps/*/publication/wirings/*'` is empty).
+
+### 5.2 Paths that re-read an old release or an old package
+
+Every serving-manifest decoder goes through `ServingManifest::from_canonical_bytes` (`crates/catalog/model/src/serving_manifest.rs:1045`). It reads `format-version` from the raw JSON before it decodes any `kind` field (`:1054`, `:1319`). So format-3 bytes get the typed refusal `CatalogIdentityError::UnsupportedServingManifestVersion` (`crates/catalog/model/src/lib.rs:142`), rendered as `unsupported-serving-manifest-version: requested 3; supported version is 4` (`serving_manifest.rs:100`, `lib.rs:222`). The change to format 4 is one constant, `SERVING_MANIFEST_FORMAT_VERSION` (`serving_manifest.rs:33`).
+
+| # | Path | Entry | What it reads | Outcome on old bytes |
+|---|---|---|---|---|
+| R1 | Host start from the registry | `services/host/src/host.rs:426` | OCI release artifact by digest | `ReleaseLoadErrorKind::ManifestRejected` carrying the literal (`crates/platform/engine/src/release_manifest.rs:80`, `:176`). The host refuses before it opens a socket |
+| R2 | Host start from a local application (`ctl dev`) | `services/host/src/host.rs:719` | Local release directory | Same as R1 |
+| R3 | `ctl dev` loop | `crates/control/lib/src/dev/coordinator.rs:1617`, `:2010` | Its kept local target | The package version is in the target structure digest, so the 2.0.0 packages force a new target. The new target mints a new format-4 snapshot. A stale local release directory refuses as R2 |
+| R4 | Edge box start | `services/edge/src/release.rs:82` | `manifest.json` of the pinned bundle | `EdgeReleaseErrorKind::Rejected` with the literal |
+| R5 | Edge bundle writer | `crates/control/lib/src/dev/edge_bundle.rs:34` | A local release directory | Refused with the literal in the error chain |
+| R6 | Re-mint of an existing release id | `crates/control/lib/src/publish_release.rs:1579`, `:2092` to `:2112` | Frozen membership and snapshot | `closure-conflict` (`publish_release.rs:282`). The frozen row is not touched. The wamn-dev republish therefore needs new effective release ids. `docs/operations/gcp.md:1297` uses id 1 today |
+| R7 | Rollback by `delivery select` of an older release | `crates/control/lib/src/delivery/deployment.rs:62`, `crates/control/lib/src/delivery/publication.rs:38` | Old snapshot through `print_release_env` (`crates/control/lib/src/print_release_env.rs:79`) | Refused with the literal before the head row moves |
+| R8 | `promote` of an old release into another environment | `crates/control/lib/src/promote.rs:391` | Old snapshot | Refused with the literal before anything is copied |
+| R9 | Wiring and component resolution for a run or a route | `crates/platform/runtime/src/plugins/wamn_postgres/wiring_resolution.rs:18`, `:135` | Snapshot jsonb, without a format check | Unreachable. Both queries require `snapshot.manifest_digest` to equal the carried digest (`:29`, `:140`). The callers pass the digest of the host's own `LoadedRelease` (`crates/execution/workflow/src/router_driver.rs:784`, `crates/execution/host/src/operation.rs:424`), which is format 4 by R1 |
+| R10 | Claim of a queued run | `crates/execution/run-state/src/queue/sql.rs:196` | `runs.effective_release_id` | A host claims only runs of its own release. A run pinned to a format-3 release is never claimed. See Q1 |
+| R11 | Authoring retry | `services/scenario-worker/src/management.rs:757` to `:775`, `:982`, `:1175` | Stored `request_hash` | Two cases. An old client that resends the old body fails the strict decode (`crates/authoring/model/src/lib.rs:571`) and gets HTTP 400 with an empty body. Nothing runs and nothing replays. A new client that resends the same `command-id` gets `command-id-reuse` (`management.rs:1265`). See Q4 |
+| R12 | `workflow start --effective-release-id <old id>` | `crates/execution/workflow/src/contract/postgres.rs:94` | Old snapshot | `WorkflowErrorKind::Refused` "the release snapshot does not parse", with the literal as source |
+| R13 | `push-release-manifest` of old bytes | `crates/control/lib/src/push_release_manifest.rs:227`, `:334` | Old snapshot | `release-manifest-document-refused` |
+| R14 | `delivery prepare` of a candidate file | `crates/control/lib/src/delivery.rs:165` | Candidate manifest file | Refused with the literal |
+| R15 | apply-package of an old package directory | `package_migrations.rs:306` | Old `wamn.json` | `invalid-manifest` |
+| R16 | apply-package of new bytes under an old coordinate | `package_migrations.rs:342` to `:355`, `:265` to `:280` | `catalog.packages` hash | `package-manifest-drift` for the applied coordinate. `package-coordinate-content-conflict` at registration. Exception: a local target lifts both on purpose (`crates/control/lib/src/apply_package/local_target.rs:18`, `catalog-schema.sql:157`). See Q6 |
+| R17 | `reconcile-run-plane` | `crates/control/lib/src/reconcile_run_plane.rs` | Table and column shapes only | Reads no release or package bytes |
+| R18 | Wiring activation and catalog listing | `crates/catalog/model/src/wiring_activation.rs:91`, `wamn-ctl workflow list` | Heads, membership, run rows | No verb lists or decodes release bytes. These read ids and hashes only |
+
+No path reads a `kind`-keyed manifest or package in a second spelling. Every path either never reads the old bytes (R3, R9, R10, R17, R18) or refuses with a named error (the rest).
+
+### 5.3 Proofs
+
+Tests are run as [running tests](../operations/running-tests.md) describes. Live tests need its database inputs.
+
+**Existing tests to keep.** They already prove a rule and must stay green through the migration.
+
+| Rule | Test | Crate |
+|---|---|---|
+| A sealed coordinate refuses other bytes, other predecessor, or a non-current predecessor | `registration_preserves_replay_conflicts_and_current_predecessor`, `crates/schema/control/src/package_migrations.rs:825` | `wamn-schema-control` |
+| Same, against PostgreSQL, under concurrency | `registration_serializes_replay_conflicts_successors_and_rollback`, `crates/control/lib/src/apply_package/package_version/registration_tests.rs:47` | `wamn-control` |
+| Same coordinate with a changed `wamn.json` refuses `package-manifest-drift` | `same_coordinate_manifest_drift_names_coordinate_and_both_hashes`, `package_migrations.rs:1052` | `wamn-schema-control` |
+| A new version without the current predecessor refuses `predecessor-not-current` | `exact_runner_commits_once_refuses_drift_and_rolls_back_a_failing_suffix`, `crates/control/lib/tests/apply_package_live.rs:560` (assertions at `:1341`, `:1357`) | `wamn-control` |
+| Recorded migration bytes cannot change and a sealed coordinate takes no migration | `package_seal_and_attestation_winner_are_server_enforced`, `crates/control/lib/tests/publish_release_live.rs:220` | `wamn-control` |
+| Control facts are immutable (`component_library`, `gate_reports`, `deployment_attestations`) | `control_portable_store_enforces_the_current_record_on_postgres`, `crates/control/provision/tests/control_portable_store.rs:167` | `wamn-control-provision` |
+| The decoder refuses other formats with the typed literal | `unsupported_formats_are_typed_refusals_not_compatibility_arms`, `serving_manifest.rs:2070` | `wamn-catalog` |
+| The host load keeps the literal | `an_unsupported_format_refuses_with_the_frozen_literal`, `crates/platform/engine/src/release_manifest.rs:413` | `wamn-engine` |
+| Release publish refuses other formats and a tag with other bytes | `unsupported_format_and_noncanonical_documents_refuse_before_transport`, `wrong_or_multi_layer_layout_refuses_as_conflict`, `push_release_manifest.rs:630`, `:644` | `wamn-control` |
+| A component tag is its digest | `production_publisher_layout_matches_the_puller_contract`, `push_component.rs:3142` | `wamn-control` |
+| A claim takes only runs of the carried release | `lease_grant_verifies_release_and_mints_manifest_on_the_existing_write`, `crates/platform/runtime/src/plugins/wamn_postgres/production_claim.rs:1636` | `wamn-runtime` |
+| An authoring retry replays only on an equal hash | `retry_classifier_is_exact_hash_or_reuse`, `services/scenario-worker/src/management.rs:1778` | `wamn-scenario-worker` |
+
+**Tests to change.**
+
+- `unsupported_formats_are_typed_refusals_not_compatibility_arms` loops over `[0, 1, 2, 3, 5]` and asserts `requested` for each.
+- `the_format_three_preimage_and_digest_are_pinned` (`crates/catalog/model/tests/serving_manifest_digest.rs:193`) becomes the format-4 pin. The format-3 vector file `crates/catalog/model/tests/fixtures/release_manifest_mint_vector.rs` is kept, renamed as a frozen format-3 fixture, and used only by the refusal test below.
+
+**Tests to add.**
+
+| Test | Crate and file | Proves |
+|---|---|---|
+| `the_frozen_format_three_vector_refuses_with_its_version` | `wamn-catalog`, `crates/catalog/model/tests/serving_manifest_digest.rs` | The real pinned format-3 bytes, with their `kind` keys, refuse with `requested: "3"`. They do not fail as an unknown field |
+| `a_format_three_bundle_is_rejected` | `wamn-edge`, `services/edge/tests/release.rs` | R4 is `EdgeReleaseErrorKind::Rejected` and carries the literal |
+| `a_frozen_release_refuses_another_closure` | `wamn-control`, `crates/control/lib/src/publish_release/effective_release_live.rs` | R6. Insert a format-3 snapshot, mint the same id, get `closure-conflict`, and read back byte-identical `canonical_bytes` |
+| Extend `assert_immutable_rows` | `wamn-control`, `crates/control/lib/tests/publish_release_live.rs:88` | `UPDATE` and `DELETE` on `catalog.packages`, `catalog.release_manifest_v3_snapshots`, `catalog.effective_release_packages` and `catalog.release_components` each refuse with SQLSTATE 55000 and `<table> is immutable`. Today only `package_migrations` is asserted |
+| `a_start_on_a_format_three_release_refuses` | `wamn-workflow`, `crates/execution/workflow/src/queue/automation_live.rs` | R12 |
+| `promote_refuses_a_format_three_source` | `wamn-control`, `crates/control/lib/src/promote/activation_live.rs` | R8, and no row is written in the target |
+| `reconcile_renames_without_touching_rows` | `wamn-control`, `crates/control/lib/tests/run_plane_live/` (the §4.3.2 live case) | The digest listing below is equal before and after the `TypeColumnCutover` for `catalog.package_definition_owners` and the run-plane rows |
+
+**Commands on wamn-dev.** Run each listing before step 1 of §4.7 and again after the republish. Save both outputs in `$P`. For each check, `comm -23 before after` must print nothing. Then every old line is still present, byte for byte. The migration only adds lines.
+
+Database digests, run on each project-env database and on wamn_system (the tables that exist in each):
+
+```sql
+SELECT 'package', tenant_id, package_id, package_version, coalesce(predecessor_version, '-'), manifest_sha256 FROM catalog.packages
+UNION ALL SELECT 'migration', tenant_id, package_id, package_version || '#' || ordinal, relative_path, sha256 FROM catalog.package_migrations
+UNION ALL SELECT 'snapshot', tenant_id, effective_release_id::text, manifest_digest, '-', encode(sha256(canonical_bytes), 'hex') FROM catalog.release_manifest_v3_snapshots
+UNION ALL SELECT 'member', tenant_id, effective_release_id::text, package_id, package_version, '-' FROM catalog.effective_release_packages
+UNION ALL SELECT 'component', tenant_id, package_id, package_version, component || '@' || interface_version, component_digest || ' ' || projection_hash FROM catalog.component_library
+ORDER BY 1, 2, 3, 4, 5
+```
+
+On wamn_system, add the audit rows:
+
+```sql
+SELECT tenant_id, principal_id, command_id, request_hash, encode(sha256(outcome_bytes), 'hex')
+  FROM catalog.authoring_command_audit ORDER BY 1, 2, 3
+```
+
+Registry digests. The component tag and the manifest digest must both be unchanged for every old line:
+
+```bash
+gcloud artifacts docker tags list us-central1-docker.pkg.dev/wamn-dev/wamn/components \
+  --format='value(tag.basename(),version.basename())' | sort > $P/components-before.txt
+gcloud artifacts docker tags list us-central1-docker.pkg.dev/wamn-dev/wamn/releases \
+  --format='value(tag.basename(),version.basename())' | sort > $P/releases-before.txt
+```
+
+Web objects. An overwritten object gets a new generation, so equal generations prove no replacement:
+
+```bash
+gcloud storage objects list 'gs://wamn-dev-web/**' \
+  --format='value(name,generation,md5_hash)' | sort > $P/web-before.txt
+```
+
+Predecessors. After the republish, every 2.0.0 row, and `client_acme_receiving` 4.0.0, names the old version:
+
+```sql
+SELECT package_id, package_version, predecessor_version FROM catalog.packages
+ WHERE package_version IN ('2.0.0', '4.0.0') ORDER BY 1
+```
+
+The same fact holds in the tree: `jq -r '.package | [.id, .version, .predecessor_version] | @tsv' apps/*/wamn.json` shows the old version in the third column for every package of §2.3. apply-package enforces it at registration (`predecessor-not-current`), and the unique index `packages_one_successor_per_version` (`catalog-schema.sql:29`) allows one successor per version.
+
+Refusal at runtime. After the new hosts start, start one host process with an old manifest digest, or `delivery select` an old release id. Each must fail with `unsupported-serving-manifest-version: requested 3`.
+
+**Fixtures and frozen evidence.** §2.4 lists what is regenerated. The proof is that the regenerating commit changes those files and the tests above pass on it. `docs/history/`, `tests/sweeps/*.log` and the dated digest table at `docs/operations/gcp.md:1184` stay as written.
+
+### 5.4 Questions for the owner
+
+The rules of platform-ui.md §0 cannot be fully proven with the current code in these places.
+
+- **Q1. Runs pinned to an old release.** A run keeps its `effective_release_id` for life (`run-state.sql:195`). A format-4 host claims only runs of its own release (R10), and no format-4 host can carry a format-3 release (R1). So a run that is `dispatched`, `running` or `effect-uncertain` under an old release is never finished. Option A: §4.7 step 1 drains these runs first. It stops while this query returns a row: `SELECT effective_release_id, status, count(*) FROM wamn_run.runs WHERE status IN ('dispatched', 'running', 'effect-uncertain') GROUP BY 1, 2`. Option B: the runs stay stranded. `terminalize-effect-uncertain` settles the effect-uncertain ones. Which option applies?
+- **Q2. Web uploads can be overwritten.** `wamn web upload` takes `--release` as a free argument and writes with default `PutOptions`, which overwrite (`services/ctl/src/web.rs:56`, `:125`). A run with an old digest replaces the old client under its old path. Nothing refuses it. Option A: the upload writes `assets/` in create-only mode. Option B: the upload checks that the digest is the current release of the app. Which option applies? Until one lands, the `generation` listing of §5.3 is the only proof. It finds a replacement only after the fact.
+- **Q3. The snapshot table is named `release_manifest_v3_snapshots`.** Format-4 rows will go into a table named for format 3, beside the old rows. Keep the name, rename the table, or add a `release_manifest_v4_snapshots` table so that format-3 rows sit apart? Many source files and the grants in `crates/control/provision/src/sql.rs:211`, `:1104` name it. The readers select by release id, so any choice keeps §5.2 true.
+- **Q4. An old authoring body gets a bare 400.** Ruling 5 says an old command retried after the rename is refused as a conflict. That is true only for a new client that re-encodes the command (`command-id-reuse`). An old client that resends its old bytes fails the strict decode first. It gets HTTP 400 with no body (`management.rs:775`). The decoder checks `schema_version` only after a full decode (`crates/authoring/model/src/lib.rs:571`). Is the bare 400 acceptable? The alternative: the decoder reads `schema-version` first, and the contract version moves from `0.1`.
+- **Q5. Router tap format.** §2.2 W5 left this to §5. The records live 5 minutes in memory (S17). The new readers start at least 5 minutes after the old hosts stop (§4.7 step 1 to step 6). Then no reader meets an old record, and no format bump is needed. Does the record format still move to 3, with 1 and 2 refused, to match the no-dual-read rule of the manifest?
+- **Q6. Local targets lift the seal.** On a local target, apply-package accepts new `wamn.json` bytes under an applied coordinate. It records the new hash in the database comment (R16). The `catalog.packages` row itself is still not rewritten. Is the local-target exception outside the scope of §0? The plan bumps every version, so the exception is not needed for this migration.
+- **Q7. Unchanged palette components cannot be re-admitted under a new coordinate.** §2.3 says the `wamn_wms` palette components keep their bytes and are admitted again under 2.0.0. `catalog.component_library` holds `UNIQUE (tenant_id, component_digest)` (`catalog-schema.sql:210`), and the control store holds the same key per environment instance. The insert does nothing on that conflict, and the exact check then refuses `component-fact-conflict` (`push_component.rs:1985`). This key is also what proves one digest has one owner. So how does `wamn_wms` 2.0.0 name these components: by a base pin, as `client_acme_receiving` pins `receiving`, or does the key change? This belongs to wamn-sfea.3, but it blocks the proof that no digest moves to another coordinate.
+- **Q8. The registry has no immutable tags.** The `wamn` repository was created without `--immutable-tags` (`docs/operations/gcp.md:132`). The proof that no artifact is replaced rests on code: tags derive from content, and release pushes refuse a conflict. Does the repository turn immutable tags on? Then host images in the same repository need unique tags.
 
 ## 6. `*ErrorKind` families
 
