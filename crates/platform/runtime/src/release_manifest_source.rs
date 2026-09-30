@@ -208,18 +208,17 @@ impl ReleaseManifestSource {
     }
 
     /// Configure one release repository whose pulls each ask the metadata
-    /// server at `token_url` for a token.
+    /// server for a token.
     pub fn with_registry_token_metadata(
         artifact_base: &str,
         insecure_registry: bool,
-        token_url: &str,
     ) -> Result<Self, ReleaseManifestFetchError> {
         let base = parse_component_artifact_base(artifact_base)
             .map_err(|_| ReleaseManifestFetchError::invalid_reference())?;
         Self::with_source(
             base,
             insecure_registry,
-            RegistryCredentialSource::MetadataServer(token_url.into()),
+            RegistryCredentialSource::MetadataServer,
         )
     }
 

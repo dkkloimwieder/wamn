@@ -106,10 +106,10 @@ impl ComponentArtifactSourceConfig {
         self
     }
 
-    /// Authenticate each pull with a token from the metadata server at
-    /// `token_url`, asked for at that pull.
-    pub fn with_registry_token_metadata(mut self, token_url: &str) -> Self {
-        self.credentials = Some(RegistryCredentialSource::MetadataServer(token_url.into()));
+    /// Authenticate each pull with a token from the metadata server, asked
+    /// for at that pull.
+    pub fn with_registry_token_metadata(mut self) -> Self {
+        self.credentials = Some(RegistryCredentialSource::MetadataServer);
         self
     }
 
@@ -653,65 +653,5 @@ mod tests {
         );
         let rendered = format!("{error:?} {error}");
         assert!(!rendered.contains("private-context"));
-    }
-
-    #[tokio::test]
-    async fn each_pull_asks_the_metadata_server_for_its_own_token() {
-        use std::sync::Arc;
-        use std::sync::atomic::{AtomicUsize, Ordering};
-        use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
-
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let token_url = format!("http://{}/token", listener.local_addr().unwrap());
-        let asked = Arc::new(AtomicUsize::new(0));
-        let counted = asked.clone();
-        let serving = tokio::spawn(async move {
-            while let Ok((mut stream, _)) = listener.accept().await {
-                let mut head = [0_u8; 1024];
-                let _ = stream.read(&mut head).await;
-                counted.fetch_add(1, Ordering::SeqCst);
-                let body = r#"{"access_token":"token"}"#;
-                let response = format!(
-                    "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
-                    body.len()
-                );
-                let _ = stream.write_all(response.as_bytes()).await;
-            }
-        });
-        // Port 9 refuses, so each pull stops at the registry after its token.
-        let config = ComponentArtifactSourceConfig::new(
-            "127.0.0.1:9/wamn/components",
-            true,
-            Duration::from_secs(5),
-        )
-        .expect("source config validates")
-        .with_registry_token_metadata(&token_url);
-        let source = ComponentArtifactSource::new(config).expect("registry client builds");
-        let component = admitted(b"component-bytes");
-
-        for pulls in 1..=2 {
-            let error = source
-                .pull_verified(&component)
-                .await
-                .expect_err("the refusing registry refuses the pull");
-            assert_eq!(error.refusal(), "component-artifact-manifest-unavailable");
-            assert_eq!(asked.load(Ordering::SeqCst), pulls);
-        }
-        serving.abort();
-
-        let silent = ComponentArtifactSourceConfig::new(
-            "127.0.0.1:9/wamn/components",
-            true,
-            Duration::from_secs(5),
-        )
-        .expect("source config validates")
-        .with_registry_token_metadata("http://127.0.0.1:9/token");
-        let error = ComponentArtifactSource::new(silent)
-            .expect("registry client builds")
-            .pull_verified(&component)
-            .await
-            .expect_err("a pull without a token refuses");
-        assert_eq!(error.kind(), ComponentArtifactFetchErrorKind::Unavailable);
-        assert_eq!(error.refusal(), "registry-token-metadata-unavailable");
     }
 }

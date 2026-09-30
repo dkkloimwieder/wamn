@@ -6450,6 +6450,7 @@ dependencies = [
  "bytes",
  "chrono",
  "deadpool-postgres",
+ "docker_credential",
  "futures-util",
  "hex",
  "http-body-util",

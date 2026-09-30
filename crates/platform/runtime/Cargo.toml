@@ -70,6 +70,9 @@ tower-service = { workspace = true }
 wasmtime-wasi = { workspace = true }
 
 [dev-dependencies]
+# wamn-i87m: the helper test runs the lookup wash-runtime's pull runs, at the
+# exact version wash-runtime resolves.
+docker_credential = "=1.4.0"
 tokio = { workspace = true, features = ["test-util"] }
 hyper = { workspace = true, features = ["server"] }
 base64 = { workspace = true }
