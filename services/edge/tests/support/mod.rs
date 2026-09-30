@@ -29,7 +29,7 @@ use wamn_session::token::{SessionAuthority, SessionClaims, SessionHeader};
 
 pub const PACKAGE: &str = "edge_device";
 /// A registered export is keyed by its permission identity.
-pub const OPERATION: &str = "edge-device:sample/read@1.0.0";
+pub const OPERATION: &str = "edge-device:sample/read@2.0.0";
 pub const ATTACHMENT: &str = "sample-read-http";
 /// The role that publish grants every served operation.
 pub const ROLE: &str = "operator";

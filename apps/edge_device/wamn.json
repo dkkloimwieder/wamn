@@ -1,7 +1,8 @@
 {
   "package": {
     "id": "edge_device",
-    "version": "1.0.0"
+    "version": "2.0.0",
+    "predecessor_version": "1.0.0"
   },
   "required_platform_policy_contract": {
     "id": "edge_device_data_access",
