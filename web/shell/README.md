@@ -95,6 +95,7 @@ The shell renders a screen with five props:
 The page mounts `<Shell title=... sections=... />` inside `ColorModeProvider`.
 The layout comes from `AppFrame`, `CardPage` and `ScreenActions` in `@wamn/ui`, so the shell states no class.
 The sign in page loads alone. The shell loads `layout.tsx`, with `AppFrame` and the `Toaster`, only after sign in.
+The router root is one Suspense boundary, so a page paints when its layout and screen modules are loaded, and a navigation keeps the old screen until the new one loads.
 
 ## The dev server
 

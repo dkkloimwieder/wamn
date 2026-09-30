@@ -6,7 +6,7 @@
  * way the identity service does for a cookie session.
  */
 
-import { cleanup, fireEvent, render, screen } from "@solidjs/testing-library";
+import { cleanup, fireEvent, render, screen, waitFor } from "@solidjs/testing-library";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { ColorModeProvider } from "@wamn/ui";
@@ -161,7 +161,7 @@ describe("the app shell", () => {
     fireEvent.input(screen.getByLabelText("password again"), { target: { value: "a long password string" } });
     fireEvent.click(screen.getByText("set password"));
     expect(await screen.findByText("sign in")).toBeDefined();
-    expect(window.location.pathname).toBe("/");
+    await waitFor(() => expect(window.location.pathname).toBe("/"));
     expect(seen).toEqual([
       {
         url: "/password/enroll",
@@ -186,7 +186,7 @@ describe("the app shell", () => {
     fireEvent.input(screen.getByLabelText("email"), { target: { value: "someone@wamn.dev" } });
     fireEvent.click(send);
     expect(await screen.findByText(/a mail with a reset link is on its way/)).toBeDefined();
-    expect(window.location.pathname).toBe("/recover");
+    await waitFor(() => expect(window.location.pathname).toBe("/recover"));
     expect(seen).toEqual([{ url: "/password/recover", body: { email: "someone@wamn.dev" } }]);
   });
 
@@ -202,7 +202,7 @@ describe("the app shell", () => {
     fireEvent.input(screen.getByLabelText("password again"), { target: { value: "a long password string" } });
     fireEvent.click(screen.getByText("set password"));
     expect(await screen.findByText("sign in")).toBeDefined();
-    expect(window.location.pathname).toBe("/");
+    await waitFor(() => expect(window.location.pathname).toBe("/"));
     expect(seen).toEqual([
       {
         url: "/password/reset",
@@ -216,7 +216,7 @@ describe("the app shell", () => {
     open("/", fetch);
     await signIn();
     expect(await screen.findByText("pallets screen")).toBeDefined();
-    expect(window.location.pathname).toBe(`/${AUD}/pallets`);
+    await waitFor(() => expect(window.location.pathname).toBe(`/${AUD}/pallets`));
   });
 
   it("asks identity for the environments of its org and project, and offers only the reply", async () => {
@@ -238,7 +238,7 @@ describe("the app shell", () => {
     });
     fireEvent.click(screen.getByText("acme/widgets/prod"));
     expect(await screen.findByText("pallets screen")).toBeDefined();
-    expect(window.location.pathname).toBe(`/${PROD}/pallets`);
+    await waitFor(() => expect(window.location.pathname).toBe(`/${PROD}/pallets`));
   });
 
   it("refuses an address that names an environment of another project", async () => {
@@ -253,7 +253,7 @@ describe("the app shell", () => {
     open(`/${AUD}/products`, fetch);
     await signIn();
     expect(await screen.findByText("products screen")).toBeDefined();
-    expect(window.location.pathname).toBe(`/${AUD}/products`);
+    await waitFor(() => expect(window.location.pathname).toBe(`/${AUD}/products`));
   });
 
   it("hands a screen the transport it reads after it rendered", async () => {
@@ -279,7 +279,7 @@ describe("the app shell", () => {
     expect(await screen.findByLabelText("password")).toBeDefined();
     expect(screen.queryByText("pallets screen")).toBeNull();
     expect(state.signedIn).toBe(false);
-    expect(window.location.pathname).toBe(`/${AUD}/pallets`);
+    await waitFor(() => expect(window.location.pathname).toBe(`/${AUD}/pallets`));
   });
 
   it("names a model with one screen by the model, and lists the screens of a model with more", async () => {
@@ -292,12 +292,12 @@ describe("the app shell", () => {
     expect(screen.getAllByText("query").length).toBe(1);
     fireEvent.click(screen.getByText("aggregate"));
     expect(await screen.findByText("product totals screen")).toBeDefined();
-    expect(window.location.pathname).toBe(`/${AUD}/product-totals`);
+    await waitFor(() => expect(window.location.pathname).toBe(`/${AUD}/product-totals`));
     expect(link("aggregate")?.getAttribute("data-active")).toBe("true");
     expect(link("Pallets")?.getAttribute("data-active")).toBeNull();
     fireEvent.click(screen.getByText("query"));
     expect(await screen.findByText("products screen")).toBeDefined();
-    expect(window.location.pathname).toBe(`/${AUD}/products`);
+    await waitFor(() => expect(window.location.pathname).toBe(`/${AUD}/products`));
   });
 
   it("opens a record page from a screen, and shows the key from the address", async () => {
@@ -305,11 +305,11 @@ describe("the app shell", () => {
     open(`/${AUD}/products`, fetch);
     fireEvent.click(await screen.findByText("open pallet abc"));
     expect(await screen.findByText("pallet abc record")).toBeDefined();
-    expect(window.location.pathname).toBe(`/${AUD}/pallets/abc`);
+    await waitFor(() => expect(window.location.pathname).toBe(`/${AUD}/pallets/abc`));
     expect(screen.getByText("Pallets").closest("a")?.getAttribute("data-active")).toBe("true");
     fireEvent.click(screen.getByText("open pallet def"));
     expect(await screen.findByText("pallet def record")).toBeDefined();
-    expect(window.location.pathname).toBe(`/${AUD}/pallets/def`);
+    await waitFor(() => expect(window.location.pathname).toBe(`/${AUD}/pallets/def`));
   });
 
   it("shows a record page from its address after a reload", async () => {
@@ -324,10 +324,10 @@ describe("the app shell", () => {
     open(`/${AUD}/pallets/abc`, fetch);
     fireEvent.click(await screen.findByText("update"));
     expect(await screen.findByText("update abc with hi")).toBeDefined();
-    expect(window.location.pathname).toBe(`/${AUD}/pallets/abc/update`);
+    await waitFor(() => expect(window.location.pathname).toBe(`/${AUD}/pallets/abc/update`));
     fireEvent.click(screen.getByText("done"));
     expect(await screen.findByText("pallet abc record")).toBeDefined();
-    expect(window.location.pathname).toBe(`/${AUD}/pallets/abc`);
+    await waitFor(() => expect(window.location.pathname).toBe(`/${AUD}/pallets/abc`));
   });
 
   it("returns from a form that no page opened to the first screen of its section", async () => {
@@ -336,7 +336,7 @@ describe("the app shell", () => {
     expect(await screen.findByText("update abc with no note")).toBeDefined();
     fireEvent.click(screen.getByText("done"));
     expect(await screen.findByText("pallets screen")).toBeDefined();
-    expect(window.location.pathname).toBe(`/${AUD}/pallets`);
+    await waitFor(() => expect(window.location.pathname).toBe(`/${AUD}/pallets`));
   });
 
   it("shows no page for an address that names none", async () => {

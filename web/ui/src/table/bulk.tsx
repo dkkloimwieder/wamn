@@ -251,7 +251,7 @@ export function createBulk<TRow extends object>(options: {
       <BulkBar
         actions={actions}
         selected={loaded().filter(selection.isSelected).length}
-        fullyRead={load.state().fullyRead}
+        fullyRead={!load.partial()}
         onRun={run}
       />
     </Show>
