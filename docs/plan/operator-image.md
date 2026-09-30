@@ -1,6 +1,6 @@
 # Operator image
 
-Updated through: 2026-09-30, `main` at `91a6ffca9`. Findings `wamn-n5d1` and `wamn-lo7z`. The owner reviews this spec before any code.
+Updated through: 2026-09-30, `main` at `0aba5aae0`. Findings `wamn-n5d1` and `wamn-lo7z`. The owner reviews this spec before any code.
 
 ## 1. Goal
 
@@ -29,8 +29,8 @@ Measured on `main` at `91a6ffca9` on 2026-09-30.
 | Operator certificate | If the client certificate of a connection chains to the operator CA, identity treats the connection as an operator (`services/identity/src/lib.rs:345-410`). Only `POST /pats` and `POST /invitations` need it. The client certificate is the Secret `operator-dkk` in namespace `identity`, from the namespaced Issuer `identity-operator` (`deploy/gcp/identity-operator-ca.yaml`). |
 | Identity address | Service `identity` in namespace `identity`, port 443 to container port 8443. The serving certificate names only `identity.identity.svc.cluster.local` (`deploy/gcp/identity-certificate.yaml:12-13`). Its CA is `ca.crt` of the Secret `identity-tls`. |
 | Hosts-file shortcut | Sections 3.16 and 4.5 of `docs/operations/gcp.md` add `127.0.0.1 identity.identity.svc.cluster.local` to `/etc/hosts` and forward `svc/identity 8443:443`. They copy `operator-dkk` into mode 0600 files. Then they run `target/debug/wamn-ctl` on the owner's machine with `--pat-issuer https://identity.identity.svc.cluster.local:8443`. |
-| `ctl` stage | `Dockerfile:165-170`: `debian:trixie-slim`, `wamn-ctl` and `wamn-ctl-ops` from `build-ctl`, no `pg_dump`. No tool builds it. `tests/conformance/src/repo_policy/docker_provenance.rs:135, 184` checks its contents. Three examples in `deploy/platform` name `wamn-ctl:dev`. |
-| `gates` stage | `Dockerfile:194-215`: `FROM host`, with `wamn-gates`, `wamn-ctl`, `wamn-ctl-ops`, `wamn-cdc-reader` and five bench components. The gates cases run `wamn-ctl` and `wamn-cdc-reader` inside it through their executable boundary. `tools/identity-jwks-journey-run` runs `wamn-ctl` in a sleeping Pod of this image and reads its files back with `kubectl exec cat` (lines 235-259). |
+| `ctl` stage | `Dockerfile:169-174`: `debian:trixie-slim`, `wamn-ctl` and `wamn-ctl-ops` from `build-ctl`, no `pg_dump`. No tool builds it. `tests/conformance/src/repo_policy/docker_provenance.rs:135, 184` checks its contents. Three examples in `deploy/platform` name `wamn-ctl:dev`. |
+| `gates` stage | `Dockerfile:198-219`: `FROM host`, with `wamn-gates`, `wamn-ctl`, `wamn-ctl-ops`, `wamn-cdc-reader` and five bench components. The gates cases run `wamn-ctl` and `wamn-cdc-reader` inside it through their executable boundary. `tools/identity-jwks-journey-run` runs `wamn-ctl` in a sleeping Pod of this image and reads its files back with `kubectl exec cat` (lines 235-259). |
 | Cache identity | `tools/journey-image-cache:80-93` leaves the test-only paths out of the identity for `host` and `identity` only. `ctl`, `gates` and `cdc-reader` hash the whole copied tree, so a test edit gives them a new identity. |
 | Jobs that run `wamn-ctl` | Only the three examples in `deploy/platform`. They take their arguments in `args`, their credentials by `secretKeyRef`, mount no token, and are read with `kubectl logs`. `deploy/gcp` has none. |
 
