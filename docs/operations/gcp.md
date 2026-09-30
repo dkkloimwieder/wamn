@@ -997,6 +997,15 @@ gcloud dns record-sets create _dmarc.wamn.dev. --type TXT $Z --rrdatas='"v=DMARC
 
 On 2026-09-30 the Resend page showed DKIM and SPF verified, but no zone served them. The status was stale after `wamn.dev` moved to Cloud DNS, and Gmail showed "via amazonses.com" for that reason (`wamn-ghx2.8`). The four records took 4 seconds to create, and `ns-cloud-a1.googledomains.com` answered them at once. The DKIM key starts with `p=MIGfMA0GCSqGSIb3DQEBAQUAA4GNADCBiQKBgQDOXZsw`.
 
+Resend checked the domain only when it was added, so it kept the old "verified" status. Amazon SES then sent with its default return path on `amazonses.com`. After the records were added, the owner pressed the restart button on the Resend domain page, and Resend verified the domain again in 3 minutes. Check the result with one recovery mail of section 4.2.1, and read "Show original" in Gmail:
+
+- The sender line shows `noreply@wamn.dev` with no "via" part.
+- `DKIM: 'PASS' with domain wamn.dev`, from `header.s=resend`.
+- `Return-Path` ends in `@rsend.wamn.dev`, and SPF passes for that domain.
+- `dmarc=pass` for `header.from=wamn.dev`.
+
+On 2026-09-30 the mail of 13:57 UTC, before the restart, passed DKIM and DMARC with no "via" line, but its return path was on `amazonses.com`. The mail of 14:24 UTC, after the restart, passed all four checks.
+
 ### 4.3 Load balancer
 
 Create the resources in this order. The names come from the release `wamn-edge`, as in the removed Config Connector template:
