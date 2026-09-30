@@ -581,7 +581,6 @@ def main():
         require(info.st_uid == os.getuid() and stat.S_IMODE(info.st_mode) == 0o700
                 and not any(candidate.iterdir()), "evidence directory must be owned, empty, and mode 0700")
         directory = candidate
-        receiving.check_descriptors(REPOSITORY)
         edit = SourceEdit()
         evidence["command"] = [str(wamn), "dev", "--config", str(config_path), "--overlay-root",
                                str(overlay), "--watch", "--tui", "receiving"]
