@@ -119,16 +119,26 @@ struct RouteState {
     shed: u64,
 }
 
+/// What one limit counts: the requests of each route, or the requests of all
+/// routes together.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum LimitScope {
+    Route,
+    Box,
+}
+
 #[derive(Debug)]
 struct RouteLimiter {
     limit: RouteInFlightLimit,
+    scope: LimitScope,
     routes: std::sync::Mutex<HashMap<String, RouteState>>,
 }
 
 impl RouteLimiter {
-    fn new(limit: RouteInFlightLimit) -> Arc<Self> {
+    fn new(limit: RouteInFlightLimit, scope: LimitScope) -> Arc<Self> {
         let limiter = Arc::new(Self {
             limit,
+            scope,
             routes: std::sync::Mutex::new(HashMap::new()),
         });
         Self::register_metrics(&limiter);
@@ -179,8 +189,12 @@ impl RouteLimiter {
             .routes
             .lock()
             .expect("HTTP route limiter lock is not poisoned");
+        let in_flight = match self.scope {
+            LimitScope::Route => routes.get(route).map_or(0, |state| state.in_flight),
+            LimitScope::Box => routes.values().map(|state| state.in_flight).sum(),
+        };
         let state = routes.entry(route.to_string()).or_default();
-        if state.in_flight >= self.limit.get() {
+        if in_flight >= self.limit.get() {
             state.shed = state.shed.saturating_add(1);
             return None;
         }
@@ -526,6 +540,7 @@ impl std::fmt::Debug for FlowHttpRouting {
                 &self.input_schemas.validators.len(),
             )
             .field("route_in_flight_limit", &self.limiter.limit)
+            .field("route_limit_scope", &self.limiter.scope)
             .field("authenticator", &self.authenticator)
             .finish_non_exhaustive()
     }
@@ -542,7 +557,16 @@ impl FlowHttpRouting {
             release,
             input_schemas,
             authenticator: None,
-            limiter: RouteLimiter::new(route_in_flight_limit),
+            limiter: RouteLimiter::new(route_in_flight_limit, LimitScope::Route),
+        }
+    }
+
+    /// Bind this plugin to the release and one ceiling for the requests of
+    /// all routes together, as an edge box serves them.
+    pub fn with_box_limit(release: Option<Arc<LoadedRelease>>, limit: RouteInFlightLimit) -> Self {
+        Self {
+            limiter: RouteLimiter::new(limit, LimitScope::Box),
+            ..Self::new(release, limit)
         }
     }
 
@@ -2074,7 +2098,10 @@ mod tests {
 
     #[test]
     fn route_slots_are_independent_shed_without_queueing_and_release_on_drop() {
-        let limiter = RouteLimiter::new("2".parse().expect("fixture limit is valid"));
+        let limiter = RouteLimiter::new(
+            "2".parse().expect("fixture limit is valid"),
+            LimitScope::Route,
+        );
         let first = limiter.try_acquire("orders").expect("first slot");
         let second = limiter.try_acquire("orders").expect("second slot");
         assert!(limiter.try_acquire("orders").is_none());
@@ -2091,5 +2118,35 @@ mod tests {
         drop(other);
         assert_eq!(limiter.snapshot("orders"), Some((0, 1)));
         assert_eq!(limiter.snapshot("widgets"), Some((0, 0)));
+    }
+
+    #[test]
+    fn a_box_limit_counts_the_requests_of_every_route_together() {
+        let limiter = RouteLimiter::new(
+            "4".parse().expect("fixture limit is valid"),
+            LimitScope::Box,
+        );
+        let orders = [
+            limiter.try_acquire("orders").expect("first slot"),
+            limiter.try_acquire("orders").expect("second slot"),
+        ];
+        let widgets = [
+            limiter.try_acquire("widgets").expect("third slot"),
+            limiter.try_acquire("widgets").expect("fourth slot"),
+        ];
+        assert!(limiter.try_acquire("orders").is_none());
+        assert!(limiter.try_acquire("widgets").is_none());
+        assert_eq!(limiter.snapshot("orders"), Some((2, 1)));
+        assert_eq!(limiter.snapshot("widgets"), Some((2, 1)));
+
+        drop(orders);
+        let again = limiter
+            .try_acquire("widgets")
+            .expect("a slot that another route released");
+        assert_eq!(limiter.snapshot("widgets"), Some((3, 1)));
+        drop(again);
+        drop(widgets);
+        assert_eq!(limiter.snapshot("orders"), Some((0, 1)));
+        assert_eq!(limiter.snapshot("widgets"), Some((0, 1)));
     }
 }
