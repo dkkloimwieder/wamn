@@ -230,6 +230,7 @@ export function actionStub(size: number) {
 
 /** The widget table with its row buttons, its bulk action, its editable cells and its child. */
 export function ActionTable(props: { size: number }): JSX.Element {
+  // eslint-disable-next-line solid/reactivity -- a gallery state keeps one size for its life.
   const stub = actionStub(props.size);
   const [opened, setOpened] = createSignal<string | null>(null);
   return (

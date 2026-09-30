@@ -200,18 +200,25 @@ export function screen<M>(load: () => Promise<M>, pick: (module: M) => Component
 }
 
 export function Shell(props: ShellProps): JSX.Element {
+  /* eslint-disable solid/reactivity -- the fetch and the route table are fixed for the life of the page, and the router takes its routes once. */
   const options: SessionOptions = props.fetch === undefined ? {} : { fetch: props.fetch };
   const screens = props.sections.flatMap((section) => section.screens);
   const routes = props.sections.flatMap((section) =>
     [...section.screens, ...(section.routes ?? [])].map((route) => ({ route, home: section.screens[0]?.path ?? "" })),
   );
+  /* eslint-enable solid/reactivity */
   const first = screens[0];
   return (
     // The boundary holds every lazy module of a page: the layout and its
     // screen paint together, and a navigation keeps the old screen until the
     // new one loads, so no page paints half built (wamn-28n8).
     <Router root={(root) => <Suspense>{root.children}</Suspense>}>
-      <Route path="/" component={() => <ChooseEnvironment title={props.title} scope={props} options={options} home={first?.path ?? ""} />} />
+      <Route
+        path="/"
+        component={() => (
+          <ChooseEnvironment title={props.title} scope={props} options={options} home={first?.path ?? ""} />
+        )}
+      />
       <Route path="/invite" component={() => <AcceptInvitation title={props.title} options={options} />} />
       <Route path="/recover" component={() => <RecoverPassword title={props.title} options={options} />} />
       <Route path="/reset" component={() => <ResetPassword title={props.title} options={options} />} />
@@ -481,6 +488,7 @@ function ChooseEnvironment(props: {
     // Straight to the first screen: the redirect of the environment's own
     // address would paint the layout with no screen for one step (wamn-28n8).
     signIn(email, password, aud, props.options)
+      // eslint-disable-next-line solid/reactivity -- it runs from the submit handler and a button click, never in a tracked scope.
       .then(() => navigate(props.home === "" ? `/${aud}` : `/${aud}/${props.home}`))
       .catch((error: unknown) => setTrouble(signInFailed(error)));
   };
@@ -488,6 +496,7 @@ function ChooseEnvironment(props: {
     <CardPage title={props.title}>
       <SignInForm
         trouble={null}
+        // eslint-disable-next-line solid/reactivity -- submit is the form's event callback, not a tracked scope.
         submit={async (email, password) => {
           const found = await environments(email, password, props.scope, props.options);
           setReachable(found);

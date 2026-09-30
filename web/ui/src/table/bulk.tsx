@@ -148,6 +148,7 @@ export function BulkBar(props: {
         <Button
           type="button"
           disabled={props.selected === 0 || chosen() === "" || running()}
+          // eslint-disable-next-line solid/reactivity -- onClick is an event handler, not a tracked scope.
           onClick={async () => {
             setRunning(true);
             try {
@@ -284,6 +285,7 @@ export function createBulk<TRow extends object>(options: {
   return {
     /** The first column, when a bulk action exists. */
     columns: (): BuiltColumn<TRow>[] =>
+      // eslint-disable-next-line solid/reactivity -- an accessor that the table reads in JSX.
       actions.length === 0 ? [] : [selectColumn<TRow>(selection, loaded, (id) => results()[id])],
     Bar,
     Form,

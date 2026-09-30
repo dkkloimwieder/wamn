@@ -39,6 +39,7 @@ const MOVE = "fixture:row/move@1.0.0";
  */
 function bulkForm(results: (code: string) => Outcome<unknown>, forms: (readonly object[])[]) {
   return (props: { rows: readonly object[]; onEach: (outcomes: readonly Outcome<unknown>[]) => void }) => {
+    // eslint-disable-next-line solid/reactivity -- the stub records the rows the form opened with.
     forms.push(props.rows);
     return (
       <button

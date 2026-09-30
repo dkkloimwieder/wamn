@@ -143,6 +143,7 @@ function ChoiceEditor(props: {
   readonly onChange: (value: string) => void;
   readonly readRow?: ((value: string) => Promise<Member | null>) | undefined;
 }): JSX.Element {
+  // eslint-disable-next-line solid/reactivity -- the choice list of a column is fixed for the life of its cell.
   const choices = props.choices;
   const [page, setPage] = createSignal<PageState<Member>>(emptyPage<Member>());
   let search = "";
@@ -162,8 +163,10 @@ function ChoiceEditor(props: {
     const next = (outcome.value["nextCursor"] ?? null) as string | null;
     setPage(cursor === null ? firstPage(rows, next) : appendPage(page(), rows, next));
   };
+  /* eslint-disable solid/reactivity -- the cell reads its first page once, and its transport is fixed for its life. */
   void read(null);
   onCleanup(afterWrites(props.transport, () => void read(null)));
+  /* eslint-enable solid/reactivity */
   return (
     <div class="min-w-48">
       <RecordSelect<Member>

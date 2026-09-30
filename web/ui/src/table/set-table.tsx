@@ -339,12 +339,14 @@ export function SetTable<TRow extends object>(props: SetTableProps<TRow>): JSX.E
 
   // The grouping names the chosen aggregates too, so a new choice rebuilds the
   // groups, whose aggregates it changes.
+  // eslint-disable-next-line solid/reactivity -- sameMemo is a tracked memo, which the rule does not know.
   const grouping = sameMemo(() => ({
     ids: levels().map((level) => groupingId(level.field, level.bucket)),
     aggregates: props.view.aggregates,
   }));
   // The sort names what each level orders its groups by, and the aggregates,
   // so a new choice of either sorts the groups again.
+  // eslint-disable-next-line solid/reactivity -- sameMemo is a tracked memo, which the rule does not know.
   const sorting = sameMemo(() => ({
     entries: [
       ...levels().map((level) => ({ id: groupingId(level.field, level.bucket), desc: level.sort.descending })),
@@ -366,10 +368,12 @@ export function SetTable<TRow extends object>(props: SetTableProps<TRow>): JSX.E
   const globalFilter = createMemo(() =>
     props.view.search === "" ? undefined : { text: props.view.search, columns: [...searchable()] },
   );
+  // eslint-disable-next-line solid/reactivity -- sameMemo is a tracked memo, which the rule does not know.
   const columnFilters = sameMemo(() =>
     props.view.filters.map((active) => ({ id: active.field, value: active.filter })),
   );
 
+  /* eslint-disable solid/reactivity -- gridViewOptions takes accessors and reads them in the table. */
   const grid = gridViewOptions(
     () => props.grid,
     (next) => props.onGrid(next),
@@ -377,6 +381,7 @@ export function SetTable<TRow extends object>(props: SetTableProps<TRow>): JSX.E
     () => [...leadingIds(props.columns as readonly BuiltColumn<object>[]), ...levels().map((level) => level.field)],
     groupingColumns,
   );
+  /* eslint-enable solid/reactivity */
 
   const table = createTable({
     features: setFeatures,
@@ -387,6 +392,7 @@ export function SetTable<TRow extends object>(props: SetTableProps<TRow>): JSX.E
       return columns();
     },
     getRowId: (row) => props.rowId(row),
+    // eslint-disable-next-line solid/reactivity -- the merged state keeps its getters, which the table reads.
     state: mergeProps(grid.state, {
       get sorting() {
         return sorting().entries;
@@ -458,17 +464,15 @@ export function SetTable<TRow extends object>(props: SetTableProps<TRow>): JSX.E
   onMount(() => requestAnimationFrame(() => setTimeout(() => setPainted(true))));
   const totals = createMemo(() => {
     const rows = painted() ? table.getFilteredRowModel().rows : null;
-    return table
-      .getVisibleLeafColumns()
-      .map((leaf) =>
-        declared().some((candidate) => candidate.field === leaf.id)
-          ? {
-              field: leaf.id,
-              aggregate: aggregateOf(leaf.id),
-              value: rows === null ? null : aggregateRows(leaf.id, rows),
-            }
-          : { field: leaf.id, aggregate: null, value: null },
-      );
+    return table.getVisibleLeafColumns().map((leaf) =>
+      declared().some((candidate) => candidate.field === leaf.id)
+        ? {
+            field: leaf.id,
+            aggregate: aggregateOf(leaf.id),
+            value: rows === null ? null : aggregateRows(leaf.id, rows),
+          }
+        : { field: leaf.id, aggregate: null, value: null },
+    );
   });
 
   /** Saves the kept rows as CSV, in the order the table shows them, without group rows or totals. */

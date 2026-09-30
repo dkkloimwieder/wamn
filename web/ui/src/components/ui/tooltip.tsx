@@ -31,6 +31,7 @@ const Tooltip = (props: TooltipPrimitive.TooltipRootProps) => {
     } as const,
     props,
   );
+  // eslint-disable-next-line solid/reactivity -- the first side only; onCurrentPlacementChange sets every later one.
   const [side, setSide] = createSignal(sideOf(merged.placement));
   return (
     <SideContext.Provider value={side}>

@@ -91,6 +91,7 @@ describe("child tables", () => {
 
   it("end when a load drops their row", async () => {
     const [rows, setRows] = createSignal<readonly Row[]>(ROWS);
+    // eslint-disable-next-line solid/reactivity -- the helper takes the accessor and reads it in its table.
     await withChildren(async (loads) => {
       fireEvent.click(theButton("expand r0"));
       await waitFor(() => expect(screen.getByText("lines of r0")).toBeDefined());

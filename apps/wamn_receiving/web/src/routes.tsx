@@ -15,6 +15,8 @@
  * the form.
  */
 
+import { Show } from "solid-js";
+
 import { fillPath, filledValues, screen, type ScreenProps, type ShellSection } from "@wamn/shell";
 import {
   LocationListTableLabel,
@@ -39,6 +41,7 @@ const supplier = () => import("@wamn/receiving-client/components/supplier.js");
 const record = (path: string, row: { readonly id: string }) => `${path}/${encodeURIComponent(row.id)}`;
 
 /** The key of the record page, from the address. The route path always holds it. */
+// eslint-disable-next-line solid/reactivity -- every caller reads it inside a JSX prop, whose getter its component tracks.
 const key = (props: ScreenProps) => ({ id: props.params.id ?? "" });
 
 /** Returns to the page that opened the form once a submission completes. A refusal stays on the form. */
@@ -90,26 +93,35 @@ export const SECTIONS: readonly ShellSection[] = [
       },
       {
         path: "purchase-orders/:id/receiving",
+        // A table reads its fixed input once, so a new order in the address
+        // mounts a new table (wamn-erwv.6).
         component: screen(receiving, (m) => (props) => (
-          <m.ReceivingLoadReceiptScreenTable
-            transport={props.transport}
-            fixed={{ purchaseOrderId: key(props).id }}
-            onFill={{
-              "wamn-receiving:receiving/record-receipt": (fill: { readonly value?: object }) =>
-                props.open(
-                  fillPath("receipts/new", { ...fill, value: { ...fill.value, purchaseOrderId: key(props).id } }),
-                ),
-            }}
-          />
+          <Show when={key(props).id} keyed>
+            {(id) => (
+              <m.ReceivingLoadReceiptScreenTable
+                transport={props.transport}
+                fixed={{ purchaseOrderId: id }}
+                onFill={{
+                  "wamn-receiving:receiving/record-receipt": (fill: { readonly value?: object }) =>
+                    props.open(fillPath("receipts/new", { ...fill, value: { ...fill.value, purchaseOrderId: id } })),
+                }}
+              />
+            )}
+          </Show>
         )),
       },
       {
         path: "purchase-orders/:id/history",
+        // A new order in the address mounts a new table, as above (wamn-erwv.6).
         component: screen(receiving, (m) => (props) => (
-          <m.ReceivingLoadPurchaseOrderHistoryTable
-            transport={props.transport}
-            fixed={{ id: key(props).id, limit: HISTORY_PAGE }}
-          />
+          <Show when={key(props).id} keyed>
+            {(id) => (
+              <m.ReceivingLoadPurchaseOrderHistoryTable
+                transport={props.transport}
+                fixed={{ id, limit: HISTORY_PAGE }}
+              />
+            )}
+          </Show>
         )),
       },
     ],

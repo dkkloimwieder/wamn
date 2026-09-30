@@ -479,6 +479,7 @@ export function Grid<TFeatures extends TableFeatures, TRow extends object>(
     // function changes.
     get getItemKey() {
       areas();
+      // eslint-disable-next-line solid/reactivity -- the capture is the point: each change makes a new key function.
       const open = detail()?.open() ?? new Set<string>();
       return (index: number) => {
         const row = rows()[index];
@@ -631,6 +632,7 @@ export function Grid<TFeatures extends TableFeatures, TRow extends object>(
                   </Show>
                 }
               >
+                {/* eslint-disable-next-line solid/reactivity -- bodyRow takes the index accessor and reads it in JSX. */}
                 <Show when={windowed()} fallback={<For each={rows()}>{(row, index) => bodyRow(row, index)}</For>}>
                   {spacer(before())}
                   <For each={items()}>

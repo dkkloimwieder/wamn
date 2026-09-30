@@ -45,6 +45,7 @@ const product = () => import("@wamn/wms-client/components/product.js");
 const record = (path: string, row: { readonly id: string }) => `${path}/${encodeURIComponent(row.id)}`;
 
 /** The key of the record page, from the address. The route path always holds it. */
+// eslint-disable-next-line solid/reactivity -- every caller reads it inside a JSX prop, whose getter its component tracks.
 const key = (props: ScreenProps) => ({ id: props.params.id ?? "" });
 
 /** Returns to the page that opened the form once a submission completes. A refusal stays on the form. */

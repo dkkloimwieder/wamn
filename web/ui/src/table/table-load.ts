@@ -299,6 +299,7 @@ export function createQueryLoad<TRow extends object, TResult>(
   };
 
   onCleanup(
+    // eslint-disable-next-line solid/reactivity -- the listener runs on a write, an event, not in a tracked scope.
     afterWrites(transport, () => {
       if (!writing) {
         reload();
@@ -308,8 +309,7 @@ export function createQueryLoad<TRow extends object, TResult>(
 
   const complete = createMemo<boolean>((last) => (state().busy ? last : state().fullyRead), false);
   const partial = createMemo<boolean>(
-    (last) =>
-      state().busy ? last : state().endedAt !== null && !state().fullyRead && state().refusal === null,
+    (last) => (state().busy ? last : state().endedAt !== null && !state().fullyRead && state().refusal === null),
     false,
   );
   const rows = createMemo<readonly TRow[]>((last) => (state().busy && complete() ? last : state().rows), []);
