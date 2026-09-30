@@ -1240,7 +1240,10 @@ impl WamnPostgres {
     /// write it makes records an actor that names no row. The read happens
     /// here, at the bind, because the two production callers reach this
     /// function once per invocation, so the cost is one read per invocation
-    /// rather than one per transactional statement.
+    /// rather than one per transactional statement. An item that begins its
+    /// own transaction binds twice, and its second bind is
+    /// [`bind_item_session_claims`](Self::bind_item_session_claims), which
+    /// does not read again.
     ///
     /// The answer holds for the life of the binding because the bind IS the
     /// read. Nothing re-reads inside one invocation, so a users row deleted in
@@ -1255,6 +1258,38 @@ impl WamnPostgres {
     /// A platform principal carries its own `wamn:<component>` row, which
     /// provisioning writes, so it binds like any other principal.
     pub async fn bind_session_claims(
+        &self,
+        component_id: &str,
+        claims: &SessionClaims,
+    ) -> anyhow::Result<()> {
+        self.write_session_claims(component_id, claims)?;
+        // An acquisition that names no principal reads nothing. The
+        // record-history triggers already refuse such a write with
+        // actor-required.
+        if let Some(user_id) = claims.user_id.as_deref() {
+            let project = claims.project.as_deref().unwrap_or(DEFAULT_PROJECT);
+            self.require_provisioned_principal(&claims.tenant, project, user_id)
+                .await?;
+        }
+        Ok(())
+    }
+
+    /// Bind `claims` as [`bind_session_claims`](Self::bind_session_claims)
+    /// does, without its principal read, for the call inside an item whose
+    /// transaction a bind of the same claims began (`wamn-uq4r`).
+    ///
+    /// The item's bind read the principal's users row moments before, in the
+    /// same invocation, so a second read answers nothing new and takes a
+    /// second guest connection. The caller passes the claims of that bind.
+    pub fn bind_item_session_claims(
+        &self,
+        component_id: &str,
+        claims: &SessionClaims,
+    ) -> anyhow::Result<()> {
+        self.write_session_claims(component_id, claims)
+    }
+
+    fn write_session_claims(
         &self,
         component_id: &str,
         claims: &SessionClaims,
@@ -1338,14 +1373,6 @@ impl WamnPostgres {
             .write()
             .expect("current_run lock poisoned")
             .remove(component_id);
-        // An acquisition that names no principal reads nothing. The
-        // record-history triggers already refuse such a write with
-        // actor-required.
-        if let Some(user_id) = claims.user_id.as_deref() {
-            let project = claims.project.as_deref().unwrap_or(DEFAULT_PROJECT);
-            self.require_provisioned_principal(&claims.tenant, project, user_id)
-                .await?;
-        }
         Ok(())
     }
 

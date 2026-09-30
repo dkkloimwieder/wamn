@@ -198,12 +198,15 @@ impl NativePolicy {
         facts: &NativeFacts,
     ) -> anyhow::Result<()> {
         let claims = facts.acquisition.executing_claims(facts.caller.as_ref());
-        let Err(error) = self
-            .resources
-            .postgres
-            .bind_session_claims(scope, &claims)
-            .await
-        else {
+        let postgres = &self.resources.postgres;
+        // An item's transaction began under a bind of these same facts, which
+        // read the principal, so the call inside it does not read again.
+        let bound = if facts.item.is_some() {
+            postgres.bind_item_session_claims(scope, &claims)
+        } else {
+            postgres.bind_session_claims(scope, &claims).await
+        };
+        let Err(error) = bound else {
             return Ok(());
         };
         if error.downcast_ref::<UnprovisionedPrincipal>().is_some() {
