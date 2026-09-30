@@ -784,10 +784,10 @@ impl Fixture {
                     claims: SessionClaims {
                         tenant: "tenant-a".into(),
                         project: Some("test".into()),
-                        release: Some(ReleaseIdentity {
-                            effective_release_id: 1,
-                            manifest_digest: self.policy.resources.release.manifest().digest(),
-                        }),
+                        release: Some(ReleaseIdentity::for_test(
+                            1,
+                            self.policy.resources.release.manifest().digest(),
+                        )),
                         ..SessionClaims::default()
                     },
                     invocation: ConnectionInvocation {

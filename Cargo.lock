@@ -6488,6 +6488,7 @@ dependencies = [
  "wamn-platform-identity",
  "wamn-project-state",
  "wamn-run-state",
+ "wamn-runtime",
  "wamn-session",
  "wamn-test-postgres",
  "wash-runtime",

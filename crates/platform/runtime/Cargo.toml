@@ -102,6 +102,10 @@ wamn-test-postgres = { workspace = true }
 wamn-engine = { workspace = true, features = ["test-util"] }
 # The session verifier tests bind a fixed token clock.
 wamn-session = { workspace = true, features = ["test-util"] }
+# M-TEST-UTIL: the unit tests and tests/common build a ReleaseIdentity with no
+# loaded release. Under resolver 2 a dev-dependency feature does not reach a
+# lib-only build, so production code still builds it only from a loaded release.
+wamn-runtime = { path = ".", features = ["test-util"] }
 # The write log store runs the intent store case set.
 wamn-run-state = { workspace = true, features = ["tenant-key", "test-util"] }
 

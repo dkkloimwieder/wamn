@@ -161,13 +161,13 @@ fn acquisition_binds_its_executing_principal_and_operation() {
             role: Some("operator".to_owned()),
             user_id: Some("user-a".to_owned()),
             operation: None,
-            release: Some(ReleaseIdentity {
-                effective_release_id: 7,
-                manifest_digest: wamn_catalog::ManifestDigest::parse(
+            release: Some(ReleaseIdentity::for_test(
+                7,
+                wamn_catalog::ManifestDigest::parse(
                     "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
                 )
                 .expect("valid manifest digest"),
-            }),
+            )),
         },
         invocation: ConnectionInvocation {
             origin: ConnectionOrigin {

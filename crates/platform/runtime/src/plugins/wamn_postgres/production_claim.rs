@@ -943,8 +943,8 @@ async fn claim_in_transaction(
     // PostgreSQL compares the effective release id to the immutable admission
     // pin and records only the digest.
     let release = release.filter(|_| selected.candidate.is_none());
-    let effective_release_id: Option<i32> = release.map(|identity| identity.effective_release_id);
-    let manifest_digest: Option<&str> = release.map(|identity| identity.manifest_digest.as_str());
+    let effective_release_id: Option<i32> = release.map(ReleaseIdentity::effective_release_id);
+    let manifest_digest: Option<&str> = release.map(|identity| identity.manifest_digest().as_str());
     // The grant is the one abortable write left in this transaction, so it runs
     // in its own subtransaction: a database refusal rolls back to the savepoint
     // instead of the whole transaction, leaving the advance above committable.

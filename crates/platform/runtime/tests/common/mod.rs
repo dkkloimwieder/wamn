@@ -19,7 +19,7 @@ use tokio_postgres::{Client, GenericClient, NoTls};
 use url::Url;
 use wamn_run_state::AuthorityClass;
 use wamn_runtime::plugins::wamn_postgres::{
-    ClassCredentials, ProductionClaimResult, WamnPostgres, WamnPostgresConfig,
+    ClassCredentials, ProductionClaimResult, ReleaseIdentity, WamnPostgres, WamnPostgresConfig,
 };
 
 pub const TENANT: &str = "claim-live";
@@ -488,16 +488,20 @@ pub async fn install_fixture(url: &str) -> anyhow::Result<LiveFixture> {
     plugin.set_runner(COMPONENT, COMPONENT)?;
     plugin.set_release_identity(
         COMPONENT,
-        POD_EFFECTIVE_RELEASE_ID,
-        wamn_catalog::ManifestDigest::parse(POD_MANIFEST_DIGEST)?,
+        ReleaseIdentity::for_test(
+            POD_EFFECTIVE_RELEASE_ID,
+            wamn_catalog::ManifestDigest::parse(POD_MANIFEST_DIGEST)?,
+        ),
     )?;
     plugin.set_tenant(ROLLED_COMPONENT, TENANT)?;
     plugin.set_schema(ROLLED_COMPONENT, SCHEMA)?;
     plugin.set_runner(ROLLED_COMPONENT, ROLLED_COMPONENT)?;
     plugin.set_release_identity(
         ROLLED_COMPONENT,
-        ROLLED_EFFECTIVE_RELEASE_ID,
-        wamn_catalog::ManifestDigest::parse(ROLLED_MANIFEST_DIGEST)?,
+        ReleaseIdentity::for_test(
+            ROLLED_EFFECTIVE_RELEASE_ID,
+            wamn_catalog::ManifestDigest::parse(ROLLED_MANIFEST_DIGEST)?,
+        ),
     )?;
 
     Ok(LiveFixture {

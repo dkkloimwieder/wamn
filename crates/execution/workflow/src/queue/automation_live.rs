@@ -298,10 +298,10 @@ async fn run_automation(mode: Mode) -> anyhow::Result<()> {
                 runner: Some("automation-live".to_owned()),
                 user_id: Some(PlatformComponent::Executor.principal_id().to_string()),
                 operation: Some(PlatformComponent::Executor.principal_name().to_owned()),
-                release: Some(ReleaseIdentity {
-                    effective_release_id: 1,
-                    manifest_digest: release.release().manifest_digest.clone(),
-                }),
+                release: Some(ReleaseIdentity::for_test(
+                    1,
+                    release.release().manifest_digest.clone(),
+                )),
                 ..SessionClaims::default()
             },
         )
