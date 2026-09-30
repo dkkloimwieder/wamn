@@ -5,7 +5,7 @@ use wamn_client_tui::{screen, submission};
 pub static GET_SPEC: screen::ScreenSpec = screen::ScreenSpec {
     model: "sample",
     name: "get",
-    operation: "edge-samples:sample/get@1.0.0",
+    operation: "edge-samples:sample/get@2.0.0",
     type_: "get",
     input: crate::sample::SAMPLE_GET_INPUT_SCHEMA,
     input_schema: Some(
@@ -74,7 +74,7 @@ pub fn get(binding: submission::SessionBinding) -> screen::Screen {
 pub static READ_SPEC: screen::ScreenSpec = screen::ScreenSpec {
     model: "sample",
     name: "read",
-    operation: "edge-samples:sample/read@1.0.0",
+    operation: "edge-samples:sample/read@2.0.0",
     type_: "command",
     input: crate::sample::SAMPLE_READ_INPUT_SCHEMA,
     input_schema: None,
@@ -125,7 +125,7 @@ pub fn read(binding: submission::SessionBinding) -> screen::Screen {
 pub static RECORD_SPEC: screen::ScreenSpec = screen::ScreenSpec {
     model: "sample",
     name: "record",
-    operation: "edge-samples:sample/record@1.0.0",
+    operation: "edge-samples:sample/record@2.0.0",
     type_: "command",
     input: crate::sample::SAMPLE_RECORD_INPUT_SCHEMA,
     input_schema: Some(

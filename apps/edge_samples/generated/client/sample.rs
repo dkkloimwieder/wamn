@@ -38,14 +38,14 @@ pub const SAMPLE_FIELDS: &[FieldDescriptor] = &[
     },
 ];
 
-/// Input for `edge-samples:sample/get@1.0.0`.
+/// Input for `edge-samples:sample/get@2.0.0`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct SampleGetRequest {
     /// `uuid`
     pub id: uuid::Uuid,
 }
 
-/// Result of `edge-samples:sample/get@1.0.0`.
+/// Result of `edge-samples:sample/get@2.0.0`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct SampleGetResult {
     /// `timestamptz`
@@ -58,7 +58,7 @@ pub struct SampleGetResult {
     pub id: uuid::Uuid,
 }
 
-/// Input descriptors for `edge-samples:sample/get@1.0.0`.
+/// Input descriptors for `edge-samples:sample/get@2.0.0`.
 pub const SAMPLE_GET_INPUT: &[FieldDescriptor] = &[FieldDescriptor {
     path: "id",
     type_name: "uuid",
@@ -66,7 +66,7 @@ pub const SAMPLE_GET_INPUT: &[FieldDescriptor] = &[FieldDescriptor {
     values: &[],
 }];
 
-/// Result descriptors for `edge-samples:sample/get@1.0.0`.
+/// Result descriptors for `edge-samples:sample/get@2.0.0`.
 pub const SAMPLE_GET_RESULT: &[FieldDescriptor] = &[
     FieldDescriptor {
         path: "captured_at",
@@ -164,10 +164,10 @@ pub const SAMPLE_GET_REQUIRES_COMPOSITION: bool = false;
 pub const SAMPLE_GET_REPLAY: Option<&str> = None;
 pub const SAMPLE_GET_RESPONSE_CONTRACT: Option<&str> = Some("{\"type\":\"array\"}");
 pub const SAMPLE_GET_RESULT_OPAQUE: bool = false;
-/// The grant a caller presents to invoke `edge-samples:sample/get@1.0.0`.
-pub const SAMPLE_GET_GRANT: &str = "edge-samples:sample/get@1.0.0";
+/// The grant a caller presents to invoke `edge-samples:sample/get@2.0.0`.
+pub const SAMPLE_GET_GRANT: &str = "edge-samples:sample/get@2.0.0";
 
-/// Typed refusals `edge-samples:sample/get@1.0.0` declares.
+/// Typed refusals `edge-samples:sample/get@2.0.0` declares.
 pub const SAMPLE_GET_ERRORS: &[&str] = &[
     "internal_error",
     "invalid_input",
@@ -177,7 +177,7 @@ pub const SAMPLE_GET_ERRORS: &[&str] = &[
     "timeout",
 ];
 
-/// Where the release publishes `edge-samples:sample/get@1.0.0`.
+/// Where the release publishes `edge-samples:sample/get@2.0.0`.
 ///
 /// Method and template only — the host and base URL are the client's
 /// deployment config, not this release's facts.
@@ -189,7 +189,7 @@ pub fn get_route() -> RouteMetadata {
     }
 }
 
-/// Invoke `edge-samples:sample/get@1.0.0` through a bound client.
+/// Invoke `edge-samples:sample/get@2.0.0` through a bound client.
 ///
 /// # Errors
 ///
@@ -204,7 +204,7 @@ pub async fn get(
         .await
 }
 
-/// Input for `edge-samples:sample/read@1.0.0`.
+/// Input for `edge-samples:sample/read@2.0.0`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct SampleReadRequest {
     /// `text`
@@ -221,7 +221,7 @@ pub struct SampleReadRequestValue {
     pub frame: String,
 }
 
-/// Result of `edge-samples:sample/read@1.0.0`.
+/// Result of `edge-samples:sample/read@2.0.0`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct SampleReadResult {
     /// `timestamptz`
@@ -230,7 +230,7 @@ pub struct SampleReadResult {
     pub frame: String,
 }
 
-/// Input descriptors for `edge-samples:sample/read@1.0.0`.
+/// Input descriptors for `edge-samples:sample/read@2.0.0`.
 pub const SAMPLE_READ_INPUT: &[FieldDescriptor] = &[
     FieldDescriptor {
         path: "request_id",
@@ -252,7 +252,7 @@ pub const SAMPLE_READ_INPUT: &[FieldDescriptor] = &[
     },
 ];
 
-/// Result descriptors for `edge-samples:sample/read@1.0.0`.
+/// Result descriptors for `edge-samples:sample/read@2.0.0`.
 pub const SAMPLE_READ_RESULT: &[FieldDescriptor] = &[
     FieldDescriptor {
         path: "captured_at",
@@ -352,16 +352,16 @@ pub const SAMPLE_READ_REQUIRES_COMPOSITION: bool = false;
 pub const SAMPLE_READ_REPLAY: Option<&str> = None;
 pub const SAMPLE_READ_RESPONSE_CONTRACT: Option<&str> = None;
 pub const SAMPLE_READ_RESULT_OPAQUE: bool = false;
-/// The grant a caller presents to invoke `edge-samples:sample/read@1.0.0`.
-pub const SAMPLE_READ_GRANT: &str = "edge-samples:sample/read@1.0.0";
+/// The grant a caller presents to invoke `edge-samples:sample/read@2.0.0`.
+pub const SAMPLE_READ_GRANT: &str = "edge-samples:sample/read@2.0.0";
 
-/// Typed refusals `edge-samples:sample/read@1.0.0` declares.
+/// Typed refusals `edge-samples:sample/read@2.0.0` declares.
 pub const SAMPLE_READ_ERRORS: &[&str] = &["internal_error", "invalid_input", "permission_denied"];
 
-// `edge-samples:sample/read@1.0.0` is not published over HTTP by this release, so it has no route
+// `edge-samples:sample/read@2.0.0` is not published over HTTP by this release, so it has no route
 // and no invoke function. It remains listed for its types and descriptors.
 
-/// Input for `edge-samples:sample/record@1.0.0`.
+/// Input for `edge-samples:sample/record@2.0.0`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct SampleRecordRequest {
     /// `text`
@@ -380,14 +380,14 @@ pub struct SampleRecordRequestValue {
     pub idempotency_key: String,
 }
 
-/// Result of `edge-samples:sample/record@1.0.0`.
+/// Result of `edge-samples:sample/record@2.0.0`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct SampleRecordResult {
     /// `uuid`
     pub sample_id: uuid::Uuid,
 }
 
-/// Input descriptors for `edge-samples:sample/record@1.0.0`.
+/// Input descriptors for `edge-samples:sample/record@2.0.0`.
 pub const SAMPLE_RECORD_INPUT: &[FieldDescriptor] = &[
     FieldDescriptor {
         path: "request_id",
@@ -415,7 +415,7 @@ pub const SAMPLE_RECORD_INPUT: &[FieldDescriptor] = &[
     },
 ];
 
-/// Result descriptors for `edge-samples:sample/record@1.0.0`.
+/// Result descriptors for `edge-samples:sample/record@2.0.0`.
 pub const SAMPLE_RECORD_RESULT: &[FieldDescriptor] = &[FieldDescriptor {
     path: "sample_id",
     type_name: "uuid",
@@ -506,10 +506,10 @@ pub const SAMPLE_RECORD_REQUIRES_COMPOSITION: bool = false;
 pub const SAMPLE_RECORD_REPLAY: Option<&str> = Some("claim");
 pub const SAMPLE_RECORD_RESPONSE_CONTRACT: Option<&str> = Some("{\"type\":\"array\"}");
 pub const SAMPLE_RECORD_RESULT_OPAQUE: bool = false;
-/// The grant a caller presents to invoke `edge-samples:sample/record@1.0.0`.
-pub const SAMPLE_RECORD_GRANT: &str = "edge-samples:sample/record@1.0.0";
+/// The grant a caller presents to invoke `edge-samples:sample/record@2.0.0`.
+pub const SAMPLE_RECORD_GRANT: &str = "edge-samples:sample/record@2.0.0";
 
-/// Typed refusals `edge-samples:sample/record@1.0.0` declares.
+/// Typed refusals `edge-samples:sample/record@2.0.0` declares.
 pub const SAMPLE_RECORD_ERRORS: &[&str] = &[
     "idempotency_conflict",
     "internal_error",
@@ -519,7 +519,7 @@ pub const SAMPLE_RECORD_ERRORS: &[&str] = &[
     "timeout",
 ];
 
-/// Where the release publishes `edge-samples:sample/record@1.0.0`.
+/// Where the release publishes `edge-samples:sample/record@2.0.0`.
 ///
 /// Method and template only — the host and base URL are the client's
 /// deployment config, not this release's facts.
@@ -531,7 +531,7 @@ pub fn record_route() -> RouteMetadata {
     }
 }
 
-/// Invoke `edge-samples:sample/record@1.0.0` through a bound client.
+/// Invoke `edge-samples:sample/record@2.0.0` through a bound client.
 ///
 /// # Errors
 ///

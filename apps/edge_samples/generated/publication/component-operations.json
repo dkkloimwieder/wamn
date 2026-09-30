@@ -1,1 +1,1 @@
-{"samples":{"edge-samples:sample/get@1.0.0":{"input-ports":[{"name":"input","schema":{"$ref":"generated/routes/sample/get.json"}}],"output-ports":[{"name":"main","schema":{"type":"array"}}],"parameters":[],"registered-operation":"edge-samples:sample/get@1.0.0"}}}
+{"samples":{"edge-samples:sample/get@2.0.0":{"input-ports":[{"name":"input","schema":{"$ref":"generated/routes/sample/get.json"}}],"output-ports":[{"name":"main","schema":{"type":"array"}}],"parameters":[],"registered-operation":"edge-samples:sample/get@2.0.0"}}}
