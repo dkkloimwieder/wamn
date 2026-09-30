@@ -265,7 +265,7 @@ pub(super) fn render_pat_secret(
             "annotations": {
                 "wamn.io/credential-purpose": purpose.purpose,
                 "wamn.io/principal-id": principal_id,
-                "wamn.io/principal-kind": "service",
+                "wamn.io/principal-type": "service",
                 "wamn.io/principal-subject": subject,
                 "wamn.io/project-role": purpose.role,
                 "wamn.io/pat-prefix": prefix,

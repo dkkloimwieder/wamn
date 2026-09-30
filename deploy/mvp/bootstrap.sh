@@ -115,7 +115,7 @@ secret_template+='{{with .metadata.labels}}{{with index . "wamn.project"}}{{.}}{
 secret_template+='{{with .metadata.labels}}{{with index . "wamn.env"}}{{.}}{{end}}{{end}}|'
 secret_template+='{{with .metadata.annotations}}{{with index . "wamn.io/credential-purpose"}}{{.}}{{end}}{{end}}|'
 secret_template+='{{with .metadata.annotations}}{{with index . "wamn.io/principal-id"}}{{.}}{{end}}{{end}}|'
-secret_template+='{{with .metadata.annotations}}{{with index . "wamn.io/principal-kind"}}{{.}}{{end}}{{end}}|'
+secret_template+='{{with .metadata.annotations}}{{with index . "wamn.io/principal-type"}}{{.}}{{end}}{{end}}|'
 secret_template+='{{with .metadata.annotations}}{{with index . "wamn.io/principal-subject"}}{{.}}{{end}}{{end}}|'
 secret_template+='{{with .metadata.annotations}}{{with index . "wamn.io/project-role"}}{{.}}{{end}}{{end}}|'
 secret_template+='{{with .metadata.annotations}}{{with index . "wamn.io/pat-prefix"}}{{.}}{{end}}{{end}}|'
@@ -133,7 +133,7 @@ inspect_secret() {
     local found record expires_at parsed_expiry now token_state
     local identity_valid=false expiry_canonical=false expiry_future=false
     local actual_name actual_namespace managed_by component actual_org actual_project actual_env
-    local actual_purpose principal_id principal_kind actual_subject actual_role prefix
+    local actual_purpose principal_id principal_type actual_subject actual_role prefix
     local pending_issued pending_revoke
 
     found=$("$kubectl_bin" get secret "$secret_name" --namespace "$namespace" \
@@ -149,7 +149,7 @@ inspect_secret() {
     record=$("$kubectl_bin" get secret "$secret_name" --namespace "$namespace" \
         -o "go-template=$secret_template")
     IFS='|' read -r actual_name actual_namespace managed_by component actual_org \
-        actual_project actual_env actual_purpose principal_id principal_kind \
+        actual_project actual_env actual_purpose principal_id principal_type \
         actual_subject actual_role prefix expires_at pending_issued pending_revoke \
         token_state <<<"$record"
 
@@ -158,7 +158,7 @@ inspect_secret() {
         $actual_org == "$org" && $actual_project == "$project" &&
         $actual_env == "$env_name" && $actual_purpose == "$purpose" &&
         $principal_id =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ &&
-        $principal_kind == service && $actual_subject == "$subject" &&
+        $principal_type == service && $actual_subject == "$subject" &&
         $actual_role == "$role" && $prefix =~ ^[0-9a-f]{16}$ ]]; then
         identity_valid=true
     fi

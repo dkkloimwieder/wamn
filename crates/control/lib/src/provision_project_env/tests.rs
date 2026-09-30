@@ -114,7 +114,7 @@ fn pat_literals_and_secret_documents_are_exact() {
                 "annotations": {
                     "wamn.io/credential-purpose": "management-author",
                     "wamn.io/principal-id": "6d3f2d1c-0000-4000-8000-00000000abcd",
-                    "wamn.io/principal-kind": "service",
+                    "wamn.io/principal-type": "service",
                     "wamn.io/principal-subject": "wamn-management-author-demo--billing--dev",
                     "wamn.io/project-role": "project-author",
                     "wamn.io/pat-prefix": "0123456789abcdef",
