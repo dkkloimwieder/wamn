@@ -621,7 +621,7 @@ impl Source {
             "source",
             [
                 ("source-id", id.as_str().as_bytes()),
-                ("kind", kind_bytes.as_slice()),
+                ("type", kind_bytes.as_slice()),
                 ("definition", definition.as_bytes()),
             ],
         )
@@ -721,7 +721,7 @@ impl Attachment {
         let kind_bytes = serde_json::to_vec(&draft.kind).expect("attachment kind serializes");
         let mut owned = vec![
             ("attachment-id", draft.id.as_str().as_bytes().to_vec()),
-            ("kind", kind_bytes),
+            ("type", kind_bytes),
             ("artifact", artifact.canonical_bytes()),
             ("definition", draft.definition.as_bytes().to_vec()),
         ];
@@ -873,7 +873,7 @@ mod tests {
                 "attachment-definition",
                 vec![
                     ("attachment-id", b"id".as_slice()),
-                    ("kind", b"kind".as_slice()),
+                    ("type", b"kind".as_slice()),
                     ("artifact", b"artifact".as_slice()),
                     ("definition", b"definition".as_slice()),
                     ("resolved-source", b"source".as_slice()),

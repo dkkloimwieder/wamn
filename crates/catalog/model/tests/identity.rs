@@ -153,7 +153,7 @@ fn definition_hash_pins_attachment_artifact_and_complete_resolved_sources() {
     }
 
     assert_eq!(
-        baseline_hash, "sha256:a462df2c4cea6093754704bde3f8c5433555e463f6b58fd99c54cfc13d2aa604",
+        baseline_hash, "sha256:973b4709ba0ad6eda6c7e65e930015b33e5398e92d80de7ed0bd1c1c17164cf0",
         "definition frame sequence changed"
     );
 }
