@@ -93,7 +93,10 @@ pub const PROJECT_RECORD_TABLE_SQL: &str =
     include_str!("../../../../deploy/sql/app-schema-migrations.sql");
 
 /// Every file of `deploy/sql/migrations/system/`, in order.
-pub const SYSTEM_MIGRATIONS: &[Migration] = &[];
+pub const SYSTEM_MIGRATIONS: &[Migration] = &[Migration {
+    relative_path: "migrations/system/0001_capture_gap.sql",
+    sql: include_str!("../../../../deploy/sql/migrations/system/0001_capture_gap.sql"),
+}];
 
 /// Every file of `deploy/sql/migrations/project/`, in order.
 pub const PROJECT_MIGRATIONS: &[Migration] = &[];
