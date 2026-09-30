@@ -280,15 +280,24 @@ mod tests {
         );
     }
 
+    /// A new compilation cache directory beside the test binary, in Cargo's
+    /// target directory. The tests do not remove it: after a compile, the
+    /// Wasmtime cache worker thread writes a `.stats` file on its own, and
+    /// dropping the engine does not wait for that thread
+    /// (wasmtime-internal-cache 48.0.2, worker.rs:87; its only wait is
+    /// test-only, worker.rs:143). A removal can therefore meet a file that the
+    /// worker creates meanwhile (wamn-jcdc). `cargo clean` removes the cache.
     fn cache_test_path() -> PathBuf {
         let nonce = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .expect("the test clock is after the Unix epoch")
             .as_nanos();
-        std::env::temp_dir().join(format!(
-            "wamn-wasmtime-cache-{}-{nonce}",
-            std::process::id()
-        ))
+        std::env::current_exe()
+            .expect("the test binary has a path")
+            .parent()
+            .expect("the test binary is in a directory")
+            .join("wamn-wasmtime-cache")
+            .join(format!("{}-{nonce}", std::process::id()))
     }
 
     fn file_count(path: &Path) -> usize {
@@ -628,7 +637,6 @@ interface tcp-create-socket {
             results.push((*builder, probe_unlisted_connect(engine).await));
         }
         drop(engines);
-        fs::remove_dir_all(&cache_dir).expect("remove the isolated compilation cache");
         for (builder, code) in results {
             assert_eq!(
                 code,
@@ -694,8 +702,6 @@ interface tcp-create-socket {
             file_count(&cache_dir) > 0,
             "compiling through the serving engine must create a persistent cache artifact"
         );
-        drop(engine);
-        fs::remove_dir_all(cache_dir).expect("remove the isolated compilation cache");
     }
 
     #[test]
