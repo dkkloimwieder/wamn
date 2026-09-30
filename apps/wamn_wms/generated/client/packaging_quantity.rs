@@ -257,8 +257,6 @@ pub struct PackagingQuantityQueryRequest {
     pub cursor: Option<String>,
     /// `int32`, omittable
     pub limit: Option<i32>,
-    /// `keyset`, omittable
-    pub pagination: Option<serde_json::Value>,
 }
 
 /// Result of `wamn-wms:packaging-quantity/query@1.0.0`.
@@ -289,12 +287,6 @@ pub const PACKAGING_QUANTITY_QUERY_INPUT: &[FieldDescriptor] = &[
     FieldDescriptor {
         path: "limit",
         type_name: "int32",
-        nullable: true,
-        values: &[],
-    },
-    FieldDescriptor {
-        path: "pagination",
-        type_name: "keyset",
         nullable: true,
         values: &[],
     },
@@ -357,18 +349,6 @@ pub const PACKAGING_QUANTITY_QUERY_INPUT_SCHEMA: &[wamn_client::descriptor::Fiel
         field: FieldDescriptor {
             path: "limit",
             type_name: "int32",
-            nullable: false,
-            values: &[],
-        },
-        required: false,
-        minimum: None,
-        maximum: None,
-        children: &[],
-    },
-    wamn_client::descriptor::FieldSchema {
-        field: FieldDescriptor {
-            path: "pagination",
-            type_name: "keyset",
             nullable: false,
             values: &[],
         },

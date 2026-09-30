@@ -269,7 +269,7 @@ END $$;
 
 RESET ROLE;
 DO $$ BEGIN
-  ASSERT (SELECT array_agg(kind || '|' || tenant_id || '|' || operation || '|' || changed_by
+  ASSERT (SELECT array_agg(type || '|' || tenant_id || '|' || operation || '|' || changed_by
                            ORDER BY position)
             FROM app_system.configurations_history
            WHERE row_key = '{{"tenant_id": "{TENANT}", "config_key": "probe"}}'::jsonb)
@@ -314,7 +314,7 @@ fn author_sql_appends_history_only_through_the_configurations_trigger() {
             ),
         };
         format!(
-            "'INSERT INTO app_system.{history} ({column}tenant_id, row_key, kind, operation, \
+            "'INSERT INTO app_system.{history} ({column}tenant_id, row_key, type, operation, \
              changed_by, changed_at, transaction_id, before, after){overriding} VALUES \
              ({value}''{TENANT}'', ''{row_key}'', ''delete'', ''admin:forge-history'', \
              ''{U1}'', now(), 1, ''{{}}'', ''{{}}'')'"

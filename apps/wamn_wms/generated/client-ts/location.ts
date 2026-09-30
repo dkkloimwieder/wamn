@@ -2,7 +2,7 @@
 //
 // `location` operations of package `wamn_wms`.
 
-import type { FieldMap, JsonValue, OperationRoute, Outcome, Timestamptz, Transport, Uuid } from "@wamn/web-runtime";
+import type { FieldMap, OperationRoute, Outcome, Timestamptz, Transport, Uuid } from "@wamn/web-runtime";
 import { reviveOutcome, toWire } from "@wamn/web-runtime";
 
 /** Input for `wamn-wms:location/create@1.0.0`. */
@@ -168,8 +168,6 @@ export interface LocationQueryRequest {
   filter?: LocationQueryRequestFilter;
   /** `int32`, omittable */
   limit?: number;
-  /** `keyset`, omittable */
-  pagination?: JsonValue;
 }
 
 export interface LocationQueryRequestFilter {
@@ -187,7 +185,6 @@ export const LOCATION_QUERY_REQUEST_FIELDS: FieldMap = {
     },
   },
   "limit": "limit",
-  "pagination": "pagination",
 };
 
 /** One row of `wamn-wms:location/query@1.0.0`. */

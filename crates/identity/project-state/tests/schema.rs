@@ -74,7 +74,7 @@ fn wamn_app_privileges(table: &str) -> &'static str {
         | "permissions_history"
         | "api_keys_history" => "",
         "configurations_history" => {
-            "INSERT (tenant_id, row_key, kind, operation, changed_by, changed_at, \
+            "INSERT (tenant_id, row_key, type, operation, changed_by, changed_at, \
              transaction_id, before, after)"
         }
         // The write log: a claim, its read, its result, and the delete of a
@@ -749,7 +749,7 @@ fn app_system_relations_log_every_row_change_on_postgres() {
         .iter()
         .map(|table| {
             format!(
-                "SELECT '{name}' AS relation, position, tenant_id, kind, operation, \
+                "SELECT '{name}' AS relation, position, tenant_id, type, operation, \
                         changed_by, row_key, before, after \
                    FROM {qualified}_history",
                 name = table.name,
@@ -760,7 +760,7 @@ fn app_system_relations_log_every_row_change_on_postgres() {
         .join(" UNION ALL ");
     writeln!(
         script,
-        "SELECT 'entry|' || relation || '|' || tenant_id || '|' || kind || '|' || operation \
+        "SELECT 'entry|' || relation || '|' || tenant_id || '|' || type || '|' || operation \
                 || '|' || changed_by || '|' || row_key::text \
                 || '|' || (before - '{{created_at,created_by,updated_at,updated_by}}'::text[])::text \
                 || '|' || (after - '{{created_at,created_by,updated_at,updated_by}}'::text[])::text \

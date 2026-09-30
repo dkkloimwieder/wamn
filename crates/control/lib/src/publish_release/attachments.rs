@@ -454,11 +454,11 @@ mod tests {
         ),
         (
             "widget-maker-query-http",
-            "sha256:c05db7c32a18e19fca6de41609e3666339ba2ef0336e294ed2ae7333fd42de75",
+            "sha256:6956775292590cfff211573833979b9d13ce915e6543a97a574551bb69ac8f9a",
         ),
         (
             "widget-query-http",
-            "sha256:e318322f89e385d021d176849c8926f18c538f3f00d9badacf112e75ab391b3f",
+            "sha256:288363232c077fe60133f6191c06d222bce9982b5cedd6f7805f5ed0382f1125",
         ),
         (
             "widget-record-batch-http",
@@ -474,10 +474,10 @@ mod tests {
         ),
     ];
     const FIXTURE_ATTACHMENTS_DIGEST: &str =
-        "sha256:7a386d6f6698fb3d3a3e5d457ada27736c9d50efb2aa3d6d228f8b1bf2a40d5f";
+        "sha256:39be5e1be0c9196ea30b12dfac907705fbc82e968887ffa8d527b2dbe5c27458";
     /// The rendered fixture declaration, before generation wrote its entries.
     const FIXTURE_DECLARATION_DIGEST: &str =
-        "sha256:891bfea270f69a15666dabeba69eaa26b7c48256de0c34dc00fe5a2bce12e6f6";
+        "sha256:e6770014d60668c5e8ed4f12a078576c2c884c398cff8ca1782b09e601e63fef";
 
     /// A publish of the fixture reads the same routes and the same component
     /// declaration from the generated entries as from the authored ones they

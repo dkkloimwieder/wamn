@@ -163,6 +163,11 @@ pub(super) fn input_fields_of(contract: &Value) -> Vec<FieldIr> {
     }
     if let Some(members) = contract.as_object() {
         for (name, member) in members {
+            // `pagination` states the cursor protocol, and its `type` names
+            // that protocol (`keyset`), not an input.
+            if name == "pagination" {
+                continue;
+            }
             let Some(type_name) = member.get("type").and_then(Value::as_str) else {
                 continue;
             };

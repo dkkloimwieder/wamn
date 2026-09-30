@@ -2,7 +2,7 @@
 //
 // `product` operations of package `wamn_wms`.
 
-import type { FieldMap, JsonValue, OperationRoute, Outcome, Timestamptz, Transport, Uuid } from "@wamn/web-runtime";
+import type { FieldMap, OperationRoute, Outcome, Timestamptz, Transport, Uuid } from "@wamn/web-runtime";
 import { reviveOutcome, toWire } from "@wamn/web-runtime";
 
 /** Input for `wamn-wms:product/create@1.0.0`. */
@@ -168,8 +168,6 @@ export interface ProductQueryRequest {
   filter?: ProductQueryRequestFilter;
   /** `int32`, omittable */
   limit?: number;
-  /** `keyset`, omittable */
-  pagination?: JsonValue;
 }
 
 export interface ProductQueryRequestFilter {
@@ -187,7 +185,6 @@ export const PRODUCT_QUERY_REQUEST_FIELDS: FieldMap = {
     },
   },
   "limit": "limit",
-  "pagination": "pagination",
 };
 
 /** One row of `wamn-wms:product/query@1.0.0`. */

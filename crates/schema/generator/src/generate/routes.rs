@@ -20,6 +20,11 @@ pub(super) fn route_input_schema(contract: &Value) -> Value {
     // Every top-level member that states a type is one input: the request
     // identity, the key, the idempotency key and the revision.
     for (name, member) in contract.as_object().into_iter().flatten() {
+        // `pagination` states the cursor protocol, and its `type` names that
+        // protocol (`keyset`), not an input. The cursor input is added below.
+        if name == "pagination" {
+            continue;
+        }
         let Some(ty) = member.get("type").and_then(Value::as_str) else {
             continue;
         };

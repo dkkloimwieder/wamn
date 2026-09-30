@@ -2,7 +2,7 @@
 //
 // `packaging` operations of package `wamn_wms`.
 
-import type { FieldMap, JsonValue, OperationRoute, Outcome, Timestamptz, Transport, Uuid } from "@wamn/web-runtime";
+import type { FieldMap, OperationRoute, Outcome, Timestamptz, Transport, Uuid } from "@wamn/web-runtime";
 import { reviveOutcome, toWire } from "@wamn/web-runtime";
 
 /** Input for `wamn-wms:packaging/create@1.0.0`. */
@@ -221,8 +221,6 @@ export interface PackagingQueryRequest {
   filter?: PackagingQueryRequestFilter;
   /** `int32`, omittable */
   limit?: number;
-  /** `keyset`, omittable */
-  pagination?: JsonValue;
   /** `object`, omittable */
   sort?: PackagingQueryRequestSort;
 }
@@ -255,7 +253,6 @@ export const PACKAGING_QUERY_REQUEST_FIELDS: FieldMap = {
     },
   },
   "limit": "limit",
-  "pagination": "pagination",
   "sort": {
     member: "sort",
     fields: {
