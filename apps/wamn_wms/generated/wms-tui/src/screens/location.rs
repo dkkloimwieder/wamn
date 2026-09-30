@@ -5,7 +5,7 @@ use wamn_client_tui::{screen, submission};
 pub static CREATE_SPEC: screen::ScreenSpec = screen::ScreenSpec {
     model: "location",
     name: "create",
-    operation: "wamn-wms:location/create@1.0.0",
+    operation: "wamn-wms:location/create@2.0.0",
     type_: "create",
     input: crate::location::LOCATION_CREATE_INPUT_SCHEMA,
     input_schema: Some(
@@ -88,7 +88,7 @@ pub fn create(binding: submission::SessionBinding) -> screen::Screen {
 pub static GET_SPEC: screen::ScreenSpec = screen::ScreenSpec {
     model: "location",
     name: "get",
-    operation: "wamn-wms:location/get@1.0.0",
+    operation: "wamn-wms:location/get@2.0.0",
     type_: "get",
     input: crate::location::LOCATION_GET_INPUT_SCHEMA,
     input_schema: Some(
@@ -157,7 +157,7 @@ pub fn get(binding: submission::SessionBinding) -> screen::Screen {
 pub static QUERY_SPEC: screen::ScreenSpec = screen::ScreenSpec {
     model: "location",
     name: "query",
-    operation: "wamn-wms:location/query@1.0.0",
+    operation: "wamn-wms:location/query@2.0.0",
     type_: "query",
     input: crate::location::LOCATION_QUERY_INPUT_SCHEMA,
     input_schema: Some(
@@ -221,7 +221,7 @@ pub fn query(binding: submission::SessionBinding) -> screen::Screen {
 pub static UPDATE_SPEC: screen::ScreenSpec = screen::ScreenSpec {
     model: "location",
     name: "update",
-    operation: "wamn-wms:location/update@1.0.0",
+    operation: "wamn-wms:location/update@2.0.0",
     type_: "update",
     input: crate::location::LOCATION_UPDATE_INPUT_SCHEMA,
     input_schema: Some(
@@ -287,7 +287,7 @@ pub static UPDATE_SPEC: screen::ScreenSpec = screen::ScreenSpec {
         key_input: Some("id"),
     }),
     revision: Some(screen::RevisionBinding {
-        read_operation: "wamn-wms:location/get@1.0.0",
+        read_operation: "wamn-wms:location/get@2.0.0",
         read_key_input: "id",
         key_field: "id",
         revision_field: "row_version",

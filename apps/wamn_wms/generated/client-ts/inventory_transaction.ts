@@ -5,18 +5,18 @@
 import type { FieldMap, Numeric, OperationRoute, Outcome, Timestamptz, Transport, Uuid } from "@wamn/web-runtime";
 import { reviveOutcome, toWire } from "@wamn/web-runtime";
 
-/** Input for `wamn-wms:inventory-transaction/get@1.0.0`. */
+/** Input for `wamn-wms:inventory-transaction/get@2.0.0`. */
 export interface InventoryTransactionGetRequest {
   /** `uuid` */
   id: Uuid;
 }
 
-/** What `wamn-wms:inventory-transaction/get@1.0.0` calls its input members. */
+/** What `wamn-wms:inventory-transaction/get@2.0.0` calls its input members. */
 export const INVENTORY_TRANSACTION_GET_REQUEST_FIELDS: FieldMap = {
   "id": "id",
 };
 
-/** Result of `wamn-wms:inventory-transaction/get@1.0.0`. */
+/** Result of `wamn-wms:inventory-transaction/get@2.0.0`. */
 export interface InventoryTransactionGetResult {
   /** `timestamptz` */
   readonly createdAt: Timestamptz;
@@ -42,7 +42,7 @@ export interface InventoryTransactionGetResult {
   readonly toStatus: string | null;
 }
 
-/** What `wamn-wms:inventory-transaction/get@1.0.0` calls its result members. */
+/** What `wamn-wms:inventory-transaction/get@2.0.0` calls its result members. */
 export const INVENTORY_TRANSACTION_GET_RESULT_FIELDS: FieldMap = {
   "created_at": "createdAt",
   "created_by": "createdBy",
@@ -58,13 +58,13 @@ export const INVENTORY_TRANSACTION_GET_RESULT_FIELDS: FieldMap = {
 };
 
 /**
- * Where the release publishes `wamn-wms:inventory-transaction/get@1.0.0`.
+ * Where the release publishes `wamn-wms:inventory-transaction/get@2.0.0`.
  *
  * Method and template only. The host and base URL are the application's
  * deployment configuration, not this release's facts.
  */
 export const INVENTORY_TRANSACTION_GET_ROUTE: OperationRoute = {
-  operation: "wamn-wms:inventory-transaction/get@1.0.0",
+  operation: "wamn-wms:inventory-transaction/get@2.0.0",
   method: "GET",
   template: "/inventory_transaction/get",
   freshOnly: false,
@@ -86,7 +86,7 @@ export const INVENTORY_TRANSACTION_GET_ROUTE: OperationRoute = {
   },
 };
 
-/** Invoke `wamn-wms:inventory-transaction/get@1.0.0` through a transport the application supplies. */
+/** Invoke `wamn-wms:inventory-transaction/get@2.0.0` through a transport the application supplies. */
 export async function get(
   transport: Transport,
   items: readonly InventoryTransactionGetRequest[],
@@ -100,7 +100,7 @@ export async function get(
   );
 }
 
-/** Input for `wamn-wms:inventory-transaction/query@1.0.0`. */
+/** Input for `wamn-wms:inventory-transaction/query@2.0.0`. */
 export interface InventoryTransactionQueryRequest {
   /** `text`, omittable */
   cursor?: string;
@@ -108,13 +108,13 @@ export interface InventoryTransactionQueryRequest {
   limit?: number;
 }
 
-/** What `wamn-wms:inventory-transaction/query@1.0.0` calls its input members. */
+/** What `wamn-wms:inventory-transaction/query@2.0.0` calls its input members. */
 export const INVENTORY_TRANSACTION_QUERY_REQUEST_FIELDS: FieldMap = {
   "cursor": "cursor",
   "limit": "limit",
 };
 
-/** One row of `wamn-wms:inventory-transaction/query@1.0.0`. */
+/** One row of `wamn-wms:inventory-transaction/query@2.0.0`. */
 export interface InventoryTransactionQueryRow {
   /** `timestamptz` */
   readonly createdAt: Timestamptz;
@@ -140,7 +140,7 @@ export interface InventoryTransactionQueryRow {
   readonly toStatus: string | null;
 }
 
-/** Result of `wamn-wms:inventory-transaction/query@1.0.0`. */
+/** Result of `wamn-wms:inventory-transaction/query@2.0.0`. */
 export interface InventoryTransactionQueryResult {
   /** The rows this page carries. */
   readonly item: readonly InventoryTransactionQueryRow[];
@@ -148,7 +148,7 @@ export interface InventoryTransactionQueryResult {
   readonly nextCursor: string | null;
 }
 
-/** What `wamn-wms:inventory-transaction/query@1.0.0` calls its result members. */
+/** What `wamn-wms:inventory-transaction/query@2.0.0` calls its result members. */
 export const INVENTORY_TRANSACTION_QUERY_RESULT_FIELDS: FieldMap = {
   "item": {
     member: "item",
@@ -170,13 +170,13 @@ export const INVENTORY_TRANSACTION_QUERY_RESULT_FIELDS: FieldMap = {
 };
 
 /**
- * Where the release publishes `wamn-wms:inventory-transaction/query@1.0.0`.
+ * Where the release publishes `wamn-wms:inventory-transaction/query@2.0.0`.
  *
  * Method and template only. The host and base URL are the application's
  * deployment configuration, not this release's facts.
  */
 export const INVENTORY_TRANSACTION_QUERY_ROUTE: OperationRoute = {
-  operation: "wamn-wms:inventory-transaction/query@1.0.0",
+  operation: "wamn-wms:inventory-transaction/query@2.0.0",
   method: "GET",
   template: "/inventory_transaction/query",
   freshOnly: false,
@@ -197,7 +197,7 @@ export const INVENTORY_TRANSACTION_QUERY_ROUTE: OperationRoute = {
   },
 };
 
-/** Invoke `wamn-wms:inventory-transaction/query@1.0.0` through a transport the application supplies. */
+/** Invoke `wamn-wms:inventory-transaction/query@2.0.0` through a transport the application supplies. */
 export async function query(
   transport: Transport,
   items: readonly InventoryTransactionQueryRequest[],

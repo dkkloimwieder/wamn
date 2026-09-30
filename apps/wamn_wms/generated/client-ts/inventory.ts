@@ -5,7 +5,7 @@
 import type { FieldMap, Numeric, OperationRoute, Outcome, Timestamptz, Transport, Uuid } from "@wamn/web-runtime";
 import { reviveOutcome, toWire } from "@wamn/web-runtime";
 
-/** Input for `wamn-wms:inventory/adjust@1.0.0`. */
+/** Input for `wamn-wms:inventory/adjust@2.0.0`. */
 export interface InventoryAdjustRequest {
   /** `text` */
   requestId: string;
@@ -32,7 +32,7 @@ export interface InventoryAdjustRequestValue {
   status: "available" | "held";
 }
 
-/** What `wamn-wms:inventory/adjust@1.0.0` calls its input members. */
+/** What `wamn-wms:inventory/adjust@2.0.0` calls its input members. */
 export const INVENTORY_ADJUST_REQUEST_FIELDS: FieldMap = {
   "request_id": "requestId",
   "value": {
@@ -50,7 +50,7 @@ export const INVENTORY_ADJUST_REQUEST_FIELDS: FieldMap = {
   },
 };
 
-/** Result of `wamn-wms:inventory/adjust@1.0.0`. */
+/** Result of `wamn-wms:inventory/adjust@2.0.0`. */
 export interface InventoryAdjustResult {
   /** `numeric` */
   readonly adjustedQuantity: Numeric;
@@ -64,7 +64,7 @@ export interface InventoryAdjustResult {
   readonly transactionIds: readonly Uuid[];
 }
 
-/** What `wamn-wms:inventory/adjust@1.0.0` calls its result members. */
+/** What `wamn-wms:inventory/adjust@2.0.0` calls its result members. */
 export const INVENTORY_ADJUST_RESULT_FIELDS: FieldMap = {
   "adjusted_quantity": "adjustedQuantity",
   "packaging_id": "packagingId",
@@ -74,13 +74,13 @@ export const INVENTORY_ADJUST_RESULT_FIELDS: FieldMap = {
 };
 
 /**
- * Where the release publishes `wamn-wms:inventory/adjust@1.0.0`.
+ * Where the release publishes `wamn-wms:inventory/adjust@2.0.0`.
  *
  * Method and template only. The host and base URL are the application's
  * deployment configuration, not this release's facts.
  */
 export const INVENTORY_ADJUST_ROUTE: OperationRoute = {
-  operation: "wamn-wms:inventory/adjust@1.0.0",
+  operation: "wamn-wms:inventory/adjust@2.0.0",
   method: "POST",
   template: "/inventory/adjust",
   freshOnly: false,
@@ -105,7 +105,7 @@ export const INVENTORY_ADJUST_ROUTE: OperationRoute = {
   },
 };
 
-/** Invoke `wamn-wms:inventory/adjust@1.0.0` through a transport the application supplies. */
+/** Invoke `wamn-wms:inventory/adjust@2.0.0` through a transport the application supplies. */
 export async function adjust(
   transport: Transport,
   items: readonly InventoryAdjustRequest[],
@@ -119,14 +119,14 @@ export async function adjust(
   );
 }
 
-/** Input for `wamn-wms:inventory/aggregate@1.0.0`. */
+/** Input for `wamn-wms:inventory/aggregate@2.0.0`. */
 export interface InventoryAggregateRequest {
 }
 
-/** What `wamn-wms:inventory/aggregate@1.0.0` calls its input members. */
+/** What `wamn-wms:inventory/aggregate@2.0.0` calls its input members. */
 export const INVENTORY_AGGREGATE_REQUEST_FIELDS: FieldMap = {};
 
-/** One row of `wamn-wms:inventory/aggregate@1.0.0`. */
+/** One row of `wamn-wms:inventory/aggregate@2.0.0`. */
 export interface InventoryAggregateRow {
   /** `uuid` */
   readonly locationId: Uuid;
@@ -140,13 +140,13 @@ export interface InventoryAggregateRow {
   readonly status: "available" | "held";
 }
 
-/** Result of `wamn-wms:inventory/aggregate@1.0.0`. */
+/** Result of `wamn-wms:inventory/aggregate@2.0.0`. */
 export interface InventoryAggregateResult {
   /** Every row the release served. */
   readonly rows: readonly InventoryAggregateRow[];
 }
 
-/** What `wamn-wms:inventory/aggregate@1.0.0` calls its result members. */
+/** What `wamn-wms:inventory/aggregate@2.0.0` calls its result members. */
 export const INVENTORY_AGGREGATE_RESULT_FIELDS: FieldMap = {
   "rows": {
     member: "rows",
@@ -161,13 +161,13 @@ export const INVENTORY_AGGREGATE_RESULT_FIELDS: FieldMap = {
 };
 
 /**
- * Where the release publishes `wamn-wms:inventory/aggregate@1.0.0`.
+ * Where the release publishes `wamn-wms:inventory/aggregate@2.0.0`.
  *
  * Method and template only. The host and base URL are the application's
  * deployment configuration, not this release's facts.
  */
 export const INVENTORY_AGGREGATE_ROUTE: OperationRoute = {
-  operation: "wamn-wms:inventory/aggregate@1.0.0",
+  operation: "wamn-wms:inventory/aggregate@2.0.0",
   method: "GET",
   template: "/inventory/aggregate",
   freshOnly: false,
@@ -188,7 +188,7 @@ export const INVENTORY_AGGREGATE_ROUTE: OperationRoute = {
   },
 };
 
-/** Invoke `wamn-wms:inventory/aggregate@1.0.0` through a transport the application supplies. */
+/** Invoke `wamn-wms:inventory/aggregate@2.0.0` through a transport the application supplies. */
 export async function aggregate(
   transport: Transport,
   items: readonly InventoryAggregateRequest[],
@@ -202,7 +202,7 @@ export async function aggregate(
   );
 }
 
-/** Input for `wamn-wms:inventory/merge@1.0.0`. */
+/** Input for `wamn-wms:inventory/merge@2.0.0`. */
 export interface InventoryMergeRequest {
   /** `text` */
   requestId: string;
@@ -223,7 +223,7 @@ export interface InventoryMergeRequestValue {
   targetPackagingId: Uuid;
 }
 
-/** What `wamn-wms:inventory/merge@1.0.0` calls its input members. */
+/** What `wamn-wms:inventory/merge@2.0.0` calls its input members. */
 export const INVENTORY_MERGE_REQUEST_FIELDS: FieldMap = {
   "request_id": "requestId",
   "value": {
@@ -238,7 +238,7 @@ export const INVENTORY_MERGE_REQUEST_FIELDS: FieldMap = {
   },
 };
 
-/** Result of `wamn-wms:inventory/merge@1.0.0`. */
+/** Result of `wamn-wms:inventory/merge@2.0.0`. */
 export interface InventoryMergeResult {
   /** `int32` */
   readonly rowVersion: number;
@@ -252,7 +252,7 @@ export interface InventoryMergeResult {
   readonly transactionIds: readonly Uuid[];
 }
 
-/** What `wamn-wms:inventory/merge@1.0.0` calls its result members. */
+/** What `wamn-wms:inventory/merge@2.0.0` calls its result members. */
 export const INVENTORY_MERGE_RESULT_FIELDS: FieldMap = {
   "row_version": "rowVersion",
   "source_packaging_id": "sourcePackagingId",
@@ -262,13 +262,13 @@ export const INVENTORY_MERGE_RESULT_FIELDS: FieldMap = {
 };
 
 /**
- * Where the release publishes `wamn-wms:inventory/merge@1.0.0`.
+ * Where the release publishes `wamn-wms:inventory/merge@2.0.0`.
  *
  * Method and template only. The host and base URL are the application's
  * deployment configuration, not this release's facts.
  */
 export const INVENTORY_MERGE_ROUTE: OperationRoute = {
-  operation: "wamn-wms:inventory/merge@1.0.0",
+  operation: "wamn-wms:inventory/merge@2.0.0",
   method: "POST",
   template: "/inventory/merge",
   freshOnly: false,
@@ -292,7 +292,7 @@ export const INVENTORY_MERGE_ROUTE: OperationRoute = {
   },
 };
 
-/** Invoke `wamn-wms:inventory/merge@1.0.0` through a transport the application supplies. */
+/** Invoke `wamn-wms:inventory/merge@2.0.0` through a transport the application supplies. */
 export async function merge(
   transport: Transport,
   items: readonly InventoryMergeRequest[],
@@ -306,7 +306,7 @@ export async function merge(
   );
 }
 
-/** Input for `wamn-wms:inventory/move@1.0.0`. */
+/** Input for `wamn-wms:inventory/move@2.0.0`. */
 export interface InventoryMoveRequest {
   /** `text` */
   requestId: string;
@@ -327,7 +327,7 @@ export interface InventoryMoveRequestValue {
   toLocationId: Uuid;
 }
 
-/** What `wamn-wms:inventory/move@1.0.0` calls its input members. */
+/** What `wamn-wms:inventory/move@2.0.0` calls its input members. */
 export const INVENTORY_MOVE_REQUEST_FIELDS: FieldMap = {
   "request_id": "requestId",
   "value": {
@@ -342,7 +342,7 @@ export const INVENTORY_MOVE_REQUEST_FIELDS: FieldMap = {
   },
 };
 
-/** Result of `wamn-wms:inventory/move@1.0.0`. */
+/** Result of `wamn-wms:inventory/move@2.0.0`. */
 export interface InventoryMoveResult {
   /** `uuid` */
   readonly locationId: Uuid;
@@ -352,7 +352,7 @@ export interface InventoryMoveResult {
   readonly rowVersion: number;
 }
 
-/** What `wamn-wms:inventory/move@1.0.0` calls its result members. */
+/** What `wamn-wms:inventory/move@2.0.0` calls its result members. */
 export const INVENTORY_MOVE_RESULT_FIELDS: FieldMap = {
   "location_id": "locationId",
   "packaging_id": "packagingId",
@@ -360,13 +360,13 @@ export const INVENTORY_MOVE_RESULT_FIELDS: FieldMap = {
 };
 
 /**
- * Where the release publishes `wamn-wms:inventory/move@1.0.0`.
+ * Where the release publishes `wamn-wms:inventory/move@2.0.0`.
  *
  * Method and template only. The host and base URL are the application's
  * deployment configuration, not this release's facts.
  */
 export const INVENTORY_MOVE_ROUTE: OperationRoute = {
-  operation: "wamn-wms:inventory/move@1.0.0",
+  operation: "wamn-wms:inventory/move@2.0.0",
   method: "POST",
   template: "/inventory/move",
   freshOnly: false,
@@ -391,7 +391,7 @@ export const INVENTORY_MOVE_ROUTE: OperationRoute = {
   },
 };
 
-/** Invoke `wamn-wms:inventory/move@1.0.0` through a transport the application supplies. */
+/** Invoke `wamn-wms:inventory/move@2.0.0` through a transport the application supplies. */
 export async function move(
   transport: Transport,
   items: readonly InventoryMoveRequest[],
@@ -405,7 +405,7 @@ export async function move(
   );
 }
 
-/** Input for `wamn-wms:inventory/split@1.0.0`. */
+/** Input for `wamn-wms:inventory/split@2.0.0`. */
 export interface InventorySplitRequest {
   /** `text` */
   requestId: string;
@@ -436,7 +436,7 @@ export interface InventorySplitRequestValue {
   toLocationId: Uuid;
 }
 
-/** What `wamn-wms:inventory/split@1.0.0` calls its input members. */
+/** What `wamn-wms:inventory/split@2.0.0` calls its input members. */
 export const INVENTORY_SPLIT_REQUEST_FIELDS: FieldMap = {
   "request_id": "requestId",
   "value": {
@@ -456,7 +456,7 @@ export const INVENTORY_SPLIT_REQUEST_FIELDS: FieldMap = {
   },
 };
 
-/** Result of `wamn-wms:inventory/split@1.0.0`. */
+/** Result of `wamn-wms:inventory/split@2.0.0`. */
 export interface InventorySplitResult {
   /** `uuid` */
   readonly newPackagingId: Uuid;
@@ -470,7 +470,7 @@ export interface InventorySplitResult {
   readonly transactionIds: readonly Uuid[];
 }
 
-/** What `wamn-wms:inventory/split@1.0.0` calls its result members. */
+/** What `wamn-wms:inventory/split@2.0.0` calls its result members. */
 export const INVENTORY_SPLIT_RESULT_FIELDS: FieldMap = {
   "new_packaging_id": "newPackagingId",
   "row_version": "rowVersion",
@@ -480,13 +480,13 @@ export const INVENTORY_SPLIT_RESULT_FIELDS: FieldMap = {
 };
 
 /**
- * Where the release publishes `wamn-wms:inventory/split@1.0.0`.
+ * Where the release publishes `wamn-wms:inventory/split@2.0.0`.
  *
  * Method and template only. The host and base URL are the application's
  * deployment configuration, not this release's facts.
  */
 export const INVENTORY_SPLIT_ROUTE: OperationRoute = {
-  operation: "wamn-wms:inventory/split@1.0.0",
+  operation: "wamn-wms:inventory/split@2.0.0",
   method: "POST",
   template: "/inventory/split",
   freshOnly: false,
@@ -513,7 +513,7 @@ export const INVENTORY_SPLIT_ROUTE: OperationRoute = {
   },
 };
 
-/** Invoke `wamn-wms:inventory/split@1.0.0` through a transport the application supplies. */
+/** Invoke `wamn-wms:inventory/split@2.0.0` through a transport the application supplies. */
 export async function split(
   transport: Transport,
   items: readonly InventorySplitRequest[],

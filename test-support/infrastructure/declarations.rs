@@ -262,7 +262,7 @@ mod tests {
     fn gate_input() -> GateInput {
         GateInput {
             command_id: "gate-wamn_wms-inventory_move_and_label".into(),
-            package: PackageCoordinate::new("wamn_wms", "1.0.0").unwrap(),
+            package: PackageCoordinate::new("wamn_wms", "2.0.0").unwrap(),
             scope: AuthoringScope {
                 project_id: "fixture".into(),
                 environment: "dev".into(),
@@ -287,7 +287,7 @@ mod tests {
         };
         assert_eq!(gate.scope, input.scope);
         assert_eq!(gate.package_id, "wamn_wms");
-        assert_eq!(gate.package_version, "1.0.0");
+        assert_eq!(gate.package_version, "2.0.0");
         assert_eq!(
             gate.document,
             serde_json::from_str::<Value>(WIRING).unwrap()

@@ -1,4 +1,4 @@
-package wamn-wms:inventory@1.0.0;
+package wamn-wms:inventory@2.0.0;
 
 interface adjust {
   use wamn:node/types@0.1.0.{emission, node-context, node-error};

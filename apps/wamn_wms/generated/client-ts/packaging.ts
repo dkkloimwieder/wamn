@@ -5,7 +5,7 @@
 import type { FieldMap, OperationRoute, Outcome, Timestamptz, Transport, Uuid } from "@wamn/web-runtime";
 import { reviveOutcome, toWire } from "@wamn/web-runtime";
 
-/** Input for `wamn-wms:packaging/create@1.0.0`. */
+/** Input for `wamn-wms:packaging/create@2.0.0`. */
 export interface PackagingCreateRequest {
   /** `text` */
   idempotencyKey: string;
@@ -21,7 +21,7 @@ export interface PackagingCreateRequest {
   type: "bin" | "case" | "loose" | "pallet" | "tote";
 }
 
-/** What `wamn-wms:packaging/create@1.0.0` calls its input members. */
+/** What `wamn-wms:packaging/create@2.0.0` calls its input members. */
 export const PACKAGING_CREATE_REQUEST_FIELDS: FieldMap = {
   "idempotency_key": "idempotencyKey",
   "location_id": "locationId",
@@ -31,7 +31,7 @@ export const PACKAGING_CREATE_REQUEST_FIELDS: FieldMap = {
   "type": "type",
 };
 
-/** Result of `wamn-wms:packaging/create@1.0.0`. */
+/** Result of `wamn-wms:packaging/create@2.0.0`. */
 export interface PackagingCreateResult {
   /** `timestamptz` */
   readonly createdAt: Timestamptz;
@@ -57,7 +57,7 @@ export interface PackagingCreateResult {
   readonly updatedBy: Uuid;
 }
 
-/** What `wamn-wms:packaging/create@1.0.0` calls its result members. */
+/** What `wamn-wms:packaging/create@2.0.0` calls its result members. */
 export const PACKAGING_CREATE_RESULT_FIELDS: FieldMap = {
   "created_at": "createdAt",
   "created_by": "createdBy",
@@ -73,13 +73,13 @@ export const PACKAGING_CREATE_RESULT_FIELDS: FieldMap = {
 };
 
 /**
- * Where the release publishes `wamn-wms:packaging/create@1.0.0`.
+ * Where the release publishes `wamn-wms:packaging/create@2.0.0`.
  *
  * Method and template only. The host and base URL are the application's
  * deployment configuration, not this release's facts.
  */
 export const PACKAGING_CREATE_ROUTE: OperationRoute = {
-  operation: "wamn-wms:packaging/create@1.0.0",
+  operation: "wamn-wms:packaging/create@2.0.0",
   method: "POST",
   template: "/packaging/create",
   freshOnly: false,
@@ -104,7 +104,7 @@ export const PACKAGING_CREATE_ROUTE: OperationRoute = {
   },
 };
 
-/** Invoke `wamn-wms:packaging/create@1.0.0` through a transport the application supplies. */
+/** Invoke `wamn-wms:packaging/create@2.0.0` through a transport the application supplies. */
 export async function create(
   transport: Transport,
   items: readonly PackagingCreateRequest[],
@@ -118,18 +118,18 @@ export async function create(
   );
 }
 
-/** Input for `wamn-wms:packaging/get@1.0.0`. */
+/** Input for `wamn-wms:packaging/get@2.0.0`. */
 export interface PackagingGetRequest {
   /** `uuid` */
   id: Uuid;
 }
 
-/** What `wamn-wms:packaging/get@1.0.0` calls its input members. */
+/** What `wamn-wms:packaging/get@2.0.0` calls its input members. */
 export const PACKAGING_GET_REQUEST_FIELDS: FieldMap = {
   "id": "id",
 };
 
-/** Result of `wamn-wms:packaging/get@1.0.0`. */
+/** Result of `wamn-wms:packaging/get@2.0.0`. */
 export interface PackagingGetResult {
   /** `timestamptz` */
   readonly createdAt: Timestamptz;
@@ -155,7 +155,7 @@ export interface PackagingGetResult {
   readonly updatedBy: Uuid;
 }
 
-/** What `wamn-wms:packaging/get@1.0.0` calls its result members. */
+/** What `wamn-wms:packaging/get@2.0.0` calls its result members. */
 export const PACKAGING_GET_RESULT_FIELDS: FieldMap = {
   "created_at": "createdAt",
   "created_by": "createdBy",
@@ -171,13 +171,13 @@ export const PACKAGING_GET_RESULT_FIELDS: FieldMap = {
 };
 
 /**
- * Where the release publishes `wamn-wms:packaging/get@1.0.0`.
+ * Where the release publishes `wamn-wms:packaging/get@2.0.0`.
  *
  * Method and template only. The host and base URL are the application's
  * deployment configuration, not this release's facts.
  */
 export const PACKAGING_GET_ROUTE: OperationRoute = {
-  operation: "wamn-wms:packaging/get@1.0.0",
+  operation: "wamn-wms:packaging/get@2.0.0",
   method: "GET",
   template: "/packaging/get",
   freshOnly: false,
@@ -199,7 +199,7 @@ export const PACKAGING_GET_ROUTE: OperationRoute = {
   },
 };
 
-/** Invoke `wamn-wms:packaging/get@1.0.0` through a transport the application supplies. */
+/** Invoke `wamn-wms:packaging/get@2.0.0` through a transport the application supplies. */
 export async function get(
   transport: Transport,
   items: readonly PackagingGetRequest[],
@@ -213,7 +213,7 @@ export async function get(
   );
 }
 
-/** Input for `wamn-wms:packaging/query@1.0.0`. */
+/** Input for `wamn-wms:packaging/query@2.0.0`. */
 export interface PackagingQueryRequest {
   /** `text`, omittable */
   cursor?: string;
@@ -241,7 +241,7 @@ export interface PackagingQueryRequestSort {
   field: "created_at" | "location_id" | "packaging_code" | "updated_at";
 }
 
-/** What `wamn-wms:packaging/query@1.0.0` calls its input members. */
+/** What `wamn-wms:packaging/query@2.0.0` calls its input members. */
 export const PACKAGING_QUERY_REQUEST_FIELDS: FieldMap = {
   "cursor": "cursor",
   "filter": {
@@ -262,7 +262,7 @@ export const PACKAGING_QUERY_REQUEST_FIELDS: FieldMap = {
   },
 };
 
-/** One row of `wamn-wms:packaging/query@1.0.0`. */
+/** One row of `wamn-wms:packaging/query@2.0.0`. */
 export interface PackagingQueryRow {
   /** `timestamptz` */
   readonly createdAt: Timestamptz;
@@ -288,7 +288,7 @@ export interface PackagingQueryRow {
   readonly updatedBy: Uuid;
 }
 
-/** Result of `wamn-wms:packaging/query@1.0.0`. */
+/** Result of `wamn-wms:packaging/query@2.0.0`. */
 export interface PackagingQueryResult {
   /** The rows this page carries. */
   readonly item: readonly PackagingQueryRow[];
@@ -296,7 +296,7 @@ export interface PackagingQueryResult {
   readonly nextCursor: string | null;
 }
 
-/** What `wamn-wms:packaging/query@1.0.0` calls its result members. */
+/** What `wamn-wms:packaging/query@2.0.0` calls its result members. */
 export const PACKAGING_QUERY_RESULT_FIELDS: FieldMap = {
   "item": {
     member: "item",
@@ -318,13 +318,13 @@ export const PACKAGING_QUERY_RESULT_FIELDS: FieldMap = {
 };
 
 /**
- * Where the release publishes `wamn-wms:packaging/query@1.0.0`.
+ * Where the release publishes `wamn-wms:packaging/query@2.0.0`.
  *
  * Method and template only. The host and base URL are the application's
  * deployment configuration, not this release's facts.
  */
 export const PACKAGING_QUERY_ROUTE: OperationRoute = {
-  operation: "wamn-wms:packaging/query@1.0.0",
+  operation: "wamn-wms:packaging/query@2.0.0",
   method: "GET",
   template: "/packaging/query",
   freshOnly: false,
@@ -345,7 +345,7 @@ export const PACKAGING_QUERY_ROUTE: OperationRoute = {
   },
 };
 
-/** Invoke `wamn-wms:packaging/query@1.0.0` through a transport the application supplies. */
+/** Invoke `wamn-wms:packaging/query@2.0.0` through a transport the application supplies. */
 export async function query(
   transport: Transport,
   items: readonly PackagingQueryRequest[],

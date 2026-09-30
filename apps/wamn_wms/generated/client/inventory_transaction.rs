@@ -74,14 +74,14 @@ pub const INVENTORY_TRANSACTION_FIELDS: &[FieldDescriptor] = &[
     },
 ];
 
-/// Input for `wamn-wms:inventory-transaction/get@1.0.0`.
+/// Input for `wamn-wms:inventory-transaction/get@2.0.0`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct InventoryTransactionGetRequest {
     /// `uuid`
     pub id: uuid::Uuid,
 }
 
-/// Result of `wamn-wms:inventory-transaction/get@1.0.0`.
+/// Result of `wamn-wms:inventory-transaction/get@2.0.0`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct InventoryTransactionGetResult {
     /// `timestamptz`
@@ -108,7 +108,7 @@ pub struct InventoryTransactionGetResult {
     pub to_status: Option<String>,
 }
 
-/// Input descriptors for `wamn-wms:inventory-transaction/get@1.0.0`.
+/// Input descriptors for `wamn-wms:inventory-transaction/get@2.0.0`.
 pub const INVENTORY_TRANSACTION_GET_INPUT: &[FieldDescriptor] = &[FieldDescriptor {
     path: "id",
     type_name: "uuid",
@@ -116,7 +116,7 @@ pub const INVENTORY_TRANSACTION_GET_INPUT: &[FieldDescriptor] = &[FieldDescripto
     values: &[],
 }];
 
-/// Result descriptors for `wamn-wms:inventory-transaction/get@1.0.0`.
+/// Result descriptors for `wamn-wms:inventory-transaction/get@2.0.0`.
 pub const INVENTORY_TRANSACTION_GET_RESULT: &[FieldDescriptor] = &[
     FieldDescriptor {
         path: "created_at",
@@ -340,10 +340,10 @@ pub const INVENTORY_TRANSACTION_GET_REQUIRES_COMPOSITION: bool = false;
 pub const INVENTORY_TRANSACTION_GET_REPLAY: Option<&str> = None;
 pub const INVENTORY_TRANSACTION_GET_RESPONSE_CONTRACT: Option<&str> = Some("{\"type\":\"array\"}");
 pub const INVENTORY_TRANSACTION_GET_RESULT_OPAQUE: bool = false;
-/// The grant a caller presents to invoke `wamn-wms:inventory-transaction/get@1.0.0`.
-pub const INVENTORY_TRANSACTION_GET_GRANT: &str = "wamn-wms:inventory-transaction/get@1.0.0";
+/// The grant a caller presents to invoke `wamn-wms:inventory-transaction/get@2.0.0`.
+pub const INVENTORY_TRANSACTION_GET_GRANT: &str = "wamn-wms:inventory-transaction/get@2.0.0";
 
-/// Typed refusals `wamn-wms:inventory-transaction/get@1.0.0` declares.
+/// Typed refusals `wamn-wms:inventory-transaction/get@2.0.0` declares.
 pub const INVENTORY_TRANSACTION_GET_ERRORS: &[&str] = &[
     "internal_error",
     "invalid_input",
@@ -353,7 +353,7 @@ pub const INVENTORY_TRANSACTION_GET_ERRORS: &[&str] = &[
     "timeout",
 ];
 
-/// Where the release publishes `wamn-wms:inventory-transaction/get@1.0.0`.
+/// Where the release publishes `wamn-wms:inventory-transaction/get@2.0.0`.
 ///
 /// Method and template only — the host and base URL are the client's
 /// deployment config, not this release's facts.
@@ -365,7 +365,7 @@ pub fn get_route() -> RouteMetadata {
     }
 }
 
-/// Invoke `wamn-wms:inventory-transaction/get@1.0.0` through a bound client.
+/// Invoke `wamn-wms:inventory-transaction/get@2.0.0` through a bound client.
 ///
 /// # Errors
 ///
@@ -380,7 +380,7 @@ pub async fn get(
         .await
 }
 
-/// Input for `wamn-wms:inventory-transaction/query@1.0.0`.
+/// Input for `wamn-wms:inventory-transaction/query@2.0.0`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct InventoryTransactionQueryRequest {
     /// `text`, omittable
@@ -389,7 +389,7 @@ pub struct InventoryTransactionQueryRequest {
     pub limit: Option<i32>,
 }
 
-/// Result of `wamn-wms:inventory-transaction/query@1.0.0`.
+/// Result of `wamn-wms:inventory-transaction/query@2.0.0`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct InventoryTransactionQueryResult {
     /// `timestamptz`
@@ -416,7 +416,7 @@ pub struct InventoryTransactionQueryResult {
     pub to_status: Option<String>,
 }
 
-/// Input descriptors for `wamn-wms:inventory-transaction/query@1.0.0`.
+/// Input descriptors for `wamn-wms:inventory-transaction/query@2.0.0`.
 pub const INVENTORY_TRANSACTION_QUERY_INPUT: &[FieldDescriptor] = &[
     FieldDescriptor {
         path: "cursor",
@@ -432,7 +432,7 @@ pub const INVENTORY_TRANSACTION_QUERY_INPUT: &[FieldDescriptor] = &[
     },
 ];
 
-/// Result descriptors for `wamn-wms:inventory-transaction/query@1.0.0`.
+/// Result descriptors for `wamn-wms:inventory-transaction/query@2.0.0`.
 pub const INVENTORY_TRANSACTION_QUERY_RESULT: &[FieldDescriptor] = &[
     FieldDescriptor {
         path: "created_at",
@@ -670,10 +670,10 @@ pub const INVENTORY_TRANSACTION_QUERY_REPLAY: Option<&str> = None;
 pub const INVENTORY_TRANSACTION_QUERY_RESPONSE_CONTRACT: Option<&str> =
     Some("{\"type\":\"array\"}");
 pub const INVENTORY_TRANSACTION_QUERY_RESULT_OPAQUE: bool = false;
-/// The grant a caller presents to invoke `wamn-wms:inventory-transaction/query@1.0.0`.
-pub const INVENTORY_TRANSACTION_QUERY_GRANT: &str = "wamn-wms:inventory-transaction/query@1.0.0";
+/// The grant a caller presents to invoke `wamn-wms:inventory-transaction/query@2.0.0`.
+pub const INVENTORY_TRANSACTION_QUERY_GRANT: &str = "wamn-wms:inventory-transaction/query@2.0.0";
 
-/// Typed refusals `wamn-wms:inventory-transaction/query@1.0.0` declares.
+/// Typed refusals `wamn-wms:inventory-transaction/query@2.0.0` declares.
 pub const INVENTORY_TRANSACTION_QUERY_ERRORS: &[&str] = &[
     "internal_error",
     "invalid_input",
@@ -682,7 +682,7 @@ pub const INVENTORY_TRANSACTION_QUERY_ERRORS: &[&str] = &[
     "timeout",
 ];
 
-/// Where the release publishes `wamn-wms:inventory-transaction/query@1.0.0`.
+/// Where the release publishes `wamn-wms:inventory-transaction/query@2.0.0`.
 ///
 /// Method and template only — the host and base URL are the client's
 /// deployment config, not this release's facts.
@@ -694,7 +694,7 @@ pub fn query_route() -> RouteMetadata {
     }
 }
 
-/// Invoke `wamn-wms:inventory-transaction/query@1.0.0` through a bound client.
+/// Invoke `wamn-wms:inventory-transaction/query@2.0.0` through a bound client.
 ///
 /// # Errors
 ///

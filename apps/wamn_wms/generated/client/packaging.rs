@@ -74,7 +74,7 @@ pub const PACKAGING_FIELDS: &[FieldDescriptor] = &[
     },
 ];
 
-/// Input for `wamn-wms:packaging/create@1.0.0`.
+/// Input for `wamn-wms:packaging/create@2.0.0`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct PackagingCreateRequest {
     /// `text`
@@ -91,7 +91,7 @@ pub struct PackagingCreateRequest {
     pub type_: String,
 }
 
-/// Result of `wamn-wms:packaging/create@1.0.0`.
+/// Result of `wamn-wms:packaging/create@2.0.0`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct PackagingCreateResult {
     /// `timestamptz`
@@ -118,7 +118,7 @@ pub struct PackagingCreateResult {
     pub updated_by: uuid::Uuid,
 }
 
-/// Input descriptors for `wamn-wms:packaging/create@1.0.0`.
+/// Input descriptors for `wamn-wms:packaging/create@2.0.0`.
 pub const PACKAGING_CREATE_INPUT: &[FieldDescriptor] = &[
     FieldDescriptor {
         path: "idempotency_key",
@@ -158,7 +158,7 @@ pub const PACKAGING_CREATE_INPUT: &[FieldDescriptor] = &[
     },
 ];
 
-/// Result descriptors for `wamn-wms:packaging/create@1.0.0`.
+/// Result descriptors for `wamn-wms:packaging/create@2.0.0`.
 pub const PACKAGING_CREATE_RESULT: &[FieldDescriptor] = &[
     FieldDescriptor {
         path: "created_at",
@@ -443,10 +443,10 @@ pub const PACKAGING_CREATE_REQUIRES_COMPOSITION: bool = false;
 pub const PACKAGING_CREATE_REPLAY: Option<&str> = Some("claim");
 pub const PACKAGING_CREATE_RESPONSE_CONTRACT: Option<&str> = Some("{\"type\":\"array\"}");
 pub const PACKAGING_CREATE_RESULT_OPAQUE: bool = false;
-/// The grant a caller presents to invoke `wamn-wms:packaging/create@1.0.0`.
-pub const PACKAGING_CREATE_GRANT: &str = "wamn-wms:packaging/create@1.0.0";
+/// The grant a caller presents to invoke `wamn-wms:packaging/create@2.0.0`.
+pub const PACKAGING_CREATE_GRANT: &str = "wamn-wms:packaging/create@2.0.0";
 
-/// Typed refusals `wamn-wms:packaging/create@1.0.0` declares.
+/// Typed refusals `wamn-wms:packaging/create@2.0.0` declares.
 pub const PACKAGING_CREATE_ERRORS: &[&str] = &[
     "check_violation",
     "foreign_key_violation",
@@ -459,7 +459,7 @@ pub const PACKAGING_CREATE_ERRORS: &[&str] = &[
     "unique_violation",
 ];
 
-/// Where the release publishes `wamn-wms:packaging/create@1.0.0`.
+/// Where the release publishes `wamn-wms:packaging/create@2.0.0`.
 ///
 /// Method and template only — the host and base URL are the client's
 /// deployment config, not this release's facts.
@@ -471,7 +471,7 @@ pub fn create_route() -> RouteMetadata {
     }
 }
 
-/// Invoke `wamn-wms:packaging/create@1.0.0` through a bound client.
+/// Invoke `wamn-wms:packaging/create@2.0.0` through a bound client.
 ///
 /// # Errors
 ///
@@ -486,14 +486,14 @@ pub async fn create(
         .await
 }
 
-/// Input for `wamn-wms:packaging/get@1.0.0`.
+/// Input for `wamn-wms:packaging/get@2.0.0`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct PackagingGetRequest {
     /// `uuid`
     pub id: uuid::Uuid,
 }
 
-/// Result of `wamn-wms:packaging/get@1.0.0`.
+/// Result of `wamn-wms:packaging/get@2.0.0`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct PackagingGetResult {
     /// `timestamptz`
@@ -520,7 +520,7 @@ pub struct PackagingGetResult {
     pub updated_by: uuid::Uuid,
 }
 
-/// Input descriptors for `wamn-wms:packaging/get@1.0.0`.
+/// Input descriptors for `wamn-wms:packaging/get@2.0.0`.
 pub const PACKAGING_GET_INPUT: &[FieldDescriptor] = &[FieldDescriptor {
     path: "id",
     type_name: "uuid",
@@ -528,7 +528,7 @@ pub const PACKAGING_GET_INPUT: &[FieldDescriptor] = &[FieldDescriptor {
     values: &[],
 }];
 
-/// Result descriptors for `wamn-wms:packaging/get@1.0.0`.
+/// Result descriptors for `wamn-wms:packaging/get@2.0.0`.
 pub const PACKAGING_GET_RESULT: &[FieldDescriptor] = &[
     FieldDescriptor {
         path: "created_at",
@@ -752,10 +752,10 @@ pub const PACKAGING_GET_REQUIRES_COMPOSITION: bool = false;
 pub const PACKAGING_GET_REPLAY: Option<&str> = None;
 pub const PACKAGING_GET_RESPONSE_CONTRACT: Option<&str> = Some("{\"type\":\"array\"}");
 pub const PACKAGING_GET_RESULT_OPAQUE: bool = false;
-/// The grant a caller presents to invoke `wamn-wms:packaging/get@1.0.0`.
-pub const PACKAGING_GET_GRANT: &str = "wamn-wms:packaging/get@1.0.0";
+/// The grant a caller presents to invoke `wamn-wms:packaging/get@2.0.0`.
+pub const PACKAGING_GET_GRANT: &str = "wamn-wms:packaging/get@2.0.0";
 
-/// Typed refusals `wamn-wms:packaging/get@1.0.0` declares.
+/// Typed refusals `wamn-wms:packaging/get@2.0.0` declares.
 pub const PACKAGING_GET_ERRORS: &[&str] = &[
     "internal_error",
     "invalid_input",
@@ -765,7 +765,7 @@ pub const PACKAGING_GET_ERRORS: &[&str] = &[
     "timeout",
 ];
 
-/// Where the release publishes `wamn-wms:packaging/get@1.0.0`.
+/// Where the release publishes `wamn-wms:packaging/get@2.0.0`.
 ///
 /// Method and template only — the host and base URL are the client's
 /// deployment config, not this release's facts.
@@ -777,7 +777,7 @@ pub fn get_route() -> RouteMetadata {
     }
 }
 
-/// Invoke `wamn-wms:packaging/get@1.0.0` through a bound client.
+/// Invoke `wamn-wms:packaging/get@2.0.0` through a bound client.
 ///
 /// # Errors
 ///
@@ -792,7 +792,7 @@ pub async fn get(
         .await
 }
 
-/// Input for `wamn-wms:packaging/query@1.0.0`.
+/// Input for `wamn-wms:packaging/query@2.0.0`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct PackagingQueryRequest {
     /// `text`, omittable
@@ -823,7 +823,7 @@ pub struct PackagingQueryRequestSort {
     pub field: String,
 }
 
-/// Result of `wamn-wms:packaging/query@1.0.0`.
+/// Result of `wamn-wms:packaging/query@2.0.0`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct PackagingQueryResult {
     /// `timestamptz`
@@ -850,7 +850,7 @@ pub struct PackagingQueryResult {
     pub updated_by: uuid::Uuid,
 }
 
-/// Input descriptors for `wamn-wms:packaging/query@1.0.0`.
+/// Input descriptors for `wamn-wms:packaging/query@2.0.0`.
 pub const PACKAGING_QUERY_INPUT: &[FieldDescriptor] = &[
     FieldDescriptor {
         path: "cursor",
@@ -896,7 +896,7 @@ pub const PACKAGING_QUERY_INPUT: &[FieldDescriptor] = &[
     },
 ];
 
-/// Result descriptors for `wamn-wms:packaging/query@1.0.0`.
+/// Result descriptors for `wamn-wms:packaging/query@2.0.0`.
 pub const PACKAGING_QUERY_RESULT: &[FieldDescriptor] = &[
     FieldDescriptor {
         path: "created_at",
@@ -1252,10 +1252,10 @@ pub const PACKAGING_QUERY_REQUIRES_COMPOSITION: bool = false;
 pub const PACKAGING_QUERY_REPLAY: Option<&str> = None;
 pub const PACKAGING_QUERY_RESPONSE_CONTRACT: Option<&str> = Some("{\"type\":\"array\"}");
 pub const PACKAGING_QUERY_RESULT_OPAQUE: bool = false;
-/// The grant a caller presents to invoke `wamn-wms:packaging/query@1.0.0`.
-pub const PACKAGING_QUERY_GRANT: &str = "wamn-wms:packaging/query@1.0.0";
+/// The grant a caller presents to invoke `wamn-wms:packaging/query@2.0.0`.
+pub const PACKAGING_QUERY_GRANT: &str = "wamn-wms:packaging/query@2.0.0";
 
-/// Typed refusals `wamn-wms:packaging/query@1.0.0` declares.
+/// Typed refusals `wamn-wms:packaging/query@2.0.0` declares.
 pub const PACKAGING_QUERY_ERRORS: &[&str] = &[
     "internal_error",
     "invalid_input",
@@ -1264,7 +1264,7 @@ pub const PACKAGING_QUERY_ERRORS: &[&str] = &[
     "timeout",
 ];
 
-/// Where the release publishes `wamn-wms:packaging/query@1.0.0`.
+/// Where the release publishes `wamn-wms:packaging/query@2.0.0`.
 ///
 /// Method and template only — the host and base URL are the client's
 /// deployment config, not this release's facts.
@@ -1276,7 +1276,7 @@ pub fn query_route() -> RouteMetadata {
     }
 }
 
-/// Invoke `wamn-wms:packaging/query@1.0.0` through a bound client.
+/// Invoke `wamn-wms:packaging/query@2.0.0` through a bound client.
 ///
 /// # Errors
 ///

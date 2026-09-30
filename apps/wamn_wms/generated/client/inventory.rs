@@ -98,7 +98,7 @@ pub const INVENTORY_FIELDS: &[FieldDescriptor] = &[
     },
 ];
 
-/// Input for `wamn-wms:inventory/adjust@1.0.0`.
+/// Input for `wamn-wms:inventory/adjust@2.0.0`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct InventoryAdjustRequest {
     /// `text`
@@ -127,7 +127,7 @@ pub struct InventoryAdjustRequestValue {
     pub status: String,
 }
 
-/// Result of `wamn-wms:inventory/adjust@1.0.0`.
+/// Result of `wamn-wms:inventory/adjust@2.0.0`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct InventoryAdjustResult {
     /// `numeric`
@@ -142,7 +142,7 @@ pub struct InventoryAdjustResult {
     pub transaction_ids: Vec<uuid::Uuid>,
 }
 
-/// Input descriptors for `wamn-wms:inventory/adjust@1.0.0`.
+/// Input descriptors for `wamn-wms:inventory/adjust@2.0.0`.
 pub const INVENTORY_ADJUST_INPUT: &[FieldDescriptor] = &[
     FieldDescriptor {
         path: "request_id",
@@ -200,7 +200,7 @@ pub const INVENTORY_ADJUST_INPUT: &[FieldDescriptor] = &[
     },
 ];
 
-/// Result descriptors for `wamn-wms:inventory/adjust@1.0.0`.
+/// Result descriptors for `wamn-wms:inventory/adjust@2.0.0`.
 pub const INVENTORY_ADJUST_RESULT: &[FieldDescriptor] = &[
     FieldDescriptor {
         path: "adjusted_quantity",
@@ -437,10 +437,10 @@ pub const INVENTORY_ADJUST_REQUIRES_COMPOSITION: bool = true;
 pub const INVENTORY_ADJUST_REPLAY: Option<&str> = Some("claim");
 pub const INVENTORY_ADJUST_RESPONSE_CONTRACT: Option<&str> = Some("{\"type\":\"array\"}");
 pub const INVENTORY_ADJUST_RESULT_OPAQUE: bool = false;
-/// The grant a caller presents to invoke `wamn-wms:inventory/adjust@1.0.0`.
-pub const INVENTORY_ADJUST_GRANT: &str = "wamn-wms:inventory/adjust@1.0.0";
+/// The grant a caller presents to invoke `wamn-wms:inventory/adjust@2.0.0`.
+pub const INVENTORY_ADJUST_GRANT: &str = "wamn-wms:inventory/adjust@2.0.0";
 
-/// Typed refusals `wamn-wms:inventory/adjust@1.0.0` declares.
+/// Typed refusals `wamn-wms:inventory/adjust@2.0.0` declares.
 pub const INVENTORY_ADJUST_ERRORS: &[&str] = &[
     "concurrency_conflict",
     "idempotency_conflict",
@@ -453,7 +453,7 @@ pub const INVENTORY_ADJUST_ERRORS: &[&str] = &[
     "timeout",
 ];
 
-/// Where the release publishes `wamn-wms:inventory/adjust@1.0.0`.
+/// Where the release publishes `wamn-wms:inventory/adjust@2.0.0`.
 ///
 /// Method and template only — the host and base URL are the client's
 /// deployment config, not this release's facts.
@@ -465,7 +465,7 @@ pub fn adjust_route() -> RouteMetadata {
     }
 }
 
-/// Invoke `wamn-wms:inventory/adjust@1.0.0` through a bound client.
+/// Invoke `wamn-wms:inventory/adjust@2.0.0` through a bound client.
 ///
 /// # Errors
 ///
@@ -480,11 +480,11 @@ pub async fn adjust(
         .await
 }
 
-/// Input for `wamn-wms:inventory/aggregate@1.0.0`.
+/// Input for `wamn-wms:inventory/aggregate@2.0.0`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct InventoryAggregateRequest {}
 
-/// Result of `wamn-wms:inventory/aggregate@1.0.0`.
+/// Result of `wamn-wms:inventory/aggregate@2.0.0`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct InventoryAggregateResult {
     /// `uuid`
@@ -499,10 +499,10 @@ pub struct InventoryAggregateResult {
     pub status: String,
 }
 
-/// Input descriptors for `wamn-wms:inventory/aggregate@1.0.0`.
+/// Input descriptors for `wamn-wms:inventory/aggregate@2.0.0`.
 pub const INVENTORY_AGGREGATE_INPUT: &[FieldDescriptor] = &[];
 
-/// Result descriptors for `wamn-wms:inventory/aggregate@1.0.0`.
+/// Result descriptors for `wamn-wms:inventory/aggregate@2.0.0`.
 pub const INVENTORY_AGGREGATE_RESULT: &[FieldDescriptor] = &[
     FieldDescriptor {
         path: "location_id",
@@ -606,10 +606,10 @@ pub const INVENTORY_AGGREGATE_REQUIRES_COMPOSITION: bool = false;
 pub const INVENTORY_AGGREGATE_REPLAY: Option<&str> = None;
 pub const INVENTORY_AGGREGATE_RESPONSE_CONTRACT: Option<&str> = Some("{\"type\":\"array\"}");
 pub const INVENTORY_AGGREGATE_RESULT_OPAQUE: bool = false;
-/// The grant a caller presents to invoke `wamn-wms:inventory/aggregate@1.0.0`.
-pub const INVENTORY_AGGREGATE_GRANT: &str = "wamn-wms:inventory/aggregate@1.0.0";
+/// The grant a caller presents to invoke `wamn-wms:inventory/aggregate@2.0.0`.
+pub const INVENTORY_AGGREGATE_GRANT: &str = "wamn-wms:inventory/aggregate@2.0.0";
 
-/// Typed refusals `wamn-wms:inventory/aggregate@1.0.0` declares.
+/// Typed refusals `wamn-wms:inventory/aggregate@2.0.0` declares.
 pub const INVENTORY_AGGREGATE_ERRORS: &[&str] = &[
     "internal_error",
     "invalid_input",
@@ -618,7 +618,7 @@ pub const INVENTORY_AGGREGATE_ERRORS: &[&str] = &[
     "timeout",
 ];
 
-/// Where the release publishes `wamn-wms:inventory/aggregate@1.0.0`.
+/// Where the release publishes `wamn-wms:inventory/aggregate@2.0.0`.
 ///
 /// Method and template only — the host and base URL are the client's
 /// deployment config, not this release's facts.
@@ -630,7 +630,7 @@ pub fn aggregate_route() -> RouteMetadata {
     }
 }
 
-/// Invoke `wamn-wms:inventory/aggregate@1.0.0` through a bound client.
+/// Invoke `wamn-wms:inventory/aggregate@2.0.0` through a bound client.
 ///
 /// # Errors
 ///
@@ -649,7 +649,7 @@ pub async fn aggregate(
         .await
 }
 
-/// Input for `wamn-wms:inventory/merge@1.0.0`.
+/// Input for `wamn-wms:inventory/merge@2.0.0`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct InventoryMergeRequest {
     /// `text`
@@ -672,7 +672,7 @@ pub struct InventoryMergeRequestValue {
     pub target_packaging_id: uuid::Uuid,
 }
 
-/// Result of `wamn-wms:inventory/merge@1.0.0`.
+/// Result of `wamn-wms:inventory/merge@2.0.0`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct InventoryMergeResult {
     /// `int32`
@@ -687,7 +687,7 @@ pub struct InventoryMergeResult {
     pub transaction_ids: Vec<uuid::Uuid>,
 }
 
-/// Input descriptors for `wamn-wms:inventory/merge@1.0.0`.
+/// Input descriptors for `wamn-wms:inventory/merge@2.0.0`.
 pub const INVENTORY_MERGE_INPUT: &[FieldDescriptor] = &[
     FieldDescriptor {
         path: "request_id",
@@ -727,7 +727,7 @@ pub const INVENTORY_MERGE_INPUT: &[FieldDescriptor] = &[
     },
 ];
 
-/// Result descriptors for `wamn-wms:inventory/merge@1.0.0`.
+/// Result descriptors for `wamn-wms:inventory/merge@2.0.0`.
 pub const INVENTORY_MERGE_RESULT: &[FieldDescriptor] = &[
     FieldDescriptor {
         path: "row_version",
@@ -928,10 +928,10 @@ pub const INVENTORY_MERGE_REQUIRES_COMPOSITION: bool = true;
 pub const INVENTORY_MERGE_REPLAY: Option<&str> = Some("claim");
 pub const INVENTORY_MERGE_RESPONSE_CONTRACT: Option<&str> = Some("{\"type\":\"array\"}");
 pub const INVENTORY_MERGE_RESULT_OPAQUE: bool = false;
-/// The grant a caller presents to invoke `wamn-wms:inventory/merge@1.0.0`.
-pub const INVENTORY_MERGE_GRANT: &str = "wamn-wms:inventory/merge@1.0.0";
+/// The grant a caller presents to invoke `wamn-wms:inventory/merge@2.0.0`.
+pub const INVENTORY_MERGE_GRANT: &str = "wamn-wms:inventory/merge@2.0.0";
 
-/// Typed refusals `wamn-wms:inventory/merge@1.0.0` declares.
+/// Typed refusals `wamn-wms:inventory/merge@2.0.0` declares.
 pub const INVENTORY_MERGE_ERRORS: &[&str] = &[
     "concurrency_conflict",
     "idempotency_conflict",
@@ -943,7 +943,7 @@ pub const INVENTORY_MERGE_ERRORS: &[&str] = &[
     "timeout",
 ];
 
-/// Where the release publishes `wamn-wms:inventory/merge@1.0.0`.
+/// Where the release publishes `wamn-wms:inventory/merge@2.0.0`.
 ///
 /// Method and template only — the host and base URL are the client's
 /// deployment config, not this release's facts.
@@ -955,7 +955,7 @@ pub fn merge_route() -> RouteMetadata {
     }
 }
 
-/// Invoke `wamn-wms:inventory/merge@1.0.0` through a bound client.
+/// Invoke `wamn-wms:inventory/merge@2.0.0` through a bound client.
 ///
 /// # Errors
 ///
@@ -970,7 +970,7 @@ pub async fn merge(
         .await
 }
 
-/// Input for `wamn-wms:inventory/move@1.0.0`.
+/// Input for `wamn-wms:inventory/move@2.0.0`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct InventoryMoveRequest {
     /// `text`
@@ -993,7 +993,7 @@ pub struct InventoryMoveRequestValue {
     pub to_location_id: uuid::Uuid,
 }
 
-/// Result of `wamn-wms:inventory/move@1.0.0`.
+/// Result of `wamn-wms:inventory/move@2.0.0`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct InventoryMoveResult {
     /// `uuid`
@@ -1004,7 +1004,7 @@ pub struct InventoryMoveResult {
     pub row_version: i32,
 }
 
-/// Input descriptors for `wamn-wms:inventory/move@1.0.0`.
+/// Input descriptors for `wamn-wms:inventory/move@2.0.0`.
 pub const INVENTORY_MOVE_INPUT: &[FieldDescriptor] = &[
     FieldDescriptor {
         path: "request_id",
@@ -1044,7 +1044,7 @@ pub const INVENTORY_MOVE_INPUT: &[FieldDescriptor] = &[
     },
 ];
 
-/// Result descriptors for `wamn-wms:inventory/move@1.0.0`.
+/// Result descriptors for `wamn-wms:inventory/move@2.0.0`.
 pub const INVENTORY_MOVE_RESULT: &[FieldDescriptor] = &[
     FieldDescriptor {
         path: "location_id",
@@ -1198,10 +1198,10 @@ pub const INVENTORY_MOVE_REQUIRES_COMPOSITION: bool = true;
 pub const INVENTORY_MOVE_REPLAY: Option<&str> = Some("claim");
 pub const INVENTORY_MOVE_RESPONSE_CONTRACT: Option<&str> = Some("{\"type\":\"array\"}");
 pub const INVENTORY_MOVE_RESULT_OPAQUE: bool = false;
-/// The grant a caller presents to invoke `wamn-wms:inventory/move@1.0.0`.
-pub const INVENTORY_MOVE_GRANT: &str = "wamn-wms:inventory/move@1.0.0";
+/// The grant a caller presents to invoke `wamn-wms:inventory/move@2.0.0`.
+pub const INVENTORY_MOVE_GRANT: &str = "wamn-wms:inventory/move@2.0.0";
 
-/// Typed refusals `wamn-wms:inventory/move@1.0.0` declares.
+/// Typed refusals `wamn-wms:inventory/move@2.0.0` declares.
 pub const INVENTORY_MOVE_ERRORS: &[&str] = &[
     "concurrency_conflict",
     "idempotency_conflict",
@@ -1214,7 +1214,7 @@ pub const INVENTORY_MOVE_ERRORS: &[&str] = &[
     "timeout",
 ];
 
-/// Where the release publishes `wamn-wms:inventory/move@1.0.0`.
+/// Where the release publishes `wamn-wms:inventory/move@2.0.0`.
 ///
 /// Method and template only — the host and base URL are the client's
 /// deployment config, not this release's facts.
@@ -1226,7 +1226,7 @@ pub fn move_route() -> RouteMetadata {
     }
 }
 
-/// Invoke `wamn-wms:inventory/move@1.0.0` through a bound client.
+/// Invoke `wamn-wms:inventory/move@2.0.0` through a bound client.
 ///
 /// # Errors
 ///
@@ -1241,7 +1241,7 @@ pub async fn move_(
         .await
 }
 
-/// Input for `wamn-wms:inventory/split@1.0.0`.
+/// Input for `wamn-wms:inventory/split@2.0.0`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct InventorySplitRequest {
     /// `text`
@@ -1274,7 +1274,7 @@ pub struct InventorySplitRequestValue {
     pub to_location_id: uuid::Uuid,
 }
 
-/// Result of `wamn-wms:inventory/split@1.0.0`.
+/// Result of `wamn-wms:inventory/split@2.0.0`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct InventorySplitResult {
     /// `uuid`
@@ -1289,7 +1289,7 @@ pub struct InventorySplitResult {
     pub transaction_ids: Vec<uuid::Uuid>,
 }
 
-/// Input descriptors for `wamn-wms:inventory/split@1.0.0`.
+/// Input descriptors for `wamn-wms:inventory/split@2.0.0`.
 pub const INVENTORY_SPLIT_INPUT: &[FieldDescriptor] = &[
     FieldDescriptor {
         path: "request_id",
@@ -1359,7 +1359,7 @@ pub const INVENTORY_SPLIT_INPUT: &[FieldDescriptor] = &[
     },
 ];
 
-/// Result descriptors for `wamn-wms:inventory/split@1.0.0`.
+/// Result descriptors for `wamn-wms:inventory/split@2.0.0`.
 pub const INVENTORY_SPLIT_RESULT: &[FieldDescriptor] = &[
     FieldDescriptor {
         path: "new_packaging_id",
@@ -1620,10 +1620,10 @@ pub const INVENTORY_SPLIT_REQUIRES_COMPOSITION: bool = true;
 pub const INVENTORY_SPLIT_REPLAY: Option<&str> = Some("claim");
 pub const INVENTORY_SPLIT_RESPONSE_CONTRACT: Option<&str> = Some("{\"type\":\"array\"}");
 pub const INVENTORY_SPLIT_RESULT_OPAQUE: bool = false;
-/// The grant a caller presents to invoke `wamn-wms:inventory/split@1.0.0`.
-pub const INVENTORY_SPLIT_GRANT: &str = "wamn-wms:inventory/split@1.0.0";
+/// The grant a caller presents to invoke `wamn-wms:inventory/split@2.0.0`.
+pub const INVENTORY_SPLIT_GRANT: &str = "wamn-wms:inventory/split@2.0.0";
 
-/// Typed refusals `wamn-wms:inventory/split@1.0.0` declares.
+/// Typed refusals `wamn-wms:inventory/split@2.0.0` declares.
 pub const INVENTORY_SPLIT_ERRORS: &[&str] = &[
     "concurrency_conflict",
     "idempotency_conflict",
@@ -1638,7 +1638,7 @@ pub const INVENTORY_SPLIT_ERRORS: &[&str] = &[
     "timeout",
 ];
 
-/// Where the release publishes `wamn-wms:inventory/split@1.0.0`.
+/// Where the release publishes `wamn-wms:inventory/split@2.0.0`.
 ///
 /// Method and template only — the host and base URL are the client's
 /// deployment config, not this release's facts.
@@ -1650,7 +1650,7 @@ pub fn split_route() -> RouteMetadata {
     }
 }
 
-/// Invoke `wamn-wms:inventory/split@1.0.0` through a bound client.
+/// Invoke `wamn-wms:inventory/split@2.0.0` through a bound client.
 ///
 /// # Errors
 ///

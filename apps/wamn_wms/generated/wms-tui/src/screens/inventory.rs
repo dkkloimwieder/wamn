@@ -5,7 +5,7 @@ use wamn_client_tui::{screen, submission};
 pub static ADJUST_SPEC: screen::ScreenSpec = screen::ScreenSpec {
     model: "inventory",
     name: "adjust",
-    operation: "wamn-wms:inventory/adjust@1.0.0",
+    operation: "wamn-wms:inventory/adjust@2.0.0",
     type_: "command",
     input: crate::inventory::INVENTORY_ADJUST_INPUT_SCHEMA,
     input_schema: Some(
@@ -98,7 +98,7 @@ pub fn adjust(binding: submission::SessionBinding) -> screen::Screen {
 pub static AGGREGATE_SPEC: screen::ScreenSpec = screen::ScreenSpec {
     model: "inventory",
     name: "aggregate",
-    operation: "wamn-wms:inventory/aggregate@1.0.0",
+    operation: "wamn-wms:inventory/aggregate@2.0.0",
     type_: "projection",
     input: crate::inventory::INVENTORY_AGGREGATE_INPUT_SCHEMA,
     input_schema: Some(
@@ -158,7 +158,7 @@ pub fn aggregate(binding: submission::SessionBinding) -> screen::Screen {
 pub static MERGE_SPEC: screen::ScreenSpec = screen::ScreenSpec {
     model: "inventory",
     name: "merge",
-    operation: "wamn-wms:inventory/merge@1.0.0",
+    operation: "wamn-wms:inventory/merge@2.0.0",
     type_: "command",
     input: crate::inventory::INVENTORY_MERGE_INPUT_SCHEMA,
     input_schema: Some(
@@ -246,7 +246,7 @@ pub fn merge(binding: submission::SessionBinding) -> screen::Screen {
 pub static MOVE_SPEC: screen::ScreenSpec = screen::ScreenSpec {
     model: "inventory",
     name: "move",
-    operation: "wamn-wms:inventory/move@1.0.0",
+    operation: "wamn-wms:inventory/move@2.0.0",
     type_: "command",
     input: crate::inventory::INVENTORY_MOVE_INPUT_SCHEMA,
     input_schema: Some(
@@ -339,7 +339,7 @@ pub fn move_(binding: submission::SessionBinding) -> screen::Screen {
 pub static SPLIT_SPEC: screen::ScreenSpec = screen::ScreenSpec {
     model: "inventory",
     name: "split",
-    operation: "wamn-wms:inventory/split@1.0.0",
+    operation: "wamn-wms:inventory/split@2.0.0",
     type_: "command",
     input: crate::inventory::INVENTORY_SPLIT_INPUT_SCHEMA,
     input_schema: Some(

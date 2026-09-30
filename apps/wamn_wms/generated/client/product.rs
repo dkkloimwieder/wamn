@@ -32,7 +32,7 @@ pub const PRODUCT_FIELDS: &[FieldDescriptor] = &[
     },
 ];
 
-/// Input for `wamn-wms:product/create@1.0.0`.
+/// Input for `wamn-wms:product/create@2.0.0`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ProductCreateRequest {
     /// `text`
@@ -43,7 +43,7 @@ pub struct ProductCreateRequest {
     pub request_id: String,
 }
 
-/// Result of `wamn-wms:product/create@1.0.0`.
+/// Result of `wamn-wms:product/create@2.0.0`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ProductCreateResult {
     /// `timestamptz`
@@ -56,7 +56,7 @@ pub struct ProductCreateResult {
     pub row_version: i32,
 }
 
-/// Input descriptors for `wamn-wms:product/create@1.0.0`.
+/// Input descriptors for `wamn-wms:product/create@2.0.0`.
 pub const PRODUCT_CREATE_INPUT: &[FieldDescriptor] = &[
     FieldDescriptor {
         path: "idempotency_key",
@@ -78,7 +78,7 @@ pub const PRODUCT_CREATE_INPUT: &[FieldDescriptor] = &[
     },
 ];
 
-/// Result descriptors for `wamn-wms:product/create@1.0.0`.
+/// Result descriptors for `wamn-wms:product/create@2.0.0`.
 pub const PRODUCT_CREATE_RESULT: &[FieldDescriptor] = &[
     FieldDescriptor {
         path: "created_at",
@@ -201,10 +201,10 @@ pub const PRODUCT_CREATE_REQUIRES_COMPOSITION: bool = false;
 pub const PRODUCT_CREATE_REPLAY: Option<&str> = Some("claim");
 pub const PRODUCT_CREATE_RESPONSE_CONTRACT: Option<&str> = Some("{\"type\":\"array\"}");
 pub const PRODUCT_CREATE_RESULT_OPAQUE: bool = false;
-/// The grant a caller presents to invoke `wamn-wms:product/create@1.0.0`.
-pub const PRODUCT_CREATE_GRANT: &str = "wamn-wms:product/create@1.0.0";
+/// The grant a caller presents to invoke `wamn-wms:product/create@2.0.0`.
+pub const PRODUCT_CREATE_GRANT: &str = "wamn-wms:product/create@2.0.0";
 
-/// Typed refusals `wamn-wms:product/create@1.0.0` declares.
+/// Typed refusals `wamn-wms:product/create@2.0.0` declares.
 pub const PRODUCT_CREATE_ERRORS: &[&str] = &[
     "idempotency_conflict",
     "internal_error",
@@ -215,7 +215,7 @@ pub const PRODUCT_CREATE_ERRORS: &[&str] = &[
     "unique_violation",
 ];
 
-/// Where the release publishes `wamn-wms:product/create@1.0.0`.
+/// Where the release publishes `wamn-wms:product/create@2.0.0`.
 ///
 /// Method and template only — the host and base URL are the client's
 /// deployment config, not this release's facts.
@@ -227,7 +227,7 @@ pub fn create_route() -> RouteMetadata {
     }
 }
 
-/// Invoke `wamn-wms:product/create@1.0.0` through a bound client.
+/// Invoke `wamn-wms:product/create@2.0.0` through a bound client.
 ///
 /// # Errors
 ///
@@ -242,14 +242,14 @@ pub async fn create(
         .await
 }
 
-/// Input for `wamn-wms:product/get@1.0.0`.
+/// Input for `wamn-wms:product/get@2.0.0`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ProductGetRequest {
     /// `uuid`
     pub id: uuid::Uuid,
 }
 
-/// Result of `wamn-wms:product/get@1.0.0`.
+/// Result of `wamn-wms:product/get@2.0.0`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ProductGetResult {
     /// `timestamptz`
@@ -262,7 +262,7 @@ pub struct ProductGetResult {
     pub row_version: i32,
 }
 
-/// Input descriptors for `wamn-wms:product/get@1.0.0`.
+/// Input descriptors for `wamn-wms:product/get@2.0.0`.
 pub const PRODUCT_GET_INPUT: &[FieldDescriptor] = &[FieldDescriptor {
     path: "id",
     type_name: "uuid",
@@ -270,7 +270,7 @@ pub const PRODUCT_GET_INPUT: &[FieldDescriptor] = &[FieldDescriptor {
     values: &[],
 }];
 
-/// Result descriptors for `wamn-wms:product/get@1.0.0`.
+/// Result descriptors for `wamn-wms:product/get@2.0.0`.
 pub const PRODUCT_GET_RESULT: &[FieldDescriptor] = &[
     FieldDescriptor {
         path: "created_at",
@@ -368,10 +368,10 @@ pub const PRODUCT_GET_REQUIRES_COMPOSITION: bool = false;
 pub const PRODUCT_GET_REPLAY: Option<&str> = None;
 pub const PRODUCT_GET_RESPONSE_CONTRACT: Option<&str> = Some("{\"type\":\"array\"}");
 pub const PRODUCT_GET_RESULT_OPAQUE: bool = false;
-/// The grant a caller presents to invoke `wamn-wms:product/get@1.0.0`.
-pub const PRODUCT_GET_GRANT: &str = "wamn-wms:product/get@1.0.0";
+/// The grant a caller presents to invoke `wamn-wms:product/get@2.0.0`.
+pub const PRODUCT_GET_GRANT: &str = "wamn-wms:product/get@2.0.0";
 
-/// Typed refusals `wamn-wms:product/get@1.0.0` declares.
+/// Typed refusals `wamn-wms:product/get@2.0.0` declares.
 pub const PRODUCT_GET_ERRORS: &[&str] = &[
     "internal_error",
     "invalid_input",
@@ -381,7 +381,7 @@ pub const PRODUCT_GET_ERRORS: &[&str] = &[
     "timeout",
 ];
 
-/// Where the release publishes `wamn-wms:product/get@1.0.0`.
+/// Where the release publishes `wamn-wms:product/get@2.0.0`.
 ///
 /// Method and template only — the host and base URL are the client's
 /// deployment config, not this release's facts.
@@ -393,7 +393,7 @@ pub fn get_route() -> RouteMetadata {
     }
 }
 
-/// Invoke `wamn-wms:product/get@1.0.0` through a bound client.
+/// Invoke `wamn-wms:product/get@2.0.0` through a bound client.
 ///
 /// # Errors
 ///
@@ -408,7 +408,7 @@ pub async fn get(
         .await
 }
 
-/// Input for `wamn-wms:product/query@1.0.0`.
+/// Input for `wamn-wms:product/query@2.0.0`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ProductQueryRequest {
     /// `text`, omittable
@@ -425,7 +425,7 @@ pub struct ProductQueryRequestFilter {
     pub product_code: Option<Vec<String>>,
 }
 
-/// Result of `wamn-wms:product/query@1.0.0`.
+/// Result of `wamn-wms:product/query@2.0.0`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ProductQueryResult {
     /// `timestamptz`
@@ -438,7 +438,7 @@ pub struct ProductQueryResult {
     pub row_version: i32,
 }
 
-/// Input descriptors for `wamn-wms:product/query@1.0.0`.
+/// Input descriptors for `wamn-wms:product/query@2.0.0`.
 pub const PRODUCT_QUERY_INPUT: &[FieldDescriptor] = &[
     FieldDescriptor {
         path: "cursor",
@@ -460,7 +460,7 @@ pub const PRODUCT_QUERY_INPUT: &[FieldDescriptor] = &[
     },
 ];
 
-/// Result descriptors for `wamn-wms:product/query@1.0.0`.
+/// Result descriptors for `wamn-wms:product/query@2.0.0`.
 pub const PRODUCT_QUERY_RESULT: &[FieldDescriptor] = &[
     FieldDescriptor {
         path: "created_at",
@@ -605,10 +605,10 @@ pub const PRODUCT_QUERY_REQUIRES_COMPOSITION: bool = false;
 pub const PRODUCT_QUERY_REPLAY: Option<&str> = None;
 pub const PRODUCT_QUERY_RESPONSE_CONTRACT: Option<&str> = Some("{\"type\":\"array\"}");
 pub const PRODUCT_QUERY_RESULT_OPAQUE: bool = false;
-/// The grant a caller presents to invoke `wamn-wms:product/query@1.0.0`.
-pub const PRODUCT_QUERY_GRANT: &str = "wamn-wms:product/query@1.0.0";
+/// The grant a caller presents to invoke `wamn-wms:product/query@2.0.0`.
+pub const PRODUCT_QUERY_GRANT: &str = "wamn-wms:product/query@2.0.0";
 
-/// Typed refusals `wamn-wms:product/query@1.0.0` declares.
+/// Typed refusals `wamn-wms:product/query@2.0.0` declares.
 pub const PRODUCT_QUERY_ERRORS: &[&str] = &[
     "internal_error",
     "invalid_input",
@@ -617,7 +617,7 @@ pub const PRODUCT_QUERY_ERRORS: &[&str] = &[
     "timeout",
 ];
 
-/// Where the release publishes `wamn-wms:product/query@1.0.0`.
+/// Where the release publishes `wamn-wms:product/query@2.0.0`.
 ///
 /// Method and template only — the host and base URL are the client's
 /// deployment config, not this release's facts.
@@ -629,7 +629,7 @@ pub fn query_route() -> RouteMetadata {
     }
 }
 
-/// Invoke `wamn-wms:product/query@1.0.0` through a bound client.
+/// Invoke `wamn-wms:product/query@2.0.0` through a bound client.
 ///
 /// # Errors
 ///
@@ -644,7 +644,7 @@ pub async fn query(
         .await
 }
 
-/// Input for `wamn-wms:product/update@1.0.0`.
+/// Input for `wamn-wms:product/update@2.0.0`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ProductUpdateRequest {
     /// `object`
@@ -663,7 +663,7 @@ pub struct ProductUpdateRequestChange {
     pub product_code: Option<String>,
 }
 
-/// Result of `wamn-wms:product/update@1.0.0`.
+/// Result of `wamn-wms:product/update@2.0.0`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ProductUpdateResult {
     /// `timestamptz`
@@ -676,7 +676,7 @@ pub struct ProductUpdateResult {
     pub row_version: i32,
 }
 
-/// Input descriptors for `wamn-wms:product/update@1.0.0`.
+/// Input descriptors for `wamn-wms:product/update@2.0.0`.
 pub const PRODUCT_UPDATE_INPUT: &[FieldDescriptor] = &[
     FieldDescriptor {
         path: "change.product_code",
@@ -704,7 +704,7 @@ pub const PRODUCT_UPDATE_INPUT: &[FieldDescriptor] = &[
     },
 ];
 
-/// Result descriptors for `wamn-wms:product/update@1.0.0`.
+/// Result descriptors for `wamn-wms:product/update@2.0.0`.
 pub const PRODUCT_UPDATE_RESULT: &[FieldDescriptor] = &[
     FieldDescriptor {
         path: "created_at",
@@ -850,10 +850,10 @@ pub const PRODUCT_UPDATE_REQUIRES_COMPOSITION: bool = false;
 pub const PRODUCT_UPDATE_REPLAY: Option<&str> = None;
 pub const PRODUCT_UPDATE_RESPONSE_CONTRACT: Option<&str> = Some("{\"type\":\"array\"}");
 pub const PRODUCT_UPDATE_RESULT_OPAQUE: bool = false;
-/// The grant a caller presents to invoke `wamn-wms:product/update@1.0.0`.
-pub const PRODUCT_UPDATE_GRANT: &str = "wamn-wms:product/update@1.0.0";
+/// The grant a caller presents to invoke `wamn-wms:product/update@2.0.0`.
+pub const PRODUCT_UPDATE_GRANT: &str = "wamn-wms:product/update@2.0.0";
 
-/// Typed refusals `wamn-wms:product/update@1.0.0` declares.
+/// Typed refusals `wamn-wms:product/update@2.0.0` declares.
 pub const PRODUCT_UPDATE_ERRORS: &[&str] = &[
     "concurrency_conflict",
     "internal_error",
@@ -865,7 +865,7 @@ pub const PRODUCT_UPDATE_ERRORS: &[&str] = &[
     "unique_violation",
 ];
 
-/// Where the release publishes `wamn-wms:product/update@1.0.0`.
+/// Where the release publishes `wamn-wms:product/update@2.0.0`.
 ///
 /// Method and template only — the host and base URL are the client's
 /// deployment config, not this release's facts.
@@ -877,7 +877,7 @@ pub fn update_route() -> RouteMetadata {
     }
 }
 
-/// Invoke `wamn-wms:product/update@1.0.0` through a bound client.
+/// Invoke `wamn-wms:product/update@2.0.0` through a bound client.
 ///
 /// # Errors
 ///

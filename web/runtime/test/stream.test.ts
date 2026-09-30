@@ -212,7 +212,7 @@ describe("an unchanged load", () => {
 
 describe("the transport's streamed read", () => {
   const request: WireRequest = {
-    operation: "wamn-wms:pallet/query@1.0.0",
+    operation: "wamn-wms:pallet/query@2.0.0",
     method: "GET",
     template: "/pallet/query",
     freshOnly: false,

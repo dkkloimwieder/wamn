@@ -32,7 +32,7 @@ pub const LOCATION_FIELDS: &[FieldDescriptor] = &[
     },
 ];
 
-/// Input for `wamn-wms:location/create@1.0.0`.
+/// Input for `wamn-wms:location/create@2.0.0`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct LocationCreateRequest {
     /// `text`
@@ -43,7 +43,7 @@ pub struct LocationCreateRequest {
     pub request_id: String,
 }
 
-/// Result of `wamn-wms:location/create@1.0.0`.
+/// Result of `wamn-wms:location/create@2.0.0`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct LocationCreateResult {
     /// `timestamptz`
@@ -56,7 +56,7 @@ pub struct LocationCreateResult {
     pub row_version: i32,
 }
 
-/// Input descriptors for `wamn-wms:location/create@1.0.0`.
+/// Input descriptors for `wamn-wms:location/create@2.0.0`.
 pub const LOCATION_CREATE_INPUT: &[FieldDescriptor] = &[
     FieldDescriptor {
         path: "idempotency_key",
@@ -78,7 +78,7 @@ pub const LOCATION_CREATE_INPUT: &[FieldDescriptor] = &[
     },
 ];
 
-/// Result descriptors for `wamn-wms:location/create@1.0.0`.
+/// Result descriptors for `wamn-wms:location/create@2.0.0`.
 pub const LOCATION_CREATE_RESULT: &[FieldDescriptor] = &[
     FieldDescriptor {
         path: "created_at",
@@ -201,10 +201,10 @@ pub const LOCATION_CREATE_REQUIRES_COMPOSITION: bool = false;
 pub const LOCATION_CREATE_REPLAY: Option<&str> = Some("claim");
 pub const LOCATION_CREATE_RESPONSE_CONTRACT: Option<&str> = Some("{\"type\":\"array\"}");
 pub const LOCATION_CREATE_RESULT_OPAQUE: bool = false;
-/// The grant a caller presents to invoke `wamn-wms:location/create@1.0.0`.
-pub const LOCATION_CREATE_GRANT: &str = "wamn-wms:location/create@1.0.0";
+/// The grant a caller presents to invoke `wamn-wms:location/create@2.0.0`.
+pub const LOCATION_CREATE_GRANT: &str = "wamn-wms:location/create@2.0.0";
 
-/// Typed refusals `wamn-wms:location/create@1.0.0` declares.
+/// Typed refusals `wamn-wms:location/create@2.0.0` declares.
 pub const LOCATION_CREATE_ERRORS: &[&str] = &[
     "idempotency_conflict",
     "internal_error",
@@ -215,7 +215,7 @@ pub const LOCATION_CREATE_ERRORS: &[&str] = &[
     "unique_violation",
 ];
 
-/// Where the release publishes `wamn-wms:location/create@1.0.0`.
+/// Where the release publishes `wamn-wms:location/create@2.0.0`.
 ///
 /// Method and template only — the host and base URL are the client's
 /// deployment config, not this release's facts.
@@ -227,7 +227,7 @@ pub fn create_route() -> RouteMetadata {
     }
 }
 
-/// Invoke `wamn-wms:location/create@1.0.0` through a bound client.
+/// Invoke `wamn-wms:location/create@2.0.0` through a bound client.
 ///
 /// # Errors
 ///
@@ -242,14 +242,14 @@ pub async fn create(
         .await
 }
 
-/// Input for `wamn-wms:location/get@1.0.0`.
+/// Input for `wamn-wms:location/get@2.0.0`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct LocationGetRequest {
     /// `uuid`
     pub id: uuid::Uuid,
 }
 
-/// Result of `wamn-wms:location/get@1.0.0`.
+/// Result of `wamn-wms:location/get@2.0.0`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct LocationGetResult {
     /// `timestamptz`
@@ -262,7 +262,7 @@ pub struct LocationGetResult {
     pub row_version: i32,
 }
 
-/// Input descriptors for `wamn-wms:location/get@1.0.0`.
+/// Input descriptors for `wamn-wms:location/get@2.0.0`.
 pub const LOCATION_GET_INPUT: &[FieldDescriptor] = &[FieldDescriptor {
     path: "id",
     type_name: "uuid",
@@ -270,7 +270,7 @@ pub const LOCATION_GET_INPUT: &[FieldDescriptor] = &[FieldDescriptor {
     values: &[],
 }];
 
-/// Result descriptors for `wamn-wms:location/get@1.0.0`.
+/// Result descriptors for `wamn-wms:location/get@2.0.0`.
 pub const LOCATION_GET_RESULT: &[FieldDescriptor] = &[
     FieldDescriptor {
         path: "created_at",
@@ -368,10 +368,10 @@ pub const LOCATION_GET_REQUIRES_COMPOSITION: bool = false;
 pub const LOCATION_GET_REPLAY: Option<&str> = None;
 pub const LOCATION_GET_RESPONSE_CONTRACT: Option<&str> = Some("{\"type\":\"array\"}");
 pub const LOCATION_GET_RESULT_OPAQUE: bool = false;
-/// The grant a caller presents to invoke `wamn-wms:location/get@1.0.0`.
-pub const LOCATION_GET_GRANT: &str = "wamn-wms:location/get@1.0.0";
+/// The grant a caller presents to invoke `wamn-wms:location/get@2.0.0`.
+pub const LOCATION_GET_GRANT: &str = "wamn-wms:location/get@2.0.0";
 
-/// Typed refusals `wamn-wms:location/get@1.0.0` declares.
+/// Typed refusals `wamn-wms:location/get@2.0.0` declares.
 pub const LOCATION_GET_ERRORS: &[&str] = &[
     "internal_error",
     "invalid_input",
@@ -381,7 +381,7 @@ pub const LOCATION_GET_ERRORS: &[&str] = &[
     "timeout",
 ];
 
-/// Where the release publishes `wamn-wms:location/get@1.0.0`.
+/// Where the release publishes `wamn-wms:location/get@2.0.0`.
 ///
 /// Method and template only — the host and base URL are the client's
 /// deployment config, not this release's facts.
@@ -393,7 +393,7 @@ pub fn get_route() -> RouteMetadata {
     }
 }
 
-/// Invoke `wamn-wms:location/get@1.0.0` through a bound client.
+/// Invoke `wamn-wms:location/get@2.0.0` through a bound client.
 ///
 /// # Errors
 ///
@@ -408,7 +408,7 @@ pub async fn get(
         .await
 }
 
-/// Input for `wamn-wms:location/query@1.0.0`.
+/// Input for `wamn-wms:location/query@2.0.0`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct LocationQueryRequest {
     /// `text`, omittable
@@ -425,7 +425,7 @@ pub struct LocationQueryRequestFilter {
     pub location_code: Option<Vec<String>>,
 }
 
-/// Result of `wamn-wms:location/query@1.0.0`.
+/// Result of `wamn-wms:location/query@2.0.0`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct LocationQueryResult {
     /// `timestamptz`
@@ -438,7 +438,7 @@ pub struct LocationQueryResult {
     pub row_version: i32,
 }
 
-/// Input descriptors for `wamn-wms:location/query@1.0.0`.
+/// Input descriptors for `wamn-wms:location/query@2.0.0`.
 pub const LOCATION_QUERY_INPUT: &[FieldDescriptor] = &[
     FieldDescriptor {
         path: "cursor",
@@ -460,7 +460,7 @@ pub const LOCATION_QUERY_INPUT: &[FieldDescriptor] = &[
     },
 ];
 
-/// Result descriptors for `wamn-wms:location/query@1.0.0`.
+/// Result descriptors for `wamn-wms:location/query@2.0.0`.
 pub const LOCATION_QUERY_RESULT: &[FieldDescriptor] = &[
     FieldDescriptor {
         path: "created_at",
@@ -605,10 +605,10 @@ pub const LOCATION_QUERY_REQUIRES_COMPOSITION: bool = false;
 pub const LOCATION_QUERY_REPLAY: Option<&str> = None;
 pub const LOCATION_QUERY_RESPONSE_CONTRACT: Option<&str> = Some("{\"type\":\"array\"}");
 pub const LOCATION_QUERY_RESULT_OPAQUE: bool = false;
-/// The grant a caller presents to invoke `wamn-wms:location/query@1.0.0`.
-pub const LOCATION_QUERY_GRANT: &str = "wamn-wms:location/query@1.0.0";
+/// The grant a caller presents to invoke `wamn-wms:location/query@2.0.0`.
+pub const LOCATION_QUERY_GRANT: &str = "wamn-wms:location/query@2.0.0";
 
-/// Typed refusals `wamn-wms:location/query@1.0.0` declares.
+/// Typed refusals `wamn-wms:location/query@2.0.0` declares.
 pub const LOCATION_QUERY_ERRORS: &[&str] = &[
     "internal_error",
     "invalid_input",
@@ -617,7 +617,7 @@ pub const LOCATION_QUERY_ERRORS: &[&str] = &[
     "timeout",
 ];
 
-/// Where the release publishes `wamn-wms:location/query@1.0.0`.
+/// Where the release publishes `wamn-wms:location/query@2.0.0`.
 ///
 /// Method and template only — the host and base URL are the client's
 /// deployment config, not this release's facts.
@@ -629,7 +629,7 @@ pub fn query_route() -> RouteMetadata {
     }
 }
 
-/// Invoke `wamn-wms:location/query@1.0.0` through a bound client.
+/// Invoke `wamn-wms:location/query@2.0.0` through a bound client.
 ///
 /// # Errors
 ///
@@ -644,7 +644,7 @@ pub async fn query(
         .await
 }
 
-/// Input for `wamn-wms:location/update@1.0.0`.
+/// Input for `wamn-wms:location/update@2.0.0`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct LocationUpdateRequest {
     /// `object`
@@ -663,7 +663,7 @@ pub struct LocationUpdateRequestChange {
     pub location_code: Option<String>,
 }
 
-/// Result of `wamn-wms:location/update@1.0.0`.
+/// Result of `wamn-wms:location/update@2.0.0`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct LocationUpdateResult {
     /// `timestamptz`
@@ -676,7 +676,7 @@ pub struct LocationUpdateResult {
     pub row_version: i32,
 }
 
-/// Input descriptors for `wamn-wms:location/update@1.0.0`.
+/// Input descriptors for `wamn-wms:location/update@2.0.0`.
 pub const LOCATION_UPDATE_INPUT: &[FieldDescriptor] = &[
     FieldDescriptor {
         path: "change.location_code",
@@ -704,7 +704,7 @@ pub const LOCATION_UPDATE_INPUT: &[FieldDescriptor] = &[
     },
 ];
 
-/// Result descriptors for `wamn-wms:location/update@1.0.0`.
+/// Result descriptors for `wamn-wms:location/update@2.0.0`.
 pub const LOCATION_UPDATE_RESULT: &[FieldDescriptor] = &[
     FieldDescriptor {
         path: "created_at",
@@ -850,10 +850,10 @@ pub const LOCATION_UPDATE_REQUIRES_COMPOSITION: bool = false;
 pub const LOCATION_UPDATE_REPLAY: Option<&str> = None;
 pub const LOCATION_UPDATE_RESPONSE_CONTRACT: Option<&str> = Some("{\"type\":\"array\"}");
 pub const LOCATION_UPDATE_RESULT_OPAQUE: bool = false;
-/// The grant a caller presents to invoke `wamn-wms:location/update@1.0.0`.
-pub const LOCATION_UPDATE_GRANT: &str = "wamn-wms:location/update@1.0.0";
+/// The grant a caller presents to invoke `wamn-wms:location/update@2.0.0`.
+pub const LOCATION_UPDATE_GRANT: &str = "wamn-wms:location/update@2.0.0";
 
-/// Typed refusals `wamn-wms:location/update@1.0.0` declares.
+/// Typed refusals `wamn-wms:location/update@2.0.0` declares.
 pub const LOCATION_UPDATE_ERRORS: &[&str] = &[
     "concurrency_conflict",
     "internal_error",
@@ -865,7 +865,7 @@ pub const LOCATION_UPDATE_ERRORS: &[&str] = &[
     "unique_violation",
 ];
 
-/// Where the release publishes `wamn-wms:location/update@1.0.0`.
+/// Where the release publishes `wamn-wms:location/update@2.0.0`.
 ///
 /// Method and template only — the host and base URL are the client's
 /// deployment config, not this release's facts.
@@ -877,7 +877,7 @@ pub fn update_route() -> RouteMetadata {
     }
 }
 
-/// Invoke `wamn-wms:location/update@1.0.0` through a bound client.
+/// Invoke `wamn-wms:location/update@2.0.0` through a bound client.
 ///
 /// # Errors
 ///
