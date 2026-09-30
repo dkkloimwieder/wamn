@@ -209,6 +209,8 @@ mod tests {
             "a",
             "--emit-secret",
             "identity.json",
+            "--db-host",
+            "sysdb",
         ]
     }
 
@@ -233,6 +235,7 @@ mod tests {
         let args = IssuerCli::try_parse_from(issuer_arguments()).unwrap().args;
         assert_eq!(args.namespace, "wamn-system");
         assert_eq!(args.secret_name, "wamn-identity-db");
+        assert_eq!(args.db_host.as_deref(), Some("sysdb"));
         assert!(!format!("{args:?}").contains("hidden-value"));
     }
 
