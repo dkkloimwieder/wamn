@@ -609,7 +609,7 @@ fn every_family_derives_its_credential_secret_name() {
 
 fn role_acl(kind: &str, schema: &str, object: &str, privilege: &str) -> RoleAcl {
     RoleAcl {
-        object_kind: kind.to_string(),
+        object_type: kind.to_string(),
         schema_name: schema.to_string(),
         object_name: object.to_string(),
         privilege: privilege.to_string(),

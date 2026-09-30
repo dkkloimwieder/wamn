@@ -86,7 +86,7 @@ pub fn reconcile_audit_retention_grants_sql() -> String {
              RETURN; \
            END IF; \
            FOR held IN \
-             SELECT 'SCHEMA' AS kind, namespace.nspname::text AS schema_name, \
+             SELECT 'SCHEMA' AS type, namespace.nspname::text AS schema_name, \
                     NULL::text AS relation_name \
                FROM pg_catalog.pg_namespace AS namespace \
               CROSS JOIN LATERAL pg_catalog.aclexplode(namespace.nspacl) AS acl \
@@ -110,7 +110,7 @@ pub fn reconcile_audit_retention_grants_sql() -> String {
               JOIN pg_catalog.pg_roles AS grantee ON grantee.oid = acl.grantee \
               WHERE grantee.rolname = role_name \
            LOOP \
-             IF held.kind = 'SCHEMA' THEN \
+             IF held.type = 'SCHEMA' THEN \
                EXECUTE format('REVOKE ALL ON SCHEMA %I FROM %I', held.schema_name, role_name); \
              ELSE \
                EXECUTE format('REVOKE ALL ON TABLE %I.%I FROM %I', \

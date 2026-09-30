@@ -1721,7 +1721,7 @@ async fn audit_retention_grants(client: &Client) -> Vec<String> {
         .map(|row| {
             format!(
                 "{} {}.{} {}",
-                row.get::<_, String>("object_kind"),
+                row.get::<_, String>("object_type"),
                 row.get::<_, String>("schema_name"),
                 row.get::<_, String>("object_name"),
                 row.get::<_, String>("privilege_type"),

@@ -65,7 +65,7 @@ pub fn non_template_databases_sql() -> &'static str {
 /// Read-only direct grants for one role in the connected database.
 pub fn role_database_grants_sql() -> &'static str {
     "WITH wanted AS (SELECT oid FROM pg_roles WHERE rolname = $1), acl AS ( \
-       SELECT 'database'::text AS object_kind, d.datname::text AS schema_name, \
+       SELECT 'database'::text AS object_type, d.datname::text AS schema_name, \
               d.datname::text AS object_name, x.privilege_type::text, x.is_grantable \
          FROM pg_database d CROSS JOIN LATERAL \
               aclexplode(COALESCE(d.datacl, acldefault('d', d.datdba))) x \
@@ -132,6 +132,6 @@ pub fn role_database_grants_sql() -> &'static str {
          FROM pg_default_acl d LEFT JOIN pg_namespace n ON n.oid = d.defaclnamespace \
          CROSS JOIN LATERAL aclexplode(d.defaclacl) x \
         WHERE x.grantee = (SELECT oid FROM wanted)) \
-     SELECT object_kind, schema_name, object_name, privilege_type, is_grantable FROM acl \
-      ORDER BY object_kind, schema_name, object_name, privilege_type"
+     SELECT object_type, schema_name, object_name, privilege_type, is_grantable FROM acl \
+      ORDER BY object_type, schema_name, object_name, privilege_type"
 }

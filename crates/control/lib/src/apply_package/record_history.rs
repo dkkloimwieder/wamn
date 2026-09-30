@@ -228,7 +228,7 @@ async fn reconcile_audit_retention_grants(tx: &Transaction<'_>) -> anyhow::Resul
             rows.iter()
                 .map(|row| {
                     (
-                        row.get::<_, String>("object_kind"),
+                        row.get::<_, String>("object_type"),
                         row.get::<_, String>("schema_name"),
                         row.get::<_, String>("object_name"),
                         row.get::<_, String>("privilege_type"),

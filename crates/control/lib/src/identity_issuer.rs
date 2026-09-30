@@ -314,7 +314,7 @@ async fn exact_grants(
     anyhow::ensure!(
         rows.len() == count
             && rows.iter().all(|row| {
-                let kind: &str = row.get("object_kind");
+                let kind: &str = row.get("object_type");
                 let schema: &str = row.get("schema_name");
                 let object: &str = row.get("object_name");
                 let privilege: &str = row.get("privilege_type");

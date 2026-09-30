@@ -320,8 +320,8 @@ fn load_role_grants(admin_url: &str, role: &str) -> Vec<String> {
     query(
         admin_url,
         &format!(
-            "SELECT kind || '|' || sch || '|' || obj || '|' || priv FROM ( \
-               SELECT 'relation' AS kind, n.nspname::text AS sch, c.relname::text AS obj, \
+            "SELECT type || '|' || sch || '|' || obj || '|' || priv FROM ( \
+               SELECT 'relation' AS type, n.nspname::text AS sch, c.relname::text AS obj, \
                       x.privilege_type::text AS priv \
                  FROM pg_catalog.pg_class c \
                  JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace \

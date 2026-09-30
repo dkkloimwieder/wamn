@@ -220,7 +220,7 @@ async fn direct_acl_set(admin: &Client, role: &str) -> BTreeSet<String> {
         .map(|row| {
             format!(
                 "{}:{}:{}:{}",
-                row.get::<_, String>("object_kind"),
+                row.get::<_, String>("object_type"),
                 row.get::<_, String>("schema_name"),
                 row.get::<_, String>("object_name"),
                 row.get::<_, String>("privilege_type")

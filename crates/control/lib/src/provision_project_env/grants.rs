@@ -173,7 +173,7 @@ pub(super) async fn verify_role_grants(
         let grants: Vec<RoleAcl> = rows
             .into_iter()
             .map(|row| RoleAcl {
-                object_kind: row.get("object_kind"),
+                object_type: row.get("object_type"),
                 schema_name: row.get("schema_name"),
                 object_name: row.get("object_name"),
                 privilege: row.get("privilege_type"),
@@ -185,7 +185,7 @@ pub(super) async fn verify_role_grants(
                 !acl.grantable,
                 "role {role:?} may grant {} on {} {}.{} in database {database:?}",
                 acl.privilege,
-                acl.object_kind,
+                acl.object_type,
                 acl.schema_name,
                 acl.object_name,
             );
@@ -223,7 +223,7 @@ pub(super) async fn verify_role_grants(
                     let allowed = match expectation {
                         RoleAclExpectation::None => false,
                         RoleAclExpectation::Generation { database: expected } => {
-                            acl.object_kind == "database"
+                            acl.object_type == "database"
                                 && database == expected
                                 && acl.object_name == expected
                                 && acl.privilege == "CONNECT"
@@ -236,7 +236,7 @@ pub(super) async fn verify_role_grants(
                         allowed,
                         "role {role:?} carries unexpected direct {} on {} {}.{} in database {database:?}",
                         acl.privilege,
-                        acl.object_kind,
+                        acl.object_type,
                         acl.schema_name,
                         acl.object_name,
                     );
@@ -251,7 +251,7 @@ pub(super) async fn verify_role_grants(
 
 #[derive(Clone)]
 pub(super) struct RoleAcl {
-    pub(super) object_kind: String,
+    pub(super) object_type: String,
     pub(super) schema_name: String,
     pub(super) object_name: String,
     pub(super) privilege: String,
@@ -278,15 +278,15 @@ fn verify_retention_grants(role: &str, database: &str, grants: &[RoleAcl]) -> an
     let mut by_schema: BTreeMap<String, BTreeSet<(String, String, String)>> = BTreeMap::new();
     for acl in grants {
         anyhow::ensure!(
-            matches!(acl.object_kind.as_str(), "schema" | "relation" | "column"),
+            matches!(acl.object_type.as_str(), "schema" | "relation" | "column"),
             "stable role {role:?} carries non-retention {} ACL in database {database:?}",
-            acl.object_kind
+            acl.object_type
         );
         by_schema
             .entry(acl.schema_name.clone())
             .or_default()
             .insert((
-                acl.object_kind.clone(),
+                acl.object_type.clone(),
                 acl.object_name.clone(),
                 acl.privilege.clone(),
             ));
@@ -411,7 +411,7 @@ pub(super) fn verify_management_admitter_grants(
         .iter()
         .map(|acl| {
             (
-                acl.object_kind.clone(),
+                acl.object_type.clone(),
                 acl.schema_name.clone(),
                 acl.object_name.clone(),
                 acl.privilege.clone(),
@@ -461,7 +461,7 @@ fn acl_tuples(grants: &[RoleAcl]) -> BTreeSet<(String, String, String, String)> 
         .iter()
         .map(|acl| {
             (
-                acl.object_kind.clone(),
+                acl.object_type.clone(),
                 acl.schema_name.clone(),
                 acl.object_name.clone(),
                 acl.privilege.clone(),
@@ -763,7 +763,7 @@ pub(super) fn verify_system_reader_grants(
         .iter()
         .map(|acl| {
             (
-                acl.object_kind.clone(),
+                acl.object_type.clone(),
                 acl.schema_name.clone(),
                 acl.object_name.clone(),
                 acl.privilege.clone(),
