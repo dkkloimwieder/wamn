@@ -1,6 +1,6 @@
 # Platform `kind` to `type` migration
 
-Status: Draft. Section 1 accepted 2026-09-29 (wamn-sfea.1). Section 2 is a draft from wamn-sfea.2. Sections 3 to 5 are pending wamn-sfea.3 to wamn-sfea.5. Section 6 holds an owner ruling (wamn-sfea.6).
+Status: Draft. Section 1 accepted 2026-09-29 (wamn-sfea.1). Section 2 accepted 2026-09-30 (wamn-sfea.2). Sections 3 to 5 are pending wamn-sfea.3 to wamn-sfea.5. Section 6 holds an owner ruling (wamn-sfea.6).
 
 Measured on `main` at `1045b4fad`.
 
@@ -323,26 +323,22 @@ Regenerated for the new vocabulary:
 | `crates/client/tui/tests/data/classification-cases.json` | A4 |
 | Router tap test bodies in `crates/platform/runtime/src/plugins/wamn_jetstream.rs:2190` | W5 |
 
-### 2.5 Questions for the owner
+### 2.5 Owner rulings, 2026-09-30
 
-1. **New version numbers.** Which version does each package take? A key rename breaks every client of the old contract, which suggests a major step (1.0.0 to 2.0.0, and 3.0.0 to 4.0.0 for `client_acme_receiving`).
-2. **Router delivery WIT.** Rename `failure-kind` inside `wamn:router-delivery@0.1.0`, or publish the rename under a new WIT package version? A version 0.2.0 already exists (`crates/execution/host/wit/deps/wamn-router-delivery-0.2/package.wit:1`).
-3. **Serving manifest format.** Does the rename take format version 4? The reader admits only format 3 (`crates/catalog/model/src/serving_manifest.rs:33`). Old releases keep format 3 bytes. §5 depends on this answer.
-4. **Catalog frame tag.** Rename the `("kind", ...)` frame label in G9? Only tests use those frames.
-5. **Authoring retries (W1).** Is it acceptable that a command sent before the rename cannot be replayed after it?
-6. **§6 and component bytes.** The §6 ruling says the 73 `*ErrorKind` families move no bytes. That holds for the type names. It does not hold if the same commit renames `kind` fields of error structs that derive `Debug` and compile into a component, such as `StatementError.kind`. Rename those fields, or keep them?
-7. **`NodeErrorKind`.** §6 says its wire bytes move. No field holds a `NodeErrorKind`, and its serialized values do not contain the type name (`crates/execution/run-state/src/status.rs:252`). By code, its rename moves no bytes. Confirm or correct §6.
+1. Every package takes a major version step, because a serialized field of the package contract changes. Each package goes to 2.0.0, and `client_acme_receiving` goes to 4.0.0.
+2. `wamn:router-delivery@0.1.0` is not renamed, because `wamn-lt7y` retires it. `failure-kind` also lives in 0.2.0, so its rename is a break. 0.2.0 becomes 0.3.0 after `wamn-lt7y` lands.
+3. The serving manifest moves to format 4, and the reader accepts format 4 only. There is no dual read. Old release rows keep their format 3 bytes, and a format 4 router never reads them. The wamn-dev republish order says which release is read when.
+4. The `("kind", ...)` frame label in G9 becomes `type`. The test vector follows.
+5. Consequence: an authoring command sent before the rename and retried after it is refused as a conflict. It is not replayed (W1).
+6. The `kind` fields of error structs are renamed. This moves component bytes, see §6.
 
-Inventory gaps found while tracing, not yet rows of §1:
-
-- `Placement` in `crates/control/registry/src/types.rs:286` uses `#[serde(tag = "kind")]` on registry JSON. It is WAMN-owned and not hashed.
-- The span attribute `wamn.caller_credential_kind` in `crates/execution/host/src/operation.rs:191`.
-- The A2 count of 104 includes the 68 matches of G1, because the A2 pathspec also matches `generated/publication/`. The authored count is 36.
+The inventory gaps found here are now rows W11 and W12 of §1, and the A2 count is corrected to 36.
 
 ## 6. `*ErrorKind` families
 
-Owner ruling, 2026-09-29 (wamn-sfea.6): the `*ErrorKind` rename is part of this migration epic.
+Owner rulings, 2026-09-29 and 2026-09-30 (wamn-sfea.6, corrected in wamn-sfea.2): the `*ErrorKind` rename is part of this migration epic.
 
-- `NodeErrorKind` is the one `*ErrorKind` family that derives serde, so its wire bytes move. It migrates with the serialized surfaces.
-- The other 73 families, including the WAMN enum `ErrorKind` in `connection_http/transport.rs`, leave the process only as `code` strings. They move no bytes.
-- These 73 families rename in one commit. That commit is the last issue of the implementation epic, after every serialized surface lands. It can merge alone.
+- All 74 families rename in one commit, including `NodeErrorKind` and the WAMN enum `ErrorKind` in `connection_http/transport.rs`.
+- `NodeErrorKind` serializes only its values, such as `retryable`, and no field holds the type. Its rename moves no bytes (`crates/execution/run-state/src/status.rs:250`).
+- The same commit renames the `kind` fields of error structs, such as `StatementError.kind`. Their `Debug` output compiles into components, so this commit moves component bytes.
+- The commit lands before the package rebuild and republish, so each component is built once.
