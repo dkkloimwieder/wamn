@@ -1331,25 +1331,12 @@ Then:
 - CLI role/permission verbs;
 - dev-loop and service-principal migration.
 
-Installed wamn-dev databases are migrated by hand because no general installed-schema migration path exists yet.
+Installed databases move by `upgrade-schema` (owner ruling 2026-09-30, `wamn-a40n.1`), not by hand statements. Issue 1 ships two migration files:
 
-For **both installed application environments**, Issue 1 owns the required statements to:
+- `deploy/sql/migrations/project/0002_authored_roles.sql`, for each project-environment database. A holder of `operator` holds `admin`, and the role `operator` goes. `admin` loses its permission rows. A surviving authored permission becomes a stable reference and a direct selection. The table gains `required_by`, the self-referencing key, the admin and reference CHECKs, and the role-name CHECK. The closure rows of each selection are written when the next candidate release is reconciled before activation.
+- `deploy/sql/migrations/system/0004_admin_role.sql`, for `wamn_system`. A service that holds the project role `operator` holds `admin`, because route PAT admission accepts only `admin`.
 
-- delete `operator` role/assignment/grant rows as required by the final DDL;
-- delete `admin` permission rows;
-- rewrite surviving authored permissions from sealed ids to stable references;
-- add `required_by`;
-- populate the direct and closure provenance required by the new model;
-- apply any accompanying role-name CHECK/schema change.
-
-Every statement actually applied to wamn-dev is recorded with date and finding in:
-
-```text
-docs/operations/gcp.md
-§7 Schema changes applied by hand
-```
-
-under the `wamn-o8b9` installed-schema-upgrade finding.
+A fresh install records both files as applied.
 
 Exit includes:
 
