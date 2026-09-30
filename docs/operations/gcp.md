@@ -772,6 +772,16 @@ kubectl -n identity delete job mint-pat
 
 The Job and its Secret also go 600 seconds after the Job ends (`ttlSecondsAfterFinished`). For an operator PAT, pass `--emit-operator-pat-secret` and read the file into `$P/operator-pat.json`.
 
+On 2026-09-30 the Job minted the operator PAT of the Receiving bench operator `wamn-operator-dkk--receiving--dev` in 10 seconds, with `--emit-operator-pat-secret`. The file was read 3 seconds after the mint. The PAT has prefix `5b0649d6dc4dd3bf` and expires on 2026-10-30. The log holds no credential, and `registry.project_envs` kept `secret_namespace` `hosts`. Revoke the previous PAT of the service from this machine, through a forward to the pod:
+
+```bash
+kubectl -n platform port-forward pod/wamn-pg-1 15435:5432 &
+target/debug/wamn-ctl provision-project-env --revoke-pat-prefix 1a98d582140907ed \
+  --system-database-url "postgresql://postgres:${PW}@127.0.0.1:15435/wamn_system"
+```
+
+The revoke took less than 1 second. `identity.pats` then showed `1a98d582140907ed` revoked and `5b0649d6dc4dd3bf` live. The new PAT file stays at mode 0600 in the private directory, and a new client VM takes it (section 6.4).
+
 The first mint ran from this machine, through a temporary `/etc/hosts` line and an identity port-forward. On 2026-09-26 the mint took 5 seconds. It made the service principal `wamn-management-author-dkk--receiving--dev` and a PAT with prefix `6922769387dc9a19` that expires on 2026-10-27. The PAT Secret file stays at mode 0600 in the work directory and is not applied.
 
 ### 3.17 Pool after the daily guard
@@ -1747,7 +1757,7 @@ The new provision needed generation `b` in one place. `provision-identity-issuer
 | Receiving | 1 | `sha256:900d35fbd2da116aac3d76abcf3895da7810cedeaf75fd5fdc4f9858f578fdfc` | `receiving` `sha256:1d034a09179b5c1a1eb74643d8a9376d612653116e7f7edddd8666dc74712fdb` |
 | WMS | 1 | `sha256:3d6b13f9c7864e2b34317b6822d85b6d6a5542c36f9b5ae5d2ae049c1fcab2f6` | `wms` `sha256:0533b015d675921df8529bdd58913730d36a8f97dbbb2b0f4affae963422ce58`, `label-render` `sha256:587434540bb0173ae447be16d89876ae0b70047b6c9241bf375c87f8c08efc91`, `blob-put` and `jsonata` unchanged |
 
-The service `wamn-operator-dkk--receiving--dev` holds the role `operator`, with a PAT of prefix `1a98d582140907ed` that expires on 2026-10-29. The owner holds `admin` in both environments. The host upgrade with `--timeout 10m` took 15 seconds, and the Helm release reads `deployed` at revision 5. The web clients of both releases took 7 seconds each to upload.
+The service `wamn-operator-dkk--receiving--dev` holds the role `operator`, with a PAT of prefix `1a98d582140907ed` that expires on 2026-10-29. On 2026-09-30 the PAT of prefix `5b0649d6dc4dd3bf`, which expires on 2026-10-30, replaced it (section 3.16). The owner holds `admin` in both environments. The host upgrade with `--timeout 10m` took 15 seconds, and the Helm release reads `deployed` at revision 5. The web clients of both releases took 7 seconds each to upload.
 
 ## 7. Schema changes applied by hand
 
