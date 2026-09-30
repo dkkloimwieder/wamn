@@ -2,7 +2,7 @@
 
 These pages describe implemented WAMN behavior, its contract boundaries, and known limits. Beads and Git own work status. The [operations pages](../operations/README.md) own commands and environment procedures.
 
-[Overview](overview.md): Applications, control libraries, publication, and releases.
+[Overview](overview.md): Applications, control libraries, publication, releases, and cloud providers.
 [Execution](execution.md): Routing, request authority, session tokens, and runtime limits.
 [Data access](data-access.md): Schema ownership, SQL generation, transactions, record history, and query contracts.
 [Naming](naming.md): Package, operation, and language identifiers, and reserved names.
