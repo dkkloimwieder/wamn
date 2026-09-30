@@ -1,6 +1,6 @@
 # Platform `kind` to `type` migration
 
-Status: Draft. Section 1 from wamn-sfea.1; sections 2–6 pending wamn-sfea.2–.6.
+Status: Draft. Section 1 accepted 2026-09-29 (wamn-sfea.1). Sections 2–6 pending wamn-sfea.2–.6.
 
 Measured on `main` at `1045b4fad`.
 
@@ -33,8 +33,8 @@ Column meanings:
 | A2 | `apps/*/publication/attachments.json` | Top-level `kind` and `definition.kind`, value `http` | yes | yes | yes. `definition.kind` is inside the canonical definition that `definition-hash` covers. The top-level `kind` enters the serving manifest digest (see G8) | `apps/wamn_receiving/publication/attachments.json:3`, `:10`. Hash check at `crates/control/lib/src/publish_release/attachments.rs:238` and `crates/schema/generator/src/route_schema.rs:219`. Hash function at `apps/platform/execution/contract/src/lib.rs:54` | 104 |
 | A3 | Test fixture packages | Same keys as A1 and A2 in fixture copies | yes | yes | tbd | `crates/control/lib/tests/fixtures/observer_package/wamn.json:32`, `services/ctl/tests/fixtures/ui_scaffold/publication/attachments.json:3` | 6 |
 | A4 | Client TUI classification fixture | `kind` holds an operation kind | yes | yes | no | `crates/client/tui/tests/data/classification-cases.json:31` | 6 |
-| A5 | Application column named `kind` in `wamn.json` | The record-history column `kind` (see P9), named as a projection path and a row field | ask | yes | tbd | `apps/wamn_receiving/wamn.json:1087` | 3 |
-| A6 | Operator recovery CRD fixture | `resource_kind` holds a Kubernetes resource kind such as `Host` | ask | yes | no | `tests/integration/fixtures/operator-recovery/deployment-crds-001/crd-inventory.json:11` | 15 |
+| A5 | Application column named `kind` in `wamn.json` | The record-history column `kind` (see P9), named as a projection path and a row field. Becomes `type` (§1.8) | yes | yes | tbd | `apps/wamn_receiving/wamn.json:1087` | 3 |
+| A6 | Operator recovery CRD fixture | `resource_kind` holds a Kubernetes resource kind such as `Host`. Stays (§1.8 rule) | no | yes | no | `tests/integration/fixtures/operator-recovery/deployment-crds-001/crd-inventory.json:11` | 15 |
 
 No authored TOML file carries a `kind` key.
 
@@ -62,12 +62,12 @@ No authored TOML file carries a `kind` key.
 | W1 | Authoring HTTP API | `#[serde(tag = "kind")]` on `AuthoringCommand`, `AuthoringQuery`, `GateRefusal`, `PublishRefusal`, `GetReportRefusal` | yes | yes | `crates/authoring/model/src/lib.rs:189`, `:210`, `:465`, `:516`, `:552` | 5 |
 | W2 | Management refusal bodies | JSON `{"kind": ...}`, such as `authorization-denied` and `unsupported-contract-version`. `ctl dev` renders them | yes | yes | `services/scenario-worker/src/management.rs:728`, `services/ctl/src/dev/tui.rs:635` | 25 in scenario-worker |
 | W3 | Router delivery WIT | `enum failure-kind` and `delivery-failure.kind`. Lowered from `FailureKind` | yes | yes | `crates/execution/host/wit/deps/wamn-router-delivery/package.wit:41`, `:55`, `crates/execution/workflow/src/wiring_delivery.rs:429` | 2 |
-| W4 | Generated application WIT | `load-purchase-order-history-row.kind: string`, the history column (P9) | ask | yes | `apps/wamn_receiving/generated/wit/deps/wamn-receiving-receiving/package.wit:35` | 1 |
+| W4 | Generated application WIT | `load-purchase-order-history-row.kind: string`, the history column (P9). Becomes `type` | yes | yes | `apps/wamn_receiving/generated/wit/deps/wamn-receiving-receiving/package.wit:35` | 1 |
 | W5 | JetStream router tap | `source-kind` / `source_kind` on `RouterTapWire` and `RouterTapRecord` | yes | yes | `crates/platform/runtime/src/plugins/wamn_jetstream.rs:251`, `:277` | 37 |
 | W6 | Connection generation identity | `credential-kind` identity label. `CredentialKind` values | yes | yes | `crates/platform/runtime/src/connection_generation.rs:230` | 1 |
-| W7 | Event advisory | Already `type` on the wire through `#[serde(rename = "type")]`. Only the Rust names `kind` and `DeliveryAdvisoryKind` remain | yes | no (name) | `apps/platform/events/wire/src/lib.rs:285` | 1 |
+| W7 | Event advisory | Already `type` on the wire through `#[serde(rename = "type")]`. Only the Rust names `kind` and `DeliveryAdvisoryKind` remain. The Rust names follow, nothing else | yes | no (name) | `apps/platform/events/wire/src/lib.rs:285` | 1 |
 | W8 | Web runtime | `OperationContract.kind` read from generated clients. `SuppliedField.kind` values | yes | yes | `web/runtime/src/wire.ts:41`, `web/runtime/src/transport.ts:382`, `web/runtime/src/supplied.ts:45` | 7 |
-| W9 | Web table filters | `SetFilter.kind` discriminant. Values appear in URLs, the key does not | yes | value | `web/ui/src/table/column-filter.tsx:26`, `web/ui/src/table/set-view.ts:41` | 34 |
+| W9 | Web table filters | `SetFilter.kind` discriminant. Values appear in URLs, the key does not. Becomes `type`, a rename only | yes | value | `web/ui/src/table/column-filter.tsx:26`, `web/ui/src/table/set-view.ts:41` | 34 |
 | W10 | Web tests and gallery | Fixtures of W8 | yes | no | `web/runtime/test/classification.test.ts:42`, `web/components/gallery/memory.tsx:28` | 12 |
 
 `*ErrorKind` values do not appear on the wire under a `kind` key. They leave the process as `code` strings. wamn-sfea.6 should confirm this per family.
@@ -86,7 +86,7 @@ Database names: `wamn_system` is the control database (`SYSTEM_SCHEMA_SQL` and `
 | P6 | wamn_system | `provisioning.copy_sagas` | `kind`, `copy_sagas_kind_check` | yes | `deploy/sql/ops-schema.sql:30` |
 | P7 | wamn_system | `catalog.authoring_command_audit` | `command_kind`, `principal_kind`, inline checks | yes | `deploy/sql/control-portable-store.sql:270` |
 | P8 | project-env | `catalog.package_definition_owners` | `definition_kind`, inline check, part of the key | yes | `deploy/sql/catalog-schema.sql:59` |
-| P9 | project-env and wamn_system | Every `<relation>_history` table | `kind` (`insert`, `update`, `delete`), `<history>_kind_check`, column grant | yes | `deploy/sql/record-history.sql:117`, `:135`, `deploy/sql/app-schema.sql:525`, `apps/platform/data/record-history/src/lib.rs:55` |
+| P9 | project-env and wamn_system | Every `<relation>_history` table | `kind` (`insert`, `update`, `delete`), `<history>_kind_check`, column grant. Becomes `type` and `<history>_type_check` in both databases | yes | `deploy/sql/record-history.sql:117`, `:135`, `deploy/sql/app-schema.sql:525`, `apps/platform/data/record-history/src/lib.rs:55` |
 | P10 | project-env | `wamn_run.runs` | `caller_outcome_kind`, `fail_kind`, `runs_caller_outcome_kind_check`, `runs_fail_kind_check` | yes | `deploy/sql/run-state.sql:377`, `:387`, `crates/schema/control/src/run_plane/declarations.rs:104`, `:116` |
 | P11 | project-env | `wamn_run.effect_attempts` | `generation_fact_kind`, inline checks | yes | `deploy/sql/run-state.sql:603` |
 | P12 | project-env | `wamn_run.operator_run_actions` | `action_kind`, `principal_kind`, `operator_run_actions_kind_check`, `operator_run_actions_principal_kind_check` | yes | `deploy/sql/run-state.sql:795`, `crates/schema/control/src/run_plane/declarations.rs:377`, `:401` |
@@ -110,7 +110,7 @@ Counts come from the R1 to R5 commands in §1.7. A family is a declared `enum`, 
 | R5 | `*ErrorKind` | 74 | 2860 | yes | value (as `code`) | `GenerateErrorKind` `crates/schema/generator/src/error.rs:6` (344 refs), `AccessErrorKind` (5 generated copies), `StatementErrorKind`, `MintManifestErrorKind`. Only `NodeErrorKind` `crates/execution/run-state/src/status.rs:254` derives serde |
 | R6 | Rust field, variable, function and test names in lowercase (`kind`, `fail_kind`, `kinds`, ...) | n/a | 3938 | mixed | only via G, W, P rows | 3211 are bare `kind`. 72 are `relkind` (not owned, see N6) |
 
-R1 through R4 total 40 distinct non-error types and 1334 references. The R5 reference count includes 78 matches of the bare name `ErrorKind`. One WAMN enum has that name, in `crates/platform/runtime/src/plugins/connection_http/transport.rs:315`. Most of the 78 are `std::io::ErrorKind` (N7). R5 leaves out 11 matches of four async-nats error kinds (`ConsumerInfoErrorKind`, `GetStreamErrorKind`, `SubscribeErrorKind`, `RawMessageErrorKind`), which N9 does not count either.
+R1 through R4 total 40 distinct non-error types and 1334 references. The R5 reference count includes 78 matches of the bare name `ErrorKind`. One WAMN enum has that name, in `crates/platform/runtime/src/plugins/connection_http/transport.rs:315`. It is in scope and goes with the `*ErrorKind` decision (wamn-sfea.6). Most of the 78 are `std::io::ErrorKind` (N7). R5 leaves out 11 matches of four async-nats error kinds (`ConsumerInfoErrorKind`, `GetStreamErrorKind`, `SubscribeErrorKind`, `RawMessageErrorKind`), which N9 does not count either.
 
 ### 1.6 Not WAMN-owned, stays as is
 
@@ -201,3 +201,12 @@ git grep -h -E '//.*\bkinds?\b' -- '*.rs' | wc -l                               
 ```
 
 The R1 to R4 name lists are a manual classification of every declared non-error `*Kind` type. `git grep -h -o -E '(enum|struct|type) [A-Za-z0-9_]*Kind[A-Za-z0-9_]*\b' -- '*.rs' | grep -v 'ErrorKind' | sed -E 's/^(enum|struct|type) //' | sort -u` lists the 40 names that the four lists cover.
+
+### 1.8 Owner rulings, 2026-09-29
+
+Rule: a name that quotes another system's term keeps that term. `resource_kind` (A6) and the R4 test-support types stay for this reason.
+
+- The record-history column becomes `type`, with the constraint `_type_check`. This applies to every history table in both databases, the `wamn.json` paths and the generated WIT field (A5, W4, P9). The wamn-dev hand statements go under `wamn-o8b9`.
+- The WAMN enum `ErrorKind` in `connection_http/transport.rs` is in scope. It goes with the `*ErrorKind` decision in wamn-sfea.6.
+- `SetFilter.kind` (W9) becomes `type`. It is a rename only, because the word is not on the wire.
+- `DeliveryAdvisory` (W7) already sends `type`. Only its Rust names change.
