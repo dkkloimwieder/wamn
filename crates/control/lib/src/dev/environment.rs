@@ -242,6 +242,9 @@ pub fn generation_args(
     target_admin_url: Option<&str>,
     secret: &Path,
 ) -> WorkloadActionRequest {
+    // The dev loop's workloads reach the database at the admin URL's own host.
+    let admin = url::Url::parse(target_admin_url.unwrap_or(system_url))
+        .expect("the dev loop's admin URL parses");
     WorkloadActionRequest {
         org: ORG.to_owned(),
         project: PROJECT.to_owned(),
@@ -249,6 +252,9 @@ pub fn generation_args(
         tenant: Some(TENANT.to_owned()),
         system_database_url: Some(system_url.to_owned()),
         target_admin_database_url: target_admin_url.map(str::to_owned),
+        cluster: None,
+        db_host: admin.host_str().map(str::to_owned),
+        db_port: admin.port_or_known_default().unwrap_or(5432),
         namespace: "wamn-system".to_owned(),
         action: WorkloadGenerationAction {
             family,

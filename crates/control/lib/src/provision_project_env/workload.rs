@@ -13,7 +13,7 @@ use super::{
     WorkloadRoleScopeKind, WorkloadSecretBody, WorkloadSecretBodyKind, connect_config,
     ensure_secret_path, exact_project_database_config, named_database_config,
     project_env_database_name, read_project_env_instance, render_workload_secret_manifest,
-    role_sql, sql, tenant_key, validate_project_env, validate_session_tenant_id,
+    resolve_cluster, role_sql, sql, tenant_key, validate_project_env, validate_session_tenant_id,
     workload_action_flag, workload_config, workload_generation_role, workload_secret_flag,
     workload_url, write_output, write_secret_json,
 };
@@ -426,6 +426,14 @@ pub async fn run_workload_action(
         (admin_url, database, config, Some(instance))
     };
     let lifecycle = workload_lifecycle(family, identity, &database);
+    let db_host = match (&args.db_host, &args.cluster) {
+        (Some(host), _) => host.clone(),
+        (None, Some(cluster)) => format!("{cluster}-rw"),
+        (None, None) => format!(
+            "{}-rw",
+            resolve_cluster(system_url, org, environment).await?
+        ),
+    };
 
     match verb {
         WorkloadActionVerb::Prepare => {
@@ -448,7 +456,8 @@ pub async fn run_workload_action(
                 generation,
                 &expires_at,
                 |role, password| {
-                    let credential_url = workload_url(admin_url, role, password, &database)?;
+                    let credential_url =
+                        workload_url(admin_url, &db_host, args.db_port, role, password, &database)?;
                     let secret = match family.secret_body_kind() {
                         WorkloadSecretBodyKind::Url => render_workload_secret_manifest(
                             family,

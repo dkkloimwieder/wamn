@@ -79,9 +79,12 @@ fn action_args(
         project: PROJECT.to_string(),
         env: ENVIRONMENT.to_string(),
         tenant: Some(TENANT.to_string()),
-        system_database_url: Some(system_url.into()),
+        system_database_url: Some(system_url.to_string()),
         namespace: format!("wamn-{ORG}--{PROJECT}--{ENVIRONMENT}--{INSTANCE}"),
         target_admin_database_url: Some(target_admin_url.to_string()),
+        cluster: None,
+        db_host: system_url.host_str().map(str::to_owned),
+        db_port: system_url.port_or_known_default().unwrap_or(5432),
         // wamn-0h0g.22.16: one derived action, not four families of fields.
         action: prepare
             .map(|(generation, _)| (WorkloadActionVerb::Prepare, generation))

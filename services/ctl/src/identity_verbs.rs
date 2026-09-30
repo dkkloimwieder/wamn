@@ -28,7 +28,7 @@ pub struct IdentityIssuerArgs {
     #[arg(long, env = "WAMN_SYSTEM_ADMIN_URL", hide_env_values = true)]
     pub system_database_url: String,
     /// Prepare an inactive A/B credential slot.
-    #[arg(long, requires = "emit_secret")]
+    #[arg(long, requires_all = ["emit_secret", "db_host"])]
     pub prepare_generation: Option<CredentialGeneration>,
     /// Retire a slot after its replacement has a live session.
     #[arg(long)]
@@ -39,6 +39,13 @@ pub struct IdentityIssuerArgs {
     /// Write the prepared credential Secret atomically with mode 0600.
     #[arg(long, requires = "prepare_generation")]
     pub emit_secret: Option<PathBuf>,
+    /// Host the emitted credential URL names, for example `<cluster>-rw`. It
+    /// has no default, so the admin URL's host never reaches a workload.
+    #[arg(long, requires = "prepare_generation")]
+    pub db_host: Option<String>,
+    /// Port the emitted credential URL names.
+    #[arg(long, default_value_t = 5432, requires = "prepare_generation")]
+    pub db_port: u16,
     /// Namespace for the emitted Secret.
     #[arg(long, default_value = "wamn-system")]
     pub namespace: String,
@@ -103,6 +110,8 @@ pub async fn provision_issuer(args: IdentityIssuerArgs) -> anyhow::Result<()> {
         retire_generation: args.retire_generation,
         abort_generation: args.abort_generation,
         emit_secret: args.emit_secret,
+        db_host: args.db_host,
+        db_port: args.db_port,
         namespace: args.namespace,
         secret_name: args.secret_name,
     })

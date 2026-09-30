@@ -107,6 +107,15 @@ pub struct ProvisionProjectEnvArgs {
     #[arg(long, env = "WAMN_CLUSTER_NAMESPACE", default_value = "wamn-system")]
     pub cluster_namespace: String,
 
+    /// Host every emitted credential URL names. Defaults to the target
+    /// cluster's read-write service `<cluster>-rw`, never the admin URL's host.
+    #[arg(long)]
+    pub db_host: Option<String>,
+
+    /// Port every emitted credential URL names.
+    #[arg(long, default_value_t = 5432)]
+    pub db_port: u16,
+
     /// Namespace the emitted credential `Secret` is applied to.
     #[arg(long, env = "WAMN_NAMESPACE", default_value = "wamn-system")]
     pub namespace: String,
@@ -638,6 +647,9 @@ fn workload_action_request(
         tenant: args.tenant,
         system_database_url: args.system_database_url,
         target_admin_database_url: args.target_admin_database_url,
+        cluster: args.cluster,
+        db_host: args.db_host,
+        db_port: args.db_port,
         namespace: args.namespace,
         action,
         secret,

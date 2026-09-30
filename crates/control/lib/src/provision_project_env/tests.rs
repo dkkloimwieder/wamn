@@ -1208,3 +1208,22 @@ async fn tenant_projection_and_instance_claim_hold_on_postgres() {
     assert_eq!(first.query_one("SELECT instance_suffix FROM catalog.tenant_environments WHERE tenant_id='tenant-a'", &[]).await.unwrap().get::<_, String>(0), "1234abcd");
     first.batch_execute("RESET ROLE; DROP SCHEMA catalog CASCADE; DROP SCHEMA wamn_run CASCADE; DROP SCHEMA wamn_authority CASCADE; DROP SCHEMA registry CASCADE; DROP SCHEMA provisioning CASCADE; DROP SCHEMA identity CASCADE").await.unwrap();
 }
+
+#[test]
+fn workload_url_names_the_cluster_host_not_the_admin_url_host() {
+    // wamn-lczu: an operator runs the verb through a port-forward, and the
+    // emitted credential must name the host a pod reaches.
+    let url = workload_url(
+        "postgresql://postgres:admin@127.0.0.1:15432/postgres?sslmode=disable",
+        "wamn-pg-rw.platform.svc.cluster.local",
+        5432,
+        "wamn_role",
+        "p@ss",
+        "wamn-db-dkk--receiving--dev--4pqjfmli",
+    )
+    .expect("the URL builds");
+    assert_eq!(
+        url,
+        "postgresql://wamn_role:p%40ss@wamn-pg-rw.platform.svc.cluster.local:5432/wamn-db-dkk--receiving--dev--4pqjfmli"
+    );
+}

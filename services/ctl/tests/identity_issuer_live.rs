@@ -78,7 +78,17 @@ async fn cli(
         .stdin(Stdio::null())
         .kill_on_drop(true);
     if let Some(path) = path {
+        let admin_url = Url::parse(admin).context("parse armed administrator URL")?;
         command.arg("--emit-secret").arg(path);
+        command
+            .arg("--db-host")
+            .arg(admin_url.host_str().unwrap_or_default());
+        command.arg("--db-port").arg(
+            admin_url
+                .port_or_known_default()
+                .unwrap_or(5432)
+                .to_string(),
+        );
     }
     let output = tokio::time::timeout(Duration::from_secs(30), command.output())
         .await

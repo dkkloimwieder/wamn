@@ -529,7 +529,8 @@ Keep the port-forward and `WAMN_SYSTEM_ADMIN_URL` of section 3.6. Set the superu
 ```bash
 T="postgresql://postgres:${PW}@127.0.0.1:15432/wamn-db-dkk--receiving--dev--4pqjfmli"
 target/debug/wamn-ctl provision-identity-issuer --issuer https://identity.identity.svc.cluster.local \
-  --prepare-generation a --namespace identity --emit-secret $P/identity-db.json
+  --prepare-generation a --namespace identity --emit-secret $P/identity-db.json \
+  --db-host wamn-pg-rw.platform.svc.cluster.local
 target/debug/wamn-ctl reconcile-run-plane --system-database-url "$WAMN_SYSTEM_ADMIN_URL" --admin-database-url "$T" \
   --org dkk --project receiving --tenant dev --env dev --schema wamn_run
 target/debug/wamn-ctl apply-package --package apps/wamn_receiving --database-url "$T" --tenant dev
@@ -538,12 +539,10 @@ target/debug/wamn-ctl reconcile-package-data-access --package apps/wamn_receivin
 
 `reconcile-run-plane` runs before `apply-package`, because it installs the catalog schema that `apply-package` writes into. On 2026-09-26 the four verbs took 4, 13, 37 and 16 seconds.
 
-The verbs copy the host of the admin URL, the port-forward `127.0.0.1:15432`, into every credential URL they emit. Set the cluster host with `jq` before you apply such a Secret (finding `wamn-lczu`):
+Every emitted credential URL names the host and port of `--db-host` and `--db-port`, never the port-forward of the admin URL (finding `wamn-lczu`). `provision-identity-issuer` has no default host. `provision-project-env` defaults to `<cluster>-rw:5432`, and a Secret outside the namespace of the cluster needs the full service name. Apply the Secret:
 
 ```bash
-jq '.stringData.url |= sub("@127\\.0\\.0\\.1:15432/"; "@wamn-pg-rw.platform.svc.cluster.local:5432/")' \
-  $P/identity-db.json > $P/identity-db.cluster.json
-kubectl apply -f $P/identity-db.cluster.json
+kubectl apply -f $P/identity-db.json
 ```
 
 ### 3.9 Component
@@ -587,15 +586,13 @@ for ns in hosts edge; do kubectl -n $ns create configmap identity-ca --from-file
 
 To send an invitation, the owner reads `tls.crt` and `tls.key` of the Secret `operator-dkk` into mode 0600 files. Never commit them.
 
-Prepare the session target, set its database host inside `target.json`, and apply it:
+Prepare the session target and apply it:
 
 ```bash
 target/debug/wamn-ctl provision-project-env --org dkk --project receiving --env dev --tenant dev \
-  --namespace identity --target-admin-database-url "$T" \
+  --namespace identity --target-admin-database-url "$T" --db-host wamn-pg-rw.platform.svc.cluster.local \
   --prepare-session-role-reader-generation a --emit-session-role-reader-secret $P/session-target.json
-jq '.stringData["target.json"] |= (fromjson | .database_url |= sub("@127\\.0\\.0\\.1:15432/"; "@wamn-pg-rw.platform.svc.cluster.local:5432/") | tojson)' \
-  $P/session-target.json > $P/session-target.cluster.json
-kubectl apply -f $P/session-target.cluster.json
+kubectl apply -f $P/session-target.json
 ```
 
 The verb prints two PostgreSQL warnings that the `postgres` role did not grant a role membership. The generation still authenticates, as the verb reports. On 2026-09-26 the certificates took 5 seconds and the session target 11 seconds.
@@ -625,18 +622,20 @@ Prepare generation `a` of the five host credentials, one family for each run. `i
 ```bash
 for f in guest executor-platform http-admitter event-materializer; do
   target/debug/wamn-ctl provision-project-env --org dkk --project receiving --env dev --tenant dev \
-    --namespace hosts --target-admin-database-url "$T" --prepare-$f-generation a --emit-$f-secret $P/$f.json
+    --namespace hosts --target-admin-database-url "$T" --db-host wamn-pg-rw.platform.svc.cluster.local \
+    --prepare-$f-generation a --emit-$f-secret $P/$f.json
 done
 target/debug/wamn-ctl provision-project-env --org dkk --project receiving --env dev --tenant dev \
-  --namespace hosts --prepare-identity-reader-generation a --emit-identity-reader-secret $P/identity-reader.json
+  --namespace hosts --db-host wamn-pg-rw.platform.svc.cluster.local \
+  --prepare-identity-reader-generation a --emit-identity-reader-secret $P/identity-reader.json
 ```
 
-Set the database host in each Secret, name the guest Secret `wamn-host-db`, and apply them:
+Name the guest Secret `wamn-host-db`, and apply them:
 
 ```bash
 for f in guest executor-platform identity-reader http-admitter event-materializer; do
-  filter='.stringData.url |= sub("@127\\.0\\.0\\.1:15432/"; "@wamn-pg-rw.platform.svc.cluster.local:5432/")'
-  [ $f = guest ] && filter="$filter | .metadata.name = \"wamn-host-db\""
+  filter='.'
+  [ $f = guest ] && filter='.metadata.name = "wamn-host-db"'
   (umask 077; jq "$filter" $P/$f.json > $P/$f.cluster.out) && kubectl apply -f - < $P/$f.cluster.out
 done
 ```
@@ -804,16 +803,17 @@ The verb writes `role.sql` with mode 0664, so keep `C` at mode 0700. The `--db-h
 
 ### 3.19 CDC reader
 
-The reader reads the registration with generation `a` of the registry-reader credential, as the Receiving cluster tests do. Prepare it, set the cluster host (finding `wamn-lczu`), and apply it:
+The reader reads the registration with generation `a` of the registry-reader credential, as the Receiving cluster tests do. Prepare it and apply it:
 
 ```bash
 (umask 077; target/debug/wamn-ctl provision-project-env --org dkk --project receiving --env dev --tenant dev \
-  --namespace platform --prepare-registry-reader-generation a --emit-registry-reader-secret $C/registry-reader.json)
-(umask 077; jq '.stringData.url |= sub("@127\\.0\\.0\\.1:15432/"; "@wamn-pg-rw.platform.svc.cluster.local:5432/")' \
-  $C/registry-reader.json > $C/registry-reader.cluster.json)
-kubectl apply -f $C/registry-reader.cluster.json
-rm -f $C/registry-reader.json $C/registry-reader.cluster.json
+  --namespace platform --db-host wamn-pg-rw.platform.svc.cluster.local \
+  --prepare-registry-reader-generation a --emit-registry-reader-secret $C/registry-reader.json)
+kubectl apply -f $C/registry-reader.json
+rm -f $C/registry-reader.json
 ```
+
+On 2026-09-30 a prepare of generation `b` with `--db-host` emitted `@wamn-pg-rw.platform.svc.cluster.local:5432/wamn_system`, and the abort of `b` followed at once. The Secret was never applied. An abort keeps the role as an inactive slot with no login, no password and no memberships. The issuer generation `a` took the same test, and identity still answered the JWKS check of section 3.10 with `HTTP 200`.
 
 Build the image by its source identity and push it as in section 3.4:
 

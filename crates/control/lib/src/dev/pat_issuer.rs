@@ -70,6 +70,15 @@ impl Bootstrap {
             retire_generation: None,
             abort_generation: (!prepare).then_some(CredentialGeneration::A),
             emit_secret: prepare.then(|| self.files.0.join("database.json")),
+            // The dev loop's identity reaches the database at the admin URL's host.
+            db_host: prepare
+                .then(|| url::Url::parse(&self.system_url).ok())
+                .flatten()
+                .and_then(|url| url.host_str().map(str::to_owned)),
+            db_port: url::Url::parse(&self.system_url)
+                .ok()
+                .and_then(|url| url.port_or_known_default())
+                .unwrap_or(5432),
             namespace: "wamn-system".into(),
             secret_name: self.secret_name.clone(),
         }
@@ -466,6 +475,8 @@ pub async fn stop_environment(root: &Path) -> anyhow::Result<()> {
         retire_generation: None,
         abort_generation: Some(CredentialGeneration::A),
         emit_secret: None,
+        db_host: None,
+        db_port: 5432,
         namespace: "wamn-system".into(),
         secret_name: state.secret_name,
     })

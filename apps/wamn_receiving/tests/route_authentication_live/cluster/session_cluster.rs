@@ -103,6 +103,12 @@ pub(super) async fn prepare(
         retire_generation: None,
         abort_generation: None,
         emit_secret: Some(identity_secret.clone()),
+        db_host: reqwest::Url::parse(&cluster.inputs.system_pg_url)?
+            .host_str()
+            .map(str::to_owned),
+        db_port: reqwest::Url::parse(&cluster.inputs.system_pg_url)?
+            .port_or_known_default()
+            .unwrap_or(5432),
         namespace: resources.name.clone(),
         secret_name: "host-session-identity-db".to_owned(),
     })
@@ -129,6 +135,9 @@ pub(super) async fn prepare(
         tenant: Some(TENANT.to_owned()),
         system_database_url: Some(cluster.inputs.system_pg_url.clone()),
         target_admin_database_url: Some(target_url.to_string()),
+        cluster: None,
+        db_host: target_url.host_str().map(str::to_owned),
+        db_port: target_url.port_or_known_default().unwrap_or(5432),
         namespace: resources.name.clone(),
         action: WorkloadGenerationAction {
             family: WorkloadRoleFamily::SessionRoleReader,

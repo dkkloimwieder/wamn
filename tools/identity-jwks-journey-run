@@ -259,6 +259,7 @@ run "${kube[@]}" -n "$namespace" exec -i "deployment/$postgres" -- \
 run "${kube[@]}" -n "$namespace" exec "$provisioner" -- /usr/local/bin/wamn-ctl \
   provision-identity-issuer --issuer "$issuer" --prepare-generation a --namespace "$namespace" \
   --secret-name wamn-identity-db --emit-secret /tmp/identity-db.json \
+  --db-host "$postgres.$namespace.svc.cluster.local" \
   >"$evidence_dir/provision-identity.log" 2>&1
 run "${kube[@]}" -n "$namespace" exec "$provisioner" -- cat /tmp/identity-db.json >"$work_dir/identity-db.json"
 jq -e --arg ns "$namespace" '.kind == "Secret" and .metadata.name == "wamn-identity-db" and .metadata.namespace == $ns and (.stringData.url | type == "string")' \
@@ -407,6 +408,7 @@ session_target() {
   run "${kube[@]}" -n "$namespace" exec "$pod" -- /usr/local/bin/wamn-ctl provision-project-env \
     --org "$org" --project shared --env "$environment" --tenant "$tenant" --namespace "$namespace" \
     --prepare-session-role-reader-generation a --emit-session-role-reader-secret /tmp/session-target.json \
+    --db-host "$postgres.$namespace.svc.cluster.local" \
     >"$evidence_dir/session-$label-provision.log" 2>&1
   run "${kube[@]}" -n "$namespace" exec "$pod" -- cat /tmp/session-target.json >"$work_dir/session-$label-target.json"
   jq -e --arg name "$target_secret" --arg ns "$namespace" \

@@ -258,6 +258,17 @@ pub struct WorkloadActionRequest {
     /// emitted.
     pub target_admin_database_url: Option<String>,
 
+    /// Target CNPG `Cluster` name. When omitted, it is read from the org's
+    /// placement in the registry.
+    pub cluster: Option<String>,
+
+    /// Host every emitted credential URL names. Defaults to `<cluster>-rw`,
+    /// never the admin URL's host (finding wamn-lczu).
+    pub db_host: Option<String>,
+
+    /// Port every emitted credential URL names.
+    pub db_port: u16,
+
     /// Namespace the credential `Secret` is applied to.
     pub namespace: String,
 

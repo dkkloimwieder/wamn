@@ -42,8 +42,14 @@ pub(super) fn workload_config(
     config
 }
 
+/// The credential URL a workload uses: the admin URL's scheme, with the
+/// workload's login, database, and the host and port the workload reaches the
+/// cluster at. The admin URL's host is often a port-forward that no pod can
+/// reach (finding wamn-lczu).
 pub(super) fn workload_url(
     admin_url: &str,
+    host: &str,
+    port: u16,
     role: &str,
     password: &str,
     database: &str,
@@ -53,6 +59,10 @@ pub(super) fn workload_url(
         matches!(url.scheme(), "postgres" | "postgresql"),
         "target admin URL must use postgres or postgresql"
     );
+    url.set_host(Some(host))
+        .with_context(|| format!("set workload URL host {host}"))?;
+    url.set_port(Some(port))
+        .map_err(|()| anyhow::anyhow!("set workload URL port"))?;
     url.set_username(role)
         .map_err(|()| anyhow::anyhow!("set workload URL username"))?;
     url.set_password(Some(password))

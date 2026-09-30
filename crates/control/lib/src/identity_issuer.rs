@@ -38,6 +38,12 @@ pub struct IdentityIssuerRequest {
     pub abort_generation: Option<CredentialGeneration>,
     /// Write the prepared credential Secret atomically with mode 0600.
     pub emit_secret: Option<PathBuf>,
+    /// Host the emitted credential URL names. Only preparation takes it, and it
+    /// has no default: the admin URL's host is often a port-forward that no pod
+    /// can reach (finding wamn-lczu).
+    pub db_host: Option<String>,
+    /// Port the emitted credential URL names.
+    pub db_port: u16,
     /// Namespace for the emitted Secret.
     pub namespace: String,
     /// Name for the emitted Secret, matching the identity chart.
@@ -104,6 +110,10 @@ fn admin_config(args: &IdentityIssuerRequest) -> anyhow::Result<Config> {
     anyhow::ensure!(
         args.prepare_generation.is_some() == args.emit_secret.is_some(),
         "only preparation requires --emit-secret"
+    );
+    anyhow::ensure!(
+        args.prepare_generation.is_some() == args.db_host.is_some(),
+        "only preparation requires --db-host"
     );
     for (name, value, maximum) in [
         ("namespace", &args.namespace, 63),
@@ -519,6 +529,8 @@ async fn prepare(
         let mut url = Url::parse(&args.system_database_url).expect("administrator URL was checked before I/O");
         url.set_username(&role).map_err(|()| anyhow::anyhow!("cannot encode identity credential user"))?;
         url.set_password(Some(&password)).map_err(|()| anyhow::anyhow!("cannot encode identity credential password"))?;
+        url.set_host(args.db_host.as_deref()).context("cannot encode identity credential host")?;
+        url.set_port(Some(args.db_port)).map_err(|()| anyhow::anyhow!("cannot encode identity credential port"))?;
         let checked = parse_identity_issuer_url(url.as_str(), &args.issuer)?;
         let document = json!({
             "apiVersion": "v1", "kind": "Secret", "type": "Opaque",
@@ -609,6 +621,8 @@ mod tests {
             retire_generation: None,
             abort_generation: None,
             emit_secret: Some("identity.json".into()),
+            db_host: Some("wamn-pg-rw".to_owned()),
+            db_port: 5432,
             namespace: "wamn-system".to_owned(),
             secret_name: "wamn-identity-db".to_owned(),
         }
@@ -628,6 +642,10 @@ mod tests {
         assert!(admin_config(&request).is_err());
         request.retire_generation = None;
         request.emit_secret = None;
+        assert!(admin_config(&request).is_err());
+        // wamn-lczu: a prepare names the host its credential URL carries.
+        request.emit_secret = Some("identity.json".into());
+        request.db_host = None;
         assert!(admin_config(&request).is_err());
     }
 

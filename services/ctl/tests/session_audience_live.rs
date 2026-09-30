@@ -96,6 +96,13 @@ async fn cli(
     if let Some(path) = output_path {
         command.arg("--emit-session-role-reader-secret").arg(path);
     }
+    // The emitted credential names the host this test reaches (wamn-lczu).
+    let admin = Url::parse(project_url)?;
+    command
+        .arg("--db-host")
+        .arg(admin.host_str().unwrap_or_default())
+        .arg("--db-port")
+        .arg(admin.port_or_known_default().unwrap_or(5432).to_string());
     let output = tokio::time::timeout(Duration::from_secs(30), command.output())
         .await
         .context("session-target CLI timed out")?
