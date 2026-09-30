@@ -198,18 +198,6 @@ pub(super) fn record_tables(src: &str, qualifier: &str) -> Vec<String> {
         .collect()
 }
 
-/// The file header: every line before the first `CREATE TABLE <qualifier>.`.
-/// For run-state.sql this is the idempotent `CREATE SCHEMA IF NOT EXISTS` +
-/// role usage grant (plus prose comments).
-#[cfg(test)]
-pub(super) fn header_section(src: &str, qualifier: &str) -> String {
-    let head = format!("CREATE TABLE {qualifier}.");
-    src.lines()
-        .take_while(|line| !line.trim().starts_with(&head))
-        .collect::<Vec<_>>()
-        .join("\n")
-}
-
 /// The schema declaration/grant prefix only. Helper functions are reconciled
 /// independently, so a missing table can never replay a plain `CREATE
 /// FUNCTION` against an already-present helper.

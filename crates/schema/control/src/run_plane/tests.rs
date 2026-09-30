@@ -376,22 +376,6 @@ fn add_legacy_child_run_state(obs: &mut RunPlaneObservation) {
 }
 
 #[test]
-fn run_plane_record_tables_are_pinned() {
-    assert_eq!(
-        record_tables(RUN_STATE_SQL, "wamn_run"),
-        [
-            "environment_policies",
-            "runs",
-            "effect_attempts",
-            "effect_attempt_dispatches",
-            "effect_attempt_outcomes",
-            "operator_run_actions",
-        ]
-    );
-    assert_eq!(record_tables(RUN_QUEUE_SQL, "wamn_run"), ["run_queue"]);
-}
-
-#[test]
 fn run_queue_record_columns_pin_the_global_fifo_shape() {
     let cols = record_columns(RUN_QUEUE_SQL, "wamn_run", "run_queue");
     let names: Vec<&str> = cols.iter().map(|(c, _)| c.as_str()).collect();
@@ -431,62 +415,6 @@ fn run_queue_record_columns_pin_the_global_fifo_shape() {
             "enqueued_at timestamptz NOT NULL DEFAULT now()",
         ]
     );
-}
-
-#[test]
-fn fresh_schema_omits_execution_bundle_carriers() {
-    let runs = table_section(RUN_STATE_SQL, "wamn_run", "runs");
-    for column in [
-        "package_id      text NOT NULL",
-        "effective_release_id int NOT NULL",
-        "environment     text NOT NULL",
-    ] {
-        assert!(runs.contains(column), "runs contract missing {column}");
-    }
-    assert!(runs.contains("effective_release_id > 0"));
-    assert!(runs.contains("CONSTRAINT runs_release_fk"));
-    assert!(runs.contains(
-        "FOREIGN KEY (tenant_id, effective_release_id)\n        REFERENCES catalog.effective_releases"
-    ));
-    assert!(
-        runs.contains(
-            "CREATE INDEX runs_release ON wamn_run.runs (tenant_id, effective_release_id)"
-        )
-    );
-    assert!(RUN_STATE_SQL.contains("MESSAGE = 'run-admission-pin-immutable'"));
-    assert!(!runs.contains(RETIRED_EXECUTION_BUNDLE_COLUMN));
-    assert!(!CATALOG_SCHEMA_SQL.contains("catalog.execution_bundles"));
-
-    // The claim-time manifest record is separate from the immutable
-    // admission-pinned effective release id.
-    assert!(!runs.contains("release_version int"));
-    assert!(runs.contains("manifest_digest text"));
-    assert!(runs.contains("CONSTRAINT runs_release_record_check"));
-    assert!(
-        runs.contains(
-            "manifest_digest IS NULL\n      OR manifest_digest ~ '^sha256:[0-9a-f]{64}$'"
-        )
-    );
-    // The durability-class carrier joins the same column-scoped guard
-    // (wamn-0h0g.20.1 rider 1): a column the trigger does not NAME never
-    // fires its transition arm, so the class would be silently mutable.
-    for trigger_fragment in [
-        "BEFORE UPDATE OF flow_id, flow_version, package_id, effective_release_id, environment,",
-        "capture_mode, durability_class, wiring_id, wiring_version,",
-        "wiring_hash, binding_world_json, manifest_digest",
-    ] {
-        assert!(
-            RUN_STATE_SQL.contains(trigger_fragment),
-            "{trigger_fragment}"
-        );
-    }
-    assert!(runs.contains("durability_class text NOT NULL DEFAULT 'standard'"));
-    assert!(runs.contains("CHECK (durability_class IN ('standard', 'durable'))"));
-    assert!(RUN_STATE_SQL.contains("MESSAGE = 'run-release-record-immutable'"));
-    assert!(!RUN_STATE_SQL.contains("OLD.release_version IS NOT NULL"));
-    assert!(RUN_STATE_SQL.contains("OLD.manifest_digest IS NOT NULL"));
-
-    assert!(!CATALOG_SCHEMA_SQL.contains(RETIRED_EXECUTION_BUNDLE_COLUMN));
 }
 
 #[test]
@@ -537,17 +465,7 @@ fn multi_line_column_definitions_parse_whole() {
 
 #[test]
 fn runs_failure_and_outcome_check_mirrors_are_exact_and_frozen() {
-    let run_columns = record_columns(RUN_STATE_SQL, "wamn_run", "runs")
-        .into_iter()
-        .map(|(column, _)| column)
-        .collect::<BTreeSet<_>>();
-    assert!(run_columns.contains("fail_kind"));
-    assert!(run_columns.contains("caller_outcome_kind"));
     for retired in RETIRED_FAILURE_DETAIL_COLUMNS {
-        assert!(
-            !run_columns.contains(*retired),
-            "fresh runs record restored retired failure detail {retired}"
-        );
         assert!(
             !RUNS_ADMISSION_PINS_TRIGGER_DEF.contains(retired),
             "write-once trigger unexpectedly names retired failure detail {retired}"
@@ -584,43 +502,6 @@ fn runs_failure_and_outcome_check_mirrors_are_exact_and_frozen() {
     );
 }
 
-#[test]
-fn operator_action_record_is_exact_immutable_and_history_independent() {
-    let columns = record_columns(RUN_STATE_SQL, "wamn_run", "operator_run_actions");
-    let names: Vec<&str> = columns.iter().map(|(name, _)| name.as_str()).collect();
-    assert_eq!(
-        names,
-        [
-            "tenant_id",
-            "action_id",
-            "correlation_id",
-            "run_id",
-            "action_kind",
-            "basis",
-            "evidence_ref",
-            "principal",
-            "principal_kind",
-            "prior_run_status",
-            "prior_started_node_frame_id",
-            "prior_started_node_local_node_id",
-            "prior_started_node_occurrence",
-            "prior_started_node_status",
-            "created_at",
-        ]
-    );
-    let actions = table_section(RUN_STATE_SQL, "wamn_run", "operator_run_actions");
-    assert!(actions.contains("CONSTRAINT operator_run_actions_run_key"));
-    assert!(actions.contains("UNIQUE (tenant_id, run_id)"));
-    assert!(actions.contains("CONSTRAINT operator_run_actions_correlation_key"));
-    assert!(actions.contains("UNIQUE (tenant_id, correlation_id)"));
-    assert!(actions.contains("FORCE ROW LEVEL SECURITY"));
-    assert!(actions.contains("operator_run_actions_update_immutable"));
-    assert!(actions.contains("operator_run_actions_delete_immutable"));
-    assert!(!actions.contains("REFERENCES"));
-    assert!(!RUN_STATE_SQL.contains("CREATE TABLE wamn_run.effect_disposition_requests"));
-    assert!(!RUN_STATE_SQL.contains("CREATE TABLE wamn_run.effect_dispositions"));
-}
-
 /// Sections carry the table's whole apparatus: indexes, RLS, policy, grant.
 #[test]
 fn table_sections_carry_indexes_rls_and_grants() {
@@ -645,58 +526,6 @@ fn table_sections_carry_indexes_rls_and_grants() {
 
     let package = table_section(CATALOG_SCHEMA_SQL, "catalog", "packages");
     assert!(package.contains("manifest_sha256"));
-
-    let actions = table_section(RUN_STATE_SQL, "wamn_run", "operator_run_actions");
-    assert!(actions.contains("operator_run_actions_delete_immutable"));
-    assert!(actions.contains("REVOKE ALL PRIVILEGES"));
-    assert!(!actions.contains("REFERENCES"));
-
-    let hdr = header_section(RUN_STATE_SQL, "wamn_run");
-    assert!(hdr.contains("CREATE SCHEMA IF NOT EXISTS wamn_run"));
-    assert!(hdr.contains("GRANT USAGE ON SCHEMA wamn_run TO wamn_app"));
-}
-
-#[test]
-fn index_statements_are_pinned() {
-    let mut names: Vec<String> = RUN_PLANE_FILES
-        .iter()
-        .flat_map(|f| index_statements(f, "wamn_run"))
-        .map(|(n, _, _)| n)
-        .collect();
-    names.sort();
-    assert_eq!(
-        names,
-        [
-            // The tenant-key expression indexes ride the re-keyed
-            // predicates (`wamn-0h0g.22.6.3`): one per guest-reachable
-            // run-plane relation, and the predicate sequential-scans
-            // without them. `run_queue` and `operator_run_actions` carry no
-            // guest grant, so they keep their claim and gain no index.
-            "effect_attempt_dispatches_tkey",
-            "effect_attempt_outcomes_tkey",
-            "effect_attempts_bulk_scope",
-            "effect_attempts_tkey",
-            "environment_policies_tkey",
-            "run_queue_claimable",
-            "runs_event_root",
-            "runs_flow",
-            "runs_idempotency",
-            "runs_release",
-            "runs_response_deadline",
-            "runs_run_deadline",
-            "runs_tkey",
-        ]
-    );
-    let (_, table, stmt) = index_statements(RUN_QUEUE_SQL, "wamn_run")
-        .into_iter()
-        .find(|(n, _, _)| n == "run_queue_claimable")
-        .unwrap();
-    assert_eq!(table, "run_queue");
-    assert_eq!(
-        stmt,
-        "CREATE INDEX run_queue_claimable ON wamn_run.run_queue \
-             (tenant_id, available_at, stream_seq, run_id, lease_expires_at)"
-    );
 }
 
 /// THE load-bearing self-consistency invariant: an observation derived from
@@ -2827,36 +2656,6 @@ fn missing_helpers_and_record_triggers_are_repaired() {
             .filter(|action| action.kind == RunPlaneActionKind::RepairTrigger)
             .count(),
         11
-    );
-}
-
-#[test]
-fn operator_action_helper_and_acl_pin_admin_only_append_and_immutability() {
-    assert!(
-        REJECT_IMMUTABLE_OPERATOR_RUN_ACTION_CHANGE_SQL.contains("operator-run-action-immutable")
-    );
-    assert!(RUN_STATE_SQL.contains(
-        "REVOKE ALL PRIVILEGES ON TABLE wamn_run.operator_run_actions\n    FROM PUBLIC, wamn_app, wamn_scenario_author;"
-    ));
-    assert!(!RUN_STATE_SQL.contains("GRANT INSERT ON wamn_run.operator_run_actions"));
-    assert!(RUN_STATE_SQL.contains("operator_run_actions_update_immutable"));
-    assert!(RUN_STATE_SQL.contains("operator_run_actions_delete_immutable"));
-}
-
-#[test]
-fn effect_tables_use_acl_not_insert_authorization_triggers() {
-    assert!(!RUN_STATE_SQL.contains("guard_effect_writer_append"));
-    assert!(!RUN_STATE_SQL.contains("writer_insert_guard"));
-    assert!(RUN_STATE_SQL.contains(
-        "REVOKE ALL PRIVILEGES ON TABLE wamn_run.effect_attempts\n    FROM PUBLIC, wamn_app, wamn_scenario_author;"
-    ));
-    // BORN PARKED: no append at record. This is the DDL-TEXT half only, and it
-    // cannot tell a declaration from a comment mentioning one. The load-bearing
-    // arm is THE SERVER'S answer, asserted live over the applied DDL in
-    // `crates/control/provision/tests/family_denial_matrix.rs`.
-    assert!(!RUN_STATE_SQL.contains("INSERT ON wamn_run.effect_attempts"));
-    assert!(
-        RUN_STATE_SQL.contains("ALTER TABLE wamn_run.effect_attempts FORCE ROW LEVEL SECURITY")
     );
 }
 

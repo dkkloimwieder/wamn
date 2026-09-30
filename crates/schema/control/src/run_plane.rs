@@ -70,16 +70,14 @@ use declarations::{
     EFFECT_ATTEMPTS_DISPATCH_IDENTITY_KEY_DEF, EFFECT_DISPATCH_ATTEMPT_FK_DEF,
     EFFECT_DISPATCH_ATTEMPT_FK_NAME, EFFECT_DISPATCHES_OCCURRENCE_KEY_DEF, EFFECT_FRAME_COLUMNS,
     EFFECT_OUTCOME_DISPATCH_FK_DEF, EFFECT_OUTCOME_DISPATCH_FK_NAME,
-    REJECT_IMMUTABLE_OPERATOR_RUN_ACTION_CHANGE_SQL, RETIRED_EFFECT_ATTEMPT_COLUMNS,
-    RUNS_ADMISSION_PINS_TRIGGER_DEF, RUNS_ADMISSION_PINS_TRIGGER_SQL, RUNS_RELEASE_FK_DEF,
-    RUNS_RELEASE_INDEX_DEF, RUNS_ROOT_INDEX_DEF, helper_specs, trigger_specs,
+    RETIRED_EFFECT_ATTEMPT_COLUMNS, RUNS_ADMISSION_PINS_TRIGGER_DEF,
+    RUNS_ADMISSION_PINS_TRIGGER_SQL, RUNS_RELEASE_FK_DEF, RUNS_RELEASE_INDEX_DEF,
+    RUNS_ROOT_INDEX_DEF, helper_specs, trigger_specs,
 };
 #[cfg(test)]
 use plan::environment_policy_row_security_at_record;
 #[cfg(test)]
-use schema::{
-    header_section, index_statements, quote_ident, record_columns, record_tables, table_section,
-};
+use schema::{index_statements, quote_ident, record_columns, record_tables, table_section};
 #[cfg(test)]
 use schema_changes::{
     RETIRED_AUTHORED_ORDERING_REFUSAL, RETIRED_CHILD_RUN_COLUMNS, RETIRED_CHILD_RUN_INDEXES,
