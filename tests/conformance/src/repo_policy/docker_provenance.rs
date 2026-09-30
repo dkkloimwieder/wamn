@@ -168,23 +168,35 @@ fn embedded_components_come_from_the_locked_builder(
 
 fn native_images_have_package_scoped_build_stages(dockerfile: &str, problems: &mut Problems) {
     let packages = [
-        ("host", "wamn-host", "host", &["wamn-host"][..]),
+        // The host image also carries the Docker credential helper, a binary
+        // of wamn-runtime (docs/plan/component-pull.md, wamn-i87m).
+        (
+            "host",
+            &["wamn-host", "wamn-runtime"][..],
+            "host",
+            &["wamn-host", "docker-credential-wamn"][..],
+        ),
         (
             "identity",
-            "wamn-identity",
+            &["wamn-identity"][..],
             "identity",
             &["wamn-identity"][..],
         ),
         (
             "scenario-worker",
-            "wamn-scenario-worker",
+            &["wamn-scenario-worker"][..],
             "scenario-worker",
             &["wamn-scenario-worker"][..],
         ),
-        ("ctl", "wamn-ctl", "ctl", &["wamn-ctl", "wamn-ctl-ops"][..]),
+        (
+            "ctl",
+            &["wamn-ctl"][..],
+            "ctl",
+            &["wamn-ctl", "wamn-ctl-ops"][..],
+        ),
         (
             "cdc-reader",
-            "wamn-cdc-reader",
+            &["wamn-cdc-reader"][..],
             "cdc-reader",
             &["wamn-cdc-reader"][..],
         ),
@@ -196,7 +208,7 @@ fn native_images_have_package_scoped_build_stages(dockerfile: &str, problems: &m
             .to_owned()
     });
 
-    for (stage_name, package, image_stage, outputs) in packages {
+    for (stage_name, allowed, image_stage, outputs) in packages {
         let build_name = format!("build-{stage_name}");
         problems.require(
             dockerfile.contains(&format!("FROM root-source AS {build_name}")),
@@ -205,8 +217,9 @@ fn native_images_have_package_scoped_build_stages(dockerfile: &str, problems: &m
         if let Some(build) = stage(dockerfile, &build_name, problems) {
             let selected = selected_packages(build);
             problems.require(
-                !selected.is_empty() && selected.iter().all(|selected| *selected == package),
-                || format!("{build_name} may compile only {package}, got {selected:?}"),
+                allowed.iter().all(|package| selected.contains(package))
+                    && selected.iter().all(|selected| allowed.contains(selected)),
+                || format!("{build_name} may compile only {allowed:?}, got {selected:?}"),
             );
             stage_caches(build, &build_name, stage_name, problems);
         }
