@@ -11,14 +11,14 @@ mod bindings {
             package wamn:prior-commit@0.1.0;
 
             world prior-commit {
-              import wamn:postgres/client@0.1.0;
+              import wamn:postgres/client@0.3.0;
               import wamn-receiving:receiving/record-receipt@1.0.0;
               export wamn:node/async-handler@0.1.0;
             }
         "#,
         path: [
             "../../../../crates/execution/workflow/router/wit",
-            "../../../../crates/platform/runtime/wit/deps/wamn-postgres",
+            "../../../../crates/platform/runtime/wit/deps/wamn-postgres-0.3",
             "../../../wamn_receiving/generated/wit/deps/wamn-receiving-receiving",
         ],
         generate_all,

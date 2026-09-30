@@ -96,6 +96,10 @@ const TRANSACTION_VIEW_RUN: Surface = Surface::DelegatedEffect {
     file: "crates/platform/runtime/src/plugins/wamn_postgres/transaction_views.rs",
     function: "run",
 };
+const STATEMENT_RUN_STREAM: Surface = Surface::DelegatedEffect {
+    file: "crates/platform/runtime/src/plugins/wamn_postgres/run_stream.rs",
+    function: "run_stream",
+};
 
 /// The methods of one host trait, each classified as an effect or not.
 type MethodSurfaces = &'static [(&'static str, Surface)];
@@ -137,12 +141,12 @@ const CONTRACT: &[(&str, &str, MethodSurfaces)] = &[
     // exists in one build is exactly the one a runtime probe would miss.
     (
         POSTGRES,
-        "bindings::named_imports::wamn::postgres0_1_0::client::Host",
+        "bindings::named_imports::wamn::postgres::client::Host",
         &[],
     ),
     (
         POSTGRES,
-        "bindings::named_imports::wamn::postgres0_1_0::client::HostWithStore",
+        "bindings::named_imports::wamn::postgres::client::HostWithStore",
         &[
             ("query", Surface::Effect),
             ("execute", Surface::Effect),
@@ -151,12 +155,12 @@ const CONTRACT: &[(&str, &str, MethodSurfaces)] = &[
     ),
     (
         POSTGRES,
-        "bindings::named_imports::wamn::postgres0_1_0::client::HostTransaction",
+        "bindings::named_imports::wamn::postgres::client::HostTransaction",
         &[("drop", DESTRUCTOR)],
     ),
     (
         POSTGRES,
-        "bindings::named_imports::wamn::postgres0_1_0::client::HostTransactionWithStore",
+        "bindings::named_imports::wamn::postgres::client::HostTransactionWithStore",
         &[
             ("query", Surface::Effect),
             ("execute", Surface::Effect),
@@ -167,12 +171,12 @@ const CONTRACT: &[(&str, &str, MethodSurfaces)] = &[
     ),
     (
         POSTGRES,
-        "bindings::named_imports::wamn::postgres0_1_0::client::HostCursor",
+        "bindings::named_imports::wamn::postgres::client::HostCursor",
         &[("drop", DESTRUCTOR)],
     ),
     (
         POSTGRES,
-        "bindings::named_imports::wamn::postgres0_1_0::client::HostCursorWithStore",
+        "bindings::named_imports::wamn::postgres::client::HostCursorWithStore",
         &[("fetch", Surface::Effect)],
     ),
     // The SQL-by-reference world. A guest names a statement digest instead of
@@ -186,7 +190,9 @@ const CONTRACT: &[(&str, &str, MethodSurfaces)] = &[
             ("selected_participation", LOCAL_STATE),
             ("participant_view", LOCAL_STATE),
             ("run", Surface::Effect),
+            ("run_stream", STATEMENT_RUN_STREAM),
             ("begin", Surface::Effect),
+            ("operation_transaction", LOCAL_STATE),
         ],
     ),
     (

@@ -398,7 +398,7 @@ fn shared_wit_changes_select_the_workspaces_with_direct_readers() {
     for (path, no_std) in [
         ("crates/execution/workflow/router/wit/package.wit", true),
         (
-            "crates/platform/runtime/wit/deps/wamn-postgres/package.wit",
+            "crates/platform/runtime/wit/deps/wamn-postgres-0.3/package.wit",
             true,
         ),
         (

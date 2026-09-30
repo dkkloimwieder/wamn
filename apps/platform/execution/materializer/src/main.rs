@@ -10,7 +10,7 @@ mod bindings {
         path: [
             "../../../../crates/platform/runtime/wit/deps/wamn-flow-http-routing",
             "../../../../crates/platform/runtime/wit/deps/wamn-jetstream",
-            "../../../../crates/platform/runtime/wit/deps/wamn-postgres",
+            "../../../../crates/platform/runtime/wit/deps/wamn-postgres-0.3",
             "../../../../crates/execution/host/wit/deps/wamn-router-delivery",
             "wit",
         ],

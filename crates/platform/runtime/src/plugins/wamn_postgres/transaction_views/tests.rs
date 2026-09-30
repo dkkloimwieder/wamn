@@ -78,7 +78,7 @@ fn invocation(operation: &str, package_id: &str) -> ConnectionInvocation {
 fn run_view_component() -> &'static str {
     r#"
 (component
-  (import "wamn:postgres/types@0.1.0" (instance $types
+  (import "wamn:postgres/types@0.3.0" (instance $types
     (type $sql-value' (variant (case "null") (case "boolean" bool) (case "int32" s32)
       (case "int64" s64) (case "float64" f64) (case "text" string) (case "bytes" (list u8))
       (case "numeric" string) (case "timestamptz" string) (case "json" string) (case "uuid" string)))
@@ -96,7 +96,7 @@ fn run_view_component() -> &'static str {
   (alias export $types "sql-value" (type $sql-value))
   (alias export $types "row-set" (type $row-set))
   (alias export $types "pg-error" (type $pg-error))
-  (import "wamn:postgres/statements@0.1.0" (instance $statements
+  (import "wamn:postgres/statements@0.3.0" (instance $statements
     (type $contract-part' (enum "binds" "columns"))
     (export "contract-part" (type $contract-part (eq $contract-part')))
     (type $value-shape' (record (field "count" u32) (field "types" (list string))))
@@ -159,7 +159,7 @@ fn run_view_component() -> &'static str {
 fn owner_component() -> &'static str {
     r#"
 (component
-  (import "wamn:postgres/types@0.1.0" (instance $types
+  (import "wamn:postgres/types@0.3.0" (instance $types
     (type $sql-value' (variant (case "null") (case "boolean" bool) (case "int32" s32)
       (case "int64" s64) (case "float64" f64) (case "text" string) (case "bytes" (list u8))
       (case "numeric" string) (case "timestamptz" string) (case "json" string) (case "uuid" string)))
@@ -177,7 +177,7 @@ fn owner_component() -> &'static str {
   (alias export $types "sql-value" (type $sql-value))
   (alias export $types "row-set" (type $row-set))
   (alias export $types "pg-error" (type $pg-error))
-  (import "wamn:postgres/statements@0.1.0" (instance $statements
+  (import "wamn:postgres/statements@0.3.0" (instance $statements
     (type $contract-part' (enum "binds" "columns"))
     (export "contract-part" (type $contract-part (eq $contract-part')))
     (type $value-shape' (record (field "count" u32) (field "types" (list string))))
@@ -545,8 +545,8 @@ async fn typed_native_participant_runs_inside_the_owner_transaction() {
                     },
                 ],
                 host_interfaces: vec![
-                    WitInterface::from("wamn:postgres/types@0.1.0"),
-                    WitInterface::from("wamn:postgres/statements@0.1.0"),
+                    WitInterface::from("wamn:postgres/types@0.3.0"),
+                    WitInterface::from("wamn:postgres/statements@0.3.0"),
                     WitInterface::from(PARTICIPANT_CALL),
                 ],
                 volumes: Vec::new(),
@@ -1056,8 +1056,8 @@ async fn the_host_owns_the_operation_transaction_and_the_participant_works_in_it
                     },
                 ],
                 host_interfaces: vec![
-                    WitInterface::from("wamn:postgres/types@0.1.0"),
-                    WitInterface::from("wamn:postgres/statements@0.1.0"),
+                    WitInterface::from("wamn:postgres/types@0.3.0"),
+                    WitInterface::from("wamn:postgres/statements@0.3.0"),
                     WitInterface::from("wamn:postgres/types@0.3.0"),
                     WitInterface::from("wamn:postgres/statements@0.3.0"),
                     WitInterface::from(PARTICIPANT_CALL),

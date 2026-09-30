@@ -634,10 +634,10 @@ impl<T: 'static + Send> client::HostWithStore<T> for SharedCtx {
 }
 
 #[cfg(feature = "wasm_component_model_implements")]
-impl bindings::named_imports::wamn::postgres0_1_0::client::Host for ActiveCtx<'_> {}
+impl bindings::named_imports::wamn::postgres::client::Host for ActiveCtx<'_> {}
 
 #[cfg(feature = "wasm_component_model_implements")]
-impl<T: 'static + Send> bindings::named_imports::wamn::postgres0_1_0::client::HostWithStore<T>
+impl<T: 'static + Send> bindings::named_imports::wamn::postgres::client::HostWithStore<T>
     for SharedCtx
 {
     async fn query(
@@ -980,8 +980,7 @@ fn cursor_drop(
 }
 
 #[cfg(feature = "wasm_component_model_implements")]
-impl<T: 'static + Send>
-    bindings::named_imports::wamn::postgres0_1_0::client::HostTransactionWithStore<T>
+impl<T: 'static + Send> bindings::named_imports::wamn::postgres::client::HostTransactionWithStore<T>
     for SharedCtx
 {
     async fn query(
@@ -1032,7 +1031,7 @@ impl<T: 'static + Send>
 }
 
 #[cfg(feature = "wasm_component_model_implements")]
-impl<T: 'static + Send> bindings::named_imports::wamn::postgres0_1_0::client::HostCursorWithStore<T>
+impl<T: 'static + Send> bindings::named_imports::wamn::postgres::client::HostCursorWithStore<T>
     for SharedCtx
 {
     async fn fetch(
@@ -1186,7 +1185,7 @@ impl client::HostCursor for ActiveCtx<'_> {
     clippy::unused_async_trait_impl,
     reason = "the generated transaction destructor is async but only releases local state"
 )]
-impl bindings::named_imports::wamn::postgres0_1_0::client::HostTransaction for ActiveCtx<'_> {
+impl bindings::named_imports::wamn::postgres::client::HostTransaction for ActiveCtx<'_> {
     async fn drop(
         &mut self,
         _id: super::NamedProject,
@@ -1201,7 +1200,7 @@ impl bindings::named_imports::wamn::postgres0_1_0::client::HostTransaction for A
     clippy::unused_async_trait_impl,
     reason = "the generated cursor destructor is async but only releases local state"
 )]
-impl bindings::named_imports::wamn::postgres0_1_0::client::HostCursor for ActiveCtx<'_> {
+impl bindings::named_imports::wamn::postgres::client::HostCursor for ActiveCtx<'_> {
     async fn drop(
         &mut self,
         _id: super::NamedProject,
@@ -1317,6 +1316,50 @@ impl<T: 'static + Send> statement_wit::HostWithStore<T> for SharedCtx {
                 }
             })
             .await
+    }
+
+    async fn run_stream(
+        accessor: &Accessor<T, Self>,
+        statement_digest: String,
+        binds: Vec<SqlValue>,
+    ) -> wash_runtime::wasmtime::Result<
+        Result<
+            (
+                Vec<super::Column>,
+                wash_runtime::wasmtime::component::StreamReader<Vec<SqlValue>>,
+                wash_runtime::wasmtime::component::FutureReader<Result<(), StatementError>>,
+            ),
+            StatementError,
+        >,
+    > {
+        super::run_stream::run_stream(accessor, statement_digest, binds).await
+    }
+
+    #[expect(
+        clippy::unused_async_trait_impl,
+        reason = "the async WIT method lends only a local resource"
+    )]
+    async fn operation_transaction(
+        accessor: &Accessor<T, Self>,
+    ) -> wash_runtime::wasmtime::Result<Result<Resource<PgStatementTransaction>, StatementError>>
+    {
+        accessor.with(|mut access| {
+            let ctx = access.get();
+            let plugin = plugin_of(&ctx)?;
+            let component_id = ctx.component_id.to_string();
+            let Some(transaction) = plugin.operation_transaction_for(&component_id) else {
+                return Ok(Err(StatementError::Postgres(PgError::PermissionDenied)));
+            };
+            let statements = plugin.active_statement_set(&component_id);
+            ctx.table
+                .push(PgStatementTransaction {
+                    transaction: transaction.lend(),
+                    owner_scope: component_id,
+                    statements,
+                })
+                .map(Ok)
+                .map_err(Into::into)
+        })
     }
 }
 

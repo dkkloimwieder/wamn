@@ -1,6 +1,6 @@
 //! Real `wamn:postgres` host plugin (S2).
 //!
-//! Contract source of truth: `crates/platform/runtime/wit/deps/wamn-postgres/package.wit`.
+//! Contract source of truth: `crates/platform/runtime/wit/deps/wamn-postgres-0.3/package.wit`.
 //! Guest bindgen paths reference that canonical package directly.
 //! Host-enforced invariants:
 //!
@@ -65,10 +65,10 @@ mod operation_transaction;
 mod pool;
 mod production_claim;
 mod resources;
+mod run_stream;
 mod statements;
 mod transaction_views;
 mod types;
-mod v0_3;
 mod wiring_resolution;
 pub mod write_log;
 
@@ -186,13 +186,13 @@ impl NamedProject {
 #[cfg(feature = "wasm_component_model_implements")]
 const NAMED_PROJECT_CONFIG_KEY: &str = "project";
 
-use bindings::wamn::postgres0_1_0::client;
-use bindings::wamn::postgres0_1_0::statements as statement_wit;
-use bindings::wamn::postgres0_1_0::types::{Column, PgError, RowSet, SqlValue};
+use bindings::wamn::postgres::client;
+use bindings::wamn::postgres::statements as statement_wit;
+use bindings::wamn::postgres::types::{Column, PgError, RowSet, SqlValue};
 use statement_wit::{ContractMismatch, ContractPart, StatementError, ValueShape};
 
 #[cfg(feature = "wasm_component_model_implements")]
-impl bindings::wamn::postgres0_1_0::types::Host for wash_runtime::engine::ctx::ActiveCtx<'_> {}
+impl bindings::wamn::postgres::types::Host for wash_runtime::engine::ctx::ActiveCtx<'_> {}
 
 pub const WAMN_POSTGRES_ID: &str = "wamn-postgres";
 
@@ -201,8 +201,7 @@ pub const WAMN_POSTGRES_ID: &str = "wamn-postgres";
 /// `pgbench` harness calls it to link the capability into a hand-built store.
 pub fn add_to_linker(linker: &mut Linker<SharedCtx>) -> wash_runtime::wasmtime::Result<()> {
     client::add_to_linker::<_, SharedCtx>(linker, extract_active_ctx)?;
-    statement_wit::add_to_linker::<_, SharedCtx>(linker, extract_active_ctx)?;
-    v0_3::add_to_linker(linker, true, true)
+    statement_wit::add_to_linker::<_, SharedCtx>(linker, extract_active_ctx)
 }
 
 /// Per-workload config key carrying the tenant identity (plumbed end-to-end
@@ -371,7 +370,6 @@ impl WamnPostgres {
             if has_statements {
                 statement_wit::add_to_linker::<_, SharedCtx>(linker, extract_active_ctx)?;
             }
-            v0_3::add_to_linker(linker, has_client, has_statements)?;
         }
 
         #[cfg(feature = "wasm_component_model_implements")]
@@ -389,7 +387,7 @@ impl WamnPostgres {
                     has_unnamed = true;
                 }
             }
-            bindings::wamn::postgres0_1_0::types::add_to_linker::<_, SharedCtx>(
+            bindings::wamn::postgres::types::add_to_linker::<_, SharedCtx>(
                 linker,
                 extract_active_ctx,
             )?;
@@ -399,9 +397,8 @@ impl WamnPostgres {
             if has_statements {
                 statement_wit::add_to_linker::<_, SharedCtx>(linker, extract_active_ctx)?;
             }
-            v0_3::add_to_linker(linker, has_unnamed, has_statements)?;
             if !named.is_empty() {
-                bindings::named_imports::wamn::postgres0_1_0::client::add_to_linker::<_, SharedCtx>(
+                bindings::named_imports::wamn::postgres::client::add_to_linker::<_, SharedCtx>(
                     linker,
                     component,
                     |name| {
@@ -442,9 +439,6 @@ impl HostPlugin for WamnPostgres {
     fn world(&self) -> WitWorld {
         WitWorld {
             imports: HashSet::from([
-                WitInterface::from("wamn:postgres/types@0.1.0"),
-                WitInterface::from("wamn:postgres/client@0.1.0"),
-                WitInterface::from("wamn:postgres/statements@0.1.0"),
                 WitInterface::from("wamn:postgres/types@0.3.0"),
                 WitInterface::from("wamn:postgres/client@0.3.0"),
                 WitInterface::from("wamn:postgres/statements@0.3.0"),

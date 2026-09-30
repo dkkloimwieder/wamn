@@ -337,7 +337,7 @@ async fn wamn_logging_absorbs_a_garbage_guest_context_without_trapping_the_guest
 }
 
 // ---------------------------------------------------------------------------
-// 2. wamn_postgres — wamn:postgres/client@0.1.0
+// 2. wamn_postgres — wamn:postgres/client@0.3.0
 // ---------------------------------------------------------------------------
 
 /// The plugin's own contract: a `WamnPostgresConfig` with no `database_url`
@@ -374,7 +374,7 @@ fn postgres_guest() -> String {
         r#"
 (component
   ;; wamn-0h0g.15.53
-  (import "wamn:postgres/types@0.1.0" (instance $types
+  (import "wamn:postgres/types@0.3.0" (instance $types
     (type $sql-value' (variant
       (case "null")
       (case "boolean" bool)
@@ -402,7 +402,7 @@ fn postgres_guest() -> String {
     (export "pg-error" (type $pg-error (eq $pg-error')))))
   (alias export $types "sql-value" (type $sql-value))
   (alias export $types "pg-error" (type $pg-error))
-  (import "wamn:postgres/client@0.1.0" (instance $client
+  (import "wamn:postgres/client@0.3.0" (instance $client
     (export "sql-value" (type (eq $sql-value)))
     (export "pg-error" (type (eq $pg-error)))
     (export "execute" (func async

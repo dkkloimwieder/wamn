@@ -98,7 +98,6 @@ async fn main() -> anyhow::Result<()> {
             "ls-files",
             "-z",
             "apps",
-            "crates/platform/runtime/wit/deps/wamn-postgres",
             "crates/platform/runtime/wit/deps/wamn-postgres-0.3",
             "rust-toolchain.toml",
         ])

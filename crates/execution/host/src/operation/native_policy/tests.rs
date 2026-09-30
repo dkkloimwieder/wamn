@@ -65,7 +65,7 @@ const CHILD: &str = "child:entry/run@1.0.0";
 /// The participant that the composed transaction owner selects.
 const PARTICIPANT: &str = "root:entry/participant@1.0.0";
 const OBSERVE: &str = "test:authority/observe@1.0.0";
-const STATEMENTS: &str = "wamn:postgres/statements@0.1.0";
+const STATEMENTS: &str = "wamn:postgres/statements@0.3.0";
 const CHILD_MARKER: &str = "WAMN_NATIVE_POLICY_CHILD";
 const BUDGET: Duration = Duration::from_millis(200);
 const CLEANUP: Duration = Duration::from_secs(2);
@@ -187,7 +187,7 @@ fn component_bytes(operation: &str, case: Case) -> Vec<u8> {
 }
 
 const POSTGRES_TYPES: &str = r#"
-      (import "wamn:postgres/types@0.1.0" (instance $types
+      (import "wamn:postgres/types@0.3.0" (instance $types
         (type $sql-value' (variant (case "null") (case "boolean" bool) (case "int32" s32)
           (case "int64" s64) (case "float64" f64) (case "text" string) (case "bytes" (list u8))
           (case "numeric" string) (case "timestamptz" string) (case "json" string) (case "uuid" string)))
@@ -205,7 +205,7 @@ const POSTGRES_TYPES: &str = r#"
       (alias export $types "sql-value" (type $sql-value))
       (alias export $types "row-set" (type $row-set))
       (alias export $types "pg-error" (type $pg-error))
-      (import "wamn:postgres/statements@0.1.0" (instance $statements
+      (import "wamn:postgres/statements@0.3.0" (instance $statements
         (type $contract-part' (enum "binds" "columns"))
         (export "contract-part" (type $contract-part (eq $contract-part')))
         (type $value-shape' (record (field "count" u32) (field "types" (list string))))
@@ -590,7 +590,7 @@ impl Fixture {
         if matches!(case, Case::TransactionOwner | Case::TransactionParticipant) {
             root.imports = vec![
                 "wamn:node/types@0.1.0".into(),
-                "wamn:postgres/types@0.1.0".into(),
+                "wamn:postgres/types@0.3.0".into(),
                 STATEMENTS.into(),
             ];
         }

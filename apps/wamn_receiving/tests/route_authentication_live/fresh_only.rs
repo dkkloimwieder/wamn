@@ -950,14 +950,14 @@ mod execution_tests {
                 package fixture:prior-commit;
 
                 world host {
-                  import wamn:postgres/client@0.1.0;
+                  import wamn:postgres/client@0.3.0;
                   import wamn-receiving:receiving/record-receipt@1.0.0;
                   export wamn:node/async-handler@0.1.0;
                 }
             "#,
             path: [
                 "../../../crates/execution/workflow/router/wit",
-                "../../../crates/platform/runtime/wit/deps/wamn-postgres",
+                "../../../crates/platform/runtime/wit/deps/wamn-postgres-0.3",
                 "../../../apps/wamn_receiving/generated/wit/deps/wamn-receiving-receiving",
             ],
             additional_derives: [PartialEq],
@@ -1271,9 +1271,9 @@ mod execution_tests {
             let mut linker = Linker::<Calls>::new(&engine);
             wasmtime_wasi::p2::add_to_linker_async(&mut linker)?;
             linker.instance("wamn:node/types@0.1.0")?;
-            linker.instance("wamn:postgres/types@0.1.0")?;
+            linker.instance("wamn:postgres/types@0.3.0")?;
             linker
-                .instance("wamn:postgres/client@0.1.0")?
+                .instance("wamn:postgres/client@0.3.0")?
                 .func_wrap_concurrent(
                     "execute",
                     |accessor, (sql, params): (String, Vec<SqlValue>)| {

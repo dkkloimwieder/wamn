@@ -5,7 +5,8 @@ package wamn:postgres@0.3.0;
 /// 2026-09-26). `statements.operation-transaction` returns the transaction
 /// that the host owns for one operation, and `statements.begin` refuses while
 /// that transaction is open (`docs/plan/host-transaction.md`). A component
-/// built against 0.2.0 does not fit. 0.1.0 stays frozen and unchanged.
+/// built against 0.2.0 does not fit. 0.1.0 is retired (wamn-rvav): this is the
+/// one version in the tree, and the host serves only it.
 
 /// Host-plugin interface for tenant-scoped Postgres access.
 /// Security invariants (enforced by the HOST, invisible to the guest):
@@ -27,8 +28,7 @@ package wamn:postgres@0.3.0;
 ///   change).
 ///
 /// STATUS: every declaration of 0.1.0, unchanged, plus `statements.run-stream`
-/// and `statements.operation-transaction`. The host serves both versions from
-/// one plugin.
+/// and `statements.operation-transaction`.
 interface types {
   /// Typed SQL values. `numeric` and `timestamptz` travel as canonical
   /// strings to preserve exactness (plan 3.3: material quantities are

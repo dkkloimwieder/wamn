@@ -1,16 +1,8 @@
 package wamn:host@0.1.0;
 
-/// Host-side bindgen world for the wamn:postgres plugin (S1: stub; real
-/// implementation lands with S2). Imports = interfaces the host implements.
+/// Host-side bindgen world for the wamn:postgres plugin. Imports = interfaces
+/// the host implements.
 world postgres-plugin {
-  import wamn:postgres/types@0.1.0;
-  import wamn:postgres/client@0.1.0;
-  import wamn:postgres/statements@0.1.0;
-}
-
-/// The same plugin at wamn:postgres 0.3.0, which adds `statements.run-stream`
-/// and `statements.operation-transaction`.
-world postgres-plugin-v0-3 {
   import wamn:postgres/types@0.3.0;
   import wamn:postgres/client@0.3.0;
   import wamn:postgres/statements@0.3.0;
