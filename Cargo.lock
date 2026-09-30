@@ -6200,6 +6200,8 @@ dependencies = [
  "tokio",
  "tokio-postgres",
  "tokio-rustls",
+ "tracing",
+ "tracing-subscriber",
  "url",
  "wamn-catalog",
  "wamn-control-provision",

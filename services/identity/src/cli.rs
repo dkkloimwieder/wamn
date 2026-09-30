@@ -189,7 +189,7 @@ pub async fn run(cli: Cli) -> Result<(), IdentityServiceError> {
         let address = listener
             .local_addr()
             .map_err(|_| IdentityServiceError::new("read identity HTTPS address failed"))?;
-        println!("identity listening on {address}");
+        tracing::info!("identity listening on {address}");
         return tokio::select! {
             result = serve(listener, service, tls) => result,
             result = tokio::signal::ctrl_c() => result.map_err(|_| IdentityServiceError::new("identity shutdown signal failed")),

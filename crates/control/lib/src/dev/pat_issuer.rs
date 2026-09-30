@@ -97,9 +97,10 @@ impl Bootstrap {
             .arg(self.files.0.join("server.key"))
             .arg("--operator-ca")
             .arg(self.files.0.join("operator-ca.pem"))
+            .env("RUST_LOG", "info")
             .stdin(Stdio::null())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::piped())
             .kill_on_drop(false);
         if let Some(target) = &self.session_target {
             command.arg("--session-target").arg(target);
@@ -108,21 +109,26 @@ impl Bootstrap {
             .spawn()
             .context("start the separate identity process")?;
         self.child = Some(child);
-        let stdout = self
+        let stderr = self
             .child
             .as_mut()
-            .and_then(|child| child.stdout.take())
+            .and_then(|child| child.stderr.take())
             .context("read the identity readiness pipe")?;
-        let mut readiness = String::new();
-        tokio::time::timeout(
-            IO_TIMEOUT,
-            BufReader::new(stdout.take(128)).read_line(&mut readiness),
-        )
+        // The readiness signal is the first tracing line that names the listener.
+        let mut lines = BufReader::new(stderr.take(4096)).lines();
+        let readiness = tokio::time::timeout(IO_TIMEOUT, async {
+            while let Some(line) = lines.next_line().await? {
+                if let Some((_, address)) = line.split_once("identity listening on ") {
+                    return Ok(Some(address.trim().to_owned()));
+                }
+            }
+            Ok::<_, std::io::Error>(None)
+        })
         .await
         .context("disposable identity startup timed out")?
         .context("read disposable identity readiness")?;
         anyhow::ensure!(
-            readiness == format!("identity listening on {bind}\n"),
+            readiness == Some(bind.to_string()),
             "disposable identity process did not report its expected listener"
         );
         Ok(())

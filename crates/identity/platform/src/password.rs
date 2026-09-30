@@ -46,16 +46,57 @@ pub enum PasswordErrorKind {
     Infrastructure,
 }
 
+/// Why a policy or refused request failed. The service logs it and never
+/// sends it on the wire.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RefusalCause {
+    /// The email credential passed its expiry.
+    Expired,
+    /// The email credential was used or replaced.
+    Consumed,
+    /// No stored email credential matches the secret.
+    UnknownSecret,
+    /// No active human account fits the request.
+    NoSuchAccount,
+    /// The invitation names a human who already has a password.
+    AlreadyEnrolled,
+    /// The password breaks the password rule.
+    PasswordRule,
+}
+impl fmt::Display for RefusalCause {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            Self::Expired => "expired",
+            Self::Consumed => "consumed",
+            Self::UnknownSecret => "unknown secret",
+            Self::NoSuchAccount => "no such account",
+            Self::AlreadyEnrolled => "already enrolled",
+            Self::PasswordRule => "password rule",
+        })
+    }
+}
+
 /// Password failure with fixed context and an optional internal source.
 pub struct PasswordError {
     kind: PasswordErrorKind,
     operation: &'static str,
+    cause: Option<RefusalCause>,
+    reason: Option<&'static str>,
     source: Option<Box<dyn Error + Send + Sync>>,
 }
 impl PasswordError {
     /// Return the internal failure class.
     pub fn kind(&self) -> PasswordErrorKind {
         self.kind
+    }
+    /// Return the cause of a policy or refused failure.
+    pub fn cause(&self) -> Option<RefusalCause> {
+        self.cause
+    }
+    /// Name the case behind a shared cause, such as `no-password` for
+    /// "no such account". Only the log carries it.
+    pub fn reason(&self) -> Option<&'static str> {
+        self.reason
     }
 }
 impl fmt::Display for PasswordError {
@@ -68,6 +109,8 @@ impl fmt::Debug for PasswordError {
         f.debug_struct("PasswordError")
             .field("kind", &self.kind)
             .field("operation", &self.operation)
+            .field("cause", &self.cause)
+            .field("reason", &self.reason)
             .finish_non_exhaustive()
     }
 }
@@ -82,6 +125,29 @@ fn failure(kind: PasswordErrorKind, operation: &'static str) -> PasswordError {
     PasswordError {
         kind,
         operation,
+        cause: None,
+        reason: None,
+        source: None,
+    }
+}
+fn refused(operation: &'static str, cause: RefusalCause) -> PasswordError {
+    refused_because(operation, cause, None)
+}
+fn refused_because(
+    operation: &'static str,
+    cause: RefusalCause,
+    reason: Option<&'static str>,
+) -> PasswordError {
+    let kind = if cause == RefusalCause::PasswordRule {
+        PasswordErrorKind::Policy
+    } else {
+        PasswordErrorKind::Refused
+    };
+    PasswordError {
+        kind,
+        operation,
+        cause: Some(cause),
+        reason,
         source: None,
     }
 }
@@ -92,6 +158,8 @@ fn infrastructure(
     PasswordError {
         kind: PasswordErrorKind::Infrastructure,
         operation,
+        cause: None,
+        reason: None,
         source: Some(Box::new(source)),
     }
 }
@@ -112,9 +180,9 @@ impl Password {
     pub fn new(value: String) -> Result<Self, PasswordError> {
         let value = Zeroizing::new(value);
         if value.is_empty() || value.len() > MAX_PASSWORD_BYTES {
-            return Err(failure(
-                PasswordErrorKind::Policy,
+            return Err(refused(
                 "password length refused",
+                RefusalCause::PasswordRule,
             ));
         }
         Ok(Self(value))
@@ -209,11 +277,18 @@ impl PasswordWork {
 }
 
 /// A one-time email secret for invitation or reset, never persisted in bearer form.
-pub struct Invitation(Zeroizing<String>);
+pub struct Invitation {
+    secret: Zeroizing<String>,
+    expires_at: String,
+}
 impl Invitation {
     /// Supply this secret to the intended recipient once; never log it.
     pub fn secret(&self) -> &str {
-        &self.0
+        &self.secret
+    }
+    /// The stored expiry in UTC, as `YYYY-MM-DD HH:MM`.
+    pub fn expires_at(&self) -> &str {
+        &self.expires_at
     }
 }
 impl fmt::Debug for Invitation {
@@ -246,11 +321,13 @@ async fn bind_actor(tx: &Transaction<'_>, actor: &PrincipalId) -> Result<(), Pas
     .map_err(|source| database(&source))?;
     Ok(())
 }
+/// Lock the principal, and return the cause and its reason when it cannot
+/// take this operation.
 async fn lock_account(
     tx: &Transaction<'_>,
     principal: &PrincipalId,
     enrolled: bool,
-) -> Result<bool, PasswordError> {
+) -> Result<Option<(RefusalCause, Option<&'static str>)>, PasswordError> {
     let row = tx
         .query_opt(
             "SELECT identity.lock_password_principal($1::text::uuid)",
@@ -259,9 +336,14 @@ async fn lock_account(
         .await
         .map_err(|source| database(&source))?;
     if !row.is_some_and(|row| row.get::<_, bool>(0)) {
-        return Ok(false);
+        return Ok(Some((RefusalCause::NoSuchAccount, None)));
     }
-    Ok(enrolled == tx.query_one("SELECT EXISTS (SELECT 1 FROM identity.password_credentials WHERE principal_id = $1::text::uuid)", &[&principal.as_str()]).await.map_err(|source| database(&source))?.get::<_, bool>(0))
+    let has_password = tx.query_one("SELECT EXISTS (SELECT 1 FROM identity.password_credentials WHERE principal_id = $1::text::uuid)", &[&principal.as_str()]).await.map_err(|source| database(&source))?.get::<_, bool>(0);
+    Ok(match (enrolled, has_password) {
+        (false, true) => Some((RefusalCause::AlreadyEnrolled, None)),
+        (true, false) => Some((RefusalCause::NoSuchAccount, Some("no-password"))),
+        _ => None,
+    })
 }
 
 /// Issue an invitation for an active, unenrolled human under an authorized actor.
@@ -310,14 +392,14 @@ async fn issue_token(
             "email credential entropy failed",
         )
     })?;
-    let secret = Invitation(Zeroizing::new(format!("{prefix}{}", hex::encode(bytes))));
-    let hash = token_hash(secret.secret(), purpose).expect("generated email credential is valid");
+    let secret = Zeroizing::new(format!("{prefix}{}", hex::encode(bytes)));
+    let hash = token_hash(&secret, purpose).expect("generated email credential is valid");
     let tx = client
         .transaction()
         .await
         .map_err(|source| database(&source))?;
-    if !lock_account(&tx, principal, purpose == RESET_PURPOSE).await? {
-        return Err(failure(PasswordErrorKind::Refused, "invitation refused"));
+    if let Some((cause, reason)) = lock_account(&tx, principal, purpose == RESET_PURPOSE).await? {
+        return Err(refused_because("invitation refused", cause, reason));
     }
     if let Some(email) = expected_email {
         let current: String = tx
@@ -329,31 +411,45 @@ async fn issue_token(
             .map_err(|source| database(&source))?
             .get(0);
         if current != email {
-            return Err(failure(
-                PasswordErrorKind::Refused,
+            return Err(refused_because(
                 "recovery address changed",
+                RefusalCause::NoSuchAccount,
+                Some("address-changed"),
             ));
         }
     }
     bind_actor(&tx, actor).await?;
-    tx.execute("INSERT INTO identity.password_tokens (token_hash, principal_id, purpose, expires_at) VALUES ($1, $2::text::uuid, $3, clock_timestamp() + $4::bigint * interval '1 second')", &[&hash, &principal.as_str(), &purpose, &lifetime]).await.map_err(|source| database(&source))?;
+    let expires_at: String = tx.query_one("INSERT INTO identity.password_tokens (token_hash, principal_id, purpose, expires_at) VALUES ($1, $2::text::uuid, $3, clock_timestamp() + $4::bigint * interval '1 second') RETURNING to_char(expires_at AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI')", &[&hash, &principal.as_str(), &purpose, &lifetime]).await.map_err(|source| database(&source))?.get(0);
     tx.commit().await.map_err(|source| database(&source))?;
-    Ok(secret)
+    Ok(Invitation { secret, expires_at })
 }
+/// Return the cause when the token cannot establish this principal's password.
 async fn usable_token(
     client: &(impl GenericClient + Sync),
     principal: &PrincipalId,
     hash: &[u8],
     purpose: &str,
-) -> Result<bool, PasswordError> {
-    client.query_one("SELECT EXISTS (SELECT 1 FROM identity.password_tokens t JOIN identity.principals p ON p.id = t.principal_id WHERE t.token_hash = $1 AND t.principal_id = $2::text::uuid AND t.purpose = $3 AND t.consumed_at IS NULL AND t.expires_at > clock_timestamp() AND p.status = 'active' AND p.kind = 'human')", &[&hash, &principal.as_str(), &purpose]).await.map(|row| row.get(0)).map_err(|source| database(&source))
+) -> Result<Option<RefusalCause>, PasswordError> {
+    let row = client.query_opt("SELECT t.consumed_at IS NOT NULL, t.expires_at <= clock_timestamp(), p.status = 'active' AND p.kind = 'human' FROM identity.password_tokens t JOIN identity.principals p ON p.id = t.principal_id WHERE t.token_hash = $1 AND t.principal_id = $2::text::uuid AND t.purpose = $3", &[&hash, &principal.as_str(), &purpose]).await.map_err(|source| database(&source))?;
+    let Some(row) = row else {
+        return Ok(Some(RefusalCause::UnknownSecret));
+    };
+    Ok(if row.get::<_, bool>(0) {
+        Some(RefusalCause::Consumed)
+    } else if row.get::<_, bool>(1) {
+        Some(RefusalCause::Expired)
+    } else if !row.get::<_, bool>(2) {
+        Some(RefusalCause::NoSuchAccount)
+    } else {
+        None
+    })
 }
 
 fn enrollment_policy(password: &Password) -> Result<(), PasswordError> {
     if password.0.chars().count() < MIN_PASSWORD_CHARACTERS {
-        return Err(failure(
-            PasswordErrorKind::Policy,
+        return Err(refused(
             "password policy refused",
+            RefusalCause::PasswordRule,
         ));
     }
     Ok(())
@@ -403,9 +499,9 @@ async fn establish_password(
 ) -> Result<(), PasswordError> {
     enrollment_policy(&password)?;
     let digest = token_hash(secret, purpose)
-        .ok_or_else(|| failure(PasswordErrorKind::Refused, "invitation refused"))?;
-    if !usable_token(client, principal, &digest, purpose).await? {
-        return Err(failure(PasswordErrorKind::Refused, "invitation refused"));
+        .ok_or_else(|| refused("invitation refused", RefusalCause::UnknownSecret))?;
+    if let Some(cause) = usable_token(client, principal, &digest, purpose).await? {
+        return Err(refused("invitation refused", cause));
     }
     let hash = work.hash(password).await?;
     store_password(client, principal, &digest, &hash, purpose).await
@@ -422,10 +518,11 @@ async fn store_password(
         .transaction()
         .await
         .map_err(|source| database(&source))?;
-    if !lock_account(&tx, principal, purpose == RESET_PURPOSE).await?
-        || !usable_token(&tx, principal, token_digest, purpose).await?
-    {
-        return Err(failure(PasswordErrorKind::Refused, "invitation refused"));
+    if let Some((cause, reason)) = lock_account(&tx, principal, purpose == RESET_PURPOSE).await? {
+        return Err(refused_because("invitation refused", cause, reason));
+    }
+    if let Some(cause) = usable_token(&tx, principal, token_digest, purpose).await? {
+        return Err(refused("invitation refused", cause));
     }
     bind_actor(&tx, principal).await?;
     if purpose == RESET_PURPOSE {

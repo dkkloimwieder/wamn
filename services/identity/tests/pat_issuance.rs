@@ -14,7 +14,7 @@ use rcgen::{
 };
 use serde_json::{Value, json};
 use tokio::io::{AsyncBufReadExt as _, AsyncReadExt as _, BufReader};
-use tokio::process::{Child, ChildStdout, Command};
+use tokio::process::{Child, ChildStderr, Command};
 use tokio_postgres::{Client, NoTls};
 use wamn_control_provision::identity_issuer::{
     IDENTITY_ISSUER_ROLE, grant_identity_issuer_surface_sql, identity_issuer_generation_role,
@@ -99,7 +99,7 @@ impl Drop for Files {
 struct Process {
     child: Child,
     endpoint: String,
-    stdout: BufReader<ChildStdout>,
+    stderr: BufReader<ChildStderr>,
 }
 
 #[test]
@@ -790,6 +790,7 @@ async fn start(
         .env("WAMN_IDENTITY_ISSUER", ISSUER)
         .env("WAMN_IDENTITY_DATABASE_URL", url)
         .env_remove("WAMN_IDENTITY_OPERATOR_CA")
+        .env("RUST_LOG", "info")
         .args(["serve", "--bind", "127.0.0.1:0", "--tls-cert"])
         .arg(certificate)
         .arg("--tls-key")
@@ -806,16 +807,17 @@ async fn start(
     let mut child = command
         .spawn()
         .expect_redacted("start native identity process");
-    let mut stdout = BufReader::new(child.stdout.take().expect("piped identity output"));
+    let mut stderr = BufReader::new(child.stderr.take().expect("piped identity log"));
     let mut line = String::new();
-    tokio::time::timeout(Duration::from_secs(5), stdout.read_line(&mut line))
+    tokio::time::timeout(Duration::from_secs(5), stderr.read_line(&mut line))
         .await
         .expect_redacted("bounded identity readiness event")
         .expect_redacted("identity readiness output");
     let address: SocketAddr = line
-        .trim_end()
-        .strip_prefix("identity listening on ")
+        .split_once("identity listening on ")
         .expect("fixed identity readiness event")
+        .1
+        .trim_end()
         .parse()
         .expect_redacted("identity listen address");
     assert!(
@@ -825,7 +827,7 @@ async fn start(
     Process {
         child,
         endpoint: format!("https://{address}"),
-        stdout,
+        stderr,
     }
 }
 
@@ -834,14 +836,14 @@ async fn stop(mut process: Process, secrets: &[&str]) {
         .child
         .start_kill()
         .expect_redacted("stop owned identity process");
-    let mut stdout = Vec::new();
+    let mut stderr = Vec::new();
     let (read, output) = tokio::join!(
-        process.stdout.read_to_end(&mut stdout),
+        process.stderr.read_to_end(&mut stderr),
         process.child.wait_with_output()
     );
-    read.expect_redacted("collect identity standard output");
+    read.expect_redacted("collect identity log");
     let output = output.expect_redacted("collect identity process output");
-    for stream in [&stdout, &output.stderr] {
+    for stream in [&output.stdout, &stderr] {
         let text = String::from_utf8_lossy(stream);
         for secret in secrets {
             assert!(

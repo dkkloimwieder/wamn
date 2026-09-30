@@ -460,17 +460,21 @@ fn dotenv_loading_precedence_and_secret_redaction() {
     let url = format!("postgres://{role}:fixture@127.0.0.1/wamn_system");
     let run = |key: Option<&str>, flag: Option<&str>| {
         let mut command = std::process::Command::new(env!("CARGO_BIN_EXE_wamn-identity"));
-        command.current_dir(&directory).env_clear().args([
-            "--issuer",
-            ISSUER,
-            "--database-url",
-            &url,
-            "serve",
-            "--tls-cert",
-            "missing.crt",
-            "--tls-key",
-            "missing.key",
-        ]);
+        command
+            .current_dir(&directory)
+            .env_clear()
+            .env("NO_COLOR", "1")
+            .args([
+                "--issuer",
+                ISSUER,
+                "--database-url",
+                &url,
+                "serve",
+                "--tls-cert",
+                "missing.crt",
+                "--tls-key",
+                "missing.key",
+            ]);
         if let Some(key) = key {
             command.env("RESEND_API_KEY", key);
         }
@@ -479,7 +483,13 @@ fn dotenv_loading_precedence_and_secret_redaction() {
         }
         let output = command.output().unwrap();
         assert!(!output.status.success());
-        String::from_utf8(output.stderr).unwrap()
+        // The refusal is one tracing ERROR line; return its message.
+        let log = String::from_utf8(output.stderr).unwrap();
+        let (_, message) = log
+            .trim()
+            .split_once(" ERROR wamn_identity: ")
+            .expect("one tracing error line");
+        message.to_owned()
     };
     std::fs::write(
         directory.join(".env"),

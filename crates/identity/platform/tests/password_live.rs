@@ -4,8 +4,8 @@ use sha2::{Digest as _, Sha256};
 use tokio_postgres::{Client, error::SqlState};
 use wamn_control_provision::{PlatformComponent, test_database};
 use wamn_platform_identity::password::{
-    Password, PasswordErrorKind, authenticate_password, enroll_password, issue_invitation,
-    password_work,
+    Password, PasswordErrorKind, RefusalCause, authenticate_password, enroll_password,
+    issue_invitation, password_work,
 };
 use wamn_platform_identity::{
     Principal, PrincipalId, authenticate_pat, create_human, create_service, disable_principal,
@@ -100,20 +100,22 @@ async fn enrollment_preserves_identity_and_pat_and_consumes_all_invitations() {
         .unwrap();
     assert_ne!(first.secret(), second.secret());
     assert!(!format!("{first:?}").contains(first.secret()));
+    let expires: String = client.query_one("SELECT to_char(expires_at AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI') FROM identity.password_tokens WHERE token_hash = $1", &[&Sha256::digest(first.secret().as_bytes()).to_vec()]).await.unwrap().get(0);
+    assert_eq!(first.expires_at(), expires);
     assert_eq!(
         enroll_password(&mut client, &work, other.id(), first.secret(), password())
             .await
             .unwrap_err()
-            .kind(),
-        PasswordErrorKind::Refused
+            .cause(),
+        Some(RefusalCause::UnknownSecret)
     );
     let short = Password::new("short".into()).unwrap();
     assert_eq!(
         enroll_password(&mut client, &work, person.id(), first.secret(), short)
             .await
             .unwrap_err()
-            .kind(),
-        PasswordErrorKind::Policy
+            .cause(),
+        Some(RefusalCause::PasswordRule)
     );
     enroll_password(&mut client, &work, person.id(), first.secret(), password())
         .await
@@ -123,16 +125,16 @@ async fn enrollment_preserves_identity_and_pat_and_consumes_all_invitations() {
             enroll_password(&mut client, &work, person.id(), secret, password())
                 .await
                 .unwrap_err()
-                .kind(),
-            PasswordErrorKind::Refused
+                .cause(),
+            Some(RefusalCause::Consumed)
         );
     }
     assert_eq!(
         issue_invitation(&mut client, &actor(), person.id())
             .await
             .unwrap_err()
-            .kind(),
-        PasswordErrorKind::Refused
+            .cause(),
+        Some(RefusalCause::AlreadyEnrolled)
     );
     let after: String = client
         .query_one(
@@ -238,8 +240,8 @@ async fn invitation_expiry_kind_purpose_and_transaction_rollback_refuse() {
         )
         .await
         .unwrap_err()
-        .kind(),
-        PasswordErrorKind::Refused
+        .cause(),
+        Some(RefusalCause::Expired)
     );
     let service = create_service(&client, "password-service", "Service")
         .await
@@ -248,15 +250,15 @@ async fn invitation_expiry_kind_purpose_and_transaction_rollback_refuse() {
         issue_invitation(&mut client, &actor(), service.id())
             .await
             .unwrap_err()
-            .kind(),
-        PasswordErrorKind::Refused
+            .cause(),
+        Some(RefusalCause::NoSuchAccount)
     );
     assert_eq!(
         issue_invitation(&mut client, &actor(), &actor())
             .await
             .unwrap_err()
-            .kind(),
-        PasswordErrorKind::Refused
+            .cause(),
+        Some(RefusalCause::NoSuchAccount)
     );
     let error = client.execute("INSERT INTO identity.password_tokens (token_hash, principal_id, purpose, expires_at) VALUES ($1, $2::text::uuid, 'unknown-purpose', clock_timestamp() + interval '1 hour')", &[&vec![1u8;32], &person.id().as_str()]).await.unwrap_err();
     assert_eq!(error.code(), Some(&SqlState::CHECK_VIOLATION));

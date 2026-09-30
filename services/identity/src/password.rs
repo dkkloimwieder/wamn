@@ -19,8 +19,9 @@ use wamn_control_provision::{PlatformComponent, identity_issuer::IdentityIssuerC
 use wamn_platform_identity::{
     PrincipalId,
     password::{
-        Password, PasswordError, PasswordErrorKind, PasswordWork, authenticate_password,
-        enroll_password, issue_invitation, issue_reset, password_work, reset_password,
+        Password, PasswordError, PasswordErrorKind, PasswordWork, RefusalCause,
+        authenticate_password, enroll_password, issue_invitation, issue_reset, password_work,
+        reset_password,
     },
     password_login,
     session_token::{IssuedSessionToken, sign_session_token_in_transaction},
@@ -250,6 +251,7 @@ async fn handle(
             };
             let Ok(row) = database.client.query_opt("SELECT email FROM identity.principals WHERE id = $1::text::uuid AND kind = 'human' AND status = 'active'", &[&principal.as_str()]).await else { return unavailable(); };
             let Some(row) = row else {
+                tracing::info!(principal = %principal, cause = %RefusalCause::NoSuchAccount, "password request refused");
                 return invalid();
             };
             let email: String = row.get(0);
@@ -261,11 +263,16 @@ async fn handle(
             let invitation = match issue_invitation(&mut database.client, &actor, &principal).await
             {
                 Ok(value) => value,
-                Err(error) => return password_failure(&error),
+                Err(error) => return refusal(&error, &email),
             };
             if state
                 .mail
-                .invite(&email, principal.as_str(), invitation.secret())
+                .invite(
+                    &email,
+                    principal.as_str(),
+                    invitation.secret(),
+                    invitation.expires_at(),
+                )
                 .await
                 .is_err()
             {
@@ -294,12 +301,14 @@ async fn handle(
                 return invalid();
             };
             let secret = Zeroizing::new(request.invitation);
-            let password = match Password::new(request.password) {
-                Ok(value) => value,
-                Err(error) => return password_failure(&error),
-            };
             let Ok(principal) = request.principal_id.parse::<PrincipalId>() else {
                 return invalid();
+            };
+            let password = match Password::new(request.password) {
+                Ok(value) => value,
+                Err(error) => {
+                    return enrollment_refusal(&database.client, &principal, &error).await;
+                }
             };
             let bucket = format!("enroll:{principal}");
             match admit(&mut database.client, &[(&bucket, 5)], &inner.issuer).await {
@@ -317,7 +326,7 @@ async fn handle(
             .await
             {
                 Ok(()) => response(StatusCode::NO_CONTENT, "application/json", Vec::new()),
-                Err(error) => password_failure(&error),
+                Err(error) => enrollment_refusal(&database.client, &principal, &error).await,
             }
         }
         "/password/session" | "/password/environments" => {
@@ -481,14 +490,16 @@ async fn handle(
             let action = async {
                 let Ok(row) = database.client.query_opt("SELECT p.id::text FROM identity.principals p JOIN identity.password_credentials c ON c.principal_id=p.id WHERE p.email=$1 AND p.kind='human' AND p.status='active'", &[&email]).await else { return unavailable(); };
                 let Some(row) = row else {
+                    tracing::info!(email = %email, cause = %RefusalCause::NoSuchAccount, "password request refused");
                     return invalid();
                 };
                 let Ok(principal) = row.get::<_, String>(0).parse::<PrincipalId>() else {
                     return unavailable();
                 };
                 if let Some((secret, password)) = reset {
-                    let Ok(password) = Password::new(password) else {
-                        return invalid();
+                    let password = match Password::new(password) {
+                        Ok(value) => value,
+                        Err(error) => return refusal(&error, &email),
                     };
                     if let Err(error) = reset_password(
                         &mut database.client,
@@ -499,7 +510,7 @@ async fn handle(
                     )
                     .await
                     {
-                        return password_failure(&error);
+                        return refusal(&error, &email);
                     }
                     let notified = state.mail.password_changed(&email).await.is_ok();
                     return response(StatusCode::OK, "application/json", serde_json::to_vec(&serde_json::json!({"status":"password_reset", "notification": if notified { "accepted_for_delivery" } else { "unavailable" }})).expect("fixed response"));
@@ -509,11 +520,20 @@ async fn handle(
                     .to_string()
                     .parse()
                     .expect("platform principal");
-                let Ok(token) = issue_reset(&mut database.client, &actor, &principal, &email).await
-                else {
-                    return unavailable();
-                };
-                if state.mail.reset(&email, token.secret()).await.is_err() {
+                let token =
+                    match issue_reset(&mut database.client, &actor, &principal, &email).await {
+                        Ok(token) => token,
+                        Err(error) => {
+                            log_refusal(&error, &email);
+                            return unavailable();
+                        }
+                    };
+                if state
+                    .mail
+                    .reset(&email, token.secret(), token.expires_at())
+                    .await
+                    .is_err()
+                {
                     let hash = Sha256::digest(token.secret().as_bytes()).to_vec();
                     if let Ok(tx) = database.client.transaction().await
                         && tx.execute("SELECT set_config('app.user_id',$1,true)", &[&actor.as_str()]).await.is_ok()
@@ -775,6 +795,49 @@ async fn admit(
     tx.commit().await?;
     Ok(allowed)
 }
+/// Log the cause of a refusal with the account's email, then answer as
+/// `password_failure`. The wire text stays the same for every cause.
+fn refusal(error: &PasswordError, email: &str) -> Response<Full<Bytes>> {
+    log_refusal(error, email);
+    password_failure(error)
+}
+
+fn log_refusal(error: &PasswordError, email: &str) {
+    if let Some(cause) = error.cause() {
+        if let Some(reason) = error.reason() {
+            tracing::info!(email = %email, cause = %cause, reason, "password request refused");
+        } else {
+            tracing::info!(email = %email, cause = %cause, "password request refused");
+        }
+    }
+}
+
+/// An enrollment request names a principal, not an email, so look the email up
+/// for the log line.
+async fn enrollment_refusal(
+    client: &Client,
+    principal: &PrincipalId,
+    error: &PasswordError,
+) -> Response<Full<Bytes>> {
+    if let Some(cause) = error.cause() {
+        match client
+            .query_opt(
+                "SELECT email FROM identity.principals WHERE id = $1::text::uuid",
+                &[&principal.as_str()],
+            )
+            .await
+        {
+            Ok(Some(row)) => {
+                return refusal(error, row.get::<_, &str>(0));
+            }
+            _ => {
+                tracing::info!(principal = %principal, cause = %cause, "password request refused");
+            }
+        }
+    }
+    password_failure(error)
+}
+
 fn password_failure(error: &PasswordError) -> Response<Full<Bytes>> {
     match error.kind() {
         PasswordErrorKind::Busy => throttled(),

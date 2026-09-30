@@ -140,11 +140,13 @@ impl Mailer {
         email: &str,
         principal: &str,
         secret: &str,
+        expires_at: &str,
     ) -> Result<(), IdentityServiceError> {
         let text = Zeroizing::new(invitation_text(
             self.config.invite_url.as_deref(),
             principal,
             secret,
+            expires_at,
         ));
         let endpoint = "https://api.resend.com/emails";
         #[cfg(any(test, feature = "test-util"))]
@@ -157,8 +159,13 @@ impl Mailer {
         &self,
         email: &str,
         secret: &str,
+        expires_at: &str,
     ) -> Result<(), IdentityServiceError> {
-        let text = Zeroizing::new(reset_text(self.config.invite_url.as_deref(), secret));
+        let text = Zeroizing::new(reset_text(
+            self.config.invite_url.as_deref(),
+            secret,
+            expires_at,
+        ));
         self.password_email(email, "Reset your WAMN password", &text)
             .await
     }
@@ -207,24 +214,30 @@ impl Mailer {
     }
 }
 
-fn invitation_text(invite_url: Option<&str>, principal: &str, secret: &str) -> String {
+/// `expires_at` is the token row's expiry in UTC, as `YYYY-MM-DD HH:MM`.
+fn invitation_text(
+    invite_url: Option<&str>,
+    principal: &str,
+    secret: &str,
+    expires_at: &str,
+) -> String {
     match invite_url {
         Some(base) => format!(
-            "Open this link to set your WAMN password.\n{base}/invite#{principal}:{secret}\n"
+            "Open this link to set your WAMN password.\n{base}/invite#{principal}:{secret}\nThe link expires at {expires_at} UTC.\n"
         ),
         None => format!(
-            "You have been invited to WAMN.\n\nInvitation code: {principal}:{secret}\n\nPaste this complete code into the invitation prompt. No PAT is needed. It expires after 24 hours and can be used once. If you did not expect this invitation, ignore this email."
+            "You have been invited to WAMN.\n\nInvitation code: {principal}:{secret}\n\nPaste this complete code into the invitation prompt. No PAT is needed. The link expires at {expires_at} UTC. It can be used once. If you did not expect this invitation, ignore this email."
         ),
     }
 }
 
-fn reset_text(invite_url: Option<&str>, secret: &str) -> String {
+fn reset_text(invite_url: Option<&str>, secret: &str, expires_at: &str) -> String {
     match invite_url {
-        Some(base) => {
-            format!("Open this link to reset your WAMN password.\n{base}/reset#{secret}\n")
-        }
+        Some(base) => format!(
+            "Open this link to reset your WAMN password.\n{base}/reset#{secret}\nThe link expires at {expires_at} UTC.\n"
+        ),
         None => format!(
-            "Reset your WAMN password.\n\nReset secret: {secret}\n\nEnter your email and this secret in the password reset prompt. It expires after 15 minutes and works once. If you did not request this, ignore this email."
+            "Reset your WAMN password.\n\nReset secret: {secret}\n\nEnter your email and this secret in the password reset prompt. The link expires at {expires_at} UTC. It works once. If you did not request this, ignore this email."
         ),
     }
 }
@@ -240,16 +253,21 @@ mod tests {
             .unwrap()
             .with_invite_url("https://receiving.example.invalid/")
             .unwrap();
+        let expires = "2026-09-30 14:39";
         assert_eq!(
-            invitation_text(config.invite_url.as_deref(), "p", "wamn_inv_s"),
-            "Open this link to set your WAMN password.\nhttps://receiving.example.invalid/invite#p:wamn_inv_s\n"
+            invitation_text(config.invite_url.as_deref(), "p", "wamn_inv_s", expires),
+            "Open this link to set your WAMN password.\nhttps://receiving.example.invalid/invite#p:wamn_inv_s\nThe link expires at 2026-09-30 14:39 UTC.\n"
         );
-        assert!(invitation_text(None, "p", "wamn_inv_s").contains("Invitation code: p:wamn_inv_s"));
+        let code = invitation_text(None, "p", "wamn_inv_s", expires);
+        assert!(code.contains("Invitation code: p:wamn_inv_s"));
+        assert!(code.contains("The link expires at 2026-09-30 14:39 UTC."));
         assert_eq!(
-            reset_text(config.invite_url.as_deref(), "wamn_reset_s"),
-            "Open this link to reset your WAMN password.\nhttps://receiving.example.invalid/reset#wamn_reset_s\n"
+            reset_text(config.invite_url.as_deref(), "wamn_reset_s", expires),
+            "Open this link to reset your WAMN password.\nhttps://receiving.example.invalid/reset#wamn_reset_s\nThe link expires at 2026-09-30 14:39 UTC.\n"
         );
-        assert!(reset_text(None, "wamn_reset_s").contains("Reset secret: wamn_reset_s"));
+        let code = reset_text(None, "wamn_reset_s", expires);
+        assert!(code.contains("Reset secret: wamn_reset_s"));
+        assert!(code.contains("The link expires at 2026-09-30 14:39 UTC."));
     }
 
     #[tokio::test]
