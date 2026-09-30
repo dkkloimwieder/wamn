@@ -1,0 +1,45 @@
+# The invitation Job of docs/plan/operator-image.md section 4.2 (wamn-n5d1).
+# It runs `wamn-ctl invite` inside the cluster, so the owner's machine needs no
+# /etc/hosts line and no identity port-forward. The operator certificate
+# reaches the Job only as the mounted Secret operator-dkk.
+#
+# Fill __PRINCIPAL_ID__ in a private copy of this file in the scratchpad, at
+# mode 0600, apply the copy and remove it (docs/operations/gcp.md section 4.5).
+# The verb prints the identity answer and writes no credential. Save the log to
+# the scratchpad before you delete the Job.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: invite
+  namespace: identity
+spec:
+  backoffLimit: 0
+  ttlSecondsAfterFinished: 600
+  template:
+    spec:
+      restartPolicy: Never
+      # The Job does not call the Kubernetes API.
+      automountServiceAccountToken: false
+      containers:
+        - name: invite
+          image: us-central1-docker.pkg.dev/wamn-dev/wamn/wamn-ctl:src-4efb827f3fd6ab78@sha256:1322d637113f2934340620556f1ef491d2d2e28f4991ddeb9236a7d4f48eae10
+          args: ["invite", "--principal", "__PRINCIPAL_ID__"]
+          env:
+            - { name: WAMN_PAT_ISSUER, value: "https://identity.identity.svc.cluster.local" }
+            - { name: WAMN_PAT_CLIENT_CERT, value: /etc/wamn/operator/tls.crt }
+            - { name: WAMN_PAT_CLIENT_KEY, value: /etc/wamn/operator/tls.key }
+            - { name: WAMN_PAT_SERVER_CA, value: /etc/wamn/identity-ca/ca.crt }
+          volumeMounts:
+            - { name: operator, mountPath: /etc/wamn/operator, readOnly: true }
+            - { name: identity-ca, mountPath: /etc/wamn/identity-ca, readOnly: true }
+      volumes:
+        - name: operator
+          secret:
+            secretName: operator-dkk
+            defaultMode: 0400
+            items: [{ key: tls.crt, path: tls.crt }, { key: tls.key, path: tls.key }]
+        - name: identity-ca
+          secret:
+            secretName: identity-tls
+            defaultMode: 0400
+            items: [{ key: ca.crt, path: ca.crt }]
