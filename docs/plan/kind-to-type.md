@@ -1,6 +1,6 @@
 # Platform `kind` to `type` migration
 
-Status: Assembled for owner acceptance (wamn-sfea.7). Measured on main at 3ad0ce5cd.
+Status: Accepted by the owner 2026-09-30 (wamn-sfea.7). Measured on main at 3ad0ce5cd.
 
 Context: [platform-ui.md §0](platform-ui.md) makes `type` the platform word and `kind` a retired one. This file is the precursor specification that §0 requires. It changes no code, no database and no cluster.
 
