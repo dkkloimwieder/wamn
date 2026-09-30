@@ -231,7 +231,7 @@ fn approved_identity_issuer_acl() -> Vec<String> {
         "column|identity|pats.label|SELECT|false",
         "column|identity|pats.principal_id|INSERT|false",
         "column|identity|pats.principal_id|SELECT|false",
-        "column|identity|pats.principal_kind|INSERT|false",
+        "column|identity|pats.principal_type|INSERT|false",
         "column|identity|pats.revoked_at|SELECT|false",
         "column|identity|pats.token_hash|INSERT|false",
         "column|identity|pats.token_hash|SELECT|false",
@@ -240,9 +240,9 @@ fn approved_identity_issuer_acl() -> Vec<String> {
         "column|identity|principals.display_name|SELECT|false",
         "column|identity|principals.email|SELECT|false",
         "column|identity|principals.id|SELECT|false",
-        "column|identity|principals.kind|SELECT|false",
         "column|identity|principals.status|SELECT|false",
         "column|identity|principals.subject|SELECT|false",
+        "column|identity|principals.type|SELECT|false",
         "column|identity|project_env_memberships.env|SELECT|false",
         "column|identity|project_env_memberships.org|SELECT|false",
         "column|identity|project_env_memberships.principal_id|SELECT|false",
@@ -288,7 +288,7 @@ fn approved_pat_issuance_acl() -> Vec<String> {
         "column|identity|pats.label|SELECT|false",
         "column|identity|pats.principal_id|INSERT|false",
         "column|identity|pats.principal_id|SELECT|false",
-        "column|identity|pats.principal_kind|INSERT|false",
+        "column|identity|pats.principal_type|INSERT|false",
         "column|identity|pats.revoked_at|SELECT|false",
         "column|identity|pats.token_hash|INSERT|false",
         "column|identity|pats.token_hash|SELECT|false",
@@ -296,9 +296,9 @@ fn approved_pat_issuance_acl() -> Vec<String> {
         "column|identity|pats.token_prefix|SELECT|false",
         "column|identity|principals.display_name|SELECT|false",
         "column|identity|principals.id|SELECT|false",
-        "column|identity|principals.kind|SELECT|false",
         "column|identity|principals.status|SELECT|false",
         "column|identity|principals.subject|SELECT|false",
+        "column|identity|principals.type|SELECT|false",
         "column|identity|project_env_memberships.env|SELECT|false",
         "column|identity|project_env_memberships.org|SELECT|false",
         "column|identity|project_env_memberships.principal_id|SELECT|false",
@@ -370,9 +370,9 @@ async fn upgrade_foundation_surface(
     revoke_password_surface(admin).await?;
     // Reproduce the installed foundation's actual privileges, not its SQL text.
     admin.batch_execute(
-        "REVOKE SELECT (id,kind,subject,email,display_name,status) ON identity.principals FROM wamn_identity_issuer; \
+        "REVOKE SELECT (id,type,subject,email,display_name,status) ON identity.principals FROM wamn_identity_issuer; \
          REVOKE SELECT (id,principal_id,token_prefix,token_hash,label,created_at,revoked_at,expires_at) ON identity.pats FROM wamn_identity_issuer; \
-         REVOKE INSERT (principal_id,principal_kind,token_prefix,token_hash,label,expires_at) ON identity.pats FROM wamn_identity_issuer; \
+         REVOKE INSERT (principal_id,principal_type,token_prefix,token_hash,label,expires_at) ON identity.pats FROM wamn_identity_issuer; \
          REVOKE SELECT (principal_id,org,project,env) ON identity.project_env_memberships FROM wamn_identity_issuer; \
          REVOKE SELECT (org,project,env,instance_suffix) ON registry.project_envs FROM wamn_identity_issuer; \
          REVOKE USAGE ON SCHEMA registry FROM wamn_identity_issuer;"
@@ -447,7 +447,7 @@ async fn upgrade_read_only_pat_surface(
     revoke_password_surface(admin).await?;
     admin.batch_execute(
         "REVOKE SELECT (id,label,created_at) ON identity.pats FROM wamn_identity_issuer; \
-         REVOKE INSERT (principal_id,principal_kind,token_prefix,token_hash,label,expires_at) ON identity.pats FROM wamn_identity_issuer;"
+         REVOKE INSERT (principal_id,principal_type,token_prefix,token_hash,label,expires_at) ON identity.pats FROM wamn_identity_issuer;"
     ).await?;
     let previous = stable_acl(admin).await?;
     anyhow::ensure!(
@@ -498,7 +498,7 @@ async fn pat_authority(admin: &Client, a: &Client, b: &Client) -> anyhow::Result
     let untouched: bool = admin
         .query_one(
             "SELECT NOT EXISTS (SELECT FROM identity.pats) \
-           AND NOT EXISTS (SELECT FROM identity.principals WHERE kind <> 'platform')",
+           AND NOT EXISTS (SELECT FROM identity.principals WHERE type <> 'platform')",
             &[],
         )
         .await?
@@ -517,7 +517,7 @@ async fn pat_authority(admin: &Client, a: &Client, b: &Client) -> anyhow::Result
         .await?;
     let id: String = admin
         .query_one(
-            "INSERT INTO identity.principals (kind,subject,email,display_name) \
+            "INSERT INTO identity.principals (type,subject,email,display_name) \
          VALUES ('human','issuer-pat-test','issuer-pat-test@example.invalid', \
                  'Issuer PAT test') RETURNING id::text",
             &[],
@@ -572,7 +572,7 @@ async fn pat_authority(admin: &Client, a: &Client, b: &Client) -> anyhow::Result
             "INSERT INTO identity.pats (created_at) VALUES (DEFAULT)",
             "INSERT INTO identity.pats (revoked_at) VALUES (NULL)",
             "UPDATE identity.principals SET display_name = 'Escape'",
-            "INSERT INTO identity.principals (kind,subject,display_name) VALUES ('human','escape','Escape')",
+            "INSERT INTO identity.principals (type,subject,display_name) VALUES ('human','escape','Escape')",
             "DELETE FROM identity.project_env_memberships",
             "INSERT INTO identity.project_env_memberships (principal_id,org,project,env) VALUES ('00000000-0000-0000-0000-000000000001','fixture','widgets','dev')",
             "INSERT INTO identity.project_roles (principal_id,org,project,role) VALUES ('00000000-0000-0000-0000-000000000001','fixture','widgets','owner')",
@@ -743,7 +743,7 @@ async fn journey(admin: &Client, admin_url: &str, directory: &Path) -> anyhow::R
     let b = connect(&b_url).await?;
     pat_authority(admin, &a, &b).await?;
     b.query(
-        "SELECT id,kind,subject,display_name,status FROM identity.principals",
+        "SELECT id,type,subject,display_name,status FROM identity.principals",
         &[],
     )
     .await
@@ -799,7 +799,7 @@ async fn journey(admin: &Client, admin_url: &str, directory: &Path) -> anyhow::R
     let empty: bool = admin.query_one(
         "SELECT NOT EXISTS (SELECT FROM identity.session_keys) AND NOT EXISTS (SELECT FROM identity.session_signing_state) \
            AND NOT EXISTS (SELECT FROM identity.pats) \
-           AND NOT EXISTS (SELECT FROM identity.principals WHERE kind <> 'platform')", &[]
+           AND NOT EXISTS (SELECT FROM identity.principals WHERE type <> 'platform')", &[]
     ).await?.get(0);
     anyhow::ensure!(
         empty,

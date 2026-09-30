@@ -23,7 +23,7 @@ pub const IDENTITY_ISSUER_TABLES: [&str; 2] = ["session_keys", "session_signing_
 /// Columns that allow PAT issuance without update or deletion authority.
 pub const IDENTITY_ISSUER_PAT_INSERT_COLUMNS: [&str; 6] = [
     "principal_id",
-    "principal_kind",
+    "principal_type",
     "token_prefix",
     "token_hash",
     "label",
@@ -34,7 +34,7 @@ pub const IDENTITY_ISSUER_READ_COLUMNS: [(&str, &str, &[&str]); 4] = [
     (
         "identity",
         "principals",
-        &["id", "kind", "subject", "display_name", "status"],
+        &["id", "type", "subject", "display_name", "status"],
     ),
     (
         "identity",
@@ -459,7 +459,7 @@ mod tests {
              GRANT USAGE ON SCHEMA identity, registry TO \"wamn_identity_issuer\"; \
              GRANT SELECT, INSERT, UPDATE, DELETE ON \
              identity.session_keys, identity.session_signing_state TO \"wamn_identity_issuer\"; \
-             GRANT SELECT (\"id\", \"kind\", \"subject\", \"display_name\", \"status\") \
+             GRANT SELECT (\"id\", \"type\", \"subject\", \"display_name\", \"status\") \
              ON TABLE \"identity\".\"principals\" TO \"wamn_identity_issuer\"; \
              GRANT SELECT (\"id\", \"principal_id\", \"token_prefix\", \"token_hash\", \"label\", \"created_at\", \"revoked_at\", \"expires_at\") \
              ON TABLE \"identity\".\"pats\" TO \"wamn_identity_issuer\"; \
@@ -467,7 +467,7 @@ mod tests {
              ON TABLE \"identity\".\"project_env_memberships\" TO \"wamn_identity_issuer\"; \
              GRANT SELECT (\"org\", \"project\", \"env\", \"instance_suffix\") \
              ON TABLE \"registry\".\"project_envs\" TO \"wamn_identity_issuer\"; \
-             GRANT INSERT (\"principal_id\", \"principal_kind\", \"token_prefix\", \"token_hash\", \"label\", \"expires_at\") \
+             GRANT INSERT (\"principal_id\", \"principal_type\", \"token_prefix\", \"token_hash\", \"label\", \"expires_at\") \
              ON TABLE identity.pats TO \"wamn_identity_issuer\";"
         );
     }

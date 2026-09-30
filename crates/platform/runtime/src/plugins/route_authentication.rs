@@ -15,7 +15,7 @@ use wamn_engine::flow_http_routing::{
     RouteAuthenticator, RouteCredential, authentication_unavailable, check_csrf,
     required_bearer_token, route_credential, unauthorized,
 };
-use wamn_platform_identity::{PreparedIdentityReads, PrincipalKind};
+use wamn_platform_identity::{PreparedIdentityReads, PrincipalType};
 use wamn_session::verifier::SessionVerifier;
 
 use crate::session_keys::IssuerKeys;
@@ -298,13 +298,13 @@ impl RouteAuthenticator for PlatformRouteAuthenticator {
                 .ok_or_else(unauthorized)?;
             let principal = principal.principal();
             match principal.kind() {
-                PrincipalKind::Platform => return Err(unauthorized()),
-                PrincipalKind::Service
+                PrincipalType::Platform => return Err(unauthorized()),
+                PrincipalType::Service
                     if principal.subject() != authentication.expected_subject.as_ref() =>
                 {
                     return Err(unauthorized());
                 }
-                PrincipalKind::Service | PrincipalKind::Human => {}
+                PrincipalType::Service | PrincipalType::Human => {}
             }
             // A service and a person hold their roles the same way, through
             // `wamn-ctl grant-role`.

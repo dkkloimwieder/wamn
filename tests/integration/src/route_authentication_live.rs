@@ -18,7 +18,7 @@ use wamn_engine::release_manifest::LoadedRelease;
 use wamn_engine::router_delivery::authorize_attachment_for_test;
 use wamn_gate_harness::journey::{journey_document_schema_bytes, parse_journey_document};
 use wamn_platform_identity::{
-    PrincipalKind, assign_project_role, create_human, create_service, disable_principal, issue_pat,
+    PrincipalType, assign_project_role, create_human, create_service, disable_principal, issue_pat,
     operator_subject, resolve_subject, revoke_pat,
 };
 use wamn_project_state::{ADMIN_ROLE, OPERATOR_ROLE};
@@ -91,7 +91,7 @@ async fn grant_service_operator(
     subject: &str,
 ) -> anyhow::Result<()> {
     let (system, system_task) = connect(system_url).await?;
-    let principal = resolve_subject(system.as_ref(), PrincipalKind::Service, subject)
+    let principal = resolve_subject(system.as_ref(), PrincipalType::Service, subject)
         .await
         .context("resolve the operator service")?
         .context("the operator service is absent")?;
@@ -372,7 +372,7 @@ async fn issue_pat_for_subject(
     subject: &str,
     label: &str,
 ) -> anyhow::Result<(String, String)> {
-    let principal = resolve_subject(admin, PrincipalKind::Service, subject)
+    let principal = resolve_subject(admin, PrincipalType::Service, subject)
         .await
         .context("resolve the operator principal")?
         .context("the operator principal is absent")?;
@@ -903,7 +903,7 @@ async fn production_operator_authentication_and_operation_authorization() {
 
     let principal = resolve_subject(
         admin.as_ref(),
-        PrincipalKind::Service,
+        PrincipalType::Service,
         &route.principal_subject,
     )
     .await

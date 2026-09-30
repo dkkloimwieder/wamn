@@ -253,7 +253,7 @@ async fn seed_control_rows(system_url: &str) {
              INSERT INTO catalog.deployment_attestations VALUES
                ('{TENANT}', 'fixture', 1, '{ORG}', '{PROJECT}', '{ENV}', '{SHA_A}', NULL, now());
              INSERT INTO catalog.authoring_command_audit
-               (tenant_id, command_id, command_kind, principal_id, principal_kind,
+               (tenant_id, command_id, command_type, principal_id, principal_type,
                 principal_subject, effective_role, org, project, environment, target_ref,
                 request_hash, outcome_bytes)
              VALUES ('{TENANT}', 'gate-fixture', 'gate', 'principal', 'service', 'subject',

@@ -429,7 +429,7 @@ async fn operator_pat_issuance_over_https() {
 
     system
         .batch_execute(&format!(
-            "REVOKE INSERT (principal_id, principal_kind, token_prefix, token_hash, label, expires_at) ON identity.pats FROM {}",
+            "REVOKE INSERT (principal_id, principal_type, token_prefix, token_hash, label, expires_at) ON identity.pats FROM {}",
             quote_ident(IDENTITY_ISSUER_ROLE)
         ))
         .await

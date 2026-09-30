@@ -404,7 +404,7 @@ const TENANT_IDENTITY_SOURCE_SQL: &str = "SELECT p.id::text, p.subject, p.displa
      FROM identity.project_roles AS r \
      JOIN identity.principals AS p ON p.id = r.principal_id \
      WHERE r.org = $1 AND r.project = $2 \
-       AND p.kind = 'service' AND p.status = 'active' \
+       AND p.type = 'service' AND p.status = 'active' \
      GROUP BY p.id, p.subject, p.display_name \
      ORDER BY p.subject";
 
@@ -419,7 +419,7 @@ const TENANT_IDENTITY_PEOPLE_SQL: &str = "SELECT p.id::text, p.email, p.display_
      FROM identity.project_env_memberships AS m \
      JOIN identity.principals AS p ON p.id = m.principal_id \
      WHERE m.org = $1 AND m.project = $2 AND m.env = $3 \
-       AND p.kind = 'human' AND p.status = 'active' \
+       AND p.type = 'human' AND p.status = 'active' \
      ORDER BY p.email";
 
 async fn read_tenant_identity_source(

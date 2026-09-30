@@ -5,8 +5,8 @@ use std::time::Duration;
 use tokio_postgres::error::SqlState;
 use wamn_control_provision::{PlatformComponent, SYSTEM_SCHEMA_SQL};
 use wamn_platform_identity::{
-    IdentityErrorKind, PreparedIdentityReads, Principal, PrincipalId, PrincipalKind,
-    PrincipalStatus, assign_project_role, create_human, create_service, disable_principal,
+    IdentityErrorKind, PreparedIdentityReads, Principal, PrincipalId, PrincipalStatus,
+    PrincipalType, assign_project_role, create_human, create_service, disable_principal,
     grant_project_env_membership, has_project_env_membership, issue_pat, project_roles,
     resolve_principal, resolve_subject, revoke_project_env_membership,
 };
@@ -70,7 +70,7 @@ async fn platform_identity_round_trip_on_postgres() {
     )
     .await
     .expect("create human principal");
-    assert_eq!(human.kind(), PrincipalKind::Human);
+    assert_eq!(human.kind(), PrincipalType::Human);
     assert_eq!(human.subject(), "author@example.com");
     assert_eq!(human.status(), PrincipalStatus::Active);
 
@@ -89,13 +89,13 @@ async fn platform_identity_round_trip_on_postgres() {
     let service = create_service(&client, "agent-ci", "CI Agent")
         .await
         .expect("create service principal");
-    assert_eq!(service.kind(), PrincipalKind::Service);
+    assert_eq!(service.kind(), PrincipalType::Service);
     let duplicate_service = create_service(&client, "agent-ci", "Second CI Agent")
         .await
         .expect_err("one subject admits one service");
     assert_eq!(duplicate_service.kind(), IdentityErrorKind::Conflict);
     assert!(
-        resolve_subject(&client, PrincipalKind::Service, "agent-ci")
+        resolve_subject(&client, PrincipalType::Service, "agent-ci")
             .await
             .expect("resolve service")
             .is_some()
@@ -400,7 +400,7 @@ async fn project_environment_membership_round_trip(
     let service_insert = client
         .execute(
             "INSERT INTO identity.project_env_memberships \
-             (principal_id, principal_kind, org, project, env) \
+             (principal_id, principal_type, org, project, env) \
              VALUES ($1::text::uuid, 'service', 'demo', 'widgets', 'dev')",
             &[&service.id().as_str()],
         )
@@ -610,7 +610,7 @@ async fn provisioning_principal_is_seeded(client: &tokio_postgres::Client) -> Pr
         .await
         .expect("resolve the platform principal")
         .expect("the platform principal is stored");
-    assert_eq!(principal.kind(), PrincipalKind::Platform);
+    assert_eq!(principal.kind(), PrincipalType::Platform);
     id
 }
 
@@ -620,7 +620,7 @@ async fn provisioning_principal_is_seeded(client: &tokio_postgres::Client) -> Pr
 async fn unbound_identity_writes_refuse(client: &tokio_postgres::Client) {
     const PRINCIPAL: &str = "00000000-0000-4000-8000-0000000000f1";
     for statement in [
-        "INSERT INTO identity.principals (kind, subject, display_name) \
+        "INSERT INTO identity.principals (type, subject, display_name) \
          VALUES ('human', 'unbound', 'Unbound')"
             .to_owned(),
         format!(
@@ -633,7 +633,7 @@ async fn unbound_identity_writes_refuse(client: &tokio_postgres::Client) {
         ),
         format!(
             "INSERT INTO identity.pats \
-               (principal_id, principal_kind, token_prefix, token_hash, label, expires_at) \
+               (principal_id, principal_type, token_prefix, token_hash, label, expires_at) \
              VALUES ('{PRINCIPAL}', 'human', '{}', '{}', 'unbound', now() + interval '1 hour')",
             "0".repeat(16),
             "0".repeat(64),
@@ -714,7 +714,7 @@ async fn platform_principal_check_refuses_other_rows(client: &tokio_postgres::Cl
     ] {
         let error = client
             .execute(
-                "INSERT INTO identity.principals (id, kind, subject, email, display_name) \
+                "INSERT INTO identity.principals (id, type, subject, email, display_name) \
                  VALUES ($1::text::uuid, $2, $3, $4, $5)",
                 &[&id, &kind, &subject, &email, &display_name],
             )

@@ -547,7 +547,7 @@ fn the_identity_reader_can_never_write_identity_and_neither_reader_reaches_the_o
     let identity_url = &reader_url[0].1;
     // The REAL consuming statements, executed by the REAL credential.
     for statement in [
-        "SELECT p.id::text, p.kind, p.subject, p.display_name, p.status, \
+        "SELECT p.id::text, p.type, p.subject, p.display_name, p.status, \
          identity.pats.token_hash, \
          (identity.pats.revoked_at IS NULL AND identity.pats.expires_at > now()) AS usable \
          FROM identity.pats JOIN identity.principals p \
@@ -603,7 +603,7 @@ fn the_identity_reader_can_never_write_identity_and_neither_reader_reaches_the_o
             "revoke environment memberships",
         ),
         (
-            "INSERT INTO identity.principals (kind, subject, display_name) \
+            "INSERT INTO identity.principals (type, subject, display_name) \
              VALUES ('service', 'forged', 'forged')",
             "mint a principal",
         ),

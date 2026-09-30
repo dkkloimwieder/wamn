@@ -166,7 +166,7 @@ async fn one_email_address_names_one_principal() {
         .expect("bind the actor the stamp trigger needs");
     let refused = transaction
         .execute(
-            "INSERT INTO identity.principals (kind, subject, email, display_name) \
+            "INSERT INTO identity.principals (type, subject, email, display_name) \
              VALUES ('human', 'third.person@example.test', $1, 'A Person')",
             &[&EMAIL],
         )
@@ -192,21 +192,21 @@ async fn only_a_human_row_carries_an_email() {
     let cases = [
         (
             "a service row with an email",
-            "INSERT INTO identity.principals (kind, subject, email, display_name) \
+            "INSERT INTO identity.principals (type, subject, email, display_name) \
              VALUES ('service', 'ingest', 'a.person@example.test', 'Ingest')"
                 .to_owned(),
         ),
         (
             "a platform row with an email",
             format!(
-                "INSERT INTO identity.principals (id, kind, subject, email, display_name) \
+                "INSERT INTO identity.principals (id, type, subject, email, display_name) \
                  VALUES ('{platform}', 'platform', 'wamn:provisioning', \
                  'a.person@example.test', 'wamn:provisioning')"
             ),
         ),
         (
             "a human row without an email",
-            "INSERT INTO identity.principals (kind, subject, display_name) \
+            "INSERT INTO identity.principals (type, subject, display_name) \
              VALUES ('human', 'a.person@example.test', 'A Person')"
                 .to_owned(),
         ),

@@ -225,28 +225,28 @@ CREATE TABLE registry.projects (
 -- Role slugs are opaque: permission meaning belongs to the management
 -- authorization boundary.
 --
--- `kind` is human, service, or platform. A platform row names a platform
+-- `type` is human, service, or platform. A platform row names a platform
 -- component that writes in this database, and only wamn:provisioning does. The
 -- row carries its `wamn:<component>` name in `subject` and in `display_name`,
 -- and the id that `wamn-project-state` derives from that name.
 -- `principals_platform_principal_check` pins the subject, display name, and id
--- of each platform row, and it refuses a `wamn:` display name on another kind.
--- The subject pattern refuses a colon on another kind. PostgreSQL has no
+-- of each platform row, and it refuses a `wamn:` display name on another type.
+-- The subject pattern refuses a colon on another type. PostgreSQL has no
 -- UUIDv5, so a Rust test compares the literal with the derivation. A platform
 -- principal cannot authenticate.
 --
 -- `email` is the deliverable address of a human. `reconcile-run-plane` copies
 -- it into the `app_system.users` person row of every tenant the human can write
 -- in (wamn-0h0g.9.18). Only a human carries one: `principals_email_check`
--- refuses an email on another kind and refuses a human without one. `subject`
+-- refuses an email on another type and refuses a human without one. `subject`
 -- is email-shaped by its own CHECK, but it is an authentication token, so
 -- nothing reads it as an address. A service and a platform row take
 -- `<subject>@<platform-domain>` in the tenant, built from
 -- `registry.meta.platform_domain`, so neither needs a column here.
 --
 -- `UNIQUE (email)` says the rule plainly: an address names one person. It needs
--- no `kind`, because `principals_email_check` already forces NULL on every
--- other kind, and PostgreSQL treats repeated NULLs as distinct. So the
+-- no `type`, because `principals_email_check` already forces NULL on every
+-- other type, and PostgreSQL treats repeated NULLs as distinct. So the
 -- constraint touches no service or platform row.
 --
 -- The refusal belongs here, where the address is entered.
@@ -256,7 +256,7 @@ CREATE TABLE registry.projects (
 -- ---------------------------------------------------------------------------
 CREATE TABLE identity.principals (
     id           uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-    kind         text NOT NULL,
+    type         text NOT NULL,
     subject      text NOT NULL,
     email        text,
     display_name text NOT NULL,
@@ -266,17 +266,17 @@ CREATE TABLE identity.principals (
     created_by   uuid NOT NULL,
     updated_at   timestamptz NOT NULL,
     updated_by   uuid NOT NULL,
-    UNIQUE (id, kind),
-    UNIQUE (kind, subject),
+    UNIQUE (id, type),
+    UNIQUE (type, subject),
     UNIQUE (email),
-    CONSTRAINT principals_kind_check
-        CHECK (kind IN ('human', 'service', 'platform')),
+    CONSTRAINT principals_type_check
+        CHECK (type IN ('human', 'service', 'platform')),
     CONSTRAINT principals_subject_check
-        CHECK (kind = 'platform'
+        CHECK (type = 'platform'
                OR (subject ~ '^[a-z0-9][a-z0-9._@+-]*$'
                    AND char_length(subject) <= 254)),
     CONSTRAINT principals_email_check
-        CHECK ((kind = 'human') = (email IS NOT NULL)
+        CHECK ((type = 'human') = (email IS NOT NULL)
                AND (email IS NULL
                     OR (email ~ '^[^@[:space:]]+@[^@[:space:]]+\.[^@[:space:]]+$'
                         AND char_length(email) <= 254))),
@@ -287,7 +287,7 @@ CREATE TABLE identity.principals (
     CONSTRAINT principals_disabled_at_check
         CHECK ((status = 'disabled') = (disabled_at IS NOT NULL)),
     CONSTRAINT principals_platform_principal_check
-        CHECK (CASE WHEN kind = 'platform'
+        CHECK (CASE WHEN type = 'platform'
                     THEN (subject, display_name, id) IN (
                              ('wamn:provisioning', 'wamn:provisioning', '770df186-ac15-579e-b46b-c297cae2011b'::uuid))
                     ELSE display_name NOT LIKE 'wamn:%'
@@ -302,7 +302,7 @@ CREATE TRIGGER wamn_record_history_stamp
 -- that principal for the current transaction, so the row stamps itself.
 DO $provisioning$ BEGIN
   PERFORM pg_catalog.set_config('app.user_id', '770df186-ac15-579e-b46b-c297cae2011b', true);
-  INSERT INTO identity.principals (id, kind, subject, display_name)
+  INSERT INTO identity.principals (id, type, subject, display_name)
   VALUES ('770df186-ac15-579e-b46b-c297cae2011b', 'platform',
           'wamn:provisioning', 'wamn:provisioning');
 END $provisioning$;
@@ -338,12 +338,12 @@ CREATE TRIGGER wamn_record_history_stamp
 -- Expiry is mandatory (no immortal tokens) and revocation is a one-way stamp.
 -- The principal FK is deliberately RESTRICT, not CASCADE: a token row is audit
 -- evidence that must outlive careless principal deletes. The FK carries the
--- principal kind, and `pats_principal_kind_check` refuses a platform principal.
+-- principal type, and `pats_principal_type_check` refuses a platform principal.
 -- ---------------------------------------------------------------------------
 CREATE TABLE identity.pats (
     id             uuid PRIMARY KEY DEFAULT gen_random_uuid(),
     principal_id   uuid NOT NULL,
-    principal_kind text NOT NULL,
+    principal_type text NOT NULL,
     token_prefix   text NOT NULL UNIQUE,
     token_hash     text NOT NULL,
     label          text NOT NULL,
@@ -353,10 +353,10 @@ CREATE TABLE identity.pats (
     updated_by     uuid NOT NULL,
     expires_at     timestamptz NOT NULL,
     revoked_at     timestamptz,
-    FOREIGN KEY (principal_id, principal_kind)
-        REFERENCES identity.principals (id, kind) ON DELETE RESTRICT,
-    CONSTRAINT pats_principal_kind_check
-        CHECK (principal_kind IN ('human', 'service')),
+    FOREIGN KEY (principal_id, principal_type)
+        REFERENCES identity.principals (id, type) ON DELETE RESTRICT,
+    CONSTRAINT pats_principal_type_check
+        CHECK (principal_type IN ('human', 'service')),
     CONSTRAINT pats_token_prefix_check
         CHECK (token_prefix ~ '^[0-9a-f]{16}$'),
     CONSTRAINT pats_token_hash_check
@@ -381,15 +381,15 @@ CREATE INDEX pats_principal_idx ON identity.pats (principal_id);
 -- Scoped issuer grants belong to the password endpoint implementation.
 CREATE TABLE identity.password_credentials (
     principal_id uuid PRIMARY KEY,
-    principal_kind text NOT NULL DEFAULT 'human' CHECK (principal_kind = 'human'),
+    principal_type text NOT NULL DEFAULT 'human' CHECK (principal_type = 'human'),
     password_hash text NOT NULL CHECK (octet_length(password_hash) <= 256
                                       AND password_hash LIKE '$argon2id$v=19$%'),
     created_at timestamptz NOT NULL,
     created_by uuid NOT NULL,
     updated_at timestamptz NOT NULL,
     updated_by uuid NOT NULL,
-    FOREIGN KEY (principal_id, principal_kind)
-        REFERENCES identity.principals (id, kind) ON DELETE RESTRICT
+    FOREIGN KEY (principal_id, principal_type)
+        REFERENCES identity.principals (id, type) ON DELETE RESTRICT
 );
 CREATE TRIGGER wamn_record_history_stamp
     BEFORE INSERT OR UPDATE ON identity.password_credentials
@@ -399,7 +399,7 @@ CREATE TRIGGER wamn_record_history_stamp
 CREATE TABLE identity.password_tokens (
     token_hash bytea PRIMARY KEY CHECK (octet_length(token_hash) = 32),
     principal_id uuid NOT NULL,
-    principal_kind text NOT NULL DEFAULT 'human' CHECK (principal_kind = 'human'),
+    principal_type text NOT NULL DEFAULT 'human' CHECK (principal_type = 'human'),
     purpose text NOT NULL CHECK (purpose IN ('invitation', 'reset')),
     expires_at timestamptz NOT NULL,
     consumed_at timestamptz,
@@ -407,8 +407,8 @@ CREATE TABLE identity.password_tokens (
     created_by uuid NOT NULL,
     updated_at timestamptz NOT NULL,
     updated_by uuid NOT NULL,
-    FOREIGN KEY (principal_id, principal_kind)
-        REFERENCES identity.principals (id, kind) ON DELETE RESTRICT,
+    FOREIGN KEY (principal_id, principal_type)
+        REFERENCES identity.principals (id, type) ON DELETE RESTRICT,
     CHECK (expires_at > created_at)
 );
 CREATE INDEX password_tokens_principal_idx ON identity.password_tokens (principal_id);
@@ -422,7 +422,7 @@ CREATE TRIGGER wamn_record_history_stamp
 CREATE TABLE identity.password_logins (
     id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
     principal_id uuid NOT NULL,
-    principal_kind text NOT NULL DEFAULT 'human' CHECK (principal_kind = 'human'),
+    principal_type text NOT NULL DEFAULT 'human' CHECK (principal_type = 'human'),
     issuer text NOT NULL CHECK (octet_length(issuer) BETWEEN 1 AND 2048),
     audience text NOT NULL CHECK (octet_length(audience) BETWEEN 1 AND 1024),
     authenticated_at timestamptz NOT NULL,
@@ -433,8 +433,8 @@ CREATE TABLE identity.password_logins (
     created_by uuid NOT NULL,
     updated_at timestamptz NOT NULL,
     updated_by uuid NOT NULL,
-    FOREIGN KEY (principal_id, principal_kind)
-        REFERENCES identity.principals (id, kind) ON DELETE RESTRICT,
+    FOREIGN KEY (principal_id, principal_type)
+        REFERENCES identity.principals (id, type) ON DELETE RESTRICT,
     CHECK (expires_at = authenticated_at + interval '8 hours'),
     CHECK (renewal_expires_at > authenticated_at AND renewal_expires_at <= expires_at)
 );
@@ -577,7 +577,7 @@ CREATE TABLE registry.project_envs (
 -- grants, so provisioning the same triple again cannot inherit them.
 CREATE TABLE identity.project_env_memberships (
     principal_id   uuid NOT NULL,
-    principal_kind text NOT NULL DEFAULT 'human',
+    principal_type text NOT NULL DEFAULT 'human',
     org            text NOT NULL,
     project        text NOT NULL,
     env            text NOT NULL,
@@ -586,12 +586,12 @@ CREATE TABLE identity.project_env_memberships (
     updated_at     timestamptz NOT NULL,
     updated_by     uuid NOT NULL,
     PRIMARY KEY (principal_id, org, project, env),
-    FOREIGN KEY (principal_id, principal_kind)
-        REFERENCES identity.principals (id, kind) ON DELETE CASCADE,
+    FOREIGN KEY (principal_id, principal_type)
+        REFERENCES identity.principals (id, type) ON DELETE CASCADE,
     FOREIGN KEY (org, project, env)
         REFERENCES registry.project_envs (org, project, env) ON DELETE CASCADE,
     CONSTRAINT project_env_memberships_human_check
-        CHECK (principal_kind = 'human')
+        CHECK (principal_type = 'human')
 );
 CREATE TRIGGER wamn_record_history_stamp
     BEFORE INSERT OR UPDATE ON identity.project_env_memberships
@@ -749,7 +749,7 @@ CREATE FUNCTION identity.lock_password_principal(principal uuid) RETURNS boolean
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog AS $$
 DECLARE eligible boolean;
 BEGIN
-    SELECT status = 'active' AND kind = 'human' INTO eligible
+    SELECT status = 'active' AND type = 'human' INTO eligible
     FROM identity.principals WHERE id = principal FOR UPDATE;
     RETURN COALESCE(eligible, false);
 END;

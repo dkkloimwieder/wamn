@@ -191,7 +191,7 @@ const SYSTEM_IDENTITY_FIXTURE_SQL: &str = "DROP SCHEMA IF EXISTS identity CASCAD
      INSERT INTO registry.meta (schema_version, platform_domain) \
        VALUES ('0.1', 'example.invalid'); \
      CREATE TABLE identity.principals ( \
-       id uuid PRIMARY KEY, kind text NOT NULL, subject text NOT NULL, \
+       id uuid PRIMARY KEY, type text NOT NULL, subject text NOT NULL, \
        email text, display_name text NOT NULL, \
        status text NOT NULL DEFAULT 'active'); \
      CREATE TABLE identity.project_roles ( \
@@ -202,7 +202,7 @@ const SYSTEM_IDENTITY_FIXTURE_SQL: &str = "DROP SCHEMA IF EXISTS identity CASCAD
        principal_id uuid NOT NULL REFERENCES identity.principals (id), \
        org text NOT NULL, project text NOT NULL, env text NOT NULL, \
        PRIMARY KEY (principal_id, org, project, env)); \
-     INSERT INTO identity.principals (id, kind, subject, email, display_name) VALUES \
+     INSERT INTO identity.principals (id, type, subject, email, display_name) VALUES \
        ('11111111-1111-4111-8111-111111111111', 'service', \
         'wamn-management-author-acme--billing--dev', NULL, \
         'WAMN management author acme/billing/dev'), \

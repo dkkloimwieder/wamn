@@ -267,9 +267,9 @@ CREATE TABLE catalog.authoring_command_audit (
     tenant_id         text        NOT NULL CHECK (tenant_id <> ''),
     audit_id          uuid        NOT NULL DEFAULT gen_random_uuid(),
     command_id        text        NOT NULL CHECK (command_id <> ''),
-    command_kind      text        NOT NULL CHECK (command_kind IN ('gate', 'publish')),
+    command_type      text        NOT NULL CHECK (command_type IN ('gate', 'publish')),
     principal_id      text        NOT NULL CHECK (principal_id <> ''),
-    principal_kind    text        NOT NULL CHECK (principal_kind IN ('human', 'service')),
+    principal_type    text        NOT NULL CHECK (principal_type IN ('human', 'service')),
     principal_subject text        NOT NULL CHECK (principal_subject <> ''),
     effective_role    text        NOT NULL
         CHECK (effective_role IN ('project-author', 'project-admin')),

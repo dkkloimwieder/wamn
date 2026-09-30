@@ -612,7 +612,7 @@ The `SYSTEM_SCHEMA_SQL` composition in [provisioning](../../crates/control/provi
 `record-history.sql` grants to `wamn_db_owner`, so an applier that runs as `wamn_system` creates that role first.
 `SYSTEM_SCHEMA_SQL` does not carry `record-history-app-grants.sql`.
 
-`identity.principals.kind` is `human`, `service`, or `platform`.
+`identity.principals.type` is `human`, `service`, or `platform`.
 A `platform` row carries its `wamn:<component>` name in `subject` and in `display_name`, and its derived id.
 The `principals_platform_principal_check` constraint pins that subject, display name, and id.
 It also refuses a `wamn:` display name on another kind, and the subject pattern of another kind refuses a colon.

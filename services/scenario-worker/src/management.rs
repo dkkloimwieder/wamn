@@ -40,7 +40,7 @@ use wamn_authoring_model::{
     SCHEMA_VERSION, ValidatedDraftRef, decode_document,
 };
 use wamn_platform_identity::{
-    AuthenticatedPrincipal, PrincipalKind, ProjectRole, authenticate_pat, project_roles,
+    AuthenticatedPrincipal, PrincipalType, ProjectRole, authenticate_pat, project_roles,
 };
 
 use wamn_control_provision::{
@@ -58,7 +58,7 @@ use crate::authoring::{ControlAuthoringScope, GetReportResult, InternalAuthoring
 /// `wamn_run.operator_run_actions` carries the same shape for the same
 /// reason.
 const INSERT_COMMAND_AUDIT_SQL: &str = "INSERT INTO catalog.authoring_command_audit \
-    (tenant_id, command_id, command_kind, principal_id, principal_kind, \
+    (tenant_id, command_id, command_type, principal_id, principal_type, \
      principal_subject, effective_role, org, project, environment, target_ref, \
      request_hash, outcome_bytes, provenance_commit, provenance_ref, provenance_dirty) \
     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)";
@@ -173,7 +173,7 @@ impl fmt::Display for AuditedCommand {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct AuthorizedAuthor {
     principal_id: Box<str>,
-    principal_kind: PrincipalKind,
+    principal_type: PrincipalType,
     subject: Box<str>,
     role: ManagementRole,
 }
@@ -185,8 +185,8 @@ impl AuthorizedAuthor {
     }
 
     /// Return whether a human or a service presented the token.
-    pub const fn principal_kind(&self) -> PrincipalKind {
-        self.principal_kind
+    pub const fn principal_type(&self) -> PrincipalType {
+        self.principal_type
     }
 
     /// Return the verified first-party subject.
@@ -320,7 +320,7 @@ fn author_from_authenticated(
     let principal = authenticated.principal();
     AuthorizedAuthor {
         principal_id: principal.id().as_str().into(),
-        principal_kind: principal.kind(),
+        principal_type: principal.kind(),
         subject: principal.subject().into(),
         role,
     }
@@ -366,7 +366,7 @@ pub(crate) async fn insert_command_audit(
                 &audit.command_id.as_ref(),
                 &audit.command.as_str(),
                 &audit.author.principal_id.as_ref(),
-                &audit.author.principal_kind.as_str(),
+                &audit.author.principal_type.as_str(),
                 &audit.author.subject.as_ref(),
                 &audit.author.role.as_str(),
                 &audit.scope.org.as_ref(),
@@ -1666,9 +1666,9 @@ mod tests {
         for column in [
             "tenant_id",
             "command_id",
-            "command_kind",
+            "command_type",
             "principal_id",
-            "principal_kind",
+            "principal_type",
             "principal_subject",
             "effective_role",
             "org",

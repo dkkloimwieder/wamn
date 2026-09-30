@@ -28,7 +28,7 @@ pub mod session_keys;
 pub mod session_token;
 
 #[cfg(test)]
-const PRINCIPAL_COLUMNS: &str = "id::text, kind, subject, display_name, status";
+const PRINCIPAL_COLUMNS: &str = "id::text, type, subject, display_name, status";
 #[cfg(test)]
 const PAT_COLUMNS: [&str; 6] = [
     "id::text",
@@ -39,20 +39,20 @@ const PAT_COLUMNS: [&str; 6] = [
     "to_char(revoked_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"')",
 ];
 const INSERT_HUMAN_SQL: &str = "INSERT INTO identity.principals \
-    (kind, subject, email, display_name) VALUES ('human', $1, $2, $3) \
-    RETURNING id::text, kind, subject, display_name, status";
+    (type, subject, email, display_name) VALUES ('human', $1, $2, $3) \
+    RETURNING id::text, type, subject, display_name, status";
 const INSERT_SERVICE_SQL: &str = "INSERT INTO identity.principals \
-    (kind, subject, display_name) VALUES ('service', $1, $2) \
-    RETURNING id::text, kind, subject, display_name, status";
-const SELECT_PRINCIPAL_BY_ID_SQL: &str = "SELECT id::text, kind, subject, \
+    (type, subject, display_name) VALUES ('service', $1, $2) \
+    RETURNING id::text, type, subject, display_name, status";
+const SELECT_PRINCIPAL_BY_ID_SQL: &str = "SELECT id::text, type, subject, \
     display_name, status FROM identity.principals WHERE id = $1::text::uuid";
-const SELECT_PRINCIPAL_BY_SUBJECT_SQL: &str = "SELECT id::text, kind, subject, \
+const SELECT_PRINCIPAL_BY_SUBJECT_SQL: &str = "SELECT id::text, type, subject, \
     display_name, status FROM identity.principals \
-    WHERE kind = $1 AND subject = $2";
+    WHERE type = $1 AND subject = $2";
 const DISABLE_PRINCIPAL_SQL: &str = "UPDATE identity.principals \
     SET status = 'disabled', disabled_at = COALESCE(disabled_at, now()) \
     WHERE id = $1::text::uuid \
-    RETURNING id::text, kind, subject, display_name, status";
+    RETURNING id::text, type, subject, display_name, status";
 const ASSIGN_PROJECT_ROLE_SQL: &str = "INSERT INTO identity.project_roles \
     (principal_id, org, project, role) VALUES ($1::text::uuid, $2, $3, $4) \
     ON CONFLICT DO NOTHING";
@@ -70,26 +70,26 @@ const REVOKE_PROJECT_ENV_MEMBERSHIP_SQL: &str = "DELETE FROM identity.project_en
 // text rendered by PostgreSQL, so the crate needs no calendar dependency and a
 // later transport can put the value straight on the wire.
 const INSERT_PAT_SQL: &str = "INSERT INTO identity.pats \
-    (principal_id, principal_kind, token_prefix, token_hash, label, expires_at) \
-    SELECT p.id, p.kind, $2, $3, $4, now() + ($5::bigint * interval '1 second') \
+    (principal_id, principal_type, token_prefix, token_hash, label, expires_at) \
+    SELECT p.id, p.type, $2, $3, $4, now() + ($5::bigint * interval '1 second') \
     FROM identity.principals p \
     WHERE p.id = $1::text::uuid AND p.status = 'active' \
     RETURNING id::text, token_prefix, label, \
         to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'), \
         to_char(expires_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'), \
         to_char(revoked_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"')";
-const SELECT_PAT_BY_PREFIX_SQL: &str = "SELECT p.id::text, p.kind, p.subject, \
+const SELECT_PAT_BY_PREFIX_SQL: &str = "SELECT p.id::text, p.type, p.subject, \
     p.display_name, p.status, identity.pats.token_hash, \
     (identity.pats.revoked_at IS NULL AND identity.pats.expires_at > now()) AS usable, identity.pats.id::text AS pat_id \
     FROM identity.pats JOIN identity.principals p \
         ON p.id = identity.pats.principal_id \
     WHERE identity.pats.token_prefix = $1";
-const SELECT_ROUTE_PAT_SQL: &str = "SELECT p.id::text, p.kind, p.subject, \
+const SELECT_ROUTE_PAT_SQL: &str = "SELECT p.id::text, p.type, p.subject, \
     p.display_name, p.status, identity.pats.token_hash, \
     (identity.pats.revoked_at IS NULL AND identity.pats.expires_at > now()) AS usable, identity.pats.id::text AS pat_id \
     FROM identity.pats JOIN identity.principals p \
         ON p.id = identity.pats.principal_id \
-    WHERE identity.pats.token_prefix = $1 AND CASE p.kind \
+    WHERE identity.pats.token_prefix = $1 AND CASE p.type \
         WHEN 'service' THEN EXISTS (SELECT 1 FROM identity.project_roles r \
             WHERE r.principal_id = p.id AND r.org = $2 AND r.project = $3 AND r.role = ANY($5::text[])) \
         WHEN 'human' THEN EXISTS (SELECT 1 FROM identity.project_env_memberships m \
@@ -139,7 +139,7 @@ const TOKEN_SECRET_BYTES: usize = 32;
 
 /// The kind of first-party platform principal.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum PrincipalKind {
+pub enum PrincipalType {
     /// A person resolved from an external identity or represented by a PAT.
     Human,
     /// A non-human client that authenticates through a machine presenter.
@@ -149,7 +149,7 @@ pub enum PrincipalKind {
     Platform,
 }
 
-impl PrincipalKind {
+impl PrincipalType {
     /// Return the stable database literal.
     pub const fn as_str(self) -> &'static str {
         match self {
@@ -172,7 +172,7 @@ impl PrincipalKind {
     }
 }
 
-impl fmt::Display for PrincipalKind {
+impl fmt::Display for PrincipalType {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str(self.as_str())
     }
@@ -252,7 +252,7 @@ impl std::str::FromStr for PrincipalId {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Principal {
     id: PrincipalId,
-    kind: PrincipalKind,
+    kind: PrincipalType,
     subject: Box<str>,
     display_name: Box<str>,
     status: PrincipalStatus,
@@ -265,7 +265,7 @@ impl Principal {
     }
 
     /// Return whether this is a human, service, or platform principal.
-    pub const fn kind(&self) -> PrincipalKind {
+    pub const fn kind(&self) -> PrincipalType {
         self.kind
     }
 
@@ -541,7 +541,7 @@ pub async fn resolve_principal(
 /// the caller.
 pub async fn resolve_subject(
     client: &(impl GenericClient + Sync),
-    kind: PrincipalKind,
+    kind: PrincipalType,
     subject: &str,
 ) -> Result<Option<Principal>, IdentityError> {
     let subject = canonical_subject(subject)?;
@@ -645,7 +645,7 @@ fn decide_pat(
     let principal = decode_principal(&row)?;
     // The pats foreign key refuses a platform principal, so a stored token
     // for one is corrupt data. It never authenticates.
-    if principal.kind == PrincipalKind::Platform {
+    if principal.kind == PrincipalType::Platform {
         return Err(IdentityError::new(
             IdentityErrorKind::CorruptData,
             "stored token names a platform principal",
@@ -890,7 +890,7 @@ fn decode_principal(row: &Row) -> Result<Principal, IdentityError> {
     let status: String = row.try_get(4).map_err(|error| database_error(&error))?;
     Ok(Principal {
         id: PrincipalId(id.into()),
-        kind: PrincipalKind::parse(&kind)?,
+        kind: PrincipalType::parse(&kind)?,
         subject: subject.into(),
         display_name: display_name.into(),
         status: PrincipalStatus::parse(&status)?,
@@ -1179,15 +1179,15 @@ mod tests {
     #[test]
     fn principal_kind_literals_round_trip() {
         for kind in [
-            PrincipalKind::Human,
-            PrincipalKind::Service,
-            PrincipalKind::Platform,
+            PrincipalType::Human,
+            PrincipalType::Service,
+            PrincipalType::Platform,
         ] {
-            assert_eq!(PrincipalKind::parse(kind.as_str()).unwrap(), kind);
+            assert_eq!(PrincipalType::parse(kind.as_str()).unwrap(), kind);
         }
-        assert_eq!(PrincipalKind::Platform.as_str(), "platform");
+        assert_eq!(PrincipalType::Platform.as_str(), "platform");
         assert_eq!(
-            PrincipalKind::parse("robot").unwrap_err().kind(),
+            PrincipalType::parse("robot").unwrap_err().kind(),
             IdentityErrorKind::CorruptData
         );
     }

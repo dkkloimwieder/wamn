@@ -7,7 +7,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use wamn_control::dev::environment::{connect, provision_journey_control, provision_route};
 use wamn_control_provision::PlatformComponent;
-use wamn_platform_identity::{PrincipalKind, authenticate_pat};
+use wamn_platform_identity::{PrincipalType, authenticate_pat};
 
 struct Files(PathBuf);
 
@@ -111,7 +111,7 @@ async fn cli_bootstrap_mints_first_service_pats_over_https() {
             .ok()
             .flatten()
             .expect("full PAT authentication");
-        assert_eq!(principal.principal().kind(), PrincipalKind::Service);
+        assert_eq!(principal.principal().kind(), PrincipalType::Service);
         let plaintext: bool = admin
             .query_one(
                 "SELECT EXISTS (SELECT FROM identity.pats WHERE token_hash=$1)",

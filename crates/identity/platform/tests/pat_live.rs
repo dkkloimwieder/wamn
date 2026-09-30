@@ -6,7 +6,7 @@ use tokio_postgres::error::SqlState;
 use tokio_postgres::{Client, Transaction};
 use wamn_control_provision::{PlatformComponent, SYSTEM_SCHEMA_SQL, bind_platform_principal_sql};
 use wamn_platform_identity::{
-    IdentityErrorKind, PrincipalId, PrincipalKind, authenticate_pat, create_human, create_service,
+    IdentityErrorKind, PrincipalId, PrincipalType, authenticate_pat, create_human, create_service,
     disable_principal, issue_pat, list_pats, revoke_pat,
 };
 use wamn_session::PAT_TOKEN_PREFIX;
@@ -257,7 +257,7 @@ async fn platform_pat_round_trip_on_postgres() {
         .expect("a valid service token must authenticate");
     assert_eq!(
         service_authenticated.principal().kind(),
-        PrincipalKind::Service
+        PrincipalType::Service
     );
 
     // Listing returns the stored metadata, newest first, and no token material.
@@ -371,7 +371,7 @@ async fn platform_principal_cannot_hold_a_token(client: &Client, provisioning: &
         let error = client
             .execute(
                 "INSERT INTO identity.pats \
-                   (principal_id, principal_kind, token_prefix, token_hash, label, expires_at) \
+                   (principal_id, principal_type, token_prefix, token_hash, label, expires_at) \
                  VALUES ($1::text::uuid, $2, $3, $4, 'platform', now() + interval '1 hour')",
                 &[&provisioning, &kind, &"e".repeat(16), &"e".repeat(64)],
             )
@@ -439,7 +439,7 @@ async fn token_rows_refuse_malformed_values(
             .execute(
                 &format!(
                     "INSERT INTO identity.pats \
-                       (principal_id, principal_kind, token_prefix, token_hash, label, expires_at) \
+                       (principal_id, principal_type, token_prefix, token_hash, label, expires_at) \
                      VALUES ($1::text::uuid, 'human', $2, $3, 'malformed', {expiry})"
                 ),
                 &[&principal.as_str(), &token_prefix, &token_hash],

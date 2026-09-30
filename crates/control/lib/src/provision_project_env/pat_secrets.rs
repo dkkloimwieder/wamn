@@ -3,9 +3,10 @@
 use anyhow::Context as _;
 
 use super::{
-    Client, Duration, IdentityErrorKind, NoTls, PatClient, Path, PathBuf, Principal, PrincipalKind,
-    PrincipalStatus, Triple, Value, assign_project_role, authenticate_pat, create_service, json,
-    operator_subject, provisioning_transaction, resolve_subject, revoke_pat, write_secret_json,
+    Client, Duration, IdentityErrorKind, NoTls, PatClient, Path, PathBuf, Principal,
+    PrincipalStatus, PrincipalType, Triple, Value, assign_project_role, authenticate_pat,
+    create_service, json, operator_subject, provisioning_transaction, resolve_subject, revoke_pat,
+    write_secret_json,
 };
 
 /// One PAT `Secret` that provisioning issued and wrote.
@@ -182,7 +183,7 @@ async fn resolve_or_create_service(
     subject: &str,
     display_name: &str,
 ) -> anyhow::Result<Principal> {
-    if let Some(principal) = resolve_subject(&*client, PrincipalKind::Service, subject)
+    if let Some(principal) = resolve_subject(&*client, PrincipalType::Service, subject)
         .await
         .context("resolve service principal")?
     {
@@ -203,7 +204,7 @@ async fn resolve_or_create_service(
                 .rollback()
                 .await
                 .context("roll back conflicting service principal")?;
-            resolve_subject(&*client, PrincipalKind::Service, subject)
+            resolve_subject(&*client, PrincipalType::Service, subject)
                 .await
                 .context("resolve concurrently created service principal")?
                 .context("service principal conflict was not resolvable")

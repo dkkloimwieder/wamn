@@ -976,7 +976,7 @@ async fn admitted_human(
 async fn command_rows(admin: &Client) -> Vec<(String, String, String, String)> {
     admin
         .query(
-            "SELECT principal_subject, principal_id, command_kind, effective_role \
+            "SELECT principal_subject, principal_id, command_type, effective_role \
                FROM catalog.authoring_command_audit ORDER BY recorded_at, principal_subject",
             &[],
         )
@@ -1593,7 +1593,7 @@ async fn management_surface_authenticates_and_attributes_authoring_commands() {
 
     let alice_principal = resolve_subject(
         &admin,
-        wamn_platform_identity::PrincipalKind::Human,
+        wamn_platform_identity::PrincipalType::Human,
         "alice@example.com",
     )
     .await
@@ -1601,7 +1601,7 @@ async fn management_surface_authenticates_and_attributes_authoring_commands() {
     .expect("alice exists");
     let bob_principal = resolve_subject(
         &admin,
-        wamn_platform_identity::PrincipalKind::Human,
+        wamn_platform_identity::PrincipalType::Human,
         "bob@example.com",
     )
     .await

@@ -430,7 +430,7 @@ async fn usable_token(
     hash: &[u8],
     purpose: &str,
 ) -> Result<Option<RefusalCause>, PasswordError> {
-    let row = client.query_opt("SELECT t.consumed_at IS NOT NULL, t.expires_at <= clock_timestamp(), p.status = 'active' AND p.kind = 'human' FROM identity.password_tokens t JOIN identity.principals p ON p.id = t.principal_id WHERE t.token_hash = $1 AND t.principal_id = $2::text::uuid AND t.purpose = $3", &[&hash, &principal.as_str(), &purpose]).await.map_err(|source| database(&source))?;
+    let row = client.query_opt("SELECT t.consumed_at IS NOT NULL, t.expires_at <= clock_timestamp(), p.status = 'active' AND p.type = 'human' FROM identity.password_tokens t JOIN identity.principals p ON p.id = t.principal_id WHERE t.token_hash = $1 AND t.principal_id = $2::text::uuid AND t.purpose = $3", &[&hash, &principal.as_str(), &purpose]).await.map_err(|source| database(&source))?;
     let Some(row) = row else {
         return Ok(Some(RefusalCause::UnknownSecret));
     };
@@ -547,7 +547,7 @@ pub async fn authenticate_password(
     email: &str,
     password: Password,
 ) -> Result<Option<AuthenticatedPrincipal>, PasswordError> {
-    let row = client.query_opt("SELECT p.id::text, p.kind, p.subject, p.display_name, p.status, c.password_hash FROM identity.principals p JOIN identity.password_credentials c ON c.principal_id = p.id WHERE p.email = $1 AND p.kind = 'human'", &[&email]).await.map_err(|source| database(&source))?;
+    let row = client.query_opt("SELECT p.id::text, p.type, p.subject, p.display_name, p.status, c.password_hash FROM identity.principals p JOIN identity.password_credentials c ON c.principal_id = p.id WHERE p.email = $1 AND p.type = 'human'", &[&email]).await.map_err(|source| database(&source))?;
     let Some(row) = row else {
         work.hash(password).await?;
         return Ok(None);

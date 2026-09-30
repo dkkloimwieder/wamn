@@ -234,7 +234,7 @@ fn scoped_issuer_grants_and_generation_retirement_execute_on_postgres() {
                 "column|identity|pats.label|SELECT|f",
                 "column|identity|pats.principal_id|INSERT|f",
                 "column|identity|pats.principal_id|SELECT|f",
-                "column|identity|pats.principal_kind|INSERT|f",
+                "column|identity|pats.principal_type|INSERT|f",
                 "column|identity|pats.revoked_at|SELECT|f",
                 "column|identity|pats.token_hash|INSERT|f",
                 "column|identity|pats.token_hash|SELECT|f",
@@ -243,9 +243,9 @@ fn scoped_issuer_grants_and_generation_retirement_execute_on_postgres() {
                 "column|identity|principals.display_name|SELECT|f",
                 "column|identity|principals.email|SELECT|f",
                 "column|identity|principals.id|SELECT|f",
-                "column|identity|principals.kind|SELECT|f",
                 "column|identity|principals.status|SELECT|f",
                 "column|identity|principals.subject|SELECT|f",
+                "column|identity|principals.type|SELECT|f",
                 "column|identity|project_env_memberships.env|SELECT|f",
                 "column|identity|project_env_memberships.org|SELECT|f",
                 "column|identity|project_env_memberships.principal_id|SELECT|f",
@@ -293,7 +293,7 @@ fn scoped_issuer_grants_and_generation_retirement_execute_on_postgres() {
             // Execute each fresh-read shape as the actual scoped issuer login.
             run(
                 url,
-                "SELECT p.id::text, p.kind, p.subject, p.display_name, p.status, t.token_hash, \
+                "SELECT p.id::text, p.type, p.subject, p.display_name, p.status, t.token_hash, \
                 (t.revoked_at IS NULL AND t.expires_at > now()) AS usable \
                 FROM identity.pats t JOIN identity.principals p ON p.id = t.principal_id \
                 WHERE t.token_prefix = 'absent-fixture-token';",
@@ -321,7 +321,7 @@ fn scoped_issuer_grants_and_generation_retirement_execute_on_postgres() {
                 "INSERT INTO identity.pats (id) VALUES (DEFAULT)",
                 "INSERT INTO identity.pats (created_at) VALUES (DEFAULT)",
                 "INSERT INTO identity.pats (revoked_at) VALUES (NULL)",
-                "INSERT INTO identity.principals (kind, subject, display_name) VALUES ('human', 'escape', 'Escape')",
+                "INSERT INTO identity.principals (type, subject, display_name) VALUES ('human', 'escape', 'Escape')",
                 "INSERT INTO identity.project_env_memberships (principal_id, org, project, env) VALUES ('00000000-0000-0000-0000-000000000001', 'acme', 'widgets', 'dev')",
                 "DELETE FROM identity.project_env_memberships",
                 "UPDATE registry.project_envs SET instance_suffix = 'z9z9z9z9'",

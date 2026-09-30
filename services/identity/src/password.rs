@@ -249,7 +249,7 @@ async fn handle(
             let Ok(principal) = request.principal_id.parse::<PrincipalId>() else {
                 return invalid();
             };
-            let Ok(row) = database.client.query_opt("SELECT email FROM identity.principals WHERE id = $1::text::uuid AND kind = 'human' AND status = 'active'", &[&principal.as_str()]).await else { return unavailable(); };
+            let Ok(row) = database.client.query_opt("SELECT email FROM identity.principals WHERE id = $1::text::uuid AND type = 'human' AND status = 'active'", &[&principal.as_str()]).await else { return unavailable(); };
             let Some(row) = row else {
                 tracing::info!(principal = %principal, cause = %RefusalCause::NoSuchAccount, "password request refused");
                 return invalid();
@@ -376,7 +376,7 @@ async fn handle(
             };
             let Ok(row) = tx
                 .query_opt(
-                    "SELECT id::text FROM identity.principals WHERE email=$1 AND kind='human'",
+                    "SELECT id::text FROM identity.principals WHERE email=$1 AND type='human'",
                     &[&email],
                 )
                 .await
@@ -488,7 +488,7 @@ async fn handle(
             // No mail task outlives the request or performs automatic retries.
             let deadline = tokio::time::Instant::now() + Duration::from_secs(6);
             let action = async {
-                let Ok(row) = database.client.query_opt("SELECT p.id::text FROM identity.principals p JOIN identity.password_credentials c ON c.principal_id=p.id WHERE p.email=$1 AND p.kind='human' AND p.status='active'", &[&email]).await else { return unavailable(); };
+                let Ok(row) = database.client.query_opt("SELECT p.id::text FROM identity.principals p JOIN identity.password_credentials c ON c.principal_id=p.id WHERE p.email=$1 AND p.type='human' AND p.status='active'", &[&email]).await else { return unavailable(); };
                 let Some(row) = row else {
                     tracing::info!(email = %email, cause = %RefusalCause::NoSuchAccount, "password request refused");
                     return invalid();

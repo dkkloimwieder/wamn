@@ -168,7 +168,7 @@ async fn receiving_release_journey(
         provision_route(&system_url, admin.as_ref(), root, Some(&management_secret)).await?;
     let caller_principal_id = resolve_subject(
         admin.as_ref(),
-        PrincipalKind::Service,
+        PrincipalType::Service,
         &route.principal_subject,
     )
     .await

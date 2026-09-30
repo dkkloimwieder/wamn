@@ -23,7 +23,7 @@ use wamn_control::publish_release::{self, PublishReleaseRequest, ReleaseWiringTa
 use wamn_control::push_component::{self, AdmitComponentRequest, PublishAdmittedComponentRequest};
 use wamn_control::push_release_manifest::{self, PushReleaseManifestRequest};
 use wamn_engine::release_manifest::LoadedRelease;
-use wamn_platform_identity::{PrincipalKind, issue_pat, resolve_subject, revoke_pat};
+use wamn_platform_identity::{PrincipalType, issue_pat, resolve_subject, revoke_pat};
 use wamn_runtime::release_manifest_source::ReleaseManifestSource;
 use wamn_runtime::session_keys::IssuerKeys;
 use wamn_session::verifier::SessionVerifier;
@@ -759,7 +759,7 @@ async fn gate_wiring(test: &PriorCommitTest<'_>, wiring: &Value) -> anyhow::Resu
         control_author: secret_value(&copies.join("control-author.json"), "url")?,
         management_admitter: secret_value(&copies.join("management-admitter.json"), "url")?,
     };
-    let publisher = resolve_subject(test.control, PrincipalKind::Service, test.publisher)
+    let publisher = resolve_subject(test.control, PrincipalType::Service, test.publisher)
         .await
         .context("resolve the prior-commit management-author principal")?
         .context("the prior-commit management-author principal is absent")?;

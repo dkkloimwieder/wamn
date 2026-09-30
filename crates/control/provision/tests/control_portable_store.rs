@@ -452,7 +452,7 @@ DO $positive$ BEGIN
 END
 $positive$;
 INSERT INTO catalog.authoring_command_audit
-  (tenant_id, command_id, command_kind, principal_id, principal_kind,
+  (tenant_id, command_id, command_type, principal_id, principal_type,
    principal_subject, effective_role, org, project, environment, target_ref,
    request_hash, outcome_bytes)
 VALUES
@@ -468,7 +468,7 @@ DO $narrowed$ BEGIN
   ASSERT (SELECT count(*) FROM catalog.effective_releases) = 0;
   BEGIN
     INSERT INTO catalog.authoring_command_audit
-      (tenant_id, command_id, command_kind, principal_id, principal_kind,
+      (tenant_id, command_id, command_type, principal_id, principal_type,
        principal_subject, effective_role, org, project, environment, target_ref,
        request_hash, outcome_bytes)
     VALUES

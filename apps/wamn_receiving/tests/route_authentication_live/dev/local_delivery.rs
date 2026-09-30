@@ -250,7 +250,7 @@ async fn require_local_facts(
         manifest.release.tenant_id == TENANT,
         "the local manifest names another tenant"
     );
-    let published: i64 = control.query_one("SELECT count(*) FROM catalog.authoring_command_audit WHERE tenant_id=$1 AND command_kind='publish'", &[&TENANT]).await?.get(0);
+    let published: i64 = control.query_one("SELECT count(*) FROM catalog.authoring_command_audit WHERE tenant_id=$1 AND command_type='publish'", &[&TENANT]).await?.get(0);
     let attestations: i64 = control
         .query_one(
             "SELECT count(*) FROM catalog.deployment_attestations WHERE tenant_id=$1",

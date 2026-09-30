@@ -11,7 +11,7 @@ use hyper::{Request, Response, StatusCode, body::Incoming};
 use ring::rand::{SecureRandom as _, SystemRandom};
 use serde::{Deserialize, Serialize};
 use wamn_platform_identity::{
-    AuthenticatedPrincipal, PrincipalKind, authenticate_pat, has_project_env_membership,
+    AuthenticatedPrincipal, PrincipalType, authenticate_pat, has_project_env_membership,
     session_token::{IssuedSessionToken, sign_session_token},
 };
 use wamn_session::token::{SessionAuthority, SessionClaims};
@@ -124,7 +124,7 @@ async fn exchange(
         .await
         .map_err(|_| failed())?
         .ok_or_else(refused)?;
-    if principal.principal().kind() != PrincipalKind::Human {
+    if principal.principal().kind() != PrincipalType::Human {
         return Err(refused());
     }
     mint_for_principal(inner, &principal, target, started_at).await
