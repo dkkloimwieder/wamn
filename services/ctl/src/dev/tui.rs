@@ -542,7 +542,7 @@ mod tests {
         ServingComponentOperation, ServingManifest, ServingRelease, ServingWiring, WorkflowSection,
     };
     use wamn_runtime::plugins::wamn_jetstream::{
-        RouterTapFormatVersion, RouterTapRecord, RouterTapRecordPhase, RouterTapSourceKind,
+        RouterTapFormatVersion, RouterTapRecord, RouterTapRecordPhase, RouterTapSourceType,
         RouterTapTarget,
     };
 
@@ -698,7 +698,7 @@ mod tests {
         publisher.push_tap(tap(
             "tap.tenant-a.project-a.dev.wiring.accepted",
             RouterTapRecordPhase::Accepted,
-            RouterTapSourceKind::Attachment,
+            RouterTapSourceType::Attachment,
             None,
             None,
             json!({"widget-id": "widget-7"}),
@@ -706,7 +706,7 @@ mod tests {
         publisher.push_tap(tap(
             "tap.tenant-a.project-a.dev.wiring.settled",
             RouterTapRecordPhase::Settled,
-            RouterTapSourceKind::Registration,
+            RouterTapSourceType::Registration,
             Some("delivered"),
             Some(70_000),
             serde_json::Value::Null,
@@ -728,11 +728,11 @@ mod tests {
             text.contains("tap.tenant-a.project-a.dev.wiring.accepted"),
             "{text}"
         );
-        assert!(text.contains(r#""format-version":1"#), "{text}");
+        assert!(text.contains(r#""format-version":3"#), "{text}");
         assert!(text.contains(r#""phase":"accepted""#), "{text}");
         assert!(text.contains(r#""phase":"settled""#), "{text}");
-        assert!(text.contains(r#""source-kind":"attachment""#), "{text}");
-        assert!(text.contains(r#""source-kind":"registration""#), "{text}");
+        assert!(text.contains(r#""source-type":"attachment""#), "{text}");
+        assert!(text.contains(r#""source-type":"registration""#), "{text}");
         assert!(text.contains(r#""outcome":"delivered""#), "{text}");
         assert!(text.contains(r#""over-ceiling-bytes":70000"#), "{text}");
         assert!(text.contains(r#""redacted":true"#), "{text}");
@@ -1006,7 +1006,7 @@ mod tests {
     fn tap(
         subject: &str,
         phase: RouterTapRecordPhase,
-        source_kind: RouterTapSourceKind,
+        source_type: RouterTapSourceType,
         outcome: Option<&str>,
         over_ceiling_bytes: Option<u64>,
         payload: serde_json::Value,
@@ -1015,14 +1015,14 @@ mod tests {
             subject.to_owned(),
             RouterTapRecord {
                 delivery_id: "delivery-7".into(),
-                format_version: RouterTapFormatVersion::V1,
+                format_version: RouterTapFormatVersion::V3,
                 outcome: outcome.map(Into::into),
                 over_ceiling_bytes,
                 payload,
                 phase,
                 redacted: true,
                 source_id: "widget-get-http".into(),
-                source_kind,
+                source_type,
                 target: RouterTapTarget::Wiring {
                     wiring_id: "widget_get".into(),
                     wiring_version: 1,

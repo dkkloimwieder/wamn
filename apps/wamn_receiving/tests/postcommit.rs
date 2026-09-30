@@ -12,7 +12,7 @@ use tokio_postgres::Client;
 use wamn_event_wire::{DeliveryAdvisory, DeliveryAdvisoryKind, Envelope, Op};
 use wamn_gate_harness::journey::PostcommitPhase;
 use wamn_runtime::plugins::wamn_jetstream::{
-    RouterTapRecord, RouterTapRecordPhase, RouterTapSourceKind, RouterTapTarget,
+    RouterTapRecord, RouterTapRecordPhase, RouterTapSourceType, RouterTapTarget,
     router_tap_environment_filter,
 };
 
@@ -236,7 +236,7 @@ async fn delivery_taps(
         record.validate()?;
         ensure!(
             record.source_id.as_ref() == REGISTRATION
-                && record.source_kind == RouterTapSourceKind::Registration
+                && record.source_type == RouterTapSourceType::Registration
                 && record.target
                     == RouterTapTarget::Wiring {
                         wiring_id: WIRING.into(),

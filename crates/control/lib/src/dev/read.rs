@@ -16,7 +16,7 @@ use wamn_catalog::{
     ServingComponentOperation, ServingManifest,
 };
 use wamn_runtime::plugins::wamn_jetstream::{
-    RouterTapRecord, RouterTapRecordPhase, RouterTapSourceKind, RouterTapTarget,
+    RouterTapRecord, RouterTapRecordPhase, RouterTapSourceType, RouterTapTarget,
 };
 
 use super::{DEV_STAGE_ORDER, DevStage, DevStageFailure};
@@ -157,8 +157,8 @@ impl DevTapObservation {
     }
 
     /// Kind of release source that originated the delivery.
-    pub const fn source_kind(&self) -> RouterTapSourceKind {
-        self.record.source_kind
+    pub const fn source_type(&self) -> RouterTapSourceType {
+        self.record.source_type
     }
 
     /// Attachment or registration identity within its source kind.
@@ -749,14 +749,14 @@ mod tests {
                 record: RouterTapRecord {
                     delivery_id: sequence.to_string().into(),
                     format_version:
-                        wamn_runtime::plugins::wamn_jetstream::RouterTapFormatVersion::V1,
+                        wamn_runtime::plugins::wamn_jetstream::RouterTapFormatVersion::V3,
                     outcome: None,
                     over_ceiling_bytes: None,
                     payload: json!({"sequence": sequence}),
                     phase: RouterTapRecordPhase::Accepted,
                     redacted: false,
                     source_id: "route".into(),
-                    source_kind: RouterTapSourceKind::Attachment,
+                    source_type: RouterTapSourceType::Attachment,
                     target: RouterTapTarget::Wiring {
                         wiring_id: "wiring".into(),
                         wiring_version: 1,

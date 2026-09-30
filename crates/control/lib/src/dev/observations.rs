@@ -477,7 +477,7 @@ fn decode_tap(
 mod tests {
     use serde_json::json;
     use wamn_runtime::plugins::wamn_jetstream::{
-        RouterTapFormatVersion, RouterTapRecordPhase, RouterTapSourceKind, RouterTapTarget,
+        RouterTapFormatVersion, RouterTapRecordPhase, RouterTapSourceType, RouterTapTarget,
     };
 
     use super::*;
@@ -486,14 +486,14 @@ mod tests {
     fn typed_tap_reader_requires_subject_and_body_to_name_the_same_delivery() {
         let record = RouterTapRecord {
             delivery_id: "delivery-1".into(),
-            format_version: RouterTapFormatVersion::V1,
+            format_version: RouterTapFormatVersion::V3,
             outcome: None,
             over_ceiling_bytes: None,
             payload: json!({"rack": "r-1"}),
             phase: RouterTapRecordPhase::Accepted,
             redacted: false,
             source_id: "route-1".into(),
-            source_kind: RouterTapSourceKind::Attachment,
+            source_type: RouterTapSourceType::Attachment,
             target: RouterTapTarget::Wiring {
                 wiring_id: "rack".into(),
                 wiring_version: 1,

@@ -459,7 +459,7 @@ impl RouterDeliveryBridge {
                 RouterTapPreview {
                     delivery_id,
                     target,
-                    source_kind: source.kind(),
+                    source_type: source.kind(),
                     source_id: source.id(),
                     phase,
                     payload,
