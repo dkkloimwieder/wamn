@@ -173,6 +173,69 @@ describe("QueryTable", () => {
     expect(document.querySelector(`tr[data-row-id="${id(19)}"]`)).not.toBeNull();
   });
 
+  it("reports no outcome for a load that a write's reload cancels (wamn-v43a)", async () => {
+    const row = {
+      id: id(0),
+      code: "standard",
+      maker_id: null,
+      note: null,
+      edit_version: "1",
+      created_at: "2026-09-21T00:00:00.000000Z",
+    };
+    const lines = `${JSON.stringify({ row })}\n${JSON.stringify({
+      outcome: { value: { more: false }, actor_labels: {} },
+    })}\n`;
+    const writes: (() => void)[] = [];
+    let opens = 0;
+    const transport: Transport = {
+      invoke: async () => ({ status: "uncertain", reason: "a stream reads no page", retryRefusal: null }),
+      onWrite: (listener) => {
+        writes.push(listener);
+        return () => undefined;
+      },
+      openStream: async (_request, signal) => {
+        opens += 1;
+        if (opens === 1) {
+          // The first load waits until the reload cancels it, and ends as the
+          // transport ends an aborted fetch.
+          await new Promise<void>((resolve) => signal.addEventListener("abort", () => resolve()));
+          return {
+            status: "uncertain",
+            reason: "the request did not complete: AbortError: signal is aborted without reason",
+            retryRefusal: null,
+          };
+        }
+        return {
+          etag: null,
+          body: new ReadableStream<Uint8Array>({
+            start(controller) {
+              controller.enqueue(new TextEncoder().encode(lines));
+              controller.close();
+            },
+          }),
+        };
+      },
+    };
+    const outcomes: string[] = [];
+    render(() => (
+      <div style={{ height: "800px" }}>
+        <QueryTable
+          definition={{ ...WIDGETS, childTables: [] }}
+          transport={transport}
+          label="widgets"
+          onOutcome={(outcome) => outcomes.push(outcome.status)}
+        />
+      </div>
+    ));
+    await waitFor(() => expect(opens).toBe(1));
+    for (const write of writes) {
+      write();
+    }
+    await waitFor(() => expect(document.querySelector(`tr[data-row-id="${id(0)}"]`)).not.toBeNull());
+    expect(opens).toBe(2);
+    expect(outcomes).toEqual([]);
+  });
+
   it("opens a record from a row, and fills a form with the row's key", async () => {
     const { opened, filled } = await shown();
     fireEvent.click(rowButton(2, "get"));

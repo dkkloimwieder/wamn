@@ -225,8 +225,9 @@ export function createQueryLoad<TRow extends object, TResult>(
     } else {
       end = opened as Outcome<never>;
     }
-    // A streamed load reports only a load that did not complete.
-    if (end.status !== "completed") {
+    // A streamed load reports only a load that did not complete. A load that
+    // a newer load cancelled did not fail, so it reports nothing (wamn-v43a).
+    if (end.status !== "completed" && !signal.aborted) {
       report(end as Outcome<unknown>);
     }
     return end;
