@@ -546,7 +546,7 @@ Then run the open-run query of the drain once more on each project-env database.
 
 **B2 to B5. Schema and annotations (§4.7 steps 2 to 5).** Run §4.8 exactly:
 
-- B2. One run of `upgrade-schema` on wamn_system: `--baseline 1 --confirm`. It records `0001_capture_gap.sql`, which the database holds by hand. It then applies `0002_kind_to_type.sql` in the same run (§4.3.4, §4.8).
+- B2. One run of `upgrade-schema` on wamn_system: `--baseline 1 --confirm`. It records `0001_capture_gap.sql`, which the database holds by hand. It then applies `0002_event_reader_schema.sql` and `0003_kind_to_type.sql` in the same run (§4.3.4, §4.8).
 - B3. One run of `upgrade-schema` on each of the two project-env databases: `--baseline 0 --confirm`. It creates the record table and applies `0001_kind_to_type.sql` in the same run (§4.3.4, §4.8).
 - B4. The new `reconcile-run-plane` for Receiving (`--project receiving --tenant dev`) and for WMS (`--project wms --tenant wms`), twice each. The second run reports no action (§4.3.2, §4.8, `gcp.md:534`).
 - B5. One `kubectl annotate` per listed PAT Secret (§4.3.5).
@@ -923,12 +923,12 @@ The batch was run on a scratch PostgreSQL 18 database. That database held the `C
 
 #### 4.3.3 Why the rest is a migration
 
-- **wamn_system (P1 to P7, the P9 functions).** `provision-system` installs `CONTROL_BOOTSTRAP_SQL` once and refuses a database that already has the schema `registry` (`crates/control/lib/src/provision_system.rs:8`, `:51` to `:63`). No other verb changed installed wamn_system schema before `upgrade-schema` (`wamn-o8b9`). So P1 to P7 and the P9 functions are the system migration `0002_kind_to_type.sql`.
+- **wamn_system (P1 to P7, the P9 functions).** `provision-system` installs `CONTROL_BOOTSTRAP_SQL` once and refuses a database that already has the schema `registry` (`crates/control/lib/src/provision_system.rs:8`, `:51` to `:63`). No other verb changed installed wamn_system schema before `upgrade-schema` (`wamn-o8b9`). So P1 to P7 and the P9 functions are the system migration `0003_kind_to_type.sql`.
 - **P9 in project-env.** No verb changes an installed history table or the installed record-history functions. `reconcile-run-plane` never alters application or floor tables (`reconcile_run_plane.rs:41` to `:44`). It installs `app-schema.sql` only when `app_system` is absent (`reconcile_run_plane.rs:628`), and `record-history.sql` only inside `CATALOG_SCHEMA_SQL` when `catalog` is absent (`plan.rs:496`). apply-package skips a history table that exists (`crates/control/lib/src/apply_package/record_history.rs:51`). The rename of installed history tables belongs to the upgrade path of `wamn-o8b9`, so P9 is the project migration `0001_kind_to_type.sql`. Its cost is recorded under `wamn-o8b9`: 15 history tables in two project-env databases (Receiving 8: six `app_system` and two `receiving`. WMS 7: six `app_system` and one `wms`), plus the record-history functions in wamn_system and in both project-env databases.
 
 #### 4.3.4 Migrations
 
-A7 places two migration files, each in the commit of its full-file change: `deploy/sql/migrations/system/0002_kind_to_type.sql` and `deploy/sql/migrations/project/0001_kind_to_type.sql`. It lists both in `crates/control/provision/src/schema_migrations.rs`. A file carries no `BEGIN` or `COMMIT`. `upgrade-schema` runs each file in one transaction and records it in the same transaction (`docs/plan/schema-upgrade.md` §2).
+A7 places two migration files, each in the commit of its full-file change: `deploy/sql/migrations/system/0003_kind_to_type.sql` and `deploy/sql/migrations/project/0001_kind_to_type.sql`. It lists both in `crates/control/provision/src/schema_migrations.rs`. A file carries no `BEGIN` or `COMMIT`. `upgrade-schema` runs each file in one transaction and records it in the same transaction (`docs/plan/schema-upgrade.md` §2).
 
 The verb runs the system file as `wamn_system`. `wamn_system` owns every P1 to P7 table and `identity.lock_password_principal`, because `provision-system` installs them in that role. It also owns `provisioning.copy_sagas`, because `copy-project-env` installs the ops schema in that role (`crates/control/lib/src/ops_schema.rs:17`). The verb runs the project file as the superuser admin connection with no `SET ROLE`. `CREATE OR REPLACE FUNCTION` keeps the owner, the `SECURITY DEFINER` setting and the grants of the function. The renames create nothing new, so no owner changes. §4.3.6 creates one table and gives it the owner of `catalog.component_library`. Each database takes one transaction, and `ON_ERROR_STOP` rolls it back on the first wrong name. Foreign keys and unique keys follow the rename by column number, so the order inside the transaction does not affect correctness. The statements rename the referenced table first, so that a reader can check them against §4.1 row by row.
 
@@ -942,7 +942,7 @@ The verb runs the system file as `wamn_system`. `wamn_system` owns every P1 to P
 SELECT to_regclass('provisioning.copy_sagas') IS NOT NULL AS ops_schema_installed;
 ```
 
-**wamn_system**, `deploy/sql/migrations/system/0002_kind_to_type.sql`:
+**wamn_system**, `deploy/sql/migrations/system/0003_kind_to_type.sql`:
 
 ```sql
 -- P1
@@ -1206,7 +1206,7 @@ $$;
 
 The old key allows one row per digest, so the `INSERT` of the owner rows meets no conflict. The constraint loop renames the three named constraints and the generated `_check` and `_not_null` names of the four columns (§4.1 rule on generated names). It prints one notice for each. Renaming `release_manifest_v3_snapshots_pkey` also renames its index. The function body is the one of `deploy/sql/catalog-schema.sql:446` to `:465` with the new table name, because PostgreSQL stores a function body as text (§4.3). Row security, the grants and the trigger follow the table by OID. The grants that `crates/control/provision/src/sql.rs:211`, `:1104` write name the table, so they change with the code of §4.5.
 
-**Migration statements, wamn_system.** They go into `deploy/sql/migrations/system/0002_kind_to_type.sql`, before the record-history text. wamn_system has no snapshot table.
+**Migration statements, wamn_system.** They go into `deploy/sql/migrations/system/0003_kind_to_type.sql`, before the record-history text. wamn_system has no snapshot table.
 
 ```sql
 CREATE TABLE catalog.component_digest_owners (
@@ -1321,7 +1321,7 @@ A renamed column breaks every old binary that names it. The old host and runtime
 The order that §3.2 follows:
 
 1. Drain, then stop (§3.2 "Drain" and B1). The drain turns ingress off: the edge goes to 0 replicas and the two materializer workloads are deleted. The `flow-http` and `wms-flow-http` workloads and their Services stay, because B9 needs the Services. Open runs finish or are settled. Then the hosts and identity stop. The hosts run the HTTP and materializer workloads, so both stop with them. No scenario-worker runs. The CDC readers keep running (§4.6).
-2. Run `upgrade-schema` on wamn_system. It applies `0002_kind_to_type.sql`, with the control component key of §4.3.6 (B2). The new `reconcile-run-plane` reads `principals.type` in wamn_system (`crates/control/lib/src/reconcile_run_plane.rs:407`, `:422`), so this step comes before step 4.
+2. Run `upgrade-schema` on wamn_system. It applies `0002_event_reader_schema.sql` and `0003_kind_to_type.sql`, with the control component key of §4.3.6 (B2). The new `reconcile-run-plane` reads `principals.type` in wamn_system (`crates/control/lib/src/reconcile_run_plane.rs:407`, `:422`), so this step comes before step 4.
 3. Run `upgrade-schema` on each project-env database. It applies `0001_kind_to_type.sql`: P9, the component key and the snapshot table of §4.3.6 (B3). The new `push-component` writes an owner row for every push, so the component key comes before the first push of the new verb. That push is `receiving.wasm` in B7 step 3. The palette pushes of B8 step 2 come after it.
 4. Run the new `reconcile-run-plane` for each project-env (B4). Its cutover renames P8, P10, P11 and P12 (§4.3.2). Never run the old verb against a renamed database. The old verb finds the declared checks missing and the new columns unknown.
 5. Re-annotate every installed PAT Secret (B5, §4.3.5).
@@ -1349,7 +1349,7 @@ for db in wamn-db-dkk--receiving--dev--4pqjfmli wamn-db-dkk--wms--dev--0nk1lrpr;
 done
 ```
 
-The wamn_system run printed `baseline migrations/system/0001_capture_gap.sql` and `applied migrations/system/0002_kind_to_type.sql`. Each project-env run printed `applied migrations/project/0001_kind_to_type.sql`. The runs took <n>, <n> and <n> seconds. The history notices named <tables>. The owner table took <n> rows in wamn_system, <n> in Receiving and <n> in WMS. The snapshot notices named <constraints>. The check of §4.3.6 listed no `component_library_digest_key` and no `release_manifest_v3` name. `registry.schema_migrations` holds rows 1 and 2, and `app_system.schema_migrations` holds row 1 in each project-env database.
+The wamn_system run printed `baseline migrations/system/0001_capture_gap.sql` , `applied migrations/system/0002_event_reader_schema.sql` and `applied migrations/system/0003_kind_to_type.sql`. Each project-env run printed `applied migrations/project/0001_kind_to_type.sql`. The runs took <n>, <n> and <n> seconds. The history notices named <tables>. The owner table took <n> rows in wamn_system, <n> in Receiving and <n> in WMS. The snapshot notices named <constraints>. The check of §4.3.6 listed no `component_library_digest_key` and no `release_manifest_v3` name. `registry.schema_migrations` holds rows 1 and 2, and `app_system.schema_migrations` holds row 1 in each project-env database.
 
 `reconcile-run-plane` of commit <commit> then applied P8 and P10 to P12 by its `TypeColumnCutover` action. Run it for each project-env as in sections 3.8 and 5.2:
 
@@ -1614,7 +1614,7 @@ One issue per step, in order. A1 to A12 are the repository commits of §3.1. B0 
 - Depends on: B0.
 
 **B2. kind → type B2: wamn_system upgrade-schema run (docs/plan/kind-to-type.md §3.2)**
-- Scope: one run of `upgrade-schema --baseline 1 --confirm` on wamn_system. It records `0001_capture_gap.sql` and applies `0002_kind_to_type.sql`, with the control component key of §4.3.6 and the new record-history functions.
+- Scope: one run of `upgrade-schema --baseline 1 --confirm` on wamn_system. It records `0001_capture_gap.sql` and applies `0002_event_reader_schema.sql` and `0003_kind_to_type.sql`, with the control component key of §4.3.6 and the new record-history functions.
 - Acceptance: the run prints the baseline row and the applied file, and commits. The §4.3.6 check on wamn_system lists the owner keys and no `component_library_digest_key`.
 - Depends on: B1.
 

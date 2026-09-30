@@ -88,7 +88,7 @@ Each item says what the hand statement becomes under the verb.
 
 
 - `registry.capture_gap` is `deploy/sql/migrations/system/0001_capture_gap.sql`: the `CREATE TABLE` block and the `GRANT SELECT` to `wamn_registry_reader`. A new install records it. On wamn-dev, the first run with `--baseline 1` records it without running it.
-- The `wamn_system` script of `kind-to-type.md` section 4.3.4 is `deploy/sql/migrations/system/0002_kind_to_type.sql`: the P1 to P7 renames, the new `identity.lock_password_principal`, and the record-history functions.
+- The `wamn_system` script of `kind-to-type.md` section 4.3.4 is `deploy/sql/migrations/system/0003_kind_to_type.sql`: the P1 to P7 renames, the new `identity.lock_password_principal`, and the record-history functions.
 - The project script is `deploy/sql/migrations/project/0001_kind_to_type.sql`: the rename loop over every `%_history` table and the record-history functions. It runs once per project database.
 - The P8 and P10 to P12 cutover stays in `reconcile-run-plane` for the cutover. The first project migration of `upgrade-schema` is the baseline after the cutover. The component key and the snapshot table of section 4.3.6 are migrations too.
 - The order of `kind-to-type.md` section 4.7 stays. Steps 2 and 3 become one run of `upgrade-schema` for each database, with `--baseline` and `--confirm`.
@@ -120,3 +120,4 @@ The owner answered these on 2026-09-30 (recorded on `wamn-o8b9`). Ruling 5 came 
 4. The P8 and P10 to P12 renames stay in `reconcile-run-plane` for the cutover. The first project migration of `upgrade-schema` is the baseline after the cutover. A P3 finding (`wamn-qpgq`) says that the in-code schema changes of `reconcile-run-plane` move under `upgrade-schema` later.
 5. `--baseline` records and then applies the rest in the same run. B2 and B3 of `kind-to-type.md` section 3.2 are one run each with `--baseline` and `--confirm`. The record shows the baseline row and the applied file of that one run. A7 of `wamn-ld93` places `system/0002_kind_to_type.sql` and `project/0001_kind_to_type.sql` beside the full-file renames, in one commit with them.
 6. A rollback of the `kind` → `type` migration is a new migration with the names swapped. No record row is deleted by hand. If the rollback happens, the file is written then: `0003` on the system side and `0002` on the project side, committed with the rollback.
+7. Numbering (2026-09-30, `wamn-0h0g.19.21`): `system/0002_event_reader_schema.sql` lands before A7, so the `kind-to-type.md` system file becomes `system/0003_kind_to_type.sql`. B2 applies `0002` and `0003` in its one run. The project file does not change.
