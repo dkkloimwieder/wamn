@@ -79,6 +79,21 @@ const INSERT_CONTROL_COMPONENT_SQL: &str = "INSERT INTO catalog.component_librar
          $12::text::jsonb\
      ) ON CONFLICT DO NOTHING RETURNING admitted_at";
 
+/// The owner package of a component digest. The first package that admits a
+/// digest owns it, so a retry and a later version of the same package append
+/// nothing here.
+const INSERT_DIGEST_OWNER_SQL: &str = "INSERT INTO catalog.component_digest_owners \
+         (tenant_id, component_digest, package_id) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING";
+const SELECT_DIGEST_OWNER_SQL: &str = "SELECT package_id FROM catalog.component_digest_owners \
+      WHERE tenant_id = $1 AND component_digest = $2";
+/// [`INSERT_DIGEST_OWNER_SQL`] within one environment instance.
+const INSERT_CONTROL_DIGEST_OWNER_SQL: &str = "INSERT INTO catalog.component_digest_owners \
+         (tenant_id, environment_instance, component_digest, package_id) \
+     VALUES ($1, $2, $3, $4) ON CONFLICT DO NOTHING";
+const SELECT_CONTROL_DIGEST_OWNER_SQL: &str = "SELECT package_id \
+       FROM catalog.component_digest_owners \
+      WHERE tenant_id = $1 AND environment_instance = $2 AND component_digest = $3";
+
 /// WHICH CREATION of the project database this tenant's control facts belong to.
 ///
 /// Read LOCALLY, inside the control transaction that is about to write the fact,
@@ -1959,6 +1974,71 @@ async fn append_or_verify_admitted_component_count(
         &component.imports_fingerprint,
         &effects,
     ];
+    // The digest names its owner package first. A digest belongs to one package
+    // for life, and each version of that package may hold it once
+    // (docs/plan/kind-to-type.md §4.3.6).
+    let owner: String = match environment_instance {
+        Some(instance) => {
+            transaction
+                .execute(
+                    INSERT_CONTROL_DIGEST_OWNER_SQL,
+                    &[
+                        &component.scope.tenant_id,
+                        &instance,
+                        &component.component_digest,
+                        &component.scope.package_id,
+                    ],
+                )
+                .await
+                .context("append the component digest owner")?;
+            transaction
+                .query_one(
+                    SELECT_CONTROL_DIGEST_OWNER_SQL,
+                    &[
+                        &component.scope.tenant_id,
+                        &instance,
+                        &component.component_digest,
+                    ],
+                )
+                .await
+                .context("read the component digest owner")?
+                .get(0)
+        }
+        None => {
+            transaction
+                .execute(
+                    INSERT_DIGEST_OWNER_SQL,
+                    &[
+                        &component.scope.tenant_id,
+                        &component.component_digest,
+                        &component.scope.package_id,
+                    ],
+                )
+                .await
+                .context("append the component digest owner")?;
+            transaction
+                .query_one(
+                    SELECT_DIGEST_OWNER_SQL,
+                    &[&component.scope.tenant_id, &component.component_digest],
+                )
+                .await
+                .context("read the component digest owner")?
+                .get(0)
+        }
+    };
+    if owner != component.scope.package_id {
+        return Err(ComponentProjectionError::new(
+            ComponentProjectionErrorKind::ComponentFactConflict,
+            format!(
+                "{}@{} component={} digest {} belongs to package {owner}",
+                component.scope.package_id,
+                component.scope.package_version,
+                component.component,
+                component.component_digest,
+            ),
+        )
+        .into());
+    }
     let (append_sql, exact_sql, params): (_, _, &[&(dyn tokio_postgres::types::ToSql + Sync)]) =
         if environment_instance.is_some() {
             (
@@ -2885,6 +2965,98 @@ mod tests {
 
         drop(project);
         drop(control);
+    }
+
+    /// A digest keeps its owner across versions (docs/plan/kind-to-type.md
+    /// §4.3.6), on both planes. Digest D admitted under P 1.0.0 is admitted
+    /// again under P 2.0.0: two library rows and one owner row. D under package Q
+    /// refuses `component-fact-conflict` and names P. A second component name
+    /// for D in one version still refuses by
+    /// `component_library_package_digest_key`.
+    #[tokio::test]
+    async fn a_digest_keeps_its_owner_across_versions() {
+        let _lock = wamn_test_postgres::lock();
+        let control = wamn_control_provision::test_database::system();
+        let project = wamn_catalog::test_database::tenant();
+        for (url, instance) in [(control.url(), Some("")), (project.url(), None)] {
+            let config: PgConfig = url.parse().expect("parse the test database URL");
+            let mut client = connect(&config).await;
+            client
+                .batch_execute(&format!(
+                    "INSERT INTO catalog.packages \
+                       (tenant_id, package_id, package_version, predecessor_version, manifest_sha256) \
+                     VALUES ('tenant-a', 'source_fixture', '1.0.0', NULL, 'sha256:{sha}'), \
+                            ('tenant-a', 'source_fixture', '2.0.0', '1.0.0', 'sha256:{sha}'), \
+                            ('tenant-a', 'other_fixture', '1.0.0', NULL, 'sha256:{sha}')",
+                    sha = "e".repeat(64)
+                ))
+                .await
+                .expect("seed the three package versions");
+            let hash = format!("sha256:{}", "f".repeat(64));
+            let append = async |client: &mut PgClient, component: AdmittedComponent| {
+                let transaction = client.transaction().await.expect("begin");
+                let result = append_or_verify_admitted_component_count(
+                    &transaction,
+                    &component,
+                    &hash,
+                    instance,
+                )
+                .await;
+                transaction.commit().await.expect("commit");
+                result
+            };
+            let first = projection_component();
+            append(&mut client, first.clone())
+                .await
+                .expect("D is admitted under P 1.0.0");
+            let mut next_version = first.clone();
+            next_version.scope.package_version = "2.0.0".to_owned();
+            append(&mut client, next_version)
+                .await
+                .expect("D is admitted again under P 2.0.0");
+            let count = async |client: &PgClient, table: &str| -> i64 {
+                client
+                    .query_one(&format!("SELECT count(*) FROM catalog.{table}"), &[])
+                    .await
+                    .expect("count rows")
+                    .get(0)
+            };
+            assert_eq!(count(&client, "component_library").await, 2);
+            assert_eq!(count(&client, "component_digest_owners").await, 1);
+
+            let mut other_package = first.clone();
+            other_package.scope.package_id = "other_fixture".to_owned();
+            let error = append(&mut client, other_package)
+                .await
+                .expect_err("D under Q refuses");
+            let refusal = error
+                .downcast_ref::<ComponentProjectionError>()
+                .expect("a typed refusal");
+            assert_eq!(
+                refusal.kind(),
+                ComponentProjectionErrorKind::ComponentFactConflict
+            );
+            assert!(
+                error
+                    .to_string()
+                    .contains("belongs to package source_fixture"),
+                "{error}"
+            );
+
+            let mut second_name = first.clone();
+            second_name.component = "second_name".to_owned();
+            let error = append(&mut client, second_name)
+                .await
+                .expect_err("a second component name for D in one version refuses");
+            assert_eq!(
+                error
+                    .downcast_ref::<ComponentProjectionError>()
+                    .expect("a typed refusal")
+                    .kind(),
+                ComponentProjectionErrorKind::ComponentFactConflict
+            );
+            assert_eq!(count(&client, "component_library").await, 2);
+        }
     }
 
     /// wamn-10yt.52 against a real control store: the ENVIRONMENT INSTANCE, not

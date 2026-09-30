@@ -128,6 +128,15 @@ async fn admit_component(
     let operations = serde_json::to_value(&admitted.operations).expect("serialize operations");
     project
         .execute(
+            "INSERT INTO catalog.component_digest_owners \
+                   (tenant_id, component_digest, package_id) \
+             VALUES ($1, $2, $3) ON CONFLICT DO NOTHING",
+            &[&TENANT, &digest, &package_id],
+        )
+        .await
+        .expect("seed the component digest owner");
+    project
+        .execute(
             "INSERT INTO catalog.component_library \
                    (tenant_id, package_id, package_version, component, interface_version, \
                     operations, component_digest, projection_hash, imports, \

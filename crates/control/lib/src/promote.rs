@@ -59,10 +59,17 @@ SELECT component_digest, store_alias, requirement_json::text, requirement_hash \
   FROM catalog.connection_requirements \
  WHERE tenant_id = $1 AND component_digest = ANY($2) \
  ORDER BY component_digest COLLATE \"C\", store_alias COLLATE \"C\"";
+/// The projection hash of each release component, read by package, version and
+/// digest: a digest can repeat across versions of its package
+/// (docs/plan/kind-to-type.md §4.3.6).
 const SELECT_PROJECTION_HASHES_SQL: &str = "\
-SELECT component_digest, projection_hash FROM catalog.component_library \
- WHERE tenant_id = $1 AND component_digest = ANY($2) \
- ORDER BY component_digest COLLATE \"C\"";
+SELECT library.component_digest, library.projection_hash \
+  FROM catalog.component_library AS library \
+  JOIN unnest($2::text[], $3::text[], $4::text[]) \
+       AS wanted (package_id, package_version, component_digest) \
+ USING (package_id, package_version, component_digest) \
+ WHERE library.tenant_id = $1 \
+ ORDER BY library.component_digest COLLATE \"C\"";
 const INSERT_REQUIREMENT_SQL: &str = "\
 INSERT INTO catalog.connection_requirements \
        (tenant_id, component_digest, store_alias, requirement_json, requirement_hash) \
@@ -443,15 +450,20 @@ async fn load_projection_hashes(
     tenant: &str,
     components: &[AdmittedComponent],
 ) -> anyhow::Result<BTreeMap<String, String>> {
-    let digests = components
-        .iter()
-        .map(|component| component.component_digest.clone())
-        .collect::<Vec<_>>();
-    if digests.is_empty() {
+    if components.is_empty() {
         return Ok(BTreeMap::new());
     }
+    let column = |value: fn(&AdmittedComponent) -> &String| {
+        components.iter().map(value).cloned().collect::<Vec<_>>()
+    };
+    let packages = column(|component| &component.scope.package_id);
+    let versions = column(|component| &component.scope.package_version);
+    let digests = column(|component| &component.component_digest);
     let hashes = tx
-        .query(SELECT_PROJECTION_HASHES_SQL, &[&tenant, &digests])
+        .query(
+            SELECT_PROJECTION_HASHES_SQL,
+            &[&tenant, &packages, &versions, &digests],
+        )
         .await
         .context("read source component projection hashes")?
         .into_iter()

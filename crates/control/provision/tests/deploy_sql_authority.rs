@@ -1,7 +1,7 @@
 //! The hand-written DDL's tenant floor derives from `current_user`.
 //!
 //! `wamn-0h0g.22.6.3` established the guest tenant floor across four artifacts;
-//! the current package-era relation set contains 39 governed relations, all off
+//! the current package-era relation set contains 40 governed relations, all off
 //! the settable `app.tenant` claim and onto
 //! `wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key()`,
 //! each with the expression index that keeps the predicate sargable.
@@ -372,8 +372,8 @@ fn the_swept_floor_admits_only_the_connected_guest_on_postgres() {
           WHERE pg_get_expr(p.polqual, p.polrelid) LIKE '%current_tenant_key%'",
     );
     assert_eq!(
-        governed, "39",
-        "the sweep must cover exactly the 39 governed relations"
+        governed, "40",
+        "the sweep must cover exactly the 40 governed relations"
     );
 
     // 3. A MINTED GUEST READS ITS OWN TENANT AND ONLY ITS OWN. The role name is
@@ -489,7 +489,7 @@ fn the_platform_arm_admits_every_platform_family_from_the_server() {
 
     // 2. EVERY GOVERNED RELATION CARRIES EXACTLY ONE ARM OF EACH KIND, counted
     //    PER RELATION rather than in total: a relation with two platform arms and
-    //    one with none sum to the same 39 and leave a silent lockout standing.
+    //    one with none sum to the same 40 and leave a silent lockout standing.
     let missing_arm = psql(
         &db_url,
         None,

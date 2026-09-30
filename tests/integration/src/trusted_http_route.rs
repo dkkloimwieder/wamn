@@ -598,6 +598,15 @@ async fn seed_with_client(
         .context("seed the wiring version")?;
     client
         .execute(
+            "INSERT INTO catalog.component_digest_owners \
+                   (tenant_id, component_digest, package_id) \
+             VALUES ($1, $2, $3) ON CONFLICT DO NOTHING",
+            &[&TENANT, &component.component_digest, &PACKAGE],
+        )
+        .await
+        .context("seed the component digest owner")?;
+    client
+        .execute(
             "INSERT INTO catalog.component_library (\
                  tenant_id, package_id, package_version, component, interface_version, operations, \
                  component_digest, projection_hash, imports, imports_fingerprint, effects\
@@ -852,6 +861,14 @@ async fn seed_additional_wirings(
         ).await?;
     }
     let projection_hash = admitted_projection_hash(component, &[])?;
+    client
+        .execute(
+            "INSERT INTO catalog.component_digest_owners (tenant_id, component_digest, package_id) \
+         VALUES ($1, $2, $3) ON CONFLICT DO NOTHING",
+            &[&TENANT, &component.component_digest, package],
+        )
+        .await
+        .context("seed the additional component digest owner")?;
     client.execute(
         "INSERT INTO catalog.component_library (tenant_id, package_id, package_version, \
              component, interface_version, operations, component_digest, projection_hash, \

@@ -288,3 +288,49 @@ async fn promotion_activation_retains_decisions_and_transaction_boundaries() {
     retirement_refuses_change_but_keeps_exact_retry(&mut client, &args).await;
     concurrent_changes_keep_serializable_refusal(&mut client, url).await;
 }
+
+/// A source that holds digest D under 1.0.0 and 2.0.0 promotes release 2 with
+/// the 2.0.0 projection hash (docs/plan/kind-to-type.md §4.3.6).
+#[tokio::test]
+async fn promote_copies_the_projection_hash_of_its_own_coordinate() {
+    let _lock = wamn_test_postgres::lock();
+    let database = wamn_catalog::test_database::tenant();
+    let mut client = connect(database.url()).await;
+    let digest = hash('d');
+    client
+        .batch_execute(&format!(
+            "INSERT INTO catalog.packages (tenant_id, package_id, package_version, manifest_sha256)
+               VALUES ('t1','shop','1.0.0','{a}'), ('t1','shop','2.0.0','{b}');
+             INSERT INTO catalog.component_digest_owners (tenant_id, component_digest, package_id)
+               VALUES ('t1','{digest}','shop');
+             INSERT INTO catalog.component_library
+               (tenant_id, package_id, package_version, component, interface_version, operations,
+                component_digest, projection_hash, imports, imports_fingerprint, effects)
+             VALUES ('t1','shop','1.0.0','shop','0.1','{{\"run\":{{}}}}','{digest}','{one}',
+                     '[]','{a}','[]'),
+                    ('t1','shop','2.0.0','shop','0.1','{{\"run\":{{}}}}','{digest}','{two}',
+                     '[]','{a}','[]');",
+            a = hash('a'),
+            b = hash('b'),
+            one = hash('1'),
+            two = hash('2'),
+        ))
+        .await
+        .expect("seed D under two versions of its package");
+    let component: wamn_catalog::AdmittedComponent = serde_json::from_value(serde_json::json!({
+        "scope": {"tenant-id": "t1", "package-id": "shop", "package-version": "2.0.0"},
+        "component": "shop",
+        "interface-version": "0.1",
+        "operations": {},
+        "component-digest": digest,
+        "imports": [],
+        "imports-fingerprint": hash('a'),
+        "effects": []
+    }))
+    .expect("an admitted component of release 2");
+    let tx = begin(&mut client).await;
+    let hashes = super::load_projection_hashes(&tx, "t1", &[component])
+        .await
+        .expect("read the projection hashes");
+    assert_eq!(hashes.get(&digest), Some(&hash('2')));
+}

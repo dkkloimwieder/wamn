@@ -912,6 +912,9 @@ fn the_http_admitter_role_adds_exactly_the_fresh_permission_reads() {
              INSERT INTO catalog.effective_release_packages \
                (tenant_id, effective_release_id, package_id, package_version) \
              VALUES ('tenant-a', 1, 'orders', '1.0.0');\n\
+             INSERT INTO catalog.component_digest_owners \
+               (tenant_id, component_digest, package_id) \
+             VALUES ('tenant-a', '{digest}', 'orders');\n\
              INSERT INTO catalog.component_library \
                (tenant_id, package_id, package_version, component, interface_version, \
                 operations, component_digest, projection_hash, imports, imports_fingerprint, \

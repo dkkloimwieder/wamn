@@ -542,6 +542,10 @@ async fn seed_candidate(project: &Client) -> anyhow::Result<()> {
              INSERT INTO catalog.effective_release_heads \
                (tenant_id, environment, effective_release_id) \
              VALUES ('{TENANT}', '{ENVIRONMENT}', {CANDIDATE_EFFECTIVE_RELEASE_ID}); \
+             INSERT INTO catalog.component_digest_owners \
+               (tenant_id, component_digest, package_id) \
+             VALUES ('{TENANT}', '{CANDIDATE_COMPONENT_DIGEST}', '{CANDIDATE_PACKAGE}'), \
+                    ('{TENANT}', '{BLOBSTORE_COMPONENT_DIGEST}', '{CANDIDATE_PACKAGE}'); \
              INSERT INTO catalog.component_library \
                (tenant_id, package_id, package_version, component, interface_version, operations, \
                 component_digest, projection_hash, imports, imports_fingerprint, effects) \
@@ -630,6 +634,15 @@ async fn seed_effectful_unreleased_candidate(project: &Client) -> anyhow::Result
         )
         .await
         .context("seed the unreleased package root")?;
+    project
+        .execute(
+            "INSERT INTO catalog.component_digest_owners \
+                   (tenant_id, component_digest, package_id) \
+             VALUES ($1, $2, $3) ON CONFLICT DO NOTHING",
+            &[&TENANT, &EFFECTFUL_COMPONENT_DIGEST, &EFFECTFUL_PACKAGE],
+        )
+        .await
+        .expect("seed the component digest owner");
     project
         .execute(
             "INSERT INTO catalog.component_library \

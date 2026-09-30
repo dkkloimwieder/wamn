@@ -177,6 +177,15 @@ async fn provision_project(project: &Client, project_url: &str) {
         admitted_projection_hash(&component, &[]).expect("hash admitted fixture projection");
     project
         .execute(
+            "INSERT INTO catalog.component_digest_owners \
+                   (tenant_id, component_digest, package_id) \
+             VALUES ($1, $2, $3) ON CONFLICT DO NOTHING",
+            &[&TENANT, &COMPONENT, &PACKAGE],
+        )
+        .await
+        .expect("seed the component digest owner");
+    project
+        .execute(
             "INSERT INTO catalog.component_library \
                    (tenant_id, package_id, package_version, component, interface_version, \
                     operations, component_digest, projection_hash, imports, \

@@ -186,7 +186,7 @@ BEGIN
   SELECT array_agg(tablename ORDER BY tablename) INTO catalog_tables
     FROM pg_tables WHERE schemaname = 'catalog';
   ASSERT catalog_tables = ARRAY[
-    'authoring_command_audit', 'component_library',
+    'authoring_command_audit', 'component_digest_owners', 'component_library',
     'connection_requirements', 'deployment_attestations',
     'effective_release_heads', 'effective_release_packages',
     'effective_releases', 'package_migrations', 'packages',
@@ -251,6 +251,9 @@ VALUES ('tenant-a', 'dev', 1);
 -- than editing the one whose database was dropped. This replaces the
 -- wamn-10yt.38 test that the disposable marker made the fact replaceable in
 -- place; that overwrite is retired and the marker decides nothing here.
+INSERT INTO catalog.component_digest_owners
+  (tenant_id, environment_instance, component_digest, package_id)
+VALUES ('tenant-a', '', 'sha256:' || repeat('1', 64), 'widgets');
 INSERT INTO catalog.component_library
   (tenant_id, environment_instance, package_id, package_version, component,
    interface_version, operations, component_digest, projection_hash, imports,
@@ -312,6 +315,9 @@ $the_marker_alone_unlocks_nothing$;
 -- The recreate claims a creation, and the SAME coordinate then admits its own
 -- bytes BESIDE the previous creation's fact rather than over it.
 UPDATE catalog.tenant_environments SET environment_instance='16384', projected_at=now() WHERE tenant_id='tenant-a';
+INSERT INTO catalog.component_digest_owners
+  (tenant_id, environment_instance, component_digest, package_id)
+VALUES ('tenant-a', '16384', 'sha256:' || repeat('4', 64), 'widgets');
 INSERT INTO catalog.component_library
   (tenant_id, environment_instance, package_id, package_version, component,
    interface_version, operations, component_digest, projection_hash, imports,
@@ -407,6 +413,9 @@ DO $seed$ DECLARE tenant text; package text; release int; BEGIN
     INSERT INTO catalog.effective_release_heads
       (tenant_id, environment, effective_release_id)
     VALUES (tenant, 'dev', release);
+    INSERT INTO catalog.component_digest_owners
+      (tenant_id, environment_instance, component_digest, package_id)
+    VALUES (tenant, '', 'sha256:' || repeat('b', 64), package);
     INSERT INTO catalog.component_library
       (tenant_id, environment_instance, package_id, package_version, component,
        interface_version, operations, component_digest, projection_hash, imports,

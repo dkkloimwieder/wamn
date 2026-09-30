@@ -276,6 +276,8 @@ async fn executor_platform_surface_live() -> anyhow::Result<()> {
              INSERT INTO catalog.effective_release_heads \
                (tenant_id,environment,effective_release_id) \
              VALUES ('{TENANT}','{ENVIRONMENT}',{EFFECTIVE_RELEASE_ID}); \
+             INSERT INTO catalog.component_digest_owners (tenant_id,component_digest,package_id) \
+             VALUES ('{TENANT}','{component_digest}','{PACKAGE_ID}'); \
              INSERT INTO catalog.component_library \
                (tenant_id,package_id,package_version,component,interface_version,operations, \
                 component_digest,projection_hash,imports,imports_fingerprint,effects) \

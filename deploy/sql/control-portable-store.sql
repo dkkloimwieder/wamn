@@ -168,6 +168,21 @@ CREATE TABLE catalog.effective_release_heads (
 -- There is deliberately no `CHECK (environment_instance <> '')`: the empty
 -- string IS the durable value, and the instance is whatever the recreate minted
 -- (a `pg_database` oid today), not a shape this store gets to constrain.
+--
+-- A component digest belongs to one package for life in each environment
+-- instance. Each version of that package may hold it once, and another package
+-- may not hold it (docs/plan/kind-to-type.md §4.3.6).
+CREATE TABLE catalog.component_digest_owners (
+    tenant_id            text NOT NULL CHECK (tenant_id <> ''),
+    environment_instance text NOT NULL,
+    component_digest     text NOT NULL CHECK (component_digest ~ '^sha256:[0-9a-f]{64}$'),
+    package_id           text NOT NULL CHECK (package_id <> ''),
+    CONSTRAINT component_digest_owners_pkey
+        PRIMARY KEY (tenant_id, environment_instance, component_digest),
+    CONSTRAINT component_digest_owners_package_key
+        UNIQUE (tenant_id, environment_instance, component_digest, package_id)
+);
+
 CREATE TABLE catalog.component_library (
     tenant_id            text        NOT NULL CHECK (tenant_id <> ''),
     environment_instance text        NOT NULL,
@@ -190,14 +205,16 @@ CREATE TABLE catalog.component_library (
     CONSTRAINT component_library_package_fkey
         FOREIGN KEY (tenant_id, package_id, package_version)
         REFERENCES catalog.packages (tenant_id, package_id, package_version),
-    CONSTRAINT component_library_digest_key
-        UNIQUE (tenant_id, environment_instance, component_digest),
+    CONSTRAINT component_library_digest_owner_fkey
+        FOREIGN KEY (tenant_id, environment_instance, component_digest, package_id)
+        REFERENCES catalog.component_digest_owners
+            (tenant_id, environment_instance, component_digest, package_id),
     CONSTRAINT component_library_package_digest_key
         UNIQUE (tenant_id, environment_instance, package_id, package_version, component_digest)
 );
 
 -- Keyed by the same instance as the component fact it requires, and its foreign
--- key travels through `component_library_digest_key`, so a requirement can never
+-- key travels through `component_digest_owners`, so a requirement can never
 -- resolve to another creation's component (wamn-10yt.52).
 CREATE TABLE catalog.connection_requirements (
     tenant_id            text  NOT NULL CHECK (tenant_id <> ''),
@@ -210,7 +227,7 @@ CREATE TABLE catalog.connection_requirements (
         PRIMARY KEY (tenant_id, environment_instance, component_digest, store_alias),
     CONSTRAINT connection_requirements_component_fkey
         FOREIGN KEY (tenant_id, environment_instance, component_digest)
-        REFERENCES catalog.component_library
+        REFERENCES catalog.component_digest_owners
             (tenant_id, environment_instance, component_digest)
 );
 
@@ -340,9 +357,10 @@ BEGIN
     FOREACH relation_name IN ARRAY ARRAY[
         'catalog.packages', 'catalog.package_migrations',
         'catalog.effective_releases', 'catalog.effective_release_packages',
-        'catalog.effective_release_heads', 'catalog.component_library',
-        'catalog.connection_requirements', 'catalog.authoring_command_audit',
-        'catalog.deployment_attestations', 'catalog.tenant_environments',
+        'catalog.effective_release_heads', 'catalog.component_digest_owners',
+        'catalog.component_library', 'catalog.connection_requirements',
+        'catalog.authoring_command_audit', 'catalog.deployment_attestations',
+        'catalog.tenant_environments',
         'wamn_run.gate_reports'
     ] LOOP
         EXECUTE format('ALTER TABLE %s ENABLE ROW LEVEL SECURITY', relation_name);
@@ -370,9 +388,9 @@ BEGIN
     FOREACH relation_name IN ARRAY ARRAY[
         'catalog.packages', 'catalog.package_migrations',
         'catalog.effective_releases', 'catalog.effective_release_packages',
-        'catalog.authoring_command_audit', 'catalog.component_library',
-        'catalog.connection_requirements', 'catalog.deployment_attestations',
-        'wamn_run.gate_reports'
+        'catalog.authoring_command_audit', 'catalog.component_digest_owners',
+        'catalog.component_library', 'catalog.connection_requirements',
+        'catalog.deployment_attestations', 'wamn_run.gate_reports'
     ] LOOP
         trigger_name := split_part(relation_name, '.', 2) || '_immutable';
         EXECUTE format(
@@ -462,7 +480,7 @@ BEGIN
     SELECT array_agg(tablename ORDER BY tablename) INTO catalog_tables
       FROM pg_tables WHERE schemaname = 'catalog';
     IF catalog_tables IS DISTINCT FROM ARRAY[
-        'authoring_command_audit', 'component_library',
+        'authoring_command_audit', 'component_digest_owners', 'component_library',
         'connection_requirements', 'deployment_attestations',
         'effective_release_heads', 'effective_release_packages',
         'effective_releases', 'package_migrations', 'packages',

@@ -237,6 +237,9 @@ async fn seed_control_rows(system_url: &str) {
             "INSERT INTO catalog.packages VALUES ('{TENANT}', 'td0pkg', '1.0.0', NULL, '{SHA_A}');
              INSERT INTO catalog.package_migrations VALUES
                ('{TENANT}', 'td0pkg', '1.0.0', 1, 'migrations/0001_initial.sql', '{SHA_A}');
+             INSERT INTO catalog.component_digest_owners
+               (tenant_id, environment_instance, component_digest, package_id)
+             VALUES ('{TENANT}', 'fixture', '{SHA_B}', 'td0pkg');
              INSERT INTO catalog.component_library
                (tenant_id, environment_instance, package_id, package_version, component,
                 interface_version, operations, component_digest, projection_hash, imports,
