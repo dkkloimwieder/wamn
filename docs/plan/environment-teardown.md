@@ -94,7 +94,7 @@ One row for each run: `org`, `project`, `env`, the deleted `instance_suffix`, an
 One branch. Each issue lands with its tests.
 
 1. The library and the verb: the read, the plan output, the refusals and the seven steps, in `crates/control/lib` and `services/ctl` (`wamn-ctl`). Unit tests for the plan and the delete order.
-2. A live test on a disposable Postgres 18 and a disposable NATS: provision a triple, enable CDC, publish a package and run a gate, run the verb, then provision the triple again. The new suffix differs, `registry.retired_project_envs` holds the old one, the next publish and gate pass, and a second verb run refuses with "no registry row".
+2. A live test on a disposable Postgres 18 and a disposable NATS: provision a triple, enable CDC, put fixture rows in every table of the delete order, run the verb, then provision the triple again. The new suffix differs, `registry.retired_project_envs` holds the old one, the same fixture rows with the same command id go in again, and a second verb run refuses with "no registry row".
 3. The operations page: section 6.7 becomes the Kubernetes deletes and the workload stop, then the verb run. A run on wamn-dev waits for the next teardown that the owner orders.
 4. Closeout: close `wamn-psss` with the commit and the test run, and report this plan as done.
 
@@ -105,8 +105,12 @@ One branch. Each issue lands with its tests.
 - A Kubernetes client in the control verbs.
 - Record history and run history of the environment. They live in the dropped database.
 
-## 7. Questions for the owner
+## 7. Owner rulings on the plan output and the live test
 
-1. The verb cannot derive the workload names (`cdc-reader`, `cdc-reader-wms`, `hostgroup-default` and `hostgroup-wms` are chosen by the manifests). Does the plan name the workloads by the Secrets that they read, for example "every workload that reads `wamn-cdc-dkk--receiving--dev`"?
-2. Only the replication Secret has a recorded namespace (`registry.event_readers.replication_secret_namespace`). The other Secrets are in `hosts` and `identity` on wamn-dev. Does the plan print the Secret names without a namespace?
-3. The Secrets of the instance are `wamn-db-`, `wamn-cdc-`, and the Secret of each family with tenant or project-environment scope: `wamn-guest-`, `wamn-retention-`, `wamn-audit-retention-`, `wamn-mgmt-admitter-`, `wamn-service-reader-`, `wamn-executor-platform-`, `wamn-http-admitter-`, `wamn-session-role-reader-` and `wamn-event-materializer-`. The Secrets of the three control families (`wamn-authoring-`, `wamn-registry-reader-`, `wamn-identity-reader-`) stay with their roles. Is that list right?
+The owner answered these on 2026-09-30 (recorded on `wamn-psss`).
+
+1. The plan names each Secret and says "stop every workload that reads it". The session refusal names the logins that are still connected.
+2. The plan prints `wamn-db-` and `wamn-cdc-` with their recorded namespaces, and the other Secrets by name alone. The operations page says that their namespace is the namespace of the host.
+3. The plan deletes the Secrets `wamn-db-`, `wamn-cdc-` and the Secret of each of the nine instance families. The three control Secrets (`wamn-authoring-`, `wamn-registry-reader-`, `wamn-identity-reader-`) stay with their roles.
+4. The live test provisions and enables CDC through `wamn_gate_harness::environment`. SQL fixtures put rows in every table of the delete order, in place of a real publish and gate.
+5. After the new provision, the test inserts the same fixture rows with the same command id, so the `command-id-reuse` refusal is gone with the rows.

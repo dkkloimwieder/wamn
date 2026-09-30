@@ -198,18 +198,13 @@ impl TeardownPlan {
             self.database
         )];
         for (name, namespace) in &self.secrets {
-            lines.push(match namespace {
-                Some(namespace) => {
-                    format!("delete before this run: Secret {name} in namespace {namespace}")
-                }
-                None => format!("delete before this run: Secret {name}"),
+            let place = namespace.as_ref().map_or(String::new(), |namespace| {
+                format!(" in namespace {namespace}")
             });
+            lines.push(format!(
+                "delete before this run: Secret {name}{place}; stop every workload that reads it"
+            ));
         }
-        let names: Vec<&str> = self.secrets.iter().map(|(name, _)| name.as_str()).collect();
-        lines.push(format!(
-            "stop before this run: every workload that reads {}",
-            names.join(", ")
-        ));
         lines.push(format!(
             "delete: streams {} and {}, with the consumers of {}",
             self.source_stream, self.advisory_stream, self.source_stream
@@ -562,9 +557,14 @@ mod tests {
         );
         assert_eq!(
             lines[1],
-            "delete before this run: Secret wamn-db-dkk--receiving--dev in namespace hosts"
+            "delete before this run: Secret wamn-db-dkk--receiving--dev in namespace hosts; \
+             stop every workload that reads it"
         );
-        assert!(lines[12].starts_with("stop before this run: every workload that reads "));
+        assert_eq!(
+            lines[3],
+            "delete before this run: Secret wamn-mgmt-admitter-dkk--receiving--dev; \
+             stop every workload that reads it"
+        );
     }
 
     #[test]
