@@ -1,6 +1,6 @@
 # Environment teardown
 
-Updated through: 2026-09-30, `main` at `0836e2cd2`.
+Updated through: 2026-09-30, `main` at `0d6c1cfd0`. The owner accepted this spec on 2026-09-30 with seven rulings (recorded on `wamn-psss`).
 
 ## 1. Goal
 
@@ -16,8 +16,9 @@ The verb adds no new rule. It runs the steps of the hand runs of 2026-09-28 and 
 - The registry rows go last. Until they go, a second run can still read the instance suffix and the tenant.
 - The database and its CDC objects go before any role. The control rows go before the registry rows.
 - The verb turns off an immutability trigger for its one delete statement only, inside one transaction, and turns it on again before the commit. No other session sees the trigger off.
-- The event stream is deleted, not purged. No NATS permission is added: the provisioning user of the stream already holds `STREAM.DELETE` and `CONSUMER.DELETE` (`test-support/infrastructure/event_broker.rs:101-131`).
+- The source stream and the advisory stream are deleted by name, not purged. No NATS permission is added: the provisioning user of the stream already holds `STREAM.DELETE` and `CONSUMER.DELETE` (`test-support/infrastructure/event_broker.rs:101-131`).
 - The verb prints each step with its result on one line. It prints no credential.
+- The plan output lists the Kubernetes objects first, as "delete before this run", with and without `--confirm`. The verb has no Kubernetes client, so the refusal on database sessions is the check that the operator stopped the workloads.
 - Without `--confirm`, the verb prints the plan and the names that a confirmed run deletes. It changes nothing.
 
 ## 3. Current state
@@ -46,7 +47,7 @@ Measured on `main` at `0836e2cd2`, and on wamn-dev, on 2026-09-30.
 
 ### 4.1 The verb
 
-`wamn-ctl-ops delete-project-env`, beside `copy-project-env`, because it destroys data. Flags, with the names and variables of the existing verbs:
+`wamn-ctl delete-project-env`. The library goes in `crates/control/lib`, because the worker of the second platform UI epic runs it, and the production image builds `wamn-ctl` without features. `--confirm` is the guard, as for `copy-project-env`. Flags, with the names and variables of the existing verbs:
 
 | Flag | Variable | Use |
 | --- | --- | --- |
@@ -60,13 +61,13 @@ Measured on `main` at `0836e2cd2`, and on wamn-dev, on 2026-09-30.
 
 The verb reads the registry row, the tenant row and the event reader row first. It then runs these steps in this order:
 
-1. Refusals of section 4.3.
-2. Delete each materializer consumer of the source stream, then the source stream. Answer "not found" as done.
-3. Drop the replication slot, then the database `WITH (FORCE)`. The publication goes with the database.
-4. Drop the CDC role and the generation roles of the project-database families, `a` and `b` of each, with one `DROP ROLE IF EXISTS` each. The names come from `workload_generation_role` with the database of this instance.
-5. In one transaction, delete the control rows of the tenant, leaves first: `deployment_attestations`, `connection_requirements`, `component_library`, `effective_release_heads`, `effective_release_packages`, `effective_releases`, `package_migrations`, `packages`, `authoring_command_audit`, `wamn_run.gate_reports`. Each immutable table gets `DISABLE TRIGGER`, the delete, and `ENABLE TRIGGER`.
-6. In one transaction, delete `registry.project_envs` and `catalog.tenant_environments` for the triple. The trigger records the suffix, and the cascade removes the memberships, the event reader, the capture gap rows and the dumps.
-7. Print the Kubernetes objects that the operator deletes: the CloudNativePG `Database` and the Secrets of section 3, with their namespaces.
+1. Print the Kubernetes objects to delete before this run: the CloudNativePG `Database` and the Secrets of the instance. Then print the workloads to stop. The `Database` must go first, because it has `ensure: present` and creates the database again. The verb prints this list with and without `--confirm`.
+2. Refusals of section 4.3.
+3. Delete the materializer consumers of the source stream, the source stream, and the advisory stream `WAMN_EVENT_ADVISORIES_<source>`, by name. Answer "not found" as done.
+4. Drop the replication slot, then the database `WITH (FORCE)`. The publication goes with the database.
+5. Drop the CDC role and the generation roles of the nine families with tenant or project-environment scope, whose scope names the database, `a` and `b` of each, with one `DROP ROLE IF EXISTS` each. The names come from `workload_generation_role` with the database of this instance.
+6. In one transaction, delete the control rows of the tenant, leaves first: `deployment_attestations`, `connection_requirements`, `component_library`, `effective_release_heads`, `effective_release_packages`, `effective_releases`, `package_migrations`, `packages`, `authoring_command_audit`, `wamn_run.gate_reports`. Each immutable table gets `DISABLE TRIGGER`, the delete, and `ENABLE TRIGGER`.
+7. In one transaction, delete `registry.project_envs` and `catalog.tenant_environments` for the triple. The trigger records the suffix, and the cascade removes the memberships, the event reader, the capture gap rows and the dumps.
 
 ### 4.3 Refusals
 
@@ -75,7 +76,7 @@ Each refusal names its reason on one line and changes nothing.
 - No `registry.project_envs` row for the triple.
 - `--admin-database-url` reaches a database other than `postgres` on the cluster of the registry row.
 - The replication slot is active: a reader still streams from it.
-- The database has a session of a login other than the verb.
+- The database has a session of a login other than the verb. The refusal names each login it found, so the operator knows which workload still runs.
 - A `catalog.tenant_environments` row names the tenant with another triple or another suffix.
 
 ### 4.4 What `registry.retired_project_envs` records
@@ -85,17 +86,16 @@ One row for each run: `org`, `project`, `env`, the deleted `instance_suffix`, an
 ### 4.5 What stays
 
 - The org, the project, `identity.project_roles` and every human principal.
-- The control-family generation roles and their `author_login_tenants` rows, because a new provision of the triple uses the same names (question 3 of section 7).
-- The service principals of the triple and their PATs (question 4 of section 7).
-- The advisory stream (question 2 of section 7).
+- The control-family generation roles and their `author_login_tenants` rows. They belong to the triple, not the instance, and a new provision of the triple uses the same names.
+- The service principals of the triple and their PATs, as in the hand procedure.
 
 ## 5. Issues
 
 One branch. Each issue lands with its tests.
 
-1. The library and the verb: the read, the plan output, the refusals and the seven steps, in `crates/control/lib` and `services/ctl`. Unit tests for the plan and the delete order.
+1. The library and the verb: the read, the plan output, the refusals and the seven steps, in `crates/control/lib` and `services/ctl` (`wamn-ctl`). Unit tests for the plan and the delete order.
 2. A live test on a disposable Postgres 18 and a disposable NATS: provision a triple, enable CDC, publish a package and run a gate, run the verb, then provision the triple again. The new suffix differs, `registry.retired_project_envs` holds the old one, the next publish and gate pass, and a second verb run refuses with "no registry row".
-3. The operations page: section 6.7 becomes the verb run and the Kubernetes deletes. A run on wamn-dev waits for the next teardown that the owner orders.
+3. The operations page: section 6.7 becomes the Kubernetes deletes and the workload stop, then the verb run. A run on wamn-dev waits for the next teardown that the owner orders.
 4. Closeout: close `wamn-psss` with the commit and the test run, and report this plan as done.
 
 ## 6. Out of scope
@@ -107,10 +107,6 @@ One branch. Each issue lands with its tests.
 
 ## 7. Questions for the owner
 
-1. Is `wamn-ctl-ops`, beside `copy-project-env`, the right binary, given that the production image builds only `wamn-ctl` without features?
-2. Does the verb delete the advisory stream `WAMN_EVENT_ADVISORIES_<source>` too? The hand procedure left it, and a test requires that it survives a delete of the source stream.
-3. Do the control-family generation roles and their `author_login_tenants` rows stay, as section 4.5 says, or go?
-4. Do the service principals and PATs of the triple stay, as the hand procedure did?
-5. Is step 7 right: the verb prints the `Database` object and the Secrets, and the operator deletes them before the verb runs? The `Database` must go first. If it stays, CloudNativePG creates the database again.
-6. The finding says "purge the stream", and the rulings of 2026-09-29 say "deleted, not purged". This spec deletes it. Is that correct?
-7. The owner message named `wamn-n5d1` as the platform UI epic. The epic that waits on this verb is `wamn-zua8`, and `wamn-n5d1` is "Provisioning verbs that call identity have no in-cluster run path". Is `wamn-zua8` the one meant?
+1. The verb cannot derive the workload names (`cdc-reader`, `cdc-reader-wms`, `hostgroup-default` and `hostgroup-wms` are chosen by the manifests). Does the plan name the workloads by the Secrets that they read, for example "every workload that reads `wamn-cdc-dkk--receiving--dev`"?
+2. Only the replication Secret has a recorded namespace (`registry.event_readers.replication_secret_namespace`). The other Secrets are in `hosts` and `identity` on wamn-dev. Does the plan print the Secret names without a namespace?
+3. The Secrets of the instance are `wamn-db-`, `wamn-cdc-`, and the Secret of each family with tenant or project-environment scope: `wamn-guest-`, `wamn-retention-`, `wamn-audit-retention-`, `wamn-mgmt-admitter-`, `wamn-service-reader-`, `wamn-executor-platform-`, `wamn-http-admitter-`, `wamn-session-role-reader-` and `wamn-event-materializer-`. The Secrets of the three control families (`wamn-authoring-`, `wamn-registry-reader-`, `wamn-identity-reader-`) stay with their roles. Is that list right?
