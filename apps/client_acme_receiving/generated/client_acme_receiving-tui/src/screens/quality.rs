@@ -6,7 +6,7 @@ pub static APPROVE_INSPECTION_SPEC: screen::ScreenSpec = screen::ScreenSpec {
     model: "quality",
     name: "approve_inspection",
     operation: "client-acme-receiving:quality/approve-inspection@3.0.0",
-    kind: "command",
+    type_: "command",
     input: crate::quality::QUALITY_APPROVE_INSPECTION_INPUT_SCHEMA,
     input_schema: Some(
         "{\"items\":{\"additionalProperties\":false,\"properties\":{\"expected_row_version\":{\"type\":\"integer\"},\"receipt_id\":{\"pattern\":\"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$\",\"type\":\"string\"},\"request_id\":{\"minLength\":1,\"type\":\"string\"}},\"required\":[\"request_id\",\"receipt_id\",\"expected_row_version\"],\"type\":\"object\"},\"type\":\"array\"}",
@@ -53,7 +53,7 @@ pub static APPROVE_INSPECTION_SPEC: screen::ScreenSpec = screen::ScreenSpec {
                 sources: &["statement_timeout"],
             },
         ],
-        kind: "command",
+        type_: "command",
         transaction: Some("explicit_per_input"),
         direct: true,
         replay: submission::Replay::State,
@@ -66,7 +66,7 @@ pub static APPROVE_INSPECTION_SPEC: screen::ScreenSpec = screen::ScreenSpec {
     requires_composition: true,
     supplied: &[screen::SuppliedField {
         path: "request_id",
-        kind: screen::SuppliedKind::RequestId,
+        type_: screen::SuppliedType::RequestId,
     }],
 };
 
@@ -79,7 +79,7 @@ pub static LOAD_PURCHASE_ORDER_DETAIL_SPEC: screen::ScreenSpec = screen::ScreenS
     model: "quality",
     name: "load_purchase_order_detail",
     operation: "client-acme-receiving:quality/load-purchase-order-detail@3.0.0",
-    kind: "projection",
+    type_: "projection",
     input: crate::quality::QUALITY_LOAD_PURCHASE_ORDER_DETAIL_INPUT_SCHEMA,
     input_schema: Some(
         "{\"items\":{\"additionalProperties\":false,\"properties\":{\"purchase_order_id\":{\"pattern\":\"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$\",\"type\":\"string\"}},\"required\":[\"purchase_order_id\"],\"type\":\"object\"},\"type\":\"array\"}",
@@ -121,7 +121,7 @@ pub static LOAD_PURCHASE_ORDER_DETAIL_SPEC: screen::ScreenSpec = screen::ScreenS
                 sources: &["statement_timeout"],
             },
         ],
-        kind: "projection",
+        type_: "projection",
         transaction: None,
         direct: true,
         replay: submission::Replay::Unknown,

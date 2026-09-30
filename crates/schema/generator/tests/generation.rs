@@ -125,7 +125,7 @@ fn custom_sql_generated_rust_symbols_are_unique_before_emission() {
 fn a_custom_operation_refuses_the_page_result_class() {
     let projection = projection_operation();
     let mut command = projection_operation();
-    command["kind"] = json!("command");
+    command["type"] = json!("command");
     command["transaction"] = json!("explicit_per_input");
     command["automatic_retry"] = json!(false);
     command["idempotent_by"] = json!({"state": {"guards": {"gadget": "gadget_id"}}});
@@ -2188,7 +2188,7 @@ fn authored_sql_deletes_only_from_a_hard_delete_model() {
         b"WITH removed AS (DELETE FROM gadget WHERE id = $1 AND row_version = $2 RETURNING id) SELECT removed.id FROM removed;",
     );
     let mut operation = projection_operation();
-    operation["kind"] = json!("command");
+    operation["type"] = json!("command");
     operation["transaction"] = json!("explicit_per_input");
     operation["automatic_retry"] = json!(false);
     operation["idempotent_by"] = json!({"state": {"guards": {"gadget": "expected_row_version"}}});
@@ -2574,13 +2574,13 @@ fn a_logged_relation_keeps_the_schema_description_and_grants_its_history_insert(
             "schema": "inventory",
             "table": "gadget_history",
             "all_fields": [
-                "after", "before", "changed_at", "changed_by", "id", "kind", "operation",
-                "position", "row_key", "transaction_id"
+                "after", "before", "changed_at", "changed_by", "id", "operation", "position",
+                "row_key", "transaction_id", "type"
             ],
             "select_fields": [],
             "insert_fields": [
-                "after", "before", "changed_at", "changed_by", "kind", "operation", "row_key",
-                "transaction_id"
+                "after", "before", "changed_at", "changed_by", "operation", "row_key",
+                "transaction_id", "type"
             ],
             "update_fields": [],
             "lock": false
@@ -2594,7 +2594,7 @@ fn a_custom_operation_reads_a_history_table() {
     let mut manifest = with_audit_log(&json!(ALL_STAMP_COLUMNS), "unlimited");
     let mut operation = projection_operation();
     operation["relations"][0]["table"] = json!("gadget_history");
-    operation["relations"][0]["select_fields"] = json!(["changed_by", "kind"]);
+    operation["relations"][0]["select_fields"] = json!(["changed_by", "type"]);
     operation["statements"]["load_gadget_part"]["row"] =
         json!([{"name": "changed_by", "type": "uuid", "nullable": false}]);
     operation["result"]["fields"] =
@@ -2603,7 +2603,7 @@ fn a_custom_operation_reads_a_history_table() {
     let mut sources = QUERY_SOURCES.to_vec();
     sources.push(AuthoredSql::new(
         "query/quality_gadget_part.sql",
-        b"SELECT changed_by FROM gadget_history WHERE kind = $1;\n",
+        b"SELECT changed_by FROM gadget_history WHERE type = $1;\n",
     ));
 
     let package = run(&all_stamps_catalog(), &manifest, &sources)
@@ -2614,7 +2614,7 @@ fn a_custom_operation_reads_a_history_table() {
         "table",
         "gadget_history",
     );
-    assert_eq!(history["select_fields"], json!(["changed_by", "kind"]));
+    assert_eq!(history["select_fields"], json!(["changed_by", "type"]));
     assert_eq!(history["update_fields"], json!([]));
     assert_eq!(history["lock"], json!(false));
 
@@ -2663,7 +2663,7 @@ fn history_names_are_reserved_and_fit_in_a_postgres_name() {
     for (label, insert, update, lock, delete) in [
         (
             "a declared insert",
-            json!(["kind"]),
+            json!(["type"]),
             json!([]),
             false,
             false,
@@ -2671,7 +2671,7 @@ fn history_names_are_reserved_and_fit_in_a_postgres_name() {
         (
             "a declared update",
             json!([]),
-            json!(["kind"]),
+            json!(["type"]),
             false,
             false,
         ),
@@ -2681,7 +2681,7 @@ fn history_names_are_reserved_and_fit_in_a_postgres_name() {
         let mut writes = with_audit_log(&json!(ALL_STAMP_COLUMNS), "unlimited");
         // An event handler can write, so the refusal is the history reservation.
         writes["custom_operations"]["gadget.record_history"] = json!({
-            "kind": "event_handler",
+            "type": "event_handler",
             "visibility": "private",
             "connection": "postgres",
             "input": {"fields": [{"path": "new.id", "type": "uuid", "nullable": false}]},
@@ -2702,7 +2702,7 @@ fn history_names_are_reserved_and_fit_in_a_postgres_name() {
                     "path": "command/record_history/write_history.sql",
                     "fetch": "optional_one",
                     "parameters": [{"name": "id", "type": "uuid", "nullable": false}],
-                    "row": [{"name": "kind", "type": "text", "nullable": false}]
+                    "row": [{"name": "type", "type": "text", "nullable": false}]
                 }
             },
             "registration": {

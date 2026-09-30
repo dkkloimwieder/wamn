@@ -52,7 +52,7 @@ pub const HISTORY_COLUMNS: [(&str, &str); 10] = [
     (POSITION_COLUMN, "int64"),
     (ENTRY_ID_COLUMN, "uuid"),
     ("row_key", "json"),
-    ("kind", "text"),
+    ("type", "text"),
     ("operation", "text"),
     ("changed_by", "uuid"),
     ("changed_at", "timestamptz"),
@@ -77,7 +77,7 @@ pub fn is_history_table_name(name: &str) -> bool {
 /// Whether every object name that the history table of `relation` derives fits in a PostgreSQL name.
 ///
 /// The names are the NOT NULL constraint of each column, the primary key, the
-/// CHECK constraints of `kind` and `operation`, and the identity sequence.
+/// CHECK constraints of `type` and `operation`, and the identity sequence.
 pub fn history_object_names_fit(relation: &str) -> bool {
     let history = history_table_name(relation);
     HISTORY_COLUMNS
@@ -85,7 +85,7 @@ pub fn history_object_names_fit(relation: &str) -> bool {
         .map(|(column, _)| format!("{history}_{column}_not_null"))
         .chain([
             format!("{history}_pkey"),
-            format!("{history}_kind_check"),
+            format!("{history}_type_check"),
             format!("{history}_operation_check"),
             format!("{history}_{POSITION_COLUMN}_seq"),
         ])
@@ -114,8 +114,8 @@ pub fn is_log_retention(value: &str) -> bool {
 pub struct HistoryRow<'a> {
     /// The per-row position of the entry.
     pub position: i64,
-    /// The entry kind: `insert`, `update`, or `delete`.
-    pub kind: &'a str,
+    /// The entry type: `insert`, `update`, or `delete`.
+    pub type_: &'a str,
     /// The JSONB text of the entry `before` image.
     pub before: &'a str,
     /// The JSONB text of the current row image, `{}` for a deleted row.
@@ -262,7 +262,7 @@ pub fn state_at(rows: &[HistoryRow<'_>], position: i64) -> Result<RowState, Fold
 }
 
 fn kind(row: &HistoryRow<'_>) -> Result<Kind, FoldError> {
-    match row.kind {
+    match row.type_ {
         "insert" => Ok(Kind::Insert),
         "update" => Ok(Kind::Update),
         "delete" => Ok(Kind::Delete),

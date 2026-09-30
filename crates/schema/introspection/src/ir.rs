@@ -223,7 +223,7 @@ impl ColumnType {
 /// unchanged in kind: an expression, a function call other than the two named
 /// here, and a literal whose type is not the column's.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
-#[serde(tag = "kind", rename_all = "snake_case")]
+#[serde(tag = "type", rename_all = "snake_case")]
 pub enum ColumnDefault {
     GenRandomUuid,
     CurrentTimestamp,
@@ -279,7 +279,7 @@ impl ColumnDefault {
 
 /// A PostgreSQL server-generated column property.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
-#[serde(tag = "kind", rename_all = "snake_case")]
+#[serde(tag = "type", rename_all = "snake_case")]
 pub enum ColumnGeneration {
     Identity { mode: IdentityMode },
     Stored { expression: Box<str> },
@@ -307,13 +307,13 @@ pub enum IdentityMode {
 pub struct Constraint {
     name: Box<str>,
     #[serde(flatten)]
-    kind: ConstraintKind,
+    kind: ConstraintType,
 }
 
 /// Semantic constraint shape, excluding its authored name.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
-#[serde(tag = "kind", rename_all = "snake_case")]
-pub enum ConstraintKind {
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum ConstraintType {
     PrimaryKey {
         columns: Box<[Box<str>]>,
     },
@@ -341,7 +341,7 @@ impl Constraint {
         Self::new(
             name,
             "constraint",
-            ConstraintKind::PrimaryKey {
+            ConstraintType::PrimaryKey {
                 columns: boxed_strings(columns),
             },
         )
@@ -355,7 +355,7 @@ impl Constraint {
         Self::new(
             name,
             "constraint",
-            ConstraintKind::Unique {
+            ConstraintType::Unique {
                 columns: boxed_strings(columns),
             },
         )
@@ -373,7 +373,7 @@ impl Constraint {
         Self::new(
             name,
             "constraint",
-            ConstraintKind::ForeignKey {
+            ConstraintType::ForeignKey {
                 columns: columns.into_boxed_slice(),
                 referenced_schema: referenced_schema.into(),
                 referenced_table: referenced_table.into(),
@@ -391,7 +391,7 @@ impl Constraint {
         Self::new(
             name,
             "constraint",
-            ConstraintKind::Check {
+            ConstraintType::Check {
                 expression: expression.into(),
             },
         )
@@ -403,14 +403,14 @@ impl Constraint {
     }
 
     /// Semantic constraint shape.
-    pub const fn kind(&self) -> &ConstraintKind {
+    pub const fn kind(&self) -> &ConstraintType {
         &self.kind
     }
 
     fn new(
         name: impl Into<Box<str>>,
         object: &'static str,
-        kind: ConstraintKind,
+        kind: ConstraintType,
     ) -> Result<Self, IrError> {
         let name = nonempty_name(name, object)?;
         Ok(Self { name, kind })
@@ -457,7 +457,7 @@ pub enum ForeignKeyAction {
 ///
 /// An exclusion constraint is carried beside [`Constraint`] rather than inside
 /// it because its keys are operator comparisons over a column OR an expression,
-/// which a [`ConstraintKind`]'s plain column list cannot hold (wamn-10yt.36).
+/// which a [`ConstraintType`]'s plain column list cannot hold (wamn-10yt.36).
 /// Both are nameable refusals: the `wamn:postgres` contract carries SQLSTATE
 /// 23505, 23503 and 23514 as [`Constraint`] violations and 23P01 as an
 /// exclusion violation, each naming the constraint that refused (wamn-10yt.54).

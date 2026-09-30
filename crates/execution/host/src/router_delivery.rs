@@ -7,7 +7,7 @@ use std::sync::Arc;
 use opentelemetry::KeyValue;
 use opentelemetry::metrics::{Counter, Meter};
 use tracing::Instrument as _;
-use wamn_catalog::{AdmittedComponent, AttachmentTarget, OperationKind, ServingRoute};
+use wamn_catalog::{AdmittedComponent, AttachmentTarget, OperationType, ServingRoute};
 use wamn_engine::flow_http_routing::AuthenticatedCaller;
 use wamn_engine::release_manifest::LoadedRelease;
 use wamn_engine::router_delivery::{
@@ -227,7 +227,7 @@ impl RouterDeliveryBridge {
                     route.package_id == target.package_id
                         && route.component == *component
                         && route.operation == *operation
-                        && route.kind.is_read()
+                        && route.type_.is_read()
                 });
                 let result = self
                     .run_route(
@@ -324,7 +324,7 @@ impl RouterDeliveryBridge {
         };
         let mut tag = None;
         if let Some(read) =
-            read.filter(|read| read.kind != OperationKind::Get && !read.reads.is_empty())
+            read.filter(|read| read.type_ != OperationType::Get && !read.reads.is_empty())
         {
             authorize_route(&self.operations, &call).await?;
             match self.list_tag(read, &release).await {
@@ -694,7 +694,7 @@ impl RouterDeliveryBridge {
                 route.package_id == target.package_id
                     && route.component == component
                     && route.operation == operation
-                    && route.kind == OperationKind::Query
+                    && route.type_ == OperationType::Query
             })
             .cloned()
             .ok_or(DeliveryError::InvalidRequest)?;

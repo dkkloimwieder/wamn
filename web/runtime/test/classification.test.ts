@@ -39,7 +39,7 @@ function contractOf(name: string): ResponseContract {
     result_class: string | null;
     partial_schema: string | null;
     errors: ErrorCase[];
-    kind: string;
+    type: string;
     transaction: string | null;
     direct: boolean;
   };
@@ -49,7 +49,7 @@ function contractOf(name: string): ResponseContract {
     errors: stated.errors,
     replay: null,
     direct: stated.direct,
-    kind: stated.kind,
+    type: stated.type,
     transaction: stated.transaction,
   };
 }
@@ -136,7 +136,7 @@ describe("a refusal whose code the operation declares text for", () => {
       ],
       replay: null,
       direct: true,
-      kind: "command",
+      type: "command",
       transaction: "explicit_per_input",
     };
     const reply = (code: string) => ({
@@ -169,7 +169,7 @@ describe("a transport failure", () => {
     errors: [],
     replay: null,
     direct: true,
-    kind: "get",
+    type: "get",
     transaction: "implicit",
   };
 

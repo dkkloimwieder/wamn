@@ -1031,7 +1031,7 @@ fn synchronous_wiring_targets(manifest: &ServingManifest) -> BTreeSet<(String, S
         .workflow
         .attachments
         .values()
-        .filter(|attachment| synchronous_request_kind(attachment.kind))
+        .filter(|attachment| synchronous_request_kind(attachment.type_))
         .map(|attachment| {
             (
                 attachment.package_id.clone(),
@@ -1099,7 +1099,7 @@ mod tests {
     };
 
     use super::*;
-    use wamn_catalog::AttachmentKind;
+    use wamn_catalog::AttachmentType;
     use wamn_execution_host::synchronous_route_count;
 
     const TRACE_ID: &str = "4bf92f3577b34da6a3ce929d0e0e4736";
@@ -1184,9 +1184,9 @@ mod tests {
             .map(|attribute| attribute.value.to_string())
     }
 
-    fn attachment(kind: AttachmentKind, wiring_id: &str) -> ServingAttachment {
+    fn attachment(kind: AttachmentType, wiring_id: &str) -> ServingAttachment {
         ServingAttachment {
-            kind,
+            type_: kind,
             package_id: "orders".to_owned(),
             target: wamn_catalog::AttachmentTarget::Wiring {
                 wiring_id: wiring_id.to_owned(),
@@ -1440,19 +1440,19 @@ mod tests {
         let (attachments, workflow_attachments) = ServingAttachment::split(BTreeMap::from([
             (
                 "http".to_owned(),
-                attachment(AttachmentKind::Http, "request-wiring"),
+                attachment(AttachmentType::Http, "request-wiring"),
             ),
             (
                 "internal".to_owned(),
-                attachment(AttachmentKind::Internal, "request-wiring"),
+                attachment(AttachmentType::Internal, "request-wiring"),
             ),
             (
                 "studio".to_owned(),
-                attachment(AttachmentKind::Studio, "studio-wiring"),
+                attachment(AttachmentType::Studio, "studio-wiring"),
             ),
             (
                 "cron".to_owned(),
-                attachment(AttachmentKind::Cron, "background-wiring"),
+                attachment(AttachmentType::Cron, "background-wiring"),
             ),
             (
                 "route".to_owned(),
@@ -1461,7 +1461,7 @@ mod tests {
                         component: "orders".to_owned(),
                         operation: "orders:order/get@1.0.0".to_owned(),
                     },
-                    ..attachment(AttachmentKind::Http, "unused")
+                    ..attachment(AttachmentType::Http, "unused")
                 },
             ),
         ]));

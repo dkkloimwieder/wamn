@@ -1,13 +1,13 @@
 {
   "entry-get-http": {
-    "kind": "http",
+    "type": "http",
     "package-id": "ui_scaffold_fixture",
     "wiring-id": "entry_get",
     "wiring-version": 1,
-    "definition-hash": "sha256:aa3411356694d4a6a224d42ca6b34bc9f28cfd88f5a07aa53fd61bb87f2bbba1",
+    "definition-hash": "sha256:5ac60c063ae10bc6ac38bb659709bc461a29ae13bad7e6803ba80ce42ecfbce0",
     "definition": {
       "id": "entry-get-http",
-      "kind": "http",
+      "type": "http",
       "route": {
         "path": "/entry/get"
       },
@@ -47,14 +47,14 @@
     "registered-operation": "ui-scaffold-fixture:entry/get"
   },
   "entry-update-http": {
-    "kind": "http",
+    "type": "http",
     "package-id": "ui_scaffold_fixture",
     "wiring-id": "entry_update",
     "wiring-version": 1,
-    "definition-hash": "sha256:9ded5b10c3e29a6ab36b7add270a41010a619adf6e05df449683063994173847",
+    "definition-hash": "sha256:4f3ffc3a2b36491632b90ff838c6bcbade5a266a320d1305e81a9973f61e68f5",
     "definition": {
       "id": "entry-update-http",
-      "kind": "http",
+      "type": "http",
       "route": {
         "path": "/entry/update"
       },

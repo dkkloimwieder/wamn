@@ -12,7 +12,7 @@ use std::process::Command;
 use serde_json::Value;
 
 use crate::client_ir::{ClientContractIr, ReplayIr};
-use crate::client_plan::{ClientPlan, ModelPlan, ScreenPlan, SuppliedKind};
+use crate::client_plan::{ClientPlan, ModelPlan, ScreenPlan, SuppliedType};
 use crate::client_rust::route_helper_names;
 use crate::generate::GeneratedFile;
 use crate::manifest::rust_identifier;
@@ -466,7 +466,7 @@ fn emit_model(
             ("model", screen.model),
             ("name", screen.name),
             ("operation", operation.operation.as_str()),
-            ("kind", operation.kind.as_str()),
+            ("type_", operation.type_.as_str()),
         ] {
             writeln!(source, "    {key}: {value:?},").expect("write to String");
         }
@@ -520,12 +520,12 @@ fn emit_model(
         .expect("write to String");
         source.push_str("    supplied: &[\n");
         for field in &screen.supplied {
-            let kind = match field.kind {
-                SuppliedKind::RequestId => "RequestId",
-                SuppliedKind::IdempotencyKey => "IdempotencyKey",
-                SuppliedKind::OccurredAt => "OccurredAt",
+            let kind = match field.type_ {
+                SuppliedType::RequestId => "RequestId",
+                SuppliedType::IdempotencyKey => "IdempotencyKey",
+                SuppliedType::OccurredAt => "OccurredAt",
             };
-            writeln!(source, "        screen::SuppliedField {{ path: {:?}, kind: screen::SuppliedKind::{kind} }},", field.path).expect("write to String");
+            writeln!(source, "        screen::SuppliedField {{ path: {:?}, type_: screen::SuppliedType::{kind} }},", field.path).expect("write to String");
         }
         source.push_str("    ],\n};\n");
         writeln!(source, "\n#[must_use]\npub fn {function}(binding: submission::SessionBinding) -> screen::Screen {{\n    screen::Screen::new(&{spec}, binding)\n}}").expect("write to String");
@@ -567,7 +567,7 @@ fn emit_response(source: &mut String, screen: &ScreenPlan<'_>, fields: &str) {
         writeln!(source, "            submission::ErrorCase {{ literal: {:?}, required: &{:?}, sources: &{:?} }},", error.literal, error.detail_required, error.sources).expect("write to String");
     }
     source.push_str("        ],\n");
-    writeln!(source, "        kind: {:?},", operation.kind).expect("write to String");
+    writeln!(source, "        type_: {:?},", operation.type_).expect("write to String");
     writeln!(source, "        transaction: {:?},", operation.transaction).expect("write to String");
     writeln!(
         source,

@@ -58,7 +58,7 @@ pub(super) fn emit_package_publication(
             };
             let definition = json!({
                 "id": id,
-                "kind": "http",
+                "type": "http",
                 "route": {"path": format!("{path_prefix}/{model_name}/{action}")},
                 "input-schema": schema,
                 "raw-body-bytes": {"maximum": RAW_BODY_MAXIMUM},
@@ -67,7 +67,7 @@ pub(super) fn emit_package_publication(
             attachments.insert(
                 id,
                 json!({
-                    "kind": "http",
+                    "type": "http",
                     "package-id": package.id,
                     "component": component,
                     "operation": registered,

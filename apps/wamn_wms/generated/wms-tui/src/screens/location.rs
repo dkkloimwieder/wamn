@@ -6,7 +6,7 @@ pub static CREATE_SPEC: screen::ScreenSpec = screen::ScreenSpec {
     model: "location",
     name: "create",
     operation: "wamn-wms:location/create@1.0.0",
-    kind: "create",
+    type_: "create",
     input: crate::location::LOCATION_CREATE_INPUT_SCHEMA,
     input_schema: Some(
         "{\"items\":{\"additionalProperties\":false,\"properties\":{\"idempotency_key\":{\"minLength\":1,\"type\":\"string\"},\"location_code\":{\"minLength\":1,\"type\":[\"string\",\"null\"],\"x-wamn-explicit-null\":\"invalid_input\"},\"request_id\":{\"minLength\":1,\"type\":\"string\"}},\"required\":[\"idempotency_key\",\"request_id\",\"location_code\"],\"type\":\"object\"},\"maxItems\":100,\"minItems\":1,\"type\":\"array\"}",
@@ -53,7 +53,7 @@ pub static CREATE_SPEC: screen::ScreenSpec = screen::ScreenSpec {
                 sources: &["unique_violation"],
             },
         ],
-        kind: "create",
+        type_: "create",
         transaction: Some("explicit_per_input"),
         direct: true,
         replay: submission::Replay::Claim,
@@ -71,11 +71,11 @@ pub static CREATE_SPEC: screen::ScreenSpec = screen::ScreenSpec {
     supplied: &[
         screen::SuppliedField {
             path: "idempotency_key",
-            kind: screen::SuppliedKind::IdempotencyKey,
+            type_: screen::SuppliedType::IdempotencyKey,
         },
         screen::SuppliedField {
             path: "request_id",
-            kind: screen::SuppliedKind::RequestId,
+            type_: screen::SuppliedType::RequestId,
         },
     ],
 };
@@ -89,7 +89,7 @@ pub static GET_SPEC: screen::ScreenSpec = screen::ScreenSpec {
     model: "location",
     name: "get",
     operation: "wamn-wms:location/get@1.0.0",
-    kind: "get",
+    type_: "get",
     input: crate::location::LOCATION_GET_INPUT_SCHEMA,
     input_schema: Some(
         "{\"items\":{\"additionalProperties\":false,\"properties\":{\"id\":{\"pattern\":\"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$\",\"type\":\"string\"}},\"required\":[\"id\"],\"type\":\"object\"},\"maxItems\":100,\"minItems\":1,\"type\":\"array\"}",
@@ -131,7 +131,7 @@ pub static GET_SPEC: screen::ScreenSpec = screen::ScreenSpec {
                 sources: &["statement_timeout"],
             },
         ],
-        kind: "get",
+        type_: "get",
         transaction: Some("implicit"),
         direct: true,
         replay: submission::Replay::Unknown,
@@ -158,10 +158,10 @@ pub static QUERY_SPEC: screen::ScreenSpec = screen::ScreenSpec {
     model: "location",
     name: "query",
     operation: "wamn-wms:location/query@1.0.0",
-    kind: "query",
+    type_: "query",
     input: crate::location::LOCATION_QUERY_INPUT_SCHEMA,
     input_schema: Some(
-        "{\"items\":{\"additionalProperties\":false,\"properties\":{\"cursor\":{\"minLength\":1,\"type\":\"string\"},\"filter\":{\"additionalProperties\":false,\"properties\":{\"location_code\":{\"items\":{\"type\":\"string\"},\"type\":\"array\"}},\"type\":\"object\"},\"limit\":{\"maximum\":100,\"minimum\":1,\"type\":\"integer\"}},\"type\":\"object\"},\"maxItems\":100,\"minItems\":1,\"type\":\"array\"}",
+        "{\"items\":{\"additionalProperties\":false,\"properties\":{\"cursor\":{\"minLength\":1,\"type\":\"string\"},\"filter\":{\"additionalProperties\":false,\"properties\":{\"location_code\":{\"items\":{\"type\":\"string\"},\"type\":\"array\"}},\"type\":\"object\"},\"limit\":{\"maximum\":100,\"minimum\":1,\"type\":\"integer\"},\"pagination\":{\"type\":\"string\"}},\"type\":\"object\"},\"maxItems\":100,\"minItems\":1,\"type\":\"array\"}",
     ),
     response: submission::ResponseContract {
         schema: Some("{\"type\":\"array\"}"),
@@ -195,7 +195,7 @@ pub static QUERY_SPEC: screen::ScreenSpec = screen::ScreenSpec {
                 sources: &["statement_timeout"],
             },
         ],
-        kind: "query",
+        type_: "query",
         transaction: Some("implicit"),
         direct: true,
         replay: submission::Replay::Unknown,
@@ -222,7 +222,7 @@ pub static UPDATE_SPEC: screen::ScreenSpec = screen::ScreenSpec {
     model: "location",
     name: "update",
     operation: "wamn-wms:location/update@1.0.0",
-    kind: "update",
+    type_: "update",
     input: crate::location::LOCATION_UPDATE_INPUT_SCHEMA,
     input_schema: Some(
         "{\"items\":{\"additionalProperties\":false,\"properties\":{\"change\":{\"additionalProperties\":false,\"properties\":{\"location_code\":{\"type\":[\"string\",\"null\"],\"x-wamn-explicit-null\":\"invalid_input\"}},\"type\":\"object\"},\"expected_row_version\":{\"type\":\"integer\"},\"id\":{\"pattern\":\"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$\",\"type\":\"string\"},\"request_id\":{\"minLength\":1,\"type\":\"string\"}},\"required\":[\"expected_row_version\",\"id\",\"request_id\",\"change\"],\"type\":\"object\"},\"maxItems\":100,\"minItems\":1,\"type\":\"array\"}",
@@ -274,7 +274,7 @@ pub static UPDATE_SPEC: screen::ScreenSpec = screen::ScreenSpec {
                 sources: &["unique_violation"],
             },
         ],
-        kind: "update",
+        type_: "update",
         transaction: Some("implicit"),
         direct: true,
         replay: submission::Replay::Unknown,
@@ -298,7 +298,7 @@ pub static UPDATE_SPEC: screen::ScreenSpec = screen::ScreenSpec {
     requires_composition: false,
     supplied: &[screen::SuppliedField {
         path: "request_id",
-        kind: screen::SuppliedKind::RequestId,
+        type_: screen::SuppliedType::RequestId,
     }],
 };
 

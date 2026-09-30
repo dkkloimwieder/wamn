@@ -4,8 +4,8 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use serde_json::{Value, json};
 use wamn_catalog::{
-    ArtifactHash, AttachmentAuthPolicy, AttachmentKind, AttachmentTarget, CatalogIdentityError,
-    DefinitionHash, EffectiveReleaseId, OperationKind, PackageCoordinate, ServingAttachment,
+    ArtifactHash, AttachmentAuthPolicy, AttachmentTarget, AttachmentType, CatalogIdentityError,
+    DefinitionHash, EffectiveReleaseId, OperationType, PackageCoordinate, ServingAttachment,
     ServingComponent, ServingComponentOperation, ServingManifest, ServingRegistration,
     ServingRegistrationInput, ServingRelease, ServingRoute, ServingWiring,
     parse_attachment_auth_policy,
@@ -110,7 +110,7 @@ fn routes() -> BTreeSet<ServingRoute> {
         package_id: "platform_fixture_overlay".into(),
         component: "http-request".into(),
         operation: "platform-fixture-overlay:widget/get@3.0.0".into(),
-        kind: OperationKind::Get,
+        type_: OperationType::Get,
         reads: BTreeSet::new(),
         revision: None,
         idempotency: None,
@@ -129,7 +129,7 @@ fn manifest() -> ServingManifest {
             (
                 "widget-get-http".into(),
                 ServingAttachment {
-                    kind: AttachmentKind::Http,
+                    type_: AttachmentType::Http,
                     package_id: "platform_fixture_overlay".into(),
                     target: AttachmentTarget::Route {
                         component: "http-request".into(),
@@ -148,7 +148,7 @@ fn manifest() -> ServingManifest {
             (
                 "orders-http".into(),
                 ServingAttachment {
-                    kind: AttachmentKind::Http,
+                    type_: AttachmentType::Http,
                     package_id: "platform_fixture_overlay".into(),
                     target: AttachmentTarget::Wiring {
                         wiring_id: "orders".into(),
@@ -215,6 +215,14 @@ fn the_format_four_preimage_and_digest_are_pinned() {
 
 #[test]
 fn the_frozen_format_three_vector_refuses_with_its_version() {
+    // The bytes are the pinned format-3 vector, not a hand-made stand-in.
+    let raw = <sha2::Sha256 as sha2::Digest>::digest(format_three_vector::CANONICAL_BYTES);
+    let hex: String = raw.iter().fold(String::new(), |mut out, byte| {
+        use std::fmt::Write as _;
+        write!(out, "{byte:02x}").expect("writing to a string is infallible");
+        out
+    });
+    assert_eq!(format!("sha256:{hex}"), format_three_vector::DIGEST);
     let error = ServingManifest::from_canonical_bytes(format_three_vector::CANONICAL_BYTES)
         .expect_err("format 4 refuses the frozen format-3 bytes");
     assert!(

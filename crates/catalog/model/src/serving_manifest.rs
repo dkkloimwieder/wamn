@@ -23,7 +23,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::{
-    AdmittedComponent, AdmittedComponentOperation, ArtifactHash, AttachmentKind,
+    AdmittedComponent, AdmittedComponentOperation, ArtifactHash, AttachmentType,
     CatalogIdentityError, ComponentOperationDependency, ComponentSqlStatement, DefinitionHash,
     EffectiveReleaseId, HASH_PREFIX, ManifestDigest, PackageCoordinate,
     package::validate_canonical_operation_for_package, validate_digest, validate_text,
@@ -349,7 +349,7 @@ pub struct ServingWiring {
 /// `operation.json`, which is the only source of this fact.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum OperationKind {
+pub enum OperationType {
     Get,
     Query,
     Create,
@@ -360,7 +360,7 @@ pub enum OperationKind {
     EventHandler,
 }
 
-impl OperationKind {
+impl OperationType {
     /// The kinds that read without changing a record.
     pub const READ_KINDS: [Self; 3] = [Self::Get, Self::Query, Self::Projection];
 
@@ -388,7 +388,7 @@ pub struct ServingRoute {
     pub component: String,
     pub operation: String,
     #[serde(rename = "type")]
-    pub kind: OperationKind,
+    pub type_: OperationType,
     /// The model relations that a read of this route reads, from the
     /// `relations` of its generated contract. A history table stands for its
     /// model relation, whose version changes in the same transaction. A route
@@ -585,7 +585,7 @@ pub enum AttachmentTarget {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(try_from = "AttachmentWire", into = "AttachmentWire")]
 pub struct ServingAttachment {
-    pub kind: AttachmentKind,
+    pub type_: AttachmentType,
     pub package_id: String,
     pub target: AttachmentTarget,
     pub definition_hash: DefinitionHash,
@@ -600,7 +600,8 @@ pub struct ServingAttachment {
 #[derive(Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 struct AttachmentWire {
-    kind: AttachmentKind,
+    #[serde(rename = "type")]
+    type_: AttachmentType,
     package_id: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     component: Option<String>,
@@ -644,7 +645,7 @@ impl TryFrom<AttachmentWire> for ServingAttachment {
             }
         };
         Ok(Self {
-            kind: wire.kind,
+            type_: wire.type_,
             package_id: wire.package_id,
             target,
             definition_hash: wire.definition_hash,
@@ -668,7 +669,7 @@ impl From<ServingAttachment> for AttachmentWire {
             } => (None, None, Some(wiring_id), Some(wiring_version)),
         };
         Self {
-            kind: attachment.kind,
+            type_: attachment.type_,
             package_id: attachment.package_id,
             component,
             operation,
@@ -701,7 +702,7 @@ impl ServingAttachment {
                     routes.insert(
                         id,
                         RouteAttachment {
-                            kind: attachment.kind,
+                            type_: attachment.type_,
                             package_id: attachment.package_id,
                             component,
                             operation,
@@ -719,7 +720,7 @@ impl ServingAttachment {
                     wirings.insert(
                         id,
                         WiringAttachment {
-                            kind: attachment.kind,
+                            type_: attachment.type_,
                             package_id: attachment.package_id,
                             wiring_id,
                             wiring_version,
@@ -739,7 +740,7 @@ impl ServingAttachment {
 impl From<RouteAttachment> for ServingAttachment {
     fn from(attachment: RouteAttachment) -> Self {
         Self {
-            kind: attachment.kind,
+            type_: attachment.type_,
             package_id: attachment.package_id,
             target: AttachmentTarget::Route {
                 component: attachment.component,
@@ -756,7 +757,7 @@ impl From<RouteAttachment> for ServingAttachment {
 impl From<WiringAttachment> for ServingAttachment {
     fn from(attachment: WiringAttachment) -> Self {
         Self {
-            kind: attachment.kind,
+            type_: attachment.type_,
             package_id: attachment.package_id,
             target: AttachmentTarget::Wiring {
                 wiring_id: attachment.wiring_id,
@@ -784,7 +785,7 @@ impl From<AttachmentRef<'_>> for ServingAttachment {
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct RouteAttachment {
     #[serde(rename = "type")]
-    pub kind: AttachmentKind,
+    pub type_: AttachmentType,
     pub package_id: String,
     pub component: String,
     pub operation: String,
@@ -801,7 +802,7 @@ pub struct RouteAttachment {
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct WiringAttachment {
     #[serde(rename = "type")]
-    pub kind: AttachmentKind,
+    pub type_: AttachmentType,
     pub package_id: String,
     pub wiring_id: String,
     pub wiring_version: u32,
@@ -823,10 +824,10 @@ pub enum AttachmentRef<'a> {
 }
 
 impl<'a> AttachmentRef<'a> {
-    pub fn kind(self) -> AttachmentKind {
+    pub fn kind(self) -> AttachmentType {
         match self {
-            Self::Route(attachment) => attachment.kind,
-            Self::Wiring(attachment) => attachment.kind,
+            Self::Route(attachment) => attachment.type_,
+            Self::Wiring(attachment) => attachment.type_,
         }
     }
 
@@ -1195,7 +1196,7 @@ impl ServingManifest {
             validate_package_member(&package_versions, &route.package_id)?;
             validate_text(&route.component, "component")?;
             validate_text(&route.operation, "operation")?;
-            if route.kind == OperationKind::EventHandler {
+            if route.type_ == OperationType::EventHandler {
                 return invalid(format!(
                     "route {}::{} operation {:?} is an event handler, and an event handler is not a route",
                     route.package_id, route.component, route.operation
@@ -1342,7 +1343,7 @@ fn validate_route_target(
     let operation = attachment.operation.as_str();
     validate_text(component, "component")?;
     validate_text(operation, "operation")?;
-    if attachment.kind == AttachmentKind::Cron {
+    if attachment.type_ == AttachmentType::Cron {
         return invalid(format!(
             "cron attachment {attachment_id:?} cannot target a route"
         ));
@@ -1597,7 +1598,7 @@ mod tests {
             package_id: "base".into(),
             component: "http-request".into(),
             operation: "base:widget/get@1.0.0".into(),
-            kind: OperationKind::Get,
+            type_: OperationType::Get,
             reads: BTreeSet::new(),
             revision: None,
             idempotency: None,
@@ -1618,7 +1619,7 @@ mod tests {
 
     fn attachment() -> ServingAttachment {
         ServingAttachment {
-            kind: AttachmentKind::Http,
+            type_: AttachmentType::Http,
             package_id: "base".into(),
             target: AttachmentTarget::Wiring {
                 wiring_id: "orders".into(),
@@ -2472,7 +2473,7 @@ mod tests {
         );
 
         let mut cron = route_attachment();
-        cron.kind = AttachmentKind::Cron;
+        cron.type_ = AttachmentType::Cron;
         let error = ServingManifest::new(
             release(),
             components(),
@@ -2493,13 +2494,13 @@ mod tests {
             ..route.clone()
         };
         let handler = ServingRoute {
-            kind: OperationKind::EventHandler,
+            type_: OperationType::EventHandler,
             ..route.clone()
         };
         let duplicate = BTreeSet::from([
             route.clone(),
             ServingRoute {
-                kind: OperationKind::Query,
+                type_: OperationType::Query,
                 ..route
             },
         ]);

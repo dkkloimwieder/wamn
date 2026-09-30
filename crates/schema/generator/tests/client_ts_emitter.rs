@@ -333,7 +333,7 @@ fn an_event_handler_emits_nothing_and_an_unexposed_operation_gets_no_function() 
     let mut ir = release();
     let mut handler = ir.models[0].operations[0].clone();
     handler.name = "widget_archived".to_owned();
-    handler.kind = "event_handler".to_owned();
+    handler.type_ = "event_handler".to_owned();
     handler.operation = "platform-fixture:widget/widget-archived@1.0.0".to_owned();
     ir.models[0].operations.push(handler);
     ir.models[0]

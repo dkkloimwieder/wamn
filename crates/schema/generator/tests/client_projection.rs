@@ -54,7 +54,7 @@ fn records() -> (Contracts, BTreeMap<String, RouteIr>) {
         &mut contracts,
         "read_projection",
         json!({
-            "operation": READ, "kind": "get", "grant": READ,
+            "operation": READ, "type": "get", "grant": READ,
             "permission_token": "entry.read_projection", "result": "one",
             "record": {
                 "relation": "inventory.stock", "key_field": "stock_id",
@@ -71,7 +71,7 @@ fn records() -> (Contracts, BTreeMap<String, RouteIr>) {
         &mut contracts,
         "apply_title",
         json!({
-            "operation": UPDATE, "kind": "update", "grant": UPDATE,
+            "operation": UPDATE, "type": "update", "grant": UPDATE,
             "permission_token": "entry.apply_title", "result": "one",
             "record": {
                 "relation": "inventory.stock", "key_field": "stock_id",
@@ -118,9 +118,9 @@ fn change(contracts: &mut Contracts, path: &str, pointer: &str, value: Value) {
 fn declared_kind_and_record_mappings_bind_operations_with_unrelated_names() {
     let (contracts, routes) = records();
     let ir = project(&contracts, &routes);
-    assert_eq!(operation(&ir, "read_projection").kind, "get");
+    assert_eq!(operation(&ir, "read_projection").type_, "get");
     let update = operation(&ir, "apply_title");
-    assert_eq!(update.kind, "update");
+    assert_eq!(update.type_, "update");
     assert!(!update.requires_composition);
     assert_eq!(
         update.revision_binding,
@@ -142,7 +142,7 @@ fn declared_delete_needs_a_compatible_exposed_read_for_its_revision() {
         change(
             &mut contracts,
             "entry/apply_title.operation.json",
-            "/kind",
+            "/type",
             json!("delete"),
         );
         if !exposed {
@@ -150,7 +150,7 @@ fn declared_delete_needs_a_compatible_exposed_read_for_its_revision() {
         }
         let ir = project(&contracts, &routes);
         let delete = operation(&ir, "apply_title");
-        assert_eq!(delete.kind, "delete");
+        assert_eq!(delete.type_, "delete");
         assert_eq!(delete.requires_composition, !exposed);
         if exposed {
             let binding = delete.revision_binding.as_ref().unwrap();
@@ -187,7 +187,7 @@ fn composed_record_read_uses_the_served_terminal_response_for_revision_binding()
             &mut contracts,
             "terminal",
             json!({
-                "operation": TERMINAL, "kind": "query", "grant": TERMINAL,
+                "operation": TERMINAL, "type": "query", "grant": TERMINAL,
                 "permission_token": "entry.terminal", "result": "one"
             }),
             json!({"fields": []}),
@@ -236,7 +236,7 @@ fn revision_binding_requires_one_served_record_even_when_terminal_fields_match()
             &mut contracts,
             "terminal",
             json!({
-                "operation": TERMINAL, "kind": "projection", "grant": TERMINAL,
+                "operation": TERMINAL, "type": "projection", "grant": TERMINAL,
                 "permission_token": "entry.terminal", "result": class
             }),
             json!({"fields": []}),
@@ -330,7 +330,7 @@ fn custom_state_and_claim_declarations_do_not_invent_input_key_links() {
     ] {
         let identity = format!("example:entry/{name}@1.0.0");
         let mut declaration = json!({
-            "operation": identity, "kind": "command", "grant": identity,
+            "operation": identity, "type": "command", "grant": identity,
             "permission_token": format!("entry.{name}"), "result": "one",
             "idempotent_by": idempotent_by,
             "relations": [{"schema": "inventory", "table": "stock"}]
@@ -410,7 +410,7 @@ fn platform_query_closed_sort_domains_remain_typed() {
         &mut contracts,
         "closed_query",
         json!({
-            "operation": "example:entry/closed-query@1.0.0", "kind": "query",
+            "operation": "example:entry/closed-query@1.0.0", "type": "query",
             "grant": "example:entry/closed-query@1.0.0",
             "permission_token": "entry.closed_query", "result": "page"
         }),
@@ -531,7 +531,7 @@ fn query_columns_remain_specific_to_each_result_contract() {
             &mut contracts,
             name,
             json!({
-                "operation": identity, "kind": "query", "grant": identity,
+                "operation": identity, "type": "query", "grant": identity,
                 "permission_token": format!("entry.{name}"), "result": "page"
             }),
             json!({"fields": []}),

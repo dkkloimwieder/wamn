@@ -265,8 +265,8 @@ pub(super) fn resolve_route_host_overlay(
     validate_attachment_definition_hashes(authored)?;
     let first_routed = authored.iter().find(|(_, attachment)| {
         matches!(
-            attachment.kind,
-            wamn_catalog::AttachmentKind::Http | wamn_catalog::AttachmentKind::Studio
+            attachment.type_,
+            wamn_catalog::AttachmentType::Http | wamn_catalog::AttachmentType::Studio
         )
     });
     let Some((first_attachment_id, _)) = first_routed else {
@@ -293,8 +293,8 @@ pub(super) fn resolve_route_host_overlay(
     let mut route_keys = BTreeSet::new();
     for (attachment_id, attachment) in &mut resolved {
         if !matches!(
-            attachment.kind,
-            wamn_catalog::AttachmentKind::Http | wamn_catalog::AttachmentKind::Studio
+            attachment.type_,
+            wamn_catalog::AttachmentType::Http | wamn_catalog::AttachmentType::Studio
         ) {
             continue;
         }
@@ -402,8 +402,8 @@ fn validate_authored_attachment_routes(
             ));
         }
         if matches!(
-            attachment.kind,
-            wamn_catalog::AttachmentKind::Http | wamn_catalog::AttachmentKind::Studio
+            attachment.type_,
+            wamn_catalog::AttachmentType::Http | wamn_catalog::AttachmentType::Studio
         ) && attachment.definition.pointer("/route/method").is_some()
         {
             return Err(MintManifestError::new(
@@ -426,58 +426,58 @@ mod tests {
     const FIXTURE_ROUTES: &[(&str, &str)] = &[
         (
             "widget-archive-http",
-            "sha256:318e0ed97696b8fa54040bf7fdf8d44251ff7aa18acc475b6a7464d1cd5e3535",
+            "sha256:258f16829d08346de513cc9d0fb123ec4b8e9eb6ae9696c68da5ccfa252a2b69",
         ),
         (
             "widget-create-http",
-            "sha256:4189444939f50079641e7492fc76f00227d87c31617c9533d2bbbf0f92ebbc11",
+            "sha256:9503afb0a101e407ff840430d229fd1628c83605963921b9877b6057926e9c9d",
         ),
         (
             "widget-delete-http",
-            "sha256:f03abc2aeb927967fe464cc8d95103aea930cb7587923dd4cc4a5e2f81570937",
+            "sha256:96d3221727142dc6745fc078b06d64c67b4e3afb95921bcbaf7b5337d296c121",
         ),
         (
             "widget-get-http",
-            "sha256:8c02eb64b189b763080d8b33c505ac8ac728bdd5556a772318e306511f78a788",
+            "sha256:be12a2d0f49cc998c581271aa6bdfc131bd552c4ea73a6da7e7ecd6f9dfc1dc2",
         ),
         (
             "widget-list-http",
-            "sha256:e5905f348a94051788ffd9eece1c61e6716ea6864e56cf25dc3d2ac93041c6ed",
+            "sha256:6108c568f9b01d428f2f100c0b3e4f2c97e6c91291676d5d17f127c8714ea3e6",
         ),
         (
             "widget-maker-get-http",
-            "sha256:039d448ec7fbdf2bed46c6e0809f297fc4ed031fb67687177c363cea7bbafd25",
+            "sha256:178499cb0949cf49768312369ccbdeede8dce515c6bce049769a1e946f9ad8b2",
         ),
         (
             "widget-maker-list-http",
-            "sha256:45ff1b1784d3f7799fea1e777a960099d0c4589c94eec78220ad17579bcc094c",
+            "sha256:b76b3cba4edb6be3dfd8767dc2324265133efa093af564fa4149d5292baccf1e",
         ),
         (
             "widget-maker-query-http",
-            "sha256:3be20be39c575f8deb827f95bc441840e8cd4fc9c9efb92ffe4dca22f9a9668e",
+            "sha256:c05db7c32a18e19fca6de41609e3666339ba2ef0336e294ed2ae7333fd42de75",
         ),
         (
             "widget-query-http",
-            "sha256:6c98260e18b130caf89668deacb9d14a1d34d973ab2068d952c38751920a17e8",
+            "sha256:e318322f89e385d021d176849c8926f18c538f3f00d9badacf112e75ab391b3f",
         ),
         (
             "widget-record-batch-http",
-            "sha256:c9617868c09c438f4e03634c9f21ccc5f21e6d6f870af592b691f0bf579d5d2b",
+            "sha256:8fcea4457fb67d951ddaa86ec9bcda160399a85ac98523a1006327f74fe74b09",
         ),
         (
             "widget-tag-update-http",
-            "sha256:4f99f1c2a78e9cb92500b04b3454e827e2e672a2721beda0654cd3db0d430b0c",
+            "sha256:1543ab164fe1711f6a22ce07d33ae304ccb1f7ec5fedc38149387f74201659bd",
         ),
         (
             "widget-update-http",
-            "sha256:11aa126e11433c107a43b1a1e6a36f47471a603bf768196fa0c22c5eac5f800e",
+            "sha256:1518132fc051dfe9e421730f88a952e1cde0bbd75ffa8e319c228a67058327d4",
         ),
     ];
     const FIXTURE_ATTACHMENTS_DIGEST: &str =
-        "sha256:0a63a518eeb9ac7bcccf03a1938589fd4cf5e0f65b641cd851842802a873d802";
+        "sha256:7a386d6f6698fb3d3a3e5d457ada27736c9d50efb2aa3d6d228f8b1bf2a40d5f";
     /// The rendered fixture declaration, before generation wrote its entries.
     const FIXTURE_DECLARATION_DIGEST: &str =
-        "sha256:e6770014d60668c5e8ed4f12a078576c2c884c398cff8ca1782b09e601e63fef";
+        "sha256:891bfea270f69a15666dabeba69eaa26b7c48256de0c34dc00fe5a2bce12e6f6";
 
     /// A publish of the fixture reads the same routes and the same component
     /// declaration from the generated entries as from the authored ones they

@@ -2,7 +2,7 @@ use serde_json::json;
 use wamn_schema_generator::client_ir::{ClientContractIr, FieldIr, OperationIr};
 use wamn_schema_generator::client_plan::{
     ChosenRevision, ClientPlan, LinkReason, NoRole, RecordRead, ResolvedColumn, Role, RowLink,
-    Rows, ScreenPlan, SuppliedKind, UnresolvedColumn, UnsearchableSelector,
+    Rows, ScreenPlan, SuppliedType, UnresolvedColumn, UnsearchableSelector,
     effective_result_fields,
 };
 
@@ -32,7 +32,7 @@ fn screens_drop_event_handlers_and_sort_within_their_model() {
     let mut ir = release();
     let mut handler = operation(&mut ir, "get").clone();
     handler.name = "widget_archived".to_owned();
-    handler.kind = "event_handler".to_owned();
+    handler.type_ = "event_handler".to_owned();
     handler.operation = "platform-fixture:widget/widget-archived@1.0.0".to_owned();
     let widget = fixture::widget_index(&ir);
     ir.models[widget].operations.push(handler);
@@ -75,11 +75,11 @@ fn supplied_inputs_name_only_the_reserved_contract_paths() {
         screen(&plan, "create")
             .supplied
             .iter()
-            .map(|field| (field.path, field.kind))
+            .map(|field| (field.path, field.type_))
             .collect::<Vec<_>>(),
         [
-            ("idempotency_key", SuppliedKind::IdempotencyKey),
-            ("request_id", SuppliedKind::RequestId),
+            ("idempotency_key", SuppliedType::IdempotencyKey),
+            ("request_id", SuppliedType::RequestId),
         ],
         "reserved paths keep their contract order"
     );
@@ -114,14 +114,14 @@ fn supplied_inputs_name_only_the_reserved_contract_paths() {
         screen(&plan, "archive")
             .supplied
             .iter()
-            .map(|field| (field.path, field.kind))
+            .map(|field| (field.path, field.type_))
             .collect::<Vec<_>>(),
         [
-            ("request_id", SuppliedKind::RequestId),
-            ("idempotency_key", SuppliedKind::IdempotencyKey),
-            ("value.idempotency_key", SuppliedKind::IdempotencyKey),
-            ("occurred_at", SuppliedKind::OccurredAt),
-            ("value.occurred_at", SuppliedKind::OccurredAt),
+            ("request_id", SuppliedType::RequestId),
+            ("idempotency_key", SuppliedType::IdempotencyKey),
+            ("value.idempotency_key", SuppliedType::IdempotencyKey),
+            ("occurred_at", SuppliedType::OccurredAt),
+            ("value.occurred_at", SuppliedType::OccurredAt),
         ],
         "a path that resembles a reserved path is operator input"
     );
@@ -226,7 +226,7 @@ fn each_platform_operation_takes_its_role_from_kind_and_result_class() {
         ("delete", "delete", Some("one"), Role::Delete),
     ] {
         let screen = screen(&plan, name);
-        assert_eq!(screen.contract.kind, kind, "{name}");
+        assert_eq!(screen.contract.type_, kind, "{name}");
         assert_eq!(screen.result_class, result, "{name}");
         assert_eq!(screen.role, role, "{name}");
         assert!(screen.role.is_supported(), "{name}");
@@ -238,7 +238,7 @@ fn each_platform_operation_takes_its_role_from_kind_and_result_class() {
 fn a_bounded_list_read_and_a_projection_both_take_the_table_role() {
     let mut ir = release();
     let query = operation(&mut ir, "query");
-    query.kind = "projection".to_owned();
+    query.type_ = "projection".to_owned();
     query
         .route
         .as_mut()
@@ -278,7 +278,7 @@ fn shapes_with_no_role_are_listed_by_operation_name_with_a_reason() {
         .response
         .result_class = None;
     let widget_wrangler = operation(&mut ir, "archive");
-    widget_wrangler.kind = "wrangle".to_owned();
+    widget_wrangler.type_ = "wrangle".to_owned();
     let plan = ClientPlan::from_ir(&ir);
     assert_eq!(
         plan.unsupported(),

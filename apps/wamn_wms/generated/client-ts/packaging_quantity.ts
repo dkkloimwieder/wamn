@@ -2,7 +2,7 @@
 //
 // `packaging_quantity` operations of package `wamn_wms`.
 
-import type { FieldMap, Numeric, OperationRoute, Outcome, Timestamptz, Transport, Uuid } from "@wamn/web-runtime";
+import type { FieldMap, JsonValue, Numeric, OperationRoute, Outcome, Timestamptz, Transport, Uuid } from "@wamn/web-runtime";
 import { reviveOutcome, toWire } from "@wamn/web-runtime";
 
 /** Input for `wamn-wms:packaging-quantity/get@1.0.0`. */
@@ -66,7 +66,7 @@ export const PACKAGING_QUANTITY_GET_ROUTE: OperationRoute = {
     ],
     replay: null,
     direct: true,
-    kind: "get",
+    type: "get",
     transaction: "implicit",
   },
 };
@@ -91,12 +91,15 @@ export interface PackagingQuantityQueryRequest {
   cursor?: string;
   /** `int32`, omittable */
   limit?: number;
+  /** `keyset`, omittable */
+  pagination?: JsonValue;
 }
 
 /** What `wamn-wms:packaging-quantity/query@1.0.0` calls its input members. */
 export const PACKAGING_QUANTITY_QUERY_REQUEST_FIELDS: FieldMap = {
   "cursor": "cursor",
   "limit": "limit",
+  "pagination": "pagination",
 };
 
 /** One row of `wamn-wms:packaging-quantity/query@1.0.0`. */
@@ -162,7 +165,7 @@ export const PACKAGING_QUANTITY_QUERY_ROUTE: OperationRoute = {
     ],
     replay: null,
     direct: true,
-    kind: "query",
+    type: "query",
     transaction: "implicit",
   },
 };

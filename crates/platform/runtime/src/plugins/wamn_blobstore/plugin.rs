@@ -850,7 +850,7 @@ mod tests {
             package_id: route.origin.package_id.clone(),
             component: route.origin.component.clone(),
             operation: route.origin.operation.clone(),
-            kind: wamn_catalog::OperationKind::Command,
+            type_: wamn_catalog::OperationType::Command,
             reads: BTreeSet::new(),
             revision: None,
             idempotency: None,

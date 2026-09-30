@@ -75,9 +75,9 @@ The generator compares those choices with the schema and SQL. It does not replac
 | `filters[].match` | Application match mode of one filter. `exact` is the default and the contract leaves it unstated. `contains` and `prefix` match a part or the start of a text field with no `enum_fields` list. `range` takes one object with an optional inclusive `min` and `max`, on an int32, float64, numeric or timestamptz field. `is_null` takes one boolean on a nullable field: true keeps the empty rows. Generation refuses a mode on any other field. The generated query SQL implements the mode, and authored query SQL must implement the mode that its filter declares. Retain. |
 | `filters[].required`, `filters[].default.last_days` | Application band of a query. Only a `range` filter on a timestamptz field can be required, and only a required filter has a default of at least one day. A read without the band reads the last `last_days` days, as of the statement. A read that sends the band states its `min`, and a band with no default is always sent. Retain. |
 | `search.fields` | Application text fields of a query's server search. The request member `search` is one non-empty string, and a row matches if any field contains it in any case. Generation refuses a field that is not text, a repeated field, and an empty list. The search binds after the filters and before the cursor. Retain. |
-| Filter `binding` (`json_array` for a list, `json_range` for a range, `json_boolean` for is-null), sort `max_fields`, pagination `kind`, `.cursor`, and limit `invalid` | Fixed query protocol, including cursor version, canonical JSON, encoding, opacity, and refusal. Derive in generated contracts. |
+| Filter `binding` (`json_array` for a list, `json_range` for a range, `json_boolean` for is-null), sort `max_fields`, pagination `type`, `.cursor`, and limit `invalid` | Fixed query protocol, including cursor version, canonical JSON, encoding, opacity, and refusal. Derive in generated contracts. |
 | `internal_relations.*.schema`, `.table`, `.cdc` | Application relation selection and event-publication policy. PostgreSQL owns relation shape. Retain. |
-| Custom operation `kind`, `visibility`, `permission`, `connection` | Application operation exposure and authority selection. Retain. |
+| Custom operation `type`, `visibility`, `permission`, `connection` | Application operation exposure and authority selection. Retain. |
 | `transaction`, `automatic_retry`, `idempotent_by` | Application transaction and replay choices. `idempotent_by: claim` is the whole declaration of a claim: the engine claims the key in the [write log](#the-write-log), and `inherited` takes the claim of a base operation. Validation refuses a `claim` object. Retain. |
 | `pre_commit`, `participant` | Application participation contract and selection. Retain. |
 | `input.raw_body_maximum`, `.envelope.minimum`, `.maximum`, `.line.minimum`, `.maximum` | Application input bounds. Retain. |
@@ -445,7 +445,7 @@ An entry has these columns:
 - `id`: the id of the entry, a random `uuid` that PostgreSQL generates. A read that shows entries in a table keys its rows on it.
 - `tenant_id`: the tenant of the row, only in a history table under a tenant floor.
 - `row_key`: a JSONB object of the primary key columns.
-- `kind`: `insert`, `update`, or `delete`.
+- `type`: `insert`, `update`, or `delete`.
 - `operation`: the source of the write, from `app.operation`.
 - `changed_by`: the actor, from `app.user_id`.
 - `changed_at`: the one time of the entry, from `transaction_timestamp()`. Retention expires entries by this time.

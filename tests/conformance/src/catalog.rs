@@ -5,7 +5,7 @@ mod tests {
     use serde_json::json;
     use wamn_catalog::{
         ArtifactHash, ArtifactId, ArtifactIdentity, Attachment, AttachmentDraft, AttachmentId,
-        AttachmentKind, CanonicalJson, Source, SourceId, SourceKind,
+        AttachmentType, CanonicalJson, Source, SourceId, SourceKind,
     };
 
     fn artifact() -> ArtifactIdentity {
@@ -26,7 +26,7 @@ mod tests {
         let attachment = Attachment::resolve(
             AttachmentDraft {
                 id: AttachmentId::new("public").unwrap(),
-                kind: AttachmentKind::Http,
+                kind: AttachmentType::Http,
                 artifact_id: artifact.id().clone(),
                 source_ids: vec![source.id().clone()],
                 definition: CanonicalJson::new(json!({"method": "POST", "path": "/v1/run"}))
@@ -49,7 +49,7 @@ mod tests {
         let error = Attachment::resolve(
             AttachmentDraft {
                 id: AttachmentId::new("public").unwrap(),
-                kind: AttachmentKind::Http,
+                kind: AttachmentType::Http,
                 artifact_id: artifact.id().clone(),
                 source_ids: vec![SourceId::new("missing").unwrap()],
                 definition: CanonicalJson::new(json!({"path": "/"})).unwrap(),

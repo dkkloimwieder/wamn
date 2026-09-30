@@ -1439,7 +1439,7 @@ fn the_history_table_function_creates_one_fixed_shape_on_postgres() {
             ),
         )
     };
-    let fixed = "row_key:jsonb:t:, kind:text:t:, operation:text:t:, changed_by:uuid:t:, \
+    let fixed = "row_key:jsonb:t:, type:text:t:, operation:text:t:, changed_by:uuid:t:, \
                  changed_at:timestamp with time zone:t:, transaction_id:bigint:t:, \
                  before:jsonb:t:, after:jsonb:t:";
     assert_eq!(
@@ -1470,10 +1470,11 @@ fn the_history_table_function_creates_one_fixed_shape_on_postgres() {
         objects,
         "logged_history_after_not_null:n, logged_history_before_not_null:n, \
          logged_history_changed_at_not_null:n, logged_history_changed_by_not_null:n, \
-         logged_history_id_not_null:n, logged_history_kind_check:c, logged_history_kind_not_null:n, \
-         logged_history_operation_check:c, logged_history_operation_not_null:n, \
-         logged_history_pkey:p, logged_history_position_not_null:n, \
-         logged_history_row_key_not_null:n, logged_history_transaction_id_not_null:n \
+         logged_history_id_not_null:n, logged_history_operation_check:c, \
+         logged_history_operation_not_null:n, logged_history_pkey:p, \
+         logged_history_position_not_null:n, logged_history_row_key_not_null:n, \
+         logged_history_transaction_id_not_null:n, logged_history_type_check:c, \
+         logged_history_type_not_null:n \
          | PRIMARY KEY (row_key, \"position\") \
          | rh_probe.logged_history_position_seq \
          | wamn_db_owner",
@@ -1481,16 +1482,16 @@ fn the_history_table_function_creates_one_fixed_shape_on_postgres() {
          position), and leave the table and its sequence with the caller"
     );
 
-    // The kind CHECK accepts only insert, update, and delete.
+    // The type CHECK accepts only insert, update, and delete.
     apply(
         &db_url,
         &refuses_log_write(
-            "INSERT INTO rh_probe.logged_history (row_key, kind, operation, changed_by, \
+            "INSERT INTO rh_probe.logged_history (row_key, type, operation, changed_by, \
                changed_at, transaction_id, before, after) \
              VALUES ('{\"id\": 1}', 'upsert', 'admin:probe', \
                '00000000-0000-4000-8000-00000000000a', now(), 1, '{}', '{}')",
             "check_violation",
-            "refused_constraint = 'logged_history_kind_check'",
+            "refused_constraint = 'logged_history_type_check'",
         ),
     );
 
@@ -1591,7 +1592,7 @@ fn the_wamn_app_history_grants_come_from_the_grant_file_alone_on_postgres() {
         &format!(
             "{}\
              DO $$ BEGIN\n\
-               ASSERT (SELECT count(*) FROM rh_probe.logged_history WHERE kind = 'insert') = 1, \
+               ASSERT (SELECT count(*) FROM rh_probe.logged_history WHERE type = 'insert') = 1, \
                       'a guest insert must write one entry';\n\
              END $$;\n",
             logged_guest_transaction(
@@ -1717,7 +1718,7 @@ fn the_log_trigger_writes_one_entry_per_row_change_on_postgres() {
              DO $$ BEGIN\n\
                ASSERT (SELECT count(*) FROM rh_probe.logged_history) = 1, \
                       'one insert must write one entry';\n\
-               ASSERT (SELECT h.row_key = '{{\"id\": 1}}' AND h.kind = 'insert' \
+               ASSERT (SELECT h.row_key = '{{\"id\": 1}}' AND h.type = 'insert' \
                           AND h.operation = '{CREATE_OPERATION}' AND h.changed_by = '{ACTOR_A}' \
                           AND h.changed_at = l.created_at \
                           AND h.transaction_id = current_setting('rh.first_xact')::bigint \
@@ -1725,7 +1726,7 @@ fn the_log_trigger_writes_one_entry_per_row_change_on_postgres() {
                         FROM rh_probe.logged_history h, rh_probe.logged l WHERE l.id = 1), \
                       'an insert entry must hold the key, the actor, the operation, the \
                        transaction time and id, an empty before, and the full row';\n\
-               ASSERT (SELECT h.tenant_id = 't1' AND h.kind = 'insert' \
+               ASSERT (SELECT h.tenant_id = 't1' AND h.type = 'insert' \
                           AND h.row_key = '{{\"id\": 1, \"tenant_id\": \"t1\"}}' \
                           AND h.before = '{{}}' AND h.after = to_jsonb(t) \
                         FROM rh_probe.tenanted_history h, rh_probe.tenanted t), \
@@ -1755,13 +1756,13 @@ fn the_log_trigger_writes_one_entry_per_row_change_on_postgres() {
             "SELECT pg_sleep(0.01);\n\
              {updates}\
              DO $$ BEGIN\n\
-               ASSERT (SELECT array_agg(kind ORDER BY position) FROM rh_probe.logged_history) \
+               ASSERT (SELECT array_agg(type ORDER BY position) FROM rh_probe.logged_history) \
                         = ARRAY['insert', 'update', 'update'], \
                       'two changes must write two entries in position order, and a no-op \
                        and a replay must write none';\n\
                ASSERT (SELECT bool_and(changed_by = '{ACTOR_B}' AND operation = '{UPDATE_OPERATION}' \
                           AND transaction_id = current_setting('rh.second_xact')::bigint) \
-                        FROM rh_probe.logged_history WHERE kind = 'update'), \
+                        FROM rh_probe.logged_history WHERE type = 'update'), \
                       'each update entry must carry its actor, operation, and transaction id';\n\
                ASSERT (SELECT u.before = jsonb_build_object('note', 'first', 'revision', 1, \
                             'updated_at', i.after -> 'updated_at', 'updated_by', '{ACTOR_A}') \
@@ -1769,13 +1770,13 @@ fn the_log_trigger_writes_one_entry_per_row_change_on_postgres() {
                             'updated_at', wamn_history.row_image(l) -> 'updated_at', \
                             'updated_by', '{ACTOR_B}') \
                         FROM rh_probe.logged_history u, rh_probe.logged_history i, rh_probe.logged l \
-                        WHERE u.kind = 'update' AND i.kind = 'insert' AND l.id = 1 \
+                        WHERE u.type = 'update' AND i.type = 'insert' AND l.id = 1 \
                         ORDER BY u.position LIMIT 1), \
                       'the first update must record the changed columns, the stamps and \
                        the revision included';\n\
                ASSERT (SELECT before = '{{\"note\": \"second\", \"revision\": 2}}' \
                           AND after = '{{\"note\": \"third\", \"revision\": 3}}' \
-                        FROM rh_probe.logged_history WHERE kind = 'update' \
+                        FROM rh_probe.logged_history WHERE type = 'update' \
                         ORDER BY position DESC LIMIT 1), \
                       'the second update in the transaction must record only its changes';\n\
              END $$;\n"
@@ -1802,23 +1803,23 @@ fn the_log_trigger_writes_one_entry_per_row_change_on_postgres() {
             "SELECT pg_sleep(0.01);\n\
              {repair}\
              DO $$ DECLARE third bigint := current_setting('rh.third_xact')::bigint; BEGIN\n\
-               ASSERT (SELECT array_agg(kind ORDER BY position) FROM rh_probe.logged_history \
+               ASSERT (SELECT array_agg(type ORDER BY position) FROM rh_probe.logged_history \
                         WHERE row_key = '{{\"id\": 1}}') \
                         = ARRAY['insert', 'update', 'update', 'update', 'update', 'delete'] \
-                  AND (SELECT array_agg(kind ORDER BY position) FROM rh_probe.logged_history \
+                  AND (SELECT array_agg(type ORDER BY position) FROM rh_probe.logged_history \
                         WHERE row_key = '{{\"id\": 2}}') = ARRAY['insert', 'delete'], \
                       'the entries of each key must follow the changes in position order';\n\
                ASSERT (SELECT array_agg(k ORDER BY k) = ARRAY['overlay_grade', 'updated_at', 'updated_by'] \
                           AND bool_and(h.before -> 'overlay_grade' = 'null' \
                                        AND h.after -> 'overlay_grade' = '\"A\"') \
                         FROM rh_probe.logged_history h, jsonb_object_keys(h.after) k \
-                        WHERE h.kind = 'update' AND h.transaction_id = third \
+                        WHERE h.type = 'update' AND h.transaction_id = third \
                           AND h.after ? 'updated_by'), \
                       'an overlay column change must record the overlay column and the stamps';\n\
                ASSERT (SELECT before = '{{\"note\": \"third\", \"overlay_grade\": \"A\"}}' \
                           AND after = '{{\"note\": \"fourth\", \"overlay_grade\": \"B\"}}' \
                         FROM rh_probe.logged_history \
-                        WHERE kind = 'update' AND transaction_id = third \
+                        WHERE type = 'update' AND transaction_id = third \
                           AND NOT after ? 'updated_by'), \
                       'a base and an overlay change must share one entry';\n\
                ASSERT (SELECT d.after = '{{}}' AND d.before ->> 'note' = 'fourth' \
@@ -1827,20 +1828,20 @@ fn the_log_trigger_writes_one_entry_per_row_change_on_postgres() {
                           AND d.transaction_id = third AND i.transaction_id = third \
                           AND d.position < i.position \
                         FROM rh_probe.logged_history d, rh_probe.logged_history i \
-                        WHERE d.row_key = '{{\"id\": 1}}' AND d.kind = 'delete' \
-                          AND i.row_key = '{{\"id\": 2}}' AND i.kind = 'insert'), \
+                        WHERE d.row_key = '{{\"id\": 1}}' AND d.type = 'delete' \
+                          AND i.row_key = '{{\"id\": 2}}' AND i.type = 'insert'), \
                       'a key change must write a full delete under the old key and a full \
                        insert under the new key in one transaction';\n\
                ASSERT (SELECT d.before = i.after AND d.after = '{{}}' \
                           AND d.operation = '{REPAIR_OPERATION}' \
                         FROM rh_probe.logged_history d, rh_probe.logged_history i \
-                        WHERE d.row_key = '{{\"id\": 2}}' AND d.kind = 'delete' \
-                          AND i.row_key = '{{\"id\": 2}}' AND i.kind = 'insert'), \
+                        WHERE d.row_key = '{{\"id\": 2}}' AND d.type = 'delete' \
+                          AND i.row_key = '{{\"id\": 2}}' AND i.type = 'insert'), \
                       'a delete must record the full row in before and an empty after';\n\
                ASSERT (SELECT d.tenant_id = 't1' AND d.before = i.after AND d.after = '{{}}' \
                           AND d.transaction_id = third \
                         FROM rh_probe.tenanted_history d, rh_probe.tenanted_history i \
-                        WHERE d.kind = 'delete' AND i.kind = 'insert'), \
+                        WHERE d.type = 'delete' AND i.type = 'insert'), \
                       'a tenant delete must copy tenant_id from the deleted row';\n\
              END $$;\n"
         ),
@@ -1893,7 +1894,7 @@ fn the_log_trigger_refuses_and_rolls_back_the_write_on_postgres() {
             "{}\
              DO $$ BEGIN\n\
                ASSERT (SELECT array_agg(operation ORDER BY position) FROM rh_probe.logged_history \
-                        WHERE kind = 'update') = ARRAY[{accepted_list}], \
+                        WHERE type = 'update') = ARRAY[{accepted_list}], \
                       'the operation CHECK must accept each operation shape';\n\
              END $$;\n",
             logged_guest_transaction(&guest, ACTOR_A, CREATE_OPERATION, &accepted_writes),
@@ -2010,7 +2011,7 @@ fn the_log_trigger_refuses_and_rolls_back_the_write_on_postgres() {
             "SQLERRM = 'history-key-required'",
         ),
         refuses_log_write(
-            "UPDATE rh_probe.logged_history SET kind = 'update'",
+            "UPDATE rh_probe.logged_history SET type = 'update'",
             "insufficient_privilege",
             "true",
         ),
@@ -2154,7 +2155,7 @@ fn the_log_trigger_serializes_concurrent_changes_on_postgres() {
                ASSERT (SELECT note = 'from second' AND revision = 3 \
                         FROM rh_probe.logged WHERE id = 1), \
                       'both changes must commit in order';\n\
-               ASSERT (SELECT array_agg(kind ORDER BY position) = ARRAY['insert', 'update', 'update'] \
+               ASSERT (SELECT array_agg(type ORDER BY position) = ARRAY['insert', 'update', 'update'] \
                           AND count(DISTINCT position) = 3 \
                           AND count(DISTINCT transaction_id) = 3 \
                         FROM rh_probe.logged_history), \
@@ -2165,7 +2166,7 @@ fn the_log_trigger_serializes_concurrent_changes_on_postgres() {
                           AND s.before = f.after \
                           AND s.after ->> 'note' = 'from second' AND s.after -> 'revision' = '3' \
                         FROM rh_probe.logged_history f, rh_probe.logged_history s \
-                        WHERE f.kind = 'update' AND s.kind = 'update' AND f.position < s.position), \
+                        WHERE f.type = 'update' AND s.type = 'update' AND f.position < s.position), \
                       'the second entry must start from the first result at a later position';\n\
              END $$;\n"
         ),
@@ -2231,7 +2232,7 @@ fn the_log_trigger_serializes_concurrent_changes_on_postgres() {
                         FROM rh_probe.logged_history), \
                       'every committed change must write one entry, and no position may repeat';\n\
                ASSERT (SELECT count(*) = 2 AND bool_and(r.kinds = ARRAY['insert', 'update']) \
-                        FROM (SELECT array_agg(kind ORDER BY position) AS kinds \
+                        FROM (SELECT array_agg(type ORDER BY position) AS kinds \
                                 FROM rh_probe.logged_history \
                                WHERE row_key IN ('{{\"id\": 2}}', '{{\"id\": 3}}') \
                                GROUP BY row_key) AS r), \
@@ -2240,8 +2241,8 @@ fn the_log_trigger_serializes_concurrent_changes_on_postgres() {
                           AND l.changed_by = '{ACTOR_B}' AND l.after ->> 'note' = 'from later' \
                           AND e.position < l.position \
                         FROM rh_probe.logged_history e, rh_probe.logged_history l \
-                        WHERE e.row_key = '{{\"id\": 2}}' AND e.kind = 'update' \
-                          AND l.row_key = '{{\"id\": 3}}' AND l.kind = 'update'), \
+                        WHERE e.row_key = '{{\"id\": 2}}' AND e.type = 'update' \
+                          AND l.row_key = '{{\"id\": 3}}' AND l.type = 'update'), \
                       'each entry must keep its own position when the later position commits first';\n\
              END $$;\n"
         ),
@@ -2395,12 +2396,12 @@ fn a_numeric_scale_only_update_writes_a_log_entry_on_postgres() {
         &format!(
             "{}{}\
              DO $$ BEGIN\n\
-               ASSERT (SELECT array_agg(kind ORDER BY position) FROM rh_probe.amounts_history) \
+               ASSERT (SELECT array_agg(type ORDER BY position) FROM rh_probe.amounts_history) \
                         = ARRAY['insert', 'update'], \
                       'a scale-only update must write one entry, and a no-op none';\n\
                ASSERT (SELECT before::text = '{{\"amount\": 1.0}}' \
                           AND after::text = '{{\"amount\": 1.00}}' \
-                        FROM rh_probe.amounts_history WHERE kind = 'update'), \
+                        FROM rh_probe.amounts_history WHERE type = 'update'), \
                       'the entry must hold both spellings of the amount';\n\
              END $$;\n",
             logged_guest_transaction(
@@ -2430,7 +2431,7 @@ fn a_numeric_scale_only_update_writes_a_log_entry_on_postgres() {
 /// deleted row has the current image '{}'.
 const WIDGET_HISTORY_READ: &str = "SELECT \
        history.position, \
-       history.kind, \
+       history.type, \
        history.operation, \
        history.changed_by, \
        history.changed_at, \
@@ -2535,7 +2536,7 @@ fn writes_or_locks(plan: &serde_json::Value) -> bool {
 fn image_columns(image: &str) -> Vec<(String, String)> {
     let row = HistoryRow {
         position: 1,
-        kind: "insert",
+        type_: "insert",
         before: "{}",
         current: image,
         head_position: 1,
@@ -2621,7 +2622,7 @@ fn the_history_read_reconstructs_a_row_at_retained_positions_on_postgres() {
         &db_url,
         &format!(
             "BEGIN;\n{grants}\
-             GRANT SELECT (position, row_key, kind, operation, changed_by, changed_at, \
+             GRANT SELECT (position, row_key, type, operation, changed_by, changed_at, \
                            before, after) ON inventory.widget_history TO wamn_app;\n\
              COMMIT;\n"
         ),
@@ -2723,7 +2724,7 @@ fn the_history_read_reconstructs_a_row_at_retained_positions_on_postgres() {
     }
 
     let pages = history_pages(&db_url, &guest, widget);
-    // The read answers position, kind, operation, changed_by, changed_at,
+    // The read answers position, type, operation, changed_by, changed_at,
     // before, after and current. It states no head position, so the newest
     // position is the last entry of the last page this read took.
     let head_position = pages
@@ -2733,14 +2734,14 @@ fn the_history_read_reconstructs_a_row_at_retained_positions_on_postgres() {
         .iter()
         .map(|row| HistoryRow {
             position: row[0].parse().expect("position is a bigint"),
-            kind: &row[1],
+            type_: &row[1],
             before: &row[5],
             current: &row[7],
             head_position,
         })
         .collect::<Vec<_>>();
     assert_eq!(
-        rows.iter().map(|row| row.kind).collect::<Vec<_>>(),
+        rows.iter().map(|row| row.type_).collect::<Vec<_>>(),
         ["insert", "update", "update", "delete"],
         "the read must return every entry of the row in position order"
     );
@@ -2775,7 +2776,7 @@ fn the_history_read_reconstructs_a_row_at_retained_positions_on_postgres() {
             state(row.position),
             (expected != "{}").then(|| image_columns(expected)),
             "the fold must reconstruct the row after the {} at position {}",
-            row.kind,
+            row.type_,
             row.position
         );
     }

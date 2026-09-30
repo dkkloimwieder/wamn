@@ -6,7 +6,7 @@ pub static UPDATE_SPEC: screen::ScreenSpec = screen::ScreenSpec {
     model: "widget_tag",
     name: "update",
     operation: "platform-fixture:widget-tag/update@1.0.0",
-    kind: "update",
+    type_: "update",
     input: crate::widget_tag::WIDGET_TAG_UPDATE_INPUT_SCHEMA,
     input_schema: Some(
         "{\"items\":{\"additionalProperties\":false,\"properties\":{\"change\":{\"additionalProperties\":false,\"properties\":{\"label\":{\"type\":[\"string\",\"null\"],\"x-wamn-explicit-null\":\"invalid_input\"}},\"type\":\"object\"},\"expected_edit_version\":{\"type\":\"string\"},\"id\":{\"pattern\":\"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$\",\"type\":\"string\"},\"request_id\":{\"minLength\":1,\"type\":\"string\"}},\"required\":[\"expected_edit_version\",\"id\",\"request_id\",\"change\"],\"type\":\"object\"},\"maxItems\":100,\"minItems\":1,\"type\":\"array\"}",
@@ -53,7 +53,7 @@ pub static UPDATE_SPEC: screen::ScreenSpec = screen::ScreenSpec {
                 sources: &["statement_timeout"],
             },
         ],
-        kind: "update",
+        type_: "update",
         transaction: Some("implicit"),
         direct: true,
         replay: submission::Replay::Unknown,
@@ -70,7 +70,7 @@ pub static UPDATE_SPEC: screen::ScreenSpec = screen::ScreenSpec {
     requires_composition: true,
     supplied: &[screen::SuppliedField {
         path: "request_id",
-        kind: screen::SuppliedKind::RequestId,
+        type_: screen::SuppliedType::RequestId,
     }],
 };
 

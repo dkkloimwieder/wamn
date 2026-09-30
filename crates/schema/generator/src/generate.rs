@@ -21,18 +21,17 @@ use sha2::{Digest as _, Sha256};
 use wamn_execution_contract::canonical_json_bytes;
 use wamn_record_history::history_table_name;
 use wamn_schema_introspection::ir::{
-    CatalogIr, Column, ColumnType, Constraint, ConstraintKind, Exclusion, ForeignKeyAction, Table,
+    CatalogIr, Column, ColumnType, Constraint, ConstraintType, Exclusion, ForeignKeyAction, Table,
 };
 
 use crate::manifest::{
     AccessOperationErrorLiteral, AuthoredSqlDeclaration, ContractFieldDeclaration, CrudAction,
-    CursorDirection, CustomOperationDeclaration, CustomOperationKind,
-    CustomOperationResultDeclaration, DeleteMode, FieldText, ModelDeclaration,
-    OperationDeclaration, OperationErrorDetailDeclaration, PackageManifest,
-    PolicyContractRequirement, PolicyContractState, RecordHistoryColumn, ResultClass,
-    SortDeclaration, StaticSqlFetch, TombstoneColumn, binding_identifier,
-    canonical_operation_identity, custom_artifact_stem, rust_identifier, rust_type_identifier,
-    validate_identifier, validate_operation_vocabulary,
+    CursorDirection, CustomOperationDeclaration, CustomOperationResultDeclaration,
+    CustomOperationType, DeleteMode, FieldText, ModelDeclaration, OperationDeclaration,
+    OperationErrorDetailDeclaration, PackageManifest, PolicyContractRequirement,
+    PolicyContractState, RecordHistoryColumn, ResultClass, SortDeclaration, StaticSqlFetch,
+    TombstoneColumn, binding_identifier, canonical_operation_identity, custom_artifact_stem,
+    rust_identifier, rust_type_identifier, validate_identifier, validate_operation_vocabulary,
 };
 use crate::sql;
 use crate::sql_lex::contains_schema_qualified_reference;
@@ -548,13 +547,13 @@ fn query_variants(operation: &OperationDeclaration) -> Vec<(&str, CursorDirectio
     )
 }
 
-fn constraint_error_code(kind: &ConstraintKind) -> AccessOperationErrorLiteral {
+fn constraint_error_code(kind: &ConstraintType) -> AccessOperationErrorLiteral {
     match kind {
-        ConstraintKind::PrimaryKey { .. } | ConstraintKind::Unique { .. } => {
+        ConstraintType::PrimaryKey { .. } | ConstraintType::Unique { .. } => {
             AccessOperationErrorLiteral::UniqueViolation
         }
-        ConstraintKind::ForeignKey { .. } => AccessOperationErrorLiteral::ForeignKeyViolation,
-        ConstraintKind::Check { .. } => AccessOperationErrorLiteral::CheckViolation,
+        ConstraintType::ForeignKey { .. } => AccessOperationErrorLiteral::ForeignKeyViolation,
+        ConstraintType::Check { .. } => AccessOperationErrorLiteral::CheckViolation,
     }
 }
 
@@ -578,17 +577,17 @@ fn constraint_field(
     operation: &OperationDeclaration,
 ) -> Option<String> {
     let column = match constraint.kind() {
-        ConstraintKind::PrimaryKey { columns } | ConstraintKind::Unique { columns } => {
+        ConstraintType::PrimaryKey { columns } | ConstraintType::Unique { columns } => {
             match &**columns {
                 [column] => &**column,
                 _ => return None,
             }
         }
-        ConstraintKind::ForeignKey { columns, .. } => match &**columns {
+        ConstraintType::ForeignKey { columns, .. } => match &**columns {
             [column] => column.column(),
             _ => return None,
         },
-        ConstraintKind::Check { .. } => return None,
+        ConstraintType::Check { .. } => return None,
     };
     operation
         .writable_fields
@@ -705,7 +704,7 @@ fn min_length_check(field: &str, minimum: u32) -> String {
 
 /// Whether a constraint is the CHECK of a minimum length the model declares.
 fn guards_min_length(constraint: &Constraint, model: &ModelDeclaration) -> bool {
-    matches!(constraint.kind(), ConstraintKind::Check { expression }
+    matches!(constraint.kind(), ConstraintType::Check { expression }
     if model.min_lengths.iter().any(|(field, minimum)| {
         **expression == *min_length_check(field, *minimum)
     }))
@@ -722,7 +721,7 @@ fn inbound_foreign_keys<'a>(catalog: &'a CatalogIr, table: &'a Table) -> Vec<&'a
         .iter()
         .flat_map(Table::constraints)
         .filter(|constraint| match constraint.kind() {
-            ConstraintKind::ForeignKey {
+            ConstraintType::ForeignKey {
                 referenced_schema,
                 referenced_table,
                 on_delete,
@@ -770,18 +769,18 @@ fn operation_exclusions<'a>(
         .collect()
 }
 
-fn update_can_violate(kind: &ConstraintKind, writable_fields: &[String]) -> bool {
+fn update_can_violate(kind: &ConstraintType, writable_fields: &[String]) -> bool {
     match kind {
         // Opaque CHECK expressions expose no structural field set to intersect.
-        ConstraintKind::Check { .. } => false,
-        ConstraintKind::PrimaryKey { columns } | ConstraintKind::Unique { columns } => {
+        ConstraintType::Check { .. } => false,
+        ConstraintType::PrimaryKey { columns } | ConstraintType::Unique { columns } => {
             columns.iter().any(|column| {
                 writable_fields
                     .iter()
                     .any(|field| field.as_str() == column.as_ref())
             })
         }
-        ConstraintKind::ForeignKey { columns, .. } => columns.iter().any(|column| {
+        ConstraintType::ForeignKey { columns, .. } => columns.iter().any(|column| {
             writable_fields
                 .iter()
                 .any(|field| field.as_str() == column.column())
@@ -1036,10 +1035,10 @@ pub(crate) fn sha256(bytes: &[u8]) -> String {
     format!("sha256:{}", hex::encode(Sha256::digest(bytes)))
 }
 
-fn constraint_error(kind: &ConstraintKind) -> &'static str {
+fn constraint_error(kind: &ConstraintType) -> &'static str {
     match kind {
-        ConstraintKind::PrimaryKey { .. } | ConstraintKind::Unique { .. } => "unique_violation",
-        ConstraintKind::ForeignKey { .. } => "foreign_key_violation",
-        ConstraintKind::Check { .. } => "check_violation",
+        ConstraintType::PrimaryKey { .. } | ConstraintType::Unique { .. } => "unique_violation",
+        ConstraintType::ForeignKey { .. } => "foreign_key_violation",
+        ConstraintType::Check { .. } => "check_violation",
     }
 }

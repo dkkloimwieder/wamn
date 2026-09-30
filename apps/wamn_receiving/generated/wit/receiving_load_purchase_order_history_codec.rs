@@ -52,7 +52,7 @@ pub(crate) fn encode(output: &[contract::LoadPurchaseOrderHistoryOutcome]) -> St
                 "value": { "rows": value.rows.iter().map(|row| json!({
                     "id": row.id,
                     "cursor": row.cursor,
-                    "kind": row.kind,
+                    "type": row.type_,
                     "operation": row.operation,
                     "changed_by": row.changed_by,
                     "changed_at": row.changed_at,
@@ -137,7 +137,7 @@ macro_rules! row {
         $target {
             id: row.id.0,
             cursor: row.cursor,
-            kind: row.kind,
+            type_: row.type_,
             operation: row.operation,
             changed_by: row.changed_by.0,
             changed_at: row.changed_at.0,

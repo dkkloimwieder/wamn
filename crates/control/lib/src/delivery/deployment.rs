@@ -736,7 +736,7 @@ fn require_released_route(
                     .pointer(&format!("/route/{member}"))
                     .and_then(Value::as_str)
             };
-            (attachment.kind() == wamn_catalog::AttachmentKind::Http
+            (attachment.kind() == wamn_catalog::AttachmentType::Http
                 && route("path") == Some(url.path())
                 && route("method") == Some(method)
                 && route("host") == Some(host)
@@ -762,7 +762,7 @@ fn route_method(
         .routes
         .iter()
         .find(|route| route.package_id == attachment.package_id() && route.operation == operation)
-        .map_or("POST", |route| route.kind.http_method())
+        .map_or("POST", |route| route.type_.http_method())
 }
 
 /// Send the qualified request and require the qualified result.

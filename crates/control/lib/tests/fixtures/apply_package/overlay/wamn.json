@@ -93,7 +93,7 @@
   },
   "custom_operations": {
     "quality.create_inspection": {
-      "kind": "event_handler",
+      "type": "event_handler",
       "visibility": "private",
       "connection": "postgres",
       "input": {

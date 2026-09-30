@@ -271,7 +271,7 @@ pub fn emit_ts_client(ir: &ClientContractIr) -> Result<Vec<GeneratedFile>, Clien
         .iter()
         .filter(|model| {
             model.operations.iter().any(|operation| {
-                operation.kind == "get"
+                operation.type_ == "get"
                     && operation
                         .record
                         .as_ref()
@@ -354,7 +354,7 @@ fn emit_model(package: &str, model: &ModelIr) -> Result<String, ClientTsError> {
     let mut operations: Vec<_> = model
         .operations
         .iter()
-        .filter(|operation| operation.kind != PRIVATE_KIND)
+        .filter(|operation| operation.type_ != PRIVATE_KIND)
         .collect();
     operations.sort_by(|left, right| left.name.cmp(&right.name));
 
@@ -564,7 +564,7 @@ fn emit_operation(
     source.push_str("    ],\n");
     writeln!(source, "    replay: {replay},").expect("write");
     writeln!(source, "    direct: {},", route.direct).expect("write");
-    writeln!(source, "    kind: {:?},", operation.kind).expect("write");
+    writeln!(source, "    type: {:?},", operation.type_).expect("write");
     writeln!(
         source,
         "    transaction: {},",

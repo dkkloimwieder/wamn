@@ -114,7 +114,7 @@ BEGIN
             (2, 'id', 'uuid DEFAULT gen_random_uuid()'),
             (3, 'tenant_id', 'text'),
             (4, 'row_key', 'jsonb'),
-            (5, 'kind', 'text'),
+            (5, 'type', 'text'),
             (6, 'operation', 'text'),
             (7, 'changed_by', 'uuid'),
             (8, 'changed_at', 'timestamptz'),
@@ -123,7 +123,7 @@ BEGIN
             (11, 'after', 'jsonb')
            ) AS c (ord, name, definition)
      WHERE tenant OR c.name <> 'tenant_id';
-    derived := derived || ARRAY[history || '_pkey', history || '_kind_check',
+    derived := derived || ARRAY[history || '_pkey', history || '_type_check',
                                 history || '_operation_check', history || '_position_seq'];
     IF EXISTS (SELECT FROM unnest(derived) AS d (name) WHERE octet_length(d.name) >= 64) THEN
         RAISE EXCEPTION USING ERRCODE = '22023',
@@ -132,11 +132,11 @@ BEGIN
 
     EXECUTE format(
         'CREATE TABLE IF NOT EXISTS %I.%I (%s, '
-        'CONSTRAINT %I CHECK (kind IN (''insert'', ''update'', ''delete'')), '
+        'CONSTRAINT %I CHECK (type IN (''insert'', ''update'', ''delete'')), '
         'CONSTRAINT %I CHECK (operation ~ %L), '
         'CONSTRAINT %I PRIMARY KEY (row_key, position))',
         schema, history, columns,
-        history || '_kind_check',
+        history || '_type_check',
         history || '_operation_check', operation_pattern,
         history || '_pkey');
 END
@@ -237,7 +237,7 @@ BEGIN
                        WHERE attrelid = to_regclass(history) AND attname = 'tenant_id'
                          AND NOT attisdropped);
     write_entry := format(
-        'INSERT INTO %s (%s row_key, kind, operation, changed_by, changed_at, '
+        'INSERT INTO %s (%s row_key, type, operation, changed_by, changed_at, '
         'transaction_id, before, after) VALUES (%s $2, $3, $4, $5, '
         'transaction_timestamp(), pg_current_xact_id()::text::bigint, $6, $7)',
         history,

@@ -1,13 +1,13 @@
 {
   "receiving-record-receipt-http": {
-    "kind": "http",
+    "type": "http",
     "package-id": "wamn_receiving",
     "component": "receiving",
     "operation": "wamn-receiving:receiving/record-receipt",
-    "definition-hash": "sha256:f6d4f629c6b9191c3ff89307333341c80f61707e71dbdc77d055aaba326299ee",
+    "definition-hash": "sha256:3378e6f031f08ecb2c91ef8c1ca49754b1761405eb84811a61b2927d4deea2bb",
     "definition": {
       "id": "receiving-record-receipt-http",
-      "kind": "http",
+      "type": "http",
       "route": {
         "path": "/receiving/record_receipt"
       },
@@ -92,14 +92,14 @@
     "registered-operation": "wamn-receiving:receiving/record-receipt"
   },
   "receiving-load-receipt-screen-http": {
-    "kind": "http",
+    "type": "http",
     "package-id": "wamn_receiving",
     "component": "receiving",
     "operation": "wamn-receiving:receiving/load-receipt-screen",
-    "definition-hash": "sha256:38d51aecff5261fbbb779f943646daf594d04c0e6b08923eedb81457b5d2f62b",
+    "definition-hash": "sha256:e22498fd97f0091387f4f54363bf62239f790859e66a455cbeca1788dc34debc",
     "definition": {
       "id": "receiving-load-receipt-screen-http",
-      "kind": "http",
+      "type": "http",
       "route": {
         "path": "/receiving/load_receipt_screen"
       },
@@ -131,14 +131,14 @@
     "registered-operation": "wamn-receiving:receiving/load-receipt-screen"
   },
   "receiving-load-purchase-order-history-http": {
-    "kind": "http",
+    "type": "http",
     "package-id": "wamn_receiving",
     "component": "receiving",
     "operation": "wamn-receiving:receiving/load-purchase-order-history",
-    "definition-hash": "sha256:fc7c98f7f5c8e395e8958390ec9f442df565dd35d8f598a9788b99cb73a493b1",
+    "definition-hash": "sha256:389adf3bb965b7cfaae7790ec00d16fbee6fb67fe1d7cd9903076b90a7534f91",
     "definition": {
       "id": "receiving-load-purchase-order-history-http",
-      "kind": "http",
+      "type": "http",
       "route": {
         "path": "/receiving/load_purchase_order_history"
       },
@@ -178,14 +178,14 @@
     "registered-operation": "wamn-receiving:receiving/load-purchase-order-history"
   },
   "location-list-http": {
-    "kind": "http",
+    "type": "http",
     "package-id": "wamn_receiving",
     "component": "receiving",
     "operation": "wamn-receiving:location/list",
-    "definition-hash": "sha256:cba9f87b65409972344d2d56cef1b4fd559be03a34dc011bac4a14bcbf3c93e1",
+    "definition-hash": "sha256:7e62a9247664d9d2878a693f9d2ee3adc666e96be4b1009d552106073a894ffe",
     "definition": {
       "id": "location-list-http",
-      "kind": "http",
+      "type": "http",
       "route": {
         "path": "/location/list"
       },

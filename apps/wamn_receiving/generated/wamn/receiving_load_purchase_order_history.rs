@@ -6,7 +6,7 @@ use wamn_postgres_statements::Transaction;
 pub struct LoadPurchaseOrderHistoryRow {
     pub id: wamn_postgres_statements::Uuid,
     pub position: i64,
-    pub kind: String,
+    pub type_: String,
     pub operation: String,
     pub changed_by: wamn_postgres_statements::Uuid,
     pub changed_at: wamn_postgres_statements::TimestampTz,
@@ -16,7 +16,7 @@ pub struct LoadPurchaseOrderHistoryRow {
 }
 
 pub(crate) const LOAD_PURCHASE_ORDER_HISTORY_DIGEST: &str =
-    "sha256:04951d1d7ac96a73c0a93ec6185a41cbe8aa3ce9de5117ec23b3fb0eded0c8c1";
+    "sha256:4e66e64f790f4435bdd16964f4944355ecfb3af51b141289663fa8a673bba147";
 
 pub(crate) async fn load_purchase_order_history(
     transaction: &mut Transaction,
@@ -38,7 +38,7 @@ pub(crate) async fn load_purchase_order_history(
         Ok(LoadPurchaseOrderHistoryRow {
             id: row.decode("id")?,
             position: row.decode("position")?,
-            kind: row.decode("kind")?,
+            type_: row.decode("type")?,
             operation: row.decode("operation")?,
             changed_by: row.decode("changed_by")?,
             changed_at: row.decode("changed_at")?,

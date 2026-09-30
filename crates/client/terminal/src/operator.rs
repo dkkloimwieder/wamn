@@ -715,7 +715,7 @@ impl GeneratedApplication {
                 }
             }
             KeyCode::Char('s') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                if self.screens[index].spec().kind == "delete" {
+                if self.screens[index].spec().type_ == "delete" {
                     self.mode = Mode::Confirm(Confirmation::Delete);
                 } else {
                     return Action::Send {
@@ -1085,7 +1085,7 @@ impl GeneratedApplication {
 
     fn refresh(&mut self, index: usize) -> Action {
         let target = if matches!(
-            self.screens[index].spec().kind,
+            self.screens[index].spec().type_,
             "get" | "query" | "projection"
         ) {
             Some(index)
@@ -1295,7 +1295,7 @@ fn link_targets(screens: &[Screen], source: usize) -> Vec<usize> {
             let revision = to
                 .revision
                 .is_some_and(|revision| revision.read_operation == from.operation);
-            let record = to.kind == "get"
+            let record = to.type_ == "get"
                 && from.record.zip(to.record).is_some_and(|(from, to)| {
                     from.relation == to.relation
                         && from.key_field == to.key_field
@@ -1513,7 +1513,7 @@ impl Widget for AppWidget<'_> {
                     app.label,
                     app.screens[index].spec().model,
                     app.screens[index].spec().name,
-                    app.screens[index].spec().kind
+                    app.screens[index].spec().type_
                 )
             },
         );
@@ -1529,7 +1529,7 @@ impl Widget for AppWidget<'_> {
                         format!(
                             "{} [{}] {}",
                             screen.spec().name,
-                            screen.spec().kind,
+                            screen.spec().type_,
                             screen.availability()
                         )
                     })

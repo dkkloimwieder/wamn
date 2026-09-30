@@ -2,7 +2,7 @@
 //
 // `supplier` operations of package `wamn_receiving`.
 
-import type { FieldMap, OperationRoute, Outcome, Timestamptz, Transport, Uuid } from "@wamn/web-runtime";
+import type { FieldMap, JsonValue, OperationRoute, Outcome, Timestamptz, Transport, Uuid } from "@wamn/web-runtime";
 import { reviveOutcome, toWire } from "@wamn/web-runtime";
 
 /** Input for `wamn-receiving:supplier/create@1.0.0`. */
@@ -64,7 +64,7 @@ export const SUPPLIER_CREATE_ROUTE: OperationRoute = {
     ],
     replay: "claim",
     direct: true,
-    kind: "create",
+    type: "create",
     transaction: "explicit_per_input",
   },
 };
@@ -89,12 +89,15 @@ export interface SupplierQueryRequest {
   cursor?: string;
   /** `int32`, omittable */
   limit?: number;
+  /** `keyset`, omittable */
+  pagination?: JsonValue;
 }
 
 /** What `wamn-receiving:supplier/query@1.0.0` calls its input members. */
 export const SUPPLIER_QUERY_REQUEST_FIELDS: FieldMap = {
   "cursor": "cursor",
   "limit": "limit",
+  "pagination": "pagination",
 };
 
 /** One row of `wamn-receiving:supplier/query@1.0.0`. */
@@ -151,7 +154,7 @@ export const SUPPLIER_QUERY_ROUTE: OperationRoute = {
     ],
     replay: null,
     direct: true,
-    kind: "query",
+    type: "query",
     transaction: "implicit",
   },
 };

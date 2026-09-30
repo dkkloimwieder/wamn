@@ -165,7 +165,7 @@ impl EdgeDelivery {
                 tenant: &self.tenant,
                 release: &release,
                 package: &target.package_id,
-                kind: route.kind,
+                kind: route.type_,
                 key_field: route.idempotency.as_deref(),
                 canonicalization: route.canonicalization.as_ref(),
                 claim_operation: route.claim_operation.as_deref(),

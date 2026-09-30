@@ -55,7 +55,8 @@ pub struct WorkflowDeclaration {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct CustomOperationDeclaration {
-    pub kind: CustomOperationKind,
+    #[serde(rename = "type")]
+    pub type_: CustomOperationType,
     pub visibility: OperationVisibility,
     /// Legacy operation metadata; all sessions require current admission authority.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
@@ -115,7 +116,7 @@ pub struct CustomOperationDeclaration {
 /// Closed non-CRUD operation kinds admitted by the package manifest.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum CustomOperationKind {
+pub enum CustomOperationType {
     Projection,
     Command,
     EventHandler,
@@ -124,10 +125,10 @@ pub enum CustomOperationKind {
 impl CustomOperationDeclaration {
     /// Closed authored operation kind.
     pub const fn kind(&self) -> &'static str {
-        match self.kind {
-            CustomOperationKind::Projection => "projection",
-            CustomOperationKind::Command => "command",
-            CustomOperationKind::EventHandler => "event_handler",
+        match self.type_ {
+            CustomOperationType::Projection => "projection",
+            CustomOperationType::Command => "command",
+            CustomOperationType::EventHandler => "event_handler",
         }
     }
 
@@ -155,7 +156,7 @@ impl CustomOperationDeclaration {
     /// command with SQL of its own (`docs/plan/host-transaction.md` 4.1). A
     /// participant works in the transaction of its base.
     pub fn has_host_transaction(&self) -> bool {
-        self.kind == CustomOperationKind::Command
+        self.type_ == CustomOperationType::Command
             && !self.statements.is_empty()
             && self.transaction != Some(CommandTransaction::Participant)
     }
@@ -1094,7 +1095,7 @@ fn validate_custom_operation(
     validate_custom_operation_kind(manifest, operation_name, operation)?;
     validate_custom_operation_input(operation_name, &operation.input)?;
     if let Some(pre_commit) = &operation.pre_commit {
-        if operation.kind != CustomOperationKind::Command
+        if operation.type_ != CustomOperationType::Command
             || !operation.claims()
             || pre_commit.raw_body_maximum.is_some()
             || pre_commit.envelope.is_some()
@@ -1137,8 +1138,8 @@ fn validate_custom_operation_kind(
     operation_name: &str,
     operation: &CustomOperationDeclaration,
 ) -> Result<(), GenerateError> {
-    match operation.kind {
-        CustomOperationKind::Projection => {
+    match operation.type_ {
+        CustomOperationType::Projection => {
             if operation.result.is_none() {
                 return Err(GenerateError::new(
                     GenerateErrorKind::InvalidOperation,
@@ -1178,7 +1179,7 @@ fn validate_custom_operation_kind(
                 ));
             }
         }
-        CustomOperationKind::Command => {
+        CustomOperationType::Command => {
             let participant = operation.transaction == Some(CommandTransaction::Participant);
             if (!participant && operation.result.is_none())
                 || (participant && operation.result.is_some())
@@ -1258,7 +1259,7 @@ fn validate_custom_operation_kind(
             }
             validate_participant_reference(manifest, operation_name, operation)?;
         }
-        CustomOperationKind::EventHandler => {
+        CustomOperationType::EventHandler => {
             if operation.visibility != OperationVisibility::Private || operation.result.is_some() {
                 return Err(GenerateError::new(
                     GenerateErrorKind::InvalidOperation,
@@ -1989,7 +1990,7 @@ fn validate_static_sql_declarations(
         ));
     }
     if !has_connection && !has_relations && !has_statements {
-        if operation.kind == CustomOperationKind::Command
+        if operation.type_ == CustomOperationType::Command
             && (matching_dependencies == 1
                 || operation.idempotent_by == Some(CommandIdempotence::Stateless))
         {
@@ -2450,8 +2451,11 @@ pub(crate) fn validate_identifier(value: &str, object: &str) -> Result<(), Gener
 
 /// Spell one singular snake_case name as a Rust 2024 identifier.
 ///
-/// Raw-ineligible path keywords have no lossless field spelling and refuse at
-/// manifest or catalog validation instead of producing uncompilable source.
+/// A keyword takes a trailing underscore, as wit-bindgen spells it: `type_`
+/// for `type` (owner ruling of wamn-ld93). An authored name never ends with an
+/// underscore, so the spelling is lossless. Raw-ineligible path keywords
+/// refuse at manifest or catalog validation instead of producing uncompilable
+/// source.
 pub(crate) fn rust_identifier(value: &str) -> Option<String> {
     const RAW_INELIGIBLE: [&str; 3] = ["crate", "self", "super"];
     const KEYWORDS: [&str; 49] = [
@@ -2464,20 +2468,33 @@ pub(crate) fn rust_identifier(value: &str) -> Option<String> {
     if RAW_INELIGIBLE.contains(&value) {
         None
     } else if KEYWORDS.contains(&value) {
-        Some(format!("r#{value}"))
+        Some(format!("{value}_"))
     } else {
         Some(value.to_owned())
     }
 }
 
 /// Spell one singular snake_case name as wit-bindgen spells a WIT record
-/// member in Rust: a keyword takes a trailing underscore, as `type_` for
-/// `%type`. Generated code that names a member of a bindgen type uses this
-/// spelling, and every other generated Rust uses [`rust_identifier`].
+/// member in Rust. It is the spelling of [`rust_identifier`], so generated and
+/// bindgen names agree.
 pub(crate) fn binding_identifier(value: &str) -> Option<String> {
-    rust_identifier(value).map(|name| match name.strip_prefix("r#") {
-        Some(keyword) => format!("{keyword}_"),
-        None => name,
+    rust_identifier(value)
+}
+
+/// The authored name that a Rust spelling of [`rust_identifier`] stands for.
+pub(crate) fn authored_name(rust: &str) -> &str {
+    rust.strip_suffix('_').unwrap_or(rust)
+}
+
+/// A field of a generated serde struct: the Rust spelling, renamed to the
+/// authored name when the two differ.
+pub(crate) fn serde_field(value: &str) -> Option<String> {
+    rust_identifier(value).map(|rust| {
+        if rust == value {
+            rust
+        } else {
+            format!("#[serde(rename = {value:?})] {rust}")
+        }
     })
 }
 
@@ -2505,7 +2522,7 @@ mod tests {
     #[test]
     fn rust_2024_names_have_one_lossless_spelling_authority() {
         for keyword in ["type", "async", "await", "move"] {
-            assert_eq!(rust_identifier(keyword), Some(format!("r#{keyword}")));
+            assert_eq!(rust_identifier(keyword), Some(format!("{keyword}_")));
             assert_eq!(binding_identifier(keyword), Some(format!("{keyword}_")));
         }
         assert_eq!(binding_identifier("status"), Some("status".to_owned()));

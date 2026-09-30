@@ -145,7 +145,7 @@ mod tests {
             BTreeMap::from([(
                 "route".into(),
                 wamn_catalog::ServingAttachment {
-                    kind: wamn_catalog::AttachmentKind::Http,
+                    type_: wamn_catalog::AttachmentType::Http,
                     package_id: "app".into(),
                     target: wamn_catalog::AttachmentTarget::Wiring {
                         wiring_id: "route".into(),

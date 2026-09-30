@@ -1,13 +1,13 @@
 {
   "widget-archive-http": {
-    "kind": "http",
+    "type": "http",
     "package-id": "platform_fixture",
     "component": "fixture",
     "operation": "platform-fixture:widget/archive",
-    "definition-hash": "sha256:318e0ed97696b8fa54040bf7fdf8d44251ff7aa18acc475b6a7464d1cd5e3535",
+    "definition-hash": "sha256:258f16829d08346de513cc9d0fb123ec4b8e9eb6ae9696c68da5ccfa252a2b69",
     "definition": {
       "id": "widget-archive-http",
-      "kind": "http",
+      "type": "http",
       "route": {
         "path": "/widget/archive"
       },
@@ -23,14 +23,14 @@
     "registered-operation": "platform-fixture:widget/archive"
   },
   "widget-list-http": {
-    "kind": "http",
+    "type": "http",
     "package-id": "platform_fixture",
     "component": "fixture",
     "operation": "platform-fixture:widget/list",
-    "definition-hash": "sha256:e5905f348a94051788ffd9eece1c61e6716ea6864e56cf25dc3d2ac93041c6ed",
+    "definition-hash": "sha256:6108c568f9b01d428f2f100c0b3e4f2c97e6c91291676d5d17f127c8714ea3e6",
     "definition": {
       "id": "widget-list-http",
-      "kind": "http",
+      "type": "http",
       "route": {
         "path": "/widget/list"
       },
@@ -46,14 +46,14 @@
     "registered-operation": "platform-fixture:widget/list"
   },
   "widget-maker-list-http": {
-    "kind": "http",
+    "type": "http",
     "package-id": "platform_fixture",
     "component": "fixture",
     "operation": "platform-fixture:widget-maker/list",
-    "definition-hash": "sha256:45ff1b1784d3f7799fea1e777a960099d0c4589c94eec78220ad17579bcc094c",
+    "definition-hash": "sha256:b76b3cba4edb6be3dfd8767dc2324265133efa093af564fa4149d5292baccf1e",
     "definition": {
       "id": "widget-maker-list-http",
-      "kind": "http",
+      "type": "http",
       "route": {
         "path": "/widget_maker/list"
       },
@@ -69,14 +69,14 @@
     "registered-operation": "platform-fixture:widget-maker/list"
   },
   "widget-record-batch-http": {
-    "kind": "http",
+    "type": "http",
     "package-id": "platform_fixture",
     "component": "fixture",
     "operation": "platform-fixture:widget/record-batch",
-    "definition-hash": "sha256:c9617868c09c438f4e03634c9f21ccc5f21e6d6f870af592b691f0bf579d5d2b",
+    "definition-hash": "sha256:8fcea4457fb67d951ddaa86ec9bcda160399a85ac98523a1006327f74fe74b09",
     "definition": {
       "id": "widget-record-batch-http",
-      "kind": "http",
+      "type": "http",
       "route": {
         "path": "/widget/record_batch"
       },

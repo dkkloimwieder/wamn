@@ -17,7 +17,7 @@ fn row<'a>(
 ) -> HistoryRow<'a> {
     HistoryRow {
         position,
-        kind,
+        type_: kind,
         before,
         current,
         head_position: head,

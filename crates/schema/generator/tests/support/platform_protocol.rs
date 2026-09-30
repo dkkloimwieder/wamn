@@ -190,7 +190,7 @@ fn crud_refuses_authored_protocol_metadata_but_custom_business_errors_remain_aut
             "query",
             "pagination",
             json!({
-                "kind": "keyset",
+                "type": "keyset",
                 "cursor": {"version": 1, "payload": "canonical_compact_json",
                     "encoding": "base64url_unpadded", "opaque": true, "invalid": "invalid_input"},
                 "default_sort": {"field": "created_at", "direction": "ascending"},

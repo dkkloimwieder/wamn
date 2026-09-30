@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 
 use serde_json::Value;
 use wamn_catalog::{
-    AttachmentKind, AttachmentTarget, ComponentDeclaration, ComponentOperationDependency,
+    AttachmentTarget, AttachmentType, ComponentDeclaration, ComponentOperationDependency,
     WiringDocument,
 };
 use wamn_test_infrastructure::operations::{package_version, sealed};
@@ -169,7 +169,7 @@ fn acme_direct_operations_and_private_handler_have_exact_publication_inputs() {
         let attachment = attachments
             .get(operation.attachment)
             .expect("the exact operation attachment exists");
-        assert_eq!(attachment.kind, AttachmentKind::Http);
+        assert_eq!(attachment.type_, AttachmentType::Http);
         assert_eq!(attachment.package_id, PACKAGE_ID);
         assert_eq!(
             attachment.target,
@@ -187,7 +187,7 @@ fn acme_direct_operations_and_private_handler_have_exact_publication_inputs() {
             serde_json::json!({"modes": ["pat", "session"]})
         );
         assert_eq!(attachment.definition["id"], operation.attachment);
-        assert_eq!(attachment.definition["kind"], "http");
+        assert_eq!(attachment.definition["type"], "http");
         assert!(
             attachment.definition["route"].get("host").is_none(),
             "package attachments leave route hostnames to the deployment overlay"
@@ -236,7 +236,7 @@ fn acme_direct_operations_and_private_handler_have_exact_publication_inputs() {
 fn receipt_insert_registration_selects_one_private_owner_wiring() {
     let manifest = read_json(&package_root().join("wamn.json"));
     let handler = &manifest["custom_operations"]["quality.create_inspection"];
-    assert_eq!(handler["kind"], "event_handler");
+    assert_eq!(handler["type"], "event_handler");
     assert_eq!(handler["visibility"], "private");
     assert!(handler["permission"].is_null());
     assert_eq!(

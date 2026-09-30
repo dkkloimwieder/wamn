@@ -14,7 +14,7 @@ use serde::de::DeserializeOwned;
 use tokio_postgres::{Client, NoTls, Transaction};
 use wamn_catalog::{
     AdmittedComponent, AdmittedComponentEffect, AdmittedComponentOperation, AttachmentTarget,
-    ComponentPackageScope, EffectiveReleaseId, ManifestDigest, OperationKind, PackageCoordinate,
+    ComponentPackageScope, EffectiveReleaseId, ManifestDigest, OperationType, PackageCoordinate,
     RouteCanonicalization, SERVING_MANIFEST_FORMAT_VERSION, ServingAttachment, ServingComponent,
     ServingManifest, ServingRegistration, ServingRelation, ServingRelease, ServingRoute,
     ServingWiring, WiringDocument, WorkflowSection, validate_resolved_wiring_compatibility,
@@ -353,7 +353,7 @@ type RouteContracts = BTreeMap<(String, String), RouteContract>;
 /// a `get`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct RouteContract {
-    kind: OperationKind,
+    kind: OperationType,
     reads: BTreeSet<ServingRelation>,
     revision: Option<String>,
     idempotency: Option<String>,
@@ -364,8 +364,8 @@ struct RouteContract {
 }
 
 #[cfg(test)]
-impl From<OperationKind> for RouteContract {
-    fn from(kind: OperationKind) -> Self {
+impl From<OperationType> for RouteContract {
+    fn from(kind: OperationType) -> Self {
         Self {
             kind,
             reads: BTreeSet::new(),
@@ -1249,7 +1249,7 @@ pub async fn mint_promoted_release_manifest(
             (
                 (route.package_id.clone(), route.operation.clone()),
                 RouteContract {
-                    kind: route.kind,
+                    kind: route.type_,
                     reads: route.reads.clone(),
                     revision: route.revision.clone(),
                     idempotency: route.idempotency.clone(),
@@ -2056,7 +2056,7 @@ fn project_routes(
             package_id: attachment.package_id.clone(),
             component: component.clone(),
             operation: operation.clone(),
-            kind: contract.kind,
+            type_: contract.kind,
             reads: contract.reads.clone(),
             revision: contract.revision.clone(),
             idempotency: contract.idempotency.clone(),
@@ -2338,7 +2338,7 @@ mod tests {
         });
         let definition_hash = wamn_execution_contract::canonical_json_sha256(&definition);
         ServingAttachment {
-            kind: wamn_catalog::AttachmentKind::Http,
+            type_: wamn_catalog::AttachmentType::Http,
             package_id: package_id.to_owned(),
             target: wamn_catalog::AttachmentTarget::Wiring {
                 wiring_id: wiring_id.to_owned(),
@@ -2501,7 +2501,7 @@ mod tests {
         });
         let definition_hash = wamn_execution_contract::canonical_json_sha256(&definition);
         let attachment = ServingAttachment {
-            kind: wamn_catalog::AttachmentKind::Http,
+            type_: wamn_catalog::AttachmentType::Http,
             package_id: "source_fixture".to_owned(),
             target: wamn_catalog::AttachmentTarget::Wiring {
                 wiring_id: "widget_get".to_owned(),
@@ -2536,7 +2536,7 @@ mod tests {
         });
         let authored_hash = wamn_execution_contract::canonical_json_sha256(&definition);
         let attachment = ServingAttachment {
-            kind: wamn_catalog::AttachmentKind::Http,
+            type_: wamn_catalog::AttachmentType::Http,
             package_id: "source_fixture".to_owned(),
             target: wamn_catalog::AttachmentTarget::Wiring {
                 wiring_id: "widget_get".to_owned(),
@@ -2599,7 +2599,7 @@ mod tests {
         non_routed
             .get_mut("fixture-http")
             .expect("the attachment exists")
-            .kind = wamn_catalog::AttachmentKind::Internal;
+            .type_ = wamn_catalog::AttachmentType::Internal;
         let package_host = resolve_route_host_overlay(&non_routed, None, &RouteContracts::new())
             .expect_err("every attachment kind refuses an authored route hostname");
         assert_eq!(package_host.kind(), MintManifestErrorKind::Document);
@@ -2685,11 +2685,11 @@ mod tests {
             ),
         ]);
         let kinds: RouteContracts = [
-            ("widget/get", OperationKind::Get),
-            ("widget/query", OperationKind::Query),
-            ("widget/load", OperationKind::Projection),
-            ("widget/update", OperationKind::Update),
-            ("widget/record", OperationKind::Command),
+            ("widget/get", OperationType::Get),
+            ("widget/query", OperationType::Query),
+            ("widget/load", OperationType::Projection),
+            ("widget/update", OperationType::Update),
+            ("widget/record", OperationType::Command),
         ]
         .into_iter()
         .map(|(operation, kind)| {
@@ -2842,7 +2842,7 @@ mod tests {
 
     fn closure_attachment(mode: &str) -> ServingAttachment {
         ServingAttachment {
-            kind: wamn_catalog::AttachmentKind::Http,
+            type_: wamn_catalog::AttachmentType::Http,
             package_id: "base".to_owned(),
             target: wamn_catalog::AttachmentTarget::Wiring {
                 wiring_id: "stock".to_owned(),

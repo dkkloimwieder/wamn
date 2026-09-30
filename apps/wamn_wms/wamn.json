@@ -373,7 +373,7 @@
   },
   "custom_operations": {
     "inventory.move": {
-      "kind": "command",
+      "type": "command",
       "visibility": "public",
       "permission": "inventory.move",
       "connection": "postgres",
@@ -603,7 +603,7 @@
       }
     },
     "inventory.adjust": {
-      "kind": "command",
+      "type": "command",
       "visibility": "public",
       "permission": "inventory.adjust",
       "connection": "postgres",
@@ -996,7 +996,7 @@
       }
     },
     "inventory.merge": {
-      "kind": "command",
+      "type": "command",
       "visibility": "public",
       "permission": "inventory.merge",
       "connection": "postgres",
@@ -1424,7 +1424,7 @@
       }
     },
     "inventory.split": {
-      "kind": "command",
+      "type": "command",
       "visibility": "public",
       "permission": "inventory.split",
       "connection": "postgres",
@@ -1950,7 +1950,7 @@
       }
     },
     "inventory.aggregate": {
-      "kind": "projection",
+      "type": "projection",
       "lists": {
         "key_field": [
           "product_id",

@@ -1,7 +1,7 @@
 use serde_json::json;
 use wamn_catalog::{
     ArtifactHash, ArtifactId, ArtifactIdentity, Attachment, AttachmentDraft, AttachmentId,
-    AttachmentKind, CanonicalJson, CatalogIdentityError, DefinitionHash, Source, SourceId,
+    AttachmentType, CanonicalJson, CatalogIdentityError, DefinitionHash, Source, SourceId,
     SourceKind,
 };
 
@@ -29,7 +29,7 @@ fn attachment(
     artifact: &ArtifactIdentity,
     sources: &[Source],
     id: &str,
-    kind: AttachmentKind,
+    kind: AttachmentType,
     definition: serde_json::Value,
 ) -> Attachment {
     Attachment::resolve(
@@ -62,7 +62,7 @@ fn definition_hash_pins_attachment_artifact_and_complete_resolved_sources() {
         &baseline_artifact,
         &baseline_sources,
         "public-api",
-        AttachmentKind::Http,
+        AttachmentType::Http,
         json!({"method": "POST", "path": "/v1/orders"}),
     );
     let baseline_hash = baseline.definition_hash().as_str();
@@ -71,21 +71,21 @@ fn definition_hash_pins_attachment_artifact_and_complete_resolved_sources() {
         &baseline_artifact,
         &baseline_sources,
         "partner-api",
-        AttachmentKind::Http,
+        AttachmentType::Http,
         json!({"method": "POST", "path": "/v1/orders"}),
     );
     let kind_mutant = attachment(
         &baseline_artifact,
         &baseline_sources,
         "public-api",
-        AttachmentKind::Internal,
+        AttachmentType::Internal,
         json!({"method": "POST", "path": "/v1/orders"}),
     );
     let definition_mutant = attachment(
         &baseline_artifact,
         &baseline_sources,
         "public-api",
-        AttachmentKind::Http,
+        AttachmentType::Http,
         json!({"method": "PUT", "path": "/v1/orders"}),
     );
 
@@ -94,7 +94,7 @@ fn definition_hash_pins_attachment_artifact_and_complete_resolved_sources() {
         &changed_artifact,
         &baseline_sources,
         "public-api",
-        AttachmentKind::Http,
+        AttachmentType::Http,
         json!({"method": "POST", "path": "/v1/orders"}),
     );
 
@@ -106,7 +106,7 @@ fn definition_hash_pins_attachment_artifact_and_complete_resolved_sources() {
         &baseline_artifact,
         &source_id_mutant_sources,
         "public-api",
-        AttachmentKind::Http,
+        AttachmentType::Http,
         json!({"method": "POST", "path": "/v1/orders"}),
     );
     let source_kind_mutant_sources = vec![
@@ -121,7 +121,7 @@ fn definition_hash_pins_attachment_artifact_and_complete_resolved_sources() {
         &baseline_artifact,
         &source_kind_mutant_sources,
         "public-api",
-        AttachmentKind::Http,
+        AttachmentType::Http,
         json!({"method": "POST", "path": "/v1/orders"}),
     );
     let source_definition_mutant_sources = vec![
@@ -132,7 +132,7 @@ fn definition_hash_pins_attachment_artifact_and_complete_resolved_sources() {
         &baseline_artifact,
         &source_definition_mutant_sources,
         "public-api",
-        AttachmentKind::Http,
+        AttachmentType::Http,
         json!({"method": "POST", "path": "/v1/orders"}),
     );
 
@@ -164,7 +164,7 @@ fn omitted_unresolved_mutable_and_noncanonical_inputs_are_rejected() {
     let missing_source = Attachment::resolve(
         AttachmentDraft {
             id: AttachmentId::new("public-api").unwrap(),
-            kind: AttachmentKind::Http,
+            kind: AttachmentType::Http,
             artifact_id: artifact.id().clone(),
             source_ids: vec![SourceId::new("missing").unwrap()],
             definition: CanonicalJson::new(json!({"path": "/"})).unwrap(),

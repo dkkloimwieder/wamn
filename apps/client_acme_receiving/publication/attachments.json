@@ -1,13 +1,13 @@
 {
   "client-acme-receiving-receiving-record-receipt-http": {
-    "kind": "http",
+    "type": "http",
     "package-id": "client_acme_receiving",
     "component": "client_acme_receiving",
     "operation": "client-acme-receiving:receiving/record-receipt",
-    "definition-hash": "sha256:829bbbf5e8eed922cbafeed672aa8e3afdd13ed6674173c0a072a7128ee98483",
+    "definition-hash": "sha256:41adc92305df27b673f87a0f5221ff65bf1a8acb0d96113b0c80711fb29ecdc7",
     "definition": {
       "id": "client-acme-receiving-receiving-record-receipt-http",
-      "kind": "http",
+      "type": "http",
       "route": {"path": "/acme/receiving/record_receipt"},
       "raw-body-bytes": {"maximum": 1048576},
       "input-schema": {
@@ -54,14 +54,14 @@
     "registered-operation": "client-acme-receiving:receiving/record-receipt"
   },
   "client-acme-receiving-quality-load-purchase-order-detail-http": {
-    "kind": "http",
+    "type": "http",
     "package-id": "client_acme_receiving",
     "component": "client_acme_receiving",
     "operation": "client-acme-receiving:quality/load-purchase-order-detail",
-    "definition-hash": "sha256:29253c340fc33cbe48eba9949d72a0a76214e8e32fcbd35e934e5837006bd0d4",
+    "definition-hash": "sha256:b9405f7ea4e61df718176f96110671d045f629ea18755c43005470ae7bd5f214",
     "definition": {
       "id": "client-acme-receiving-quality-load-purchase-order-detail-http",
-      "kind": "http",
+      "type": "http",
       "route": {"path": "/acme/quality/load_purchase_order_detail"},
       "raw-body-bytes": {"maximum": 1048576},
       "input-schema": {
@@ -80,14 +80,14 @@
     "registered-operation": "client-acme-receiving:quality/load-purchase-order-detail"
   },
   "client-acme-receiving-quality-approve-inspection-http": {
-    "kind": "http",
+    "type": "http",
     "package-id": "client_acme_receiving",
     "component": "client_acme_receiving",
     "operation": "client-acme-receiving:quality/approve-inspection",
-    "definition-hash": "sha256:d69e1168647f0e09638aa031e8373a405c8ca872b3bcc39cb1c6da64720a6ad7",
+    "definition-hash": "sha256:2f1ee0f3234da6ab9e2d4456371ec8025bf083de29ebc822d9ea49674a88d980",
     "definition": {
       "id": "client-acme-receiving-quality-approve-inspection-http",
-      "kind": "http",
+      "type": "http",
       "route": {"path": "/acme/quality/approve_inspection"},
       "raw-body-bytes": {"maximum": 1048576},
       "input-schema": {

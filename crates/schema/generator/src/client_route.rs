@@ -349,7 +349,7 @@ mod tests {
     fn attachment(id: &str, wiring_id: &str, operation: &str) -> ServingAttachment {
         serde_json::from_value(json!({
             "package-id": "platform_fixture",
-            "kind": "http",
+            "type": "http",
             "wiring-id": wiring_id,
             "wiring-version": 1,
             "definition-hash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",

@@ -237,7 +237,7 @@ fn emit_operation(
     writeln!(
         source,
         "pub const {constant_stem}_KIND: &str = {:?};",
-        operation.kind
+        operation.type_
     )
     .expect("write");
     writeln!(
@@ -562,7 +562,7 @@ mod tests {
         let [omitted, ordinary, fresh] = [None, Some(false), Some(true)].map(|policy| {
             let mut operation = serde_json::json!({
                 "operation": "orders:widget/get@1.0.0",
-                "kind": "get",
+                "type": "get",
                 "grant": "orders:widget/get@1.0.0",
                 "permission_token": "widget.get"
             });

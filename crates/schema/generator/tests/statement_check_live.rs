@@ -88,7 +88,7 @@ impl PlatformPackage {
                 "server_owned_fields": ["id"], "audit_log": {"columns": [], "retention": "none"}, "operations": {}
             }},
             "custom_operations": {"widget.list": {
-                "kind": "projection", "lists": {"key_field": "id"}, "visibility": "public", "permission": "widget.list",
+                "type": "projection", "lists": {"key_field": "id"}, "visibility": "public", "permission": "widget.list",
                 "connection": "postgres", "input": {"fields": []},
                 "result": {"class": "bounded_list", "fields": [{"path": "id", "type": "uuid", "nullable": false}]},
                 "errors": ["invalid_input", "retry", "timeout", "permission_denied", "internal_error"],
@@ -138,7 +138,7 @@ async fn generation_refuses_whole_row_references_as_the_application_role() {
         serde_json::from_slice(&fs::read(&manifest_path).expect("read the platform manifest"))
             .expect("parse the platform manifest");
     manifest["custom_operations"]["widget.load_image"] = json!({
-        "kind": "projection",
+        "type": "projection",
         "lists": {"key_field": "image"},
         "visibility": "public",
         "permission": "widget.load_image",

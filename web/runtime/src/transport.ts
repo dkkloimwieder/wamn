@@ -379,7 +379,7 @@ function confirmed(contract: ResponseContract, error: { code?: string | undefine
   }
   if (declared.sources.length === 0) {
     return (
-      ["get", "query", "create", "update", "delete"].includes(contract.kind) &&
+      ["get", "query", "create", "update", "delete"].includes(contract.type) &&
       ["invalid_input", "not_found", "concurrency_conflict", "idempotency_conflict"].includes(code)
     );
   }

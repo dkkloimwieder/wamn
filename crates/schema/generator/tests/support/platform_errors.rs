@@ -173,7 +173,7 @@ fn custom_visibility_permissions_and_components_remain_closed() {
     let operation = projection["custom_operations"]["widget.archive"]
         .as_object_mut()
         .unwrap();
-    operation.insert("kind".into(), json!("projection"));
+    operation.insert("type".into(), json!("projection"));
     for field in ["idempotent_by", "transaction", "automatic_retry"] {
         operation.remove(field);
     }

@@ -29,7 +29,7 @@ pub fn screens(binding: SessionBinding) -> Vec<Screen> {
         screens::inventory::adjust(binding.clone()),
         screens::inventory::aggregate(binding.clone()),
         screens::inventory::merge(binding.clone()),
-        screens::inventory::r#move(binding.clone()),
+        screens::inventory::move_(binding.clone()),
         screens::inventory::split(binding.clone()),
         screens::inventory_transaction::get(binding.clone()),
         screens::inventory_transaction::query(binding.clone()),

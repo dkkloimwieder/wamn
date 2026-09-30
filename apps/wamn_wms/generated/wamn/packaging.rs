@@ -12,7 +12,7 @@ pub struct PackagingRow {
     pub packaging_code: String,
     pub row_version: i32,
     pub status: String,
-    pub r#type: String,
+    pub type_: String,
     pub updated_at: wamn_postgres_statements::TimestampTz,
     pub updated_by: wamn_postgres_statements::Uuid,
 }
@@ -65,7 +65,7 @@ pub(crate) async fn get(
             packaging_code: row.decode("packaging_code")?,
             row_version: row.decode("row_version")?,
             status: row.decode("status")?,
-            r#type: row.decode("type")?,
+            type_: row.decode("type")?,
             updated_at: row.decode("updated_at")?,
             updated_by: row.decode("updated_by")?,
         })
@@ -105,7 +105,7 @@ pub(crate) async fn query_packaging_code_ascending(
                     packaging_code: row.decode("packaging_code")?,
                     row_version: row.decode("row_version")?,
                     status: row.decode("status")?,
-                    r#type: row.decode("type")?,
+                    type_: row.decode("type")?,
                     updated_at: row.decode("updated_at")?,
                     updated_by: row.decode("updated_by")?,
                 })
@@ -147,7 +147,7 @@ pub(crate) async fn query_packaging_code_descending(
                     packaging_code: row.decode("packaging_code")?,
                     row_version: row.decode("row_version")?,
                     status: row.decode("status")?,
-                    r#type: row.decode("type")?,
+                    type_: row.decode("type")?,
                     updated_at: row.decode("updated_at")?,
                     updated_by: row.decode("updated_by")?,
                 })
@@ -189,7 +189,7 @@ pub(crate) async fn query_location_id_ascending(
                     packaging_code: row.decode("packaging_code")?,
                     row_version: row.decode("row_version")?,
                     status: row.decode("status")?,
-                    r#type: row.decode("type")?,
+                    type_: row.decode("type")?,
                     updated_at: row.decode("updated_at")?,
                     updated_by: row.decode("updated_by")?,
                 })
@@ -231,7 +231,7 @@ pub(crate) async fn query_location_id_descending(
                     packaging_code: row.decode("packaging_code")?,
                     row_version: row.decode("row_version")?,
                     status: row.decode("status")?,
-                    r#type: row.decode("type")?,
+                    type_: row.decode("type")?,
                     updated_at: row.decode("updated_at")?,
                     updated_by: row.decode("updated_by")?,
                 })
@@ -273,7 +273,7 @@ pub(crate) async fn query_updated_at_ascending(
                     packaging_code: row.decode("packaging_code")?,
                     row_version: row.decode("row_version")?,
                     status: row.decode("status")?,
-                    r#type: row.decode("type")?,
+                    type_: row.decode("type")?,
                     updated_at: row.decode("updated_at")?,
                     updated_by: row.decode("updated_by")?,
                 })
@@ -315,7 +315,7 @@ pub(crate) async fn query_updated_at_descending(
                     packaging_code: row.decode("packaging_code")?,
                     row_version: row.decode("row_version")?,
                     status: row.decode("status")?,
-                    r#type: row.decode("type")?,
+                    type_: row.decode("type")?,
                     updated_at: row.decode("updated_at")?,
                     updated_by: row.decode("updated_by")?,
                 })
@@ -357,7 +357,7 @@ pub(crate) async fn query_created_at_ascending(
                     packaging_code: row.decode("packaging_code")?,
                     row_version: row.decode("row_version")?,
                     status: row.decode("status")?,
-                    r#type: row.decode("type")?,
+                    type_: row.decode("type")?,
                     updated_at: row.decode("updated_at")?,
                     updated_by: row.decode("updated_by")?,
                 })
@@ -399,7 +399,7 @@ pub(crate) async fn query_created_at_descending(
                     packaging_code: row.decode("packaging_code")?,
                     row_version: row.decode("row_version")?,
                     status: row.decode("status")?,
-                    r#type: row.decode("type")?,
+                    type_: row.decode("type")?,
                     updated_at: row.decode("updated_at")?,
                     updated_by: row.decode("updated_by")?,
                 })
@@ -411,7 +411,7 @@ pub(crate) async fn query_created_at_descending(
 pub(crate) async fn create(
     transaction: &mut wamn_postgres_statements::Transaction,
     packaging_code: String,
-    r#type: String,
+    type_: String,
     location_id: wamn_postgres_statements::Uuid,
     status: String,
 ) -> Result<PackagingRow, wamn_postgres_statements::StatementError> {
@@ -420,7 +420,7 @@ pub(crate) async fn create(
             CREATE_DIGEST,
             vec![
                 wamn_postgres_statements::into_sql_value(packaging_code),
-                wamn_postgres_statements::into_sql_value(r#type),
+                wamn_postgres_statements::into_sql_value(type_),
                 wamn_postgres_statements::into_sql_value(location_id),
                 wamn_postgres_statements::into_sql_value(status),
             ],
@@ -436,7 +436,7 @@ pub(crate) async fn create(
             packaging_code: row.decode("packaging_code")?,
             row_version: row.decode("row_version")?,
             status: row.decode("status")?,
-            r#type: row.decode("type")?,
+            type_: row.decode("type")?,
             updated_at: row.decode("updated_at")?,
             updated_by: row.decode("updated_by")?,
         })

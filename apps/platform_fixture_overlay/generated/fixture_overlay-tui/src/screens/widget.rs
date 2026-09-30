@@ -6,7 +6,7 @@ pub static GET_SPEC: screen::ScreenSpec = screen::ScreenSpec {
     model: "widget",
     name: "get",
     operation: "platform-fixture-overlay:widget/get@1.0.0",
-    kind: "get",
+    type_: "get",
     input: crate::widget::WIDGET_GET_INPUT_SCHEMA,
     input_schema: Some(
         "{\"items\":{\"additionalProperties\":false,\"properties\":{\"id\":{\"pattern\":\"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$\",\"type\":\"string\"}},\"required\":[\"id\"],\"type\":\"object\"},\"maxItems\":100,\"minItems\":1,\"type\":\"array\"}",
@@ -48,7 +48,7 @@ pub static GET_SPEC: screen::ScreenSpec = screen::ScreenSpec {
                 sources: &["statement_timeout"],
             },
         ],
-        kind: "get",
+        type_: "get",
         transaction: Some("implicit"),
         direct: true,
         replay: submission::Replay::Unknown,

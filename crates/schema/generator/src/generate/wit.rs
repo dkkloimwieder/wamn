@@ -12,7 +12,7 @@ use super::{
 };
 use crate::client_fields::input_fields_of;
 use crate::client_ir::FieldIr;
-use crate::manifest::{FilterMatch, OperationErrorDetailKey};
+use crate::manifest::{FilterMatch, OperationErrorDetailKey, authored_name, serde_field};
 
 /// How many items one generated CRUD call carries. The codec refuses any
 /// other count, and the route input schema states the same bounds.
@@ -421,7 +421,7 @@ fn emit_update_codec(
         writeln!(
             source,
             "    #[serde(default)]\n    {}: JsonChange<{}>,",
-            rust_identifier(field).expect("validated update field has a Rust name"),
+            serde_field(field).expect("validated update field has a Rust name"),
             codec_rust_type(column.column_type(), false)
         )
         .expect("writing to a String cannot fail");
@@ -1044,7 +1044,7 @@ fn emit_json_columns(source: &mut String, table: &Table, fields: &[String]) {
         writeln!(
             source,
             "    #[serde(default)]\n    {}: JsonChange<{}>,",
-            rust_identifier(field).expect("validated field has a Rust name"),
+            serde_field(field).expect("validated field has a Rust name"),
             codec_rust_type(column.column_type(), false)
         )
         .expect("writing to a String cannot fail");
@@ -1084,7 +1084,7 @@ fn emit_query_json_types(source: &mut String, table: &Table, operation: &Operati
         writeln!(
             source,
             "    #[serde(default)] {}: Option<{value}> ,",
-            rust_identifier(&filter.field).expect("validated filter has a Rust name"),
+            serde_field(&filter.field).expect("validated filter has a Rust name"),
         )
         .expect("writing to a String cannot fail");
     }
@@ -1347,7 +1347,7 @@ fn crud_is_keyed(action: CrudAction) -> bool {
 /// Whether the items of a custom operation carry a `request_id`: every kind
 /// but a projection, which is a read.
 fn custom_is_keyed(operation: &CustomOperationDeclaration) -> bool {
-    operation.kind != crate::manifest::CustomOperationKind::Projection
+    operation.type_ != crate::manifest::CustomOperationType::Projection
 }
 
 /// The WIT field that keys an item or an outcome, or nothing for a read.
@@ -2205,9 +2205,7 @@ pub(super) fn wit_name(value: &str) -> String {
 }
 
 fn artifact_name(value: &str) -> String {
-    rust_identifier(value)
-        .expect("validated operation name has a Rust spelling")
-        .trim_start_matches("r#")
+    authored_name(&rust_identifier(value).expect("validated operation name has a Rust spelling"))
         .to_owned()
 }
 

@@ -24,7 +24,8 @@ struct JsonRequest {
     #[serde(default)]
     packaging_code: JsonChange<String>,
     #[serde(default)]
-    r#type: JsonChange<String>,
+    #[serde(rename = "type")]
+    type_: JsonChange<String>,
     #[serde(default)]
     location_id: JsonChange<String>,
     #[serde(default)]
@@ -39,7 +40,7 @@ pub(crate) fn decode(input: &str) -> Result<Vec<contract::CreateItem>, CodecErro
                 .map(|request| contract::CreateRequest {
                     idempotency_key: request.idempotency_key,
                     packaging_code: change(request.packaging_code),
-                    type_: change(request.r#type),
+                    type_: change(request.type_),
                     location_id: change(request.location_id),
                     status: change(request.status),
                 })
@@ -222,7 +223,7 @@ macro_rules! row {
             packaging_code: row.packaging_code,
             row_version: row.row_version,
             status: row.status,
-            type_: row.r#type,
+            type_: row.type_,
             updated_at: row.updated_at.0,
             updated_by: row.updated_by.0,
         }

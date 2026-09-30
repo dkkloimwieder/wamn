@@ -4,7 +4,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 
 use tokio_postgres::{Client, NoTls};
-use wamn_catalog::{AdmittedComponent, ComponentDeclaration, OperationKind, PackageCoordinate};
+use wamn_catalog::{AdmittedComponent, ComponentDeclaration, OperationType, PackageCoordinate};
 use wamn_control_provision::CONTROL_BOOTSTRAP_SQL;
 use wamn_engine::component_admission::{ComponentAdmissionRequest, validate_component_admission};
 
@@ -442,19 +442,19 @@ async fn fresh_base_and_overlay_mint_byte_identically_and_refuse_drift() {
             .routes
             .iter()
             .find(|route| route.operation == operation)
-            .map(|route| route.kind)
+            .map(|route| route.type_)
     };
     assert_eq!(
         kind_of("platform-fixture-overlay:widget/get@1.0.0"),
-        Some(OperationKind::Get)
+        Some(OperationType::Get)
     );
     assert_eq!(
         kind_of("platform-fixture:widget/query@1.0.0"),
-        Some(OperationKind::Query)
+        Some(OperationType::Query)
     );
     assert_eq!(
         kind_of("platform-fixture:widget/record-batch@1.0.0"),
-        Some(OperationKind::Command)
+        Some(OperationType::Command)
     );
     let route_members: i64 = project
         .query_one(

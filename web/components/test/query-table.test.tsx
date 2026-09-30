@@ -66,7 +66,7 @@ const WIDGETS: QueryTableDefinition<WidgetQueryRow> = {
   update: {
     ...WIDGET_QUERY_TABLE.update,
     binding: { route: WIDGET_UPDATE_ROUTE, request: WIDGET_UPDATE_REQUEST_FIELDS, result: WIDGET_UPDATE_RESULT_FIELDS },
-    supplied: [{ input: ["requestId"], kind: "requestId" }],
+    supplied: [{ input: ["requestId"], type: "requestId" }],
   },
   actions: [
     {

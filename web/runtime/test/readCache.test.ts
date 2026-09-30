@@ -89,7 +89,7 @@ function contract(kind: string, resultClass: string): ResponseContract {
     errors: [],
     replay: null,
     direct: true,
-    kind,
+    type: kind,
     transaction: "implicit",
   };
 }

@@ -243,7 +243,7 @@ fn state_idempotence_requires_its_exact_shape() {
 fn stateless_idempotence_is_only_for_a_command_without_sql() {
     let mut manifest = fixture::manifest();
     manifest["custom_operations"]["widget.inspect"] = json!({
-        "kind": "command",
+        "type": "command",
         "visibility": "public",
         "permission": "widget.inspect",
         "idempotent_by": "stateless",
@@ -283,7 +283,7 @@ fn a_package_with_no_sql_generates_without_a_model() {
         "required_platform_policy_contract": {"id": "fixture_device_data_access", "state": "satisfied"},
         "models": {},
         "custom_operations": {"widget.inspect": {
-            "kind": "command",
+            "type": "command",
             "visibility": "public",
             "permission": "widget.inspect",
             "idempotent_by": "stateless",
@@ -523,7 +523,7 @@ fn event_registration_and_line_profiles_are_closed() {
     let operation = handler["custom_operations"]["widget.archive"]
         .as_object_mut()
         .unwrap();
-    operation.insert("kind".to_owned(), json!("event_handler"));
+    operation.insert("type".to_owned(), json!("event_handler"));
     operation.insert("visibility".to_owned(), json!("private"));
     operation.remove("permission");
     operation.remove("result");

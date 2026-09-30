@@ -797,7 +797,7 @@ pub(super) fn released_component_digests(
             .context("every journey attachment names a journey package")?
             .component;
         anyhow::ensure!(
-            attachment.kind == AttachmentKind::Http
+            attachment.type_ == AttachmentType::Http
                 && attachment.package_id == expected.package_id
                 && attachment.component == component
                 && attachment.operation == sealed(expected.operation)

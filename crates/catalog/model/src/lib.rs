@@ -42,7 +42,7 @@ pub use package::{EffectiveReleaseId, PackageCoordinate};
 pub use serving_manifest::{
     AttachmentAuthPolicy, AttachmentRef, AttachmentTarget, CanonicalSpelling,
     INVALID_ATTACHMENT_AUTH_POLICY_REFUSAL, MAX_SERVING_MANIFEST_BYTES, NO_AUTHENTICATION_MODE,
-    OperationKind, PAT_AUTHENTICATION_MODE, RELEASE_MANIFEST_CONFIGMAP_PREFIX,
+    OperationType, PAT_AUTHENTICATION_MODE, RELEASE_MANIFEST_CONFIGMAP_PREFIX,
     RELEASE_MANIFEST_FILE_NAME, RELEASE_MANIFEST_MOUNT_PATH, RegistrationDelivery, RouteAttachment,
     RouteCanonicalization, RouteLineOrder, SERVING_MANIFEST_FORMAT_VERSION,
     SESSION_AUTHENTICATION_MODE, ServingAttachment, ServingComponent, ServingComponentOperation,
@@ -658,7 +658,7 @@ impl Source {
 /// derive adds no unvalidated construction path.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
-pub enum AttachmentKind {
+pub enum AttachmentType {
     Http,
     Internal,
     Studio,
@@ -669,7 +669,7 @@ pub enum AttachmentKind {
 #[derive(Debug, Clone, PartialEq)]
 pub struct AttachmentDraft {
     pub id: AttachmentId,
-    pub kind: AttachmentKind,
+    pub kind: AttachmentType,
     pub artifact_id: ArtifactId,
     pub source_ids: Vec<SourceId>,
     pub definition: CanonicalJson,
@@ -679,7 +679,7 @@ pub struct AttachmentDraft {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Attachment {
     id: AttachmentId,
-    kind: AttachmentKind,
+    kind: AttachmentType,
     artifact: ArtifactIdentity,
     source_ids: Vec<SourceId>,
     resolved_sources: Vec<Source>,
@@ -750,7 +750,7 @@ impl Attachment {
         &self.id
     }
 
-    pub fn kind(&self) -> AttachmentKind {
+    pub fn kind(&self) -> AttachmentType {
         self.kind
     }
 

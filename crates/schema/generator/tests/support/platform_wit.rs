@@ -120,7 +120,7 @@ fn typed_custom_shapes_do_not_depend_on_application_names() {
     let operation = manifest["custom_operations"]["widget.archive"]
         .as_object_mut()
         .unwrap();
-    operation.insert("kind".into(), json!("event_handler"));
+    operation.insert("type".into(), json!("event_handler"));
     operation.insert("visibility".into(), json!("private"));
     for field in [
         "permission",
@@ -189,7 +189,7 @@ fn a_read_contract_declares_no_request_id_and_a_write_still_does() {
         .keys()
         .filter(|path| path.ends_with(".operation.json"))
     {
-        let kind = json(path)["kind"].as_str().expect("kind").to_owned();
+        let kind = json(path)["type"].as_str().expect("type").to_owned();
         let input = json(&path.replace(".operation.json", ".input.json"));
         let declares = input.get("request_id").is_some()
             || input["fields"]

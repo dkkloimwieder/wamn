@@ -6,7 +6,7 @@ pub static CREATE_SPEC: screen::ScreenSpec = screen::ScreenSpec {
     model: "packaging",
     name: "create",
     operation: "wamn-wms:packaging/create@1.0.0",
-    kind: "create",
+    type_: "create",
     input: crate::packaging::PACKAGING_CREATE_INPUT_SCHEMA,
     input_schema: Some(
         "{\"items\":{\"additionalProperties\":false,\"properties\":{\"idempotency_key\":{\"minLength\":1,\"type\":\"string\"},\"location_id\":{\"pattern\":\"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$\",\"type\":[\"string\",\"null\"],\"x-wamn-explicit-null\":\"invalid_input\"},\"packaging_code\":{\"minLength\":1,\"type\":[\"string\",\"null\"],\"x-wamn-explicit-null\":\"invalid_input\"},\"request_id\":{\"minLength\":1,\"type\":\"string\"},\"status\":{\"enum\":[\"available\",\"held\",null],\"type\":[\"string\",\"null\"],\"x-wamn-explicit-null\":\"invalid_input\"},\"type\":{\"enum\":[\"pallet\",\"tote\",\"bin\",\"case\",\"loose\",null],\"type\":[\"string\",\"null\"],\"x-wamn-explicit-null\":\"invalid_input\"}},\"required\":[\"idempotency_key\",\"request_id\",\"packaging_code\",\"type\",\"location_id\",\"status\"],\"type\":\"object\"},\"maxItems\":100,\"minItems\":1,\"type\":\"array\"}",
@@ -63,7 +63,7 @@ pub static CREATE_SPEC: screen::ScreenSpec = screen::ScreenSpec {
                 sources: &["unique_violation"],
             },
         ],
-        kind: "create",
+        type_: "create",
         transaction: Some("explicit_per_input"),
         direct: true,
         replay: submission::Replay::Claim,
@@ -81,11 +81,11 @@ pub static CREATE_SPEC: screen::ScreenSpec = screen::ScreenSpec {
     supplied: &[
         screen::SuppliedField {
             path: "idempotency_key",
-            kind: screen::SuppliedKind::IdempotencyKey,
+            type_: screen::SuppliedType::IdempotencyKey,
         },
         screen::SuppliedField {
             path: "request_id",
-            kind: screen::SuppliedKind::RequestId,
+            type_: screen::SuppliedType::RequestId,
         },
     ],
 };
@@ -99,7 +99,7 @@ pub static GET_SPEC: screen::ScreenSpec = screen::ScreenSpec {
     model: "packaging",
     name: "get",
     operation: "wamn-wms:packaging/get@1.0.0",
-    kind: "get",
+    type_: "get",
     input: crate::packaging::PACKAGING_GET_INPUT_SCHEMA,
     input_schema: Some(
         "{\"items\":{\"additionalProperties\":false,\"properties\":{\"id\":{\"pattern\":\"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$\",\"type\":\"string\"}},\"required\":[\"id\"],\"type\":\"object\"},\"maxItems\":100,\"minItems\":1,\"type\":\"array\"}",
@@ -141,7 +141,7 @@ pub static GET_SPEC: screen::ScreenSpec = screen::ScreenSpec {
                 sources: &["statement_timeout"],
             },
         ],
-        kind: "get",
+        type_: "get",
         transaction: Some("implicit"),
         direct: true,
         replay: submission::Replay::Unknown,
@@ -168,10 +168,10 @@ pub static QUERY_SPEC: screen::ScreenSpec = screen::ScreenSpec {
     model: "packaging",
     name: "query",
     operation: "wamn-wms:packaging/query@1.0.0",
-    kind: "query",
+    type_: "query",
     input: crate::packaging::PACKAGING_QUERY_INPUT_SCHEMA,
     input_schema: Some(
-        "{\"items\":{\"additionalProperties\":false,\"properties\":{\"cursor\":{\"minLength\":1,\"type\":\"string\"},\"filter\":{\"additionalProperties\":false,\"properties\":{\"location_id\":{\"items\":{\"pattern\":\"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$\",\"type\":\"string\"},\"type\":\"array\"},\"packaging_code\":{\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"status\":{\"items\":{\"enum\":[\"available\",\"held\",\"consumed\"],\"type\":\"string\"},\"type\":\"array\"}},\"type\":\"object\"},\"limit\":{\"maximum\":100,\"minimum\":1,\"type\":\"integer\"},\"sort\":{\"additionalProperties\":false,\"properties\":{\"direction\":{\"enum\":[\"ascending\",\"descending\"]},\"field\":{\"enum\":[\"packaging_code\",\"location_id\",\"updated_at\",\"created_at\"]}},\"required\":[\"field\",\"direction\"],\"type\":\"object\"}},\"type\":\"object\"},\"maxItems\":100,\"minItems\":1,\"type\":\"array\"}",
+        "{\"items\":{\"additionalProperties\":false,\"properties\":{\"cursor\":{\"minLength\":1,\"type\":\"string\"},\"filter\":{\"additionalProperties\":false,\"properties\":{\"location_id\":{\"items\":{\"pattern\":\"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$\",\"type\":\"string\"},\"type\":\"array\"},\"packaging_code\":{\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"status\":{\"items\":{\"enum\":[\"available\",\"held\",\"consumed\"],\"type\":\"string\"},\"type\":\"array\"}},\"type\":\"object\"},\"limit\":{\"maximum\":100,\"minimum\":1,\"type\":\"integer\"},\"pagination\":{\"type\":\"string\"},\"sort\":{\"additionalProperties\":false,\"properties\":{\"direction\":{\"enum\":[\"ascending\",\"descending\"]},\"field\":{\"enum\":[\"packaging_code\",\"location_id\",\"updated_at\",\"created_at\"]}},\"required\":[\"field\",\"direction\"],\"type\":\"object\"}},\"type\":\"object\"},\"maxItems\":100,\"minItems\":1,\"type\":\"array\"}",
     ),
     response: submission::ResponseContract {
         schema: Some("{\"type\":\"array\"}"),
@@ -205,7 +205,7 @@ pub static QUERY_SPEC: screen::ScreenSpec = screen::ScreenSpec {
                 sources: &["statement_timeout"],
             },
         ],
-        kind: "query",
+        type_: "query",
         transaction: Some("implicit"),
         direct: true,
         replay: submission::Replay::Unknown,

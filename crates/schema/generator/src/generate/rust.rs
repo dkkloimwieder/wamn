@@ -2,9 +2,11 @@
 
 use std::fmt::Write as _;
 
+use crate::manifest::authored_name;
+
 use super::{
     AccessorBind, AccessorFetch, BTreeMap, CREATE_STATEMENT, CatalogIr, Column, ColumnType,
-    ConstraintKind, ConstraintNameSlice, CrudAction, CustomOperationDeclaration, GenerateError,
+    ConstraintNameSlice, ConstraintType, CrudAction, CustomOperationDeclaration, GenerateError,
     ModelDeclaration, MutationConstraintNames, NativeBindFixture, OperationDeclaration, Projection,
     ProjectionContents, RustMember, RustRow, RustVisibility, StaticSqlAccessor, StaticSqlFetch,
     Table, WamnAccessor, WamnApi, column, insert_bytes, operation_constraints,
@@ -81,7 +83,7 @@ pub(super) fn static_sql_native_bind_fixtures(
                 function: format!(
                     "{}_{}_bind_fixture",
                     accessor.name,
-                    bind.parameter.trim_start_matches("r#")
+                    authored_name(&bind.parameter)
                 ),
                 visibility: RustVisibility::Crate,
                 rust_type: bind.native_rust.clone(),
@@ -437,13 +439,13 @@ fn mutation_constraint_names(
     let mut check = Vec::new();
     for constraint in operation_constraints(catalog, table, action, operation, model) {
         match constraint.kind() {
-            ConstraintKind::PrimaryKey { .. } | ConstraintKind::Unique { .. } => {
+            ConstraintType::PrimaryKey { .. } | ConstraintType::Unique { .. } => {
                 unique.push(constraint.name().to_owned());
             }
-            ConstraintKind::ForeignKey { .. } => {
+            ConstraintType::ForeignKey { .. } => {
                 foreign_key.push(constraint.name().to_owned());
             }
-            ConstraintKind::Check { .. } => {
+            ConstraintType::Check { .. } => {
                 check.push(constraint.name().to_owned());
             }
         }
@@ -487,7 +489,7 @@ pub(super) fn native_bind_fixtures(api: &WamnApi) -> Vec<NativeBindFixture> {
                 function: format!(
                     "{}_{}_bind_fixture",
                     accessor.name,
-                    bind.parameter.trim_start_matches("r#")
+                    authored_name(&bind.parameter)
                 ),
                 visibility: RustVisibility::Crate,
                 rust_type: bind.native_rust.clone(),
@@ -799,7 +801,16 @@ fn emit_rust_row(source: &mut String, row: &RustRow, projection: Projection) {
     writeln!(source, "{} struct {} {{", row.visibility.source(), row.name)
         .expect("writing to a String cannot fail");
     for field in &row.fields {
-        writeln!(source, "    pub {}: {},", field.name, field.rust_type)
+        // `sqlx::query_file_as!` names each field after its column, and it
+        // spells a keyword column as a raw identifier. The native row exists
+        // only for that macro, so it takes the macro's spelling.
+        let column = authored_name(&field.name);
+        let name = if matches!(projection, Projection::Native) && column != field.name {
+            format!("r#{column}")
+        } else {
+            field.name.clone()
+        };
+        writeln!(source, "    pub {name}: {},", field.rust_type)
             .expect("writing to a String cannot fail");
     }
     source.push_str("}\n\n");
@@ -899,7 +910,7 @@ fn emit_stream_accessor_body(source: &mut String, accessor: &WamnAccessor, row: 
             source,
             "            {}: row.decode({:?})?,",
             field.name,
-            field.name.trim_start_matches("r#")
+            authored_name(&field.name)
         )
         .expect("writing to a String cannot fail");
     }
@@ -924,7 +935,7 @@ fn emit_decode_result(
             source,
             "            {}: row.decode({:?})?,",
             field.name,
-            field.name.trim_start_matches("r#")
+            authored_name(&field.name)
         )
         .expect("writing to a String cannot fail");
     }

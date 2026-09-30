@@ -74,10 +74,10 @@ pub fn start(
     );
     let route = delivery.device_route(&config.attachment, &caller)?;
     anyhow::ensure!(
-        logs_intent(route.kind),
+        logs_intent(route.type_),
         "{} is a {:?} route; the device loop calls a route that changes records",
         config.attachment,
-        route.kind
+        route.type_
     );
     if let Some(field) = &route.idempotency {
         anyhow::bail!(

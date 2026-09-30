@@ -374,7 +374,7 @@
   },
   "custom_operations": {
     "receiving.record_receipt": {
-      "kind": "command",
+      "type": "command",
       "label": "Record a receipt",
       "description": "One submission records every line of one receipt against one purchase order.",
       "visibility": "public",
@@ -803,7 +803,7 @@
       }
     },
     "receiving.load_receipt_screen": {
-      "kind": "projection",
+      "type": "projection",
       "label": "Receiving screen",
       "lists": {
         "model": "purchase_order_line",
@@ -1037,7 +1037,7 @@
       }
     },
     "receiving.load_purchase_order_history": {
-      "kind": "projection",
+      "type": "projection",
       "label": "Purchase order history",
       "lists": {
         "key_field": "id"
@@ -1084,7 +1084,7 @@
             "label": "Position"
           },
           {
-            "path": "kind",
+            "path": "type",
             "type": "text",
             "nullable": false,
             "values": [
@@ -1167,7 +1167,7 @@
             "id",
             "position",
             "row_key",
-            "kind",
+            "type",
             "operation",
             "changed_by",
             "changed_at",
@@ -1213,7 +1213,7 @@
               "nullable": false
             },
             {
-              "name": "kind",
+              "name": "type",
               "type": "text",
               "nullable": false
             },
@@ -1252,7 +1252,7 @@
       }
     },
     "location.list": {
-      "kind": "projection",
+      "type": "projection",
       "label": "Locations",
       "lists": {
         "model": "location",

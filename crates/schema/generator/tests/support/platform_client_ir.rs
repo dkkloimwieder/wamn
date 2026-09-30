@@ -63,7 +63,7 @@ impl ReleaseFiles {
                 (
                     format!("widget-{index}"),
                     json!({
-                        "kind": "http", "package-id": "platform_fixture",
+                        "type": "http", "package-id": "platform_fixture",
                         "wiring-id": format!("widget-{index}"), "wiring-version": 1,
                         "definition-hash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
                         "definition": {"id": format!("widget-{index}"), "kind": "http",
@@ -192,7 +192,7 @@ fn every_platform_operation_has_constructible_input_and_typed_result() {
             // A projection can have no input: a read carries no request
             // identity, which was the only member of `widget_maker.list`.
             assert!(
-                !operation.input_fields.is_empty() || operation.kind == "projection",
+                !operation.input_fields.is_empty() || operation.type_ == "projection",
                 "{}/{}",
                 model.name,
                 operation.name
@@ -227,7 +227,7 @@ fn platform_release_routes_are_exact_and_contracts_alone_invent_none() {
         .flat_map(|model| &model.operations)
         .filter_map(|operation| {
             let route = operation.route.as_ref()?;
-            let read = matches!(operation.kind.as_str(), "get" | "query" | "projection");
+            let read = matches!(operation.type_.as_str(), "get" | "query" | "projection");
             Some((operation.operation.as_str(), read, route.method.as_str()))
         })
         .collect::<Vec<_>>();
@@ -288,7 +288,7 @@ fn studio_attachment_removes_exactly_one_client_route() {
     let mut files = ReleaseFiles::new();
     let baseline = files.project().unwrap();
     let id = files.published.keys().next().unwrap().clone();
-    files.published.get_mut(&id).unwrap()["kind"] = json!("studio");
+    files.published.get_mut(&id).unwrap()["type"] = json!("studio");
     let changed = files.project().unwrap();
     let count = |ir: &ClientContractIr| {
         ir.models

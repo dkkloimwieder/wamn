@@ -436,7 +436,7 @@ mod tests {
     #[test]
     fn an_authored_copy_of_a_generated_entry_refuses() {
         let attachment: ServingAttachment = serde_json::from_value(json!({
-            "kind": "http", "package-id": "p", "component": "c",
+            "type": "http", "package-id": "p", "component": "c",
             "operation": "p:m/get@1.0.0", "registered-operation": "p:m/get@1.0.0",
             "definition-hash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
             "definition": {}, "auth-policy": {"modes": ["pat"]}

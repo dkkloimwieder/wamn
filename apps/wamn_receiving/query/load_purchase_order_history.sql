@@ -9,7 +9,7 @@
 SELECT
     history.id,
     history.position,
-    history.kind,
+    history.type,
     history.operation,
     history.changed_by,
     history.changed_at,

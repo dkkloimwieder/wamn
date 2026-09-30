@@ -23,7 +23,7 @@ impl MoveApplication {
     fn new(label: &str, binding: SessionBinding) -> Self {
         let mut generated = GeneratedApplication::new(
             label,
-            vec![packaging::get(binding.clone()), inventory::r#move(binding)],
+            vec![packaging::get(binding.clone()), inventory::move_(binding)],
         );
         generated
             .edit_field(PACKAGING, "/id")

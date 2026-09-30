@@ -57,7 +57,7 @@ export const EVENT_QUERY_ROUTE: OperationRoute = {
     errors: [],
     replay: null,
     direct: true,
-    kind: "query",
+    type: "query",
     transaction: "implicit",
   },
 };

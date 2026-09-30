@@ -664,7 +664,7 @@ fn the_index_names_every_shape_that_gets_no_component() {
         .flat_map(|model| model.operations.iter_mut())
         .find(|operation| operation.name == "archive")
         .expect("the fixture declares widget.archive")
-        .kind = "wrangle".to_owned();
+        .type_ = "wrangle".to_owned();
     let index = emit(&unsupported);
     let index = source(&index, "generated/client-ts/components/index.ts");
     assert!(
@@ -722,7 +722,7 @@ fn a_component_builds_a_read_request_with_no_request_identity() {
         .map(str::trim)
         .filter(|line| {
             !(line.starts_with("update: ")
-                && line.contains("supplied: [{ input: [\"requestId\"], kind: \"requestId\" }]"))
+                && line.contains("supplied: [{ input: [\"requestId\"], type: \"requestId\" }]"))
         })
         .collect::<BTreeSet<_>>();
     assert_eq!(
@@ -1402,7 +1402,7 @@ fn a_table_definition_names_its_update_its_actions_and_its_child_tables() {
     let widgets = definition(widget(&files), "WIDGET_QUERY_TABLE");
     for line in [
         // The update writes these columns, and the plan supplies none of them.
-        "  update: { operation: \"platform-fixture:widget/update@1.0.0\", binding: { route: WIDGET_UPDATE_ROUTE, request: WIDGET_UPDATE_REQUEST_FIELDS, result: WIDGET_UPDATE_RESULT_FIELDS }, keyInput: [\"id\"], revisionInput: [\"expectedEditVersion\"], revisionField: \"editVersion\", supplied: [{ input: [\"requestId\"], kind: \"requestId\" }], fields: [\n    { field: \"code\", input: [\"change\", \"code\"] },\n    { field: \"makerId\", input: [\"change\", \"makerId\"], choices: { read: { route: WIDGET_MAKER_QUERY_ROUTE, request: WIDGET_MAKER_QUERY_REQUEST_FIELDS, result: WIDGET_MAKER_QUERY_RESULT_FIELDS }, rows: \"item\", keyField: \"id\", displayField: \"name\", searchInput: [\"filter\", \"name\"], cursorInput: [\"cursor\"] } },\n    { field: \"note\", input: [\"change\", \"note\"] },\n  ] },\n",
+        "  update: { operation: \"platform-fixture:widget/update@1.0.0\", binding: { route: WIDGET_UPDATE_ROUTE, request: WIDGET_UPDATE_REQUEST_FIELDS, result: WIDGET_UPDATE_RESULT_FIELDS }, keyInput: [\"id\"], revisionInput: [\"expectedEditVersion\"], revisionField: \"editVersion\", supplied: [{ input: [\"requestId\"], type: \"requestId\" }], fields: [\n    { field: \"code\", input: [\"change\", \"code\"] },\n    { field: \"makerId\", input: [\"change\", \"makerId\"], choices: { read: { route: WIDGET_MAKER_QUERY_ROUTE, request: WIDGET_MAKER_QUERY_REQUEST_FIELDS, result: WIDGET_MAKER_QUERY_RESULT_FIELDS }, rows: \"item\", keyField: \"id\", displayField: \"name\", searchInput: [\"filter\", \"name\"], cursorInput: [\"cursor\"] } },\n    { field: \"note\", input: [\"change\", \"note\"] },\n  ] },\n",
         // A command that runs each outer input on its own takes many rows.
         "  actions: [\n    { operation: \"platform-fixture:widget/get@1.0.0\", reference: \"platform-fixture:widget/get\", label: \"get\", many: false, opens: \"record\", fill: [] },\n    { operation: \"platform-fixture:widget/archive@1.0.0\", reference: \"platform-fixture:widget/archive\", label: \"archive\", many: false, opens: \"form\", fill: [{ field: \"id\", input: [\"id\"] }], revision: { field: \"editVersion\", input: [\"expectedEditVersion\"] } },\n    { operation: \"platform-fixture:widget/record-batch@1.0.0\", reference: \"platform-fixture:widget/record-batch\", label: \"record-batch\", many: true, opens: \"form\", fill: [{ field: \"id\", input: [\"value\", \"line\", \"[]\", \"widgetId\"] }], form: async () => ({ default: WidgetRecordBatchForm }) },\n  ],\n",
         "  childTables: [],\n",

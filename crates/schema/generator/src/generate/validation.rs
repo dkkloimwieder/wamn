@@ -2,7 +2,7 @@
 
 use super::{
     AuthoredSql, AuthoredSqlDeclaration, BTreeMap, BTreeSet, CatalogIr, Column, ColumnType,
-    Constraint, ConstraintKind, CrudAction, CursorDirection, CustomOperationDeclaration,
+    Constraint, ConstraintType, CrudAction, CursorDirection, CustomOperationDeclaration,
     DeleteMode, GenerateError, GenerateErrorKind, GenerationInput, ModelDeclaration,
     OperationDeclaration, PackageManifest, QUERY_LIMIT, RecordHistoryColumn, ResultClass,
     SortDeclaration, Table, TombstoneColumn, column, contains_schema_qualified_reference,
@@ -157,7 +157,7 @@ fn validate_lists(
             message,
         ))
     };
-    let table = operation.kind == crate::CustomOperationKind::Projection
+    let table = operation.type_ == crate::CustomOperationType::Projection
         && operation.result.as_ref().is_some_and(|result| {
             matches!(result.class, ResultClass::BoundedList | ResultClass::Page)
         });
@@ -306,7 +306,7 @@ fn validate_model(
         // nothing outside `generated/`.
         let expression = super::min_length_check(field, *minimum);
         let guarded = table.constraints().iter().any(|constraint| {
-            matches!(constraint.kind(), ConstraintKind::Check { expression: found } if **found == *expression)
+            matches!(constraint.kind(), ConstraintType::Check { expression: found } if **found == *expression)
         });
         if !guarded {
             return Err(GenerateError::for_object(
@@ -595,7 +595,7 @@ fn validate_audit_log_columns(
         && !table
             .constraints()
             .iter()
-            .any(|constraint| matches!(constraint.kind(), ConstraintKind::PrimaryKey { .. }))
+            .any(|constraint| matches!(constraint.kind(), ConstraintType::PrimaryKey { .. }))
     {
         return Err(GenerateError::for_object(
             GenerateErrorKind::InvalidModel,

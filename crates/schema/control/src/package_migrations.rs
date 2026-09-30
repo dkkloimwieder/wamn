@@ -930,7 +930,7 @@ mod tests {
             serde_json::from_slice(&directory.manifest_bytes).expect("fixture is JSON");
         manifest["custom_operations"] = serde_json::json!({
             "quality.create_inspection": {
-                "kind": "projection",
+                "type": "projection",
                 "visibility": "private",
                 "permission": "quality.create_inspection",
                 "input": {"fields": []},

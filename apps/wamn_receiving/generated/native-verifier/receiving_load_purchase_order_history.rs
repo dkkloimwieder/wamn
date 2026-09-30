@@ -4,7 +4,7 @@
 pub struct LoadPurchaseOrderHistoryRow {
     pub id: uuid::Uuid,
     pub position: i64,
-    pub kind: String,
+    pub r#type: String,
     pub operation: String,
     pub changed_by: uuid::Uuid,
     pub changed_at: chrono::DateTime<chrono::Utc>,

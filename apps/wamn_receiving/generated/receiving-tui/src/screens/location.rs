@@ -6,7 +6,7 @@ pub static LIST_SPEC: screen::ScreenSpec = screen::ScreenSpec {
     model: "location",
     name: "list",
     operation: "wamn-receiving:location/list@1.0.0",
-    kind: "projection",
+    type_: "projection",
     input: crate::location::LOCATION_LIST_INPUT_SCHEMA,
     input_schema: Some(
         "{\"items\":{\"additionalProperties\":false,\"properties\":{},\"type\":\"object\"},\"maxItems\":100,\"minItems\":1,\"type\":\"array\"}",
@@ -43,7 +43,7 @@ pub static LIST_SPEC: screen::ScreenSpec = screen::ScreenSpec {
                 sources: &["statement_timeout"],
             },
         ],
-        kind: "projection",
+        type_: "projection",
         transaction: None,
         direct: true,
         replay: submission::Replay::Unknown,

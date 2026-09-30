@@ -33,7 +33,7 @@ pub struct RevisionBinding {
 
 /// Platform values supplied once when a submission intent starts.
 #[derive(Debug, Clone, Copy)]
-pub enum SuppliedKind {
+pub enum SuppliedType {
     RequestId,
     IdempotencyKey,
     OccurredAt,
@@ -43,7 +43,7 @@ pub enum SuppliedKind {
 #[derive(Debug, Clone, Copy)]
 pub struct SuppliedField {
     pub path: &'static str,
-    pub kind: SuppliedKind,
+    pub type_: SuppliedType,
 }
 
 /// All facts that a generated or scaffolded screen consumes.
@@ -52,7 +52,7 @@ pub struct ScreenSpec {
     pub model: &'static str,
     pub name: &'static str,
     pub operation: &'static str,
-    pub kind: &'static str,
+    pub type_: &'static str,
     pub input: &'static [FieldSchema],
     pub input_schema: Option<&'static str>,
     pub response: ResponseContract,
@@ -368,7 +368,7 @@ impl Screen {
                     .unwrap_or_else(|| availability.to_string()),
             ));
         }
-        if self.spec.kind == "delete" && !delete_confirmed {
+        if self.spec.type_ == "delete" && !delete_confirmed {
             return Err(ScreenError::new(
                 ScreenErrorKind::ConfirmationRequired,
                 "confirm deletion before submitting",
@@ -376,10 +376,10 @@ impl Screen {
         }
         let mut draft = self.draft.clone();
         for supplied in self.spec.supplied {
-            let value = match supplied.kind {
-                SuppliedKind::RequestId => &values.request_id,
-                SuppliedKind::IdempotencyKey => &values.idempotency_key,
-                SuppliedKind::OccurredAt => &values.occurred_at,
+            let value = match supplied.type_ {
+                SuppliedType::RequestId => &values.request_id,
+                SuppliedType::IdempotencyKey => &values.idempotency_key,
+                SuppliedType::OccurredAt => &values.occurred_at,
             };
             draft.bind(&pointer(supplied.path), Value::String(value.clone()))?;
         }
@@ -450,7 +450,7 @@ impl Screen {
             .revision
             .ok_or_else(|| binding_error("no record read is declared for this command"))?;
         if read.spec.operation != mapping.read_operation
-            || read.spec.kind != "get"
+            || read.spec.type_ != "get"
             || read.spec.response.result_class != Some("one")
         {
             return Err(binding_error("the source is not the declared record read"));
@@ -483,7 +483,7 @@ impl Screen {
         row_index: usize,
     ) -> Result<(), ScreenError> {
         self.ensure_editable()?;
-        if !matches!(self.spec.kind, "get" | "projection") {
+        if !matches!(self.spec.type_, "get" | "projection") {
             return Err(binding_error("record selection can populate only a read"));
         }
         let target = self
@@ -524,7 +524,7 @@ impl Screen {
             || !read.submission.available()
             || self.submission.binding() != read.submission.binding()
             || read.spec.operation != mapping.read_operation
-            || read.spec.kind != "get"
+            || read.spec.type_ != "get"
             || read.spec.route.is_none()
         {
             return Err(binding_error(
@@ -634,7 +634,7 @@ impl Screen {
     }
 
     fn is_read(&self) -> bool {
-        matches!(self.spec.kind, "get" | "query" | "projection")
+        matches!(self.spec.type_, "get" | "query" | "projection")
     }
 
     fn has_cursor(&self) -> bool {

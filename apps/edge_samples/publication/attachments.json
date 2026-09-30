@@ -1,13 +1,13 @@
 {
   "sample-record-http": {
-    "kind": "http",
+    "type": "http",
     "package-id": "edge_samples",
     "component": "samples",
     "operation": "edge-samples:sample/record",
-    "definition-hash": "sha256:0d22f61363113777b568f06a22a9440338c98fc13023f0e33e97dcad218adb98",
+    "definition-hash": "sha256:65f2dbd09dee027d2160363e5ab4dcc03db48e119572a578470b33d54200073f",
     "definition": {
       "id": "sample-record-http",
-      "kind": "http",
+      "type": "http",
       "route": {
         "path": "/sample/record"
       },

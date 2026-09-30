@@ -325,8 +325,9 @@ impl FieldIr {
 pub struct OperationIr {
     /// Local name within the model, e.g. `query`.
     pub name: String,
-    /// Operation kind carried by the generated manifest contract.
-    pub kind: String,
+    /// Operation type carried by the generated manifest contract.
+    #[serde(rename = "type")]
+    pub type_: String,
     /// Canonical operation identity.
     pub operation: String,
     /// The grant a caller needs.
@@ -836,7 +837,7 @@ fn route_index(
         // carries none by construction, and `studio` is the authoring surface
         // — a generated package client that acquired a studio path would call
         // a control-plane route it was never generated for.
-        if attachment.kind != wamn_catalog::AttachmentKind::Http {
+        if attachment.type_ != wamn_catalog::AttachmentType::Http {
             continue;
         }
         // No registered operation means the attachment invokes no package
@@ -931,8 +932,8 @@ fn route_index(
 
 /// The HTTP method of a route to an operation of this contract kind.
 fn route_method(kind: &str, module: &str, name: &str) -> Result<&'static str, ClientIrError> {
-    serde_json::from_value::<wamn_catalog::OperationKind>(Value::String(kind.to_owned()))
-        .map(wamn_catalog::OperationKind::http_method)
+    serde_json::from_value::<wamn_catalog::OperationType>(Value::String(kind.to_owned()))
+        .map(wamn_catalog::OperationType::http_method)
         .map_err(|error| {
             ClientIrError::new(
                 ClientIrErrorKind::MalformedContract,
@@ -1152,7 +1153,7 @@ fn build_operation(
         .unwrap_or_else(|| Value::Object(serde_json::Map::new()));
 
     let identity = member("operation")?;
-    let kind = member("kind")?;
+    let kind = member("type")?;
     let record: Option<RecordIr> = operation
         .get("record")
         .cloned()
@@ -1189,7 +1190,7 @@ fn build_operation(
     };
     Ok(Some(OperationIr {
         name: name.to_owned(),
-        kind,
+        type_: kind,
         route,
         record,
         revision_binding: None,
@@ -1301,7 +1302,7 @@ fn bind_served_contracts(models: &mut [ModelIr]) {
         let candidates = operations
             .iter()
             .filter_map(|read| {
-                if read.kind != "get" {
+                if read.type_ != "get" {
                     return None;
                 }
                 let route = read.route.as_ref()?;
@@ -1481,7 +1482,7 @@ mod tests {
         for policy in [None, Some(false), Some(true)] {
             let mut contract = serde_json::json!({
                 "operation": "orders:widget/get@1.0.0",
-                "kind": "get",
+                "type": "get",
                 "grant": "orders:widget/get@1.0.0",
                 "permission_token": "widget.get"
             });

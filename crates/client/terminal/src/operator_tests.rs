@@ -3,7 +3,7 @@ use std::collections::VecDeque;
 use std::sync::Mutex;
 use wamn_client::CredentialProvider;
 use wamn_client::credentials::CredentialError;
-use wamn_client_tui::screen::{RecordLink, RevisionBinding, SuppliedField, SuppliedKind};
+use wamn_client_tui::screen::{RecordLink, RevisionBinding, SuppliedField, SuppliedType};
 use wamn_client_tui::submission::{Replay, ResponseContract};
 
 #[test]
@@ -51,7 +51,7 @@ const INPUT: &[FieldSchema] = &[
 const RESULT: &[FieldSchema] = &[field("id", "text")];
 const SUPPLIED: &[SuppliedField] = &[SuppliedField {
     path: "request_id",
-    kind: SuppliedKind::RequestId,
+    type_: SuppliedType::RequestId,
 }];
 
 fn route() -> RouteMetadata {
@@ -65,7 +65,7 @@ const SPEC: ScreenSpec = ScreenSpec {
     model: "stock",
     name: "apply",
     operation: "example:stock/apply@1.0.0",
-    kind: "command",
+    type_: "command",
     input: INPUT,
     input_schema: None,
     response: ResponseContract {
@@ -74,7 +74,7 @@ const SPEC: ScreenSpec = ScreenSpec {
         fields: RESULT,
         result_class: Some("one"),
         errors: &[],
-        kind: "command",
+        type_: "command",
         transaction: Some("explicit_per_input"),
         direct: true,
         replay: Replay::Claim,
@@ -267,7 +267,7 @@ fn route_parameters_are_required_before_any_request_becomes_pending() {
 fn linked_navigation_requires_the_declared_relation_or_exact_read_operation() {
     const LIST: ScreenSpec = ScreenSpec {
         name: "query",
-        kind: "query",
+        type_: "query",
         operation: "example:stock/query@1.0.0",
         record: Some(RecordLink {
             relation: "inventory.stock",
@@ -278,7 +278,7 @@ fn linked_navigation_requires_the_declared_relation_or_exact_read_operation() {
     };
     const READ: ScreenSpec = ScreenSpec {
         name: "get",
-        kind: "get",
+        type_: "get",
         operation: "example:stock/get@1.0.0",
         record: Some(RecordLink {
             relation: "inventory.stock",
@@ -289,7 +289,7 @@ fn linked_navigation_requires_the_declared_relation_or_exact_read_operation() {
     };
     const OTHER: ScreenSpec = ScreenSpec {
         name: "other",
-        kind: "get",
+        type_: "get",
         record: Some(RecordLink {
             relation: "inventory.other",
             key_field: "id",
@@ -339,7 +339,7 @@ fn status_preserves_conflict_versions_and_permission_details() {
 #[test]
 fn cursor_display_stays_opaque_and_query_columns_come_from_its_schema() {
     const PAGE: ScreenSpec = ScreenSpec {
-        kind: "query",
+        type_: "query",
         input: &[
             field("request_id", "string"),
             FieldSchema {
@@ -349,7 +349,7 @@ fn cursor_display_stays_opaque_and_query_columns_come_from_its_schema() {
         ],
         response: ResponseContract {
             result_class: Some("page"),
-            kind: "query",
+            type_: "query",
             ..SPEC.response
         },
         ..SPEC
@@ -583,13 +583,13 @@ fn f5_refreshes_command_a_even_when_the_shared_read_now_holds_b() {
     const READ: ScreenSpec = ScreenSpec {
         name: "get",
         operation: "stock.get",
-        kind: "get",
+        type_: "get",
         // A read carries no request identity.
         input: &[field("id", "text"), field("locale", "text")],
         supplied: &[],
         response: ResponseContract {
             fields: &[field("id", "text"), field("version", "int64")],
-            kind: "get",
+            type_: "get",
             ..SPEC.response
         },
         ..SPEC
@@ -1046,11 +1046,11 @@ async fn a_legacy_fresh_screen_accepts_session_only_credentials() {
 async fn queued_initial_and_follow_up_reads_use_the_shared_request_driver() {
     // A read carries no request identity, so its outcome matches by position.
     const READ: ScreenSpec = ScreenSpec {
-        kind: "get",
+        type_: "get",
         input: &[INPUT[1], INPUT[2]],
         supplied: &[],
         response: ResponseContract {
-            kind: "get",
+            type_: "get",
             replay: Replay::Unknown,
             ..SPEC.response
         },
@@ -1185,7 +1185,7 @@ fn record_actor_labels_render_names_and_full_id_fallback() {
     const ACTORS: &[FieldSchema] = &[field("created_by", "uuid"), field("updated_by", "uuid")];
     const RECORD: ScreenSpec = ScreenSpec {
         name: "get",
-        kind: "get",
+        type_: "get",
         record: Some(RecordLink {
             relation: "stock",
             key_field: "created_by",

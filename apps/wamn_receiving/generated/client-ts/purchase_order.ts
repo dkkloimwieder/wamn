@@ -2,7 +2,7 @@
 //
 // `purchase_order` operations of package `wamn_receiving`.
 
-import type { FieldMap, OperationRoute, Outcome, Timestamptz, Transport, Uuid } from "@wamn/web-runtime";
+import type { FieldMap, JsonValue, OperationRoute, Outcome, Timestamptz, Transport, Uuid } from "@wamn/web-runtime";
 import { reviveOutcome, toWire } from "@wamn/web-runtime";
 
 /** Input for `wamn-receiving:purchase-order/get@1.0.0`. */
@@ -75,7 +75,7 @@ export const PURCHASE_ORDER_GET_ROUTE: OperationRoute = {
     ],
     replay: null,
     direct: true,
-    kind: "get",
+    type: "get",
     transaction: "implicit",
   },
 };
@@ -102,6 +102,8 @@ export interface PurchaseOrderQueryRequest {
   filter?: PurchaseOrderQueryRequestFilter;
   /** `int32`, omittable */
   limit?: number;
+  /** `keyset`, omittable */
+  pagination?: JsonValue;
   /** `object`, omittable */
   sort?: PurchaseOrderQueryRequestSort;
 }
@@ -134,6 +136,7 @@ export const PURCHASE_ORDER_QUERY_REQUEST_FIELDS: FieldMap = {
     },
   },
   "limit": "limit",
+  "pagination": "pagination",
   "sort": {
     member: "sort",
     fields: {
@@ -215,7 +218,7 @@ export const PURCHASE_ORDER_QUERY_ROUTE: OperationRoute = {
     ],
     replay: null,
     direct: true,
-    kind: "query",
+    type: "query",
     transaction: "implicit",
   },
 };
@@ -329,7 +332,7 @@ export const PURCHASE_ORDER_UPDATE_ROUTE: OperationRoute = {
     ],
     replay: null,
     direct: true,
-    kind: "update",
+    type: "update",
     transaction: "implicit",
   },
 };

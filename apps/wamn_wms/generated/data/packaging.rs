@@ -345,7 +345,7 @@ pub async fn query(
 pub async fn create(
     transaction: &mut wamn_postgres_statements::Transaction,
     packaging_code: Option<String>,
-    r#type: Option<String>,
+    type_: Option<String>,
     location_id: Option<String>,
     status: Option<String>,
 ) -> Result<PackagingRow, Error> {
@@ -353,10 +353,10 @@ pub async fn create(
         return Err(Error::invalid("packaging_code"));
     };
     let packaging_code = value;
-    let Some(value) = r#type else {
+    let Some(value) = type_ else {
         return Err(Error::invalid("type"));
     };
-    let r#type = value;
+    let type_ = value;
     let Some(value) = location_id else {
         return Err(Error::invalid("location_id"));
     };
@@ -365,7 +365,7 @@ pub async fn create(
         return Err(Error::invalid("status"));
     };
     let status = value;
-    sql::create(transaction, packaging_code, r#type, location_id, status)
+    sql::create(transaction, packaging_code, type_, location_id, status)
         .await
         .map_err(|error| {
             Error::from_statement(

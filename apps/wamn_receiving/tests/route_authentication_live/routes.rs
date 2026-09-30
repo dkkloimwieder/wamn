@@ -1177,14 +1177,14 @@ async fn assert_route_history_read(
         .iter()
         .map(|(position, kind, before, current)| HistoryRow {
             position: *position,
-            kind,
+            type_: kind,
             before,
             current,
             head_position: newest_position,
         })
         .collect::<Vec<_>>();
     anyhow::ensure!(
-        rows.iter().map(|row| row.kind).collect::<Vec<_>>() == ["insert", "update", "update"],
+        rows.iter().map(|row| row.type_).collect::<Vec<_>>() == ["insert", "update", "update"],
         "the purchase order history has the wrong entries: {value}"
     );
     let folded = |position: i64| -> anyhow::Result<serde_json::Map<String, Value>> {

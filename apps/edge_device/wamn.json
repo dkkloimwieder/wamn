@@ -10,7 +10,7 @@
   "models": {},
   "custom_operations": {
     "sample.read": {
-      "kind": "command",
+      "type": "command",
       "visibility": "public",
       "label": "Read a sample",
       "description": "The device operation of an edge box. It turns one frame from the serial device into the sample that the box stores and forwards. It declares no SQL.",

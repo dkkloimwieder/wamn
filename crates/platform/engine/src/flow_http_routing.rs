@@ -32,7 +32,7 @@ use sha2::{Digest as _, Sha256};
 #[cfg(test)]
 use wamn_catalog::PAT_AUTHENTICATION_MODE;
 use wamn_catalog::{
-    AttachmentAuthPolicy, AttachmentKind, AttachmentRef, OperationKind, ServingManifest,
+    AttachmentAuthPolicy, AttachmentRef, AttachmentType, OperationType, ServingManifest,
     parse_attachment_auth_policy,
 };
 use wamn_session::PAT_TOKEN_PREFIX;
@@ -719,8 +719,8 @@ fn route_definitions(
 
 /// The two kinds that carry an HTTP route. An `internal` or `cron` attachment has
 /// none and must never be reachable over HTTP.
-fn carries_http_route(kind: AttachmentKind) -> bool {
-    matches!(kind, AttachmentKind::Http | AttachmentKind::Studio)
+fn carries_http_route(kind: AttachmentType) -> bool {
+    matches!(kind, AttachmentType::Http | AttachmentType::Studio)
 }
 
 /// Project explicit hostnames from the same routes that the HTTP plugin serves.
@@ -827,22 +827,22 @@ fn route_definition(
 /// The Cache-Control value of a successful read response
 /// (`docs/architecture/execution.md`), or `None` for a kind that is not
 /// a read. A read is private unless its route admits anonymous callers.
-fn read_cache_control(kind: OperationKind, policy: Option<AttachmentAuthPolicy>) -> Option<String> {
+fn read_cache_control(kind: OperationType, policy: Option<AttachmentAuthPolicy>) -> Option<String> {
     let scope = if policy == Some(AttachmentAuthPolicy::None) {
         "public"
     } else {
         "private"
     };
     match kind {
-        OperationKind::Get => Some(format!("{scope}, no-cache")),
-        OperationKind::Query | OperationKind::Projection => {
+        OperationType::Get => Some(format!("{scope}, no-cache")),
+        OperationType::Query | OperationType::Projection => {
             Some(format!("{scope}, max-age=10, stale-while-revalidate=60"))
         }
-        OperationKind::Create
-        | OperationKind::Update
-        | OperationKind::Delete
-        | OperationKind::Command
-        | OperationKind::EventHandler => None,
+        OperationType::Create
+        | OperationType::Update
+        | OperationType::Delete
+        | OperationType::Command
+        | OperationType::EventHandler => None,
     }
 }
 
@@ -986,14 +986,14 @@ pub fn session_cookie(headers: &[Header]) -> Result<Option<&str>, AuthRejection>
 }
 
 /// Whether an attachment only reads: it targets a route whose operation kind is
-/// one of `OperationKind::READ_KINDS`. A wiring can write, so it never reads
+/// one of `OperationType::READ_KINDS`. A wiring can write, so it never reads
 /// only.
 pub fn serves_read(manifest: &ServingManifest, attachment: AttachmentRef<'_>) -> bool {
-    route_kind(manifest, attachment).is_some_and(OperationKind::is_read)
+    route_kind(manifest, attachment).is_some_and(OperationType::is_read)
 }
 
 /// The operation kind of the route an attachment targets. A wiring has none.
-fn route_kind(manifest: &ServingManifest, attachment: AttachmentRef<'_>) -> Option<OperationKind> {
+fn route_kind(manifest: &ServingManifest, attachment: AttachmentRef<'_>) -> Option<OperationType> {
     let AttachmentRef::Route(attachment) = attachment else {
         return None;
     };
@@ -1003,7 +1003,7 @@ fn route_kind(manifest: &ServingManifest, attachment: AttachmentRef<'_>) -> Opti
             &attachment.component,
             &attachment.operation,
         )
-        .map(|route| route.kind)
+        .map(|route| route.type_)
 }
 
 /// Check the signed double-submit of a cookie session.
@@ -1266,9 +1266,9 @@ mod tests {
         }])
     }
 
-    fn attachment(kind: AttachmentKind, definition: Value) -> ServingAttachment {
+    fn attachment(kind: AttachmentType, definition: Value) -> ServingAttachment {
         ServingAttachment {
-            kind,
+            type_: kind,
             package_id: "cat".into(),
             target: wamn_catalog::AttachmentTarget::Wiring {
                 wiring_id: "orders".into(),
@@ -1325,7 +1325,7 @@ mod tests {
     fn one_http_route() -> ServingManifest {
         release_manifest(BTreeMap::from([(
             "orders".to_string(),
-            attachment(AttachmentKind::Http, orders_definition()),
+            attachment(AttachmentType::Http, orders_definition()),
         )]))
     }
 
@@ -1402,35 +1402,35 @@ mod tests {
         let none = json!({"modes": ["none"]});
         for (kind, policy, expected) in [
             (
-                OperationKind::Get,
+                OperationType::Get,
                 &session,
                 Some("private, no-cache".to_string()),
             ),
             (
-                OperationKind::Query,
+                OperationType::Query,
                 &both,
                 Some(format!("private, {SHORT}")),
             ),
             (
-                OperationKind::Projection,
+                OperationType::Projection,
                 &session,
                 Some(format!("private, {SHORT}")),
             ),
             (
-                OperationKind::Get,
+                OperationType::Get,
                 &none,
                 Some("public, no-cache".to_string()),
             ),
             (
-                OperationKind::Query,
+                OperationType::Query,
                 &none,
                 Some(format!("public, {SHORT}")),
             ),
-            (OperationKind::Command, &session, None),
-            (OperationKind::Create, &none, None),
+            (OperationType::Command, &session, None),
+            (OperationType::Create, &none, None),
         ] {
             let mut route = attachment(
-                AttachmentKind::Http,
+                AttachmentType::Http,
                 json!({
                     "id": "route",
                     "kind": "http",
@@ -1452,7 +1452,7 @@ mod tests {
                     package_id: "cat".into(),
                     component: "http-request".into(),
                     operation: "request".into(),
-                    kind,
+                    type_: kind,
                     reads: BTreeSet::new(),
                     revision: None,
                     idempotency: None,
@@ -1541,7 +1541,7 @@ mod tests {
         definition["raw-body-bytes"] = json!({"maximum": 1_048_576});
         let manifest = release_manifest(BTreeMap::from([(
             "orders".to_string(),
-            attachment(AttachmentKind::Http, definition),
+            attachment(AttachmentType::Http, definition),
         )]));
         let mount = Mount::holding(&manifest, "authored-input");
         let plugin =
@@ -1584,7 +1584,7 @@ mod tests {
         });
         let manifest = release_manifest(BTreeMap::from([(
             "orders".to_string(),
-            attachment(AttachmentKind::Http, definition),
+            attachment(AttachmentType::Http, definition),
         )]));
         let mount = Mount::holding(&manifest, "schema-pointer");
         let plugin =
@@ -1628,7 +1628,7 @@ mod tests {
             definition["id"] = json!(id);
             definition["route"]["path"] = json!(format!("/{id}"));
             definition["input-schema"] = schema;
-            attachment(AttachmentKind::Http, definition)
+            attachment(AttachmentType::Http, definition)
         };
         let manifest = release_manifest(BTreeMap::from([
             ("first".to_string(), with_schema("first", first)),
@@ -1674,11 +1674,11 @@ mod tests {
         let manifest = release_manifest(BTreeMap::from([
             (
                 "invalid".to_string(),
-                attachment(AttachmentKind::Http, invalid_definition),
+                attachment(AttachmentType::Http, invalid_definition),
             ),
             (
                 "string".to_string(),
-                attachment(AttachmentKind::Http, string_definition),
+                attachment(AttachmentType::Http, string_definition),
             ),
         ]));
         let mount = Mount::holding(&manifest, "schema-invalid");
@@ -1712,7 +1712,7 @@ mod tests {
             definition["raw-body-bytes"] = raw_body_bytes;
             let manifest = release_manifest(BTreeMap::from([(
                 "orders".to_string(),
-                attachment(AttachmentKind::Http, definition),
+                attachment(AttachmentType::Http, definition),
             )]));
 
             assert!(
@@ -1742,7 +1742,7 @@ mod tests {
         definition["route"]["host"] = json!(WILDCARD_HOST);
         let manifest = release_manifest(BTreeMap::from([(
             "orders".to_string(),
-            attachment(AttachmentKind::Http, definition),
+            attachment(AttachmentType::Http, definition),
         )]));
 
         assert_eq!(
@@ -1760,10 +1760,10 @@ mod tests {
         // Every kind is given a route document, including the two that cannot
         // legally have one: the filter under test is the kind, not the route.
         let attachments = [
-            ("cron-attachment", AttachmentKind::Cron),
-            ("http-attachment", AttachmentKind::Http),
-            ("internal-attachment", AttachmentKind::Internal),
-            ("studio-attachment", AttachmentKind::Studio),
+            ("cron-attachment", AttachmentType::Cron),
+            ("http-attachment", AttachmentType::Http),
+            ("internal-attachment", AttachmentType::Internal),
+            ("studio-attachment", AttachmentType::Studio),
         ]
         .into_iter()
         .map(|(id, kind)| (id.to_string(), attachment(kind, orders_definition())))
@@ -1782,26 +1782,26 @@ mod tests {
     #[test]
     fn expected_hosts_follow_the_serviceable_projection_without_wildcard_expansion() {
         let attachments = [
-            ("http", AttachmentKind::Http, "api.example.test", false),
-            ("duplicate", AttachmentKind::Http, "api.example.test", false),
+            ("http", AttachmentType::Http, "api.example.test", false),
+            ("duplicate", AttachmentType::Http, "api.example.test", false),
             (
                 "studio",
-                AttachmentKind::Studio,
+                AttachmentType::Studio,
                 "studio.example.test",
                 false,
             ),
-            ("cron", AttachmentKind::Cron, "cron.example.test", false),
+            ("cron", AttachmentType::Cron, "cron.example.test", false),
             (
                 "internal",
-                AttachmentKind::Internal,
+                AttachmentType::Internal,
                 "internal.example.test",
                 false,
             ),
-            ("wildcard", AttachmentKind::Http, WILDCARD_HOST, false),
-            ("empty", AttachmentKind::Http, "", false),
+            ("wildcard", AttachmentType::Http, WILDCARD_HOST, false),
+            ("empty", AttachmentType::Http, "", false),
             (
                 "malformed",
-                AttachmentKind::Http,
+                AttachmentType::Http,
                 "broken.example.test",
                 true,
             ),
@@ -1828,18 +1828,18 @@ mod tests {
 
     #[test]
     fn only_an_externally_selectable_pat_attachment_requires_route_authentication() {
-        let mut internal = attachment(AttachmentKind::Internal, orders_definition());
+        let mut internal = attachment(AttachmentType::Internal, orders_definition());
         internal.auth_policy = json!({"modes": [PAT_AUTHENTICATION_MODE]});
         let internal_only = release_manifest(BTreeMap::from([("internal".to_string(), internal)]));
         assert!(!requires_pat_route_authentication(&internal_only));
 
-        let mut malformed = attachment(AttachmentKind::Http, json!({"route": {}}));
+        let mut malformed = attachment(AttachmentType::Http, json!({"route": {}}));
         malformed.auth_policy = json!({"modes": [PAT_AUTHENTICATION_MODE]});
         let malformed_only =
             release_manifest(BTreeMap::from([("malformed".to_string(), malformed)]));
         assert!(!requires_pat_route_authentication(&malformed_only));
 
-        let mut http = attachment(AttachmentKind::Http, orders_definition());
+        let mut http = attachment(AttachmentType::Http, orders_definition());
         http.auth_policy = json!({"modes": [PAT_AUTHENTICATION_MODE]});
         let protected = release_manifest(BTreeMap::from([("orders".to_string(), http)]));
         assert!(requires_pat_route_authentication(&protected));
@@ -1855,14 +1855,14 @@ mod tests {
             (json!(["pat", "session"]), true, true),
         ] {
             for kind in [
-                AttachmentKind::Http,
-                AttachmentKind::Studio,
-                AttachmentKind::Internal,
+                AttachmentType::Http,
+                AttachmentType::Studio,
+                AttachmentType::Internal,
             ] {
                 let mut route = attachment(kind, orders_definition());
                 route.auth_policy = json!({"modes": modes});
                 let manifest = release_manifest(BTreeMap::from([("orders".to_string(), route)]));
-                let external = kind != AttachmentKind::Internal;
+                let external = kind != AttachmentType::Internal;
                 assert_eq!(
                     requires_pat_route_authentication(&manifest),
                     pat && external
@@ -1888,11 +1888,11 @@ mod tests {
         let manifest = release_manifest(BTreeMap::from([
             (
                 "broken".to_string(),
-                attachment(AttachmentKind::Http, broken),
+                attachment(AttachmentType::Http, broken),
             ),
             (
                 "orders".to_string(),
-                attachment(AttachmentKind::Http, orders_definition()),
+                attachment(AttachmentType::Http, orders_definition()),
             ),
         ]));
 
@@ -1911,7 +1911,7 @@ mod tests {
         definition["mappings"][0]["from"] = json!("cookie");
         let manifest = release_manifest(BTreeMap::from([(
             "orders".to_string(),
-            attachment(AttachmentKind::Http, definition),
+            attachment(AttachmentType::Http, definition),
         )]));
 
         assert!(

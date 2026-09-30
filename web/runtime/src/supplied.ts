@@ -42,15 +42,15 @@ export function occurredAt(now: Date = new Date()): string {
 /** One input the operator never types: its path, and the value it takes. */
 export interface SuppliedInput {
   readonly input: MemberPath;
-  readonly kind: "requestId" | "idempotencyKey" | "occurredAt";
+  readonly type: "requestId" | "idempotencyKey" | "occurredAt";
 }
 
 /** Writes a fresh value into each supplied input of one item. */
 export function writeSupplied<Item>(item: Item, supplied: readonly SuppliedInput[]): Item {
   let next = item;
-  for (const { input, kind } of supplied) {
+  for (const { input, type } of supplied) {
     const value =
-      kind === "requestId" ? newRequestId() : kind === "idempotencyKey" ? newIdempotencyKey() : occurredAt();
+      type === "requestId" ? newRequestId() : type === "idempotencyKey" ? newIdempotencyKey() : occurredAt();
     next = writeMember(next, input, value);
   }
   return next;

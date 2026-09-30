@@ -768,10 +768,10 @@ async fn a_logged_relation_writes_history_through_the_reconciled_app_role() {
         "before:INSERT",
         "changed_at:INSERT",
         "changed_by:INSERT",
-        "kind:INSERT",
         "operation:INSERT",
         "row_key:INSERT",
         "transaction_id:INSERT",
+        "type:INSERT",
     ];
     assert_eq!(history_privileges().await, expected_privileges);
 
@@ -801,7 +801,7 @@ async fn a_logged_relation_writes_history_through_the_reconciled_app_role() {
         .expect("the App role writes a logged relation with its reconciled grants");
     let entries = admin
         .query(
-            "SELECT kind, operation, changed_by::text, row_key::text, before::text, after::text \
+            "SELECT type, operation, changed_by::text, row_key::text, before::text, after::text \
                FROM inventory.widget_tag_history ORDER BY position",
             &[],
         )
@@ -857,8 +857,8 @@ async fn a_logged_relation_writes_history_through_the_reconciled_app_role() {
     assert_eq!(stamps, 0, "the logged relation carries no stamp column");
 
     for statement in [
-        "SELECT kind FROM inventory.widget_tag_history",
-        "UPDATE inventory.widget_tag_history SET kind = kind",
+        "SELECT type FROM inventory.widget_tag_history",
+        "UPDATE inventory.widget_tag_history SET type = type",
         "DELETE FROM inventory.widget_tag_history",
     ] {
         let denied = guest

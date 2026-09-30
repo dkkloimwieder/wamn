@@ -7,8 +7,8 @@ use super::rust::{
 use super::wit::{emit_custom_operation_wit, emit_model_wit};
 use super::{
     AccessOperationErrorLiteral, BTreeMap, BTreeSet, CREATE_KEY_FIELD, CREATE_STATEMENT,
-    CURSOR_VERSION, CatalogIr, ColumnType, ConstraintKind, ContractFieldDeclaration, CrudAction,
-    CustomOperationDeclaration, CustomOperationKind, CustomOperationResultDeclaration, DeleteMode,
+    CURSOR_VERSION, CatalogIr, ColumnType, ConstraintType, ContractFieldDeclaration, CrudAction,
+    CustomOperationDeclaration, CustomOperationResultDeclaration, CustomOperationType, DeleteMode,
     FieldText, GenerateError, GenerateErrorKind, ModelDeclaration, OperationDeclaration,
     OperationErrorDetailDeclaration, PackageManifest, Projection, ProjectionContents,
     RequiredConstraint, RequiredField, RequiredSchemaContract, RequiredTable, ResultClass,
@@ -19,7 +19,9 @@ use super::{
     query_variants, relation, rust_type_identifier, server_owned_fields, sha256, sql,
     writable_path,
 };
-use crate::manifest::{FieldReference, OperationErrorDetailKey, StaticSqlRelationDeclaration};
+use crate::manifest::{
+    FieldReference, OperationErrorDetailKey, StaticSqlRelationDeclaration, authored_name,
+};
 use wamn_record_history::HISTORY_COLUMNS;
 
 #[expect(
@@ -179,13 +181,13 @@ pub(super) fn emit_custom_operation(
             }),
         );
     }
-    match operation.kind {
-        CustomOperationKind::Command => {
+    match operation.type_ {
+        CustomOperationType::Command => {
             source_map.insert("command".to_owned(), json!(operation_name));
         }
-        CustomOperationKind::Projection | CustomOperationKind::EventHandler => {
+        CustomOperationType::Projection | CustomOperationType::EventHandler => {
             source_map.insert("operation".to_owned(), json!(operation_name));
-            source_map.insert("kind".to_owned(), json!(operation.kind()));
+            source_map.insert("type".to_owned(), json!(operation.kind()));
             if let Some(registration) = &operation.registration {
                 source_map.insert("registration".to_owned(), json!(registration));
             }
@@ -236,7 +238,7 @@ fn emit_custom_operation_contracts(
     let key = operation.idempotency_key_field();
     let mut operation_contract = serde_json::Map::from_iter([
         ("operation".to_owned(), json!(operation_id)),
-        ("kind".to_owned(), json!(operation.kind())),
+        ("type".to_owned(), json!(operation.kind())),
         ("visibility".to_owned(), json!(operation.visibility)),
         ("permission_token".to_owned(), json!(operation.permission)),
         ("grant".to_owned(), json!(grant)),
@@ -733,7 +735,7 @@ fn emit_operation_contracts(
                 transactional,
                 accessor.binds.iter().map(|bind| {
                     statement_value_contract(
-                        bind.parameter.trim_start_matches("r#"),
+                        authored_name(&bind.parameter),
                         bind.statement_type,
                         bind.nullable,
                     )
@@ -776,7 +778,7 @@ fn emit_operation_contracts(
     }
     let mut operation_contract = serde_json::Map::from_iter([
         ("operation".to_owned(), json!(operation_id)),
-        ("kind".to_owned(), json!(action.as_str())),
+        ("type".to_owned(), json!(action.as_str())),
         ("record".to_owned(), Value::Object(record)),
         ("permission_token".to_owned(), json!(operation.permission)),
         ("grant".to_owned(), json!(operation_id)),
@@ -920,7 +922,7 @@ fn column_reference(
     column: &str,
 ) -> Option<(String, String)> {
     let (schema, referenced, key) = table.constraints().iter().find_map(|constraint| {
-        let ConstraintKind::ForeignKey {
+        let ConstraintType::ForeignKey {
             columns,
             referenced_schema,
             referenced_table,
@@ -1111,7 +1113,7 @@ fn input_contract(
                         "max_fields": 1,
                     })),
                     "pagination": operation.pagination.as_ref().map(|pagination| json!({
-                        "kind": "keyset",
+                        "type": "keyset",
                         "cursor": {
                             "version": CURSOR_VERSION,
                             "payload": "canonical_compact_json",

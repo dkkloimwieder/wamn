@@ -76,7 +76,7 @@ fn crud_record_links_use_the_declared_relation_and_revision() {
             &package,
             &format!("generated/contracts/entry/{action}.operation.json"),
         );
-        assert_eq!(contract["kind"], action);
+        assert_eq!(contract["type"], action);
         let mut record = json!({
             "relation": "inventory.stock",
             "key_field": "id",
@@ -102,7 +102,7 @@ fn custom_state_metadata_preserves_the_guard_without_inventing_a_record_link() {
     let mut manifest = manifest();
     manifest["custom_operations"] = json!({
         "entry.inspect": {
-            "kind": "command",
+            "type": "command",
             "visibility": "public",
             "permission": "entry.inspect",
             "connection": "postgres",
@@ -142,7 +142,7 @@ fn custom_state_metadata_preserves_the_guard_without_inventing_a_record_link() {
         )],
     );
     let contract = artifact(&package, "generated/contracts/entry/inspect.operation.json");
-    assert_eq!(contract["kind"], "command");
+    assert_eq!(contract["type"], "command");
     assert_eq!(
         contract["idempotent_by"],
         json!({"state": {"guards": {"stock": "version_seen"}}})

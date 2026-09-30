@@ -44,7 +44,7 @@ describe("the transport carrier", () => {
     errors: [],
     replay: null,
     direct: true,
-    kind: "get",
+    type: "get",
     transaction: "implicit",
   };
   const request = {

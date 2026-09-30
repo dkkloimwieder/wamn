@@ -130,7 +130,7 @@ macro_rules! row {
             packaging_code: row.packaging_code,
             row_version: row.row_version,
             status: row.status,
-            type_: row.r#type,
+            type_: row.type_,
             updated_at: row.updated_at.0,
             updated_by: row.updated_by.0,
         }

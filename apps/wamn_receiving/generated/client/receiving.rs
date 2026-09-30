@@ -61,12 +61,6 @@ pub const RECEIVING_FIELDS: &[FieldDescriptor] = &[
         values: &[],
     },
     FieldDescriptor {
-        path: "kind",
-        type_name: "text",
-        nullable: false,
-        values: &["delete", "insert", "update"],
-    },
-    FieldDescriptor {
         path: "line_id",
         type_name: "uuid",
         nullable: true,
@@ -138,6 +132,12 @@ pub const RECEIVING_FIELDS: &[FieldDescriptor] = &[
         nullable: false,
         values: &[],
     },
+    FieldDescriptor {
+        path: "type",
+        type_name: "text",
+        nullable: false,
+        values: &["delete", "insert", "update"],
+    },
 ];
 
 /// Input for `wamn-receiving:receiving/load-purchase-order-history@1.0.0`.
@@ -169,9 +169,9 @@ pub struct ReceivingLoadPurchaseOrderHistoryResult {
     /// `uuid`
     pub id: uuid::Uuid,
     /// `text`
-    pub kind: String,
-    /// `text`
     pub operation: String,
+    /// `text`
+    pub type_: String,
 }
 
 /// Input descriptors for `wamn-receiving:receiving/load-purchase-order-history@1.0.0`.
@@ -241,16 +241,16 @@ pub const RECEIVING_LOAD_PURCHASE_ORDER_HISTORY_RESULT: &[FieldDescriptor] = &[
         values: &[],
     },
     FieldDescriptor {
-        path: "kind",
-        type_name: "text",
-        nullable: false,
-        values: &["delete", "insert", "update"],
-    },
-    FieldDescriptor {
         path: "operation",
         type_name: "text",
         nullable: false,
         values: &[],
+    },
+    FieldDescriptor {
+        path: "type",
+        type_name: "text",
+        nullable: false,
+        values: &["delete", "insert", "update"],
     },
 ];
 
@@ -382,10 +382,10 @@ pub const RECEIVING_LOAD_PURCHASE_ORDER_HISTORY_RESULT_SCHEMA:
     },
     wamn_client::descriptor::FieldSchema {
         field: FieldDescriptor {
-            path: "kind",
+            path: "operation",
             type_name: "text",
             nullable: false,
-            values: &["delete", "insert", "update"],
+            values: &[],
         },
         required: true,
         minimum: None,
@@ -394,10 +394,10 @@ pub const RECEIVING_LOAD_PURCHASE_ORDER_HISTORY_RESULT_SCHEMA:
     },
     wamn_client::descriptor::FieldSchema {
         field: FieldDescriptor {
-            path: "operation",
+            path: "type",
             type_name: "text",
             nullable: false,
-            values: &[],
+            values: &["delete", "insert", "update"],
         },
         required: true,
         minimum: None,

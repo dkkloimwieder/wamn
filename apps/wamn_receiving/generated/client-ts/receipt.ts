@@ -2,7 +2,7 @@
 //
 // `receipt` operations of package `wamn_receiving`.
 
-import type { FieldMap, OperationRoute, Outcome, Timestamptz, Transport, Uuid } from "@wamn/web-runtime";
+import type { FieldMap, JsonValue, OperationRoute, Outcome, Timestamptz, Transport, Uuid } from "@wamn/web-runtime";
 import { reviveOutcome, toWire } from "@wamn/web-runtime";
 
 /** Input for `wamn-receiving:receipt/get@1.0.0`. */
@@ -66,7 +66,7 @@ export const RECEIPT_GET_ROUTE: OperationRoute = {
     ],
     replay: null,
     direct: true,
-    kind: "get",
+    type: "get",
     transaction: "implicit",
   },
 };
@@ -91,12 +91,15 @@ export interface ReceiptQueryRequest {
   cursor?: string;
   /** `int32`, omittable */
   limit?: number;
+  /** `keyset`, omittable */
+  pagination?: JsonValue;
 }
 
 /** What `wamn-receiving:receipt/query@1.0.0` calls its input members. */
 export const RECEIPT_QUERY_REQUEST_FIELDS: FieldMap = {
   "cursor": "cursor",
   "limit": "limit",
+  "pagination": "pagination",
 };
 
 /** One row of `wamn-receiving:receipt/query@1.0.0`. */
@@ -162,7 +165,7 @@ export const RECEIPT_QUERY_ROUTE: OperationRoute = {
     ],
     replay: null,
     direct: true,
-    kind: "query",
+    type: "query",
     transaction: "implicit",
   },
 };

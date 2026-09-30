@@ -757,7 +757,7 @@ fn history_rows(rows: &[Value]) -> Option<Vec<HistoryRow<'_>>> {
         .map(|(index, row)| {
             Some(HistoryRow {
                 position: i64::try_from(index).ok()? + 1,
-                kind: row["kind"].as_str()?,
+                type_: row["type"].as_str()?,
                 before: row["before"].as_str()?,
                 current: row["current"].as_str()?,
                 head_position: head,

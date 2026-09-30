@@ -60,7 +60,7 @@ export const LOCATION_LIST_ROUTE: OperationRoute = {
     ],
     replay: null,
     direct: true,
-    kind: "projection",
+    type: "projection",
     transaction: null,
   },
 };

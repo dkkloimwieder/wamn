@@ -1232,7 +1232,7 @@ pub fn move_route() -> RouteMetadata {
 ///
 /// [`ClientError`] for a transport failure, a refusal, or a response that
 /// does not match the operation's envelope.
-pub async fn r#move(
+pub async fn move_(
     client: &WamnClient,
     items: &[serde_json::Value],
 ) -> Result<Vec<wamn_client::ItemOutcome>, ClientError> {

@@ -6,7 +6,7 @@ pub static CREATE_SPEC: screen::ScreenSpec = screen::ScreenSpec {
     model: "supplier",
     name: "create",
     operation: "wamn-receiving:supplier/create@1.0.0",
-    kind: "create",
+    type_: "create",
     input: crate::supplier::SUPPLIER_CREATE_INPUT_SCHEMA,
     input_schema: Some(
         "{\"items\":{\"additionalProperties\":false,\"properties\":{\"idempotency_key\":{\"minLength\":1,\"type\":\"string\"},\"name\":{\"minLength\":1,\"type\":[\"string\",\"null\"],\"x-wamn-explicit-null\":\"invalid_input\"},\"request_id\":{\"minLength\":1,\"type\":\"string\"}},\"required\":[\"idempotency_key\",\"request_id\",\"name\"],\"type\":\"object\"},\"maxItems\":100,\"minItems\":1,\"type\":\"array\"}",
@@ -53,7 +53,7 @@ pub static CREATE_SPEC: screen::ScreenSpec = screen::ScreenSpec {
                 sources: &["unique_violation"],
             },
         ],
-        kind: "create",
+        type_: "create",
         transaction: Some("explicit_per_input"),
         direct: true,
         replay: submission::Replay::Claim,
@@ -71,11 +71,11 @@ pub static CREATE_SPEC: screen::ScreenSpec = screen::ScreenSpec {
     supplied: &[
         screen::SuppliedField {
             path: "idempotency_key",
-            kind: screen::SuppliedKind::IdempotencyKey,
+            type_: screen::SuppliedType::IdempotencyKey,
         },
         screen::SuppliedField {
             path: "request_id",
-            kind: screen::SuppliedKind::RequestId,
+            type_: screen::SuppliedType::RequestId,
         },
     ],
 };
@@ -89,10 +89,10 @@ pub static QUERY_SPEC: screen::ScreenSpec = screen::ScreenSpec {
     model: "supplier",
     name: "query",
     operation: "wamn-receiving:supplier/query@1.0.0",
-    kind: "query",
+    type_: "query",
     input: crate::supplier::SUPPLIER_QUERY_INPUT_SCHEMA,
     input_schema: Some(
-        "{\"items\":{\"additionalProperties\":false,\"properties\":{\"cursor\":{\"minLength\":1,\"type\":\"string\"},\"limit\":{\"maximum\":100,\"minimum\":1,\"type\":\"integer\"}},\"type\":\"object\"},\"maxItems\":100,\"minItems\":1,\"type\":\"array\"}",
+        "{\"items\":{\"additionalProperties\":false,\"properties\":{\"cursor\":{\"minLength\":1,\"type\":\"string\"},\"limit\":{\"maximum\":100,\"minimum\":1,\"type\":\"integer\"},\"pagination\":{\"type\":\"string\"}},\"type\":\"object\"},\"maxItems\":100,\"minItems\":1,\"type\":\"array\"}",
     ),
     response: submission::ResponseContract {
         schema: Some("{\"type\":\"array\"}"),
@@ -126,7 +126,7 @@ pub static QUERY_SPEC: screen::ScreenSpec = screen::ScreenSpec {
                 sources: &["statement_timeout"],
             },
         ],
-        kind: "query",
+        type_: "query",
         transaction: Some("implicit"),
         direct: true,
         replay: submission::Replay::Unknown,

@@ -47,7 +47,7 @@ pub struct ResponseContract {
     pub fields: &'static [wamn_client::descriptor::FieldSchema],
     pub result_class: Option<&'static str>,
     pub errors: &'static [ErrorCase],
-    pub kind: &'static str,
+    pub type_: &'static str,
     pub transaction: Option<&'static str>,
     pub direct: bool,
     pub replay: Replay,
@@ -204,7 +204,7 @@ impl Submission {
         };
         // A read carries no request identity: its one outcome answers its one
         // item by position.
-        let read = matches!(contract.kind, "get" | "query" | "projection");
+        let read = matches!(contract.type_, "get" | "query" | "projection");
         let request_id = if read {
             None
         } else {
@@ -587,7 +587,7 @@ fn refusal_is_confirmed(contract: &ResponseContract, error: &Value) -> bool {
     }
     if case.sources.is_empty() {
         return matches!(
-            contract.kind,
+            contract.type_,
             "get" | "query" | "create" | "update" | "delete"
         ) && matches!(
             code,

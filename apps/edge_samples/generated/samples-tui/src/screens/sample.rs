@@ -6,7 +6,7 @@ pub static GET_SPEC: screen::ScreenSpec = screen::ScreenSpec {
     model: "sample",
     name: "get",
     operation: "edge-samples:sample/get@1.0.0",
-    kind: "get",
+    type_: "get",
     input: crate::sample::SAMPLE_GET_INPUT_SCHEMA,
     input_schema: Some(
         "{\"items\":{\"additionalProperties\":false,\"properties\":{\"id\":{\"pattern\":\"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$\",\"type\":\"string\"}},\"required\":[\"id\"],\"type\":\"object\"},\"maxItems\":100,\"minItems\":1,\"type\":\"array\"}",
@@ -48,7 +48,7 @@ pub static GET_SPEC: screen::ScreenSpec = screen::ScreenSpec {
                 sources: &["statement_timeout"],
             },
         ],
-        kind: "get",
+        type_: "get",
         transaction: Some("implicit"),
         direct: true,
         replay: submission::Replay::Unknown,
@@ -75,7 +75,7 @@ pub static READ_SPEC: screen::ScreenSpec = screen::ScreenSpec {
     model: "sample",
     name: "read",
     operation: "edge-samples:sample/read@1.0.0",
-    kind: "command",
+    type_: "command",
     input: crate::sample::SAMPLE_READ_INPUT_SCHEMA,
     input_schema: None,
     response: submission::ResponseContract {
@@ -100,7 +100,7 @@ pub static READ_SPEC: screen::ScreenSpec = screen::ScreenSpec {
                 sources: &["permission_denied"],
             },
         ],
-        kind: "command",
+        type_: "command",
         transaction: None,
         direct: false,
         replay: submission::Replay::Unknown,
@@ -113,7 +113,7 @@ pub static READ_SPEC: screen::ScreenSpec = screen::ScreenSpec {
     requires_composition: false,
     supplied: &[screen::SuppliedField {
         path: "request_id",
-        kind: screen::SuppliedKind::RequestId,
+        type_: screen::SuppliedType::RequestId,
     }],
 };
 
@@ -126,7 +126,7 @@ pub static RECORD_SPEC: screen::ScreenSpec = screen::ScreenSpec {
     model: "sample",
     name: "record",
     operation: "edge-samples:sample/record@1.0.0",
-    kind: "command",
+    type_: "command",
     input: crate::sample::SAMPLE_RECORD_INPUT_SCHEMA,
     input_schema: Some(
         "{\"items\":{\"additionalProperties\":false,\"properties\":{\"request_id\":{\"minLength\":1,\"type\":\"string\"},\"value\":{\"additionalProperties\":false,\"properties\":{\"captured_at\":{\"format\":\"date-time\",\"type\":\"string\"},\"frame\":{\"minLength\":1,\"type\":\"string\"},\"idempotency_key\":{\"minLength\":1,\"type\":\"string\"}},\"required\":[\"idempotency_key\",\"frame\",\"captured_at\"],\"type\":\"object\"}},\"required\":[\"request_id\",\"value\"],\"type\":\"object\"},\"maxItems\":100,\"minItems\":1,\"type\":\"array\"}",
@@ -168,7 +168,7 @@ pub static RECORD_SPEC: screen::ScreenSpec = screen::ScreenSpec {
                 sources: &["statement_timeout"],
             },
         ],
-        kind: "command",
+        type_: "command",
         transaction: Some("explicit_per_input"),
         direct: true,
         replay: submission::Replay::Claim,
@@ -182,11 +182,11 @@ pub static RECORD_SPEC: screen::ScreenSpec = screen::ScreenSpec {
     supplied: &[
         screen::SuppliedField {
             path: "request_id",
-            kind: screen::SuppliedKind::RequestId,
+            type_: screen::SuppliedType::RequestId,
         },
         screen::SuppliedField {
             path: "value.idempotency_key",
-            kind: screen::SuppliedKind::IdempotencyKey,
+            type_: screen::SuppliedType::IdempotencyKey,
         },
     ],
 };

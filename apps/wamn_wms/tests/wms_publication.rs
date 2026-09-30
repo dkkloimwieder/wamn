@@ -9,7 +9,7 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use serde_json::Value;
-use wamn_catalog::{AttachmentKind, AttachmentTarget, ComponentDeclaration};
+use wamn_catalog::{AttachmentTarget, AttachmentType, ComponentDeclaration};
 use wamn_test_infrastructure::operations::sealed;
 
 const TENANT: &str = "wms-publication-test";
@@ -228,7 +228,7 @@ fn package_owned_inputs_declare_the_exact_shipped_route_closure() {
         let attachment = attachments
             .get(operation.attachment)
             .unwrap_or_else(|| panic!("{} is not attached", operation.attachment));
-        assert_eq!(attachment.kind, AttachmentKind::Http);
+        assert_eq!(attachment.type_, AttachmentType::Http);
         assert_eq!(attachment.package_id, PACKAGE_ID);
         assert_eq!(attachment.target, target);
         assert_eq!(

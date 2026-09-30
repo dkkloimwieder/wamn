@@ -12,7 +12,7 @@ use serde_json::Value;
 use tokio::sync::watch;
 use wamn_authoring_model::{GateRefusal, GateResult};
 use wamn_catalog::{
-    AttachmentKind, PackageCoordinate, ServingAttachment, ServingComponent,
+    AttachmentType, PackageCoordinate, ServingAttachment, ServingComponent,
     ServingComponentOperation, ServingManifest,
 };
 use wamn_runtime::plugins::wamn_jetstream::{
@@ -345,7 +345,7 @@ impl DevSnapshot {
             .filter(|(_, attachment)| {
                 matches!(
                     attachment.kind(),
-                    AttachmentKind::Http | AttachmentKind::Studio
+                    AttachmentType::Http | AttachmentType::Studio
                 )
             })
             .map(|(id, attachment)| (id, ServingAttachment::from(attachment)))
@@ -812,7 +812,7 @@ mod tests {
             operations: BTreeMap::from([("widget/get".to_owned(), operation)]),
         };
         let attachment = ServingAttachment {
-            kind: AttachmentKind::Http,
+            type_: AttachmentType::Http,
             package_id: "platform_fixture".to_owned(),
             target: wamn_catalog::AttachmentTarget::Wiring {
                 wiring_id: "widget/get".to_owned(),
@@ -842,7 +842,7 @@ mod tests {
                     (
                         "widget/studio".to_owned(),
                         ServingAttachment {
-                            kind: AttachmentKind::Studio,
+                            type_: AttachmentType::Studio,
                             definition: json!({
                                 "route": {"method": "POST", "path": "/studio"}
                             }),

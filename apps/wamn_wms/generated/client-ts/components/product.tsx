@@ -259,7 +259,7 @@ export const PRODUCT_QUERY_TABLE = {
     { field: "productCode", label: "product code", type: "text", role: "value" },
     { field: "rowVersion", label: "row version", type: "int32", role: "revision" },
   ],
-  update: { operation: "wamn-wms:product/update@1.0.0", binding: { route: PRODUCT_UPDATE_ROUTE, request: PRODUCT_UPDATE_REQUEST_FIELDS, result: PRODUCT_UPDATE_RESULT_FIELDS }, keyInput: ["id"], revisionInput: ["expectedRowVersion"], revisionField: "rowVersion", supplied: [{ input: ["requestId"], kind: "requestId" }], fields: [
+  update: { operation: "wamn-wms:product/update@1.0.0", binding: { route: PRODUCT_UPDATE_ROUTE, request: PRODUCT_UPDATE_REQUEST_FIELDS, result: PRODUCT_UPDATE_RESULT_FIELDS }, keyInput: ["id"], revisionInput: ["expectedRowVersion"], revisionField: "rowVersion", supplied: [{ input: ["requestId"], type: "requestId" }], fields: [
     { field: "productCode", input: ["change", "productCode"] },
   ] },
   actions: [

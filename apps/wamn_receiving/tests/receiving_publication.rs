@@ -4,7 +4,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 use serde_json::Value;
-use wamn_catalog::{AttachmentKind, AttachmentTarget, ComponentDeclaration};
+use wamn_catalog::{AttachmentTarget, AttachmentType, ComponentDeclaration};
 use wamn_test_infrastructure::operations::{package_version, sealed};
 
 const TENANT: &str = "receiving-publication-test";
@@ -198,7 +198,7 @@ fn package_owned_inputs_declare_the_exact_eleven_route_closure() {
         let attachment = attachments
             .get(operation.attachment)
             .expect("the exact operation attachment exists");
-        assert_eq!(attachment.kind, AttachmentKind::Http);
+        assert_eq!(attachment.type_, AttachmentType::Http);
         assert_eq!(attachment.package_id, PACKAGE_ID);
         assert_eq!(
             attachment.target,
@@ -216,7 +216,7 @@ fn package_owned_inputs_declare_the_exact_eleven_route_closure() {
             serde_json::json!({"modes": ["pat", "session"]})
         );
         assert_eq!(attachment.definition["id"], operation.attachment);
-        assert_eq!(attachment.definition["kind"], "http");
+        assert_eq!(attachment.definition["type"], "http");
         assert!(
             attachment.definition["route"].get("host").is_none(),
             "package attachments leave route hostnames to the deployment overlay"

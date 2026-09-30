@@ -1117,7 +1117,7 @@ mod tests {
     use std::collections::{BTreeMap, BTreeSet};
 
     use wamn_catalog::{
-        EffectiveReleaseId, OperationKind, PackageCoordinate, SERVING_MANIFEST_FORMAT_VERSION,
+        EffectiveReleaseId, OperationType, PackageCoordinate, SERVING_MANIFEST_FORMAT_VERSION,
         ServingComponentOperation, ServingRelease, ServingRoute,
     };
 
@@ -1334,7 +1334,7 @@ mod tests {
             package_id: invocation.origin.package_id.clone(),
             component: invocation.origin.component.clone(),
             operation: invocation.origin.operation.clone(),
-            kind: OperationKind::Command,
+            type_: OperationType::Command,
             reads: BTreeSet::new(),
             revision: None,
             idempotency: None,

@@ -537,7 +537,7 @@ mod tests {
     use serde_json::json;
     use wamn_authoring_model::{GateRefusal, GateResult, ValidatedDraftRef};
     use wamn_catalog::{
-        ArtifactHash, AttachmentKind, DefinitionHash, EffectiveReleaseId, PackageCoordinate,
+        ArtifactHash, AttachmentType, DefinitionHash, EffectiveReleaseId, PackageCoordinate,
         SERVING_MANIFEST_FORMAT_VERSION, ServingAttachment, ServingComponent,
         ServingComponentOperation, ServingManifest, ServingRelease, ServingWiring, WorkflowSection,
     };
@@ -936,9 +936,9 @@ mod tests {
             digest: ArtifactHash::parse(DIGEST).expect("valid digest"),
             operations: BTreeMap::from([("widget/get".to_owned(), operation)]),
         };
-        let http = attachment(AttachmentKind::Http, "widget-get-http", "/widget/get");
+        let http = attachment(AttachmentType::Http, "widget-get-http", "/widget/get");
         let studio = attachment(
-            AttachmentKind::Studio,
+            AttachmentType::Studio,
             "widget-get-studio",
             "/studio/widget",
         );
@@ -970,12 +970,12 @@ mod tests {
         }
     }
 
-    fn attachment(kind: AttachmentKind, id: &str, path: &str) -> ServingAttachment {
+    fn attachment(kind: AttachmentType, id: &str, path: &str) -> ServingAttachment {
         let kind_name = match kind {
-            AttachmentKind::Http => "http",
-            AttachmentKind::Internal => "internal",
-            AttachmentKind::Studio => "studio",
-            AttachmentKind::Cron => "cron",
+            AttachmentType::Http => "http",
+            AttachmentType::Internal => "internal",
+            AttachmentType::Studio => "studio",
+            AttachmentType::Cron => "cron",
         };
         let definition = json!({
             "id": id,
@@ -990,7 +990,7 @@ mod tests {
             DefinitionHash::parse(wamn_execution_contract::canonical_json_sha256(&definition))
                 .expect("the canonicalizer emits a valid definition hash");
         ServingAttachment {
-            kind,
+            type_: kind,
             package_id: "platform_fixture".to_owned(),
             target: wamn_catalog::AttachmentTarget::Wiring {
                 wiring_id: "widget_get".to_owned(),

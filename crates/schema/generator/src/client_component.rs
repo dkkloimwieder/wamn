@@ -23,7 +23,7 @@ use std::fmt::Write as _;
 
 use crate::client_ir::FieldIr;
 use crate::client_plan::{
-    ClientPlan, ModelPlan, PopulatedInput, Role, Rows, ScreenPlan, SuppliedKind,
+    ClientPlan, ModelPlan, PopulatedInput, Role, Rows, ScreenPlan, SuppliedType,
 };
 use crate::client_ts::{RUNTIME_PACKAGE, UI_PACKAGE, ts_type};
 use crate::generate::GeneratedFile;
@@ -893,13 +893,13 @@ fn write_table_definition(
             .map_or(&[][..], |candidate| &candidate.supplied[..])
             .iter()
             .map(|field| {
-                let kind = match field.kind {
-                    SuppliedKind::RequestId => "requestId",
-                    SuppliedKind::IdempotencyKey => "idempotencyKey",
-                    SuppliedKind::OccurredAt => "occurredAt",
+                let kind = match field.type_ {
+                    SuppliedType::RequestId => "requestId",
+                    SuppliedType::IdempotencyKey => "idempotencyKey",
+                    SuppliedType::OccurredAt => "occurredAt",
                 };
                 format!(
-                    "{{ input: {}, kind: {} }}",
+                    "{{ input: {}, type: {} }}",
                     member_literal(field.path),
                     quote(kind)
                 )
@@ -1504,10 +1504,10 @@ fn emit_form(
     ]);
     if !screen.supplied.is_empty() {
         for supplied in &screen.supplied {
-            match supplied.kind {
-                SuppliedKind::RequestId => runtime.insert("newRequestId"),
-                SuppliedKind::IdempotencyKey => runtime.insert("newIdempotencyKey"),
-                SuppliedKind::OccurredAt => runtime.insert("occurredAt"),
+            match supplied.type_ {
+                SuppliedType::RequestId => runtime.insert("newRequestId"),
+                SuppliedType::IdempotencyKey => runtime.insert("newIdempotencyKey"),
+                SuppliedType::OccurredAt => runtime.insert("occurredAt"),
             };
         }
     }
@@ -1883,10 +1883,10 @@ fn many_rows(screen: &ScreenPlan<'_>) -> bool {
 /// The writes of the inputs the runtime supplies, at `pad`.
 fn write_supplied(source: &mut String, screen: &ScreenPlan<'_>, pad: &str) {
     for supplied in &screen.supplied {
-        let value = match supplied.kind {
-            SuppliedKind::RequestId => "newRequestId()",
-            SuppliedKind::IdempotencyKey => "newIdempotencyKey()",
-            SuppliedKind::OccurredAt => "occurredAt()",
+        let value = match supplied.type_ {
+            SuppliedType::RequestId => "newRequestId()",
+            SuppliedType::IdempotencyKey => "newIdempotencyKey()",
+            SuppliedType::OccurredAt => "occurredAt()",
         };
         writeln!(
             source,
@@ -2457,10 +2457,10 @@ fn emit_delete(
     ]);
     ui.extend(["ConfirmAction", "FieldError", "announceOutcome"]);
     for supplied in &screen.supplied {
-        match supplied.kind {
-            SuppliedKind::RequestId => runtime.insert("newRequestId"),
-            SuppliedKind::IdempotencyKey => runtime.insert("newIdempotencyKey"),
-            SuppliedKind::OccurredAt => runtime.insert("occurredAt"),
+        match supplied.type_ {
+            SuppliedType::RequestId => runtime.insert("newRequestId"),
+            SuppliedType::IdempotencyKey => runtime.insert("newIdempotencyKey"),
+            SuppliedType::OccurredAt => runtime.insert("occurredAt"),
         };
     }
     bindings.insert(function.clone());
@@ -2565,10 +2565,10 @@ fn emit_delete(
         .expect("write");
     }
     for supplied in &screen.supplied {
-        let value = match supplied.kind {
-            SuppliedKind::RequestId => "newRequestId()",
-            SuppliedKind::IdempotencyKey => "newIdempotencyKey()",
-            SuppliedKind::OccurredAt => "occurredAt()",
+        let value = match supplied.type_ {
+            SuppliedType::RequestId => "newRequestId()",
+            SuppliedType::IdempotencyKey => "newIdempotencyKey()",
+            SuppliedType::OccurredAt => "occurredAt()",
         };
         writeln!(
             source,

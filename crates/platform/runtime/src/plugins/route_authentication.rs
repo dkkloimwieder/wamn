@@ -339,7 +339,7 @@ mod tests {
 
     use serde_json::{Value, json};
     use wamn_catalog::{
-        ArtifactHash, AttachmentKind, AttachmentTarget, DefinitionHash, EffectiveReleaseId,
+        ArtifactHash, AttachmentTarget, AttachmentType, DefinitionHash, EffectiveReleaseId,
         PAT_AUTHENTICATION_MODE, PackageCoordinate, ServingAttachment, ServingComponent,
         ServingComponentOperation, ServingManifest, ServingRelease, ServingWiring,
     };
@@ -389,7 +389,7 @@ mod tests {
             BTreeMap::from([(
                 "orders".to_string(),
                 ServingAttachment {
-                    kind: AttachmentKind::Http,
+                    type_: AttachmentType::Http,
                     package_id: "cat".into(),
                     target: AttachmentTarget::Wiring {
                         wiring_id: "orders".into(),

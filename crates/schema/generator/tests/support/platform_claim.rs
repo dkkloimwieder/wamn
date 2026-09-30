@@ -8,7 +8,7 @@ use super::fixture;
 pub(super) fn manifest() -> Value {
     let mut value = fixture::manifest();
     value["custom_operations"]["widget.archive"] = json!({
-        "kind": "command", "visibility": "public", "permission": "widget.archive",
+        "type": "command", "visibility": "public", "permission": "widget.archive",
         "connection": "postgres", "transaction": "explicit_per_input",
         "automatic_retry": false, "idempotent_by": "claim",
         "canonicalization": {"excluded_fields": ["idempotency_key"]},

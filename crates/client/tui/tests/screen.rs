@@ -6,7 +6,7 @@ use wamn_client::{HttpResponse, RouteMetadata};
 use wamn_client_tui::draft::FieldState;
 use wamn_client_tui::screen::{
     Availability, ExitState, IntentValues, RecordLink, RevisionBinding, Screen, ScreenErrorKind,
-    ScreenSpec, SuppliedField, SuppliedKind,
+    ScreenSpec, SuppliedField, SuppliedType,
 };
 use wamn_client_tui::submission::{Replay, ResponseContract, SessionBinding, State};
 
@@ -65,7 +65,7 @@ const READ: ScreenSpec = ScreenSpec {
     model: "inventory",
     name: "get",
     operation: "inventory.get",
-    kind: "get",
+    type_: "get",
     input: READ_INPUT,
     input_schema: None,
     response: ResponseContract {
@@ -74,7 +74,7 @@ const READ: ScreenSpec = ScreenSpec {
         fields: RESULT,
         result_class: Some("one"),
         errors: &[],
-        kind: "get",
+        type_: "get",
         transaction: Some("implicit"),
         direct: true,
         replay: Replay::Unknown,
@@ -90,11 +90,11 @@ const READ: ScreenSpec = ScreenSpec {
 const PAGE: ScreenSpec = ScreenSpec {
     name: "query",
     operation: "inventory.query",
-    kind: "query",
+    type_: "query",
     input: PAGE_INPUT,
     response: ResponseContract {
         result_class: Some("page"),
-        kind: "query",
+        type_: "query",
         ..READ.response
     },
     record: Some(RecordLink {
@@ -106,10 +106,10 @@ const PAGE: ScreenSpec = ScreenSpec {
 const COMMAND: ScreenSpec = ScreenSpec {
     name: "adjust",
     operation: "inventory.adjust",
-    kind: "command",
+    type_: "command",
     input: COMMAND_INPUT,
     response: ResponseContract {
-        kind: "command",
+        type_: "command",
         replay: Replay::Claim,
         ..READ.response
     },
@@ -125,15 +125,15 @@ const COMMAND: ScreenSpec = ScreenSpec {
     supplied: &[
         SuppliedField {
             path: "request_id",
-            kind: SuppliedKind::RequestId,
+            type_: SuppliedType::RequestId,
         },
         SuppliedField {
             path: "idempotency_key",
-            kind: SuppliedKind::IdempotencyKey,
+            type_: SuppliedType::IdempotencyKey,
         },
         SuppliedField {
             path: "occurred_at",
-            kind: SuppliedKind::OccurredAt,
+            type_: SuppliedType::OccurredAt,
         },
     ],
     ..READ
@@ -481,7 +481,7 @@ fn unchanged_activation_preserves_state_but_same_schema_target_replacement_reset
 #[test]
 fn delete_needs_confirmation_and_pending_prevents_exit_or_draft_discard() {
     const DELETE: ScreenSpec = ScreenSpec {
-        kind: "delete",
+        type_: "delete",
         ..COMMAND
     };
     let mut command = Screen::new(&DELETE, binding("a"));

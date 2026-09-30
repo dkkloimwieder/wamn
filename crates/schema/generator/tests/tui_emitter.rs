@@ -78,7 +78,7 @@ fn platform_operator_crate_is_deterministic_and_covers_each_callable_operation()
         .models
         .iter()
         .flat_map(|model| &model.operations)
-        .filter(|operation| operation.kind != "event_handler")
+        .filter(|operation| operation.type_ != "event_handler")
         .count();
     assert_eq!(calls.len(), callable_count);
     if let Some((last, earlier)) = calls.split_last() {
@@ -99,7 +99,7 @@ fn platform_operator_crate_is_deterministic_and_covers_each_callable_operation()
             .expect("the library declares its client module");
         for operation in &model.operations {
             let function = declared_identifier(screens, "pub fn ", &operation.name, '(');
-            if operation.kind == "event_handler" {
+            if operation.type_ == "event_handler" {
                 assert!(function.is_none());
             } else {
                 let function = function.expect("a callable operation has a screen constructor");
@@ -368,7 +368,7 @@ fn fixtures() -> ClientContractIr {
             (
                 "operation",
                 json!({
-                    "operation": identity, "kind": kind, "grant": identity,
+                    "operation": identity, "type": kind, "grant": identity,
                     "permission_token": format!("entry.{name}"), "result": "one",
                     "fresh_only": name == "query_beta"
                 }),
@@ -546,7 +546,7 @@ fn event_handlers_are_excluded_and_deployment_values_are_supplied_at_launch() {
     let mut ir = fixtures();
     let mut handler = ir.models[0].operations[0].clone();
     handler.name = "private_handler".into();
-    handler.kind = "event_handler".into();
+    handler.type_ = "event_handler".into();
     handler.operation = "example:entry/private-handler@1.0.0".into();
     ir.models[0].operations.push(handler);
     let files = emit_tui(&ir, "example", None, "../../../..").unwrap();

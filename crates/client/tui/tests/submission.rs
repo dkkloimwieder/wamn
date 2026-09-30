@@ -80,7 +80,7 @@ fn contract(replay: Replay) -> ResponseContract {
         fields: OUTPUT,
         result_class: Some("one"),
         errors: ERRORS,
-        kind: "command",
+        type_: "command",
         transaction: Some("explicit_per_input"),
         direct: true,
         replay,
@@ -533,7 +533,7 @@ fn widget_update_validates_the_public_success_row_without_sql_bookkeeping_column
             .as_ref()
             .map(|class| &*Box::leak(class.clone().into_boxed_str())),
         errors: &[],
-        kind: Box::leak(operation.kind.clone().into_boxed_str()),
+        type_: Box::leak(operation.type_.clone().into_boxed_str()),
         transaction: operation
             .transaction
             .as_ref()
@@ -794,7 +794,7 @@ fn composed_contract() -> ResponseContract {
         fields: COMPOSED_FIELDS,
         result_class: Some("one"),
         errors: &[],
-        kind: "command",
+        type_: "command",
         transaction: Some("explicit_per_input"),
         direct: false,
         replay: Replay::Unknown,

@@ -427,7 +427,7 @@ mod tests {
 
         let entries = client
             .query(
-                "SELECT position, kind, before::text, after::text, \
+                "SELECT position, type, before::text, after::text, \
                         wamn_history.row_image(purchase_order)::text AS current \
                    FROM purchase_order_history \
                    JOIN purchase_order ON purchase_order.id = $1::uuid \
@@ -457,8 +457,8 @@ mod tests {
             .collect::<BTreeSet<_>>();
         let (before, after) = (keys(update.get("before"))?, keys(update.get("after"))?);
         ensure!(
-            insert.get::<_, String>("kind") == "insert"
-                && update.get::<_, String>("kind") == "update"
+            insert.get::<_, String>("type") == "insert"
+                && update.get::<_, String>("type") == "update"
                 && before == changed
                 && after == changed,
             "the overlay update did not log a changed-column diff: {before:?} {after:?}"
@@ -470,7 +470,7 @@ mod tests {
             .map(|row| {
                 (
                     row.get::<_, i64>("position"),
-                    row.get::<_, String>("kind"),
+                    row.get::<_, String>("type"),
                     row.get::<_, String>("before"),
                 )
             })
@@ -480,7 +480,7 @@ mod tests {
             .iter()
             .map(|(position, kind, before)| HistoryRow {
                 position: *position,
-                kind,
+                type_: kind,
                 before,
                 current: &current,
                 head_position: head,
@@ -539,7 +539,7 @@ mod tests {
                 };
                 Ok((
                     row.get::<_, i64>("position"),
-                    row.get::<_, String>("kind"),
+                    row.get::<_, String>("type"),
                     declared_image("before")?,
                     declared_image("current")?,
                 ))
@@ -552,7 +552,7 @@ mod tests {
             .iter()
             .map(|(position, kind, before, current)| HistoryRow {
                 position: *position,
-                kind,
+                type_: kind,
                 before,
                 current,
                 head_position: base_head,

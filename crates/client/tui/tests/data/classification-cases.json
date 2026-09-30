@@ -28,7 +28,7 @@
         { "literal": "unsourced", "required": [], "sources": ["invented_source"] },
         { "literal": "needs_detail", "required": ["field"], "sources": ["check_violation"] }
       ],
-      "kind": "update",
+      "type": "update",
       "transaction": "implicit",
       "direct": true
     },
@@ -36,7 +36,7 @@
       "result_class": "page",
       "partial_schema": null,
       "errors": [],
-      "kind": "query",
+      "type": "query",
       "transaction": "implicit",
       "direct": true
     },
@@ -44,7 +44,7 @@
       "result_class": "bounded_list",
       "partial_schema": null,
       "errors": [],
-      "kind": "projection",
+      "type": "projection",
       "transaction": "implicit",
       "direct": true
     },
@@ -52,7 +52,7 @@
       "result_class": "one",
       "partial_schema": "{}",
       "errors": [],
-      "kind": "command",
+      "type": "command",
       "transaction": "explicit_per_input",
       "direct": true
     },
@@ -60,7 +60,7 @@
       "result_class": "one",
       "partial_schema": null,
       "errors": [{ "literal": "not_found", "required": [], "sources": [] }],
-      "kind": "update",
+      "type": "update",
       "transaction": "implicit",
       "direct": false
     },
@@ -68,7 +68,7 @@
       "result_class": "one",
       "partial_schema": null,
       "errors": [{ "literal": "not_found", "required": [], "sources": [] }],
-      "kind": "update",
+      "type": "update",
       "transaction": null,
       "direct": true
     }

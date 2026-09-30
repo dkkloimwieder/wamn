@@ -30,7 +30,7 @@ fn response_contract(contract: &Value) -> ResponseContract {
         fields: &[] as &[FieldSchema],
         result_class: contract["result_class"].as_str().map(leak),
         errors: Box::leak(errors.into_boxed_slice()),
-        kind: leak(contract["kind"].as_str().expect("an operation kind")),
+        type_: leak(contract["type"].as_str().expect("an operation kind")),
         transaction: contract["transaction"].as_str().map(leak),
         direct: contract["direct"].as_bool().expect("a direct flag"),
         replay: Replay::Unknown,

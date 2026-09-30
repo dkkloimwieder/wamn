@@ -6,7 +6,7 @@ pub static ARCHIVE_SPEC: screen::ScreenSpec = screen::ScreenSpec {
     model: "widget",
     name: "archive",
     operation: "platform-fixture:widget/archive@1.0.0",
-    kind: "command",
+    type_: "command",
     input: crate::widget::WIDGET_ARCHIVE_INPUT_SCHEMA,
     input_schema: None,
     response: submission::ResponseContract {
@@ -51,7 +51,7 @@ pub static ARCHIVE_SPEC: screen::ScreenSpec = screen::ScreenSpec {
                 sources: &["statement_timeout"],
             },
         ],
-        kind: "command",
+        type_: "command",
         transaction: Some("explicit_per_input"),
         direct: true,
         replay: submission::Replay::State,
@@ -74,7 +74,7 @@ pub static CREATE_SPEC: screen::ScreenSpec = screen::ScreenSpec {
     model: "widget",
     name: "create",
     operation: "platform-fixture:widget/create@1.0.0",
-    kind: "create",
+    type_: "create",
     input: crate::widget::WIDGET_CREATE_INPUT_SCHEMA,
     input_schema: Some(
         "{\"items\":{\"additionalProperties\":false,\"properties\":{\"code\":{\"enum\":[\"priority\",\"standard\",null],\"type\":[\"string\",\"null\"],\"x-wamn-explicit-null\":\"invalid_input\"},\"idempotency_key\":{\"minLength\":1,\"type\":\"string\"},\"maker_id\":{\"pattern\":\"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$\",\"type\":[\"string\",\"null\"],\"x-wamn-explicit-null\":\"accepted\"},\"note\":{\"type\":[\"string\",\"null\"],\"x-wamn-explicit-null\":\"accepted\"},\"request_id\":{\"minLength\":1,\"type\":\"string\"}},\"required\":[\"idempotency_key\",\"request_id\",\"code\"],\"type\":\"object\"},\"maxItems\":100,\"minItems\":1,\"type\":\"array\"}",
@@ -131,7 +131,7 @@ pub static CREATE_SPEC: screen::ScreenSpec = screen::ScreenSpec {
                 sources: &["unique_violation"],
             },
         ],
-        kind: "create",
+        type_: "create",
         transaction: Some("explicit_per_input"),
         direct: true,
         replay: submission::Replay::Claim,
@@ -149,11 +149,11 @@ pub static CREATE_SPEC: screen::ScreenSpec = screen::ScreenSpec {
     supplied: &[
         screen::SuppliedField {
             path: "idempotency_key",
-            kind: screen::SuppliedKind::IdempotencyKey,
+            type_: screen::SuppliedType::IdempotencyKey,
         },
         screen::SuppliedField {
             path: "request_id",
-            kind: screen::SuppliedKind::RequestId,
+            type_: screen::SuppliedType::RequestId,
         },
     ],
 };
@@ -167,7 +167,7 @@ pub static DELETE_SPEC: screen::ScreenSpec = screen::ScreenSpec {
     model: "widget",
     name: "delete",
     operation: "platform-fixture:widget/delete@1.0.0",
-    kind: "delete",
+    type_: "delete",
     input: crate::widget::WIDGET_DELETE_INPUT_SCHEMA,
     input_schema: Some(
         "{\"items\":{\"additionalProperties\":false,\"properties\":{\"expected_edit_version\":{\"type\":\"string\"},\"id\":{\"pattern\":\"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$\",\"type\":\"string\"},\"request_id\":{\"minLength\":1,\"type\":\"string\"}},\"required\":[\"expected_edit_version\",\"id\",\"request_id\"],\"type\":\"object\"},\"maxItems\":100,\"minItems\":1,\"type\":\"array\"}",
@@ -214,7 +214,7 @@ pub static DELETE_SPEC: screen::ScreenSpec = screen::ScreenSpec {
                 sources: &["statement_timeout"],
             },
         ],
-        kind: "delete",
+        type_: "delete",
         transaction: Some("implicit"),
         direct: true,
         replay: submission::Replay::Unknown,
@@ -238,7 +238,7 @@ pub static DELETE_SPEC: screen::ScreenSpec = screen::ScreenSpec {
     requires_composition: false,
     supplied: &[screen::SuppliedField {
         path: "request_id",
-        kind: screen::SuppliedKind::RequestId,
+        type_: screen::SuppliedType::RequestId,
     }],
 };
 
@@ -251,7 +251,7 @@ pub static GET_SPEC: screen::ScreenSpec = screen::ScreenSpec {
     model: "widget",
     name: "get",
     operation: "platform-fixture:widget/get@1.0.0",
-    kind: "get",
+    type_: "get",
     input: crate::widget::WIDGET_GET_INPUT_SCHEMA,
     input_schema: Some(
         "{\"items\":{\"additionalProperties\":false,\"properties\":{\"id\":{\"pattern\":\"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$\",\"type\":\"string\"}},\"required\":[\"id\"],\"type\":\"object\"},\"maxItems\":100,\"minItems\":1,\"type\":\"array\"}",
@@ -293,7 +293,7 @@ pub static GET_SPEC: screen::ScreenSpec = screen::ScreenSpec {
                 sources: &["statement_timeout"],
             },
         ],
-        kind: "get",
+        type_: "get",
         transaction: Some("implicit"),
         direct: true,
         replay: submission::Replay::Unknown,
@@ -320,7 +320,7 @@ pub static LIST_SPEC: screen::ScreenSpec = screen::ScreenSpec {
     model: "widget",
     name: "list",
     operation: "platform-fixture:widget/list@1.0.0",
-    kind: "projection",
+    type_: "projection",
     input: crate::widget::WIDGET_LIST_INPUT_SCHEMA,
     input_schema: None,
     response: submission::ResponseContract {
@@ -355,7 +355,7 @@ pub static LIST_SPEC: screen::ScreenSpec = screen::ScreenSpec {
                 sources: &["statement_timeout"],
             },
         ],
-        kind: "projection",
+        type_: "projection",
         transaction: None,
         direct: true,
         replay: submission::Replay::Unknown,
@@ -378,10 +378,10 @@ pub static QUERY_SPEC: screen::ScreenSpec = screen::ScreenSpec {
     model: "widget",
     name: "query",
     operation: "platform-fixture:widget/query@1.0.0",
-    kind: "query",
+    type_: "query",
     input: crate::widget::WIDGET_QUERY_INPUT_SCHEMA,
     input_schema: Some(
-        "{\"items\":{\"additionalProperties\":false,\"properties\":{\"cursor\":{\"minLength\":1,\"type\":\"string\"},\"filter\":{\"additionalProperties\":false,\"properties\":{\"code\":{\"items\":{\"enum\":[\"priority\",\"standard\"],\"type\":\"string\"},\"type\":\"array\"},\"maker_id\":{\"type\":\"boolean\"},\"note\":{\"items\":{\"type\":\"string\"},\"type\":\"array\"}},\"type\":\"object\"},\"limit\":{\"maximum\":100,\"minimum\":1,\"type\":\"integer\"},\"sort\":{\"additionalProperties\":false,\"properties\":{\"direction\":{\"enum\":[\"ascending\",\"descending\"]},\"field\":{\"enum\":[\"created_at\"]}},\"required\":[\"field\",\"direction\"],\"type\":\"object\"}},\"type\":\"object\"},\"maxItems\":100,\"minItems\":1,\"type\":\"array\"}",
+        "{\"items\":{\"additionalProperties\":false,\"properties\":{\"cursor\":{\"minLength\":1,\"type\":\"string\"},\"filter\":{\"additionalProperties\":false,\"properties\":{\"code\":{\"items\":{\"enum\":[\"priority\",\"standard\"],\"type\":\"string\"},\"type\":\"array\"},\"maker_id\":{\"type\":\"boolean\"},\"note\":{\"items\":{\"type\":\"string\"},\"type\":\"array\"}},\"type\":\"object\"},\"limit\":{\"maximum\":100,\"minimum\":1,\"type\":\"integer\"},\"pagination\":{\"type\":\"string\"},\"sort\":{\"additionalProperties\":false,\"properties\":{\"direction\":{\"enum\":[\"ascending\",\"descending\"]},\"field\":{\"enum\":[\"created_at\"]}},\"required\":[\"field\",\"direction\"],\"type\":\"object\"}},\"type\":\"object\"},\"maxItems\":100,\"minItems\":1,\"type\":\"array\"}",
     ),
     response: submission::ResponseContract {
         schema: Some("{\"type\":\"array\"}"),
@@ -415,7 +415,7 @@ pub static QUERY_SPEC: screen::ScreenSpec = screen::ScreenSpec {
                 sources: &["statement_timeout"],
             },
         ],
-        kind: "query",
+        type_: "query",
         transaction: Some("implicit"),
         direct: true,
         replay: submission::Replay::Unknown,
@@ -442,7 +442,7 @@ pub static RECORD_BATCH_SPEC: screen::ScreenSpec = screen::ScreenSpec {
     model: "widget",
     name: "record_batch",
     operation: "platform-fixture:widget/record-batch@1.0.0",
-    kind: "command",
+    type_: "command",
     input: crate::widget::WIDGET_RECORD_BATCH_INPUT_SCHEMA,
     input_schema: Some(
         "{\"items\":{\"additionalProperties\":false,\"properties\":{\"request_id\":{\"minLength\":1,\"type\":\"string\"},\"value\":{\"additionalProperties\":false,\"properties\":{\"expected_edit_version\":{\"type\":\"string\"},\"grade\":{\"enum\":[\"first\",\"second\"],\"type\":\"string\"},\"idempotency_key\":{\"minLength\":1,\"type\":\"string\"},\"inspector_id\":{\"format\":\"uuid\",\"type\":[\"string\",\"null\"]},\"line\":{\"items\":{\"additionalProperties\":false,\"properties\":{\"amount\":{\"type\":\"string\"},\"widget_id\":{\"format\":\"uuid\",\"type\":\"string\"}},\"required\":[\"widget_id\",\"amount\"],\"type\":\"object\"},\"maxItems\":10,\"minItems\":1,\"type\":\"array\"},\"maker_id\":{\"format\":\"uuid\",\"type\":[\"string\",\"null\"]},\"note\":{\"type\":[\"string\",\"null\"]}},\"required\":[\"idempotency_key\",\"expected_edit_version\",\"grade\",\"line\"],\"type\":\"object\"}},\"required\":[\"request_id\",\"value\"],\"type\":\"object\"},\"maxItems\":100,\"minItems\":1,\"type\":\"array\"}",
@@ -490,7 +490,7 @@ pub static RECORD_BATCH_SPEC: screen::ScreenSpec = screen::ScreenSpec {
                 sources: &["statement_timeout"],
             },
         ],
-        kind: "command",
+        type_: "command",
         transaction: Some("explicit_per_input"),
         direct: true,
         replay: submission::Replay::Claim,
@@ -504,11 +504,11 @@ pub static RECORD_BATCH_SPEC: screen::ScreenSpec = screen::ScreenSpec {
     supplied: &[
         screen::SuppliedField {
             path: "request_id",
-            kind: screen::SuppliedKind::RequestId,
+            type_: screen::SuppliedType::RequestId,
         },
         screen::SuppliedField {
             path: "value.idempotency_key",
-            kind: screen::SuppliedKind::IdempotencyKey,
+            type_: screen::SuppliedType::IdempotencyKey,
         },
     ],
 };
@@ -522,7 +522,7 @@ pub static UPDATE_SPEC: screen::ScreenSpec = screen::ScreenSpec {
     model: "widget",
     name: "update",
     operation: "platform-fixture:widget/update@1.0.0",
-    kind: "update",
+    type_: "update",
     input: crate::widget::WIDGET_UPDATE_INPUT_SCHEMA,
     input_schema: Some(
         "{\"items\":{\"additionalProperties\":false,\"properties\":{\"change\":{\"additionalProperties\":false,\"properties\":{\"code\":{\"enum\":[\"priority\",\"standard\",null],\"type\":[\"string\",\"null\"],\"x-wamn-explicit-null\":\"invalid_input\"},\"maker_id\":{\"pattern\":\"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$\",\"type\":[\"string\",\"null\"],\"x-wamn-explicit-null\":\"accepted\"},\"note\":{\"type\":[\"string\",\"null\"],\"x-wamn-explicit-null\":\"accepted\"}},\"type\":\"object\"},\"expected_edit_version\":{\"type\":\"string\"},\"id\":{\"pattern\":\"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$\",\"type\":\"string\"},\"request_id\":{\"minLength\":1,\"type\":\"string\"}},\"required\":[\"expected_edit_version\",\"id\",\"request_id\",\"change\"],\"type\":\"object\"},\"maxItems\":100,\"minItems\":1,\"type\":\"array\"}",
@@ -579,7 +579,7 @@ pub static UPDATE_SPEC: screen::ScreenSpec = screen::ScreenSpec {
                 sources: &["unique_violation"],
             },
         ],
-        kind: "update",
+        type_: "update",
         transaction: Some("implicit"),
         direct: true,
         replay: submission::Replay::Unknown,
@@ -603,7 +603,7 @@ pub static UPDATE_SPEC: screen::ScreenSpec = screen::ScreenSpec {
     requires_composition: false,
     supplied: &[screen::SuppliedField {
         path: "request_id",
-        kind: screen::SuppliedKind::RequestId,
+        type_: screen::SuppliedType::RequestId,
     }],
 };
 

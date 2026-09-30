@@ -43,9 +43,9 @@ export interface ReceivingLoadPurchaseOrderHistoryRow {
   /** `uuid` */
   readonly id: Uuid;
   /** `text` */
-  readonly kind: "delete" | "insert" | "update";
-  /** `text` */
   readonly operation: string;
+  /** `text` */
+  readonly type: "delete" | "insert" | "update";
 }
 
 /** Result of `wamn-receiving:receiving/load-purchase-order-history@1.0.0`. */
@@ -66,8 +66,8 @@ export const RECEIVING_LOAD_PURCHASE_ORDER_HISTORY_RESULT_FIELDS: FieldMap = {
       "current": "current",
       "cursor": "cursor",
       "id": "id",
-      "kind": "kind",
       "operation": "operation",
+      "type": "type",
     },
   },
 };
@@ -95,7 +95,7 @@ export const RECEIVING_LOAD_PURCHASE_ORDER_HISTORY_ROUTE: OperationRoute = {
     ],
     replay: null,
     direct: true,
-    kind: "projection",
+    type: "projection",
     transaction: null,
   },
 };
@@ -204,7 +204,7 @@ export const RECEIVING_LOAD_RECEIPT_SCREEN_ROUTE: OperationRoute = {
     ],
     replay: null,
     direct: true,
-    kind: "projection",
+    type: "projection",
     transaction: null,
   },
 };
@@ -338,7 +338,7 @@ export const RECEIVING_RECORD_RECEIPT_ROUTE: OperationRoute = {
     ],
     replay: "claim",
     direct: true,
-    kind: "command",
+    type: "command",
     transaction: "explicit_per_input",
   },
 };

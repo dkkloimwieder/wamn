@@ -37,8 +37,8 @@ export interface ResponseContract {
   readonly replay: "claim" | "state" | null;
   /** Whether the release serves this operation itself, without a handler. */
   readonly direct: boolean;
-  /** The operation kind, for example `get`, `create` or `command`. */
-  readonly kind: string;
+  /** The operation type, for example `get`, `create` or `command`. */
+  readonly type: string;
   /** The declared transaction boundary, or null when the release states none. */
   readonly transaction: string | null;
 }

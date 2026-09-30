@@ -6,7 +6,7 @@ pub static RECORD_RECEIPT_SPEC: screen::ScreenSpec = screen::ScreenSpec {
     model: "receiving",
     name: "record_receipt",
     operation: "client-acme-receiving:receiving/record-receipt@3.0.0",
-    kind: "command",
+    type_: "command",
     input: crate::receiving::RECEIVING_RECORD_RECEIPT_INPUT_SCHEMA,
     input_schema: Some(
         "{\"items\":{\"additionalProperties\":false,\"properties\":{\"request_id\":{\"minLength\":1,\"type\":\"string\"},\"value\":{\"additionalProperties\":false,\"properties\":{\"idempotency_key\":{\"minLength\":1,\"type\":\"string\"},\"line\":{\"items\":{\"additionalProperties\":false,\"properties\":{\"location_id\":{\"pattern\":\"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$\",\"type\":\"string\"},\"purchase_order_line_id\":{\"pattern\":\"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$\",\"type\":\"string\"},\"quantity\":{\"type\":\"string\"}},\"required\":[\"purchase_order_line_id\",\"quantity\",\"location_id\"],\"type\":\"object\"},\"maxItems\":100,\"minItems\":1,\"type\":\"array\"},\"occurred_at\":{\"type\":\"string\"},\"purchase_order_id\":{\"pattern\":\"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$\",\"type\":\"string\"},\"receipt_reference\":{\"minLength\":1,\"type\":\"string\"}},\"required\":[\"idempotency_key\",\"purchase_order_id\",\"receipt_reference\",\"occurred_at\",\"line\"],\"type\":\"object\"}},\"required\":[\"request_id\",\"value\"],\"type\":\"object\"},\"maxItems\":100,\"minItems\":1,\"type\":\"array\"}",
@@ -83,7 +83,7 @@ pub static RECORD_RECEIPT_SPEC: screen::ScreenSpec = screen::ScreenSpec {
                 sources: &["statement_timeout"],
             },
         ],
-        kind: "command",
+        type_: "command",
         transaction: None,
         direct: true,
         replay: submission::Replay::Unknown,
@@ -97,15 +97,15 @@ pub static RECORD_RECEIPT_SPEC: screen::ScreenSpec = screen::ScreenSpec {
     supplied: &[
         screen::SuppliedField {
             path: "request_id",
-            kind: screen::SuppliedKind::RequestId,
+            type_: screen::SuppliedType::RequestId,
         },
         screen::SuppliedField {
             path: "value.idempotency_key",
-            kind: screen::SuppliedKind::IdempotencyKey,
+            type_: screen::SuppliedType::IdempotencyKey,
         },
         screen::SuppliedField {
             path: "value.occurred_at",
-            kind: screen::SuppliedKind::OccurredAt,
+            type_: screen::SuppliedType::OccurredAt,
         },
     ],
 };

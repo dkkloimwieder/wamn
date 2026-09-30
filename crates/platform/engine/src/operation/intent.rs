@@ -18,7 +18,7 @@ use std::time::Duration;
 
 use anyhow::Context as _;
 use serde_json::{Map, Value, json};
-use wamn_catalog::{OperationKind, RouteCanonicalization};
+use wamn_catalog::{OperationType, RouteCanonicalization};
 use wamn_run_state::IntentStore;
 use wamn_run_state::intent_store::{Begun, Intent, IntentId, StoredOutcome};
 
@@ -49,7 +49,7 @@ pub struct IntentContext<'a> {
     pub release: &'a str,
     pub package: &'a str,
     /// The kind of the route's operation. Only [`logs_intent`] kinds log.
-    pub kind: OperationKind,
+    pub kind: OperationType,
     /// The item field of the idempotency key, such as
     /// `value.idempotency_key`. `None` keys each item by its `request_id`.
     pub key_field: Option<&'a str>,
@@ -83,13 +83,13 @@ impl fmt::Debug for IntentContext<'_> {
 
 /// Whether a call of `kind` logs its intents. A read never does.
 #[must_use]
-pub fn logs_intent(kind: OperationKind) -> bool {
+pub fn logs_intent(kind: OperationType) -> bool {
     matches!(
         kind,
-        OperationKind::Create
-            | OperationKind::Update
-            | OperationKind::Delete
-            | OperationKind::Command
+        OperationType::Create
+            | OperationType::Update
+            | OperationType::Delete
+            | OperationType::Command
     )
 }
 
@@ -459,21 +459,21 @@ mod tests {
     use std::collections::{BTreeMap, BTreeSet};
 
     use serde_json::json;
-    use wamn_catalog::{CanonicalSpelling, OperationKind, RouteCanonicalization, RouteLineOrder};
+    use wamn_catalog::{CanonicalSpelling, OperationType, RouteCanonicalization, RouteLineOrder};
 
     use super::{item_input_hash, items, logs_intent};
 
     #[test]
     fn only_a_kind_that_changes_records_logs() {
         let logged: Vec<_> = [
-            OperationKind::Get,
-            OperationKind::Query,
-            OperationKind::Create,
-            OperationKind::Update,
-            OperationKind::Delete,
-            OperationKind::Command,
-            OperationKind::Projection,
-            OperationKind::EventHandler,
+            OperationType::Get,
+            OperationType::Query,
+            OperationType::Create,
+            OperationType::Update,
+            OperationType::Delete,
+            OperationType::Command,
+            OperationType::Projection,
+            OperationType::EventHandler,
         ]
         .into_iter()
         .filter(|kind| logs_intent(*kind))
@@ -481,10 +481,10 @@ mod tests {
         assert_eq!(
             logged,
             [
-                OperationKind::Create,
-                OperationKind::Update,
-                OperationKind::Delete,
-                OperationKind::Command
+                OperationType::Create,
+                OperationType::Update,
+                OperationType::Delete,
+                OperationType::Command
             ]
         );
     }

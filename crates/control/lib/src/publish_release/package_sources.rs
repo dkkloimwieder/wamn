@@ -5,7 +5,7 @@ use std::path::Path;
 use wamn_record_history::{HISTORY_TABLE_SUFFIX, is_history_table_name};
 
 use super::{
-    BTreeMap, BTreeSet, MintManifestError, MintManifestErrorKind, OperationKind, PathBuf,
+    BTreeMap, BTreeSet, MintManifestError, MintManifestErrorKind, OperationType, PathBuf,
     RouteCanonicalization, RouteContract, RouteContracts, ServingRelation, ServingRoute, sha256,
 };
 
@@ -172,7 +172,7 @@ pub fn package_route(
         package_id: package_id.to_owned(),
         component: component.to_owned(),
         operation: operation.to_owned(),
-        kind: contract.kind,
+        type_: contract.kind,
         reads: contract.reads,
         revision: contract.revision,
         idempotency: contract.idempotency,
@@ -250,7 +250,8 @@ fn read_operation_contracts(root: &Path) -> Result<Vec<PackageContract>, MintMan
     #[derive(serde::Deserialize)]
     struct Contract {
         operation: String,
-        kind: OperationKind,
+        #[serde(rename = "type")]
+        type_: OperationType,
         #[serde(default)]
         relations: Vec<Relation>,
         #[serde(default)]
@@ -308,7 +309,7 @@ fn read_operation_contracts(root: &Path) -> Result<Vec<PackageContract>, MintMan
                     error,
                 )
             })?;
-            let reads = if contract.kind.is_read() {
+            let reads = if contract.type_.is_read() {
                 contract
                     .relations
                     .into_iter()
@@ -333,8 +334,8 @@ fn read_operation_contracts(root: &Path) -> Result<Vec<PackageContract>, MintMan
             let revision = contract
                 .record
                 .and_then(|record| record.revision_field)
-                .filter(|_| contract.kind == OperationKind::Get);
-            let (idempotency, canonicalization) = if contract.kind.is_read() {
+                .filter(|_| contract.type_ == OperationType::Get);
+            let (idempotency, canonicalization) = if contract.type_.is_read() {
                 (None, None)
             } else {
                 read_input_identity(&path)?
@@ -354,7 +355,7 @@ fn read_operation_contracts(root: &Path) -> Result<Vec<PackageContract>, MintMan
                 declared,
                 inherited,
                 route: RouteContract {
-                    kind: contract.kind,
+                    kind: contract.type_,
                     reads,
                     revision,
                     idempotency,
@@ -436,7 +437,7 @@ mod tests {
     use std::collections::BTreeSet;
     use std::path::Path;
 
-    use wamn_catalog::{OperationKind, ServingRelation};
+    use wamn_catalog::{OperationType, ServingRelation};
     use wamn_test_infrastructure::operations::sealed;
 
     use super::BTreeMap;
@@ -475,13 +476,13 @@ mod tests {
         let wms = app("wamn_wms");
         let get = package_route(&wms, "wamn_wms", "wms", &sealed("wamn-wms:packaging/get"))
             .expect("the packaging get has a contract");
-        assert_eq!(get.kind, OperationKind::Get);
+        assert_eq!(get.type_, OperationType::Get);
         assert_eq!(get.revision.as_deref(), Some("row_version"));
         assert_eq!(get.reads, relations(&[("wms", "packaging")]));
 
         let query = package_route(&wms, "wamn_wms", "wms", &sealed("wamn-wms:packaging/query"))
             .expect("the packaging query has a contract");
-        assert_eq!((query.kind, query.revision), (OperationKind::Query, None));
+        assert_eq!((query.type_, query.revision), (OperationType::Query, None));
         assert_eq!(query.reads, relations(&[("wms", "packaging")]));
 
         let aggregate = package_route(

@@ -2,7 +2,7 @@
 //
 // `inventory_transaction` operations of package `wamn_wms`.
 
-import type { FieldMap, Numeric, OperationRoute, Outcome, Timestamptz, Transport, Uuid } from "@wamn/web-runtime";
+import type { FieldMap, JsonValue, Numeric, OperationRoute, Outcome, Timestamptz, Transport, Uuid } from "@wamn/web-runtime";
 import { reviveOutcome, toWire } from "@wamn/web-runtime";
 
 /** Input for `wamn-wms:inventory-transaction/get@1.0.0`. */
@@ -81,7 +81,7 @@ export const INVENTORY_TRANSACTION_GET_ROUTE: OperationRoute = {
     ],
     replay: null,
     direct: true,
-    kind: "get",
+    type: "get",
     transaction: "implicit",
   },
 };
@@ -106,12 +106,15 @@ export interface InventoryTransactionQueryRequest {
   cursor?: string;
   /** `int32`, omittable */
   limit?: number;
+  /** `keyset`, omittable */
+  pagination?: JsonValue;
 }
 
 /** What `wamn-wms:inventory-transaction/query@1.0.0` calls its input members. */
 export const INVENTORY_TRANSACTION_QUERY_REQUEST_FIELDS: FieldMap = {
   "cursor": "cursor",
   "limit": "limit",
+  "pagination": "pagination",
 };
 
 /** One row of `wamn-wms:inventory-transaction/query@1.0.0`. */
@@ -192,7 +195,7 @@ export const INVENTORY_TRANSACTION_QUERY_ROUTE: OperationRoute = {
     ],
     replay: null,
     direct: true,
-    kind: "query",
+    type: "query",
     transaction: "implicit",
   },
 };

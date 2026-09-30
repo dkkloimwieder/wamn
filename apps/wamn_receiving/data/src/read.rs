@@ -39,7 +39,7 @@ const PURCHASE_ORDER_HISTORY_COLUMNS: [&str; 9] = [
 pub struct PurchaseOrderHistoryValue {
     pub id: Uuid,
     pub cursor: String,
-    pub kind: String,
+    pub type_: String,
     pub operation: String,
     pub changed_by: Uuid,
     pub changed_at: wamn_postgres_statements::TimestampTz,
@@ -67,7 +67,7 @@ fn history_value(
             &row.position,
             record,
         )?,
-        kind: row.kind,
+        type_: row.type_,
         operation: row.operation,
         changed_by: row.changed_by,
         changed_at: row.changed_at,
@@ -224,7 +224,7 @@ mod tests {
         let row = |current: Option<&str>| history_sql::LoadPurchaseOrderHistoryRow {
             id: Uuid("00000000-0000-0000-0000-00000000000e".to_owned()),
             position: 2,
-            kind: "update".to_owned(),
+            type_: "update".to_owned(),
             operation: "client-acme-receiving:purchase-order/update@3.0.0".to_owned(),
             changed_by: Uuid("00000000-0000-0000-0000-000000000004".to_owned()),
             changed_at: TimestampTz("2026-08-31T12:01:00.000000Z".to_owned()),
@@ -240,7 +240,7 @@ mod tests {
         )
         .unwrap();
         assert_eq!(value.id.0, "00000000-0000-0000-0000-00000000000e");
-        assert_eq!(value.kind, "update");
+        assert_eq!(value.type_, "update");
         assert_eq!(
             value.operation,
             "client-acme-receiving:purchase-order/update@3.0.0"

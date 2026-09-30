@@ -222,7 +222,7 @@ describe("the transport's streamed read", () => {
       errors: [{ literal: "invalid_input", required: ["field"], sources: [], text: null }],
       replay: null,
       direct: true,
-      kind: "query",
+      type: "query",
       transaction: "implicit",
     },
     items: [{ limit: 1000 }],

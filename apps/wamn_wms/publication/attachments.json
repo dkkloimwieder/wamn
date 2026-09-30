@@ -1,13 +1,13 @@
 {
   "inventory-move-http": {
-    "kind": "http",
+    "type": "http",
     "package-id": "wamn_wms",
     "component": "wms",
     "operation": "wamn-wms:inventory/move",
-    "definition-hash": "sha256:94d5db8cfee9e72c6e0022021af46102836d139305677285f6a4119c14958d66",
+    "definition-hash": "sha256:82e6b142d8f02ddb53eb3352fb8bf1e795602655a9c8cb83b2663dee008c9301",
     "definition": {
       "id": "inventory-move-http",
-      "kind": "http",
+      "type": "http",
       "route": {
         "path": "/inventory/move"
       },
@@ -72,14 +72,14 @@
     "registered-operation": "wamn-wms:inventory/move"
   },
   "inventory-adjust-http": {
-    "kind": "http",
+    "type": "http",
     "package-id": "wamn_wms",
     "component": "wms",
     "operation": "wamn-wms:inventory/adjust",
-    "definition-hash": "sha256:d98e9963eb66e0b1386b5f2e55048866413f10162c42fc12e8815ab4801e647a",
+    "definition-hash": "sha256:aac4680c5c4fea209da3b10afc545d6bd76ca5b74ee8fa3ec5157b2291417041",
     "definition": {
       "id": "inventory-adjust-http",
-      "kind": "http",
+      "type": "http",
       "route": {
         "path": "/inventory/adjust"
       },
@@ -162,14 +162,14 @@
     "registered-operation": "wamn-wms:inventory/adjust"
   },
   "inventory-merge-http": {
-    "kind": "http",
+    "type": "http",
     "package-id": "wamn_wms",
     "component": "wms",
     "operation": "wamn-wms:inventory/merge",
-    "definition-hash": "sha256:53f01e164e8cf46d031f49cd51893019d1ceb58b3e2fdef7117bb9c1331a01ff",
+    "definition-hash": "sha256:a89dc6fd6bcbb4e7042bb8241aaa201758d6bb4a77216bbf962d92acda62f911",
     "definition": {
       "id": "inventory-merge-http",
-      "kind": "http",
+      "type": "http",
       "route": {
         "path": "/inventory/merge"
       },
@@ -234,14 +234,14 @@
     "registered-operation": "wamn-wms:inventory/merge"
   },
   "inventory-split-http": {
-    "kind": "http",
+    "type": "http",
     "package-id": "wamn_wms",
     "component": "wms",
     "operation": "wamn-wms:inventory/split",
-    "definition-hash": "sha256:59857c736f7287c144855acb0196ee77e120618bf6670e41017f4a11dd21d3a6",
+    "definition-hash": "sha256:1c5b9af94eec7ee44abfe615d3784385b85cbf1a67de898f424974891670a30f",
     "definition": {
       "id": "inventory-split-http",
-      "kind": "http",
+      "type": "http",
       "route": {
         "path": "/inventory/split"
       },
@@ -340,14 +340,14 @@
     "registered-operation": "wamn-wms:inventory/split"
   },
   "inventory-aggregate-http": {
-    "kind": "http",
+    "type": "http",
     "package-id": "wamn_wms",
     "component": "wms",
     "operation": "wamn-wms:inventory/aggregate",
-    "definition-hash": "sha256:b38d671e87b272062b9d9a87c1cc002beb36e48b47929138f2b7d211b17df98b",
+    "definition-hash": "sha256:888d4979a677de8ff5c583d70f895a58da2be56593b7c5dccd68e1a79aebb30e",
     "definition": {
       "id": "inventory-aggregate-http",
-      "kind": "http",
+      "type": "http",
       "route": {
         "path": "/inventory/aggregate"
       },

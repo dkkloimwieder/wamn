@@ -1074,6 +1074,8 @@ pub struct WidgetQueryRequest {
     pub filter: Option<WidgetQueryRequestFilter>,
     /// `int32`, omittable
     pub limit: Option<i32>,
+    /// `keyset`, omittable
+    pub pagination: Option<serde_json::Value>,
     /// `object`, omittable
     pub sort: Option<WidgetQueryRequestSort>,
 }
@@ -1142,6 +1144,12 @@ pub const WIDGET_QUERY_INPUT: &[FieldDescriptor] = &[
     FieldDescriptor {
         path: "limit",
         type_name: "int32",
+        nullable: true,
+        values: &[],
+    },
+    FieldDescriptor {
+        path: "pagination",
+        type_name: "keyset",
         nullable: true,
         values: &[],
     },
@@ -1287,6 +1295,18 @@ pub const WIDGET_QUERY_INPUT_SCHEMA: &[wamn_client::descriptor::FieldSchema] = &
         field: FieldDescriptor {
             path: "limit",
             type_name: "int32",
+            nullable: false,
+            values: &[],
+        },
+        required: false,
+        minimum: None,
+        maximum: None,
+        children: &[],
+    },
+    wamn_client::descriptor::FieldSchema {
+        field: FieldDescriptor {
+            path: "pagination",
+            type_name: "keyset",
             nullable: false,
             values: &[],
         },

@@ -100,7 +100,7 @@ export const INVENTORY_ADJUST_ROUTE: OperationRoute = {
     ],
     replay: "claim",
     direct: true,
-    kind: "command",
+    type: "command",
     transaction: "explicit_per_input",
   },
 };
@@ -183,7 +183,7 @@ export const INVENTORY_AGGREGATE_ROUTE: OperationRoute = {
     ],
     replay: null,
     direct: true,
-    kind: "projection",
+    type: "projection",
     transaction: null,
   },
 };
@@ -287,7 +287,7 @@ export const INVENTORY_MERGE_ROUTE: OperationRoute = {
     ],
     replay: "claim",
     direct: true,
-    kind: "command",
+    type: "command",
     transaction: "explicit_per_input",
   },
 };
@@ -386,7 +386,7 @@ export const INVENTORY_MOVE_ROUTE: OperationRoute = {
     ],
     replay: "claim",
     direct: true,
-    kind: "command",
+    type: "command",
     transaction: "explicit_per_input",
   },
 };
@@ -508,7 +508,7 @@ export const INVENTORY_SPLIT_ROUTE: OperationRoute = {
     ],
     replay: "claim",
     direct: true,
-    kind: "command",
+    type: "command",
     transaction: "explicit_per_input",
   },
 };

@@ -1,13 +1,13 @@
 {
   "sample-read-http": {
-    "kind": "http",
+    "type": "http",
     "package-id": "edge_device",
     "component": "device",
     "operation": "edge-device:sample/read",
-    "definition-hash": "sha256:e7f8dfa8f364078553452bf72c235598929b9f429ded0323326ca30a0d1bc55f",
+    "definition-hash": "sha256:904c347537bcff05f8e6e48add260574f5c902d25cf274817b64fad29a401b18",
     "definition": {
       "id": "sample-read-http",
-      "kind": "http",
+      "type": "http",
       "route": {
         "path": "/sample/read"
       },

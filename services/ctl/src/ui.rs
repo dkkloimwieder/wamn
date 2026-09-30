@@ -205,7 +205,7 @@ fn screen_functions(
         for operation in model
             .operations
             .iter()
-            .filter(|operation| operation.kind != "event_handler")
+            .filter(|operation| operation.type_ != "event_handler")
         {
             let mut candidates =
                 source
@@ -237,7 +237,7 @@ fn screen_functions(
                 name: operation.name.clone(),
                 function: function.to_owned(),
                 operation: operation.operation.clone(),
-                kind: operation.kind.clone(),
+                kind: operation.type_.clone(),
                 spec: format!("{}_SPEC", operation.name.to_uppercase()),
                 source: source[start..end].to_owned(),
             });

@@ -6,7 +6,7 @@ pub static ADJUST_SPEC: screen::ScreenSpec = screen::ScreenSpec {
     model: "inventory",
     name: "adjust",
     operation: "wamn-wms:inventory/adjust@1.0.0",
-    kind: "command",
+    type_: "command",
     input: crate::inventory::INVENTORY_ADJUST_INPUT_SCHEMA,
     input_schema: Some(
         "{\"items\":{\"additionalProperties\":false,\"properties\":{\"request_id\":{\"minLength\":1,\"type\":\"string\"},\"value\":{\"additionalProperties\":false,\"properties\":{\"expected_row_version\":{\"type\":\"integer\"},\"idempotency_key\":{\"minLength\":1,\"type\":\"string\"},\"occurred_at\":{\"format\":\"date-time\",\"type\":\"string\"},\"packaging_id\":{\"pattern\":\"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$\",\"type\":\"string\"},\"product_id\":{\"pattern\":\"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$\",\"type\":\"string\"},\"quantity\":{\"pattern\":\"^[0-9]+(\\\\.[0-9]+)?$\",\"type\":\"string\"},\"reason_code\":{\"minLength\":1,\"type\":\"string\"},\"status\":{\"enum\":[\"available\",\"held\"],\"type\":\"string\"}},\"required\":[\"idempotency_key\",\"packaging_id\",\"product_id\",\"status\",\"quantity\",\"reason_code\",\"expected_row_version\",\"occurred_at\"],\"type\":\"object\"}},\"required\":[\"request_id\",\"value\"],\"type\":\"object\"},\"maxItems\":100,\"minItems\":1,\"type\":\"array\"}",
@@ -63,7 +63,7 @@ pub static ADJUST_SPEC: screen::ScreenSpec = screen::ScreenSpec {
                 sources: &["statement_timeout"],
             },
         ],
-        kind: "command",
+        type_: "command",
         transaction: Some("explicit_per_input"),
         direct: true,
         replay: submission::Replay::Claim,
@@ -77,15 +77,15 @@ pub static ADJUST_SPEC: screen::ScreenSpec = screen::ScreenSpec {
     supplied: &[
         screen::SuppliedField {
             path: "request_id",
-            kind: screen::SuppliedKind::RequestId,
+            type_: screen::SuppliedType::RequestId,
         },
         screen::SuppliedField {
             path: "value.idempotency_key",
-            kind: screen::SuppliedKind::IdempotencyKey,
+            type_: screen::SuppliedType::IdempotencyKey,
         },
         screen::SuppliedField {
             path: "value.occurred_at",
-            kind: screen::SuppliedKind::OccurredAt,
+            type_: screen::SuppliedType::OccurredAt,
         },
     ],
 };
@@ -99,7 +99,7 @@ pub static AGGREGATE_SPEC: screen::ScreenSpec = screen::ScreenSpec {
     model: "inventory",
     name: "aggregate",
     operation: "wamn-wms:inventory/aggregate@1.0.0",
-    kind: "projection",
+    type_: "projection",
     input: crate::inventory::INVENTORY_AGGREGATE_INPUT_SCHEMA,
     input_schema: Some(
         "{\"items\":{\"additionalProperties\":false,\"properties\":{},\"type\":\"object\"},\"maxItems\":100,\"minItems\":1,\"type\":\"array\"}",
@@ -136,7 +136,7 @@ pub static AGGREGATE_SPEC: screen::ScreenSpec = screen::ScreenSpec {
                 sources: &["statement_timeout"],
             },
         ],
-        kind: "projection",
+        type_: "projection",
         transaction: None,
         direct: true,
         replay: submission::Replay::Unknown,
@@ -159,7 +159,7 @@ pub static MERGE_SPEC: screen::ScreenSpec = screen::ScreenSpec {
     model: "inventory",
     name: "merge",
     operation: "wamn-wms:inventory/merge@1.0.0",
-    kind: "command",
+    type_: "command",
     input: crate::inventory::INVENTORY_MERGE_INPUT_SCHEMA,
     input_schema: Some(
         "{\"items\":{\"additionalProperties\":false,\"properties\":{\"request_id\":{\"minLength\":1,\"type\":\"string\"},\"value\":{\"additionalProperties\":false,\"properties\":{\"expected_row_version\":{\"type\":\"integer\"},\"idempotency_key\":{\"minLength\":1,\"type\":\"string\"},\"occurred_at\":{\"format\":\"date-time\",\"type\":\"string\"},\"source_packaging_id\":{\"pattern\":\"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$\",\"type\":\"string\"},\"target_packaging_id\":{\"pattern\":\"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$\",\"type\":\"string\"}},\"required\":[\"idempotency_key\",\"source_packaging_id\",\"target_packaging_id\",\"expected_row_version\",\"occurred_at\"],\"type\":\"object\"}},\"required\":[\"request_id\",\"value\"],\"type\":\"object\"},\"maxItems\":100,\"minItems\":1,\"type\":\"array\"}",
@@ -211,7 +211,7 @@ pub static MERGE_SPEC: screen::ScreenSpec = screen::ScreenSpec {
                 sources: &["statement_timeout"],
             },
         ],
-        kind: "command",
+        type_: "command",
         transaction: Some("explicit_per_input"),
         direct: true,
         replay: submission::Replay::Claim,
@@ -225,15 +225,15 @@ pub static MERGE_SPEC: screen::ScreenSpec = screen::ScreenSpec {
     supplied: &[
         screen::SuppliedField {
             path: "request_id",
-            kind: screen::SuppliedKind::RequestId,
+            type_: screen::SuppliedType::RequestId,
         },
         screen::SuppliedField {
             path: "value.idempotency_key",
-            kind: screen::SuppliedKind::IdempotencyKey,
+            type_: screen::SuppliedType::IdempotencyKey,
         },
         screen::SuppliedField {
             path: "value.occurred_at",
-            kind: screen::SuppliedKind::OccurredAt,
+            type_: screen::SuppliedType::OccurredAt,
         },
     ],
 };
@@ -247,7 +247,7 @@ pub static MOVE_SPEC: screen::ScreenSpec = screen::ScreenSpec {
     model: "inventory",
     name: "move",
     operation: "wamn-wms:inventory/move@1.0.0",
-    kind: "command",
+    type_: "command",
     input: crate::inventory::INVENTORY_MOVE_INPUT_SCHEMA,
     input_schema: Some(
         "{\"items\":{\"additionalProperties\":false,\"properties\":{\"request_id\":{\"minLength\":1,\"type\":\"string\"},\"value\":{\"additionalProperties\":false,\"properties\":{\"expected_row_version\":{\"type\":\"integer\"},\"idempotency_key\":{\"minLength\":1,\"type\":\"string\"},\"occurred_at\":{\"format\":\"date-time\",\"type\":\"string\"},\"packaging_id\":{\"pattern\":\"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$\",\"type\":\"string\"},\"to_location_id\":{\"pattern\":\"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$\",\"type\":\"string\"}},\"required\":[\"idempotency_key\",\"packaging_id\",\"to_location_id\",\"expected_row_version\",\"occurred_at\"],\"type\":\"object\"}},\"required\":[\"request_id\",\"value\"],\"type\":\"object\"},\"maxItems\":100,\"minItems\":1,\"type\":\"array\"}",
@@ -304,7 +304,7 @@ pub static MOVE_SPEC: screen::ScreenSpec = screen::ScreenSpec {
                 sources: &["statement_timeout"],
             },
         ],
-        kind: "command",
+        type_: "command",
         transaction: Some("explicit_per_input"),
         direct: true,
         replay: submission::Replay::Claim,
@@ -318,21 +318,21 @@ pub static MOVE_SPEC: screen::ScreenSpec = screen::ScreenSpec {
     supplied: &[
         screen::SuppliedField {
             path: "request_id",
-            kind: screen::SuppliedKind::RequestId,
+            type_: screen::SuppliedType::RequestId,
         },
         screen::SuppliedField {
             path: "value.idempotency_key",
-            kind: screen::SuppliedKind::IdempotencyKey,
+            type_: screen::SuppliedType::IdempotencyKey,
         },
         screen::SuppliedField {
             path: "value.occurred_at",
-            kind: screen::SuppliedKind::OccurredAt,
+            type_: screen::SuppliedType::OccurredAt,
         },
     ],
 };
 
 #[must_use]
-pub fn r#move(binding: submission::SessionBinding) -> screen::Screen {
+pub fn move_(binding: submission::SessionBinding) -> screen::Screen {
     screen::Screen::new(&MOVE_SPEC, binding)
 }
 
@@ -340,7 +340,7 @@ pub static SPLIT_SPEC: screen::ScreenSpec = screen::ScreenSpec {
     model: "inventory",
     name: "split",
     operation: "wamn-wms:inventory/split@1.0.0",
-    kind: "command",
+    type_: "command",
     input: crate::inventory::INVENTORY_SPLIT_INPUT_SCHEMA,
     input_schema: Some(
         "{\"items\":{\"additionalProperties\":false,\"properties\":{\"request_id\":{\"minLength\":1,\"type\":\"string\"},\"value\":{\"additionalProperties\":false,\"properties\":{\"expected_row_version\":{\"type\":\"integer\"},\"idempotency_key\":{\"minLength\":1,\"type\":\"string\"},\"new_packaging_code\":{\"minLength\":1,\"type\":\"string\"},\"new_packaging_type\":{\"enum\":[\"pallet\",\"tote\",\"bin\",\"case\",\"loose\"],\"type\":\"string\"},\"occurred_at\":{\"format\":\"date-time\",\"type\":\"string\"},\"product_id\":{\"pattern\":\"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$\",\"type\":\"string\"},\"quantity\":{\"pattern\":\"^[0-9]+(\\\\.[0-9]+)?$\",\"type\":\"string\"},\"source_packaging_id\":{\"pattern\":\"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$\",\"type\":\"string\"},\"status\":{\"enum\":[\"available\",\"held\"],\"type\":\"string\"},\"to_location_id\":{\"pattern\":\"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$\",\"type\":\"string\"}},\"required\":[\"idempotency_key\",\"source_packaging_id\",\"product_id\",\"status\",\"quantity\",\"new_packaging_code\",\"new_packaging_type\",\"to_location_id\",\"expected_row_version\",\"occurred_at\"],\"type\":\"object\"}},\"required\":[\"request_id\",\"value\"],\"type\":\"object\"},\"maxItems\":100,\"minItems\":1,\"type\":\"array\"}",
@@ -407,7 +407,7 @@ pub static SPLIT_SPEC: screen::ScreenSpec = screen::ScreenSpec {
                 sources: &["statement_timeout"],
             },
         ],
-        kind: "command",
+        type_: "command",
         transaction: Some("explicit_per_input"),
         direct: true,
         replay: submission::Replay::Claim,
@@ -421,15 +421,15 @@ pub static SPLIT_SPEC: screen::ScreenSpec = screen::ScreenSpec {
     supplied: &[
         screen::SuppliedField {
             path: "request_id",
-            kind: screen::SuppliedKind::RequestId,
+            type_: screen::SuppliedType::RequestId,
         },
         screen::SuppliedField {
             path: "value.idempotency_key",
-            kind: screen::SuppliedKind::IdempotencyKey,
+            type_: screen::SuppliedType::IdempotencyKey,
         },
         screen::SuppliedField {
             path: "value.occurred_at",
-            kind: screen::SuppliedKind::OccurredAt,
+            type_: screen::SuppliedType::OccurredAt,
         },
     ],
 };

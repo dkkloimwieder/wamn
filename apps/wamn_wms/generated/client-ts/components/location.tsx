@@ -262,7 +262,7 @@ export const LOCATION_QUERY_TABLE = {
     { field: "locationCode", label: "location code", type: "text", role: "value" },
     { field: "rowVersion", label: "row version", type: "int32", role: "revision" },
   ],
-  update: { operation: "wamn-wms:location/update@1.0.0", binding: { route: LOCATION_UPDATE_ROUTE, request: LOCATION_UPDATE_REQUEST_FIELDS, result: LOCATION_UPDATE_RESULT_FIELDS }, keyInput: ["id"], revisionInput: ["expectedRowVersion"], revisionField: "rowVersion", supplied: [{ input: ["requestId"], kind: "requestId" }], fields: [
+  update: { operation: "wamn-wms:location/update@1.0.0", binding: { route: LOCATION_UPDATE_ROUTE, request: LOCATION_UPDATE_REQUEST_FIELDS, result: LOCATION_UPDATE_RESULT_FIELDS }, keyInput: ["id"], revisionInput: ["expectedRowVersion"], revisionField: "rowVersion", supplied: [{ input: ["requestId"], type: "requestId" }], fields: [
     { field: "locationCode", input: ["change", "locationCode"] },
   ] },
   actions: [

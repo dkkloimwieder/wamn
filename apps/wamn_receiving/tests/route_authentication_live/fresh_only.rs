@@ -246,7 +246,7 @@ pub(super) async fn test_prior_commit(test: PriorCommitTest<'_>) -> anyhow::Resu
     write_json(
         &attachment,
         &json!({(WIRING): {
-            "kind": "http", "package-id": PACKAGE, "wiring-id": WIRING, "wiring-version": 1,
+            "type": "http", "package-id": PACKAGE, "wiring-id": WIRING, "wiring-version": 1,
             "definition-hash": wamn_execution_contract::canonical_json_sha256(&definition),
             "definition": definition, "auth-policy": {"modes": ["pat", "session"]}
         }}),

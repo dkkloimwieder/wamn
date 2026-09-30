@@ -11,7 +11,7 @@
 
 use serde::Deserialize as _;
 use serde::de::IntoDeserializer as _;
-use wamn_catalog::OperationKind;
+use wamn_catalog::OperationType;
 
 use crate::client_ir::{
     CURSOR_INPUT, ClientContractIr, FILTER_PREFIX, FieldIr, FilterIr, LIMIT_INPUT, LimitIr,
@@ -23,12 +23,12 @@ use crate::client_ir::{
 const DISPLAY_TYPE: &str = "text";
 
 /// Contract input paths that carry a platform value instead of operator input.
-const SUPPLIED_PATHS: [(&str, SuppliedKind); 5] = [
-    ("request_id", SuppliedKind::RequestId),
-    ("idempotency_key", SuppliedKind::IdempotencyKey),
-    ("value.idempotency_key", SuppliedKind::IdempotencyKey),
-    ("occurred_at", SuppliedKind::OccurredAt),
-    ("value.occurred_at", SuppliedKind::OccurredAt),
+const SUPPLIED_PATHS: [(&str, SuppliedType); 5] = [
+    ("request_id", SuppliedType::RequestId),
+    ("idempotency_key", SuppliedType::IdempotencyKey),
+    ("value.idempotency_key", SuppliedType::IdempotencyKey),
+    ("occurred_at", SuppliedType::OccurredAt),
+    ("value.occurred_at", SuppliedType::OccurredAt),
 ];
 
 /// The transaction of a command that runs each outer input on its own.
@@ -103,7 +103,7 @@ pub fn idempotency_field(input_contract: &serde_json::Value) -> Option<String> {
         .find(|field| {
             SUPPLIED_PATHS
                 .iter()
-                .any(|(path, kind)| *kind == SuppliedKind::IdempotencyKey && *path == field.path)
+                .any(|(path, kind)| *kind == SuppliedType::IdempotencyKey && *path == field.path)
         })
         .map(|field| field.path.clone())
 }
@@ -170,7 +170,7 @@ pub fn route_canonicalization(
 
 /// The platform value that a session driver writes into a reserved input.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SuppliedKind {
+pub enum SuppliedType {
     /// One submission attempt's identity.
     RequestId,
     /// The replay key of one submission intent.
@@ -185,7 +185,7 @@ pub struct SuppliedField<'a> {
     /// Exact input path declared by the contract.
     pub path: &'a str,
     /// The platform value bound to that path.
-    pub kind: SuppliedKind,
+    pub type_: SuppliedType,
 }
 
 /// The stored record that one screen reads or changes.
@@ -808,7 +808,7 @@ impl<'a> ModelPlan<'a> {
         let mut screens: Vec<_> = model
             .operations
             .iter()
-            .filter(|operation| operation.kind != PRIVATE_KIND)
+            .filter(|operation| operation.type_ != PRIVATE_KIND)
             .map(|operation| ScreenPlan::from_ir(&model.name, operation))
             .collect();
         screens.sort_by(|left, right| left.name.cmp(right.name));
@@ -826,7 +826,7 @@ impl<'a> ScreenPlan<'a> {
                     .find(|(path, _)| *path == field.path)
                     .map(|(_, kind)| SuppliedField {
                         path: field.path.as_str(),
-                        kind: *kind,
+                        type_: *kind,
                     })
             })
             .collect();
@@ -904,7 +904,7 @@ impl<'a> ScreenPlan<'a> {
             model,
             name: &operation.name,
             contract: operation,
-            role: role(&operation.kind, result_class),
+            role: role(&operation.type_, result_class),
             result_class,
             columns: leaf_fields(result_fields),
             inputs,
@@ -929,9 +929,9 @@ impl<'a> ScreenPlan<'a> {
     /// A read clears its rows when the operator changes an input.
     #[must_use]
     pub fn is_read(&self) -> bool {
-        let kind: Result<OperationKind, serde::de::value::Error> =
-            OperationKind::deserialize(self.contract.kind.as_str().into_deserializer());
-        kind.is_ok_and(OperationKind::is_read)
+        let kind: Result<OperationType, serde::de::value::Error> =
+            OperationType::deserialize(self.contract.type_.as_str().into_deserializer());
+        kind.is_ok_and(OperationType::is_read)
     }
 
     /// Whether the operator confirms before the screen submits.
@@ -958,7 +958,7 @@ impl<'a> Target<'a> {
             operation: screen.contract.operation.as_str(),
             model: screen.model,
             name: screen.name,
-            kind: screen.contract.kind.as_str(),
+            kind: screen.contract.type_.as_str(),
             served: screen.contract.route.is_some(),
             record: screen.record,
             revision_read: screen.revision.map(|revision| revision.read_operation),
@@ -1216,7 +1216,7 @@ fn table_update<'a>(screen: &ScreenPlan<'a>, plan: &ClientPlan<'a>) -> Option<Ta
     let shows = |path: &str| screen.columns.iter().any(|column| column.path == path);
     plan.screens().find_map(|update| {
         let record = update.contract.record.as_ref()?;
-        if update.contract.kind != "update"
+        if update.contract.type_ != "update"
             || update.contract.route.is_none()
             || record.relation != relation
             || record.key_field != list.key_field

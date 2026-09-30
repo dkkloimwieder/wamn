@@ -538,7 +538,7 @@ fn selected_attachments(
                     component,
                     operation,
                 } => package_route(roots, &attachment.package_id, component, operation)?
-                    .kind
+                    .type_
                     .http_method(),
                 AttachmentTarget::Wiring { .. } => "POST",
             };

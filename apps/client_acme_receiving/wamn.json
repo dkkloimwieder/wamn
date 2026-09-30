@@ -93,7 +93,7 @@
   },
   "custom_operations": {
     "receiving.record_receipt": {
-      "kind": "command",
+      "type": "command",
       "visibility": "public",
       "permission": "receiving.record_receipt",
       "idempotent_by": {
@@ -252,7 +252,7 @@
       "statements": {}
     },
     "receiving.record_receipt_participant": {
-      "kind": "command",
+      "type": "command",
       "visibility": "public",
       "permission": "receiving.record_receipt_participant",
       "connection": "postgres",
@@ -348,7 +348,7 @@
       }
     },
     "quality.load_purchase_order_detail": {
-      "kind": "projection",
+      "type": "projection",
       "visibility": "public",
       "permission": "quality.load_purchase_order_detail",
       "connection": "postgres",
@@ -492,7 +492,7 @@
       }
     },
     "quality.approve_inspection": {
-      "kind": "command",
+      "type": "command",
       "visibility": "public",
       "permission": "quality.approve_inspection",
       "connection": "postgres",
@@ -672,7 +672,7 @@
       }
     },
     "quality.create_inspection": {
-      "kind": "event_handler",
+      "type": "event_handler",
       "visibility": "private",
       "connection": "postgres",
       "input": {

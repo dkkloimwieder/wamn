@@ -312,6 +312,8 @@ pub struct WidgetMakerQueryRequest {
     pub filter: Option<WidgetMakerQueryRequestFilter>,
     /// `int32`, omittable
     pub limit: Option<i32>,
+    /// `keyset`, omittable
+    pub pagination: Option<serde_json::Value>,
     /// `string`, omittable
     pub search: Option<String>,
     /// `object`, omittable
@@ -384,6 +386,12 @@ pub const WIDGET_MAKER_QUERY_INPUT: &[FieldDescriptor] = &[
     FieldDescriptor {
         path: "limit",
         type_name: "int32",
+        nullable: true,
+        values: &[],
+    },
+    FieldDescriptor {
+        path: "pagination",
+        type_name: "keyset",
         nullable: true,
         values: &[],
     },
@@ -525,6 +533,18 @@ pub const WIDGET_MAKER_QUERY_INPUT_SCHEMA: &[wamn_client::descriptor::FieldSchem
         field: FieldDescriptor {
             path: "limit",
             type_name: "int32",
+            nullable: false,
+            values: &[],
+        },
+        required: false,
+        minimum: None,
+        maximum: None,
+        children: &[],
+    },
+    wamn_client::descriptor::FieldSchema {
+        field: FieldDescriptor {
+            path: "pagination",
+            type_name: "keyset",
             nullable: false,
             values: &[],
         },

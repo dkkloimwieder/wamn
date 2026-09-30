@@ -522,7 +522,7 @@ CREATE TRIGGER wamn_record_history_log
     FOR EACH ROW
     EXECUTE FUNCTION wamn_history.log_row_change('unlimited');
 -- A guest write of configurations appends its entry as wamn_app.
-GRANT INSERT (tenant_id, row_key, kind, operation, changed_by, changed_at,
+GRANT INSERT (tenant_id, row_key, type, operation, changed_by, changed_at,
               transaction_id, before, after)
     ON app_system.configurations_history TO wamn_app;
 

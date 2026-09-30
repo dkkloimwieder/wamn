@@ -97,7 +97,7 @@ pub(super) fn catalog(add_unused_table: bool) -> CatalogIr {
 
 pub(super) fn projection_operation() -> Value {
     json!({
-        "kind": "projection",
+        "type": "projection",
         "visibility": "public",
         "permission": "quality.load_gadget_part",
         "connection": "postgres",

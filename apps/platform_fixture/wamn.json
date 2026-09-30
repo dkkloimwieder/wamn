@@ -271,7 +271,7 @@
           }
         ]
       },
-      "kind": "command",
+      "type": "command",
       "permission": "widget.archive",
       "relations": [
         {
@@ -369,7 +369,7 @@
           }
         ]
       },
-      "kind": "projection",
+      "type": "projection",
       "lists": {
         "display_field": "code",
         "key_field": "id",
@@ -567,7 +567,7 @@
         },
         "raw_body_maximum": 1048576
       },
-      "kind": "command",
+      "type": "command",
       "label": "Record a batch",
       "permission": "widget.record_batch",
       "relations": [
@@ -629,7 +629,7 @@
       "input": {
         "fields": []
       },
-      "kind": "projection",
+      "type": "projection",
       "lists": {
         "key_field": "id"
       },

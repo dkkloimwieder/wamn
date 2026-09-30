@@ -29,7 +29,7 @@
   },
   "custom_operations": {
     "audit.observe": {
-      "kind": "event_handler",
+      "type": "event_handler",
       "visibility": "private",
       "connection": "postgres",
       "input": {
