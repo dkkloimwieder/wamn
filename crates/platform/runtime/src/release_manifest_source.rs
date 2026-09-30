@@ -30,7 +30,7 @@ use oci_client::secrets::RegistryAuth;
 use oci_client::{Client as OciClient, Reference};
 use wamn_catalog::MAX_SERVING_MANIFEST_BYTES;
 
-use crate::registry_credentials::read_registry_credentials;
+use crate::registry_credentials::{RegistryCredentialSource, read_registry_credentials};
 use crate::registry_transport::transport_is_mismatched;
 use crate::release_manifest_artifact::verify_release_manifest_artifact_layout;
 use wamn_engine::component_admission::component_digest;
@@ -44,7 +44,7 @@ const REGISTRY_IO_TIMEOUT: Duration = Duration::from_secs(30);
 pub enum ReleaseManifestFetchErrorKind {
     /// The configured base or the named digest cannot form an immutable reference.
     InvalidReference,
-    /// The projected registry credential could not be loaded for this registry.
+    /// The registry credential could not be loaded for this registry.
     Credential,
     /// A configured PEM CA bundle could not be read as a trust root.
     TrustAnchor,
@@ -175,13 +175,14 @@ impl std::error::Error for ReleaseManifestFetchError {}
 /// A process pulls its one release once, during construction, and holds the
 /// verified bytes in its loaded release — so this is deliberately not a shared, cloneable
 /// service and owns no cache, retry policy or refresh.
+///
+/// Each pull builds its own `oci-client`, because a client keeps the first
+/// credential it is given for a registry.
 pub struct ReleaseManifestSource {
-    client: OciClient,
     base: ComponentArtifactBase,
-    auth: RegistryAuth,
-    /// Kept so [`ReleaseManifestSource::with_ca_paths`] can rebuild the client
-    /// without re-reading the credential.
+    credentials: RegistryCredentialSource,
     insecure_registry: bool,
+    ca_bundles: Vec<Vec<u8>>,
 }
 
 impl ReleaseManifestSource {
@@ -199,15 +200,40 @@ impl ReleaseManifestSource {
             .map_err(|_| ReleaseManifestFetchError::invalid_reference())?;
         let credentials = read_registry_credentials(registry_auth_file, base.registry())
             .map_err(|error| ReleaseManifestFetchError::credential(error.refusal()))?;
-        let client = registry_client(base.registry(), insecure_registry, Vec::new())?;
-        Ok(Self {
-            client,
+        Self::with_source(
             base,
-            auth: RegistryAuth::Basic(
-                credentials.username().to_owned(),
-                credentials.password().to_owned(),
-            ),
             insecure_registry,
+            RegistryCredentialSource::Fixed(credentials),
+        )
+    }
+
+    /// Configure one release repository whose pulls each ask the metadata
+    /// server at `token_url` for a token.
+    pub fn with_registry_token_metadata(
+        artifact_base: &str,
+        insecure_registry: bool,
+        token_url: &str,
+    ) -> Result<Self, ReleaseManifestFetchError> {
+        let base = parse_component_artifact_base(artifact_base)
+            .map_err(|_| ReleaseManifestFetchError::invalid_reference())?;
+        Self::with_source(
+            base,
+            insecure_registry,
+            RegistryCredentialSource::MetadataServer(token_url.into()),
+        )
+    }
+
+    fn with_source(
+        base: ComponentArtifactBase,
+        insecure_registry: bool,
+        credentials: RegistryCredentialSource,
+    ) -> Result<Self, ReleaseManifestFetchError> {
+        registry_client(base.registry(), insecure_registry, &[])?;
+        Ok(Self {
+            base,
+            credentials,
+            insecure_registry,
+            ca_bundles: Vec::new(),
         })
     }
 
@@ -240,7 +266,8 @@ impl ReleaseManifestSource {
             bundles
                 .push(std::fs::read(path).map_err(|_| ReleaseManifestFetchError::trust_anchor())?);
         }
-        self.client = registry_client(self.base.registry(), self.insecure_registry, bundles)?;
+        registry_client(self.base.registry(), self.insecure_registry, &bundles)?;
+        self.ca_bundles = bundles;
         Ok(self)
     }
 
@@ -259,10 +286,23 @@ impl ReleaseManifestSource {
             artifact.tag().to_owned(),
         );
         let named = artifact.to_string();
+        let credentials = self
+            .credentials
+            .credentials(artifact.registry())
+            .await
+            .map_err(|error| ReleaseManifestFetchError::credential(error.refusal()))?;
+        let auth = RegistryAuth::Basic(
+            credentials.username().to_owned(),
+            credentials.password().to_owned(),
+        );
+        let client = registry_client(
+            self.base.registry(),
+            self.insecure_registry,
+            &self.ca_bundles,
+        )?;
 
-        let (manifest, _) = self
-            .client
-            .pull_image_manifest(&reference, &self.auth)
+        let (manifest, _) = client
+            .pull_image_manifest(&reference, &auth)
             .await
             .map_err(|source| {
                 if transport_is_mismatched(&source) {
@@ -291,7 +331,7 @@ impl ReleaseManifestSource {
         }
 
         let mut canonical_bytes = Vec::new();
-        self.client
+        client
             .pull_blob(&reference, blobs.layer, &mut canonical_bytes)
             .await
             .map_err(|source| {
@@ -331,7 +371,7 @@ impl fmt::Debug for ReleaseManifestSource {
 fn registry_client(
     registry: &str,
     insecure_registry: bool,
-    ca_bundles: Vec<Vec<u8>>,
+    ca_bundles: &[Vec<u8>],
 ) -> Result<OciClient, ReleaseManifestFetchError> {
     let protocol = if insecure_registry {
         ClientProtocol::HttpsExcept(vec![registry.to_owned()])
@@ -343,10 +383,10 @@ fn registry_client(
         read_timeout: Some(REGISTRY_IO_TIMEOUT),
         connect_timeout: Some(REGISTRY_IO_TIMEOUT),
         extra_root_certificates: ca_bundles
-            .into_iter()
+            .iter()
             .map(|data| Certificate {
                 encoding: CertificateEncoding::Pem,
-                data,
+                data: data.clone(),
             })
             .collect(),
         ..ClientConfig::default()

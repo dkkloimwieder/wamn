@@ -62,37 +62,29 @@ The host gets its registry token from the GKE metadata server: `GET http://metad
 
 ### 4.2 Our readers
 
-`wamn-host` gains a second, explicit credential source beside `--registry-auth-file`: the metadata server. The two are exclusive, and a release-backed host needs exactly one. With the metadata source, `ReleaseManifestSource` and `ComponentArtifactSource` ask for a token at each pull instead of keeping a fixed `RegistryAuth`. A failed token request is a named refusal of the pull. This also removes the stale-token defect of section 3.1.
-
-The accepted forms of `read_registry_credentials` do not change. `capabilities.md` gains one rule: a host set up for the metadata server reads no credential file.
+The host flag `--registry-token-metadata` is built. [Registry credentials](../architecture/capabilities.md#registry-credentials) states its behavior. The one token function is `read_metadata_registry_credentials` in `crates/platform/runtime/src/registry_credentials.rs`.
 
 ### 4.3 wash-runtime's reader
 
-The host image gains one executable, `docker-credential-<name>`, on `PATH`. It answers `get` with `{"Username":"oauth2accesstoken","Secret":"<token>"}`, where the token comes from the metadata server. A ConfigMap mounted at `DOCKER_CONFIG` holds `{"credHelpers":{"us-central1-docker.pkg.dev":"<name>"}}`. The ConfigMap holds no credential. wash-runtime runs the helper at each pull.
+The host image gains one executable built in this tree, `docker-credential-wamn`, on `PATH`. It calls `read_metadata_registry_credentials`, the function of the host's readers, and answers `get` with `{"Username":"oauth2accesstoken","Secret":"<token>"}`. It never answers the username `<token>`. A ConfigMap mounted at `DOCKER_CONFIG` holds `{"credHelpers":{"us-central1-docker.pkg.dev":"wamn"}}`. The ConfigMap holds no credential. wash-runtime runs the helper at each pull. No third-party binary goes into the image.
 
 ### 4.4 Deployment
 
-- The host's Google service account gets `roles/artifactregistry.reader` on repository `wamn`.
+- The host's existing Google service account, `wamn-blob`, gets `roles/artifactregistry.reader` on repository `wamn`. A pod has one Workload Identity binding, and the host needs both roles. The name `wamn-blob` now understates the account. Renaming it is not this finding.
 - The GKE host values drop the `wamn-registry-pull` volume, its mount and `WAMN_REGISTRY_AUTH_FILE`, and set the metadata source and the ConfigMap.
 - `deploy/gcp/registry-token.yaml` is deleted, with its service account, Secret, Role and RoleBinding. `wamn-registry-reader` and its two IAM bindings are deleted.
 - `docs/operations/gcp.md` and `docs/plan/gcp-deployment.md` lose the CronJob steps.
 
-### 4.5 Choices for review
+### 4.5 Owner rulings
 
-The owner rules on these before any code:
-
-1. The helper: Google's `docker-credential-gcr`, pinned, or a small helper built in this tree. The answer of `docker-credential-gcr` on GKE is not measured here. It must not be `<token>`.
-2. The Google service account of the host: add the read role to `wamn-blob`, or give the host its own Kubernetes service account bound to `wamn-registry-reader`.
-3. The name of the new host setting, for example `--registry-auth gke-metadata` beside `--registry-auth-file`.
-4. The token reuse: one request to the metadata server per pull, or reuse of a token until shortly before its `expires_in`.
+The owner accepted the spec on 2026-09-30 with four rulings, recorded on `wamn-i87m`. Sections 4.2 to 4.4 apply them. The host asks the metadata server once per pull and keeps no expiry, because the metadata server caches the token itself.
 
 ## 5. Issues
 
-One branch, after the owner rules on section 4.5. Each issue lands with its tests.
+One branch. Each issue lands with its tests.
 
-1. The metadata source in `wamn-runtime` and `wamn-host`. Unit tests against a local HTTP server that plays the metadata server: a pull sends the token as the password of `oauth2accesstoken`, a second pull asks again, a failed token request refuses the pull by name, and the two settings together refuse at startup.
-2. The helper and the image. The host image carries the helper. A unit test runs `docker_credential::get_credential` against a `config.json` that names the helper and a local metadata server, and gets `UsernamePassword`.
-3. The GKE deployment of section 4.4, with the docs. The live change on `wamn-dev` is a GKE step for the peer session `wamn-93`, not a test run of this branch.
+1. The helper and the image. The host image carries the helper. A unit test runs `docker_credential::get_credential` against a `config.json` that names the helper and a local metadata server, and gets `UsernamePassword`.
+2. The GKE deployment of section 4.4, with the docs. The live change on `wamn-dev` is a GKE step for the peer session `wamn-93`, not a test run of this branch.
 
 ## 6. Out of scope
 

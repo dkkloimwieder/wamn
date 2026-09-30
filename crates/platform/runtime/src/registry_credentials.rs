@@ -1,15 +1,17 @@
-//! Exact registry credentials loaded from a Kubernetes pull-secret projection.
+//! Exact registry credentials: a Kubernetes pull-secret projection, or a token
+//! from the GKE metadata server.
 
 use std::collections::BTreeMap;
 use std::fmt;
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use serde::Deserialize;
 
 /// Stable classification of a refused registry credential file.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RegistryCredentialsErrorKind {
-    /// The projected credential file could not be read.
+    /// The projected credential file or the metadata server could not be read.
     Unreadable,
     /// The file did not carry one complete credential for the expected registry.
     Rejected,
@@ -19,6 +21,7 @@ pub enum RegistryCredentialsErrorKind {
 enum RegistryCredentialsErrorSource {
     Io(std::io::Error),
     Json(serde_json::Error),
+    Http(reqwest::Error),
 }
 
 impl fmt::Display for RegistryCredentialsErrorSource {
@@ -26,17 +29,25 @@ impl fmt::Display for RegistryCredentialsErrorSource {
         match self {
             Self::Io(source) => source.fmt(formatter),
             Self::Json(source) => source.fmt(formatter),
+            Self::Http(source) => source.fmt(formatter),
         }
     }
 }
 
 impl std::error::Error for RegistryCredentialsErrorSource {}
 
+/// Where a refused credential came from.
+#[derive(Debug)]
+enum CredentialOrigin {
+    File(PathBuf),
+    MetadataServer,
+}
+
 /// Contextual refusal from the registry credential boundary.
 #[derive(Debug)]
 pub struct RegistryCredentialsError {
     kind: RegistryCredentialsErrorKind,
-    path: PathBuf,
+    origin: CredentialOrigin,
     registry: Box<str>,
     refusal: &'static str,
     source: Option<RegistryCredentialsErrorSource>,
@@ -56,7 +67,7 @@ impl RegistryCredentialsError {
     fn unreadable(path: &Path, registry: &str, source: std::io::Error) -> Self {
         Self {
             kind: RegistryCredentialsErrorKind::Unreadable,
-            path: path.to_owned(),
+            origin: CredentialOrigin::File(path.to_owned()),
             registry: registry.into(),
             refusal: "registry-credentials-unreadable",
             source: Some(RegistryCredentialsErrorSource::Io(source)),
@@ -66,7 +77,7 @@ impl RegistryCredentialsError {
     fn malformed(path: &Path, registry: &str, source: serde_json::Error) -> Self {
         Self {
             kind: RegistryCredentialsErrorKind::Rejected,
-            path: path.to_owned(),
+            origin: CredentialOrigin::File(path.to_owned()),
             registry: registry.into(),
             refusal: "registry-credentials-malformed",
             source: Some(RegistryCredentialsErrorSource::Json(source)),
@@ -76,23 +87,45 @@ impl RegistryCredentialsError {
     fn rejected(path: &Path, registry: &str, refusal: &'static str) -> Self {
         Self {
             kind: RegistryCredentialsErrorKind::Rejected,
-            path: path.to_owned(),
+            origin: CredentialOrigin::File(path.to_owned()),
             registry: registry.into(),
             refusal,
             source: None,
+        }
+    }
+
+    fn metadata(
+        registry: &str,
+        kind: RegistryCredentialsErrorKind,
+        refusal: &'static str,
+        source: Option<RegistryCredentialsErrorSource>,
+    ) -> Self {
+        Self {
+            kind,
+            origin: CredentialOrigin::MetadataServer,
+            registry: registry.into(),
+            refusal,
+            source,
         }
     }
 }
 
 impl fmt::Display for RegistryCredentialsError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            formatter,
-            "registry credential file {} for {}: {}",
-            self.path.display(),
-            self.registry,
-            self.refusal
-        )
+        match &self.origin {
+            CredentialOrigin::File(path) => write!(
+                formatter,
+                "registry credential file {} for {}: {}",
+                path.display(),
+                self.registry,
+                self.refusal
+            ),
+            CredentialOrigin::MetadataServer => write!(
+                formatter,
+                "registry token from the metadata server for {}: {}",
+                self.registry, self.refusal
+            ),
+        }
     }
 }
 
@@ -186,4 +219,112 @@ fn parse_registry_credentials(
         username: username.into(),
         password: password.into(),
     })
+}
+
+/// The token endpoint of the GKE metadata server for the pod's Workload
+/// Identity.
+pub const GKE_METADATA_TOKEN_URL: &str =
+    "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token";
+
+/// The username Artifact Registry takes with an OAuth access token.
+const METADATA_TOKEN_USERNAME: &str = "oauth2accesstoken";
+
+/// Bound the one request to the metadata server, which is on the node.
+const METADATA_TOKEN_TIMEOUT: Duration = Duration::from_secs(5);
+
+#[derive(Deserialize)]
+struct MetadataToken {
+    access_token: String,
+}
+
+/// Ask the metadata server at `token_url` for a token, as the credential of
+/// `registry`.
+///
+/// This is the one token source of the host's readers and of
+/// `docker-credential-wamn`. Each call makes one request and keeps nothing: the
+/// metadata server caches the token itself. `registry` only names the refusal.
+pub async fn read_metadata_registry_credentials(
+    token_url: &str,
+    registry: &str,
+) -> Result<RegistryCredentials, RegistryCredentialsError> {
+    let unavailable = |source| {
+        RegistryCredentialsError::metadata(
+            registry,
+            RegistryCredentialsErrorKind::Unreadable,
+            "registry-token-metadata-unavailable",
+            Some(RegistryCredentialsErrorSource::Http(source)),
+        )
+    };
+    let client = reqwest::Client::builder()
+        .no_proxy()
+        .redirect(reqwest::redirect::Policy::none())
+        .timeout(METADATA_TOKEN_TIMEOUT)
+        .build()
+        .map_err(unavailable)?;
+    let body = client
+        .get(token_url)
+        .header("Metadata-Flavor", "Google")
+        .send()
+        .await
+        .and_then(reqwest::Response::error_for_status)
+        .map_err(unavailable)?
+        .bytes()
+        .await
+        .map_err(unavailable)?;
+    let token: MetadataToken = serde_json::from_slice(&body).map_err(|source| {
+        RegistryCredentialsError::metadata(
+            registry,
+            RegistryCredentialsErrorKind::Rejected,
+            "registry-token-metadata-malformed",
+            Some(RegistryCredentialsErrorSource::Json(source)),
+        )
+    })?;
+    if token.access_token.is_empty() {
+        return Err(RegistryCredentialsError::metadata(
+            registry,
+            RegistryCredentialsErrorKind::Rejected,
+            "registry-token-metadata-incomplete",
+            None,
+        ));
+    }
+    Ok(RegistryCredentials {
+        username: METADATA_TOKEN_USERNAME.into(),
+        password: token.access_token.into(),
+    })
+}
+
+/// Where a registry source gets the credential of each pull.
+#[derive(Clone, PartialEq, Eq)]
+pub enum RegistryCredentialSource {
+    /// One credential, read once from a projected Docker config file.
+    Fixed(RegistryCredentials),
+    /// A token from the metadata server at this URL, asked for at each pull.
+    MetadataServer(Box<str>),
+}
+
+impl RegistryCredentialSource {
+    /// The credential for one pull from `registry`.
+    pub async fn credentials(
+        &self,
+        registry: &str,
+    ) -> Result<RegistryCredentials, RegistryCredentialsError> {
+        match self {
+            Self::Fixed(credentials) => Ok(credentials.clone()),
+            Self::MetadataServer(token_url) => {
+                read_metadata_registry_credentials(token_url, registry).await
+            }
+        }
+    }
+}
+
+impl fmt::Debug for RegistryCredentialSource {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Fixed(credentials) => formatter.debug_tuple("Fixed").field(credentials).finish(),
+            Self::MetadataServer(token_url) => formatter
+                .debug_tuple("MetadataServer")
+                .field(token_url)
+                .finish(),
+        }
+    }
 }

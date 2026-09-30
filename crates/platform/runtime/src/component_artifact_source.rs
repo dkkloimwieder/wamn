@@ -21,7 +21,8 @@ use oci_client::{Client as OciClient, Reference};
 use wamn_catalog::AdmittedComponent;
 
 use crate::registry_credentials::{
-    RegistryCredentials, RegistryCredentialsError, read_registry_credentials,
+    RegistryCredentialSource, RegistryCredentials, RegistryCredentialsError,
+    read_registry_credentials,
 };
 use crate::registry_transport::transport_is_mismatched;
 use wamn_engine::artifact_source::{
@@ -39,7 +40,7 @@ pub struct ComponentArtifactSourceConfig {
     base: ComponentArtifactBase,
     insecure_registry: bool,
     fetch_timeout: Duration,
-    credentials: Option<RegistryCredentials>,
+    credentials: Option<RegistryCredentialSource>,
     /// PEM CA bundles this source trusts on top of the compiled-in roots, kept
     /// as read bytes rather than `oci_client::client::Certificate` so the
     /// configuration stays comparable.
@@ -101,7 +102,14 @@ impl ComponentArtifactSourceConfig {
 
     /// Authenticate pulls with one complete credential for this exact registry.
     pub fn with_credentials(mut self, credentials: RegistryCredentials) -> Self {
-        self.credentials = Some(credentials);
+        self.credentials = Some(RegistryCredentialSource::Fixed(credentials));
+        self
+    }
+
+    /// Authenticate each pull with a token from the metadata server at
+    /// `token_url`, asked for at that pull.
+    pub fn with_registry_token_metadata(mut self, token_url: &str) -> Self {
+        self.credentials = Some(RegistryCredentialSource::MetadataServer(token_url.into()));
         self
     }
 
@@ -197,54 +205,55 @@ fn transport_error(
 }
 
 /// OCI registry source that returns only verified component bytes.
+///
+/// Each pull builds its own `oci-client`. A client keeps the first credential
+/// it is given for a registry, so a client kept across pulls would keep an
+/// expired metadata token.
 #[derive(Clone)]
 pub struct ComponentArtifactSource {
-    client: OciClient,
-    base: ComponentArtifactBase,
-    auth: RegistryAuth,
+    config: ComponentArtifactSourceConfig,
 }
 
 impl ComponentArtifactSource {
     /// Construct a source from explicit validated transport configuration.
     ///
-    /// Built through `TryFrom`, not `Client::new`: that constructor answers a
-    /// rejected configuration with a warning and a wholly default client, which
-    /// drops the trust roots, the protocol and the timeouts and turns an
-    /// unusable CA bundle into a confusing TLS failure on the first pull.
+    /// The client is built once here, so an unusable configuration refuses
+    /// before the first pull.
     pub fn new(config: ComponentArtifactSourceConfig) -> Result<Self, ComponentArtifactFetchError> {
-        let protocol = if config.insecure_registry {
-            ClientProtocol::HttpsExcept(vec![config.base.registry().to_owned()])
-        } else {
-            ClientProtocol::Https
-        };
-        let client = OciClient::try_from(ClientConfig {
-            protocol,
-            read_timeout: Some(config.fetch_timeout),
-            connect_timeout: Some(config.fetch_timeout),
-            extra_root_certificates: config
-                .ca_bundles
-                .into_iter()
-                .map(|data| Certificate {
-                    encoding: CertificateEncoding::Pem,
-                    data,
-                })
-                .collect(),
-            ..ClientConfig::default()
-        })
-        .map_err(|_| ComponentArtifactFetchError::registry_client())?;
-        Ok(Self {
-            client,
-            base: config.base,
-            auth: config
-                .credentials
-                .map_or(RegistryAuth::Anonymous, |credentials| {
-                    RegistryAuth::Basic(
-                        credentials.username().to_owned(),
-                        credentials.password().to_owned(),
-                    )
-                }),
-        })
+        registry_client(&config)?;
+        Ok(Self { config })
     }
+}
+
+/// One registry client for this source's configuration.
+///
+/// Built through `TryFrom`, not `Client::new`: that constructor answers a
+/// rejected configuration with a warning and a wholly default client, which
+/// drops the trust roots, the protocol and the timeouts and turns an unusable
+/// CA bundle into a confusing TLS failure on the first pull.
+fn registry_client(
+    config: &ComponentArtifactSourceConfig,
+) -> Result<OciClient, ComponentArtifactFetchError> {
+    let protocol = if config.insecure_registry {
+        ClientProtocol::HttpsExcept(vec![config.base.registry().to_owned()])
+    } else {
+        ClientProtocol::Https
+    };
+    OciClient::try_from(ClientConfig {
+        protocol,
+        read_timeout: Some(config.fetch_timeout),
+        connect_timeout: Some(config.fetch_timeout),
+        extra_root_certificates: config
+            .ca_bundles
+            .iter()
+            .map(|data| Certificate {
+                encoding: CertificateEncoding::Pem,
+                data: data.clone(),
+            })
+            .collect(),
+        ..ClientConfig::default()
+    })
+    .map_err(|_| ComponentArtifactFetchError::registry_client())
 }
 
 #[async_trait]
@@ -254,6 +263,7 @@ impl ArtifactSource for ComponentArtifactSource {
         component: &AdmittedComponent,
     ) -> Result<Vec<u8>, ComponentArtifactFetchError> {
         let artifact = self
+            .config
             .base
             .reference(&component.component_digest)
             .map_err(|_| ComponentArtifactFetchError::invalid_reference())?;
@@ -266,9 +276,26 @@ impl ArtifactSource for ComponentArtifactSource {
         let expected_config = component_artifact_config_bytes(component);
         let expected_config_digest = component_digest(&expected_config);
 
-        let (manifest, _) = self
-            .client
-            .pull_image_manifest(&reference, &self.auth)
+        let auth = match &self.config.credentials {
+            None => RegistryAuth::Anonymous,
+            Some(source) => {
+                let credentials =
+                    source
+                        .credentials(artifact.registry())
+                        .await
+                        .map_err(|error| {
+                            ComponentArtifactFetchError::unavailable(&named, error.refusal())
+                        })?;
+                RegistryAuth::Basic(
+                    credentials.username().to_owned(),
+                    credentials.password().to_owned(),
+                )
+            }
+        };
+        let client = registry_client(&self.config)?;
+
+        let (manifest, _) = client
+            .pull_image_manifest(&reference, &auth)
             .await
             .map_err(|source| {
                 transport_error(
@@ -287,7 +314,7 @@ impl ArtifactSource for ComponentArtifactSource {
         )?;
 
         let mut component_bytes = Vec::new();
-        self.client
+        client
             .pull_blob(&reference, descriptors.component, &mut component_bytes)
             .await
             .map_err(|source| {
@@ -306,7 +333,7 @@ impl ArtifactSource for ComponentArtifactSource {
         )?;
 
         let mut config_bytes = Vec::new();
-        self.client
+        client
             .pull_blob(&reference, descriptors.config, &mut config_bytes)
             .await
             .map_err(|source| {
@@ -333,8 +360,8 @@ impl fmt::Debug for ComponentArtifactSource {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
             .debug_struct("ComponentArtifactSource")
-            .field("registry", &self.base.registry())
-            .field("repository", &self.base.repository())
+            .field("registry", &self.config.base.registry())
+            .field("repository", &self.config.base.repository())
             .finish_non_exhaustive()
     }
 }
@@ -626,5 +653,65 @@ mod tests {
         );
         let rendered = format!("{error:?} {error}");
         assert!(!rendered.contains("private-context"));
+    }
+
+    #[tokio::test]
+    async fn each_pull_asks_the_metadata_server_for_its_own_token() {
+        use std::sync::Arc;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let token_url = format!("http://{}/token", listener.local_addr().unwrap());
+        let asked = Arc::new(AtomicUsize::new(0));
+        let counted = asked.clone();
+        let serving = tokio::spawn(async move {
+            while let Ok((mut stream, _)) = listener.accept().await {
+                let mut head = [0_u8; 1024];
+                let _ = stream.read(&mut head).await;
+                counted.fetch_add(1, Ordering::SeqCst);
+                let body = r#"{"access_token":"token"}"#;
+                let response = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+                let _ = stream.write_all(response.as_bytes()).await;
+            }
+        });
+        // Port 9 refuses, so each pull stops at the registry after its token.
+        let config = ComponentArtifactSourceConfig::new(
+            "127.0.0.1:9/wamn/components",
+            true,
+            Duration::from_secs(5),
+        )
+        .expect("source config validates")
+        .with_registry_token_metadata(&token_url);
+        let source = ComponentArtifactSource::new(config).expect("registry client builds");
+        let component = admitted(b"component-bytes");
+
+        for pulls in 1..=2 {
+            let error = source
+                .pull_verified(&component)
+                .await
+                .expect_err("the refusing registry refuses the pull");
+            assert_eq!(error.refusal(), "component-artifact-manifest-unavailable");
+            assert_eq!(asked.load(Ordering::SeqCst), pulls);
+        }
+        serving.abort();
+
+        let silent = ComponentArtifactSourceConfig::new(
+            "127.0.0.1:9/wamn/components",
+            true,
+            Duration::from_secs(5),
+        )
+        .expect("source config validates")
+        .with_registry_token_metadata("http://127.0.0.1:9/token");
+        let error = ComponentArtifactSource::new(silent)
+            .expect("registry client builds")
+            .pull_verified(&component)
+            .await
+            .expect_err("a pull without a token refuses");
+        assert_eq!(error.kind(), ComponentArtifactFetchErrorKind::Unavailable);
+        assert_eq!(error.refusal(), "registry-token-metadata-unavailable");
     }
 }

@@ -212,10 +212,14 @@ The service retains only its hash.
 
 ## Registry credentials
 
-Server pulls read one explicitly configured projected credential file.
+A release-backed host takes exactly one registry credential: `--registry-auth-file` or `--registry-token-metadata`.
+With `--registry-auth-file`, server pulls read one explicitly configured projected credential file.
 The lookup requires an exact registry authority and a plaintext username and password entry.
 It does not consult `DOCKER_CONFIG`, invoke helpers, normalize Docker Hub names, or accept identity tokens and base64-only entries.
-The [reader](../../crates/platform/runtime/src/registry_credentials.rs) owns that narrow accepted form.
+With `--registry-token-metadata`, the host reads no credential file.
+Each pull asks the GKE metadata server of the pod's Workload Identity for a token, and sends it as the password of `oauth2accesstoken`.
+The host keeps no token and no expiry, and each pull builds its own registry client.
+The [reader](../../crates/platform/runtime/src/registry_credentials.rs) owns both accepted forms.
 
 Client certificate loading and OCI transfer retain their WAMN artifact contracts.
 The [native alignment page](native-alignment.md) names the conditions for replacing those native adapters.

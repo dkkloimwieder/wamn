@@ -46,6 +46,7 @@ use wamn_runtime::plugins::route_authentication::{
 use wamn_runtime::plugins::wamn_credentials::WamnCredentials;
 use wamn_runtime::plugins::wamn_postgres::AuthorityClass;
 use wamn_runtime::plugins::{ClassCredentials, WamnJetstream, WamnLogging, WamnPostgres};
+use wamn_runtime::registry_credentials::GKE_METADATA_TOKEN_URL;
 use wamn_runtime::release_manifest_source::ReleaseManifestSource;
 use wamn_runtime::session_keys::{IssuerKeys, IssuerKeysConfig};
 use wamn_session::verifier::SessionVerifier;
@@ -54,6 +55,10 @@ use wamn_workflow::{
     WIRING_CACHE_CAPACITY_ENV, WiringCacheCapacity,
 };
 
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "each flag is an independent command-line switch of the host"
+)]
 #[derive(Debug, Args)]
 pub struct HostArgs {
     /// The host group label to assign to the host
@@ -264,7 +269,8 @@ pub struct HostArgs {
 
     /// Explicit unpublished application directory for an owned local session.
     #[arg(long, requires_all = ["local_application_digest", "local_admission_digest"], conflicts_with_all = [
-        "release_artifact_base", "release_manifest_digest", "component_artifact_base", "registry_auth_file"
+        "release_artifact_base", "release_manifest_digest", "component_artifact_base", "registry_auth_file",
+        "registry_token_metadata"
     ])]
     pub local_application: Option<PathBuf>,
 
@@ -291,6 +297,15 @@ pub struct HostArgs {
     /// Projected `.dockerconfigjson` file for the component registry.
     #[arg(long, env = "WAMN_REGISTRY_AUTH_FILE")]
     pub registry_auth_file: Option<PathBuf>,
+
+    /// Pull with a token from the GKE metadata server of this pod's Workload
+    /// Identity, asked for at each pull, in place of `--registry-auth-file`.
+    #[arg(
+        long,
+        env = "WAMN_REGISTRY_TOKEN_METADATA",
+        conflicts_with = "registry_auth_file"
+    )]
+    pub registry_token_metadata: bool,
 
     /// Mounted production credential-vault file for node capabilities.
     #[arg(long, env = "WAMN_CREDENTIALS_FILE")]
@@ -398,6 +413,25 @@ impl Drop for SupervisedIdentityConnection {
 /// The half-passed third state cannot reach here at all: the two arguments
 /// mutually `requires` each other, so clap refuses it at startup.
 ///
+/// The registry credential of a release-backed host: exactly one of
+/// `--registry-auth-file` and `--registry-token-metadata`.
+enum RegistryPullCredential<'a> {
+    AuthFile(&'a Path),
+    TokenMetadata,
+}
+
+impl<'a> RegistryPullCredential<'a> {
+    /// Clap refuses both flags together; this refuses neither.
+    fn select(auth_file: Option<&'a Path>, token_metadata: bool) -> anyhow::Result<Self> {
+        if token_metadata {
+            return Ok(Self::TokenMetadata);
+        }
+        auth_file.map(Self::AuthFile).context(
+            "a release-backed host requires --registry-auth-file or --registry-token-metadata",
+        )
+    }
+}
+
 /// The node-component registry is deliberately a separate explicit argument.
 /// A release artifact establishes release identity; it never implies where
 /// digest-addressed component bytes may be pulled from.
@@ -406,17 +440,28 @@ async fn load_release(
     manifest_digest: Option<&str>,
     insecure_registry: bool,
     registry_auth_file: Option<&Path>,
+    registry_token_metadata: bool,
     ca_paths: &[PathBuf],
 ) -> anyhow::Result<Option<Arc<LoadedRelease>>> {
     let (Some(artifact_base), Some(manifest_digest)) = (artifact_base, manifest_digest) else {
         return Ok(None);
     };
-    let registry_auth_file =
-        registry_auth_file.context("a release-backed host requires --registry-auth-file")?;
-    let source = ReleaseManifestSource::new(artifact_base, insecure_registry, registry_auth_file)
-        .context("configure the release-manifest registry")?
-        .with_ca_paths(ca_paths)
-        .context("trust the configured OCI CA bundles for the release pull")?;
+    let source = match RegistryPullCredential::select(registry_auth_file, registry_token_metadata)?
+    {
+        RegistryPullCredential::AuthFile(path) => {
+            ReleaseManifestSource::new(artifact_base, insecure_registry, path)
+        }
+        RegistryPullCredential::TokenMetadata => {
+            ReleaseManifestSource::with_registry_token_metadata(
+                artifact_base,
+                insecure_registry,
+                GKE_METADATA_TOKEN_URL,
+            )
+        }
+    }
+    .context("configure the release-manifest registry")?
+    .with_ca_paths(ca_paths)
+    .context("trust the configured OCI CA bundles for the release pull")?;
     let canonical_bytes = source
         .pull_verified(manifest_digest)
         .await
@@ -744,6 +789,7 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
             args.release_manifest_digest.as_deref(),
             args.allow_insecure_registries,
             args.registry_auth_file.as_deref(),
+            args.registry_token_metadata,
             &args.oci_ca_paths,
         )
         .await?
@@ -936,17 +982,22 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
                         .component_artifact_base
                         .as_deref()
                         .context("a serving host requires --component-artifact-base")?;
-                    let registry_auth_file = args
-                        .registry_auth_file
-                        .as_deref()
-                        .context("a serving host requires --registry-auth-file")?;
                     let source_config = ComponentArtifactSourceConfig::new(
                         artifact_base,
                         args.allow_insecure_registries,
                         Duration::from_secs(30),
-                    )?
-                    .with_registry_auth_file(registry_auth_file)
-                    .context("load component registry pull credential")?
+                    )?;
+                    let source_config = match RegistryPullCredential::select(
+                        args.registry_auth_file.as_deref(),
+                        args.registry_token_metadata,
+                    )? {
+                        RegistryPullCredential::AuthFile(path) => source_config
+                            .with_registry_auth_file(path)
+                            .context("load component registry pull credential")?,
+                        RegistryPullCredential::TokenMetadata => {
+                            source_config.with_registry_token_metadata(GKE_METADATA_TOKEN_URL)
+                        }
+                    }
                     .with_ca_paths(&args.oci_ca_paths)
                     .context("trust the configured OCI CA bundles for component pulls")?;
                     Arc::new(
@@ -2103,6 +2154,43 @@ mod tests {
     }
 
     #[test]
+    fn a_release_backed_host_takes_exactly_one_registry_credential() {
+        let file = ["host", "--registry-auth-file", "/tmp/registry.json"];
+        let metadata = ["host", "--registry-token-metadata"];
+        let parsed = TestCli::try_parse_from(file).unwrap();
+        assert!(matches!(
+            RegistryPullCredential::select(
+                parsed.args.registry_auth_file.as_deref(),
+                parsed.args.registry_token_metadata
+            ),
+            Ok(RegistryPullCredential::AuthFile(_))
+        ));
+        let parsed = TestCli::try_parse_from(metadata).unwrap();
+        assert!(matches!(
+            RegistryPullCredential::select(
+                parsed.args.registry_auth_file.as_deref(),
+                parsed.args.registry_token_metadata
+            ),
+            Ok(RegistryPullCredential::TokenMetadata)
+        ));
+
+        let both = [
+            "host",
+            "--registry-auth-file",
+            "/tmp/registry.json",
+            "--registry-token-metadata",
+        ];
+        assert!(TestCli::try_parse_from(both).is_err());
+        let neither = RegistryPullCredential::select(None, false)
+            .err()
+            .expect("a host with no registry credential refuses");
+        assert_eq!(
+            neither.to_string(),
+            "a release-backed host requires --registry-auth-file or --registry-token-metadata"
+        );
+    }
+
+    #[test]
     fn session_configuration_requires_the_complete_public_trust_binding() {
         assert!(TestCli::try_parse_from(["host"]).is_ok());
         for arguments in [
@@ -2164,7 +2252,7 @@ mod tests {
     /// a release, so there is nothing to pull and nothing to refuse.
     #[tokio::test]
     async fn a_host_given_no_release_pair_carries_no_release() {
-        let release = load_release(None, None, false, None, &[])
+        let release = load_release(None, None, false, None, false, &[])
             .await
             .expect("no release pair is not a failure");
         assert!(
@@ -2187,6 +2275,7 @@ mod tests {
             Some(RELEASE_DIGEST),
             false,
             Some(auth_file),
+            false,
             &[],
         )
         .await
