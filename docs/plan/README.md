@@ -3,6 +3,7 @@
 These pages describe unbuilt work and its limits. Current behavior belongs in [architecture](../architecture/README.md), and Beads records decisions and implementation status.
 
 - [Delivery](delivery.md): Deferred CI-provider configuration and conditional delivery extensions.
+- [Environment teardown](environment-teardown.md): Design for `delete-project-env`, the verb that deletes one project environment (finding `wamn-psss`).
 - [Identity](identity.md): External login providers within the existing identity authority.
 - [Edge](edge.md): Epic 19 scope for `wamn-edge`, one application and one device loop on a small aarch64 box.
 - [Generated operations](generated-operations.md): Draft design for generating the handler, data function, world export, route entry and declaration entry of each generated operation.
