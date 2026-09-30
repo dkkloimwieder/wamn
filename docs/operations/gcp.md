@@ -1485,6 +1485,62 @@ On 2026-09-27 the owner moved one pallet. The movement `8743151e-e335-491e-ac80-
 
 On 2026-09-29, on the new environments, the owner signed in at both hosts with the role `admin`. At Receiving the lists of purchase orders, receipts and suppliers answered 200. The owner moved `PAL-000006` at 13:28:21.644 UTC, and the host started the `wamn_wms::movement_label` run 250 milliseconds later. The label `wms/252da141-b014-fe2f-ebe0-103105cd75cc/2` is a 282 byte ZPL document. On main the object name is the packaging id and its row version. The move also showed the toast `query: uncertain` for a list refresh that the page cancelled itself (finding `wamn-v43a`).
 
+### 5.8 WMS host crash during a queued run
+
+This section kills the WMS host process while a durable queue run is `running`, and records what the queue does. [Cluster tests](cluster-tests.md#deployed-queue-recovery-on-wamn-dev) holds the case and its numbers. The kill is a SIGKILL of the host process, so it models a crash and not an operator action.
+
+Start a privileged debug pod on the node of `hostgroup-wms`. Its image is the pinned `wamn-ctl` image of section 3.4:
+
+```bash
+kubectl -n hosts get pod -o wide | grep hostgroup-wms
+kubectl -n default debug node/<node> --profile=sysadmin \
+  --image=us-central1-docker.pkg.dev/wamn-dev/wamn/wamn-ctl:src-4efb827f3fd6ab78@sha256:1322d637113f2934340620556f1ef491d2d2e28f4991ddeb9236a7d4f48eae10 \
+  -- /bin/sleep 7200
+```
+
+Both host groups can run on one node, so find the PID by the pod UID in the process cgroup. The cgroup path can spell the UID with underscores:
+
+```bash
+U=$(kubectl -n hosts get pod <wms pod> -o jsonpath='{.metadata.uid}')
+kubectl -n default exec <debug pod> -- /bin/sh -c "for p in /proc/[0-9]*; do [ \"\$(cat \$p/comm)\" = wamn-host ] && grep -q -e $U -e ${U//-/_} \$p/cgroup && echo \${p#/proc/}; done"
+```
+
+Forward the database pod as in section 6.4, and set `WAMN_PG_ADMIN_URL` to the superuser URL of the WMS database. Start one run of the published wiring. The input is one pallet `update` event. The service principal is the WMS management author, the one active service principal in the WMS database:
+
+```bash
+echo '[{"event":"update","new":{"id":"<pallet id>","location_id":"<location id>","row_version":"<row version>","type":"pallet"}}]' > $P/input.json
+target/debug/wamn-ctl workflow start --tenant wms --environment dev --effective-release-id 1 --package-id wamn_wms \
+  --wiring-id inventory_move_and_label --wiring-version 2 --service-principal-id 9ba1ea8e-4ad2-45bb-b96d-20dffdcc881b \
+  --idempotency-key <key> --input $P/input.json
+```
+
+Read the run status in a loop. When it shows `running`, kill the process:
+
+```bash
+kubectl -n default exec <debug pod> -- kill -KILL <pid>
+```
+
+Then read the run and its queue row once a second until the run ends:
+
+```sql
+SELECT r.status, r.updated_at, q.lease_generation, q.attempts, q.lease_owner, q.lease_expires_at
+  FROM wamn_run.runs AS r
+  LEFT JOIN wamn_run.run_queue AS q USING (tenant_id, run_id)
+ WHERE r.run_id = '<run id>';
+```
+
+Read the pod `Ready` time and the label object, then save the debug pod log and delete the pod:
+
+```bash
+kubectl -n hosts get pod <wms pod> -o jsonpath='{range .status.conditions[*]}{.type}={.status}@{.lastTransitionTime} {end}'
+gcloud storage objects describe gs://wamn-dev-labels/wms/<pallet id>/<row version> --project wamn-dev
+gcloud storage ls -l --soft-deleted "gs://wamn-dev-labels/wms/<pallet id>/**" --project wamn-dev
+kubectl -n default logs <debug pod> > $P/debug-pod.log
+kubectl -n default delete pod <debug pod>
+```
+
+On 2026-09-30 the first attempt landed inside the window, so no second run was needed. The pallet was `PAL-000001` (`82b2ffa1-142a-20e7-bc58-93751f88bd7d`) at location `97d88290-feb6-1874-f784-7ae7603e645c`, row version 1. The pallet did not move, because the wiring moves nothing. The label is `gs://wamn-dev-labels/wms/82b2ffa1-142a-20e7-bc58-93751f88bd7d/1`. The debug pod was `node-debugger-gke-wamn-main-cb3380eb-prq4-tzp69` on node `gke-wamn-main-cb3380eb-prq4`. `wms.wamn.dev` was down from 21:10:58 to 21:11:13 UTC, which is 15 seconds.
+
 ## 6. Benchmark
 
 ### 6.1 Morning start and the 1000 seed
