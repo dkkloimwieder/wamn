@@ -1,6 +1,6 @@
 # Platform `kind` to `type` migration
 
-Status: Draft. Section 1 accepted 2026-09-29 (wamn-sfea.1). Section 2 accepted 2026-09-30 (wamn-sfea.2). Section 4 is a draft from wamn-sfea.4. Sections 3 and 5 are pending wamn-sfea.3 and wamn-sfea.5. Section 6 holds an owner ruling (wamn-sfea.6).
+Status: Draft. Section 1 accepted 2026-09-29 (wamn-sfea.1). Section 2 accepted 2026-09-30 (wamn-sfea.2). Section 4 accepted 2026-09-30 (wamn-sfea.4). Section 3 is a draft from wamn-sfea.3. Section 5 is pending wamn-sfea.5. Section 6 holds an owner ruling (wamn-sfea.6).
 
 Measured on `main` at `1045b4fad`.
 
@@ -334,6 +334,294 @@ Regenerated for the new vocabulary:
 6. The `kind` fields of error structs are renamed. This moves component bytes, see §6.
 
 The inventory gaps found here are now rows W11 and W12 of §1, and the A2 count is corrected to 36.
+
+## 3. Regeneration and republish order
+
+Draft from wamn-sfea.3. Measured on `worktree-table` at `0dc04ec4e`. This section changes no code, no database and no cluster.
+
+Sources of the rules that this section follows:
+
+- Every package takes 2.0.0, and `client_acme_receiving` takes 4.0.0 (§2.5 ruling 1).
+- `wamn:router-delivery` goes from 0.2.0 to 0.3.0 (§2.5 ruling 2).
+- The serving manifest goes to format 4. The reader accepts format 4 only. Old release rows keep their format 3 bytes, and a format 4 reader never reads them (§2.5 ruling 3, bead wamn-sfea.3 notes).
+- The `("kind", ...)` frame label becomes `type` (§2.5 ruling 4).
+- All 74 `*ErrorKind` families and the `kind` fields of error structs rename in one commit, before the package rebuild (§6).
+- On wamn-dev there is no mixed window. The order is stop, wamn_system script, project-env script, new `reconcile-run-plane`, PAT re-annotation, then new binaries and the republish (§4.7).
+
+Part 3.1 is the repository order. Part 3.2 is the wamn-dev order. Part 3.3 says which release is read when. Part 3.4 is rollback. Part 3.5 lists the open owner questions.
+
+### 3.1 Repository order
+
+These are the commits of the P1 implementation epic, in this order. Each commit leaves the tree green. Each commit carries its bead id in its subject.
+
+Two rules hold for every commit:
+
+- **Regeneration.** A commit that changes generator output also regenerates every `apps/*/generated/` tree at the versions that the tree holds at that commit. Otherwise `materialize_package check` fails on that commit (`docs/operations/running-tests.md` "Capture a run"). The command for one package is in step A9. See question Q4.
+- **Router pin.** A commit that changes the bytes of `http_route.wasm` writes the new digest to `apps/platform/ingress/http-route/http_route.wasm.sha256`. `tools/build-components` refuses a guest that does not match its pin (`tools/build-components:464` to `:469`, `docs/operations/building.md:44` to `:46`).
+
+The general proof of each commit is:
+
+```bash
+tools/test-changes run --base HEAD~1
+tools/repo-lint run
+tools/build-components all
+```
+
+`tools/test-changes` selects the packages that the change set touches and their dependents (`docs/operations/running-tests.md` "Select the relevant tests"). `tools/repo-lint run` includes the repository policy lints, which require one version of each WAMN WIT package (commit `288e65032` message). The build checks the router pin.
+
+**A1. Router delivery WIT 0.3.0.**
+
+- Changes: rename `crates/execution/host/wit/deps/wamn-router-delivery-0.2/` to `wamn-router-delivery-0.3/` and declare `package wamn:router-delivery@0.3.0` (`package.wit:1`). Rename `enum failure-kind` and the field `delivery-failure.kind` (`package.wit:46`, `:60`). Follow every importer. The precedent commit `288e65032` (0.1.0 retired) touched the same set. The guests and the engine: `apps/platform/ingress/http-route/wit/world.wit`, `apps/platform/ingress/http-route/src/guest.rs`, `apps/platform/execution/materializer/wit/world.wit`, `apps/platform/execution/materializer/src/main.rs`, `crates/platform/engine/wit/world.wit`, `crates/platform/engine/src/route_bindings.rs`, `crates/platform/engine/src/router_delivery.rs`, `crates/execution/host/src/router_delivery.rs`, `services/edge/src/serve.rs`. The tools and tests: `deploy/platform/http-route-workload.example.yaml`, `tools/build-components` (the `shared_wit_roots` list), `tools/test-changes`, `tests/conformance/tests/profile_selectors.rs`, `tests/conformance/tests/test_changes.rs`. Also `crates/execution/workflow/src/wiring_delivery.rs:429`, which lowers `FailureKind`. `type` is a WIT keyword, so the field name needs the WIT escape `%type` (question Q3).
+- Regenerates: the router pin `http_route.wasm.sha256` (§2.4).
+- Proof: the general proof. `tools/repo-lint run` shows one version of `wamn:router-delivery`. `git grep -n 'router-delivery@0.2\|router-delivery-0.2'` returns nothing outside `docs/history`.
+
+**A2. Serving manifest format 4 and the publish reader.**
+
+- Changes: `SERVING_MANIFEST_FORMAT_VERSION` becomes 4 (`crates/catalog/model/src/serving_manifest.rs:33`). The five `kind` fields of G8 serialize as `type` (`serving_manifest.rs:390`, `:441`, `:456`, `:639`, `:655`). `Contract.kind` of G10 reads `type` (`crates/control/lib/src/publish_release/package_sources.rs:147`). The mint refusal text "format-3" at `crates/control/lib/src/publish_release.rs:1371` follows.
+- Regenerates, in the same commit, because the tests read them: `crates/catalog/model/tests/fixtures/release_manifest_mint_vector.rs` (bytes and `DIGEST`), `crates/catalog/model/tests/serving_manifest_digest.rs`, the manifest constants at `crates/execution/host/src/router_delivery.rs:959` and `crates/platform/engine/src/router_delivery.rs:625`, and the other format 3 byte fixtures: `crates/control/lib/src/push_release_manifest.rs` (its `CANONICAL_MANIFEST` tests), `crates/control/lib/tests/push_release_manifest_live.rs`, `crates/platform/runtime/tests/release_manifest_source.rs`, `services/ctl/src/delivery_verbs.rs`. The new vector digest comes from the method of §2.2 proof 2, and the digest test checks it.
+- Proof: `cargo test --locked --offline -p wamn-catalog -p wamn-control -p wamn-engine -p wamn-execution-host`. `git grep -n -E '"format-version": ?3' -- ':!.beads' ':!docs/history'` returns nothing. `release_manifest_v3_snapshots` keeps its name unless the owner rules otherwise (question Q1).
+
+**A3. Catalog frame label.**
+
+- Changes: the `("kind", ...)` frames in `crates/catalog/model/src/lib.rs:623`, `:723`, `:875` become `("type", ...)`.
+- Regenerates: the pinned baseline at `crates/catalog/model/tests/identity.rs:156` (§2.4).
+- Proof: `cargo test --locked --offline -p wamn-catalog --test identity`, and `tests/conformance/src/catalog.rs` through `-p wamn-conformance-tests`.
+
+**A4. Authoring model and management wire.**
+
+- Changes: the five `#[serde(tag = "kind")]` of W1 (`crates/authoring/model/src/lib.rs:189`, `:210`, `:465`, `:516`, `:552`). The W2 refusal bodies (`services/scenario-worker/src/management.rs:728`, `services/ctl/src/dev/tui.rs:635`). Both follow the §5 rulings.
+- Proof: `cargo test --locked --offline -p wamn-authoring-model -p wamn-scenario-worker -p wamn-ctl`.
+
+**A5. Other wire surfaces of §5.** W5 (router tap), W6, W8, W9, W11, W12 and G12 land here, one commit per §5 ruling. §5 is still pending (wamn-sfea.5). Its rulings slot in here without a change to the rest of this order.
+
+**A6. Generator serde names and the record-history column.**
+
+- Changes: the G2, G3 and G4 names (`crates/schema/generator/src/generate/contracts.rs:246`, `:837`, `:1172`, `:188`). The G5 tags (`crates/schema/introspection/src/ir.rs:316`, `:227`, `:283`). The G6 and G7 names (`crates/schema/generator/src/client_ir.rs:329`, `client_plan.rs:128`, `client_ts.rs:567`, `client_tui.rs:469`). G1 (`generate/publication.rs:61`, `:70`). The P9 column in `apps/platform/data/record-history/src/lib.rs:55`, `:88`, and everything that derives from `HISTORY_COLUMNS` (§4.5 row "Record history"). The web runtime (`web/runtime/src/wire.ts:41`, `transport.ts:382`, `supplied.ts:45`) reads the generated contracts, so it follows in this commit. The generated WIT field of W4 needs `%type` (question Q3).
+- Changes, authored package inputs: `custom_operations.*.kind` (A1), the history paths (A5), and `kind` and `definition.kind` in every `apps/*/publication/attachments.json` (A2). Each authored `definition-hash` is recomputed with `canonical_json_sha256` over the new `definition` (`apps/platform/execution/contract/src/lib.rs:54`), by the method of §2.2 proof 1. The authored read `apps/wamn_receiving/query/load_purchase_order_history.sql:12` follows P9. The package versions do not change yet.
+- Regenerates: every `apps/*/generated/` tree (step A9 commands), and `apps/wamn_receiving/tests/.sqlx/query-04951d1d….json` (step A9 SQLx command).
+- Proof: `materialize_package check` passes for all seven packages. The attachment hash check runs inside it (`crates/schema/generator/src/route_schema.rs:227`). `cargo test --locked --offline -p wamn-schema-generator`. `cargo run --locked --offline -p wamn-schema-generator --example check_client_ts` and `--example check_client_components` (`docs/operations/running-tests.md` "Generated TypeScript bindings" and "Generated components"). `cd web/runtime && pnpm test`. The regenerated A4 table `crates/client/tui/tests/data/classification-cases.json` is read by both `cargo test -p wamn-client-tui` and the web runtime tests (`running-tests.md` "Web runtime").
+
+**A7. SQL sources and the `reconcile-run-plane` cutover.** One commit, or one per §4.5 group, each with its DDL and its readers.
+
+- Changes: the fresh-install DDL of §4.2 in `deploy/sql/*.sql`. The Rust groups of §4.5 (registry and provisioning, identity, management audit, package ownership, run plane, grants). The `TypeColumnCutover` action and its detection of §4.3.2. The PAT annotation of §4.3.5 (`crates/control/lib/src/provision_project_env/pat_secrets.rs:267`, `deploy/mvp/bootstrap.sh:118` and their tests). `tools/identity-jwks-journey-run:428`.
+- Proof: the unit plan case in `crates/schema/control/src/run_plane/tests.rs` and the live case in `crates/control/lib/tests/run_plane_live/` (§4.3.2 "Tests"). `cargo test --locked --offline -p wamn-control-provision --test deploy_sql_authority`. `deploy/mvp/tests/bootstrap.sh`. The check query of §4.3 on a fresh install returns no row.
+
+**A8. The `*ErrorKind` commit (§6).**
+
+- Changes: all 74 families, `NodeErrorKind`, the enum `ErrorKind` in `crates/platform/runtime/src/plugins/connection_http/transport.rs:315`, and the `kind` fields of error structs such as `StatementError.kind` (`apps/platform/data/postgres-statements/src/lib.rs:88`). The generator emits `AccessErrorKind` and `StatementErrorKind` into `generated/data/error.rs` (§1.2 G11), so the generator change and the regenerated trees land here too.
+- Regenerates: every `apps/*/generated/` tree. When the router bytes move, it also writes the router pin.
+- Proof: the general proof. `git grep -h -o -E '(enum|struct|type) [A-Za-z0-9_]*ErrorKind\b' -- '*.rs'` counts 0 WAMN declarations. No `*ErrorKind` of async-nats or `std::io` is touched (§1.5, N7).
+
+After A8, no later commit changes platform code that compiles into a guest. So the component bytes built in A9 to A12 are the bytes that wamn-dev receives. This is the "built once" rule of §6.
+
+**A9. Base packages: `wamn_receiving`, `wamn_wms`, `platform_fixture`, `edge_samples`, `edge_device` to 2.0.0.** One commit per package. The base commits come before any overlay commit.
+
+- Changes: in `wamn.json`, `package.version` becomes `2.0.0` and `package.predecessor_version` becomes `1.0.0`. Registration refuses a new version whose predecessor is not the current leaf (`crates/schema/control/src/package_migrations.rs:287`). A fresh database has no leaf and admits it (same function, `:286`). No migration file changes (§2.3).
+- Regenerate the package. Receiving:
+
+  ```bash
+  cargo run --locked --offline -p wamn-test-infrastructure --bin wamn-test-postgres -- \
+    --database wamn_receiving --schema receiving \
+    --migration-dir apps/wamn_receiving/migrations \
+    --history-manifest apps/wamn_receiving/wamn.json \
+    --url-env DATABASE_URL -- \
+    cargo run --locked --offline -p wamn-schema-generator --example materialize_package \
+    -- write apps/wamn_receiving
+  ```
+
+  This is the command of `running-tests.md` "Capture a run" with `write` in place of `check`. The other packages take the arguments that the same section gives: WMS `--schema wms`, its migrations and its manifest. Platform fixture `--schema inventory`, its migrations and its manifest. `edge_samples` takes `--schema edge_samples` (`apps/edge_samples/wamn.json:12`), `--migration-dir apps/edge_samples/migrations` and `--history-manifest apps/edge_samples/wamn.json`. `edge_device` has no schema and no migration (`docs/plan/edge.md:76`), so it takes only `--database edge_device --url-env DATABASE_URL`. The runner makes `--schema` and `--migration-dir` optional (`test-support/infrastructure/postgres-run.rs:42` to `:64`).
+- Prepare SQLx metadata for each package with SQL, with the same runner arguments and `--example sqlx_metadata -- prepare apps/<package>` (`running-tests.md` "Capture a run"). Then run it with `check`.
+- Build the component: `tools/build-components app apps/<package>` (`docs/operations/building.md:28`). Record the sha256 of `apps/target/virtualized/std-empty-environment/<component>.wasm`. The overlay commits need the `receiving` and `platform_fixture` digests.
+- Sweep the tests. 78 Rust files hold the literal `"1.0.0"` and 7 files hold a `<package>@1.0.0` coordinate outside `generated/` (`git grep -l -E '"1\.0\.0"' -- 'crates/*.rs' 'services/*.rs' 'tests/*.rs' 'apps/*.rs'`). Each one that names one of these packages moves to 2.0.0. `docs/operations/gcp.md` stays as a dated record.
+- Proof: `materialize_package check` for the package. `sqlx_metadata check`. `cargo test --locked --offline -p wamn-receiving-tests -p wamn-wms-tests --lib committed_sqlx_metadata_compiles_offline -- --exact` (`running-tests.md` "Select the relevant tests"). `cargo test --locked --offline -p wamn-schema-generator --test platform_generation`. The general proof.
+
+**A10. Overlays: `client_acme_receiving` to 4.0.0 and `platform_fixture_overlay` to 2.0.0.** One commit each, after its base.
+
+- Changes: `package.version` becomes `4.0.0` (Acme) or `2.0.0` (fixture overlay). `package.predecessor_version` becomes `3.0.0` or `1.0.0`. `base_dependencies.*.version` becomes `2.0.0`, and `base_dependencies.*.digest` becomes the base component digest recorded in A9 (`apps/client_acme_receiving/wamn.json:9`, `:10`, `apps/platform_fixture_overlay/wamn.json:9`, `:10`). That field is the one authored site of the base pin (`crates/control/lib/src/component_declaration.rs:112` to `:122`).
+- Regenerate with the base migrations first, then the overlay migrations, and the overlay manifest (`running-tests.md` "Capture a run", the Acme and fixture overlay paragraphs). Prepare SQLx metadata the same way.
+- Build: `tools/build-components app apps/wamn_receiving apps/client_acme_receiving` (`building.md:29`). The fixture overlay takes `apps/platform_fixture apps/platform_fixture_overlay`. An overlay build without its base fails (`building.md:35`, `:36`).
+- Proof: `cargo test --locked --offline -p wamn-client-acme-receiving-tests`, which runs `apps/client_acme_receiving/tests/acme_overlay_publication.rs` against the authored base pin. `materialize_package check` and `sqlx_metadata check` for the overlay. The general proof.
+
+**A11. Test fixtures that are not package trees.** Most fixtures land in their owning commits. The rest land here: A3 `crates/control/lib/tests/fixtures/observer_package/wamn.json`, `crates/control/lib/tests/fixtures/apply_package/overlay/wamn.json`, `services/ctl/tests/fixtures/ui_scaffold/`. W5 tap bodies at `crates/platform/runtime/src/plugins/wamn_jetstream.rs:2190`. Proof: `tools/test-changes run --base HEAD~1`.
+
+**A12. Final build and pins.** On the final commit, run `tools/build-components all` once. It must pass the router pin with no edit. Record the sha256 of every guest that wamn-dev takes: `receiving.wasm`, `wms.wasm`, `label_render.wasm`, `blob_put.wasm`, `jsonata_expression.wasm`, `http_route.wasm`, `materializer.wasm` (`docs/operations/gcp.md` §3.9, §3.20, §5.3). Then check the tree:
+
+```bash
+git grep -n -w -E 'failure-kind|definition_kind|principal_kind|fail_kind' -- ':!.beads' ':!docs/history' ':!tests/sweeps'
+git grep -h -o '"kind":"' -- 'apps/*/generated/*'
+```
+
+Both print nothing. The §1.7 counts of the renamed rows are 0, and the rows that stay (§1.6, §1.8) keep their counts.
+
+**Frozen evidence that stays.** `docs/history/`, the dated digest tables of `docs/operations/gcp.md` (§2.4), and `tests/sweeps/*.log` (§4.5) are not edited. New records go below the old ones.
+
+### 3.2 wamn-dev order
+
+**Installed environments.** wamn-dev has one control database and two project environments. No overlay, fixture or edge package is installed there. No edge device runs there (§4.4).
+
+| Environment | Tenant | Database | Package | Host group | Route host | Release now | Cite |
+|---|---|---|---|---|---|---|---|
+| wamn_system | none | `wamn_system` | none | none | none | none | `gcp.md` §3.6 |
+| Receiving | `dev` | `wamn-db-dkk--receiving--dev--4pqjfmli` | `wamn_receiving@1.0.0` | `default` | `receiving.wamn.dev` | 1, `sha256:900d35fb…` | `gcp.md` §3.7, §3.8, §6.7 table |
+| WMS | `wms` | `wamn-db-dkk--wms--dev--0nk1lrpr` | `wamn_wms@1.0.0` | `wms` | `wms.wamn.dev` | 1, `sha256:3d6b13f9…` | `gcp.md` §5.2, §5.3, §6.7 table |
+
+The hosts select a release by `--release-manifest-digest` (`deploy/gcp/values-host.yaml:110`, `:250`). The edge serves each web client from a bucket path keyed by the release digest (`deploy/gcp/values-edge.yaml:13`, `:16`, `deploy/gcp/url-map.yaml:47` to `:93`).
+
+The base-then-overlay rule has nothing to order on wamn-dev, because each environment holds one base package. Receiving runs before WMS in the steps below. The two environments share no package, so that order is for the record only.
+
+Run everything in one session. The daily guard sets pool `main` to 0 nodes at 03:00 New York time (`gcp.md:762`). Start with pool `main` at 2 nodes (`gcp.md` §3.17). Keep the port-forward, `WAMN_SYSTEM_ADMIN_URL` and `PW` of `gcp.md` §3.6. `T` is the superuser URL of the environment's database (`gcp.md` §3.8). `SYS` is the control database URL of `gcp.md` §5.3.
+
+**B0. Before the stop. Nothing here changes installed state.**
+
+1. Check out the final commit of 3.1. Build the programs: `cargo build -p wamn-ctl`, `cargo build -p wamn-ctl --bin wamn`, `cargo build -p wamn-scenario-worker` (`gcp.md` §3.6, §4.2, §5.3).
+2. Build the guests with `tools/build-components all` (`gcp.md` §3.20). Each sha256 must equal the value recorded in A12.
+3. Build and push the host and identity images by source identity (`gcp.md:384`, `:385` and the push lines of §3.4). Record both digests. The CDC reader image does not change, because the CDC readers keep running (§4.6, §4.7 step 1).
+4. Push the four workload guests with `wash`, as `gcp.md` §3.20 and §5.5 do: `flow-http` and `wms-flow-http` from `http_route.wasm`, `materializer` and `wms-materializer` from `materializer.wasm`. The running workloads name their guests by digest (`gcp.md:868`), so a new tag does not move them. Record the four pushed digests.
+5. Run the ops-schema query of §4.3.4 on wamn_system and the PAT Secret listing of §4.3.5. Record both answers.
+6. Run the check query of §4.3 on the three databases. Record the result. It must equal the §4.1 names for that database plus the function bodies of §4.3.
+
+**B1. Stop (§4.7 step 1).**
+
+```bash
+kubectl -n hosts scale deploy/hostgroup-default deploy/hostgroup-wms --replicas=0
+kubectl -n identity scale deploy/identity --replicas=0
+kubectl -n hosts get pods
+kubectl -n identity get pods
+```
+
+The scale form is the one of `gcp.md:1646`. The hosts run the HTTP and materializer workloads, so both stop with them. The scenario-worker is not deployed on wamn-dev. It runs on the operator machine only for a gate (`gcp.md:1278`), so make sure none runs. The CDC readers keep running (§4.6). Run no `bootstrap.sh`. wamn-dev never runs it (`gcp.md` has no `bootstrap.sh` step), so the rule of §4.3.5 holds by default.
+
+Then count the open runs in each project-env database:
+
+```bash
+for db in wamn-db-dkk--receiving--dev--4pqjfmli wamn-db-dkk--wms--dev--0nk1lrpr; do
+  kubectl -n platform exec wamn-pg-1 -c postgres -- psql -U postgres -d "$db" -Atc \
+    "select effective_release_id, status, count(*) from wamn_run.runs where status in ('dispatched', 'running') group by 1, 2"
+done
+```
+
+`dispatched` and `running` are the open states (`deploy/sql/run-state.sql:329` to `:331`). A run pins its release id and manifest digest (`run-state.sql:190` to `:227`). A new host reads the snapshot of that release (`crates/platform/runtime/src/plugins/wamn_postgres/wiring_resolution.rs:17` to `:30`). A format 4 reader cannot read a release 1 snapshot. So both queries must print nothing. If a query prints a row, stop here and restart the old binaries (3.4 row R1). Question Q2 asks the owner to rule this case in advance.
+
+**B2 to B5. Schema and annotations (§4.7 steps 2 to 5).** Run §4.8 exactly:
+
+- B2. The wamn_system script `$P/kind-to-type-system.sql` (§4.3.4, §4.8).
+- B3. The project-env script `$P/kind-to-type-project-env.sql` on both databases (§4.3.4, §4.8).
+- B4. The new `reconcile-run-plane` for Receiving (`--project receiving --tenant dev`) and for WMS (`--project wms --tenant wms`), twice each. The second run reports no action (§4.3.2, §4.8, `gcp.md:534`).
+- B5. One `kubectl annotate` per listed PAT Secret (§4.3.5).
+
+Proof: the check query of §4.3 returns no row in any of the three databases (§4.8).
+
+**B6. Identity (§4.7 step 6, first part).** Write the new identity digest into `deploy/gcp/values-identity.yaml:7`. Then:
+
+```bash
+helm upgrade identity deploy/platform/identity -n identity -f deploy/gcp/values-identity.yaml
+kubectl -n identity rollout status deploy/identity --timeout=300s
+```
+
+The command is the one of `gcp.md:413`. The chart sets `replicas: 1` (`deploy/platform/identity/templates/deployment.yaml:19`). If `kubectl -n identity get deploy identity` still shows 0 replicas, run `kubectl -n identity scale deploy/identity --replicas=1`. Proof: the TLS check of `gcp.md` §3.10 answers, and the key set still lists the active `kid` (`gcp.md` §3.15).
+
+The hosts stay stopped until B10. At this point the host values name only format 3 digests, and a new host refuses them (`crates/catalog/model/src/serving_manifest.rs:1073` to `:1076`). The republish in B7 to B9 runs from the operator machine and needs no host.
+
+**B7. Receiving republish.** `T` names the Receiving database.
+
+1. `target/debug/wamn-ctl apply-package --package apps/wamn_receiving --database-url "$T" --tenant dev` (`gcp.md:536`). It records `wamn_receiving@2.0.0` with predecessor `1.0.0`, and it writes `definition_type`.
+2. `target/debug/wamn-ctl reconcile-package-data-access --package apps/wamn_receiving --database-url "$T" --tenant dev` (`gcp.md:537`).
+3. `push-component` of `receiving.wasm` with the declaration template, as `gcp.md` §3.9 (`gcp.md:566`). The printed digest equals the local sha256 (`gcp.md:574`).
+4. `publish-release` with `--org dkk --project receiving --tenant dev --environment dev --effective-release-id 2 --verified-publisher-principal wamn-management-author-dkk--receiving--dev --run-schema wamn_run --package wamn_receiving@2.0.0 --attachments apps/wamn_receiving/publication/attachments.json --route-host receiving.wamn.dev --package-manifest apps/wamn_receiving/wamn.json` and no `--wiring` (`docs/operations/deployment.md:123` to `:134`, `gcp.md:1300`). Release 1 exists, so release 2 is the next id (`deploy/sql/control-portable-store.sql:50` to `:62`).
+5. `push-release-manifest` with `--effective-release-id 2 --artifact-base us-central1-docker.pkg.dev/wamn-dev/wamn/releases` (`gcp.md:1296`, `deployment.md:154`).
+6. `print-release-env --effective-release-id 2` (`deployment.md:143`). Record the manifest digest.
+
+Proof: the new snapshot holds format 4:
+
+```bash
+kubectl -n platform exec wamn-pg-1 -c postgres -- psql -U postgres -d wamn-db-dkk--receiving--dev--4pqjfmli -Atc \
+  "select effective_release_id, manifest_digest, convert_from(canonical_bytes, 'UTF8')::jsonb ->> 'format-version' from catalog.release_manifest_v3_snapshots order by 1"
+```
+
+It prints release 1 with format 3 and release 2 with format 4.
+
+**B8. WMS republish.** `T` names the WMS database.
+
+1. `apply-package`, `reconcile-package-data-access` and `reconcile-replica-identity` with `--package apps/wamn_wms --tenant wms` (`gcp.md` §5.2, `deployment.md:54` to `:59`).
+2. Render the three platform declarations with `s/__PACKAGE_VERSION__/2.0.0/g` in the `sed` of `gcp.md:1254`. Push `wms`, `label-render`, `blob-put` and `jsonata` under `wamn_wms` 2.0.0 with the admitted packages of the `gcp.md` §5.3 table. The palette bytes do not change, but they are admitted again under the new coordinate (§2.3).
+3. Gate the wiring. Run the new scenario-worker as `gcp.md:1275` to `:1278` does. Make the request with `cargo run -p wamn-test-infrastructure --example gate_request -- wamn_wms 2.0.0 wms dev apps/wamn_wms/publication/wirings/inventory_move_and_label.json` (`gcp.md:1279`). Post it with the WMS management-author PAT. The reply has `body.outcome.status` `completed`. Stop the service. The example derives the command id from the package id and the wiring id only (`test-support/infrastructure/examples/gate_request.rs:37`). The 1.0.0 gate already holds that id in `catalog.authoring_command_audit` for this principal (`control-portable-store.sql:287`). A new request under the old id is refused (§2.5 ruling 5, `services/scenario-worker/src/management.rs:984`). So A11 must put the package version into that command id (question Q6).
+4. `author-wiring` with `--package-version 2.0.0` (`gcp.md:1286`). Record the wiring version `<V>` that it prints.
+5. `publish-release` with `--effective-release-id 2 --package wamn_wms@2.0.0 --wiring "wamn_wms@2.0.0::inventory_move_and_label=<V>"` and the other arguments of `gcp.md:1288` to `:1291`.
+6. `bind-connection` with `--effective-release-id 2` and the `blob-put` digest (`gcp.md:1293`).
+7. `push-release-manifest` and `print-release-env` with `--effective-release-id 2`. Record the manifest digest.
+
+Proof: the snapshot query of B7 on the WMS database prints release 1 with format 3 and release 2 with format 4.
+
+The event users and consumers need no change. The consumer names come from the package id and the registration name (`gcp.md:1314`), and neither changes. As a check, run `event_broker_files` into a scratch directory (`gcp.md` §5.4) and compare `consumers.jsonl` with the one in `$P/evt`. They are equal.
+
+**B9. Web clients and edge. The hosts are still stopped.**
+
+1. Upload both clients of release 2 (`gcp.md:922`, `:1383`):
+
+   ```bash
+   target/debug/wamn web upload apps/wamn_receiving --release <Receiving release 2 digest> --bucket gs://wamn-dev-web/clients --org dkk
+   target/debug/wamn web upload apps/wamn_wms --release <WMS release 2 digest> --bucket gs://wamn-dev-web/clients --org dkk
+   ```
+
+2. Write the two new digest hex values into `deploy/gcp/values-edge.yaml:13`, `:16` and the six rewrites of `deploy/gcp/url-map.yaml:47` to `:93`.
+3. `helm upgrade wamn-edge deploy/platform/edge -n edge -f deploy/gcp/values-edge.yaml --wait --timeout 3m` and `gcloud compute url-maps import wamn-edge --global --project wamn-dev --source deploy/gcp/url-map.yaml --quiet` (`gcp.md:1391`, `:1392`). The Services `hosts/flow-http` and `hosts/wms-flow-http` still exist, so the edge starts (`gcp.md` §4.1).
+
+The switch comes before the hosts start. So no old client ever calls a new host, and no new client ever calls an old host.
+
+**B10. Hosts and workloads (the router switch).**
+
+1. Write the new host image into `HOST_IMAGE` (`test-support/infrastructure/examples/host_values_files.rs:34`). Render the values with both release 2 digests (`gcp.md:1347`):
+
+   ```bash
+   cargo run -p wamn-test-infrastructure --example host_values_files -- deploy/gcp \
+     us-central1-docker.pkg.dev/wamn-dev/wamn/releases <Receiving release 2 digest> <WMS release 2 digest>
+   ```
+
+2. Render the four workloads with the digests of B0 step 4 (`gcp.md:1356`).
+3. `helm upgrade wamn-host oci://ghcr.io/wasmcloud/charts/runtime-operator --version 2.10.0 -n hosts -f deploy/gcp/values-host-base.yaml -f deploy/gcp/values-host.yaml --wait --timeout 10m` (`gcp.md:1349`, the timeout of `gcp.md` §6.7). The values set one replica per host group (`deploy/gcp/values-host.yaml:4`, `:144`). If `kubectl -n hosts get deploy` shows 0 for a host group, scale it to 1.
+4. `kubectl apply -f deploy/gcp/flow-http.yaml -f deploy/gcp/materializer.yaml -f deploy/gcp/wms-flow-http.yaml -f deploy/gcp/wms-materializer.yaml`, then the two `kubectl -n hosts wait` lines of `gcp.md:870` and `:1359`. Before this apply, the operator can place the old `flow-http` guest on a new host. That guest imports `wamn:router-delivery@0.2.0`, so it does not link. No traffic reaches it, because the apply follows at once.
+
+Proof: the serve check of `gcp.md` §3.21 for both route hosts answers 401 on a released route and 404 on an unknown path. The host log says that each host loaded release 2 (`gcp.md:1367` shows the form of that line).
+
+**B11. End-to-end check.** The owner signs in at both hosts. At Receiving the lists answer 200. At WMS the owner moves one pallet, and the label object appears (`gcp.md` §5.7). One history row of the move is readable through `load_purchase_order_history` or the WMS history table. This shows the renamed `type` column from write to read.
+
+**B12. Record.** Add the §4.8 entry to `gcp.md` §7. Add the new images to the table of `gcp.md` §3.13. Add the new digests to the component tables of §3.20 and §5.3. Add a release table like the one of §6.7. Commit `deploy/gcp/values-identity.yaml`, `values-host.yaml`, `values-host-base.yaml`, the four workload files, `values-edge.yaml`, `url-map.yaml`, `host_values_files.rs` and `gcp.md` together (`deployment.md:156`, `:157`).
+
+### 3.3 Which release is read when
+
+| Time | Receiving and WMS hosts | Release read | Web client served |
+|---|---|---|---|
+| Before B1 | old binaries | release 1, format 3, by `--release-manifest-digest` (`values-host.yaml:110`, `:250`) | release 1 client |
+| B1 to B9 | stopped | none. Every API call fails at the edge, because no workload serves it. Sign-in fails until B6, because identity is stopped. The CDC readers keep writing change events into JetStream, and the events wait for the materializer consumers (§4.6) | release 1 client until B9 step 3, then release 2 client |
+| B7 and B8 | stopped | The new `wamn-ctl` reads only the release 2 bytes it has just minted (`crates/control/lib/src/publish_release.rs:627`, `:1366`). Never pass `--effective-release-id 1` to a new verb. `print-release-env`, `push-release-manifest` and `promote` refuse the format 3 bytes (`crates/control/lib/src/print_release_env.rs:79`, `push_release_manifest.rs:227`, `promote.rs:391`) | as above |
+| From B10 step 3 | new binaries | release 2, format 4. This is the moment the router switches | release 2 client |
+| After B10 | new binaries | release 2 only. Release 1 rows stay in `catalog.release_manifest_v3_snapshots` and in the registry under their digests. No reader opens them, because no open run pins release 1 (B1 check) and no host names its digest | release 2 client. The release 1 client stays in the bucket at its own path (`deployment.md:207`) |
+
+The events captured during the stop are delivered after B10 to the new materializer. The new host runs them under release 2.
+
+### 3.4 Rollback
+
+Each row says what state the environment is in and how to go back. `deployment.md:340` to `:343` states the general rule: revert the configuration and select the previous release, and a code rollback does not reverse database changes.
+
+| Row | Point reached | Can roll back | How | Cannot roll back |
+|---|---|---|---|---|
+| R0 | Any commit of 3.1, before B1 | everything | `git revert` of the commit. wamn-dev is untouched | nothing |
+| R1 | B1 (stopped) | everything | `helm upgrade` of identity and the host with the unchanged values, or `kubectl scale` back to 1 | nothing |
+| R2 | B2 to B5 | everything | Run the rollback of §4.7. It runs the hand statements with the names swapped, with the old `deploy/sql/record-history.sql`. It runs the §4.3.2 renames swapped for P8 and P10 to P12. It swaps the annotation keys back. All of it is metadata-only. Then R1 | nothing |
+| R3 | B6 (new identity) | everything | Old `values-identity.yaml` (`git revert`) and `helm upgrade`, then R2 | nothing |
+| R4 | B7 or B8 started | serving and schema | R3. The old host serves release 1 again, because its values still name the release 1 digest | The rows of `wamn_receiving@2.0.0` and `wamn_wms@2.0.0` in `catalog.packages`, their migrations, `catalog.component_library`, the gate report and the audit row, `catalog.effective_releases` 2 and its snapshot. The triggers `<table>_immutable` refuse their removal (`gcp.md:1676` to `:1684`). The pushed registry artifacts also stay. They are harmless to release 1. A later attempt must present the same 2.0.0 bytes, because a sealed coordinate refuses other bytes (§2.1, `package-coordinate-content-conflict`). A fix that changes a 2.0.0 `wamn.json` needs a new version (question Q5) |
+| R5 | B9 (edge switched) | the edge | Old `values-edge.yaml` and `url-map.yaml`, `helm upgrade wamn-edge`, `gcloud compute url-maps import`. The release 1 client is still in the bucket | nothing beyond R4 |
+| R6 | B10 and after (new hosts serve) | serving and schema | Old host values and workload files, `helm upgrade`, `kubectl apply`, then R5 and R2. Rows written under the new names keep their data, because every rename is metadata-only (§4.3) | Everything of R4. Runs admitted under release 2 that are still open cannot be read by an old host, because it reads format 3 only. The JetStream acknowledgements of the new materializer stand, so events handled under release 2 are not replayed. Authoring commands sent after the switch hash differently from the same commands sent before it (§2.5 ruling 5) |
+
+### 3.5 Questions for the owner
+
+- **Q1.** After B7 the table `catalog.release_manifest_v3_snapshots` (`deploy/sql/catalog-schema.sql:432`) holds format 4 bytes. §2 and §4 do not rename it. Keep the name, or rename it in this epic? A rename is project-env DDL that `reconcile-run-plane` must carry in its cutover, and 22 tracked files name the table.
+- **Q2.** B1 requires no open run in either database. If one is open, this procedure stops and restarts the old binaries. Is that the ruled path? The other path is to close each open run with `terminalize-effect-uncertain` before B2.
+- **Q3.** `type` is a WIT keyword. The renamed field of `delivery-failure` (W3) and the generated history field (W4) must be spelled `%type` in WIT, or take another name. §2.5 ruling 2 does not name the new spellings, including the new name of `enum failure-kind`.
+- **Q4.** 3.1 keeps every commit green. So each platform commit that changes generator output regenerates all seven `generated/` trees at the old versions. A9 and A10 then regenerate them at the new versions. The alternative is one regeneration after A8, with red commits before it. The first is the default of this section.
+- **Q5.** B7 seals the 2.0.0 coordinates on wamn-dev. Assume that a defect in a 2.0.0 `wamn.json` shows after that. Which fix applies: a patch version such as 2.0.1, a new major version, or a teardown of the environment by `gcp.md` §6.7?
+- **Q6.** The gate command id of `gate_request.rs:37` does not carry the package version, so the 2.0.0 gate is refused as a reuse. 3.2 B8 needs the version in that id, for example `gate-wamn_wms-2.0.0-inventory_move_and_label`. Is that change to the example correct?
+- **Q7.** The current Acme base pin `sha256:4bc28f01…` (`apps/client_acme_receiving/wamn.json:10`) is not the `receiving` digest of wamn-dev release 1 (`sha256:1d034a09…`, `gcp.md` §6.7 table). A10 sets the pin to the new A9 build. No action is needed unless the owner wants the pin checked against a deployed digest.
 
 ## 4. Database schema changes
 
