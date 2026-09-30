@@ -72,6 +72,8 @@ enum Command {
     CloseCaptureGap(provisioning_verbs::CloseCaptureGapArgs),
     /// Delete one project environment and everything its instance names, so the next provision mints a new suffix (wamn-psss)
     DeleteProjectEnv(provisioning_verbs::DeleteProjectEnvArgs),
+    /// Apply the pending platform schema migrations to one installed database (wamn-o8b9)
+    UpgradeSchema(provisioning_verbs::UpgradeSchemaArgs),
     /// Apply one exact package-owned migration stream to a project database.
     ApplyPackage(package_verbs::ApplyPackageArgs),
     /// Reconcile generated package data privileges after apply-package.
@@ -141,6 +143,7 @@ async fn main() -> anyhow::Result<()> {
         Command::RecoverCaptureGap(args) => provisioning_verbs::recover_capture_gap(args).await,
         Command::CloseCaptureGap(args) => provisioning_verbs::close_capture_gap(args).await,
         Command::DeleteProjectEnv(args) => provisioning_verbs::delete_project_env(args).await,
+        Command::UpgradeSchema(args) => provisioning_verbs::upgrade_schema(args).await,
         Command::ApplyPackage(args) => package_verbs::apply(args).await,
         Command::BindConnection(args) => component_verbs::bind(args).await,
         Command::ReconcilePackageDataAccess(args) => {

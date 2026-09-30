@@ -10,6 +10,7 @@
 
 use anyhow::{Context as _, ensure};
 use tokio_postgres::{Client, NoTls};
+use wamn_control_provision::schema_migrations::MigrationTarget;
 use wamn_control_provision::{CONTROL_BOOTSTRAP_SQL, sql, validate_platform_domain};
 
 /// Inputs of one `provision-system` run.
@@ -87,6 +88,9 @@ pub async fn install_control_store(admin: &Client) -> anyhow::Result<()> {
             .await
             .context("install the control store")?;
     }
+    crate::upgrade_schema::record_fresh_install(admin, MigrationTarget::System)
+        .await
+        .context("record the system migrations that the full schema holds")?;
     admin
         .batch_execute("RESET ROLE")
         .await

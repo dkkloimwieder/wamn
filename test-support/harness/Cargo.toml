@@ -20,6 +20,7 @@ tokio-postgres = { workspace = true, features = ["with-chrono-0_4"] }
 [dev-dependencies]
 async-nats = { workspace = true, features = ["jetstream"] }
 tokio = { workspace = true, features = ["macros", "rt"] }
+wamn-catalog = { workspace = true }
 wamn-control-registry = { workspace = true }
 wamn-event-wire = { workspace = true }
 wamn-schema-control = { workspace = true }
