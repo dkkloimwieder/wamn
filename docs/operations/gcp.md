@@ -1732,7 +1732,7 @@ The service `wamn-operator-dkk--receiving--dev` holds the role `operator`, with 
 
 ## 7. Schema changes applied by hand
 
-No verb applies a schema change to an installed database (finding `wamn-o8b9`, design in `docs/plan/upgrades.md`). Record every statement that you run by hand on wamn-dev in this section, with its date and its finding.
+`wamn-ctl upgrade-schema` applies a platform schema change to an installed database ([deployment](deployment.md#platform-schema-upgrades), `wamn-o8b9`). This section records the statements that ran by hand on wamn-dev before the verb existed, with their date and their finding. Its last entry is the first run of the verb on each database, with `--baseline`, at the `kind` → `type` cutover (`docs/plan/kind-to-type.md` §4.8). After that entry, no schema change runs by hand.
 
 On 2026-09-29 (`wamn-59z6`, `wamn-o8b9`), the capture gap table of `deploy/sql/system-schema.sql` went into `wamn_system` as its owner, with the read grant of the CDC reader. Write the `CREATE TABLE registry.capture_gap` block of that file between the two lines below into `$P/capture-gap.sql`, and apply it:
 

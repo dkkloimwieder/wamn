@@ -335,6 +335,32 @@ After replacing the identity service target Secret, restart the identity service
 Its database target connections are selected at process startup.
 Use the environment's identity Deployment and require its readiness before issuing new sessions.
 
+## Platform schema upgrades
+
+`wamn-ctl upgrade-schema` applies a platform schema change to an installed database.
+A platform schema change is a numbered file under `deploy/sql/migrations/system/` or `deploy/sql/migrations/project/`, which lands in the commit of its full-file change.
+The design is in [schema upgrade](../plan/schema-upgrade.md).
+Package migrations of an application are not platform migrations.
+
+Upgrade the system database first, then each project-environment database:
+
+```bash
+wamn-ctl upgrade-schema --system-database-url "$SYSTEM_ADMIN_URL"
+wamn-ctl upgrade-schema --system-database-url "$SYSTEM_ADMIN_URL" --confirm
+wamn-ctl upgrade-schema --system-database-url "$SYSTEM_ADMIN_URL" --admin-database-url "$TARGET_ADMIN_URL" --confirm
+```
+
+Without `--confirm`, the verb prints the pending files and changes nothing.
+One run applies the pending files in one transaction and records them in `registry.schema_migrations` or `app_system.schema_migrations`.
+A failure leaves the database as it was.
+The verb refuses a recorded file that differs from the file of the binary, with `schema-migration-drift`.
+It runs system files as `wamn_system` and project files as the admin connection.
+
+`provision-system` and `reconcile-run-plane` record every file in a fresh install, so a new target needs no upgrade run.
+A database installed before its record table existed takes `--baseline <ordinal>` on its first run only.
+The verb then records the files up to that ordinal without running them, and applies the rest in the same run.
+If a change breaks a running binary, stop that binary before the run.
+
 ## Rollback and maintenance
 
 Revert the workload configuration change and apply the previous release selection to roll back its artifact pointer.

@@ -1,6 +1,6 @@
 # Schema upgrade
 
-Updated through: 2026-09-30, `main` at `47dc5a3e7`. Finding `wamn-o8b9`. The owner reviews this spec before any code. It comes before the B issues of `wamn-ld93`.
+Updated through: 2026-09-30, `main` at `0bc92457f`. Finding `wamn-o8b9`. The owner accepted this spec, and issues 1 to 3 are on `main`. It comes before the B issues of `wamn-ld93`.
 
 ## 1. Goal
 
@@ -87,11 +87,11 @@ The verb never runs a migration that `publish-release` or `deploy-release` needs
 Each item says what the hand statement becomes under the verb.
 
 
-- `registry.capture_gap` is `deploy/sql/migrations/system/0001_capture_gap.sql`: the `CREATE TABLE` block and the `GRANT SELECT` to `wamn_registry_reader`. `wamn-ctl upgrade-schema --system-database-url "$WAMN_SYSTEM_ADMIN_URL" --confirm` applies it. The `gcp.md` entry names the verb run and its time, not the statements.
+- `registry.capture_gap` is `deploy/sql/migrations/system/0001_capture_gap.sql`: the `CREATE TABLE` block and the `GRANT SELECT` to `wamn_registry_reader`. A new install records it. On wamn-dev, the first run with `--baseline 1` records it without running it.
 - The `wamn_system` script of `kind-to-type.md` section 4.3.4 is `deploy/sql/migrations/system/0002_kind_to_type.sql`: the P1 to P7 renames, the new `identity.lock_password_principal`, and the record-history functions.
 - The project script is `deploy/sql/migrations/project/0001_kind_to_type.sql`: the rename loop over every `%_history` table and the record-history functions. It runs once per project database.
 - The P8 and P10 to P12 cutover stays in `reconcile-run-plane` for the cutover. The first project migration of `upgrade-schema` is the baseline after the cutover. The component key and the snapshot table of section 4.3.6 are migrations too.
-- The order of `kind-to-type.md` section 4.7 stays. Steps 2 and 3 become two runs of `upgrade-schema` for each database.
+- The order of `kind-to-type.md` section 4.7 stays. Steps 2 and 3 become one run of `upgrade-schema` for each database, with `--baseline` and `--confirm`.
 - Rollback is a new migration with the names swapped. The verb never runs a file backward.
 
 ## 5. Issues
@@ -100,8 +100,8 @@ One branch. Each issue lands with its tests.
 
 1. The record tables, the prefix check and the fresh-install record, in `provision-system` and `reconcile-run-plane`.
 2. The verb, its refusals and `--baseline`. Live test on a disposable Postgres 18: a fresh install records every file. A new file applies once, and a second run changes nothing. An edited applied file refuses. A failing file leaves no change and no record.
-3. `registry.capture_gap` as `0001_capture_gap.sql`. A run on wamn-dev with `--baseline 1` records it without running it. The `gcp.md` section 7 entry says so.
-4. Closeout. The operations page gets the verb. `kind-to-type.md` sections 4.3.3, 4.3.4 and 4.8 name migrations in place of hand statements. Close `wamn-o8b9`.
+3. `registry.capture_gap` as `0001_capture_gap.sql`. On wamn-dev, the run with `--baseline 1` is B2 of the `kind` → `type` cutover (`kind-to-type.md` section 3.2). It records `0001` and applies `0002` in the same run. The `gcp.md` section 7 entry of that run says so.
+4. Closeout. The operations page gets the verb (`docs/operations/deployment.md`, "Platform schema upgrades"). `kind-to-type.md` sections 4.3.3, 4.3.4 and 4.8 name migrations in place of hand statements. Close `wamn-o8b9`.
 
 ## 6. Out of scope
 
@@ -112,9 +112,10 @@ One branch. Each issue lands with its tests.
 
 ## 7. Owner rulings
 
-The owner answered these on 2026-09-30 (recorded on `wamn-o8b9`).
+The owner answered these on 2026-09-30 (recorded on `wamn-o8b9`). Ruling 5 came after the code of issues 1 to 3.
 
 1. A project schema change means the platform schemas of a project database. Package migrations stay in `docs/plan/upgrades.md`.
 2. The names are accepted: `upgrade-schema`, `deploy/sql/migrations/system/`, `deploy/sql/migrations/project/`, `registry.schema_migrations` and `app_system.schema_migrations`.
 3. `--baseline <ordinal>` is for the first run only. It is refused once the record table has a row.
 4. The P8 and P10 to P12 renames stay in `reconcile-run-plane` for the cutover. The first project migration of `upgrade-schema` is the baseline after the cutover. A P3 finding (`wamn-qpgq`) says that the in-code schema changes of `reconcile-run-plane` move under `upgrade-schema` later.
+5. `--baseline` records and then applies the rest in the same run. B2 and B3 of `kind-to-type.md` section 3.2 are one run each with `--baseline` and `--confirm`. The record shows the baseline row and the applied file of that one run. A7 of `wamn-ld93` places `system/0002_kind_to_type.sql` and `project/0001_kind_to_type.sql` beside the full-file renames, in one commit with them.
