@@ -465,7 +465,7 @@ Run everything in one session. The daily guard sets pool `main` to 0 nodes at 03
 1. Check out the cutover commit. Build the programs: `cargo build -p wamn-ctl`, `cargo build -p wamn-ctl --bin wamn`, `cargo build -p wamn-scenario-worker` (`gcp.md` §3.6, §4.2, §5.3).
 2. Build the guests with `tools/build-components all` (`gcp.md` §3.20). Each sha256 must equal the value recorded in A12.
 3. Build and push the host and identity images by source identity (`gcp.md:384`, `:385` and the push lines of gcp.md §3.4). Record both digests. The identity image carries the renamed `principals.type` reads of `services/identity/src/password.rs:251`, `:370`, `:482` (§4.5 group "Identity service"). The CDC reader image does not change, because the CDC readers keep running (§4.6, §4.7 step 1).
-4. Push the four workload guests with `wash`, as `gcp.md` §3.20 and §5.5 do: `flow-http` and `wms-flow-http` from `http_route.wasm`, `materializer` and `wms-materializer` from `materializer.wasm`. The running workloads name their guests by digest (`gcp.md:868`), so a new tag does not move them. Record the four pushed digests.
+4. Push each distinct workload guest file once with `wash`, as `gcp.md` §3.20 does. `http_route.wasm` goes to `components/flow-http` and `materializer.wasm` goes to `components/materializer`. The tag of each push is the sha256 hex of its file, the tag rule of application components (`crates/control/lib/src/push_component.rs:523`). Receiving and WMS run the same bytes, so both name the same digest. The running workloads name their guests by digest (`gcp.md:868`), so a new push does not move them. Record the two pushed digests. Owner ruling of 2026-09-30 on `wamn-orba`.
 5. Run the ops-schema query of §4.3.4 on wamn_system and the PAT Secret listing of §4.3.5. Record both answers.
 6. Run the check query of §4.3 on the three databases. Record the result. It must equal the §4.1 names for that database plus the function bodies of §4.3.
 
@@ -627,7 +627,7 @@ The switch comes before the hosts start. So no old client ever calls a new host,
      us-central1-docker.pkg.dev/wamn-dev/wamn/releases <Receiving release 2 digest> <WMS release 2 digest>
    ```
 
-2. Render the four workloads with the digests of B0 step 4 (`gcp.md:1356`).
+2. Render the four workloads with the two digests of B0 step 4 (`gcp.md:1356`). `flow-http` and `wms-flow-http` name the `components/flow-http` digest. `materializer` and `wms-materializer` name the `components/materializer` digest.
 3. `helm upgrade wamn-host oci://ghcr.io/wasmcloud/charts/runtime-operator --version 2.10.0 -n hosts -f deploy/gcp/values-host-base.yaml -f deploy/gcp/values-host.yaml --wait --timeout 10m` (`gcp.md:1349`, the timeout of `gcp.md` §6.7). The values set one replica per host group (`deploy/gcp/values-host.yaml:4`, `:144`). If `kubectl -n hosts get deploy` shows 0 for a host group, scale it to 1.
 4. `kubectl apply -f deploy/gcp/flow-http.yaml -f deploy/gcp/materializer.yaml -f deploy/gcp/wms-flow-http.yaml -f deploy/gcp/wms-materializer.yaml`, then the two `kubectl -n hosts wait` lines of `gcp.md:870` and `:1359`. Before this apply, the operator can place the old `flow-http` guest on a new host. That guest imports `wamn:router-delivery@0.2.0`, so it does not link. No traffic reaches it, because the apply follows at once.
 
@@ -637,13 +637,28 @@ Proof: the serve check of `gcp.md` §3.21 for both route hosts answers 401 on a 
 
 **B12. Record.** Add the §4.8 entry to `gcp.md` §7. It names the cutover commit that B0 checked out. Add the new images to the table of `gcp.md` §3.13. Add the new digests to the component tables of `gcp.md` §3.20 and §5.3. Add a release table like the one of `gcp.md` §6.7. Commit `deploy/gcp/values-identity.yaml`, `values-host.yaml`, `values-host-base.yaml`, the four workload files, `values-edge.yaml`, `url-map.yaml`, `host_values_files.rs` and `gcp.md` together (`deployment.md:156`, `:157`).
 
-**Gated follow-up. Immutable tags on the `wamn` registry.** Not part of this cutover. The deployment agent turns immutable tags on only after `wamn-r9lz` and `wamn-orba` close. Until component bytes are reproducible, a rebuild of one source identity can produce a second digest, and an immutable tag would refuse it for the wrong reason. `wamn-r9lz` closed at `e8e5eb987`, which fixed the known cause of that drift. `wamn-orba` gives the workload guests content tags. The repository was created without `--immutable-tags` (`docs/operations/gcp.md:132`). The command is:
+**B13. Immutable tags on the `wamn` registry. After B12.**
 
-```bash
-gcloud artifacts repositories update wamn --project wamn-dev --location us-central1 --immutable-tags
-```
+B13 runs after B12, because the B12 acceptance compares the before and after tag listings of §5.3, and B13 removes tag lines. The four fixed guest tags `flow-http`, `materializer`, `wms-flow-http` and `wms-materializer` of the `components` repository name no running digest after B10. Every other push into the repository already uses a content tag. Component tags are the digest hex (`crates/control/lib/src/push_component.rs:523`). Release tags derive from the manifest digest (`crates/control/lib/src/push_release_manifest.rs:1` to `:5`). Host, identity and ctl images are tagged by source identity (`gcp.md:384`, `:385`). The workload guests carry their file sha256 from B0 step 4. The repository was created without `--immutable-tags` (`docs/operations/gcp.md:132`).
 
-Before it runs, every push into the repository must use a tag that names one content. Component tags are the digest hex (`crates/control/lib/src/push_component.rs:523`). Release tags derive from the manifest digest (`crates/control/lib/src/push_release_manifest.rs:1` to `:5`). Host and identity images are tagged by source identity (`gcp.md:384`, `:385`). The workload guests are pushed under fixed tags such as `flow-http` and `materializer` (`gcp.md` §3.20). An immutable tag refuses the second push of such a tag, so those pushes need content tags first. The record of the change goes into `gcp.md` §7.
+1. Delete the four fixed tags, one command per tag:
+
+   ```bash
+   gcloud artifacts docker tags delete us-central1-docker.pkg.dev/wamn-dev/wamn/components:flow-http --project wamn-dev --quiet
+   gcloud artifacts docker tags delete us-central1-docker.pkg.dev/wamn-dev/wamn/components:materializer --project wamn-dev --quiet
+   gcloud artifacts docker tags delete us-central1-docker.pkg.dev/wamn-dev/wamn/components:wms-flow-http --project wamn-dev --quiet
+   gcloud artifacts docker tags delete us-central1-docker.pkg.dev/wamn-dev/wamn/components:wms-materializer --project wamn-dev --quiet
+   ```
+
+2. Turn immutable tags on:
+
+   ```bash
+   gcloud artifacts repositories update wamn --project wamn-dev --location us-central1 --immutable-tags
+   ```
+
+3. Add the record to `gcp.md` §7. It names the four deleted tags with their digests and the date of the update.
+
+Proof: `gcloud artifacts repositories describe wamn --project wamn-dev --location us-central1` shows immutable tags enabled, and the tag listing of `components` holds no fixed tag.
 
 ### 3.3 Which release is read when
 
@@ -1491,7 +1506,7 @@ gcloud artifacts docker tags list us-central1-docker.pkg.dev/wamn-dev/wamn/relea
   --format='value(tag.basename(),version.basename())' | sort > $P/releases-before.txt
 ```
 
-Immutable tags are a gated follow-up of §3.2. After `wamn-orba` closes and the deployment agent turns them on, `gcloud artifacts repositories describe wamn --project wamn-dev --location us-central1` shows immutable tags enabled. A second push of an existing component tag with other bytes then fails at the registry as well as in code. Until then the proof rests on code: tags derive from content (`push_component.rs:523`), and release pushes refuse a conflict (`push_release_manifest.rs:570`).
+Immutable tags come on at §3.2 B13. After B13, `gcloud artifacts repositories describe wamn --project wamn-dev --location us-central1` shows immutable tags enabled. A second push of an existing component tag with other bytes then fails at the registry as well as in code. Until B13 the proof rests on code: tags derive from content (`push_component.rs:523`), and release pushes refuse a conflict (`push_release_manifest.rs:570`).
 
 Web objects. An overwritten object gets a new generation, so equal generations prove no replacement. After A5 the upload is create-only, so the listing confirms what the code refuses (§3.1 A5):
 
@@ -1526,7 +1541,7 @@ The `*ErrorKind` rename is part of this migration. §3.1 A8 is its commit.
 
 ## 7. Implementation issues (wamn-ld93)
 
-One issue per step, in order. A1 to A12 are the repository commits of §3.1. B0 to B12 are the wamn-dev steps of §3.2, which run in one session from the cutover commit. Each issue depends on the one before it. B0 depends on A12.
+One issue per step, in order. A1 to A12 are the repository commits of §3.1. B0 to B13 are the wamn-dev steps of §3.2, which run in one session from the cutover commit. Each issue depends on the one before it. B0 depends on A12.
 
 **A1. kind → type A1: router delivery WIT 0.3.0 (docs/plan/kind-to-type.md §3.1)**
 - Scope: rename `wamn:router-delivery` from 0.2.0 to 0.3.0, with `failure-kind` and `delivery-failure.kind` as `failure-type`. Follow every importer that §3.1 A1 lists, and rewrite the router pin `http_route.wasm.sha256`.
@@ -1589,8 +1604,8 @@ One issue per step, in order. A1 to A12 are the repository commits of §3.1. B0 
 - Depends on: A11.
 
 **B0. kind → type B0: build and record before the stop (docs/plan/kind-to-type.md §3.2)**
-- Scope: from the cutover commit, build the programs and the guests, build and push the host and identity images, and push the four workload guests. Answer the ops-schema query and the PAT Secret listing, and run the check query of §4.3 on the three databases. Nothing changes installed state.
-- Acceptance: each guest sha256 equals its A12 value. The two image digests, the four guest digests, both answers and the three check results are recorded.
+- Scope: from the cutover commit, build the programs and the guests, build and push the host and identity images, and push the two workload guest files to `components/flow-http` and `components/materializer` under their file sha256. Answer the ops-schema query and the PAT Secret listing, and run the check query of §4.3 on the three databases. Nothing changes installed state.
+- Acceptance: each guest sha256 equals its A12 value. The two image digests, the two guest digests, both answers and the three check results are recorded.
 - Depends on: A12.
 
 **B1. kind → type B1: drain and stop (docs/plan/kind-to-type.md §3.2)**
@@ -1639,7 +1654,7 @@ One issue per step, in order. A1 to A12 are the repository commits of §3.1. B0 
 - Depends on: B8.
 
 **B10. kind → type B10: new hosts and workloads (docs/plan/kind-to-type.md §3.2)**
-- Scope: render the host values with both release 2 digests and the new host image, upgrade the host release, and apply the four workloads with the B0 guest digests. This is the router switch.
+- Scope: render the host values with both release 2 digests and the new host image, upgrade the host release, and apply the four workloads with the two B0 guest digests. This is the router switch.
 - Acceptance: the serve check of `gcp.md` §3.21 answers 401 on a released route and 404 on an unknown path for both route hosts. Each host log says it loaded release 2.
 - Depends on: B9.
 
@@ -1653,4 +1668,7 @@ One issue per step, in order. A1 to A12 are the repository commits of §3.1. B0 
 - Acceptance: the commit holds every file that §3.2 B12 lists. The §5.3 before and after listings show no removed line, and the drain records are in the entry.
 - Depends on: B11.
 
-Immutable tags on the `wamn` registry are not one of these issues. They are the gated follow-up of §3.2, held by `wamn-orba`. `wamn-r9lz`, its other gate, is closed.
+**B13. kind → type B13: immutable tags on the wamn registry (docs/plan/kind-to-type.md §3.2)**
+- Scope: delete the four fixed guest tags of the `components` repository, turn immutable tags on, and add the record to `gcp.md` §7.
+- Acceptance: the repository shows immutable tags enabled, and no fixed tag remains in `components`.
+- Depends on: B12.
