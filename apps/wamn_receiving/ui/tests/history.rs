@@ -27,7 +27,7 @@ fn entry(index: i64, kind: &str, before: &str, after: &str, current: &str) -> Va
     json!({
         "id": format!("eeeeeeee-0000-0000-0000-{index:012}"),
         "cursor": format!("cursor-{index}"), "type": kind,
-        "operation": "wamn-receiving:receiving/record-receipt@1.0.0",
+        "operation": "wamn-receiving:receiving/record-receipt@2.0.0",
         "changed_by": "cccccccc-0000-0000-0000-000000000001",
         "changed_at": "2026-09-03T00:00:00.000000Z",
         "before": before, "after": after, "current": current,

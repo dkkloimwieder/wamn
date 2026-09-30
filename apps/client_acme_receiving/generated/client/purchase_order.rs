@@ -74,14 +74,14 @@ pub const PURCHASE_ORDER_FIELDS: &[FieldDescriptor] = &[
     },
 ];
 
-/// Input for `client-acme-receiving:purchase-order/get@3.0.0`.
+/// Input for `client-acme-receiving:purchase-order/get@4.0.0`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct PurchaseOrderGetRequest {
     /// `uuid`
     pub id: uuid::Uuid,
 }
 
-/// Result of `client-acme-receiving:purchase-order/get@3.0.0`.
+/// Result of `client-acme-receiving:purchase-order/get@4.0.0`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct PurchaseOrderGetResult {
     /// `boolean`
@@ -108,7 +108,7 @@ pub struct PurchaseOrderGetResult {
     pub updated_by: uuid::Uuid,
 }
 
-/// Input descriptors for `client-acme-receiving:purchase-order/get@3.0.0`.
+/// Input descriptors for `client-acme-receiving:purchase-order/get@4.0.0`.
 pub const PURCHASE_ORDER_GET_INPUT: &[FieldDescriptor] = &[FieldDescriptor {
     path: "id",
     type_name: "uuid",
@@ -116,7 +116,7 @@ pub const PURCHASE_ORDER_GET_INPUT: &[FieldDescriptor] = &[FieldDescriptor {
     values: &[],
 }];
 
-/// Result descriptors for `client-acme-receiving:purchase-order/get@3.0.0`.
+/// Result descriptors for `client-acme-receiving:purchase-order/get@4.0.0`.
 pub const PURCHASE_ORDER_GET_RESULT: &[FieldDescriptor] = &[
     FieldDescriptor {
         path: "acme_inspection_required",
@@ -340,10 +340,10 @@ pub const PURCHASE_ORDER_GET_REQUIRES_COMPOSITION: bool = false;
 pub const PURCHASE_ORDER_GET_REPLAY: Option<&str> = None;
 pub const PURCHASE_ORDER_GET_RESPONSE_CONTRACT: Option<&str> = Some("{\"type\":\"array\"}");
 pub const PURCHASE_ORDER_GET_RESULT_OPAQUE: bool = false;
-/// The grant a caller presents to invoke `client-acme-receiving:purchase-order/get@3.0.0`.
-pub const PURCHASE_ORDER_GET_GRANT: &str = "client-acme-receiving:purchase-order/get@3.0.0";
+/// The grant a caller presents to invoke `client-acme-receiving:purchase-order/get@4.0.0`.
+pub const PURCHASE_ORDER_GET_GRANT: &str = "client-acme-receiving:purchase-order/get@4.0.0";
 
-/// Typed refusals `client-acme-receiving:purchase-order/get@3.0.0` declares.
+/// Typed refusals `client-acme-receiving:purchase-order/get@4.0.0` declares.
 pub const PURCHASE_ORDER_GET_ERRORS: &[&str] = &[
     "internal_error",
     "invalid_input",
@@ -353,7 +353,7 @@ pub const PURCHASE_ORDER_GET_ERRORS: &[&str] = &[
     "timeout",
 ];
 
-/// Where the release publishes `client-acme-receiving:purchase-order/get@3.0.0`.
+/// Where the release publishes `client-acme-receiving:purchase-order/get@4.0.0`.
 ///
 /// Method and template only — the host and base URL are the client's
 /// deployment config, not this release's facts.
@@ -365,7 +365,7 @@ pub fn get_route() -> RouteMetadata {
     }
 }
 
-/// Invoke `client-acme-receiving:purchase-order/get@3.0.0` through a bound client.
+/// Invoke `client-acme-receiving:purchase-order/get@4.0.0` through a bound client.
 ///
 /// # Errors
 ///
@@ -380,7 +380,7 @@ pub async fn get(
         .await
 }
 
-/// Input for `client-acme-receiving:purchase-order/update@3.0.0`.
+/// Input for `client-acme-receiving:purchase-order/update@4.0.0`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct PurchaseOrderUpdateRequest {
     /// `object`
@@ -401,7 +401,7 @@ pub struct PurchaseOrderUpdateRequestChange {
     pub acme_quality_status: Option<String>,
 }
 
-/// Result of `client-acme-receiving:purchase-order/update@3.0.0`.
+/// Result of `client-acme-receiving:purchase-order/update@4.0.0`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct PurchaseOrderUpdateResult {
     /// `boolean`
@@ -428,7 +428,7 @@ pub struct PurchaseOrderUpdateResult {
     pub updated_by: uuid::Uuid,
 }
 
-/// Input descriptors for `client-acme-receiving:purchase-order/update@3.0.0`.
+/// Input descriptors for `client-acme-receiving:purchase-order/update@4.0.0`.
 pub const PURCHASE_ORDER_UPDATE_INPUT: &[FieldDescriptor] = &[
     FieldDescriptor {
         path: "change.acme_inspection_required",
@@ -462,7 +462,7 @@ pub const PURCHASE_ORDER_UPDATE_INPUT: &[FieldDescriptor] = &[
     },
 ];
 
-/// Result descriptors for `client-acme-receiving:purchase-order/update@3.0.0`.
+/// Result descriptors for `client-acme-receiving:purchase-order/update@4.0.0`.
 pub const PURCHASE_ORDER_UPDATE_RESULT: &[FieldDescriptor] = &[
     FieldDescriptor {
         path: "acme_inspection_required",
@@ -748,10 +748,10 @@ pub const PURCHASE_ORDER_UPDATE_REQUIRES_COMPOSITION: bool = false;
 pub const PURCHASE_ORDER_UPDATE_REPLAY: Option<&str> = None;
 pub const PURCHASE_ORDER_UPDATE_RESPONSE_CONTRACT: Option<&str> = Some("{\"type\":\"array\"}");
 pub const PURCHASE_ORDER_UPDATE_RESULT_OPAQUE: bool = false;
-/// The grant a caller presents to invoke `client-acme-receiving:purchase-order/update@3.0.0`.
-pub const PURCHASE_ORDER_UPDATE_GRANT: &str = "client-acme-receiving:purchase-order/update@3.0.0";
+/// The grant a caller presents to invoke `client-acme-receiving:purchase-order/update@4.0.0`.
+pub const PURCHASE_ORDER_UPDATE_GRANT: &str = "client-acme-receiving:purchase-order/update@4.0.0";
 
-/// Typed refusals `client-acme-receiving:purchase-order/update@3.0.0` declares.
+/// Typed refusals `client-acme-receiving:purchase-order/update@4.0.0` declares.
 pub const PURCHASE_ORDER_UPDATE_ERRORS: &[&str] = &[
     "concurrency_conflict",
     "internal_error",
@@ -762,7 +762,7 @@ pub const PURCHASE_ORDER_UPDATE_ERRORS: &[&str] = &[
     "timeout",
 ];
 
-/// Where the release publishes `client-acme-receiving:purchase-order/update@3.0.0`.
+/// Where the release publishes `client-acme-receiving:purchase-order/update@4.0.0`.
 ///
 /// Method and template only — the host and base URL are the client's
 /// deployment config, not this release's facts.
@@ -774,7 +774,7 @@ pub fn update_route() -> RouteMetadata {
     }
 }
 
-/// Invoke `client-acme-receiving:purchase-order/update@3.0.0` through a bound client.
+/// Invoke `client-acme-receiving:purchase-order/update@4.0.0` through a bound client.
 ///
 /// # Errors
 ///

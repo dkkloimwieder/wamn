@@ -151,7 +151,7 @@ A copy of an authored document outside its package reads the generated file besi
 ### Operation references
 
 The package version is authored once, as `package.version` in `wamn.json`.
-A sealed operation id is `<package>:<interface>/<operation>@<version>`, for example `wamn-receiving:location/list@1.0.0`.
+A sealed operation id is `<package>:<interface>/<operation>@<version>`, for example `wamn-receiving:location/list@2.0.0`.
 WIT packages, component worlds, contracts, the files under `generated/`, the clients, grants and the statement sets of the host carry the sealed id.
 
 An authored route entry, component declaration or wiring names an operation by its reference, `<package>:<interface>/<operation>`.

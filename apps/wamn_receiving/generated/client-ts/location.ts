@@ -5,14 +5,14 @@
 import type { FieldMap, OperationRoute, Outcome, Transport, Uuid } from "@wamn/web-runtime";
 import { reviveOutcome, toWire } from "@wamn/web-runtime";
 
-/** Input for `wamn-receiving:location/list@1.0.0`. */
+/** Input for `wamn-receiving:location/list@2.0.0`. */
 export interface LocationListRequest {
 }
 
-/** What `wamn-receiving:location/list@1.0.0` calls its input members. */
+/** What `wamn-receiving:location/list@2.0.0` calls its input members. */
 export const LOCATION_LIST_REQUEST_FIELDS: FieldMap = {};
 
-/** One row of `wamn-receiving:location/list@1.0.0`. */
+/** One row of `wamn-receiving:location/list@2.0.0`. */
 export interface LocationListRow {
   /** `uuid` */
   readonly id: Uuid;
@@ -20,13 +20,13 @@ export interface LocationListRow {
   readonly locationCode: string;
 }
 
-/** Result of `wamn-receiving:location/list@1.0.0`. */
+/** Result of `wamn-receiving:location/list@2.0.0`. */
 export interface LocationListResult {
   /** Every row the release served. */
   readonly rows: readonly LocationListRow[];
 }
 
-/** What `wamn-receiving:location/list@1.0.0` calls its result members. */
+/** What `wamn-receiving:location/list@2.0.0` calls its result members. */
 export const LOCATION_LIST_RESULT_FIELDS: FieldMap = {
   "rows": {
     member: "rows",
@@ -38,13 +38,13 @@ export const LOCATION_LIST_RESULT_FIELDS: FieldMap = {
 };
 
 /**
- * Where the release publishes `wamn-receiving:location/list@1.0.0`.
+ * Where the release publishes `wamn-receiving:location/list@2.0.0`.
  *
  * Method and template only. The host and base URL are the application's
  * deployment configuration, not this release's facts.
  */
 export const LOCATION_LIST_ROUTE: OperationRoute = {
-  operation: "wamn-receiving:location/list@1.0.0",
+  operation: "wamn-receiving:location/list@2.0.0",
   method: "GET",
   template: "/location/list",
   freshOnly: false,
@@ -65,7 +65,7 @@ export const LOCATION_LIST_ROUTE: OperationRoute = {
   },
 };
 
-/** Invoke `wamn-receiving:location/list@1.0.0` through a transport the application supplies. */
+/** Invoke `wamn-receiving:location/list@2.0.0` through a transport the application supplies. */
 export async function list(
   transport: Transport,
   items: readonly LocationListRequest[],

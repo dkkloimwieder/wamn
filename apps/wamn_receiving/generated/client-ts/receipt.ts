@@ -5,18 +5,18 @@
 import type { FieldMap, OperationRoute, Outcome, Timestamptz, Transport, Uuid } from "@wamn/web-runtime";
 import { reviveOutcome, toWire } from "@wamn/web-runtime";
 
-/** Input for `wamn-receiving:receipt/get@1.0.0`. */
+/** Input for `wamn-receiving:receipt/get@2.0.0`. */
 export interface ReceiptGetRequest {
   /** `uuid` */
   id: Uuid;
 }
 
-/** What `wamn-receiving:receipt/get@1.0.0` calls its input members. */
+/** What `wamn-receiving:receipt/get@2.0.0` calls its input members. */
 export const RECEIPT_GET_REQUEST_FIELDS: FieldMap = {
   "id": "id",
 };
 
-/** Result of `wamn-receiving:receipt/get@1.0.0`. */
+/** Result of `wamn-receiving:receipt/get@2.0.0`. */
 export interface ReceiptGetResult {
   /** `timestamptz` */
   readonly createdAt: Timestamptz;
@@ -32,7 +32,7 @@ export interface ReceiptGetResult {
   readonly receiptReference: string;
 }
 
-/** What `wamn-receiving:receipt/get@1.0.0` calls its result members. */
+/** What `wamn-receiving:receipt/get@2.0.0` calls its result members. */
 export const RECEIPT_GET_RESULT_FIELDS: FieldMap = {
   "created_at": "createdAt",
   "created_by": "createdBy",
@@ -43,13 +43,13 @@ export const RECEIPT_GET_RESULT_FIELDS: FieldMap = {
 };
 
 /**
- * Where the release publishes `wamn-receiving:receipt/get@1.0.0`.
+ * Where the release publishes `wamn-receiving:receipt/get@2.0.0`.
  *
  * Method and template only. The host and base URL are the application's
  * deployment configuration, not this release's facts.
  */
 export const RECEIPT_GET_ROUTE: OperationRoute = {
-  operation: "wamn-receiving:receipt/get@1.0.0",
+  operation: "wamn-receiving:receipt/get@2.0.0",
   method: "GET",
   template: "/receipt/get",
   freshOnly: false,
@@ -71,7 +71,7 @@ export const RECEIPT_GET_ROUTE: OperationRoute = {
   },
 };
 
-/** Invoke `wamn-receiving:receipt/get@1.0.0` through a transport the application supplies. */
+/** Invoke `wamn-receiving:receipt/get@2.0.0` through a transport the application supplies. */
 export async function get(
   transport: Transport,
   items: readonly ReceiptGetRequest[],
@@ -85,7 +85,7 @@ export async function get(
   );
 }
 
-/** Input for `wamn-receiving:receipt/query@1.0.0`. */
+/** Input for `wamn-receiving:receipt/query@2.0.0`. */
 export interface ReceiptQueryRequest {
   /** `text`, omittable */
   cursor?: string;
@@ -93,13 +93,13 @@ export interface ReceiptQueryRequest {
   limit?: number;
 }
 
-/** What `wamn-receiving:receipt/query@1.0.0` calls its input members. */
+/** What `wamn-receiving:receipt/query@2.0.0` calls its input members. */
 export const RECEIPT_QUERY_REQUEST_FIELDS: FieldMap = {
   "cursor": "cursor",
   "limit": "limit",
 };
 
-/** One row of `wamn-receiving:receipt/query@1.0.0`. */
+/** One row of `wamn-receiving:receipt/query@2.0.0`. */
 export interface ReceiptQueryRow {
   /** `timestamptz` */
   readonly createdAt: Timestamptz;
@@ -115,7 +115,7 @@ export interface ReceiptQueryRow {
   readonly receiptReference: string;
 }
 
-/** Result of `wamn-receiving:receipt/query@1.0.0`. */
+/** Result of `wamn-receiving:receipt/query@2.0.0`. */
 export interface ReceiptQueryResult {
   /** The rows this page carries. */
   readonly item: readonly ReceiptQueryRow[];
@@ -123,7 +123,7 @@ export interface ReceiptQueryResult {
   readonly nextCursor: string | null;
 }
 
-/** What `wamn-receiving:receipt/query@1.0.0` calls its result members. */
+/** What `wamn-receiving:receipt/query@2.0.0` calls its result members. */
 export const RECEIPT_QUERY_RESULT_FIELDS: FieldMap = {
   "item": {
     member: "item",
@@ -140,13 +140,13 @@ export const RECEIPT_QUERY_RESULT_FIELDS: FieldMap = {
 };
 
 /**
- * Where the release publishes `wamn-receiving:receipt/query@1.0.0`.
+ * Where the release publishes `wamn-receiving:receipt/query@2.0.0`.
  *
  * Method and template only. The host and base URL are the application's
  * deployment configuration, not this release's facts.
  */
 export const RECEIPT_QUERY_ROUTE: OperationRoute = {
-  operation: "wamn-receiving:receipt/query@1.0.0",
+  operation: "wamn-receiving:receipt/query@2.0.0",
   method: "GET",
   template: "/receipt/query",
   freshOnly: false,
@@ -167,7 +167,7 @@ export const RECEIPT_QUERY_ROUTE: OperationRoute = {
   },
 };
 
-/** Invoke `wamn-receiving:receipt/query@1.0.0` through a transport the application supplies. */
+/** Invoke `wamn-receiving:receipt/query@2.0.0` through a transport the application supplies. */
 export async function query(
   transport: Transport,
   items: readonly ReceiptQueryRequest[],

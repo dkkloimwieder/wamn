@@ -27,7 +27,7 @@ The public operations are declared in the manifest:
 | `receiving.load_purchase_order_history` | Read one page of the change log of a purchase order. |
 
 Each public operation has its own operation grant, and the `operator` and `admin` roles hold every grant.
-The history read has the grant `wamn-receiving:receiving/load-purchase-order-history@1.0.0`.
+The history read has the grant `wamn-receiving:receiving/load-purchase-order-history@2.0.0`.
 
 The query filters on `supplier_id` and `status`.
 Its declared sort fields are `purchase_order_number`, `status`, and `created_at`.

@@ -560,14 +560,14 @@ mod tests {
             &roots,
             "wamn_receiving",
             "receiving",
-            "wamn-receiving:receiving/record-receipt@1.0.0",
+            "wamn-receiving:receiving/record-receipt@2.0.0",
         )
         .expect("the base command has a contract");
         let overlay = super::package_route(
             &roots,
             "client_acme_receiving",
             "client_acme_receiving",
-            "client-acme-receiving:receiving/record-receipt@3.0.0",
+            "client-acme-receiving:receiving/record-receipt@4.0.0",
         )
         .expect("the overlay command has a contract");
         assert_eq!(base.claim_operation, None);

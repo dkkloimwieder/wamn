@@ -1,4 +1,4 @@
-package client-acme-receiving:purchase-order@3.0.0;
+package client-acme-receiving:purchase-order@4.0.0;
 
 interface get {
   use wamn:node/types@0.1.0.{emission, node-context, node-error};

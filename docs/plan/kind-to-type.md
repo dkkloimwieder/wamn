@@ -1580,7 +1580,7 @@ One issue per step, in order. A1 to A12 are the repository commits of §3.1. B0 
 - Depends on: A7.
 
 **A9. kind → type A9: base packages to 2.0.0 (docs/plan/kind-to-type.md §3.1)**
-- Scope: one commit each for `wamn_receiving`, `wamn_wms`, `platform_fixture`, `edge_samples` and `edge_device`, with `predecessor_version` 1.0.0. Regenerate each package, prepare its SQLx metadata, build its component and record the digest, and move the tests that name the old coordinate.
+- Scope: one commit each for `wamn_receiving`, `wamn_wms`, `platform_fixture`, `edge_samples` and `edge_device`, with `predecessor_version` 1.0.0. `wamn_receiving` 2.0.0 and `client_acme_receiving` 4.0.0 (A10) land as one commit, because the overlay's base pin names the base version and neither commit is green alone (owner ruling 1); `platform_fixture` and `platform_fixture_overlay` the same. Regenerate each package, prepare its SQLx metadata, build its component and record the digest, and move the tests that name the old coordinate.
 - Acceptance: `materialize_package check` and `sqlx_metadata check` pass for each package. `committed_sqlx_metadata_compiles_offline` and `cargo test --locked --offline -p wamn-schema-generator --test platform_generation` pass. The general proof of §3.1.
 - Depends on: A8.
 

@@ -19,9 +19,9 @@ use wamn::node::types::{Emission, ErrorDetail, NodeContext, NodeError};
 use wamn_client_acme_receiving_data_access::{AccessError, AccessErrorType};
 
 wit_bindgen::generate!({
-    world: "client-acme-receiving:participant/client-acme-receiving-participant@3.0.0",
+    world: "client-acme-receiving:participant/client-acme-receiving-participant@4.0.0",
     inline: r#"
-        package client-acme-receiving:participant@3.0.0;
+        package client-acme-receiving:participant@4.0.0;
 
         world client-acme-receiving-participant {
           include client-acme-receiving:generated/participant;

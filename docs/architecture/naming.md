@@ -33,7 +33,7 @@ One token names an operation's export, dispatch selection, and authorization:
 ```
 
 Source underscores become single hyphens in this external spelling.
-For `wamn_receiving`, `purchase_order.get` at `1.0.0` becomes `wamn-receiving:purchase-order/get@1.0.0`.
+For `wamn_receiving`, `purchase_order.get` at `2.0.0` becomes `wamn-receiving:purchase-order/get@2.0.0`.
 The package version is the only operation-version coordinate.
 It is authored once, in `wamn.json`, and an authored publication file names the token without it, as [operation references](data-access.md#operation-references) states.
 

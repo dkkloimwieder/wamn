@@ -5,7 +5,7 @@ use wamn_client_tui::{screen, submission};
 pub static RECORD_RECEIPT_SPEC: screen::ScreenSpec = screen::ScreenSpec {
     model: "receiving",
     name: "record_receipt",
-    operation: "client-acme-receiving:receiving/record-receipt@3.0.0",
+    operation: "client-acme-receiving:receiving/record-receipt@4.0.0",
     type_: "command",
     input: crate::receiving::RECEIVING_RECORD_RECEIPT_INPUT_SCHEMA,
     input_schema: Some(

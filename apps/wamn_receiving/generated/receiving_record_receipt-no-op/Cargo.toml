@@ -4,7 +4,7 @@
 name = "wamn-receiving-receiving-record-receipt-no-op"
 version.workspace = true
 edition.workspace = true
-description = "No-op participant for wamn-receiving:receiving/record-receipt-pre-commit@1.0.0"
+description = "No-op participant for wamn-receiving:receiving/record-receipt-pre-commit@2.0.0"
 license = "Apache-2.0"
 
 [dependencies]

@@ -72,12 +72,12 @@ import {
 /** What the release accepts: one UUID, hyphenated. */
 const UUID_TEXT = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
 
-/** The record that the detail for `wamn-receiving:purchase-order/get@1.0.0` reads. */
+/** The record that the detail for `wamn-receiving:purchase-order/get@2.0.0` reads. */
 export interface PurchaseOrderGetDetailInput {
   readonly id: Uuid;
 }
 
-/** What the detail screen for `wamn-receiving:purchase-order/get@1.0.0` takes. */
+/** What the detail screen for `wamn-receiving:purchase-order/get@2.0.0` takes. */
 export interface PurchaseOrderGetDetailProps {
   /** The transport the application supplies. */
   readonly transport: Transport;
@@ -88,7 +88,7 @@ export interface PurchaseOrderGetDetailProps {
 }
 
 /**
- * The detail screen for `wamn-receiving:purchase-order/get@1.0.0`.
+ * The detail screen for `wamn-receiving:purchase-order/get@2.0.0`.
  *
  * It reads when it mounts and again whenever its input changes, because the
  * input names the record it shows.
@@ -134,7 +134,7 @@ export function PurchaseOrderGetDetail(props: PurchaseOrderGetDetailProps) {
   );
 }
 
-/** What the table for `wamn-receiving:purchase-order/query@1.0.0` takes. */
+/** What the table for `wamn-receiving:purchase-order/query@2.0.0` takes. */
 export interface PurchaseOrderQueryTableProps {
   /** The transport the application supplies. */
   readonly transport: Transport;
@@ -148,7 +148,7 @@ export interface PurchaseOrderQueryTableProps {
   readonly onOutcome?: (outcome: Outcome<PurchaseOrderQueryResult>) => void;
 }
 
-/** The table for `wamn-receiving:purchase-order/query@1.0.0`: the QueryTable over `PURCHASE_ORDER_QUERY_TABLE`, in the table screen. */
+/** The table for `wamn-receiving:purchase-order/query@2.0.0`: the QueryTable over `PURCHASE_ORDER_QUERY_TABLE`, in the table screen. */
 export function PurchaseOrderQueryTable(props: PurchaseOrderQueryTableProps) {
   return (
     <TableScreen>
@@ -157,7 +157,7 @@ export function PurchaseOrderQueryTable(props: PurchaseOrderQueryTableProps) {
   );
 }
 
-/** The table definition of `wamn-receiving:purchase-order/query@1.0.0`. */
+/** The table definition of `wamn-receiving:purchase-order/query@2.0.0`. */
 export const PURCHASE_ORDER_QUERY_TABLE = {
   name: "purchase-order",
   read: { route: PURCHASE_ORDER_QUERY_ROUTE, request: PURCHASE_ORDER_QUERY_REQUEST_FIELDS, result: PURCHASE_ORDER_QUERY_RESULT_FIELDS },
@@ -183,17 +183,17 @@ export const PURCHASE_ORDER_QUERY_TABLE = {
     { field: "updatedAt", label: "Updated", type: "timestamptz", role: "value" },
     { field: "updatedBy", label: "Updated by", type: "uuid", role: "value" },
   ],
-  update: { operation: "wamn-receiving:purchase-order/update@1.0.0", binding: { route: PURCHASE_ORDER_UPDATE_ROUTE, request: PURCHASE_ORDER_UPDATE_REQUEST_FIELDS, result: PURCHASE_ORDER_UPDATE_RESULT_FIELDS }, keyInput: ["id"], revisionInput: ["expectedRowVersion"], revisionField: "rowVersion", supplied: [{ input: ["requestId"], type: "requestId" }], fields: [
+  update: { operation: "wamn-receiving:purchase-order/update@2.0.0", binding: { route: PURCHASE_ORDER_UPDATE_ROUTE, request: PURCHASE_ORDER_UPDATE_REQUEST_FIELDS, result: PURCHASE_ORDER_UPDATE_RESULT_FIELDS }, keyInput: ["id"], revisionInput: ["expectedRowVersion"], revisionField: "rowVersion", supplied: [{ input: ["requestId"], type: "requestId" }], fields: [
     { field: "supplierId", input: ["change", "supplierId"], choices: { read: { route: SUPPLIER_QUERY_ROUTE, request: SUPPLIER_QUERY_REQUEST_FIELDS, result: SUPPLIER_QUERY_RESULT_FIELDS }, rows: "item", keyField: "id", displayField: "name", cursorInput: ["cursor"] } },
   ] },
   actions: [
-    { operation: "wamn-receiving:purchase-order/get@1.0.0", reference: "wamn-receiving:purchase-order/get", label: "get", many: false, opens: "record", fill: [] },
-    { operation: "wamn-receiving:receiving/record-receipt@1.0.0", reference: "wamn-receiving:receiving/record-receipt", label: "record-receipt", many: true, opens: "form", fill: [{ field: "id", input: ["value", "purchaseOrderId"] }], form: () => import("./receiving.js").then((module) => ({ default: module.ReceivingRecordReceiptForm })) },
+    { operation: "wamn-receiving:purchase-order/get@2.0.0", reference: "wamn-receiving:purchase-order/get", label: "get", many: false, opens: "record", fill: [] },
+    { operation: "wamn-receiving:receiving/record-receipt@2.0.0", reference: "wamn-receiving:receiving/record-receipt", label: "record-receipt", many: true, opens: "form", fill: [{ field: "id", input: ["value", "purchaseOrderId"] }], form: () => import("./receiving.js").then((module) => ({ default: module.ReceivingRecordReceiptForm })) },
   ],
   childTables: [],
 } as const;
 
-/** What an operator types for `wamn-receiving:purchase-order/update@1.0.0`. */
+/** What an operator types for `wamn-receiving:purchase-order/update@2.0.0`. */
 const UPDATE_INPUT = z.object({
   change: z.optional(
     z.object({
@@ -202,28 +202,28 @@ const UPDATE_INPUT = z.object({
   ),
 });
 
-/** What the form for `wamn-receiving:purchase-order/update@1.0.0` can start with. */
+/** What the form for `wamn-receiving:purchase-order/update@2.0.0` can start with. */
 export interface PurchaseOrderUpdateFormInitial {
   change?: {
     supplierId?: Uuid;
   };
 }
 
-/** What the form for `wamn-receiving:purchase-order/update@1.0.0` takes. */
+/** What the form for `wamn-receiving:purchase-order/update@2.0.0` takes. */
 export interface PurchaseOrderUpdateFormProps {
   /** The transport the application supplies. */
   readonly transport: Transport;
   /** Values the form starts with. */
   readonly initial?: PurchaseOrderUpdateFormInitial;
   /** The record this command changes. The form reads it when it opens, and
-   * sends the revision it read, because `wamn-receiving:purchase-order/get@1.0.0` states that binding. */
+   * sends the revision it read, because `wamn-receiving:purchase-order/get@2.0.0` states that binding. */
   readonly key: PurchaseOrderGetDetailInput;
   /** Called with the outcome of every submission. */
   readonly onSubmitted?: (outcome: Outcome<PurchaseOrderUpdateResult>) => void;
 }
 
 /**
- * The form for `wamn-receiving:purchase-order/update@1.0.0`.
+ * The form for `wamn-receiving:purchase-order/update@2.0.0`.
  *
  * It renders what the operator fills and nothing else. The reserved inputs
  * come from the runtime at submit time, and the operator never sees them.

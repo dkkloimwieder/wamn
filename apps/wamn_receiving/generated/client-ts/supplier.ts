@@ -5,7 +5,7 @@
 import type { FieldMap, OperationRoute, Outcome, Timestamptz, Transport, Uuid } from "@wamn/web-runtime";
 import { reviveOutcome, toWire } from "@wamn/web-runtime";
 
-/** Input for `wamn-receiving:supplier/create@1.0.0`. */
+/** Input for `wamn-receiving:supplier/create@2.0.0`. */
 export interface SupplierCreateRequest {
   /** `text` */
   idempotencyKey: string;
@@ -15,14 +15,14 @@ export interface SupplierCreateRequest {
   requestId: string;
 }
 
-/** What `wamn-receiving:supplier/create@1.0.0` calls its input members. */
+/** What `wamn-receiving:supplier/create@2.0.0` calls its input members. */
 export const SUPPLIER_CREATE_REQUEST_FIELDS: FieldMap = {
   "idempotency_key": "idempotencyKey",
   "name": "name",
   "request_id": "requestId",
 };
 
-/** Result of `wamn-receiving:supplier/create@1.0.0`. */
+/** Result of `wamn-receiving:supplier/create@2.0.0`. */
 export interface SupplierCreateResult {
   /** `timestamptz` */
   readonly createdAt: Timestamptz;
@@ -32,7 +32,7 @@ export interface SupplierCreateResult {
   readonly name: string;
 }
 
-/** What `wamn-receiving:supplier/create@1.0.0` calls its result members. */
+/** What `wamn-receiving:supplier/create@2.0.0` calls its result members. */
 export const SUPPLIER_CREATE_RESULT_FIELDS: FieldMap = {
   "created_at": "createdAt",
   "id": "id",
@@ -40,13 +40,13 @@ export const SUPPLIER_CREATE_RESULT_FIELDS: FieldMap = {
 };
 
 /**
- * Where the release publishes `wamn-receiving:supplier/create@1.0.0`.
+ * Where the release publishes `wamn-receiving:supplier/create@2.0.0`.
  *
  * Method and template only. The host and base URL are the application's
  * deployment configuration, not this release's facts.
  */
 export const SUPPLIER_CREATE_ROUTE: OperationRoute = {
-  operation: "wamn-receiving:supplier/create@1.0.0",
+  operation: "wamn-receiving:supplier/create@2.0.0",
   method: "POST",
   template: "/supplier/create",
   freshOnly: false,
@@ -69,7 +69,7 @@ export const SUPPLIER_CREATE_ROUTE: OperationRoute = {
   },
 };
 
-/** Invoke `wamn-receiving:supplier/create@1.0.0` through a transport the application supplies. */
+/** Invoke `wamn-receiving:supplier/create@2.0.0` through a transport the application supplies. */
 export async function create(
   transport: Transport,
   items: readonly SupplierCreateRequest[],
@@ -83,7 +83,7 @@ export async function create(
   );
 }
 
-/** Input for `wamn-receiving:supplier/query@1.0.0`. */
+/** Input for `wamn-receiving:supplier/query@2.0.0`. */
 export interface SupplierQueryRequest {
   /** `text`, omittable */
   cursor?: string;
@@ -91,13 +91,13 @@ export interface SupplierQueryRequest {
   limit?: number;
 }
 
-/** What `wamn-receiving:supplier/query@1.0.0` calls its input members. */
+/** What `wamn-receiving:supplier/query@2.0.0` calls its input members. */
 export const SUPPLIER_QUERY_REQUEST_FIELDS: FieldMap = {
   "cursor": "cursor",
   "limit": "limit",
 };
 
-/** One row of `wamn-receiving:supplier/query@1.0.0`. */
+/** One row of `wamn-receiving:supplier/query@2.0.0`. */
 export interface SupplierQueryRow {
   /** `timestamptz` */
   readonly createdAt: Timestamptz;
@@ -107,7 +107,7 @@ export interface SupplierQueryRow {
   readonly name: string;
 }
 
-/** Result of `wamn-receiving:supplier/query@1.0.0`. */
+/** Result of `wamn-receiving:supplier/query@2.0.0`. */
 export interface SupplierQueryResult {
   /** The rows this page carries. */
   readonly item: readonly SupplierQueryRow[];
@@ -115,7 +115,7 @@ export interface SupplierQueryResult {
   readonly nextCursor: string | null;
 }
 
-/** What `wamn-receiving:supplier/query@1.0.0` calls its result members. */
+/** What `wamn-receiving:supplier/query@2.0.0` calls its result members. */
 export const SUPPLIER_QUERY_RESULT_FIELDS: FieldMap = {
   "item": {
     member: "item",
@@ -129,13 +129,13 @@ export const SUPPLIER_QUERY_RESULT_FIELDS: FieldMap = {
 };
 
 /**
- * Where the release publishes `wamn-receiving:supplier/query@1.0.0`.
+ * Where the release publishes `wamn-receiving:supplier/query@2.0.0`.
  *
  * Method and template only. The host and base URL are the application's
  * deployment configuration, not this release's facts.
  */
 export const SUPPLIER_QUERY_ROUTE: OperationRoute = {
-  operation: "wamn-receiving:supplier/query@1.0.0",
+  operation: "wamn-receiving:supplier/query@2.0.0",
   method: "GET",
   template: "/supplier/query",
   freshOnly: false,
@@ -156,7 +156,7 @@ export const SUPPLIER_QUERY_ROUTE: OperationRoute = {
   },
 };
 
-/** Invoke `wamn-receiving:supplier/query@1.0.0` through a transport the application supplies. */
+/** Invoke `wamn-receiving:supplier/query@2.0.0` through a transport the application supplies. */
 export async function query(
   transport: Transport,
   items: readonly SupplierQueryRequest[],

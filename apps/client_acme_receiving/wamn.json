@@ -1,13 +1,14 @@
 {
   "package": {
     "id": "client_acme_receiving",
-    "version": "3.0.0"
+    "version": "4.0.0",
+    "predecessor_version": "3.0.0"
   },
   "base_dependencies": {
     "base_receiving": {
       "package": "wamn_receiving",
-      "version": "1.0.0",
-      "digest": "sha256:4bc28f013c1e7afce82bfdffd42557232efc453205b9962f1ff477dcb93c1ae7",
+      "version": "2.0.0",
+      "digest": "sha256:0855fd4cfc5bd6202321134a6bf8331b5266b521f6814bc7c88c3689029fba81",
       "operations": [
         "receiving.record_receipt"
       ]

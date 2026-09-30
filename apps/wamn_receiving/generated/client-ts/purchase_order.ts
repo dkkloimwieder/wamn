@@ -5,18 +5,18 @@
 import type { FieldMap, OperationRoute, Outcome, Timestamptz, Transport, Uuid } from "@wamn/web-runtime";
 import { reviveOutcome, toWire } from "@wamn/web-runtime";
 
-/** Input for `wamn-receiving:purchase-order/get@1.0.0`. */
+/** Input for `wamn-receiving:purchase-order/get@2.0.0`. */
 export interface PurchaseOrderGetRequest {
   /** `uuid` */
   id: Uuid;
 }
 
-/** What `wamn-receiving:purchase-order/get@1.0.0` calls its input members. */
+/** What `wamn-receiving:purchase-order/get@2.0.0` calls its input members. */
 export const PURCHASE_ORDER_GET_REQUEST_FIELDS: FieldMap = {
   "id": "id",
 };
 
-/** Result of `wamn-receiving:purchase-order/get@1.0.0`. */
+/** Result of `wamn-receiving:purchase-order/get@2.0.0`. */
 export interface PurchaseOrderGetResult {
   /** `timestamptz` */
   readonly createdAt: Timestamptz;
@@ -38,7 +38,7 @@ export interface PurchaseOrderGetResult {
   readonly updatedBy: Uuid;
 }
 
-/** What `wamn-receiving:purchase-order/get@1.0.0` calls its result members. */
+/** What `wamn-receiving:purchase-order/get@2.0.0` calls its result members. */
 export const PURCHASE_ORDER_GET_RESULT_FIELDS: FieldMap = {
   "created_at": "createdAt",
   "created_by": "createdBy",
@@ -52,13 +52,13 @@ export const PURCHASE_ORDER_GET_RESULT_FIELDS: FieldMap = {
 };
 
 /**
- * Where the release publishes `wamn-receiving:purchase-order/get@1.0.0`.
+ * Where the release publishes `wamn-receiving:purchase-order/get@2.0.0`.
  *
  * Method and template only. The host and base URL are the application's
  * deployment configuration, not this release's facts.
  */
 export const PURCHASE_ORDER_GET_ROUTE: OperationRoute = {
-  operation: "wamn-receiving:purchase-order/get@1.0.0",
+  operation: "wamn-receiving:purchase-order/get@2.0.0",
   method: "GET",
   template: "/purchase_order/get",
   freshOnly: false,
@@ -80,7 +80,7 @@ export const PURCHASE_ORDER_GET_ROUTE: OperationRoute = {
   },
 };
 
-/** Invoke `wamn-receiving:purchase-order/get@1.0.0` through a transport the application supplies. */
+/** Invoke `wamn-receiving:purchase-order/get@2.0.0` through a transport the application supplies. */
 export async function get(
   transport: Transport,
   items: readonly PurchaseOrderGetRequest[],
@@ -94,7 +94,7 @@ export async function get(
   );
 }
 
-/** Input for `wamn-receiving:purchase-order/query@1.0.0`. */
+/** Input for `wamn-receiving:purchase-order/query@2.0.0`. */
 export interface PurchaseOrderQueryRequest {
   /** `text`, omittable */
   cursor?: string;
@@ -122,7 +122,7 @@ export interface PurchaseOrderQueryRequestSort {
   field: "created_at" | "purchase_order_number" | "status";
 }
 
-/** What `wamn-receiving:purchase-order/query@1.0.0` calls its input members. */
+/** What `wamn-receiving:purchase-order/query@2.0.0` calls its input members. */
 export const PURCHASE_ORDER_QUERY_REQUEST_FIELDS: FieldMap = {
   "cursor": "cursor",
   "filter": {
@@ -143,7 +143,7 @@ export const PURCHASE_ORDER_QUERY_REQUEST_FIELDS: FieldMap = {
   },
 };
 
-/** One row of `wamn-receiving:purchase-order/query@1.0.0`. */
+/** One row of `wamn-receiving:purchase-order/query@2.0.0`. */
 export interface PurchaseOrderQueryRow {
   /** `timestamptz` */
   readonly createdAt: Timestamptz;
@@ -165,7 +165,7 @@ export interface PurchaseOrderQueryRow {
   readonly updatedBy: Uuid;
 }
 
-/** Result of `wamn-receiving:purchase-order/query@1.0.0`. */
+/** Result of `wamn-receiving:purchase-order/query@2.0.0`. */
 export interface PurchaseOrderQueryResult {
   /** The rows this page carries. */
   readonly item: readonly PurchaseOrderQueryRow[];
@@ -173,7 +173,7 @@ export interface PurchaseOrderQueryResult {
   readonly nextCursor: string | null;
 }
 
-/** What `wamn-receiving:purchase-order/query@1.0.0` calls its result members. */
+/** What `wamn-receiving:purchase-order/query@2.0.0` calls its result members. */
 export const PURCHASE_ORDER_QUERY_RESULT_FIELDS: FieldMap = {
   "item": {
     member: "item",
@@ -193,13 +193,13 @@ export const PURCHASE_ORDER_QUERY_RESULT_FIELDS: FieldMap = {
 };
 
 /**
- * Where the release publishes `wamn-receiving:purchase-order/query@1.0.0`.
+ * Where the release publishes `wamn-receiving:purchase-order/query@2.0.0`.
  *
  * Method and template only. The host and base URL are the application's
  * deployment configuration, not this release's facts.
  */
 export const PURCHASE_ORDER_QUERY_ROUTE: OperationRoute = {
-  operation: "wamn-receiving:purchase-order/query@1.0.0",
+  operation: "wamn-receiving:purchase-order/query@2.0.0",
   method: "GET",
   template: "/purchase_order/query",
   freshOnly: false,
@@ -220,7 +220,7 @@ export const PURCHASE_ORDER_QUERY_ROUTE: OperationRoute = {
   },
 };
 
-/** Invoke `wamn-receiving:purchase-order/query@1.0.0` through a transport the application supplies. */
+/** Invoke `wamn-receiving:purchase-order/query@2.0.0` through a transport the application supplies. */
 export async function query(
   transport: Transport,
   items: readonly PurchaseOrderQueryRequest[],
@@ -235,7 +235,7 @@ export async function query(
 }
 
 /**
- * Input for `wamn-receiving:purchase-order/update@1.0.0`.
+ * Input for `wamn-receiving:purchase-order/update@2.0.0`.
  *
  * The order must carry the revision the operator read, or the write is refused.
  */
@@ -255,7 +255,7 @@ export interface PurchaseOrderUpdateRequestChange {
   supplierId?: Uuid;
 }
 
-/** What `wamn-receiving:purchase-order/update@1.0.0` calls its input members. */
+/** What `wamn-receiving:purchase-order/update@2.0.0` calls its input members. */
 export const PURCHASE_ORDER_UPDATE_REQUEST_FIELDS: FieldMap = {
   "change": {
     member: "change",
@@ -268,7 +268,7 @@ export const PURCHASE_ORDER_UPDATE_REQUEST_FIELDS: FieldMap = {
   "request_id": "requestId",
 };
 
-/** Result of `wamn-receiving:purchase-order/update@1.0.0`. */
+/** Result of `wamn-receiving:purchase-order/update@2.0.0`. */
 export interface PurchaseOrderUpdateResult {
   /** `timestamptz` */
   readonly createdAt: Timestamptz;
@@ -290,7 +290,7 @@ export interface PurchaseOrderUpdateResult {
   readonly updatedBy: Uuid;
 }
 
-/** What `wamn-receiving:purchase-order/update@1.0.0` calls its result members. */
+/** What `wamn-receiving:purchase-order/update@2.0.0` calls its result members. */
 export const PURCHASE_ORDER_UPDATE_RESULT_FIELDS: FieldMap = {
   "created_at": "createdAt",
   "created_by": "createdBy",
@@ -304,13 +304,13 @@ export const PURCHASE_ORDER_UPDATE_RESULT_FIELDS: FieldMap = {
 };
 
 /**
- * Where the release publishes `wamn-receiving:purchase-order/update@1.0.0`.
+ * Where the release publishes `wamn-receiving:purchase-order/update@2.0.0`.
  *
  * Method and template only. The host and base URL are the application's
  * deployment configuration, not this release's facts.
  */
 export const PURCHASE_ORDER_UPDATE_ROUTE: OperationRoute = {
-  operation: "wamn-receiving:purchase-order/update@1.0.0",
+  operation: "wamn-receiving:purchase-order/update@2.0.0",
   method: "POST",
   template: "/purchase_order/update",
   freshOnly: false,
@@ -334,7 +334,7 @@ export const PURCHASE_ORDER_UPDATE_ROUTE: OperationRoute = {
   },
 };
 
-/** Invoke `wamn-receiving:purchase-order/update@1.0.0` through a transport the application supplies. */
+/** Invoke `wamn-receiving:purchase-order/update@2.0.0` through a transport the application supplies. */
 export async function update(
   transport: Transport,
   items: readonly PurchaseOrderUpdateRequest[],

@@ -760,7 +760,7 @@ fn every_bridge_refusal_has_a_bounded_http_answer() {
 
 #[test]
 fn missing_exact_operation_is_a_discoverable_forbidden_refusal() {
-    const OPERATION: &str = "wamn-receiving:receipt/get@1.0.0";
+    const OPERATION: &str = "wamn-receiving:receipt/get@2.0.0";
     let mut backend = FakeBackend::new(route());
     backend.delivery = Err(DeliveryError::PermissionDenied {
         operation: OPERATION.to_string(),
@@ -776,7 +776,7 @@ fn missing_exact_operation_is_a_discoverable_forbidden_refusal() {
 
 #[test]
 fn fresh_only_refusal_names_the_operation_without_repeating_delivery() {
-    const OPERATION: &str = "wamn-receiving:receipt/get@1.0.0";
+    const OPERATION: &str = "wamn-receiving:receipt/get@2.0.0";
     let mut backend = FakeBackend::new(route());
     backend.delivery = Err(DeliveryError::FreshCredentialRequired {
         operation: OPERATION.to_string(),

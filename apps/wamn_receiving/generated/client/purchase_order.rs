@@ -62,14 +62,14 @@ pub const PURCHASE_ORDER_FIELDS: &[FieldDescriptor] = &[
     },
 ];
 
-/// Input for `wamn-receiving:purchase-order/get@1.0.0`.
+/// Input for `wamn-receiving:purchase-order/get@2.0.0`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct PurchaseOrderGetRequest {
     /// `uuid`
     pub id: uuid::Uuid,
 }
 
-/// Result of `wamn-receiving:purchase-order/get@1.0.0`.
+/// Result of `wamn-receiving:purchase-order/get@2.0.0`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct PurchaseOrderGetResult {
     /// `timestamptz`
@@ -92,7 +92,7 @@ pub struct PurchaseOrderGetResult {
     pub updated_by: uuid::Uuid,
 }
 
-/// Input descriptors for `wamn-receiving:purchase-order/get@1.0.0`.
+/// Input descriptors for `wamn-receiving:purchase-order/get@2.0.0`.
 pub const PURCHASE_ORDER_GET_INPUT: &[FieldDescriptor] = &[FieldDescriptor {
     path: "id",
     type_name: "uuid",
@@ -100,7 +100,7 @@ pub const PURCHASE_ORDER_GET_INPUT: &[FieldDescriptor] = &[FieldDescriptor {
     values: &[],
 }];
 
-/// Result descriptors for `wamn-receiving:purchase-order/get@1.0.0`.
+/// Result descriptors for `wamn-receiving:purchase-order/get@2.0.0`.
 pub const PURCHASE_ORDER_GET_RESULT: &[FieldDescriptor] = &[
     FieldDescriptor {
         path: "created_at",
@@ -288,10 +288,10 @@ pub const PURCHASE_ORDER_GET_REQUIRES_COMPOSITION: bool = false;
 pub const PURCHASE_ORDER_GET_REPLAY: Option<&str> = None;
 pub const PURCHASE_ORDER_GET_RESPONSE_CONTRACT: Option<&str> = Some("{\"type\":\"array\"}");
 pub const PURCHASE_ORDER_GET_RESULT_OPAQUE: bool = false;
-/// The grant a caller presents to invoke `wamn-receiving:purchase-order/get@1.0.0`.
-pub const PURCHASE_ORDER_GET_GRANT: &str = "wamn-receiving:purchase-order/get@1.0.0";
+/// The grant a caller presents to invoke `wamn-receiving:purchase-order/get@2.0.0`.
+pub const PURCHASE_ORDER_GET_GRANT: &str = "wamn-receiving:purchase-order/get@2.0.0";
 
-/// Typed refusals `wamn-receiving:purchase-order/get@1.0.0` declares.
+/// Typed refusals `wamn-receiving:purchase-order/get@2.0.0` declares.
 pub const PURCHASE_ORDER_GET_ERRORS: &[&str] = &[
     "internal_error",
     "invalid_input",
@@ -301,7 +301,7 @@ pub const PURCHASE_ORDER_GET_ERRORS: &[&str] = &[
     "timeout",
 ];
 
-/// Where the release publishes `wamn-receiving:purchase-order/get@1.0.0`.
+/// Where the release publishes `wamn-receiving:purchase-order/get@2.0.0`.
 ///
 /// Method and template only — the host and base URL are the client's
 /// deployment config, not this release's facts.
@@ -313,7 +313,7 @@ pub fn get_route() -> RouteMetadata {
     }
 }
 
-/// Invoke `wamn-receiving:purchase-order/get@1.0.0` through a bound client.
+/// Invoke `wamn-receiving:purchase-order/get@2.0.0` through a bound client.
 ///
 /// # Errors
 ///
@@ -328,7 +328,7 @@ pub async fn get(
         .await
 }
 
-/// Input for `wamn-receiving:purchase-order/query@1.0.0`.
+/// Input for `wamn-receiving:purchase-order/query@2.0.0`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct PurchaseOrderQueryRequest {
     /// `text`, omittable
@@ -359,7 +359,7 @@ pub struct PurchaseOrderQueryRequestSort {
     pub field: String,
 }
 
-/// Result of `wamn-receiving:purchase-order/query@1.0.0`.
+/// Result of `wamn-receiving:purchase-order/query@2.0.0`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct PurchaseOrderQueryResult {
     /// `timestamptz`
@@ -382,7 +382,7 @@ pub struct PurchaseOrderQueryResult {
     pub updated_by: uuid::Uuid,
 }
 
-/// Input descriptors for `wamn-receiving:purchase-order/query@1.0.0`.
+/// Input descriptors for `wamn-receiving:purchase-order/query@2.0.0`.
 pub const PURCHASE_ORDER_QUERY_INPUT: &[FieldDescriptor] = &[
     FieldDescriptor {
         path: "cursor",
@@ -428,7 +428,7 @@ pub const PURCHASE_ORDER_QUERY_INPUT: &[FieldDescriptor] = &[
     },
 ];
 
-/// Result descriptors for `wamn-receiving:purchase-order/query@1.0.0`.
+/// Result descriptors for `wamn-receiving:purchase-order/query@2.0.0`.
 pub const PURCHASE_ORDER_QUERY_RESULT: &[FieldDescriptor] = &[
     FieldDescriptor {
         path: "created_at",
@@ -748,10 +748,10 @@ pub const PURCHASE_ORDER_QUERY_REQUIRES_COMPOSITION: bool = false;
 pub const PURCHASE_ORDER_QUERY_REPLAY: Option<&str> = None;
 pub const PURCHASE_ORDER_QUERY_RESPONSE_CONTRACT: Option<&str> = Some("{\"type\":\"array\"}");
 pub const PURCHASE_ORDER_QUERY_RESULT_OPAQUE: bool = false;
-/// The grant a caller presents to invoke `wamn-receiving:purchase-order/query@1.0.0`.
-pub const PURCHASE_ORDER_QUERY_GRANT: &str = "wamn-receiving:purchase-order/query@1.0.0";
+/// The grant a caller presents to invoke `wamn-receiving:purchase-order/query@2.0.0`.
+pub const PURCHASE_ORDER_QUERY_GRANT: &str = "wamn-receiving:purchase-order/query@2.0.0";
 
-/// Typed refusals `wamn-receiving:purchase-order/query@1.0.0` declares.
+/// Typed refusals `wamn-receiving:purchase-order/query@2.0.0` declares.
 pub const PURCHASE_ORDER_QUERY_ERRORS: &[&str] = &[
     "internal_error",
     "invalid_input",
@@ -760,7 +760,7 @@ pub const PURCHASE_ORDER_QUERY_ERRORS: &[&str] = &[
     "timeout",
 ];
 
-/// Where the release publishes `wamn-receiving:purchase-order/query@1.0.0`.
+/// Where the release publishes `wamn-receiving:purchase-order/query@2.0.0`.
 ///
 /// Method and template only — the host and base URL are the client's
 /// deployment config, not this release's facts.
@@ -772,7 +772,7 @@ pub fn query_route() -> RouteMetadata {
     }
 }
 
-/// Invoke `wamn-receiving:purchase-order/query@1.0.0` through a bound client.
+/// Invoke `wamn-receiving:purchase-order/query@2.0.0` through a bound client.
 ///
 /// # Errors
 ///
@@ -787,7 +787,7 @@ pub async fn query(
         .await
 }
 
-/// Input for `wamn-receiving:purchase-order/update@1.0.0`.
+/// Input for `wamn-receiving:purchase-order/update@2.0.0`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct PurchaseOrderUpdateRequest {
     /// `object`
@@ -806,7 +806,7 @@ pub struct PurchaseOrderUpdateRequestChange {
     pub supplier_id: Option<uuid::Uuid>,
 }
 
-/// Result of `wamn-receiving:purchase-order/update@1.0.0`.
+/// Result of `wamn-receiving:purchase-order/update@2.0.0`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct PurchaseOrderUpdateResult {
     /// `timestamptz`
@@ -829,7 +829,7 @@ pub struct PurchaseOrderUpdateResult {
     pub updated_by: uuid::Uuid,
 }
 
-/// Input descriptors for `wamn-receiving:purchase-order/update@1.0.0`.
+/// Input descriptors for `wamn-receiving:purchase-order/update@2.0.0`.
 pub const PURCHASE_ORDER_UPDATE_INPUT: &[FieldDescriptor] = &[
     FieldDescriptor {
         path: "change.supplier_id",
@@ -857,7 +857,7 @@ pub const PURCHASE_ORDER_UPDATE_INPUT: &[FieldDescriptor] = &[
     },
 ];
 
-/// Result descriptors for `wamn-receiving:purchase-order/update@1.0.0`.
+/// Result descriptors for `wamn-receiving:purchase-order/update@2.0.0`.
 pub const PURCHASE_ORDER_UPDATE_RESULT: &[FieldDescriptor] = &[
     FieldDescriptor {
         path: "created_at",
@@ -1093,10 +1093,10 @@ pub const PURCHASE_ORDER_UPDATE_REQUIRES_COMPOSITION: bool = false;
 pub const PURCHASE_ORDER_UPDATE_REPLAY: Option<&str> = None;
 pub const PURCHASE_ORDER_UPDATE_RESPONSE_CONTRACT: Option<&str> = Some("{\"type\":\"array\"}");
 pub const PURCHASE_ORDER_UPDATE_RESULT_OPAQUE: bool = false;
-/// The grant a caller presents to invoke `wamn-receiving:purchase-order/update@1.0.0`.
-pub const PURCHASE_ORDER_UPDATE_GRANT: &str = "wamn-receiving:purchase-order/update@1.0.0";
+/// The grant a caller presents to invoke `wamn-receiving:purchase-order/update@2.0.0`.
+pub const PURCHASE_ORDER_UPDATE_GRANT: &str = "wamn-receiving:purchase-order/update@2.0.0";
 
-/// Typed refusals `wamn-receiving:purchase-order/update@1.0.0` declares.
+/// Typed refusals `wamn-receiving:purchase-order/update@2.0.0` declares.
 pub const PURCHASE_ORDER_UPDATE_ERRORS: &[&str] = &[
     "concurrency_conflict",
     "foreign_key_violation",
@@ -1108,7 +1108,7 @@ pub const PURCHASE_ORDER_UPDATE_ERRORS: &[&str] = &[
     "timeout",
 ];
 
-/// Where the release publishes `wamn-receiving:purchase-order/update@1.0.0`.
+/// Where the release publishes `wamn-receiving:purchase-order/update@2.0.0`.
 ///
 /// Method and template only — the host and base URL are the client's
 /// deployment config, not this release's facts.
@@ -1120,7 +1120,7 @@ pub fn update_route() -> RouteMetadata {
     }
 }
 
-/// Invoke `wamn-receiving:purchase-order/update@1.0.0` through a bound client.
+/// Invoke `wamn-receiving:purchase-order/update@2.0.0` through a bound client.
 ///
 /// # Errors
 ///

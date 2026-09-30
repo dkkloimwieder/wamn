@@ -68,7 +68,7 @@ pub const QUALITY_FIELDS: &[FieldDescriptor] = &[
     },
 ];
 
-/// Input for `client-acme-receiving:quality/approve-inspection@3.0.0`.
+/// Input for `client-acme-receiving:quality/approve-inspection@4.0.0`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct QualityApproveInspectionRequest {
     /// `int32`
@@ -79,7 +79,7 @@ pub struct QualityApproveInspectionRequest {
     pub request_id: String,
 }
 
-/// Result of `client-acme-receiving:quality/approve-inspection@3.0.0`.
+/// Result of `client-acme-receiving:quality/approve-inspection@4.0.0`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct QualityApproveInspectionResult {
     /// `uuid`
@@ -94,7 +94,7 @@ pub struct QualityApproveInspectionResult {
     pub status: String,
 }
 
-/// Input descriptors for `client-acme-receiving:quality/approve-inspection@3.0.0`.
+/// Input descriptors for `client-acme-receiving:quality/approve-inspection@4.0.0`.
 pub const QUALITY_APPROVE_INSPECTION_INPUT: &[FieldDescriptor] = &[
     FieldDescriptor {
         path: "expected_row_version",
@@ -116,7 +116,7 @@ pub const QUALITY_APPROVE_INSPECTION_INPUT: &[FieldDescriptor] = &[
     },
 ];
 
-/// Result descriptors for `client-acme-receiving:quality/approve-inspection@3.0.0`.
+/// Result descriptors for `client-acme-receiving:quality/approve-inspection@4.0.0`.
 pub const QUALITY_APPROVE_INSPECTION_RESULT: &[FieldDescriptor] = &[
     FieldDescriptor {
         path: "purchase_order_id",
@@ -257,11 +257,11 @@ pub const QUALITY_APPROVE_INSPECTION_REQUIRES_COMPOSITION: bool = true;
 pub const QUALITY_APPROVE_INSPECTION_REPLAY: Option<&str> = Some("state");
 pub const QUALITY_APPROVE_INSPECTION_RESPONSE_CONTRACT: Option<&str> = Some("{\"type\":\"array\"}");
 pub const QUALITY_APPROVE_INSPECTION_RESULT_OPAQUE: bool = false;
-/// The grant a caller presents to invoke `client-acme-receiving:quality/approve-inspection@3.0.0`.
+/// The grant a caller presents to invoke `client-acme-receiving:quality/approve-inspection@4.0.0`.
 pub const QUALITY_APPROVE_INSPECTION_GRANT: &str =
-    "client-acme-receiving:quality/approve-inspection@3.0.0";
+    "client-acme-receiving:quality/approve-inspection@4.0.0";
 
-/// Typed refusals `client-acme-receiving:quality/approve-inspection@3.0.0` declares.
+/// Typed refusals `client-acme-receiving:quality/approve-inspection@4.0.0` declares.
 pub const QUALITY_APPROVE_INSPECTION_ERRORS: &[&str] = &[
     "concurrency_conflict",
     "internal_error",
@@ -272,7 +272,7 @@ pub const QUALITY_APPROVE_INSPECTION_ERRORS: &[&str] = &[
     "timeout",
 ];
 
-/// Where the release publishes `client-acme-receiving:quality/approve-inspection@3.0.0`.
+/// Where the release publishes `client-acme-receiving:quality/approve-inspection@4.0.0`.
 ///
 /// Method and template only — the host and base URL are the client's
 /// deployment config, not this release's facts.
@@ -284,7 +284,7 @@ pub fn approve_inspection_route() -> RouteMetadata {
     }
 }
 
-/// Invoke `client-acme-receiving:quality/approve-inspection@3.0.0` through a bound client.
+/// Invoke `client-acme-receiving:quality/approve-inspection@4.0.0` through a bound client.
 ///
 /// # Errors
 ///
@@ -303,14 +303,14 @@ pub async fn approve_inspection(
         .await
 }
 
-/// Input for `client-acme-receiving:quality/load-purchase-order-detail@3.0.0`.
+/// Input for `client-acme-receiving:quality/load-purchase-order-detail@4.0.0`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct QualityLoadPurchaseOrderDetailRequest {
     /// `uuid`
     pub purchase_order_id: uuid::Uuid,
 }
 
-/// Result of `client-acme-receiving:quality/load-purchase-order-detail@3.0.0`.
+/// Result of `client-acme-receiving:quality/load-purchase-order-detail@4.0.0`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct QualityLoadPurchaseOrderDetailResult {
     /// `boolean`
@@ -329,7 +329,7 @@ pub struct QualityLoadPurchaseOrderDetailResult {
     pub supplier_id: uuid::Uuid,
 }
 
-/// Input descriptors for `client-acme-receiving:quality/load-purchase-order-detail@3.0.0`.
+/// Input descriptors for `client-acme-receiving:quality/load-purchase-order-detail@4.0.0`.
 pub const QUALITY_LOAD_PURCHASE_ORDER_DETAIL_INPUT: &[FieldDescriptor] = &[FieldDescriptor {
     path: "purchase_order_id",
     type_name: "uuid",
@@ -337,7 +337,7 @@ pub const QUALITY_LOAD_PURCHASE_ORDER_DETAIL_INPUT: &[FieldDescriptor] = &[Field
     values: &[],
 }];
 
-/// Result descriptors for `client-acme-receiving:quality/load-purchase-order-detail@3.0.0`.
+/// Result descriptors for `client-acme-receiving:quality/load-purchase-order-detail@4.0.0`.
 pub const QUALITY_LOAD_PURCHASE_ORDER_DETAIL_RESULT: &[FieldDescriptor] = &[
     FieldDescriptor {
         path: "acme_inspection_required",
@@ -491,11 +491,11 @@ pub const QUALITY_LOAD_PURCHASE_ORDER_DETAIL_REPLAY: Option<&str> = None;
 pub const QUALITY_LOAD_PURCHASE_ORDER_DETAIL_RESPONSE_CONTRACT: Option<&str> =
     Some("{\"type\":\"array\"}");
 pub const QUALITY_LOAD_PURCHASE_ORDER_DETAIL_RESULT_OPAQUE: bool = false;
-/// The grant a caller presents to invoke `client-acme-receiving:quality/load-purchase-order-detail@3.0.0`.
+/// The grant a caller presents to invoke `client-acme-receiving:quality/load-purchase-order-detail@4.0.0`.
 pub const QUALITY_LOAD_PURCHASE_ORDER_DETAIL_GRANT: &str =
-    "client-acme-receiving:quality/load-purchase-order-detail@3.0.0";
+    "client-acme-receiving:quality/load-purchase-order-detail@4.0.0";
 
-/// Typed refusals `client-acme-receiving:quality/load-purchase-order-detail@3.0.0` declares.
+/// Typed refusals `client-acme-receiving:quality/load-purchase-order-detail@4.0.0` declares.
 pub const QUALITY_LOAD_PURCHASE_ORDER_DETAIL_ERRORS: &[&str] = &[
     "internal_error",
     "invalid_input",
@@ -505,7 +505,7 @@ pub const QUALITY_LOAD_PURCHASE_ORDER_DETAIL_ERRORS: &[&str] = &[
     "timeout",
 ];
 
-/// Where the release publishes `client-acme-receiving:quality/load-purchase-order-detail@3.0.0`.
+/// Where the release publishes `client-acme-receiving:quality/load-purchase-order-detail@4.0.0`.
 ///
 /// Method and template only — the host and base URL are the client's
 /// deployment config, not this release's facts.
@@ -517,7 +517,7 @@ pub fn load_purchase_order_detail_route() -> RouteMetadata {
     }
 }
 
-/// Invoke `client-acme-receiving:quality/load-purchase-order-detail@3.0.0` through a bound client.
+/// Invoke `client-acme-receiving:quality/load-purchase-order-detail@4.0.0` through a bound client.
 ///
 /// # Errors
 ///

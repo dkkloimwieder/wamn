@@ -5,7 +5,7 @@ use wamn_client_tui::{screen, submission};
 pub static LOAD_PURCHASE_ORDER_HISTORY_SPEC: screen::ScreenSpec = screen::ScreenSpec {
     model: "receiving",
     name: "load_purchase_order_history",
-    operation: "wamn-receiving:receiving/load-purchase-order-history@1.0.0",
+    operation: "wamn-receiving:receiving/load-purchase-order-history@2.0.0",
     type_: "projection",
     input: crate::receiving::RECEIVING_LOAD_PURCHASE_ORDER_HISTORY_INPUT_SCHEMA,
     input_schema: Some(
@@ -65,7 +65,7 @@ pub fn load_purchase_order_history(binding: submission::SessionBinding) -> scree
 pub static LOAD_RECEIPT_SCREEN_SPEC: screen::ScreenSpec = screen::ScreenSpec {
     model: "receiving",
     name: "load_receipt_screen",
-    operation: "wamn-receiving:receiving/load-receipt-screen@1.0.0",
+    operation: "wamn-receiving:receiving/load-receipt-screen@2.0.0",
     type_: "projection",
     input: crate::receiving::RECEIVING_LOAD_RECEIPT_SCREEN_INPUT_SCHEMA,
     input_schema: Some(
@@ -130,7 +130,7 @@ pub fn load_receipt_screen(binding: submission::SessionBinding) -> screen::Scree
 pub static RECORD_RECEIPT_SPEC: screen::ScreenSpec = screen::ScreenSpec {
     model: "receiving",
     name: "record_receipt",
-    operation: "wamn-receiving:receiving/record-receipt@1.0.0",
+    operation: "wamn-receiving:receiving/record-receipt@2.0.0",
     type_: "command",
     input: crate::receiving::RECEIVING_RECORD_RECEIPT_INPUT_SCHEMA,
     input_schema: Some(

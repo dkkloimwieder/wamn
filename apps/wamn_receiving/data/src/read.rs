@@ -225,7 +225,7 @@ mod tests {
             id: Uuid("00000000-0000-0000-0000-00000000000e".to_owned()),
             position: 2,
             type_: "update".to_owned(),
-            operation: "client-acme-receiving:purchase-order/update@3.0.0".to_owned(),
+            operation: "client-acme-receiving:purchase-order/update@4.0.0".to_owned(),
             changed_by: Uuid("00000000-0000-0000-0000-000000000004".to_owned()),
             changed_at: TimestampTz("2026-08-31T12:01:00.000000Z".to_owned()),
             before: Some(r#"{"row_version": 1, "acme_quality_status": "pending"}"#.to_owned()),
@@ -243,7 +243,7 @@ mod tests {
         assert_eq!(value.type_, "update");
         assert_eq!(
             value.operation,
-            "client-acme-receiving:purchase-order/update@3.0.0"
+            "client-acme-receiving:purchase-order/update@4.0.0"
         );
         assert_eq!(value.changed_by.0, "00000000-0000-0000-0000-000000000004");
         assert_eq!(value.changed_at.0, "2026-08-31T12:01:00.000000Z");

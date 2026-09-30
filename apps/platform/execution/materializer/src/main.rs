@@ -1064,7 +1064,7 @@ mod tests {
         }
         let permission_denied = Err(DeliveryError::PermissionDenied(
             delivery::PermissionDenial {
-                operation: "wamn-receiving:receipt/get@1.0.0".into(),
+                operation: "wamn-receiving:receipt/get@2.0.0".into(),
             },
         ));
         assert_eq!(
@@ -1073,7 +1073,7 @@ mod tests {
         );
         let fresh_required = Err(DeliveryError::FreshCredentialRequired(
             delivery::PermissionDenial {
-                operation: "wamn-receiving:receipt/get@1.0.0".into(),
+                operation: "wamn-receiving:receipt/get@2.0.0".into(),
             },
         ));
         assert_eq!(

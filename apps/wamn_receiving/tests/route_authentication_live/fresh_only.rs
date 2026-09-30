@@ -38,7 +38,7 @@ use super::{
 };
 
 const PACKAGE: &str = "fresh_only_probe";
-const VERSION: &str = "1.0.0";
+const VERSION: &str = "2.0.0";
 const OPERATION: &str = "wamn:node/async-handler@0.1.0";
 const WIRING: &str = "prior_commit";
 const ROUTE: &str = "/fresh_only_probe/prior_commit";
@@ -951,7 +951,7 @@ mod execution_tests {
 
                 world host {
                   import wamn:postgres/client@0.3.0;
-                  import wamn-receiving:receiving/record-receipt@1.0.0;
+                  import wamn-receiving:receiving/record-receipt@2.0.0;
                   export wamn:node/async-handler@0.1.0;
                 }
             "#,

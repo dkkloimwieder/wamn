@@ -565,9 +565,9 @@ impl ClientContractIr {
     /// its publication attaches them to.
     ///
     /// Two inputs, not one. Route templates are RELEASE facts — the base
-    /// package publishes `wamn-receiving:purchase-order/get@1.0.0` at
+    /// package publishes `wamn-receiving:purchase-order/get@2.0.0` at
     /// `/purchase_order/get` while the overlay publishes its own
-    /// `client-acme-receiving:purchase-order/get@3.0.0` at
+    /// `client-acme-receiving:purchase-order/get@4.0.0` at
     /// `/acme/purchase_order/get` — so an IR built from contracts alone could
     /// only guess where an operation lives, and generated code that guessed
     /// would be wrong the first time it moved.

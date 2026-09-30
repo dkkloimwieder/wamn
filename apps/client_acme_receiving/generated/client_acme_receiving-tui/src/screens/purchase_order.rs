@@ -5,7 +5,7 @@ use wamn_client_tui::{screen, submission};
 pub static GET_SPEC: screen::ScreenSpec = screen::ScreenSpec {
     model: "purchase_order",
     name: "get",
-    operation: "client-acme-receiving:purchase-order/get@3.0.0",
+    operation: "client-acme-receiving:purchase-order/get@4.0.0",
     type_: "get",
     input: crate::purchase_order::PURCHASE_ORDER_GET_INPUT_SCHEMA,
     input_schema: Some(
@@ -74,7 +74,7 @@ pub fn get(binding: submission::SessionBinding) -> screen::Screen {
 pub static UPDATE_SPEC: screen::ScreenSpec = screen::ScreenSpec {
     model: "purchase_order",
     name: "update",
-    operation: "client-acme-receiving:purchase-order/update@3.0.0",
+    operation: "client-acme-receiving:purchase-order/update@4.0.0",
     type_: "update",
     input: crate::purchase_order::PURCHASE_ORDER_UPDATE_INPUT_SCHEMA,
     input_schema: Some(
@@ -135,7 +135,7 @@ pub static UPDATE_SPEC: screen::ScreenSpec = screen::ScreenSpec {
         key_input: Some("id"),
     }),
     revision: Some(screen::RevisionBinding {
-        read_operation: "client-acme-receiving:purchase-order/get@3.0.0",
+        read_operation: "client-acme-receiving:purchase-order/get@4.0.0",
         read_key_input: "id",
         key_field: "id",
         revision_field: "row_version",

@@ -34,7 +34,7 @@ mod create_codec {
 }
 
 wit_bindgen::generate!({
-    world: "client-acme-receiving:component/client-acme-receiving@3.0.0",
+    world: "client-acme-receiving:component/client-acme-receiving@4.0.0",
     path: [
         "../../../crates/execution/workflow/router/wit",
         "../../../crates/platform/runtime/wit/deps/wamn-postgres-0.3",

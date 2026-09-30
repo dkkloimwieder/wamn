@@ -49,17 +49,17 @@ import {
   PURCHASE_ORDER_QUERY_TABLE,
 } from "./purchase_order.js";
 
-/** What an operator types for `wamn-receiving:supplier/create@1.0.0`. */
+/** What an operator types for `wamn-receiving:supplier/create@2.0.0`. */
 const CREATE_INPUT = z.object({
   name: z.string(),
 });
 
-/** What the form for `wamn-receiving:supplier/create@1.0.0` can start with. */
+/** What the form for `wamn-receiving:supplier/create@2.0.0` can start with. */
 export interface SupplierCreateFormInitial {
   name?: string;
 }
 
-/** What the form for `wamn-receiving:supplier/create@1.0.0` takes. */
+/** What the form for `wamn-receiving:supplier/create@2.0.0` takes. */
 export interface SupplierCreateFormProps {
   /** The transport the application supplies. */
   readonly transport: Transport;
@@ -70,7 +70,7 @@ export interface SupplierCreateFormProps {
 }
 
 /**
- * The form for `wamn-receiving:supplier/create@1.0.0`.
+ * The form for `wamn-receiving:supplier/create@2.0.0`.
  *
  * It renders what the operator fills and nothing else. The reserved inputs
  * come from the runtime at submit time, and the operator never sees them.
@@ -145,7 +145,7 @@ export function SupplierCreateForm(props: SupplierCreateFormProps) {
   );
 }
 
-/** What the table for `wamn-receiving:supplier/query@1.0.0` takes. */
+/** What the table for `wamn-receiving:supplier/query@2.0.0` takes. */
 export interface SupplierQueryTableProps {
   /** The transport the application supplies. */
   readonly transport: Transport;
@@ -159,7 +159,7 @@ export interface SupplierQueryTableProps {
   readonly onOutcome?: (outcome: Outcome<SupplierQueryResult>) => void;
 }
 
-/** The table for `wamn-receiving:supplier/query@1.0.0`: the QueryTable over `SUPPLIER_QUERY_TABLE`, in the table screen. */
+/** The table for `wamn-receiving:supplier/query@2.0.0`: the QueryTable over `SUPPLIER_QUERY_TABLE`, in the table screen. */
 export function SupplierQueryTable(props: SupplierQueryTableProps) {
   return (
     <TableScreen>
@@ -168,7 +168,7 @@ export function SupplierQueryTable(props: SupplierQueryTableProps) {
   );
 }
 
-/** The table definition of `wamn-receiving:supplier/query@1.0.0`. */
+/** The table definition of `wamn-receiving:supplier/query@2.0.0`. */
 export const SUPPLIER_QUERY_TABLE = {
   name: "supplier",
   read: { route: SUPPLIER_QUERY_ROUTE, request: SUPPLIER_QUERY_REQUEST_FIELDS, result: SUPPLIER_QUERY_RESULT_FIELDS },
@@ -189,7 +189,7 @@ export const SUPPLIER_QUERY_TABLE = {
     { field: "name", label: "Supplier name", type: "text", role: "value" },
   ],
   actions: [
-    { operation: "wamn-receiving:purchase-order/update@1.0.0", reference: "wamn-receiving:purchase-order/update", label: "update", many: false, opens: "form", fill: [{ field: "id", input: ["change", "supplierId"] }] },
+    { operation: "wamn-receiving:purchase-order/update@2.0.0", reference: "wamn-receiving:purchase-order/update", label: "update", many: false, opens: "form", fill: [{ field: "id", input: ["change", "supplierId"] }] },
   ],
   childTables: [
     { label: "purchase order", table: () => PURCHASE_ORDER_QUERY_TABLE, scopeFilter: "supplierId" },

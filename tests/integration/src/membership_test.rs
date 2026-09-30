@@ -20,7 +20,7 @@ use wamn_schema_generator::{PackageIdentity, canonical_operation_identity};
 const PURCHASE_ORDER_ID: &str = "00000000-0000-0000-0000-000000000301";
 /// The deployed Receiving package whose route this test drives.
 const PACKAGE_ID: &str = "wamn_receiving";
-const PACKAGE_VERSION: &str = "1.0.0";
+const PACKAGE_VERSION: &str = "2.0.0";
 /// The one operation the test role is granted.
 const OPERATION: &str = "purchase_order.get";
 const OPERATION_TIMEOUT: Duration = Duration::from_secs(30);

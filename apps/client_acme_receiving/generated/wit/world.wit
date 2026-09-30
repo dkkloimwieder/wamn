@@ -4,21 +4,21 @@ package client-acme-receiving:generated;
 
 /// Every operation of the package. An authored world includes it.
 world generated {
-  import wamn-receiving:receiving/record-receipt@1.0.0;
+  import wamn-receiving:receiving/record-receipt@2.0.0;
   import wamn:postgres/types@0.3.0;
   import wamn:postgres/statements@0.3.0;
-  export client-acme-receiving:quality/approve-inspection@3.0.0;
-  export client-acme-receiving:quality/create-inspection@3.0.0;
-  export client-acme-receiving:quality/load-purchase-order-detail@3.0.0;
-  export client-acme-receiving:receiving/record-receipt@3.0.0;
-  export client-acme-receiving:purchase-order/get@3.0.0;
-  export client-acme-receiving:purchase-order/update@3.0.0;
+  export client-acme-receiving:quality/approve-inspection@4.0.0;
+  export client-acme-receiving:quality/create-inspection@4.0.0;
+  export client-acme-receiving:quality/load-purchase-order-detail@4.0.0;
+  export client-acme-receiving:receiving/record-receipt@4.0.0;
+  export client-acme-receiving:purchase-order/get@4.0.0;
+  export client-acme-receiving:purchase-order/update@4.0.0;
 }
 
 /// The participant of the package. An authored participant world includes it.
 world participant {
   import wamn:postgres/types@0.3.0;
   import wamn:postgres/statements@0.3.0;
-  export wamn-receiving:receiving/record-receipt-pre-commit@1.0.0;
-  export client-acme-receiving:receiving/record-receipt-participant@3.0.0;
+  export wamn-receiving:receiving/record-receipt-pre-commit@2.0.0;
+  export client-acme-receiving:receiving/record-receipt-participant@4.0.0;
 }
