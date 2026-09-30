@@ -793,6 +793,8 @@ kubectl -n <namespace> annotate secret <name> wamn.io/principal-type=service wam
 3. Where `reconcile-run-plane` already changes installed run-plane schema in code, P10 to P12 go into that verb, and the operations page records that the verb applied them. Hand statements are only for what no verb can do. §4.3.1 shows what the verb changes today. §4.3.2 moves P8 and P10 to P12 into it. §4.3.3 says why the rest stays by hand.
 4. The PAT Secret annotation becomes `wamn.io/principal-type`. Installed Secrets are re-annotated by one recorded `kubectl annotate` per Secret under gcp.md §7 (§4.3.5, §4.8).
 5. Whether `ops-schema.sql` is installed on wamn-dev is not guessed. The operations page does not say, so the deployment agent answers it with the query of §4.3.4 before the apply, and the record states the answer.
+6. P8 goes into `reconcile-run-plane` with P10 to P12. A table that the verb already changes on an installed database is the verb's to rename.
+7. P9 stays a hand statement. A verb that renames history tables is the upgrade path of `wamn-o8b9` built sideways. The cost is recorded under `wamn-o8b9`: 15 history tables in two project-env databases (Receiving 8: six `app_system` and two `receiving`, WMS 7: six `app_system` and one `wms`), plus the record-history functions in wamn_system and both project-env databases.
 
 ## 6. `*ErrorKind` families
 
