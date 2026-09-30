@@ -729,7 +729,7 @@ async fn promote_target(
         &source.manifest.routes,
     )
     .await
-    .context("mint target format-3 release snapshot")?;
+    .context("mint target format-4 release snapshot")?;
     let expected = read_expected_environment(&tx, run_schema, &args.tenant).await?;
     verify_provisioned_environment(expected.as_deref(), &minted.manifest.release, run_schema)?;
     tx.execute(

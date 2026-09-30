@@ -1,6 +1,6 @@
 //! The immutable release-serving manifest mounted by every serving process.
 //!
-//! Format 3 closes over exact package membership, component digests, routes,
+//! Format 4 closes over exact package membership, component digests, routes,
 //! the permissions and SQL statements of each export's call graph, and route
 //! attachments. Publish folds each call graph, because an application's
 //! components compose at build into one component. A route calls one component
@@ -30,7 +30,7 @@ use crate::{
 };
 
 /// The only serving-manifest format admitted by this revision.
-pub const SERVING_MANIFEST_FORMAT_VERSION: u32 = 3;
+pub const SERVING_MANIFEST_FORMAT_VERSION: u32 = 4;
 
 /// The attachment auth-policy mode that permits an unauthenticated caller.
 pub const NO_AUTHENTICATION_MODE: &str = "none";
@@ -387,6 +387,7 @@ pub struct ServingRoute {
     pub package_id: String,
     pub component: String,
     pub operation: String,
+    #[serde(rename = "type")]
     pub kind: OperationKind,
     /// The model relations that a read of this route reads, from the
     /// `relations` of its generated contract. A history table stands for its
@@ -782,6 +783,7 @@ impl From<AttachmentRef<'_>> for ServingAttachment {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct RouteAttachment {
+    #[serde(rename = "type")]
     pub kind: AttachmentKind,
     pub package_id: String,
     pub component: String,
@@ -798,6 +800,7 @@ pub struct RouteAttachment {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct WiringAttachment {
+    #[serde(rename = "type")]
     pub kind: AttachmentKind,
     pub package_id: String,
     pub wiring_id: String,
@@ -1036,9 +1039,9 @@ impl ServingManifest {
         .expect("the shared canonicalizer emits a canonical sha256 digest")
     }
 
-    /// Parse, validate, and admit only canonical format-3 bytes.
+    /// Parse, validate, and admit only canonical format-4 bytes.
     ///
-    /// The version is classified before the format-3 schema is decoded. This is
+    /// The version is classified before the format-4 schema is decoded. This is
     /// what makes an unsupported mount an explicit typed refusal rather than a
     /// generic unknown-field parse error, and it deliberately provides no
     /// dual-version tolerance.
@@ -1963,7 +1966,7 @@ mod tests {
     }
 
     #[test]
-    fn only_canonical_format_three_bytes_are_admitted() {
+    fn only_canonical_format_four_bytes_are_admitted() {
         let manifest = manifest();
         let bytes = manifest.canonical_bytes();
         assert_eq!(
@@ -2068,14 +2071,14 @@ mod tests {
 
     #[test]
     fn unsupported_formats_are_typed_refusals_not_compatibility_arms() {
-        for version in [0, 1, 2, 4] {
+        for version in [0, 1, 2, 3, 5] {
             let unsupported = serde_json::to_vec(&serde_json::json!({
                 "format-version": version,
                 "release": {}
             }))
             .unwrap();
             let error = ServingManifest::from_canonical_bytes(&unsupported)
-                .expect_err("only format three may enter the decoder");
+                .expect_err("only format four may enter the decoder");
             assert_eq!(
                 error,
                 CatalogIdentityError::UnsupportedServingManifestVersion {

@@ -369,7 +369,7 @@ fn release_manifest(component: &AdmittedComponent, wiring_hash: &str) -> serde_j
             }],
             "attachments": {
                 (ATTACHMENT_ID): {
-                    "kind": "http",
+                    "type": "http",
                     "package-id": PACKAGE,
                     "wiring-id": WIRING_ID,
                     "wiring-version": WIRING_VERSION,

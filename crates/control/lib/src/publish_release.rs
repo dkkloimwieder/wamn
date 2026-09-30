@@ -1412,7 +1412,7 @@ async fn mint_release_manifest_from_sources(
             MintManifestError::with_source(
                 MintManifestErrorKind::Document,
                 format!(
-                    "effective release {} does not project a deliverable format-3 manifest",
+                    "effective release {} does not project a deliverable format-4 manifest",
                     request.effective_release_id
                 ),
                 error,

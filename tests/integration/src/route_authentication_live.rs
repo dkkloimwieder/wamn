@@ -267,7 +267,7 @@ fn load_serving_release() -> anyhow::Result<Arc<LoadedRelease>> {
             }],
             "attachments": {
                 (ATTACHMENT_ID): {
-                    "kind": "http",
+                    "type": "http",
                     "package-id": FIXTURE_PACKAGE_ID,
                     "wiring-id": "item-get",
                     "wiring-version": 1,

@@ -166,7 +166,7 @@ fn route_attachment(id: &str, path: &str, operation: &str, modes: &[&str]) -> Va
     let definition = json!({"id": id, "kind": "http", "route": {
         "host": "purchase.example.test", "path": path, "method": "POST"
     }});
-    json!({"kind": "http", "package-id": "session_test", "component": "purchase",
+    json!({"type": "http", "package-id": "session_test", "component": "purchase",
         "operation": operation, "definition-hash": wamn_execution_contract::canonical_json_sha256(&definition),
         "definition": definition, "auth-policy": {"modes": modes}, "registered-operation": operation})
 }
@@ -185,8 +185,8 @@ fn load_release(modes: &[&str]) -> anyhow::Result<Arc<LoadedRelease>> {
                 WRITE: {"registered-operation": WRITE, "permissions": [WRITE]}
             }}],
         "routes": [
-            {"package-id": "session_test", "component": "purchase", "operation": READ, "kind": "get"},
-            {"package-id": "session_test", "component": "purchase", "operation": WRITE, "kind": "create"}
+            {"package-id": "session_test", "component": "purchase", "operation": READ, "type": "get"},
+            {"package-id": "session_test", "component": "purchase", "operation": WRITE, "type": "create"}
         ],
         "attachments": {
             READ_ROUTE: route_attachment(READ_ROUTE, "/purchase/read", READ, modes),
@@ -194,7 +194,7 @@ fn load_release(modes: &[&str]) -> anyhow::Result<Arc<LoadedRelease>> {
         "workflow": {
             "wirings": [{"package-id": "session_test", "wiring-id": "purchase", "wiring-version": 1,
                 "graph-hash": format!("sha256:{}", "b".repeat(64))}],
-            "attachments": {ATTACHMENT: {"kind": "http", "package-id": "session_test", "wiring-id": "purchase",
+            "attachments": {ATTACHMENT: {"type": "http", "package-id": "session_test", "wiring-id": "purchase",
                 "wiring-version": 1, "definition-hash": wamn_execution_contract::canonical_json_sha256(&definition),
                 "definition": definition, "auth-policy": {"modes": modes}, "registered-operation": READ}}
         }
