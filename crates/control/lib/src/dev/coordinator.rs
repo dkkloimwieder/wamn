@@ -15,7 +15,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use crate::apply_package::{self, ApplyPackageRequest};
 use crate::component_declaration::{
     ComponentDeclarationError, ComponentDeclarationErrorKind, PACKAGE_MANIFEST,
-    authored_base_digests, render_declaration_document,
+    authored_base_digests, declared_platform_packages, render_declaration_document,
+    render_palette_declaration,
 };
 use crate::publish_release::{self, PublishReleaseRequest, ReleaseWiringTarget};
 use crate::push_component::{AdmitComponentRequest, ComponentAdmission, admit_component};
@@ -166,6 +167,16 @@ impl Error for ProductionDevStageError {
 #[derive(Debug, Deserialize)]
 struct ComponentBuildPlan {
     virtualization: ComponentVirtualizationPlan,
+    palette: Vec<PaletteArtifactPlan>,
+}
+
+/// One palette component that a wiring of a selected package names, as
+/// `tools/build-components` found and built it (wamn-hw3n).
+#[derive(Clone, Debug, Deserialize)]
+struct PaletteArtifactPlan {
+    component: String,
+    declaration: PathBuf,
+    artifact: PathBuf,
 }
 
 #[derive(Debug, Deserialize)]
@@ -192,6 +203,15 @@ struct SelectedComponentArtifact {
     component: Box<str>,
     path: PathBuf,
     digest: Box<str>,
+}
+
+/// A palette component admitted into the scope of the package whose wiring
+/// names it, with the store alias that its wiring node sets.
+#[derive(Clone, Debug)]
+struct SelectedPaletteArtifact {
+    artifact: SelectedComponentArtifact,
+    declaration: PathBuf,
+    store_alias: Option<Box<str>>,
 }
 
 #[derive(Clone, Debug)]
@@ -355,6 +375,7 @@ pub struct ProductionDevStageRunner {
     catalogs: BTreeMap<String, CatalogIr>,
     build: Option<BuildStageOutput>,
     artifacts: Vec<SelectedComponentArtifact>,
+    palette_artifacts: Vec<SelectedPaletteArtifact>,
     verified_base_digests: Vec<VerifiedBaseComponentDigest>,
     admissions: Vec<ComponentAdmission>,
     gated_wirings: Vec<WiringInput>,
@@ -400,6 +421,7 @@ impl fmt::Debug for ProductionDevStageRunner {
             )
             .field("catalog_count", &self.catalogs.len())
             .field("artifact_count", &self.artifacts.len())
+            .field("palette_artifact_count", &self.palette_artifacts.len())
             .field(
                 "verified_base_digest_count",
                 &self.verified_base_digests.len(),
@@ -432,6 +454,7 @@ impl ProductionDevStageRunner {
             catalogs: BTreeMap::new(),
             build: None,
             artifacts: Vec::new(),
+            palette_artifacts: Vec::new(),
             verified_base_digests: Vec::new(),
             admissions: Vec::new(),
             gated_wirings: Vec::new(),
@@ -819,6 +842,8 @@ impl ProductionDevStageRunner {
             &self.package_inputs()?,
             &build.plan.virtualization.artifacts,
         )?;
+        self.palette_artifacts =
+            select_palette_artifacts(&self.package_inputs()?, &build.plan.palette)?;
 
         let packages = self
             .packages
@@ -870,7 +895,7 @@ impl ProductionDevStageRunner {
             )?;
             let admission = admit_component(AdmitComponentRequest {
                 package: package.root,
-                component_bytes: artifact.path,
+                component_bytes: artifact.path.clone(),
                 declaration: declaration.path().to_owned(),
                 admitted_platform_packages: vec![
                     NODE_CAPABILITY.to_owned(),
@@ -880,26 +905,45 @@ impl ProductionDevStageRunner {
             .map_err(|source| {
                 ProductionDevStageError::owner("admit exact component bytes", source)
             })?;
-            if admission.package_id() != artifact.package_id.as_ref()
-                || admission.package_version() != artifact.package_version.as_ref()
-                || admission.component() != artifact.component.as_ref()
-                || admission.component_digest() != artifact.digest.as_ref()
-            {
-                return Err(ProductionDevStageError::invalid(
-                    "carry admitted component identity",
-                    format!(
-                        "{}@{}::{} digest {} differs from selected {}@{}::{} digest {}",
-                        admission.package_id(),
-                        admission.package_version(),
-                        admission.component(),
-                        admission.component_digest(),
-                        artifact.package_id,
-                        artifact.package_version,
-                        artifact.component,
-                        artifact.digest
-                    ),
-                ));
-            }
+            require_admitted_identity(&admission, &artifact)?;
+            self.admissions.push(admission);
+        }
+        // Each palette component a wiring names, admitted into the scope of
+        // its package with the packages its own declaration states, as the
+        // cluster path pushes it (wamn-hw3n).
+        for palette in self.palette_artifacts.clone() {
+            let artifact = palette.artifact;
+            let package = self.package_input(&artifact.package_id)?;
+            let scope = wamn_catalog::ComponentPackageScope {
+                tenant_id: self.config.activation_identity().tenant.clone(),
+                package_id: artifact.package_id.to_string(),
+                package_version: artifact.package_version.to_string(),
+            };
+            let document = render_palette_declaration(
+                &palette.declaration,
+                &scope,
+                palette.store_alias.as_deref(),
+            )
+            .map_err(declaration_stage_error)?;
+            let admitted_platform_packages =
+                declared_platform_packages(&palette.declaration, &document)
+                    .map_err(declaration_stage_error)?;
+            let rendered = serde_json::to_vec(&document).map_err(|source| {
+                ProductionDevStageError::owner("serialize palette declaration", source.into())
+            })?;
+            let declaration = TemporaryFile::write(&rendered).map_err(|source| {
+                ProductionDevStageError::owner("write rendered palette declaration", source)
+            })?;
+            let admission = admit_component(AdmitComponentRequest {
+                package: package.root,
+                component_bytes: artifact.path.clone(),
+                declaration: declaration.path().to_owned(),
+                admitted_platform_packages,
+            })
+            .map_err(|source| {
+                ProductionDevStageError::owner("admit exact palette component bytes", source)
+            })?;
+            require_admitted_identity(&admission, &artifact)?;
             self.admissions.push(admission);
         }
         Ok(())
@@ -908,10 +952,10 @@ impl ProductionDevStageRunner {
     async fn gate(&mut self) -> Result<(), ProductionDevStageError> {
         self.clear_after(DevStage::Gate);
         let mut read_outcomes = Vec::new();
-        if self.admissions.len() != self.package_inputs()?.len() {
+        if self.admissions.len() != self.artifacts.len() + self.palette_artifacts.len() {
             return Err(ProductionDevStageError::invalid(
                 "gate package wirings",
-                "every package must carry one exact admission before Gate",
+                "every package and palette component must carry one exact admission before Gate",
             ));
         }
         for input in load_wirings(&self.package_inputs()?)? {
@@ -1127,7 +1171,11 @@ impl ProductionDevStageRunner {
         fs::create_dir_all(&local.directory).map_err(|source| {
             ProductionDevStageError::owner("create local artifact directory", source.into())
         })?;
-        for artifact in &self.artifacts {
+        for artifact in self.artifacts.iter().chain(
+            self.palette_artifacts
+                .iter()
+                .map(|palette| &palette.artifact),
+        ) {
             let bytes = fs::read(&artifact.path).map_err(|source| {
                 ProductionDevStageError::owner("read local component", source.into())
             })?;
@@ -1507,6 +1555,7 @@ impl ProductionDevStageRunner {
                 self.catalogs.clear();
                 self.build = None;
                 self.artifacts.clear();
+                self.palette_artifacts.clear();
                 self.verified_base_digests.clear();
                 self.admissions.clear();
                 self.gated_wirings.clear();
@@ -1515,6 +1564,7 @@ impl ProductionDevStageRunner {
             DevStage::Generate | DevStage::Build => {
                 self.build = None;
                 self.artifacts.clear();
+                self.palette_artifacts.clear();
                 self.verified_base_digests.clear();
                 self.admissions.clear();
                 self.gated_wirings.clear();
@@ -1522,6 +1572,7 @@ impl ProductionDevStageRunner {
             }
             DevStage::Virtualize => {
                 self.artifacts.clear();
+                self.palette_artifacts.clear();
                 self.verified_base_digests.clear();
                 self.admissions.clear();
                 self.gated_wirings.clear();
@@ -2309,6 +2360,103 @@ fn select_component_artifacts(
         });
     }
     Ok(selected)
+}
+
+/// The palette components that the wirings of each package name, each with the
+/// one store alias its nodes set. A node component that the plan does not list
+/// as palette is a package component, or Gate refuses it.
+fn select_palette_artifacts(
+    packages: &[PackageInput],
+    plan: &[PaletteArtifactPlan],
+) -> Result<Vec<SelectedPaletteArtifact>, ProductionDevStageError> {
+    let mut named = BTreeMap::<(Box<str>, Box<str>, usize), BTreeSet<&str>>::new();
+    let wirings = load_wirings(packages)?;
+    for input in &wirings {
+        for node in input.wiring.nodes.values() {
+            let Some(palette) = plan
+                .iter()
+                .position(|palette| palette.component == node.component)
+            else {
+                continue;
+            };
+            let aliases = named
+                .entry((
+                    input.package_id.clone(),
+                    input.package_version.clone(),
+                    palette,
+                ))
+                .or_default();
+            if let Some(alias) = node.params.get("store_alias").and_then(Value::as_str) {
+                aliases.insert(alias);
+            }
+        }
+    }
+    let mut selected = Vec::with_capacity(named.len());
+    for ((package_id, package_version, palette), aliases) in named {
+        let palette = &plan[palette];
+        if aliases.len() > 1 {
+            return Err(ProductionDevStageError::invalid(
+                "select palette component artifact",
+                format!(
+                    "{package_id}@{package_version} names palette component {} with more than \
+                     one store_alias: {aliases:?}",
+                    palette.component
+                ),
+            ));
+        }
+        let bytes = fs::read(&palette.artifact).map_err(|source| {
+            ProductionDevStageError::owner(
+                "read palette component output",
+                anyhow!(source).context(format!("read {}", palette.artifact.display())),
+            )
+        })?;
+        if bytes.is_empty() {
+            return Err(ProductionDevStageError::invalid(
+                "read palette component output",
+                format!("{} is empty", palette.artifact.display()),
+            ));
+        }
+        selected.push(SelectedPaletteArtifact {
+            artifact: SelectedComponentArtifact {
+                package_id,
+                package_version,
+                component: palette.component.clone().into_boxed_str(),
+                path: palette.artifact.clone(),
+                digest: wamn_engine::component_admission::component_digest(&bytes).into_boxed_str(),
+            },
+            declaration: palette.declaration.clone(),
+            store_alias: aliases.into_iter().next().map(Box::from),
+        });
+    }
+    Ok(selected)
+}
+
+/// Refuse an admission whose identity differs from the artifact selected for it.
+fn require_admitted_identity(
+    admission: &ComponentAdmission,
+    artifact: &SelectedComponentArtifact,
+) -> Result<(), ProductionDevStageError> {
+    if admission.package_id() != artifact.package_id.as_ref()
+        || admission.package_version() != artifact.package_version.as_ref()
+        || admission.component() != artifact.component.as_ref()
+        || admission.component_digest() != artifact.digest.as_ref()
+    {
+        return Err(ProductionDevStageError::invalid(
+            "carry admitted component identity",
+            format!(
+                "{}@{}::{} digest {} differs from selected {}@{}::{} digest {}",
+                admission.package_id(),
+                admission.package_version(),
+                admission.component(),
+                admission.component_digest(),
+                artifact.package_id,
+                artifact.package_version,
+                artifact.component,
+                artifact.digest
+            ),
+        ));
+    }
+    Ok(())
 }
 
 fn canonical_component_build_package(component: &str) -> String {

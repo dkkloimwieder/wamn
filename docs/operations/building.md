@@ -32,6 +32,8 @@ tools/build-components all
 
 These are alternative selections. The last command selects every guest from Cargo metadata.
 Each selected guest gets one Cargo invocation, with the retained release profile and virtualization step.
+A selected application also builds each palette component that its wirings name.
+The tool finds a palette component by the `component` of its `declaration.json.in` under `apps/platform/*/*/`, and builds the crate in that directory.
 Pass the resolved base app directories when building an overlay.
 If an overlay is composed and its base app is not in the selection, the build fails.
 Do not combine guests into a new grouped Cargo invocation.
@@ -65,6 +67,7 @@ The composer does not compare the base bytes with the digest pin in `wamn.json`.
 
 The build tool requires `jq` and `sha256sum`.
 `build-only app APP_DIRECTORY...` and `build-only all` emit an artifact plan to stdout.
+Its `palette` list gives each palette component, its declaration, and its artifact: the virtualized output when the allowlist names the crate, and the raw guest otherwise.
 `virtualize-only ARTIFACT_PLAN` refuses changed inputs or raw hashes before it updates outputs. It then composes the overlays.
 `watch-roots app APP_DIRECTORY...` lists selected source dependencies without building them.
 It also includes the shared platform WIT sources, so interface edits rebuild the selected components.
