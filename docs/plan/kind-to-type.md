@@ -1,6 +1,6 @@
 # Platform `kind` to `type` migration
 
-Status: Draft. Section 1 accepted 2026-09-29 (wamn-sfea.1). Sections 2–6 pending wamn-sfea.2–.6.
+Status: Draft. Section 1 accepted 2026-09-29 (wamn-sfea.1). Section 2 is a draft from wamn-sfea.2. Sections 3 to 5 are pending wamn-sfea.3 to wamn-sfea.5. Section 6 holds an owner ruling (wamn-sfea.6).
 
 Measured on `main` at `1045b4fad`.
 
@@ -22,18 +22,18 @@ Column meanings:
 
 - **Owned**: `yes` if WAMN defines the name. `no` if a third party defines it. `ask` if the owner must decide.
 - **Serialized**: `yes` if the name reaches bytes that leave the process (a file, a hash input, a wire body, a column). `value` if only the values of a `*Kind` type are serialized and the word `kind` is not. `no` if the name stays in source.
-- **Hashed**: whether the key or the value feeds a definition hash, a manifest digest or a schema identity. `tbd` means wamn-sfea.2 must decide.
+- **Hashed**: whether the key or the value feeds a definition hash, a manifest digest or a schema identity. wamn-sfea.2 resolved every former `tbd` cell. §2 gives the evidence.
 - **Count**: matches from the commands in §1.7. A count is a match count unless the row says otherwise.
 
 ### 1.1 Serialized authored surfaces
 
 | # | Surface | Key and values | Owned | Serialized | Hashed | Cite | Count |
 |---|---|---|---|---|---|---|---|
-| A1 | `apps/*/wamn.json` custom operations | `custom_operations.*.kind`: `command`, `projection`, `event_handler`. Parsed into `CustomOperationDeclaration.kind: CustomOperationKind` | yes | yes | tbd. The manifest is package content | `apps/wamn_receiving/wamn.json:377`, `crates/schema/generator/src/manifest.rs:58` | 21 |
-| A2 | `apps/*/publication/attachments.json` | Top-level `kind` and `definition.kind`, value `http` | yes | yes | yes. `definition.kind` is inside the canonical definition that `definition-hash` covers. The top-level `kind` enters the serving manifest digest (see G8) | `apps/wamn_receiving/publication/attachments.json:3`, `:10`. Hash check at `crates/control/lib/src/publish_release/attachments.rs:238` and `crates/schema/generator/src/route_schema.rs:219`. Hash function at `apps/platform/execution/contract/src/lib.rs:54` | 104 |
-| A3 | Test fixture packages | Same keys as A1 and A2 in fixture copies | yes | yes | tbd | `crates/control/lib/tests/fixtures/observer_package/wamn.json:32`, `services/ctl/tests/fixtures/ui_scaffold/publication/attachments.json:3` | 6 |
+| A1 | `apps/*/wamn.json` custom operations | `custom_operations.*.kind`: `command`, `projection`, `event_handler`. Parsed into `CustomOperationDeclaration.kind: CustomOperationKind` | yes | yes | yes. The `wamn.json` bytes are the `manifest_sha256` that seals the package coordinate (§2) | `apps/wamn_receiving/wamn.json:377`, `crates/schema/generator/src/manifest.rs:58` | 21 |
+| A2 | `apps/*/publication/attachments.json` | Top-level `kind` and `definition.kind`, value `http` | yes | yes | yes. `definition.kind` is inside the canonical definition that `definition-hash` covers. The top-level `kind` enters the serving manifest digest (see G8) | `apps/wamn_receiving/publication/attachments.json:3`, `:10`. Hash check at `crates/control/lib/src/publish_release/attachments.rs:238` and `crates/schema/generator/src/route_schema.rs:219`. Hash function at `apps/platform/execution/contract/src/lib.rs:54` | 36 (G1 holds the other 68) |
+| A3 | Test fixture packages | Same keys as A1 and A2 in fixture copies | yes | yes | yes, at test time only. The same hash code reads them. No sealed coordinate holds them (§2) | `crates/control/lib/tests/fixtures/observer_package/wamn.json:32`, `services/ctl/tests/fixtures/ui_scaffold/publication/attachments.json:3` | 6 |
 | A4 | Client TUI classification fixture | `kind` holds an operation kind | yes | yes | no | `crates/client/tui/tests/data/classification-cases.json:31` | 6 |
-| A5 | Application column named `kind` in `wamn.json` | The record-history column `kind` (see P9), named as a projection path and a row field. Becomes `type` (§1.8) | yes | yes | tbd | `apps/wamn_receiving/wamn.json:1087` | 3 |
+| A5 | Application column named `kind` in `wamn.json` | The record-history column `kind` (see P9), named as a projection path and a row field. Becomes `type` (§1.8) | yes | yes | yes. Same as A1. The column itself moves the digests of P9 (§2) | `apps/wamn_receiving/wamn.json:1087` | 3 |
 | A6 | Operator recovery CRD fixture | `resource_kind` holds a Kubernetes resource kind such as `Host`. Stays (§1.8 rule) | no | yes | no | `tests/integration/fixtures/operator-recovery/deployment-crds-001/crd-inventory.json:11` | 15 |
 
 No authored TOML file carries a `kind` key.
@@ -43,16 +43,16 @@ No authored TOML file carries a `kind` key.
 | # | Surface | Producer | Owned | Serialized | Hashed | Cite | Count |
 |---|---|---|---|---|---|---|---|
 | G1 | `apps/*/generated/publication/attachments.json` | `json!` with top-level `kind` and `definition.kind` | yes | yes | yes. Same as A2 | `crates/schema/generator/src/generate/publication.rs:61`, `:70` | 68 |
-| G2 | `generated/contracts/*/*.operation.json` | `"kind"` from `OperationKind` or action name | yes | yes | tbd. It becomes `ServingRoute.kind` (G8) | `crates/schema/generator/src/generate/contracts.rs:246`, `:837` | 57 |
-| G3 | `generated/contracts/*/query.input.json` | `pagination.kind`, value `keyset` | yes | yes | tbd | `crates/schema/generator/src/generate/contracts.rs:1172` | 10 |
-| G4 | `generated/source-map/*.json` | `"kind"` from the custom operation kind | yes | yes | tbd | `crates/schema/generator/src/generate/contracts.rs:188` | 8 |
+| G2 | `generated/contracts/*/*.operation.json` | `"kind"` from `OperationKind` or action name | yes | yes | yes. It becomes `ServingRoute.kind` (G8), inside the manifest digest | `crates/schema/generator/src/generate/contracts.rs:246`, `:837` | 57 |
+| G3 | `generated/contracts/*/query.input.json` | `pagination.kind`, value `keyset` | yes | yes | no. Only the client IR reads it, and no client output carries it (§2) | `crates/schema/generator/src/generate/contracts.rs:1172` | 10 |
+| G4 | `generated/source-map/*.json` | `"kind"` from the custom operation kind | yes | yes | no. Only SQLx metadata preparation reads source maps (§2) | `crates/schema/generator/src/generate/contracts.rs:188` | 8 |
 | G5 | `generated/package-weld.json` | `#[serde(tag = "kind")]` on `ConstraintKind`, `ColumnDefault`, `ColumnGeneration` | yes | yes | yes. The schema IR feeds `verified_schema_state_id` | `crates/schema/introspection/src/ir.rs:316`, `:227`, `:283`. Hash at `crates/schema/generator/src/generate.rs:415` | 72 |
-| G6 | Client IR | `OperationIr.kind: String`, serde, kebab-case | yes | yes | tbd | `crates/schema/generator/src/client_ir.rs:329` | 1 field |
-| G7 | Screen plan and generated clients | `SuppliedField.kind: SuppliedKind` in the plan. Emitted as `kind:` in generated TypeScript and TUI source | yes | yes, as generated source | tbd | `crates/schema/generator/src/client_plan.rs:128`, `crates/schema/generator/src/client_ts.rs:567`, `crates/schema/generator/src/client_tui.rs:469` | TS 35, TUI 148 |
+| G6 | Client IR | `OperationIr.kind: String`, serde, kebab-case | yes | yes | no. The IR lives in memory. Only tests compare its canonical bytes (§2) | `crates/schema/generator/src/client_ir.rs:329` | 1 field |
+| G7 | Screen plan and generated clients | `SuppliedField.kind: SuppliedKind` in the plan. Emitted as `kind:` in generated TypeScript and TUI source | yes | yes, as generated source | no hash. It moves client UI bytes (§2) | `crates/schema/generator/src/client_plan.rs:128`, `crates/schema/generator/src/client_ts.rs:567`, `crates/schema/generator/src/client_tui.rs:469` | TS 35, TUI 148 |
 | G8 | Serving (release) manifest | `kind` field on `ServingRoute` (`OperationKind`), `ServingAttachment`, `AttachmentWire`, `RouteAttachment`, `WiringAttachment` (`AttachmentKind`) | yes | yes | yes. `ServingManifest::digest` covers the canonical bytes | `crates/catalog/model/src/serving_manifest.rs:390`, `:441`, `:456`, `:639`, `:655`. Digest at `:886` | 5 fields |
 | G9 | Catalog canonical frames | `("kind", ...)` frame in `Source` and attachment definition identities | yes | yes | yes. The frames are the canonical bytes | `crates/catalog/model/src/lib.rs:623`, `:723`, `:875` | 3 |
-| G10 | Publish-release package source contract | `Contract.kind: OperationKind`, serde | yes | yes | tbd | `crates/control/lib/src/publish_release/package_sources.rs:147` | 1 field |
-| G11 | Generated app code | `StatementErrorKind` use in `generated/data/error.rs`. History `kind` column in generated WIT codec, accessor and client | yes | yes, as generated source | tbd | `apps/wamn_receiving/generated/data/error.rs:154`, `apps/wamn_receiving/generated/wit/receiving_load_purchase_order_history_codec.rs:55` | 30 and 17 |
+| G10 | Publish-release package source contract | `Contract.kind: OperationKind`, serde | yes | yes | yes. It is the reader of G2 and feeds G8 | `crates/control/lib/src/publish_release/package_sources.rs:147` | 1 field |
+| G11 | Generated app code | `StatementErrorKind` use in `generated/data/error.rs`. History `kind` column in generated WIT codec, accessor and client | yes | yes, as generated source | yes for the history codec and WIT, which compile into the `receiving` component digest. No for the `error.rs` local names (§2) | `apps/wamn_receiving/generated/data/error.rs:154`, `apps/wamn_receiving/generated/wit/receiving_load_purchase_order_history_codec.rs:55` | 30 and 17 |
 | G12 | Stored caller outcome | `StoredCallerOutcome.kind: String`, serde, kebab-case | yes | yes | no | `crates/execution/run-state/src/transitions.rs:57` | 1 field |
 
 ### 1.3 Wire surfaces
@@ -69,6 +69,8 @@ No authored TOML file carries a `kind` key.
 | W8 | Web runtime | `OperationContract.kind` read from generated clients. `SuppliedField.kind` values | yes | yes | `web/runtime/src/wire.ts:41`, `web/runtime/src/transport.ts:382`, `web/runtime/src/supplied.ts:45` | 7 |
 | W9 | Web table filters | `SetFilter.kind` discriminant. Values appear in URLs, the key does not. Becomes `type`, a rename only | yes | value | `web/ui/src/table/column-filter.tsx:26`, `web/ui/src/table/set-view.ts:41` | 34 |
 | W10 | Web tests and gallery | Fixtures of W8 | yes | no | `web/runtime/test/classification.test.ts:42`, `web/components/gallery/memory.tsx:28` | 12 |
+| W11 | Registry JSON | `#[serde(tag = "kind")]` on `Placement`. Not hashed | yes | yes | `crates/control/registry/src/types.rs:286` | 1 |
+| W12 | Trace attribute | `wamn.caller_credential_kind` | yes | yes | `crates/execution/host/src/operation.rs:191` | 1 |
 
 `*ErrorKind` values do not appear on the wire under a `kind` key. They leave the process as `code` strings. wamn-sfea.6 should confirm this per family.
 
@@ -142,7 +144,7 @@ git grep -h -o -i -E '[a-z_]*kind[a-z_]*' -- docs/history | wc -l               
 
 # 1.1 Authored
 git grep -h -o -E '"kind": *"(command|projection|event_handler)"' -- 'apps/*/wamn.json' | wc -l      # A1 21
-git grep -h -o -E '"kind": *"' -- 'apps/*/publication/attachments.json' | wc -l                     # A2 104
+git grep -h -o -E '"kind": *"' -- 'apps/*/publication/attachments.json' ':!apps/*/generated/*' | wc -l  # A2 36
 git grep -h -o -E '"kind": *"' -- 'crates/*wamn.json' 'services/*wamn.json' 'services/ctl/tests/fixtures/*attachments.json' | wc -l  # A3 6
 git grep -h -o '"kind":' -- crates/client/tui/tests/data/classification-cases.json | wc -l          # A4 6
 git grep -h -E '"(path|name)": *"kind"|^ *"kind",?$' -- 'apps/*/wamn.json' | wc -l                 # A5 3
@@ -210,6 +212,132 @@ Rule: a name that quotes another system's term keeps that term. `resource_kind` 
 - The WAMN enum `ErrorKind` in `connection_http/transport.rs` is in scope. It goes with the `*ErrorKind` decision in wamn-sfea.6.
 - `SetFilter.kind` (W9) becomes `type`. It is a rename only, because the word is not on the wire.
 - `DeliveryAdvisory` (W7) already sends `type`. Only its Rust names change.
+
+## 2. Digest and package-version consequences
+
+Draft from wamn-sfea.2. Measured on `worktree-table` at `f348aa1e4`. This section changes no code.
+
+### 2.1 What each identity hashes
+
+| Identity | Input bytes | Where it is compared or kept | Cite |
+|---|---|---|---|
+| Package manifest (`manifest_sha256`) | The raw `wamn.json` bytes. Nothing under `generated/`, no contract, no source map and no `package-weld.json` | `catalog.packages`. A coordinate that is already recorded with other bytes refuses with `package-coordinate-content-conflict` | `crates/schema/control/src/package_migrations.rs:342`, `:265`, `crates/control/lib/src/apply_package/package_version.rs:64` |
+| Package migrations | Each file under `migrations/`, by path and sha256 | `catalog.package_migrations`. A new version must keep the old stream as a byte-identical prefix | `crates/schema/control/src/package_migrations.rs:790`, `docs/architecture/data-access.md:13` |
+| Attachment `definition-hash` | `canonical_json_sha256` of the attachment `definition` object | Checked at release mint and at route-schema resolve. Stored in the serving manifest | `apps/platform/execution/contract/src/lib.rs:54`, `crates/control/lib/src/publish_release/attachments.rs:238`, `crates/schema/generator/src/route_schema.rs:227` |
+| `verified_schema_state_id` | Canonical JSON of the catalog IR. The catalog reader skips every `_history` table | `generated/package-weld.json`. The dev loop uses it only to decide if SQLx metadata is current | `crates/schema/generator/src/generate.rs:415`, `crates/schema/introspection/src/postgres.rs:261`, `crates/control/lib/src/dev/coordinator.rs:1733` |
+| `application_sql_corpus_identity` | The authored and generated SQL files | `package-weld.json`. `push-component` refuses a corpus that differs | `crates/schema/generator/src/generate.rs:421`, `crates/control/lib/src/push_component.rs:754` |
+| Component digest | sha256 of the component wasm bytes | `catalog.component_library`, keyed by package coordinate and component. Overlays pin the base digest in `base_dependencies[*].digest` | `deploy/sql/catalog-schema.sql:191`, `crates/control/lib/src/component_declaration.rs:122` |
+| Serving manifest digest | Canonical bytes of the whole release manifest: routes, attachments with their definitions and hashes, component digests, wirings | Release records, run admission pins, edge bundles, the web client upload path | `crates/catalog/model/src/serving_manifest.rs:886`, `crates/control/lib/src/dev/edge_bundle.rs`, `docs/operations/deployment.md:207` |
+| Authoring request hash | Canonical JSON of the whole authoring request, with its `kind` tags | `catalog.authoring_command_audit.request_hash`. A retry with the same `command-id` replays only on an equal hash | `services/scenario-worker/src/management.rs:394`, `:259`, `deploy/sql/control-portable-store.sql:280` |
+
+A package version is part of every sealed operation id, `<package>:<interface>/<operation>@<version>`. WIT packages, contracts, every file under `generated/`, the clients and the grants carry it (`docs/architecture/data-access.md:153`). So a package that takes a new version regenerates all of its generated files and rebuilds all of its components, whatever its `kind` count is.
+
+### 2.2 Effect of each serialized row
+
+Columns: **Def** is the attachment definition hash. **Pkg** is the package manifest hash. **Schema** is `verified_schema_state_id`. **Comp** is a component digest. **Release** is the serving manifest digest and release bytes. **Client** is generated client source and the web bundle. `-` means no effect.
+
+| Row | Def | Pkg | Schema | Comp | Release | Client | Other effect and evidence |
+|---|---|---|---|---|---|---|---|
+| A1 | - | yes | - | - | - | - | `wamn.json` of six packages. The data-access overlay also records `manifest_sha256` (`crates/schema/generator/src/data_access.rs:779`) |
+| A2 | yes | - | - | - | yes | - | The authored `definition-hash` value must be rewritten in the file. All 52 attachment definitions recompute to their stored hash, and all 52 move when `definition.kind` becomes `type` (proof 1) |
+| A3 | yes | yes | - | - | - | - | Test fixtures only. No sealed coordinate. Regenerate |
+| A4 | - | - | - | - | - | - | Test data only |
+| A5 | - | yes | - | - | - | - | `wamn_receiving/wamn.json` only. Its column moves the rows of P9 |
+| G1 | yes | - | - | - | yes | - | Same as A2 for generated route attachments |
+| G2 | - | - | - | - | yes | yes | Read into `ServingRoute.kind` (`crates/control/lib/src/publish_release/package_sources.rs:124`) and into the client IR (`crates/schema/generator/src/client_ir.rs:1155`) |
+| G3 | - | - | - | - | - | - | Only the client IR reads it (`crates/schema/generator/src/client_ir.rs:1354`). No generated client names `keyset` (`git grep -c keyset -- 'apps/*/generated/client-ts/*' 'apps/*/generated/*-tui/*'` is empty). Generated file bytes only |
+| G4 | - | - | - | - | - | - | Only SQLx metadata preparation reads source maps (`crates/schema/generator/src/sqlx_metadata.rs:170`). Generated file bytes only |
+| G5 | - | - | yes | - | - | - | The `kind` tags of `ConstraintKind`, `ColumnDefault` and `ColumnGeneration` are inside the catalog IR. The weld also copies `ConstraintKind` into `required_schema_contract` (`crates/schema/generator/src/generate/contracts.rs:1431`). Every package with a table moves. `edge_device` has no table and does not |
+| G6 | - | - | - | - | - | yes | In memory only. Its canonical bytes are compared only in tests (`crates/schema/generator/tests/support/platform_client_ir.rs:337`) |
+| G7 | - | - | - | - | - | yes | Generated TypeScript and TUI source. The web bundle upload path is keyed by the release digest, so old bundles keep their path |
+| G8 | yes | - | - | - | yes | - | Proof 2. The reader admits format 3 only, with no dual-version tolerance (`crates/catalog/model/src/serving_manifest.rs:33`, `:898`). Edge bundles carry the same manifest |
+| G9 | yes | - | - | - | - | - | Only tests call `Attachment::resolve` (`crates/catalog/model/tests/identity.rs:35`, `tests/conformance/src/catalog.rs:26`). The pinned baseline at `crates/catalog/model/tests/identity.rs:156` moves if the frame tag renames |
+| G10 | - | - | - | - | yes | - | The reader of G2 |
+| G11 | - | - | - | yes | yes | yes | The history codec and WIT compile into the `receiving` component (`apps/wamn_receiving/component/src/reads.rs:89`). The component digest is in the release. The `error.rs` matches are local names and moves nothing by itself |
+| G12 | - | - | - | - | - | - | Built from row columns (`crates/execution/run-state/src/transitions.rs:109`, `:307`). Not hashed |
+| W1 | - | - | - | - | - | - | Moves the stored authoring request hash and the stored `outcome_bytes`. An old command retried after the rename hashes differently and refuses instead of replaying (`services/scenario-worker/src/management.rs:262`). §5 must decide |
+| W2 | - | - | - | - | - | - | Wire only |
+| W3 | - | - | - | yes | - | - | `http-route` and `materializer` import `wamn:router-delivery/delivery@0.1.0` (`apps/platform/ingress/http-route/wit/world.wit`, `apps/platform/execution/materializer/wit/world.wit:21`). The pin `apps/platform/ingress/http-route/http_route.wasm.sha256` must be rewritten. The host binary changes too |
+| W4 | - | - | - | yes | yes | yes | The `receiving` component and the generated Rust and TypeScript clients (`apps/wamn_receiving/generated/client/receiving.rs:172`, `apps/wamn_receiving/generated/client-ts/receiving.ts:46`) |
+| W5 | - | - | - | - | - | - | JetStream stream bytes. `RouterTapWire` carries `format_version` (`crates/platform/runtime/src/plugins/wamn_jetstream.rs:262`). §5 must decide on a format bump |
+| W6 | - | - | - | - | - | - | An error label (`crates/platform/runtime/src/connection_generation.rs:230`). The `CredentialKind` values stay |
+| W7 | - | - | - | - | - | - | Rust names only |
+| W8 | - | - | - | - | - | yes | Web runtime bundle |
+| W9 | - | - | - | - | - | yes | Web bundle only. The key is not on the wire |
+| W10 | - | - | - | - | - | - | Tests and gallery |
+| P9 | - | - | - | yes | yes | yes | History DDL is platform-owned (`deploy/sql/record-history.sql:117`), so no package migration changes. The one authored read `apps/wamn_receiving/query/load_purchase_order_history.sql:12` changes. That moves the `receiving` SQL corpus identity, its statement digest constants and its SQLx query file `apps/wamn_receiving/tests/.sqlx/query-04951d1d….json`. The history columns also appear in the generated data-access overlays of `wamn_receiving`, `wamn_wms` and `platform_fixture`. A change to `record-history.sql` marks the SQLx metadata of every package stale in the dev loop (`crates/control/lib/src/dev/coordinator.rs:1710`) |
+| P1 to P8, P10 to P14 | - | - | - | - | - | - | Database columns only. §4 migrates them |
+| R1 to R3, R5, R6 | - | - | - | see note | - | - | Serialized values keep their spelling. A type rename moves no hashed byte |
+
+Note on component bytes. Release components build with `strip = true` (`apps/Cargo.toml:141`). So a pure Rust type or local name leaves no trace in a released component. Three things do stay in the bytes: WIT names, serde keys, and the names that a derived `Debug` prints. A scan of the release builds in `apps/target` (dated 2026-09-26, some stale) found `failure-kind` in `http_route.wasm` and `materializer.wasm`, and `StatementError` with its field `kind` in `receiving.wasm`. That field is `apps/platform/data/postgres-statements/src/lib.rs:88`. The palette components (`http_request`, `transform`, `label_render`, `blob_put`) hold no WAMN `kind` string. The `kind` strings in `jsonata_expression.wasm` and `sqlx_command.wasm` come from third-party crates and `std`.
+
+Proofs. Each is a throwaway Python script that reads tracked files and writes nothing. It hashes `json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False)` with sha256, which reproduces the platform canonical bytes for these documents.
+
+1. Every `definition-hash` in `apps/*/publication/attachments.json` and `apps/*/generated/publication/attachments.json`, recomputed over its `definition`. Result: 52 attachments, 52 equal to the stored hash, 52 different after `definition.kind` becomes `type`.
+2. The release manifest vector in `crates/catalog/model/tests/fixtures/release_manifest_mint_vector.rs`. As is, it hashes to the pinned `sha256:bc7a8268…`. With its 5 `"kind":` keys renamed, it hashes to `sha256:0baa4d79…`.
+
+### 2.3 Package versions
+
+Every application package must take a new version. Each new `wamn.json` must declare the current version as `predecessor_version`. Registration refuses a new version whose predecessor is not the current leaf (`crates/schema/control/src/package_migrations.rs:287`). No migration file changes, so each new stream keeps the old one as its prefix.
+
+| Package | Current coordinate | Declared at | Changes | Why |
+|---|---|---|---|---|
+| `wamn_receiving` | 1.0.0 | `apps/wamn_receiving/wamn.json:4` | yes | A1 (4 keys) and A5 (3) move its manifest hash. P9, W4 and G11 move its `receiving` component |
+| `wamn_wms` | 1.0.0 | `apps/wamn_wms/wamn.json:4` | yes | A1 (5 keys). The palette components that it admits under its coordinate (`label-render`, `blob-put`, `jsonata`) keep their bytes but are admitted again under the new coordinate |
+| `client_acme_receiving` | 3.0.0, pins `wamn_receiving` 1.0.0 | `apps/client_acme_receiving/wamn.json:4`, `:9` | yes | A1 (5 keys). Its base pin moves to the new `wamn_receiving` version and `receiving` digest |
+| `platform_fixture` | 1.0.0 | `apps/platform_fixture/wamn.json:4` | yes | A1 (4 keys) |
+| `platform_fixture_overlay` | 1.0.0, pins `platform_fixture` 1.0.0 | `apps/platform_fixture_overlay/wamn.json:4`, `:9` | yes | Its `wamn.json` holds no `kind`. Its base pin must move with `platform_fixture` |
+| `edge_samples` | 1.0.0 | `apps/edge_samples/wamn.json:4` | yes | A1 (2 keys) |
+| `edge_device` | 1.0.0 | `apps/edge_device/wamn.json:4` | yes | A1 (1 key) |
+
+Platform components under `apps/platform/` have no package coordinate. Their crates are all 0.1.0.
+
+| Component | Changes | Why |
+|---|---|---|
+| `http-route` | yes, new digest | W3. Rewrite `http_route.wasm.sha256` |
+| `materializer` (execution) | yes, new digest | W3 |
+| `events/wire` | Rust names only | W7 |
+| `http-request`, `transform`, `label-render`, `label-template`, `blob-put`, `jsonata`, `events/materializer`, `events/registration`, `fixtures/*` | no | No serialized WAMN `kind`. See the question on `Debug` field names below |
+
+### 2.4 What stays and what is regenerated
+
+Stays, byte for byte:
+
+- Every sealed coordinate above, in every environment where it is recorded: its `catalog.packages` row, its migrations, its `catalog.component_library` rows and its component bytes. Applying new bytes under an old coordinate refuses, so the new vocabulary can only arrive under new versions.
+- Every minted release manifest and its digest, every edge bundle and every uploaded web client path.
+- Authoring audit rows and gate reports.
+- `crates/schema/control/src/package_migrations.rs:796`. Its pinned manifest holds no `kind`.
+- `docs/history/` and the dated digest table at `docs/operations/gcp.md:1184`.
+
+Regenerated for the new vocabulary:
+
+| Evidence | Row |
+|---|---|
+| Every file under `apps/*/generated/` | all app rows, and the version bump itself |
+| `apps/wamn_receiving/tests/.sqlx/query-04951d1d….json` | P9 |
+| `apps/platform/ingress/http-route/http_route.wasm.sha256` | W3 |
+| `crates/catalog/model/tests/fixtures/release_manifest_mint_vector.rs`, `crates/catalog/model/tests/serving_manifest_digest.rs` | G8 |
+| Manifest constants in `crates/execution/host/src/router_delivery.rs:959` and `crates/platform/engine/src/router_delivery.rs:625` | G8 |
+| `crates/catalog/model/tests/identity.rs:156` | G9, if the frame tag renames |
+| `crates/control/lib/tests/fixtures/observer_package/wamn.json`, `crates/control/lib/tests/fixtures/apply_package/overlay/wamn.json`, `services/ctl/tests/fixtures/ui_scaffold/` | A3 |
+| `crates/client/tui/tests/data/classification-cases.json` | A4 |
+| Router tap test bodies in `crates/platform/runtime/src/plugins/wamn_jetstream.rs:2190` | W5 |
+
+### 2.5 Questions for the owner
+
+1. **New version numbers.** Which version does each package take? A key rename breaks every client of the old contract, which suggests a major step (1.0.0 to 2.0.0, and 3.0.0 to 4.0.0 for `client_acme_receiving`).
+2. **Router delivery WIT.** Rename `failure-kind` inside `wamn:router-delivery@0.1.0`, or publish the rename under a new WIT package version? A version 0.2.0 already exists (`crates/execution/host/wit/deps/wamn-router-delivery-0.2/package.wit:1`).
+3. **Serving manifest format.** Does the rename take format version 4? The reader admits only format 3 (`crates/catalog/model/src/serving_manifest.rs:33`). Old releases keep format 3 bytes. §5 depends on this answer.
+4. **Catalog frame tag.** Rename the `("kind", ...)` frame label in G9? Only tests use those frames.
+5. **Authoring retries (W1).** Is it acceptable that a command sent before the rename cannot be replayed after it?
+6. **§6 and component bytes.** The §6 ruling says the 73 `*ErrorKind` families move no bytes. That holds for the type names. It does not hold if the same commit renames `kind` fields of error structs that derive `Debug` and compile into a component, such as `StatementError.kind`. Rename those fields, or keep them?
+7. **`NodeErrorKind`.** §6 says its wire bytes move. No field holds a `NodeErrorKind`, and its serialized values do not contain the type name (`crates/execution/run-state/src/status.rs:252`). By code, its rename moves no bytes. Confirm or correct §6.
+
+Inventory gaps found while tracing, not yet rows of §1:
+
+- `Placement` in `crates/control/registry/src/types.rs:286` uses `#[serde(tag = "kind")]` on registry JSON. It is WAMN-owned and not hashed.
+- The span attribute `wamn.caller_credential_kind` in `crates/execution/host/src/operation.rs:191`.
+- The A2 count of 104 includes the 68 matches of G1, because the A2 pathspec also matches `generated/publication/`. The authored count is 36.
 
 ## 6. `*ErrorKind` families
 
