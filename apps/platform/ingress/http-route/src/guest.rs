@@ -9,7 +9,7 @@ mod bindings {
         world: "wamn:flow-http/flow-http@0.1.0",
         path: [
             "../../../../crates/platform/runtime/wit/deps/wamn-flow-http-routing",
-            "../../../../crates/execution/host/wit/deps/wamn-router-delivery-0.2",
+            "../../../../crates/execution/host/wit/deps/wamn-router-delivery-0.3",
             "../../execution/materializer/wit/deps/wasi-clocks",
             "wit",
         ],
@@ -17,8 +17,8 @@ mod bindings {
         async: [
             "export:wasi:http/handler@0.3.0#handle",
             "wamn:flow-http-routing/routing@0.1.0#authenticate",
-            "wamn:router-delivery/delivery@0.2.0#deliver",
-            "wamn:router-delivery/delivery@0.2.0#deliver-stream",
+            "wamn:router-delivery/delivery@0.3.0#deliver",
+            "wamn:router-delivery/delivery@0.3.0#deliver-stream",
         ],
     });
 }
@@ -261,17 +261,17 @@ fn convert_delivery_failure(
 ) -> DeliveryFailure {
     use bindings::wamn::router_delivery::delivery;
     DeliveryFailure {
-        kind: match failure.kind {
-            delivery::FailureKind::Terminal => DeliveryFailureKind::Terminal,
-            delivery::FailureKind::RetryExhausted => DeliveryFailureKind::RetryExhausted,
-            delivery::FailureKind::InvalidInput => DeliveryFailureKind::InvalidInput,
-            delivery::FailureKind::HopLimit => DeliveryFailureKind::HopLimit,
-            delivery::FailureKind::UnreleasedCaller => DeliveryFailureKind::UnreleasedCaller,
-            delivery::FailureKind::MissingDedupId => DeliveryFailureKind::MissingDedupId,
-            delivery::FailureKind::RespondWithoutCaller => {
+        kind: match failure.failure_type {
+            delivery::FailureType::Terminal => DeliveryFailureKind::Terminal,
+            delivery::FailureType::RetryExhausted => DeliveryFailureKind::RetryExhausted,
+            delivery::FailureType::InvalidInput => DeliveryFailureKind::InvalidInput,
+            delivery::FailureType::HopLimit => DeliveryFailureKind::HopLimit,
+            delivery::FailureType::UnreleasedCaller => DeliveryFailureKind::UnreleasedCaller,
+            delivery::FailureType::MissingDedupId => DeliveryFailureKind::MissingDedupId,
+            delivery::FailureType::RespondWithoutCaller => {
                 DeliveryFailureKind::RespondWithoutCaller
             }
-            delivery::FailureKind::SecondVerdict => DeliveryFailureKind::SecondVerdict,
+            delivery::FailureType::SecondVerdict => DeliveryFailureKind::SecondVerdict,
         },
         code: failure.code,
         message: failure.message,

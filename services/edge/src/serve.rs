@@ -297,7 +297,7 @@ fn ingress_workload(release: &EdgeRelease, route_host: &str) -> WorkloadStartReq
             host_interfaces: vec![
                 handler,
                 WitInterface::from("wamn:flow-http-routing/routing@0.1.0"),
-                WitInterface::from("wamn:router-delivery/delivery@0.2.0"),
+                WitInterface::from("wamn:router-delivery/delivery@0.3.0"),
             ],
             volumes: Vec::new(),
         },

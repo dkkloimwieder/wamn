@@ -1,9 +1,9 @@
-package wamn:router-delivery@0.2.0;
+package wamn:router-delivery@0.3.0;
 
-/// 0.2.0 is 0.1.0 with one added call, `deliver-stream`, which answers a
-/// query read as the rows arrive (owner ruling on wamn-utci, 2026-09-26).
-/// 0.1.0 is retired (wamn-lt7y): this is the one version in the tree, and it
-/// declares every 0.1.0 type itself.
+/// 0.3.0 is 0.2.0 with `failure-kind` renamed `failure-type`, and the field
+/// `delivery-failure.kind` renamed `failure-type` (wamn-ld93.1). 0.2.0 added
+/// `deliver-stream`, which answers a query read as the rows arrive (owner
+/// ruling on wamn-utci, 2026-09-26). This is the one version in the tree.
 
 /// Host-owned delivery into the one production router driver.
 interface delivery {
@@ -43,7 +43,7 @@ interface delivery {
   }
 
   /// The router's exhaustive terminal failure classes.
-  enum failure-kind {
+  enum failure-type {
     terminal,
     retry-exhausted,
     invalid-input,
@@ -57,7 +57,7 @@ interface delivery {
   /// Caller-facing failure truth. Retired node coordinates do not cross this
   /// boundary.
   record delivery-failure {
-    kind: failure-kind,
+    failure-type: failure-type,
     code: option<string>,
     message: string,
   }

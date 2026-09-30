@@ -1,4 +1,4 @@
-//! Host plugin for `wamn:router-delivery@0.2.0`, the one guest-to-host
+//! Host plugin for `wamn:router-delivery@0.3.0`, the one guest-to-host
 //! delivery import that attachment and registration ingress share.
 //! `deliver-stream` answers a query read as its rows arrive.
 //!
@@ -39,7 +39,7 @@ use crate::route_bindings::wamn::router_delivery::delivery;
 /// settle into.
 pub use crate::route_bindings::wamn::router_delivery::delivery::{
     DeadlineAdjustment, DeliveryError, DeliveryFailure, DeliveryOutcome, DeliveryReport,
-    DeliveryRequest, EffectOutcome, Emission, FailedOutcome, FailureKind, ParentCausation,
+    DeliveryRequest, EffectOutcome, Emission, FailedOutcome, FailureType, ParentCausation,
     PartialCompletion, PermissionDenial, Source,
 };
 
@@ -113,7 +113,7 @@ impl HostPlugin for RouterDelivery {
 
     fn world(&self) -> WitWorld {
         WitWorld {
-            imports: HashSet::from([WitInterface::from("wamn:router-delivery/delivery@0.2.0")]),
+            imports: HashSet::from([WitInterface::from("wamn:router-delivery/delivery@0.3.0")]),
             exports: HashSet::new(),
         }
     }
@@ -449,11 +449,11 @@ pub struct RouteSettlement {
 pub fn settle_route(
     outcome: Result<node_types::Emission, node_types::NodeError>,
 ) -> anyhow::Result<RouteSettlement> {
-    let failed = |kind, detail: node_types::ErrorDetail| RouteSettlement {
+    let failed = |failure_type, detail: node_types::ErrorDetail| RouteSettlement {
         label: "failed",
         result: serde_json::json!({"code": detail.code, "message": detail.message}),
         outcome: DeliveryOutcome::Failed(DeliveryFailure {
-            kind,
+            failure_type,
             code: detail.code,
             message: detail.message,
         }),
@@ -469,14 +469,14 @@ pub fn settle_route(
             }
         }
         Err(node_types::NodeError::Retryable(detail)) => {
-            failed(FailureKind::RetryExhausted, detail)
+            failed(FailureType::RetryExhausted, detail)
         }
         Err(node_types::NodeError::RateLimited(limited)) => {
-            failed(FailureKind::RetryExhausted, limited.detail)
+            failed(FailureType::RetryExhausted, limited.detail)
         }
-        Err(node_types::NodeError::Terminal(detail)) => failed(FailureKind::Terminal, detail),
+        Err(node_types::NodeError::Terminal(detail)) => failed(FailureType::Terminal, detail),
         Err(node_types::NodeError::InvalidInput(detail)) => {
-            failed(FailureKind::InvalidInput, detail)
+            failed(FailureType::InvalidInput, detail)
         }
         Err(node_types::NodeError::Cancelled) => RouteSettlement {
             outcome: DeliveryOutcome::Cancelled,

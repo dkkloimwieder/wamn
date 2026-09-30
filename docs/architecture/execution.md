@@ -75,7 +75,7 @@ Every stage between the database and the socket holds a few batches at most, so 
 A load that stops ends its database query, whether it reached its cap, the client aborted it, or the connection dropped.
 A closed connection drops the reply lines, the host then drops the rows and the component's stream, and the host rolls the query's transaction back.
 The test `a_streamed_load_that_stops_ends_its_database_query` in [`route_interface_live`](../../tests/integration/src/route_interface_live.rs) watches the server's open transactions for each of the three stops.
-The router calls `deliver-stream` of [`wamn:router-delivery` 0.2.0](../../crates/execution/host/wit/deps/wamn-router-delivery-0.2/package.wit), which adds that call to 0.1.0 and names the 0.1.0 types.
+The router calls `deliver-stream` of [`wamn:router-delivery` 0.3.0](../../crates/execution/host/wit/deps/wamn-router-delivery-0.3/package.wit), the one version in the tree.
 [`query_read`](../../crates/execution/host/src/query_read.rs) owns the ceiling and the lines.
 
 `invoke_operation` takes an optional intent context, and with one a write logs one intent for each input item and runs only the new items.

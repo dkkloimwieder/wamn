@@ -402,7 +402,7 @@ fn shared_wit_changes_select_the_workspaces_with_direct_readers() {
             true,
         ),
         (
-            "crates/execution/host/wit/deps/wamn-router-delivery-0.2/package.wit",
+            "crates/execution/host/wit/deps/wamn-router-delivery-0.3/package.wit",
             false,
         ),
         (

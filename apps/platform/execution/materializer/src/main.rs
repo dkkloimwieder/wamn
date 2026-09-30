@@ -11,7 +11,7 @@ mod bindings {
             "../../../../crates/platform/runtime/wit/deps/wamn-flow-http-routing",
             "../../../../crates/platform/runtime/wit/deps/wamn-jetstream",
             "../../../../crates/platform/runtime/wit/deps/wamn-postgres-0.3",
-            "../../../../crates/execution/host/wit/deps/wamn-router-delivery-0.2",
+            "../../../../crates/execution/host/wit/deps/wamn-router-delivery-0.3",
             "wit",
         ],
         generate_all,
@@ -525,15 +525,15 @@ fn delivery_disposition(result: &Result<DeliveryOutcome, DeliveryError>) -> Deli
             DeliveryDisposition::Terminate("router-terminal")
         }
         Ok(DeliveryOutcome::Failed(failure)) => {
-            DeliveryDisposition::Terminate(match failure.kind {
-                delivery::FailureKind::Terminal => "router-terminal",
-                delivery::FailureKind::RetryExhausted => "router-retry-exhausted",
-                delivery::FailureKind::InvalidInput => "router-invalid-input",
-                delivery::FailureKind::HopLimit => "router-hop-limit",
-                delivery::FailureKind::UnreleasedCaller => "router-unreleased-caller",
-                delivery::FailureKind::MissingDedupId => "router-missing-dedup-id",
-                delivery::FailureKind::RespondWithoutCaller => "router-respond-without-caller",
-                delivery::FailureKind::SecondVerdict => "router-second-verdict",
+            DeliveryDisposition::Terminate(match failure.failure_type {
+                delivery::FailureType::Terminal => "router-terminal",
+                delivery::FailureType::RetryExhausted => "router-retry-exhausted",
+                delivery::FailureType::InvalidInput => "router-invalid-input",
+                delivery::FailureType::HopLimit => "router-hop-limit",
+                delivery::FailureType::UnreleasedCaller => "router-unreleased-caller",
+                delivery::FailureType::MissingDedupId => "router-missing-dedup-id",
+                delivery::FailureType::RespondWithoutCaller => "router-respond-without-caller",
+                delivery::FailureType::SecondVerdict => "router-second-verdict",
             })
         }
         Err(
@@ -872,7 +872,7 @@ async fn run_service() {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use bindings::wamn::router_delivery::delivery::{DeliveryFailure, FailureKind};
+    use bindings::wamn::router_delivery::delivery::{DeliveryFailure, FailureType};
     use wamn_event_wire::{Causation, Op};
 
     fn serving() -> Serving {
@@ -1038,7 +1038,7 @@ mod tests {
     #[test]
     fn router_completion_matrix_separates_deterministic_poison_from_retry() {
         let failed = Ok(DeliveryOutcome::Failed(DeliveryFailure {
-            kind: FailureKind::InvalidInput,
+            failure_type: FailureType::InvalidInput,
             code: None,
             message: "bad event".into(),
         }));

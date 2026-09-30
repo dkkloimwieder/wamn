@@ -7,7 +7,7 @@
 wash_runtime::wasmtime::component::bindgen!({
     path: [
         "../runtime/wit/deps/wamn-flow-http-routing",
-        "../../execution/host/wit/deps/wamn-router-delivery-0.2",
+        "../../execution/host/wit/deps/wamn-router-delivery-0.3",
         "wit",
     ],
     world: "wamn:engine/route-plugins@0.1.0",

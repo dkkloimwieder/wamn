@@ -7,7 +7,7 @@ use opentelemetry::KeyValue;
 use wamn_catalog::{AttachmentTarget, RegistrationDelivery};
 use wamn_engine::router_delivery::{
     DeliveryClass, DeliveryError, DeliveryFailure, DeliveryOutcome, EXECUTION_FAILED,
-    EffectOutcome as WireEffectOutcome, Emission, FailedOutcome, FailureKind as WireFailureKind,
+    EffectOutcome as WireEffectOutcome, Emission, FailedOutcome, FailureType as WireFailureType,
     OperationRefusal, PartialCompletion, ROUTER_DELIVERY_ID, SourceRef, lower_operation_refusal,
 };
 use wamn_event_wire::Causation;
@@ -401,7 +401,7 @@ pub(crate) fn lower_outcome(outcome: Outcome) -> Result<DeliveryOutcome, Deliver
             .failure
             .map(|failure| {
                 DeliveryOutcome::Failed(DeliveryFailure {
-                    kind: lower_failure_kind(failure.kind),
+                    failure_type: lower_failure_type(failure.kind),
                     code: failure.detail.code,
                     message: failure.detail.message,
                 })
@@ -426,16 +426,16 @@ fn lower_verdict(verdict: Verdict) -> Result<DeliveryOutcome, DeliveryError> {
     }
 }
 
-fn lower_failure_kind(kind: FailureKind) -> WireFailureKind {
+fn lower_failure_type(kind: FailureKind) -> WireFailureType {
     match kind {
-        FailureKind::Terminal => WireFailureKind::Terminal,
-        FailureKind::RetryExhausted => WireFailureKind::RetryExhausted,
-        FailureKind::InvalidInput => WireFailureKind::InvalidInput,
-        FailureKind::HopLimit => WireFailureKind::HopLimit,
-        FailureKind::UnreleasedCaller => WireFailureKind::UnreleasedCaller,
-        FailureKind::MissingDedupId => WireFailureKind::MissingDedupId,
-        FailureKind::RespondWithoutCaller => WireFailureKind::RespondWithoutCaller,
-        FailureKind::SecondVerdict => WireFailureKind::SecondVerdict,
+        FailureKind::Terminal => WireFailureType::Terminal,
+        FailureKind::RetryExhausted => WireFailureType::RetryExhausted,
+        FailureKind::InvalidInput => WireFailureType::InvalidInput,
+        FailureKind::HopLimit => WireFailureType::HopLimit,
+        FailureKind::UnreleasedCaller => WireFailureType::UnreleasedCaller,
+        FailureKind::MissingDedupId => WireFailureType::MissingDedupId,
+        FailureKind::RespondWithoutCaller => WireFailureType::RespondWithoutCaller,
+        FailureKind::SecondVerdict => WireFailureType::SecondVerdict,
     }
 }
 
@@ -464,7 +464,10 @@ mod tests {
         let DeliveryOutcome::Failed(failure) = lower_outcome(outcome).expect("failure maps") else {
             panic!("failed walk must remain a failed delivery")
         };
-        assert!(matches!(failure.kind, WireFailureKind::InvalidInput));
+        assert!(matches!(
+            failure.failure_type,
+            WireFailureType::InvalidInput
+        ));
         assert_eq!(failure.code.as_deref(), Some("bad-order"));
         assert_eq!(failure.message, "order is invalid");
     }
@@ -700,7 +703,7 @@ mod partial_tests {
         let FailedOutcome::Failed(failure) = partial.failed_outcome else {
             panic!("original node failure")
         };
-        assert!(matches!(failure.kind, WireFailureKind::Terminal));
+        assert!(matches!(failure.failure_type, WireFailureType::Terminal));
         assert_eq!(failure.code.as_deref(), Some("write_failed"));
         assert_eq!(failure.message, "label store failed");
     }
