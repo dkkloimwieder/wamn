@@ -23,11 +23,11 @@ CREATE TABLE IF NOT EXISTS provisioning.dumps (
 );
 
 -- Durable state for the operations-only copy pipeline. It is deliberately
--- separate from core provisioning sagas; the fixed kind makes a copy row
+-- separate from core provisioning sagas; the fixed type makes a copy row
 -- impossible to reinterpret as an ordinary provisioning operation.
 CREATE TABLE IF NOT EXISTS provisioning.copy_sagas (
     saga_id     text PRIMARY KEY,
-    kind        text NOT NULL,
+    type        text NOT NULL,
     target      text NOT NULL,
     status      text NOT NULL DEFAULT 'pending',
     step        int  NOT NULL DEFAULT 0,
@@ -35,7 +35,7 @@ CREATE TABLE IF NOT EXISTS provisioning.copy_sagas (
     last_error  text,
     created_at  timestamptz NOT NULL DEFAULT now(),
     updated_at  timestamptz NOT NULL DEFAULT now(),
-    CONSTRAINT copy_sagas_kind_check CHECK (kind = 'copy'),
+    CONSTRAINT copy_sagas_type_check CHECK (type = 'copy'),
     CONSTRAINT copy_sagas_status_check
         CHECK (status IN ('pending', 'running', 'completed', 'failed',
                           'compensating', 'compensated')),

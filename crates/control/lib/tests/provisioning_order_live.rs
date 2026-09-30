@@ -134,7 +134,7 @@ async fn reset_cluster(catalog: &Client, database: &str, roles: &[&str]) {
     catalog
         .batch_execute(&format!(
             "ALTER TABLE registry.project_envs OWNER TO wamn_system; \
-             INSERT INTO registry.orgs (id, placement_kind, pool_cluster) \
+             INSERT INTO registry.orgs (id, placement_type, pool_cluster) \
              VALUES ('{ORG}', 'pooled', 'pool') ON CONFLICT (id) DO NOTHING; \
              INSERT INTO registry.env_policies \
                (org, name, recovery_domain, promotion_rank, instances, storage, cpu, memory, \

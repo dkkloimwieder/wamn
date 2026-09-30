@@ -8,27 +8,27 @@
 
 /// Upsert an org's placement row into `registry.orgs` (idempotent + additive —
 /// re-running `provision-org` refreshes placement, never dropping). Params: `$1`
-/// id, `$2` placement_kind (`pooled` / `dedicated`), `$3` pool_cluster (nullable
+/// id, `$2` placement_type (`pooled` / `dedicated`), `$3` pool_cluster (nullable
 /// `text` — the shared pool for a pooled org, `NULL` for a dedicated org whose
 /// clusters are derived, D18 [`cluster_of`](crate::cluster_of)).
 ///
 /// The placement-kind CHECK and the `pooled ⟺ pool_cluster` structural CHECK are
 /// enforced by the schema, not re-checked here — a bad row is rejected by the DB.
 pub fn upsert_org_sql() -> &'static str {
-    "INSERT INTO registry.orgs (id, placement_kind, pool_cluster) \
+    "INSERT INTO registry.orgs (id, placement_type, pool_cluster) \
      VALUES ($1, $2, $3) \
      ON CONFLICT (id) DO UPDATE SET \
-       placement_kind = EXCLUDED.placement_kind, \
+       placement_type = EXCLUDED.placement_type, \
        pool_cluster = EXCLUDED.pool_cluster"
 }
 
-/// Select an org's placement (`placement_kind`, `pool_cluster`) by id, so
+/// Select an org's placement (`placement_type`, `pool_cluster`) by id, so
 /// `provision-project-env` (wamn-q3n.7) can derive the target cluster per-env via
 /// [`cluster_of`](crate::cluster_of) (placement + the env policy) — without
 /// loading the whole registry or requiring the project-env to already exist
 /// (which is what [`resolve`](crate::Registry::resolve) needs). Param: `$1` org id.
 pub fn select_org_placement_sql() -> &'static str {
-    "SELECT placement_kind, pool_cluster FROM registry.orgs WHERE id = $1"
+    "SELECT placement_type, pool_cluster FROM registry.orgs WHERE id = $1"
 }
 
 // --- env policies (wamn-8df.3; org-scoped by wamn-8df.4) --------------------

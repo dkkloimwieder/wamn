@@ -1003,7 +1003,7 @@ async fn tenant_projection_and_instance_claim_hold_on_postgres() {
     };
     let mut first = connect().await;
     first.batch_execute("SET ROLE wamn_system").await.unwrap();
-    first.batch_execute("INSERT INTO registry.orgs (id,placement_kind) VALUES ('demo','dedicated'); INSERT INTO registry.env_policies (org,name,recovery_domain,promotion_rank,instances,storage,cpu,memory,image) VALUES ('demo','dev','\"own\"',0,1,'1Gi','1','1Gi','postgres:18')").await.unwrap();
+    first.batch_execute("INSERT INTO registry.orgs (id,placement_type) VALUES ('demo','dedicated'); INSERT INTO registry.env_policies (org,name,recovery_domain,promotion_rank,instances,storage,cpu,memory,image) VALUES ('demo','dev','\"own\"',0,1,'1Gi','1','1Gi','postgres:18')").await.unwrap();
     let triple = Triple::new("demo", "inventory", "dev");
     let other = Triple::new("demo", "shipping", "dev");
     let mut second = connect().await;

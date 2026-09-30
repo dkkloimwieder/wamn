@@ -939,7 +939,7 @@ async fn provision(admin: &mut Client, admin_url: &str) -> anyhow::Result<()> {
         .context("map the control-author login to its one tenant")?;
     admin
         .batch_execute(&format!(
-            "INSERT INTO registry.orgs (id, placement_kind, pool_cluster) \
+            "INSERT INTO registry.orgs (id, placement_type, pool_cluster) \
                VALUES ('{ORG}', 'pooled', 'pool-a'); \
              INSERT INTO registry.projects (org, id) VALUES ('{ORG}', '{PROJECT}'); \
              INSERT INTO registry.projects (org, id) VALUES ('{ORG}', '{OTHER_PROJECT}');"

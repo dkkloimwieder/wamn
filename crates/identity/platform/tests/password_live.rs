@@ -67,7 +67,7 @@ async fn enrollment_preserves_identity_and_pat_and_consumes_all_invitations() {
     )
     .await
     .unwrap();
-    client.batch_execute("INSERT INTO registry.orgs (id, placement_kind) VALUES ('password-test', 'dedicated');
+    client.batch_execute("INSERT INTO registry.orgs (id, placement_type) VALUES ('password-test', 'dedicated');
         INSERT INTO registry.projects (org, id) VALUES ('password-test', 'widgets');
         INSERT INTO registry.env_policies (org, name, recovery_domain, promotion_rank, instances, storage, cpu, memory, image)
         VALUES ('password-test', 'dev', '\"own\"'::jsonb, 1, 1, '1Gi', '1', '1Gi', 'postgres:18');

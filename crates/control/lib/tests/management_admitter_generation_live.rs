@@ -372,7 +372,7 @@ async fn management_admitter_generation_lifecycle_converges_and_rotates() {
     catalog
         .batch_execute(&format!(
             "ALTER TABLE registry.project_envs OWNER TO wamn_system; \
-             INSERT INTO registry.orgs (id, placement_kind, pool_cluster) \
+             INSERT INTO registry.orgs (id, placement_type, pool_cluster) \
              VALUES ('{ORG}', 'pooled', 'pool') \
              ON CONFLICT (id) DO NOTHING; \
              INSERT INTO registry.env_policies \

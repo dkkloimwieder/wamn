@@ -25,7 +25,7 @@ pub fn ensure_ops_role_sql() -> &'static str {
 
 /// Create one copy saga idempotently.
 pub fn create_saga_sql() -> &'static str {
-    "INSERT INTO provisioning.copy_sagas (saga_id, kind, target, total_steps) \
+    "INSERT INTO provisioning.copy_sagas (saga_id, type, target, total_steps) \
      VALUES ($1, $2, $3, $4) \
      ON CONFLICT (saga_id) DO NOTHING"
 }

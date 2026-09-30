@@ -245,7 +245,7 @@ async fn setup(admin: &Client, system_url: &str) -> anyhow::Result<Client> {
         ))
         .await?;
     admin.batch_execute(&format!(r#"
-        INSERT INTO registry.orgs (id, placement_kind, pool_cluster) VALUES ('{ORG}', 'pooled', 'fixture');
+        INSERT INTO registry.orgs (id, placement_type, pool_cluster) VALUES ('{ORG}', 'pooled', 'fixture');
         INSERT INTO registry.env_policies (org,name,recovery_domain,promotion_rank,instances,storage,cpu,memory,image)
           VALUES ('{ORG}','{ENVIRONMENT}','"own"',0,1,'1Gi','1','1Gi','postgres:18');
         INSERT INTO registry.projects (org,id) VALUES ('{ORG}','{PROJECT}');

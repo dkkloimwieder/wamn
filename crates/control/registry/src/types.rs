@@ -292,7 +292,7 @@ pub enum Placement {
 }
 
 impl Placement {
-    /// The `placement_kind` storage literal (`pooled` / `dedicated`).
+    /// The `placement_type` storage literal (`pooled` / `dedicated`).
     pub fn kind_str(&self) -> &'static str {
         match self {
             Placement::Pooled { .. } => "pooled",

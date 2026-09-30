@@ -2,7 +2,7 @@
 
 /// Create one provisioning saga idempotently.
 pub fn create_saga_sql() -> &'static str {
-    "INSERT INTO provisioning.sagas (saga_id, kind, target, total_steps) \
+    "INSERT INTO provisioning.sagas (saga_id, type, target, total_steps) \
      VALUES ($1, $2, $3, $4) \
      ON CONFLICT (saga_id) DO NOTHING"
 }

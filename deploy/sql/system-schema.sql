@@ -124,7 +124,7 @@ INSERT INTO registry.meta (schema_version) VALUES ('0.1');
 
 -- ---------------------------------------------------------------------------
 -- Orgs — the unit of isolation and billing. Carries only the id and a minimal
--- D18 PLACEMENT (crates/control/registry Placement): `placement_kind` is `pooled`
+-- D18 PLACEMENT (crates/control/registry Placement): `placement_type` is `pooled`
 -- (every env shares `pool_cluster`, the T3-style pool) or `dedicated` (the org
 -- owns one cluster per recovery domain, `<org>-<owner(env)>`, DERIVED by
 -- cluster_of — not stored). The retired `tier` / `prod_cluster` / `canary_cluster`
@@ -144,12 +144,12 @@ INSERT INTO registry.meta (schema_version) VALUES ('0.1');
 -- ---------------------------------------------------------------------------
 CREATE TABLE registry.orgs (
     id             text PRIMARY KEY,
-    placement_kind text NOT NULL,
+    placement_type text NOT NULL,
     pool_cluster   text,
-    CONSTRAINT orgs_placement_kind_check
-        CHECK (placement_kind IN ('pooled', 'dedicated')),
+    CONSTRAINT orgs_placement_type_check
+        CHECK (placement_type IN ('pooled', 'dedicated')),
     CONSTRAINT orgs_pool_cluster_check
-        CHECK ((placement_kind = 'pooled') = (pool_cluster IS NOT NULL)),
+        CHECK ((placement_type = 'pooled') = (pool_cluster IS NOT NULL)),
     CONSTRAINT orgs_id_charset_check
         CHECK (id ~ '^[a-z0-9]+(-[a-z0-9]+)*$'
                AND char_length(id) <= 40
@@ -728,7 +728,7 @@ CREATE TABLE registry.capture_gap (
 -- ---------------------------------------------------------------------------
 CREATE TABLE provisioning.sagas (
     saga_id     text PRIMARY KEY,
-    kind        text NOT NULL,
+    type        text NOT NULL,
     target      text NOT NULL,
     status      text NOT NULL DEFAULT 'pending',
     step        int  NOT NULL DEFAULT 0,
@@ -736,8 +736,8 @@ CREATE TABLE provisioning.sagas (
     last_error  text,
     created_at  timestamptz NOT NULL DEFAULT now(),
     updated_at  timestamptz NOT NULL DEFAULT now(),
-    CONSTRAINT sagas_kind_check
-        CHECK (kind IN ('provision-org', 'provision-project-env')),
+    CONSTRAINT sagas_type_check
+        CHECK (type IN ('provision-org', 'provision-project-env')),
     CONSTRAINT sagas_status_check
         CHECK (status IN ('pending', 'running', 'completed', 'failed',
                           'compensating', 'compensated')),

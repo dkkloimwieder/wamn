@@ -1095,7 +1095,7 @@ async fn pat_caller(
                 .to_string()],
         )
         .await?;
-    system.execute("INSERT INTO registry.orgs (id, placement_kind, pool_cluster) VALUES ($1, 'pooled', 'warm-test')", &[&ORG]).await?;
+    system.execute("INSERT INTO registry.orgs (id, placement_type, pool_cluster) VALUES ($1, 'pooled', 'warm-test')", &[&ORG]).await?;
     system
         .execute(
             "INSERT INTO registry.projects (org, id) VALUES ($1, $2)",

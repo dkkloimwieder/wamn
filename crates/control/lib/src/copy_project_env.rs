@@ -40,7 +40,7 @@ use tokio_postgres::NoTls;
 use tokio_postgres::error::SqlState;
 
 use wamn_control_provision::{
-    COPY_SAGA_KIND, CopyRequest, CopyStep, DUMP_FORMAT, count_rows_sql, dump_object_key,
+    COPY_SAGA_TYPE, CopyRequest, CopyStep, DUMP_FORMAT, count_rows_sql, dump_object_key,
     list_schema_tables_sql, pg_dump_argv, pg_restore_data_only_argv, plan_copy,
     project_env_database_name, quiesce_database_sql, sql as provision_sql,
     terminate_database_backends_sql, unquiesce_database_sql, validate_project_env,
@@ -497,7 +497,7 @@ impl SagaRecorder {
         self.client
             .execute(
                 wamn_control_provision::state::create_saga_sql(),
-                &[&self.saga_id, &COPY_SAGA_KIND, &target, &Some(total_steps)],
+                &[&self.saga_id, &COPY_SAGA_TYPE, &target, &Some(total_steps)],
             )
             .await
             .context("create the copy saga")?;

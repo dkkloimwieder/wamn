@@ -43,7 +43,7 @@ async fn platform_identity_round_trip_on_postgres() {
         .expect("apply the system schema composition");
     client
         .batch_execute(
-            "INSERT INTO registry.orgs (id, placement_kind, pool_cluster) \
+            "INSERT INTO registry.orgs (id, placement_type, pool_cluster) \
              VALUES ('demo', 'pooled', 'wamn-pg'); \
              INSERT INTO registry.projects (org, id) VALUES ('demo', 'widgets');",
         )
@@ -245,7 +245,7 @@ async fn project_environment_membership_round_trip(
 ) {
     client
         .batch_execute(
-            "INSERT INTO registry.orgs (id, placement_kind, pool_cluster) \
+            "INSERT INTO registry.orgs (id, placement_type, pool_cluster) \
              VALUES ('other', 'pooled', 'wamn-pg'); \
              INSERT INTO registry.projects (org, id) \
              VALUES ('demo', 'inventory'), ('other', 'widgets'); \

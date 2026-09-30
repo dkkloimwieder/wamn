@@ -92,7 +92,7 @@ pub use control_author::{
 };
 #[cfg(feature = "ops")]
 pub use copy::{
-    COPY_SAGA_KIND, CopyRequest, CopyStep, DUMP_FORMAT, count_rows_sql, dump_object_key,
+    COPY_SAGA_TYPE, CopyRequest, CopyStep, DUMP_FORMAT, count_rows_sql, dump_object_key,
     list_schema_tables_sql, pg_dump_argv, pg_restore_data_only_argv, plan_copy,
     quiesce_database_sql, terminate_database_backends_sql, unquiesce_database_sql,
 };

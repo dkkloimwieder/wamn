@@ -51,7 +51,7 @@ fn system_schema_applies_and_enforces_invariants_on_postgres() {
          DO $$ BEGIN\n\
            ASSERT (SELECT count(*) FROM registry.orgs WHERE id='demo')=1,\n\
              'upsert_org_sql is idempotent — one row after two upserts';\n\
-           ASSERT (SELECT placement_kind FROM registry.orgs WHERE id='demo')='dedicated',\n\
+           ASSERT (SELECT placement_type FROM registry.orgs WHERE id='demo')='dedicated',\n\
              'the second upsert refreshed the placement (ON CONFLICT DO UPDATE)';\n\
            ASSERT (SELECT pool_cluster FROM registry.orgs WHERE id='demo') IS NULL,\n\
              'the second (dedicated) upsert cleared the pool cluster';\n\
@@ -177,7 +177,7 @@ fn system_schema_applies_and_enforces_invariants_on_postgres() {
          CREATE TEMP TABLE retired_probe AS EXECUTE retired('acme','billing','prod');\n\
          CREATE TEMP TABLE retired_other AS EXECUTE retired('demo','app','dev');\n\
          DO $$ BEGIN\n\
-           ASSERT (SELECT placement_kind || '/' || pool_cluster FROM place_probe)='pooled/wamn-pg',\n\
+           ASSERT (SELECT placement_type || '/' || pool_cluster FROM place_probe)='pooled/wamn-pg',\n\
              'select_org_placement_sql reads the org placement';\n\
            ASSERT (SELECT count(*) FROM place_other)=0,\n\
              'select_org_placement_sql returns no row for an unknown org';\n\
@@ -227,7 +227,7 @@ fn system_schema_applies_and_enforces_invariants_on_postgres() {
          EXECUTE saga_fail('saga-b','boom');\n\
          CREATE TEMP TABLE saga_failed AS EXECUTE saga_select('saga-b');\n\
          DO $$ BEGIN\n\
-           ASSERT (SELECT kind || '/' || target FROM provisioning.sagas WHERE saga_id='saga-a')\n\
+           ASSERT (SELECT type || '/' || target FROM provisioning.sagas WHERE saga_id='saga-a')\n\
                ='provision-org/demo',\n\
              'a repeated create_saga_sql changes nothing';\n\
            ASSERT (SELECT status || '/' || step || '/' || total_steps FROM saga_running)='running/2/3',\n\
@@ -397,7 +397,7 @@ fn identifier_cases() -> String {
             .any(|issue| issue.path == path)
     };
     let mut s = String::from(
-        "INSERT INTO registry.orgs (id, placement_kind, pool_cluster) \
+        "INSERT INTO registry.orgs (id, placement_type, pool_cluster) \
          VALUES ('probe','dedicated',NULL);\n",
     );
     let mut case = |accepted: bool, insert: String, remove: String, input: &str| {
@@ -421,7 +421,7 @@ fn identifier_cases() -> String {
         case(
             accepted(registry, "orgs[0].id"),
             format!(
-                "INSERT INTO registry.orgs (id, placement_kind, pool_cluster) \
+                "INSERT INTO registry.orgs (id, placement_type, pool_cluster) \
                  VALUES ('{id}','dedicated',NULL)"
             ),
             format!("DELETE FROM registry.orgs WHERE id='{id}'"),
@@ -436,7 +436,7 @@ fn identifier_cases() -> String {
         case(
             accepted(registry, "orgs[0].placement.pool"),
             format!(
-                "INSERT INTO registry.orgs (id, placement_kind, pool_cluster) \
+                "INSERT INTO registry.orgs (id, placement_type, pool_cluster) \
                  VALUES ('pooled','pooled','{pool}')"
             ),
             "DELETE FROM registry.orgs WHERE id='pooled'".to_owned(),
@@ -488,7 +488,7 @@ const ASSERTIONS: &str = r#"
 -- FK integrity: an org + its per-org policies (8df.4 fixtures — the REAL stamp
 -- builder is exercised via PREPARE later) + its project + two provisioned envs
 -- (references only). 'try' deliberately gets NO policy rows.
-INSERT INTO registry.orgs (id, placement_kind, pool_cluster)
+INSERT INTO registry.orgs (id, placement_type, pool_cluster)
   VALUES ('acme','dedicated',NULL),
          ('try','pooled','wamn-pg');
 INSERT INTO registry.env_policies
@@ -566,20 +566,20 @@ DO $$ BEGIN ASSERT (SELECT count(*) FROM registry.project_envs
 
 -- D18 placement: the pooled ⟺ pool_cluster CHECK. A pooled org MUST name a pool.
 DO $$ BEGIN BEGIN
-  INSERT INTO registry.orgs (id, placement_kind, pool_cluster)
+  INSERT INTO registry.orgs (id, placement_type, pool_cluster)
     VALUES ('badpool','pooled',NULL);
   ASSERT false, 'a pooled org with no pool cluster must be rejected';
 EXCEPTION WHEN check_violation THEN NULL; END; END $$;
 -- A dedicated org MUST NOT carry a pool (its clusters are derived).
 DO $$ BEGIN BEGIN
-  INSERT INTO registry.orgs (id, placement_kind, pool_cluster)
+  INSERT INTO registry.orgs (id, placement_type, pool_cluster)
     VALUES ('baddedicated','dedicated','wamn-pg');
   ASSERT false, 'a dedicated org must not carry a pool cluster';
 EXCEPTION WHEN check_violation THEN NULL; END; END $$;
--- An unknown placement_kind is rejected.
+-- An unknown placement_type is rejected.
 DO $$ BEGIN BEGIN
-  INSERT INTO registry.orgs (id, placement_kind) VALUES ('badkind','elastic');
-  ASSERT false, 'an unknown placement_kind must be rejected';
+  INSERT INTO registry.orgs (id, placement_type) VALUES ('badkind','elastic');
+  ASSERT false, 'an unknown placement_type must be rejected';
 EXCEPTION WHEN check_violation THEN NULL; END; END $$;
 
 -- Registry and provisioning store references, not tenant database credentials.
@@ -632,15 +632,15 @@ DO $$ DECLARE tbls text; BEGIN
 END $$;
 
 -- Saga: creation is exactly-once via the saga_id PK; the kind/status CHECKs hold.
-INSERT INTO provisioning.sagas (saga_id, kind, target) VALUES ('s1','provision-org','acme')
+INSERT INTO provisioning.sagas (saga_id, type, target) VALUES ('s1','provision-org','acme')
   ON CONFLICT (saga_id) DO NOTHING;
 DO $$ BEGIN BEGIN
-  INSERT INTO provisioning.sagas (saga_id, kind, target) VALUES ('s2','provision-everything','x');
+  INSERT INTO provisioning.sagas (saga_id, type, target) VALUES ('s2','provision-everything','x');
   ASSERT false, 'an unknown saga kind must be rejected';
 EXCEPTION WHEN check_violation THEN NULL; END; END $$;
 -- Copy sagas belong to the operations artifact, never to the core relation.
 DO $$ BEGIN BEGIN
-  INSERT INTO provisioning.sagas (saga_id, kind, target) VALUES ('s3','copy','x');
+  INSERT INTO provisioning.sagas (saga_id, type, target) VALUES ('s3','copy','x');
   ASSERT false, 'a copy saga must be rejected by the core relation';
 EXCEPTION WHEN check_violation THEN NULL; END; END $$;
 DO $$ BEGIN BEGIN

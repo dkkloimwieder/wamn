@@ -58,7 +58,7 @@ async fn reset_and_install_control(admin: &Client) -> anyhow::Result<()> {
         .batch_execute(
             r#"RESET ROLE;
                SET ROLE wamn_system;
-               INSERT INTO registry.orgs (id, placement_kind, pool_cluster)
+               INSERT INTO registry.orgs (id, placement_type, pool_cluster)
                VALUES ('acme', 'pooled', 'route-auth-pg18');
                INSERT INTO registry.env_policies
                  (org, name, recovery_domain, promotion_rank, instances, storage, cpu, memory, image)
@@ -429,7 +429,7 @@ async fn assert_human_environment_membership(
         system_database_url: admin_url.to_owned(),
     };
     admin.batch_execute(
-        "INSERT INTO registry.orgs (id, placement_kind, pool_cluster) \
+        "INSERT INTO registry.orgs (id, placement_type, pool_cluster) \
          VALUES ('other-org', 'pooled', 'route-auth-pg18'); \
          INSERT INTO registry.projects (org, id) \
          VALUES ('other-org', 'receiving'), ('acme', 'other'); \

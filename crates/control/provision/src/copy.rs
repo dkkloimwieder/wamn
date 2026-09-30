@@ -79,8 +79,8 @@ impl CopyStep {
     }
 }
 
-/// The fixed saga `kind` admitted by `provisioning.copy_sagas`.
-pub const COPY_SAGA_KIND: &str = "copy";
+/// The fixed saga `type` admitted by `provisioning.copy_sagas`.
+pub const COPY_SAGA_TYPE: &str = "copy";
 
 /// Derive the ordered step plan for a copy request.
 ///

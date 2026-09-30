@@ -87,14 +87,14 @@ async fn do_resolve_cluster(
                 "org {org:?} is not registered: run provision-org before provisioning a project-env"
             )
         })?;
-    let placement_kind: String = row.get("placement_kind");
+    let placement_type: String = row.get("placement_type");
     let pool: Option<String> = row.get("pool_cluster");
-    let placement = match placement_kind.as_str() {
+    let placement = match placement_type.as_str() {
         "pooled" => Placement::Pooled {
             pool: pool.context("pooled org row is missing its pool_cluster")?,
         },
         "dedicated" => Placement::Dedicated,
-        other => anyhow::bail!("unknown placement_kind {other:?} for org {org:?}"),
+        other => anyhow::bail!("unknown placement_type {other:?} for org {org:?}"),
     };
     let org_obj = Org {
         id: org.to_string(),

@@ -74,7 +74,7 @@ pub(super) async fn assemble(
         .await?;
     system
         .execute(
-            "INSERT INTO registry.orgs (id, placement_kind, pool_cluster) VALUES ($1, 'pooled', 'local-application')",
+            "INSERT INTO registry.orgs (id, placement_type, pool_cluster) VALUES ($1, 'pooled', 'local-application')",
             &[&input.org],
         )
         .await?;

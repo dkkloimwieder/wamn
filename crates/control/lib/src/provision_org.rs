@@ -201,13 +201,13 @@ async fn record_org_rows(
     org: &Org,
     stamped: &[OrgEnvPolicy],
 ) -> anyhow::Result<()> {
-    let placement_kind = org.placement.kind_str();
+    let placement_type = org.placement.kind_str();
     // The pool cluster is set only for a pooled org; NULL for a dedicated org.
     let pool = org.placement.pool();
     client
         .execute(
             wamn_control_registry::sql::upsert_org_sql(),
-            &[&org.id, &placement_kind, &pool],
+            &[&org.id, &placement_type, &pool],
         )
         .await
         .context("upsert registry.orgs row")?;

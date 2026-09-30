@@ -40,7 +40,7 @@ fn ops_schema_applies_idempotently_after_core_on_postgres() {
     script.push('\n');
     script.push_str(CORE_OBJECTS_UNCHANGED);
     script.push_str(
-        "INSERT INTO registry.orgs (id, placement_kind) VALUES ('acme','dedicated');\n\
+        "INSERT INTO registry.orgs (id, placement_type) VALUES ('acme','dedicated');\n\
          INSERT INTO registry.env_policies \
              (org,name,recovery_domain,promotion_rank,instances,storage,cpu,memory,image) \
            VALUES ('acme','dev','\"own\"'::jsonb,10,1,'2Gi','200m','256Mi','postgres:18');\n\
