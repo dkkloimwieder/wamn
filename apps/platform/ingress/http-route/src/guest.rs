@@ -9,7 +9,6 @@ mod bindings {
         world: "wamn:flow-http/flow-http@0.1.0",
         path: [
             "../../../../crates/platform/runtime/wit/deps/wamn-flow-http-routing",
-            "../../../../crates/execution/host/wit/deps/wamn-router-delivery",
             "../../../../crates/execution/host/wit/deps/wamn-router-delivery-0.2",
             "../../execution/materializer/wit/deps/wasi-clocks",
             "wit",
@@ -128,7 +127,7 @@ impl Backend for GuestBackend {
         request: DeliveryRequest<Self::AuthenticatedCaller>,
     ) -> DeliveryReport {
         delivery_report(
-            bindings::wamn::router_delivery0_2_0::delivery::deliver(wire_request(request)).await,
+            bindings::wamn::router_delivery::delivery::deliver(wire_request(request)).await,
         )
     }
 
@@ -136,8 +135,7 @@ impl Backend for GuestBackend {
         &mut self,
         request: DeliveryRequest<Self::AuthenticatedCaller>,
     ) -> Result<StreamedHead, DeliveryReport> {
-        match bindings::wamn::router_delivery0_2_0::delivery::deliver_stream(wire_request(request))
-            .await
+        match bindings::wamn::router_delivery::delivery::deliver_stream(wire_request(request)).await
         {
             Ok(reply) => {
                 self.lines = Some(reply.lines);
@@ -154,8 +152,8 @@ impl Backend for GuestBackend {
 
 fn wire_request(
     request: DeliveryRequest<bindings::wamn::flow_http_routing::routing::AuthenticatedCaller>,
-) -> bindings::wamn::router_delivery0_1_0::delivery::DeliveryRequest {
-    use bindings::wamn::router_delivery0_1_0::delivery;
+) -> bindings::wamn::router_delivery::delivery::DeliveryRequest {
+    use bindings::wamn::router_delivery::delivery;
 
     delivery::DeliveryRequest {
         source: delivery::Source::Attachment(request.attachment_id),
@@ -172,7 +170,7 @@ fn wire_request(
 }
 
 fn delivery_report(
-    report: bindings::wamn::router_delivery0_1_0::delivery::DeliveryReport,
+    report: bindings::wamn::router_delivery::delivery::DeliveryReport,
 ) -> DeliveryReport {
     DeliveryReport {
         actor_labels: report.actor_labels,
@@ -205,9 +203,9 @@ fn hex(bytes: &[u8]) -> String {
 }
 
 fn convert_delivery_outcome(
-    outcome: bindings::wamn::router_delivery0_1_0::delivery::DeliveryOutcome,
+    outcome: bindings::wamn::router_delivery::delivery::DeliveryOutcome,
 ) -> DeliveryOutcome {
-    use bindings::wamn::router_delivery0_1_0::delivery;
+    use bindings::wamn::router_delivery::delivery;
 
     match outcome {
         delivery::DeliveryOutcome::Respond(payload) => DeliveryOutcome::Respond(payload),
@@ -259,9 +257,9 @@ fn convert_delivery_outcome(
 }
 
 fn convert_delivery_failure(
-    failure: bindings::wamn::router_delivery0_1_0::delivery::DeliveryFailure,
+    failure: bindings::wamn::router_delivery::delivery::DeliveryFailure,
 ) -> DeliveryFailure {
-    use bindings::wamn::router_delivery0_1_0::delivery;
+    use bindings::wamn::router_delivery::delivery;
     DeliveryFailure {
         kind: match failure.kind {
             delivery::FailureKind::Terminal => DeliveryFailureKind::Terminal,
@@ -281,9 +279,9 @@ fn convert_delivery_failure(
 }
 
 fn convert_delivery_error(
-    error: bindings::wamn::router_delivery0_1_0::delivery::DeliveryError,
+    error: bindings::wamn::router_delivery::delivery::DeliveryError,
 ) -> DeliveryError {
-    use bindings::wamn::router_delivery0_1_0::delivery::DeliveryError as WireError;
+    use bindings::wamn::router_delivery::delivery::DeliveryError as WireError;
 
     match error {
         WireError::SourceNotFound => DeliveryError::SourceNotFound,

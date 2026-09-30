@@ -11,7 +11,7 @@ mod bindings {
             "../../../../crates/platform/runtime/wit/deps/wamn-flow-http-routing",
             "../../../../crates/platform/runtime/wit/deps/wamn-jetstream",
             "../../../../crates/platform/runtime/wit/deps/wamn-postgres-0.3",
-            "../../../../crates/execution/host/wit/deps/wamn-router-delivery",
+            "../../../../crates/execution/host/wit/deps/wamn-router-delivery-0.2",
             "wit",
         ],
         generate_all,

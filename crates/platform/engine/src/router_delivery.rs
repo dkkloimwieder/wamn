@@ -1,7 +1,6 @@
-//! Host plugin for `wamn:router-delivery@0.1.0` and `@0.2.0`, the one
-//! guest-to-host delivery import that attachment and registration ingress
-//! share. 0.2.0 adds `deliver-stream`, which answers a query read as its rows
-//! arrive.
+//! Host plugin for `wamn:router-delivery@0.2.0`, the one guest-to-host
+//! delivery import that attachment and registration ingress share.
+//! `deliver-stream` answers a query read as its rows arrive.
 //!
 //! The plugin takes the caller handle back from the resource table and hands
 //! the request to the host's [`RouteDelivery`]. Every host serves a delivery
@@ -35,15 +34,14 @@ use wash_runtime::wit::{WitInterface, WitWorld};
 use crate::engine::MAX_HOST_CALL_DURATION;
 use crate::flow_http_routing::{AuthenticatedCaller, CredentialKind};
 use crate::operation::node_types;
-use crate::route_bindings::wamn::router_delivery0_1_0::delivery;
+use crate::route_bindings::wamn::router_delivery::delivery;
 /// The wire types of `wamn:router-delivery` that a host and the wiring layer
 /// settle into.
-pub use crate::route_bindings::wamn::router_delivery0_1_0::delivery::{
+pub use crate::route_bindings::wamn::router_delivery::delivery::{
     DeadlineAdjustment, DeliveryError, DeliveryFailure, DeliveryOutcome, DeliveryReport,
     DeliveryRequest, EffectOutcome, Emission, FailedOutcome, FailureKind, ParentCausation,
     PartialCompletion, PermissionDenial, Source,
 };
-use crate::route_bindings::wamn::router_delivery0_2_0::delivery as delivery_v2;
 
 /// Host-plugin identity for the one guest-to-router bridge.
 pub const ROUTER_DELIVERY_ID: &str = "wamn-router-delivery";
@@ -115,10 +113,7 @@ impl HostPlugin for RouterDelivery {
 
     fn world(&self) -> WitWorld {
         WitWorld {
-            imports: HashSet::from([
-                WitInterface::from("wamn:router-delivery/delivery@0.1.0"),
-                WitInterface::from("wamn:router-delivery/delivery@0.2.0"),
-            ]),
+            imports: HashSet::from([WitInterface::from("wamn:router-delivery/delivery@0.2.0")]),
             exports: HashSet::new(),
         }
     }
@@ -132,7 +127,6 @@ impl HostPlugin for RouterDelivery {
             return Ok(());
         }
         delivery::add_to_linker::<_, SharedCtx>(item.linker(), extract_active_ctx)?;
-        delivery_v2::add_to_linker::<_, SharedCtx>(item.linker(), extract_active_ctx)?;
         Ok(())
     }
 }
@@ -160,22 +154,11 @@ impl<T: 'static + Send> delivery::HostWithStore<T> for SharedCtx {
         })?;
         Ok(plugin.delivery.deliver(request, caller).await)
     }
-}
-
-impl delivery_v2::Host for ActiveCtx<'_> {}
-
-impl<T: 'static + Send> delivery_v2::HostWithStore<T> for SharedCtx {
-    async fn deliver(
-        accessor: &Accessor<T, Self>,
-        request: DeliveryRequest,
-    ) -> wash_runtime::wasmtime::Result<DeliveryReport> {
-        <Self as delivery::HostWithStore<T>>::deliver(accessor, request).await
-    }
 
     async fn deliver_stream(
         accessor: &Accessor<T, Self>,
         mut request: DeliveryRequest,
-    ) -> wash_runtime::wasmtime::Result<Result<delivery_v2::StreamedReply, DeliveryReport>> {
+    ) -> wash_runtime::wasmtime::Result<Result<delivery::StreamedReply, DeliveryReport>> {
         let (plugin, caller) = accessor.with(|mut access| {
             let ctx = access.get();
             let plugin = plugin_of(&ctx)?;
@@ -195,7 +178,7 @@ impl<T: 'static + Send> delivery_v2::HostWithStore<T> for SharedCtx {
                         lines: streamed.lines,
                     },
                 )?;
-                Ok(Ok(delivery_v2::StreamedReply {
+                Ok(Ok(delivery::StreamedReply {
                     etag: streamed.etag,
                     lines,
                 }))
