@@ -1321,8 +1321,9 @@ BEGIN;
 ALTER TABLE registry.orgs RENAME COLUMN placement_kind TO placement_type;
 -- ... the other renames of §4.3.4 ...
 CREATE OR REPLACE FUNCTION identity.lock_password_principal(principal uuid) ...;
--- the component key of §4.3.6: CREATE TABLE catalog.component_digest_owners ...;
--- ALTER TABLE catalog.component_library DROP CONSTRAINT component_library_digest_key;
+-- the component key of §4.3.6, one line per copy (owner ruling 2026-09-30):
+-- wamn_system control copy: CREATE TABLE catalog.component_digest_owners ... (with environment_instance); DROP CONSTRAINT component_library_digest_key;
+-- each project-env copy:    CREATE TABLE catalog.component_digest_owners ...; DROP CONSTRAINT component_library_digest_key;
 -- project-env only, the snapshot table of §4.3.6:
 -- ALTER TABLE catalog.release_manifest_v3_snapshots RENAME TO release_manifest_snapshots; ...
 -- deploy/sql/record-history.sql
