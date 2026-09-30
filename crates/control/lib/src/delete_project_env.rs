@@ -18,7 +18,6 @@ use std::path::PathBuf;
 use anyhow::{Context as _, bail};
 use async_nats::jetstream::context::GetStreamErrorKind;
 use async_nats::jetstream::{self, ErrorCode};
-use futures_util::TryStreamExt as _;
 use tokio_postgres::{Client, NoTls};
 
 use wamn_control_provision::sql::{drop_database_named_sql, drop_replication_slot_sql};
@@ -266,6 +265,19 @@ pub async fn delete_project_env(args: &DeleteProjectEnvRequest) -> anyhow::Resul
         crate::event_streams::connection_options(&args.nats_username, &args.nats_password_file)?;
 
     let mut system = connect(&args.system_database_url).await?;
+    // Forced row-level security shows a catalog.tenant_environments row only to
+    // a session that claims its tenant, and the tenant is what this read finds.
+    // So the read runs as the superuser of the URL, before SET ROLE. Every
+    // delete then runs as wamn_system with the tenant claimed.
+    let tenant_row: Option<(String, String)> = system
+        .query_opt(
+            "SELECT tenant_id, instance_suffix FROM catalog.tenant_environments \
+             WHERE org = $1 AND project = $2 AND env = $3",
+            &[&triple.org, &triple.project, &env],
+        )
+        .await
+        .context("read the catalog.tenant_environments row")?
+        .map(|row| (row.get(0), row.get(1)));
     system
         .batch_execute("SET ROLE wamn_system")
         .await
@@ -284,18 +296,8 @@ pub async fn delete_project_env(args: &DeleteProjectEnvRequest) -> anyhow::Resul
     let db_namespace: Option<String> = row.get("secret_namespace");
     validate_instance_suffix(&instance)
         .map_err(|error| anyhow::anyhow!("registry instance suffix: {error}"))?;
-    let tenant = match system
-        .query_opt(
-            "SELECT tenant_id, instance_suffix FROM catalog.tenant_environments \
-             WHERE org = $1 AND project = $2 AND env = $3",
-            &[&triple.org, &triple.project, &env],
-        )
-        .await
-        .context("read the catalog.tenant_environments row")?
-    {
-        Some(row) => {
-            let tenant: String = row.get(0);
-            let suffix: String = row.get(1);
+    let tenant = match tenant_row {
+        Some((tenant, suffix)) => {
             if suffix != instance {
                 bail!(
                     "refused: catalog.tenant_environments names tenant {tenant} with suffix \
@@ -306,6 +308,16 @@ pub async fn delete_project_env(args: &DeleteProjectEnvRequest) -> anyhow::Resul
         }
         None => None,
     };
+    // The cluster of the environment. Only a pooled org records it
+    // (`wamn-3icz`).
+    let cluster: Option<String> = system
+        .query_opt(
+            wamn_control_registry::sql::select_org_placement_sql(),
+            &[&triple.org],
+        )
+        .await
+        .context("read the registry.orgs row")?
+        .and_then(|row| row.get("pool_cluster"));
     let cdc_namespace: Option<String> = system
         .query_opt(
             "SELECT replication_secret_namespace FROM registry.event_readers \
@@ -335,6 +347,21 @@ pub async fn delete_project_env(args: &DeleteProjectEnvRequest) -> anyhow::Resul
         .get(0);
     if current != "postgres" {
         bail!("refused: --admin-database-url reaches database {current}, not postgres");
+    }
+    let Some(cluster) = cluster else {
+        bail!("refused: org {} has no recorded cluster", triple.org);
+    };
+    // CloudNativePG sets cluster_name to the name of its Cluster.
+    let reached: String = admin
+        .query_one("SHOW cluster_name", &[])
+        .await
+        .context("read cluster_name of --admin-database-url")?
+        .get(0);
+    if reached != cluster {
+        bail!(
+            "refused: --admin-database-url reaches cluster {reached:?}, and org {} records {cluster}",
+            triple.org
+        );
     }
     let active = admin
         .query_opt(
@@ -381,8 +408,8 @@ pub async fn delete_project_env(args: &DeleteProjectEnvRequest) -> anyhow::Resul
             .await
             .context("connect the event provisioning credential")?,
     );
-    delete_stream(&broker, &plan.source_stream, true).await?;
-    delete_stream(&broker, &plan.advisory_stream, false).await?;
+    delete_stream(&broker, &plan.source_stream).await?;
+    delete_stream(&broker, &plan.advisory_stream).await?;
 
     admin
         .batch_execute(&drop_replication_slot_sql(&plan.cdc_object))
@@ -407,6 +434,7 @@ pub async fn delete_project_env(args: &DeleteProjectEnvRequest) -> anyhow::Resul
             .transaction()
             .await
             .context("begin the control rows transaction")?;
+        claim_tenant(&transaction, tenant).await?;
         for (table, trigger) in CONTROL_TABLES {
             let statements = delete_control_rows_sql(table, trigger, tenant);
             let mut deleted = 0;
@@ -428,6 +456,9 @@ pub async fn delete_project_env(args: &DeleteProjectEnvRequest) -> anyhow::Resul
         .transaction()
         .await
         .context("begin the registry transaction")?;
+    if let Some(tenant) = &plan.tenant {
+        claim_tenant(&transaction, tenant).await?;
+    }
     transaction
         .execute(
             "DELETE FROM registry.project_envs WHERE org = $1 AND project = $2 AND env = $3",
@@ -454,40 +485,27 @@ pub async fn delete_project_env(args: &DeleteProjectEnvRequest) -> anyhow::Resul
     Ok(())
 }
 
-/// Delete one stream, and with `consumers` its consumers first. A missing
-/// stream is done.
-async fn delete_stream(
-    broker: &jetstream::Context,
-    name: &str,
-    consumers: bool,
-) -> anyhow::Result<()> {
-    let stream = match broker.get_stream(name).await {
-        Ok(stream) => stream,
-        Err(error) if stream_not_found(error.kind()) => {
-            println!("stream {name} not found: done");
-            return Ok(());
-        }
-        Err(error) => return Err(error).with_context(|| format!("read stream {name}")),
-    };
-    if consumers {
-        let names: Vec<String> = stream
-            .consumer_names()
-            .try_collect()
-            .await
-            .with_context(|| format!("list the consumers of {name}"))?;
-        for consumer in names {
-            stream
-                .delete_consumer(&consumer)
-                .await
-                .with_context(|| format!("delete consumer {consumer} of {name}"))?;
-            println!("deleted consumer {consumer} of {name}");
-        }
-    }
+/// Delete one stream. A stream delete removes its consumers, and the
+/// provisioning user may not list them. A missing stream is done.
+async fn delete_stream(broker: &jetstream::Context, name: &str) -> anyhow::Result<()> {
     match broker.delete_stream(name).await {
         Ok(_) => println!("deleted stream {name}"),
         Err(error) if stream_not_found(error.kind()) => println!("stream {name} not found: done"),
         Err(error) => return Err(error).with_context(|| format!("delete stream {name}")),
     }
+    Ok(())
+}
+
+/// Claim the tenant for this transaction, the platform's own claim pattern for
+/// the tenant policies of the control store.
+async fn claim_tenant(
+    transaction: &tokio_postgres::Transaction<'_>,
+    tenant: &str,
+) -> anyhow::Result<()> {
+    transaction
+        .query_one("SELECT set_config('app.tenant', $1, true)", &[&tenant])
+        .await
+        .context("claim the tenant in app.tenant")?;
     Ok(())
 }
 

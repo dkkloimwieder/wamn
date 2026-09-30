@@ -6023,13 +6023,19 @@ name = "wamn-gate-harness"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "async-nats",
  "schemars",
  "serde",
  "serde_json",
+ "tokio",
  "tokio-postgres",
  "url",
  "wamn-control",
  "wamn-control-provision",
+ "wamn-control-registry",
+ "wamn-event-wire",
+ "wamn-schema-control",
+ "wamn-test-postgres",
 ]
 
 [[package]]

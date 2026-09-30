@@ -17,5 +17,13 @@ wamn-control-provision = { workspace = true }
 # the connection, the harness holds the one copy of the fixture SQL.
 tokio-postgres = { workspace = true, features = ["with-chrono-0_4"] }
 
+[dev-dependencies]
+async-nats = { workspace = true, features = ["jetstream"] }
+tokio = { workspace = true, features = ["macros", "rt"] }
+wamn-control-registry = { workspace = true }
+wamn-event-wire = { workspace = true }
+wamn-schema-control = { workspace = true }
+wamn-test-postgres = { workspace = true }
+
 [lints]
 workspace = true

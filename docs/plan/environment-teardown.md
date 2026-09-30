@@ -34,6 +34,7 @@ Measured on `main` at `0836e2cd2`, and on wamn-dev, on 2026-09-30.
 | Tenant row | `catalog.tenant_environments` (`deploy/sql/control-portable-store.sql:254`), key `tenant_id`, with the triple and the suffix. No foreign key and no trigger. |
 | Control rows | Nine tables in `wamn_system` key their rows by `tenant_id`, and eight have a `<table>_immutable` trigger that refuses `UPDATE` and `DELETE` (`control-portable-store.sql:370-381`). Their foreign keys have no `ON DELETE` clause (section 4.2 gives the order). |
 | Missing from the hand list | `catalog.package_migrations` and `catalog.effective_release_packages` (both immutable) and `catalog.effective_release_heads`. Rows in them make the hand order fail on a foreign key. `wamn_authority.author_login_tenants` (`control-portable-store.sql:390`) maps each control-scoped login to its tenant and triple. wamn-dev holds 6 rows, one of them for the aborted registry reader generation `b` of 2026-09-30. |
+| Row-level security | Every control table and `catalog.tenant_environments` has forced row-level security. A row shows only to a session that sets `app.tenant` to its tenant (`control-portable-store.sql:335-356`). The hand procedure ran as the superuser, which bypasses this security, so it never saw the rule. The verb reads the tenant row by triple as the superuser before `SET ROLE wamn_system`, then claims that tenant in each transaction that deletes. |
 | Gate rows | `catalog.authoring_command_audit` and `wamn_run.gate_reports`, both immutable. A leftover row refuses the next gate with `command-id-reuse`. |
 | Database | `wamn-db-<org>--<project>--<env>--<instance>` (`crates/control/provision/src/name.rs:182`). |
 | CDC objects | One name, `cdc_object_name`, serves the publication, the slot and the replication role (`name.rs:364-385`). `drop_replication_slot_sql` and `drop_publication_sql` exist (`crates/control/provision/src/sql/cdc.rs:219-226`). |
@@ -63,7 +64,7 @@ The verb reads the registry row, the tenant row and the event reader row first. 
 
 1. Print the Kubernetes objects to delete before this run: the CloudNativePG `Database` and the Secrets of the instance. Then print the workloads to stop. The `Database` must go first, because it has `ensure: present` and creates the database again. The verb prints this list with and without `--confirm`.
 2. Refusals of section 4.3.
-3. Delete the materializer consumers of the source stream, the source stream, and the advisory stream `WAMN_EVENT_ADVISORIES_<source>`, by name. Answer "not found" as done.
+3. Delete the source stream and the advisory stream `WAMN_EVENT_ADVISORIES_<source>`, by name. The stream delete removes the materializer consumers, and the provisioning user has no permission to list them. Answer "not found" as done.
 4. Drop the replication slot, then the database `WITH (FORCE)`. The publication goes with the database.
 5. Drop the CDC role and the generation roles of the nine families with tenant or project-environment scope, whose scope names the database, `a` and `b` of each, with one `DROP ROLE IF EXISTS` each. The names come from `workload_generation_role` with the database of this instance.
 6. In one transaction, delete the control rows of the tenant, leaves first: `deployment_attestations`, `connection_requirements`, `component_library`, `effective_release_heads`, `effective_release_packages`, `effective_releases`, `package_migrations`, `packages`, `authoring_command_audit`, `wamn_run.gate_reports`. Each immutable table gets `DISABLE TRIGGER`, the delete, and `ENABLE TRIGGER`.
@@ -74,7 +75,7 @@ The verb reads the registry row, the tenant row and the event reader row first. 
 Each refusal names its reason on one line and changes nothing.
 
 - No `registry.project_envs` row for the triple.
-- `--admin-database-url` reaches a database other than `postgres` on the cluster of the registry row.
+- `--admin-database-url` reaches a database other than `postgres`, or its `cluster_name` differs from `registry.orgs.pool_cluster`. A dedicated org records no cluster, so the verb refuses it with "no recorded cluster" (`wamn-3icz`). A missing database is not a refusal, because a second run after the drop must go on.
 - The replication slot is active: a reader still streams from it.
 - The database has a session of a login other than the verb. The refusal names each login it found, so the operator knows which workload still runs.
 - A `catalog.tenant_environments` row names the tenant with another triple or another suffix.
