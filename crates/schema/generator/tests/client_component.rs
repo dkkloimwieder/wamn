@@ -262,7 +262,7 @@ fn a_row_link_becomes_one_callback_named_from_its_target() {
     );
     assert!(
         definition(widget, "WIDGET_QUERY_TABLE").contains(
-            "    { operation: \"platform-fixture:widget/get@1.0.0\", reference: \"platform-fixture:widget/get\", label: \"get\", many: false, opens: \"record\", fill: [] },"
+            "    { operation: \"platform-fixture:widget/get@2.0.0\", reference: \"platform-fixture:widget/get\", label: \"get\", many: false, opens: \"record\", fill: [] },"
         ),
         "the plan's row link is an action that opens a record by the row"
     );
@@ -531,7 +531,7 @@ fn a_command_sends_the_revision_of_the_record_it_names() {
     assert_eq!(error.kind(), ClientComponentErrorType::UnsuppliedRevision);
     assert!(
         error.to_string().contains(
-            "platform-fixture:widget/archive@1.0.0 sends the revision expected_edit_version"
+            "platform-fixture:widget/archive@2.0.0 sends the revision expected_edit_version"
         ),
         "{error}"
     );
@@ -669,7 +669,7 @@ fn the_index_names_every_shape_that_gets_no_component() {
     let index = source(&index, "generated/client-ts/components/index.ts");
     assert!(
         index.contains(
-            "// platform-fixture:widget/archive@1.0.0: the operation kind has no screen role"
+            "// platform-fixture:widget/archive@2.0.0: the operation kind has no screen role"
         ),
         "{index}"
     );
@@ -1013,7 +1013,7 @@ fn a_row_hands_its_values_to_the_form_the_plan_named() {
     let makers = definition(maker, "WIDGET_MAKER_QUERY_TABLE");
     assert!(
         makers.contains(
-            "{ operation: \"platform-fixture:widget/create@1.0.0\", reference: \"platform-fixture:widget/create\", label: \"create\", many: false, opens: \"form\", fill: [{ field: \"id\", input: [\"makerId\"] }] }"
+            "{ operation: \"platform-fixture:widget/create@2.0.0\", reference: \"platform-fixture:widget/create\", label: \"create\", many: false, opens: \"form\", fill: [{ field: \"id\", input: [\"makerId\"] }] }"
         ),
         "the row writes its key at the declared input path: {makers}"
     );
@@ -1035,7 +1035,7 @@ fn a_row_hands_its_values_to_the_form_the_plan_named() {
     );
     assert!(
         definition(widget, "WIDGET_QUERY_TABLE").contains(
-            "{ operation: \"platform-fixture:widget/get@1.0.0\", reference: \"platform-fixture:widget/get\", label: \"get\", many: false, opens: \"record\", fill: [] }"
+            "{ operation: \"platform-fixture:widget/get@2.0.0\", reference: \"platform-fixture:widget/get\", label: \"get\", many: false, opens: \"record\", fill: [] }"
         ),
         "a record read is not a form, so no row fills it"
     );
@@ -1178,8 +1178,8 @@ fn a_selector_searches_by_its_display_field_and_reads_the_next_page() {
         source(&files, "generated/client-ts/components/index.ts").contains(concat!(
             "// These selectors read the first page and render no search, because the\n",
             "// list they read declares no filter on its display field:\n",
-            "// platform-fixture:widget/archive@1.0.0 id: platform-fixture:widget/list@1.0.0\n",
-            "// platform-fixture:widget/record-batch@1.0.0 value.line[].widget_id: platform-fixture:widget/list@1.0.0\n",
+            "// platform-fixture:widget/archive@2.0.0 id: platform-fixture:widget/list@2.0.0\n",
+            "// platform-fixture:widget/record-batch@2.0.0 value.line[].widget_id: platform-fixture:widget/list@2.0.0\n",
         )),
         "the generator names the selector, its input and the list it reads"
     );
@@ -1215,7 +1215,7 @@ fn an_operation_the_release_does_not_serve_gets_no_component() {
     let index = source(&files, "generated/client-ts/components/index.ts");
     assert!(
         index.contains(
-            "// These operations get no component, because this release does not serve\n// them over HTTP and the bindings write no invoke function for them:\n// platform-fixture:widget/archive@1.0.0\n"
+            "// These operations get no component, because this release does not serve\n// them over HTTP and the bindings write no invoke function for them:\n// platform-fixture:widget/archive@2.0.0\n"
         ),
         "the index names it: {index}"
     );
@@ -1402,9 +1402,9 @@ fn a_table_definition_names_its_update_its_actions_and_its_child_tables() {
     let widgets = definition(widget(&files), "WIDGET_QUERY_TABLE");
     for line in [
         // The update writes these columns, and the plan supplies none of them.
-        "  update: { operation: \"platform-fixture:widget/update@1.0.0\", binding: { route: WIDGET_UPDATE_ROUTE, request: WIDGET_UPDATE_REQUEST_FIELDS, result: WIDGET_UPDATE_RESULT_FIELDS }, keyInput: [\"id\"], revisionInput: [\"expectedEditVersion\"], revisionField: \"editVersion\", supplied: [{ input: [\"requestId\"], type: \"requestId\" }], fields: [\n    { field: \"code\", input: [\"change\", \"code\"] },\n    { field: \"makerId\", input: [\"change\", \"makerId\"], choices: { read: { route: WIDGET_MAKER_QUERY_ROUTE, request: WIDGET_MAKER_QUERY_REQUEST_FIELDS, result: WIDGET_MAKER_QUERY_RESULT_FIELDS }, rows: \"item\", keyField: \"id\", displayField: \"name\", searchInput: [\"filter\", \"name\"], cursorInput: [\"cursor\"] } },\n    { field: \"note\", input: [\"change\", \"note\"] },\n  ] },\n",
+        "  update: { operation: \"platform-fixture:widget/update@2.0.0\", binding: { route: WIDGET_UPDATE_ROUTE, request: WIDGET_UPDATE_REQUEST_FIELDS, result: WIDGET_UPDATE_RESULT_FIELDS }, keyInput: [\"id\"], revisionInput: [\"expectedEditVersion\"], revisionField: \"editVersion\", supplied: [{ input: [\"requestId\"], type: \"requestId\" }], fields: [\n    { field: \"code\", input: [\"change\", \"code\"] },\n    { field: \"makerId\", input: [\"change\", \"makerId\"], choices: { read: { route: WIDGET_MAKER_QUERY_ROUTE, request: WIDGET_MAKER_QUERY_REQUEST_FIELDS, result: WIDGET_MAKER_QUERY_RESULT_FIELDS }, rows: \"item\", keyField: \"id\", displayField: \"name\", searchInput: [\"filter\", \"name\"], cursorInput: [\"cursor\"] } },\n    { field: \"note\", input: [\"change\", \"note\"] },\n  ] },\n",
         // A command that runs each outer input on its own takes many rows.
-        "  actions: [\n    { operation: \"platform-fixture:widget/get@1.0.0\", reference: \"platform-fixture:widget/get\", label: \"get\", many: false, opens: \"record\", fill: [] },\n    { operation: \"platform-fixture:widget/archive@1.0.0\", reference: \"platform-fixture:widget/archive\", label: \"archive\", many: false, opens: \"form\", fill: [{ field: \"id\", input: [\"id\"] }], revision: { field: \"editVersion\", input: [\"expectedEditVersion\"] } },\n    { operation: \"platform-fixture:widget/record-batch@1.0.0\", reference: \"platform-fixture:widget/record-batch\", label: \"record-batch\", many: true, opens: \"form\", fill: [{ field: \"id\", input: [\"value\", \"line\", \"[]\", \"widgetId\"] }], form: async () => ({ default: WidgetRecordBatchForm }) },\n  ],\n",
+        "  actions: [\n    { operation: \"platform-fixture:widget/get@2.0.0\", reference: \"platform-fixture:widget/get\", label: \"get\", many: false, opens: \"record\", fill: [] },\n    { operation: \"platform-fixture:widget/archive@2.0.0\", reference: \"platform-fixture:widget/archive\", label: \"archive\", many: false, opens: \"form\", fill: [{ field: \"id\", input: [\"id\"] }], revision: { field: \"editVersion\", input: [\"expectedEditVersion\"] } },\n    { operation: \"platform-fixture:widget/record-batch@2.0.0\", reference: \"platform-fixture:widget/record-batch\", label: \"record-batch\", many: true, opens: \"form\", fill: [{ field: \"id\", input: [\"value\", \"line\", \"[]\", \"widgetId\"] }], form: async () => ({ default: WidgetRecordBatchForm }) },\n  ],\n",
         "  childTables: [],\n",
     ] {
         assert!(widgets.contains(line), "{line} in {widgets}");
@@ -1418,7 +1418,7 @@ fn a_table_definition_names_its_update_its_actions_and_its_child_tables() {
         "the maker model serves no update: {makers}"
     );
     assert!(
-        makers.contains("    { operation: \"platform-fixture:widget/create@1.0.0\", reference: \"platform-fixture:widget/create\", label: \"create\", many: false, opens: \"form\","),
+        makers.contains("    { operation: \"platform-fixture:widget/create@2.0.0\", reference: \"platform-fixture:widget/create\", label: \"create\", many: false, opens: \"form\","),
         "a create takes one row: {makers}"
     );
 }

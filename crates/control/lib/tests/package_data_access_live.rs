@@ -540,7 +540,7 @@ async fn an_author_recovers_from_a_failed_version_bump_in_either_direction() {
     let (bumped, bumped_sha256) = stage_package_root(
         &fixture_package_root(),
         "fixture-bumped",
-        Some(("1.1.0", "1.0.0")),
+        Some(("2.1.0", "2.0.0")),
     );
     apply(&url, released.clone()).await;
     apply(&url, overlay.clone()).await;
@@ -627,7 +627,7 @@ async fn an_author_recovers_from_a_failed_version_bump_in_either_direction() {
     assert!(
         drift
             .to_string()
-            .contains("package-data-access-source-drift: package=platform_fixture@1.1.0"),
+            .contains("package-data-access-source-drift: package=platform_fixture@2.1.0"),
         "the immutable coordinate did not carry its drift refusal: {drift:#}"
     );
 
@@ -792,7 +792,7 @@ async fn a_logged_relation_writes_history_through_the_reconciled_app_role() {
         .batch_execute(
             "BEGIN; \
              SELECT set_config('app.user_id', '00000000-0000-4000-8000-0000000000f2', true), \
-                    set_config('app.operation', 'platform-fixture:widget-tag/update@1.0.0', true); \
+                    set_config('app.operation', 'platform-fixture:widget-tag/update@2.0.0', true); \
              UPDATE inventory.widget_tag SET label = 'logged' \
               WHERE id = '00000000-0000-4000-8000-00000000b003'; \
              COMMIT;",
@@ -836,7 +836,7 @@ async fn a_logged_relation_writes_history_through_the_reconciled_app_role() {
         entries[1],
         (
             "update".to_owned(),
-            "platform-fixture:widget-tag/update@1.0.0".to_owned(),
+            "platform-fixture:widget-tag/update@2.0.0".to_owned(),
             "00000000-0000-4000-8000-0000000000f2".to_owned(),
             r#"{"id": "00000000-0000-4000-8000-00000000b003"}"#.to_owned(),
             r#"{"label": "history-tag"}"#.to_owned(),
@@ -992,8 +992,8 @@ async fn the_local_grant_reconcile_records_the_presented_manifest_hash() {
     assert_eq!(
         recorded_manifests(&admin).await,
         BTreeMap::from([
-            ("platform_fixture@1.0.0".to_owned(), first.clone()),
-            ("platform_fixture_overlay@1.0.0".to_owned(), overlay_sha256),
+            ("platform_fixture@2.0.0".to_owned(), first.clone()),
+            ("platform_fixture_overlay@2.0.0".to_owned(), overlay_sha256),
         ]),
         "the comment does not name the presented manifest of each package"
     );
@@ -1008,7 +1008,7 @@ async fn the_local_grant_reconcile_records_the_presented_manifest_hash() {
     assert_eq!(
         recorded_manifests(&admin)
             .await
-            .get("platform_fixture@1.0.0"),
+            .get("platform_fixture@2.0.0"),
         Some(&second),
         "the comment kept a manifest hash the application no longer came from"
     );
@@ -1017,7 +1017,7 @@ async fn the_local_grant_reconcile_records_the_presented_manifest_hash() {
             .query_one(
                 "SELECT manifest_sha256 FROM catalog.packages \
                   WHERE tenant_id = $1 AND package_id = 'platform_fixture' \
-                    AND package_version = '1.0.0'",
+                    AND package_version = '2.0.0'",
                 &[&TENANT],
             )
             .await
@@ -1037,7 +1037,7 @@ async fn the_local_grant_reconcile_records_the_presented_manifest_hash() {
     assert!(
         drift
             .to_string()
-            .contains("package-data-access-source-drift: package=platform_fixture@1.0.0"),
+            .contains("package-data-access-source-drift: package=platform_fixture@2.0.0"),
         "the production path did not refuse the moved bytes: {drift:#}"
     );
 

@@ -1,4 +1,4 @@
-package platform-fixture:widget@1.0.0;
+package platform-fixture:widget@2.0.0;
 
 interface get {
   use wamn:node/types@0.1.0.{emission, node-context, node-error};

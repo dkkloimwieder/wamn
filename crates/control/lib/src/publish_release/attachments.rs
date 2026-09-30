@@ -474,10 +474,10 @@ mod tests {
         ),
     ];
     const FIXTURE_ATTACHMENTS_DIGEST: &str =
-        "sha256:39be5e1be0c9196ea30b12dfac907705fbc82e968887ffa8d527b2dbe5c27458";
+        "sha256:45af3a3c8e8ff73d14c725f9c4c74078c69096ccf74da82395374b71f7257451";
     /// The rendered fixture declaration, before generation wrote its entries.
     const FIXTURE_DECLARATION_DIGEST: &str =
-        "sha256:e6770014d60668c5e8ed4f12a078576c2c884c398cff8ca1782b09e601e63fef";
+        "sha256:7f0194ad4794e4415d07301704b7da0547433e29bb8d26423dfbcdd13c194531";
 
     /// A publish of the fixture reads the same routes and the same component
     /// declaration from the generated entries as from the authored ones they

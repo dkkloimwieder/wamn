@@ -538,7 +538,7 @@ mod tests {
             &app("platform_fixture"),
             "platform_fixture",
             "widget",
-            "platform-fixture:widget/archive@1.0.0",
+            "platform-fixture:widget/archive@2.0.0",
         );
         assert_eq!(
             archive.expect("the archive has a contract").idempotency,

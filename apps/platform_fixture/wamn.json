@@ -1,7 +1,8 @@
 {
   "package": {
     "id": "platform_fixture",
-    "version": "1.0.0"
+    "version": "2.0.0",
+    "predecessor_version": "1.0.0"
   },
   "required_platform_policy_contract": {
     "id": "platform_fixture_data_access",

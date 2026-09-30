@@ -797,7 +797,7 @@ fn inherited_overlay_manifest() -> Value {
         .remove("delete");
     manifest["base_dependencies"] = json!({"base": {
         "package": "platform_fixture",
-        "version": "1.0.0",
+        "version": "2.0.0",
         "digest": format!("sha256:{}", "a".repeat(64)),
         "operations": ["widget.archive"]
     }});
@@ -957,7 +957,7 @@ fn a_participant_takes_the_request_record_of_the_base_pre_commit() {
     .unwrap();
     assert!(
         wit.contains(
-            "interface archive-participant {\n  use wamn:node/types@0.1.0.{emission, node-context, node-error};\n  use platform-fixture:widget/archive-pre-commit@1.0.0.{archive-pre-commit-request};\n\n  run: async func(ctx: node-context, input: archive-pre-commit-request) -> result<archive-pre-commit-request, node-error>;\n  run-json: async func(ctx: node-context, input: string) -> result<emission, node-error>;\n}\n"
+            "interface archive-participant {\n  use wamn:node/types@0.1.0.{emission, node-context, node-error};\n  use platform-fixture:widget/archive-pre-commit@2.0.0.{archive-pre-commit-request};\n\n  run: async func(ctx: node-context, input: archive-pre-commit-request) -> result<archive-pre-commit-request, node-error>;\n  run-json: async func(ctx: node-context, input: string) -> result<emission, node-error>;\n}\n"
         ),
         "{wit}"
     );
@@ -1588,7 +1588,7 @@ fn a_package_without_routes_takes_the_default_route_members() {
         artifact(
             &package,
             wamn_schema_generator::route_schema::GENERATED_COMPONENT_OPERATIONS,
-        )["fixture"]["platform-fixture:widget/get@1.0.0"]["input-ports"][0]["schema"],
+        )["fixture"]["platform-fixture:widget/get@2.0.0"]["input-ports"][0]["schema"],
         json!({"$ref": "generated/routes/widget/get.json"})
     );
 }

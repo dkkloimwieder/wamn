@@ -141,8 +141,8 @@ fn user_role_grants_are_exact_residue_free_and_convergent_live() {
            ('t1', 'sibling-role'), \
            ('t2', 'operator'); \
          INSERT INTO app_system.permissions (tenant_id, role_name, permission) VALUES \
-           ('t1', 'operator', 'platform-fixture:widget/get@1.0.0'), \
-           ('t1', 'operator', 'platform-fixture:obsolete/operation@1.0.0'), \
+           ('t1', 'operator', 'platform-fixture:widget/get@2.0.0'), \
+           ('t1', 'operator', 'platform-fixture:obsolete/operation@2.0.0'), \
            ('t1', 'operator', 'platform-fixture:widget/get@1.1.0'), \
            ('t1', 'operator', 'platform-fixture-overlay:widget/archive@3.0.0'), \
            ('t1', 'sibling-role', 'residue.must.stay'), \
@@ -176,22 +176,22 @@ fn user_role_grants_are_exact_residue_free_and_convergent_live() {
                    FROM app_system.permissions \
                   WHERE tenant_id = 't1' AND role_name = '{role}' \
                     AND starts_with(permission, 'platform-fixture:') \
-                    AND right(permission, length('@1.0.0')) = '@1.0.0'"
+                    AND right(permission, length('@2.0.0')) = '@2.0.0'"
                 )
             ),
             [
-                "platform-fixture:widget-maker/get@1.0.0",
-                "platform-fixture:widget-maker/list@1.0.0",
-                "platform-fixture:widget-maker/query@1.0.0",
-                "platform-fixture:widget-tag/update@1.0.0",
-                "platform-fixture:widget/archive@1.0.0",
-                "platform-fixture:widget/create@1.0.0",
-                "platform-fixture:widget/delete@1.0.0",
-                "platform-fixture:widget/get@1.0.0",
-                "platform-fixture:widget/list@1.0.0",
-                "platform-fixture:widget/query@1.0.0",
-                "platform-fixture:widget/record-batch@1.0.0",
-                "platform-fixture:widget/update@1.0.0",
+                "platform-fixture:widget-maker/get@2.0.0",
+                "platform-fixture:widget-maker/list@2.0.0",
+                "platform-fixture:widget-maker/query@2.0.0",
+                "platform-fixture:widget-tag/update@2.0.0",
+                "platform-fixture:widget/archive@2.0.0",
+                "platform-fixture:widget/create@2.0.0",
+                "platform-fixture:widget/delete@2.0.0",
+                "platform-fixture:widget/get@2.0.0",
+                "platform-fixture:widget/list@2.0.0",
+                "platform-fixture:widget/query@2.0.0",
+                "platform-fixture:widget/record-batch@2.0.0",
+                "platform-fixture:widget/update@2.0.0",
             ]
             .join("\n"),
             "{role} did not hold exactly the manifest's twelve operation grants"
@@ -204,7 +204,7 @@ fn user_role_grants_are_exact_residue_free_and_convergent_live() {
                    FROM app_system.permissions \
                   WHERE tenant_id = 't1' AND role_name = '{role}' \
                     AND NOT (starts_with(permission, 'platform-fixture:') \
-                             AND right(permission, length('@1.0.0')) = '@1.0.0')"
+                             AND right(permission, length('@2.0.0')) = '@2.0.0')"
                 )
             ),
             if role == OPERATOR_ROLE {

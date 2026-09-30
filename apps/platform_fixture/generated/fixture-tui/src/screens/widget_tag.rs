@@ -5,7 +5,7 @@ use wamn_client_tui::{screen, submission};
 pub static UPDATE_SPEC: screen::ScreenSpec = screen::ScreenSpec {
     model: "widget_tag",
     name: "update",
-    operation: "platform-fixture:widget-tag/update@1.0.0",
+    operation: "platform-fixture:widget-tag/update@2.0.0",
     type_: "update",
     input: crate::widget_tag::WIDGET_TAG_UPDATE_INPUT_SCHEMA,
     input_schema: Some(

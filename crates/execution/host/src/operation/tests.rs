@@ -135,7 +135,7 @@ fn a_custom_read_refuses_a_caller_without_its_grant() {
     )
     .expect("parse the fixture manifest");
     let operation = tokens
-        .get("platform-fixture:widget/list@1.0.0")
+        .get("platform-fixture:widget/list@2.0.0")
         .expect("the custom list read is its own operation grant");
     let denial = authorize_registered_operation(None, Some(operation), false)
         .expect_err("a caller without the grant is refused");
@@ -175,7 +175,7 @@ fn acquisition_binds_its_executing_principal_and_operation() {
                 component_digest: "sha256:overlay".to_owned(),
                 component: "overlay".to_owned(),
                 interface_version: "1.0.0".to_owned(),
-                operation: "platform-fixture-overlay:widget/record-batch@1.0.0".to_owned(),
+                operation: "platform-fixture-overlay:widget/record-batch@2.0.0".to_owned(),
             },
             entry: InvocationEntry::Wiring(WiringPosition {
                 package_id: "org_workflow".to_owned(),
@@ -187,7 +187,7 @@ fn acquisition_binds_its_executing_principal_and_operation() {
             package_id: "platform_fixture_overlay".to_owned(),
             component_digest: "sha256:overlay".to_owned(),
             component: "overlay".to_owned(),
-            operation: "platform-fixture-overlay:widget/record-batch@1.0.0".to_owned(),
+            operation: "platform-fixture-overlay:widget/record-batch@2.0.0".to_owned(),
             closure: ConnectionExecutionClosure::Released,
             effects: None,
         },
@@ -215,7 +215,7 @@ fn acquisition_binds_its_executing_principal_and_operation() {
         original.executing_claims(None),
         SessionClaims {
             user_id: Some(materializer),
-            operation: Some("platform-fixture-overlay:widget/record-batch@1.0.0".to_owned()),
+            operation: Some("platform-fixture-overlay:widget/record-batch@2.0.0".to_owned()),
             ..original.claims.clone()
         }
     );

@@ -208,7 +208,7 @@ fn pre_commit_generation_and_canonical_authority_use_platform_declarations() {
     assert_eq!(operation["automatic_retry"], false);
     assert_eq!(
         operation["pre_commit"],
-        "platform-fixture:widget/archive-pre-commit@1.0.0"
+        "platform-fixture:widget/archive-pre-commit@2.0.0"
     );
     for (path, expected) in [
         (
@@ -292,7 +292,7 @@ fn an_optional_pre_commit_slot_generates_its_no_op_participant() {
     );
     let library = source("generated/widget_archive-no-op/src/lib.rs");
     for expected in [
-        "export platform-fixture:widget/archive-pre-commit@1.0.0;",
+        "export platform-fixture:widget/archive-pre-commit@2.0.0;",
         "\"../wit/deps/platform-fixture-widget\"",
         "input: ArchivePreCommitRequest,",
         "std::future::ready(Ok(input))",

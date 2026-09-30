@@ -289,7 +289,7 @@ mod tests {
     ///
     /// The shipped overlay guest imports no base operation, so its template
     /// declares no dependency. The rendering rule is stated on this template,
-    /// which leaves one `platform_fixture@1.0.0` digest as the placeholder.
+    /// which leaves one `platform_fixture@2.0.0` digest as the placeholder.
     fn base_dependency_template(name: &str) -> PathBuf {
         let template = serde_json::json!({
             "scope": {
@@ -303,7 +303,7 @@ mod tests {
                     "registered-operation": "platform-fixture-overlay:widget/get",
                     "dependencies": [{
                         "package": "platform_fixture",
-                        "version": "1.0.0",
+                        "version": "2.0.0",
                         "digest": COMPONENT_DECLARATION_BASE_DIGEST_PLACEHOLDER,
                         "operation": "platform-fixture:widget/archive"
                     }],
@@ -325,10 +325,10 @@ mod tests {
         fs::write(
             package.join(PACKAGE_MANIFEST),
             serde_json::to_vec_pretty(&serde_json::json!({
-                "package": {"id": "platform_fixture_overlay", "version": "1.0.0"},
+                "package": {"id": "platform_fixture_overlay", "version": "2.0.0"},
                 "base_dependencies": {"base": {
                     "package": "platform_fixture",
-                    "version": "1.0.0",
+                    "version": "2.0.0",
                     "digest": format!("sha256:{}", "0".repeat(64)),
                     "operations": ["widget.archive"]
                 }}
@@ -364,7 +364,7 @@ mod tests {
             1,
             "the shipped overlay authors exactly one base dependency digest"
         );
-        let pin = authored["platform_fixture@1.0.0"].to_string();
+        let pin = authored["platform_fixture@2.0.0"].to_string();
         let built = format!("sha256:{}", "7".repeat(64));
         assert_ne!(pin, built);
 
@@ -378,7 +378,7 @@ mod tests {
 
         let mut base_digests = authored.clone();
         base_digests.insert(
-            Box::<str>::from("platform_fixture@1.0.0"),
+            Box::<str>::from("platform_fixture@2.0.0"),
             Box::<str>::from(built.as_str()),
         );
         let disposable = render_declaration_document(&template, "tenant-a", &base_digests)
@@ -432,7 +432,7 @@ mod tests {
             .expect("read the base dependency template")
             .replace(
                 COMPONENT_DECLARATION_BASE_DIGEST_PLACEHOLDER,
-                &authored["platform_fixture@1.0.0"],
+                &authored["platform_fixture@2.0.0"],
             );
         fs::write(&hand_written, restated.as_bytes()).expect("write the control template");
         let refusal = render_declaration_document(&hand_written, "tenant-a", &authored)

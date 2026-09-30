@@ -7,7 +7,7 @@ use super::{fixture, platform_claim};
 
 pub(super) fn release(composed: bool) -> ClientContractIr {
     let package = fixture::generate_with(&fixture::catalog(), &platform_claim::manifest());
-    let identity = "platform-fixture:widget/archive@1.0.0".to_owned();
+    let identity = "platform-fixture:widget/archive@2.0.0".to_owned();
     let response = if composed {
         ResponseIr {
             schema: Some(json!({"type": "object"})),

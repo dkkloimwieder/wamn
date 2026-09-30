@@ -232,8 +232,8 @@ fn two_declared_components_render_only_their_owned_operations() {
     assert_eq!(
         report_operations,
         [
-            "platform-fixture:widget-maker/query@1.0.0",
-            "platform-fixture:widget/query@1.0.0",
+            "platform-fixture:widget-maker/query@2.0.0",
+            "platform-fixture:widget/query@2.0.0",
         ],
         "the component holds the query of each model and nothing else"
     );

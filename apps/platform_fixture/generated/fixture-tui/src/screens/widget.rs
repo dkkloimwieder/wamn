@@ -5,7 +5,7 @@ use wamn_client_tui::{screen, submission};
 pub static ARCHIVE_SPEC: screen::ScreenSpec = screen::ScreenSpec {
     model: "widget",
     name: "archive",
-    operation: "platform-fixture:widget/archive@1.0.0",
+    operation: "platform-fixture:widget/archive@2.0.0",
     type_: "command",
     input: crate::widget::WIDGET_ARCHIVE_INPUT_SCHEMA,
     input_schema: None,
@@ -73,7 +73,7 @@ pub fn archive(binding: submission::SessionBinding) -> screen::Screen {
 pub static CREATE_SPEC: screen::ScreenSpec = screen::ScreenSpec {
     model: "widget",
     name: "create",
-    operation: "platform-fixture:widget/create@1.0.0",
+    operation: "platform-fixture:widget/create@2.0.0",
     type_: "create",
     input: crate::widget::WIDGET_CREATE_INPUT_SCHEMA,
     input_schema: Some(
@@ -166,7 +166,7 @@ pub fn create(binding: submission::SessionBinding) -> screen::Screen {
 pub static DELETE_SPEC: screen::ScreenSpec = screen::ScreenSpec {
     model: "widget",
     name: "delete",
-    operation: "platform-fixture:widget/delete@1.0.0",
+    operation: "platform-fixture:widget/delete@2.0.0",
     type_: "delete",
     input: crate::widget::WIDGET_DELETE_INPUT_SCHEMA,
     input_schema: Some(
@@ -227,7 +227,7 @@ pub static DELETE_SPEC: screen::ScreenSpec = screen::ScreenSpec {
         key_input: Some("id"),
     }),
     revision: Some(screen::RevisionBinding {
-        read_operation: "platform-fixture:widget/get@1.0.0",
+        read_operation: "platform-fixture:widget/get@2.0.0",
         read_key_input: "id",
         key_field: "id",
         revision_field: "edit_version",
@@ -250,7 +250,7 @@ pub fn delete(binding: submission::SessionBinding) -> screen::Screen {
 pub static GET_SPEC: screen::ScreenSpec = screen::ScreenSpec {
     model: "widget",
     name: "get",
-    operation: "platform-fixture:widget/get@1.0.0",
+    operation: "platform-fixture:widget/get@2.0.0",
     type_: "get",
     input: crate::widget::WIDGET_GET_INPUT_SCHEMA,
     input_schema: Some(
@@ -319,7 +319,7 @@ pub fn get(binding: submission::SessionBinding) -> screen::Screen {
 pub static LIST_SPEC: screen::ScreenSpec = screen::ScreenSpec {
     model: "widget",
     name: "list",
-    operation: "platform-fixture:widget/list@1.0.0",
+    operation: "platform-fixture:widget/list@2.0.0",
     type_: "projection",
     input: crate::widget::WIDGET_LIST_INPUT_SCHEMA,
     input_schema: None,
@@ -377,7 +377,7 @@ pub fn list(binding: submission::SessionBinding) -> screen::Screen {
 pub static QUERY_SPEC: screen::ScreenSpec = screen::ScreenSpec {
     model: "widget",
     name: "query",
-    operation: "platform-fixture:widget/query@1.0.0",
+    operation: "platform-fixture:widget/query@2.0.0",
     type_: "query",
     input: crate::widget::WIDGET_QUERY_INPUT_SCHEMA,
     input_schema: Some(
@@ -441,7 +441,7 @@ pub fn query(binding: submission::SessionBinding) -> screen::Screen {
 pub static RECORD_BATCH_SPEC: screen::ScreenSpec = screen::ScreenSpec {
     model: "widget",
     name: "record_batch",
-    operation: "platform-fixture:widget/record-batch@1.0.0",
+    operation: "platform-fixture:widget/record-batch@2.0.0",
     type_: "command",
     input: crate::widget::WIDGET_RECORD_BATCH_INPUT_SCHEMA,
     input_schema: Some(
@@ -521,7 +521,7 @@ pub fn record_batch(binding: submission::SessionBinding) -> screen::Screen {
 pub static UPDATE_SPEC: screen::ScreenSpec = screen::ScreenSpec {
     model: "widget",
     name: "update",
-    operation: "platform-fixture:widget/update@1.0.0",
+    operation: "platform-fixture:widget/update@2.0.0",
     type_: "update",
     input: crate::widget::WIDGET_UPDATE_INPUT_SCHEMA,
     input_schema: Some(
@@ -592,7 +592,7 @@ pub static UPDATE_SPEC: screen::ScreenSpec = screen::ScreenSpec {
         key_input: Some("id"),
     }),
     revision: Some(screen::RevisionBinding {
-        read_operation: "platform-fixture:widget/get@1.0.0",
+        read_operation: "platform-fixture:widget/get@2.0.0",
         read_key_input: "id",
         key_field: "id",
         revision_field: "edit_version",

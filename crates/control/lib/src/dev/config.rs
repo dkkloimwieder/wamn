@@ -1918,14 +1918,14 @@ pub(crate) mod tests {
         let verified = base
             .component_digest()
             .verify(base.component_digest().expected());
-        assert_eq!(verified.coordinate(), "platform_fixture@1.0.0");
+        assert_eq!(verified.coordinate(), "platform_fixture@2.0.0");
         assert_eq!(verified.digest(), base.component_digest().expected());
         assert_eq!(verified.superseded_pin(), None);
     }
 
     fn moved_digest_expectation() -> (BaseComponentDigestExpectation, String) {
         let expectation = BaseComponentDigestExpectation {
-            coordinate: "platform_fixture@1.0.0".into(),
+            coordinate: "platform_fixture@2.0.0".into(),
             expected: format!("sha256:{}", "a".repeat(64)).into_boxed_str(),
         };
         let observed = format!("sha256:{}", "b".repeat(64));
@@ -1975,7 +1975,7 @@ pub(crate) mod tests {
         let error = resolve_dev_packages(&missing_config, &overlay_root)
             .expect_err("zero coordinate matches must refuse");
         assert_eq!(error.kind(), DevPackageErrorType::BaseDependencyMissing);
-        assert_eq!(error.coordinate(), Some("platform_fixture@1.0.0"));
+        assert_eq!(error.coordinate(), Some("platform_fixture@2.0.0"));
         assert_eq!(error.dependency_digest(), Some(expected.digest.as_str()));
         assert_eq!(error.searched_roots(), std::slice::from_ref(&overlay_root));
 
@@ -1992,7 +1992,7 @@ pub(crate) mod tests {
         )
         .expect_err("multiple coordinate matches must refuse");
         assert_eq!(error.kind(), DevPackageErrorType::BaseDependencyAmbiguous);
-        assert_eq!(error.coordinate(), Some("platform_fixture@1.0.0"));
+        assert_eq!(error.coordinate(), Some("platform_fixture@2.0.0"));
         assert_eq!(error.dependency_digest(), Some(expected.digest.as_str()));
         assert_eq!(
             error.searched_roots(),

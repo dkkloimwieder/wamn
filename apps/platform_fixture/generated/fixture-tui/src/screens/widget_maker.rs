@@ -5,7 +5,7 @@ use wamn_client_tui::{screen, submission};
 pub static GET_SPEC: screen::ScreenSpec = screen::ScreenSpec {
     model: "widget_maker",
     name: "get",
-    operation: "platform-fixture:widget-maker/get@1.0.0",
+    operation: "platform-fixture:widget-maker/get@2.0.0",
     type_: "get",
     input: crate::widget_maker::WIDGET_MAKER_GET_INPUT_SCHEMA,
     input_schema: Some(
@@ -74,7 +74,7 @@ pub fn get(binding: submission::SessionBinding) -> screen::Screen {
 pub static LIST_SPEC: screen::ScreenSpec = screen::ScreenSpec {
     model: "widget_maker",
     name: "list",
-    operation: "platform-fixture:widget-maker/list@1.0.0",
+    operation: "platform-fixture:widget-maker/list@2.0.0",
     type_: "projection",
     input: crate::widget_maker::WIDGET_MAKER_LIST_INPUT_SCHEMA,
     input_schema: None,
@@ -132,7 +132,7 @@ pub fn list(binding: submission::SessionBinding) -> screen::Screen {
 pub static QUERY_SPEC: screen::ScreenSpec = screen::ScreenSpec {
     model: "widget_maker",
     name: "query",
-    operation: "platform-fixture:widget-maker/query@1.0.0",
+    operation: "platform-fixture:widget-maker/query@2.0.0",
     type_: "query",
     input: crate::widget_maker::WIDGET_MAKER_QUERY_INPUT_SCHEMA,
     input_schema: Some(
