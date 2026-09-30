@@ -24,6 +24,10 @@ readonly WAMN_REPOSITORY_ROOT="$(
   pwd -P
 )"
 readonly WAMN_CARGO="${CARGO:-cargo}"
+readonly WAMN_BUILD_COMPONENTS="${WAMN_BUILD_COMPONENTS:-$WAMN_TOOL_DIRECTORY/build-components}"
+readonly WAMN_DOCKER="${DOCKER:-docker}"
+# The Dockerfile stage that builds the guests of the host image.
+readonly WAMN_GUEST_STAGE='component-builder'
 
 # The three Cargo workspaces, in run order: label and manifest.
 readonly -a WAMN_WORKSPACES=(root apps no-std)
@@ -252,4 +256,52 @@ while IFS=$'\t' read -r index full trigger packages features; do
     failed=1
   fi
 done <<<"$WAMN_PLAN"
+
+# A change set that selects a guest of the host image also builds the guests
+# with tools/build-components and with the Dockerfile guest stage, because the
+# two builds diverged once (wamn-lt7y). The guests are the packages that the
+# stage builds, and they belong to the apps workspace.
+wamn_guest_check() {
+  local -r label="$1"
+  shift
+  if [[ "$WAMN_COMMAND" == dry-run ]]; then
+    printf '%s:' "$label"
+    printf ' %q' "$@"
+    printf '\n'
+    return 0
+  fi
+  printf 'test-changes: %s\n' "$label" >&2
+  local exit_code=0
+  "$@" </dev/null || exit_code=$?
+  if ((exit_code == 0)); then
+    printf 'test-changes: PASS: %s\n' "$label" >&2
+  else
+    printf 'test-changes: FAIL: %s (exit %d)\n' "$label" "$exit_code" >&2
+    failed=1
+  fi
+}
+
+if [[ "$WAMN_CLUSTER" != true ]]; then
+  declare -a guests=()
+  mapfile -t guests < <(
+    awk -v stage="$WAMN_GUEST_STAGE" '$1 == "FROM" { in_stage = ($NF == stage); next } in_stage' Dockerfile |
+      grep -oE -- '-p [A-Za-z0-9_-]+' | cut -d ' ' -f 2
+  )
+  ((${#guests[@]} > 0)) ||
+    wamn_fail 65 "the Dockerfile stage $WAMN_GUEST_STAGE names no guest package"
+  guest_selected=false
+  while IFS=$'\t' read -r index _ _ packages _; do
+    ((index == 1)) || continue
+    for package in $packages; do
+      for guest in "${guests[@]}"; do
+        [[ "$package" != "$guest" ]] || guest_selected=true
+      done
+    done
+  done <<<"$WAMN_PLAN"
+  if [[ "$guest_selected" == true ]]; then
+    wamn_guest_check 'guests (build-components)' "$WAMN_BUILD_COMPONENTS" all
+    wamn_guest_check "guests (Dockerfile $WAMN_GUEST_STAGE)" \
+      "$WAMN_DOCKER" build --target "$WAMN_GUEST_STAGE" "$WAMN_REPOSITORY_ROOT"
+  fi
+fi
 ((failed == 0))
