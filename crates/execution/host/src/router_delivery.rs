@@ -1035,7 +1035,7 @@ mod tests {
     /// manifest does not name, so nothing outside the manifest can become a
     /// label and the series count is fixed for the process.
     #[test]
-    fn a_delivery_is_labelled_by_its_source_kind_id_and_wiring_release() {
+    fn a_delivery_is_labelled_by_its_source_type_id_and_wiring_release() {
         let manifest = manifest();
         let attachment =
             resolve_authorized_target(&manifest, SourceRef::Attachment("orders-http"), None)

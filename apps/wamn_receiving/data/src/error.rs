@@ -158,7 +158,7 @@ impl AccessError {
     ) -> Self {
         Self::from_statement_parts(
             context,
-            source.kind(),
+            source.type_(),
             source.constraint(),
             allowed_constraints,
         )

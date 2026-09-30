@@ -434,11 +434,11 @@ After A8, no later commit changes platform code that compiles into a guest. So t
 **A12. Final build and pins.** On the final commit, run `tools/build-components all` once. It must pass the router pin with no edit. Record the sha256 of every guest that wamn-dev takes: `receiving.wasm`, `wms.wasm`, `label_render.wasm`, `blob_put.wasm`, `jsonata_expression.wasm`, `http_route.wasm`, `materializer.wasm` (`docs/operations/gcp.md` §3.9, §3.20, §5.3). Then check the tree:
 
 ```bash
-git grep -n -w -E 'failure-kind|definition_kind|principal_kind|fail_kind' -- ':!.beads' ':!docs/history' ':!tests/sweeps' ':!docs/plan/kind-to-type.md' ':!docs/plan/platform-ui.md'
+git grep -n -w -E 'failure-kind|definition_kind|principal_kind|fail_kind' -- ':!.beads' ':!docs/history' ':!tests/sweeps' ':!docs/plan/kind-to-type.md' ':!docs/plan/platform-ui.md' ':!crates/schema/control/src/run_plane/type_column.rs' ':!crates/schema/control/src/run_plane/tests.rs' ':!crates/schema/control/src/run_plane/observation.rs' ':!crates/control/lib/src/reconcile_run_plane.rs' ':!crates/control/lib/tests/run_plane_live/type_columns.rs' ':!crates/execution/host/wit/deps/wamn-router-delivery-0.3/package.wit'
 git grep -h -o '"kind":"' -- 'apps/*/generated/*'
 ```
 
-Both print nothing. The two plan files name the old words on purpose. The §1.7 counts of the renamed rows are 0, and the rows that stay (§1.6) keep their counts.
+Both print nothing. The two plan files name the old words on purpose, and so do the `TypeColumnCutover` code and its tests, which rename the old columns, and the history comment of the router delivery WIT, whose bytes the router pin covers. The §1.7 counts of the renamed rows are 0, and the rows that stay (§1.6) keep their counts.
 
 **Frozen evidence that stays.** `docs/history/`, the dated digest tables of `docs/operations/gcp.md` (§2.4), and `tests/sweeps/*.log` (§4.5) are not edited. New records go below the old ones.
 

@@ -139,11 +139,11 @@ export function ColumnFilter<TRow extends object>(props: {
   };
   const setRange = (min: string, max: string) =>
     set(min === "" && max === "" ? undefined : { type: "range", min, max });
-  const text = (kind: "contains" | "equals") => {
+  const text = (type: "contains" | "equals") => {
     const filter = current();
-    return filter?.type === "contains" && kind === "contains"
+    return filter?.type === "contains" && type === "contains"
       ? filter.text
-      : filter?.type === "equals" && kind === "equals"
+      : filter?.type === "equals" && type === "equals"
         ? filter.value
         : "";
   };

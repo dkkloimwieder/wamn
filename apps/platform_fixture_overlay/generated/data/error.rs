@@ -136,7 +136,7 @@ impl Error {
     }
 
     /// The one translation of a statement failure. A constraint the
-    /// operation does not name is an `internal_error`, as is every kind the
+    /// operation does not name is an `internal_error`, as is every type the
     /// contract does not name.
     #[must_use]
     pub fn from_statement(
@@ -144,14 +144,14 @@ impl Error {
         constraints: &Constraints,
         operation: &str,
     ) -> Self {
-        Self::from_parts(error.kind(), error.constraint(), constraints, operation)
+        Self::from_parts(error.type_(), error.constraint(), constraints, operation)
     }
 
-    /// [`Error::from_statement`] over the kind and the constraint of a
+    /// [`Error::from_statement`] over the type and the constraint of a
     /// statement failure.
     #[must_use]
     pub fn from_parts(
-        kind: StatementErrorType,
+        type_: StatementErrorType,
         constraint: Option<&str>,
         constraints: &Constraints,
         operation: &str,
@@ -162,7 +162,7 @@ impl Error {
             Some(constraint) => refusal(constraint.to_owned()),
             None => Self::InternalError,
         };
-        match kind {
+        match type_ {
             StatementErrorType::SerializationFailure
             | StatementErrorType::ConnectionUnavailable => Self::Retry,
             StatementErrorType::StatementTimeout => Self::Timeout,

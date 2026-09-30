@@ -218,7 +218,7 @@ mod tests {
     use async_nats::jetstream::{AckKind, Message};
     use wamn_control_provision::events::{materializer_consumer_config, source_stream_config};
     use wamn_control_registry::Triple;
-    use wamn_event_wire::{DeliveryAdvisoryKind, stream_name};
+    use wamn_event_wire::{DeliveryAdvisoryType, stream_name};
 
     use super::*;
 
@@ -364,10 +364,10 @@ mod tests {
             }
             let state = advisories.cached_info().state.clone();
             ensure!(state.messages == 2, "unexpected retained advisory count");
-            for (consumer, kind) in [("exhausted", DeliveryAdvisoryKind::MaxDeliver), ("terminated", DeliveryAdvisoryKind::Terminated)] {
+            for (consumer, kind) in [("exhausted", DeliveryAdvisoryType::MaxDeliver), ("terminated", DeliveryAdvisoryType::Terminated)] {
                 let records = retained_advisories(&jetstream, &advisories, &source_name, consumer, 1).await?;
                 ensure!(records.len() == 1, "selected consumer advisory is missing");
-                ensure!(records[0].advisory.kind == kind, "selected consumer has another advisory kind");
+                ensure!(records[0].advisory.type_ == kind, "selected consumer has another advisory kind");
                 ensure!(matches!(&records[0].source, SourcePayload::Available { .. }), "retained source payload is missing");
             }
             ensure!(advisories.info().await?.state.consumer_count == 0, "advisory reads created a consumer");
@@ -380,8 +380,8 @@ mod tests {
                     advisory.stream == source_name,
                     "advisory names another source"
                 );
-                let expected = match advisory.kind {
-                    DeliveryAdvisoryKind::MaxDeliver => {
+                let expected = match advisory.type_ {
+                    DeliveryAdvisoryType::MaxDeliver => {
                         ensure!(
                             advisory.consumer == "exhausted"
                                 && advisory.stream_seq == exhausted_sequence
@@ -391,7 +391,7 @@ mod tests {
                         exhausted_seen = true;
                         b"exhausted payload".as_slice()
                     }
-                    DeliveryAdvisoryKind::Terminated => {
+                    DeliveryAdvisoryType::Terminated => {
                         ensure!(
                             advisory.consumer == "terminated"
                                 && advisory.stream_seq == terminated_sequence
@@ -843,7 +843,7 @@ mod tests {
             tokio::time::sleep(Duration::from_millis(20)).await;
         };
         ensure!(
-            initial.advisory.kind == DeliveryAdvisoryKind::Terminated
+            initial.advisory.type_ == DeliveryAdvisoryType::Terminated
                 && initial.advisory.stream_seq == sequence
                 && initial.advisory.deliveries == 1
                 && matches!(&initial.source, SourcePayload::Available { body, .. } if body == b"expiring source payload"),
@@ -855,7 +855,7 @@ mod tests {
                 records.len() == 1
                     && records[0].advisory_sequence == initial.advisory_sequence
                     && records[0].advisory.stream_seq == sequence
-                    && records[0].advisory.kind == DeliveryAdvisoryKind::Terminated,
+                    && records[0].advisory.type_ == DeliveryAdvisoryType::Terminated,
                 "source expiry changed or removed the retained termination advisory"
             );
             if matches!(records[0].source, SourcePayload::Unavailable) {

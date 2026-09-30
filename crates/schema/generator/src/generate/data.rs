@@ -774,18 +774,18 @@ fn emit_error(
          #[must_use]\n\
          pub fn internal() -> Self {{ Self::InternalError }}\n\n\
          /// The one translation of a statement failure. A constraint the\n\
-         /// operation does not name is an `internal_error`, as is every kind the\n\
+         /// operation does not name is an `internal_error`, as is every type the\n\
          /// contract does not name.\n\
          #[must_use]\n\
          pub fn from_statement(error: &StatementError, constraints: &Constraints, operation: &str) -> Self {{\n\
-         Self::from_parts(error.kind(), error.constraint(), constraints, operation)\n\
+         Self::from_parts(error.type_(), error.constraint(), constraints, operation)\n\
          }}\n\n\
-         /// [`Error::from_statement`] over the kind and the constraint of a\n\
+         /// [`Error::from_statement`] over the type and the constraint of a\n\
          /// statement failure.\n\
          #[must_use]\n\
-         pub fn from_parts(kind: StatementErrorType, constraint: Option<&str>, constraints: &Constraints, operation: &str) -> Self {{\n\
+         pub fn from_parts(type_: StatementErrorType, constraint: Option<&str>, constraints: &Constraints, operation: &str) -> Self {{\n\
          {named}\
-         match kind {{\n\
+         match type_ {{\n\
          StatementErrorType::SerializationFailure | StatementErrorType::ConnectionUnavailable => Self::Retry,\n\
          StatementErrorType::StatementTimeout => Self::Timeout,\n\
          StatementErrorType::PermissionDenied => Self::PermissionDenied {{ operation: operation.to_owned() }},\n\

@@ -9,7 +9,7 @@ use futures_util::StreamExt as _;
 use serde_json::{Value, json};
 use tokio::process::Command;
 use tokio_postgres::Client;
-use wamn_event_wire::{DeliveryAdvisory, DeliveryAdvisoryKind, Envelope, Op};
+use wamn_event_wire::{DeliveryAdvisory, DeliveryAdvisoryType, Envelope, Op};
 use wamn_gate_harness::journey::PostcommitPhase;
 use wamn_runtime::plugins::wamn_jetstream::{
     RouterTapRecord, RouterTapRecordPhase, RouterTapSourceType, RouterTapTarget,
@@ -557,7 +557,7 @@ async fn assert_replay_and_progress(
         evidence["deployment_resumed"] = resumed;
         ensure!(attempts.len() == 3, "expected three real blocked handler attempts, observed {}", attempts.len());
         ensure!(subject == format!("$JS.EVENT.ADVISORY.CONSUMER.MSG_TERMINATED.{MATERIALIZER_STREAM}.{MATERIALIZER_DURABLE}")
-            && advisory.kind == DeliveryAdvisoryKind::Terminated
+            && advisory.type_ == DeliveryAdvisoryType::Terminated
             && advisory.deliveries == 1
             && advisory.stream_seq == poison_source.sequence,
             "broker advisory does not identify the actual terminated poison delivery: {advisory:?}");

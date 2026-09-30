@@ -109,7 +109,7 @@ fn definition_hash_pins_attachment_artifact_and_complete_resolved_sources() {
         AttachmentType::Http,
         json!({"method": "POST", "path": "/v1/orders"}),
     );
-    let source_kind_mutant_sources = vec![
+    let source_type_mutant_sources = vec![
         source(
             "a-auth",
             SourceKind::CallerPolicy,
@@ -117,9 +117,9 @@ fn definition_hash_pins_attachment_artifact_and_complete_resolved_sources() {
         ),
         baseline_sources[1].clone(),
     ];
-    let source_kind_mutant = attachment(
+    let source_type_mutant = attachment(
         &baseline_artifact,
-        &source_kind_mutant_sources,
+        &source_type_mutant_sources,
         "public-api",
         AttachmentType::Http,
         json!({"method": "POST", "path": "/v1/orders"}),
@@ -142,7 +142,7 @@ fn definition_hash_pins_attachment_artifact_and_complete_resolved_sources() {
         ("definition-attachment-body", definition_mutant),
         ("definition-artifact-identity", artifact_mutant),
         ("definition-source-id", source_id_mutant),
-        ("definition-source-kind", source_kind_mutant),
+        ("definition-source-type", source_type_mutant),
         ("definition-source-body", source_definition_mutant),
     ] {
         assert_ne!(

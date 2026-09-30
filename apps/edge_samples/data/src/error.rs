@@ -90,7 +90,7 @@ impl Error for AccessError {}
 /// or a contract mismatch is a deployment fault that a caller cannot act on.
 #[must_use]
 pub fn from_statement(error: &StatementError) -> AccessError {
-    let kind = match error.kind() {
+    let kind = match error.type_() {
         StatementErrorType::SerializationFailure | StatementErrorType::ConnectionUnavailable => {
             AccessErrorType::Retry
         }

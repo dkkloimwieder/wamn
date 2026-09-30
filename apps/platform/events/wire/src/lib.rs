@@ -271,7 +271,7 @@ pub const DELIVERY_ADVISORY_MAX_AGE_SECONDS: u64 = 7 * 24 * 60 * 60;
 
 /// The broker's delivery disposition.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum DeliveryAdvisoryKind {
+pub enum DeliveryAdvisoryType {
     #[serde(rename = "io.nats.jetstream.advisory.v1.max_deliver")]
     MaxDeliver,
     #[serde(rename = "io.nats.jetstream.advisory.v1.terminated")]
@@ -282,7 +282,7 @@ pub enum DeliveryAdvisoryKind {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DeliveryAdvisory {
     #[serde(rename = "type")]
-    pub kind: DeliveryAdvisoryKind,
+    pub type_: DeliveryAdvisoryType,
     pub id: String,
     pub timestamp: String,
     pub stream: String,

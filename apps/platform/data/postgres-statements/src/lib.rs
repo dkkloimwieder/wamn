@@ -95,7 +95,7 @@ pub struct StatementError {
 
 impl StatementError {
     /// Stable failure class; callers must not match display text.
-    pub const fn kind(&self) -> StatementErrorType {
+    pub const fn type_(&self) -> StatementErrorType {
         self.type_
     }
 

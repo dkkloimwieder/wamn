@@ -159,7 +159,7 @@ impl Error for AccessError {}
 /// deployment fault, not something a caller can act on.
 #[must_use]
 pub fn from_statement(error: &StatementError) -> AccessError {
-    let kind = match error.kind() {
+    let kind = match error.type_() {
         StatementErrorType::SerializationFailure | StatementErrorType::ConnectionUnavailable => {
             AccessErrorType::Retry
         }

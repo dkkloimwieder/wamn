@@ -111,7 +111,7 @@ impl AccessError {
     /// A constraint the operation does not name lands on `internal_error`, as
     /// does every unmapped kind.
     pub(crate) fn from_statement(error: &StatementError, constraints: Constraints) -> Self {
-        Self::from_statement_parts(error.kind(), error.constraint(), constraints)
+        Self::from_statement_parts(error.type_(), error.constraint(), constraints)
     }
 
     fn from_statement_parts(
