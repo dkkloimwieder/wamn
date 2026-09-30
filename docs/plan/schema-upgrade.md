@@ -63,7 +63,8 @@ The verb takes one of the two URLs per run. It locks the record table, reads the
 
 - A recorded file that differs from its file on disk, by path or by sha256.
 - A recorded ordinal with no file.
-- No record table. The database was installed before the table existed (section 4.5).
+- No record table and no `--baseline`. The database was installed before the table existed (section 4.5).
+- `--baseline` on a database whose record table has a row.
 - A project URL whose database is not in `registry.project_envs`, or a system URL whose database is not `wamn_system`.
 
 ### 4.4 Ordering with releases
@@ -79,7 +80,7 @@ The verb never runs a migration that `publish-release` or `deploy-release` needs
 
 ### 4.5 The installed databases of wamn-dev
 
-`wamn_system` and the two project databases have no record table. The first run on such a database takes `--baseline <ordinal>`. The operator states the last file that the database already holds. The verb creates the record table and records the files up to that ordinal without running them, then applies the rest.
+`wamn_system` and the two project databases have no record table. The first run on such a database takes `--baseline <ordinal>`, and only the first run. The operator states the last file that the database already holds. The verb creates the record table and records the files up to that ordinal without running them, then applies the rest.
 
 ### 4.6 The hand statements of section 7 under this verb
 
@@ -89,7 +90,7 @@ Each item says what the hand statement becomes under the verb.
 - `registry.capture_gap` is `deploy/sql/migrations/system/0001_capture_gap.sql`: the `CREATE TABLE` block and the `GRANT SELECT` to `wamn_registry_reader`. `wamn-ctl upgrade-schema --system-database-url "$WAMN_SYSTEM_ADMIN_URL" --confirm` applies it. The `gcp.md` entry names the verb run and its time, not the statements.
 - The `wamn_system` script of `kind-to-type.md` section 4.3.4 is `deploy/sql/migrations/system/0002_kind_to_type.sql`: the P1 to P7 renames, the new `identity.lock_password_principal`, and the record-history functions.
 - The project script is `deploy/sql/migrations/project/0001_kind_to_type.sql`: the rename loop over every `%_history` table and the record-history functions. It runs once per project database.
-- The P8 and P10 to P12 cutover stays in `reconcile-run-plane`, as `kind-to-type.md` section 4.3.2 plans. The component key and the snapshot table of section 4.3.6 are migrations too.
+- The P8 and P10 to P12 cutover stays in `reconcile-run-plane` for the cutover. The first project migration of `upgrade-schema` is the baseline after the cutover. The component key and the snapshot table of section 4.3.6 are migrations too.
 - The order of `kind-to-type.md` section 4.7 stays. Steps 2 and 3 become two runs of `upgrade-schema` for each database.
 - Rollback is a new migration with the names swapped. The verb never runs a file backward.
 
@@ -108,3 +109,12 @@ One branch. Each issue lands with its tests.
 - A migration that runs backward.
 - A change that needs a drain, a backfill in steps, or a second writer.
 - The Kubernetes objects of a change, such as the PAT Secret annotations of `kind-to-type.md` section 4.3.5.
+
+## 7. Owner rulings
+
+The owner answered these on 2026-09-30 (recorded on `wamn-o8b9`).
+
+1. A project schema change means the platform schemas of a project database. Package migrations stay in `docs/plan/upgrades.md`.
+2. The names are accepted: `upgrade-schema`, `deploy/sql/migrations/system/`, `deploy/sql/migrations/project/`, `registry.schema_migrations` and `app_system.schema_migrations`.
+3. `--baseline <ordinal>` is for the first run only. It is refused once the record table has a row.
+4. The P8 and P10 to P12 renames stay in `reconcile-run-plane` for the cutover. The first project migration of `upgrade-schema` is the baseline after the cutover. A P3 finding (`wamn-qpgq`) says that the in-code schema changes of `reconcile-run-plane` move under `upgrade-schema` later.

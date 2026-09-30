@@ -51,15 +51,17 @@ Two manifests under `deploy/gcp/operator/`, both in namespace `identity`, where 
 - `invite.yaml` runs `wamn-ctl invite --principal <principal id>`.
 - `mint-pat.yaml` runs `wamn-ctl provision-project-env` with the PAT flags of section 3.16.
 
-Each Job has `backoffLimit: 0`, `restartPolicy: Never` and `automountServiceAccountToken: false`. It mounts `tls.crt` and `tls.key` of `operator-dkk` and `ca.crt` of `identity-tls` read-only at mode 0400, and sets `WAMN_PAT_ISSUER=https://identity.identity.svc.cluster.local`.
+Each Job has `backoffLimit: 0`, `restartPolicy: Never`, `ttlSecondsAfterFinished` and `automountServiceAccountToken: false`. It mounts `tls.crt` and `tls.key` of `operator-dkk` and `ca.crt` of `identity-tls` read-only at mode 0400, and sets `WAMN_PAT_ISSUER=https://identity.identity.svc.cluster.local`.
 
 ### 4.3 Arguments and output
 
-The fixed flags are in the manifest. The run values are placeholders in `args`: the principal id, or the triple and the tenant. The operator fills them in a private copy of the manifest before `kubectl apply`, as for the `deploy/platform` examples.
+The fixed flags are in the manifest. The run values are placeholders in `args`: the principal id, or the triple and the tenant. The operator fills them in a private copy of the manifest in the scratchpad, at mode 0600, and removes the copy after `kubectl apply`.
 
 `invite` writes no credential. The operator waits for the Job to complete, saves `kubectl logs job/<name>` to the scratchpad, and deletes the Job.
 
-`mint-pat` writes a PAT Secret file. The file must reach the owner's machine. The bench PAT is used on the client VM, and the management-author PAT is not applied (`gcp.md` section 3.16). The container writes it to a memory `emptyDir`, then waits. The operator copies it with `kubectl exec cat` into a mode 0600 file, as `tools/identity-jwks-journey-run` does, and deletes the Job. The verb also needs the superuser URL of `wamn_system`. The operator makes the Secret `wamn-system-admin` in namespace `identity` from `wamn-pg-superuser` before the run, and deletes it after.
+`mint-pat` writes a PAT Secret file. The file must reach the owner's machine. The bench PAT is used on the client VM, and the management-author PAT is not applied (`gcp.md` section 3.16). The container writes it to a memory `emptyDir`, then waits for a fixed bound. The operator copies it with `kubectl exec cat` into a mode 0600 file, as `tools/identity-jwks-journey-run` does, and deletes the Job.
+
+The mint also needs the superuser URL of `wamn_system`. After the apply, the operator makes the Secret `wamn-system-admin` in namespace `identity` with `kubectl`, from the CloudNativePG Secret `wamn-pg-superuser`. Nobody types the password. The Secret carries an owner reference to the Job. Kubernetes deletes it with the Job, and `ttlSecondsAfterFinished` deletes the Job.
 
 ### 4.4 What the hosts-file shortcut becomes
 
@@ -71,7 +73,7 @@ One branch. Each issue lands with its tests.
 
 1. The image. `ctl` gets the host identity rule in `tools/journey-image-cache` and its test. Measure the `gates` rebuild after a test-only commit, before and after.
 2. The Jobs. `deploy/gcp/operator/invite.yaml` and `mint-pat.yaml`, and sections 3.16 and 4.5 of `gcp.md` rewritten for them.
-3. The run on wamn-dev. Build and push `wamn-ctl:src-<identity>`, pin it in both manifests, and run each Job once.
+3. The run on wamn-dev. Build and push `wamn-ctl:src-<identity>` and pin it in both manifests. Run one PAT mint for the Receiving bench operator `wamn-operator-dkk--receiving--dev`, then revoke its previous PAT. No invitation runs, because nothing is created for a test.
 4. Closeout. Close `wamn-n5d1` and `wamn-lo7z` with the commits and the runs.
 
 ## 6. Out of scope
@@ -80,3 +82,13 @@ One branch. Each issue lands with its tests.
 - A non-root user in the images. No stage sets `USER` today.
 - The `copy-project-env` verb, which needs `pg_dump` and `pg_restore`.
 - The other verbs of `gcp.md` that run from the owner's machine through the Postgres port-forward. They call no identity.
+
+## 7. Owner rulings
+
+The owner answered these on 2026-09-30 (recorded on `wamn-n5d1`).
+
+1. The `ctl` stage is the operator image, with the test-free cache identity. `gates` keeps its own copy for its tests.
+2. The Jobs run in namespace `identity`. The short-lived Secret is made from the CloudNativePG superuser Secret with `kubectl`, never typed. It carries an owner reference to the Job, so Kubernetes deletes it with the Job. The manifest sets `ttlSecondsAfterFinished`, so neither can be forgotten.
+3. The private copy of the manifest is in the scratchpad, at mode 0600, and is removed after the apply.
+4. The pod waits with a bound. The file comes out with `kubectl exec cat` into a 0600 file, as the journey tool does.
+5. One run on wamn-dev: a PAT mint for the Receiving bench operator `wamn-operator-dkk--receiving--dev`, then a revoke of the previous PAT. No invitation, because nothing is created for a test.
