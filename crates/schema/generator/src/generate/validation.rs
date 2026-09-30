@@ -125,6 +125,7 @@ pub(super) fn validate(
     }
     validate_connections(manifest)?;
     validate_authored_sources(manifest, input.authored_sql)?;
+    validate_authored_query_filters(manifest, input.authored_sql)?;
     for (operation_name, operation) in &manifest.custom_operations {
         validate_custom_operation_sql(
             input.catalog,
@@ -1193,6 +1194,61 @@ fn validate_authored_sources(
                     ),
                     source.path,
                 ));
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Each authored query file implements the match mode that each filter of its
+/// operation declares (wamn-efxf). Filter `n` binds `$n`, as it does in a
+/// generated query.
+fn validate_authored_query_filters(
+    manifest: &PackageManifest,
+    authored_sql: &[AuthoredSql<'_>],
+) -> Result<(), GenerateError> {
+    for (model_name, model) in &manifest.models {
+        for (operation_name, operation) in &model.operations {
+            let Some(authored) = &operation.authored_sql else {
+                continue;
+            };
+            let operation_name = operation_name.as_str();
+            for variant in &authored.variants {
+                let path = variant.path.as_str();
+                let Some(source) = authored_sql.iter().find(|source| source.path == path) else {
+                    continue;
+                };
+                for (index, filter) in operation.filters.iter().enumerate() {
+                    let parameter = u32::try_from(index + 1).expect("a query has few filters");
+                    let declared = filter.match_mode;
+                    let refusal = match crate::sql_lex::filter_predicate(source.bytes, parameter) {
+                        Some((Some(found), _)) if found == declared => continue,
+                        Some((Some(found), line)) => format!(
+                            "{path}:{line}: {model_name}.{operation_name} filter `{}` declares \
+                             match {}, but its predicate on ${parameter} matches {}",
+                            filter.field,
+                            declared.as_str(),
+                            found.as_str()
+                        ),
+                        Some((None, line)) => format!(
+                            "{path}:{line}: {model_name}.{operation_name} filter `{}` declares \
+                             match {}, but its predicate on ${parameter} matches no filter mode",
+                            filter.field,
+                            declared.as_str()
+                        ),
+                        None => format!(
+                            "{path}: {model_name}.{operation_name} filter `{}` declares match \
+                             {}, but the file never reads ${parameter}",
+                            filter.field,
+                            declared.as_str()
+                        ),
+                    };
+                    return Err(GenerateError::for_path(
+                        GenerateErrorKind::InvalidOperation,
+                        refusal,
+                        path,
+                    ));
+                }
             }
         }
     }

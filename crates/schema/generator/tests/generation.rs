@@ -1396,13 +1396,57 @@ fn duplicate_filters_and_schema_qualified_authored_sql_refuse() {
         if source.path() == "query/open_gadget.sql" {
             AuthoredSql::new(
                 source.path(),
-                b"-- inventory.gadget\nSELECT 'inventory.gadget', $$\"inventory\".\"gadget\"$$, $1, $2, $3, $4, $5 /* inventory.gadget */;\n",
+                b"-- inventory.gadget\nSELECT 'inventory.gadget', $$\"inventory\".\"gadget\"$$, $3, $4, $5\nWHERE ($1::jsonb IS NULL OR stock_id::text IN (SELECT jsonb_array_elements_text($1::jsonb)))\n    AND ($2::jsonb IS NULL OR status IN (SELECT jsonb_array_elements_text($2::jsonb)))\n/* inventory.gadget */;\n",
             )
         } else {
             source
         }
     });
     run(&ir, &manifest(), &inert).unwrap();
+}
+
+/// An authored query implements the match mode that each filter declares
+/// (wamn-efxf). The refusal names the file and the line of the predicate.
+#[test]
+fn authored_query_sql_that_does_not_implement_a_filter_mode_refuses() {
+    let ir = catalog(false);
+    let mut contains = manifest();
+    contains["models"]["gadget"]["operations"]["query"]["filters"][1] =
+        json!({"field": "part_code", "match": "contains"});
+    let error = run(&ir, &contains, &QUERY_SOURCES).unwrap_err();
+    assert_eq!(error.kind(), GenerateErrorKind::InvalidOperation);
+    assert_eq!(
+        error.context(),
+        "query/open_gadget_by_part_code_ascending.sql:3: gadget.query filter `part_code` declares match contains, \
+         but its predicate on $2 matches exact"
+    );
+    assert_eq!(
+        error.path(),
+        Some("query/open_gadget_by_part_code_ascending.sql")
+    );
+
+    let substring = QUERY_SOURCES.map(|source| {
+        AuthoredSql::new(
+            source.path(),
+            b"SELECT $3, $4, $5\nWHERE ($1::jsonb IS NULL OR stock_id::text IN (SELECT jsonb_array_elements_text($1::jsonb)))\n    AND ($2::jsonb IS NULL OR EXISTS (\n        SELECT 1 FROM jsonb_array_elements_text($2::jsonb) AS filter(value)\n        WHERE strpos(part_code, filter.value) > 0\n    ));\n",
+        )
+    });
+    run(&ir, &contains, &substring).unwrap();
+    let error = run(&ir, &manifest(), &substring).unwrap_err();
+    assert_eq!(
+        error.context(),
+        "query/open_gadget_by_part_code_ascending.sql:3: gadget.query filter `status` declares match exact, \
+         but its predicate on $2 matches contains"
+    );
+
+    let unread = QUERY_SOURCES.map(|source| {
+        AuthoredSql::new(source.path(), b"SELECT $1, $3, $4, $5 WHERE $2 IS NULL;\n")
+    });
+    assert_eq!(
+        run(&ir, &manifest(), &unread).unwrap_err().context(),
+        "query/open_gadget_by_part_code_ascending.sql:1: gadget.query filter `stock_id` declares match exact, \
+         but its predicate on $1 matches no filter mode"
+    );
 }
 
 // ---------------------------------------------------------------------------

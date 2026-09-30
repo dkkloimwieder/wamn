@@ -6,6 +6,8 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use crate::FilterMatch;
+
 #[cfg(test)]
 mod grammar;
 
@@ -29,7 +31,8 @@ enum Token {
     Star,
     /// A positional bind parameter, `$n`.
     Parameter(u32),
-    Other,
+    /// Any other byte, such as an operator character.
+    Other(u8),
 }
 
 pub(crate) fn contains_schema_qualified_reference(sql: &[u8], schema: &str) -> bool {
@@ -619,7 +622,7 @@ fn apply_lock_clause(
             continue;
         }
         let locking = matches!(
-            identifier(tokens.get(index + 1).unwrap_or(&Token::Other)),
+            identifier(tokens.get(index + 1).unwrap_or(&Token::Other(b' '))),
             Some("update" | "share" | "no" | "key")
         );
         if !locking {
@@ -742,63 +745,168 @@ fn is_keyword(value: &str) -> bool {
 }
 
 fn tokens(sql: &[u8]) -> Vec<Token> {
+    positioned_tokens(sql)
+        .into_iter()
+        .map(|(_, token)| token)
+        .collect()
+}
+
+/// The tokens of `sql`, each with the byte offset where it starts.
+fn positioned_tokens(sql: &[u8]) -> Vec<(usize, Token)> {
     let mut tokens = Vec::new();
     let mut cursor = 0;
     while cursor < sql.len() {
-        match sql[cursor] {
-            byte if byte.is_ascii_whitespace() => cursor += 1,
-            b'-' if sql.get(cursor + 1) == Some(&b'-') => skip_line_comment(sql, &mut cursor),
-            b'/' if sql.get(cursor + 1) == Some(&b'*') => skip_block_comment(sql, &mut cursor),
-            b'\'' => skip_quoted(sql, &mut cursor, b'\''),
-            b'"' => tokens.push(Token::Identifier(quoted_identifier(sql, &mut cursor))),
+        let start = cursor;
+        let token = match sql[cursor] {
+            byte if byte.is_ascii_whitespace() => {
+                cursor += 1;
+                continue;
+            }
+            b'-' if sql.get(cursor + 1) == Some(&b'-') => {
+                skip_line_comment(sql, &mut cursor);
+                continue;
+            }
+            b'/' if sql.get(cursor + 1) == Some(&b'*') => {
+                skip_block_comment(sql, &mut cursor);
+                continue;
+            }
+            b'\'' => {
+                skip_quoted(sql, &mut cursor, b'\'');
+                continue;
+            }
+            b'"' => Token::Identifier(quoted_identifier(sql, &mut cursor)),
             // A dollar-quote tag cannot start with a digit, so `$n` is a parameter.
             b'$' if sql.get(cursor + 1).is_some_and(u8::is_ascii_digit) => {
-                let start = cursor + 1;
-                cursor = start;
+                let digits = cursor + 1;
+                cursor = digits;
                 while sql.get(cursor).is_some_and(u8::is_ascii_digit) {
                     cursor += 1;
                 }
-                let index = std::str::from_utf8(&sql[start..cursor])
+                let index = std::str::from_utf8(&sql[digits..cursor])
                     .expect("ASCII digits are UTF-8")
                     .parse()
                     .unwrap_or(u32::MAX);
-                tokens.push(Token::Parameter(index));
+                Token::Parameter(index)
             }
-            b'$' if dollar_quote_end(sql, cursor).is_some() => skip_dollar_quote(sql, &mut cursor),
-            b'.' => {
-                tokens.push(Token::Dot);
-                cursor += 1;
-            }
-            b'(' => {
-                tokens.push(Token::LeftParen);
-                cursor += 1;
-            }
-            b')' => {
-                tokens.push(Token::RightParen);
-                cursor += 1;
-            }
-            b',' => {
-                tokens.push(Token::Comma);
-                cursor += 1;
-            }
-            b'=' => {
-                tokens.push(Token::Equals);
-                cursor += 1;
-            }
-            b'*' => {
-                tokens.push(Token::Star);
-                cursor += 1;
+            b'$' if dollar_quote_end(sql, cursor).is_some() => {
+                skip_dollar_quote(sql, &mut cursor);
+                continue;
             }
             byte if identifier_start(byte) => {
-                tokens.push(Token::Identifier(unquoted_identifier(sql, &mut cursor)));
+                Token::Identifier(unquoted_identifier(sql, &mut cursor))
             }
-            _ => {
-                tokens.push(Token::Other);
+            byte => {
                 cursor += 1;
+                match byte {
+                    b'.' => Token::Dot,
+                    b'(' => Token::LeftParen,
+                    b')' => Token::RightParen,
+                    b',' => Token::Comma,
+                    b'=' => Token::Equals,
+                    b'*' => Token::Star,
+                    other => Token::Other(other),
+                }
             }
-        }
+        };
+        tokens.push((start, token));
     }
     tokens
+}
+
+/// The match mode that the predicate on bind parameter `$parameter`
+/// implements, and the line of the parameter's first reference.
+///
+/// The predicate is the innermost parenthesized group that holds every
+/// reference to the parameter. It implements contains when it calls
+/// `strpos`, prefix when it calls `starts_with`, exact when it tests
+/// `IN (`, is_null when it casts to `boolean`, and range when it reads a
+/// bound of the parameter with `->>`. The mode is `None` when the group does
+/// none of these. The result is `None` when the statement never reads the
+/// parameter.
+pub(crate) fn filter_predicate(sql: &[u8], parameter: u32) -> Option<(Option<FilterMatch>, usize)> {
+    let positioned = positioned_tokens(sql);
+    let mut uses = positioned
+        .iter()
+        .enumerate()
+        .filter(|(_, (_, token))| *token == Token::Parameter(parameter))
+        .map(|(index, _)| index);
+    let first = uses.next()?;
+    let last = uses.next_back().unwrap_or(first);
+    let line = sql[..positioned[first].0]
+        .split(|byte| *byte == b'\n')
+        .count();
+    let tokens = positioned
+        .into_iter()
+        .map(|(_, token)| token)
+        .collect::<Vec<_>>();
+    let (start, end) = enclosing_group(&tokens, first, last);
+    let group = &tokens[start..end];
+    let calls = |name: &str| group.iter().any(|token| identifier(token) == Some(name));
+    let mode = if calls("strpos") {
+        Some(FilterMatch::Contains)
+    } else if calls("starts_with") {
+        Some(FilterMatch::Prefix)
+    } else if group
+        .windows(2)
+        .any(|pair| identifier(&pair[0]) == Some("in") && pair[1] == Token::LeftParen)
+    {
+        Some(FilterMatch::Exact)
+    } else if calls("boolean") {
+        Some(FilterMatch::IsNull)
+    } else if group.windows(7).any(|window| {
+        window[0] == Token::Parameter(parameter)
+            && window[1..3] == [Token::Other(b':'), Token::Other(b':')]
+            && identifier(&window[3]) == Some("jsonb")
+            && window[4..] == [Token::Other(b'-'), Token::Other(b'>'), Token::Other(b'>')]
+    }) {
+        Some(FilterMatch::Range)
+    } else {
+        None
+    };
+    Some((mode, line))
+}
+
+/// The token range inside the innermost parentheses that hold the tokens
+/// `first` to `last`, or the whole statement when no parentheses do.
+fn enclosing_group(tokens: &[Token], first: usize, last: usize) -> (usize, usize) {
+    let mut from = first;
+    loop {
+        let mut depth = 0_usize;
+        let open = (0..from).rev().find(|index| match tokens[*index] {
+            Token::RightParen => {
+                depth += 1;
+                false
+            }
+            Token::LeftParen if depth == 0 => true,
+            Token::LeftParen => {
+                depth -= 1;
+                false
+            }
+            _ => false,
+        });
+        let Some(open) = open else {
+            return (0, tokens.len());
+        };
+        let mut depth = 0_usize;
+        let close = (open + 1..tokens.len())
+            .find(|index| match tokens[*index] {
+                Token::LeftParen => {
+                    depth += 1;
+                    false
+                }
+                Token::RightParen if depth == 0 => true,
+                Token::RightParen => {
+                    depth -= 1;
+                    false
+                }
+                _ => false,
+            })
+            .unwrap_or(tokens.len());
+        if close > last {
+            return (open + 1, close);
+        }
+        from = open;
+    }
 }
 
 fn skip_line_comment(sql: &[u8], cursor: &mut usize) {

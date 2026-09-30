@@ -11,27 +11,27 @@ use wamn_schema_introspection::ir::{
 pub(super) const QUERY_SOURCES: [AuthoredSql<'static>; 6] = [
     AuthoredSql::new(
         "query/open_gadget_by_part_code_ascending.sql",
-        b"SELECT $1, $2, $3, $4, $5 /* part_code ascending */;\n",
+        b"SELECT $3, $4, $5\nWHERE ($1::jsonb IS NULL OR stock_id::text IN (SELECT jsonb_array_elements_text($1::jsonb)))\n    AND ($2::jsonb IS NULL OR status IN (SELECT jsonb_array_elements_text($2::jsonb)))\n/* part_code ascending */;\n",
     ),
     AuthoredSql::new(
         "query/open_gadget_by_part_code_descending.sql",
-        b"SELECT $1, $2, $3, $4, $5 /* part_code descending */;\n",
+        b"SELECT $3, $4, $5\nWHERE ($1::jsonb IS NULL OR stock_id::text IN (SELECT jsonb_array_elements_text($1::jsonb)))\n    AND ($2::jsonb IS NULL OR status IN (SELECT jsonb_array_elements_text($2::jsonb)))\n/* part_code descending */;\n",
     ),
     AuthoredSql::new(
         "query/open_gadget_by_status_ascending.sql",
-        b"SELECT $1, $2, $3, $4, $5 /* status ascending */;\n",
+        b"SELECT $3, $4, $5\nWHERE ($1::jsonb IS NULL OR stock_id::text IN (SELECT jsonb_array_elements_text($1::jsonb)))\n    AND ($2::jsonb IS NULL OR status IN (SELECT jsonb_array_elements_text($2::jsonb)))\n/* status ascending */;\n",
     ),
     AuthoredSql::new(
         "query/open_gadget_by_status_descending.sql",
-        b"SELECT $1, $2, $3, $4, $5 /* status descending */;\n",
+        b"SELECT $3, $4, $5\nWHERE ($1::jsonb IS NULL OR stock_id::text IN (SELECT jsonb_array_elements_text($1::jsonb)))\n    AND ($2::jsonb IS NULL OR status IN (SELECT jsonb_array_elements_text($2::jsonb)))\n/* status descending */;\n",
     ),
     AuthoredSql::new(
         "query/open_gadget.sql",
-        b"SELECT $1, $2, $3, $4, $5 /* created_at ascending */;\n",
+        b"SELECT $3, $4, $5\nWHERE ($1::jsonb IS NULL OR stock_id::text IN (SELECT jsonb_array_elements_text($1::jsonb)))\n    AND ($2::jsonb IS NULL OR status IN (SELECT jsonb_array_elements_text($2::jsonb)))\n/* created_at ascending */;\n",
     ),
     AuthoredSql::new(
         "query/open_gadget_by_created_at_descending.sql",
-        b"SELECT $1, $2, $3, $4, $5 /* created_at descending */;\n",
+        b"SELECT $3, $4, $5\nWHERE ($1::jsonb IS NULL OR stock_id::text IN (SELECT jsonb_array_elements_text($1::jsonb)))\n    AND ($2::jsonb IS NULL OR status IN (SELECT jsonb_array_elements_text($2::jsonb)))\n/* created_at descending */;\n",
     ),
 ];
 

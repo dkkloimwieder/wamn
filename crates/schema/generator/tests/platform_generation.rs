@@ -161,8 +161,11 @@ fn a_statement_takes_exactly_the_parameters_its_accessor_binds() {
     for (path, sql, expected) in [
         (
             "query/widget.sql",
-            "SELECT widget.code, widget.created_at, widget.edit_version, widget.id, widget.maker_id, widget.note FROM widget AS widget;\n",
-            "query/widget.sql takes 0 parameters, but its generated accessor query_created_at_ascending binds 6",
+            "SELECT widget.code, widget.created_at, widget.edit_version, widget.id, widget.maker_id, widget.note FROM widget AS widget \
+             WHERE ($1::jsonb IS NULL OR widget.code IN (SELECT jsonb_array_elements_text($1::jsonb))) \
+             AND ($2::jsonb IS NULL OR EXISTS (SELECT 1 FROM jsonb_array_elements_text($2::jsonb) AS filter(value) WHERE starts_with(widget.note, filter.value))) \
+             AND ($3::jsonb IS NULL OR (widget.maker_id IS NULL) = ($3::jsonb)::boolean);\n",
+            "query/widget.sql takes 3 parameters, but its generated accessor query_created_at_ascending binds 6",
         ),
         (
             "command/widget/archive.sql",
