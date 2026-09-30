@@ -1,0 +1,76 @@
+# The PAT mint Job of docs/plan/operator-image.md section 4.2 (wamn-n5d1).
+# It runs `wamn-ctl provision-project-env` with an operator PAT flag inside
+# the cluster, so the owner's machine needs no /etc/hosts line and no identity
+# port-forward. The operator certificate reaches the Job only as the mounted
+# Secret operator-dkk.
+#
+# Fill __ORG__, __PROJECT__, __ENV__, __TENANT__, __NAMESPACE__,
+# __SECRET_NAMESPACE__ and __PAT_FLAG__ in a private copy of this file in the
+# scratchpad, at mode 0600, apply the copy and remove it. __PAT_FLAG__ is
+# --emit-operator-pat-secret or --emit-management-author-pat-secret. The run
+# rewrites secret_namespace of registry.project_envs, so __SECRET_NAMESPACE__
+# must be the recorded value (wamn-rjtf). Then make the Secret wamn-system-admin
+# with an owner reference to this Job (docs/operations/gcp.md section 3.16).
+# The pod waits for that Secret before it starts.
+#
+# The verb writes the PAT Secret file into a memory volume. The operator reads
+# and deletes it with one `kubectl exec`, and the pod then ends. If nobody
+# reads the file within 300 seconds, the pod fails and the file goes with it.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: mint-pat
+  namespace: identity
+spec:
+  backoffLimit: 0
+  ttlSecondsAfterFinished: 600
+  template:
+    spec:
+      restartPolicy: Never
+      # The Job does not call the Kubernetes API.
+      automountServiceAccountToken: false
+      containers:
+        - name: mint-pat
+          image: us-central1-docker.pkg.dev/wamn-dev/wamn/wamn-ctl:src-4efb827f3fd6ab78@sha256:1322d637113f2934340620556f1ef491d2d2e28f4991ddeb9236a7d4f48eae10
+          command: ["/bin/sh", "-ec"]
+          args:
+            - |
+              umask 077
+              /usr/local/bin/wamn-ctl provision-project-env \
+                --org __ORG__ --project __PROJECT__ --env __ENV__ --tenant __TENANT__ \
+                --namespace __NAMESPACE__ --secret-namespace __SECRET_NAMESPACE__ \
+                __PAT_FLAG__ /out/pat.json
+              waited=0
+              while [ -e /out/pat.json ] && [ "$waited" -lt 300 ]; do
+                sleep 1
+                waited=$((waited + 1))
+              done
+              if [ -e /out/pat.json ]; then
+                echo "nobody read the PAT Secret file within 300 seconds" >&2
+                exit 1
+              fi
+              echo "the PAT Secret file was read after $waited seconds"
+          env:
+            - name: WAMN_SYSTEM_ADMIN_URL
+              valueFrom: { secretKeyRef: { name: wamn-system-admin, key: url } }
+            - { name: WAMN_PAT_ISSUER, value: "https://identity.identity.svc.cluster.local" }
+            - { name: WAMN_PAT_CLIENT_CERT, value: /etc/wamn/operator/tls.crt }
+            - { name: WAMN_PAT_CLIENT_KEY, value: /etc/wamn/operator/tls.key }
+            - { name: WAMN_PAT_SERVER_CA, value: /etc/wamn/identity-ca/ca.crt }
+          volumeMounts:
+            - { name: operator, mountPath: /etc/wamn/operator, readOnly: true }
+            - { name: identity-ca, mountPath: /etc/wamn/identity-ca, readOnly: true }
+            - { name: out, mountPath: /out }
+      volumes:
+        - name: operator
+          secret:
+            secretName: operator-dkk
+            defaultMode: 0400
+            items: [{ key: tls.crt, path: tls.crt }, { key: tls.key, path: tls.key }]
+        - name: identity-ca
+          secret:
+            secretName: identity-tls
+            defaultMode: 0400
+            items: [{ key: ca.crt, path: ca.crt }]
+        - name: out
+          emptyDir: { medium: Memory, sizeLimit: 1Mi }

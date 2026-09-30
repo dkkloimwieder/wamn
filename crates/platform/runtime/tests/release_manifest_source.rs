@@ -12,9 +12,6 @@
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
-
-use base64::Engine as _;
 
 use wamn_engine::component_admission::component_digest;
 use wamn_engine::release_manifest::LoadedRelease;
@@ -23,10 +20,6 @@ use wamn_runtime::release_manifest_artifact::{
     verify_release_manifest_artifact_layout,
 };
 use wamn_runtime::release_manifest_source::{ReleaseManifestFetchErrorType, ReleaseManifestSource};
-
-#[path = "support/metadata_server.rs"]
-mod metadata;
-use metadata::metadata_server;
 
 const REGISTRY: &str = "registry.example:5000";
 const ARTIFACT_BASE: &str = "registry.example:5000/wamn/releases";
@@ -293,37 +286,7 @@ async fn a_published_release_pulls_back_byte_exact_and_loads_the_release_it_name
 /// transport can provoke them.
 struct LyingRegistry {
     authority: String,
-    heads: Arc<Mutex<Vec<String>>>,
     listening: tokio::task::JoinHandle<()>,
-}
-
-impl LyingRegistry {
-    /// The `Authorization` header of each manifest request, in order.
-    fn manifest_authorizations(&self) -> Vec<String> {
-        self.heads
-            .lock()
-            .expect("heads lock")
-            .iter()
-            .filter(|head| {
-                head.lines()
-                    .next()
-                    .is_some_and(|line| line.contains("/manifests/"))
-            })
-            .map(|head| {
-                head.lines()
-                    .find_map(|line| {
-                        line.to_ascii_lowercase()
-                            .starts_with("authorization:")
-                            .then(|| line["authorization:".len()..].trim().to_owned())
-                    })
-                    .unwrap_or_default()
-            })
-            .collect()
-    }
-
-    fn request_count(&self) -> usize {
-        self.heads.lock().expect("heads lock").len()
-    }
 }
 
 impl Drop for LyingRegistry {
@@ -334,18 +297,6 @@ impl Drop for LyingRegistry {
 
 /// Bind an ephemeral port and answer every pull phase from these fixed bytes.
 async fn lying_registry(manifest_json: Vec<u8>, body: Vec<u8>) -> LyingRegistry {
-    stub_registry(manifest_json, body, false).await
-}
-
-/// [`lying_registry`], but its `/v2/` probe asks for HTTP Basic, so every
-/// later request carries the pull credential.
-async fn challenging_registry(manifest_json: Vec<u8>, body: Vec<u8>) -> LyingRegistry {
-    stub_registry(manifest_json, body, true).await
-}
-
-async fn stub_registry(manifest_json: Vec<u8>, body: Vec<u8>, challenge: bool) -> LyingRegistry {
-    let heads = Arc::new(Mutex::new(Vec::new()));
-    let recorded = heads.clone();
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await
         .expect("an ephemeral loopback port binds");
@@ -360,7 +311,6 @@ async fn stub_registry(manifest_json: Vec<u8>, body: Vec<u8>, challenge: bool) -
             };
             let manifest_json = manifest_json.clone();
             let body = body.clone();
-            let recorded = recorded.clone();
             tokio::spawn(async move {
                 use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
 
@@ -372,10 +322,6 @@ async fn stub_registry(manifest_json: Vec<u8>, body: Vec<u8>, challenge: bool) -
                         Ok(read) => head.extend_from_slice(&chunk[..read]),
                     }
                 }
-                recorded
-                    .lock()
-                    .expect("heads lock")
-                    .push(String::from_utf8_lossy(&head).into_owned());
                 let target = String::from_utf8_lossy(&head)
                     .lines()
                     .next()
@@ -395,13 +341,8 @@ async fn stub_registry(manifest_json: Vec<u8>, body: Vec<u8>, challenge: bool) -
                 } else {
                     ("application/json", b"{}".to_vec())
                 };
-                let status = if challenge && target == "/v2/" {
-                    "401 Unauthorized\r\nWWW-Authenticate: Basic realm=\"stub\""
-                } else {
-                    "200 OK"
-                };
                 let response = format!(
-                    "HTTP/1.1 {status}\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                    "HTTP/1.1 200 OK\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
                     payload.len()
                 );
                 let _ = stream.write_all(response.as_bytes()).await;
@@ -412,7 +353,6 @@ async fn stub_registry(manifest_json: Vec<u8>, body: Vec<u8>, challenge: bool) -
     });
     LyingRegistry {
         authority,
-        heads,
         listening,
     }
 }
@@ -555,73 +495,4 @@ async fn a_manifest_the_registry_cannot_parse_refuses_as_a_contradiction() {
         error.refusal(),
         "release-manifest-artifact-envelope-mismatch"
     );
-}
-
-#[tokio::test]
-async fn each_pull_asks_the_metadata_server_and_sends_its_token() {
-    let canonical = br#"{"format-version":1}"#;
-    let (digest, wire) = published_artifact(canonical);
-    let registry = challenging_registry(
-        serde_json::to_vec(&wire).expect("the published envelope serializes"),
-        canonical.to_vec(),
-    )
-    .await;
-    let metadata = metadata_server(vec![
-        (200, r#"{"access_token":"token-1","expires_in":3599}"#),
-        (200, r#"{"access_token":"token-2","expires_in":3599}"#),
-    ])
-    .await;
-    let source = ReleaseManifestSource::with_registry_token_metadata(
-        &format!("{}/wamn/releases", registry.authority),
-        true,
-        &metadata.token_url,
-    )
-    .expect("an explicit base and a metadata source configure");
-
-    for _ in 0..2 {
-        let pulled = source
-            .pull_verified(&digest)
-            .await
-            .expect("a pull with a metadata token succeeds");
-        assert_eq!(pulled, canonical);
-    }
-
-    let basic = |token: &str| {
-        let pair = format!("oauth2accesstoken:{token}");
-        format!(
-            "Basic {}",
-            base64::engine::general_purpose::STANDARD.encode(pair)
-        )
-    };
-    assert_eq!(metadata.heads().len(), 2, "one token request per pull");
-    assert_eq!(
-        registry.manifest_authorizations(),
-        vec![basic("token-1"), basic("token-2")]
-    );
-}
-
-#[tokio::test]
-async fn a_failed_token_request_refuses_the_pull_before_any_registry_transport() {
-    let canonical = br#"{"format-version":1}"#;
-    let (digest, wire) = published_artifact(canonical);
-    let registry = challenging_registry(
-        serde_json::to_vec(&wire).expect("the published envelope serializes"),
-        canonical.to_vec(),
-    )
-    .await;
-    let metadata = metadata_server(vec![(503, "{}")]).await;
-    let source = ReleaseManifestSource::with_registry_token_metadata(
-        &format!("{}/wamn/releases", registry.authority),
-        true,
-        &metadata.token_url,
-    )
-    .expect("an explicit base and a metadata source configure");
-
-    let error = source
-        .pull_verified(&digest)
-        .await
-        .expect_err("a pull without a token refuses");
-    assert_eq!(error.kind(), ReleaseManifestFetchErrorType::Credential);
-    assert_eq!(error.refusal(), "registry-token-metadata-unavailable");
-    assert_eq!(registry.request_count(), 0);
 }

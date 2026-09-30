@@ -28,8 +28,8 @@ use crate::plugins::wamn_postgres::resources::{
 };
 use crate::plugins::wamn_postgres::transaction_views::PgTransactionView;
 use crate::plugins::wamn_postgres::{
-    ClassCredentials, SessionClaims, StatementField, StatementValueType, VerifiedStatement,
-    WAMN_POSTGRES_ID, WamnPostgres, WamnPostgresConfig,
+    ClassCredentials, ReleaseIdentity, SessionClaims, StatementField, StatementValueType,
+    VerifiedStatement, WAMN_POSTGRES_ID, WamnPostgres, WamnPostgresConfig,
 };
 use wamn_engine::engine::build_engine;
 
@@ -468,7 +468,7 @@ async fn typed_native_participant_runs_inside_the_owner_transaction() {
             .await
             .expect("claims bind");
         postgres
-            .set_release_identity(scope, 1, release.clone())
+            .set_release_identity(scope, ReleaseIdentity::for_test(1, release.clone()))
             .expect("release binds");
         postgres
             .bind_invocation(scope, invocation(operation, package))
@@ -697,7 +697,7 @@ async fn typed_native_participant_runs_inside_the_owner_transaction() {
             .await
             .unwrap();
         postgres
-            .set_release_identity(scope, 1, release.clone())
+            .set_release_identity(scope, ReleaseIdentity::for_test(1, release.clone()))
             .unwrap();
         postgres
             .bind_invocation(scope, invocation(operation, package))
@@ -970,7 +970,7 @@ async fn the_host_owns_the_operation_transaction_and_the_participant_works_in_it
         .await
         .expect("claims bind");
     postgres
-        .set_release_identity(OPERATION_OWNER, 1, release)
+        .set_release_identity(OPERATION_OWNER, ReleaseIdentity::for_test(1, release))
         .expect("release binds");
     postgres
         .bind_invocation(OPERATION_OWNER, invocation(OWNER_OPERATION, "base"))

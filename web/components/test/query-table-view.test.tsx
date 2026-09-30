@@ -14,7 +14,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { TableColumn } from "@wamn/ui";
 
 import { bodyRows, pickChoice, theButton } from "./dom.js";
-import { queryTable, settled } from "./tables.js";
+import { painted, queryTable, settled } from "./tables.js";
 
 interface Row {
   readonly id: string;
@@ -108,6 +108,7 @@ describe("the URL", () => {
     expect((screen.getByLabelText("search") as HTMLInputElement).value).toBe("e");
     expect(theButton("remove filter qty")).toBeDefined();
     // The read keeps codes a and b, and the refine filter keeps a quantity of at least 3: b alone.
+    await painted();
     expect(document.querySelector('[data-slot="table-total"][data-field="qty"]')?.textContent).toBe("avg 6");
     // One load, with the scope and the cap of the URL.
     expect(asked).toEqual([{ limit: 500, filter: { code: ["a", "b"] } }]);

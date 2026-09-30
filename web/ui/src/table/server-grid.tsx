@@ -32,6 +32,8 @@ export function ServerGrid<TRow extends object>(props: {
   detail: GridDetail<TRow> | undefined;
   class: string;
 }): JSX.Element {
+  /* eslint-disable solid/reactivity -- gridViewOptions takes accessors, and the columns and the sort
+     fields come from a definition that is fixed for the life of the table. */
   const grid = gridViewOptions(
     () => props.grid,
     (next) => props.onGrid(next),
@@ -64,6 +66,7 @@ export function ServerGrid<TRow extends object>(props: {
           enableSorting: props.sortFields.includes(built.id),
         },
   );
+  /* eslint-enable solid/reactivity */
   const table = createTable({
     features: gridFeatures,
     get data() {
@@ -71,6 +74,7 @@ export function ServerGrid<TRow extends object>(props: {
     },
     columns,
     getRowId: (row) => props.rowId(row),
+    // eslint-disable-next-line solid/reactivity -- the merged state keeps its getters, which the table reads.
     state: mergeProps(grid.state, {
       get sorting() {
         return sorting();

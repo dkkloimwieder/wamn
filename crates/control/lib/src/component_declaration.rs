@@ -271,6 +271,105 @@ pub fn render_declaration_document(
     Ok(document)
 }
 
+/// Slot a palette declaration leaves for the store alias of its wiring node.
+pub const COMPONENT_DECLARATION_STORE_ALIAS_PLACEHOLDER: &str = "__STORE_ALIAS__";
+
+/// Renders one palette declaration (`apps/platform/*/*/declaration.json.in`)
+/// into the document admission reads, for the package `scope` it is admitted
+/// into (wamn-hw3n).
+///
+/// A palette component belongs to no package, so its template leaves the whole
+/// scope as placeholders. A connection whose alias is
+/// [`COMPONENT_DECLARATION_STORE_ALIAS_PLACEHOLDER`] takes `store_alias`, the
+/// `store_alias` parameter of the wiring node that names the component.
+pub fn render_palette_declaration(
+    template: &Path,
+    scope: &wamn_catalog::ComponentPackageScope,
+    store_alias: Option<&str>,
+) -> Result<Value, ComponentDeclarationError> {
+    let bytes =
+        fs::read(template).map_err(|source| ComponentDeclarationError::read(template, source))?;
+    let mut document: Value = serde_json::from_slice(&bytes)
+        .map_err(|source| ComponentDeclarationError::parse(template, source))?;
+    let invalid = |detail: String| {
+        ComponentDeclarationError::invalid(
+            ComponentDeclarationErrorType::TemplateInvalid,
+            template,
+            detail,
+        )
+    };
+    for (field, placeholder, value) in [
+        (
+            "tenant-id",
+            COMPONENT_DECLARATION_PLACEHOLDER,
+            &scope.tenant_id,
+        ),
+        ("package-id", "__PACKAGE_ID__", &scope.package_id),
+        (
+            "package-version",
+            "__PACKAGE_VERSION__",
+            &scope.package_version,
+        ),
+    ] {
+        let slot = document
+            .pointer_mut(&format!("/scope/{field}"))
+            .ok_or_else(|| invalid(format!("has no scope.{field}")))?;
+        if slot.as_str() != Some(placeholder) {
+            return Err(invalid(format!(
+                "must leave scope.{field} as the placeholder {placeholder}"
+            )));
+        }
+        *slot = Value::String(value.clone());
+    }
+    for connection in document
+        .get_mut("connections")
+        .and_then(Value::as_array_mut)
+        .into_iter()
+        .flatten()
+    {
+        let Some(alias) = connection.get_mut("store-alias") else {
+            continue;
+        };
+        if alias.as_str() != Some(COMPONENT_DECLARATION_STORE_ALIAS_PLACEHOLDER) {
+            continue;
+        }
+        let store_alias = store_alias.ok_or_else(|| {
+            invalid(format!(
+                "leaves a store alias as {COMPONENT_DECLARATION_STORE_ALIAS_PLACEHOLDER}, and \
+                 no wiring node that names the component sets store_alias"
+            ))
+        })?;
+        *alias = Value::String(store_alias.to_owned());
+    }
+    Ok(document)
+}
+
+/// The platform packages a rendered declaration states it imports: the WIT
+/// package of each operation interface, and the import package of each
+/// connection type. Admission grants exactly these (wamn-hw3n).
+pub fn declared_platform_packages(
+    template: &Path,
+    document: &Value,
+) -> Result<Vec<String>, ComponentDeclarationError> {
+    let declaration: wamn_catalog::ComponentDeclaration = serde_json::from_value(document.clone())
+        .map_err(|source| ComponentDeclarationError::parse(template, source))?;
+    let mut packages = std::collections::BTreeSet::new();
+    for operation in declaration.operations.keys() {
+        let (package, _) = operation.split_once('/').ok_or_else(|| {
+            ComponentDeclarationError::invalid(
+                ComponentDeclarationErrorType::TemplateInvalid,
+                template,
+                format!("names operation {operation}, which is not a WIT interface"),
+            )
+        })?;
+        packages.insert(package.to_owned());
+    }
+    for connection in &declaration.connections {
+        packages.insert(connection.requirement_type.import_package().to_owned());
+    }
+    Ok(packages.into_iter().collect())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -446,6 +545,34 @@ mod tests {
         assert!(
             refusal.to_string().contains("authored once"),
             "the refusal names the single authored site: {refusal}"
+        );
+    }
+
+    /// The blob-put palette template renders into the package scope with the
+    /// store alias of its node, and states the two packages the WMS cluster
+    /// test grants it (wamn-hw3n).
+    #[test]
+    fn a_palette_declaration_renders_its_scope_alias_and_imports() {
+        let template = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../../apps/platform/execution/blob-put/declaration.json.in");
+        let scope = wamn_catalog::ComponentPackageScope {
+            tenant_id: "tenant-a".to_owned(),
+            package_id: "wamn_wms".to_owned(),
+            package_version: "1.0.0".to_owned(),
+        };
+        let document = render_palette_declaration(&template, &scope, Some("labels"))
+            .expect("the template renders");
+        assert_eq!(document["scope"]["package-id"], "wamn_wms");
+        assert_eq!(document["connections"][0]["store-alias"], "labels");
+        assert_eq!(
+            declared_platform_packages(&template, &document).expect("the declaration parses"),
+            ["wamn:node", "wasmcloud:blobstore"]
+        );
+        let refusal = render_palette_declaration(&template, &scope, None)
+            .expect_err("an unfilled store alias is refused");
+        assert!(
+            refusal.to_string().contains("store_alias"),
+            "the refusal names the missing parameter: {refusal}"
         );
     }
 

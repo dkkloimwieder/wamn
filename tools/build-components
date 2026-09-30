@@ -88,7 +88,14 @@ if [[ "$WAMN_MODE" == virtualize-only ]]; then
       def exact_keys($expected): keys | sort == ($expected | sort);
       select(length == 1)
       | .[0]
-      | select(exact_keys(["applications", "build", "profile", "virtualization"]))
+      | select(exact_keys(["applications", "build", "palette", "profile", "virtualization"]))
+      | select(.palette | type == "array")
+      | select([.palette[]
+                | select((exact_keys(["artifact", "component", "declaration"]) | not)
+                         or (.component | type != "string" or length == 0)
+                         or (.declaration | type != "string" or (startswith("/") | not))
+                         or (.artifact | type != "string" or (startswith("/") | not)))]
+               | length == 0)
       | select(.profile == "app" or .profile == "all")
       | select(.applications | type == "array")
       | select(all(.applications[]; type == "string" and startswith("/")))
@@ -188,6 +195,39 @@ WAMN_COMPOSITION_MEMBERS="$(
 )" || wamn_fail 65 'could not read composition members'
 readonly WAMN_COMPOSITION_MEMBERS
 
+# A palette component is a platform component that a wiring of a selected
+# application names. Its declaration.json.in under apps/platform/*/*/ names it,
+# and the Cargo package in that directory builds it. A wiring node that names
+# no palette component names a package component, or Gate refuses it.
+declare WAMN_WIRING_COMPONENTS
+WAMN_WIRING_COMPONENTS="$(
+  for application in "${WAMN_APPLICATION_MANIFESTS[@]}"; do
+    for wiring in "$(dirname -- "$application")"/publication/wirings/*.json; do
+      [[ -f "$wiring" ]] || continue
+      jq -r '.nodes[]?.component // empty' "$wiring" || {
+        wamn_fail 65 "cannot read the wiring nodes of $wiring"
+      }
+    done
+  done | sort -u | jq -Rn '[inputs | select(length > 0)]'
+)" || wamn_fail 65 'could not read the wiring components'
+readonly WAMN_WIRING_COMPONENTS
+declare WAMN_PALETTE
+WAMN_PALETTE="$(
+  for declaration in "$WAMN_REPOSITORY_ROOT"/apps/platform/*/*/declaration.json.in; do
+    [[ -f "$declaration" ]] || continue
+    jq -ce --arg declaration "$declaration" \
+      'select(.component | type == "string" and length > 0)
+       | {component, declaration: $declaration}' "$declaration" || {
+      wamn_fail 65 "cannot read the component of $declaration"
+    }
+  done | jq -ces --argjson named "$WAMN_WIRING_COMPONENTS" '
+    select((map(.component) | length) == (map(.component) | unique | length))
+    | [.[] | select(.component as $component | $named | index($component) != null)]
+    | sort_by(.component)
+  '
+)" || wamn_fail 65 'the palette declarations are unreadable or name one component twice'
+readonly WAMN_PALETTE
+
 declare -a WAMN_METADATA=()
 declare WAMN_WORKSPACE_METADATA
 for manifest in "${WAMN_MANIFESTS[@]}"; do
@@ -199,6 +239,37 @@ for manifest in "${WAMN_MANIFESTS[@]}"; do
   WAMN_METADATA+=("$WAMN_WORKSPACE_METADATA")
 done
 readonly WAMN_METADATA
+
+# The one workspace crate in the directory of each palette declaration, and the
+# raw guest file of its one cdylib target.
+declare WAMN_PALETTE_MEMBERS
+WAMN_PALETTE_MEMBERS="$(
+  printf '%s\n' "${WAMN_METADATA[@]}" | jq -ce -s --argjson palette "$WAMN_PALETTE" \
+    --arg root "$WAMN_REPOSITORY_ROOT" '
+    . as $metadata
+    | [$palette[] as $entry
+       | ($entry.declaration
+          | ltrimstr($root)
+          | sub("/declaration\\.json\\.in$"; "/Cargo.toml")) as $cargo
+       | [$metadata[] as $workspace
+          | $workspace.packages[]
+          | select(.manifest_path | endswith($cargo))
+          | select(.id as $id | $workspace.workspace_members | index($id) != null)
+          | [.targets[] | select(.crate_types | index("cdylib") != null)] as $targets
+          | select($targets | length == 1)
+          | {component: $entry.component,
+             declaration: $entry.declaration,
+             package: .name,
+             raw: ($workspace.target_directory + "/wasm32-wasip2/release/"
+                   + $targets[0].name + ".wasm")}]
+       | select(length == 1)
+       | .[0]] as $members
+    | select($members | length == ($palette | length))
+    | $members
+  '
+)" || wamn_fail 65 'a palette declaration has no single workspace crate with one cdylib target'
+readonly WAMN_PALETTE_MEMBERS
+readonly WAMN_PALETTE_PACKAGES="$(jq -c '[.[].package]' <<<"$WAMN_PALETTE_MEMBERS")"
 
 # Every application component must be a declared Cargo workspace member.
 declare WAMN_ABSENT_PACKAGE_COMPONENTS
@@ -222,7 +293,8 @@ WAMN_PLAN="$(
   printf '%s\n' "${WAMN_METADATA[@]}" | jq -e -s --arg profile "$WAMN_PROFILE" \
     --argjson manifests "$WAMN_MANIFEST_LIST" \
     --argjson package_components "$WAMN_PACKAGE_COMPONENTS" \
-    --argjson composition_members "$WAMN_COMPOSITION_MEMBERS" '
+    --argjson composition_members "$WAMN_COMPOSITION_MEMBERS" \
+    --argjson palette_packages "$WAMN_PALETTE_PACKAGES" '
     [to_entries[]
      | .key as $index
      | .value as $metadata
@@ -230,7 +302,8 @@ WAMN_PLAN="$(
      | select(.id as $id | $metadata.workspace_members | index($id) != null)
      | select($profile == "all"
               or (.name as $name
-                  | $package_components + $composition_members | index($name) != null))
+                  | $package_components + $composition_members + $palette_packages
+                  | index($name) != null))
      | {manifest: $manifests[$index], packages: [.name]}]
     | sort_by(.manifest, .packages[0])
     | select(length > 0)
@@ -493,12 +566,21 @@ wamn_artifact_plan() {
     )"
   done
 
+  # A palette artifact is the virtualized output when the allowlist names its
+  # crate, and the raw guest otherwise.
   jq -nceS \
     --arg profile "$WAMN_PROFILE" \
     --argjson applications "$WAMN_APPLICATION_LIST" \
     --argjson build "$WAMN_PLAN" \
     --argjson virtualization "$virtualization_plan" \
-    '{profile: $profile, applications: $applications, build: $build, virtualization: $virtualization}'
+    --argjson palette "$WAMN_PALETTE_MEMBERS" \
+    '{profile: $profile, applications: $applications, build: $build, virtualization: $virtualization,
+      palette: [$palette[] as $member
+                | {component: $member.component,
+                   declaration: $member.declaration,
+                   artifact: ([$virtualization.artifacts[]
+                               | select(.package == $member.package) | .output][0]
+                              // $member.raw)}]}'
 }
 
 WAMN_PENDING_OUTPUT=''

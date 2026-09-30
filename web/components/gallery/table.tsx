@@ -119,6 +119,7 @@ function pallets(count: number): PalletRow[] {
  * fields let a shift click show a sort by more than one field.
  */
 export function MemoryTable(props: { size: number }): JSX.Element {
+  // eslint-disable-next-line solid/reactivity -- a gallery state keeps one size for its life.
   const rows = pallets(props.size);
   const [view, setView] = createSignal(defaultSetView());
   const [grid, setGrid] = createSignal(defaultGridView(PALLET_COLUMNS.map((column) => column.field)));

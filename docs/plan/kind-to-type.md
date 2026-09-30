@@ -86,7 +86,7 @@ Database names: `wamn_system` is the control database (`SYSTEM_SCHEMA_SQL` and `
 | P6 | wamn_system | `provisioning.copy_sagas` | `kind`, `copy_sagas_kind_check` | yes | `deploy/sql/ops-schema.sql:30` |
 | P7 | wamn_system | `catalog.authoring_command_audit` | `command_kind`, `principal_kind`, inline checks | yes | `deploy/sql/control-portable-store.sql:270` |
 | P8 | project-env | `catalog.package_definition_owners` | `definition_kind`, inline check, part of the key | yes | `deploy/sql/catalog-schema.sql:59` |
-| P9 | project-env and wamn_system | Every `<relation>_history` table | `kind` (`insert`, `update`, `delete`), `<history>_kind_check`, column grant. Becomes `type` and `<history>_type_check` in every history table of both databases, in the `wamn.json` paths (A5) and in the generated WIT field (W4). The wamn-dev hand statements go under `wamn-o8b9` (§4.3.4) | yes | `deploy/sql/record-history.sql:117`, `:135`, `deploy/sql/app-schema.sql:525`, `apps/platform/data/record-history/src/lib.rs:55` |
+| P9 | project-env and wamn_system | Every `<relation>_history` table | `kind` (`insert`, `update`, `delete`), `<history>_kind_check`, column grant. Becomes `type` and `<history>_type_check` in every history table of both databases, in the `wamn.json` paths (A5) and in the generated WIT field (W4). On wamn-dev, the migrations of §4.3.4 carry it (`wamn-o8b9`) | yes | `deploy/sql/record-history.sql:117`, `:135`, `deploy/sql/app-schema.sql:525`, `apps/platform/data/record-history/src/lib.rs:55` |
 | P10 | project-env | `wamn_run.runs` | `caller_outcome_kind`, `fail_kind`, `runs_caller_outcome_kind_check`, `runs_fail_kind_check` | yes | `deploy/sql/run-state.sql:377`, `:387`, `crates/schema/control/src/run_plane/declarations.rs:104`, `:116` |
 | P11 | project-env | `wamn_run.effect_attempts` | `generation_fact_kind`, inline checks | yes | `deploy/sql/run-state.sql:603` |
 | P12 | project-env | `wamn_run.operator_run_actions` | `action_kind`, `principal_kind`, `operator_run_actions_kind_check`, `operator_run_actions_principal_kind_check` | yes | `deploy/sql/run-state.sql:795`, `crates/schema/control/src/run_plane/declarations.rs:377`, `:401` |
@@ -325,7 +325,7 @@ The rules that this section follows:
 - The `("kind", ...)` frame label becomes `type` (§2.2 row G9).
 - All 74 `*ErrorKind` families and the `kind` fields of error structs rename in one commit, before the package rebuild (§6).
 - The stop drains first. Ingress goes off, open runs finish within a stated bound, `terminalize-effect-uncertain` settles what stays uncertain, and only then do the workloads stop. Nothing is stranded (§3.2 "Drain").
-- On wamn-dev there is no mixed window. The order is drain, stop, wamn_system script, project-env script, new `reconcile-run-plane`, PAT re-annotation, new identity, republish, head and edge switch, then new hosts (§4.7).
+- On wamn-dev there is no mixed window. The order is drain, stop, wamn_system migration, project-env migration, new `reconcile-run-plane`, PAT re-annotation, new identity, republish, head and edge switch, then new hosts (§4.7).
 
 Part 3.1 is the repository order. Part 3.2 is the wamn-dev order. Part 3.3 says which release is read when. Part 3.4 is rollback.
 
@@ -465,7 +465,7 @@ Run everything in one session. The daily guard sets pool `main` to 0 nodes at 03
 1. Check out the cutover commit. Build the programs: `cargo build -p wamn-ctl`, `cargo build -p wamn-ctl --bin wamn`, `cargo build -p wamn-scenario-worker` (`gcp.md` §3.6, §4.2, §5.3).
 2. Build the guests with `tools/build-components all` (`gcp.md` §3.20). Each sha256 must equal the value recorded in A12.
 3. Build and push the host and identity images by source identity (`gcp.md:384`, `:385` and the push lines of gcp.md §3.4). Record both digests. The identity image carries the renamed `principals.type` reads of `services/identity/src/password.rs:251`, `:370`, `:482` (§4.5 group "Identity service"). The CDC reader image does not change, because the CDC readers keep running (§4.6, §4.7 step 1).
-4. Push the four workload guests with `wash`, as `gcp.md` §3.20 and §5.5 do: `flow-http` and `wms-flow-http` from `http_route.wasm`, `materializer` and `wms-materializer` from `materializer.wasm`. The running workloads name their guests by digest (`gcp.md:868`), so a new tag does not move them. Record the four pushed digests.
+4. Push each distinct workload guest file once with `wash`, as `gcp.md` §3.20 does. `http_route.wasm` goes to `components/flow-http` and `materializer.wasm` goes to `components/materializer`. The tag of each push is the sha256 hex of its file, the tag rule of application components (`crates/control/lib/src/push_component.rs:523`). Receiving and WMS run the same bytes, so both name the same digest. The running workloads name their guests by digest (`gcp.md:868`), so a new push does not move them. Record the two pushed digests. Owner ruling of 2026-09-30 on `wamn-orba`.
 5. Run the ops-schema query of §4.3.4 on wamn_system and the PAT Secret listing of §4.3.5. Record both answers.
 6. Run the check query of §4.3 on the three databases. Record the result. It must equal the §4.1 names for that database plus the function bodies of §4.3.
 
@@ -546,8 +546,8 @@ Then run the open-run query of the drain once more on each project-env database.
 
 **B2 to B5. Schema and annotations (§4.7 steps 2 to 5).** Run §4.8 exactly:
 
-- B2. The wamn_system script `$P/kind-to-type-system.sql` (§4.3.4, §4.8).
-- B3. The project-env script `$P/kind-to-type-project-env.sql` on both databases (§4.3.4, §4.8).
+- B2. One run of `upgrade-schema` on wamn_system: `--baseline 1 --confirm`. It records `0001_capture_gap.sql`, which the database holds by hand. It then applies `0002_event_reader_schema.sql` and `0003_kind_to_type.sql` in the same run (§4.3.4, §4.8).
+- B3. One run of `upgrade-schema` on each of the two project-env databases: `--baseline 0 --confirm`. It creates the record table and applies `0001_kind_to_type.sql` in the same run (§4.3.4, §4.8).
 - B4. The new `reconcile-run-plane` for Receiving (`--project receiving --tenant dev`) and for WMS (`--project wms --tenant wms`), twice each. The second run reports no action (§4.3.2, §4.8, `gcp.md:534`).
 - B5. One `kubectl annotate` per listed PAT Secret (§4.3.5).
 
@@ -627,7 +627,7 @@ The switch comes before the hosts start. So no old client ever calls a new host,
      us-central1-docker.pkg.dev/wamn-dev/wamn/releases <Receiving release 2 digest> <WMS release 2 digest>
    ```
 
-2. Render the four workloads with the digests of B0 step 4 (`gcp.md:1356`).
+2. Render the four workloads with the two digests of B0 step 4 (`gcp.md:1356`). `flow-http` and `wms-flow-http` name the `components/flow-http` digest. `materializer` and `wms-materializer` name the `components/materializer` digest.
 3. `helm upgrade wamn-host oci://ghcr.io/wasmcloud/charts/runtime-operator --version 2.10.0 -n hosts -f deploy/gcp/values-host-base.yaml -f deploy/gcp/values-host.yaml --wait --timeout 10m` (`gcp.md:1349`, the timeout of `gcp.md` §6.7). The values set one replica per host group (`deploy/gcp/values-host.yaml:4`, `:144`). If `kubectl -n hosts get deploy` shows 0 for a host group, scale it to 1.
 4. `kubectl apply -f deploy/gcp/flow-http.yaml -f deploy/gcp/materializer.yaml -f deploy/gcp/wms-flow-http.yaml -f deploy/gcp/wms-materializer.yaml`, then the two `kubectl -n hosts wait` lines of `gcp.md:870` and `:1359`. Before this apply, the operator can place the old `flow-http` guest on a new host. That guest imports `wamn:router-delivery@0.2.0`, so it does not link. No traffic reaches it, because the apply follows at once.
 
@@ -637,13 +637,28 @@ Proof: the serve check of `gcp.md` §3.21 for both route hosts answers 401 on a 
 
 **B12. Record.** Add the §4.8 entry to `gcp.md` §7. It names the cutover commit that B0 checked out. Add the new images to the table of `gcp.md` §3.13. Add the new digests to the component tables of `gcp.md` §3.20 and §5.3. Add a release table like the one of `gcp.md` §6.7. Commit `deploy/gcp/values-identity.yaml`, `values-host.yaml`, `values-host-base.yaml`, the four workload files, `values-edge.yaml`, `url-map.yaml`, `host_values_files.rs` and `gcp.md` together (`deployment.md:156`, `:157`).
 
-**Gated follow-up. Immutable tags on the `wamn` registry.** Not part of this cutover. The deployment agent turns immutable tags on only after `wamn-r9lz` and `wamn-orba` close. Until component bytes are reproducible, a rebuild of one source identity can produce a second digest, and an immutable tag would refuse it for the wrong reason. `wamn-r9lz` closed at `e8e5eb987`, which fixed the known cause of that drift. `wamn-orba` gives the workload guests content tags. The repository was created without `--immutable-tags` (`docs/operations/gcp.md:132`). The command is:
+**B13. Immutable tags on the `wamn` registry. After B12.**
 
-```bash
-gcloud artifacts repositories update wamn --project wamn-dev --location us-central1 --immutable-tags
-```
+B13 runs after B12, because the B12 acceptance compares the before and after tag listings of §5.3, and B13 removes tag lines. The four fixed guest tags `flow-http`, `materializer`, `wms-flow-http` and `wms-materializer` of the `components` repository name no running digest after B10. Every other push into the repository already uses a content tag. Component tags are the digest hex (`crates/control/lib/src/push_component.rs:523`). Release tags derive from the manifest digest (`crates/control/lib/src/push_release_manifest.rs:1` to `:5`). Host, identity and ctl images are tagged by source identity (`gcp.md:384`, `:385`). The workload guests carry their file sha256 from B0 step 4. The repository was created without `--immutable-tags` (`docs/operations/gcp.md:132`).
 
-Before it runs, every push into the repository must use a tag that names one content. Component tags are the digest hex (`crates/control/lib/src/push_component.rs:523`). Release tags derive from the manifest digest (`crates/control/lib/src/push_release_manifest.rs:1` to `:5`). Host and identity images are tagged by source identity (`gcp.md:384`, `:385`). The workload guests are pushed under fixed tags such as `flow-http` and `materializer` (`gcp.md` §3.20). An immutable tag refuses the second push of such a tag, so those pushes need content tags first. The record of the change goes into `gcp.md` §7.
+1. Delete the four fixed tags, one command per tag:
+
+   ```bash
+   gcloud artifacts docker tags delete us-central1-docker.pkg.dev/wamn-dev/wamn/components:flow-http --project wamn-dev --quiet
+   gcloud artifacts docker tags delete us-central1-docker.pkg.dev/wamn-dev/wamn/components:materializer --project wamn-dev --quiet
+   gcloud artifacts docker tags delete us-central1-docker.pkg.dev/wamn-dev/wamn/components:wms-flow-http --project wamn-dev --quiet
+   gcloud artifacts docker tags delete us-central1-docker.pkg.dev/wamn-dev/wamn/components:wms-materializer --project wamn-dev --quiet
+   ```
+
+2. Turn immutable tags on:
+
+   ```bash
+   gcloud artifacts repositories update wamn --project wamn-dev --location us-central1 --immutable-tags
+   ```
+
+3. Add the record to `gcp.md` §7. It names the four deleted tags with their digests and the date of the update.
+
+Proof: `gcloud artifacts repositories describe wamn --project wamn-dev --location us-central1` shows immutable tags enabled, and the tag listing of `components` holds no fixed tag.
 
 ### 3.3 Which release is read when
 
@@ -666,7 +681,7 @@ Each row says what state the environment is in and how to go back. `deployment.m
 |---|---|---|---|---|
 | R0 | Any commit of 3.1, before the drain | everything | `git revert` of the commit. wamn-dev is untouched | nothing |
 | R1 | Drain (ingress off) or B1 (stopped) | everything | `kubectl -n edge scale deploy/wamn-edge --replicas=1` and `kubectl apply -f deploy/gcp/materializer.yaml -f deploy/gcp/wms-materializer.yaml`. After B1 also `helm upgrade` of identity and the host with the unchanged values, or `kubectl scale` back to 1 | The operator actions of drain step 3. Each settled run stays terminal (`deploy/sql/run-state.sql:790`) |
-| R2 | B2 to B5 | everything | Run the rollback of §4.7. It runs the hand statements with the names swapped, with the old `deploy/sql/record-history.sql`. It runs the §4.3.2 renames swapped for P8 and P10 to P12. It swaps the annotation keys back. It renames the snapshot table back and restores the old component key (§4.3.6). All of it is metadata-only, except the restore of `component_library_digest_key`, which builds one index and fails if a digest already has two rows. Before B8 no digest has two rows. Then R1 | nothing |
+| R2 | B2 to B5 | everything | Run the rollback of §4.7. It runs a new migration with the names swapped, with the old record-history functions. The file takes the next free ordinal of each directory when the rollback is written. It runs the §4.3.2 renames swapped for P8 and P10 to P12. It swaps the annotation keys back. It renames the snapshot table back and restores the old component key (§4.3.6). All of it is metadata-only, except the restore of `component_library_digest_key`, which builds one index and fails if a digest already has two rows. Before B8 no digest has two rows. Then R1 | nothing |
 | R3 | B6 (new identity) | everything | Old `values-identity.yaml` (`git revert`) and `helm upgrade`, then R2 | nothing |
 | R4 | B7 or B8 started | serving and schema | R3. The old host serves release 1 again, because its values still name the release 1 digest | The rows of `wamn_receiving@2.0.0` and `wamn_wms@2.0.0` in `catalog.packages`, their migrations, `catalog.component_library`, the gate report and the audit row, `catalog.effective_releases` 2 and its snapshot. The triggers `<table>_immutable` refuse their removal (`gcp.md:1676` to `:1684`). The pushed registry artifacts also stay. They are harmless to release 1. After B8 step 2 each palette digest has two `catalog.component_library` rows, so the old key `component_library_digest_key` cannot return. The new key stays. Run no old `push-component` against it, because the old verb writes no owner row. A later attempt must present the same 2.0.0 bytes, because a sealed coordinate refuses other bytes (§2.1, `package-coordinate-content-conflict`). A defect found after 2.0.0 is sealed on wamn-dev is fixed as 2.0.1. A fix that keeps the contract is a patch step. A contract break is a major step. A teardown is not a fix path |
 | R5 | B9 (edge switched) | the edge | Old `values-edge.yaml` and `url-map.yaml`, `helm upgrade wamn-edge`, `gcloud compute url-maps import`. The release 1 client is still in the bucket | nothing beyond R4 |
@@ -684,16 +699,16 @@ The constraint column lists the old names. Each new name is the old name with `k
 
 | Row | Database | Table | Column | Constraints renamed | Path |
 |---|---|---|---|---|---|
-| P1 | wamn_system | `registry.orgs` | `placement_kind` → `placement_type` | `orgs_placement_kind_check`, `orgs_placement_kind_not_null` | hand |
-| P2 | wamn_system | `identity.principals` | `kind` → `type` | `principals_kind_check`, `principals_kind_not_null`, `principals_id_kind_key`, `principals_kind_subject_key` | hand |
-| P3 | wamn_system | `identity.pats` | `principal_kind` → `principal_type` | `pats_principal_kind_check`, `pats_principal_kind_not_null`, `pats_principal_id_principal_kind_fkey` | hand |
-| P4 | wamn_system | `identity.password_credentials`, `identity.password_tokens`, `identity.password_logins` | `principal_kind` → `principal_type` | per table: `<table>_principal_kind_check`, `<table>_principal_kind_not_null`, `<table>_principal_id_principal_kind_fkey` | hand |
-| P4 | wamn_system | `identity.project_env_memberships` | `principal_kind` → `principal_type` | `project_env_memberships_principal_kind_not_null`, `project_env_memberships_principal_id_principal_kind_fkey`. `project_env_memberships_human_check` keeps its name | hand |
-| P5 | wamn_system | `provisioning.sagas` | `kind` → `type` | `sagas_kind_check`, `sagas_kind_not_null` | hand |
-| P6 | wamn_system | `provisioning.copy_sagas` | `kind` → `type` | `copy_sagas_kind_check`, `copy_sagas_kind_not_null` | hand |
-| P7 | wamn_system | `catalog.authoring_command_audit` | `command_kind` → `command_type`, `principal_kind` → `principal_type` | `authoring_command_audit_command_kind_check`, `authoring_command_audit_command_kind_not_null`, `authoring_command_audit_principal_kind_check`, `authoring_command_audit_principal_kind_not_null` | hand |
+| P1 | wamn_system | `registry.orgs` | `placement_kind` → `placement_type` | `orgs_placement_kind_check`, `orgs_placement_kind_not_null` | migration |
+| P2 | wamn_system | `identity.principals` | `kind` → `type` | `principals_kind_check`, `principals_kind_not_null`, `principals_id_kind_key`, `principals_kind_subject_key` | migration |
+| P3 | wamn_system | `identity.pats` | `principal_kind` → `principal_type` | `pats_principal_kind_check`, `pats_principal_kind_not_null`, `pats_principal_id_principal_kind_fkey` | migration |
+| P4 | wamn_system | `identity.password_credentials`, `identity.password_tokens`, `identity.password_logins` | `principal_kind` → `principal_type` | per table: `<table>_principal_kind_check`, `<table>_principal_kind_not_null`, `<table>_principal_id_principal_kind_fkey` | migration |
+| P4 | wamn_system | `identity.project_env_memberships` | `principal_kind` → `principal_type` | `project_env_memberships_principal_kind_not_null`, `project_env_memberships_principal_id_principal_kind_fkey`. `project_env_memberships_human_check` keeps its name | migration |
+| P5 | wamn_system | `provisioning.sagas` | `kind` → `type` | `sagas_kind_check`, `sagas_kind_not_null` | migration |
+| P6 | wamn_system | `provisioning.copy_sagas` | `kind` → `type` | `copy_sagas_kind_check`, `copy_sagas_kind_not_null` | migration |
+| P7 | wamn_system | `catalog.authoring_command_audit` | `command_kind` → `command_type`, `principal_kind` → `principal_type` | `authoring_command_audit_command_kind_check`, `authoring_command_audit_command_kind_not_null`, `authoring_command_audit_principal_kind_check`, `authoring_command_audit_principal_kind_not_null` | migration |
 | P8 | project-env | `catalog.package_definition_owners` | `definition_kind` → `definition_type` | `package_definition_owners_definition_kind_check`, `package_definition_owners_definition_kind_not_null`. The primary key keeps its name | `reconcile-run-plane` |
-| P9 | project-env | every `<relation>_history` | `kind` → `type` | `<history>_kind_check`, `<history>_kind_not_null` | hand |
+| P9 | project-env | every `<relation>_history` | `kind` → `type` | `<history>_kind_check`, `<history>_kind_not_null` | migration |
 | P10 | project-env | `wamn_run.runs` | `caller_outcome_kind` → `caller_outcome_type`, `fail_kind` → `fail_type` | `runs_caller_outcome_kind_check`, `runs_fail_kind_check`. Both columns are nullable, so no `NOT NULL` name | `reconcile-run-plane` |
 | P11 | project-env | `wamn_run.effect_attempts` | `generation_fact_kind` → `generation_fact_type` | `effect_attempts_generation_fact_kind_not_null`. `effect_attempts_generation_fact_check` and `effect_attempts_generation_values_check` keep their names | `reconcile-run-plane` |
 | P12 | project-env | `wamn_run.operator_run_actions` | `action_kind` → `action_type`, `principal_kind` → `principal_type` | `operator_run_actions_kind_check` (new name `operator_run_actions_type_check`), `operator_run_actions_action_kind_not_null`, `operator_run_actions_principal_kind_check`, `operator_run_actions_principal_kind_not_null` | `reconcile-run-plane` |
@@ -768,7 +783,7 @@ Column grants name columns in Rust. They change with the DDL:
 
 ### 4.3 Installed databases
 
-Four paths change installed state. A verb carries every change that a verb already knows how to make. Hand statements carry only what no verb can do. §4.3.1 shows what `reconcile-run-plane` changes today. §4.3.2 moves P8 and P10 to P12 into it, and the operations page records that the verb applied them (§4.8). §4.3.3 says why the rest stays by hand.
+Four paths change installed state. A verb carries every change that a verb already knows how to make. The migrations of `upgrade-schema` (`docs/plan/schema-upgrade.md`) carry the rest. §4.3.1 shows what `reconcile-run-plane` changes today. §4.3.2 moves P8 and P10 to P12 into it, and the operations page records that the verb applied them (§4.8). §4.3.3 says why the rest is a migration.
 
 | Path | Rows | Where |
 |---|---|---|
@@ -790,7 +805,7 @@ What follows a rename by itself, because PostgreSQL stores it by column number a
 
 What does not follow a rename, because PostgreSQL stores it as text:
 
-- PL/pgSQL function bodies. Three name a renamed column: `wamn_history.create_history_table` (`record-history.sql:117`, `:135`), `wamn_history.log_row_change` (`record-history.sql:240`) and `identity.lock_password_principal` (`system-schema.sql:752`). The hand statements replace all three in the same transaction as the renames. Without that, every write to a logged relation fails, and every password login fails.
+- PL/pgSQL function bodies. Three name a renamed column: `wamn_history.create_history_table` (`record-history.sql:117`, `:135`), `wamn_history.log_row_change` (`record-history.sql:240`) and `identity.lock_password_principal` (`system-schema.sql:752`). The migrations replace all three in the same transaction as the renames. Without that, every write to a logged relation fails, and every password login fails.
 
 No view, materialized view, rule, statistics object or event trigger exists in `deploy/sql` or in SQL that Rust creates. The other functions in `deploy/sql` and in `crates/schema/control/src/run_plane/declarations.rs:431` to `:527` name no renamed column.
 
@@ -832,7 +847,7 @@ The verb has no rename today. Without one, the new verb does the wrong thing on 
 
 #### 4.3.2 Code changes in `reconcile-run-plane`
 
-P8, P10, P11 and P12 move into the verb. Nothing of them stays a hand statement. A table that the verb already changes on an installed database is the verb's to rename. P8 is in the `catalog` schema, which is inside the verb's scope, and the verb already alters an installed `catalog` table (§4.3.1).
+P8, P10, P11 and P12 move into the verb. None of them goes into a migration. A table that the verb already changes on an installed database is the verb's to rename. P8 is in the `catalog` schema, which is inside the verb's scope, and the verb already alters an installed `catalog` table (§4.3.1).
 
 - **Observation.** The verb already reads the columns and the checks of `runs`, `effect_attempts` and `operator_run_actions` in the `--schema` schema (`observation_sql.rs:345` to `:352`). It reads only the columns of the `catalog` tables (`reconcile_run_plane.rs:1140` to `:1153`). Add two flags beside `release_components_without_routes` (`reconcile_run_plane.rs:1152`, `crates/schema/control/src/run_plane/observation.rs:139`): whether `catalog.package_definition_owners` has `definition_kind`, and whether it has `definition_type`. The verb does not observe the checks of `catalog`, so the P8 check is guarded in the batch instead.
 - **Detection, per table.** For each of the four tables, the verb compares the observed columns with the old and new names of §4.1:
@@ -906,31 +921,30 @@ $type_column_not_null$;
 
 The batch was run on a scratch PostgreSQL 18 database. That database held the `CATALOG_SCHEMA_SQL` files and `run-state.sql` of `3ad0ce5cd`, with `run-state.sql` rewritten to the schema `demo`, and the batch took the same rewrite. The batch renamed every name of §4.1 rows P8, P10, P11 and P12, and the check query of §4.3 then listed only the two record-history functions that the hand script replaces. On a smaller copy of the four tables, a second batch with only the `NOT NULL` block changed nothing. With `runs` renamed first and its part left out, the batch renamed the other three tables. With the P8 check dropped first, the batch raised SQLSTATE 55000 and left every name as it was. The two hand scripts of §4.3.4, with their §4.3.6 parts, also ran on scratch databases built from the same files. Each committed. The project-env script printed the six `app_system` history notices and the eleven snapshot constraint notices, and the second query of the §4.3.6 check printed no row.
 
-#### 4.3.3 Why the rest stays by hand
+#### 4.3.3 Why the rest is a migration
 
-- **wamn_system (P1 to P7, the P9 functions).** `provision-system` installs `CONTROL_BOOTSTRAP_SQL` once and refuses a database that already has the schema `registry` (`crates/control/lib/src/provision_system.rs:8`, `:51` to `:63`). No other verb changes installed wamn_system schema. This is the `wamn-o8b9` finding.
-- **P9 in project-env.** No verb changes an installed history table or the installed record-history functions. `reconcile-run-plane` never alters application or floor tables (`reconcile_run_plane.rs:41` to `:44`). It installs `app-schema.sql` only when `app_system` is absent (`reconcile_run_plane.rs:628`), and `record-history.sql` only inside `CATALOG_SCHEMA_SQL` when `catalog` is absent (`plan.rs:496`). apply-package skips a history table that exists (`crates/control/lib/src/apply_package/record_history.rs:51`). A verb that renames history tables would be the upgrade path of `wamn-o8b9` built sideways, so P9 stays a hand statement. Its cost is recorded under `wamn-o8b9`: 15 history tables in two project-env databases (Receiving 8: six `app_system` and two `receiving`. WMS 7: six `app_system` and one `wms`), plus the record-history functions in wamn_system and in both project-env databases.
+- **wamn_system (P1 to P7, the P9 functions).** `provision-system` installs `CONTROL_BOOTSTRAP_SQL` once and refuses a database that already has the schema `registry` (`crates/control/lib/src/provision_system.rs:8`, `:51` to `:63`). No other verb changed installed wamn_system schema before `upgrade-schema` (`wamn-o8b9`). So P1 to P7 and the P9 functions are the system migration `0003_kind_to_type.sql`.
+- **P9 in project-env.** No verb changes an installed history table or the installed record-history functions. `reconcile-run-plane` never alters application or floor tables (`reconcile_run_plane.rs:41` to `:44`). It installs `app-schema.sql` only when `app_system` is absent (`reconcile_run_plane.rs:628`), and `record-history.sql` only inside `CATALOG_SCHEMA_SQL` when `catalog` is absent (`plan.rs:496`). apply-package skips a history table that exists (`crates/control/lib/src/apply_package/record_history.rs:51`). The rename of installed history tables belongs to the upgrade path of `wamn-o8b9`, so P9 is the project migration `0001_kind_to_type.sql`. Its cost is recorded under `wamn-o8b9`: 15 history tables in two project-env databases (Receiving 8: six `app_system` and two `receiving`. WMS 7: six `app_system` and one `wms`), plus the record-history functions in wamn_system and in both project-env databases.
 
-#### 4.3.4 Hand statements
+#### 4.3.4 Migrations
 
-Run them as the `postgres` superuser with no `SET ROLE`. `CREATE OR REPLACE FUNCTION` keeps the owner, the `SECURITY DEFINER` setting and the grants of the function. The renames create nothing new, so no owner changes. §4.3.6 creates one table and gives it the owner of `catalog.component_library`. Each database takes one transaction, and `ON_ERROR_STOP` rolls it back on the first wrong name. Foreign keys and unique keys follow the rename by column number, so the order inside the transaction does not affect correctness. The statements rename the referenced table first, so that a reader can check them against §4.1 row by row.
+A7 places two migration files, each in the commit of its full-file change: `deploy/sql/migrations/system/0003_kind_to_type.sql` and `deploy/sql/migrations/project/0001_kind_to_type.sql`. It lists both in `crates/control/provision/src/schema_migrations.rs`. A file carries no `BEGIN` or `COMMIT`. `upgrade-schema` runs each file in one transaction and records it in the same transaction (`docs/plan/schema-upgrade.md` §2).
 
-**Each script runs once.** The scripts of §4.3.4 and §4.3.6 are not idempotent. A plain `RENAME` fails when the old name is gone, and `CREATE TABLE` fails when the table exists. That is intended. Each script is one `BEGIN … COMMIT` under `ON_ERROR_STOP`, so a failure rolls the whole script back and leaves nothing applied. A script that fails is not re-run. The deployment agent records the error, stops the cutover and goes to §3.4 row R1.
+The verb runs the system file as `wamn_system`. `wamn_system` owns every P1 to P7 table and `identity.lock_password_principal`, because `provision-system` installs them in that role. It also owns `provisioning.copy_sagas`, because `copy-project-env` installs the ops schema in that role (`crates/control/lib/src/ops_schema.rs:17`). The verb runs the project file as the superuser admin connection with no `SET ROLE`. `CREATE OR REPLACE FUNCTION` keeps the owner, the `SECURITY DEFINER` setting and the grants of the function. The renames create nothing new, so no owner changes. §4.3.6 creates one table and gives it the owner of `catalog.component_library`. Each database takes one transaction, and `ON_ERROR_STOP` rolls it back on the first wrong name. Foreign keys and unique keys follow the rename by column number, so the order inside the transaction does not affect correctness. The statements rename the referenced table first, so that a reader can check them against §4.1 row by row.
 
-`deploy/sql/record-history.sql` is idempotent: `CREATE SCHEMA IF NOT EXISTS`, `CREATE OR REPLACE FUNCTION`, and grants that the database already holds (`record-history.sql:37` to `:286`). It carries no transaction of its own (`record-history.sql:4`). So each script appends the file of the migration commit before `COMMIT`, and the installed functions become the fresh-install functions.
+**Each migration runs once.** The statements of §4.3.4 and §4.3.6 are not idempotent. A plain `RENAME` fails when the old name is gone, and `CREATE TABLE` fails when the table exists. That is intended. The verb records each file it applies and never runs it again. A failure rolls the whole run back and leaves nothing applied and nothing recorded. A run that fails is not repeated. The deployment agent records the error, stops the cutover and goes to §3.4 row R1.
 
-**ops-schema.sql.** `provision-system` installs `CONTROL_BOOTSTRAP_SQL`, which is `SYSTEM_SCHEMA_SQL` and `CONTROL_PORTABLE_STORE_SQL` (`crates/control/provision/src/lib.rs:166`, `crates/control/lib/src/provision_system.rs:84`). It does not install `ops-schema.sql`. Only `wamn-ctl-ops copy-project-env` installs it (`crates/control/lib/src/copy_project_env.rs:488`, `crates/control/lib/src/ops_schema.rs:21`), and `docs/operations/gcp.md` records no run of that verb. So the operations page does not say whether P6 exists on wamn-dev. The deployment agent answers it on wamn_system before the apply, and the record states the answer:
+`deploy/sql/record-history.sql` is idempotent: `CREATE SCHEMA IF NOT EXISTS`, `CREATE OR REPLACE FUNCTION`, and grants that the database already holds (`record-history.sql:37` to `:286`). It carries no transaction of its own (`record-history.sql:4`). So each migration ends with the text of `deploy/sql/record-history.sql` of its commit, and the installed functions become the fresh-install functions.
+
+**ops-schema.sql.** `provision-system` installs `CONTROL_BOOTSTRAP_SQL`, which is `SYSTEM_SCHEMA_SQL` and `CONTROL_PORTABLE_STORE_SQL` (`crates/control/provision/src/lib.rs:166`, `crates/control/lib/src/provision_system.rs:84`). It does not install `ops-schema.sql`. Only `wamn-ctl-ops copy-project-env` installs it (`crates/control/lib/src/copy_project_env.rs:488`, `crates/control/lib/src/ops_schema.rs:21`), and `docs/operations/gcp.md` records no run of that verb. So the operations page does not say whether P6 exists on wamn-dev, and a migration file is fixed text. When the table exists, the file renames P6 in a `DO` block on `to_regclass`. The deployment agent runs this query on wamn_system before B2, and the record states the answer:
 
 ```sql
 SELECT to_regclass('provisioning.copy_sagas') IS NOT NULL AS ops_schema_installed;
 ```
 
-When the answer is false, leave the three P6 lines out of the script. The script names P6 without `IF EXISTS`, so a wrong answer fails loudly.
-
-**wamn_system.** Save as `$P/kind-to-type-system.sql`:
+**wamn_system**, `deploy/sql/migrations/system/0003_kind_to_type.sql`:
 
 ```sql
-BEGIN;
 -- P1
 ALTER TABLE registry.orgs RENAME COLUMN placement_kind TO placement_type;
 ALTER TABLE registry.orgs RENAME CONSTRAINT orgs_placement_kind_check TO orgs_placement_type_check;
@@ -966,10 +980,16 @@ ALTER TABLE identity.project_env_memberships RENAME CONSTRAINT project_env_membe
 ALTER TABLE provisioning.sagas RENAME COLUMN kind TO type;
 ALTER TABLE provisioning.sagas RENAME CONSTRAINT sagas_kind_check TO sagas_type_check;
 ALTER TABLE provisioning.sagas RENAME CONSTRAINT sagas_kind_not_null TO sagas_type_not_null;
--- P6. Only when the ops-schema query answered true.
-ALTER TABLE provisioning.copy_sagas RENAME COLUMN kind TO type;
-ALTER TABLE provisioning.copy_sagas RENAME CONSTRAINT copy_sagas_kind_check TO copy_sagas_type_check;
-ALTER TABLE provisioning.copy_sagas RENAME CONSTRAINT copy_sagas_kind_not_null TO copy_sagas_type_not_null;
+-- P6. Only where copy-project-env installed the ops schema.
+DO $p6$
+BEGIN
+    IF to_regclass('provisioning.copy_sagas') IS NOT NULL THEN
+        ALTER TABLE provisioning.copy_sagas RENAME COLUMN kind TO type;
+        ALTER TABLE provisioning.copy_sagas RENAME CONSTRAINT copy_sagas_kind_check TO copy_sagas_type_check;
+        ALTER TABLE provisioning.copy_sagas RENAME CONSTRAINT copy_sagas_kind_not_null TO copy_sagas_type_not_null;
+    END IF;
+END
+$p6$;
 -- P7
 ALTER TABLE catalog.authoring_command_audit RENAME COLUMN command_kind TO command_type;
 ALTER TABLE catalog.authoring_command_audit RENAME CONSTRAINT authoring_command_audit_command_kind_check TO authoring_command_audit_command_type_check;
@@ -987,17 +1007,15 @@ BEGIN
     RETURN COALESCE(eligible, false);
 END;
 $$;
--- Component key, control copy: append the wamn_system statements of §4.3.6 here.
--- P9 function bodies: append the new deploy/sql/record-history.sql here.
-COMMIT;
+-- Component key, control copy: the wamn_system statements of §4.3.6.
+-- P9 function bodies: the text of deploy/sql/record-history.sql of this commit.
 ```
 
 wamn_system holds the record-history functions (`SYSTEM_SCHEMA_SQL`, `crates/control/provision/src/lib.rs:151`) but no history table. Its identity relations carry stamp triggers only (`system-schema.sql:296` and the other `wamn_record_history_stamp` triggers), and `record-history-app-grants.sql:6` says the system database never applies the app grants. So P9 in wamn_system is the function replacement only.
 
-**Each project-env database, P9 only.** In wamn-dev these are `wamn-db-dkk--receiving--dev--4pqjfmli` and `wamn-db-dkk--wms--dev--0nk1lrpr` (`docs/operations/gcp.md` §3.18 and §5.4). `SELECT datname FROM pg_database WHERE datname LIKE 'wamn-db-%'` confirms the list. Save as `$P/kind-to-type-project-env.sql`:
+**Each project-env database, P9 only.** In wamn-dev these are `wamn-db-dkk--receiving--dev--4pqjfmli` and `wamn-db-dkk--wms--dev--0nk1lrpr` (`docs/operations/gcp.md` §3.18 and §5.4). `SELECT datname FROM pg_database WHERE datname LIKE 'wamn-db-%'` confirms the list. The file is `deploy/sql/migrations/project/0001_kind_to_type.sql`:
 
 ```sql
-BEGIN;
 -- P9 tables. The set varies by package, so the block finds each history table
 -- by the check constraint that create_history_table gave it.
 DO $rename_history$
@@ -1026,12 +1044,11 @@ BEGIN
     END LOOP;
 END
 $rename_history$;
--- Component key and snapshot table: append the project-env statements of §4.3.6 here.
--- P9 function bodies: append the new deploy/sql/record-history.sql here.
-COMMIT;
+-- Component key and snapshot table: the project-env statements of §4.3.6.
+-- P9 function bodies: the text of deploy/sql/record-history.sql of this commit.
 ```
 
-`create_history_table` names both constraints, `<history>_kind_check` and `<history>_kind_not_null` (`record-history.sql:106`, `:139`). The block therefore finds every history table, in `app_system` (`app-schema.sql:435`) and in each package schema (`crates/control/lib/src/apply_package/record_history.rs:57`). It prints one notice per table. In wamn-dev the expected tables are the six `app_system` tables in both databases, `receiving.purchase_order_history` and `receiving.purchase_order_line_history` in Receiving, and `wms.packaging_history` in WMS. These come from the generated data-access overlays. The notices are the evidence to record.
+`create_history_table` names both constraints, `<history>_kind_check` and `<history>_kind_not_null` (`record-history.sql:106`, `:139`). The block therefore finds every history table, in `app_system` (`app-schema.sql:435`) and in each package schema (`crates/control/lib/src/apply_package/record_history.rs:57`). It prints one notice per table. `wamn-ctl` shows each notice on stderr at its default `info` log level. In wamn-dev the expected tables are the six `app_system` tables in both databases, `receiving.purchase_order_history` and `receiving.purchase_order_line_history` in Receiving, and `wms.packaging_history` in WMS. These come from the generated data-access overlays. The notices are the evidence to record.
 
 No history entry holds a renamed key. The `before` and `after` images copy the columns of the logged relation. No logged relation has a renamed column: the P1 to P8 and P10 to P12 tables carry no log trigger, and no application relation has a `kind` column (the only `kind` in `apps/*/wamn.json` outside A1 is the history column, A5).
 
@@ -1060,9 +1077,9 @@ The wamn-dev listing is possibly empty. `docs/operations/gcp.md` §3.16 writes t
 
 #### 4.3.6 Component key and snapshot table
 
-These are not `kind` renames. They go into the same scripts and the same record, under `wamn-o8b9`, because no verb changes an installed `catalog` key or table name (§4.3.3). Both apply to fresh installs (§4.2), to the installed project-env databases and, for the component key, to the control copy in wamn_system. §3.2 B8 step 2 depends on the component key.
+These are not `kind` renames. They go into the same migrations and the same record, under `wamn-o8b9`. No other verb changes an installed `catalog` key or table name (§4.3.3). Both apply to fresh installs (§4.2), to the installed project-env databases and, for the component key, to the control copy in wamn_system. §3.2 B8 step 2 depends on the component key.
 
-**Snapshot table.** `catalog.release_manifest_v3_snapshots` becomes `catalog.release_manifest_snapshots`. The table name holds no format. Each row states its format in the `format-version` of its bytes, and new rows say 4. The rename covers the fresh-install DDL, the hand statement below, and the 22 files of the §4.5 snapshot groups, in A7.
+**Snapshot table.** `catalog.release_manifest_v3_snapshots` becomes `catalog.release_manifest_snapshots`. The table name holds no format. Each row states its format in the `format-version` of its bytes, and new rows say 4. The rename covers the fresh-install DDL, the migration statement below, and the 22 files of the §4.5 snapshot groups, in A7.
 
 **What the old component key protects.** `catalog.component_library` holds `component_library_digest_key UNIQUE (tenant_id, component_digest)` (`deploy/sql/catalog-schema.sql:210`, `:211`). The control copy holds the same key per environment instance (`deploy/sql/control-portable-store.sql:193`, `:194`). The key is the target of `connection_requirements_component_fkey`, and connection requirements are keyed by digest alone (`catalog-schema.sql:216` to `:227`, `control-portable-store.sql:199` to `:215`). So the key makes one digest one fact row: one package, one version, one component name. Its purpose is that each requirement row belongs to exactly one component owner. A digest under a second package is refused as part of that. A digest under a second version of the same package is refused too, and that is the defect. A component that does not change keeps its digest across versions of its package, so the key refuses an unchanged component under the next version of its own package (`push_component.rs:1985`). The append is `ON CONFLICT DO NOTHING` with no target (`crates/control/lib/src/push_component.rs:58` to `:80`). So the key turns a second row into no insert, and the exact check then refuses `component-fact-conflict` (`push_component.rs:1977` to `:1996`). One reader also assumes one row per digest: `promote` reads projection hashes by digest alone (`crates/control/lib/src/promote.rs:62` to `:65`, `:441` to `:467`).
 
@@ -1099,7 +1116,7 @@ In `catalog.component_library`, `component_library_digest_key` gives way to:
 
 `connection_requirements_component_fkey` references `catalog.component_digest_owners (tenant_id, component_digest)`. The code change: `append_or_verify_admitted_component_count` first inserts the owner row with `ON CONFLICT DO NOTHING`. When the stored owner names another package, it refuses `component-fact-conflict` and names the owner package. Then it appends the library row as today. `promote` reads projection hashes by package, version and digest.
 
-**Hand statements, each project-env database.** Append to `$P/kind-to-type-project-env.sql` before `COMMIT;`:
+**Migration statements, each project-env database.** They go into `deploy/sql/migrations/project/0001_kind_to_type.sql`, before the record-history text:
 
 ```sql
 -- Component key
@@ -1189,7 +1206,7 @@ $$;
 
 The old key allows one row per digest, so the `INSERT` of the owner rows meets no conflict. The constraint loop renames the three named constraints and the generated `_check` and `_not_null` names of the four columns (§4.1 rule on generated names). It prints one notice for each. Renaming `release_manifest_v3_snapshots_pkey` also renames its index. The function body is the one of `deploy/sql/catalog-schema.sql:446` to `:465` with the new table name, because PostgreSQL stores a function body as text (§4.3). Row security, the grants and the trigger follow the table by OID. The grants that `crates/control/provision/src/sql.rs:211`, `:1104` write name the table, so they change with the code of §4.5.
 
-**Hand statements, wamn_system.** Append to `$P/kind-to-type-system.sql` before `COMMIT;`. wamn_system has no snapshot table.
+**Migration statements, wamn_system.** They go into `deploy/sql/migrations/system/0003_kind_to_type.sql`, before the record-history text. wamn_system has no snapshot table.
 
 ```sql
 CREATE TABLE catalog.component_digest_owners (
@@ -1304,8 +1321,8 @@ A renamed column breaks every old binary that names it. The old host and runtime
 The order that §3.2 follows:
 
 1. Drain, then stop (§3.2 "Drain" and B1). The drain turns ingress off: the edge goes to 0 replicas and the two materializer workloads are deleted. The `flow-http` and `wms-flow-http` workloads and their Services stay, because B9 needs the Services. Open runs finish or are settled. Then the hosts and identity stop. The hosts run the HTTP and materializer workloads, so both stop with them. No scenario-worker runs. The CDC readers keep running (§4.6).
-2. Apply the wamn_system hand script, with the control component key of §4.3.6 (B2). The new `reconcile-run-plane` reads `principals.type` in wamn_system (`crates/control/lib/src/reconcile_run_plane.rs:407`, `:422`), so this step comes before step 4.
-3. Apply the project-env hand script (P9, the component key and the snapshot table of §4.3.6) to each project-env database (B3). The new `push-component` writes an owner row for every push, so the component key comes before the first push of the new verb. That push is `receiving.wasm` in B7 step 3. The palette pushes of B8 step 2 come after it.
+2. Run `upgrade-schema` on wamn_system. It applies `0002_event_reader_schema.sql` and `0003_kind_to_type.sql`, with the control component key of §4.3.6 (B2). The new `reconcile-run-plane` reads `principals.type` in wamn_system (`crates/control/lib/src/reconcile_run_plane.rs:407`, `:422`), so this step comes before step 4.
+3. Run `upgrade-schema` on each project-env database. It applies `0001_kind_to_type.sql`: P9, the component key and the snapshot table of §4.3.6 (B3). The new `push-component` writes an owner row for every push, so the component key comes before the first push of the new verb. That push is `receiving.wasm` in B7 step 3. The palette pushes of B8 step 2 come after it.
 4. Run the new `reconcile-run-plane` for each project-env (B4). Its cutover renames P8, P10, P11 and P12 (§4.3.2). Never run the old verb against a renamed database. The old verb finds the declared checks missing and the new columns unknown.
 5. Re-annotate every installed PAT Secret (B5, §4.3.5).
 6. Start the new identity service (B6). It reads `principals.type`, so it comes after step 2. Sign-in works again from here.
@@ -1315,37 +1332,24 @@ The order that §3.2 follows:
 
 No `bootstrap.sh` runs at any point of the cutover. wamn-dev never runs it (§3.2 B1). The rule of §4.3.5 still holds for any environment that does run it: no `bootstrap.sh` runs between the stop and the re-annotation, and a later run uses the new `bootstrap.sh` only.
 
-Rollback swaps the names back. It runs the hand statements with the names swapped and appends `deploy/sql/record-history.sql` of the old commit. It renames P8 and P10 to P12 back with the statements of §4.3.2, names swapped, because the old verb has no rename. It swaps the annotation keys back. It renames the snapshot table and its names back and restores the old function body. It restores `component_library_digest_key` and the old requirement key and drops `catalog.component_digest_owners`, which works only while no digest has two library rows (§3.4 rows R2 and R4).
+Rollback swaps the names back. It is a new migration with the names swapped, because the verb never runs a file backward and no record row is deleted by hand. If the rollback happens, the swapped file is written then. It takes the next free ordinal of each directory at that time, in `migrations/system/` and `migrations/project/`, committed with the rollback, and `upgrade-schema` applies it. It ends with the text of `deploy/sql/record-history.sql` of the old commit. It renames P8 and P10 to P12 back with the statements of §4.3.2, names swapped, because the old verb has no rename. It swaps the annotation keys back. It renames the snapshot table and its names back and restores the old function body. It restores `component_library_digest_key` and the old requirement key and drops `catalog.component_digest_owners`, which works only while no digest has two library rows (§3.4 rows R2 and R4).
 
 ### 4.8 Record for gcp.md §7
 
-`docs/operations/gcp.md:1716` is §7 "Schema changes applied by hand". When the changes run, add this entry to it, in the form of its `registry.capture_gap` entry. The entry records the hand statements, the verb run that applied P8 and P10 to P12, the component key and the snapshot table of §4.3.6, and the annotations. Before the apply, the deployment agent runs the ops-schema query of §4.3.4 on wamn_system and the Secret listing of §4.3.5, and the entry states both answers. The angle-bracket fields are filled in at apply time.
+`docs/operations/gcp.md` §7 "Schema changes applied by hand" gets this entry as its last entry when the changes run. The entry records the two `upgrade-schema` runs, each with its baseline rows and its applied file. It also records the verb run that applied P8 and P10 to P12, and the annotations. Before B2, the deployment agent runs the ops-schema query of §4.3.4 on wamn_system and the Secret listing of §4.3.5, and the entry states both answers. The angle-bracket fields are filled in at apply time.
 
 ````markdown
-On <date> (`wamn-ld93`, `wamn-o8b9`), the `kind` → `type` renames of `docs/plan/kind-to-type.md` §4.3 went into `wamn_system`, `wamn-db-dkk--receiving--dev--4pqjfmli` and `wamn-db-dkk--wms--dev--0nk1lrpr`, with the workloads stopped. On wamn_system, `SELECT to_regclass('provisioning.copy_sagas') IS NOT NULL` answered <true|false>, so the script <kept|left out> the three `provisioning.copy_sagas` lines. Write the wamn_system script of §4.3.4 into `$P/kind-to-type-system.sql` and the project-env script into `$P/kind-to-type-project-env.sql`. Put `deploy/sql/record-history.sql` of commit <commit> before the `COMMIT;` of each. Apply them as the superuser:
-
-```sql
-BEGIN;
-ALTER TABLE registry.orgs RENAME COLUMN placement_kind TO placement_type;
--- ... the other renames of §4.3.4 ...
-CREATE OR REPLACE FUNCTION identity.lock_password_principal(principal uuid) ...;
--- the component key of §4.3.6, one line per copy:
--- wamn_system control copy: CREATE TABLE catalog.component_digest_owners ... (with environment_instance); DROP CONSTRAINT component_library_digest_key;
--- each project-env copy:    CREATE TABLE catalog.component_digest_owners ...; DROP CONSTRAINT component_library_digest_key;
--- project-env only, the snapshot table of §4.3.6:
--- ALTER TABLE catalog.release_manifest_v3_snapshots RENAME TO release_manifest_snapshots; ...
--- deploy/sql/record-history.sql
-COMMIT;
-```
+On <date> (`wamn-ld93`, `wamn-o8b9`), `wamn-ctl upgrade-schema` of commit <commit> ran for the first time on `wamn_system`, `wamn-db-dkk--receiving--dev--4pqjfmli` and `wamn-db-dkk--wms--dev--0nk1lrpr`, with the workloads stopped. Each run took `--baseline` and `--confirm`, and it applied the `kind` → `type` migration of `docs/plan/kind-to-type.md` §4.3.4 in the same run. On wamn_system, `SELECT to_regclass('provisioning.copy_sagas') IS NOT NULL` answered <true|false>, so the migration <renamed|did not rename> P6. Keep the port-forward, `WAMN_SYSTEM_ADMIN_URL` and `PW` of section 3.6, and run:
 
 ```bash
-kubectl -n platform exec -i wamn-pg-1 -c postgres -- psql -U postgres -d wamn_system -v ON_ERROR_STOP=1 < $P/kind-to-type-system.sql
+target/debug/wamn-ctl upgrade-schema --system-database-url "$WAMN_SYSTEM_ADMIN_URL" --baseline 1 --confirm
 for db in wamn-db-dkk--receiving--dev--4pqjfmli wamn-db-dkk--wms--dev--0nk1lrpr; do
-  kubectl -n platform exec -i wamn-pg-1 -c postgres -- psql -U postgres -d "$db" -v ON_ERROR_STOP=1 < $P/kind-to-type-project-env.sql
+  target/debug/wamn-ctl upgrade-schema --system-database-url "$WAMN_SYSTEM_ADMIN_URL" \
+    --admin-database-url "postgresql://postgres:${PW}@127.0.0.1:15432/$db" --baseline 0 --confirm
 done
 ```
 
-Each script ran once, as one transaction, and committed. The applies took <n> seconds. The history notices named <tables>. The owner table took <n> rows in wamn_system, <n> in Receiving and <n> in WMS. The snapshot notices named <constraints>. The check of §4.3.6 listed no `component_library_digest_key` and no `release_manifest_v3` name.
+The wamn_system run printed `baseline migrations/system/0001_capture_gap.sql` , `applied migrations/system/0002_event_reader_schema.sql` and `applied migrations/system/0003_kind_to_type.sql`. Each project-env run printed `applied migrations/project/0001_kind_to_type.sql`. The runs took <n>, <n> and <n> seconds. The history notices named <tables>. The owner table took <n> rows in wamn_system, <n> in Receiving and <n> in WMS. The snapshot notices named <constraints>. The check of §4.3.6 listed no `component_library_digest_key` and no `release_manifest_v3` name. `registry.schema_migrations` holds rows 1 and 2, and `app_system.schema_migrations` holds row 1 in each project-env database.
 
 `reconcile-run-plane` of commit <commit> then applied P8 and P10 to P12 by its `TypeColumnCutover` action. Run it for each project-env as in sections 3.8 and 5.2:
 
@@ -1502,7 +1506,7 @@ gcloud artifacts docker tags list us-central1-docker.pkg.dev/wamn-dev/wamn/relea
   --format='value(tag.basename(),version.basename())' | sort > $P/releases-before.txt
 ```
 
-Immutable tags are a gated follow-up of §3.2. After `wamn-orba` closes and the deployment agent turns them on, `gcloud artifacts repositories describe wamn --project wamn-dev --location us-central1` shows immutable tags enabled. A second push of an existing component tag with other bytes then fails at the registry as well as in code. Until then the proof rests on code: tags derive from content (`push_component.rs:523`), and release pushes refuse a conflict (`push_release_manifest.rs:570`).
+Immutable tags come on at §3.2 B13. After B13, `gcloud artifacts repositories describe wamn --project wamn-dev --location us-central1` shows immutable tags enabled. A second push of an existing component tag with other bytes then fails at the registry as well as in code. Until B13 the proof rests on code: tags derive from content (`push_component.rs:523`), and release pushes refuse a conflict (`push_release_manifest.rs:570`).
 
 Web objects. An overwritten object gets a new generation, so equal generations prove no replacement. After A5 the upload is create-only, so the listing confirms what the code refuses (§3.1 A5):
 
@@ -1537,7 +1541,7 @@ The `*ErrorKind` rename is part of this migration. §3.1 A8 is its commit.
 
 ## 7. Implementation issues (wamn-ld93)
 
-One issue per step, in order. A1 to A12 are the repository commits of §3.1. B0 to B12 are the wamn-dev steps of §3.2, which run in one session from the cutover commit. Each issue depends on the one before it. B0 depends on A12.
+One issue per step, in order. A1 to A12 are the repository commits of §3.1. B0 to B13 are the wamn-dev steps of §3.2, which run in one session from the cutover commit. Each issue depends on the one before it. B0 depends on A12.
 
 **A1. kind → type A1: router delivery WIT 0.3.0 (docs/plan/kind-to-type.md §3.1)**
 - Scope: rename `wamn:router-delivery` from 0.2.0 to 0.3.0, with `failure-kind` and `delivery-failure.kind` as `failure-type`. Follow every importer that §3.1 A1 lists, and rewrite the router pin `http_route.wasm.sha256`.
@@ -1600,8 +1604,8 @@ One issue per step, in order. A1 to A12 are the repository commits of §3.1. B0 
 - Depends on: A11.
 
 **B0. kind → type B0: build and record before the stop (docs/plan/kind-to-type.md §3.2)**
-- Scope: from the cutover commit, build the programs and the guests, build and push the host and identity images, and push the four workload guests. Answer the ops-schema query and the PAT Secret listing, and run the check query of §4.3 on the three databases. Nothing changes installed state.
-- Acceptance: each guest sha256 equals its A12 value. The two image digests, the four guest digests, both answers and the three check results are recorded.
+- Scope: from the cutover commit, build the programs and the guests, build and push the host and identity images, and push the two workload guest files to `components/flow-http` and `components/materializer` under their file sha256. Answer the ops-schema query and the PAT Secret listing, and run the check query of §4.3 on the three databases. Nothing changes installed state.
+- Acceptance: each guest sha256 equals its A12 value. The two image digests, the two guest digests, both answers and the three check results are recorded.
 - Depends on: A12.
 
 **B1. kind → type B1: drain and stop (docs/plan/kind-to-type.md §3.2)**
@@ -1609,14 +1613,14 @@ One issue per step, in order. A1 to A12 are the repository commits of §3.1. B0 
 - Acceptance: each minute's open-run answer and each settled run are recorded. The open-run query prints nothing on both project-env databases after the drain and again after the stop.
 - Depends on: B0.
 
-**B2. kind → type B2: wamn_system hand script (docs/plan/kind-to-type.md §3.2)**
-- Scope: run `$P/kind-to-type-system.sql` once, as one transaction, with the control component key of §4.3.6 and the new `record-history.sql`.
-- Acceptance: the script commits. The §4.3.6 check on wamn_system lists the owner keys and no `component_library_digest_key`.
+**B2. kind → type B2: wamn_system upgrade-schema run (docs/plan/kind-to-type.md §3.2)**
+- Scope: one run of `upgrade-schema --baseline 1 --confirm` on wamn_system. It records `0001_capture_gap.sql` and applies `0002_event_reader_schema.sql` and `0003_kind_to_type.sql`, with the control component key of §4.3.6 and the new record-history functions.
+- Acceptance: the run prints the baseline row and the applied file, and commits. The §4.3.6 check on wamn_system lists the owner keys and no `component_library_digest_key`.
 - Depends on: B1.
 
-**B3. kind → type B3: project-env hand script (docs/plan/kind-to-type.md §3.2)**
-- Scope: run `$P/kind-to-type-project-env.sql` once on each of the two project-env databases: P9, the component key with its `wamn_app` grant, and the snapshot table.
-- Acceptance: each script commits. The history and snapshot notices are recorded. The §4.3.6 check lists no `component_library_digest_key` and no `release_manifest_v3` name.
+**B3. kind → type B3: project-env upgrade-schema runs (docs/plan/kind-to-type.md §3.2)**
+- Scope: one run of `upgrade-schema --baseline 0 --confirm` on each of the two project-env databases. It applies `0001_kind_to_type.sql`: P9, the component key with its `wamn_app` grant, and the snapshot table.
+- Acceptance: each run prints the applied file and commits. The history and snapshot notices are recorded. The §4.3.6 check lists no `component_library_digest_key` and no `release_manifest_v3` name.
 - Depends on: B2.
 
 **B4. kind → type B4: new reconcile-run-plane (docs/plan/kind-to-type.md §3.2)**
@@ -1650,7 +1654,7 @@ One issue per step, in order. A1 to A12 are the repository commits of §3.1. B0 
 - Depends on: B8.
 
 **B10. kind → type B10: new hosts and workloads (docs/plan/kind-to-type.md §3.2)**
-- Scope: render the host values with both release 2 digests and the new host image, upgrade the host release, and apply the four workloads with the B0 guest digests. This is the router switch.
+- Scope: render the host values with both release 2 digests and the new host image, upgrade the host release, and apply the four workloads with the two B0 guest digests. This is the router switch.
 - Acceptance: the serve check of `gcp.md` §3.21 answers 401 on a released route and 404 on an unknown path for both route hosts. Each host log says it loaded release 2.
 - Depends on: B9.
 
@@ -1664,4 +1668,7 @@ One issue per step, in order. A1 to A12 are the repository commits of §3.1. B0 
 - Acceptance: the commit holds every file that §3.2 B12 lists. The §5.3 before and after listings show no removed line, and the drain records are in the entry.
 - Depends on: B11.
 
-Immutable tags on the `wamn` registry are not one of these issues. They are the gated follow-up of §3.2, held by `wamn-orba`. `wamn-r9lz`, its other gate, is closed.
+**B13. kind → type B13: immutable tags on the wamn registry (docs/plan/kind-to-type.md §3.2)**
+- Scope: delete the four fixed guest tags of the `components` repository, turn immutable tags on, and add the record to `gcp.md` §7.
+- Acceptance: the repository shows immutable tags enabled, and no fixed tag remains in `components`.
+- Depends on: B12.

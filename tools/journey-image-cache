@@ -8,8 +8,8 @@
 #
 # The identity is the hash of the HEAD tree entries that the Dockerfile copies.
 # Two commits that change only an uncopied path share one identity, which is
-# the point: the image is the same. The host and identity stages also leave
-# out the test-only files in TEST_ONLY. The per-run tag still carries the run's own
+# the point: the image is the same. The host, identity and ctl stages also
+# leave out the test-only files in TEST_ONLY. The per-run tag still carries the run's own
 # HEAD in wamn.dev/source-head, because that is what the loaded-image checks
 # read.
 
@@ -30,12 +30,12 @@ readonly COPIED=(
   deploy
 )
 
-# Copied files that the host and identity binaries never build from: test
+# Copied files that the host, identity and ctl binaries never build from: test
 # crates and test data. A commit that changes only these files keeps the
-# host and identity images (wamn-as5u). Every Cargo.toml under them stays in
+# host, identity and ctl images (wamn-as5u, wamn-lo7z). Every Cargo.toml under them stays in
 # the identity, because a manifest can change how the workspace resolves.
 # tests/conformance/tests/journey_image_cache.rs keeps this list outside the
-# dependency closure of wamn-host and wamn-identity.
+# dependency closure of wamn-host, wamn-identity and wamn-ctl with ops.
 readonly TEST_ONLY='^(tests/|test-support/(fixture-package|fixtures|harness|infrastructure|simulator)/|apps/[^/]+/tests/)'
 
 # Identities kept per image repository, newest use first.
@@ -52,7 +52,7 @@ usage() {
 usage: journey-image-cache ACTION [arguments]
   identity REPOSITORY [TARGET]
       Print the source identity of REPOSITORY at HEAD for the Docker stage
-      TARGET. The host and identity stages leave out test-only files.
+      TARGET. The host, identity and ctl stages leave out test-only files.
   ensure REPOSITORY TARGET NAME HEAD TAG CLUSTER
       Build wamn-NAME for the Docker stage TARGET if no image of this identity
       exists, then relabel it to wamn-NAME:TAG carrying source-head=HEAD, and
@@ -78,7 +78,7 @@ identity() {
       { printf 'HEAD does not carry the copied path %s\n' "$path" >&2; exit 64; }
   done
   case "$target" in
-    host | identity)
+    host | identity | ctl)
       git -C "$repository" ls-tree -r --full-tree HEAD -- "${COPIED[@]}" |
         awk -F '\t' -v test_only="$TEST_ONLY" \
           '!($2 ~ test_only) || $2 ~ /(^|\/)Cargo\.toml$/' |

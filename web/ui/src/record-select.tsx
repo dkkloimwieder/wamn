@@ -131,6 +131,7 @@ export function RecordSelect<Row extends object>(props: RecordSelectProps<Row>) 
     }
     asked.add(value);
     read(value).then(
+      // eslint-disable-next-line solid/reactivity -- it reads the current value when the read resolves, to drop a stale answer.
       (row) => {
         if (row !== null && current() === value) {
           setLoaded(() => row);

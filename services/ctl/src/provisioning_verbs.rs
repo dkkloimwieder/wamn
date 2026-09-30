@@ -559,6 +559,31 @@ pub struct DeleteProjectEnvArgs {
     pub confirm: bool,
 }
 
+/// Arguments of `upgrade-schema` (docs/plan/schema-upgrade.md).
+#[derive(Debug, Args)]
+pub struct UpgradeSchemaArgs {
+    /// Superuser Postgres URL to the T1 system DB (`wamn_system`). Alone, it
+    /// names the database to upgrade. With `--admin-database-url`, the verb
+    /// reads `registry.project_envs` through it.
+    #[arg(long, env = "WAMN_SYSTEM_ADMIN_URL", hide_env_values = true)]
+    pub system_database_url: String,
+
+    /// Superuser Postgres URL to one project-environment database. With it,
+    /// the verb upgrades that database.
+    #[arg(long, env = "WAMN_PG_ADMIN_URL", hide_env_values = true)]
+    pub admin_database_url: Option<String>,
+
+    /// First run on a database installed before its record table: the last
+    /// file that the database already holds. The verb records the files up to
+    /// it without running them. Refused once the record table has a row.
+    #[arg(long)]
+    pub baseline: Option<i32>,
+
+    /// Apply the pending files. Without it, the verb prints them and changes nothing.
+    #[arg(long)]
+    pub confirm: bool,
+}
+
 /// TLS credentials and the identity service endpoint for operator PAT issuance.
 #[derive(Clone, Default, Args)]
 pub struct PatIssuerArgs {
@@ -861,6 +886,19 @@ pub async fn delete_project_env(args: DeleteProjectEnvArgs) -> anyhow::Result<()
         nats_password_file: args.nats_password_file,
         confirm: args.confirm,
     })
+    .await
+}
+
+/// Upgrade one installed database. The library prints each file.
+pub async fn upgrade_schema(args: UpgradeSchemaArgs) -> anyhow::Result<()> {
+    wamn_control::upgrade_schema::upgrade_schema(
+        &wamn_control::upgrade_schema::UpgradeSchemaRequest {
+            system_database_url: args.system_database_url,
+            admin_database_url: args.admin_database_url,
+            baseline: args.baseline,
+            confirm: args.confirm,
+        },
+    )
     .await
 }
 

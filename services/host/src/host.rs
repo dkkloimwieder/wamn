@@ -46,7 +46,6 @@ use wamn_runtime::plugins::route_authentication::{
 use wamn_runtime::plugins::wamn_credentials::WamnCredentials;
 use wamn_runtime::plugins::wamn_postgres::AuthorityClass;
 use wamn_runtime::plugins::{ClassCredentials, WamnJetstream, WamnLogging, WamnPostgres};
-use wamn_runtime::registry_credentials::GKE_METADATA_TOKEN_URL;
 use wamn_runtime::release_manifest_source::ReleaseManifestSource;
 use wamn_runtime::session_keys::{IssuerKeys, IssuerKeysConfig};
 use wamn_session::verifier::SessionVerifier;
@@ -452,11 +451,7 @@ async fn load_release(
             ReleaseManifestSource::new(artifact_base, insecure_registry, path)
         }
         RegistryPullCredential::TokenMetadata => {
-            ReleaseManifestSource::with_registry_token_metadata(
-                artifact_base,
-                insecure_registry,
-                GKE_METADATA_TOKEN_URL,
-            )
+            ReleaseManifestSource::with_registry_token_metadata(artifact_base, insecure_registry)
         }
     }
     .context("configure the release-manifest registry")?
@@ -995,7 +990,7 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
                             .with_registry_auth_file(path)
                             .context("load component registry pull credential")?,
                         RegistryPullCredential::TokenMetadata => {
-                            source_config.with_registry_token_metadata(GKE_METADATA_TOKEN_URL)
+                            source_config.with_registry_token_metadata()
                         }
                     }
                     .with_ca_paths(&args.oci_ca_paths)

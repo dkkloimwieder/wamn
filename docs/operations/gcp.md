@@ -385,6 +385,12 @@ TMPDIR=<directory on the main disk> tools/journey-image-cache ensure . host host
 TMPDIR=<directory on the main disk> tools/journey-image-cache ensure . identity identity "$(git rev-parse HEAD)" gcp gcp-wamn
 ```
 
+The operator image `wamn-ctl` of sections 3.16 and 4.5 builds the same way, from a clean worktree, because the build copies the working tree:
+
+```bash
+TMPDIR=<directory on the main disk> tools/journey-image-cache ensure . ctl ctl "$(git rev-parse HEAD)" gcp gcp-wamn
+```
+
 Push them with a Docker configuration of your own, so the shared `~/.docker/config.json` stays unchanged:
 
 ```bash
@@ -408,9 +414,12 @@ On 2026-09-26 the host image took 419 seconds to build and the identity image 59
 | `wamn-host:src-490a0d098a176e39` | `sha256:b44a6f944a410ca42dccf378c0948226946c54fefa17c4bf3cc246e25dcd9dd2` |
 | `wamn-identity:src-bf477a549dc55932` | `sha256:b0896c8fb3f94920c097762f75019fe68a81254fc49a4fa6768a29db97794827` |
 | `wamn-identity:src-cb10274981e78f44` | `sha256:0fe43f6bc52e98e327cb7abd9898a3e1268f9298e37ec56e12504fe7ffdeab42` |
+| `wamn-ctl:src-4efb827f3fd6ab78` | `sha256:1322d637113f2934340620556f1ef491d2d2e28f4991ddeb9236a7d4f48eae10` |
 | `wamn-identity:src-4d7d761fa53551b2` | `sha256:5ba5e9dc09043d36f6fbc2cf830b09d08dea2f5a63bde2be74dc246411a55164` |
 
 On 2026-09-27 the second identity image, with the invitation link, took 53 seconds to build and 5 seconds to push. Roll it out with `helm upgrade identity deploy/platform/identity -n identity -f deploy/gcp/values-identity.yaml`.
+
+On 2026-09-30 the `wamn-ctl` image of `b89dd2ea5` took 1 second to build from warm layers and 6 seconds to push. The two Jobs of `deploy/gcp/operator/` pin it by digest.
 On 2026-09-27 the third identity image, with the org and project filter of finding `wamn-9a3v`, took 102 seconds to build and 6 seconds to push. The rollout took 9 seconds.
 
 ### 3.5 Event NATS
@@ -726,36 +735,54 @@ kubectl -n identity exec deploy/identity -- wamn-identity activate --kid <kid>
 
 Run the check of section 3.10 again. The key set now lists the `kid`. On 2026-09-26 the key was `a24410b7-e7da-423c-944a-27479ed4b0f2`.
 
-### 3.16 Management-author PAT (temporary procedure)
+### 3.16 PAT mint in the cluster
 
-This procedure is temporary (finding `wamn-n5d1`). No in-cluster run path exists yet for the verbs that call identity. The owner adds this line to `/etc/hosts` before the mint and removes it after the mint:
+The Job `deploy/gcp/operator/mint-pat.yaml` mints a PAT inside the cluster, in namespace `identity` (`docs/plan/operator-image.md`, `wamn-n5d1`). It runs the operator image `wamn-ctl`, which the manifest pins by digest. It reads the `operator-dkk` certificate as a mounted Secret, so the certificate never reaches this machine. It needs no `/etc/hosts` line and no identity port-forward.
 
-```text
-127.0.0.1 identity.identity.svc.cluster.local
-```
-
-Forward identity to port 8443. Read the `operator-dkk` certificate into mode 0600 files of a private directory `C`, and delete the directory after the mint:
+Fill the run values in a private copy of the manifest, apply the copy and remove it. This run mints the management-author PAT of Receiving. The run writes `secret_namespace` of `registry.project_envs` again, so pass the recorded value `hosts` (`wamn-rjtf`):
 
 ```bash
-kubectl -n identity port-forward svc/identity 8443:443 &
-C=$(mktemp -d); chmod 700 $C
-(umask 077
- kubectl -n identity get secret operator-dkk -o jsonpath='{.data.tls\.crt}' | base64 -d > $C/client.crt
- kubectl -n identity get secret operator-dkk -o jsonpath='{.data.tls\.key}' | base64 -d > $C/client.key)
+(umask 077; sed -e 's/__ORG__/dkk/' -e 's/__PROJECT__/receiving/' -e 's/__ENV__/dev/' -e 's/__TENANT__/dev/' \
+  -e 's/__NAMESPACE__/platform/' -e 's/__SECRET_NAMESPACE__/hosts/' \
+  -e 's/__PAT_FLAG__/--emit-management-author-pat-secret/' deploy/gcp/operator/mint-pat.yaml > $P/mint-pat.yaml)
+kubectl apply -f $P/mint-pat.yaml
+rm $P/mint-pat.yaml
 ```
 
-Run `provision-project-env` again with the PAT flags. The verb requires `--emit-secret`, so write that file into `C` too; it repeats the database Secret without a password and is never applied (finding `wamn-6b4g`):
+The pod waits for the Secret `wamn-system-admin`, which holds the superuser URL of `wamn_system`. Make it from the CloudNativePG Secret, with an owner reference to the Job, so that Kubernetes deletes it with the Job. Use `kubectl create`, because `kubectl apply` copies the data into an annotation:
 
 ```bash
-(umask 077; target/debug/wamn-ctl provision-project-env --org dkk --project receiving --env dev --tenant dev \
-  --namespace platform --secret-namespace hosts --emit-secret $C/database-secret.json \
-  --pat-issuer https://identity.identity.svc.cluster.local:8443 --pat-server-ca $P/identity-ca.crt \
-  --pat-client-cert $C/client.crt --pat-client-key $C/client.key \
-  --emit-management-author-pat-secret $P/management-author-pat.json)
-rm -rf $C
+JOB_UID=$(kubectl -n identity get job mint-pat -o jsonpath='{.metadata.uid}')
+PW=$(kubectl -n platform get secret wamn-pg-superuser -o jsonpath='{.data.password}' | base64 -d)
+printf 'postgresql://postgres:%s@wamn-pg-rw.platform.svc.cluster.local:5432/wamn_system' "$PW" |
+  kubectl -n identity create secret generic wamn-system-admin --from-file=url=/dev/stdin --dry-run=client -o json |
+  jq --arg uid "$JOB_UID" '.metadata.ownerReferences = [{apiVersion: "batch/v1", kind: "Job", name: "mint-pat", uid: $uid}]' |
+  kubectl create -f -
 ```
 
-Then the owner removes the `/etc/hosts` line. On 2026-09-26 the mint took 5 seconds. It made the service principal `wamn-management-author-dkk--receiving--dev` and a PAT with prefix `6922769387dc9a19` that expires on 2026-10-27. The PAT Secret file stays at mode 0600 in the work directory and is not applied.
+The verb writes the PAT Secret file into a memory volume of the pod. The pod keeps it for at most 300 seconds. Wait for the file, then read and delete it with one command into a mode 0600 file:
+
+```bash
+for i in $(seq 60); do kubectl -n identity exec job/mint-pat -- test -e /out/pat.json && break; sleep 2; done
+(umask 077; kubectl -n identity exec job/mint-pat -- sh -c 'cat /out/pat.json && rm /out/pat.json' > $P/management-author-pat.json)
+kubectl -n identity wait --for=condition=complete job/mint-pat --timeout=60s
+kubectl -n identity logs job/mint-pat > $P/mint-pat.log
+kubectl -n identity delete job mint-pat
+```
+
+The Job and its Secret also go 600 seconds after the Job ends (`ttlSecondsAfterFinished`). For an operator PAT, pass `--emit-operator-pat-secret` and read the file into `$P/operator-pat.json`.
+
+On 2026-09-30 the Job minted the operator PAT of the Receiving bench operator `wamn-operator-dkk--receiving--dev` in 10 seconds, with `--emit-operator-pat-secret`. The file was read 3 seconds after the mint. The PAT has prefix `5b0649d6dc4dd3bf` and expires on 2026-10-30. The log holds no credential, and `registry.project_envs` kept `secret_namespace` `hosts`. Revoke the previous PAT of the service from this machine, through a forward to the pod:
+
+```bash
+kubectl -n platform port-forward pod/wamn-pg-1 15435:5432 &
+target/debug/wamn-ctl provision-project-env --revoke-pat-prefix 1a98d582140907ed \
+  --system-database-url "postgresql://postgres:${PW}@127.0.0.1:15435/wamn_system"
+```
+
+The revoke took less than 1 second. `identity.pats` then showed `1a98d582140907ed` revoked and `5b0649d6dc4dd3bf` live. The new PAT file stays at mode 0600 in the private directory, and a new client VM takes it (section 6.4).
+
+The first mint ran from this machine, through a temporary `/etc/hosts` line and an identity port-forward. On 2026-09-26 the mint took 5 seconds. It made the service principal `wamn-management-author-dkk--receiving--dev` and a PAT with prefix `6922769387dc9a19` that expires on 2026-10-27. The PAT Secret file stays at mode 0600 in the work directory and is not applied.
 
 ### 3.17 Pool after the daily guard
 
@@ -1142,16 +1169,18 @@ target/debug/wamn-ctl reconcile-run-plane --system-database-url "$WAMN_SYSTEM_AD
   --org dkk --project receiving --tenant dev --env dev --schema wamn_run
 ```
 
-Send the invitation through the identity port-forward and the temporary `/etc/hosts` line of section 3.16. Read the `operator-dkk` certificate into mode 0600 files of a private directory `C`, and delete the directory after the request:
+Send the invitation with the Job `deploy/gcp/operator/invite.yaml`, which runs in namespace `identity` with the mounted `operator-dkk` certificate (section 3.16). Fill the principal in a private copy of the manifest, apply the copy and remove it:
 
 ```bash
-target/debug/wamn-ctl invite --principal <principal id> \
-  --pat-issuer https://identity.identity.svc.cluster.local:8443 --pat-server-ca $P/identity-ca.crt \
-  --pat-client-cert $C/client.crt --pat-client-key $C/client.key
-rm -rf $C
+(umask 077; sed -e 's/__PRINCIPAL_ID__/<principal id>/' deploy/gcp/operator/invite.yaml > $P/invite.yaml)
+kubectl apply -f $P/invite.yaml
+rm $P/invite.yaml
+kubectl -n identity wait --for=condition=complete job/invite --timeout=120s
+kubectl -n identity logs job/invite > $P/invite.log
+kubectl -n identity delete job invite
 ```
 
-On 2026-09-27 the principal was `ccc4533d-a81a-465d-8a44-1414369ae2fd`. The three verbs took 2, 1 and 25 seconds, and identity answered `201 {"status":"accepted_for_delivery"}` in 1 second.
+The log holds the identity answer. The first invitations ran from this machine, through a temporary `/etc/hosts` line and an identity port-forward. On 2026-09-27 the principal was `ccc4533d-a81a-465d-8a44-1414369ae2fd`. The three verbs took 2, 1 and 25 seconds, and identity answered `201 {"status":"accepted_for_delivery"}` in 1 second.
 The first invitation showed a code for the terminal client, and the web client had no page to accept it (`wamn-ch2w`). With `inviteUrl` set in `deploy/gcp/values-identity.yaml`, the mail carries one link to `https://receiving.wamn.dev/invite#<code>`. The second invitation went out the same way and took 1 second. Restart the identity port-forward after identity rolls, because the forward ends with the old pod:
 
 ```bash
@@ -1731,11 +1760,11 @@ The new provision needed generation `b` in one place. `provision-identity-issuer
 | Receiving | 1 | `sha256:900d35fbd2da116aac3d76abcf3895da7810cedeaf75fd5fdc4f9858f578fdfc` | `receiving` `sha256:1d034a09179b5c1a1eb74643d8a9376d612653116e7f7edddd8666dc74712fdb` |
 | WMS | 1 | `sha256:3d6b13f9c7864e2b34317b6822d85b6d6a5542c36f9b5ae5d2ae049c1fcab2f6` | `wms` `sha256:0533b015d675921df8529bdd58913730d36a8f97dbbb2b0f4affae963422ce58`, `label-render` `sha256:587434540bb0173ae447be16d89876ae0b70047b6c9241bf375c87f8c08efc91`, `blob-put` and `jsonata` unchanged |
 
-The service `wamn-operator-dkk--receiving--dev` holds the role `operator`, with a PAT of prefix `1a98d582140907ed` that expires on 2026-10-29. The owner holds `admin` in both environments. The host upgrade with `--timeout 10m` took 15 seconds, and the Helm release reads `deployed` at revision 5. The web clients of both releases took 7 seconds each to upload.
+The service `wamn-operator-dkk--receiving--dev` holds the role `operator`, with a PAT of prefix `1a98d582140907ed` that expires on 2026-10-29. On 2026-09-30 the PAT of prefix `5b0649d6dc4dd3bf`, which expires on 2026-10-30, replaced it (section 3.16). The owner holds `admin` in both environments. The host upgrade with `--timeout 10m` took 15 seconds, and the Helm release reads `deployed` at revision 5. The web clients of both releases took 7 seconds each to upload.
 
 ## 7. Schema changes applied by hand
 
-No verb applies a schema change to an installed database (finding `wamn-o8b9`, design in `docs/plan/upgrades.md`). Record every statement that you run by hand on wamn-dev in this section, with its date and its finding.
+`wamn-ctl upgrade-schema` applies a platform schema change to an installed database ([deployment](deployment.md#platform-schema-upgrades), `wamn-o8b9`). This section records the statements that ran by hand on wamn-dev before the verb existed, with their date and their finding. Its last entry is the first run of the verb on each database, with `--baseline`, at the `kind` → `type` cutover (`docs/plan/kind-to-type.md` §4.8). After that entry, no schema change runs by hand.
 
 On 2026-09-29 (`wamn-59z6`, `wamn-o8b9`), the capture gap table of `deploy/sql/system-schema.sql` went into `wamn_system` as its owner, with the read grant of the CDC reader. Write the `CREATE TABLE registry.capture_gap` block of that file between the two lines below into `$P/capture-gap.sql`, and apply it:
 

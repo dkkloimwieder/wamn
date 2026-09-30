@@ -105,10 +105,7 @@ impl QueueService {
                     role: None,
                     user_id: Some(PlatformComponent::Executor.principal_id().to_string()),
                     operation: Some(PlatformComponent::Executor.principal_name().to_owned()),
-                    release: Some(ReleaseIdentity {
-                        effective_release_id: release.release().effective_release_id,
-                        manifest_digest: release.release().manifest_digest.clone(),
-                    }),
+                    release: Some(ReleaseIdentity::from_loaded(release)),
                 },
             )
             .await?;

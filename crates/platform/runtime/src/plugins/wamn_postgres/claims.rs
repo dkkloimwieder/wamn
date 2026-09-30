@@ -15,6 +15,7 @@ use tracing::Instrument as _;
 
 use wamn_catalog::ManifestDigest;
 use wamn_control_registry::identifiers::{valid_project, valid_runner, valid_schema, valid_tenant};
+use wamn_engine::release_manifest::LoadedRelease;
 use wamn_event_wire::Causation;
 use wamn_run_state::AuthorityClass;
 
@@ -169,15 +170,47 @@ pub struct WamnPostgres {
 /// Admission pins the effective release. The production claim verifies that
 /// pin and records the claiming pod's manifest digest. Both values are
 /// host-injected identity, never guest-supplied.
+///
+/// The fields are private, so production code builds the value only from a
+/// loaded release (wamn-p77b).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ReleaseIdentity {
     /// The release identity — `runs.effective_release_id`.
-    pub effective_release_id: i32,
+    effective_release_id: i32,
     /// The serving manifest's digest — `runs.manifest_digest`. The
     /// `sha256:<64 lowercase hex>` shape the run plane's
     /// `runs_release_record_check` admits is carried by the type, so there is no
     /// hand-rolled shape check on this path.
-    pub manifest_digest: ManifestDigest,
+    manifest_digest: ManifestDigest,
+}
+
+impl ReleaseIdentity {
+    /// The identity of the release a pod loaded.
+    pub fn from_loaded(release: &LoadedRelease) -> Self {
+        Self {
+            effective_release_id: release.release().effective_release_id,
+            manifest_digest: release.release().manifest_digest.clone(),
+        }
+    }
+
+    /// An identity with no loaded release, for tests whose rows name it.
+    #[cfg(feature = "test-util")]
+    pub fn for_test(effective_release_id: i32, manifest_digest: ManifestDigest) -> Self {
+        Self {
+            effective_release_id,
+            manifest_digest,
+        }
+    }
+
+    /// `runs.effective_release_id`.
+    pub fn effective_release_id(&self) -> i32 {
+        self.effective_release_id
+    }
+
+    /// `runs.manifest_digest`.
+    pub fn manifest_digest(&self) -> &ManifestDigest {
+        &self.manifest_digest
+    }
 }
 
 /// The complete host-injected claim set one component id resolves to.
@@ -1106,9 +1139,9 @@ impl WamnPostgres {
     pub fn set_release_identity(
         &self,
         component_id: &str,
-        effective_release_id: i32,
-        manifest_digest: ManifestDigest,
+        identity: ReleaseIdentity,
     ) -> anyhow::Result<()> {
+        let effective_release_id = identity.effective_release_id;
         anyhow::ensure!(
             effective_release_id > 0,
             "invalid effective release id {effective_release_id}: a positive value is required"
@@ -1116,13 +1149,7 @@ impl WamnPostgres {
         self.release_identities
             .write()
             .expect("release identities lock poisoned")
-            .insert(
-                component_id.to_string(),
-                ReleaseIdentity {
-                    effective_release_id,
-                    manifest_digest,
-                },
-            );
+            .insert(component_id.to_string(), identity);
         Ok(())
     }
 
@@ -1353,11 +1380,7 @@ impl WamnPostgres {
             ),
         }
         match claims.release.as_ref() {
-            Some(release) => self.set_release_identity(
-                component_id,
-                release.effective_release_id,
-                release.manifest_digest.clone(),
-            )?,
+            Some(release) => self.set_release_identity(component_id, release.clone())?,
             None => drop(
                 self.release_identities
                     .write()

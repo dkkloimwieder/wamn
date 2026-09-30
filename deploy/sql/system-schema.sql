@@ -670,12 +670,19 @@ CREATE TRIGGER project_envs_retire_instance
 -- through the same project-env identity, so a de-provisioned env (or a deleted
 -- org, cascading through project_envs) drops its registration. The reader
 -- service (l5i9.10) reads its row to learn what to stream.
+--
+-- `schema` is the application schema that the publication covers. The reader
+-- refuses a registration without one, and a publication of another schema
+-- (wamn-0h0g.19.21). It is nullable because a system database from before
+-- migration 0002 holds registrations without it, and enable-cdc-project-env
+-- writes it on its next run.
 -- ---------------------------------------------------------------------------
 CREATE TABLE registry.event_readers (
     org                          text NOT NULL,
     project                      text NOT NULL,
     env                          text NOT NULL,
     publication                  text NOT NULL,
+    schema                       text,
     slot                         text NOT NULL,
     stream                       text NOT NULL,
     replication_secret_name      text NOT NULL,

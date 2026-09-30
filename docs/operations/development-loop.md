@@ -136,6 +136,10 @@ A failed stage prints its top context first and every cause under it.
 The printed line names the refusal that stopped the stage.
 The loop replaces the host and operator only after the candidate passes preparation.
 The local Gate uses the same wiring rules as release authoring and authenticates the configured publisher.
+A wiring can name a palette component, which is a platform component with a `declaration.json.in` under `apps/platform/*/*/`.
+`tools/build-components` builds each palette component that a wiring of a selected package names.
+The loop admits it into the scope of that package, with the platform packages that its declaration states.
+A `__STORE_ALIAS__` connection takes the `store_alias` parameter of the wiring node, and it needs its own selection in `--local-bindings`.
 The runtime still enforces operation grants, connection bindings, and credentials for each database role.
 
 Local preparation limits each metadata or version command to 60 seconds.

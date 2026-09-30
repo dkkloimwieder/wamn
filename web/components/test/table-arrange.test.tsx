@@ -122,6 +122,7 @@ describe("the column panel", () => {
 describe("the column width", () => {
   it("follows a header edge drag, and a new load keeps it", async () => {
     const [rows, setRows] = createSignal<readonly Row[]>(ROWS);
+    // eslint-disable-next-line solid/reactivity -- the helper takes the accessor and reads it in its table.
     await table(rows);
     const cell = theButton("menu qty").closest("th")!;
     const width = () => cell.closest("table")!.style.getPropertyValue("--col-qty-size");

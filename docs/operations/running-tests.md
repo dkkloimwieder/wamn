@@ -26,6 +26,10 @@ It includes committed, staged, unstaged, deleted, and untracked files.
 Selected packages run their default tests with the required features of their targets.
 Use `tools/build-components` or `tools/repo-lint` to compile guest targets that disable Cargo tests.
 A passing workspace test result does not establish compilation of those guest targets.
+If the change set selects a guest of the host image, `tools/test-changes` also runs `tools/build-components all` and `docker build --target component-builder`.
+These guests are the packages that the Dockerfile `component-builder` stage builds, so a shared WIT root or a platform crate that a guest links selects them.
+Both builds run because the two builds diverged once (`wamn-lt7y`).
+`tools/test-changes --cluster` runs neither build.
 Cargo metadata does not show a file that a package reads from another package's directory through `include_str!` or `#[path]`.
 Run the reading package's tests for such a change.
 `tools/test-changes dry-run` prints the selected commands.

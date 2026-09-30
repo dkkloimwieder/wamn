@@ -251,6 +251,7 @@ pub async fn enable_cdc_project_env(
     record_event_reader(
         system_url,
         &triple,
+        &args.schema,
         &cdc_name,
         &stream,
         &secret_name,
@@ -293,10 +294,11 @@ fn cdc_sql_bundle(schema: &str, cdc_name: &str, db_name: &str) -> String {
 /// Record the CDC reader registration in the registry (idempotent + refreshing).
 /// Connects as superuser and `SET ROLE wamn_system` (the registry owner), then
 /// runs the pure `wamn-control-registry` builder. The publication and slot share
-/// `cdc_name`.
+/// `cdc_name`, and `schema` is the schema that the publication covers.
 async fn record_event_reader(
     system_url: &str,
     triple: &Triple,
+    schema: &str,
     cdc_name: &str,
     stream: &str,
     secret_name: &str,
@@ -325,6 +327,7 @@ async fn record_event_reader(
                     &secret_name,
                     &secret_namespace,
                     &true,
+                    &schema,
                 ],
             )
             .await

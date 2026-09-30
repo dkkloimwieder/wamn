@@ -82,6 +82,25 @@ services:
       interval: 1s
       timeout: 2s
       retries: 60
+  receiving-dev-minio:
+    profiles:
+      - receiving-route
+    image: minio/minio:RELEASE.2025-09-07T16-13-09Z
+    command:
+      - server
+      - /data
+    environment:
+      MINIO_ROOT_USER: ${WAMN_RECEIVING_DEV_MINIO_USER:-wamn-labels-store}
+      MINIO_ROOT_PASSWORD: ${WAMN_RECEIVING_DEV_MINIO_PASSWORD:-probe-labels-store}
+    ports:
+      - "127.0.0.1:${WAMN_RECEIVING_DEV_MINIO_PORT:-9004}:9000"
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - curl -fsS http://127.0.0.1:9000/minio/health/ready
+      interval: 1s
+      timeout: 2s
+      retries: 60
   receiving-dev-tempo:
     profiles:
       - receiving-route

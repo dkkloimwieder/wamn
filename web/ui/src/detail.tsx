@@ -18,6 +18,7 @@ export interface DetailListProps {
 
 export function DetailList(props: ParentProps<DetailListProps>): JSX.Element {
   return (
+    // eslint-disable-next-line solid/reactivity -- the context holds the accessor, and each item reads it in JSX.
     <Reading.Provider value={() => props.loading}>
       <dl class="grid grid-cols-[max-content_1fr] gap-x-6 gap-y-2 text-sm">{props.children}</dl>
     </Reading.Provider>

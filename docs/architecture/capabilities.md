@@ -219,7 +219,12 @@ It does not consult `DOCKER_CONFIG`, invoke helpers, normalize Docker Hub names,
 With `--registry-token-metadata`, the host reads no credential file.
 Each pull asks the GKE metadata server of the pod's Workload Identity for a token, and sends it as the password of `oauth2accesstoken`.
 The host keeps no token and no expiry, and each pull builds its own registry client.
+The server's host is `GCE_METADATA_HOST` when it is set, as Google's client libraries read it, and `metadata.google.internal` otherwise.
 The [reader](../../crates/platform/runtime/src/registry_credentials.rs) owns both accepted forms.
+
+The host image also carries [`docker-credential-wamn`](../../crates/platform/runtime/src/bin/docker-credential-wamn.rs), a Docker credential helper for wash-runtime's own pulls.
+It answers `get` with the same token function, and supports no other command.
+A `config.json` that names it under `credHelpers` holds no credential.
 
 Client certificate loading and OCI transfer retain their WAMN artifact contracts.
 The [native alignment page](native-alignment.md) names the conditions for replacing those native adapters.

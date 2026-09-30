@@ -123,6 +123,12 @@ export interface QueryLoad<TRow extends object> {
   readonly state: Accessor<LoadState<TRow>>;
   /** True when the last load that ended read every row. */
   readonly complete: Accessor<boolean>;
+  /**
+   * True when the last load that ended stopped before the last row. It is
+   * false before the first load ends, so the table shows no hint of a partial
+   * set while it cannot know yet (wamn-28n8).
+   */
+  readonly partial: Accessor<boolean>;
   /** The rows of the last complete set while a load runs over it, or else the loaded rows. */
   readonly rows: Accessor<readonly TRow[]>;
   /** Starts a new load at the cap the query holds. */
@@ -219,8 +225,9 @@ export function createQueryLoad<TRow extends object, TResult>(
     } else {
       end = opened as Outcome<never>;
     }
-    // A streamed load reports only a load that did not complete.
-    if (end.status !== "completed") {
+    // A streamed load reports only a load that did not complete. A load that
+    // a newer load cancelled did not fail, so it reports nothing (wamn-v43a).
+    if (end.status !== "completed" && !signal.aborted) {
       report(end as Outcome<unknown>);
     }
     return end;
@@ -292,6 +299,7 @@ export function createQueryLoad<TRow extends object, TResult>(
   };
 
   onCleanup(
+    // eslint-disable-next-line solid/reactivity -- the listener runs on a write, an event, not in a tracked scope.
     afterWrites(transport, () => {
       if (!writing) {
         reload();
@@ -300,11 +308,16 @@ export function createQueryLoad<TRow extends object, TResult>(
   );
 
   const complete = createMemo<boolean>((last) => (state().busy ? last : state().fullyRead), false);
+  const partial = createMemo<boolean>(
+    (last) => (state().busy ? last : state().endedAt !== null && !state().fullyRead && state().refusal === null),
+    false,
+  );
   const rows = createMemo<readonly TRow[]>((last) => (state().busy && complete() ? last : state().rows), []);
 
   return {
     state,
     complete,
+    partial,
     rows,
     reload,
     hold,

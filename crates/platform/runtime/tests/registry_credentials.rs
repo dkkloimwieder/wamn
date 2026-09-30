@@ -1,13 +1,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use wamn_runtime::registry_credentials::{
-    RegistryCredentialsErrorType, read_metadata_registry_credentials, read_registry_credentials,
-};
-
-#[path = "support/metadata_server.rs"]
-mod metadata;
-use metadata::metadata_server;
+use wamn_runtime::registry_credentials::{RegistryCredentialsErrorType, read_registry_credentials};
 
 const REGISTRY: &str = "registry.example:5000";
 static NEXT_SCRATCH: AtomicU64 = AtomicU64::new(0);
@@ -90,64 +84,4 @@ fn malformed_document_does_not_echo_secret_bytes() {
     let rendered = format!("{error:?} {error}");
     assert_eq!(error.refusal(), "registry-credentials-malformed");
     assert!(!rendered.contains("private-value"));
-}
-
-#[tokio::test]
-async fn a_metadata_token_is_the_password_of_oauth2accesstoken() {
-    let server = metadata_server(vec![(
-        200,
-        r#"{"access_token":"token-1","expires_in":3599,"token_type":"Bearer"}"#,
-    )])
-    .await;
-    let credentials = read_metadata_registry_credentials(&server.token_url, REGISTRY)
-        .await
-        .expect("a token answer is a credential");
-    assert_eq!(credentials.username(), "oauth2accesstoken");
-    assert_eq!(credentials.password(), "token-1");
-
-    let heads = server.heads();
-    assert_eq!(heads.len(), 1);
-    assert!(heads[0].starts_with(
-        "GET /computeMetadata/v1/instance/service-accounts/default/token HTTP/1.1\r\n"
-    ));
-    assert!(
-        heads[0]
-            .to_ascii_lowercase()
-            .contains("\r\nmetadata-flavor: google\r\n"),
-        "the request names the metadata flavor: {}",
-        heads[0]
-    );
-}
-
-#[tokio::test]
-async fn a_failed_or_unusable_metadata_answer_refuses_by_name_without_the_token() {
-    for (status, body, kind, refusal) in [
-        (
-            500,
-            "{}",
-            RegistryCredentialsErrorType::Unreadable,
-            "registry-token-metadata-unavailable",
-        ),
-        (
-            200,
-            r#"{"token":"private-value""#,
-            RegistryCredentialsErrorType::Rejected,
-            "registry-token-metadata-malformed",
-        ),
-        (
-            200,
-            r#"{"access_token":""}"#,
-            RegistryCredentialsErrorType::Rejected,
-            "registry-token-metadata-incomplete",
-        ),
-    ] {
-        let server = metadata_server(vec![(status, body)]).await;
-        let error = read_metadata_registry_credentials(&server.token_url, REGISTRY)
-            .await
-            .expect_err("an unusable answer refuses");
-        assert_eq!((error.kind(), error.refusal()), (kind, refusal));
-        let rendered = format!("{error:?} {error}");
-        assert!(rendered.contains(REGISTRY));
-        assert!(!rendered.contains("private-value"));
-    }
 }

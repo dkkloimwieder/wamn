@@ -336,10 +336,7 @@ impl OperationHost {
 
     /// The identity of the carried release, bound on every released call.
     pub fn release_identity(&self) -> ReleaseIdentity {
-        ReleaseIdentity {
-            effective_release_id: self.release.release().effective_release_id,
-            manifest_digest: self.release.release().manifest_digest.clone(),
-        }
+        ReleaseIdentity::from_loaded(&self.release)
     }
 
     /// The session claims of one call, before activation binds its principal.

@@ -66,6 +66,7 @@ pub mod platform_principals;
 #[cfg(feature = "ops")]
 pub mod recovery;
 pub mod saga;
+pub mod schema_migrations;
 pub mod secret;
 pub mod session_role_reader;
 pub mod session_target;
@@ -151,6 +152,7 @@ pub use workload_role::{
 pub const SYSTEM_SCHEMA_SQL: &str = concat!(
     include_str!("../../../../deploy/sql/record-history.sql"),
     include_str!("../../../../deploy/sql/system-schema.sql"),
+    include_str!("../../../../deploy/sql/system-schema-migrations.sql"),
 );
 
 /// Dormant portable-store extension, applied after [`SYSTEM_SCHEMA_SQL`].
@@ -173,7 +175,10 @@ pub const CONTROL_BOOTSTRAP_SQL: [&str; 2] = [SYSTEM_SCHEMA_SQL, CONTROL_PORTABL
 /// `deploy/sql/record-history.sql` first. `CATALOG_SCHEMA_SQL` carries that
 /// file, so an applier that applied the catalog schema already holds it
 /// (`wamn-0h0g.9.15`).
-pub const APP_SCHEMA_SQL: &str = include_str!("../../../../deploy/sql/app-schema.sql");
+pub const APP_SCHEMA_SQL: &str = concat!(
+    include_str!("../../../../deploy/sql/app-schema.sql"),
+    include_str!("../../../../deploy/sql/app-schema-migrations.sql"),
+);
 
 /// Operations persistence extension, installed after the core system schema.
 #[cfg(feature = "ops")]

@@ -55,8 +55,9 @@ FROM root-source AS build-host
 RUN --mount=type=cache,id=wamn-root-cargo-registry,target=/usr/local/cargo/registry,sharing=shared \
     --mount=type=cache,id=wamn-root-cargo-git,target=/usr/local/cargo/git,sharing=shared \
     --mount=type=cache,id=wamn-root-target-host,target=/build/target,sharing=locked \
-    cargo build --locked --release -p wamn-host \
- && install -D -m 0755 target/release/wamn-host /native-output/wamn-host
+    cargo build --locked --release -p wamn-host -p wamn-runtime --bin wamn-host --bin docker-credential-wamn \
+ && install -D -m 0755 target/release/wamn-host /native-output/wamn-host \
+ && install -D -m 0755 target/release/docker-credential-wamn /native-output/docker-credential-wamn
 
 FROM root-source AS build-scenario-worker
 RUN --mount=type=cache,id=wamn-root-cargo-registry,target=/usr/local/cargo/registry,sharing=shared \
@@ -156,6 +157,9 @@ RUN --mount=type=cache,id=wamn-component-cargo-registry,target=/usr/local/cargo/
 FROM debian:trixie-slim AS host
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates && rm -rf /var/lib/apt/lists/*
 COPY --from=build-host /native-output/wamn-host /usr/local/bin/wamn-host
+# The Docker credential helper wash-runtime runs for a registry that the
+# mounted config.json names under credHelpers (docs/plan/component-pull.md).
+COPY --from=build-host /native-output/docker-credential-wamn /usr/local/bin/docker-credential-wamn
 ENV HOME=/tmp
 ENTRYPOINT ["/usr/local/bin/wamn-host"]
 

@@ -60,13 +60,13 @@ The helper is the way in. It runs once per pull, and `config.json` names it with
 
 The host gets its registry token from the GKE metadata server: `GET http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token` with `Metadata-Flavor: Google`. The token is the `access_token` field. The registry credential is `oauth2accesstoken` and that token, the form Artifact Registry accepts and the CronJob writes today. The token is read for each pull and is never written to a file or a log.
 
-### 4.2 Our readers
+### 4.2 Our readers and the helper
 
-The host flag `--registry-token-metadata` is built. [Registry credentials](../architecture/capabilities.md#registry-credentials) states its behavior. The one token function is `read_metadata_registry_credentials` in `crates/platform/runtime/src/registry_credentials.rs`.
+The host flag `--registry-token-metadata` and the helper `docker-credential-wamn` in the host image are built. [Registry credentials](../architecture/capabilities.md#registry-credentials) states their behavior. Both call the one token function, `read_metadata_registry_credentials`, which reads `GCE_METADATA_HOST`.
 
 ### 4.3 wash-runtime's reader
 
-The host image gains one executable built in this tree, `docker-credential-wamn`, on `PATH`. It calls `read_metadata_registry_credentials`, the function of the host's readers, and answers `get` with `{"Username":"oauth2accesstoken","Secret":"<token>"}`. It never answers the username `<token>`. A ConfigMap mounted at `DOCKER_CONFIG` holds `{"credHelpers":{"us-central1-docker.pkg.dev":"wamn"}}`. The ConfigMap holds no credential. wash-runtime runs the helper at each pull. No third-party binary goes into the image.
+A ConfigMap mounted at `DOCKER_CONFIG` holds `{"credHelpers":{"us-central1-docker.pkg.dev":"wamn"}}`. The ConfigMap holds no credential. wash-runtime runs the helper at each pull.
 
 ### 4.4 Deployment
 
@@ -83,8 +83,7 @@ The owner accepted the spec on 2026-09-30 with four rulings, recorded on `wamn-i
 
 One branch. Each issue lands with its tests.
 
-1. The helper and the image. The host image carries the helper. A unit test runs `docker_credential::get_credential` against a `config.json` that names the helper and a local metadata server, and gets `UsernamePassword`.
-2. The GKE deployment of section 4.4, with the docs. The live change on `wamn-dev` is a GKE step for the peer session `wamn-93`, not a test run of this branch.
+1. The GKE deployment of section 4.4, with the docs. The live change on `wamn-dev` is a GKE step for the peer session `wamn-93`, not a test run of this branch.
 
 ## 6. Out of scope
 

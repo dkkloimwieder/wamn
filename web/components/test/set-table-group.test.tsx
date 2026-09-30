@@ -14,7 +14,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import type { TableColumn } from "@wamn/ui";
 
 import { bodyRows, button, pickChoice, pickMenu, theButton } from "./dom.js";
-import { queryTable, setTable, settled } from "./tables.js";
+import { painted, queryTable, setTable, settled } from "./tables.js";
 
 afterEach(cleanup);
 
@@ -238,8 +238,9 @@ describe("the grouping", () => {
 });
 
 describe("the aggregates and the totals row", () => {
-  it("default by type and role, and every level of a group shows them", () => {
+  it("default by type and role, and every level of a group shows them", async () => {
     table({ groupedFields: ["region"] });
+    await painted();
     expect(total("qty")).toBe("sum 21");
     expect(total("weight")).toBe("sum 1.60");
     expect(total("ratio")).toBe("sum 5.75");
@@ -253,8 +254,9 @@ describe("the aggregates and the totals row", () => {
     expect(Array.from(east.querySelectorAll("td")).map((cell) => cell.textContent)).toContain("6");
   });
 
-  it("offer each aggregate their type allows", () => {
+  it("offer each aggregate their type allows", async () => {
     table();
+    await painted();
     for (const [name, qty, weight, ratio] of [
       ["count", "5", "5", "5"],
       ["min", "1", "0.05", "0.25"],
@@ -278,24 +280,28 @@ describe("the aggregates and the totals row", () => {
     // Sixteen menus open and close; on a loaded machine this takes more than 5 s.
   }, 20_000);
 
-  it("sum and average decimals exactly, rounding an average half away from zero", () => {
+  it("sum and average decimals exactly, rounding an average half away from zero", async () => {
     const decimals = (weights: readonly string[]) =>
       weights.map((weight, index) => ({ ...ROWS[0]!, id: `d${index}`, weight }));
     table({ rows: decimals(["0.1", "0.2"]) });
+    await painted();
     expect(total("weight")).toBe("sum 0.3");
     cleanup();
     const eighth = ["0.01", "0.00", "0.00", "0.00", "0.00", "0.00", "0.00", "0.00"];
     table({ rows: decimals(eighth) });
+    await painted();
     aggregate("weight", "avg");
     expect(total("weight")).toBe("avg 0.0013");
     cleanup();
     table({ rows: decimals(eighth.map((weight) => `-${weight}`)) });
+    await painted();
     aggregate("weight", "avg");
     expect(total("weight")).toBe("avg -0.0013");
   });
 
-  it("totals every row the search keeps, whatever the grouping", () => {
+  it("totals every row the search keeps, whatever the grouping", async () => {
     table({ groupedFields: ["region"] });
+    await painted();
     fireEvent.input(screen.getByLabelText("search"), { target: { value: "east" } });
     expect(total("qty")).toBe("sum 6");
   });

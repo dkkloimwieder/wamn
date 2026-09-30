@@ -29,6 +29,7 @@ export default function Layout(props: {
       return location.pathname === own || location.pathname.startsWith(`${own}/`);
     },
   });
+  // eslint-disable-next-line solid/reactivity -- the route table is fixed for the life of the page.
   const navigation: FrameEntry[] = props.sections.map((section) => {
     const only = section.screens.length === 1 ? section.screens[0] : undefined;
     return only === undefined

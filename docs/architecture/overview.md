@@ -145,3 +145,12 @@ The developer host also loads unpublished components and admitted facts from loc
 It requires the expected file digests and a database marker tied to the tenant, environment, and physical database creation.
 Local facts supply released wiring, connection requirements, and binding selections without changing the frozen catalog records.
 The normal runtime still owns tenant authority, run claims, credential generations, and effects.
+
+## Cloud providers
+
+A provider-specific piece is a named implementation behind one platform interface, never a switch inside the platform.
+Three such interfaces exist: the registry token source, the blob provider, and the certificate job.
+On Google Cloud they are the metadata server token of [registry credentials](capabilities.md#registry-credentials), the `gcs` blob provider, and the edge certificate CronJob of `deploy/gcp/edge-cert.yaml`.
+A second provider adds one implementation of each and a values file.
+Nothing in the router, the generator, or the applications changes, and no piece uses a service account key.
+The kind clusters run the platform with none of these implementations.

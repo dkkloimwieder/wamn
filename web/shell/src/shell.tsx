@@ -27,6 +27,7 @@ import {
   Match,
   onCleanup,
   Show,
+  Suspense,
   Switch,
   useContext,
   type Component,
@@ -199,15 +200,25 @@ export function screen<M>(load: () => Promise<M>, pick: (module: M) => Component
 }
 
 export function Shell(props: ShellProps): JSX.Element {
+  /* eslint-disable solid/reactivity -- the fetch and the route table are fixed for the life of the page, and the router takes its routes once. */
   const options: SessionOptions = props.fetch === undefined ? {} : { fetch: props.fetch };
   const screens = props.sections.flatMap((section) => section.screens);
   const routes = props.sections.flatMap((section) =>
     [...section.screens, ...(section.routes ?? [])].map((route) => ({ route, home: section.screens[0]?.path ?? "" })),
   );
+  /* eslint-enable solid/reactivity */
   const first = screens[0];
   return (
-    <Router>
-      <Route path="/" component={() => <ChooseEnvironment title={props.title} scope={props} options={options} />} />
+    // The boundary holds every lazy module of a page: the layout and its
+    // screen paint together, and a navigation keeps the old screen until the
+    // new one loads, so no page paints half built (wamn-28n8).
+    <Router root={(root) => <Suspense>{root.children}</Suspense>}>
+      <Route
+        path="/"
+        component={() => (
+          <ChooseEnvironment title={props.title} scope={props} options={options} home={first?.path ?? ""} />
+        )}
+      />
       <Route path="/invite" component={() => <AcceptInvitation title={props.title} options={options} />} />
       <Route path="/recover" component={() => <RecoverPassword title={props.title} options={options} />} />
       <Route path="/reset" component={() => <ResetPassword title={props.title} options={options} />} />
@@ -465,6 +476,8 @@ function ChooseEnvironment(props: {
   readonly title: string;
   readonly scope: Scope;
   readonly options: SessionOptions;
+  /** The path of the first screen, or "" when there is none. */
+  readonly home: string;
 }): JSX.Element {
   const navigate = useNavigate();
   const [credentials, setCredentials] = createSignal<{ email: string; password: string } | null>(null);
@@ -472,14 +485,18 @@ function ChooseEnvironment(props: {
   const [trouble, setTrouble] = createSignal<string | null>(null);
   const enter = (email: string, password: string, aud: string) => {
     setTrouble(null);
+    // Straight to the first screen: the redirect of the environment's own
+    // address would paint the layout with no screen for one step (wamn-28n8).
     signIn(email, password, aud, props.options)
-      .then(() => navigate(`/${aud}`))
+      // eslint-disable-next-line solid/reactivity -- it runs from the submit handler and a button click, never in a tracked scope.
+      .then(() => navigate(props.home === "" ? `/${aud}` : `/${aud}/${props.home}`))
       .catch((error: unknown) => setTrouble(signInFailed(error)));
   };
   return (
     <CardPage title={props.title}>
       <SignInForm
         trouble={null}
+        // eslint-disable-next-line solid/reactivity -- submit is the form's event callback, not a tracked scope.
         submit={async (email, password) => {
           const found = await environments(email, password, props.scope, props.options);
           setReachable(found);
@@ -542,6 +559,8 @@ function Session(props: {
         onCleanup(() => keeper.stop());
         const transport = createTransport({ ...props.options, baseUrl: API_BASE, cookie: true });
         const current = () => state();
+        // The layout module loads while the session renews (wamn-28n8).
+        void Layout.preload();
         return (
           <Switch>
             <Match when={current()?.status === "signedIn"}>

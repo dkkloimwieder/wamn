@@ -120,15 +120,21 @@ const actionsWidth = (labels: readonly string[]): number =>
 type Member = { readonly [name: string]: unknown };
 
 export function QueryTable<TRow extends object, TResult = unknown>(props: QueryTableProps<TRow, TResult>): JSX.Element {
-  // The definition and the transport name one table for its whole life.
+  // The definition and the transport name one table for its whole life, and
+  // the table reads its other inputs once too. A caller that changes one
+  // mounts a new table, as the Receiving routes do for the order in the
+  // address (wamn-erwv.6).
+  /* eslint-disable solid/reactivity -- a QueryTable reads its inputs once (above). */
   const definition = props.definition;
   const transport = props.transport;
+  /* eslint-enable solid/reactivity */
   const idOf = (row: TRow) => rowKey(row, definition.rowId);
   const column = (field: string) => definition.columns.find((candidate) => candidate.field === field);
   const labelOf = (field: string) => column(field)?.label ?? field;
 
   const scopeFields = definition.scopeFilters.filter((field) => {
     const filter = definition.filters.find((declared) => declared.field === field);
+    // eslint-disable-next-line solid/reactivity -- a QueryTable reads its inputs once (above).
     return filter === undefined || !fixedBy(props.fixed, filter);
   });
   const modeOf = (field: string): ScopeMode => {
@@ -150,6 +156,7 @@ export function QueryTable<TRow extends object, TResult = unknown>(props: QueryT
     })),
     scopeFilters: scopeFields,
   };
+  /* eslint-disable solid/reactivity -- a QueryTable reads its inputs once (above). */
   const defaults: TableView = {
     grid: defaultGridView(
       definition.columns.map((declared) => declared.field),
@@ -160,11 +167,13 @@ export function QueryTable<TRow extends object, TResult = unknown>(props: QueryT
       (props.groupedFields ?? []).map((field) => ({ field, time: column(field)?.type === "timestamptz" })),
     ),
   };
+  /* eslint-enable solid/reactivity */
   // The values the scope bar holds, a band without its start among them. The query holds the ones that apply.
   const [scopeDraft, setScopeDraft] = createSignal<Readonly<Record<string, ScopeFilter>>>({});
   const state = createTableState({
     declaration,
     defaults,
+    // eslint-disable-next-line solid/reactivity -- a QueryTable reads its inputs once (above).
     urlKey: props.urlKey,
     // A change of what the read is asked reads again, and so does a sort on a set that is not fully read.
     onApply: (before, after) => {
@@ -180,9 +189,11 @@ export function QueryTable<TRow extends object, TResult = unknown>(props: QueryT
 
   const load = createQueryLoad<TRow, TResult>(definition, {
     transport,
+    /* eslint-disable solid/reactivity -- a QueryTable reads its inputs once (above). */
     label: props.label,
     fixed: props.fixed,
     onOutcome: props.onOutcome,
+    /* eslint-enable solid/reactivity */
     query,
   });
   load.reload();
@@ -253,6 +264,7 @@ export function QueryTable<TRow extends object, TResult = unknown>(props: QueryT
 
   // The labels of the buttons the page shows: the actions it takes.
   const shownActions = definition.actions
+    // eslint-disable-next-line solid/reactivity -- a QueryTable reads its inputs once (above).
     .filter((action) => (action.opens === "record" ? props.onOpen : props.onFill)?.[action.reference])
     .map((action) => action.label);
 

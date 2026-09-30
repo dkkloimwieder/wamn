@@ -631,6 +631,12 @@ async fn converge_tenant_identity(
             .batch_execute(APP_SCHEMA_SQL)
             .await
             .context("install deploy/sql/app-schema.sql")?;
+        crate::upgrade_schema::record_fresh_install(
+            &transaction,
+            wamn_control_provision::schema_migrations::MigrationTarget::Project,
+        )
+        .await
+        .context("record the project migrations that the full schema holds")?;
     }
     // Every write below stamps `wamn:provisioning`, and its own row stamps
     // itself, because the bind comes first and lasts for this transaction.

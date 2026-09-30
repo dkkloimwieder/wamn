@@ -536,6 +536,9 @@ struct Registration {
     slot: String,
     stream: String,
     enabled: bool,
+    /// The schema that the publication covers. `None` on a row from before
+    /// `migrations/system/0002_event_reader_schema.sql`.
+    schema: Option<String>,
 }
 
 async fn read_registration(args: &EventReaderArgs) -> anyhow::Result<Registration> {
@@ -569,6 +572,7 @@ async fn read_registration(args: &EventReaderArgs) -> anyhow::Result<Registratio
         slot: row.get(1),
         stream: row.get(2),
         enabled: row.get(5),
+        schema: row.get(6),
     })
 }
 
@@ -582,7 +586,8 @@ async fn connect_system(args: &EventReaderArgs) -> anyhow::Result<tokio_postgres
     Ok(client)
 }
 
-/// Refuse a registration that names another stream or is disabled.
+/// Refuse a registration that names another stream, is disabled, or names no
+/// schema.
 fn check_registration(args: &EventReaderArgs, reg: &Registration) -> anyhow::Result<()> {
     let expected_stream = stream_name(&args.org, &args.project, &args.env);
     if reg.stream != expected_stream {
@@ -594,6 +599,15 @@ fn check_registration(args: &EventReaderArgs, reg: &Registration) -> anyhow::Res
     if !reg.enabled {
         bail!(
             "event-reader registration for {}/{}/{} is disabled",
+            args.org,
+            args.project,
+            args.env
+        );
+    }
+    if reg.schema.is_none() {
+        bail!(
+            "event-reader registration for {}/{}/{} names no schema — run \
+             enable-cdc-project-env again to record it",
             args.org,
             args.project,
             args.env
@@ -729,7 +743,11 @@ async fn preflight(
         let _ = conn.await;
     });
     preflight_server_version(&client).await?;
-    preflight_publication(&client, &reg.publication).await?;
+    let schema = reg
+        .schema
+        .as_deref()
+        .context("check_registration refuses a registration with no schema")?;
+    preflight_publication(&client, &reg.publication, schema).await?;
     preflight_slot(&client, &reg.slot).await
 }
 
@@ -769,15 +787,16 @@ struct PublicationShape {
     update: bool,
     delete: bool,
     truncate: bool,
-    /// Rows in `pg_publication_namespace` for this publication.
-    schemas: i64,
+    /// The schemas in `pg_publication_namespace` for this publication, sorted.
+    schemas: Vec<String>,
     /// Rows in `pg_publication_rel` for this publication.
     tables: i64,
 }
 
-/// Every way a live publication differs from `create_publication_sql`, one
-/// sentence each. An empty result means the publication matches.
-fn publication_drift(shape: &PublicationShape) -> Vec<String> {
+/// Every way a live publication differs from `create_publication_sql` for the
+/// registered `schema`, one sentence each. An empty result means the
+/// publication matches.
+fn publication_drift(shape: &PublicationShape, schema: &str) -> Vec<String> {
     let mut drift: Vec<String> = Vec::new();
     if shape.all_tables {
         drift.push("puballtables=true, declared false (FOR TABLES IN SCHEMA)".to_owned());
@@ -794,8 +813,12 @@ fn publication_drift(shape: &PublicationShape) -> Vec<String> {
     if shape.truncate {
         drift.push("pubtruncate=true, declared false".to_owned());
     }
-    if shape.schemas != 1 {
-        drift.push(format!("{} published schemas, declared 1", shape.schemas));
+    match shape.schemas.as_slice() {
+        [published] if published == schema => {}
+        [published] => drift.push(format!(
+            "publishes schema {published}, registered schema {schema}"
+        )),
+        schemas => drift.push(format!("{} published schemas, declared 1", schemas.len())),
     }
     if shape.tables != 0 {
         drift.push(format!(
@@ -843,17 +866,20 @@ fn slot_drift(shape: &SlotShape) -> Vec<String> {
     drift
 }
 
-/// Compare the live publication against `create_publication_sql`: one schema,
-/// no explicit tables, never `FOR ALL TABLES`, and the three row operations the
-/// event plane carries with TRUNCATE excluded.
+/// Compare the live publication against `create_publication_sql`: the one
+/// registered schema, no explicit tables, never `FOR ALL TABLES`, and the three
+/// row operations the event plane carries with TRUNCATE excluded.
 async fn preflight_publication(
     client: &tokio_postgres::Client,
     publication: &str,
+    schema: &str,
 ) -> anyhow::Result<()> {
     let row = client
         .query_opt(
             "SELECT p.puballtables, p.pubinsert, p.pubupdate, p.pubdelete, p.pubtruncate, \
-                    (SELECT count(*) FROM pg_publication_namespace n WHERE n.pnpubid = p.oid), \
+                    ARRAY(SELECT s.nspname::text FROM pg_publication_namespace n \
+                            JOIN pg_namespace s ON s.oid = n.pnnspid \
+                           WHERE n.pnpubid = p.oid ORDER BY 1), \
                     (SELECT count(*) FROM pg_publication_rel r WHERE r.prpubid = p.oid) \
              FROM pg_publication p WHERE p.pubname = $1",
             &[&publication],
@@ -866,15 +892,18 @@ async fn preflight_publication(
              the reader never creates publications; re-enable CDC for this project-env"
         );
     };
-    let drift = publication_drift(&PublicationShape {
-        all_tables: row.get(0),
-        insert: row.get(1),
-        update: row.get(2),
-        delete: row.get(3),
-        truncate: row.get(4),
-        schemas: row.get(5),
-        tables: row.get(6),
-    });
+    let drift = publication_drift(
+        &PublicationShape {
+            all_tables: row.get(0),
+            insert: row.get(1),
+            update: row.get(2),
+            delete: row.get(3),
+            truncate: row.get(4),
+            schemas: row.get(5),
+            tables: row.get(6),
+        },
+        schema,
+    );
     if !drift.is_empty() {
         bail!(
             "{CAPTURE_SHAPE_DRIFT_REFUSAL}: publication {publication} differs from its \
@@ -884,6 +913,7 @@ async fn preflight_publication(
     }
     tracing::info!(
         publication,
+        schema,
         "preflight: publication matches its declaration (insert/update/delete, one schema)"
     );
     Ok(())
@@ -2056,7 +2086,7 @@ mod tests {
             update: true,
             delete: true,
             truncate: false,
-            schemas: 1,
+            schemas: vec!["app".to_owned()],
             tables: 0,
         }
     }
@@ -2098,7 +2128,7 @@ mod tests {
     /// it produces exactly one named refusal reason.
     #[test]
     fn publication_and_slot_drift_name_every_departure_from_the_declaration() {
-        assert!(publication_drift(&declared_publication()).is_empty());
+        assert!(publication_drift(&declared_publication(), "app").is_empty());
         assert!(slot_drift(&declared_slot()).is_empty());
 
         let truncating = PublicationShape {
@@ -2106,26 +2136,30 @@ mod tests {
             ..declared_publication()
         };
         assert_eq!(
-            publication_drift(&truncating),
+            publication_drift(&truncating, "app"),
             vec!["pubtruncate=true, declared false".to_owned()]
         );
         let all_tables = PublicationShape {
             all_tables: true,
             ..declared_publication()
         };
-        assert_eq!(publication_drift(&all_tables).len(), 1);
+        assert_eq!(publication_drift(&all_tables, "app").len(), 1);
+        assert_eq!(
+            publication_drift(&declared_publication(), "billing"),
+            vec!["publishes schema app, registered schema billing".to_owned()]
+        );
         let re_pointed = PublicationShape {
-            schemas: 2,
+            schemas: vec!["app".to_owned(), "billing".to_owned()],
             tables: 3,
             ..declared_publication()
         };
-        assert_eq!(publication_drift(&re_pointed).len(), 2);
+        assert_eq!(publication_drift(&re_pointed, "app").len(), 2);
         let no_updates = PublicationShape {
             update: false,
             ..declared_publication()
         };
         assert_eq!(
-            publication_drift(&no_updates),
+            publication_drift(&no_updates, "app"),
             vec!["pubupdate=false, declared true".to_owned()]
         );
 

@@ -315,7 +315,7 @@ impl RouterDeliveryBridge {
         let release = self
             .operations
             .release_identity()
-            .manifest_digest
+            .manifest_digest()
             .to_string();
         let not_modified = || RouteSettlement {
             outcome: DeliveryOutcome::NotModified,
@@ -605,7 +605,7 @@ impl RouterDeliveryBridge {
         let release = self
             .operations
             .release_identity()
-            .manifest_digest
+            .manifest_digest()
             .to_string();
         let tag = match self.list_tag(&read.route, &release).await {
             Ok(tag) => Some(tag),

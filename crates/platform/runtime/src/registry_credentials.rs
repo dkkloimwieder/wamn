@@ -221,10 +221,14 @@ fn parse_registry_credentials(
     })
 }
 
-/// The token endpoint of the GKE metadata server for the pod's Workload
-/// Identity.
-pub const GKE_METADATA_TOKEN_URL: &str =
-    "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token";
+/// The variable Google's client libraries read for the metadata server's host.
+pub const METADATA_HOST_ENV: &str = "GCE_METADATA_HOST";
+
+/// The metadata server's host when [`METADATA_HOST_ENV`] is unset or empty.
+const METADATA_DEFAULT_HOST: &str = "metadata.google.internal";
+
+/// The token path for the pod's Workload Identity.
+const METADATA_TOKEN_PATH: &str = "/computeMetadata/v1/instance/service-accounts/default/token";
 
 /// The username Artifact Registry takes with an OAuth access token.
 const METADATA_TOKEN_USERNAME: &str = "oauth2accesstoken";
@@ -237,16 +241,21 @@ struct MetadataToken {
     access_token: String,
 }
 
-/// Ask the metadata server at `token_url` for a token, as the credential of
-/// `registry`.
+/// Ask the GKE metadata server for a token, as the credential of `registry`.
 ///
 /// This is the one token source of the host's readers and of
-/// `docker-credential-wamn`. Each call makes one request and keeps nothing: the
-/// metadata server caches the token itself. `registry` only names the refusal.
+/// `docker-credential-wamn`. The server's host is [`METADATA_HOST_ENV`] when it
+/// is set, as Google's client libraries read it, and `http://` and the token
+/// path are fixed. Each call makes one request and keeps nothing: the metadata
+/// server caches the token itself. `registry` only names the refusal.
 pub async fn read_metadata_registry_credentials(
-    token_url: &str,
     registry: &str,
 ) -> Result<RegistryCredentials, RegistryCredentialsError> {
+    let host = std::env::var(METADATA_HOST_ENV)
+        .ok()
+        .filter(|host| !host.is_empty())
+        .unwrap_or_else(|| METADATA_DEFAULT_HOST.to_owned());
+    let token_url = format!("http://{host}{METADATA_TOKEN_PATH}");
     let unavailable = |source| {
         RegistryCredentialsError::metadata(
             registry,
@@ -262,7 +271,7 @@ pub async fn read_metadata_registry_credentials(
         .build()
         .map_err(unavailable)?;
     let body = client
-        .get(token_url)
+        .get(&token_url)
         .header("Metadata-Flavor", "Google")
         .send()
         .await
@@ -298,8 +307,8 @@ pub async fn read_metadata_registry_credentials(
 pub enum RegistryCredentialSource {
     /// One credential, read once from a projected Docker config file.
     Fixed(RegistryCredentials),
-    /// A token from the metadata server at this URL, asked for at each pull.
-    MetadataServer(Box<str>),
+    /// A token from the metadata server, asked for at each pull.
+    MetadataServer,
 }
 
 impl RegistryCredentialSource {
@@ -310,9 +319,7 @@ impl RegistryCredentialSource {
     ) -> Result<RegistryCredentials, RegistryCredentialsError> {
         match self {
             Self::Fixed(credentials) => Ok(credentials.clone()),
-            Self::MetadataServer(token_url) => {
-                read_metadata_registry_credentials(token_url, registry).await
-            }
+            Self::MetadataServer => read_metadata_registry_credentials(registry).await,
         }
     }
 }
@@ -321,10 +328,7 @@ impl fmt::Debug for RegistryCredentialSource {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Fixed(credentials) => formatter.debug_tuple("Fixed").field(credentials).finish(),
-            Self::MetadataServer(token_url) => formatter
-                .debug_tuple("MetadataServer")
-                .field(token_url)
-                .finish(),
+            Self::MetadataServer => formatter.write_str("MetadataServer"),
         }
     }
 }

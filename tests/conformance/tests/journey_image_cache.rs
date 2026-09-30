@@ -214,10 +214,10 @@ const TEST_ONLY: [&str; 7] = [
     "apps/receiving/tests/",
 ];
 
-/// A commit that changes only test files keeps the host and identity images,
+/// A commit that changes only test files keeps the host, identity and ctl images,
 /// so a rerun after a test fix rebuilds nothing. A test manifest still counts,
 /// and the gates image, which carries the test binaries, still rebuilds
-/// (wamn-as5u).
+/// (wamn-as5u, wamn-lo7z).
 #[test]
 fn the_host_and_identity_stages_ignore_test_only_files() {
     let directory = TestDirectory::new();
@@ -234,6 +234,7 @@ fn the_host_and_identity_stages_ignore_test_only_files() {
     let host = stage_identity(&directory, &repository, "host");
     let gates = stage_identity(&directory, &repository, "gates");
     assert_eq!(host, stage_identity(&directory, &repository, "identity"));
+    assert_eq!(host, stage_identity(&directory, &repository, "ctl"));
 
     for path in TEST_ONLY {
         fs::write(repository.join(path).join("kept.rs"), "two\n").expect("edit test file");
@@ -243,6 +244,11 @@ fn the_host_and_identity_stages_ignore_test_only_files() {
         host,
         stage_identity(&directory, &repository, "host"),
         "a test-only change rebuilt the host image"
+    );
+    assert_eq!(
+        host,
+        stage_identity(&directory, &repository, "ctl"),
+        "a test-only change rebuilt the ctl image"
     );
     assert_ne!(
         gates,
@@ -260,14 +266,24 @@ fn the_host_and_identity_stages_ignore_test_only_files() {
     );
 }
 
-/// The host and identity binaries build from none of the test-only paths, so
-/// leaving those paths out of their identity cannot hide a change to them.
+/// The host, identity and ctl binaries build from none of the test-only paths,
+/// so leaving those paths out of their identity cannot hide a change to them.
+/// The ctl stage builds `wamn-ctl-ops` with the `ops` feature, so the metadata
+/// resolves that feature too.
 #[test]
 fn the_host_and_identity_binaries_reach_no_test_only_path() {
     let root = repository_root();
     let output = Command::new(std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into()))
         .current_dir(&root)
-        .args(["metadata", "--locked", "--offline", "--format-version", "1"])
+        .args([
+            "metadata",
+            "--locked",
+            "--offline",
+            "--format-version",
+            "1",
+            "--features",
+            "wamn-ctl/ops",
+        ])
         .output()
         .expect("run cargo metadata");
     assert!(
@@ -281,7 +297,7 @@ fn the_host_and_identity_binaries_reach_no_test_only_path() {
     let nodes = metadata["resolve"]["nodes"]
         .as_array()
         .expect("resolve nodes");
-    for binary in ["wamn-host", "wamn-identity"] {
+    for binary in ["wamn-host", "wamn-identity", "wamn-ctl"] {
         let mut stack = packages
             .iter()
             .filter(|package| package["name"] == binary && package["source"].is_null())
