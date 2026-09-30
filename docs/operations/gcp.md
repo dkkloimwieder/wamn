@@ -1033,6 +1033,15 @@ gcloud dns record-sets create receiving.wamn.dev. $P --zone wamn-dev --type A --
 
 On 2026-09-27 the address was `8.232.230.139`. The first six commands took 45 seconds, the backend service 97 seconds, the URL map 6 seconds, and the proxy, rule and record 29 seconds.
 
+The bucket root answers with a listing of every object, because `allUsers` holds `roles/storage.objectViewer`. Only the two host rules reach the bucket. The default route of the URL map aborts every other request with the load balancer's own 404 (finding `wamn-uo2p`). Make sure that the bare address and an unknown host answer 404 with no `ListBucketResult`:
+
+```bash
+curl -sk -o /dev/null -w '%{http_code}\n' https://8.232.230.139/
+curl -sk -o /dev/null -w '%{http_code}\n' -H 'Host: nothing.wamn.dev' https://8.232.230.139/
+```
+
+On 2026-09-30 both answered `200` with the XML listing before the change. The import took 24 seconds, and both answered `404` with the body `fault filter abort` about 3 minutes after it. `receiving.wamn.dev` and `wms.wamn.dev` still answered `200` for `/` and for their script under `/assets/`.
+
 ### 4.3.1 Certificate renewal
 
 [deploy/gcp/edge-cert.yaml](../../deploy/gcp/edge-cert.yaml) holds the CronJob `edge/edge-cert` of finding `wamn-ghx2.7`. At 14:00 New York time every day, it compares the serial of `edge/wamn-edge-tls` with the serial of the entry that the proxy `wamn-edge` serves. If the serials differ, it uploads the Secret as `wamn-edge-<first 12 hex digits of the serial>`, moves the proxy, and deletes the old entry.

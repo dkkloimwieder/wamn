@@ -4,8 +4,21 @@
 # /api/ and /password/ go to the edge, /assets/ to the release path in the
 # bucket, and every other path to its index.html, which the client routes.
 # Import it with: gcloud compute url-maps import wamn-edge --global --source <this file>
+#
+# An unknown host and the bare address get the load balancer's own 404: the
+# default route aborts every request before it reaches the named service, so
+# nothing outside the two host rules reaches the bucket, whose root answers
+# with a listing (finding wamn-uo2p). A backend service with no endpoints
+# answers 503, not 404.
 name: wamn-edge
-defaultService: https://www.googleapis.com/compute/v1/projects/wamn-dev/global/backendBuckets/wamn-edge-files
+defaultRouteAction:
+  weightedBackendServices:
+    - backendService: https://www.googleapis.com/compute/v1/projects/wamn-dev/global/backendServices/wamn-edge-platform
+      weight: 100
+  faultInjectionPolicy:
+    abort:
+      httpStatus: 404
+      percentage: 100
 hostRules:
   - hosts:
       - receiving.wamn.dev
