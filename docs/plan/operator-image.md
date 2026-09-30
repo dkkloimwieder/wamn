@@ -92,3 +92,6 @@ The owner answered these on 2026-09-30 (recorded on `wamn-n5d1`).
 3. The private copy of the manifest is in the scratchpad, at mode 0600, and is removed after the apply.
 4. The pod waits with a bound. The file comes out with `kubectl exec cat` into a 0600 file, as the journey tool does.
 5. One run on wamn-dev: a PAT mint for the Receiving bench operator `wamn-operator-dkk--receiving--dev`, then a revoke of the previous PAT. No invitation, because nothing is created for a test.
+6. The `gates` rebuild is measured on a commit that changes only test files: `ctl` plus `gates` before the change, `gates` alone after it. The difference is the cost the split removes.
+7. `ttlSecondsAfterFinished` is 600 seconds for both Jobs.
+8. The `mint-pat` pod waits at most 300 seconds. The wait ends as soon as the file is read, so on the normal path the pod exits early.
