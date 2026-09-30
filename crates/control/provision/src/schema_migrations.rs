@@ -102,10 +102,17 @@ pub const SYSTEM_MIGRATIONS: &[Migration] = &[
         relative_path: "migrations/system/0002_event_reader_schema.sql",
         sql: include_str!("../../../../deploy/sql/migrations/system/0002_event_reader_schema.sql"),
     },
+    Migration {
+        relative_path: "migrations/system/0003_kind_to_type.sql",
+        sql: include_str!("../../../../deploy/sql/migrations/system/0003_kind_to_type.sql"),
+    },
 ];
 
 /// Every file of `deploy/sql/migrations/project/`, in order.
-pub const PROJECT_MIGRATIONS: &[Migration] = &[];
+pub const PROJECT_MIGRATIONS: &[Migration] = &[Migration {
+    relative_path: "migrations/project/0001_kind_to_type.sql",
+    sql: include_str!("../../../../deploy/sql/migrations/project/0001_kind_to_type.sql"),
+}];
 
 #[cfg(test)]
 mod tests {
