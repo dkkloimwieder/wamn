@@ -35,6 +35,8 @@ url = { workspace = true }
 
 [dev-dependencies]
 wamn-test-postgres = { workspace = true }
+rcgen = { workspace = true }
+rustls = { workspace = true, features = ["aws-lc-rs"] }
 
 [lints]
 workspace = true

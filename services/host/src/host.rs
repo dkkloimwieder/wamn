@@ -19,7 +19,7 @@ use wash_runtime::host::probes::{self, Liveness, ProbeState};
 use wash_runtime::host::{HostApi as _, HostConfig};
 use wash_runtime::observability::{MeterKind, Meters};
 use wash_runtime::plugin;
-use wash_runtime::washlet::{ClusterHostBuilder, NatsConnectionOptions, connect_nats};
+use wash_runtime::washlet::ClusterHostBuilder;
 
 use wamn_control_provision::session_target::session_audience;
 use wamn_control_provision::{SystemReader, parse_system_reader_url, project_env_database_name};
@@ -567,6 +567,118 @@ fn session_verifier(
     SessionVerifier::new(keys, org, &audience).context("configure the host session verifier")
 }
 
+/// The tracing target of the scheduler client's events. The `wasmcloud:nats`
+/// plugin logs the same event words, and only the target and the `client`
+/// field tell the two lines apart (docs/plan/nats-outage.md §4.1).
+const SCHEDULER_NATS_TARGET: &str = "wamn_host::scheduler_nats";
+
+/// The scheduler client with the options of wash-runtime's `connect_nats`, and
+/// its `name`. A `ClientError` event carries only the error kind, so each line
+/// also counts the failed passes since the last connect; async-nats logs the
+/// cause of each attempt on `async_nats::connector` at debug.
+async fn connect_scheduler_nats(args: &HostArgs, name: &str) -> anyhow::Result<async_nats::Client> {
+    let mut opts = async_nats::ConnectOptions::new().name(name);
+    if let Some(ca_path) = &args.scheduler_nats_tls_ca {
+        opts = opts.add_root_certificates(ca_path.clone());
+    }
+    if args.scheduler_nats_tls_first {
+        opts = opts.tls_first();
+    }
+    if let (Some(cert_path), Some(key_path)) =
+        (&args.scheduler_nats_tls_cert, &args.scheduler_nats_tls_key)
+    {
+        opts = opts.add_client_certificate(cert_path.clone(), key_path.clone());
+    }
+    let client = name.to_owned();
+    let state = Arc::new(std::sync::Mutex::new((None::<Instant>, 0_u64)));
+    opts = opts.event_callback(move |event| {
+        let client = client.clone();
+        let state = state.clone();
+        async move {
+            match event {
+                async_nats::Event::SlowConsumer(sid) => tracing::warn!(
+                    target: SCHEDULER_NATS_TARGET,
+                    %client,
+                    subscription = sid,
+                    "NATS slow consumer: the subscription buffer overflowed and messages were dropped"
+                ),
+                async_nats::Event::Disconnected => tracing::warn!(
+                    target: SCHEDULER_NATS_TARGET,
+                    %client,
+                    "disconnected from scheduler NATS; buffered operations will be retried"
+                ),
+                async_nats::Event::Connected => {
+                    *state.lock().unwrap_or_else(std::sync::PoisonError::into_inner) =
+                        (Some(Instant::now()), 0);
+                    tracing::info!(target: SCHEDULER_NATS_TARGET, %client, "connected to scheduler NATS");
+                }
+                async_nats::Event::ClientError(err) => {
+                    let (connected, failed_passes) = {
+                        let mut state = state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+                        state.1 += 1;
+                        *state
+                    };
+                    tracing::warn!(
+                        target: SCHEDULER_NATS_TARGET,
+                        %client,
+                        %err,
+                        failed_passes,
+                        since_connected = ?connected.map(|at| at.elapsed()),
+                        "scheduler NATS client error"
+                    );
+                }
+                async_nats::Event::ServerError(err) => tracing::warn!(
+                    target: SCHEDULER_NATS_TARGET,
+                    %client,
+                    %err,
+                    "scheduler NATS server error"
+                ),
+                other => tracing::debug!(
+                    target: SCHEDULER_NATS_TARGET,
+                    %client,
+                    event = %other,
+                    "scheduler NATS connection event"
+                ),
+            }
+        }
+    });
+
+    let url = args.scheduler_nats_url.as_str();
+    let window = args.nats_connect_timeout;
+    if window.is_zero() {
+        return opts
+            .connect(url)
+            .await
+            .context("failed to connect to scheduler NATS");
+    }
+    // As `connect_nats`: retry only a server that is not up yet. A refused
+    // credential or TLS setup reads the same on every attempt.
+    let deadline = tokio::time::Instant::now() + window;
+    let mut backoff = Duration::from_millis(250);
+    loop {
+        let err = match opts.clone().connect(url).await {
+            Ok(client) => return Ok(client),
+            Err(err) => err,
+        };
+        if !matches!(
+            err.kind(),
+            async_nats::ConnectErrorKind::Io
+                | async_nats::ConnectErrorKind::TimedOut
+                | async_nats::ConnectErrorKind::Dns
+        ) {
+            return Err(anyhow::Error::new(err)).context("failed to connect to scheduler NATS");
+        }
+        let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+        if remaining.is_zero() {
+            return Err(anyhow::Error::new(err))
+                .with_context(|| format!("failed to connect to scheduler NATS within {window:?}"));
+        }
+        tracing::warn!(target: SCHEDULER_NATS_TARGET, client = name, %err, retry_in = ?backoff, "scheduler NATS is not accepting connections yet");
+        tokio::time::sleep(backoff.min(remaining)).await;
+        backoff = (backoff * 2).min(Duration::from_secs(5));
+    }
+}
+
 pub async fn run(args: HostArgs) -> anyhow::Result<()> {
     let startup_started = Instant::now();
     let descriptor_soft_limit = wash_runtime::host::quota::raise_descriptor_limit();
@@ -720,20 +832,8 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
         })
         .unwrap_or_else(|| "wamn-host".to_owned());
 
-    let scheduler_nats_client = connect_nats(
-        args.scheduler_nats_url.clone(),
-        NatsConnectionOptions {
-            connect_retry: (!args.nats_connect_timeout.is_zero())
-                .then_some(args.nats_connect_timeout),
-            request_timeout: None,
-            tls_ca: args.scheduler_nats_tls_ca.clone(),
-            tls_first: args.scheduler_nats_tls_first,
-            tls_cert: args.scheduler_nats_tls_cert.clone(),
-            tls_key: args.scheduler_nats_tls_key.clone(),
-        },
-    )
-    .await
-    .context("failed to connect to scheduler NATS")?;
+    let scheduler_nats_client =
+        connect_scheduler_nats(&args, args.host_name.as_deref().unwrap_or(&router_owner)).await?;
     let host_memory = host_memory(&args)?;
     let engine = Arc::new(
         if let Some(compilation_cache_dir) = args.wasmtime_cache_dir.as_deref() {
