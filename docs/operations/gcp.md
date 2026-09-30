@@ -948,7 +948,15 @@ curl -s -o /dev/null -w '%{http_code}\n' -H 'content-type: application/json' \
 
 Identity answers `202` for every address, known or not, so the check is the mail in the owner's mailbox. On 2026-09-29 the request took 7 seconds.
 
-Use the link within 15 minutes, because a reset secret expires then. Identity answers every refusal with the same `400 {"error":"password request refused"}` and logs no reason. To find the reason, read the edge log for the request and the token row:
+The mail states the time at which the link expires, in UTC. Identity answers every refusal with the same `400 {"error":"password request refused"}`. It logs the cause at info level with the email and never the secret. The cause is one of expired, consumed, unknown secret, no such account, already enrolled or password rule. Read the log of the running pod:
+
+```bash
+kubectl -n identity logs deploy/identity | grep 'password request refused'
+```
+
+On 2026-09-30 identity was rolled with this log from commit `082af74dc` (`wamn-ghx2.9`). The image `wamn-identity:src-bb57cc3a679703c1` took 164 seconds to build and 3 seconds to push. The Helm upgrade took 5 seconds (revision 8), and the rollout took 3 seconds. The check of section 3.10 returned the key set with `HTTP 200` in 3 seconds. One recovery for the unknown address `nobody-ghx29@example.invalid` answered `202` in 6 seconds, and the new pod logged `password request refused email=nobody-ghx29@example.invalid cause=no such account`. During a rollout, `logs deploy/identity` can read the old pod, so name the new pod.
+
+Before that roll, identity logged no reason. For a refusal from that time, read the edge log for the request and the token row:
 
 ```bash
 kubectl -n edge logs deploy/wamn-edge --since=1h | grep 'POST /password/reset'
