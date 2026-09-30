@@ -61,7 +61,7 @@ No authored TOML file carries a `kind` key.
 |---|---|---|---|---|---|---|
 | W1 | Authoring HTTP API | `#[serde(tag = "kind")]` on `AuthoringCommand`, `AuthoringQuery`, `GateRefusal`, `PublishRefusal`, `GetReportRefusal` | yes | yes | `crates/authoring/model/src/lib.rs:189`, `:210`, `:465`, `:516`, `:552` | 5 |
 | W2 | Management refusal bodies | JSON `{"kind": ...}`, such as `authorization-denied` and `unsupported-contract-version`. `ctl dev` renders them | yes | yes | `services/scenario-worker/src/management.rs:728`, `services/ctl/src/dev/tui.rs:635` | 25 in scenario-worker |
-| W3 | Router delivery WIT | `enum failure-kind` and `delivery-failure.kind`. Lowered from `FailureKind` | yes | yes | `crates/execution/host/wit/deps/wamn-router-delivery/package.wit:41`, `:55`, `crates/execution/workflow/src/wiring_delivery.rs:429` | 2 |
+| W3 | Router delivery WIT | `enum failure-kind` and `delivery-failure.kind`. Lowered from `FailureKind` | yes | yes | `crates/execution/host/wit/deps/wamn-router-delivery-0.2/package.wit:46`, `:60`, `crates/execution/workflow/src/wiring_delivery.rs:429` | 2 |
 | W4 | Generated application WIT | `load-purchase-order-history-row.kind: string`, the history column (P9). Becomes `type` | yes | yes | `apps/wamn_receiving/generated/wit/deps/wamn-receiving-receiving/package.wit:35` | 1 |
 | W5 | JetStream router tap | `source-kind` / `source_kind` on `RouterTapWire` and `RouterTapRecord` | yes | yes | `crates/platform/runtime/src/plugins/wamn_jetstream.rs:251`, `:277` | 37 |
 | W6 | Connection generation identity | `credential-kind` identity label. `CredentialKind` values | yes | yes | `crates/platform/runtime/src/connection_generation.rs:230` | 1 |
@@ -76,7 +76,7 @@ No authored TOML file carries a `kind` key.
 
 ### 1.4 Persisted surfaces
 
-Database names: `wamn_system` is the control database (`SYSTEM_SCHEMA_SQL` and `CONTROL_PORTABLE_STORE_SQL` in `crates/control/provision/src/lib.rs:151`). Project-env is each provisioned project database (`CATALOG_SCHEMA_SQL` in `crates/catalog/model/src/lib.rs:76`, plus `run-state.sql` and `app-schema.sql`).
+Database names: `wamn_system` is the control database (`SYSTEM_SCHEMA_SQL` and `CONTROL_PORTABLE_STORE_SQL` in `crates/control/provision/src/lib.rs:151`). Project-env is each provisioned project database (`CATALOG_SCHEMA_SQL` in `crates/catalog/model/src/lib.rs:77`, plus `run-state.sql` and `app-schema.sql`).
 
 | # | Database | Table | Column and constraints | Owned | Cite |
 |---|---|---|---|---|---|
@@ -84,7 +84,7 @@ Database names: `wamn_system` is the control database (`SYSTEM_SCHEMA_SQL` and `
 | P2 | wamn_system | `identity.principals` | `kind`, `principals_kind_check`, `UNIQUE (id, kind)`, `UNIQUE (kind, subject)`, three checks that read `kind` | yes | `deploy/sql/system-schema.sql:259` |
 | P3 | wamn_system | `identity.pats` | `principal_kind`, `pats_principal_kind_check`, FK `(principal_id, principal_kind)` to `principals (id, kind)` | yes | `deploy/sql/system-schema.sql:346` |
 | P4 | wamn_system | `identity.password_credentials`, `identity.password_tokens`, `identity.password_logins`, `identity.project_env_memberships` | `principal_kind` with an inline check and FK to `principals (id, kind)` | yes | `deploy/sql/system-schema.sql:384`, `:402`, `:425`, `:580` |
-| P5 | wamn_system | `provisioning.sagas` | `kind`, `sagas_kind_check` | yes | `deploy/sql/system-schema.sql:706` |
+| P5 | wamn_system | `provisioning.sagas` | `kind`, `sagas_kind_check` | yes | `deploy/sql/system-schema.sql:731` |
 | P6 | wamn_system | `provisioning.copy_sagas` | `kind`, `copy_sagas_kind_check` | yes | `deploy/sql/ops-schema.sql:30` |
 | P7 | wamn_system | `catalog.authoring_command_audit` | `command_kind`, `principal_kind`, inline checks | yes | `deploy/sql/control-portable-store.sql:270` |
 | P8 | project-env | `catalog.package_definition_owners` | `definition_kind`, inline check, part of the key | yes | `deploy/sql/catalog-schema.sql:59` |
@@ -92,10 +92,11 @@ Database names: `wamn_system` is the control database (`SYSTEM_SCHEMA_SQL` and `
 | P10 | project-env | `wamn_run.runs` | `caller_outcome_kind`, `fail_kind`, `runs_caller_outcome_kind_check`, `runs_fail_kind_check` | yes | `deploy/sql/run-state.sql:377`, `:387`, `crates/schema/control/src/run_plane/declarations.rs:104`, `:116` |
 | P11 | project-env | `wamn_run.effect_attempts` | `generation_fact_kind`, inline checks | yes | `deploy/sql/run-state.sql:603` |
 | P12 | project-env | `wamn_run.operator_run_actions` | `action_kind`, `principal_kind`, `operator_run_actions_kind_check`, `operator_run_actions_principal_kind_check` | yes | `deploy/sql/run-state.sql:795`, `crates/schema/control/src/run_plane/declarations.rs:377`, `:401` |
-| P13 | edge SQLite | intent store | `outcome_kind` with a check | yes | `crates/execution/run-state-sqlite/src/lib.rs:41` |
+| P13 | edge SQLite | intent store | `outcome_kind` with a check. Retired upstream at `78d02a6d8` (wamn-4afx.1), which removed the column. No longer in scope | yes | `crates/execution/run-state-sqlite/src/lib.rs:30` |
 | P14 | none | Query result aliases | `AS relation_kind`, `AS object_kind` and similar. These are not persisted but are WAMN names | yes | `crates/schema/introspection/src/postgres.rs:305`, `crates/control/provision/src/sql/database_grants.rs:68` |
+| P15 | Kubernetes Secrets | PAT Secrets of `provision-project-env` | Annotation `wamn.io/principal-kind` (value `service`). Installed Secrets carry it. Pending an owner ruling (§4.9) | yes | `crates/control/lib/src/provision_project_env/pat_secrets.rs:267`, read by `deploy/mvp/bootstrap.sh:118` |
 
-Counts: matching lines in `deploy/sql` are 79 (system-schema 43, run-state 17, catalog-schema 5, record-history 5, control-portable-store 3, ops-schema 3, app-schema 2, postgres-init 1). The postgres-init line is prose about the kind cluster. Rust code names these persisted columns 222 times. P14 has 20 aliases.
+Counts: matching lines in `deploy/sql` are 79 (system-schema 43, run-state 17, catalog-schema 5, record-history 5, control-portable-store 3, ops-schema 3, app-schema 2, postgres-init 1). The postgres-init line is prose about the kind cluster. Rust code names these persisted columns 222 times. P14 has 20 aliases. Re-measured for wamn-sfea.4 at `2d9700969`: the Rust count is 218, because `crates/schema/control/src/run_plane/tests.rs` lost 4 references. The `deploy/sql` line counts and the P14 count are unchanged.
 
 No PostgreSQL enum type and no index is named `*kind*`. The unique constraints in P2 and P8 are the only keys that include a `kind` column.
 
@@ -257,7 +258,7 @@ Columns: **Def** is the attachment definition hash. **Pkg** is the package manif
 | G12 | - | - | - | - | - | - | Built from row columns (`crates/execution/run-state/src/transitions.rs:109`, `:307`). Not hashed |
 | W1 | - | - | - | - | - | - | Moves the stored authoring request hash and the stored `outcome_bytes`. An old command retried after the rename hashes differently and refuses instead of replaying (`services/scenario-worker/src/management.rs:262`). §5 must decide |
 | W2 | - | - | - | - | - | - | Wire only |
-| W3 | - | - | - | yes | - | - | `http-route` and `materializer` import `wamn:router-delivery/delivery@0.1.0` (`apps/platform/ingress/http-route/wit/world.wit`, `apps/platform/execution/materializer/wit/world.wit:21`). The pin `apps/platform/ingress/http-route/http_route.wasm.sha256` must be rewritten. The host binary changes too |
+| W3 | - | - | - | yes | - | - | `http-route` and `materializer` import `wamn:router-delivery/delivery@0.2.0` (`apps/platform/ingress/http-route/wit/world.wit:5`, `apps/platform/execution/materializer/wit/world.wit:21`), and so does the engine world (`crates/platform/engine/wit/world.wit:10`). The pin `apps/platform/ingress/http-route/http_route.wasm.sha256` must be rewritten. The host binary changes too |
 | W4 | - | - | - | yes | yes | yes | The `receiving` component and the generated Rust and TypeScript clients (`apps/wamn_receiving/generated/client/receiving.rs:172`, `apps/wamn_receiving/generated/client-ts/receiving.ts:46`) |
 | W5 | - | - | - | - | - | - | JetStream stream bytes. `RouterTapWire` carries `format_version` (`crates/platform/runtime/src/plugins/wamn_jetstream.rs:262`). §5 must decide on a format bump |
 | W6 | - | - | - | - | - | - | An error label (`crates/platform/runtime/src/connection_generation.rs:230`). The `CredentialKind` values stay |
@@ -326,7 +327,7 @@ Regenerated for the new vocabulary:
 ### 2.5 Owner rulings, 2026-09-30
 
 1. Every package takes a major version step, because a serialized field of the package contract changes. Each package goes to 2.0.0, and `client_acme_receiving` goes to 4.0.0.
-2. `wamn:router-delivery@0.1.0` is not renamed, because `wamn-lt7y` retires it. `failure-kind` also lives in 0.2.0, so its rename is a break. 0.2.0 becomes 0.3.0 after `wamn-lt7y` lands.
+2. `wamn-lt7y` retired `wamn:router-delivery@0.1.0` at `288e65032`. `failure-kind` is in `wamn:router-delivery@0.2.0` (`crates/execution/host/wit/deps/wamn-router-delivery-0.2/package.wit:46`, `:60`). This epic renames it. The rename is a break, so the package becomes 0.3.0.
 3. The serving manifest moves to format 4, and the reader accepts format 4 only. There is no dual read. Old release rows keep their format 3 bytes, and a format 4 router never reads them. The wamn-dev republish order says which release is read when.
 4. The `("kind", ...)` frame label in G9 becomes `type`. The test vector follows.
 5. Consequence: an authoring command sent before the rename and retried after it is refused as a conflict. It is not replayed (W1).
@@ -336,7 +337,7 @@ The inventory gaps found here are now rows W11 and W12 of §1, and the A2 count 
 
 ## 4. Database schema changes
 
-Draft from wamn-sfea.4. Measured on `worktree-table` at `31eac2d05`. This section changes no code and no database.
+Draft from wamn-sfea.4. Measured on `worktree-table` at `31eac2d05`, re-verified at `2d9700969` after the rebase onto `0dad0cb9b`. This section changes no code and no database.
 
 ### 4.1 Names
 
@@ -359,7 +360,6 @@ PostgreSQL 18 runs every wamn-dev database (`deploy/gcp/cnpg-cluster.yaml:14`). 
 | P10 | project-env | `wamn_run.runs` | `caller_outcome_kind` → `caller_outcome_type`, `fail_kind` → `fail_type` | `runs_caller_outcome_kind_check`, `runs_fail_kind_check`. Both columns are nullable, so no `NOT NULL` name |
 | P11 | project-env | `wamn_run.effect_attempts` | `generation_fact_kind` → `generation_fact_type` | `effect_attempts_generation_fact_kind_not_null`. `effect_attempts_generation_fact_check` and `effect_attempts_generation_values_check` keep their names |
 | P12 | project-env | `wamn_run.operator_run_actions` | `action_kind` → `action_type`, `principal_kind` → `principal_type` | `operator_run_actions_kind_check` → `operator_run_actions_type_check`, `operator_run_actions_action_kind_not_null`, `operator_run_actions_principal_kind_check`, `operator_run_actions_principal_kind_not_null` |
-| P13 | edge SQLite | `intents` | `outcome_kind` → `outcome_type` | SQLite gives the checks no names |
 
 Every other constraint that reads one of these columns keeps its name. Examples are `orgs_pool_cluster_check`, `principals_subject_check`, `principals_email_check`, `principals_platform_principal_check`, `package_definition_owners_relation_shape_check`, `package_definition_owners_extensibility_check` and `runs_check6` to `runs_check8`.
 
@@ -371,7 +371,7 @@ W11, the `Placement` registry JSON, is not stored in any database. `registry.org
 
 ### 4.2 Fresh-install DDL
 
-The composed constants `SYSTEM_SCHEMA_SQL`, `CONTROL_PORTABLE_STORE_SQL`, `OPS_SCHEMA_SQL`, `APP_SCHEMA_SQL` (`crates/control/provision/src/lib.rs:151`) and `CATALOG_SCHEMA_SQL` (`crates/catalog/model/src/lib.rs:76`) take the files by `include_str!`. They change with the files and need no edit of their own.
+The composed constants `SYSTEM_SCHEMA_SQL`, `CONTROL_PORTABLE_STORE_SQL`, `OPS_SCHEMA_SQL`, `APP_SCHEMA_SQL` (`crates/control/provision/src/lib.rs:151`) and `CATALOG_SCHEMA_SQL` (`crates/catalog/model/src/lib.rs:77`) take the files by `include_str!`. They change with the files and need no edit of their own.
 
 | Row | File and line | Edit |
 |---|---|---|
@@ -383,7 +383,7 @@ The composed constants `SYSTEM_SCHEMA_SQL`, `CONTROL_PORTABLE_STORE_SQL`, `OPS_S
 | P2 | `deploy/sql/system-schema.sql:272`, `:273` | `CONSTRAINT principals_type_check CHECK (type IN ('human', 'service', 'platform'))` |
 | P2 | `deploy/sql/system-schema.sql:275`, `:279`, `:290` | `principals_subject_check`, `principals_email_check` and `principals_platform_principal_check` read `type` |
 | P2 | `deploy/sql/system-schema.sql:305` | The `wamn:provisioning` seed inserts `(id, type, subject, display_name)` |
-| P2 | `deploy/sql/system-schema.sql:727` | `identity.lock_password_principal` reads `status = 'active' AND type = 'human'` |
+| P2 | `deploy/sql/system-schema.sql:752` | `identity.lock_password_principal` reads `status = 'active' AND type = 'human'` |
 | P3 | `deploy/sql/system-schema.sql:346` | `principal_type text NOT NULL` |
 | P3 | `deploy/sql/system-schema.sql:356`, `:357` | `FOREIGN KEY (principal_id, principal_type) REFERENCES identity.principals (id, type)` |
 | P3 | `deploy/sql/system-schema.sql:358`, `:359` | `CONSTRAINT pats_principal_type_check CHECK (principal_type IN ('human', 'service'))` |
@@ -391,7 +391,7 @@ The composed constants `SYSTEM_SCHEMA_SQL`, `CONTROL_PORTABLE_STORE_SQL`, `OPS_S
 | P4 | `deploy/sql/system-schema.sql:391`, `:392`, `:410`, `:411`, `:436`, `:437` | `FOREIGN KEY (principal_id, principal_type) REFERENCES identity.principals (id, type)` |
 | P4 | `deploy/sql/system-schema.sql:580` | `principal_type text NOT NULL DEFAULT 'human'` |
 | P4 | `deploy/sql/system-schema.sql:589`, `:590`, `:594` | The foreign key as above, and `project_env_memberships_human_check` reads `principal_type` |
-| P5 | `deploy/sql/system-schema.sql:706`, `:714`, `:715` | `type text NOT NULL`, `CONSTRAINT sagas_type_check CHECK (type IN ('provision-org', 'provision-project-env'))` |
+| P5 | `deploy/sql/system-schema.sql:731`, `:739`, `:740` | `type text NOT NULL`, `CONSTRAINT sagas_type_check CHECK (type IN ('provision-org', 'provision-project-env'))` |
 | P6 | `deploy/sql/ops-schema.sql:30`, `:38` | `type text NOT NULL`, `CONSTRAINT copy_sagas_type_check CHECK (type = 'copy')` |
 | P7 | `deploy/sql/control-portable-store.sql:270` | `command_type text NOT NULL CHECK (command_type IN ('gate', 'publish'))` |
 | P7 | `deploy/sql/control-portable-store.sql:272` | `principal_type text NOT NULL CHECK (principal_type IN ('human', 'service'))` |
@@ -414,8 +414,6 @@ The composed constants `SYSTEM_SCHEMA_SQL`, `CONTROL_PORTABLE_STORE_SQL`, `OPS_S
 | P12 | `deploy/sql/run-state.sql:809`, `:810` | `CONSTRAINT operator_run_actions_type_check CHECK (action_type = 'terminalize-effect-uncertain')` |
 | P12 | `deploy/sql/run-state.sql:816`, `:817` | `CONSTRAINT operator_run_actions_principal_type_check CHECK (principal_type = 'database-role')` |
 | P12 | `crates/schema/control/src/run_plane/declarations.rs:377`, `:378`, `:401`, `:402` | The two names and definitions as in `run-state.sql` |
-| P13 | `crates/execution/run-state-sqlite/src/lib.rs:41`, `:46`, `:47` | `outcome_type TEXT CHECK (outcome_type IN ('completed', 'failed'))` and the two table checks |
-| P13 | `crates/execution/run-state-sqlite/src/lib.rs:260`, `:292` | The `UPDATE` and the `SELECT` name `outcome_type` |
 
 The declarations in `declarations.rs` are the text that `pg_get_constraintdef` renders. `reconcile-run-plane` compares them with the installed checks. So they must match `run-state.sql` in the same commit.
 
@@ -436,11 +434,11 @@ What follows a rename by itself, because PostgreSQL stores it by column number a
 - column grants, such as the issuer grants of §4.2 and the column grant at `app-schema.sql:525`
 - row security policies. No policy reads a renamed column (`git grep -n -i 'CREATE POLICY' -- deploy/sql` finds none that names one)
 - trigger `WHEN` clauses and `UPDATE OF` column lists. None names a renamed column
-- publications. The CDC publication is `FOR TABLES IN SCHEMA <schema>` with no column list (`crates/control/provision/src/sql/cdc.rs:74`)
+- publications. The CDC publication is `FOR TABLES IN SCHEMA <schema>` with no column list (`crates/control/provision/src/sql/cdc.rs:82`)
 
 What does not follow a rename, because PostgreSQL stores it as text:
 
-- PL/pgSQL function bodies. Three name a renamed column: `wamn_history.create_history_table` (`record-history.sql:117`, `:135`), `wamn_history.log_row_change` (`record-history.sql:240`) and `identity.lock_password_principal` (`system-schema.sql:727`). The statements replace all three in the same transaction as the renames. Without that, every write to a logged relation fails, and every password login fails.
+- PL/pgSQL function bodies. Three name a renamed column: `wamn_history.create_history_table` (`record-history.sql:117`, `:135`), `wamn_history.log_row_change` (`record-history.sql:240`) and `identity.lock_password_principal` (`system-schema.sql:752`). The statements replace all three in the same transaction as the renames. Without that, every write to a logged relation fails, and every password login fails.
 
 No view, materialized view, rule, statistics object or event trigger exists in `deploy/sql` or in SQL that Rust creates. The other functions in `deploy/sql` and in `crates/schema/control/src/run_plane/declarations.rs:431` to `:527` name no renamed column.
 
@@ -602,21 +600,11 @@ No history entry holds a renamed key. The `before` and `after` images copy the c
 
 ### 4.4 Edge SQLite
 
-The edge store creates its table with `CREATE TABLE IF NOT EXISTS` at every open (`crates/execution/run-state-sqlite/src/lib.rs:30`, `:107`). It keeps no schema version and has no migration step. So an existing `edge.db` keeps `outcome_kind`, and the new `SELECT` at `lib.rs:292` fails with "no such column".
-
-No edge device runs in wamn-dev. `docs/operations/` has no edge-device section, and the only `edge.db` reference is the default path `/edge.db` (`services/edge/src/config.rs:303`). Two choices, for the owner (question 3):
-
-- **Rebuild.** Delete `edge.db` before the new edge starts. This loses open and uncertain intents and the `samples` table of the same file (`services/edge/src/samples.rs:32`). It adds no code.
-- **Migrate at open.** In `open`, before the schema batch, rename the column when the old one exists. SQLite has had `ALTER TABLE ... RENAME COLUMN` since 3.25.0. It rewrites the column name in the stored table text, checks included, and copies no row. The bundled SQLite of `rusqlite` 0.39 is newer than 3.25.0.
-
-```sql
--- Run only when pragma_table_info('intents') has a row named 'outcome_kind'.
-ALTER TABLE intents RENAME COLUMN outcome_kind TO outcome_type;
-```
+P13 is out of scope. `78d02a6d8` (wamn-4afx.1) removed `outcome_kind` from the edge intent table, so the table has no `kind` name left (`crates/execution/run-state-sqlite/src/lib.rs:30`). An `edge.db` made before that commit keeps the old column, because the store runs `CREATE TABLE IF NOT EXISTS` at every open and has no migration step (`lib.rs:110`). That is a consequence of wamn-4afx.1, not of this epic. No edge device runs in wamn-dev: `docs/operations/` has no edge-device section, and the only `edge.db` reference is the default path (`services/edge/src/config.rs:303`).
 
 ### 4.5 Code that changes with the DDL
 
-The 222 Rust references of §1.4 and the bare `kind` columns fall into these groups. Each group must land in the commit that edits the DDL it reads.
+The 218 Rust references of §1.4 (222 at the §1 commit) and the bare `kind` columns fall into these groups. Each group must land in the commit that edits the DDL it reads.
 
 | Group | Columns | Files |
 |---|---|---|
@@ -624,9 +612,8 @@ The 222 Rust references of §1.4 and the bare `kind` columns fall into these gro
 | Identity | P2, P3, P4 | `crates/identity/platform/src/lib.rs` (`PRINCIPAL_COLUMNS` and the PAT queries at `:31` to `:92`), `crates/identity/platform/src/password.rs:349`, `:453`, `crates/identity/platform/src/session_token.rs:154`, `crates/control/lib/src/reconcile_run_plane.rs:407`, `:422`, `crates/control/provision/src/identity_issuer.rs:26`, `:37`, `:462`, `:470` |
 | Management audit | P7 | `services/scenario-worker/src/management.rs:61` and its attribution test at `:1669` |
 | Package ownership | P8 | `crates/control/lib/src/apply_package/definition_ownership.rs`, `crates/control/lib/src/apply_package/error.rs`, `crates/control/lib/src/apply_package/package_version.rs`, `crates/control/lib/src/apply_package.rs` |
-| Record history | P9 | `deploy/sql/record-history.sql`, `deploy/sql/app-schema.sql`, `apps/platform/data/record-history/src/lib.rs` (`HISTORY_COLUMNS`, the name check, and the fold that reads `HistoryRow.kind` at `:118`, `:265`), `apps/wamn_receiving/query/load_purchase_order_history.sql:12`, `apps/wamn_receiving/data/src/read.rs`, and everything the generator derives from `HISTORY_COLUMNS` (`crates/schema/generator/src/data_access.rs:624`, `:749`, `generate/contracts.rs:1399`, `generate/validation.rs:841`, `:974`) |
-| Run plane | P10, P11, P12 | `crates/schema/control/src/run_plane/declarations.rs`, `schema_changes.rs`, `crates/execution/run-state/src/transitions.rs`, `run_store.rs`, `sql.rs`, `queue/sql.rs`, `operator_action.rs`, `crates/execution/workflow/src/queue.rs`, `router_action.rs`, `crates/platform/runtime/src/plugins/wamn_postgres/production_claim.rs`, `crates/control/lib/src/terminalize_effect_uncertain.rs`, `crates/control/provision/src/sql.rs:242`, `:247`, `:1106` |
-| Edge store | P13 | `crates/execution/run-state-sqlite/src/lib.rs` |
+| Record history | P9 | `deploy/sql/record-history.sql`, `deploy/sql/app-schema.sql`, `apps/platform/data/record-history/src/lib.rs` (`HISTORY_COLUMNS`, the name check, and the fold that reads `HistoryRow.kind` at `:118`, `:265`), `apps/wamn_receiving/query/load_purchase_order_history.sql:12`, `apps/wamn_receiving/data/src/read.rs`, and everything the generator derives from `HISTORY_COLUMNS` (`crates/schema/generator/src/data_access.rs:624`, `:749`, `generate/contracts.rs:1341`, `generate/validation.rs:841`, `:974`) |
+| Run plane | P10, P11, P12 | `crates/schema/control/src/run_plane/declarations.rs`, `schema_changes.rs`, `crates/execution/run-state/src/transitions.rs`, `run_store.rs`, `sql.rs`, `queue/sql.rs`, `operator_action.rs`, `crates/execution/workflow/src/queue.rs`, `router_action.rs`, `crates/platform/runtime/src/plugins/wamn_postgres/production_claim.rs`, `crates/control/lib/src/terminalize_effect_uncertain.rs`, `crates/control/provision/src/sql.rs:242`, `:247`, `:1107` |
 | Regenerated | P9 | Every `apps/*/generated/` file of §2.4, the three `generated/platform-policy/data-access.json` overlays (`wamn_receiving`, `wamn_wms`, `platform_fixture`), and `apps/wamn_receiving/tests/.sqlx/query-04951d1d….json`. That is the only SQLx query file that names a renamed column (`git grep -l -E '_kind\|\bkind\b' -- '*/.sqlx/*'`) |
 | Tests and fixtures | all | The live and unit tests that the §1.7 command lists, including `crates/control/provision/tests/deploy_sql_authority.rs`, `control_storage.rs`, `control_portable_store.rs`, `identity_issuer_live.rs`, `crates/identity/platform/tests/`, `crates/identity/project-state/tests/`, `crates/control/lib/tests/run_plane_live/`, `crates/schema/control/src/run_plane/tests.rs`, `tests/conformance/src/schema_drift.rs`, `crates/schema/generator/tests/generation.rs`, `crates/platform/runtime/tests/support/session_fixture.rs:220`, and the `registry.orgs` fixture inserts across `crates/`, `services/` and `tests/integration/` |
 | Scripts | P1 | `tools/identity-jwks-journey-run:428` inserts `placement_kind` |
@@ -637,9 +624,9 @@ The `tests/sweeps/*.log` files that name `principal_kind` are records of past ru
 
 No change-event payload key changes.
 
-- The publication covers the application data schema only, `FOR TABLES IN SCHEMA <schema>` (`crates/control/provision/src/sql/cdc.rs:74`). In wamn-dev that is `receiving` and `wms` (`docs/operations/gcp.md` §3.18 and §5.4). The P1 to P8 and P10 to P12 tables live in `registry`, `identity`, `provisioning`, `catalog` and `wamn_run`, which no publication covers.
-- The package history tables do live in the published schema. But each one is a declared CDC exclusion (`crates/schema/control/src/package_migrations.rs:385`). The reader classifies each relation by OID and drops an excluded relation before it builds a payload (`services/cdc-reader/src/lib.rs:332`, `:388`). A rename keeps the OID, so the classification holds.
-- The payload is the column map of the changed row (`services/cdc-reader/src/lib.rs:473`). No published entity relation has a renamed column (§4.3).
+- The publication covers the application data schema only, `FOR TABLES IN SCHEMA <schema>` (`crates/control/provision/src/sql/cdc.rs:82`). In wamn-dev that is `receiving` and `wms` (`docs/operations/gcp.md` §3.18 and §5.4). The P1 to P8 and P10 to P12 tables live in `registry`, `identity`, `provisioning`, `catalog` and `wamn_run`, which no publication covers.
+- The package history tables do live in the published schema. But each one is a declared CDC exclusion (`crates/schema/control/src/package_migrations.rs:385`). The reader classifies each relation by OID and drops an excluded relation before it builds a payload (`services/cdc-reader/src/lib.rs:339`, `:398`). A rename keeps the OID, so the classification holds.
+- The payload is the column map of the changed row (`services/cdc-reader/src/lib.rs:478`). No published entity relation has a renamed column (§4.3).
 - Logical decoding carries no DDL. After the rename, pgoutput sends a new relation message for a history table at its next change, and the reader drops that change as before. The slot and the publication need no change, and the CDC readers may keep running through the apply.
 
 The router tap `source_kind` (W5) is a JetStream body, not a column. §5 decides it.
@@ -661,27 +648,37 @@ Rollback runs the same statements with the names swapped and appends `deploy/sql
 
 ### 4.8 Record for gcp.md §7
 
-`docs/operations/gcp.md` §7 does not exist on this branch yet. Its first entry is on `fix/wamn-59z6-gap` (`e7850f71e`). When the statements run, add an entry in that form:
+`docs/operations/gcp.md:1728` is §7 "Schema changes applied by hand". When the statements run, add this entry to it, in the form of its `registry.capture_gap` entry. The angle-bracket fields are filled in at apply time.
 
-> On `<date>` (`wamn-sfea`, `wamn-o8b9`), the `kind` → `type` column renames of `docs/plan/kind-to-type.md` §4.3 went into `wamn_system`, `wamn-db-dkk--receiving--dev--4pqjfmli` and `wamn-db-dkk--wms--dev--0nk1lrpr`, with the workloads stopped. Write the two scripts of §4.3, each followed by `deploy/sql/record-history.sql` of commit `<commit>` and a final `COMMIT;`, into `$P/kind-to-type-system.sql` and `$P/kind-to-type-project-env.sql`, and apply them as the superuser:
->
-> ```bash
-> kubectl -n platform exec -i wamn-pg-1 -c postgres -- psql -U postgres -d wamn_system -v ON_ERROR_STOP=1 < $P/kind-to-type-system.sql
-> for db in wamn-db-dkk--receiving--dev--4pqjfmli wamn-db-dkk--wms--dev--0nk1lrpr; do
->   kubectl -n platform exec -i wamn-pg-1 -c postgres -- psql -U postgres -d "$db" -v ON_ERROR_STOP=1 < $P/kind-to-type-project-env.sql
-> done
-> ```
->
-> The applies took `<n>` seconds. The history notices named `<tables>`. The check query of §4.3 returned no row afterwards in any of the three databases.
+````markdown
+On <date> (`wamn-sfea`, `wamn-o8b9`), the `kind` → `type` renames of `docs/plan/kind-to-type.md` §4.3 went into `wamn_system`, `wamn-db-dkk--receiving--dev--4pqjfmli` and `wamn-db-dkk--wms--dev--0nk1lrpr`, with the workloads stopped. Write the wamn_system script of §4.3 into `$P/kind-to-type-system.sql` and the project-env script into `$P/kind-to-type-project-env.sql`. Put `deploy/sql/record-history.sql` of commit <commit> before the `COMMIT;` of each. Apply them as the superuser:
+
+```sql
+BEGIN;
+ALTER TABLE registry.orgs RENAME COLUMN placement_kind TO placement_type;
+-- ... the other renames of §4.3 ...
+CREATE OR REPLACE FUNCTION identity.lock_password_principal(principal uuid) ...;
+-- deploy/sql/record-history.sql
+COMMIT;
+```
+
+```bash
+kubectl -n platform exec -i wamn-pg-1 -c postgres -- psql -U postgres -d wamn_system -v ON_ERROR_STOP=1 < $P/kind-to-type-system.sql
+for db in wamn-db-dkk--receiving--dev--4pqjfmli wamn-db-dkk--wms--dev--0nk1lrpr; do
+  kubectl -n platform exec -i wamn-pg-1 -c postgres -- psql -U postgres -d "$db" -v ON_ERROR_STOP=1 < $P/kind-to-type-project-env.sql
+done
+```
+
+The applies took <n> seconds. The history notices named <tables>. The check query of §4.3 returned no row in any of the three databases afterwards.
+````
 
 ### 4.9 Questions for the owner
 
 1. §1.8 rules the history column only. Are the other names of §4.1 right? In particular `principals.type`, `fail_type`, `action_type` and `operator_run_actions_type_check`.
 2. Should the installed statements rename the generated names too (`_not_null`, `_key`, `_fkey`, one-column `_check`)? Nothing in the code reads them. Renaming keeps an installed database equal to a fresh install. §4.3 assumes yes.
-3. Edge store: rebuild or migrate at open (§4.4)?
-4. `reconcile-run-plane` already carries in-code changes for retired run-schema structures (`crates/schema/control/src/run_plane/schema_changes.rs:24`). Should P10 to P12 go there instead of into hand statements? §4.3 assumes hand statements under `wamn-o8b9`.
-5. Inventory gap: the Kubernetes annotation `wamn.io/principal-kind` on PAT Secrets (`crates/control/lib/src/provision_project_env/pat_secrets.rs:267`, read by `deploy/mvp/bootstrap.sh:118`) is a WAMN-owned persisted name that §1 does not list. Does it rename? If yes, the installed Secrets need the new annotation.
-6. Is `ops-schema.sql` installed in wamn-dev? The P6 statements use `IF EXISTS`, so they work either way.
+3. `reconcile-run-plane` already carries in-code changes for retired run-schema structures (`crates/schema/control/src/run_plane/schema_changes.rs:24`). Should P10 to P12 go there instead of into hand statements? §4.3 assumes hand statements under `wamn-o8b9`.
+4. P15, the Kubernetes annotation `wamn.io/principal-kind` on PAT Secrets: does it rename to `wamn.io/principal-type`? If yes, `pat_secrets.rs:267` and `deploy/mvp/bootstrap.sh:118` change together, and the installed PAT Secrets need the new annotation.
+5. Is `ops-schema.sql` installed in wamn-dev? The P6 statements use `IF EXISTS`, so they work either way.
 
 ## 6. `*ErrorKind` families
 
