@@ -13,6 +13,7 @@ These pages describe unbuilt work and its limits. Current behavior belongs in [a
 - [Human identity and login](identity-plan.md): Incremental password login, later account lifecycle, and PAT-free sensitive operations with planning at each epic start.
 - [NATS outage](nats-outage.md): Design for the host and the runtime operator to stay up and connect again when the scheduler NATS stops or moves.
 - [Operation ids](operation-ids.md): Design for authoring the package version once, in `wamn.json`, and deriving each sealed operation id from it.
+- [Operator image](operator-image.md): Design for the image and the Jobs that run the verbs that call identity inside the cluster (findings `wamn-n5d1` and `wamn-lo7z`).
 - [Operator UI](operator-ui.md): Deferred client and screen capabilities.
 - [Upgrades](upgrades.md): Design for changing a schema after installation.
 - [Web deployment](web-deployment.md): Epic 20 rules for the web client host, and its remaining real deployment.
