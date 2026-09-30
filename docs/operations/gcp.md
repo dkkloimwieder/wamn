@@ -983,6 +983,20 @@ kubectl -n identity get pod -o custom-columns=N:.metadata.name,R:.status.contain
 
 On 2026-09-29 the command ended 3 issuer sessions at 16:38:26 UTC. `/healthz` answered `200` at 16:38:28 and at each probe to 16:38:36. A new issuer session (pid 7010) started at 16:38:28. The pod `identity-749bc76b9d-5z6sj` stayed ready with 0 restarts.
 
+### 4.2.3 Mail DNS records
+
+Resend signs the mail of identity for `wamn.dev` and sends it with a return path on `send.wamn.dev`. The wamn-dev Cloud DNS zone is authoritative for `wamn.dev`, so the records go there, with the TTL 3600 of the other records of the zone. The values come from the Resend domain page:
+
+```bash
+Z="--zone wamn-dev --project wamn-dev --ttl 3600"
+gcloud dns record-sets create resend._domainkey.wamn.dev. --type TXT $Z --rrdatas='"<DKIM key of the Resend page>"'
+gcloud dns record-sets create rsend.wamn.dev. --type CNAME $Z --rrdatas=rsend.forge.rmta.net.
+gcloud dns record-sets create send.wamn.dev. --type CNAME $Z --rrdatas=send.forge.rmta.net.
+gcloud dns record-sets create _dmarc.wamn.dev. --type TXT $Z --rrdatas='"v=DMARC1; p=none;"'
+```
+
+On 2026-09-30 the Resend page showed DKIM and SPF verified, but no zone served them. The status was stale after `wamn.dev` moved to Cloud DNS, and Gmail showed "via amazonses.com" for that reason (`wamn-ghx2.8`). The four records took 4 seconds to create, and `ns-cloud-a1.googledomains.com` answered them at once. The DKIM key starts with `p=MIGfMA0GCSqGSIb3DQEBAQUAA4GNADCBiQKBgQDOXZsw`.
+
 ### 4.3 Load balancer
 
 Create the resources in this order. The names come from the release `wamn-edge`, as in the removed Config Connector template:
