@@ -25,6 +25,8 @@ The migration does **not** relax immutability or pinned-digest rules:
 - affected applications are regenerated and republished under new immutable package/artifact/release identities as required;
 - fixtures and frozen contract evidence are regenerated for the new vocabulary.
 
+A disposable `ctl dev` target is not a sealed coordinate, so its local-target exception is outside these rules.
+
 Before an agent implements the precursor, that epic gets its own accepted specification in the same form as this one. It must settle at least:
 
 - every authored, generated, wire and persisted WAMN-owned surface that carries `kind`;
