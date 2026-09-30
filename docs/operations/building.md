@@ -39,6 +39,7 @@ Cargo combines dependency features within each invocation, which can change arti
 
 [`tools/guest-rustflags`](../../tools/guest-rustflags) sets the RUSTFLAGS of every guest build.
 It maps the repository to `/wamn` and the Cargo home to `/cargo`, so no guest carries a local path.
+It also maps the toolchain's `rust-src` tree to `/rustc/<commit-hash>`, so a toolchain with and without `rust-src` gives one digest.
 `tools/build-components` and the Dockerfile `component-builder` stage call it. Nothing else sets guest RUSTFLAGS.
 The build tool refuses a built guest that contains `/home/`, the Cargo home, or the repository path.
 A guest crate can hold a pin file beside its `Cargo.toml`, named for the artifact, for example `http_route.wasm.sha256`.
