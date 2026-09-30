@@ -16,7 +16,7 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::Value;
 
 /// Authoring contract version shipped for the MVP.
-pub const SCHEMA_VERSION: &str = "0.1";
+pub const SCHEMA_VERSION: &str = "0.2";
 
 /// Largest query correlation identifier, measured in exact UTF-8 bytes.
 ///
@@ -186,7 +186,7 @@ pub struct AuthoringQueryResponse {
 /// renders it and no `rename` apologises for a second spelling.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(
-    tag = "kind",
+    tag = "type",
     content = "input",
     rename_all = "kebab-case",
     deny_unknown_fields
@@ -199,7 +199,7 @@ pub enum AuthoringCommand {
 /// Stable command names used by response and command table vocabulary.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "kebab-case")]
-pub enum AuthoringCommandKind {
+pub enum AuthoringCommandType {
     Gate,
     Publish,
 }
@@ -207,7 +207,7 @@ pub enum AuthoringCommandKind {
 /// Complete one-query authoring API.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(
-    tag = "kind",
+    tag = "type",
     content = "input",
     rename_all = "kebab-case",
     deny_unknown_fields
@@ -219,7 +219,7 @@ pub enum AuthoringQuery {
 /// Stable query names used only for typed response attribution.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "kebab-case")]
-pub enum AuthoringQueryKind {
+pub enum AuthoringQueryType {
     GetReport,
 }
 
@@ -462,7 +462,7 @@ pub enum ReportProjection {
 /// Refusals owned by `gate`.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(
-    tag = "kind",
+    tag = "type",
     rename_all = "kebab-case",
     rename_all_fields = "kebab-case",
     deny_unknown_fields
@@ -513,7 +513,7 @@ pub enum GateRefusal {
 /// Refusals owned by `publish`.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(
-    tag = "kind",
+    tag = "type",
     rename_all = "kebab-case",
     rename_all_fields = "kebab-case",
     deny_unknown_fields
@@ -549,7 +549,7 @@ pub enum PublishRefusal {
 /// Refusals owned by `get-report`.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(
-    tag = "kind",
+    tag = "type",
     rename_all = "kebab-case",
     rename_all_fields = "kebab-case",
     deny_unknown_fields
@@ -568,23 +568,18 @@ pub enum GetReportRefusal {
 }
 
 /// Decode a contract document and reject unsupported versions before dispatch.
+///
+/// The version is read from the raw JSON before the body is decoded, so a body
+/// of another contract version gets the version refusal, not a decode error of
+/// a shape this version does not know.
 pub fn decode_document(input: &str) -> Result<AuthoringDocument, ContractDecodeError> {
-    let document: AuthoringDocument =
-        serde_json::from_str(input).map_err(ContractDecodeError::json)?;
-    let version = match &document {
-        AuthoringDocument::Request(request) => match request.as_ref() {
-            AuthoringRequestEnvelope::Command(request) => &request.schema_version,
-            AuthoringRequestEnvelope::Query(request) => &request.schema_version,
-        },
-        AuthoringDocument::Response(response) => match response.as_ref() {
-            AuthoringResponseEnvelope::Command(response) => &response.schema_version,
-            AuthoringResponseEnvelope::Query(response) => &response.schema_version,
-        },
-    };
-    if version != SCHEMA_VERSION {
-        return Err(ContractDecodeError::unsupported(version.clone()));
+    let raw: Value = serde_json::from_str(input).map_err(ContractDecodeError::json)?;
+    if let Some(version) = raw["body"]["schema-version"].as_str()
+        && version != SCHEMA_VERSION
+    {
+        return Err(ContractDecodeError::unsupported(version.to_owned()));
     }
-    Ok(document)
+    serde_json::from_value(raw).map_err(ContractDecodeError::json)
 }
 
 /// Stable decode failure classification.

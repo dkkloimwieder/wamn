@@ -1,7 +1,7 @@
 use serde_json::{Value, json};
 use wamn_authoring_model::{
-    AuthoringCommandKind, AuthoringDocument, AuthoringQueryKind, AuthoringQueryOutcome,
-    AuthoringQueryResponse, AuthoringResponseEnvelope, ContractDecodeErrorKind, GetReportRefusal,
+    AuthoringCommandType, AuthoringDocument, AuthoringQueryOutcome, AuthoringQueryResponse,
+    AuthoringQueryType, AuthoringResponseEnvelope, ContractDecodeErrorKind, GetReportRefusal,
     MAX_QUERY_ID_BYTES, MAX_TEST_SET_CASES, QueryId, ReportProjection, SCHEMA_VERSION,
     ValidatedDraftRef, decode_document,
 };
@@ -38,7 +38,7 @@ fn command(kind: &str, input: &Value) -> Value {
         "body": {
             "schema-version": SCHEMA_VERSION,
             "command-id": format!("{kind}-1"),
-            "command": {"kind": kind, "input": input}
+            "command": {"type": kind, "input": input}
         }
     })
 }
@@ -49,7 +49,7 @@ fn query(kind: &str, input: &Value, query_id: &str) -> Value {
         "body": {
             "schema-version": SCHEMA_VERSION,
             "query-id": query_id,
-            "query": {"kind": kind, "input": input}
+            "query": {"type": kind, "input": input}
         }
     })
 }
@@ -150,7 +150,7 @@ fn the_collapsed_draft_operations_no_longer_decode() {
 fn command_kinds_and_operation_pairing_are_exact() {
     let schema = wamn_authoring_model::json_schema();
     for (definition, field) in [
-        ("AuthoringCommand", "kind"),
+        ("AuthoringCommand", "type"),
         ("AuthoringSuccess", "command"),
         ("CommandRefusal", "command"),
     ] {
@@ -160,7 +160,7 @@ fn command_kinds_and_operation_pairing_are_exact() {
             "{definition} variant list drifted"
         );
     }
-    let kind_schema = serde_json::to_value(schemars::schema_for!(AuthoringCommandKind))
+    let kind_schema = serde_json::to_value(schemars::schema_for!(AuthoringCommandType))
         .expect("command-kind schema serializes");
     assert_eq!(kind_schema["enum"], json!(["gate", "publish"]));
 }
@@ -286,7 +286,7 @@ fn the_effect_free_clause_has_a_typed_refusal_on_the_wire() {
                 "value": {
                     "command": "gate",
                     "reason": {
-                        "kind": "effectful-component-reached",
+                        "type": "effectful-component-reached",
                         "components": ["example:accounting", "example:mailer"]
                     }
                 }
@@ -327,7 +327,7 @@ fn operation_specific_refusal_pairing_rejects_cross_operation_reason() {
                 "status": "refused",
                 "value": {
                     "command": "gate",
-                    "reason": {"kind": "report-not-successful"}
+                    "reason": {"type": "report-not-successful"}
                 }
             }
         }
@@ -349,7 +349,7 @@ fn operation_specific_refusal_pairing_rejects_cross_operation_reason() {
                 "value": {
                     "command": "publish",
                     "reason": {
-                        "kind": "effectful-component-reached",
+                        "type": "effectful-component-reached",
                         "components": ["example:accounting"]
                     }
                 }
@@ -445,10 +445,10 @@ fn retired_and_forbidden_vocabulary_is_absent() {
 fn query_kinds_and_operation_pairing_are_exact() {
     let schema = wamn_authoring_model::json_schema();
     assert_eq!(
-        schema_discriminators(&schema, "AuthoringQuery", "kind"),
+        schema_discriminators(&schema, "AuthoringQuery", "type"),
         ["get-report"]
     );
-    let kind_schema = serde_json::to_value(schemars::schema_for!(AuthoringQueryKind))
+    let kind_schema = serde_json::to_value(schemars::schema_for!(AuthoringQueryType))
         .expect("query-kind schema serializes");
     assert_eq!(kind_schema["enum"], json!(["get-report"]));
     assert_eq!(
@@ -468,14 +468,34 @@ fn unsupported_version_is_classified_without_dispatch() {
         &json!({"scope": scope(), "report-id": "report-1"}),
         "query-1",
     );
-    request["body"]["schema-version"] = json!("0.2");
+    request["body"]["schema-version"] = json!("0.1");
     let error = decode_document(&serde_json::to_string(&request).expect("serializes"))
         .expect_err("unsupported version must fail");
     assert_eq!(
         error.kind(),
         ContractDecodeErrorKind::UnsupportedContractVersion
     );
-    assert_eq!(error.requested(), Some("0.2"));
+    assert_eq!(error.requested(), Some("0.1"));
+}
+
+#[test]
+fn an_old_contract_version_is_refused_before_decode() {
+    // A contract 0.1 body tags its command with `kind`, which 0.2 does not
+    // know. The version refusal still wins over the decode error.
+    let body = json!({
+        "document": "request",
+        "body": {
+            "schema-version": "0.1",
+            "command-id": "command-1",
+            "command": {"kind": "publish", "input": {}}
+        }
+    });
+    let error = decode_document(&body.to_string()).expect_err("0.1 is refused");
+    assert_eq!(
+        error.kind(),
+        ContractDecodeErrorKind::UnsupportedContractVersion
+    );
+    assert_eq!(error.requested(), Some("0.1"));
 }
 
 #[test]

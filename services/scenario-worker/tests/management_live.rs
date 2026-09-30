@@ -186,7 +186,7 @@ const BIND: &str = "127.0.0.1:18088";
 const TTL: Duration = Duration::from_secs(3600);
 
 /// The one refusal every authentication and authorization failure must return.
-const AUTHORIZATION_DENIED: &str = r#"{"kind":"authorization-denied"}"#;
+const AUTHORIZATION_DENIED: &str = r#"{"type":"authorization-denied"}"#;
 
 struct Response {
     status: u16,
@@ -245,10 +245,10 @@ fn get_report_document(query_id: &str, project: &str, report_id: &str) -> String
     serde_json::json!({
         "document": "request",
         "body": {
-            "schema-version": "0.1",
+            "schema-version": "0.2",
             "query-id": query_id,
             "query": {
-                "kind": "get-report",
+                "type": "get-report",
                 "input": {
                     "scope": {"project-id": project, "environment": ENVIRONMENT},
                     "report-id": report_id,
@@ -263,10 +263,10 @@ fn legacy_get_run_query() -> String {
     serde_json::json!({
         "document": "request",
         "body": {
-            "schema-version": "0.1",
+            "schema-version": "0.2",
             "query-id": "retired-get-run",
             "query": {
-                "kind": "get-run",
+                "type": "get-run",
                 "input": {
                     "scope": {"project-id": PROJECT, "environment": "dev"},
                     "run-id": "run-retired",
@@ -733,10 +733,10 @@ fn gate_document_for_package_in(
     serde_json::json!({
         "document": "request",
         "body": {
-            "schema-version": "0.1",
+            "schema-version": "0.2",
             "command-id": command_id,
             "command": {
-                "kind": "gate",
+                "type": "gate",
                 "input": {
                     "scope": {"project-id": project, "environment": ENVIRONMENT},
                     "package-id": package,
@@ -772,10 +772,10 @@ fn publish_document_in(command_id: &str, project: &str, document: &serde_json::V
     serde_json::json!({
         "document": "request",
         "body": {
-            "schema-version": "0.1",
+            "schema-version": "0.2",
             "command-id": command_id,
             "command": {
-                "kind": "publish",
+                "type": "publish",
                 "input": {
                     "scope": {"project-id": project, "environment": ENVIRONMENT},
                     "package-id": CANDIDATE_PACKAGE,
@@ -1139,7 +1139,7 @@ async fn nonempty_case_store_requirement_refuses_effect_posture(
         serde_json::json!({
             "command": "gate",
             "reason": {
-                "kind": "effectful-component-reached",
+                "type": "effectful-component-reached",
                 "components": [EFFECTFUL_COMPONENT],
             },
         }),
@@ -1261,7 +1261,7 @@ async fn management_surface_reconnects_after_the_verification_database_is_recrea
     assert_eq!(
         as_json(&unavailable.body),
         serde_json::json!({
-            "kind": "management-admission-unavailable",
+            "type": "management-admission-unavailable",
             "config-key": "WAMN_MANAGEMENT_ADMISSION_PG_URL",
             "endpoint": sanitized_admission_endpoint(url),
         })
@@ -1459,7 +1459,7 @@ async fn management_surface_authenticates_and_attributes_authoring_commands() {
             "status": "refused",
             "value": {
                 "query": "get-report",
-                "reason": {"kind": "report-not-found", "report-id": "report-missing"},
+                "reason": {"type": "report-not-found", "report-id": "report-missing"},
             },
         })
     );
@@ -1489,7 +1489,7 @@ async fn management_surface_authenticates_and_attributes_authoring_commands() {
         assert_eq!(document["body"]["query-id"], query_id);
         assert_eq!(
             outcome(&response.body)["value"]["reason"],
-            serde_json::json!({"kind": "report-not-found", "report-id": report_id}),
+            serde_json::json!({"type": "report-not-found", "report-id": report_id}),
             "get-report answered from a store that no longer exists: {}",
             response.body
         );
@@ -1566,7 +1566,7 @@ async fn management_surface_authenticates_and_attributes_authoring_commands() {
             .remove("schema-version");
     });
     let unsupported = versioned(|document| {
-        document["body"]["schema-version"] = serde_json::json!("0.2");
+        document["body"]["schema-version"] = serde_json::json!("0.1");
     });
     for (name, document) in [("unversioned", &unversioned), ("unsupported", &unsupported)] {
         let command_count_before = command_rows(&admin).await.len();
@@ -1585,9 +1585,9 @@ async fn management_surface_authenticates_and_attributes_authoring_commands() {
     assert_eq!(
         as_json(&refused.body),
         serde_json::json!({
-            "kind": "unsupported-contract-version",
-            "requested": "0.2",
-            "supported": "0.1",
+            "type": "unsupported-contract-version",
+            "requested": "0.1",
+            "supported": "0.2",
         })
     );
 
@@ -1632,7 +1632,7 @@ async fn management_surface_authenticates_and_attributes_authoring_commands() {
         outcome(&ungated_publish.body)["value"],
         serde_json::json!({
             "command": "publish",
-            "reason": {"kind": "report-not-found", "report-id": candidate_hash},
+            "reason": {"type": "report-not-found", "report-id": candidate_hash},
         })
     );
     assert_eq!(stored_wiring_count(&project).await, 0);
@@ -1931,7 +1931,7 @@ async fn management_surface_authenticates_and_attributes_authoring_commands() {
     let refusal = outcome(&incompatible.body)["value"].clone();
     assert_eq!(refusal["command"], serde_json::json!("gate"));
     assert_eq!(
-        refusal["reason"]["kind"],
+        refusal["reason"]["type"],
         serde_json::json!("invalid-document"),
         "an incompatible zero-case wiring was not refused: {}",
         incompatible.body
@@ -2000,7 +2000,7 @@ async fn management_surface_authenticates_and_attributes_authoring_commands() {
         serde_json::json!({
             "command": "gate",
             "reason": {
-                "kind": "effectful-component-reached",
+                "type": "effectful-component-reached",
                 "components": [BLOBSTORE_COMPONENT],
             },
         }),
@@ -2037,7 +2037,7 @@ async fn management_surface_authenticates_and_attributes_authoring_commands() {
     let refusal = outcome(&unknown.body)["value"].clone();
     assert_eq!(refusal["command"], serde_json::json!("gate"));
     assert_eq!(
-        refusal["reason"]["kind"],
+        refusal["reason"]["type"],
         serde_json::json!("invalid-document"),
         "an unreadable document was not refused as one: {}",
         unknown.body
@@ -2083,7 +2083,7 @@ async fn management_surface_authenticates_and_attributes_authoring_commands() {
         outcome(&wrong_hash_guard.body)["value"],
         serde_json::json!({
             "command": "publish",
-            "reason": {"kind": "report-not-successful"},
+            "reason": {"type": "report-not-successful"},
         }),
         "{}",
         wrong_hash_guard.body
@@ -2116,7 +2116,7 @@ async fn management_surface_authenticates_and_attributes_authoring_commands() {
         outcome(&incompatible.body)["value"],
         serde_json::json!({
             "command": "publish",
-            "reason": {"kind": "publish-executable-drift"},
+            "reason": {"type": "publish-executable-drift"},
         }),
         "{}",
         incompatible.body
@@ -2213,7 +2213,7 @@ async fn management_surface_authenticates_and_attributes_authoring_commands() {
         outcome(&reused_publish.body)["value"],
         serde_json::json!({
             "command": "publish",
-            "reason": {"kind": "command-id-reuse"},
+            "reason": {"type": "command-id-reuse"},
         }),
         "{}",
         reused_publish.body
@@ -2235,7 +2235,7 @@ async fn management_surface_authenticates_and_attributes_authoring_commands() {
         outcome(&reused_incompatible.body)["value"],
         serde_json::json!({
             "command": "publish",
-            "reason": {"kind": "command-id-reuse"},
+            "reason": {"type": "command-id-reuse"},
         }),
         "{}",
         reused_incompatible.body
@@ -2288,7 +2288,7 @@ async fn management_surface_authenticates_and_attributes_authoring_commands() {
         outcome(&changed.body)["value"],
         serde_json::json!({
             "command": "publish",
-            "reason": {"kind": "publish-executable-drift"},
+            "reason": {"type": "publish-executable-drift"},
         }),
         "{}",
         changed.body

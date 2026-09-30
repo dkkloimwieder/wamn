@@ -725,7 +725,7 @@ async fn route(
             return json(
                 StatusCode::SERVICE_UNAVAILABLE,
                 &serde_json::json!({
-                    "kind": crate::store::admission::AdmissionEndpointUnavailable::code(),
+                    "type": crate::store::admission::AdmissionEndpointUnavailable::code(),
                     "config-key":
                         crate::store::admission::AdmissionEndpointUnavailable::config_key(),
                     "endpoint": unavailable.endpoint(),
@@ -764,7 +764,7 @@ async fn authoring_command(
             return Ok(json(
                 StatusCode::BAD_REQUEST,
                 &serde_json::json!({
-                    "kind": "unsupported-contract-version",
+                    "type": "unsupported-contract-version",
                     "requested": error.requested().unwrap_or_default(),
                     "supported": SCHEMA_VERSION,
                 }),
@@ -1292,7 +1292,7 @@ fn bearer<B>(request: &Request<B>) -> Option<&str> {
 fn authorization_denied() -> Response<Full<Bytes>> {
     json(
         StatusCode::FORBIDDEN,
-        &serde_json::json!({"kind": "authorization-denied"}),
+        &serde_json::json!({"type": "authorization-denied"}),
     )
 }
 
@@ -1323,7 +1323,7 @@ fn empty(status: StatusCode) -> Response<Full<Bytes>> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use wamn_authoring_model::AuthoringCommandKind;
+    use wamn_authoring_model::AuthoringCommandType;
 
     async fn body_of(response: Response<Full<Bytes>>) -> Bytes {
         response
@@ -1352,11 +1352,11 @@ mod tests {
         assert_eq!(denied.headers(), repeated.headers());
         assert_eq!(
             body_of(denied).await,
-            Bytes::from_static(br#"{"kind":"authorization-denied"}"#)
+            Bytes::from_static(br#"{"type":"authorization-denied"}"#)
         );
         assert_eq!(
             body_of(repeated).await,
-            Bytes::from_static(br#"{"kind":"authorization-denied"}"#)
+            Bytes::from_static(br#"{"type":"authorization-denied"}"#)
         );
     }
 
@@ -1649,8 +1649,8 @@ mod tests {
     #[test]
     fn stored_command_literals_match_the_wire_contract_spelling() {
         for (kind, audited) in [
-            (AuthoringCommandKind::Gate, AuditedCommand::Gate),
-            (AuthoringCommandKind::Publish, AuditedCommand::Publish),
+            (AuthoringCommandType::Gate, AuditedCommand::Gate),
+            (AuthoringCommandType::Publish, AuditedCommand::Publish),
         ] {
             let wire = serde_json::to_string(&kind).unwrap();
             assert_eq!(
@@ -1737,10 +1737,10 @@ mod tests {
     fn canonical_request_hash_ignores_object_order_and_detects_content_change() {
         let request = |input: serde_json::Value| {
             serde_json::from_value::<AuthoringRequest>(serde_json::json!({
-                "schema-version": "0.1",
+                "schema-version": "0.2",
                 "command-id": "retry-1",
                 "command": {
-                    "kind": "gate",
+                    "type": "gate",
                     "input": {
                         "scope": input,
                         "package-id": "orders",
@@ -1831,7 +1831,7 @@ mod tests {
         });
         let command_cases = [
             (
-                AuthoringCommandKind::Gate,
+                AuthoringCommandType::Gate,
                 AuthoringCommand::Gate(Gate {
                     scope: scope.clone(),
                     package_id: "orders".to_owned(),
@@ -1840,7 +1840,7 @@ mod tests {
                 }),
             ),
             (
-                AuthoringCommandKind::Publish,
+                AuthoringCommandType::Publish,
                 AuthoringCommand::Publish(PublishValidatedDraft {
                     scope,
                     package_id: "orders".to_owned(),
@@ -1860,7 +1860,7 @@ mod tests {
             .collect();
         assert_eq!(
             routed.iter().map(|(kind, _)| *kind).collect::<Vec<_>>(),
-            [AuthoringCommandKind::Gate, AuthoringCommandKind::Publish]
+            [AuthoringCommandType::Gate, AuthoringCommandType::Publish]
         );
         assert!(routed[0].1.starts_with("Gate("));
         assert!(routed[1].1.starts_with("Publish("));

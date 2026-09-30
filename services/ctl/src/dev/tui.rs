@@ -632,12 +632,12 @@ mod tests {
             "{text}"
         );
         for refusal in [
-            r#"{"kind":"authorization-denied"}"#,
-            r#"{"kind":"unsupported-contract-version","requested":"2","supported":"1"}"#,
-            r#"{"kind":"invalid-document","detail":"missing entry"}"#,
-            r#"{"kind":"invalid-test-set","detail":"no cases"}"#,
-            r#"{"kind":"effectful-component-reached","components":["payments","accounts"]}"#,
-            r#"{"kind":"command-id-reuse"}"#,
+            r#"{"type":"authorization-denied"}"#,
+            r#"{"type":"unsupported-contract-version","requested":"2","supported":"1"}"#,
+            r#"{"type":"invalid-document","detail":"missing entry"}"#,
+            r#"{"type":"invalid-test-set","detail":"no cases"}"#,
+            r#"{"type":"effectful-component-reached","components":["payments","accounts"]}"#,
+            r#"{"type":"command-id-reuse"}"#,
         ] {
             assert!(text.contains(refusal), "missing {refusal} from:\n{text}");
         }
