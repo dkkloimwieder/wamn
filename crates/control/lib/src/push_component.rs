@@ -1977,54 +1977,51 @@ async fn append_or_verify_admitted_component_count(
     // The digest names its owner package first. A digest belongs to one package
     // for life, and each version of that package may hold it once
     // (docs/plan/kind-to-type.md §4.3.6).
-    let owner: String = match environment_instance {
-        Some(instance) => {
-            transaction
-                .execute(
-                    INSERT_CONTROL_DIGEST_OWNER_SQL,
-                    &[
-                        &component.scope.tenant_id,
-                        &instance,
-                        &component.component_digest,
-                        &component.scope.package_id,
-                    ],
-                )
-                .await
-                .context("append the component digest owner")?;
-            transaction
-                .query_one(
-                    SELECT_CONTROL_DIGEST_OWNER_SQL,
-                    &[
-                        &component.scope.tenant_id,
-                        &instance,
-                        &component.component_digest,
-                    ],
-                )
-                .await
-                .context("read the component digest owner")?
-                .get(0)
-        }
-        None => {
-            transaction
-                .execute(
-                    INSERT_DIGEST_OWNER_SQL,
-                    &[
-                        &component.scope.tenant_id,
-                        &component.component_digest,
-                        &component.scope.package_id,
-                    ],
-                )
-                .await
-                .context("append the component digest owner")?;
-            transaction
-                .query_one(
-                    SELECT_DIGEST_OWNER_SQL,
-                    &[&component.scope.tenant_id, &component.component_digest],
-                )
-                .await
-                .context("read the component digest owner")?
-                .get(0)
-        }
+    let owner: String = if let Some(instance) = environment_instance {
+        transaction
+            .execute(
+                INSERT_CONTROL_DIGEST_OWNER_SQL,
+                &[
+                    &component.scope.tenant_id,
+                    &instance,
+                    &component.component_digest,
+                    &component.scope.package_id,
+                ],
+            )
+            .await
+            .context("append the component digest owner")?;
+        transaction
+            .query_one(
+                SELECT_CONTROL_DIGEST_OWNER_SQL,
+                &[
+                    &component.scope.tenant_id,
+                    &instance,
+                    &component.component_digest,
+                ],
+            )
+            .await
+            .context("read the component digest owner")?
+            .get(0)
+    } else {
+        transaction
+            .execute(
+                INSERT_DIGEST_OWNER_SQL,
+                &[
+                    &component.scope.tenant_id,
+                    &component.component_digest,
+                    &component.scope.package_id,
+                ],
+            )
+            .await
+            .context("append the component digest owner")?;
+        transaction
+            .query_one(
+                SELECT_DIGEST_OWNER_SQL,
+                &[&component.scope.tenant_id, &component.component_digest],
+            )
+            .await
+            .context("read the component digest owner")?
+            .get(0)
     };
     if owner != component.scope.package_id {
         return Err(ComponentProjectionError::new(
