@@ -711,6 +711,8 @@ On 2026-09-26 the first run took 10 seconds, and the email was `wamn-registry-re
 | `wamn-cdc-reader:src-596c8e6604d119a0` | `sha256:9b1ed15e87122ce208114582b27ce23af7cc06c80653c798fcac5b79172e1c52` | CDC reader |
 | `curlimages/curl:8.22.0` | `sha256:58adaa4e8dca9c988bae2aba4ab3434a0bb2da16bbe3f92dec39ec7785166777` | registry token CronJob |
 
+`deploy/gcp/registry-helper.yaml` holds the ConfigMap `wamn-registry-helper`, which names the `wamn` credential helper for the registry. It is not applied yet. B10 of `docs/plan/kind-to-type.md` section 3.2 applies it with `kubectl` before the `helm upgrade` of the hosts.
+
 ### 3.14 Host values
 
 Run the host values program after `publish-release`, with the release artifact base and the manifest digest that `print-release-env` prints. The program calls `render_host_values`, the derivation of the kind cases, and writes both files:
@@ -1383,7 +1385,10 @@ cargo run -p wamn-test-infrastructure --example gate_request -- wamn_wms 1.0.0 w
 
 Post `gate-request.json` to `http://127.0.0.1:18090/authoring` with the PAT as a bearer token, read from its file through a pipe. The reply has `body.outcome.status` `completed` and a `report-id`. Stop the service, then record the wiring, publish, bind the label store and push the manifest:
 
+`SYS` is the superuser URL of `wamn_system`, `$WAMN_SYSTEM_ADMIN_URL` of section 3.6:
+
 ```bash
+SYS="$WAMN_SYSTEM_ADMIN_URL"
 target/debug/wamn-ctl author-wiring --database-url "$T" --control-database-url "$SYS" --tenant wms \
   --package-id wamn_wms --package-version 1.0.0 --wiring-document apps/wamn_wms/publication/wirings/inventory_move_and_label.json
 target/debug/wamn-ctl publish-release --database-url "$T" --control-database-url "$SYS" --org dkk --project wms \

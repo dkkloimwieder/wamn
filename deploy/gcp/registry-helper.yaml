@@ -1,0 +1,13 @@
+# The registry helper ConfigMap of docs/plan/kind-to-type.md section 3.2 B10
+# (finding wamn-i87m). The host pulls components with a token from the GKE
+# metadata server (WAMN_REGISTRY_TOKEN_METADATA). This file names the `wamn`
+# credential helper for the registry. It is mounted at /etc/wamn/registry,
+# which DOCKER_CONFIG names. It carries no credential.
+# B10 applies it with kubectl before the helm upgrade of the hosts.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: wamn-registry-helper
+  namespace: hosts
+data:
+  config.json: '{"credHelpers":{"us-central1-docker.pkg.dev":"wamn"}}'
