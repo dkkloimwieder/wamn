@@ -35,7 +35,7 @@ use wamn_control_provision::workload_role::WorkloadRoleFamily;
 use wamn_gate_harness::journey::JourneyDocument;
 use wamn_test_infrastructure::rendering::{
     EventIdentity, HostIdentity, HostRoleSecret, HostValuesInput, assert_rendered_identity,
-    render_host_values,
+    overlay_values, render_host_values,
 };
 use wamn_test_infrastructure::secrets::{HostSecretsInput, derive_host_secrets};
 
@@ -434,17 +434,26 @@ async fn prepare_host(
             name: secret.name.clone(),
         })
         .collect();
+    let event = EventIdentity {
+        org: identity().org.clone(),
+        project: identity().project.clone(),
+        environment: identity().environment.clone(),
+    };
+    let mut overlay = fs::read_to_string(
+        cluster
+            .repository
+            .join("deploy/platform/values-host-receiving-pat.yaml"),
+    )?;
+    if cluster.candidate.is_some() {
+        overlay = overlay_values(&overlay, &event)?;
+    }
     let mut values = render_host_values(
         &fs::read_to_string(
             cluster
                 .repository
                 .join("deploy/platform/values-host-default.yaml"),
         )?,
-        &fs::read_to_string(
-            cluster
-                .repository
-                .join("deploy/platform/values-host-receiving-pat.yaml"),
-        )?,
+        &overlay,
         &HostValuesInput {
             namespace: cluster.name.clone(),
             host_tag: cluster.name.clone(),
@@ -453,11 +462,7 @@ async fn prepare_host(
             release_artifact_base: carrier.artifact_base.clone(),
             manifest_digest: carrier.manifest_digest.to_string(),
             nats_url: nats_url.to_owned(),
-            event: EventIdentity {
-                org: identity().org.clone(),
-                project: identity().project.clone(),
-                environment: identity().environment.clone(),
-            },
+            event,
             guest_secret_name: guest.name.clone(),
             role_secrets: roles,
             object_store_secret_name: None,

@@ -107,6 +107,59 @@ pub fn host_values(base: &str, image: &str) -> anyhow::Result<String> {
     serde_yaml::to_string(&base).context("render the digest-pinned host image")
 }
 
+/// Move an application overlay from its own identity to a supplied release's
+/// identity: the org, project and environment values, and every Secret name
+/// that carries `<org>--<project>--<env>`.
+pub fn overlay_values(overlay: &str, identity: &EventIdentity) -> anyhow::Result<String> {
+    let mut overlay: HostValues =
+        serde_yaml::from_str(overlay).context("parse host overlay values")?;
+    let group = one_mut(&mut overlay.runtime.host_groups, "host overlay hostGroups")?;
+    unique_env(&group.env)?;
+    let declared = |env: &[EnvVar], name: &str| -> anyhow::Result<String> {
+        env.iter()
+            .find(|entry| entry.name == name)
+            .and_then(|entry| entry.value.clone())
+            .with_context(|| format!("host overlay declares no value for {name}"))
+    };
+    let from = format!(
+        "{}--{}--{}",
+        declared(&group.env, "WAMN_ORG")?,
+        declared(&group.env, "WAMN_PROJECT")?,
+        declared(&group.env, "WAMN_EVT_ENV")?,
+    );
+    let to = format!(
+        "{}--{}--{}",
+        identity.org, identity.project, identity.environment
+    );
+    for (name, value) in [
+        ("WAMN_ORG", &identity.org),
+        ("WAMN_EVT_ORG", &identity.org),
+        ("WAMN_PROJECT", &identity.project),
+        ("WAMN_EVT_PROJECT", &identity.project),
+        ("WAMN_EVT_ENV", &identity.environment),
+    ] {
+        env_mut(&mut group.env, name)?.value = Some(value.clone());
+    }
+    let names = group
+        .env
+        .iter_mut()
+        .filter_map(|entry| entry.value_from.as_mut())
+        .map(|source| &mut source.secret_key_ref.name)
+        .chain(
+            group
+                .volumes
+                .iter_mut()
+                .filter_map(|volume| volume.secret.as_mut())
+                .map(|secret| &mut secret.secret_name),
+        );
+    for name in names {
+        if let Some(prefix) = name.strip_suffix(&from) {
+            *name = format!("{prefix}{to}");
+        }
+    }
+    serde_yaml::to_string(&overlay).context("serialize host overlay values")
+}
+
 /// All identity claims consumed by the HTTP component.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]

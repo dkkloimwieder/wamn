@@ -835,3 +835,38 @@ fn host_identity_matches_whole_names_and_accepts_equivalent_yaml_layouts() {
     assert_rendered_identity(&host_template(FIXTURE), &identity).unwrap();
     assert!(assert_rendered_identity("not YAML: [", &identity).is_err());
 }
+
+#[test]
+fn a_supplied_release_moves_the_overlay_to_its_own_identity() {
+    let identity = EventIdentity {
+        org: "dkk".into(),
+        project: OVERLAY.into(),
+        environment: "dev".into(),
+    };
+    let mut input = host_input(OVERLAY);
+    input.event = identity.clone();
+    assert!(
+        render_host_values(BASE, &host_template(OVERLAY), &input)
+            .unwrap_err()
+            .to_string()
+            .contains("missing role Secret")
+    );
+    let moved = overlay_values(&host_template(OVERLAY), &identity).unwrap();
+    assert!(!moved.contains("example"), "{moved}");
+    assert!(moved.contains("wamn-object-store-credentials-dkk--fixture-overlay--dev"));
+    let output = render_host_values(BASE, &moved, &input).unwrap();
+    let overlay: HostValues = serde_yaml::from_str(&output.overlay).unwrap();
+    let env = &overlay.runtime.host_groups[0].env;
+    for name in ["WAMN_ORG", "WAMN_EVT_ORG"] {
+        assert_eq!(value(env, name), "dkk");
+    }
+    assert_rendered_identity(
+        &output.overlay,
+        &HostIdentity {
+            org: "dkk".into(),
+            project: OVERLAY.into(),
+            schema: SCHEMA.into(),
+        },
+    )
+    .unwrap();
+}

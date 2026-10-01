@@ -143,7 +143,7 @@ pub(super) fn render_host(
     use wamn_control_provision::WorkloadRoleFamily;
     use wamn_test_infrastructure::rendering::{
         EventIdentity, HostIdentity, HostRoleSecret, HostValuesInput, assert_rendered_identity,
-        render_host_values,
+        overlay_values, render_host_values,
     };
 
     let HostBinding {
@@ -170,9 +170,20 @@ pub(super) fn render_host(
             name: secret.name.clone(),
         })
         .collect();
+    let event = EventIdentity {
+        org: crate::environment::identity().org.clone(),
+        project: crate::environment::identity().project.clone(),
+        environment: crate::environment::identity().environment.clone(),
+    };
+    let candidate = wamn_control::delivery::Candidate::from_env()?;
+    let mut overlay =
+        std::fs::read_to_string(repository.join("deploy/platform/values-host-wms-pat.yaml"))?;
+    if candidate.is_some() {
+        overlay = overlay_values(&overlay, &event)?;
+    }
     let mut rendered = render_host_values(
         &std::fs::read_to_string(repository.join("deploy/platform/values-host-default.yaml"))?,
-        &std::fs::read_to_string(repository.join("deploy/platform/values-host-wms-pat.yaml"))?,
+        &overlay,
         &HostValuesInput {
             namespace: inputs.host_secret_namespace.clone(),
             host_tag: host_tag.to_owned(),
@@ -183,11 +194,7 @@ pub(super) fn render_host(
             release_artifact_base: inputs.release_artifact_base.clone(),
             manifest_digest: manifest_digest.to_owned(),
             nats_url: nats_url.to_owned(),
-            event: EventIdentity {
-                org: crate::environment::identity().org.clone(),
-                project: crate::environment::identity().project.clone(),
-                environment: crate::environment::identity().environment.clone(),
-            },
+            event,
             guest_secret_name: guest.name.clone(),
             role_secrets,
             object_store_secret_name: Some(format!(
@@ -198,7 +205,7 @@ pub(super) fn render_host(
             )),
         },
     )?;
-    if let Some(candidate) = wamn_control::delivery::Candidate::from_env()? {
+    if let Some(candidate) = candidate {
         rendered.base = crate::delivery::host_values(
             &rendered.base,
             &crate::delivery::image_reference(&candidate.host_image)?,
