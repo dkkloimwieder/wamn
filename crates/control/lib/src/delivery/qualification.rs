@@ -17,6 +17,11 @@ const RECEIVING_CASES: &[&str] = &[
     "route_authentication_live::cluster::postcommit_case::baseline_overlay_and_materializer_progress",
     "route_authentication_live::cluster::queue_recovery::interrupted_durable_queue_item_completes_after_host_restart",
 ];
+// The Receiving cases that touch no overlay, for a release without Acme.
+const RECEIVING_BASE_CASES: &[&str] = &[
+    "route_authentication_live::cluster::route_cases::command_histories",
+    "route_authentication_live::cluster::queue_recovery::interrupted_durable_queue_item_completes_after_host_restart",
+];
 const WMS_CASES: &[&str] = &[
     "cluster::released_wms_routes",
     "cluster::released_wms_routes_retain_committed_work_after_label_failure",
@@ -27,6 +32,7 @@ const RECEIVING_SCHEMAS: &[(&str, &str)] = &[
     ("wamn_receiving", "receiving"),
     ("client_acme_receiving", "receiving"),
 ];
+const RECEIVING_BASE_SCHEMAS: &[(&str, &str)] = &[("wamn_receiving", "receiving")];
 // Existing deployed cases own bounded setup and cleanup inside this outer limit.
 const COMMAND_TIMEOUT: Duration = Duration::from_mins(45);
 /// Workspace directories, from the repository root, whose members change checks can select.
@@ -104,26 +110,37 @@ fn application(candidate: &Candidate) -> anyhow::Result<Application> {
         .packages
         .iter()
         .map(wamn_catalog::PackageCoordinate::package_id)
+        .collect::<std::collections::BTreeSet<_>>()
+        .into_iter()
         .collect();
-    if packages.contains(&"wamn_wms") && !packages.contains(&"wamn_receiving") {
-        Ok(Application {
+    application_for(&packages)
+}
+
+/// The cases that qualify a release, chosen by its exact package set in
+/// sorted order. No case runs that needs a package the release does not carry.
+fn application_for(packages: &[&str]) -> anyhow::Result<Application> {
+    match packages {
+        ["wamn_wms"] => Ok(Application {
             package: "wamn-wms-tests",
             cases: WMS_CASES,
             schemas: WMS_SCHEMAS,
             evidence_env: "WAMN_WMS_EVIDENCE_DIR",
-        })
-    } else if packages.contains(&"wamn_receiving")
-        && packages.contains(&"client_acme_receiving")
-        && !packages.contains(&"wamn_wms")
-    {
-        Ok(Application {
+        }),
+        ["wamn_receiving"] => Ok(Application {
+            package: "wamn-receiving-tests",
+            cases: RECEIVING_BASE_CASES,
+            schemas: RECEIVING_BASE_SCHEMAS,
+            evidence_env: "WAMN_RECEIVING_EVIDENCE_DIR",
+        }),
+        ["client_acme_receiving", "wamn_receiving"] => Ok(Application {
             package: "wamn-receiving-tests",
             cases: RECEIVING_CASES,
             schemas: RECEIVING_SCHEMAS,
             evidence_env: "WAMN_RECEIVING_EVIDENCE_DIR",
-        })
-    } else {
-        anyhow::bail!("the candidate has no supported existing application qualification case")
+        }),
+        _ => {
+            anyhow::bail!("the candidate has no supported existing application qualification case")
+        }
     }
 }
 
@@ -797,6 +814,25 @@ mod tests {
             output(pass, "", 256),
         ] {
             assert!(require_one_case(&failed).is_err());
+        }
+    }
+
+    #[test]
+    fn the_package_set_selects_its_cases_exactly() {
+        let cases = |packages: &[&str]| application_for(packages).map(|app| app.cases);
+        assert_eq!(cases(&["wamn_wms"]).unwrap(), WMS_CASES);
+        assert_eq!(cases(&["wamn_receiving"]).unwrap(), RECEIVING_BASE_CASES);
+        assert_eq!(
+            cases(&["client_acme_receiving", "wamn_receiving"]).unwrap(),
+            RECEIVING_CASES
+        );
+        for refused in [
+            &["client_acme_receiving"][..],
+            &["wamn_receiving", "wamn_wms"],
+            &["client_acme_receiving", "wamn_receiving", "wamn_wms"],
+            &[],
+        ] {
+            assert!(cases(refused).is_err(), "accepted {refused:?}");
         }
     }
 

@@ -69,9 +69,9 @@ Native comparison builds use `tools/journey-image-cache`, as the owned delivery 
 Qualification requires the exact image ID, including the source and release profile labels.
 The application cases consume the supplied artifacts without replacement builds.
 
-The first disposable targets use the existing Receiving and Acme baseline release or the existing WMS route release.
-Receiving runs command histories and baseline overlay compatibility against the same manifest.
-Receiving also runs durable queue recovery after interruption of its combined host.
+The package set of the candidate selects the cases exactly. Any other set fails.
+A Receiving release with Acme runs command histories, baseline overlay compatibility, and durable queue recovery after interruption of its combined host.
+A Receiving release without Acme runs command histories and durable queue recovery, because neither calls an Acme route.
 WMS runs its released routes, partial-label completion, and restart/cache cases against the same supplied manifest and host image.
 Both require exact canonical release bytes, executed success, unchanged artifacts, and successful cleanup.
 Qualification writes pass or fail with the source commit, command results, release inputs, and artifact hashes.
