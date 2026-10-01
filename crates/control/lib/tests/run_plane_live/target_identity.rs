@@ -339,6 +339,24 @@ async fn reconcile_target_identity_guard_live() {
         "correct-target dry-run changed the project plane"
     );
 
+    // Reconcile only reads the registry. The system migration adds the
+    // durability column before the apply (`wamn-rjtf`).
+    let migration = wamn_control_provision::schema_migrations::SYSTEM_MIGRATIONS
+        .iter()
+        .find(|migration| {
+            migration
+                .relative_path
+                .ends_with("0004_env_policy_durability.sql")
+        })
+        .expect("the durability migration is listed");
+    system_su
+        .batch_execute(&format!(
+            "SET ROLE wamn_system; {} RESET ROLE",
+            migration.sql
+        ))
+        .await
+        .expect("apply the durability migration");
+
     reconcile_run_plane::reconcile_run_plane(target_guard_args(
         &system_url,
         &primary_url,
@@ -443,7 +461,7 @@ async fn reconcile_target_identity_guard_live() {
         .get(0);
     assert!(
         carrier_present,
-        "correct apply did not converge the policy carrier"
+        "the durability migration did not add the policy carrier"
     );
 
     let system_converged = target_guard_system_snapshot(&system_su).await;

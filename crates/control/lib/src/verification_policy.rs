@@ -102,7 +102,7 @@ pub(crate) async fn read_authoritative_environment_policy(
     system_database_url: &str,
     source_policy_org: &str,
     environment: &str,
-    ensure_durability_schema: bool,
+    require_durability_column: bool,
 ) -> anyhow::Result<AuthoritativeEnvironmentPolicy> {
     anyhow::ensure!(
         !source_policy_org.is_empty(),
@@ -118,10 +118,7 @@ pub(crate) async fn read_authoritative_environment_policy(
             .batch_execute("SET ROLE wamn_system")
             .await
             .context("assume the environment-policy owner")?;
-        if ensure_durability_schema {
-            crate::env_policies::ensure_env_policy_durability_schema(&source).await?;
-        }
-        let policy = if ensure_durability_schema {
+        let policy = if require_durability_column {
             crate::env_policies::read_env_policy(&source, source_policy_org, environment).await?
         } else {
             crate::env_policies::observe_env_policy(&source, source_policy_org, environment).await?

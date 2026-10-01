@@ -42,7 +42,7 @@
 use anyhow::Context as _;
 use tokio_postgres::NoTls;
 
-use crate::env_policies::{ensure_env_policy_durability_schema, read_env_policies};
+use crate::env_policies::read_env_policies;
 use wamn_control_provision::org::OrgClusters;
 use wamn_control_registry::{EnvPolicy, Org, OrgEnvPolicy, Registry, SCHEMA_VERSION, Template};
 
@@ -183,7 +183,6 @@ async fn record_org(
         .batch_execute("SET ROLE wamn_system")
         .await
         .context("SET ROLE wamn_system")?;
-    ensure_env_policy_durability_schema(client).await?;
     client.batch_execute("BEGIN").await.context("BEGIN")?;
     let result = record_org_rows(client, org, stamped).await;
     match result {
