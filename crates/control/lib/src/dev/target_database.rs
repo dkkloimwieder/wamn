@@ -729,8 +729,8 @@ mod tests {
         document["target_template_database"] = json!("target_template");
         document["target_privileges_file"] = json!(privileges);
         document["target_database_acl_file"] = json!(acl);
-        document["local_artifacts"] =
-            json!({"directory": directory, "flow_http_component": directory.join("http.wasm")});
+        document["local_artifacts"] = json!({"directory": directory, "flow_http_component": directory.join("http.wasm"),
+                "materializer_component": directory.join("materializer.wasm")});
         let config = super::super::config::parse_config(&serde_json::to_vec(&document)?)?;
         let (admin, admin_driver) = tokio_postgres::connect(admin_database.url(), NoTls).await?;
         let admin_driver = tokio::spawn(admin_driver);

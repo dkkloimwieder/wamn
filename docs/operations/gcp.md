@@ -906,7 +906,7 @@ DOCKER_CONFIG=$D $W -o json oci push $R:materializer apps/target/wasm32-wasip2/r
 rm -rf $D
 ```
 
-Render both workloads with the example program, which calls `render_http_workload` and `render_materializer` of the kind cases, and apply them:
+Render both workloads with the example program, which calls `rendering::render_http_workload` of the kind cases and `wamn_control_provision::materializer_workload::render_materializer`, and apply them:
 
 ```bash
 cargo run -p wamn-test-infrastructure --example workload_files -- deploy/gcp $R@<flow-http digest> $R@<materializer digest>

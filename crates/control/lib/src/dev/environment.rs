@@ -64,6 +64,60 @@ pub struct DevEnvironmentInputs {
     pub credentials_file: Option<PathBuf>,
     /// The CDC reader that `wamn dev up` enabled.
     pub cdc_reader: Option<super::config::CdcReader>,
+    /// The event-broker credential the platform materializer consumes with.
+    pub event_materializer_username: String,
+    pub event_materializer_password_file: PathBuf,
+}
+
+/// The materializer's events binding inside the private root.
+const MATERIALIZER_NATS_BINDING_FILE: &str = "materializer-nats.json";
+
+/// Write the materializer's events binding in the shape that the cluster
+/// mounts from its Secret: the server, the credential, its private inbox, and
+/// the environment's source stream and subjects.
+fn write_materializer_binding(
+    root: &Path,
+    inputs: &DevEnvironmentInputs,
+    identity: &DevActivationIdentity,
+) -> anyhow::Result<PathBuf> {
+    use std::io::Write as _;
+    use std::os::unix::fs::{OpenOptionsExt as _, PermissionsExt as _};
+
+    let password = std::fs::read_to_string(&inputs.event_materializer_password_file)
+        .context("read the event materializer password file")?;
+    let source = wamn_control_provision::events::source_stream_config(
+        &wamn_control_registry::Triple::new(
+            &identity.org,
+            &identity.project,
+            identity.environment.clone(),
+        ),
+        inputs.stream_replicas,
+        Duration::from_secs(inputs.dup_window_secs),
+    );
+    let binding = serde_json::json!({
+        "servers": inputs.event_nats_url,
+        "username": inputs.event_materializer_username,
+        "password": password,
+        "inbox-prefix": format!("_INBOX_{}", inputs.event_materializer_username),
+        "stream-allow": source.name,
+        "subject-allow": source.subjects.join(","),
+        "subscription-capacity-bytes": "4194304",
+        "subscription-capacity": "64",
+        "max-in-flight": "64"
+    });
+    let path = root.join(MATERIALIZER_NATS_BINDING_FILE);
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .mode(0o600)
+        .open(&path)
+        .with_context(|| format!("create {}", path.display()))?;
+    // A file left by an earlier run keeps its old mode, so set it again.
+    file.set_permissions(std::fs::Permissions::from_mode(0o600))?;
+    file.write_all(&serde_json::to_vec(&binding)?)
+        .with_context(|| format!("write {}", path.display()))?;
+    Ok(path)
 }
 
 /// Everything the strict `wamn dev` configuration is written from.
@@ -910,6 +964,7 @@ pub fn write_dev_config(
     // compilation cache is the point of keeping it.
     std::fs::create_dir_all(&wasmtime_cache)
         .context("create the product-command Wasmtime cache")?;
+    let materializer_binding = write_materializer_binding(root, inputs, identity)?;
     let mut config = serde_json::json!({
         "target_database_url": route.database_url.as_str(),
         // The loop recreates the target when its schema inputs change, which
@@ -956,6 +1011,7 @@ pub fn write_dev_config(
         "runner": identity.runner.as_str(),
         "host_binary": &inputs.host_binary,
         "wasmtime_cache_dir": wasmtime_cache,
+        "materializer_nats_binding_file": materializer_binding,
     });
     // A separate insert keeps the literal above inside the json! recursion limit.
     config["platform_domain"] = inputs.platform_domain.as_str().into();

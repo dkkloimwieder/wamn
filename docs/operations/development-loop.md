@@ -8,7 +8,7 @@ Local saves do not publish components or release manifests to a registry.
 
 ## [WAMN-DEV-ENVIRONMENT] Developer session
 
-Build `wamn`, `wamn-host`, `wamn-identity`, and the flow-http component before starting a session.
+Build `wamn`, `wamn-host`, `wamn-identity`, the flow-http component, and the materializer component before starting a session.
 If you change the manifest vocabulary of `wamn.json`, build `wamn` again first.
 The loop runs the binary you built, so an older one refuses the manifest with `unknown field`.
 Use only disposable PostgreSQL 18, scheduler NATS, event NATS, and telemetry services.
@@ -25,7 +25,8 @@ Read the current required arguments from the existing command:
 
 Supply an explicit environment directory, package roots, built binaries, and service endpoints.
 Supply `--flow-http-component` with the absolute path to the built `http_route.wasm`.
-The emitted `local_artifacts` configuration names the local output directory and this component.
+Supply `--materializer-component` with the absolute path to the `materializer.wasm` that `tools/build-components` builds.
+The emitted `local_artifacts` configuration names the local output directory and these components.
 For declared connections, pass `--local-bindings` with an absolute path to the selection file.
 The emitted configuration stores that path in `local_artifacts.bindings`.
 If the host needs credentials, pass `--credentials-file` with a file of the form `{project: {handle: secret}}`.
@@ -48,6 +49,19 @@ The PostgreSQL server must run with `wal_level=logical`.
 At each activation, the loop applies the CDC SQL of the verb to the target and starts `wamn-cdc-reader`.
 The reader logs to `cdc-reader.log` in the environment directory, and the loop waits until it streams.
 The loop stops the reader before it replaces the target, and the target lease drops the replication slot before the drop.
+
+Use `--event-materializer-username` and `--event-materializer-password-file` for the credential that the materializer consumes with.
+The command writes `materializer-nats.json` into the environment directory with mode 0600, in the shape of the cluster's binding Secret.
+The file names the server, the credential, its private inbox prefix, and the environment's source stream and subjects.
+`materializer_nats_binding_file` in `dev.json` names the file, and the loop passes it to the host as `--materializer-nats-binding-file`.
+
+The loop runs the platform materializer as a second workload beside the release, as the cluster does.
+At each activation, the loop renders `deploy/platform/materializer.example.yaml` with `render_materializer`, the renderer of the cluster files.
+The rendering uses the deployed fetch and sweep intervals of `wamn-control-provision`.
+The loop writes the result with the local component bytes to `materializer.json` in the local output directory.
+The materializer does not enter the local admission digest, the release manifest, or the preload.
+The host starts it after the flow-http workload runs, and the loop waits until it runs.
+The materializer restarts with the host on each loop change. Its JetStream consumers are durable, so a restart resumes them.
 
 The command starts `wamn-identity`, writes private `dev.json`, prints the next developer command, and exits.
 The identity process keeps running across application builds and operator exits.

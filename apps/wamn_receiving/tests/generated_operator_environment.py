@@ -23,19 +23,23 @@ def main():
         "WAMN_DEV_ENV_ROUTE_HOST": "WAMN_ROUTE_HOST",
     }.items():
         environment[target] = environment[original]
-    environment["WAMN_DEV_ENV_ROOT"] = str(root / "environment")
     environment["WAMN_DEV_ENV_PLATFORM_DOMAIN"] = "example.invalid"
     wamn = environment["WAMN_RECEIVING_DEV_BIN"]
     subprocess.run([
         wamn, "dev", "up", "--package", str(source / "apps/wamn_receiving"),
         "--package", str(source / "apps/client_acme_receiving"),
     ], env=environment, check=True)
-    return subprocess.call([
-        sys.executable, str(source / "apps/wamn_receiving/tests/generated_operator_live.py"),
-        "--wamn", wamn, "--config", str(root / "environment/dev.json"),
-        "--overlay-root", str(source / "apps/client_acme_receiving"),
-        "--evidence-dir", str(root / "result"),
-    ], env=environment)
+    try:
+        return subprocess.call([
+            sys.executable, str(source / "apps/wamn_receiving/tests/generated_operator_live.py"),
+            "--wamn", wamn, "--config", str(Path(environment["WAMN_DEV_ENV_ROOT"]) / "dev.json"),
+            "--overlay-root", str(source / "apps/client_acme_receiving"),
+            "--evidence-dir", str(root / "result"),
+        ], env=environment)
+    finally:
+        # The root survives runs, so the environment ends while its database
+        # still runs, and the next run can stand up again.
+        subprocess.run([wamn, "dev", "down"], env=environment, check=True)
 
 
 if __name__ == "__main__":

@@ -42,6 +42,11 @@ const HOST_REAP_TIMEOUT: Duration = Duration::from_secs(5);
 
 const FLOW_HTTP_NAME: &str = "flow-http";
 const FLOW_HTTP_WORKLOAD_ID: &str = "wamn-dev-flow-http";
+const MATERIALIZER_WORKLOAD_ID: &str = "wamn-dev-materializer";
+/// The platform materializer's one template, which the cluster files and the
+/// cluster tests render too.
+const MATERIALIZER_TEMPLATE: &str =
+    include_str!("../../../../../deploy/platform/materializer.example.yaml");
 const LOOPBACK_HTTP_BIND: &str = "127.0.0.1:0";
 const OTEL_EXPORTER_OTLP_PROTOCOL: &str = "grpc";
 const OTEL_BSP_SCHEDULE_DELAY_MILLIS: &str = "1";
@@ -589,7 +594,199 @@ pub(super) fn prepare_local(request: &DevActivationRequest<'_>) -> Result<(), De
             source,
         )
     })?;
-    Ok(())
+    stage_materializer(request.config)
+}
+
+/// Stage the platform materializer beside the release. It enters neither the
+/// local admission digest nor the release manifest.
+fn stage_materializer(config: &DevConfig) -> Result<(), DevActivationError> {
+    let staged = (|| -> anyhow::Result<()> {
+        let local = config.local_artifacts();
+        let bytes = std::fs::read(&local.materializer_component).with_context(|| {
+            format!(
+                "read the materializer component {}",
+                local.materializer_component.display()
+            )
+        })?;
+        let digest = wamn_engine::component_admission::component_digest(&bytes);
+        let path = wamn_engine::artifact_source::local_component_path(&local.directory, &digest)
+            .expect("a computed component digest is valid");
+        std::fs::write(path, bytes)?;
+        let request = materializer_request(config, &digest)?;
+        std::fs::write(
+            local.directory.join("materializer.json"),
+            serde_json::to_vec(&request)?,
+        )?;
+        Ok(())
+    })();
+    staged.map_err(|source| {
+        DevActivationError::with_source(
+            DevActivationErrorType::InvalidInput,
+            "local-materializer",
+            format!("cannot stage the local materializer: {source:#}"),
+            NativeBackendError::from(source),
+        )
+    })
+}
+
+/// The cluster's materializer workload for this environment, rendered from its
+/// template with the cluster's settings, and with the local bytes of `digest`.
+fn materializer_request(
+    config: &DevConfig,
+    digest: &str,
+) -> anyhow::Result<v2::WorkloadStartRequest> {
+    use wamn_control_provision::materializer_workload::{
+        EventIdentity, FETCH_MS, MaterializerInput, SWEEP_MS, render_materializer,
+    };
+
+    let identity = config.activation_identity();
+    let source = wamn_control_provision::events::source_stream_config(
+        &wamn_control_registry::Triple::new(
+            &identity.org,
+            &identity.project,
+            identity.environment.clone(),
+        ),
+        config.stream_replicas(),
+        Duration::from_secs(config.dup_window_secs()),
+    );
+    let rendered = render_materializer(
+        MATERIALIZER_TEMPLATE,
+        &MaterializerInput {
+            workload: format!("{}-materializer", identity.project),
+            namespace: identity.environment.clone(),
+            image: digest.to_owned(),
+            tenant: identity.tenant.clone(),
+            event: EventIdentity {
+                org: identity.org.clone(),
+                project: identity.project.clone(),
+                environment: identity.environment.clone(),
+            },
+            event_stream: source.name,
+            fetch_ms: FETCH_MS,
+            sweep_ms: SWEEP_MS,
+        },
+    )
+    .context("render the materializer workload")?;
+    let document: rendered::Document =
+        serde_yaml::from_str(&rendered).context("read the rendered materializer workload")?;
+    let workload = document.spec.template.spec;
+    let resources = workload.service.local_resources;
+    Ok(v2::WorkloadStartRequest {
+        workload_id: MATERIALIZER_WORKLOAD_ID.to_owned(),
+        workload: Some(v2::Workload {
+            namespace: identity.environment.clone(),
+            name: document.metadata.name,
+            annotations: HashMap::new(),
+            service: Some(v2::Service {
+                image: digest.to_owned(),
+                local_resources: Some(v2::LocalResources {
+                    memory_limit_mb: 0,
+                    cpu_limit: 0,
+                    config: resources.config,
+                    environment: resources.environment.config,
+                    volume_mounts: Vec::new(),
+                    allowed_hosts: Vec::new(),
+                    allowed_ip_name_lookups: resources.allowed_ip_name_lookups,
+                    allowed_host_loopback_ports: Vec::new(),
+                }),
+                max_restarts: workload.service.max_restarts,
+                image_pull_secret: None,
+                image_pull_policy: v2::ImagePullPolicy::Never.into(),
+            }),
+            wit_world: Some(v2::WitWorld {
+                components: Vec::new(),
+                host_interfaces: workload
+                    .host_interfaces
+                    .into_iter()
+                    .map(|interface| v2::WitInterface {
+                        namespace: interface.namespace,
+                        package: interface.package,
+                        version: interface.version,
+                        interfaces: interface.interfaces,
+                        config: interface.config,
+                        name: interface.name.unwrap_or_default(),
+                    })
+                    .collect(),
+            }),
+            volumes: Vec::new(),
+        }),
+    })
+}
+
+/// The fields of a rendered materializer workload that the loop starts. A
+/// field the template gains that the loop does not map refuses here, so the
+/// loop cannot run less than the cluster runs.
+mod rendered {
+    use std::collections::HashMap;
+
+    use serde::Deserialize;
+
+    #[derive(Deserialize)]
+    pub(super) struct Document {
+        pub(super) metadata: Metadata,
+        pub(super) spec: Spec,
+    }
+
+    #[derive(Deserialize)]
+    pub(super) struct Metadata {
+        pub(super) name: String,
+    }
+
+    #[derive(Deserialize)]
+    pub(super) struct Spec {
+        pub(super) template: Template,
+    }
+
+    #[derive(Deserialize)]
+    pub(super) struct Template {
+        pub(super) spec: Workload,
+    }
+
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    pub(super) struct Workload {
+        pub(super) host_interfaces: Vec<Interface>,
+        pub(super) service: Service,
+    }
+
+    #[derive(Deserialize)]
+    #[serde(deny_unknown_fields)]
+    pub(super) struct Interface {
+        pub(super) namespace: String,
+        pub(super) package: String,
+        pub(super) version: String,
+        pub(super) interfaces: Vec<String>,
+        #[serde(default)]
+        pub(super) name: Option<String>,
+        #[serde(default)]
+        pub(super) config: HashMap<String, String>,
+    }
+
+    #[derive(Deserialize)]
+    #[serde(deny_unknown_fields, rename_all = "camelCase")]
+    pub(super) struct Service {
+        #[expect(dead_code, reason = "the loop starts local bytes, not the image")]
+        pub(super) image: String,
+        #[expect(dead_code, reason = "the loop starts local bytes and pulls nothing")]
+        pub(super) image_pull_policy: String,
+        pub(super) max_restarts: u64,
+        pub(super) local_resources: Resources,
+    }
+
+    #[derive(Deserialize)]
+    #[serde(deny_unknown_fields, rename_all = "camelCase")]
+    pub(super) struct Resources {
+        #[serde(default)]
+        pub(super) allowed_ip_name_lookups: Vec<String>,
+        pub(super) config: HashMap<String, String>,
+        pub(super) environment: Environment,
+    }
+
+    #[derive(Deserialize)]
+    #[serde(deny_unknown_fields)]
+    pub(super) struct Environment {
+        pub(super) config: HashMap<String, String>,
+    }
 }
 
 /// Start one local host and its flow-http workload through native NATS.
@@ -676,6 +873,12 @@ fn host_process_spec(request: &DevActivationRequest<'_>) -> HostProcessSpec {
             .to_owned(),
         "--wasmtime-cache-dir".to_owned(),
         request.wasmtime_cache_dir.display().to_string(),
+        "--materializer-nats-binding-file".to_owned(),
+        request
+            .config
+            .materializer_nats_binding_file()
+            .display()
+            .to_string(),
         "--project".to_owned(),
         identity.project.clone(),
         "--org".to_owned(),
@@ -941,6 +1144,32 @@ where
                         "status-local-workload",
                         response.workload_status,
                         FLOW_HTTP_WORKLOAD_ID,
+                    )?;
+                }
+                tokio::time::sleep(Duration::from_millis(100)).await;
+            }
+
+            // The host starts the materializer after flow-http runs.
+            loop {
+                let response: v2::WorkloadStatusResponse = request_json(
+                    &mut backend,
+                    &rpc_subject(selected, "workload.status"),
+                    &v2::WorkloadStatusRequest {
+                        workload_id: MATERIALIZER_WORKLOAD_ID.to_owned(),
+                    },
+                    "status-local-materializer",
+                )
+                .await?;
+                if response.workload_status.as_ref().is_some_and(|status| {
+                    status.workload_state == v2::WorkloadState::Running as i32
+                }) {
+                    break;
+                }
+                if Instant::now() >= deadline {
+                    require_running(
+                        "status-local-materializer",
+                        response.workload_status,
+                        MATERIALIZER_WORKLOAD_ID,
                     )?;
                 }
                 tokio::time::sleep(Duration::from_millis(100)).await;
@@ -1571,7 +1800,8 @@ mod tests {
             "route_host": "fixture.localhost",
             "platform_domain": "example.invalid",
             "local_artifacts": {
-                "directory": "/tmp/wamn-local-candidate", "flow_http_component": "/tmp/flow-http.wasm"
+                "directory": "/tmp/wamn-local-candidate", "flow_http_component": "/tmp/flow-http.wasm",
+                "materializer_component": "/tmp/materializer.wasm"
             },
             "package_sources": [],
             "effective_release_id": 1,
@@ -1585,7 +1815,8 @@ mod tests {
             "host_name": "wamn-dev-fixture-1",
             "runner": "wamn-dev-fixture-1",
             "host_binary": "/opt/wamn/bin/wamn-host",
-            "wasmtime_cache_dir": "/tmp/wamn-dev-cache"
+            "wasmtime_cache_dir": "/tmp/wamn-dev-cache",
+            "materializer_nats_binding_file": "/tmp/wamn-dev/materializer-nats.json"
         })
     }
 
@@ -1809,10 +2040,11 @@ mod tests {
     async fn local_activation_uses_native_startup_without_registry_requests() {
         let fixture = host_log_fixture();
         let source = fixture.0.join("flow-http-source.wasm");
+        let materializer = fixture.0.join("materializer-source.wasm");
         let directory = fixture.0.join("candidate");
         let mut document = config_document();
-        document["local_artifacts"] =
-            json!({"directory": directory, "flow_http_component": source});
+        document["local_artifacts"] = json!({"directory": directory, "flow_http_component": source,
+            "materializer_component": materializer});
         let config = parse_config(&serde_json::to_vec(&document).unwrap()).unwrap();
         let mut resolve = wit_parser::Resolve::new();
         let package = resolve
@@ -1838,6 +2070,8 @@ mod tests {
             .encode()
             .unwrap();
         std::fs::write(&source, &component_bytes).unwrap();
+        let materializer_bytes = b"local materializer fixture";
+        std::fs::write(&materializer, materializer_bytes).unwrap();
         std::fs::create_dir(&directory).unwrap();
         let admission = b"local-admission-fixture";
         let admission_digest = wamn_engine::component_admission::component_digest(admission);
@@ -1862,6 +2096,46 @@ mod tests {
         };
         prepare_local(&request).expect("Release stages validated workload bytes");
         let staged_workload = std::fs::read(directory.join("flow-http.json")).unwrap();
+        let staged_materializer: v2::WorkloadStartRequest =
+            serde_json::from_slice(&std::fs::read(directory.join("materializer.json")).unwrap())
+                .unwrap();
+        assert_eq!(staged_materializer.workload_id, MATERIALIZER_WORKLOAD_ID);
+        let staged = staged_materializer.workload.unwrap();
+        assert_eq!(staged.name, format!("{}-materializer", identity.project));
+        let service = staged.service.unwrap();
+        let materializer_digest =
+            wamn_engine::component_admission::component_digest(materializer_bytes);
+        assert_eq!(service.image, materializer_digest);
+        assert_eq!(service.image_pull_policy, v2::ImagePullPolicy::Never as i32);
+        assert_eq!(
+            std::fs::read(
+                wamn_engine::artifact_source::local_component_path(
+                    &directory,
+                    &materializer_digest
+                )
+                .unwrap()
+            )
+            .unwrap(),
+            materializer_bytes
+        );
+        let resources = service.local_resources.unwrap();
+        assert_eq!(
+            resources.config["wamn.postgres.authority"],
+            "event-materializer"
+        );
+        assert_eq!(resources.config["wamn.tenant"], identity.tenant);
+        assert_eq!(resources.environment["WAMN_MAT_MAX_DELIVER"], "5");
+        assert_eq!(
+            resources.environment["WAMN_MAT_FETCH_MS"],
+            wamn_control_provision::materializer_workload::FETCH_MS.to_string()
+        );
+        let world = staged.wit_world.unwrap();
+        assert!(world.components.is_empty());
+        assert!(world.host_interfaces.iter().any(|interface| {
+            interface.namespace == "wasmcloud"
+                && interface.package == "nats"
+                && interface.name == "events"
+        }));
         let component_path = wamn_engine::artifact_source::local_component_path(
             &directory,
             &wamn_engine::component_admission::component_digest(&component_bytes),
@@ -1892,6 +2166,9 @@ mod tests {
                 &identity.host_group,
             )],
             [
+                response(&v2::WorkloadStatusResponse {
+                    workload_status: Some(status(v2::WorkloadState::Running)),
+                }),
                 response(&v2::WorkloadStatusResponse {
                     workload_status: Some(status(v2::WorkloadState::Running)),
                 }),
@@ -1955,6 +2232,9 @@ mod tests {
                 response(&v2::WorkloadStatusResponse {
                     workload_status: Some(status(v2::WorkloadState::Running)),
                 }),
+                response(&v2::WorkloadStatusResponse {
+                    workload_status: Some(status(v2::WorkloadState::Running)),
+                }),
                 response(&v2::WorkloadStopResponse {
                     workload_status: Some(status(v2::WorkloadState::Stopping)),
                 }),
@@ -2011,6 +2291,8 @@ mod tests {
             "",
             "--wasmtime-cache-dir",
             "/tmp/wamn-dev-cache",
+            "--materializer-nats-binding-file",
+            "/tmp/wamn-dev/materializer-nats.json",
             "--project",
             "fixture",
             "--org",
@@ -2082,8 +2364,8 @@ mod tests {
             .expect("request lock is not poisoned");
         assert_eq!(
             requests.len(),
-            3,
-            "running status, one status reply, then stop"
+            4,
+            "flow-http running, the materializer running, one status reply, then stop"
         );
         assert_eq!(
             requests
@@ -2093,9 +2375,13 @@ mod tests {
             [
                 "runtime.host.selected-host-id.workload.status",
                 "runtime.host.selected-host-id.workload.status",
+                "runtime.host.selected-host-id.workload.status",
                 "runtime.host.selected-host-id.workload.stop",
             ]
         );
+        let polled: v2::WorkloadStatusRequest =
+            serde_json::from_slice(&requests[1].1).expect("the second status request decodes");
+        assert_eq!(polled.workload_id, MATERIALIZER_WORKLOAD_ID);
         let incoming_http = workload
             .workload
             .as_ref()
@@ -2123,6 +2409,7 @@ mod tests {
                 Event::Spawn,
                 Event::Heartbeat,
                 Event::Heartbeat,
+                Event::Request("runtime.host.selected-host-id.workload.status".to_owned()),
                 Event::Request("runtime.host.selected-host-id.workload.status".to_owned()),
                 Event::Request("runtime.host.selected-host-id.workload.status".to_owned()),
                 Event::Request("runtime.host.selected-host-id.workload.stop".to_owned()),

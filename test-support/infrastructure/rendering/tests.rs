@@ -181,7 +181,6 @@ __CREDENTIALS_MOUNT__
           cpu: "6"
 "#;
 const HTTP: &str = include_str!("../../../deploy/platform/http-route-workload.example.yaml");
-const MATERIALIZER: &str = include_str!("../../../deploy/platform/materializer.example.yaml");
 const KIND: &str = include_str!("../../../deploy/infra/kind-config.yaml");
 
 #[test]
@@ -642,127 +641,6 @@ fn http_workload_requires_the_service_workload_and_http_handler_once() {
     }
 }
 
-fn materializer_input() -> MaterializerInput {
-    MaterializerInput {
-        workload: "fixture-materializer".into(),
-        namespace: "warehouse-eu-3".into(),
-        image: "registry.test.invalid:5000/materializer@sha256:abc123".into(),
-        tenant: "fixture-route-auth".into(),
-        event: event(FIXTURE),
-        event_stream: "EVT_7_example_7_fixture_3_dev".into(),
-        fetch_ms: 500,
-        sweep_ms: 500,
-    }
-}
-
-#[test]
-fn materializer_renders_each_identity_and_preserves_native_binding_and_retry() {
-    let first = materializer_input();
-    let second = MaterializerInput {
-        workload: "hopper-materializer".into(),
-        tenant: "quay-9-route-auth".into(),
-        event: EventIdentity {
-            org: "zamboni".into(),
-            project: "quay9".into(),
-            environment: "stage7".into(),
-        },
-        event_stream: "EVT_7_zamboni_5_quay9_6_stage7".into(),
-        fetch_ms: 131,
-        sweep_ms: 137,
-        ..first.clone()
-    };
-    let original: MaterializerDocument = serde_yaml::from_str(MATERIALIZER).unwrap();
-    for input in [first, second] {
-        let rendered = render_materializer(MATERIALIZER, &input).unwrap();
-        let document: MaterializerDocument = serde_yaml::from_str(&rendered).unwrap();
-        assert_eq!(document.metadata.name, input.workload);
-        assert_eq!(document.metadata.namespace, input.namespace);
-        let spec = &document.spec.template.spec;
-        assert_eq!(spec.environment, input.namespace);
-        assert_eq!(spec.service.image, input.image);
-        let claims = &spec.service.local_resources.config;
-        assert_eq!(claims.tenant, input.tenant);
-        assert_eq!(claims.project, input.event.project);
-        assert_eq!(claims.environment, input.event.environment);
-        assert_eq!(claims.authority, MaterializerAuthority::EventMaterializer);
-        let environment = &spec.service.local_resources.environment.config;
-        assert_eq!(environment.stream, input.event_stream);
-        assert_eq!(environment.org, input.event.org);
-        assert_eq!(environment.project, input.event.project);
-        assert_eq!(environment.environment, input.event.environment);
-        assert_eq!(environment.tenant, input.tenant);
-        assert_eq!(
-            environment.fetch_ms.as_deref(),
-            Some(input.fetch_ms.to_string().as_str())
-        );
-        assert_eq!(
-            environment.sweep_ms.as_deref(),
-            Some(input.sweep_ms.to_string().as_str())
-        );
-        assert_eq!(environment.max_deliver, "5");
-        assert_eq!(
-            spec.host_interfaces,
-            original.spec.template.spec.host_interfaces
-        );
-        let native = spec
-            .host_interfaces
-            .iter()
-            .find(|interface| interface.namespace == "wasmcloud" && interface.package == "nats")
-            .unwrap();
-        assert_eq!(native.name.as_deref(), Some("events"));
-        assert_eq!(native.interfaces, ["types", "jetstream"]);
-        let registration = spec
-            .host_interfaces
-            .iter()
-            .find(|interface| interface.namespace == "wamn" && interface.package == "jetstream")
-            .unwrap();
-        assert_eq!(registration.interfaces, ["types", "registration"]);
-    }
-}
-
-#[test]
-fn materializer_refuses_missing_identity_extra_subscription_fields_and_credentials() {
-    let input = materializer_input();
-    for field in [
-        "WAMN_MAT_STREAM",
-        "WAMN_MAT_ORG",
-        "WAMN_MAT_PROJECT",
-        "WAMN_MAT_ENV",
-        "WAMN_MAT_TENANT",
-    ] {
-        let mut document: Value = serde_yaml::from_str(MATERIALIZER).unwrap();
-        document["spec"]["template"]["spec"]["service"]["localResources"]["environment"]["config"]
-            .as_mapping_mut()
-            .unwrap()
-            .remove(Value::from(field));
-        assert!(
-            format!(
-                "{:#}",
-                render_materializer(&serde_yaml::to_string(&document).unwrap(), &input)
-                    .unwrap_err()
-            )
-            .contains(field)
-        );
-    }
-    for field in [
-        "WAMN_MAT_LEGACY_TENANT",
-        "WAMN_EVT_NATS_PASSWORD",
-        "WAMN_MAT_NATS_BINDING_FILE",
-    ] {
-        let mut document: Value = serde_yaml::from_str(MATERIALIZER).unwrap();
-        document["spec"]["template"]["spec"]["service"]["localResources"]["environment"]["config"]
-            [field] = Value::from("t1");
-        assert!(
-            format!(
-                "{:#}",
-                render_materializer(&serde_yaml::to_string(&document).unwrap(), &input)
-                    .unwrap_err()
-            )
-            .contains(field)
-        );
-    }
-}
-
 #[test]
 fn yaml_serialization_keeps_caller_values_as_single_values() {
     let mut input = http_input(FIXTURE, "default");
@@ -825,54 +703,6 @@ fn kind_configuration_keeps_three_nodes_without_host_port_mappings() {
 
 #[test]
 fn workload_documents_refuse_missing_required_fields_and_wrong_types() {
-    let input = materializer_input();
-    for path in [
-        vec!["metadata", "name"],
-        vec!["metadata", "namespace"],
-        vec!["spec", "template", "spec", "environment"],
-        vec!["spec", "template", "spec", "service", "image"],
-        vec![
-            "spec",
-            "template",
-            "spec",
-            "service",
-            "localResources",
-            "config",
-            "wamn.tenant",
-        ],
-        vec![
-            "spec",
-            "template",
-            "spec",
-            "service",
-            "localResources",
-            "config",
-            "wamn.project",
-        ],
-        vec![
-            "spec",
-            "template",
-            "spec",
-            "service",
-            "localResources",
-            "config",
-            "wamn.environment",
-        ],
-    ] {
-        let mut document: Value = serde_yaml::from_str(MATERIALIZER).unwrap();
-        let mut parent = &mut document;
-        for part in &path[..path.len() - 1] {
-            parent = &mut parent[*part];
-        }
-        parent
-            .as_mapping_mut()
-            .unwrap()
-            .remove(Value::from(*path.last().unwrap()));
-        assert!(
-            render_materializer(&serde_yaml::to_string(&document).unwrap(), &input).is_err(),
-            "{path:?}"
-        );
-    }
     let mut document: Value = serde_yaml::from_str(BASE).unwrap();
     document["runtime"]["hostGroups"][0]["replicas"] = Value::from("three");
     assert!(

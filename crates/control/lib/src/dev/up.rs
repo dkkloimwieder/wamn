@@ -36,6 +36,11 @@ pub struct DevUpRequest {
     /// The event-broker credential the reader publishes change events with.
     pub event_publisher_username: String,
     pub event_publisher_password_file: PathBuf,
+    /// The built platform materializer the loop runs beside the release.
+    pub materializer_component: PathBuf,
+    /// The event-broker credential the materializer consumes with.
+    pub event_materializer_username: String,
+    pub event_materializer_password_file: PathBuf,
 }
 
 /// The private copy of the host credentials file inside the root.
@@ -81,6 +86,15 @@ pub async fn provision_environment(mut args: DevUpRequest) -> anyhow::Result<Pat
                 args.flow_http_component.display()
             )
         })?,
+        materializer_component: args
+            .materializer_component
+            .canonicalize()
+            .with_context(|| {
+                format!(
+                    "resolve local materializer component {}",
+                    args.materializer_component.display()
+                )
+            })?,
     };
     let mut inputs = DevEnvironmentInputs {
         local_artifacts,
@@ -98,6 +112,8 @@ pub async fn provision_environment(mut args: DevUpRequest) -> anyhow::Result<Pat
         package_sources,
         credentials_file,
         cdc_reader: None,
+        event_materializer_username: args.event_materializer_username.clone(),
+        event_materializer_password_file: args.event_materializer_password_file.clone(),
     };
 
     let (admin, admin_task) = connect(&args.system_database_url).await?;
