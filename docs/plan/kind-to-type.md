@@ -513,9 +513,14 @@ os.close(fd)' $A
    tools/delivery-owned build-native "$DELIVERY_TARGET"
    ```
 
-2. Build the guests with `tools/build-components all` (`gcp.md` §3.20). Each sha256 must equal the value recorded in A12.
+2. Build the guests into `$DELIVERY_TARGET` (`gcp.md` §3.20). `prepare-release` reads the guests there, and `qualify-release` rebuilds them there (`wamn-ld93.33.5`). Each sha256 must equal the value recorded in A12:
+
+   ```bash
+   CARGO_TARGET_DIR="$DELIVERY_TARGET" tools/build-components all
+   ```
+
 3. Build and push the host, identity and gates images by source identity (`gcp.md` §3.4). Record the three digests. Set `IDENTITY_IMAGE=us-central1-docker.pkg.dev/wamn-dev/wamn/wamn-identity:src-<identity>@<digest>` and `GATES_IMAGE=us-central1-docker.pkg.dev/wamn-dev/wamn/wamn-gates:src-<identity>@<digest>`. The kind cases of `qualify-release` start the identity service and the gates from these two images (`docs/operations/delivery.md` §Candidate qualification, `docs/plan/release-qualification.md` §4.4). Set `HOST_IMAGE=us-central1-docker.pkg.dev/wamn-dev/wamn/wamn-host:src-<identity>@<digest>`. The identity image carries the renamed `principals.type` reads of `services/identity/src/password.rs:251`, `:370`, `:482` (§4.5 group "Identity service"). The CDC reader image does not change, because the CDC readers keep running (§4.6, §4.7 step 1).
-4. Push each distinct workload guest file once with `wash`, as `gcp.md` §3.20 does. `http_route.wasm` goes to `components/flow-http` and `materializer.wasm` goes to `components/materializer`. The tag of each push is the sha256 hex of its file, the tag rule of application components (`crates/control/lib/src/push_component.rs:523`). Receiving and WMS run the same bytes, so both name the same digest. The running workloads name their guests by digest (`gcp.md:868`), so a new push does not move them. Record the two pushed digests. Owner ruling of 2026-09-30 on `wamn-orba`.
+4. Push each distinct workload guest file once with `wash`, as `gcp.md` §3.20 does, from `$DELIVERY_TARGET/wasm32-wasip2/release`. `http_route.wasm` goes to `components/flow-http` and `materializer.wasm` goes to `components/materializer`. The tag of each push is the sha256 hex of its file, the tag rule of application components (`crates/control/lib/src/push_component.rs:523`). Receiving and WMS run the same bytes, so both name the same digest. The running workloads name their guests by digest (`gcp.md:868`), so a new push does not move them. Record the two pushed digests. Owner ruling of 2026-09-30 on `wamn-orba`.
 5. Run the ops-schema query of §4.3.4 on wamn_system and the PAT Secret listing of §4.3.5. Record both answers.
 6. Run the check query of §4.3 on the three databases. Record the result. It must equal the §4.1 names for that database plus the function bodies of §4.3.
 7. Choose the gate branch of B8 step 3. Read the `VALID UNTIL` of the generation `a` roles in the gate files of `gcp.md` §5.3, and the expiry of the WMS management-author PAT. `G` names the private directory of those files. B0 runs before B2, so the query joins on columns that B2 does not rename:
@@ -744,12 +749,12 @@ The hosts stay stopped until B10. At this point the host values name only format
 
    ```bash
    target/debug/wamn-ctl push-component --package apps/wamn_receiving \
-     --component-bytes apps/target/virtualized/std-empty-environment/receiving.wasm \
+     --component-bytes "$DELIVERY_TARGET"/virtualized/std-empty-environment/receiving.wasm \
      --declaration-template apps/wamn_receiving/publication/components/receiving.json.in --tenant dev \
      --artifact-base us-central1-docker.pkg.dev/wamn-dev/wamn/components --registry-auth-file $A/config.json \
      --admit-platform-package wamn:node --admit-platform-package wamn:postgres \
      --project-database-url "$T" --control-database-url "$SYS"
-   sha256sum apps/target/virtualized/std-empty-environment/receiving.wasm
+   sha256sum "$DELIVERY_TARGET"/virtualized/std-empty-environment/receiving.wasm
    ```
 
 4. Publish release 2 with no `--wiring` (`docs/operations/deployment.md` §Publish and select a release, `gcp.md` §5.3 "target/debug/wamn-ctl publish-release"). Release 1 exists, so release 2 is the next id (`deploy/sql/control-portable-store.sql:50` to `:62`):
@@ -824,7 +829,7 @@ It prints release 1 with format 3 and release 2 with format 4. The table name ho
      sed -e 's/__TENANT_ID__/wms/g; s/__PACKAGE_ID__/wamn_wms/g; s/__PACKAGE_VERSION__/2.0.0/g; s/__STORE_ALIAS__/labels/g' \
        ${pair#*:} > $P/${pair%%:*}.declaration.json
    done
-   V=apps/target/virtualized/std-empty-environment
+   V="$DELIVERY_TARGET"/virtualized/std-empty-environment
    push() {
      target/debug/wamn-ctl push-component --package apps/wamn_wms --tenant wms \
        --artifact-base us-central1-docker.pkg.dev/wamn-dev/wamn/components --registry-auth-file $A/config.json \
@@ -832,13 +837,13 @@ It prints release 1 with format 3 and release 2 with format 4. The table name ho
    }
    push --component-bytes $V/wms.wasm --declaration-template apps/wamn_wms/publication/components/wms.json.in \
      --admit-platform-package wamn:node --admit-platform-package wamn:postgres
-   push --component-bytes apps/platform/no-std/target/wasm32-wasip2/release/label_render.wasm \
+   push --component-bytes "$DELIVERY_TARGET"/wasm32-wasip2/release/label_render.wasm \
      --declaration $P/label-render.declaration.json --admit-platform-package wamn:node
    push --component-bytes $V/blob_put.wasm --declaration $P/blob-put.declaration.json \
      --admit-platform-package wamn:node --admit-platform-package wasmcloud:blobstore
    push --component-bytes $V/jsonata_expression.wasm --declaration $P/jsonata.declaration.json \
      --admit-platform-package wamn:node
-   sha256sum $V/wms.wasm apps/platform/no-std/target/wasm32-wasip2/release/label_render.wasm $V/blob_put.wasm $V/jsonata_expression.wasm
+   sha256sum $V/wms.wasm "$DELIVERY_TARGET"/wasm32-wasip2/release/label_render.wasm $V/blob_put.wasm $V/jsonata_expression.wasm
    ```
 
    Proof: the component listing of `gcp.md` §5.3 shows the `label-render` and `blob-put` digests under both 1.0.0 and 2.0.0, and the new `jsonata` digest under 2.0.0 only. `SELECT component_digest, package_id FROM catalog.component_digest_owners` shows one row per digest.
