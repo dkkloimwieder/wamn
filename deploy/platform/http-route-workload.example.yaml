@@ -66,7 +66,7 @@ spec:
           interfaces: [routing]
         - namespace: wamn
           package: router-delivery
-          version: "0.2.0"
+          version: "0.3.0"
           interfaces: [delivery]
       components:
         - name: flow-http
