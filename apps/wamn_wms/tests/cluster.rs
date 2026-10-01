@@ -127,6 +127,20 @@ async fn run_case(case: Case) -> anyhow::Result<()> {
         .map(|(candidate, _)| crate::delivery::image_reference(&candidate.host_image))
         .transpose()?
         .unwrap_or_else(|| format!("wamn-host:{tag}"));
+    // The published attachments accept sessions, so every case starts the
+    // session issuer from this image, as the Receiving cases do.
+    let identity_image = candidate
+        .as_ref()
+        .map(|(candidate, _)| {
+            crate::delivery::image_reference(
+                candidate
+                    .identity_image
+                    .as_deref()
+                    .context("this WMS case requires a supplied identity image")?,
+            )
+        })
+        .transpose()?
+        .unwrap_or_else(|| format!("wamn-identity:{cluster}"));
     let lifecycle = repository.join("tools/wms-cluster-journey-run");
     deployment::preflight(&lifecycle, &cluster, &image).await?;
     let target = candidate
@@ -208,6 +222,17 @@ async fn run_case(case: Case) -> anyhow::Result<()> {
                 )
                 .await?;
             }
+            if candidate.is_none() {
+                checked(
+                    Command::new(&lifecycle)
+                        .arg("build-identity")
+                        .arg(&cluster)
+                        .arg(&repository)
+                        .arg(&head)
+                        .arg(&cluster),
+                )
+                .await?;
+            }
             if let Some((candidate, _)) = &candidate {
                 crate::delivery::registry_files(candidate, work.path())?;
             }
@@ -217,7 +242,8 @@ async fn run_case(case: Case) -> anyhow::Result<()> {
                     .arg(&cluster)
                     .arg(work.path())
                     .arg(&repository)
-                    .arg(&image),
+                    .arg(&image)
+                    .arg(&identity_image),
             )
             .await?;
             let digest = workload::image_ready(
@@ -244,6 +270,7 @@ async fn run_case(case: Case) -> anyhow::Result<()> {
                     target: &target,
                     evidence: &evidence,
                     image: &image,
+                    identity_image: &identity_image,
                     tag: &tag,
                     source_head: &head,
                     runtime_digest: &digest,
@@ -290,7 +317,13 @@ async fn run_case(case: Case) -> anyhow::Result<()> {
             .arg("remove")
             .arg(&cluster)
             .arg(work.path())
-            .args(candidate.is_none().then_some(&image)),
+            .args(
+                candidate
+                    .is_none()
+                    .then_some([&image, &identity_image])
+                    .into_iter()
+                    .flatten(),
+            ),
     )
     .await;
     let absent = deployment::preflight(&lifecycle, &cluster, &image).await;
@@ -369,12 +402,41 @@ struct CaseContext<'a> {
     target: &'a Path,
     evidence: &'a Path,
     image: &'a str,
+    identity_image: &'a str,
     tag: &'a str,
     source_head: &'a str,
     runtime_digest: &'a str,
     files: &'a bootstrap::BootstrapFiles,
     broker: &'a EventBroker,
     source: &'a async_nats::jetstream::stream::Config,
+}
+
+/// Start the session issuer that the published WMS attachments need, and
+/// return the issuer and the instance suffix the host trusts.
+async fn start_session_issuer(
+    context: &CaseContext<'_>,
+    document: &JourneyDocument,
+    manifest_digest: &str,
+) -> anyhow::Result<(String, String)> {
+    let identity = crate::environment::identity();
+    wamn_gate_harness::session_issuer::prepare_application(
+        &wamn_gate_harness::session_issuer::IssuerCluster {
+            name: context.cluster,
+            work: context.work,
+            evidence: context.evidence,
+            repository: context.repository,
+            lifecycle: context.lifecycle,
+            source: context.source_head,
+            system_database_url: &document.system_pg_url,
+            identity_image: Some(context.identity_image),
+            org: identity.org.as_str(),
+            project: identity.project.as_str(),
+            environment: identity.environment.as_str(),
+            tenant: identity.tenant.as_str(),
+        },
+        manifest_digest,
+    )
+    .await
 }
 
 async fn run_created(
@@ -392,6 +454,7 @@ async fn run_created(
         target,
         evidence,
         image,
+        identity_image: _,
         tag,
         source_head: _,
         runtime_digest,
@@ -562,6 +625,8 @@ async fn run_created(
             &operator_values,
         )
         .await?;
+        let (issuer, instance) =
+            start_session_issuer(case_context, &document, release.manifest_digest.as_str()).await?;
         let (base, overlay) = application::render_host(
             &document,
             &application::HostBinding {
@@ -571,6 +636,7 @@ async fn run_created(
                 manifest_digest: release.manifest_digest.as_str(),
                 source,
                 replicas: if measure_startup { 0 } else { 3 },
+                session: (&issuer, &instance),
             },
             work,
         )?;

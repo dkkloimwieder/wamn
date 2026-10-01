@@ -196,5 +196,5 @@ Workload changes and an application mutation can already exist when failure occu
 Inspect that state before another authorized attempt because the command does not reset the database or roll back workloads automatically.
 The deployment pull uses the same `--oci-ca-path` roots from `release_args`.
 
-Receiving qualification requires a supplied identity image through `--identity-image`, because its published application routes accept sessions.
-The owned Receiving fixture starts that image and supplies issuer trust to its application hosts.
+Receiving and WMS qualification require a supplied identity image through `--identity-image`, because their published application routes accept sessions.
+The owned fixtures start that image and supply issuer trust to their application hosts.

@@ -131,6 +131,8 @@ pub(super) struct HostBinding<'a> {
     pub(super) manifest_digest: &'a str,
     pub(super) source: &'a async_nats::jetstream::stream::Config,
     pub(super) replicas: u32,
+    /// The session issuer and the instance suffix the host trusts.
+    pub(super) session: (&'a str, &'a str),
 }
 
 pub(super) fn render_host(
@@ -151,6 +153,7 @@ pub(super) fn render_host(
         manifest_digest,
         source,
         replicas,
+        session: (issuer, instance_suffix),
     } = *binding;
 
     let repository = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
@@ -212,7 +215,10 @@ pub(super) fn render_host(
     let base = work.join("host-base.yaml");
     let overlay = work.join("host-overlay.yaml");
     std::fs::write(&base, rendered.base)?;
-    std::fs::write(&overlay, rendered.overlay)?;
+    std::fs::write(
+        &overlay,
+        wamn_gate_harness::session_issuer::adjust_host(&rendered.overlay, issuer, instance_suffix)?,
+    )?;
     Ok((base, overlay))
 }
 

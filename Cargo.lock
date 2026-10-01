@@ -6033,6 +6033,7 @@ dependencies = [
  "schemars",
  "serde",
  "serde_json",
+ "serde_yaml",
  "tokio",
  "tokio-postgres",
  "url",
@@ -6041,7 +6042,9 @@ dependencies = [
  "wamn-control-provision",
  "wamn-control-registry",
  "wamn-event-wire",
+ "wamn-platform-identity",
  "wamn-schema-control",
+ "wamn-test-infrastructure",
  "wamn-test-postgres",
 ]
 

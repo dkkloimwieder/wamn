@@ -480,7 +480,7 @@ async fn prepare_host(
     let overlay = cluster.work.join("host-overlay.yaml");
     fs::write(&base, values.base)?;
     let overlay_values = if let Some((issuer, instance_suffix)) = session {
-        session_cluster::adjust_host(&values.overlay, issuer, instance_suffix)?
+        wamn_gate_harness::session_issuer::adjust_host(&values.overlay, issuer, instance_suffix)?
     } else {
         values.overlay
     };

@@ -11,6 +11,7 @@
 pub mod ceiling;
 pub mod environment;
 pub mod journey;
+pub mod session_issuer;
 
 use std::path::PathBuf;
 use std::time::Duration;

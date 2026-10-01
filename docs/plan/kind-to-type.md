@@ -514,7 +514,7 @@ os.close(fd)' $A
    ```
 
 2. Build the guests with `tools/build-components all` (`gcp.md` §3.20). Each sha256 must equal the value recorded in A12.
-3. Build and push the host and identity images by source identity (`gcp.md:384`, `:385` and the push lines of gcp.md §3.4). Record both digests. Set `HOST_IMAGE=us-central1-docker.pkg.dev/wamn-dev/wamn/wamn-host:src-<identity>@<digest>`. The identity image carries the renamed `principals.type` reads of `services/identity/src/password.rs:251`, `:370`, `:482` (§4.5 group "Identity service"). The CDC reader image does not change, because the CDC readers keep running (§4.6, §4.7 step 1).
+3. Build and push the host, identity and gates images by source identity (`gcp.md` §3.4). Record the three digests. Set `IDENTITY_IMAGE=us-central1-docker.pkg.dev/wamn-dev/wamn/wamn-identity:src-<identity>@<digest>` and `GATES_IMAGE=us-central1-docker.pkg.dev/wamn-dev/wamn/wamn-gates:src-<identity>@<digest>`. The kind cases of `qualify-release` start the identity service and the gates from these two images (`docs/operations/delivery.md` §Candidate qualification, `docs/plan/release-qualification.md` §4.4). Set `HOST_IMAGE=us-central1-docker.pkg.dev/wamn-dev/wamn/wamn-host:src-<identity>@<digest>`. The identity image carries the renamed `principals.type` reads of `services/identity/src/password.rs:251`, `:370`, `:482` (§4.5 group "Identity service"). The CDC reader image does not change, because the CDC readers keep running (§4.6, §4.7 step 1).
 4. Push each distinct workload guest file once with `wash`, as `gcp.md` §3.20 does. `http_route.wasm` goes to `components/flow-http` and `materializer.wasm` goes to `components/materializer`. The tag of each push is the sha256 hex of its file, the tag rule of application components (`crates/control/lib/src/push_component.rs:523`). Receiving and WMS run the same bytes, so both name the same digest. The running workloads name their guests by digest (`gcp.md:868`), so a new push does not move them. Record the two pushed digests. Owner ruling of 2026-09-30 on `wamn-orba`.
 5. Run the ops-schema query of §4.3.4 on wamn_system and the PAT Secret listing of §4.3.5. Record both answers.
 6. Run the check query of §4.3 on the three databases. Record the result. It must equal the §4.1 names for that database plus the function bodies of §4.3.
@@ -754,13 +754,13 @@ The hosts stay stopped until B10. At this point the host values name only format
      --route-host receiving.wamn.dev --package-manifest apps/wamn_receiving/wamn.json
    ```
 
-5. Capture the published release and its exact artifact locations as the candidate (`docs/operations/delivery.md` §Candidate qualification). `HOST_IMAGE` and `DELIVERY_TARGET` come from B0:
+5. Capture the published release and its exact artifact locations as the candidate (`docs/operations/delivery.md` §Candidate qualification). `HOST_IMAGE`, `IDENTITY_IMAGE`, `GATES_IMAGE` and `DELIVERY_TARGET` come from B0:
 
    ```bash
    target/debug/wamn-ctl prepare-release --database-url "$T" --org dkk --project receiving \
      --tenant dev --effective-release-id 2 \
      --artifact-base us-central1-docker.pkg.dev/wamn-dev/wamn/releases --target-directory "$DELIVERY_TARGET" \
-     --host-image "$HOST_IMAGE" \
+     --host-image "$HOST_IMAGE" --identity-image "$IDENTITY_IMAGE" --gates-image "$GATES_IMAGE" \
      --manifest-output $P/receiving-manifest.json --candidate-output $P/receiving-candidate.json
    ```
 
@@ -906,7 +906,7 @@ It prints release 1 with format 3 and release 2 with format 4. The table name ho
    target/debug/wamn-ctl prepare-release --database-url "$T" --org dkk --project wms \
      --tenant wms --effective-release-id 2 \
      --artifact-base us-central1-docker.pkg.dev/wamn-dev/wamn/releases --target-directory "$DELIVERY_TARGET" \
-     --host-image "$HOST_IMAGE" \
+     --host-image "$HOST_IMAGE" --identity-image "$IDENTITY_IMAGE" --gates-image "$GATES_IMAGE" \
      --manifest-output $P/wms-manifest.json --candidate-output $P/wms-candidate.json
    target/debug/wamn-ctl qualify-release --repository "$PWD" --revision "$(git rev-parse HEAD)" \
      --candidate $P/wms-candidate.json --result $P/wms-qualification.json
@@ -2029,8 +2029,8 @@ One issue per step, in order. A1 to A12 are the repository commits of §3.1. B0 
 - Depends on: A11.
 
 **B0. kind → type B0: build and record before the stop (docs/plan/kind-to-type.md §3.2)**
-- Scope: from the cutover commit, build the programs and the guests, build and push the host and identity images, and push the two workload guest files to `components/flow-http` and `components/materializer` under their file sha256. Answer the ops-schema query and the PAT Secret listing, and run the check query of §4.3 on the three databases. Nothing changes installed state.
-- Acceptance: each guest sha256 equals its A12 value. The two image digests, the two guest digests, both answers and the three check results are recorded.
+- Scope: from the cutover commit, build the programs and the guests, build and push the host, identity and gates images, and push the two workload guest files to `components/flow-http` and `components/materializer` under their file sha256. Answer the ops-schema query and the PAT Secret listing, and run the check query of §4.3 on the three databases. Nothing changes installed state.
+- Acceptance: each guest sha256 equals its A12 value. The three image digests, the two guest digests, both answers and the three check results are recorded.
 - Depends on: A12.
 
 **B1. kind → type B1: drain and stop (docs/plan/kind-to-type.md §3.2)**

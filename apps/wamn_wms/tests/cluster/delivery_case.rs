@@ -77,6 +77,8 @@ pub(super) async fn run(
         &operator_values,
     )
     .await?;
+    let (issuer, instance) =
+        super::start_session_issuer(context, document, release.manifest_digest.as_str()).await?;
     let (base, _) = application::render_host(
         document,
         &application::HostBinding {
@@ -86,6 +88,7 @@ pub(super) async fn run(
             manifest_digest: release.manifest_digest.as_str(),
             source,
             replicas: 1,
+            session: (&issuer, &instance),
         },
         work,
     )?;

@@ -1,6 +1,6 @@
 //! Receiving session setup and checks on two deployed native hosts.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 use std::fs;
 use std::path::Path;
 use std::process::Stdio;
@@ -11,69 +11,50 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use tokio::io::{AsyncBufReadExt as _, BufReader};
 use tokio::process::Command;
-use wamn_control::identity_issuer::{IdentityIssuerRequest, provision_identity_issuer};
 use wamn_control::print_release_env::ReleaseCarrier;
-use wamn_control::provision_project_env::{
-    self, WorkloadActionRequest, WorkloadActionVerb, WorkloadGenerationAction,
+use wamn_gate_harness::session_issuer::{
+    self, Env, IssuerCluster, Mount, Preserved, SecretVolume, Volume, ca_volume, image_loaded,
+    mount,
 };
-use wamn_control_provision::{CredentialGeneration, WorkloadRoleFamily, workload_secret_name};
 use wamn_test_infrastructure::rendering::{HttpClaims, HttpWorkloadInput, render_http_workload};
 use wamn_test_infrastructure::workload;
 
 use super::super::{identity, sessions};
-use super::resources::{checked, write_private};
+use super::resources::checked;
 use super::{ReceivingCluster, Resources, apply, kubectl};
 
-const IDENTITY: &str = "host-session-identity";
 const DEPLOYMENTS: [&str; 2] = ["flow-http-session-a", "flow-http-session-b"];
+
+/// The issuer cluster of this Receiving run.
+fn issuer_cluster(cluster: &ReceivingCluster) -> IssuerCluster<'_> {
+    let resources = &cluster.resources;
+    IssuerCluster {
+        name: &resources.name,
+        work: &resources.work,
+        evidence: &resources.evidence,
+        repository: &resources.repository,
+        lifecycle: &resources.lifecycle,
+        source: &resources.source,
+        system_database_url: &cluster.inputs.system_pg_url,
+        identity_image: resources.identity_image.as_deref(),
+        org: identity().org.as_str(),
+        project: identity().project.as_str(),
+        environment: identity().environment.as_str(),
+        tenant: identity().tenant.as_str(),
+    }
+}
 
 /// Supply the real issuer required by the published application's session routes.
 pub(super) async fn prepare_application(
     cluster: &ReceivingCluster,
     carrier: &ReleaseCarrier,
 ) -> anyhow::Result<(String, String)> {
-    let (database, task) = super::super::connect(&cluster.inputs.system_pg_url).await?;
-    let instance: String = database.query_one(
-        "SELECT instance_suffix FROM registry.project_envs WHERE org = $1 AND project = $2 AND env = $3",
-        &[&identity().org.as_str(), &identity().project.as_str(), &identity().environment.as_str()],
-    ).await?.get(0);
-    drop(database);
-    task.abort();
-    let audience = wamn_control_provision::session_target::session_audience(
-        &wamn_control_registry::Triple::new(
-            identity().org.as_str(),
-            identity().project.as_str(),
-            identity().environment.as_str(),
-        ),
-        &instance,
-    )?;
-    let fixture = cluster.resources.work.join("application-session.json");
-    write_private(
-        &fixture,
-        &serde_json::to_vec(&json!({
-            "manifest_digest": carrier.manifest_digest.to_string(),
-            "instance_suffix": instance,
-            "audience": audience,
-        }))?,
-    )?;
-    let issuer = prepare(cluster, carrier, &fixture).await?;
-    let database = wamn_control::provision_project_env::secret_value(
-        &cluster.resources.work.join("session-identity-db.json"),
-        "url",
-    )?;
-    let (mut client, connection) =
-        tokio_postgres::connect(&database, tokio_postgres::NoTls).await?;
-    let driver = tokio::spawn(connection);
-    let result = async {
-        let key =
-            wamn_platform_identity::session_keys::publish_session_key(&mut client, &issuer).await?;
-        wamn_platform_identity::session_keys::activate_session_key(&mut client, &issuer, &key.kid)
-            .await
-    }
-    .await;
-    driver.abort();
-    result?;
-    Ok((issuer, instance))
+    load_gates(cluster).await?;
+    session_issuer::prepare_application(
+        &issuer_cluster(cluster),
+        &carrier.manifest_digest.to_string(),
+    )
+    .await
 }
 
 pub(super) async fn prepare(
@@ -81,575 +62,21 @@ pub(super) async fn prepare(
     carrier: &ReleaseCarrier,
     fixture: &Path,
 ) -> anyhow::Result<String> {
-    let resources = &cluster.resources;
-    let fixture_path = fixture;
-    let fixture: Value = serde_json::from_slice(&fs::read(fixture)?)?;
-    ensure!(
-        fixture["manifest_digest"] == carrier.manifest_digest.to_string(),
-        "the session fixture differs from the deployed release"
-    );
-    let issuer = format!("https://{IDENTITY}.{}.svc.cluster.local", resources.name);
-    let identity_image = resources
-        .identity_image
-        .as_deref()
-        .context("the session identity image is built")?;
-    let identity_digest = image_loaded(cluster, identity_image, "identity", false)
-        .await?
-        .0;
-    if let Some(gates_image) = resources.gates_image.as_deref() {
-        image_loaded(cluster, gates_image, "gates", true).await?;
-    }
-    let identity_secret = resources.work.join("session-identity-db.json");
-    provision_identity_issuer(IdentityIssuerRequest {
-        issuer: issuer.clone(),
-        system_database_url: cluster.inputs.system_pg_url.clone(),
-        prepare_generation: Some(CredentialGeneration::A),
-        retire_generation: None,
-        abort_generation: None,
-        emit_secret: Some(identity_secret.clone()),
-        db_host: reqwest::Url::parse(&cluster.inputs.system_pg_url)?
-            .host_str()
-            .map(str::to_owned),
-        db_port: reqwest::Url::parse(&cluster.inputs.system_pg_url)?
-            .port_or_known_default()
-            .unwrap_or(5432),
-        namespace: resources.name.clone(),
-        secret_name: "host-session-identity-db".to_owned(),
-    })
-    .await?;
-    let target_file = resources.work.join("session-target.json");
-    let target_name = workload_secret_name(
-        WorkloadRoleFamily::SessionRoleReader,
-        identity().org.as_str(),
-        identity().project.as_str(),
-        identity().environment.as_str(),
-    );
-    let database = wamn_control_provision::project_env_database_name(
-        identity().org.as_str(),
-        identity().project.as_str(),
-        identity().environment.as_str(),
-        text(&fixture, "/instance_suffix")?,
-    );
-    let mut target_url = reqwest::Url::parse(&cluster.inputs.system_pg_url)?;
-    target_url.set_path(&format!("/{database}"));
-    provision_project_env::run_workload_action(&WorkloadActionRequest {
-        org: identity().org.clone(),
-        project: identity().project.clone(),
-        env: identity().environment.clone(),
-        tenant: Some(identity().tenant.clone()),
-        system_database_url: Some(cluster.inputs.system_pg_url.clone()),
-        target_admin_database_url: Some(target_url.to_string()),
-        cluster: None,
-        db_host: target_url.host_str().map(str::to_owned),
-        db_port: target_url.port_or_known_default().unwrap_or(5432),
-        namespace: resources.name.clone(),
-        action: WorkloadGenerationAction {
-            family: WorkloadRoleFamily::SessionRoleReader,
-            verb: WorkloadActionVerb::Prepare,
-            generation: CredentialGeneration::A,
-        },
-        secret: Some(target_file.clone()),
-        emit_role_sql: None,
-    })
-    .await?;
-    for (path, name, key) in [
-        (&identity_secret, "host-session-identity-db", "url"),
-        (&target_file, target_name.as_str(), "target.json"),
-    ] {
-        let document: Value = serde_json::from_slice(&fs::read(path)?)?;
-        ensure!(
-            document["kind"] == "Secret"
-                && document["metadata"]["name"] == name
-                && document["metadata"]["namespace"] == resources.name,
-            "the session Secret has the declared name and namespace"
-        );
-        let data = document["stringData"]
-            .as_object()
-            .context("the Secret has stringData")?;
-        ensure!(
-            data.len() == 1 && data.contains_key(key),
-            "the session Secret has the declared single key"
-        );
-        if key == "target.json" {
-            let target = wamn_control_provision::session_target::SessionTarget::from_json(
-                data[key]
-                    .as_str()
-                    .context("the session target is JSON text")?
-                    .as_bytes(),
-            )?;
-            ensure!(
-                target.audience() == text(&fixture, "/audience")?,
-                "the session target audience differs from its fixture"
-            );
-        }
-        apply(resources, path).await?;
-    }
-    create_tls(cluster).await?;
-    checked(
-        kubectl(resources)
-            .args([
-                "-n",
-                &resources.name,
-                "create",
-                "secret",
-                "tls",
-                "host-session-identity-tls",
-            ])
-            .arg(format!(
-                "--cert={}",
-                resources.work.join("session-tls.crt").display()
-            ))
-            .arg(format!(
-                "--key={}",
-                resources.work.join("session-tls.key").display()
-            )),
+    load_gates(cluster).await?;
+    session_issuer::prepare(
+        &issuer_cluster(cluster),
+        &carrier.manifest_digest.to_string(),
+        fixture,
     )
-    .await?;
-    checked(
-        kubectl(resources)
-            .args([
-                "-n",
-                &resources.name,
-                "create",
-                "configmap",
-                "host-session-public-ca",
-            ])
-            .arg(format!(
-                "--from-file=ca.crt={}",
-                resources.work.join("session-ca.crt").display()
-            )),
-    )
-    .await?;
-    // The fixture stays in the private work directory and Kubernetes Secret.
-    checked(
-        kubectl(resources)
-            .args([
-                "-n",
-                &resources.name,
-                "create",
-                "secret",
-                "generic",
-                "host-session-fixture",
-            ])
-            .arg(format!(
-                "--from-file=fixture.json={}",
-                fixture_path.display()
-            )),
-    )
-    .await?;
-    let chart = resources.repository.join("deploy/platform/identity");
-    let tagged = identity_image
-        .split('@')
-        .next()
-        .context("identity image name")?;
-    let (repository, _) = tagged.rsplit_once(':').context("identity image tag")?;
-    let tag = &identity_image[repository.len() + 1..];
-    let args = [
-        format!("issuer={issuer}"),
-        "databaseSecret=host-session-identity-db".to_owned(),
-        "tlsSecret=host-session-identity-tls".to_owned(),
-        format!("image.repository={repository}"),
-        format!("image.tag={tag}"),
-        "image.pullPolicy=Never".to_owned(),
-        format!("sessionTargetSecrets[0]={target_name}"),
-    ];
-    for install in [false, true] {
-        let mut command = Command::new("helm");
-        if install {
-            command.args(["upgrade", "--install"]);
-        } else {
-            command.arg("template");
-        }
-        command
-            .arg(IDENTITY)
-            .arg(&chart)
-            .arg("--kubeconfig")
-            .arg(resources.work.join("kubeconfig"))
-            .arg("--kube-context")
-            .arg(format!("kind-{}", resources.name))
-            .args(["--namespace", &resources.name]);
-        for value in &args {
-            command.arg("--set-string").arg(value);
-        }
-        if install {
-            command.args(["--wait", "--timeout", "180s"]);
-        }
-        let output = checked(&mut command).await?;
-        fs::write(
-            resources.evidence.join(if install {
-                "session-identity-install.log"
-            } else {
-                "session-identity-rendered.yaml"
-            }),
-            output,
-        )?;
-    }
-    let deployment = read_object(
-        resources,
-        "session-identity-deployment",
-        &["-n", &resources.name, "get", "deployment", IDENTITY],
-    )
-    .await?;
-    ensure!(
-        deployment["spec"]["template"]["spec"]["automountServiceAccountToken"] == false,
-        "the identity deployment must not mount a service account token"
-    );
-    let containers = array(&deployment, "/spec/template/spec/containers")?;
-    ensure!(
-        containers.len() == 1 && containers[0]["image"] == identity_image,
-        "the identity deployment has its exact single image"
-    );
-    let pods = read_object(
-        resources,
-        "session-identity-pods",
-        &[
-            "-n",
-            &resources.name,
-            "get",
-            "pods",
-            "-l",
-            "app.kubernetes.io/instance=host-session-identity",
-        ],
-    )
-    .await?;
-    let pods = array(&pods, "/items")?;
-    ensure!(pods.len() == 1, "one identity pod is required");
-    ready_pod(&pods[0], "identity", identity_image, &identity_digest)?;
-    Ok(issuer)
+    .await
 }
 
-async fn create_tls(cluster: &ReceivingCluster) -> anyhow::Result<()> {
-    let resources = &cluster.resources;
-    let hostname = format!("{IDENTITY}.{}.svc.cluster.local", resources.name);
-    let requests: Vec<(&str, Vec<String>)> = vec![
-        (
-            "ca",
-            [
-                "req",
-                "-x509",
-                "-newkey",
-                "rsa:2048",
-                "-nodes",
-                "-days",
-                "1",
-                "-subj",
-                "/CN=HOST-SESSION disposable CA",
-                "-addext",
-                "basicConstraints=critical,CA:TRUE",
-                "-addext",
-                "keyUsage=critical,keyCertSign,cRLSign",
-                "-keyout",
-                "session-ca.key",
-                "-out",
-                "session-ca.crt",
-            ]
-            .map(str::to_owned)
-            .to_vec(),
-        ),
-        (
-            "request",
-            vec![
-                "req".into(),
-                "-new".into(),
-                "-newkey".into(),
-                "rsa:2048".into(),
-                "-nodes".into(),
-                "-subj".into(),
-                format!("/CN={IDENTITY}"),
-                "-keyout".into(),
-                "session-tls.key".into(),
-                "-out".into(),
-                "session-tls.csr".into(),
-            ],
-        ),
-        (
-            "sign",
-            [
-                "x509",
-                "-req",
-                "-days",
-                "1",
-                "-in",
-                "session-tls.csr",
-                "-CA",
-                "session-ca.crt",
-                "-CAkey",
-                "session-ca.key",
-                "-CAcreateserial",
-                "-extfile",
-                "session-tls.ext",
-                "-out",
-                "session-tls.crt",
-            ]
-            .map(str::to_owned)
-            .to_vec(),
-        ),
-    ];
-    write_private(&resources.work.join("session-tls.ext"), format!(
-        "subjectAltName=DNS:{hostname},DNS:localhost,IP:127.0.0.1\nbasicConstraints=critical,CA:FALSE\nkeyUsage=critical,digitalSignature,keyEncipherment\nextendedKeyUsage=serverAuth\n"
-    ).as_bytes())?;
-    for (name, args) in requests {
-        let output = Command::new("openssl")
-            .current_dir(&resources.work)
-            .args(args)
-            .output()
-            .await?;
-        let mut log = output.stdout;
-        log.extend(output.stderr);
-        fs::write(
-            resources.evidence.join(format!("session-tls-{name}.log")),
-            log,
-        )?;
-        ensure!(
-            output.status.success(),
-            "the session TLS {name} command failed"
-        );
+/// Load the gates image of a case that uses it, beside the issuer.
+async fn load_gates(cluster: &ReceivingCluster) -> anyhow::Result<()> {
+    if let Some(gates_image) = cluster.resources.gates_image.as_deref() {
+        image_loaded(&issuer_cluster(cluster), gates_image, "gates", true).await?;
     }
-    fs::copy(
-        resources.work.join("session-ca.crt"),
-        resources.evidence.join("session-ca.crt"),
-    )?;
     Ok(())
-}
-
-type Preserved = BTreeMap<String, serde_yaml::Value>;
-
-#[derive(Serialize, Deserialize)]
-struct HostValues {
-    runtime: HostRuntime,
-    #[serde(flatten)]
-    rest: Preserved,
-}
-#[derive(Serialize, Deserialize)]
-struct HostRuntime {
-    #[serde(rename = "hostGroups")]
-    groups: Vec<HostGroup>,
-    #[serde(flatten)]
-    rest: Preserved,
-}
-#[derive(Serialize, Deserialize)]
-struct HostGroup {
-    env: Vec<Env>,
-    volumes: Vec<Volume>,
-    #[serde(rename = "volumeMounts")]
-    mounts: Vec<Mount>,
-    #[serde(flatten)]
-    rest: Preserved,
-}
-#[derive(Clone, Serialize, Deserialize)]
-struct Env {
-    name: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    value: Option<String>,
-    #[serde(flatten)]
-    rest: Preserved,
-}
-#[derive(Clone, Serialize, Deserialize)]
-struct Volume {
-    name: String,
-    #[serde(rename = "configMap", skip_serializing_if = "Option::is_none")]
-    config_map: Option<Named>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    secret: Option<SecretVolume>,
-    #[serde(flatten)]
-    rest: Preserved,
-}
-#[derive(Clone, Serialize, Deserialize)]
-struct Named {
-    name: String,
-    #[serde(flatten)]
-    rest: Preserved,
-}
-#[derive(Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct SecretVolume {
-    secret_name: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    default_mode: Option<u32>,
-    #[serde(flatten)]
-    rest: Preserved,
-}
-#[derive(Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-#[expect(
-    clippy::struct_field_names,
-    reason = "the field names are Kubernetes' own: `rename_all = \"camelCase\"` maps this one \
-              to `mountPath`, the key a volumeMount carries, so renaming it would stop the \
-              overlay parsing"
-)]
-struct Mount {
-    name: String,
-    mount_path: String,
-    read_only: bool,
-    #[serde(flatten)]
-    rest: Preserved,
-}
-
-pub(super) fn adjust_host(
-    overlay: &str,
-    issuer: &str,
-    instance_suffix: &str,
-) -> anyhow::Result<String> {
-    let mut document: HostValues = serde_yaml::from_str(overlay)?;
-    ensure!(
-        document.runtime.groups.len() == 1,
-        "the session overlay has exactly one host group"
-    );
-    let group = &mut document.runtime.groups[0];
-    for (name, value) in [
-        ("WAMN_SESSION_ISSUER", issuer),
-        ("WAMN_SESSION_INSTANCE_SUFFIX", instance_suffix),
-        ("WAMN_SESSION_JWKS_CA", "/etc/host-session-ca/ca.crt"),
-    ] {
-        ensure!(
-            group.env.iter().all(|entry| entry.name != name),
-            "the session environment entry already exists: {name}"
-        );
-        group.env.push(Env {
-            name: name.to_owned(),
-            value: Some(value.to_owned()),
-            rest: Preserved::new(),
-        });
-    }
-    ensure!(
-        group
-            .volumes
-            .iter()
-            .all(|volume| volume.name != "host-session-ca")
-            && group
-                .mounts
-                .iter()
-                .all(|mount| mount.name != "host-session-ca"),
-        "the session CA is already mounted"
-    );
-    group.volumes.push(ca_volume("host-session-ca"));
-    group
-        .mounts
-        .push(mount("host-session-ca", "/etc/host-session-ca"));
-    Ok(serde_yaml::to_string(&document)?)
-}
-
-fn ca_volume(name: &str) -> Volume {
-    Volume {
-        name: name.to_owned(),
-        config_map: Some(Named {
-            name: "host-session-public-ca".to_owned(),
-            rest: Preserved::new(),
-        }),
-        secret: None,
-        rest: Preserved::new(),
-    }
-}
-fn mount(name: &str, path: &str) -> Mount {
-    Mount {
-        name: name.to_owned(),
-        mount_path: path.to_owned(),
-        read_only: true,
-        rest: Preserved::new(),
-    }
-}
-
-async fn image_loaded(
-    cluster: &ReceivingCluster,
-    image: &str,
-    name: &str,
-    config_fallback: bool,
-) -> anyhow::Result<(String, String)> {
-    let resources = &cluster.resources;
-    let labels: Value = serde_json::from_slice(
-        &checked(Command::new(&resources.lifecycle).args(["image-labels", image])).await?,
-    )?;
-    save(resources, &format!("{name}-image-labels"), &labels)?;
-    ensure!(
-        labels["wamn.dev/source-head"] == resources.source
-            && labels["wamn.dev/build-profile"] == "release",
-        "the session image carries the selected source and build profile"
-    );
-    let nodes = String::from_utf8(
-        checked(Command::new(&resources.lifecycle).args(["nodes", &resources.name])).await?,
-    )?;
-    let nodes = nodes.lines().collect::<BTreeSet<_>>();
-    ensure!(
-        nodes.len() == 3,
-        "the session image must be loaded on three distinct nodes"
-    );
-    let loaded = session_image_digest(resources, image, name, &nodes, config_fallback).await;
-    if loaded.is_err() {
-        let nodes = nodes.iter().map(|node| (*node).to_owned()).collect();
-        wamn_test_infrastructure::workload::capture_node_images(
-            &resources.lifecycle,
-            &nodes,
-            &resources.evidence,
-        )
-        .await;
-    }
-    loaded
-}
-
-/// The one digest and config id that every node reports for the session image.
-async fn session_image_digest(
-    resources: &Resources,
-    image: &str,
-    name: &str,
-    nodes: &BTreeSet<&str>,
-    config_fallback: bool,
-) -> anyhow::Result<(String, String)> {
-    let mut expected = None;
-    let mut rows = Vec::new();
-    for node in nodes {
-        let observed: Value = serde_json::from_slice(
-            &checked(Command::new(&resources.lifecycle).args(["node-image", node, image])).await?,
-        )?;
-        save(resources, &format!("{name}-image-{node}"), &observed)?;
-        let tuple = image_tuple(&observed, config_fallback)?;
-        if let Some(expected) = &expected {
-            ensure!(expected == &tuple, "the session image differs across nodes");
-        }
-        expected = Some(tuple.clone());
-        rows.push(json!({"node":node,"runtime_digest":tuple.0,"config_id":tuple.1}));
-    }
-    save(resources, &format!("{name}-image-nodes"), &json!(rows))?;
-    expected.context("the session image was observed on a node")
-}
-
-fn image_tuple(observed: &Value, config_fallback: bool) -> anyhow::Result<(String, String)> {
-    let config = text(observed, "/status/id")?;
-    ensure!(
-        digest(config),
-        "the loaded image has a SHA-256 configuration id"
-    );
-    let values = observed
-        .pointer("/status/repoDigests")
-        .and_then(Value::as_array);
-    let digests = values
-        .into_iter()
-        .flatten()
-        .filter_map(Value::as_str)
-        .filter_map(|value| value.rsplit_once('@').map(|(_, digest)| digest))
-        .filter(|value| digest(value))
-        .collect::<BTreeSet<_>>();
-    let runtime = if digests.is_empty() && config_fallback {
-        config
-    } else {
-        ensure!(
-            digests.len() == 1,
-            "the loaded session image has one runtime digest"
-        );
-        digests
-            .into_iter()
-            .next()
-            .context("the runtime digest exists")?
-    };
-    Ok((runtime.to_owned(), config.to_owned()))
-}
-
-fn digest(value: &str) -> bool {
-    value.strip_prefix("sha256:").is_some_and(|value| {
-        value.len() == 64
-            && value
-                .bytes()
-                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
-    })
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -744,7 +171,7 @@ pub(super) async fn assert_session(
         .gates_image
         .as_deref()
         .context("the session gates image is built")?;
-    let gates = image_loaded(cluster, gates_image, "gates", true).await?;
+    let gates = image_loaded(&issuer_cluster(cluster), gates_image, "gates", true).await?;
     let host_digest = workload::image_ready(
         &resources.lifecycle,
         &resources.name,
@@ -2005,59 +1432,6 @@ fn occurred_after(value: &str, started: i64) -> anyhow::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn session_overlay_preserves_existing_fields_and_refuses_missing_or_repeated_groups()
-    -> anyhow::Result<()> {
-        let original = "runtime:\n  hostGroups:\n    - env:\n        - name: EXISTING\n          value: keep\n      volumes:\n        - name: database\n          secret:\n            secretName: database\n            items: [{key: url, path: url}]\n      volumeMounts:\n        - name: database\n          mountPath: /database\n          readOnly: true\n      replicas: 2\n";
-        let rendered = adjust_host(original, "https://identity.example", "abcdefgh")?;
-        let mut document: HostValues = serde_yaml::from_str(&rendered)?;
-        let group = &mut document.runtime.groups[0];
-        assert_eq!(group.env.len(), 4);
-        assert_eq!(
-            group.env[3].value.as_deref(),
-            Some("/etc/host-session-ca/ca.crt")
-        );
-        assert_eq!(group.volumes.len(), 2);
-        assert_eq!(group.mounts[1].mount_path, "/etc/host-session-ca");
-        group.env.truncate(1);
-        group.volumes.truncate(1);
-        group.mounts.truncate(1);
-        assert_eq!(
-            serde_yaml::to_value(document)?,
-            serde_yaml::from_str::<serde_yaml::Value>(original)?
-        );
-        assert!(adjust_host(&rendered, "https://identity.example", "abcdefgh").is_err());
-        assert!(
-            adjust_host(
-                "runtime: {hostGroups: []}",
-                "https://identity.example",
-                "abcdefgh"
-            )
-            .is_err()
-        );
-        assert!(
-            adjust_host(
-                "runtime: {hostGroups: [{env: []}]}",
-                "https://identity.example",
-                "abcdefgh"
-            )
-            .is_err()
-        );
-        Ok(())
-    }
-
-    #[test]
-    fn only_session_gates_accept_a_loaded_image_without_a_repository_digest() -> anyhow::Result<()>
-    {
-        let id = format!("sha256:{}", "a".repeat(64));
-        let image = json!({"status":{"id":id,"repoDigests":[]}});
-        assert!(image_tuple(&image, false).is_err());
-        assert_eq!(image_tuple(&image, true)?, (id.clone(), id.clone()));
-        let ambiguous = json!({"status":{"id":id,"repoDigests":[format!("repo@{id}"),format!("repo@sha256:{}", "b".repeat(64))]}});
-        assert!(image_tuple(&ambiguous, true).is_err());
-        Ok(())
-    }
 
     #[test]
     fn pinning_changes_only_the_two_declared_host_placements() -> anyhow::Result<()> {

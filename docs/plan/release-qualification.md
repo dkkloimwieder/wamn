@@ -138,7 +138,9 @@ Acme takes part in `record_receipt` only through its own route `/acme/receiving/
 
 ### 4.4 WMS auth policy
 
-The WMS fixture publishes the authored attachments unchanged, so the bytes keep `["pat","session"]`. The change deletes `pat_only_attachments` (`apps/wamn_wms/tests/environment.rs:394-425` at `01ca2425d`) and its caller. The fixture installs the session issuer the way `route_authentication_live/sessions.rs` does (`prepare_session_host_fixture`, `sessions.rs:6`). The WMS cases keep calling PAT routes.
+The WMS fixture publishes the authored attachments unchanged, so the bytes keep `["pat","session"]`. The change deletes `pat_only_attachments` (`apps/wamn_wms/tests/environment.rs:394-425` at `01ca2425d`) and its caller. The fixture installs the session issuer the way the Receiving cluster cases do, with `prepare_application`, `prepare` and `adjust_host`. These functions move from `route_authentication_live/cluster/session_cluster.rs` to `test-support`, and both fixtures call them. Without a candidate, the WMS fixture builds `wamn-identity:<name>` itself. With a candidate, it takes the image of `--identity-image`. The WMS cases keep calling PAT routes.
+
+Every candidate of the cutover carries three images, all built by B0 from the cutover commit: `--host-image`, `--identity-image` and `--gates-image` (`docs/plan/kind-to-type.md` §3.2 B0, B7 and B8).
 
 ## 5. Issues
 

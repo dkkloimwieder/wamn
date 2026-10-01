@@ -407,6 +407,13 @@ for image in wamn-host:src-<identity> wamn-identity:src-<identity>; do
 done
 ```
 
+From the kind to type cutover on, B0 also builds and pushes the gates image from the same commit, because the kind cases of `qualify-release` start it (`docs/plan/kind-to-type.md` §3.2 B0):
+
+```bash
+TMPDIR=<directory on the main disk> tools/journey-image-cache ensure . gates gates "$(git rev-parse HEAD)" gcp gcp-wamn
+docker tag wamn-gates:src-<identity> $R/wamn-gates:src-<identity> && docker push $R/wamn-gates:src-<identity>
+```
+
 On 2026-09-26 the host image took 419 seconds to build and the identity image 59 seconds. The pushed images are:
 
 | Image | Digest |

@@ -424,50 +424,6 @@ fn label_store_alias(root: &Path) -> anyhow::Result<String> {
         .with_context(|| format!("{} names no store alias on its store node", path.display()))
 }
 
-/// Write a copy of the package attachments that admits the PAT mode only.
-///
-/// The journey calls every route with a PAT and installs no session issuer,
-/// and a host refuses to serve a session route without one (wamn-1g0u). The
-/// copy keeps each definition and its hash, which the auth policy is outside
-/// of, and takes the generated route entries in. Generated input schemas
-/// still resolve against the package directory.
-fn pat_only_attachments(source: &Path, evidence: &Path) -> anyhow::Result<PathBuf> {
-    let mut attachments: serde_json::Value = serde_json::from_slice(
-        &fs::read(source).with_context(|| format!("read {}", source.display()))?,
-    )?;
-    let attachments_map = attachments
-        .as_object_mut()
-        .context("the attachments are an object")?;
-    let generated = route_schema::read_generated_publication(
-        route_schema::package_root_of(source),
-        route_schema::GENERATED_ATTACHMENTS,
-    )?;
-    if let Some(Value::Object(mut generated)) = generated {
-        generated.values_mut().for_each(as_authored_entry);
-        attachments_map.extend(generated);
-    }
-    for attachment in attachments_map.values_mut() {
-        if let Some(modes) = attachment.pointer_mut("/auth-policy/modes") {
-            *modes = json!(["pat"]);
-        }
-    }
-    let target = evidence.join("attachments.pat.json");
-    fs::write(&target, serde_json::to_vec_pretty(&attachments)?)?;
-    Ok(target)
-}
-
-/// Write a generated route entry as an authored one, which names its
-/// operation by reference: a publish reads the copy as an authored document.
-fn as_authored_entry(entry: &mut serde_json::Value) {
-    for member in ["operation", "registered-operation"] {
-        if let Some(sealed) = entry.get(member).and_then(serde_json::Value::as_str)
-            && let Some((reference, _)) = sealed.rsplit_once('@')
-        {
-            entry[member] = serde_json::Value::String(reference.to_owned());
-        }
-    }
-}
-
 /// Publish WMS and its label components, author its wirings, then bind and attest.
 /// The artifacts and endpoint one release publication is published from.
 pub struct PublicationArtifacts<'a> {
@@ -622,10 +578,7 @@ pub async fn publish(
         run_schema: "wamn_run".into(),
         packages: vec![package],
         wirings: targets,
-        attachments: vec![pat_only_attachments(
-            &root.join("publication/attachments.json"),
-            evidence,
-        )?],
+        attachments: vec![root.join("publication/attachments.json")],
         route_host: Some(inputs.route_host.clone()),
         package_manifests: vec![root.join("wamn.json")],
     })
