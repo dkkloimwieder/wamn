@@ -27,6 +27,9 @@ export const memoryRoute = (name: string, verb = "query"): OperationRoute => ({
     direct: true,
     type: verb === "query" ? "query" : "command",
     transaction: "implicit",
+    // A memory operation reads or writes the one relation its name gives.
+    reads: verb === "query" ? [`gallery.${name}`] : [],
+    writes: verb === "query" ? null : [`gallery.${name}`],
   },
 });
 

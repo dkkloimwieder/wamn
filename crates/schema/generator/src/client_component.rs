@@ -603,6 +603,11 @@ fn binding(
     )
 }
 
+/// The route constant the bindings module of `model` exports for `name`.
+fn route_constant(model: &str, name: &str) -> String {
+    format!("{}_{}_ROUTE", model.to_uppercase(), name.to_uppercase())
+}
+
 /// The member path of one input a row fills, with `"[]"` after each
 /// repeated member, as `fillMember` of the runtime reads it.
 fn fill_literal(path: &str) -> String {
@@ -1118,6 +1123,8 @@ fn emit_detail(
     bindings.insert(function.clone());
     bindings.insert(format!("type {stem}Request"));
     bindings.insert(format!("type {stem}Result"));
+    let route = route_constant(screen.model, screen.name);
+    bindings.insert(route.clone());
 
     writeln!(
         source,
@@ -1164,8 +1171,13 @@ fn emit_detail(
         "  const [outcome, {{ refetch: readAgain }}] = createResource(\n    () => props.input,\n    async (input: {stem}DetailInput) => {{\n      const read = await {function}(props.transport, [\n        input as {stem}Request,\n      ]);\n      props.onOutcome?.(read);\n      if (read.status !== \"completed\") {{\n        announceOutcome(read, {stem}DetailLabel);\n      }}\n      return read;\n    }},\n  );"
     )
     .expect("write");
-    // A write can change the record a detail shows, so it reads it again.
-    source.push_str("  onCleanup(afterWrites(props.transport, () => void readAgain()));\n");
+    // A write that changes a relation the detail reads can change the record
+    // it shows, so it reads it again.
+    writeln!(
+        source,
+        "  onCleanup(afterWrites(props.transport, {route}.contract.reads, () => void readAgain()));"
+    )
+    .expect("write");
     writeln!(
         source,
         "  const record = (): {stem}Result | undefined => {{\n    const read = outcome();\n    return read?.status === \"completed\" ? read.value : undefined;\n  }};"
@@ -1771,6 +1783,7 @@ fn emit_form(
             foreign.entry(populated.list_model.to_owned()).or_default()
         };
         names.insert(format!("{list_function} as {alias}"));
+        names.insert(route_constant(populated.list_model, populated.list_name));
         names.insert(format!("type {list_stem}Request"));
         names.insert(format!("type {list_stem}Row"));
         if let Some(read) = populated.read {
@@ -2185,13 +2198,15 @@ fn emit_selector_state(
     } else {
         writeln!(source, "  void read{state_upper}Options(null);").expect("write");
     }
-    // A write can add or change a record the list offers, so the list reads
-    // its first page again. The chosen row stays chosen, because the selector
-    // keeps it by key, so its revision is still the one the operator chose.
+    // A write that changes a relation the list reads can add or change a
+    // record it offers, so the list reads its first page again. The chosen row
+    // stays chosen, because the selector keeps it by key, so its revision is
+    // still the one the operator chose.
     runtime.insert("afterWrites");
     writeln!(
         source,
-        "  onCleanup(afterWrites(props.transport, () => void read{state_upper}Options(null)));"
+        "  onCleanup(afterWrites(props.transport, {}.contract.reads, () => void read{state_upper}Options(null)));",
+        route_constant(populated.list_model, populated.list_name)
     )
     .expect("write");
 }

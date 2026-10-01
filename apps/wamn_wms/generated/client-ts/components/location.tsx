@@ -36,6 +36,7 @@ import {
 } from "@wamn/ui";
 import {
   LOCATION_CREATE_REQUEST_FIELDS,
+  LOCATION_GET_ROUTE,
   LOCATION_QUERY_REQUEST_FIELDS,
   LOCATION_QUERY_RESULT_FIELDS,
   LOCATION_QUERY_ROUTE,
@@ -196,7 +197,7 @@ export function LocationGetDetail(props: LocationGetDetailProps) {
       return read;
     },
   );
-  onCleanup(afterWrites(props.transport, () => void readAgain()));
+  onCleanup(afterWrites(props.transport, LOCATION_GET_ROUTE.contract.reads, () => void readAgain()));
   const record = (): LocationGetResult | undefined => {
     const read = outcome();
     return read?.status === "completed" ? read.value : undefined;

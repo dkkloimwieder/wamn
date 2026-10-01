@@ -69,6 +69,8 @@ export const LOCATION_CREATE_ROUTE: OperationRoute = {
     direct: true,
     type: "create",
     transaction: "explicit_per_input",
+    reads: [],
+    writes: ["wms.location"],
   },
 };
 
@@ -143,6 +145,8 @@ export const LOCATION_GET_ROUTE: OperationRoute = {
     direct: true,
     type: "get",
     transaction: "implicit",
+    reads: ["wms.location"],
+    writes: null,
   },
 };
 
@@ -246,6 +250,8 @@ export const LOCATION_QUERY_ROUTE: OperationRoute = {
     direct: true,
     type: "query",
     transaction: "implicit",
+    reads: ["wms.location"],
+    writes: null,
   },
 };
 
@@ -341,6 +347,8 @@ export const LOCATION_UPDATE_ROUTE: OperationRoute = {
     direct: true,
     type: "update",
     transaction: "implicit",
+    reads: [],
+    writes: ["wms.location"],
   },
 };
 

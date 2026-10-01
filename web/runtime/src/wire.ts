@@ -41,6 +41,13 @@ export interface ResponseContract {
   readonly type: string;
   /** The declared transaction boundary, or null when the release states none. */
   readonly transaction: string | null;
+  /** The relations a read selects from, as `schema.table`. Empty for a write. */
+  readonly reads: readonly string[];
+  /**
+   * The relations a write changes, as `schema.table`, or null when the
+   * contract names none. Null for a read.
+   */
+  readonly writes: readonly string[] | null;
 }
 
 /** One refusal the operation declares. */
@@ -116,11 +123,12 @@ export interface Transport {
    */
   invokeEach?(request: WireRequest): Promise<readonly Outcome<JsonValue>[]>;
   /**
-   * Calls `listener` after each write settles, whatever its outcome, and
-   * returns the function that stops it. A page reads its shown reads again
-   * this way. A transport without it tells nobody about a write.
+   * Calls `listener` with the write's `writes` after each write settles,
+   * whatever its outcome, and returns the function that stops it. A page
+   * reads its shown reads again this way. A transport without it tells
+   * nobody about a write.
    */
-  onWrite?(listener: () => void): () => void;
+  onWrite?(listener: (writes: readonly string[] | null) => void): () => void;
   /**
    * Opens a streamed read of one query, the `stream` shape of its canonical
    * GET URL. A reply of lines returns its body for `readLoadLines` and its

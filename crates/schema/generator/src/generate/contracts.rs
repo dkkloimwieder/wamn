@@ -19,9 +19,7 @@ use super::{
     query_variants, relation, rust_type_identifier, server_owned_fields, sha256, sql,
     writable_path,
 };
-use crate::manifest::{
-    FieldReference, OperationErrorDetailKey, StaticSqlRelationDeclaration, authored_name,
-};
+use crate::manifest::{FieldReference, OperationErrorDetailKey, authored_name};
 use wamn_record_history::HISTORY_COLUMNS;
 
 #[expect(
@@ -810,30 +808,21 @@ fn emit_operation_contracts(
             json!({"model": model_name, "key_field": "id"}),
         );
     }
-    // A read states the relations it reads, whoever wrote it, in the member an
-    // authored read declares. The host keys a list ETag on their versions and
-    // never guesses them (docs/architecture/execution.md).
-    if matches!(action, CrudAction::Get | CrudAction::Query) {
-        let mut select_fields = table
-            .columns()
-            .iter()
-            .map(|column| column.name().to_owned())
-            .collect::<Vec<_>>();
-        select_fields.sort();
-        operation_contract.insert(
-            "relations".to_owned(),
-            json!([StaticSqlRelationDeclaration {
-                schema: model.schema.clone(),
-                table: model.table.clone(),
-                select_fields,
-                insert_fields: Vec::new(),
-                update_fields: Vec::new(),
-                delete: false,
-                lock: false,
-                constraints: Vec::new(),
-            }]),
-        );
-    }
+    // Every operation states the relations it reads and writes, whoever wrote
+    // it, in the member an authored operation declares. The host keys a list
+    // ETag on the relations a read selects, and a client marks stale the reads
+    // whose relations a write changes (docs/architecture/execution.md).
+    let fields = table
+        .columns()
+        .iter()
+        .map(|column| column.name().to_owned())
+        .collect::<Vec<_>>();
+    operation_contract.insert(
+        "relations".to_owned(),
+        json!([crate::data_access::generated_relation_access(
+            model, action, operation, &fields
+        )?]),
+    );
     if action == CrudAction::Create {
         operation_contract.insert("idempotent_by".to_owned(), json!("claim"));
         operation_contract.insert(

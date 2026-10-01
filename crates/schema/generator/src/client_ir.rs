@@ -28,7 +28,9 @@
 //! correct IR before that distinction was drawn.
 
 use std::collections::{BTreeMap, BTreeSet};
+
 use std::path::Path;
+use wamn_record_history::{HISTORY_TABLE_SUFFIX, is_history_table_name};
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -197,6 +199,15 @@ pub struct ResponseIr {
     pub result_class: Option<String>,
     pub fields: Vec<FieldIr>,
     pub errors: Vec<ErrorCaseIr>,
+    /// The relations a direct route's read selects from. Empty for a write
+    /// and for a composed route.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub reads: Vec<String>,
+    /// The relations a direct route's write changes, or `None` when the
+    /// client cannot tell: a read, a composed route, or a contract that
+    /// names no relation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub writes: Option<Vec<String>>,
 }
 
 /// Replay guarantees declared by the served operation.
@@ -370,6 +381,13 @@ pub struct OperationIr {
     pub transaction: Option<String>,
     /// Result class, e.g. `one`, `page`.
     pub result_class: String,
+    /// The relations a read selects from, as `schema.table`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub reads: Vec<String>,
+    /// The relations a write changes, as `schema.table`, or `None` when its
+    /// contract names no relation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub writes: Option<Vec<String>>,
     /// Input field descriptors, ordered by path.
     pub input_fields: Vec<FieldIr>,
     /// Result field descriptors, ordered by path.
@@ -1174,6 +1192,7 @@ fn build_operation(
             |schema| schema_fields(schema, &declared_fields),
         );
     let idempotent_by = operation.get("idempotent_by").cloned();
+    let (reads, writes) = relations_of(&kind, operation.get("relations"));
     let requires_composition = matches!(kind.as_str(), "update" | "delete")
         || idempotent_by
             .as_ref()
@@ -1222,6 +1241,8 @@ fn build_operation(
             .and_then(Value::as_str)
             .unwrap_or("none")
             .to_owned(),
+        reads,
+        writes,
         input_fields,
         result_fields: fields_of(&result),
         server_owned_fields: string_list(
@@ -1260,6 +1281,8 @@ fn bind_served_contracts(models: &mut [ModelIr]) {
                 route.response.errors = terminal.errors.clone();
             }
             if route.direct {
+                route.response.reads.clone_from(&operation.reads);
+                route.response.writes.clone_from(&operation.writes);
                 route.replay = match operation.idempotent_by.as_ref() {
                     Some(value) if value == "claim" => Some(ReplayIr::Claim),
                     Some(value) if value.get("state").is_some() => Some(ReplayIr::State),
@@ -1456,6 +1479,54 @@ fn errors_of(errors: Option<&Value>) -> Vec<ErrorCaseIr> {
         true
     });
     cases
+}
+
+/// The relations an operation reads and writes, from its contract's
+/// `relations`, as `schema.table`. A read selects from every relation it
+/// lists, and a history table is named as its model table, which changes in
+/// the same transaction. A write changes each relation it inserts into,
+/// updates or deletes from. A relation it only locks is not written.
+fn relations_of(kind: &str, relations: Option<&Value>) -> (Vec<String>, Option<Vec<String>>) {
+    let read = matches!(kind, "get" | "query" | "projection");
+    let Some(relations) = relations.and_then(Value::as_array) else {
+        return (Vec::new(), None);
+    };
+    let mut named = BTreeSet::new();
+    for relation in relations {
+        let (Some(schema), Some(table)) = (
+            relation.get("schema").and_then(Value::as_str),
+            relation.get("table").and_then(Value::as_str),
+        ) else {
+            continue;
+        };
+        let listed = |member: &str| {
+            relation
+                .get(member)
+                .and_then(Value::as_array)
+                .is_some_and(|fields| !fields.is_empty())
+        };
+        if read {
+            let table = if is_history_table_name(table) {
+                &table[..table.len() - HISTORY_TABLE_SUFFIX.len()]
+            } else {
+                table
+            };
+            named.insert(format!("{schema}.{table}"));
+        } else if listed("insert_fields")
+            || listed("update_fields")
+            || relation.get("delete").and_then(Value::as_bool) == Some(true)
+        {
+            named.insert(format!("{schema}.{table}"));
+        }
+    }
+    let named = named.into_iter().collect::<Vec<_>>();
+    if read {
+        (named, None)
+    } else if relations.is_empty() {
+        (Vec::new(), None)
+    } else {
+        (Vec::new(), Some(named))
+    }
 }
 
 fn string_list(value: Option<&Value>) -> Vec<String> {

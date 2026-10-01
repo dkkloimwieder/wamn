@@ -97,6 +97,8 @@ export const RECEIVING_LOAD_PURCHASE_ORDER_HISTORY_ROUTE: OperationRoute = {
     direct: true,
     type: "projection",
     transaction: null,
+    reads: ["receiving.purchase_order"],
+    writes: null,
   },
 };
 
@@ -206,6 +208,8 @@ export const RECEIVING_LOAD_RECEIPT_SCREEN_ROUTE: OperationRoute = {
     direct: true,
     type: "projection",
     transaction: null,
+    reads: ["receiving.item", "receiving.purchase_order", "receiving.purchase_order_line"],
+    writes: null,
   },
 };
 
@@ -340,6 +344,8 @@ export const RECEIVING_RECORD_RECEIPT_ROUTE: OperationRoute = {
     direct: true,
     type: "command",
     transaction: "explicit_per_input",
+    reads: [],
+    writes: ["receiving.purchase_order", "receiving.purchase_order_line", "receiving.receipt", "receiving.receipt_line"],
   },
 };
 

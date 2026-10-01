@@ -66,6 +66,8 @@ export const SUPPLIER_CREATE_ROUTE: OperationRoute = {
     direct: true,
     type: "create",
     transaction: "explicit_per_input",
+    reads: [],
+    writes: ["receiving.supplier"],
   },
 };
 
@@ -153,6 +155,8 @@ export const SUPPLIER_QUERY_ROUTE: OperationRoute = {
     direct: true,
     type: "query",
     transaction: "implicit",
+    reads: ["receiving.supplier"],
+    writes: null,
   },
 };
 

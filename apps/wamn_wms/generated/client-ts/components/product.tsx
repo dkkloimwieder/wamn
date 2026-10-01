@@ -36,6 +36,7 @@ import {
 } from "@wamn/ui";
 import {
   PRODUCT_CREATE_REQUEST_FIELDS,
+  PRODUCT_GET_ROUTE,
   PRODUCT_QUERY_REQUEST_FIELDS,
   PRODUCT_QUERY_RESULT_FIELDS,
   PRODUCT_QUERY_ROUTE,
@@ -193,7 +194,7 @@ export function ProductGetDetail(props: ProductGetDetailProps) {
       return read;
     },
   );
-  onCleanup(afterWrites(props.transport, () => void readAgain()));
+  onCleanup(afterWrites(props.transport, PRODUCT_GET_ROUTE.contract.reads, () => void readAgain()));
   const record = (): ProductGetResult | undefined => {
     const read = outcome();
     return read?.status === "completed" ? read.value : undefined;

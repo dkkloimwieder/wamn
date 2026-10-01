@@ -46,6 +46,8 @@ describe("the transport carrier", () => {
     direct: true,
     type: "get",
     transaction: "implicit",
+    reads: [],
+    writes: null,
   };
   const request = {
     operation: "platform-fixture:widget/get@1.0.0",

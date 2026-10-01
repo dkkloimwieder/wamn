@@ -82,7 +82,11 @@ function harness(options: { held?: boolean; cookies?: () => string } = {}) {
   return { transport, replies, seen, release };
 }
 
-function contract(kind: string, resultClass: string): ResponseContract {
+function contract(
+  kind: string,
+  resultClass: string,
+  relations: { reads?: readonly string[]; writes?: readonly string[] | null } = {},
+): ResponseContract {
   return {
     resultClass,
     partialSchema: null,
@@ -91,6 +95,8 @@ function contract(kind: string, resultClass: string): ResponseContract {
     direct: true,
     type: kind,
     transaction: "implicit",
+    reads: relations.reads ?? [],
+    writes: relations.writes ?? null,
   };
 }
 
@@ -124,6 +130,16 @@ const WRITE: WireRequest = {
   contract: contract("update", "one"),
   items: [{ request_id: "r1", id: "a" }],
 };
+
+/** A list of widgets that states the relation it reads. */
+function widgets(): WireRequest {
+  return { ...list("open"), contract: contract("query", "bounded_list", { reads: ["fixture.widget"] }) };
+}
+
+/** A write that states the relations it changes. */
+function writing(writes: readonly string[] | null): WireRequest {
+  return { ...WRITE, contract: contract("command", "one", { writes }) };
+}
 
 const ROWS = '[{"value":{"rows":[{"id":"a"}]}}]';
 const WIDGET = '[{"value":{"id":"a","row_version":1}}]';
@@ -271,7 +287,7 @@ describe("a write listener", () => {
     const { transport, replies } = harness();
     const heard: number[] = [];
     let settled = 0;
-    const stop = afterWrites(transport, () => heard.push(settled));
+    const stop = afterWrites(transport, [], () => heard.push(settled));
     replies.push({ status: 200, body: '[{"request_id":"r1","value":{"id":"a"}}]' });
     await transport.invoke(WRITE).then(() => (settled += 1));
     replies.push({ status: 503, body: "unavailable" });
@@ -287,6 +303,70 @@ describe("a write listener", () => {
 
   it("is never called by a transport that has no onWrite", () => {
     const bare: Transport = { invoke: () => Promise.reject(new Error("unused")) };
-    expect(() => afterWrites(bare, () => undefined)()).not.toThrow();
+    expect(() => afterWrites(bare, [], () => undefined)()).not.toThrow();
+  });
+
+  it("hears only a write that touches the relations of its read", async () => {
+    const { transport, replies } = harness();
+    const heard: string[] = [];
+    afterWrites(transport, ["fixture.widget"], () => heard.push("widget"));
+    const done = '[{"request_id":"r1","value":{"id":"a"}}]';
+    for (const writes of [["fixture.widget"], ["fixture.maker"], [], null]) {
+      replies.push({ status: 200, body: done });
+      await transport.invoke(writing(writes));
+      heard.push(JSON.stringify(writes));
+    }
+    expect(heard).toEqual(["widget", '["fixture.widget"]', '["fixture.maker"]', "[]", "widget", "null"]);
+  });
+});
+
+describe("the relations of a write", () => {
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(0);
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  const done = '[{"request_id":"r1","value":{"id":"a"}}]';
+
+  /** The requests a fresh stored list costs after one write of `writes`. */
+  async function after(writes: readonly string[] | null): Promise<number> {
+    const { transport, replies, seen } = harness();
+    replies.push({ status: 200, body: ROWS, cacheControl: LIST, etag: 'W/"v1"' });
+    await transport.invoke(widgets());
+    replies.push({ status: 200, body: done });
+    await transport.invoke(writing(writes));
+    replies.push({ status: 304, cacheControl: LIST, etag: 'W/"v1"' });
+    await transport.invoke(widgets());
+    return seen.length - 2;
+  }
+
+  it("marks stale a stored read whose relation the write changes", async () => {
+    expect(await after(["fixture.maker", "fixture.widget"])).toBe(1);
+  });
+
+  it("leaves fresh a stored read whose relations the write does not change", async () => {
+    expect(await after(["fixture.maker"])).toBe(0);
+  });
+
+  it("leaves every stored read fresh after a write that only locks", async () => {
+    expect(await after([])).toBe(0);
+  });
+
+  it("marks every stored read stale after a write that names no relation", async () => {
+    expect(await after(null)).toBe(1);
+  });
+
+  it("marks stale a stored read that names no relation", async () => {
+    const { transport, replies, seen } = harness();
+    replies.push({ status: 200, body: ROWS, cacheControl: LIST, etag: 'W/"v1"' });
+    await transport.invoke(list("open"));
+    replies.push({ status: 200, body: done });
+    await transport.invoke(writing(["fixture.maker"]));
+    replies.push({ status: 304, cacheControl: LIST, etag: 'W/"v1"' });
+    await transport.invoke(list("open"));
+    expect(seen).toHaveLength(3);
   });
 });

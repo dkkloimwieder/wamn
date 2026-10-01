@@ -224,6 +224,8 @@ describe("the transport's streamed read", () => {
       direct: true,
       type: "query",
       transaction: "implicit",
+      reads: [],
+      writes: null,
     },
     items: [{ limit: 1000 }],
   };

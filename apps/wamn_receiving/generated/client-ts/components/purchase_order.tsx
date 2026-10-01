@@ -39,6 +39,7 @@ import {
   announceOutcome,
 } from "@wamn/ui";
 import {
+  PURCHASE_ORDER_GET_ROUTE,
   PURCHASE_ORDER_QUERY_REQUEST_FIELDS,
   PURCHASE_ORDER_QUERY_RESULT_FIELDS,
   PURCHASE_ORDER_QUERY_ROUTE,
@@ -107,7 +108,7 @@ export function PurchaseOrderGetDetail(props: PurchaseOrderGetDetailProps) {
       return read;
     },
   );
-  onCleanup(afterWrites(props.transport, () => void readAgain()));
+  onCleanup(afterWrites(props.transport, PURCHASE_ORDER_GET_ROUTE.contract.reads, () => void readAgain()));
   const record = (): PurchaseOrderGetResult | undefined => {
     const read = outcome();
     return read?.status === "completed" ? read.value : undefined;
@@ -306,7 +307,7 @@ export function PurchaseOrderUpdateForm(props: PurchaseOrderUpdateFormProps) {
     );
   };
   void readChangeSupplierIdOptions(null);
-  onCleanup(afterWrites(props.transport, () => void readChangeSupplierIdOptions(null)));
+  onCleanup(afterWrites(props.transport, SUPPLIER_QUERY_ROUTE.contract.reads, () => void readChangeSupplierIdOptions(null)));
 
   return (
     <form

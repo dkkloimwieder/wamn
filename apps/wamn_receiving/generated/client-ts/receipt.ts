@@ -68,6 +68,8 @@ export const RECEIPT_GET_ROUTE: OperationRoute = {
     direct: true,
     type: "get",
     transaction: "implicit",
+    reads: ["receiving.receipt"],
+    writes: null,
   },
 };
 
@@ -164,6 +166,8 @@ export const RECEIPT_QUERY_ROUTE: OperationRoute = {
     direct: true,
     type: "query",
     transaction: "implicit",
+    reads: ["receiving.receipt"],
+    writes: null,
   },
 };
 

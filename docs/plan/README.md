@@ -7,6 +7,7 @@ These pages describe unbuilt work and its limits. Current behavior belongs in [a
 - [Environment teardown](environment-teardown.md): Design for `delete-project-env`, the verb that deletes one project environment (finding `wamn-psss`).
 - [Identity](identity.md): External login providers within the existing identity authority.
 - [Edge](edge.md): Epic 19 scope for `wamn-edge`, one application and one device loop on a small aarch64 box.
+- [Edge diagnostics](edge-diagnostics.md): Draft design for the read surface of a running edge: dropped frames, credential failures, refused and pending samples (`wamn-1bd2`).
 - [Generated operations](generated-operations.md): Draft design for generating the handler, data function, world export, route entry and declaration entry of each generated operation.
 - [Google Cloud deployment](gcp-deployment.md): Epic 23 proposal for the first deployment to the `wamn-dev` project, with costs, a limited mode and shutdown commands.
 - [Host-owned transaction](host-transaction.md): Design for one idempotency path, in which the host owns the transaction of an operation and the engine runs the intent rules around every call.
@@ -18,7 +19,6 @@ These pages describe unbuilt work and its limits. Current behavior belongs in [a
 - [Release qualification](release-qualification.md): Draft design for `qualify-release` of any environment from its candidate (finding `wamn-ld93.33`).
 - [Schema upgrade](schema-upgrade.md): Design for `upgrade-schema`, the verb that applies a platform schema change to an installed database (finding `wamn-o8b9`).
 - [Upgrades](upgrades.md): Design for changing a schema after installation.
-- [Web cache invalidation](web-cache-invalidation.md): A write marks stale only the stored reads whose relations it writes (`wamn-fjdo`).
 - [Web deployment](web-deployment.md): Epic 20 rules for the web client host, and its remaining real deployment.
 - [Web operator client](web-operator-client.md): Generated browser UIs from the release contract, scoped one epic at a time.
 - [Write log](write-log.md): Epic 24 design for one idempotency record per database, `app_system.write_log`, in place of the claim tables.

@@ -59,6 +59,8 @@ export const EVENT_QUERY_ROUTE: OperationRoute = {
     direct: true,
     type: "query",
     transaction: "implicit",
+    reads: [],
+    writes: null,
   },
 };
 
@@ -127,7 +129,7 @@ export function actionStub(size: number) {
       recordedAt: `2026-09-2${number + 2}T08:00:00.000000Z`,
     })),
   );
-  const writeListeners = new Set<() => void>();
+  const writeListeners = new Set<(writes: readonly string[] | null) => void>();
 
   const completed = (value: JsonValue): Outcome<JsonValue> => ({ status: "completed", value });
   const refused = (code: string, detail: JsonValue): Outcome<JsonValue> => ({
@@ -188,7 +190,7 @@ export function actionStub(size: number) {
           }
           Object.assign(widget, change, { edit_version: String(Number(widget.edit_version) + 1) });
           for (const listener of writeListeners) {
-            listener();
+            listener(null);
           }
           return completed({ ...widget });
         }

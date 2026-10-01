@@ -83,6 +83,8 @@ export const INVENTORY_TRANSACTION_GET_ROUTE: OperationRoute = {
     direct: true,
     type: "get",
     transaction: "implicit",
+    reads: ["wms.inventory_transaction"],
+    writes: null,
   },
 };
 
@@ -194,6 +196,8 @@ export const INVENTORY_TRANSACTION_QUERY_ROUTE: OperationRoute = {
     direct: true,
     type: "query",
     transaction: "implicit",
+    reads: ["wms.inventory_transaction"],
+    writes: null,
   },
 };
 

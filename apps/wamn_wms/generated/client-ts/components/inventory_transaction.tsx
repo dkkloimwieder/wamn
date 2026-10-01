@@ -21,6 +21,7 @@ import {
   announceOutcome,
 } from "@wamn/ui";
 import {
+  INVENTORY_TRANSACTION_GET_ROUTE,
   INVENTORY_TRANSACTION_QUERY_REQUEST_FIELDS,
   INVENTORY_TRANSACTION_QUERY_RESULT_FIELDS,
   INVENTORY_TRANSACTION_QUERY_ROUTE,
@@ -81,7 +82,7 @@ export function InventoryTransactionGetDetail(props: InventoryTransactionGetDeta
       return read;
     },
   );
-  onCleanup(afterWrites(props.transport, () => void readAgain()));
+  onCleanup(afterWrites(props.transport, INVENTORY_TRANSACTION_GET_ROUTE.contract.reads, () => void readAgain()));
   const record = (): InventoryTransactionGetResult | undefined => {
     const read = outcome();
     return read?.status === "completed" ? read.value : undefined;

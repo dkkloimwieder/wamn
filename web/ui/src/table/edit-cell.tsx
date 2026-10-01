@@ -165,7 +165,7 @@ function ChoiceEditor(props: {
   };
   /* eslint-disable solid/reactivity -- the cell reads its first page once, and its transport is fixed for its life. */
   void read(null);
-  onCleanup(afterWrites(props.transport, () => void read(null)));
+  onCleanup(afterWrites(props.transport, choices.read.route.contract.reads, () => void read(null)));
   /* eslint-enable solid/reactivity */
   return (
     <div class="min-w-48">

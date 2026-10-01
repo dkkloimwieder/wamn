@@ -42,6 +42,7 @@ pub(super) fn release(composed: bool) -> ClientContractIr {
                 })
                 .collect(),
             errors: Vec::new(),
+            ..ResponseIr::default()
         }
     } else {
         ResponseIr::default()
