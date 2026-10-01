@@ -12,6 +12,12 @@
 //! Receiving group in `values-host.yaml`, and names the WMS Secrets. Its label
 //! store signs with the pod's service account, so it mounts no credentials.
 //!
+//! Each group pulls components with a token from the GKE metadata server
+//! (`WAMN_REGISTRY_TOKEN_METADATA`, finding wamn-i87m). The pull volume keeps
+//! its mount path and `DOCKER_CONFIG`, and reads ConfigMap
+//! `wamn-registry-helper` of `deploy/gcp/registry-helper.yaml` in place of
+//! Secret `wamn-registry-pull`.
+//!
 //! cargo run -p wamn-test-infrastructure --example host_values_files -- \
 //!   <output directory> <release artifact base> <Receiving manifest digest> \
 //!   <WMS manifest digest>
@@ -38,6 +44,8 @@ const COMPONENT_BASE: &str = "us-central1-docker.pkg.dev/wamn-dev/wamn/component
 const EVENT_NATS: &str = "nats://evt-nats.platform.svc.cluster.local:4222";
 const CONTROL_NATS: &str = "nats://nats.platform.svc.cluster.local:4222";
 const ISSUER: &str = "https://identity.identity.svc.cluster.local";
+/// The ConfigMap that names the `wamn` credential helper for the registry.
+const REGISTRY_HELPER: &str = "wamn-registry-helper";
 
 /// One application's host group.
 struct Application {
@@ -256,6 +264,7 @@ fn google_cloud_overlay(overlay: &str, application: &Application) -> anyhow::Res
         "wamn-materializer-nats",
         application.materializer_secret,
     )?;
+    pull_with_metadata_token(group)?;
     let args = group["extraArgs"]
         .as_sequence_mut()
         .context("the overlay host group has extraArgs")?;
@@ -309,6 +318,39 @@ fn google_cloud_overlay(overlay: &str, application: &Application) -> anyhow::Res
     Ok(serde_yaml::to_string(&document)?)
 }
 
+/// Pull with the metadata server token: drop `WAMN_REGISTRY_AUTH_FILE`, set
+/// `WAMN_REGISTRY_TOKEN_METADATA`, and read the pull volume from the helper
+/// ConfigMap in place of the token Secret.
+fn pull_with_metadata_token(group: &mut Value) -> anyhow::Result<()> {
+    let env = group["env"]
+        .as_sequence_mut()
+        .context("the overlay host group has env")?;
+    let before = env.len();
+    env.retain(|entry| entry["name"] != "WAMN_REGISTRY_AUTH_FILE");
+    ensure!(
+        env.len() + 1 == before,
+        "the overlay has one WAMN_REGISTRY_AUTH_FILE"
+    );
+    env.push(entry(&[
+        ("name", "WAMN_REGISTRY_TOKEN_METADATA"),
+        ("value", "true"),
+    ]));
+    let volume = group["volumes"]
+        .as_sequence_mut()
+        .context("the overlay host group has volumes")?
+        .iter_mut()
+        .find(|volume| volume["name"] == "registry-pull")
+        .context("the overlay has the registry-pull volume")?;
+    ensure!(
+        volume["secret"]["secretName"] == "wamn-registry-pull",
+        "the registry-pull volume reads Secret wamn-registry-pull"
+    );
+    *volume = serde_yaml::from_str(&format!(
+        "{{name: registry-pull, configMap: {{name: {REGISTRY_HELPER}}}}}"
+    ))?;
+    Ok(())
+}
+
 /// Point every env reference and volume of Secret `from` at Secret `to`.
 fn rename_secret(group: &mut Value, from: &str, to: &str) -> anyhow::Result<()> {
     let mut renamed = 0;
@@ -351,4 +393,58 @@ fn entry(fields: &[(&str, &str)]) -> Value {
         mapping.insert((*key).into(), (*value).into());
     }
     Value::Mapping(mapping)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn each_group_pulls_with_the_metadata_token() -> anyhow::Result<()> {
+        for application in [&RECEIVING, &WMS] {
+            let (_, overlay) = render(application, "registry.example/releases", "sha256:00")?;
+            let mut document: Value = serde_yaml::from_str(&overlay)?;
+            let group = group_mut(&mut document)?;
+            let env = |name: &str| {
+                group["env"]
+                    .as_sequence()
+                    .into_iter()
+                    .flatten()
+                    .filter(|entry| entry["name"] == name)
+                    .map(|entry| entry["value"].clone())
+                    .collect::<Vec<_>>()
+            };
+            assert_eq!(env("WAMN_REGISTRY_AUTH_FILE"), Vec::<Value>::new());
+            assert_eq!(
+                env("WAMN_REGISTRY_TOKEN_METADATA"),
+                vec![Value::from("true")]
+            );
+            assert_eq!(
+                env("DOCKER_CONFIG"),
+                vec![Value::from("/etc/wamn/registry")]
+            );
+            let named = |list: &str| {
+                group[list]
+                    .as_sequence()
+                    .into_iter()
+                    .flatten()
+                    .filter(|entry| entry["name"] == "registry-pull")
+                    .cloned()
+                    .collect::<Vec<_>>()
+            };
+            assert_eq!(
+                named("volumes"),
+                vec![serde_yaml::from_str::<Value>(
+                    "{name: registry-pull, configMap: {name: wamn-registry-helper}}"
+                )?]
+            );
+            assert_eq!(
+                named("volumeMounts"),
+                vec![serde_yaml::from_str::<Value>(
+                    "{name: registry-pull, mountPath: /etc/wamn/registry, readOnly: true}"
+                )?]
+            );
+        }
+        Ok(())
+    }
 }
