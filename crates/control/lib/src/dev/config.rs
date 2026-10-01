@@ -37,6 +37,7 @@ const GUEST_DATABASE_URL: &str = "guest_database_url";
 const EXECUTOR_PLATFORM_DATABASE_URL: &str = "executor_platform_database_url";
 const HTTP_ADMITTER_DATABASE_URL: &str = "http_admitter_database_url";
 const EVENT_MATERIALIZER_DATABASE_URL: &str = "event_materializer_database_url";
+const ADMINISTRATION_DATABASE_URL: &str = "administration_database_url";
 const SCHEDULER_NATS_URL: &str = "scheduler_nats_url";
 const EVENT_NATS_URL: &str = "event_nats_url";
 const EVENT_NATS_USERNAME: &str = "event_nats_username";
@@ -104,6 +105,7 @@ struct DevConfigDocument {
     executor_platform_database_url: String,
     http_admitter_database_url: String,
     event_materializer_database_url: String,
+    administration_database_url: String,
     scheduler_nats_url: String,
     event_nats_url: String,
     event_nats_username: String,
@@ -534,6 +536,7 @@ pub struct DevConfig {
     executor_platform_database_url: Box<str>,
     http_admitter_database_url: Box<str>,
     event_materializer_database_url: Box<str>,
+    administration_database_url: Box<str>,
     scheduler_nats_url: Box<str>,
     event_nats_url: Box<str>,
     event_nats_username: Box<str>,
@@ -590,6 +593,10 @@ impl fmt::Debug for DevConfig {
             .field(
                 EVENT_MATERIALIZER_DATABASE_URL,
                 &self.sanitized_endpoint(EVENT_MATERIALIZER_DATABASE_URL),
+            )
+            .field(
+                ADMINISTRATION_DATABASE_URL,
+                &self.sanitized_endpoint(ADMINISTRATION_DATABASE_URL),
             )
             .field(
                 SCHEDULER_NATS_URL,
@@ -700,6 +707,11 @@ impl DevConfig {
     /// Event-materializer PostgreSQL URL passed to the local serving host.
     pub fn event_materializer_database_url(&self) -> &str {
         &self.event_materializer_database_url
+    }
+
+    /// Administration PostgreSQL URL passed to the local serving host.
+    pub fn administration_database_url(&self) -> &str {
+        &self.administration_database_url
     }
 
     /// Scheduler NATS endpoint used by the native workload API.
@@ -849,6 +861,7 @@ pub fn parse_config(bytes: &[u8]) -> Result<DevConfig, DevConfigError> {
         executor_platform_database_url,
         http_admitter_database_url,
         event_materializer_database_url,
+        administration_database_url,
         scheduler_nats_url,
         event_nats_url,
         event_nats_username,
@@ -892,6 +905,8 @@ pub fn parse_config(bytes: &[u8]) -> Result<DevConfig, DevConfigError> {
         event_materializer_database_url,
         EVENT_MATERIALIZER_DATABASE_URL,
     )?;
+    let administration_database_url =
+        nonempty_string(administration_database_url, ADMINISTRATION_DATABASE_URL)?;
     let scheduler_nats_url = nonempty_string(scheduler_nats_url, SCHEDULER_NATS_URL)?;
     let event_nats_url = nonempty_string(event_nats_url, EVENT_NATS_URL)?;
     let event_nats_username = nonempty_string(event_nats_username, EVENT_NATS_USERNAME)?;
@@ -1018,6 +1033,8 @@ pub fn parse_config(bytes: &[u8]) -> Result<DevConfig, DevConfigError> {
         EVENT_MATERIALIZER_DATABASE_URL,
         &event_materializer_database_url,
     )?;
+    let (administration_probe, administration_identity) =
+        database_probe(ADMINISTRATION_DATABASE_URL, &administration_database_url)?;
     validate_disposable_target_database(&target_probe, &target_identity)?;
     validate_runtime_database_credentials(
         &[
@@ -1030,6 +1047,7 @@ pub fn parse_config(bytes: &[u8]) -> Result<DevConfig, DevConfigError> {
             (&executor_platform_probe, &executor_platform_identity),
             (&http_admitter_probe, &http_admitter_identity),
             (&event_materializer_probe, &event_materializer_identity),
+            (&administration_probe, &administration_identity),
         ],
     )?;
     let scheduler_probe = url_probe(
@@ -1062,6 +1080,7 @@ pub fn parse_config(bytes: &[u8]) -> Result<DevConfig, DevConfigError> {
         executor_platform_probe,
         http_admitter_probe,
         event_materializer_probe,
+        administration_probe,
         scheduler_probe,
         event_probe,
         tempo_probe,
@@ -1102,6 +1121,7 @@ pub fn parse_config(bytes: &[u8]) -> Result<DevConfig, DevConfigError> {
         executor_platform_database_url,
         http_admitter_database_url,
         event_materializer_database_url,
+        administration_database_url,
         scheduler_nats_url,
         event_nats_url,
         event_nats_username,
@@ -1607,7 +1627,7 @@ pub(crate) mod tests {
     use serde_json::json;
     use tokio::net::TcpListener;
 
-    const ENDPOINT_COUNT: usize = 11;
+    const ENDPOINT_COUNT: usize = 12;
     const DEV_CONFIG_SCHEMA_PATH: &str = "schema/wamn-dev.schema.json";
     /// The overlay manifest of the platform fixture application.
     fn overlay_manifest() -> Vec<u8> {
@@ -1665,6 +1685,7 @@ pub(crate) mod tests {
             (EXECUTOR_PLATFORM_DATABASE_URL): format!("postgresql://platform:platform-secret@{}/target", addresses[4]),
             (HTTP_ADMITTER_DATABASE_URL): format!("postgresql://admitter:admitter-secret@{}/target", addresses[5]),
             (EVENT_MATERIALIZER_DATABASE_URL): format!("postgresql://materializer:materializer-secret@{}/target", addresses[6]),
+            (ADMINISTRATION_DATABASE_URL): format!("postgresql://administration:administration-secret@{}/target", addresses[11]),
             (SCHEDULER_NATS_URL): format!("nats://{}", addresses[7]),
             (EVENT_NATS_URL): format!("nats://{}", addresses[8]),
             (EVENT_NATS_USERNAME): "dev_runtime",
@@ -2084,6 +2105,7 @@ pub(crate) mod tests {
             "platform-secret",
             "admitter-secret",
             "materializer-secret",
+            "administration-secret",
             "gate-super-secret",
         ] {
             assert!(!debug.contains(credential), "Debug leaked {credential}");

@@ -369,7 +369,9 @@ impl WamnPostgres {
         let (connection, pool) = match class {
             AuthorityClass::GuestSql => self.checkout_guest(project, tenant).await?,
             AuthorityClass::EventMaterializer => self.checkout_platform(project, class).await?,
-            AuthorityClass::ExecutorPlatform | AuthorityClass::CallableHttp => {
+            AuthorityClass::ExecutorPlatform
+            | AuthorityClass::CallableHttp
+            | AuthorityClass::Administration => {
                 unreachable!("the closed workload binding admits only EventMaterializer")
             }
         };

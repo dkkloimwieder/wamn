@@ -57,6 +57,9 @@ pub const SESSION_ROLE_READER_ROLE: &str = "wamn_session_role_reader";
 const SESSION_ROLE_READER_GENERATION_PREFIX: &str = "wamn_session_roles";
 /// Stable NOLOGIN role used by record history retention generations.
 pub use wamn_record_history::AUDIT_RETENTION_ROLE;
+/// Stable NOLOGIN role used by administration generations. Its 19 bytes
+/// mint a 62-byte login, so the role name is its own generation prefix.
+pub const ADMINISTRATION_ROLE: &str = "wamn_administration";
 
 /// The shared NOLOGIN group role every non-guest tenant-floor arm targets
 /// (`wamn-0h0g.22.17`).
@@ -102,6 +105,8 @@ pub(crate) const SCOPE_HASH_HEX_LEN: usize = 40;
 /// expired record history entries.
 /// `wamn-0h0g.10.15` removes the effect-writer family, which had no runtime
 /// consumer.
+/// `wamn-a40n.2` adds the project-environment administration family, the
+/// credential of the host-run administration routes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WorkloadRoleFamily {
     ControlAuthor,
@@ -116,6 +121,7 @@ pub enum WorkloadRoleFamily {
     IdentityReader,
     SessionRoleReader,
     AuditRetention,
+    Administration,
 }
 
 impl WorkloadRoleFamily {
@@ -125,7 +131,7 @@ impl WorkloadRoleFamily {
     /// provisioning's flag set, action dispatch and Secret naming are all
     /// derived by walking it, so an admitted family reaches every one of them
     /// without a list anywhere being appended to by hand.
-    pub const ALL: [Self; 12] = [
+    pub const ALL: [Self; 13] = [
         Self::ControlAuthor,
         Self::ManagementAdmitter,
         Self::ServiceReader,
@@ -138,6 +144,7 @@ impl WorkloadRoleFamily {
         Self::IdentityReader,
         Self::SessionRoleReader,
         Self::AuditRetention,
+        Self::Administration,
     ];
 
     /// Stable NOLOGIN ACL role inherited by this family's generations.
@@ -155,6 +162,7 @@ impl WorkloadRoleFamily {
             Self::IdentityReader => IDENTITY_READER_ROLE,
             Self::SessionRoleReader => SESSION_ROLE_READER_ROLE,
             Self::AuditRetention => AUDIT_RETENTION_ROLE,
+            Self::Administration => ADMINISTRATION_ROLE,
         }
     }
 
@@ -189,7 +197,8 @@ impl WorkloadRoleFamily {
             | Self::ExecutorPlatform
             | Self::HttpAdmitter
             | Self::SessionRoleReader
-            | Self::EventMaterializer => WorkloadRoleScopeKind::ProjectEnvironment,
+            | Self::EventMaterializer
+            | Self::Administration => WorkloadRoleScopeKind::ProjectEnvironment,
             // Scope follows the RESOURCE PLANE, not the consumer's home: these
             // credentials reach the CONTROL database (`wamn-0h0g.13.63`).
             Self::ControlAuthor | Self::RegistryReader | Self::IdentityReader => {
@@ -319,6 +328,7 @@ impl WorkloadRoleFamily {
             Self::IdentityReader => b"wamn.identity-reader.scope.v0.1",
             Self::SessionRoleReader => b"wamn.session-role-reader.scope.v0.1",
             Self::AuditRetention => b"wamn.audit-retention.scope.v0.1",
+            Self::Administration => b"wamn.administration.scope.v0.1",
         }
     }
 }
@@ -342,6 +352,7 @@ impl From<AuthorityClass> for WorkloadRoleFamily {
             AuthorityClass::ExecutorPlatform => Self::ExecutorPlatform,
             AuthorityClass::CallableHttp => Self::HttpAdmitter,
             AuthorityClass::EventMaterializer => Self::EventMaterializer,
+            AuthorityClass::Administration => Self::Administration,
         }
     }
 }
@@ -550,6 +561,7 @@ mod tests {
             (AuthorityClass::ExecutorPlatform, "wamn_executor_platform"),
             (AuthorityClass::CallableHttp, "wamn_http_admitter"),
             (AuthorityClass::EventMaterializer, "wamn_event_materializer"),
+            (AuthorityClass::Administration, "wamn_administration"),
         ];
         for (class, role) in ruled {
             assert_eq!(
@@ -575,7 +587,7 @@ mod tests {
             }
             seen.push((class, family));
         }
-        assert_eq!(seen.len(), 4);
+        assert_eq!(seen.len(), 5);
     }
 
     /// Every class is covered. `ALL` plus the exhaustive match in `From` means a
@@ -585,7 +597,7 @@ mod tests {
     fn every_authority_class_projects() {
         assert_eq!(
             AuthorityClass::ALL.len(),
-            4,
+            5,
             "a new authority class must be added to the ruled table above and to ALL"
         );
         for class in AuthorityClass::ALL {
@@ -599,8 +611,9 @@ mod tests {
 
     /// The exact vocabulary, in declaration order (`wamn-0fqa`: seven to ten;
     /// `wamn-0h0g.13.63`: ten to twelve; `wamn-ctc8.15.2`: thirteen;
-    /// `wamn-emtx.13`: fourteen; `wamn-0h0g.10.15`: thirteen).
-    const FAMILIES: [WorkloadRoleFamily; 12] = [
+    /// `wamn-emtx.13`: fourteen; `wamn-0h0g.10.15`: thirteen; `wamn-a40n.2`:
+    /// administration).
+    const FAMILIES: [WorkloadRoleFamily; 13] = [
         WorkloadRoleFamily::ControlAuthor,
         WorkloadRoleFamily::ManagementAdmitter,
         WorkloadRoleFamily::ServiceReader,
@@ -613,6 +626,7 @@ mod tests {
         WorkloadRoleFamily::IdentityReader,
         WorkloadRoleFamily::SessionRoleReader,
         WorkloadRoleFamily::AuditRetention,
+        WorkloadRoleFamily::Administration,
     ];
 
     #[test]
@@ -633,6 +647,7 @@ mod tests {
                 WorkloadRoleFamily::IdentityReader => 9,
                 WorkloadRoleFamily::SessionRoleReader => 10,
                 WorkloadRoleFamily::AuditRetention => 11,
+                WorkloadRoleFamily::Administration => 12,
             };
             assert_eq!(index, pinned, "{family:?}");
         }
@@ -651,6 +666,7 @@ mod tests {
                 WorkloadRoleScopeKind::Control,
                 WorkloadRoleScopeKind::ProjectEnvironment,
                 WorkloadRoleScopeKind::Tenant,
+                WorkloadRoleScopeKind::ProjectEnvironment,
             ],
         );
         assert_eq!(
@@ -668,6 +684,7 @@ mod tests {
                 "wamn_identity_reader",
                 "wamn_session_role_reader",
                 "wamn_audit_retention",
+                "wamn_administration",
             ],
         );
     }
@@ -791,6 +808,15 @@ mod tests {
                 WorkloadRoleFamily::AuditRetention,
                 WorkloadRoleScope::Tenant {
                     tenant: "t",
+                    database: "db",
+                },
+            ),
+            (
+                WorkloadRoleFamily::Administration,
+                WorkloadRoleScope::ProjectEnvironment {
+                    org: "o",
+                    project: "p",
+                    environment: "dev",
                     database: "db",
                 },
             ),
@@ -1084,5 +1110,38 @@ mod tests {
             "wamn_audit_retention_bd22eb963b03bd528015fd2fba92768578166321_a"
         );
         assert_eq!(derived.len(), 63);
+    }
+
+    /// The administration family (`wamn-a40n.2`). The derived login was
+    /// computed independently of this module.
+    #[test]
+    fn the_administration_family_freezes_its_strings_and_identity() {
+        let family = WorkloadRoleFamily::Administration;
+        assert_eq!(family.acl_role(), "wamn_administration");
+        assert_eq!(family.label(), "administration");
+        assert_eq!(family.secret_prefix(), "wamn-administration-");
+        assert_eq!(family.secret_body_kind(), WorkloadSecretBodyKind::Url);
+        assert_eq!(
+            family.scope_kind(),
+            WorkloadRoleScopeKind::ProjectEnvironment
+        );
+        assert_eq!(family.generation_prefix(), family.acl_role());
+        assert!(family.is_platform_grain());
+        let derived = workload_generation_role(
+            family,
+            WorkloadRoleScope::ProjectEnvironment {
+                org: "acme",
+                project: "billing",
+                environment: "dev",
+                database: "wamn-db-acme--billing--dev--k3m9x2p7",
+            },
+            CredentialGeneration::A,
+        )
+        .unwrap();
+        assert_eq!(
+            derived,
+            "wamn_administration_8ea3fd26fcbe9be54c679986ae735776e5bb8195_a"
+        );
+        assert_eq!(derived.len(), 62);
     }
 }

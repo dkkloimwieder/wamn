@@ -653,6 +653,18 @@ done
 
 On 2026-09-26 the five generations took 107 seconds and the apply 13 seconds.
 
+Since `wamn-a40n.2`, a host also reads a sixth credential, `WAMN_ADMINISTRATION_PG_URL`, from the Secret `wamn-administration-dkk--receiving--dev`.
+Prepare it and apply it the same way:
+
+```bash
+target/debug/wamn-ctl provision-project-env --org dkk --project receiving --env dev --tenant dev \
+  --namespace hosts --target-admin-database-url "$T" --db-host wamn-pg-rw.platform.svc.cluster.local \
+  --prepare-administration-generation a --emit-administration-secret $P/administration.json
+(umask 077; jq . $P/administration.json > $P/administration.cluster.out) && kubectl apply -f - < $P/administration.cluster.out
+```
+
+Apply the Secret before the host rollout, because [values-host.yaml](../../deploy/gcp/values-host.yaml) names it with `optional: false`.
+
 Create the Google service account of the registry token CronJob. Give it read access to repository `wamn` only, and bind it to the Kubernetes service account `hosts/registry-token`:
 
 ```bash

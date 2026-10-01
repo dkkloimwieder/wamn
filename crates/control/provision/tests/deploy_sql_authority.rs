@@ -106,7 +106,8 @@ const HOST_INJECTED: [&str; 2] = ["wamn_run.operator_run_actions", "wamn_run.run
 /// Its explicit column grants and tenant predicates bound its reads.
 ///
 /// Sorted, because both consumers compare against a sorted list.
-const PLATFORM_GRAIN_ACL_ROLES: [&str; 7] = [
+const PLATFORM_GRAIN_ACL_ROLES: [&str; 8] = [
+    "wamn_administration",
     "wamn_event_materializer",
     "wamn_executor_platform",
     "wamn_http_admitter",

@@ -544,6 +544,7 @@ pub(super) async fn assert_nested_session(
         executor_platform: secret("executor-platform")?,
         event_materializer: secret("event-materializer")?,
         http_admitter: secret("http-admitter")?,
+        administration: secret("administration")?,
         identity_reader: secret("identity-reader")?,
         // This continuation does not start an authoring Gate or provision roles.
         control_author: String::new(),

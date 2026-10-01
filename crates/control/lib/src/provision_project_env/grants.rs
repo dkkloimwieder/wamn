@@ -63,6 +63,7 @@ pub(super) fn stable_grant_set(family: WorkloadRoleFamily) -> Option<StableGrant
         // retention source, and the family acquires its denial matrix row with
         // them.
         WorkloadRoleFamily::AuditRetention => Some(StableGrantSet::AuditRetention),
+        WorkloadRoleFamily::Administration => Some(StableGrantSet::Administration),
         _ => None,
     }
 }
@@ -79,6 +80,7 @@ pub(super) enum StableGrantSet {
     HttpAdmitter,
     EventMaterializer,
     AuditRetention,
+    Administration,
 }
 
 impl StableGrantSet {
@@ -127,6 +129,9 @@ impl StableGrantSet {
             }
             Self::AuditRetention => {
                 verify_audit_retention_grants(role, database, grants, retention_targets)
+            }
+            Self::Administration => {
+                verify_administration_grants(role, database, required_database, grants)
             }
         }
     }
@@ -685,6 +690,48 @@ pub(super) fn verify_http_admitter_grants(
     anyhow::ensure!(
         actual == expected,
         "stable role {role:?} ACLs in database {database:?} are not the exact callable-HTTP admission grant set"
+    );
+    Ok(())
+}
+
+/// Exact surface of the administration family (`wamn-a40n.2`): `USAGE` on
+/// `app_system` and `wamn_history`, a `SELECT` on each relation of
+/// `sql::ADMINISTRATION_RELATIONS`, and `EXECUTE` on `row_image` and on the
+/// tenant-key derivation. Its writes come through `wamn_platform`.
+pub(super) fn verify_administration_grants(
+    role: &str,
+    database: &str,
+    required_database: &str,
+    grants: &[RoleAcl],
+) -> anyhow::Result<()> {
+    if grants.is_empty() {
+        anyhow::ensure!(
+            database != required_database,
+            "stable role {role:?} has no administration ACL in required database {database:?}"
+        );
+        return Ok(());
+    }
+    let actual = acl_tuples(grants);
+    let tuple = |object_type: &str, schema: &str, object: &str, privilege: &str| {
+        (
+            object_type.to_string(),
+            schema.to_string(),
+            object.to_string(),
+            privilege.to_string(),
+        )
+    };
+    let mut expected = BTreeSet::from([
+        tuple("schema", "app_system", "app_system", "USAGE"),
+        tuple("schema", "wamn_history", "wamn_history", "USAGE"),
+        tuple("routine", "wamn_history", "row_image", "EXECUTE"),
+        tuple("routine", "wamn_authority", "tenant_key", "EXECUTE"),
+    ]);
+    for relation in sql::ADMINISTRATION_RELATIONS {
+        expected.insert(tuple("relation", "app_system", relation, "SELECT"));
+    }
+    anyhow::ensure!(
+        actual == expected,
+        "stable role {role:?} ACLs in database {database:?} are not the exact administration grant set"
     );
     Ok(())
 }

@@ -49,6 +49,9 @@
   },
   "description": "Sole field authority for the strict deployment-owned `dev.json` document.",
   "properties": {
+    "administration_database_url": {
+      "type": "string"
+    },
     "catalog": {
       "type": "string"
     },
@@ -185,6 +188,7 @@
     }
   },
   "required": [
+    "administration_database_url",
     "catalog",
     "dup_window_secs",
     "effective_release_id",

@@ -377,6 +377,9 @@ fn every_family_derives_a_lifecycle_and_only_a_grant_set_stays_per_family() {
             // three-column SELECT on P<n>D history tables, with its denial
             // matrix row.
             WorkloadRoleFamily::AuditRetention,
+            // `wamn-a40n.2`: the administration family reads the application
+            // authorization relations, with its denial matrix row.
+            WorkloadRoleFamily::Administration,
         ],
         "a family acquired a grant set without acquiring authority"
     );
@@ -396,6 +399,7 @@ fn every_family_derives_a_lifecycle_and_only_a_grant_set_stays_per_family() {
         WorkloadRoleFamily::RegistryReader,
         WorkloadRoleFamily::IdentityReader,
         WorkloadRoleFamily::SessionRoleReader,
+        WorkloadRoleFamily::Administration,
     ] {
         assert!(sql::stable_surface_sql(family).is_some(), "{family:?}");
     }
@@ -409,6 +413,7 @@ fn every_family_derives_a_lifecycle_and_only_a_grant_set_stays_per_family() {
                 | WorkloadRoleFamily::RegistryReader
                 | WorkloadRoleFamily::IdentityReader
                 | WorkloadRoleFamily::SessionRoleReader
+                | WorkloadRoleFamily::Administration
         ) {
             assert!(sql::stable_surface_sql(family).is_none(), "{family:?}");
         }
@@ -916,6 +921,7 @@ fn every_workload_family_carries_a_distinct_frozen_label() {
         (WorkloadRoleFamily::IdentityReader, "identity-reader"),
         (WorkloadRoleFamily::SessionRoleReader, "session-role-reader"),
         (WorkloadRoleFamily::AuditRetention, "audit-retention"),
+        (WorkloadRoleFamily::Administration, "administration"),
     ];
     assert_eq!(expected.len(), WorkloadRoleFamily::ALL.len());
     let mut seen = Vec::new();

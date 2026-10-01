@@ -165,7 +165,7 @@ struct FamilyReach {
 /// different plane. `wamn_scenario_author` is absent because it is a host group,
 /// not a [`WorkloadRoleFamily`] — it has no generation lifecycle to mint a
 /// principal from.
-const MATRIX: [FamilyReach; 9] = [
+const MATRIX: [FamilyReach; 10] = [
     FamilyReach {
         family: WorkloadRoleFamily::App,
         relations: &[
@@ -284,6 +284,18 @@ const MATRIX: [FamilyReach; 9] = [
             "retention_fixture.entry_history|SELECT|column",
         ],
         routines: &[],
+    },
+    // `wamn-a40n.2`: the host-run administration routes read the application
+    // authorization relations. `app_system.roles` and `wamn_history.row_image`
+    // are outside the matrix universe.
+    FamilyReach {
+        family: WorkloadRoleFamily::Administration,
+        relations: &[
+            "app_system.permissions|SELECT|table",
+            "app_system.user_roles|SELECT|table",
+            "app_system.users|SELECT|table",
+        ],
+        routines: &["wamn_authority.tenant_key(text)"],
     },
 ];
 
@@ -855,6 +867,11 @@ fn the_audit_retention_family_is_refused_the_other_families_operations() {
     assert_family_row(WorkloadRoleFamily::AuditRetention);
 }
 
+#[test]
+fn the_administration_family_is_refused_the_other_families_operations() {
+    assert_family_row(WorkloadRoleFamily::Administration);
+}
+
 /// The matrix is PAIRWISE, and this is what makes that literally true.
 ///
 /// A pure arm, so it fails in the ordinary sweep and not only against a server:
@@ -930,7 +947,9 @@ fn every_ordered_pair_of_matrix_families_is_covered_exactly_once() {
 /// pairs the matrix cannot speak for, so it is spelled out rather than left to
 /// be counted. Pairs naming the MEASURED-EMPTY family as the object
 /// are excluded: those are asserted separately, by name, above.
-const CONTAINED_PAIRS: [(&str, &str); 5] = [
+const CONTAINED_PAIRS: [(&str, &str); 7] = [
+    ("administration", "session-role-reader"),
+    ("app", "administration"),
     ("app", "event-materializer"),
     ("app", "http-admitter"),
     ("app", "retention"),
@@ -1322,7 +1341,8 @@ fn authority_derivations_are_not_public_execute() {
 /// admitting or demoting a family costs one deliberate edit here.
 ///
 /// Sorted, because the arm compares against a sorted list.
-const PLATFORM_GRAIN_ACL_ROLES: [&str; 7] = [
+const PLATFORM_GRAIN_ACL_ROLES: [&str; 8] = [
+    "wamn_administration",
     "wamn_event_materializer",
     "wamn_executor_platform",
     "wamn_http_admitter",

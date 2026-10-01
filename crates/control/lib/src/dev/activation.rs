@@ -705,6 +705,10 @@ fn host_process_spec(request: &DevActivationRequest<'_>) -> HostProcessSpec {
             request.config.event_materializer_database_url().to_owned(),
         ),
         (
+            "WAMN_ADMINISTRATION_PG_URL".to_owned(),
+            request.config.administration_database_url().to_owned(),
+        ),
+        (
             "WAMN_EVT_NATS_URL".to_owned(),
             request.config.event_nats_url().to_owned(),
         ),
@@ -1554,6 +1558,7 @@ mod tests {
             "executor_platform_database_url": "postgresql://platform:platform-secret@127.0.0.1:41006/target",
             "http_admitter_database_url": "postgresql://admitter:admitter-secret@127.0.0.1:41007/target",
             "event_materializer_database_url": "postgresql://materializer:materializer-secret@127.0.0.1:41008/target",
+            "administration_database_url": "postgresql://administration:administration-secret@127.0.0.1:41013/target",
             "scheduler_nats_url": "nats://127.0.0.1:41009",
             "event_nats_url": "nats://127.0.0.1:41010",
             "event_nats_username": "dev_runtime",
@@ -2037,6 +2042,11 @@ mod tests {
                 (
                     "WAMN_EVENT_MATERIALIZER_PG_URL".to_owned(),
                     "postgresql://materializer:materializer-secret@127.0.0.1:41008/target"
+                        .to_owned(),
+                ),
+                (
+                    "WAMN_ADMINISTRATION_PG_URL".to_owned(),
+                    "postgresql://administration:administration-secret@127.0.0.1:41013/target"
                         .to_owned(),
                 ),
                 (
