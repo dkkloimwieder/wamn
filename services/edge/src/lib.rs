@@ -15,6 +15,7 @@
 //! - [`forward`]: the forward of each sample to a platform route over HTTPS.
 //! - [`refusals`]: the `wamn-edge samples` commands, which list and resolve
 //!   refused samples while the edge is stopped.
+//! - [`status`]: the status socket of a running edge, and its reader.
 //! - [`authenticator`], [`delivery`], [`policy`] and [`application`]: the
 //!   edge side of the engine's route and operation traits.
 //! - [`intents`]: the `wamn-edge intents` commands, which list and resolve
@@ -51,3 +52,4 @@ pub mod release;
 pub mod samples;
 pub mod serial;
 pub mod serve;
+pub mod status;

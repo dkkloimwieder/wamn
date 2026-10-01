@@ -24,7 +24,7 @@
 
 use std::os::unix::fs::PermissionsExt as _;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::Duration;
 
 use anyhow::Context as _;
@@ -61,6 +61,7 @@ const REASON_BYTES: usize = 1024;
 pub struct Forward {
     task: JoinHandle<()>,
     credential_failures: Arc<AtomicU64>,
+    credential_stop: Arc<AtomicBool>,
 }
 
 impl Forward {
@@ -68,6 +69,21 @@ impl Forward {
     /// shows a PAT that the platform does not accept.
     pub fn credential_failures(&self) -> u64 {
         self.credential_failures.load(Ordering::Relaxed)
+    }
+
+    /// Whether the forward stopped at `credential_bound`. It sends again only
+    /// after the edge restarts.
+    pub fn stopped(&self) -> bool {
+        self.credential_stop.load(Ordering::Relaxed)
+    }
+
+    /// The counter of [`Self::credential_failures`] and the flag of
+    /// [`Self::stopped`], for the status.
+    pub(crate) fn status_counters(&self) -> (Arc<AtomicU64>, Arc<AtomicBool>) {
+        (
+            Arc::clone(&self.credential_failures),
+            Arc::clone(&self.credential_stop),
+        )
     }
 
     /// Wait for the forward to end.
@@ -128,15 +144,18 @@ pub fn start(
         credential_bound: config.credential_bound.get(),
     };
     let credential_failures = Arc::new(AtomicU64::new(0));
+    let credential_stop = Arc::new(AtomicBool::new(false));
     let task = tokio::spawn(run(
         forwarder,
         samples,
         Arc::clone(&credential_failures),
+        Arc::clone(&credential_stop),
         stopped,
     ));
     Ok(Forward {
         task,
         credential_failures,
+        credential_stop,
     })
 }
 
@@ -199,6 +218,7 @@ async fn run(
     forwarder: Forwarder,
     samples: SampleStore,
     credential_failures: Arc<AtomicU64>,
+    credential_stop: Arc<AtomicBool>,
     mut stopped: watch::Receiver<bool>,
 ) {
     let mut backoff = FIRST_BACKOFF;
@@ -214,6 +234,7 @@ async fn run(
             Pass::Credential => {
                 in_a_row += 1;
                 if in_a_row >= forwarder.credential_bound {
+                    credential_stop.store(true, Ordering::Relaxed);
                     tracing::error!(
                         failures = in_a_row,
                         "the forward stopped: the platform refused the PAT; \

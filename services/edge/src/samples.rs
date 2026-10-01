@@ -111,6 +111,22 @@ impl SampleStore {
         self.stored.notified().await;
     }
 
+    /// The count of pending samples.
+    pub async fn pending_count(&self) -> Result<u32, StoreError> {
+        self.store
+            .transact("pending count", |transaction| {
+                transaction
+                    .query_row(
+                        "SELECT COUNT(*) FROM samples \
+                         WHERE forwarded_at IS NULL AND refused_at IS NULL",
+                        [],
+                        |row| row.get(0),
+                    )
+                    .map_err(storage("pending count"))
+            })
+            .await
+    }
+
     /// The oldest pending samples, at most `limit`. A pending sample is
     /// neither forwarded nor refused.
     pub async fn pending(&self, limit: u32) -> Result<Vec<Sample>, StoreError> {

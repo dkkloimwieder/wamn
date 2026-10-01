@@ -41,6 +41,11 @@ impl DeviceLoop {
         self.dropped.load(Ordering::Relaxed)
     }
 
+    /// The counter of [`Self::dropped_frames`], for the status.
+    pub(crate) fn dropped_counter(&self) -> Arc<AtomicU64> {
+        Arc::clone(&self.dropped)
+    }
+
     /// Wait for the loop to end. A call in flight finishes first.
     pub async fn join(self) {
         if let Err(error) = self.task.await {

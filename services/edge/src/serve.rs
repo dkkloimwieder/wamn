@@ -5,7 +5,8 @@
 //! an ingress. The route guest runs as its own workload, built from the bundle
 //! bytes. The application loads once as a native application. When the
 //! configuration names a device, the device loop calls the same delivery, and
-//! when it names a forward, the forward sends each stored sample on.
+//! when it names a forward, the forward sends each stored sample on. The
+//! status socket beside the run-state file answers what the edge holds.
 
 use std::collections::HashMap;
 use std::net::SocketAddr;
@@ -14,6 +15,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use anyhow::Context as _;
+use chrono::{SecondsFormat, Utc};
 use wamn_catalog::edge_bundle::file_digest;
 use wamn_engine::engine::{
     build_engine_with_host_memory_and_compilation_cache, core_instances_of_component,
@@ -40,6 +42,7 @@ use crate::device::{self, DeviceLoop};
 use crate::forward::{self, Forward};
 use crate::release::EdgeRelease;
 use crate::samples::SampleStore;
+use crate::status::{self, Facts};
 
 /// The workload that runs the route guest.
 const INGRESS_WORKLOAD: &str = "flow-http";
@@ -53,6 +56,9 @@ pub struct EdgeHost {
     device: Option<DeviceLoop>,
     forward: Option<Forward>,
     samples: SampleStore,
+    /// The status socket's accept loop, and the socket file.
+    status: tokio::task::JoinHandle<()>,
+    status_socket: PathBuf,
     /// Resolves when the last handle of the run-state file drops.
     closed: StoreClosed,
 }
@@ -78,6 +84,11 @@ impl EdgeHost {
         self.forward.as_ref()
     }
 
+    /// The status socket, beside the run-state file.
+    pub fn status_socket(&self) -> &Path {
+        &self.status_socket
+    }
+
     /// Refuse new requests and frames, let the device call in flight finish,
     /// drop a forward in flight, then stop the host and its workloads. The
     /// platform key makes the repeat of a dropped forward harmless. Returns
@@ -89,10 +100,18 @@ impl EdgeHost {
             device,
             forward,
             samples,
+            status,
+            status_socket,
             closed,
             ..
         } = self;
         let _ = stopping.send(true);
+        if let Err(error) = status.await {
+            tracing::warn!(%error, "the status socket failed");
+        }
+        if let Err(error) = std::fs::remove_file(&status_socket) {
+            tracing::warn!(%error, socket = %status_socket.display(), "the status socket file stays");
+        }
         if let Some(device) = device {
             device.join().await;
         }
@@ -175,6 +194,9 @@ pub async fn serve(config: EdgeConfig) -> anyhow::Result<EdgeHost> {
     let samples = SampleStore::open(intents.clone())
         .await
         .context("open the samples table")?;
+    let started_at = Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true);
+    let status_socket = status::socket_path(&config.store.db)?;
+    let status_listener = status::bind(&status_socket)?;
     let application = EdgeApplication::load(Arc::clone(&engine), &release)
         .await
         .context("load the release application")?;
@@ -251,9 +273,20 @@ pub async fn serve(config: EdgeConfig) -> anyhow::Result<EdgeHost> {
         },
         None => None,
     };
+    let status = status::start(
+        status_listener,
+        Facts {
+            started_at,
+            dropped_frames: device.as_ref().map(DeviceLoop::dropped_counter),
+            forward: forward.as_ref().map(Forward::status_counters),
+            samples: samples.clone(),
+        },
+        stopping.subscribe(),
+    );
     tracing::info!(
         bundle_digest = release.bundle_digest(),
         %addr,
+        status_socket = %status_socket.display(),
         device = config.device.is_some(),
         forward = config.forward.is_some(),
         "wamn-edge serves its release"
@@ -265,6 +298,8 @@ pub async fn serve(config: EdgeConfig) -> anyhow::Result<EdgeHost> {
         device,
         forward,
         samples,
+        status,
+        status_socket,
         closed,
     })
 }

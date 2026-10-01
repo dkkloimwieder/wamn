@@ -27,7 +27,7 @@ use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
 use tokio::net::TcpListener;
 use tokio::sync::Notify;
 use tokio_rustls::TlsAcceptor;
-use wamn_edge::refusals;
+use wamn_edge::{refusals, status};
 
 use support::{ATTACHMENT, AUDIENCE, HOST, ISSUER, ORG, PRINCIPAL, ROLE, bundle, key};
 
@@ -382,6 +382,7 @@ async fn a_sample_is_forwarded_once_across_kills() {
     let (ca_file, acceptor) = tls(&directory);
     let url = format!("https://127.0.0.1:{port}/samples");
     let config = configuration(&directory, &digest, &device, &url, &ca_file, TOKEN, 5);
+    let db = directory.join("edge.db");
 
     // The platform is down: the samples are stored and the forward fails.
     let mut edge = Edge::start(&config);
@@ -390,6 +391,12 @@ async fn a_sample_is_forwarded_once_across_kills() {
         .expect("send the frames");
     edge.wait_for("the device call stored its sample", 2);
     edge.wait_for("the forward did not reach the platform", 1);
+    let down = status::read(&db).await.expect("read the status");
+    assert_eq!(
+        down["forward"],
+        json!({"credential_failures": 0, "stopped": false})
+    );
+    assert_eq!(down["samples"], json!({"pending": 2, "refused": []}));
     edge.kill();
 
     // The platform applies the first sample and holds its answer.
@@ -416,6 +423,7 @@ async fn a_sample_is_forwarded_once_across_kills() {
         .write_all(format!("{REFUSED_FRAME}\n").as_bytes())
         .expect("send the refused frame");
     edge.wait_for("the platform refused a sample", 1);
+    let refused = status::read(&db).await.expect("read the status");
     edge.kill();
 
     let refused_key = {
@@ -439,8 +447,25 @@ async fn a_sample_is_forwarded_once_across_kills() {
         );
         keys[3].to_owned()
     };
+    let entries = refused["samples"]["refused"]
+        .as_array()
+        .expect("the refused samples");
+    assert_eq!(refused["samples"]["pending"], 0, "{refused}");
+    assert_eq!(entries.len(), 1, "{refused}");
+    assert_eq!(entries[0]["sample_key"], refused_key);
+    assert!(entries[0]["captured_at"].is_string(), "{refused}");
+    assert!(
+        entries[0]["reason"]
+            .as_str()
+            .is_some_and(|reason| reason.contains("invalid_input")),
+        "{refused}"
+    );
+    assert_eq!(
+        entries[0].as_object().map(serde_json::Map::len),
+        Some(3),
+        "a refused sample carries its key, time and reason, and no body"
+    );
 
-    let db = directory.join("edge.db");
     let connection = rusqlite::Connection::open(&db).expect("open the stopped edge's file");
     let count = |query: &str| -> i64 {
         connection
@@ -510,6 +535,14 @@ async fn a_refused_pat_stops_the_forward_at_the_bound() {
     edge.wait_for("the forward stopped", 1);
     controller.write_all(b"13.0 kg\n").expect("send a frame");
     edge.wait_for("the device call stored its sample", 2);
+    let stopped = status::read(&directory.join("edge.db"))
+        .await
+        .expect("read the status");
+    assert_eq!(
+        stopped["forward"],
+        json!({"credential_failures": 1, "stopped": true})
+    );
+    assert_eq!(stopped["samples"], json!({"pending": 2, "refused": []}));
     // Without the stop, the forward sends again after the first 5 s backoff.
     tokio::time::sleep(Duration::from_secs(7)).await;
     edge.kill();

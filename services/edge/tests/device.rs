@@ -16,6 +16,7 @@ use serde_json::json;
 use wamn_edge::config::{DeviceConfig, SerialConfig};
 use wamn_edge::device::DeviceLoop;
 use wamn_edge::samples::{Sample, SampleStore};
+use wamn_edge::status;
 use wamn_run_state::IntentStore as _;
 use wamn_run_state_sqlite::SqliteIntentStore;
 
@@ -50,7 +51,9 @@ async fn pending(samples: &SampleStore, count: usize) -> Vec<Sample> {
 /// Two frames give two calls, two finished intents and two samples, and the
 /// device component trims each frame. A frame longer than `max_frame` gives
 /// none, a trailing carriage return is dropped, and a blank frame, which the
-/// component refuses, stores no sample.
+/// component refuses, stores no sample. The status socket counts the dropped
+/// frame and the pending samples while the edge runs, and is gone after it
+/// stops.
 #[tokio::test(flavor = "multi_thread")]
 async fn each_frame_is_one_call_one_intent_and_one_sample() {
     let (_, public) = key("key-one", 1);
@@ -68,6 +71,13 @@ async fn each_frame_is_one_call_one_intent_and_one_sample() {
         },
     });
     let host = start(config).await;
+    let db = directory.join("edge.db");
+    let before = status::read(&db).await.expect("read the status");
+    assert!(before["started_at"].is_string(), "{before}");
+    assert_eq!(before["device"], json!({"dropped_frames": 0}));
+    assert_eq!(before["forward"], json!(null), "no forward is configured");
+    assert_eq!(before["samples"], json!({"pending": 0, "refused": []}));
+    assert_eq!(host.status_socket(), directory.join("status.sock"));
     controller
         .write_all(b"0123456789ABCDEFGHIJ\n12.5 kg\r\n   \n  13.0 kg\n")
         .expect("send the frames");
@@ -77,7 +87,19 @@ async fn each_frame_is_one_call_one_intent_and_one_sample() {
         Some(1),
         "the long frame is counted"
     );
+    let after = status::read(&db).await.expect("read the status");
+    assert_eq!(after["device"], json!({"dropped_frames": 1}));
+    assert_eq!(after["samples"], json!({"pending": 2, "refused": []}));
+    assert_eq!(after["started_at"], before["started_at"]);
     host.stop().await.expect("the edge stops");
+    assert!(
+        !directory.join("status.sock").exists(),
+        "the stopped edge removes its socket"
+    );
+    assert!(
+        status::read(&db).await.is_err(),
+        "a stopped edge answers no status"
+    );
 
     assert_eq!(
         stored
