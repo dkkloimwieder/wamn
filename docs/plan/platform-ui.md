@@ -721,13 +721,16 @@ Each actual control operation independently repeats its authoritative role check
 
 ## 4.4 Org level
 
-Add:
+Issue 3 (`wamn-a40n.3`) builds the system-level part of this section.
+The application rows (`app_system.user_roles` in each environment's project database) follow in issue 4, because the control host holds no project database credential ([§9](#9-questions-for-the-owner)).
+
+Add, in `wamn_system`:
 
 ```text
 identity.org_memberships (
     principal_id,
     org,
-    status
+    status        active | inactive
 )
 
 identity.org_roles (
@@ -743,87 +746,97 @@ Initial org role vocabulary:
 org-admin
 ```
 
-`provision-org` writes the owner's active org membership and `org-admin`.
+`provision-org --owner-email <email>` is required.
+It names an existing human principal and refuses an unknown email.
+It writes that person's active org membership and `org-admin` row, stamped `wamn:provisioning` as every provisioning row is ([data access](../architecture/data-access.md#actors)).
+An org provisioned before the flag gets its owner through `wamn-ctl invite` with `org-admin`.
+
+### Control writes
+
+The control host writes with the `control` family login, as the session user.
+Each write transaction binds `app.user_id` to the caller's principal and `app.operation` to the route's sealed operation id.
+The system identity tables record the actor only, so `app.operation` is bound but not stored.
+
+The `control` family holds exactly these privileges in `wamn_system`:
+
+```text
+SELECT                          identity.principals, identity.password_logins
+SELECT, INSERT, UPDATE, DELETE  identity.org_memberships, identity.org_roles,
+                                identity.project_roles, identity.project_env_memberships
+SELECT                          registry.projects, registry.project_envs
+```
+
+It holds nothing on `principals` beyond `SELECT`, nothing on password or invitation tokens, and nothing in any project database.
+
+The control host never creates a principal.
+Identity creates or reuses the global human, issues the invitation credential and sends the mail, over the operator-certificate path that `wamn-ctl invite` uses.
+The control host never holds the Resend key or a token-minting role.
 
 ### Org operations
 
+Each org operation, except `control.mine`, requires a current `org-admin` row for the caller in the token's org.
+The handler repeats that check in its write transaction.
+
 ```text
-person.list
-person.invite
-person.activate
-person.deactivate
+wamn-control:person/list@0.1.0
+wamn-control:person/invite@0.1.0
+wamn-control:person/activate@0.1.0
+wamn-control:person/deactivate@0.1.0
 
-project.list
+wamn-control:project/list@0.1.0
 
-org_admin.grant
-org_admin.revoke
+wamn-control:org-admin/grant@0.1.0
+wamn-control:org-admin/revoke@0.1.0
 
-control.mine
+wamn-control:control/mine@0.1.0
 ```
 
 ### `person.list`
 
-Returns active and inactive memberships of the org.
+Returns active and inactive memberships of the org, with each principal's email and display name.
 
-The global principal remains an identity fact; membership status is org-local.
+The global principal remains an identity fact. Membership status is org-local.
 
 ### `person.invite`
 
 Input names:
 
-- email;
-- display name;
-- optional project-env memberships;
-- optional `org-admin`;
-- optional `project-admin` grants;
-- optional direct application roles.
+- email
+- display name
+- optional project-env memberships
+- optional `org-admin`
+- optional `project-admin` grants.
 
-All role lists may be empty.
+All lists can be empty.
+Direct application roles follow in issue 4.
 
-The operation resolves the email globally.
+The operation runs in three steps:
+
+```text
+identity: create or reuse the human by email     → principal id
+control:  create or reactivate the org membership
+          + write the requested system grants     (one transaction)
+identity: issue the invitation and mail it        (only when no password credential exists)
+```
+
+The identity call that creates or reuses a human is idempotent on the email and returns the principal id.
+Identity's database role gains `INSERT` on `identity.principals` for it.
 
 #### New principal
 
-If no principal exists:
-
-```text
-create global human principal
-→ create active org membership
-→ write requested system grants
-→ converge environment/application grants
-→ issue invitation credential
-→ mail invitation
-```
+Identity creates the human.
+The invitation is issued and mailed.
 
 #### Existing enrolled principal
 
-If the human principal already exists and already has a password credential:
-
-```text
-reuse principal
-→ create/reactivate org membership
-→ write requested system grants
-→ converge environment/application grants
-→ send no mail
-```
-
+The human already has a password credential.
+Identity reuses it, and no invitation or informational email is sent.
 This is the normal second-org case.
-
-No invitation credential or informational email is sent.
 
 #### Existing unenrolled principal
 
-If the principal exists but has no password credential:
-
-```text
-reuse principal
-→ create/reactivate org membership
-→ write requested system grants
-→ converge environment/application grants
-→ issue invitation credential
-→ mail invitation
-```
-
+The human exists but has no password credential.
+Identity reuses it, and the invitation is issued and mailed.
 Principal existence alone therefore does not suppress enrollment.
 
 Only email and display name identify the global human. Org membership and access remain org-local.
@@ -832,23 +845,21 @@ An invitation with no effective role is valid. After enrollment the person sees:
 
 > **No access has been granted.**
 
-`wamn-ctl invite` accepts the same logical input and follows the same principal/enrollment rules.
+`wamn-ctl invite` accepts the same logical input and follows the same principal and enrollment rules.
 
 ### `person.deactivate`
 
-Revokes from the leaves upward:
+Revokes from the leaves upward, in one transaction:
 
-1. application user/access rows for every environment in the org;
-2. project-env memberships;
-3. project roles;
-4. org roles;
-5. mark the org membership inactive.
+1. project-env memberships in the org
+2. project roles in the org
+3. org roles
+4. mark the org membership inactive.
 
 It does not disable the global principal.
 
-The operation reports success only after the downward access has been removed.
-
-`reconcile-run-plane` can repair an interrupted convergence, but a successful deactivation never depends on eventual cleanup to close access.
+Until issue 4, application `users` and role rows in each environment remain after a deactivation.
+The rule that the operation reports success only after all downward access is removed is not met until issue 4.
 
 ### `person.activate`
 
@@ -860,23 +871,36 @@ It restores no project, environment or role access.
 
 Requires an active org member.
 
-Writes the actual `org-admin` row, then materializes:
+Writes the actual `org-admin` row, then in the same transaction materializes:
 
 ```text
-project-admin in every existing project
-membership in every existing environment
-admin in every existing application
+project-admin in every existing project of the org
+membership in every existing environment of the org
 ```
+
+`admin` in every existing application follows in issue 4.
 
 A later project/environment creation performs the same materialization for all current org admins.
 
 ### `org_admin.revoke`
 
-Removes application `admin` throughout the org, then project-admin rows throughout the org, then the `org-admin` row.
+Removes `project-admin` rows throughout the org, then the `org-admin` row, in one transaction.
+Removing application `admin` first follows in issue 4.
 
-Ordinary memberships and authored application roles remain.
+Ordinary memberships remain.
 
 If lower administrative authority is still wanted after the revoke, it is explicitly granted again.
+
+### Control admission
+
+Control discovery, the control session's per-request check and `control.mine` accept `org-admin` beside `project-admin`.
+Identity's database role gains `SELECT` on `identity.org_roles` for discovery.
+`control.mine` reports `org_admin: true` for a holder, with every project of the org.
+
+### Installed databases
+
+System migration `0007` creates both tables and carries the grant changes of this section, as the rendered output of the provisioning builders.
+`wamn-ctl upgrade-schema --system-database-url` applies it on an installed `wamn_system`.
 
 ---
 
@@ -1375,26 +1399,41 @@ Exit includes:
 
 **3. Org membership and org administration.**
 
-- `identity.org_memberships`;
-- `identity.org_roles`;
-- provisioning owner rows;
-- invitation with optional zero access;
-- new / enrolled / unenrolled existing-principal cases;
-- no-access login state;
-- person activation/deactivation;
-- org-admin materialization and downward revoke;
-- `wamn-ctl invite` parity.
+Issue 3 (`wamn-a40n.3`) is bounded by what lives in `wamn_system`.
+§4.4 holds the design. Main at `216da8ce2` was measured on 2026-10-01.
 
-Issue 3 owns the hand-applied wamn-dev `wamn_system` statements needed to add:
+Measured starting state:
 
-```text
-identity.org_memberships
-identity.org_roles
-```
+- `identity.org_memberships` and `identity.org_roles` do not exist.
+- The `control` family holds `SELECT` on `identity.principals`, `identity.project_roles` and `identity.password_logins` only (`CONTROL_RELATIONS`, `crates/control/provision/src/sql.rs`). Credential prepare converges it with `REVOKE ALL` first, so a grant outside the builder does not survive.
+- `provision-org` writes `registry.orgs` and `registry.env_policies` only, and binds no actor.
+- `wamn-ctl invite` sends `POST /invitations {principal_id}` over the operator certificate. The principal must already exist, and identity's database role cannot insert one.
+- Control admission (`control_session_is_active`, `control_orgs`) and `control.mine` know `project-admin` only.
+- `/password/environments` already returns an empty list for a person with no access.
+- The system identity tables carry the stamp trigger, which records `app.user_id` only.
 
-and their required constraints/grants.
+Commits, each one green:
 
-Those statements are recorded in `docs/operations/gcp.md` §7 against `wamn-o8b9`.
+1. System migration `0007` and the provisioning builders. The migration creates `identity.org_memberships` and `identity.org_roles` with their keys, checks and stamp triggers. It carries the grant changes of §4.4 as the rendered builder output. `system-schema.sql` gains the same tables for a fresh install. `family_denial_matrix` pins the new `control` writes and reads and the identity issuer's new `SELECT` and `INSERT`.
+2. `provision-org --owner-email`, required, which writes the owner's membership and `org-admin` row.
+3. The identity call that creates or reuses a human by email and display name. `wamn-ctl invite` takes the logical input of `person.invite`.
+4. Control admission and `control.mine` accept `org-admin`.
+5. The org host routes of §4.4: `person.list`, `person.invite`, `person.activate`, `person.deactivate`, `project.list`, `org_admin.grant` and `org_admin.revoke`. Each write runs in one transaction on the `control` login, with `app.user_id` and `app.operation` bound.
+6. Documentation: execution, data access (the system identity tables record the actor only), and `gcp.md` §7, which records `0007` as a migration run and the dkk owner as a `wamn-ctl invite` with `org-admin`.
+
+Exit includes:
+
+- `0007` on an installed `wamn_system` gives the same ACL surface as a fresh install
+- the denial matrix rows of the `control` family and the identity issuer
+- `provision-org` with a known and an unknown owner email
+- the new, enrolled and unenrolled `person.invite` cases, including mail only where no password credential exists
+- an invitation with no access, whose login lists no environment
+- `person.deactivate` and `person.activate` at the system level
+- `org_admin.grant` materialization over every project and environment, and `org_admin.revoke`
+- every org route refusing a caller without `org-admin`, and a revoked `org-admin` refused on the next request
+- `wamn-ctl invite` parity
+
+The application rows of `org_admin.grant`, `org_admin.revoke` and `person.deactivate` move to issue 4.
 
 **4. Project administration and convergence.**
 
@@ -1491,3 +1530,11 @@ New-project grant materialization and deterministic empty-environment copy from 
 6. **Naming precursor — accepted owner ruling.** The platform-wide `kind` → `type` contract migration is mandatory and completes before Platform UI Issue 1 begins. Its implementation is itself gated on an accepted dedicated migration specification.
 
 7. **Baseline discipline — accepted.** Section 3 is the reviewed `3a81dcfec` baseline, not a permanent statement about `main`. Issue 1 remeasures it against its starting `main` in its first commit before changing Platform UI behavior.
+
+---
+
+## 9. Questions for the owner
+
+1. Issue 4. How does an org-level write reach a project database? `org_admin.grant`, `org_admin.revoke` and `person.deactivate` must change `app_system.users` and `app_system.user_roles` in each environment of the org. The control serving root holds no project database (§4.2), and the control host holds no `wamn_administration` credential. This is a credential boundary, so the issue 4 spec answers it first.
+2. Issue 3. Which credential does `wamn-ctl invite` use for the membership and grants it writes? Its sibling `wamn-ctl grant-project-env-membership` takes `--system-database-url` and writes as `wamn_system`, stamped `wamn:provisioning`.
+3. Issue 3. Does the shell message "No access has been granted." land in issue 3 or with the web work of issue 6? Identity already returns an empty environment list for such a person.
