@@ -91,6 +91,15 @@ async fn each_frame_is_one_call_one_intent_and_one_sample() {
     assert_eq!(after["device"], json!({"dropped_frames": 1}));
     assert_eq!(after["samples"], json!({"pending": 2, "refused": []}));
     assert_eq!(after["started_at"], before["started_at"]);
+    assert_eq!(
+        status::run(&db).await.expect("print the status"),
+        format!(
+            "started_at\t{}\ndevice.dropped_frames\t1\nforward\tnone\n\
+             samples.pending\t2\nsamples.refused\t0\n",
+            before["started_at"].as_str().expect("a time")
+        ),
+        "wamn-edge status prints one line per fact"
+    );
     host.stop().await.expect("the edge stops");
     assert!(
         !directory.join("status.sock").exists(),

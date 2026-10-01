@@ -424,6 +424,7 @@ async fn a_sample_is_forwarded_once_across_kills() {
         .expect("send the refused frame");
     edge.wait_for("the platform refused a sample", 1);
     let refused = status::read(&db).await.expect("read the status");
+    let printed = status::run(&db).await.expect("print the status");
     edge.kill();
 
     let refused_key = {
@@ -464,6 +465,15 @@ async fn a_sample_is_forwarded_once_across_kills() {
         entries[0].as_object().map(serde_json::Map::len),
         Some(3),
         "a refused sample carries its key, time and reason, and no body"
+    );
+    assert!(
+        printed.contains("forward.stopped\tfalse\n")
+            && printed.contains("samples.refused\t1\n")
+            && printed.contains(&format!(
+                "refused\t{refused_key}\t{}\t",
+                entries[0]["captured_at"].as_str().expect("a time")
+            )),
+        "{printed}"
     );
 
     let connection = rusqlite::Connection::open(&db).expect("open the stopped edge's file");

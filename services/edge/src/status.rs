@@ -11,6 +11,7 @@
 //! which keep their one matcher.
 
 use std::convert::Infallible;
+use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -212,4 +213,64 @@ pub async fn read(db: &Path) -> anyhow::Result<Value> {
         String::from_utf8_lossy(&body).trim_end()
     );
     serde_json::from_slice(&body).context("parse the status answer")
+}
+
+/// `wamn-edge status`: the status of the running edge whose run-state file
+/// is `db`, as text. Each line is a name and its value, separated by a tab,
+/// and each refused sample is one line of its key, capture time and reason,
+/// as `wamn-edge samples list` prints them.
+///
+/// # Errors
+///
+/// Fails as [`read`] fails.
+pub async fn run(db: &Path) -> anyhow::Result<String> {
+    Ok(text_of(&read(db).await?)?)
+}
+
+/// The text of one status answer.
+fn text_of(status: &Value) -> Result<String, std::fmt::Error> {
+    let mut output = String::new();
+    writeln!(output, "started_at\t{}", plain(&status["started_at"]))?;
+    for (section, fields) in [
+        ("device", &["dropped_frames"][..]),
+        ("forward", &["credential_failures", "stopped"][..]),
+    ] {
+        if status[section].is_null() {
+            writeln!(output, "{section}\tnone")?;
+            continue;
+        }
+        for field in fields {
+            writeln!(
+                output,
+                "{section}.{field}\t{}",
+                plain(&status[section][field])
+            )?;
+        }
+    }
+    writeln!(
+        output,
+        "samples.pending\t{}",
+        plain(&status["samples"]["pending"])
+    )?;
+    let refused = status["samples"]["refused"]
+        .as_array()
+        .map_or(&[][..], Vec::as_slice);
+    writeln!(output, "samples.refused\t{}", refused.len())?;
+    for sample in refused {
+        writeln!(
+            output,
+            "refused\t{}\t{}\t{}",
+            plain(&sample["sample_key"]),
+            plain(&sample["captured_at"]),
+            plain(&sample["reason"])
+        )?;
+    }
+    Ok(output)
+}
+
+/// A JSON value as text: a string without its quotes.
+fn plain(value: &Value) -> String {
+    value
+        .as_str()
+        .map_or_else(|| value.to_string(), str::to_owned)
 }

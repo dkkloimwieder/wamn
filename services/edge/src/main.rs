@@ -3,7 +3,8 @@
 //!
 //! `wamn-edge [--config <path>] intents ...` lists and resolves uncertain
 //! intents instead, and `samples ...` lists and resolves refused samples,
-//! while the edge is stopped. Without `--config`,
+//! while the edge is stopped. `wamn-edge [--config <path>] status` prints the
+//! status of the running edge. Without `--config`,
 //! `WAMN_EDGE_CONFIG` names the file, and without either, every key comes from
 //! its `WAMN_EDGE_*` variable.
 
@@ -14,7 +15,7 @@ use tracing_subscriber::EnvFilter;
 use tracing_subscriber::filter::LevelFilter;
 use wamn_edge::config::{CONFIG_VARIABLE, EdgeConfig};
 use wamn_edge::serve::serve;
-use wamn_edge::{intents, refusals};
+use wamn_edge::{intents, refusals, status};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -44,6 +45,10 @@ async fn main() -> anyhow::Result<()> {
         }
         Some((command, rest)) if command == "intents" => {
             print!("{}", intents::run(rest, &config.store.db).await?);
+            Ok(())
+        }
+        Some((command, [])) if command == "status" => {
+            print!("{}", status::run(&config.store.db).await?);
             Ok(())
         }
         Some((command, rest)) if command == "samples" => {
