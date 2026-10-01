@@ -418,6 +418,19 @@ pub async fn provision_project_env(
     ])?;
     let issues_pat =
         args.emit_management_author_pat_secret.is_some() || args.emit_operator_pat_secret.is_some();
+    // A run with any provisioning output provisions and may also mint. A run
+    // with only PAT outputs mints for a recorded environment and writes nothing
+    // to the registry (wamn-rjtf).
+    let provisions = args.emit_database.is_some()
+        || args.emit_role_sql.is_some()
+        || args.emit_privilege_sql.is_some()
+        || db_secret_path.is_some();
+    let mints_only = issues_pat && !provisions;
+    if mints_only && (args.secret_namespace.is_some() || args.disposable) {
+        anyhow::bail!(
+            "--secret-namespace and --disposable belong to a provisioning run, which passes an --emit-* output"
+        );
+    }
     if issues_pat && args.system_database_url.is_none() {
         anyhow::bail!(
             "PAT issuance requires --system-database-url to resolve the stable service principal"
@@ -444,16 +457,20 @@ pub async fn provision_project_env(
         "--system-database-url is required to read or mint the project-env instance suffix",
     )?;
     let secret_name = project_env_secret_name(org, project, env);
-    let instance = record_project_env(
-        system_url,
-        &triple,
-        args.tenant.as_deref(),
-        &secret_name,
-        args.secret_namespace.as_deref(),
-        &mint_instance_suffix()?,
-        args.disposable,
-    )
-    .await?;
+    let instance = if mints_only {
+        read_project_env_instance(system_url, &triple).await?
+    } else {
+        record_project_env(
+            system_url,
+            &triple,
+            args.tenant.as_deref(),
+            &secret_name,
+            args.secret_namespace.as_deref(),
+            &mint_instance_suffix()?,
+            args.disposable,
+        )
+        .await?
+    };
 
     // Pick the target cluster: an explicit `--cluster` wins (render-only / manual);
     // otherwise derive it from the org's placement + the env policy (`cluster_of`).
