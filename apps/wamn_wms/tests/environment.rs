@@ -68,6 +68,17 @@ pub(crate) fn identity() -> &'static ReleaseIdentity {
     &IDENTITY
 }
 
+/// The object-store credential Secret of the released environment, which the
+/// host overlay mounts and the cluster fixture writes.
+pub(crate) fn object_store_secret_name() -> String {
+    format!(
+        "wamn-object-store-credentials-{}--{}--{}",
+        identity().org,
+        identity().project,
+        identity().environment,
+    )
+}
+
 fn package_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()

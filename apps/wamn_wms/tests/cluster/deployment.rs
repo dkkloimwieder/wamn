@@ -173,7 +173,7 @@ pub(super) async fn install_application_secrets(
     }
     let credentials = bootstrap::object_store_credentials(files);
     let body = json!({"apiVersion":"v1","kind":"Secret",
-        "metadata":{"name":"wamn-object-store-credentials-acme--wms--dev","namespace":document.host_secret_namespace},
+        "metadata":{"name":crate::environment::object_store_secret_name(),"namespace":document.host_secret_namespace},
         "type":"Opaque","stringData":{"credentials.json":serde_json::to_string(&json!({
             "wms":{"labels-store":serde_json::to_string(&credentials)?}
         }))?}});

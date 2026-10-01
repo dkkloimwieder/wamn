@@ -197,12 +197,7 @@ pub(super) fn render_host(
             event,
             guest_secret_name: guest.name.clone(),
             role_secrets,
-            object_store_secret_name: Some(format!(
-                "wamn-object-store-credentials-{}--{}--{}",
-                crate::environment::identity().org.as_str(),
-                crate::environment::identity().project.as_str(),
-                crate::environment::identity().environment.as_str(),
-            )),
+            object_store_secret_name: Some(crate::environment::object_store_secret_name()),
         },
     )?;
     if let Some(candidate) = candidate {
