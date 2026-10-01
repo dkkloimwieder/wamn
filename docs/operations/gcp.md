@@ -741,6 +741,8 @@ Run the check of section 3.10 again. The key set now lists the `kid`. On 2026-09
 
 The Job `deploy/gcp/operator/mint-pat.yaml` mints a PAT inside the cluster, in namespace `identity` (`docs/plan/operator-image.md`, `wamn-n5d1`). It runs the operator image `wamn-ctl`, which the manifest pins by digest. It reads the `operator-dkk` certificate as a mounted Secret, so the certificate never reaches this machine. It needs no `/etc/hosts` line and no identity port-forward.
 
+No mint and no invitation runs on wamn-dev until step B2 of the kind to type cutover (`docs/plan/kind-to-type.md` §3.2). The image pinned in `mint-pat.yaml` and `invite.yaml` comes from `main` after the cutover commit, and it reads `placement_type`, which wamn-dev does not have before B2. The two operator Jobs are part of the binaries of the cutover. No image from a commit that is not on `main` runs in them (`wamn-rjtf`).
+
 Fill the run values in a private copy of the manifest, apply the copy and remove it. This run mints the management-author PAT of Receiving. A run with only a PAT flag reads the recorded environment and writes nothing to the registry. It refuses `--secret-namespace` and `--disposable`, and it refuses an environment that the registry does not hold (`wamn-rjtf`):
 
 ```bash

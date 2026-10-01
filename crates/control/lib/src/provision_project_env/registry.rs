@@ -4,8 +4,8 @@ use anyhow::Context as _;
 use ring::rand::SecureRandom as _;
 
 use super::{
-    INSTANCE_SUFFIX_LEN, NoTls, Org, Placement, SystemRandom, Triple, cluster_of,
-    ensure_env_policy_durability_schema, read_env_policy, sql, validate_instance_suffix,
+    INSTANCE_SUFFIX_LEN, NoTls, Org, Placement, SystemRandom, Triple, cluster_of, read_env_policy,
+    sql, validate_instance_suffix,
 };
 
 /// Alphabet of the provision-minted instance suffix: `[a-z0-9]`, 36 symbols, so
@@ -74,7 +74,6 @@ async fn do_resolve_cluster(
         .batch_execute("SET ROLE wamn_system")
         .await
         .context("SET ROLE wamn_system")?;
-    ensure_env_policy_durability_schema(client).await?;
     let row = client
         .query_opt(
             wamn_control_registry::sql::select_org_placement_sql(),

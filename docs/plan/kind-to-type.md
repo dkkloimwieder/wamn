@@ -546,7 +546,7 @@ Then run the open-run query of the drain once more on each project-env database.
 
 **B2 to B5. Schema and annotations (§4.7 steps 2 to 5).** Run §4.8 exactly:
 
-- B2. One run of `upgrade-schema` on wamn_system: `--baseline 1 --confirm`. It records `0001_capture_gap.sql`, which the database holds by hand. It then applies `0002_event_reader_schema.sql` and `0003_kind_to_type.sql` in the same run (§4.3.4, §4.8).
+- B2. One run of `upgrade-schema` on wamn_system: `--baseline 1 --confirm`. It records `0001_capture_gap.sql`, which the database holds by hand. It then applies `0002_event_reader_schema.sql`, `0003_kind_to_type.sql` and `0004_env_policy_durability.sql` in the same run (§4.3.4, §4.8).
 - B3. One run of `upgrade-schema` on each of the two project-env databases: `--baseline 0 --confirm`. It creates the record table and applies `0001_kind_to_type.sql` in the same run (§4.3.4, §4.8).
 - B4. The new `reconcile-run-plane` for Receiving (`--project receiving --tenant dev`) and for WMS (`--project wms --tenant wms`), twice each. The second run reports no action (§4.3.2, §4.8, `gcp.md:534`). Then run `enable-cdc-project-env` once for Receiving and once for WMS, with the arguments of `gcp.md` §3.18 and §5.4. It writes the schema into each `registry.event_readers` row (`0002_event_reader_schema.sql`). A second run is safe since `wamn-fipl`. Apply the role SQL, the CDC SQL and the Secret of each run as `gcp.md` §3.18 does. Then restart the two readers once, so that they read the new Secret: `kubectl -n platform rollout restart deploy/cdc-reader` and `deploy/cdc-reader-wms`, each with its `rollout status` (`gcp.md:1800`). Proof: each reader logs `registration loaded`, the three `preflight` lines and `walsender session open`.
 - B5. One `kubectl annotate` per listed PAT Secret (§4.3.5).
@@ -632,6 +632,8 @@ The switch comes before the hosts start. So no old client ever calls a new host,
 4. `kubectl apply -f deploy/gcp/flow-http.yaml -f deploy/gcp/materializer.yaml -f deploy/gcp/wms-flow-http.yaml -f deploy/gcp/wms-materializer.yaml`, then the two `kubectl -n hosts wait` lines of `gcp.md:870` and `:1359`. Before this apply, the operator can place the old `flow-http` guest on a new host. That guest imports `wamn:router-delivery@0.2.0`, so it does not link. No traffic reaches it, because the apply follows at once.
 
 Proof: the serve check of `gcp.md` §3.21 for both route hosts answers 401 on a released route and 404 on an unknown path. The host log says that each host loaded release 2 (`gcp.md:1367` shows the form of that line).
+
+After B10, run the live check of `wamn-rjtf`. Mint a new operator PAT of the Receiving bench operator with the `mint-pat` Job (`gcp.md` §3.16). Revoke the PAT of prefix `5b0649d6dc4dd3bf`. Before and after the mint, read the `registry.project_envs` row of `dkk/receiving/dev` with its `xmin` and `ctid`, and make sure that the two answers are byte-equal. Then close `wamn-rjtf`.
 
 **B11. End-to-end check.** The owner signs in at both hosts. At Receiving the lists answer 200. At WMS the owner moves one pallet, and the label object appears (`gcp.md` §5.7). One history row of the move is readable through `load_purchase_order_history` or the WMS history table. This shows the renamed `type` column from write to read.
 
@@ -1321,7 +1323,7 @@ A renamed column breaks every old binary that names it. The old host and runtime
 The order that §3.2 follows:
 
 1. Drain, then stop (§3.2 "Drain" and B1). The drain turns ingress off: the edge goes to 0 replicas and the two materializer workloads are deleted. The `flow-http` and `wms-flow-http` workloads and their Services stay, because B9 needs the Services. Open runs finish or are settled. Then the hosts and identity stop. The hosts run the HTTP and materializer workloads, so both stop with them. No scenario-worker runs. The CDC readers keep running (§4.6).
-2. Run `upgrade-schema` on wamn_system. It applies `0002_event_reader_schema.sql` and `0003_kind_to_type.sql`, with the control component key of §4.3.6 (B2). The new `reconcile-run-plane` reads `principals.type` in wamn_system (`crates/control/lib/src/reconcile_run_plane.rs:407`, `:422`), so this step comes before step 4.
+2. Run `upgrade-schema` on wamn_system. It applies `0002_event_reader_schema.sql`, `0003_kind_to_type.sql` and `0004_env_policy_durability.sql`, with the control component key of §4.3.6 (B2). The new `reconcile-run-plane` reads `principals.type` in wamn_system (`crates/control/lib/src/reconcile_run_plane.rs:407`, `:422`), so this step comes before step 4.
 3. Run `upgrade-schema` on each project-env database. It applies `0001_kind_to_type.sql`: P9, the component key and the snapshot table of §4.3.6 (B3). The new `push-component` writes an owner row for every push, so the component key comes before the first push of the new verb. That push is `receiving.wasm` in B7 step 3. The palette pushes of B8 step 2 come after it.
 4. Run the new `reconcile-run-plane` for each project-env (B4). Its cutover renames P8, P10, P11 and P12 (§4.3.2). Never run the old verb against a renamed database. The old verb finds the declared checks missing and the new columns unknown.
 5. Re-annotate every installed PAT Secret (B5, §4.3.5).
@@ -1349,7 +1351,7 @@ for db in wamn-db-dkk--receiving--dev--4pqjfmli wamn-db-dkk--wms--dev--0nk1lrpr;
 done
 ```
 
-The wamn_system run printed `baseline migrations/system/0001_capture_gap.sql` , `applied migrations/system/0002_event_reader_schema.sql` and `applied migrations/system/0003_kind_to_type.sql`. Each project-env run printed `applied migrations/project/0001_kind_to_type.sql`. The runs took <n>, <n> and <n> seconds. The history notices named <tables>. The owner table took <n> rows in wamn_system, <n> in Receiving and <n> in WMS. The snapshot notices named <constraints>. The check of §4.3.6 listed no `component_library_digest_key` and no `release_manifest_v3` name. `registry.schema_migrations` holds rows 1 and 2, and `app_system.schema_migrations` holds row 1 in each project-env database.
+The wamn_system run printed `baseline migrations/system/0001_capture_gap.sql` , `applied migrations/system/0002_event_reader_schema.sql`, `applied migrations/system/0003_kind_to_type.sql` and `applied migrations/system/0004_env_policy_durability.sql`. Each project-env run printed `applied migrations/project/0001_kind_to_type.sql`. The runs took <n>, <n> and <n> seconds. The history notices named <tables>. The owner table took <n> rows in wamn_system, <n> in Receiving and <n> in WMS. The snapshot notices named <constraints>. The check of §4.3.6 listed no `component_library_digest_key` and no `release_manifest_v3` name. `registry.schema_migrations` holds rows 1 to 4, and `app_system.schema_migrations` holds row 1 in each project-env database.
 
 `reconcile-run-plane` of commit <commit> then applied P8 and P10 to P12 by its `TypeColumnCutover` action. Run it for each project-env as in sections 3.8 and 5.2:
 
@@ -1614,7 +1616,7 @@ One issue per step, in order. A1 to A12 are the repository commits of §3.1. B0 
 - Depends on: B0.
 
 **B2. kind → type B2: wamn_system upgrade-schema run (docs/plan/kind-to-type.md §3.2)**
-- Scope: one run of `upgrade-schema --baseline 1 --confirm` on wamn_system. It records `0001_capture_gap.sql` and applies `0002_event_reader_schema.sql` and `0003_kind_to_type.sql`, with the control component key of §4.3.6 and the new record-history functions.
+- Scope: one run of `upgrade-schema --baseline 1 --confirm` on wamn_system. It records `0001_capture_gap.sql` and applies `0002_event_reader_schema.sql`, `0003_kind_to_type.sql` and `0004_env_policy_durability.sql`, with the control component key of §4.3.6 and the new record-history functions.
 - Acceptance: the run prints the baseline row and the applied file, and commits. The §4.3.6 check on wamn_system lists the owner keys and no `component_library_digest_key`.
 - Depends on: B1.
 
