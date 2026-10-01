@@ -1,6 +1,6 @@
 # Edge diagnostics
 
-Updated through: 2026-10-01, `main` at `43497e343`. The owner accepted option A of sections 4.1 to 4.3 on 2026-10-01, with the fixed loopback listener of section 4.2.
+Updated through: 2026-10-01, `main` at `43497e343`. The owner accepted option A of sections 4.1 to 4.3 on 2026-10-01, with the fixed loopback listener of section 4.2. On the same day the owner moved the listener from a TCP port to a Unix socket beside the run-state file, because a fixed port collides when two edges run on one box, as the tests do.
 
 ## 1. Goal
 
@@ -42,7 +42,7 @@ Measured on `main` at `43497e343` on 2026-10-01.
 
 | Option | Rule | Cost |
 | --- | --- | --- |
-| A (accepted) | The edge host serves `GET /status` on a listener of its own, as the probe listener does. The listener binds `127.0.0.1:8081` (section 4.2). The answer is one JSON object built from `EdgeHost`. | One small native HTTP handler in `services/edge`. |
+| A (accepted) | The edge host serves `GET /status` on a listener of its own, as the probe listener does. The listener is the Unix socket `status.sock` in the directory of the run-state file (section 4.2). The answer is one JSON object built from `EdgeHost`. | One small native HTTP handler in `services/edge`. |
 | B | A release operation reads the facts through a new host import. | A WIT interface for host facts, and a release that must import it. |
 | C | The forward and the device loop write the counters to SQLite, and `wamn-edge status` reads them on a stopped edge. | It does not serve a running box, which is the goal. |
 
@@ -63,7 +63,7 @@ The answer of option A:
 
 | Option | Rule | Cost |
 | --- | --- | --- |
-| A (accepted) | The listener binds `127.0.0.1:8081`, and no configuration key binds it elsewhere. It checks no credential, as the probe listener checks none. | Anyone on the box reads the counts and the reasons of refused samples. Nobody off the box reads them. |
+| A (accepted) | The listener is a Unix socket beside the run-state file. It has no port and no configuration key, and nothing off the box reaches it. It checks no credential, as the probe listener checks none. `wamn-edge status` finds the socket from the run-state path in the configuration. | A process on the box that can open the socket file reads the counts and the reasons of refused samples. |
 | B | The listener verifies a session as a local route does, through `EdgeAuthenticator`, and requires one permission in `grants.json`. | A permission name, and a session on the box for the operator. |
 
 ### 4.3 The view
@@ -78,7 +78,7 @@ The answer of option A:
 
 One chain, the routes agent, after acceptance. Each issue lands with its tests.
 
-1. The read surface: the `stopped` flag of the forward, the pending count, the listener and its answer. Tests: the answer before and after a dropped frame, a credential failure, the stop at `credential_bound`, a refused sample, and a pending sample. The listener binds the loopback address only.
+1. The read surface: the `stopped` flag of the forward, the pending count, the listener and its answer. Tests: the answer before and after a dropped frame, a credential failure, the stop at `credential_bound`, a refused sample, and a pending sample. The socket is beside the run-state file while the edge runs, and gone after the edge stops.
 2. The view of section 4.3.
 3. Closeout. The edge's status read moves into the documentation that holds the edge's behavior, and `docs/operations` states the command. Workspace test run.
 
@@ -86,7 +86,7 @@ One chain, the routes agent, after acceptance. Each issue lands with its tests.
 
 - Resolving a refused sample on a running edge.
 - Counters that survive a restart.
-- A configuration key that binds the status listener to another address. Such a key would put the facts on the network without a credential.
+- A TCP listener, or a configuration key that names the socket elsewhere. Such a key would put the facts on the network without a credential.
 - A credential on the status listener.
 - Sample bodies in the status answer.
 - A push of the facts to the platform.
