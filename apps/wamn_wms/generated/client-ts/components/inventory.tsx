@@ -82,6 +82,7 @@ import {
   InventorySplitFormLabel,
 } from "./labels.js";
 import {
+  LOCATION_QUERY_ROUTE,
   get as locationGet,
   query as locationQuery,
   type LocationGetRequest,
@@ -89,6 +90,7 @@ import {
   type LocationQueryRow,
 } from "../location.js";
 import {
+  PACKAGING_QUERY_ROUTE,
   get as packagingGet,
   query as packagingQuery,
   type PackagingGetRequest,
@@ -96,6 +98,7 @@ import {
   type PackagingQueryRow,
 } from "../packaging.js";
 import {
+  PRODUCT_QUERY_ROUTE,
   get as productGet,
   query as productQuery,
   type ProductGetRequest,
@@ -288,7 +291,7 @@ export function InventoryAdjustForm(props: InventoryAdjustFormProps) {
     return outcome.status === "completed" ? ((outcome.value ?? null) as unknown as PackagingQueryRow | null) : null;
   };
   void readValuePackagingIdOptions(null);
-  onCleanup(afterWrites(props.transport, () => void readValuePackagingIdOptions(null)));
+  onCleanup(afterWrites(props.transport, PACKAGING_QUERY_ROUTE.contract.reads, () => void readValuePackagingIdOptions(null)));
   const [valueProductIdOptions, setValueProductIdOptions] = createSignal<PageState<ProductQueryRow>>(emptyPage<ProductQueryRow>());
   const [valueProductIdSearch, setValueProductIdSearch] = createSignal("");
   const readValueProductIdOptions = async (cursor: string | null) => {
@@ -316,7 +319,7 @@ export function InventoryAdjustForm(props: InventoryAdjustFormProps) {
     return outcome.status === "completed" ? ((outcome.value ?? null) as unknown as ProductQueryRow | null) : null;
   };
   void readValueProductIdOptions(null);
-  onCleanup(afterWrites(props.transport, () => void readValueProductIdOptions(null)));
+  onCleanup(afterWrites(props.transport, PRODUCT_QUERY_ROUTE.contract.reads, () => void readValueProductIdOptions(null)));
   const rowsFill = (path: readonly string[]) =>
     props.rows?.some((row) => readMember(row, path) !== undefined) ?? false;
 
@@ -617,7 +620,7 @@ export function InventoryMergeForm(props: InventoryMergeFormProps) {
     return outcome.status === "completed" ? ((outcome.value ?? null) as unknown as PackagingQueryRow | null) : null;
   };
   void readValueSourcePackagingIdOptions(null);
-  onCleanup(afterWrites(props.transport, () => void readValueSourcePackagingIdOptions(null)));
+  onCleanup(afterWrites(props.transport, PACKAGING_QUERY_ROUTE.contract.reads, () => void readValueSourcePackagingIdOptions(null)));
   const [valueTargetPackagingIdOptions, setValueTargetPackagingIdOptions] = createSignal<PageState<PackagingQueryRow>>(emptyPage<PackagingQueryRow>());
   const [valueTargetPackagingIdSearch, setValueTargetPackagingIdSearch] = createSignal("");
   const [valueTargetPackagingIdRevision, setValueTargetPackagingIdRevision] = createSignal<PackagingQueryRow["rowVersion"] | null>(null);
@@ -646,7 +649,7 @@ export function InventoryMergeForm(props: InventoryMergeFormProps) {
     return outcome.status === "completed" ? ((outcome.value ?? null) as unknown as PackagingQueryRow | null) : null;
   };
   void readValueTargetPackagingIdOptions(null);
-  onCleanup(afterWrites(props.transport, () => void readValueTargetPackagingIdOptions(null)));
+  onCleanup(afterWrites(props.transport, PACKAGING_QUERY_ROUTE.contract.reads, () => void readValueTargetPackagingIdOptions(null)));
   const rowsFill = (path: readonly string[]) =>
     props.rows?.some((row) => readMember(row, path) !== undefined) ?? false;
 
@@ -868,7 +871,7 @@ export function InventoryMoveForm(props: InventoryMoveFormProps) {
     return outcome.status === "completed" ? ((outcome.value ?? null) as unknown as PackagingQueryRow | null) : null;
   };
   void readValuePackagingIdOptions(null);
-  onCleanup(afterWrites(props.transport, () => void readValuePackagingIdOptions(null)));
+  onCleanup(afterWrites(props.transport, PACKAGING_QUERY_ROUTE.contract.reads, () => void readValuePackagingIdOptions(null)));
   const [valueToLocationIdOptions, setValueToLocationIdOptions] = createSignal<PageState<LocationQueryRow>>(emptyPage<LocationQueryRow>());
   const [valueToLocationIdSearch, setValueToLocationIdSearch] = createSignal("");
   const readValueToLocationIdOptions = async (cursor: string | null) => {
@@ -896,7 +899,7 @@ export function InventoryMoveForm(props: InventoryMoveFormProps) {
     return outcome.status === "completed" ? ((outcome.value ?? null) as unknown as LocationQueryRow | null) : null;
   };
   void readValueToLocationIdOptions(null);
-  onCleanup(afterWrites(props.transport, () => void readValueToLocationIdOptions(null)));
+  onCleanup(afterWrites(props.transport, LOCATION_QUERY_ROUTE.contract.reads, () => void readValueToLocationIdOptions(null)));
   const rowsFill = (path: readonly string[]) =>
     props.rows?.some((row) => readMember(row, path) !== undefined) ?? false;
 
@@ -1147,7 +1150,7 @@ export function InventorySplitForm(props: InventorySplitFormProps) {
     return outcome.status === "completed" ? ((outcome.value ?? null) as unknown as ProductQueryRow | null) : null;
   };
   void readValueProductIdOptions(null);
-  onCleanup(afterWrites(props.transport, () => void readValueProductIdOptions(null)));
+  onCleanup(afterWrites(props.transport, PRODUCT_QUERY_ROUTE.contract.reads, () => void readValueProductIdOptions(null)));
   const [valueSourcePackagingIdOptions, setValueSourcePackagingIdOptions] = createSignal<PageState<PackagingQueryRow>>(emptyPage<PackagingQueryRow>());
   const [valueSourcePackagingIdSearch, setValueSourcePackagingIdSearch] = createSignal("");
   const [valueSourcePackagingIdRevision, setValueSourcePackagingIdRevision] = createSignal<PackagingQueryRow["rowVersion"] | null>(null);
@@ -1176,7 +1179,7 @@ export function InventorySplitForm(props: InventorySplitFormProps) {
     return outcome.status === "completed" ? ((outcome.value ?? null) as unknown as PackagingQueryRow | null) : null;
   };
   void readValueSourcePackagingIdOptions(null);
-  onCleanup(afterWrites(props.transport, () => void readValueSourcePackagingIdOptions(null)));
+  onCleanup(afterWrites(props.transport, PACKAGING_QUERY_ROUTE.contract.reads, () => void readValueSourcePackagingIdOptions(null)));
   const [valueToLocationIdOptions, setValueToLocationIdOptions] = createSignal<PageState<LocationQueryRow>>(emptyPage<LocationQueryRow>());
   const [valueToLocationIdSearch, setValueToLocationIdSearch] = createSignal("");
   const readValueToLocationIdOptions = async (cursor: string | null) => {
@@ -1204,7 +1207,7 @@ export function InventorySplitForm(props: InventorySplitFormProps) {
     return outcome.status === "completed" ? ((outcome.value ?? null) as unknown as LocationQueryRow | null) : null;
   };
   void readValueToLocationIdOptions(null);
-  onCleanup(afterWrites(props.transport, () => void readValueToLocationIdOptions(null)));
+  onCleanup(afterWrites(props.transport, LOCATION_QUERY_ROUTE.contract.reads, () => void readValueToLocationIdOptions(null)));
   const rowsFill = (path: readonly string[]) =>
     props.rows?.some((row) => readMember(row, path) !== undefined) ?? false;
 

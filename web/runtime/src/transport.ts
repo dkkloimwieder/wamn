@@ -17,7 +17,7 @@ import { en } from "zod/locales";
 import * as z from "zod/mini";
 
 import { encodeReadQuery } from "./readQuery.js";
-import { createReadStore, type ReadReply } from "./readCache.js";
+import { createReadStore, writeTouches, type ReadReply } from "./readCache.js";
 import type {
   StreamReply,
   ErrorCase,
@@ -457,7 +457,7 @@ export function createTransport(options: TransportOptions): Transport {
   // The store belongs to this transport and to one session, so one caller's
   // reads never answer another's.
   const reads = createReadStore();
-  const writeListeners = new Set<() => void>();
+  const writeListeners = new Set<(writes: readonly string[] | null) => void>();
   const send = async (target: string, init: RequestInit): Promise<ReadReply> => {
     const response = await call(`${options.baseUrl}${target}`, init);
     return {
@@ -513,6 +513,7 @@ export function createTransport(options: TransportOptions): Transport {
         const stored = (outcome: Outcome<JsonValue>) => outcome.status === "completed" || outcome.status === "refused";
         reply = await reads.read(
           `${request.operation} ${target}`,
+          request.contract.reads,
           (tag) =>
             send(
               target,
@@ -528,13 +529,13 @@ export function createTransport(options: TransportOptions): Transport {
     } catch (error) {
       return uncertain(`the request did not complete: ${String(error)}`);
     } finally {
-      // Any write can change what a stored read returns, so every stored
-      // read revalidates next (wamn-fjdo narrows this to the write's models),
-      // and each listener then reads what its page shows again.
+      // A write can change what a stored read of the relations it writes
+      // returns, so each such read revalidates next, and each listener
+      // decides whether to read what its page shows again.
       if (!read) {
-        reads.invalidate();
+        reads.invalidate(request.contract.writes);
         for (const listener of [...writeListeners]) {
-          listener();
+          listener(request.contract.writes);
         }
       }
     }
@@ -554,7 +555,7 @@ export function createTransport(options: TransportOptions): Transport {
       const reply = await exchange(request);
       return isReply(reply) ? classifyEach(request.contract, requestIds, reply) : requestIds.map(() => reply);
     },
-    onWrite(listener: () => void): () => void {
+    onWrite(listener: (writes: readonly string[] | null) => void): () => void {
       writeListeners.add(listener);
       return () => writeListeners.delete(listener);
     },
@@ -609,11 +610,18 @@ export function createTransport(options: TransportOptions): Transport {
 const STREAM_CONTENT_TYPE = "application/x-ndjson";
 
 /**
- * Calls `listener` after each write on `transport`, and returns the function
- * that stops it. A transport without `onWrite` never calls it.
+ * Calls `listener` after each write on `transport` that touches `reads`, the
+ * relations of the read the caller shows, and returns the function that stops
+ * it. A transport without `onWrite` never calls it.
  */
-export function afterWrites(transport: Transport, listener: () => void): () => void {
-  return transport.onWrite?.(listener) ?? (() => undefined);
+export function afterWrites(transport: Transport, reads: readonly string[], listener: () => void): () => void {
+  return (
+    transport.onWrite?.((writes) => {
+      if (writeTouches(writes, reads)) {
+        listener();
+      }
+    }) ?? (() => undefined)
+  );
 }
 
 /** Whether an exchange returned a reply, rather than the outcome of a failed send. */

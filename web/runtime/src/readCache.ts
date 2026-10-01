@@ -7,8 +7,8 @@
  * `no-cache` keeps it only to revalidate, and `no-store` keeps nothing. A stale
  * reply with an ETag revalidates with If-None-Match, and a 304 reuses it.
  *
- * A write marks every stored reply stale, because the browser cannot tell
- * which models a write changed. An unchanged read then costs one 304.
+ * A write marks stale only the stored replies whose relations it writes, as
+ * `writeTouches` decides. An unchanged read that it marked costs one 304.
  */
 
 import type { HttpReply } from "./transport.js";
@@ -19,8 +19,20 @@ export interface ReadReply extends HttpReply {
   readonly etag: string | null;
 }
 
+/**
+ * Whether a write that changes `writes` can change a read that selects from
+ * `reads`. Both name relations as `schema.table`. A write that names no
+ * relation, or a read that names none, counts as touching, because the
+ * browser cannot tell.
+ */
+export function writeTouches(writes: readonly string[] | null, reads: readonly string[]): boolean {
+  return writes === null || reads.length === 0 || writes.some((relation) => reads.includes(relation));
+}
+
 /** The last reply of one read, and the request that is in flight for it. */
 interface Entry {
+  /** The relations the read selects from. */
+  reads: readonly string[];
   reply: HttpReply | null;
   etag: string | null;
   freshUntil: number;
@@ -30,16 +42,18 @@ interface Entry {
 /** The store that one transport owns. */
 export interface ReadStore {
   /**
-   * The reply of the read at `key`. `send` makes the request, with the stored
-   * tag or null. `keep` tells whether a 200 reply is an outcome to store.
+   * The reply of the read at `key`, which selects from `reads`. `send` makes
+   * the request, with the stored tag or null. `keep` tells whether a 200 reply
+   * is an outcome to store.
    */
   read(
     key: string,
+    reads: readonly string[],
     send: (ifNoneMatch: string | null) => Promise<ReadReply>,
     keep: (reply: HttpReply) => boolean,
   ): Promise<HttpReply>;
-  /** Marks every stored reply stale, after a write. */
-  invalidate(): void;
+  /** Marks stale each stored reply that a write of `writes` touches. */
+  invalidate(writes: readonly string[] | null): void;
   /** Empties the store when the session differs from the one it holds. */
   belongTo(session: string | null): void;
 }
@@ -99,7 +113,7 @@ export function createReadStore(): ReadStore {
   }
 
   return {
-    read(key, send, keep) {
+    read(key, reads, send, keep) {
       const stored = entries.get(key);
       if (stored?.pending != null && stored.pending.generation === generation) {
         return stored.pending.reply;
@@ -108,6 +122,7 @@ export function createReadStore(): ReadStore {
         return Promise.resolve(stored.reply);
       }
       const entry: Entry = {
+        reads,
         reply: stored?.reply ?? null,
         etag: stored?.etag ?? null,
         freshUntil: 0,
@@ -118,10 +133,12 @@ export function createReadStore(): ReadStore {
       entry.pending = { generation, reply };
       return reply;
     },
-    invalidate() {
+    invalidate(writes) {
       generation += 1;
       for (const entry of entries.values()) {
-        entry.freshUntil = 0;
+        if (writeTouches(writes, entry.reads)) {
+          entry.freshUntil = 0;
+        }
       }
     },
     belongTo(owner) {

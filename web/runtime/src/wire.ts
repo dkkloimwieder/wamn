@@ -123,11 +123,12 @@ export interface Transport {
    */
   invokeEach?(request: WireRequest): Promise<readonly Outcome<JsonValue>[]>;
   /**
-   * Calls `listener` after each write settles, whatever its outcome, and
-   * returns the function that stops it. A page reads its shown reads again
-   * this way. A transport without it tells nobody about a write.
+   * Calls `listener` with the write's `writes` after each write settles,
+   * whatever its outcome, and returns the function that stops it. A page
+   * reads its shown reads again this way. A transport without it tells
+   * nobody about a write.
    */
-  onWrite?(listener: () => void): () => void;
+  onWrite?(listener: (writes: readonly string[] | null) => void): () => void;
   /**
    * Opens a streamed read of one query, the `stream` shape of its canonical
    * GET URL. A reply of lines returns its body for `readLoadLines` and its

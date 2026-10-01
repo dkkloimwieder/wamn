@@ -133,7 +133,7 @@ export const withUpdate =
  */
 export function updating(answer: (item: UpdateItem) => Outcome<JsonValue>) {
   const updates: UpdateItem[] = [];
-  const writes = new Set<() => void>();
+  const writes = new Set<(writes: readonly string[] | null) => void>();
   const transport = (memory: Transport): Transport => ({
     invoke: async (request) => {
       if (request.operation !== UPDATE.operation) {

@@ -252,7 +252,7 @@ export function QueryTable<TRow extends object, TResult = unknown>(props: QueryT
     if (recordRead === undefined || displayField === undefined) {
       return shown;
     }
-    const labels = createRecordLabels(transport, async (key) => {
+    const labels = createRecordLabels(transport, recordRead.read.route.contract.reads, async (key) => {
       const outcome = await callOperation<Member>(transport, recordRead.read, [
         writeMember({}, recordRead.keyInput, key),
       ]);

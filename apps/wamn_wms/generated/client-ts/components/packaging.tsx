@@ -43,6 +43,7 @@ import {
 } from "@wamn/ui";
 import {
   PACKAGING_CREATE_REQUEST_FIELDS,
+  PACKAGING_GET_ROUTE,
   PACKAGING_QUERY_REQUEST_FIELDS,
   PACKAGING_QUERY_RESULT_FIELDS,
   PACKAGING_QUERY_ROUTE,
@@ -65,6 +66,7 @@ import {
   LOCATION_GET_REQUEST_FIELDS,
   LOCATION_GET_RESULT_FIELDS,
   LOCATION_GET_ROUTE,
+  LOCATION_QUERY_ROUTE,
   get as locationGet,
   query as locationQuery,
   type LocationGetRequest,
@@ -188,7 +190,7 @@ export function PackagingCreateForm(props: PackagingCreateFormProps) {
     return outcome.status === "completed" ? ((outcome.value ?? null) as unknown as LocationQueryRow | null) : null;
   };
   void readLocationIdOptions(null);
-  onCleanup(afterWrites(props.transport, () => void readLocationIdOptions(null)));
+  onCleanup(afterWrites(props.transport, LOCATION_QUERY_ROUTE.contract.reads, () => void readLocationIdOptions(null)));
 
   return (
     <form
@@ -293,7 +295,7 @@ export function PackagingGetDetail(props: PackagingGetDetailProps) {
       return read;
     },
   );
-  onCleanup(afterWrites(props.transport, () => void readAgain()));
+  onCleanup(afterWrites(props.transport, PACKAGING_GET_ROUTE.contract.reads, () => void readAgain()));
   const record = (): PackagingGetResult | undefined => {
     const read = outcome();
     return read?.status === "completed" ? read.value : undefined;

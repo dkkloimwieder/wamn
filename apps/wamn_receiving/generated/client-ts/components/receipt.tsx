@@ -21,6 +21,7 @@ import {
   announceOutcome,
 } from "@wamn/ui";
 import {
+  RECEIPT_GET_ROUTE,
   RECEIPT_QUERY_REQUEST_FIELDS,
   RECEIPT_QUERY_RESULT_FIELDS,
   RECEIPT_QUERY_ROUTE,
@@ -76,7 +77,7 @@ export function ReceiptGetDetail(props: ReceiptGetDetailProps) {
       return read;
     },
   );
-  onCleanup(afterWrites(props.transport, () => void readAgain()));
+  onCleanup(afterWrites(props.transport, RECEIPT_GET_ROUTE.contract.reads, () => void readAgain()));
   const record = (): ReceiptGetResult | undefined => {
     const read = outcome();
     return read?.status === "completed" ? read.value : undefined;

@@ -185,7 +185,7 @@ describe("QueryTable", () => {
     const lines = `${JSON.stringify({ row })}\n${JSON.stringify({
       outcome: { value: { more: false }, actor_labels: {} },
     })}\n`;
-    const writes: (() => void)[] = [];
+    const writes: ((writes: readonly string[] | null) => void)[] = [];
     let opens = 0;
     const transport: Transport = {
       invoke: async () => ({ status: "uncertain", reason: "a stream reads no page", retryRefusal: null }),
@@ -232,7 +232,7 @@ describe("QueryTable", () => {
     ));
     await waitFor(() => expect(opens).toBe(1));
     for (const write of writes) {
-      write();
+      write(null);
     }
     await waitFor(() => expect(document.querySelector(`tr[data-row-id="${id(0)}"]`)).not.toBeNull());
     expect(opens).toBe(2);

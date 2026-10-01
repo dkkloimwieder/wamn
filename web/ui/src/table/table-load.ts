@@ -300,7 +300,7 @@ export function createQueryLoad<TRow extends object, TResult>(
 
   onCleanup(
     // eslint-disable-next-line solid/reactivity -- the listener runs on a write, an event, not in a tracked scope.
-    afterWrites(transport, () => {
+    afterWrites(transport, definition.read.route.contract.reads, () => {
       if (!writing) {
         reload();
       }

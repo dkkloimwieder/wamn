@@ -73,11 +73,13 @@ import {
   ReceivingRecordReceiptFormLabel,
 } from "./labels.js";
 import {
+  LOCATION_LIST_ROUTE,
   list as locationList,
   type LocationListRequest,
   type LocationListRow,
 } from "../location.js";
 import {
+  PURCHASE_ORDER_QUERY_ROUTE,
   get as purchaseOrderGet,
   query as purchaseOrderQuery,
   type PurchaseOrderGetRequest,
@@ -358,7 +360,7 @@ export function ReceivingRecordReceiptForm(props: ReceivingRecordReceiptFormProp
     );
   };
   void readValueLineLocationIdOptions(null);
-  onCleanup(afterWrites(props.transport, () => void readValueLineLocationIdOptions(null)));
+  onCleanup(afterWrites(props.transport, LOCATION_LIST_ROUTE.contract.reads, () => void readValueLineLocationIdOptions(null)));
   const [valueLinePurchaseOrderLineIdOptions, setValueLinePurchaseOrderLineIdOptions] = createSignal<PageState<ReceivingLoadReceiptScreenRow>>(emptyPage<ReceivingLoadReceiptScreenRow>());
   const [valueLinePurchaseOrderLineIdNarrowed, setValueLinePurchaseOrderLineIdNarrowed] = createSignal<string | null>(null);
   const readValueLinePurchaseOrderLineIdOptions = async (cursor: string | null) => {
@@ -383,7 +385,7 @@ export function ReceivingRecordReceiptForm(props: ReceivingRecordReceiptFormProp
     setValueLinePurchaseOrderLineIdNarrowed((valuePurchaseOrderIdValue() as string | null | undefined) ?? null);
     void readValueLinePurchaseOrderLineIdOptions(null);
   });
-  onCleanup(afterWrites(props.transport, () => void readValueLinePurchaseOrderLineIdOptions(null)));
+  onCleanup(afterWrites(props.transport, RECEIVING_LOAD_RECEIPT_SCREEN_ROUTE.contract.reads, () => void readValueLinePurchaseOrderLineIdOptions(null)));
   const [valuePurchaseOrderIdOptions, setValuePurchaseOrderIdOptions] = createSignal<PageState<PurchaseOrderQueryRow>>(emptyPage<PurchaseOrderQueryRow>());
   const [valuePurchaseOrderIdSearch, setValuePurchaseOrderIdSearch] = createSignal("");
   const readValuePurchaseOrderIdOptions = async (cursor: string | null) => {
@@ -411,7 +413,7 @@ export function ReceivingRecordReceiptForm(props: ReceivingRecordReceiptFormProp
     return outcome.status === "completed" ? ((outcome.value ?? null) as unknown as PurchaseOrderQueryRow | null) : null;
   };
   void readValuePurchaseOrderIdOptions(null);
-  onCleanup(afterWrites(props.transport, () => void readValuePurchaseOrderIdOptions(null)));
+  onCleanup(afterWrites(props.transport, PURCHASE_ORDER_QUERY_ROUTE.contract.reads, () => void readValuePurchaseOrderIdOptions(null)));
   const rowsFill = (path: readonly string[]) =>
     props.rows?.some((row) => readMember(row, path) !== undefined) ?? false;
 

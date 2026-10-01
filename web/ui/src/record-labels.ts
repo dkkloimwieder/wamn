@@ -6,10 +6,9 @@
  * starts the read, and every later ask for that key reads the kept answer, so
  * a page that names one record in many rows reads it once.
  *
- * A write can rename a record, so after each write on the transport every key
- * asked so far reads again (wamn-p398). A cell keeps its old text until the
- * new answer comes. Every write counts, as it does for a stored read, until
- * write contracts name their models (wamn-fjdo).
+ * A write can rename a record, so after each write that touches the relations
+ * of the read, every key asked so far reads again (wamn-p398). A cell keeps its
+ * old text until the new answer comes.
  *
  * A cell shows nothing while its first read runs. A read that returns no text
  * shows the key, so a cell never hides which record it names.
@@ -24,6 +23,7 @@ type Answer = string | null;
 
 export function createRecordLabels(
   transport: Transport,
+  relations: readonly string[],
   read: (key: string) => Promise<string | null>,
 ): (key: string | null | undefined) => string {
   const [answers, setAnswers] = createSignal<ReadonlyMap<string, Answer>>(new Map());
@@ -43,7 +43,7 @@ export function createRecordLabels(
     read(key).then(answer, () => answer(null));
   };
   onCleanup(
-    afterWrites(transport, () => {
+    afterWrites(transport, relations, () => {
       for (const key of [...asked.keys()]) {
         ask(key);
       }

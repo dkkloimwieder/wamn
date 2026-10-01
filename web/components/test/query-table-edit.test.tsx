@@ -131,7 +131,7 @@ describe("a held load", () => {
     fireEvent.click(theButton("edit r0"));
     // Another session's write asks for a load, and so does a new cap.
     for (const write of writes) {
-      write();
+      write(null);
     }
     fireEvent.change(screen.getByLabelText("cap"), { target: { value: "50" } });
     expect(asked).toHaveLength(1);
@@ -195,5 +195,55 @@ describe("a reference field", () => {
     fireEvent.click(theButton("save"));
     await waitFor(() => expect(screen.queryByRole("combobox", { name: "maker r0" })).toBeNull());
     expect(update.updates).toEqual([{ id: "r0", expected: 1, change: { makerId: "m2" } }]);
+  });
+
+  it("reads its records again only after a write that changes their relation", async () => {
+    const update = updating(() => ({ status: "completed", value: null }));
+    let makerReads = 0;
+    await queryTable<MakerRow>({
+      columns: [
+        { field: "code", label: "code", type: "text" },
+        { field: "makerId", label: "maker", type: "uuid", role: "reference" },
+      ],
+      rows: () => [{ id: "r0", code: "a", makerId: "m1", rowVersion: 1 }],
+      definition: (declared) => {
+        const updated = withUpdate<MakerRow>(["makerId"])(declared);
+        const choices = {
+          read: { route: MAKERS, request: {}, result: { next_cursor: "nextCursor" } },
+          rows: "item",
+          keyField: "id",
+          displayField: "name",
+        };
+        return { ...updated, update: { ...updated.update!, fields: [{ ...updated.update!.fields[0]!, choices }] } };
+      },
+      transport: (memory) => {
+        const inner = update.transport(memory);
+        return {
+          ...inner,
+          invoke: (request) => {
+            if (request.operation !== MAKERS.operation) {
+              return inner.invoke(request);
+            }
+            makerReads += 1;
+            return Promise.resolve({
+              status: "completed",
+              value: { item: [{ id: "m1", name: "Acme" }], next_cursor: null },
+            });
+          },
+        };
+      },
+    });
+    fireEvent.click(theButton("edit r0"));
+    await waitFor(() => expect(selector("maker r0").value).toBe("Acme"));
+    expect(makerReads).toBe(1);
+    for (const write of update.writes) {
+      write(["gallery.widgets"]);
+    }
+    await settled();
+    expect(makerReads).toBe(1);
+    for (const write of update.writes) {
+      write(["gallery.makers"]);
+    }
+    await waitFor(() => expect(makerReads).toBe(2));
   });
 });

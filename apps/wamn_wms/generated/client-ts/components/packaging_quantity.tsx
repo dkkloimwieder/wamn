@@ -21,6 +21,7 @@ import {
   announceOutcome,
 } from "@wamn/ui";
 import {
+  PACKAGING_QUANTITY_GET_ROUTE,
   PACKAGING_QUANTITY_QUERY_REQUEST_FIELDS,
   PACKAGING_QUANTITY_QUERY_RESULT_FIELDS,
   PACKAGING_QUANTITY_QUERY_ROUTE,
@@ -81,7 +82,7 @@ export function PackagingQuantityGetDetail(props: PackagingQuantityGetDetailProp
       return read;
     },
   );
-  onCleanup(afterWrites(props.transport, () => void readAgain()));
+  onCleanup(afterWrites(props.transport, PACKAGING_QUANTITY_GET_ROUTE.contract.reads, () => void readAgain()));
   const record = (): PackagingQuantityGetResult | undefined => {
     const read = outcome();
     return read?.status === "completed" ? read.value : undefined;
