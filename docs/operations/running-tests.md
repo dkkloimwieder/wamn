@@ -439,7 +439,7 @@ Build the native programs, fixture, HTTP guest, and exact test binary from that 
 ```bash
 cd "$SOURCE"
 cargo build --locked --offline \
-  -p wamn-ctl -p wamn-host -p wamn-identity \
+  -p wamn-ctl -p wamn-host -p wamn-identity -p wamn-cdc-reader \
   -p wamn-test-infrastructure -p wamn-receiving-tests --bins --example delivery_timings
 cargo build --locked --offline --manifest-path apps/Cargo.toml \
   --target wasm32-wasip2 -p http-route
@@ -464,6 +464,9 @@ The fixture starts Compose services on assigned loopback ports.
 If you put `--wms` before `--`, the fixture also starts MinIO and makes the `labels` bucket.
 It then sets `WAMN_DEV_ENV_CREDENTIALS_FILE` to a mode 0600 file with the MinIO credential under the handle `labels-store`.
 It sets `WAMN_RECEIVING_DEV_MINIO_ENDPOINT` to the MinIO address.
+The owned event broker admits the materializer consumers of every application under `apps/`.
+The fixture sets the CDC reader binary and the event publisher credential for `wamn dev up`.
+`wamn-test-postgres` starts its server with `wal_level=logical`.
 It sets every variable that the case declares, except the two that the command sets.
 The case starts its own PostgreSQL server, because the development environment resets the control store of the whole server.
 The case requires authenticated application results after code, SQL, and schema edits.

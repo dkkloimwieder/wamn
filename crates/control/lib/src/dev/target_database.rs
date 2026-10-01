@@ -551,6 +551,22 @@ async fn replace_database(
         ));
     }
 
+    // A replication slot blocks the drop, and the loop makes a new slot on
+    // the new database. Its CDC reader stopped before this point.
+    client
+        .execute(
+            "SELECT pg_catalog.pg_drop_replication_slot(slot_name)
+               FROM pg_catalog.pg_replication_slots WHERE database = $1",
+            &[&spec.database.as_str()],
+        )
+        .await
+        .map_err(|source| {
+            TargetDatabaseError::new(
+                TargetDatabaseErrorType::DropFailed,
+                "stop the CDC reader of the disposable database before it is replaced",
+            )
+            .with_source(source)
+        })?;
     client
         .batch_execute(&format!(
             "DROP DATABASE IF EXISTS {} WITH (FORCE)",

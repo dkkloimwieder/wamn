@@ -82,7 +82,8 @@ async fn main() -> anyhow::Result<std::process::ExitCode> {
     let mut command =
         tokio::process::Command::new(program.context("a test command after -- is required")?);
     command.args(args);
-    let mut server = postgres::start(&[])?;
+    // Logical WAL lets a CDC reader stream from the server, as in the cluster.
+    let mut server = postgres::start(&[("wal_level", "logical")])?;
     let owned = server.create_database(&database)?;
     let setup = apply_migrations(
         &owned,

@@ -70,6 +70,7 @@ impl DevJourneyInputs {
                         .context("resolve the base package root")?,
                 ],
                 credentials_file: None,
+                cdc_reader: None,
             },
         };
         anyhow::ensure!(

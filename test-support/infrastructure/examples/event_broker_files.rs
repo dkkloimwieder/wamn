@@ -20,7 +20,7 @@ use async_nats::jetstream::consumer::pull;
 use ring::rand::{SecureRandom as _, SystemRandom};
 use serde_json::{Value, json};
 use wamn_control_provision::events::{
-    advisory_stream_config, materializer_consumer_config, source_stream_config,
+    advisory_stream_config, registration_consumers, source_stream_config,
 };
 use wamn_control_registry::Triple;
 use wamn_test_infrastructure::event_broker;
@@ -104,64 +104,21 @@ fn main() -> anyhow::Result<()> {
 }
 
 /// The materializer consumers of the event registrations that the given
-/// package manifests declare, named as the cluster tests name them.
+/// package manifests declare, by the rule the development loop also uses.
 fn declared_consumers(
     scope: &Triple,
     tenant: &str,
     manifests: &[String],
 ) -> anyhow::Result<Vec<pull::Config>> {
-    let sanitize = |value: &str| {
-        value
-            .chars()
-            .map(|character| {
-                if character.is_ascii_alphanumeric() || matches!(character, '_' | '-') {
-                    character
-                } else {
-                    '_'
-                }
-            })
-            .collect::<String>()
-    };
-    let mut consumers = Vec::new();
-    for path in manifests {
-        let manifest = wamn_schema_generator::PackageManifest::from_slice(
-            &fs::read(path).with_context(|| format!("read {path}"))?,
-        )?;
-        // Handlers and workflows both register, as the WMS cluster case
-        // derives them (apps/wamn_wms/tests/environment.rs).
-        let handlers = manifest
-            .custom_operations
-            .iter()
-            .filter_map(|(name, operation)| Some((name, operation.registration.as_ref()?)));
-        let workflows = manifest
-            .workflows
-            .iter()
-            .map(|(name, workflow)| (name, &workflow.registration));
-        for (name, registration) in handlers.chain(workflows) {
-            {
-                let durable = format!(
-                    "mat_{}_{}_{}",
-                    sanitize(tenant),
-                    sanitize(&manifest.package.id),
-                    sanitize(name)
-                );
-                let filter = format!(
-                    "evt.{}.{}.{}.{}.>",
-                    scope.org,
-                    scope.project,
-                    scope.env.as_str(),
-                    wamn_event_wire::subject_token(&registration.entity)
-                );
-                consumers.push(materializer_consumer_config(
-                    &durable,
-                    &filter,
-                    Duration::from_secs(30),
-                    5,
-                ));
-            }
-        }
-    }
-    Ok(consumers)
+    let manifests = manifests
+        .iter()
+        .map(|path| {
+            Ok(wamn_schema_generator::PackageManifest::from_slice(
+                &fs::read(path).with_context(|| format!("read {path}"))?,
+            )?)
+        })
+        .collect::<anyhow::Result<Vec<_>>>()?;
+    Ok(registration_consumers(scope, tenant, &manifests))
 }
 
 fn random_password() -> anyhow::Result<String> {

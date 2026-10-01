@@ -391,6 +391,7 @@ pub struct ProductionDevStageRunner {
     local_grants: Option<PreparedLocalGrants>,
     local_admission_digest: Option<String>,
     activation: Option<DevActivation>,
+    cdc_reader: Option<super::cdc_reader::CdcReaderProcess>,
     operator: Option<(
         super::native_tui::NativePackage,
         super::operator::OperatorControl,
@@ -470,6 +471,7 @@ impl ProductionDevStageRunner {
             local_grants: None,
             local_admission_digest: None,
             activation: None,
+            cdc_reader: None,
             operator: None,
             native_binaries: BTreeMap::new(),
             generated_native_outputs: None,
@@ -573,6 +575,16 @@ impl ProductionDevStageRunner {
         } else {
             Ok(())
         };
+        // The reader stops first, so that a target replacement finds its
+        // slot inactive.
+        let reader_result = match self.cdc_reader.take() {
+            Some(reader) => reader
+                .stop()
+                .await
+                .map_err(|source| ProductionDevStageError::owner("stop the CDC reader", source)),
+            None => Ok(()),
+        };
+        let operator_result = operator_result.and(reader_result);
         let Some(active) = self.activation.take() else {
             return operator_result;
         };
@@ -923,8 +935,11 @@ impl ProductionDevStageRunner {
                 package_id: artifact.package_id.to_string(),
                 package_version: artifact.package_version.to_string(),
             };
-            let document = render_palette_declaration(&palette.declaration, &scope)
-                .map_err(declaration_stage_error)?;
+            let store_alias = selected_store_alias(&self.config, &artifact)
+                .map_err(|source| ProductionDevStageError::owner("read store alias", source))?;
+            let document =
+                render_palette_declaration(&palette.declaration, &scope, store_alias.as_deref())
+                    .map_err(declaration_stage_error)?;
             let admitted_platform_packages =
                 declared_platform_packages(&palette.declaration, &document)
                     .map_err(declaration_stage_error)?;
@@ -1317,6 +1332,27 @@ impl ProductionDevStageRunner {
             target_instance,
         );
         self.activation = Some(activation);
+        if let Some(reader) = self.config.cdc_reader() {
+            // After the package migrations, as the cluster runs the verb after
+            // apply-package, so the schema keeps its owner.
+            super::cdc_reader::apply_cdc_sql(&self.config, reader)
+                .await
+                .map_err(|source| {
+                    ProductionDevStageError::owner("enable CDC on the local target", source)
+                })?;
+            let log = self
+                .config
+                .local_artifacts()
+                .directory
+                .with_file_name("cdc-reader.log");
+            self.cdc_reader = Some(
+                super::cdc_reader::CdcReaderProcess::start(&self.config, reader, &log)
+                    .await
+                    .map_err(|source| {
+                        ProductionDevStageError::owner("start the local CDC reader", source)
+                    })?,
+            );
+        }
         self.read_publisher.set_runtime_endpoint(endpoint.clone());
         if let Some((package, control)) = &self.operator {
             let launched = async {
@@ -2154,18 +2190,50 @@ struct PreparedLocalBinding {
     instance: Option<crate::bind_connection::PreparedLocalInstance>,
 }
 
-fn prepare_local_bindings(
+/// The store alias that the binding selections give a component: the one name
+/// the operator passes as `bind-connection --store-alias` in the cluster.
+fn selected_store_alias(
     config: &DevConfig,
-    admissions: &[ComponentAdmission],
-) -> anyhow::Result<Vec<PreparedLocalBinding>> {
-    let path = config.local_artifacts().bindings.as_ref();
-    let selections: Vec<LocalBindingSelection> = path
+    artifact: &SelectedComponentArtifact,
+) -> anyhow::Result<Option<String>> {
+    let selections = read_local_binding_selections(config)?;
+    let mut aliases = selections
+        .iter()
+        .filter(|selection| {
+            *selection.package_id == *artifact.package_id
+                && *selection.component == *artifact.component
+        })
+        .map(|selection| selection.store_alias.clone())
+        .collect::<BTreeSet<_>>()
+        .into_iter();
+    let alias = aliases.next();
+    anyhow::ensure!(
+        aliases.next().is_none(),
+        "the binding selections give {}::{} more than one store alias",
+        artifact.package_id,
+        artifact.component
+    );
+    Ok(alias)
+}
+
+fn read_local_binding_selections(config: &DevConfig) -> anyhow::Result<Vec<LocalBindingSelection>> {
+    Ok(config
+        .local_artifacts()
+        .bindings
+        .as_ref()
         .map(|path| -> anyhow::Result<_> {
             serde_json::from_slice(&fs::read(path).context("read local connection selections")?)
                 .context("parse strict local connection selections")
         })
         .transpose()?
-        .unwrap_or_default();
+        .unwrap_or_default())
+}
+
+fn prepare_local_bindings(
+    config: &DevConfig,
+    admissions: &[ComponentAdmission],
+) -> anyhow::Result<Vec<PreparedLocalBinding>> {
+    let selections = read_local_binding_selections(config)?;
     let requirements = admissions
         .iter()
         .flat_map(|admission| {

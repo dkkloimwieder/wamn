@@ -5,6 +5,8 @@
 //! [`DevStageRunner`].
 
 pub mod activation;
+#[cfg(target_os = "linux")]
+mod cdc_reader;
 pub mod config;
 #[cfg(target_os = "linux")]
 pub mod coordinator;

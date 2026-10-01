@@ -38,6 +38,16 @@ Supply event runtime credentials separately from provisioning credentials.
 Declare `--stream-replicas` and `--dup-window-secs` explicitly.
 Use `--event-provisioning-username` and `--event-provisioning-password-file` for stream creation.
 Use `--event-nats-username` and `--event-nats-password-file` for runtime access.
+Supply `--cdc-reader-binary` with the built `wamn-cdc-reader`.
+Use `--event-publisher-username` and `--event-publisher-password-file` for the credential that the reader publishes with.
+
+The command runs `enable-cdc-project-env`, which is the verb that the cluster runs.
+The verb provisions the event streams with the materializer consumers of the packages, and it records the reader registration.
+The command applies the replication role, prepares a registry-reader login, and writes `cdc_reader` into `dev.json`.
+The PostgreSQL server must run with `wal_level=logical`.
+At each activation, the loop applies the CDC SQL of the verb to the target and starts `wamn-cdc-reader`.
+The reader logs to `cdc-reader.log` in the environment directory, and the loop waits until it streams.
+The loop stops the reader before it replaces the target, and the target lease drops the replication slot before the drop.
 
 The command starts `wamn-identity`, writes private `dev.json`, prints the next developer command, and exits.
 The identity process keeps running across application builds and operator exits.
@@ -142,7 +152,8 @@ The local Gate uses the same wiring rules as release authoring and authenticates
 A wiring can name a palette component, which is a platform component with a `declaration.json.in` under `apps/platform/*/*/`.
 `tools/build-components` builds each palette component that a wiring of a selected package names.
 The loop admits it into the scope of that package, with the platform packages that its declaration states.
-The loop refuses a declaration that leaves a connection alias as `__STORE_ALIAS__`, because it names no store alias for it.
+A `__STORE_ALIAS__` connection takes the `store-alias` of the component's selection in `--local-bindings`.
+That is the name that the operator passes to `bind-connection --store-alias` in the cluster.
 The runtime still enforces operation grants, connection bindings, and credentials for each database role.
 
 Local preparation limits each metadata or version command to 60 seconds.
