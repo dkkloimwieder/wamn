@@ -27,6 +27,8 @@ export const memoryRoute = (name: string, verb = "query"): OperationRoute => ({
     direct: true,
     type: verb === "query" ? "query" : "command",
     transaction: "implicit",
+    reads: [],
+    writes: null,
   },
 });
 

@@ -91,6 +91,8 @@ function contract(kind: string, resultClass: string): ResponseContract {
     direct: true,
     type: kind,
     transaction: "implicit",
+    reads: [],
+    writes: null,
   };
 }
 

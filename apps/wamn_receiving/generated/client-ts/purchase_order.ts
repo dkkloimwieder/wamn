@@ -77,6 +77,8 @@ export const PURCHASE_ORDER_GET_ROUTE: OperationRoute = {
     direct: true,
     type: "get",
     transaction: "implicit",
+    reads: ["receiving.purchase_order"],
+    writes: null,
   },
 };
 
@@ -217,6 +219,8 @@ export const PURCHASE_ORDER_QUERY_ROUTE: OperationRoute = {
     direct: true,
     type: "query",
     transaction: "implicit",
+    reads: ["receiving.purchase_order"],
+    writes: null,
   },
 };
 
@@ -331,6 +335,8 @@ export const PURCHASE_ORDER_UPDATE_ROUTE: OperationRoute = {
     direct: true,
     type: "update",
     transaction: "implicit",
+    reads: [],
+    writes: ["receiving.purchase_order"],
   },
 };
 

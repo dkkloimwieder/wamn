@@ -574,6 +574,16 @@ fn emit_operation(
             .map_or_else(|| "null".to_owned(), |value| format!("{value:?}"))
     )
     .expect("write");
+    writeln!(source, "    reads: [{}],", literals(&route.response.reads)).expect("write");
+    writeln!(
+        source,
+        "    writes: {},",
+        route.response.writes.as_ref().map_or_else(
+            || "null".to_owned(),
+            |writes| format!("[{}]", literals(writes))
+        )
+    )
+    .expect("write");
     source.push_str("  },\n};\n");
 
     writeln!(

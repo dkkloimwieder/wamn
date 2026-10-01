@@ -62,6 +62,8 @@ export const LOCATION_LIST_ROUTE: OperationRoute = {
     direct: true,
     type: "projection",
     transaction: null,
+    reads: ["receiving.location"],
+    writes: null,
   },
 };
 

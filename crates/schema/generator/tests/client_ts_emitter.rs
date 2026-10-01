@@ -306,6 +306,14 @@ fn the_release_route_supplies_the_method_and_the_template() {
         widget.contains("    resultClass: \"page\","),
         "the query pages"
     );
+    assert!(
+        widget.contains("    reads: [\"inventory.widget\"],\n    writes: null,\n"),
+        "a read states the relations it selects from"
+    );
+    assert!(
+        widget.contains("    reads: [],\n    writes: [\"inventory.widget\"],\n"),
+        "a write states the relations it changes"
+    );
 
     let combined = combined(&files);
     for absent in [

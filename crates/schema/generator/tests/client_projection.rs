@@ -477,6 +477,95 @@ fn direct_state_replay_and_composed_routes_remain_distinct() {
         Some("wamn:node/async-handler@0.1.0")
     );
     assert_eq!(route.replay, None);
+    // The client cannot tell what a composed route writes.
+    assert_eq!(route.response.writes, None);
+}
+
+#[test]
+fn a_direct_route_states_the_relations_it_reads_and_writes() {
+    let platform = release();
+    let response = |model: &str, name: &str| {
+        platform
+            .models
+            .iter()
+            .find(|candidate| candidate.name == model)
+            .and_then(|model| model.operations.iter().find(|op| op.name == name))
+            .and_then(|operation| operation.route.as_ref())
+            .unwrap_or_else(|| panic!("{model}/{name} has a route"))
+            .response
+            .clone()
+    };
+    let widget = vec!["inventory.widget".to_owned()];
+    for name in ["get", "query", "list"] {
+        let read = response("widget", name);
+        assert_eq!(read.reads, widget, "{name} reads the widget");
+        assert_eq!(read.writes, None);
+    }
+    // A generated write states its relation in the form an authored one does.
+    for name in ["create", "update", "delete"] {
+        let write = response("widget", name);
+        assert!(write.reads.is_empty());
+        assert_eq!(
+            write.writes.as_ref(),
+            Some(&widget),
+            "{name} writes the widget"
+        );
+    }
+    // Archive only locks the widget, so it writes nothing.
+    assert_eq!(response("widget", "archive").writes, Some(Vec::new()));
+
+    // A history table is named as its model table, which changes with it.
+    // A write whose contract names no relation states none.
+    let mut contracts = BTreeMap::new();
+    insert_operation(
+        &mut contracts,
+        "history",
+        json!({
+            "operation": "example:entry/history@1.0.0", "type": "projection",
+            "grant": "example:entry/history@1.0.0",
+            "permission_token": "entry.history", "result": "page",
+            "relations": [
+                {"schema": "inventory", "table": "stock_history", "select_fields": ["id"],
+                 "insert_fields": [], "update_fields": [], "lock": false, "constraints": []}
+            ]
+        }),
+        json!({"fields": []}),
+        json!({"class": "page", "fields": []}),
+    );
+    insert_operation(
+        &mut contracts,
+        "unstated",
+        json!({
+            "operation": "example:entry/unstated@1.0.0", "type": "command",
+            "grant": "example:entry/unstated@1.0.0",
+            "permission_token": "entry.unstated", "result": "one"
+        }),
+        json!({"fields": []}),
+        json!({"class": "one", "fields": []}),
+    );
+    let routes = BTreeMap::from([
+        (
+            "example:entry/history@1.0.0".into(),
+            direct_route("example:entry/history@1.0.0"),
+        ),
+        (
+            "example:entry/unstated@1.0.0".into(),
+            direct_route("example:entry/unstated@1.0.0"),
+        ),
+    ]);
+    let projected = project(&contracts, &routes);
+    let history = &operation(&projected, "history")
+        .route
+        .as_ref()
+        .unwrap()
+        .response;
+    assert_eq!(history.reads, ["inventory.stock"]);
+    let unstated = &operation(&projected, "unstated")
+        .route
+        .as_ref()
+        .unwrap()
+        .response;
+    assert_eq!(unstated.writes, None);
 }
 
 #[test]

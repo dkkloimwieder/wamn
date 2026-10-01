@@ -51,6 +51,8 @@ function contractOf(name: string): ResponseContract {
     direct: stated.direct,
     type: stated.type,
     transaction: stated.transaction,
+    reads: [],
+    writes: null,
   };
 }
 
@@ -138,6 +140,8 @@ describe("a refusal whose code the operation declares text for", () => {
       direct: true,
       type: "command",
       transaction: "explicit_per_input",
+      reads: [],
+      writes: null,
     };
     const reply = (code: string) => ({
       status: 200,
@@ -171,6 +175,8 @@ describe("a transport failure", () => {
     direct: true,
     type: "get",
     transaction: "implicit",
+    reads: [],
+    writes: null,
   };
 
   const route = {

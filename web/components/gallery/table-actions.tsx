@@ -59,6 +59,8 @@ export const EVENT_QUERY_ROUTE: OperationRoute = {
     direct: true,
     type: "query",
     transaction: "implicit",
+    reads: [],
+    writes: null,
   },
 };
 

@@ -68,6 +68,8 @@ export const PACKAGING_QUANTITY_GET_ROUTE: OperationRoute = {
     direct: true,
     type: "get",
     transaction: "implicit",
+    reads: ["wms.packaging_quantity"],
+    writes: null,
   },
 };
 
@@ -164,6 +166,8 @@ export const PACKAGING_QUANTITY_QUERY_ROUTE: OperationRoute = {
     direct: true,
     type: "query",
     transaction: "implicit",
+    reads: ["wms.packaging_quantity"],
+    writes: null,
   },
 };
 

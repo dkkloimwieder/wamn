@@ -10,7 +10,10 @@ use wamn_record_history::{ENTRY_ID_COLUMN, HISTORY_COLUMNS, POSITION_COLUMN};
 use wamn_schema_introspection::ir::CatalogIr;
 
 use crate::generate::logged_history_tables;
-use crate::manifest::{DeleteMode, TombstoneColumn};
+use crate::manifest::{
+    DeleteMode, ModelDeclaration, OperationDeclaration, StaticSqlRelationDeclaration,
+    TombstoneColumn,
+};
 use crate::{CrudAction, GenerateError, GenerateErrorType, PackageManifest};
 
 /// Package-relative canonical data-access evidence artifact.
@@ -683,61 +686,13 @@ fn derive_data_access_overlay_for_manifest(
     for model in manifest.models.values() {
         let relation = desired_relation(&mut desired, &model.schema, &model.table)?;
         for (action, operation) in &model.operations {
-            match action {
-                CrudAction::Get | CrudAction::Query => {
-                    relation.select_all();
-                }
-                CrudAction::Create => {
-                    relation.select_all();
-                    relation
-                        .insert
-                        .extend(operation.writable_fields.iter().cloned());
-                }
-                CrudAction::Update => {
-                    relation.select_all();
-                    relation
-                        .update
-                        .extend(operation.writable_fields.iter().cloned());
-                    relation
-                        .update
-                        .extend(operation.revision_field.iter().cloned());
-                    relation.lock = true;
-                }
-                // A hard delete removes the row, so the relation carries
-                // table-level DELETE. A tombstone delete is an UPDATE that sets
-                // the two reserved marker columns, which no caller writes, so
-                // the shape is column UPDATE on that pair and no DELETE.
-                CrudAction::Delete => match model.delete_mode {
-                    // Both delete statements open with the same locking read of
-                    // the id and the revision, so both need the read and the
-                    // lock that an update needs. `FOR UPDATE` is checked as the
-                    // UPDATE privilege, which the revision column supplies for a
-                    // hard delete and the marker pair supplies for a tombstone.
-                    Some(DeleteMode::Hard) => {
-                        relation.select_all();
-                        relation
-                            .update
-                            .extend(operation.revision_field.iter().cloned());
-                        relation.lock = true;
-                        relation.delete = true;
-                    }
-                    Some(DeleteMode::Tombstone) => {
-                        relation.select_all();
-                        relation.update.extend(
-                            TombstoneColumn::ALL
-                                .into_iter()
-                                .map(|column| column.as_str().to_owned()),
-                        );
-                        relation.lock = true;
-                    }
-                    None => {
-                        return Err(GenerateError::new(
-                            GenerateErrorType::InvalidOperation,
-                            "generated data-access overlay has a delete without a delete mode",
-                        ));
-                    }
-                },
-            }
+            let access =
+                generated_relation_access(model, *action, operation, &relation.all_fields)?;
+            relation.select.extend(access.select_fields);
+            relation.insert.extend(access.insert_fields);
+            relation.update.extend(access.update_fields);
+            relation.lock |= access.lock;
+            relation.delete |= access.delete;
         }
     }
     // The log trigger runs with the authority of the writer, so the App role
@@ -784,6 +739,83 @@ fn derive_data_access_overlay_for_manifest(
     };
     overlay.validate()?;
     Ok(overlay)
+}
+
+/// The access of one generated operation to its model relation, in the form
+/// an authored operation declares. The grants and the operation contract both
+/// read it, so a generated write states what it writes in one definition.
+///
+/// `fields` are the columns of the model relation.
+pub(crate) fn generated_relation_access(
+    model: &ModelDeclaration,
+    action: CrudAction,
+    operation: &OperationDeclaration,
+    fields: &[String],
+) -> Result<StaticSqlRelationDeclaration, GenerateError> {
+    let mut access = StaticSqlRelationDeclaration {
+        schema: model.schema.clone(),
+        table: model.table.clone(),
+        select_fields: fields.to_vec(),
+        insert_fields: Vec::new(),
+        update_fields: Vec::new(),
+        delete: false,
+        lock: false,
+        constraints: Vec::new(),
+    };
+    match action {
+        CrudAction::Get | CrudAction::Query => {}
+        CrudAction::Create => {
+            access.insert_fields.clone_from(&operation.writable_fields);
+        }
+        CrudAction::Update => {
+            access.update_fields.clone_from(&operation.writable_fields);
+            access
+                .update_fields
+                .extend(operation.revision_field.iter().cloned());
+            access.lock = true;
+        }
+        // A hard delete removes the row, so the relation carries
+        // table-level DELETE. A tombstone delete is an UPDATE that sets
+        // the two reserved marker columns, which no caller writes, so
+        // the shape is column UPDATE on that pair and no DELETE.
+        CrudAction::Delete => match model.delete_mode {
+            // Both delete statements open with the same locking read of
+            // the id and the revision, so both need the read and the
+            // lock that an update needs. `FOR UPDATE` is checked as the
+            // UPDATE privilege, which the revision column supplies for a
+            // hard delete and the marker pair supplies for a tombstone.
+            Some(DeleteMode::Hard) => {
+                access
+                    .update_fields
+                    .extend(operation.revision_field.iter().cloned());
+                access.lock = true;
+                access.delete = true;
+            }
+            Some(DeleteMode::Tombstone) => {
+                access.update_fields.extend(
+                    TombstoneColumn::ALL
+                        .into_iter()
+                        .map(|column| column.as_str().to_owned()),
+                );
+                access.lock = true;
+            }
+            None => {
+                return Err(GenerateError::new(
+                    GenerateErrorType::InvalidOperation,
+                    "generated data-access overlay has a delete without a delete mode",
+                ));
+            }
+        },
+    }
+    for list in [
+        &mut access.select_fields,
+        &mut access.insert_fields,
+        &mut access.update_fields,
+    ] {
+        list.sort();
+        list.dedup();
+    }
+    Ok(access)
 }
 
 pub(crate) fn application_schemas(
@@ -868,10 +900,6 @@ impl DesiredRelation {
             delete: false,
             lock: false,
         }
-    }
-
-    fn select_all(&mut self) {
-        self.select.extend(self.all_fields.iter().cloned());
     }
 
     fn finish(self, schema: String, table: String) -> Result<DataAccessRelation, GenerateError> {

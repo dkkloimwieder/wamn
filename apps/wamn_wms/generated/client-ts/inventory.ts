@@ -102,6 +102,8 @@ export const INVENTORY_ADJUST_ROUTE: OperationRoute = {
     direct: true,
     type: "command",
     transaction: "explicit_per_input",
+    reads: [],
+    writes: ["wms.inventory_transaction", "wms.packaging", "wms.packaging_quantity"],
   },
 };
 
@@ -185,6 +187,8 @@ export const INVENTORY_AGGREGATE_ROUTE: OperationRoute = {
     direct: true,
     type: "projection",
     transaction: null,
+    reads: ["wms.packaging", "wms.packaging_quantity"],
+    writes: null,
   },
 };
 
@@ -289,6 +293,8 @@ export const INVENTORY_MERGE_ROUTE: OperationRoute = {
     direct: true,
     type: "command",
     transaction: "explicit_per_input",
+    reads: [],
+    writes: ["wms.inventory_transaction", "wms.packaging", "wms.packaging_quantity"],
   },
 };
 
@@ -388,6 +394,8 @@ export const INVENTORY_MOVE_ROUTE: OperationRoute = {
     direct: true,
     type: "command",
     transaction: "explicit_per_input",
+    reads: [],
+    writes: ["wms.packaging"],
   },
 };
 
@@ -510,6 +518,8 @@ export const INVENTORY_SPLIT_ROUTE: OperationRoute = {
     direct: true,
     type: "command",
     transaction: "explicit_per_input",
+    reads: [],
+    writes: ["wms.inventory_transaction", "wms.packaging", "wms.packaging_quantity"],
   },
 };
 

@@ -41,6 +41,13 @@ export interface ResponseContract {
   readonly type: string;
   /** The declared transaction boundary, or null when the release states none. */
   readonly transaction: string | null;
+  /** The relations a read selects from, as `schema.table`. Empty for a write. */
+  readonly reads: readonly string[];
+  /**
+   * The relations a write changes, as `schema.table`, or null when the
+   * contract names none. Null for a read.
+   */
+  readonly writes: readonly string[] | null;
 }
 
 /** One refusal the operation declares. */

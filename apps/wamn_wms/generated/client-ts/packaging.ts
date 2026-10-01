@@ -101,6 +101,8 @@ export const PACKAGING_CREATE_ROUTE: OperationRoute = {
     direct: true,
     type: "create",
     transaction: "explicit_per_input",
+    reads: [],
+    writes: ["wms.packaging"],
   },
 };
 
@@ -196,6 +198,8 @@ export const PACKAGING_GET_ROUTE: OperationRoute = {
     direct: true,
     type: "get",
     transaction: "implicit",
+    reads: ["wms.packaging"],
+    writes: null,
   },
 };
 
@@ -342,6 +346,8 @@ export const PACKAGING_QUERY_ROUTE: OperationRoute = {
     direct: true,
     type: "query",
     transaction: "implicit",
+    reads: ["wms.packaging"],
+    writes: null,
   },
 };
 

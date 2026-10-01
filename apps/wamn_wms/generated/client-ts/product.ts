@@ -69,6 +69,8 @@ export const PRODUCT_CREATE_ROUTE: OperationRoute = {
     direct: true,
     type: "create",
     transaction: "explicit_per_input",
+    reads: [],
+    writes: ["wms.product"],
   },
 };
 
@@ -143,6 +145,8 @@ export const PRODUCT_GET_ROUTE: OperationRoute = {
     direct: true,
     type: "get",
     transaction: "implicit",
+    reads: ["wms.product"],
+    writes: null,
   },
 };
 
@@ -246,6 +250,8 @@ export const PRODUCT_QUERY_ROUTE: OperationRoute = {
     direct: true,
     type: "query",
     transaction: "implicit",
+    reads: ["wms.product"],
+    writes: null,
   },
 };
 
@@ -341,6 +347,8 @@ export const PRODUCT_UPDATE_ROUTE: OperationRoute = {
     direct: true,
     type: "update",
     transaction: "implicit",
+    reads: [],
+    writes: ["wms.product"],
   },
 };
 
