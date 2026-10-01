@@ -1,6 +1,6 @@
 # Edge diagnostics
 
-Updated through: 2026-10-01, `main` at `43497e343`.
+Updated through: 2026-10-01, `main` at `43497e343`. The owner accepted option A of sections 4.1 to 4.3 on 2026-10-01, with the fixed loopback listener of section 4.2.
 
 ## 1. Goal
 
@@ -42,7 +42,7 @@ Measured on `main` at `43497e343` on 2026-10-01.
 
 | Option | Rule | Cost |
 | --- | --- | --- |
-| A (proposed) | The edge host serves `GET /status` on a listener of its own, at `http.status_listen` in the configuration, as the probe listener does. The answer is one JSON object built from `EdgeHost`. No `status_listen`, no listener. | One small native HTTP handler in `services/edge`. |
+| A (accepted) | The edge host serves `GET /status` on a listener of its own, as the probe listener does. The listener binds `127.0.0.1:8081` (section 4.2). The answer is one JSON object built from `EdgeHost`. | One small native HTTP handler in `services/edge`. |
 | B | A release operation reads the facts through a new host import. | A WIT interface for host facts, and a release that must import it. |
 | C | The forward and the device loop write the counters to SQLite, and `wamn-edge status` reads them on a stopped edge. | It does not serve a running box, which is the goal. |
 
@@ -53,24 +53,24 @@ The answer of option A:
   "started_at": "2026-10-01T12:00:00Z",
   "device": {"dropped_frames": 0},
   "forward": {"credential_failures": 0, "stopped": false},
-  "samples": {"pending": 3, "refused": [{"sample_key": "…", "captured_at": "…", "reason": "…", "attempts": 1}]}
+  "samples": {"pending": 3, "refused": [{"sample_key": "…", "captured_at": "…", "reason": "…"}]}
 }
 ```
 
-`device` and `forward` are null when the configuration names no device or no forward. The counters count since `started_at`, because they live in memory. The forward gains a shared `stopped` flag that `run` sets where it logs the stop. The sample store gains a count of pending samples.
+`device` and `forward` are null when the configuration names no device or no forward. `stopped` is true after the forward stops at `credential_bound`. Each refused sample carries its key, its capture time and the platform's reason. The answer carries no sample body. The counters count since `started_at`, because they live in memory. The forward gains a shared `stopped` flag that `run` sets where it logs the stop. The sample store gains a count of pending samples.
 
 ### 4.2 Who can read it
 
 | Option | Rule | Cost |
 | --- | --- | --- |
-| A (proposed) | The listener binds where the configuration says, and the configuration example binds it to `127.0.0.1`. It checks no credential, as the probe listener checks none. | Anyone on the box, or anyone the bind address reaches, reads the reasons of refused samples. |
+| A (accepted) | The listener binds `127.0.0.1:8081`, and no configuration key binds it elsewhere. It checks no credential, as the probe listener checks none. | Anyone on the box reads the counts and the reasons of refused samples. Nobody off the box reads them. |
 | B | The listener verifies a session as a local route does, through `EdgeAuthenticator`, and requires one permission in `grants.json`. | A permission name, and a session on the box for the operator. |
 
 ### 4.3 The view
 
 | Option | Rule | Cost |
 | --- | --- | --- |
-| A (proposed) | `wamn-edge status` prints the answer of a running edge as text, in the form `samples list` uses. | No web page. |
+| A (accepted) | `wamn-edge status` prints the answer of a running edge as text, in the form `samples list` uses. | No web page. |
 | B | A page in a new web package reads `/status`. | A web package, and a host that serves its files, which the box does not have. |
 | C | A screen of the terminal client in `crates/client/tui`. | The terminal client learns a second contract beside the release contract. |
 
@@ -78,7 +78,7 @@ The answer of option A:
 
 One chain, the routes agent, after acceptance. Each issue lands with its tests.
 
-1. The read surface: the `stopped` flag of the forward, the pending count, the listener and its answer, and the configuration key. Tests: the answer before and after a dropped frame, a credential failure, the stop at `credential_bound`, a refused sample, and a pending sample. The listener is absent without the configuration key.
+1. The read surface: the `stopped` flag of the forward, the pending count, the listener and its answer. Tests: the answer before and after a dropped frame, a credential failure, the stop at `credential_bound`, a refused sample, and a pending sample. The listener binds the loopback address only.
 2. The view of section 4.3.
 3. Closeout. The edge's status read moves into the documentation that holds the edge's behavior, and `docs/operations` states the command. Workspace test run.
 
@@ -86,5 +86,8 @@ One chain, the routes agent, after acceptance. Each issue lands with its tests.
 
 - Resolving a refused sample on a running edge.
 - Counters that survive a restart.
+- A configuration key that binds the status listener to another address. Such a key would put the facts on the network without a credential.
+- A credential on the status listener.
+- Sample bodies in the status answer.
 - A push of the facts to the platform.
 - Moving the rest of `docs/plan/edge.md` into `docs/architecture`.

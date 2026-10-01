@@ -7,7 +7,7 @@ These pages describe unbuilt work and its limits. Current behavior belongs in [a
 - [Environment teardown](environment-teardown.md): Design for `delete-project-env`, the verb that deletes one project environment (finding `wamn-psss`).
 - [Identity](identity.md): External login providers within the existing identity authority.
 - [Edge](edge.md): Epic 19 scope for `wamn-edge`, one application and one device loop on a small aarch64 box.
-- [Edge diagnostics](edge-diagnostics.md): Draft design for the read surface of a running edge: dropped frames, credential failures, refused and pending samples (`wamn-1bd2`).
+- [Edge diagnostics](edge-diagnostics.md): Design for the read surface of a running edge: dropped frames, credential failures, refused and pending samples (`wamn-1bd2`).
 - [Generated operations](generated-operations.md): Draft design for generating the handler, data function, world export, route entry and declaration entry of each generated operation.
 - [Google Cloud deployment](gcp-deployment.md): Epic 23 proposal for the first deployment to the `wamn-dev` project, with costs, a limited mode and shutdown commands.
 - [Host-owned transaction](host-transaction.md): Design for one idempotency path, in which the host owns the transaction of an operation and the engine runs the intent rules around every call.
