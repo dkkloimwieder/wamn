@@ -13,6 +13,7 @@ use wamn_catalog::{ComponentPackageScope, PackageCoordinate};
 use wamn_control::apply_package::{self, ApplyPackageRequest};
 use wamn_control::author_wiring::{self, AuthorWiringRequest};
 use wamn_control::bind_connection::{self, BindConnectionRequest, RequirementType};
+use wamn_control::component_declaration::declared_platform_packages;
 use wamn_control::dev::environment::{JourneyCredentials, connect};
 use wamn_control::enable_cdc_project_env::EnableCdcProjectEnvRequest;
 use wamn_control::pat_client::PatIssuerConfig;
@@ -349,7 +350,7 @@ fn component_declaration(
     output: &Path,
     package: &PackageCoordinate,
     alias: &str,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<Vec<String>> {
     let mut source: Value = serde_json::from_slice(
         &fs::read(template).with_context(|| format!("read {}", template.display()))?,
     )?;
@@ -368,7 +369,26 @@ fn component_declaration(
         ComponentPackageScope::new(TENANT, package.package_id(), package.package_version())?;
     let declaration = render_component_declaration(&source.to_string(), &scope, alias)?;
     fs::write(output, serde_json::to_vec_pretty(&declaration)?)?;
-    Ok(())
+    // The grant is the platform packages the declaration states, as the dev
+    // loop admits a palette component.
+    Ok(declared_platform_packages(
+        template,
+        &serde_json::to_value(&declaration)?,
+    )?)
+}
+
+/// The store alias the label wiring's blob-put node names: the one authored
+/// alias, which the declaration and the binding both take.
+fn label_store_alias(root: &Path) -> anyhow::Result<String> {
+    let path = root.join("publication/wirings/inventory_move_and_label.json");
+    let wiring: Value = serde_json::from_slice(
+        &fs::read(&path).with_context(|| format!("read {}", path.display()))?,
+    )?;
+    wiring
+        .pointer("/nodes/store/params/store_alias")
+        .and_then(Value::as_str)
+        .map(str::to_owned)
+        .with_context(|| format!("{} names no store alias on its store node", path.display()))
 }
 
 /// Write a copy of the package attachments that admits the PAT mode only.
@@ -444,35 +464,36 @@ pub async fn publish(
     let label_declaration = evidence.join("label-render.declaration.json");
     let blob_declaration = evidence.join("blob-put.declaration.json");
     let jsonata_declaration = evidence.join("jsonata.declaration.json");
+    let store_alias = label_store_alias(&root)?;
     component_declaration(
         &root.join("publication/components/wms.json.in"),
         &wms_declaration,
         &package,
         "",
     )?;
-    component_declaration(
+    let label_packages = component_declaration(
         &repository.join("apps/platform/no-std/label-render/declaration.json.in"),
         &label_declaration,
         &package,
         "",
     )?;
-    component_declaration(
+    let blob_packages = component_declaration(
         &repository.join("apps/platform/execution/blob-put/declaration.json.in"),
         &blob_declaration,
         &package,
-        "labels",
+        &store_alias,
     )?;
-    component_declaration(
+    let jsonata_packages = component_declaration(
         &repository.join("apps/platform/execution/jsonata/declaration.json.in"),
         &jsonata_declaration,
         &package,
         "",
     )?;
-    let admit_request = |component_bytes, declaration, admitted: &[&str]| AdmitComponentRequest {
+    let admit_request = |component_bytes, declaration, admitted| AdmitComponentRequest {
         package: root.clone(),
         component_bytes,
         declaration,
-        admitted_platform_packages: admitted.iter().map(|value| (*value).to_owned()).collect(),
+        admitted_platform_packages: admitted,
     };
     let publish_request = || PublishAdmittedComponentRequest {
         artifact_base: inputs.component_artifact_base.clone(),
@@ -486,7 +507,7 @@ pub async fn publish(
         admit_request(
             inputs.component_directory.join("wms.wasm"),
             wms_declaration,
-            &["wamn:node", "wamn:postgres"],
+            vec!["wamn:node".to_owned(), "wamn:postgres".to_owned()],
         ),
         publish_request(),
     )
@@ -495,7 +516,7 @@ pub async fn publish(
         admit_request(
             label_render_wasm.to_path_buf(),
             label_declaration,
-            &["wamn:node"],
+            label_packages,
         ),
         publish_request(),
     )
@@ -504,7 +525,7 @@ pub async fn publish(
         admit_request(
             inputs.component_directory.join("blob_put.wasm"),
             blob_declaration,
-            &["wamn:node", "wasmcloud:blobstore"],
+            blob_packages,
         ),
         publish_request(),
     )
@@ -513,7 +534,7 @@ pub async fn publish(
         admit_request(
             inputs.component_directory.join("jsonata_expression.wasm"),
             jsonata_declaration,
-            &["wamn:node"],
+            jsonata_packages,
         ),
         publish_request(),
     )
@@ -607,7 +628,7 @@ pub async fn publish(
         credential_handle: Some("labels-store".into()),
         effective_release_id: RELEASE_ID,
         component_digest: blob_digest,
-        store_alias: "labels".into(),
+        store_alias,
     })
     .await?;
     if !mint_only {
