@@ -174,7 +174,12 @@ async fn reopen_after_kill_finds_the_uncertain_intent() {
 #[tokio::test]
 #[ignore = "the child process of reopen_after_kill_finds_the_uncertain_intent"]
 async fn child_begins_an_intent_and_waits_to_be_killed() {
-    let path = std::env::var_os(CHILD_DATABASE).expect("run only by the kill test");
+    // The child process of the kill test, not a test. A run with
+    // `--include-ignored` selects it without the kill test's variable, and
+    // then it has nothing to do.
+    let Some(path) = std::env::var_os(CHILD_DATABASE) else {
+        return;
+    };
     let store = SqliteIntentStore::open(path).expect("open");
     let id = new_id(store.begin(&intent("k-killed", "h1")).await.expect("begin"));
     println!("begun {}", id.0);
