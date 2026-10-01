@@ -3,8 +3,14 @@
 # /etc/hosts line and no identity port-forward. The operator certificate
 # reaches the Job only as the mounted Secret operator-dkk.
 #
-# Fill __PRINCIPAL_ID__ in a private copy of this file in the scratchpad, at
-# mode 0600, apply the copy and remove it (docs/operations/gcp.md section 4.5).
+# Fill __EMAIL__, __DISPLAY_NAME__, __ORG__ and __GRANT_FLAGS__ in a private
+# copy of this file in the scratchpad, at mode 0600, apply the copy and remove
+# it (docs/operations/gcp.md section 4.5). __GRANT_FLAGS__ holds --org-admin,
+# --project-admin <project> and --membership <project>/<env> as needed, or
+# nothing. Then make the Secret wamn-system-admin with an owner reference to
+# this Job (docs/operations/gcp.md section 3.16). The pod waits for that
+# Secret before it starts.
+#
 # The verb prints the identity answer and writes no credential. Save the log to
 # the scratchpad before you delete the Job.
 apiVersion: batch/v1
@@ -23,8 +29,15 @@ spec:
       containers:
         - name: invite
           image: us-central1-docker.pkg.dev/wamn-dev/wamn/wamn-ctl:src-61412780c14f9a3b@sha256:94a87fe53ba0765c61ae03075c5f81c294ae2e79c617071dc1966d4d105d3584
-          args: ["invite", "--principal", "__PRINCIPAL_ID__"]
+          command: ["/bin/sh", "-ec"]
+          args:
+            - |
+              /usr/local/bin/wamn-ctl invite \
+                --email '__EMAIL__' --display-name '__DISPLAY_NAME__' --org __ORG__ \
+                __GRANT_FLAGS__
           env:
+            - name: WAMN_SYSTEM_ADMIN_URL
+              valueFrom: { secretKeyRef: { name: wamn-system-admin, key: url } }
             - { name: WAMN_PAT_ISSUER, value: "https://identity.identity.svc.cluster.local" }
             - { name: WAMN_PAT_CLIENT_CERT, value: /etc/wamn/operator/tls.crt }
             - { name: WAMN_PAT_CLIENT_KEY, value: /etc/wamn/operator/tls.key }

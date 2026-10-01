@@ -48,20 +48,20 @@ The `gates` stage keeps its contents, because its cases run `wamn-ctl` inside it
 
 Two manifests under `deploy/gcp/operator/`, both in namespace `identity`, where `operator-dkk` and `identity-tls` live:
 
-- `invite.yaml` runs `wamn-ctl invite --principal <principal id>`.
+- `invite.yaml` runs `wamn-ctl invite` with the email, the display name, the org and the grant flags. It also needs the superuser URL of `wamn_system`, from the Secret `wamn-system-admin` of section 4.3.
 - `mint-pat.yaml` runs `wamn-ctl provision-project-env` with the PAT flags of section 3.16.
 
 Each Job has `backoffLimit: 0`, `restartPolicy: Never`, `ttlSecondsAfterFinished` and `automountServiceAccountToken: false`. It mounts `tls.crt` and `tls.key` of `operator-dkk` and `ca.crt` of `identity-tls` read-only at mode 0400, and sets `WAMN_PAT_ISSUER=https://identity.identity.svc.cluster.local`.
 
 ### 4.3 Arguments and output
 
-The fixed flags are in the manifest. The run values are placeholders in `args`: the principal id, or the triple and the tenant. The operator fills them in a private copy of the manifest in the scratchpad, at mode 0600, and removes the copy after `kubectl apply`.
+The fixed flags are in the manifest. The run values are placeholders in `args`: the email, the display name, the org and the grant flags, or the triple and the tenant. The operator fills them in a private copy of the manifest in the scratchpad, at mode 0600, and removes the copy after `kubectl apply`.
 
 `invite` writes no credential. The operator waits for the Job to complete, saves `kubectl logs job/<name>` to the scratchpad, and deletes the Job.
 
 `mint-pat` writes a PAT Secret file. The file must reach the owner's machine. The bench PAT is used on the client VM, and the management-author PAT is not applied (`gcp.md` section 3.16). The container writes it to a memory `emptyDir`, then waits for a fixed bound. The operator copies it with `kubectl exec cat` into a mode 0600 file, as `tools/identity-jwks-journey-run` does, and deletes the Job.
 
-The mint also needs the superuser URL of `wamn_system`. After the apply, the operator makes the Secret `wamn-system-admin` in namespace `identity` with `kubectl`, from the CloudNativePG Secret `wamn-pg-superuser`. Nobody types the password. The Secret carries an owner reference to the Job. Kubernetes deletes it with the Job, and `ttlSecondsAfterFinished` deletes the Job.
+Both Jobs also need the superuser URL of `wamn_system`. After the apply, the operator makes the Secret `wamn-system-admin` in namespace `identity` with `kubectl`, from the CloudNativePG Secret `wamn-pg-superuser`. Nobody types the password. The Secret carries an owner reference to the Job. Kubernetes deletes it with the Job, and `ttlSecondsAfterFinished` deletes the Job.
 
 ### 4.4 What the hosts-file shortcut becomes
 

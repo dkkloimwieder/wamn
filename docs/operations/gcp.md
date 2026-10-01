@@ -1200,29 +1200,37 @@ On 2026-09-27 the results were these:
 
 ### 4.5 Invitation
 
-Make the owner's user principal, admit it to the environment, and write its tenant user row. Keep the port-forward and `WAMN_SYSTEM_ADMIN_URL` of section 3.6 and `T` of section 3.8:
+Invite the owner with the Job `deploy/gcp/operator/invite.yaml`, which runs in namespace `identity` with the mounted `operator-dkk` certificate (section 3.16). The Job creates or reuses the user of the email, writes the org membership and the grants of `__GRANT_FLAGS__`, and mails the invitation when the user has no password. Fill the run values in a private copy of the manifest, apply the copy and remove it:
 
 ```bash
-cargo build -p wamn-ctl --features ops --bin wamn-ctl-ops
-target/debug/wamn-ctl-ops create-user --subject dkkloimwieder@gmail.com --email dkkloimwieder@gmail.com --display-name dkk
-target/debug/wamn-ctl grant-project-env-membership --org dkk --project receiving --env dev \
-  --principal-id <principal id> --system-database-url "$WAMN_SYSTEM_ADMIN_URL"
-target/debug/wamn-ctl reconcile-run-plane --system-database-url "$WAMN_SYSTEM_ADMIN_URL" --admin-database-url "$T" \
-  --org dkk --project receiving --tenant dev --env dev --schema wamn_run
-```
-
-Send the invitation with the Job `deploy/gcp/operator/invite.yaml`, which runs in namespace `identity` with the mounted `operator-dkk` certificate (section 3.16). Fill the principal in a private copy of the manifest, apply the copy and remove it:
-
-```bash
-(umask 077; sed -e 's/__PRINCIPAL_ID__/<principal id>/' deploy/gcp/operator/invite.yaml > $P/invite.yaml)
+(umask 077; sed -e 's/__EMAIL__/dkkloimwieder@gmail.com/' -e 's/__DISPLAY_NAME__/dkk/' -e 's/__ORG__/dkk/' \
+  -e 's|__GRANT_FLAGS__|--membership receiving/dev|' deploy/gcp/operator/invite.yaml > $P/invite.yaml)
 kubectl apply -f $P/invite.yaml
 rm $P/invite.yaml
+```
+
+The pod waits for the Secret `wamn-system-admin`. Make it as in section 3.16, with the owner reference to the Job `invite`:
+
+```bash
+JOB_UID=$(kubectl -n identity get job invite -o jsonpath='{.metadata.uid}')
+PW=$(kubectl -n platform get secret wamn-pg-superuser -o jsonpath='{.data.password}' | base64 -d)
+printf 'postgresql://postgres:%s@wamn-pg-rw.platform.svc.cluster.local:5432/wamn_system' "$PW" |
+  kubectl -n identity create secret generic wamn-system-admin --from-file=url=/dev/stdin --dry-run=client -o json |
+  jq --arg uid "$JOB_UID" '.metadata.ownerReferences = [{apiVersion: "batch/v1", kind: "Job", name: "invite", uid: $uid}]' |
+  kubectl create -f -
 kubectl -n identity wait --for=condition=complete job/invite --timeout=120s
 kubectl -n identity logs job/invite > $P/invite.log
 kubectl -n identity delete job invite
 ```
 
-The log holds the identity answer. The first invitations ran from this machine, through a temporary `/etc/hosts` line and an identity port-forward. On 2026-09-27 the principal was `ccc4533d-a81a-465d-8a44-1414369ae2fd`. The three verbs took 2, 1 and 25 seconds, and identity answered `201 {"status":"accepted_for_delivery"}` in 1 second.
+The log holds the principal id and the identity answer. Write the tenant user row of the new member. Keep the port-forward and `WAMN_SYSTEM_ADMIN_URL` of section 3.6 and `T` of section 3.8:
+
+```bash
+target/debug/wamn-ctl reconcile-run-plane --system-database-url "$WAMN_SYSTEM_ADMIN_URL" --admin-database-url "$T" \
+  --org dkk --project receiving --tenant dev --env dev --schema wamn_run
+```
+
+On 2026-09-27 the invitation ran as three verbs, `create-user`, `grant-project-env-membership` and `reconcile-run-plane`, then `wamn-ctl invite --principal <principal id>`. The first invitations ran from this machine, through a temporary `/etc/hosts` line and an identity port-forward. On 2026-09-27 the principal was `ccc4533d-a81a-465d-8a44-1414369ae2fd`. The three verbs took 2, 1 and 25 seconds, and identity answered `201 {"status":"accepted_for_delivery"}` in 1 second.
 The first invitation showed a code for the terminal client, and the web client had no page to accept it (`wamn-ch2w`). With `inviteUrl` set in `deploy/gcp/values-identity.yaml`, the mail carries one link to `https://receiving.wamn.dev/invite#<code>`. The second invitation went out the same way and took 1 second. Restart the identity port-forward after identity rolls, because the forward ends with the old pod:
 
 ```bash
