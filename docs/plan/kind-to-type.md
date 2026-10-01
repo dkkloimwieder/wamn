@@ -528,6 +528,14 @@ os.close(fd)' $A
    psql "$SYS" -Atc "SELECT p.token_prefix, p.expires_at, p.revoked_at FROM identity.pats p JOIN identity.principals r ON r.id = p.principal_id WHERE r.subject = 'wamn-management-author-dkk--wms--dev' ORDER BY p.expires_at"
    ```
 
+8. Choose the baseline of B2. `--baseline <n>` means that the database already holds files 1 to n (`crates/control/lib/src/upgrade_schema.rs:165` to `:183`). Inspect `wamn_system` for the objects of `deploy/sql/migrations/system/0001_capture_gap.sql` (the table `registry.capture_gap`) and of `0002_event_reader_schema.sql` (the column `registry.event_readers.schema`):
+
+   ```bash
+   psql "$SYS" -Atc "SELECT to_regclass('registry.capture_gap') IS NOT NULL, EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'registry' AND table_name = 'event_readers' AND column_name = 'schema')"
+   ```
+
+   If both answers are `t`, set `BASELINE=2`. If only the first is `t`, set `BASELINE=1`. B12 records the query and its answer.
+
    If a file is missing, or a role or the PAT is expired, B8 takes branch `b`. Otherwise it takes branch `a`. Record the answer.
 
 **Drain. Before B1.** The old binaries finish every open run under release 1. Nothing is stranded.
@@ -610,11 +618,11 @@ Then run the open-run query of the drain once more on each project-env database.
 B2. Run `upgrade-schema` once on wamn_system (§4.3.4, §4.8, `docs/plan/schema-upgrade.md` §3):
 
 ```bash
-target/debug/wamn-ctl upgrade-schema --system-database-url "$SYS" --baseline 1 --confirm
+target/debug/wamn-ctl upgrade-schema --system-database-url "$SYS" --baseline "$BASELINE" --confirm
 ```
 
-It records `0001_capture_gap.sql`, which the database holds by hand. It then applies `0002_event_reader_schema.sql`, `0003_kind_to_type.sql` and `0004_env_policy_durability.sql` in the same run.
-The same run applies every later system file. `0007_org_administration.sql` changes the principal type `human` to `user` (`wamn-a40n.3`). No hand statement does this.
+It records the files that B0 step 8 found, without running them. It then applies every later system migration in the same run. The list is the list of the cutover commit on the day. Today it is `0002_event_reader_schema.sql` when `BASELINE` is 1, then `0003_kind_to_type.sql`, `0004_env_policy_durability.sql`, `0005_admin_role.sql`, `0006_control_audience_reads.sql` and `0007_org_administration.sql`.
+`0007_org_administration.sql` changes the principal type `human` to `user` (`wamn-a40n.3`). No hand statement does this.
 
 B3. Run `upgrade-schema` once on each project-env database (§4.3.4, §4.8):
 
@@ -623,8 +631,8 @@ target/debug/wamn-ctl upgrade-schema --system-database-url "$SYS" --admin-databa
 target/debug/wamn-ctl upgrade-schema --system-database-url "$SYS" --admin-database-url "$TW" --baseline 0 --confirm
 ```
 
-Each run creates the record table and applies `0001_kind_to_type.sql`.
-The same run applies every later project file. `0004_user_type.sql` changes the user type `person` to `user` (`wamn-a40n.3`). No hand statement does this.
+Each project database was installed before its record table and holds no project migration, so the baseline is 0. Each run creates the record table and applies every project migration. The list is the list of the cutover commit on the day. Today it is `0001_kind_to_type.sql`, `0002_authored_roles.sql`, `0003_administration_grants.sql` and `0004_user_type.sql`.
+`0004_user_type.sql` changes the user type `person` to `user` (`wamn-a40n.3`). No hand statement does this.
 
 B4. Run the new `reconcile-run-plane` twice for each environment (§4.3.2, §4.8, `gcp.md` §3.8, §5.2). The second run of each reports no action:
 
@@ -1746,8 +1754,8 @@ A renamed column breaks every old binary that names it. The old host and runtime
 The order that §3.2 follows:
 
 1. Drain, then stop (§3.2 "Drain" and B1). The drain turns ingress off: the edge goes to 0 replicas and the two materializer workloads are deleted. The `flow-http` and `wms-flow-http` workloads and their Services stay, because B9 needs the Services. Open runs finish or are settled. Then the hosts and identity stop. The hosts run the HTTP and materializer workloads, so both stop with them. No scenario-worker runs. The CDC readers keep running (§4.6).
-2. Run `upgrade-schema` on wamn_system. It applies `0002_event_reader_schema.sql`, `0003_kind_to_type.sql` and `0004_env_policy_durability.sql`, with the control component key of §4.3.6 (B2). The new `reconcile-run-plane` reads `principals.type` in wamn_system (`crates/control/lib/src/reconcile_run_plane.rs:407`, `:422`), so this step comes before step 4.
-3. Run `upgrade-schema` on each project-env database. It applies `0001_kind_to_type.sql`: P9, the component key and the snapshot table of §4.3.6 (B3). The new `push-component` writes an owner row for every push, so the component key comes before the first push of the new verb. That push is `receiving.wasm` in B7 step 3. The palette pushes of B8 step 2 come after it.
+2. Run `upgrade-schema` on wamn_system with the baseline of B0 step 8. It applies every later system migration of the cutover commit, with the control component key of §4.3.6 (B2). The new `reconcile-run-plane` reads `principals.type` in wamn_system (`crates/control/lib/src/reconcile_run_plane.rs:407`, `:422`), so this step comes before step 4.
+3. Run `upgrade-schema` on each project-env database with `--baseline 0`. It applies every project migration of the cutover commit, starting with `0001_kind_to_type.sql`: P9, the component key and the snapshot table of §4.3.6 (B3). The new `push-component` writes an owner row for every push, so the component key comes before the first push of the new verb. That push is `receiving.wasm` in B7 step 3. The palette pushes of B8 step 2 come after it.
 4. Run the new `reconcile-run-plane` for each project-env (B4). Its cutover renames P8, P10, P11 and P12 (§4.3.2). Never run the old verb against a renamed database. The old verb finds the declared checks missing and the new columns unknown.
 5. Re-annotate every installed PAT Secret (B5, §4.3.5).
 6. Start the new identity service (B6). It reads `principals.type`, so it comes after step 2. Sign-in works again from here.
@@ -1767,14 +1775,14 @@ Rollback swaps the names back. It is a new migration with the names swapped, bec
 On <date> (`wamn-ld93`, `wamn-o8b9`), `wamn-ctl upgrade-schema` of commit <commit> ran for the first time on `wamn_system`, `wamn-db-dkk--receiving--dev--4pqjfmli` and `wamn-db-dkk--wms--dev--0nk1lrpr`, with the workloads stopped. Each run took `--baseline` and `--confirm`, and it applied the `kind` → `type` migration of `docs/plan/kind-to-type.md` §4.3.4 in the same run. On wamn_system, `SELECT to_regclass('provisioning.copy_sagas') IS NOT NULL` answered <true|false>, so the migration <renamed|did not rename> P6. Keep the port-forward, `WAMN_SYSTEM_ADMIN_URL` and `PW` of section 3.6, and run:
 
 ```bash
-target/debug/wamn-ctl upgrade-schema --system-database-url "$WAMN_SYSTEM_ADMIN_URL" --baseline 1 --confirm
+target/debug/wamn-ctl upgrade-schema --system-database-url "$WAMN_SYSTEM_ADMIN_URL" --baseline <BASELINE of B0 step 8> --confirm
 for db in wamn-db-dkk--receiving--dev--4pqjfmli wamn-db-dkk--wms--dev--0nk1lrpr; do
   target/debug/wamn-ctl upgrade-schema --system-database-url "$WAMN_SYSTEM_ADMIN_URL" \
     --admin-database-url "postgresql://postgres:${PW}@127.0.0.1:15432/$db" --baseline 0 --confirm
 done
 ```
 
-The wamn_system run printed `baseline migrations/system/0001_capture_gap.sql` , `applied migrations/system/0002_event_reader_schema.sql`, `applied migrations/system/0003_kind_to_type.sql` and `applied migrations/system/0004_env_policy_durability.sql`. Each project-env run printed `applied migrations/project/0001_kind_to_type.sql`. The runs took <n>, <n> and <n> seconds. The history notices named <tables>. The owner table took <n> rows in wamn_system, <n> in Receiving and <n> in WMS. The snapshot notices named <constraints>. The check of §4.3.6 listed no `component_library_digest_key` and no `release_manifest_v3` name. `registry.schema_migrations` holds rows 1 to 4, and `app_system.schema_migrations` holds row 1 in each project-env database.
+B0 step 8 answered <answer>, so the baseline was <BASELINE>. The wamn_system run printed <one `baseline` line for each held file, then one `applied` line for each later file>. Each project-env run printed <one `applied` line for each project file>. The runs took <n>, <n> and <n> seconds. The history notices named <tables>. The owner table took <n> rows in wamn_system, <n> in Receiving and <n> in WMS. The snapshot notices named <constraints>. The check of §4.3.6 listed no `component_library_digest_key` and no `release_manifest_v3` name. `registry.schema_migrations` holds rows 1 to 4, and `app_system.schema_migrations` holds row 1 in each project-env database.
 
 `reconcile-run-plane` of commit <commit> then applied P8 and P10 to P12 by its `TypeColumnCutover` action. Run it for each project-env as in sections 3.8 and 5.2:
 
@@ -2030,7 +2038,7 @@ One issue per step, in order. A1 to A12 are the repository commits of §3.1. B0 
 
 **B0. kind → type B0: build and record before the stop (docs/plan/kind-to-type.md §3.2)**
 - Scope: from the cutover commit, build the programs and the guests, build and push the host, identity and gates images, and push the two workload guest files to `components/flow-http` and `components/materializer` under their file sha256. Answer the ops-schema query and the PAT Secret listing, and run the check query of §4.3 on the three databases. Nothing changes installed state.
-- Acceptance: each guest sha256 equals its A12 value. The three image digests, the two guest digests, both answers and the three check results are recorded.
+- Acceptance: each guest sha256 equals its A12 value. The three image digests, the two guest digests, both answers, the three check results and the baseline answer of step 8 are recorded.
 - Depends on: A12.
 
 **B1. kind → type B1: drain and stop (docs/plan/kind-to-type.md §3.2)**
@@ -2039,12 +2047,12 @@ One issue per step, in order. A1 to A12 are the repository commits of §3.1. B0 
 - Depends on: B0.
 
 **B2. kind → type B2: wamn_system upgrade-schema run (docs/plan/kind-to-type.md §3.2)**
-- Scope: one run of `upgrade-schema --baseline 1 --confirm` on wamn_system. It records `0001_capture_gap.sql` and applies `0002_event_reader_schema.sql`, `0003_kind_to_type.sql` and `0004_env_policy_durability.sql`, with the control component key of §4.3.6 and the new record-history functions.
+- Scope: one run of `upgrade-schema --baseline "$BASELINE" --confirm` on wamn_system, with the baseline of B0 step 8. It records the files that the database holds and applies every later system migration of the cutover commit, with the control component key of §4.3.6 and the new record-history functions.
 - Acceptance: the run prints the baseline row and the applied file, and commits. The §4.3.6 check on wamn_system lists the owner keys and no `component_library_digest_key`.
 - Depends on: B1.
 
 **B3. kind → type B3: project-env upgrade-schema runs (docs/plan/kind-to-type.md §3.2)**
-- Scope: one run of `upgrade-schema --baseline 0 --confirm` on each of the two project-env databases. It applies `0001_kind_to_type.sql`: P9, the component key with its `wamn_app` grant, and the snapshot table.
+- Scope: one run of `upgrade-schema --baseline 0 --confirm` on each of the two project-env databases. It applies every project migration of the cutover commit, starting with `0001_kind_to_type.sql`: P9, the component key with its `wamn_app` grant, and the snapshot table.
 - Acceptance: each run prints the applied file and commits. The history and snapshot notices are recorded. The §4.3.6 check lists no `component_library_digest_key` and no `release_manifest_v3` name.
 - Depends on: B2.
 
