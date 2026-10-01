@@ -59,13 +59,15 @@ pub async fn resolve_cluster(system_url: &str, org: &str, env: &str) -> anyhow::
         .await
         .context("system db connect")?;
     let conn_task = tokio::spawn(conn);
-    let result = do_resolve_cluster(&client, org, env).await;
+    let result = resolve_cluster_on(&client, org, env).await;
     drop(client);
     let _ = conn_task.await;
     result
 }
 
-async fn do_resolve_cluster(
+/// [`resolve_cluster`] on an open system-database connection. It leaves the
+/// session as `wamn_system`.
+pub(crate) async fn resolve_cluster_on(
     client: &tokio_postgres::Client,
     org: &str,
     env: &str,
