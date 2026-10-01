@@ -806,7 +806,7 @@ mod tests {
     ///
     /// Before `wamn-0h0g.22.16` `resolve` returned the same url whatever
     /// authority asked, so every family authenticated as the shared `wamn_app`
-    /// login. Four classes, four configured logins, four different answers.
+    /// login. Five classes, five configured logins, five different answers.
     #[test]
     fn each_authority_class_authenticates_with_its_own_configured_credential() {
         let projects = StaticCredentialProvider::projects_from_json(
@@ -814,7 +814,8 @@ mod tests {
                  "guest-sql":"postgres://wamn_app_g_a:pw@db/billing",
                  "executor-platform":"postgres://wamn_exec_platform_x_a:pw@db/billing",
                  "callable-http":"postgres://wamn_http_admitter_x_a:pw@db/billing",
-                 "event-materializer":"postgres://wamn_materializer_x_a:pw@db/billing"}}}"#,
+                 "event-materializer":"postgres://wamn_materializer_x_a:pw@db/billing",
+                 "administration":"postgres://wamn_administration_x_a:pw@db/billing"}}}"#,
             &base(),
         )
         .expect("per-class credentials parse");
@@ -832,7 +833,7 @@ mod tests {
             );
             seen.push(url);
         }
-        assert_eq!(seen.len(), 4);
+        assert_eq!(seen.len(), 5);
     }
 
     /// A class with no configured credential REFUSES. The forbidden behaviour is
@@ -852,6 +853,7 @@ mod tests {
             AuthorityClass::ExecutorPlatform,
             AuthorityClass::CallableHttp,
             AuthorityClass::EventMaterializer,
+            AuthorityClass::Administration,
         ] {
             let error = provider
                 .resolve("billing", class, None)
@@ -1068,7 +1070,7 @@ mod tests {
             );
             seen.push(key);
         }
-        assert_eq!(seen.len(), 4);
+        assert_eq!(seen.len(), 5);
     }
 
     /// The class subsumes the lifecycle, so a guest-sql checkout against the
@@ -1083,6 +1085,7 @@ mod tests {
             AuthorityClass::ExecutorPlatform,
             AuthorityClass::CallableHttp,
             AuthorityClass::EventMaterializer,
+            AuthorityClass::Administration,
         ] {
             assert_eq!(
                 PoolLifecycle::for_class(class).label(),
@@ -1129,11 +1132,12 @@ mod tests {
         // the probe — so a hook that expected one fixed role for every class
         // passed it. The literals below are the second document the expectation
         // is checked against, and they are what makes the arm per-family.
-        let expected: [(AuthorityClass, &str); 4] = [
+        let expected: [(AuthorityClass, &str); 5] = [
             (AuthorityClass::GuestSql, "wamn_app"),
             (AuthorityClass::ExecutorPlatform, "wamn_executor_platform"),
             (AuthorityClass::CallableHttp, "wamn_http_admitter"),
             (AuthorityClass::EventMaterializer, "wamn_event_materializer"),
+            (AuthorityClass::Administration, "wamn_administration"),
         ];
         let mut roles = Vec::new();
         for class in AuthorityClass::ALL {
@@ -1162,7 +1166,7 @@ mod tests {
             );
             roles.push(class.acl_role());
         }
-        assert_eq!(roles.len(), 4);
+        assert_eq!(roles.len(), 5);
     }
 
     /// The ambient credential source is gone.
