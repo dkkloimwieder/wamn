@@ -936,6 +936,26 @@ curl -s -i -H 'Host: receiving.wamn.dev' http://127.0.0.1:18080/nope
 A released route answers `401` with `{"error":{"code":"unauthorized"}}`, because the call has no session. An unknown path answers `404` with `route-not-found`.
 Before the workloads existed, every path answered `503`, and the host log said `router is temporarily unavailable`. The host router in `crates/platform/engine/src/expected_router.rs` gives this answer when the release names the host but no workload is bound to it.
 
+### 3.22 Control host
+
+The control host serves the control routes of org `dkk` as `hostgroup-control` (docs/plan/platform-ui.md §4.2, `wamn-a40n.2`).
+It has no application release and no project credential.
+It reads `wamn_system` through the `control` login of the org, from the Secret `wamn-control-dkk`.
+Run these steps only with a host image that contains `wamn-a40n.2`.
+
+Apply the pending system migrations first, because `system/0006_control_audience_reads.sql` gives the identity issuer the reads of the control audience.
+Keep the port-forward and `WAMN_SYSTEM_ADMIN_URL` of section 3.6. Prepare the control credential with `provision-org`. The run changes no registry row:
+
+```bash
+target/debug/wamn-ctl provision-org --org dkk --template trials --pool wamn-pg \
+  --system-database-url "$WAMN_SYSTEM_ADMIN_URL" --db-host wamn-pg-rw.platform.svc.cluster.local \
+  --namespace hosts --prepare-control-generation a --emit-control-secret $P/control.json
+(umask 077; jq . $P/control.json > $P/control.cluster.out) && kubectl apply -f - < $P/control.cluster.out
+```
+
+Apply the Secret before the host rollout, because [values-host.yaml](../../deploy/gcp/values-host.yaml) names it with `optional: false`.
+The host values program of section 5.5 renders the control group, so the same `helm upgrade` starts it.
+
 ## 4. Public edge
 
 Step 4 ran on 2026-09-27. Pool `main` stays at 2 nodes until step 4 ends. If the guard scales it to 0 first, scale it back as in section 3.17.

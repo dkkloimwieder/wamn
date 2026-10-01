@@ -418,3 +418,82 @@ async fn a_refused_prepare_leaves_the_state_its_documentation_promises() {
 
     let _ = std::fs::remove_file(&path_a);
 }
+
+/// The administration prepare (`wamn-a40n.2`) on a populated project database:
+/// the verb applies the family's write surface and then accepts it in its
+/// own grant check, and the minted login writes an authorization relation.
+#[tokio::test]
+async fn the_administration_prepare_accepts_its_own_write_surface() {
+    let _lock = wamn_test_postgres::lock();
+    let admin_database = wamn_test_postgres::database();
+    let mut admin_url = Url::parse(admin_database.url()).expect("parse the test database URL");
+    admin_url.set_path("/postgres");
+    let admin_url = admin_url.to_string();
+    let database = project_env_database_name(ORG, PROJECT, ENVIRONMENT, INSTANCE);
+    let role_a = workload_generation_role(
+        WorkloadRoleFamily::Administration,
+        WorkloadRoleScope::ProjectEnvironment {
+            org: ORG,
+            project: PROJECT,
+            environment: ENVIRONMENT,
+            database: &database,
+        },
+        CredentialGeneration::A,
+    )
+    .expect("Administration takes a project-environment scope");
+
+    let catalog = connect(&admin_url).await;
+    reset_cluster(&catalog, &database, &[&role_a]).await;
+    apply_documented_order(&catalog, &database).await;
+    let target_url = database_url(&admin_url, &database);
+    let target = connect(&target_url).await;
+    target
+        .batch_execute(
+            "DO $$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles \
+                                        WHERE rolname = 'wamn_scenario_author') THEN \
+               CREATE ROLE wamn_scenario_author NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE \
+                 NOBYPASSRLS; \
+             END IF; END $$; \
+             CREATE SCHEMA wamn_run;",
+        )
+        .await
+        .expect("create the run plane schema");
+    target
+        .batch_execute(wamn_catalog::CATALOG_SCHEMA_SQL)
+        .await
+        .expect("install the catalog");
+    target
+        .batch_execute(include_str!("../../../../deploy/sql/app-schema.sql"))
+        .await
+        .expect("install the application schema");
+
+    let path_a = secret_path("administration-a");
+    let mut request = prepare_args(&target_url, CredentialGeneration::A, &path_a);
+    request.action.family = WorkloadRoleFamily::Administration;
+    provision_project_env::run_workload_action(&request)
+        .await
+        .expect("the verb accepts the administration surface it applied");
+
+    let secret: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&path_a).expect("read emitted Secret"))
+            .expect("emitted Secret is JSON");
+    let administration = connect(
+        secret["stringData"]["url"]
+            .as_str()
+            .expect("the Secret carries a url"),
+    )
+    .await;
+    administration
+        .batch_execute(&format!(
+            "BEGIN; \
+             SELECT set_config('app.user_id', '00000000-0000-4000-8000-0000000000a1', true), \
+                    set_config('app.operation', 'admin:provisioning-order-fixture', true); \
+             INSERT INTO app_system.roles (tenant_id, name) VALUES ('{TENANT}', 'clerk'); \
+             DELETE FROM app_system.roles WHERE tenant_id = '{TENANT}' AND name = 'clerk'; \
+             COMMIT;"
+        ))
+        .await
+        .expect("the administration login writes and appends history");
+
+    let _ = std::fs::remove_file(&path_a);
+}

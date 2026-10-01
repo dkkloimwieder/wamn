@@ -403,3 +403,150 @@ async fn permission_mine_answers_the_held_grants_of_the_session_caller() -> anyh
     server.stop().await;
     Ok(())
 }
+
+/// `wamn_control:control/control.mine` on a control host: the control
+/// serving root, the control route authenticator and the org's real
+/// `control` login. Only a browser session of a current `project-admin` is
+/// admitted, and a revoked role refuses the next request.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn control_mine_admits_only_a_current_project_admin_session() -> anyhow::Result<()> {
+    let mut postgres = wamn_test_postgres::start(&[])?;
+    let test_database = postgres.create_database("control_route")?;
+    let admin_url = test_database.url();
+    let admin = connect(admin_url).await?;
+    let database: String = admin
+        .query_one("SELECT current_database()::text", &[])
+        .await?
+        .get(0);
+    let audience = wamn_platform_identity::control::control_audience(ORG)?;
+    let principal = claims()["sub"]
+        .as_str()
+        .expect("fixture principal")
+        .to_owned();
+    session_fixture::install_authority(&admin, PROJECT, "dev", &audience, &[&principal]).await?;
+    admin
+        .execute(
+            "INSERT INTO identity.project_roles VALUES ($1::text::uuid, $2, $3, 'project-admin')",
+            &[&principal, &ORG, &PROJECT],
+        )
+        .await?;
+    let role = workload_generation_role(
+        WorkloadRoleFamily::Control,
+        WorkloadRoleScope::Org {
+            org: ORG,
+            database: &database,
+        },
+        CredentialGeneration::A,
+    )?;
+    admin
+        .batch_execute(&sql::prepare_workload_generation_sql(
+            WorkloadRoleFamily::Control,
+            &database,
+            &role,
+            PASSWORD,
+            "2099-01-01T00:00:00Z",
+        ))
+        .await?;
+    let control = Arc::new(connect(&login(admin_url, &role)?).await?);
+
+    let mut server = Server::start().await;
+    let (keys, _key_clock) = server.cache();
+    let (verifier, _token_clock) =
+        wamn_session::verifier::SessionVerifier::with_test_clock(keys, ORG, &audience, 1000)?;
+    let release = Arc::new(LoadedRelease::control_root());
+    let routing = FlowHttpRouting::new(Some(Arc::clone(&release)), RouteInFlightLimit::default())
+        .with_authenticator(Arc::new(
+            wamn_runtime::plugins::route_authentication::ControlRouteAuthenticator::new(
+                verifier,
+                Arc::clone(&control),
+            ),
+        ));
+    let delivery = HostRouteDelivery::new(
+        release,
+        HostRouteHandlers::Control {
+            control,
+            org: ORG.to_owned(),
+        },
+        None,
+    );
+    let route = HostRouteSet::Control
+        .attachments()
+        .find(|(_, attachment)| attachment.reference == "wamn_control:control/control.mine")
+        .map(|(id, _)| id.to_owned())
+        .expect("the control set serves control.mine");
+    let mut session = claims();
+    session["aud"] = json!(audience);
+    session["roles"] = json!([]);
+    let bearer = format!("Bearer {}", signed(&header(), &session));
+
+    let caller = routing
+        .authenticate_authorization_for_test(&route, Some(&bearer))
+        .await
+        .expect("a project-admin session is admitted")
+        .expect("a host-owned caller");
+    assert_eq!(
+        deliver(&delivery, &route, Some(caller))
+            .await
+            .expect("the host answers"),
+        json!({"org_admin": false, "projects": [{"project": PROJECT, "project_admin": true}]})
+    );
+
+    // A cookie read needs the CSRF claim. A PAT is never a control credential.
+    let mut carried = session.clone();
+    carried["csrf"] = json!(hex::encode(Sha256::digest(b"control-csrf")));
+    let cookie = format!("__Host-wamn-session={}", signed(&header(), &carried));
+    assert!(
+        routing
+            .authenticate_headers_for_test(&route, &[("cookie", &cookie)])
+            .await
+            .expect("a cookie read with the claim is admitted")
+            .is_some()
+    );
+    let bare = format!("__Host-wamn-session={}", signed(&header(), &session));
+    for headers in [
+        vec![("cookie", bare.as_str())],
+        vec![("authorization", "Bearer wamn_pat_unknown")],
+    ] {
+        assert_eq!(
+            routing
+                .authenticate_headers_for_test(&route, &headers)
+                .await
+                .expect_err("refused")
+                .0,
+            401,
+            "{headers:?}"
+        );
+    }
+
+    // An application session is not a control session.
+    let mut application = session.clone();
+    application["aud"] = json!(AUDIENCE);
+    assert_eq!(
+        routing
+            .authenticate_authorization_for_test(
+                &route,
+                Some(&format!("Bearer {}", signed(&header(), &application)))
+            )
+            .await
+            .expect_err("another audience is refused")
+            .0,
+        401
+    );
+
+    admin
+        .execute(
+            "DELETE FROM identity.project_roles WHERE principal_id = $1::text::uuid",
+            &[&principal],
+        )
+        .await?;
+    assert_eq!(
+        routing
+            .authenticate_authorization_for_test(&route, Some(&bearer))
+            .await
+            .expect_err("a revoked role refuses the next request")
+            .0,
+        401
+    );
+    server.stop().await;
+    Ok(())
+}
