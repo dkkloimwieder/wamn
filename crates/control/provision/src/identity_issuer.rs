@@ -30,7 +30,7 @@ pub const IDENTITY_ISSUER_PAT_INSERT_COLUMNS: [&str; 6] = [
     "expires_at",
 ];
 /// Fresh exchange inputs and non-secret metadata returned by PAT issuance.
-pub const IDENTITY_ISSUER_READ_COLUMNS: [(&str, &str, &[&str]); 4] = [
+pub const IDENTITY_ISSUER_READ_COLUMNS: [(&str, &str, &[&str]); 6] = [
     (
         "identity",
         "principals",
@@ -60,6 +60,14 @@ pub const IDENTITY_ISSUER_READ_COLUMNS: [(&str, &str, &[&str]); 4] = [
         "project_envs",
         &["org", "project", "env", "instance_suffix"],
     ),
+    // The control audience of an org (docs/plan/platform-ui.md §4.3): the
+    // org must be registered and the person must hold a control role there.
+    (
+        "identity",
+        "project_roles",
+        &["principal_id", "org", "project", "role"],
+    ),
+    ("registry", "orgs", &["id"]),
 ];
 
 /// Narrow password endpoint column grants; principal administration stays separate.

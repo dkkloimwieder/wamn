@@ -336,6 +336,18 @@ pub(super) fn resolve_route_host_overlay(
                 error,
             )
         })?;
+        if normalized
+            .path
+            .starts_with(wamn_catalog::HOST_ROUTE_PATH_PREFIX)
+        {
+            return Err(MintManifestError::new(
+                MintManifestErrorType::Document,
+                format!(
+                    "attachment {attachment_id:?} uses the path prefix {:?} of the platform's host routes",
+                    wamn_catalog::HOST_ROUTE_PATH_PREFIX
+                ),
+            ));
+        }
         if !route_keys.insert((
             canonical_http_route_template(&normalized.path),
             normalized.method,

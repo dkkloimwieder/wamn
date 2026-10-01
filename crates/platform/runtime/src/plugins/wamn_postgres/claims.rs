@@ -1919,6 +1919,65 @@ impl WamnPostgres {
         HeldOperationGrants::from_rows(&rows).context("decode user operation permission")
     }
 
+    /// The application roles and stored permissions a caller holds, read by
+    /// a host route (docs/plan/platform-ui.md §4.2) in a host-owned READ
+    /// COMMITTED transaction under the administration credential. The
+    /// transaction binds the caller and the host route's reference as
+    /// `app.user_id` and `app.operation`, as every host route write does.
+    pub async fn held_operation_grants(
+        &self,
+        project: &str,
+        tenant: &str,
+        principal_id: &wamn_platform_identity::PrincipalId,
+        operation: &str,
+    ) -> anyhow::Result<HeldOperationGrants> {
+        anyhow::ensure!(valid_project(project), "invalid host-route project");
+        anyhow::ensure!(valid_tenant(tenant), "invalid host-route tenant");
+        let (connection, policy) = self
+            .checkout_platform(project, AuthorityClass::Administration)
+            .await
+            .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+        if let Err(error) = self
+            .begin_with_claims(
+                &connection,
+                AuthorityClass::Administration,
+                tenant,
+                None,
+                None,
+                None,
+                Some(principal_id.as_str()),
+                Some(operation),
+                None,
+                policy.statement_timeout_ms,
+            )
+            .await
+        {
+            self.destroy(connection);
+            return Err(anyhow::anyhow!(error.to_string()));
+        }
+        let rows = connection
+            .query(
+                USER_OPERATION_PERMISSIONS_SQL,
+                &[&tenant, &principal_id.as_str()],
+            )
+            .await
+            .context("read held operation grants");
+        let rows = match rows {
+            Ok(rows) => rows,
+            Err(error) => {
+                if connection.batch_execute("ROLLBACK").await.is_err() {
+                    self.destroy(connection);
+                }
+                return Err(error);
+            }
+        };
+        if let Err(error) = connection.batch_execute("COMMIT").await {
+            self.destroy(connection);
+            return Err(error).context("commit held operation grants");
+        }
+        HeldOperationGrants::from_rows(&rows).context("decode held operation grant")
+    }
+
     /// Refresh the identity and permissions of an operator-admitted queued service.
     pub async fn queued_service_caller(
         &self,

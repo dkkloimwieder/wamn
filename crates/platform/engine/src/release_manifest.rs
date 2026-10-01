@@ -203,6 +203,35 @@ impl LoadedRelease {
         })
     }
 
+    /// The control serving root (docs/plan/platform-ui.md §4.2). It is built
+    /// with the platform and serves only the control host routes: it has no
+    /// package, component, route, attachment or database. Its release names
+    /// no real tenant or environment, and a control host reads neither.
+    pub fn control_root() -> Self {
+        let manifest = ServingManifest {
+            format_version: wamn_catalog::SERVING_MANIFEST_FORMAT_VERSION,
+            release: wamn_catalog::ServingRelease {
+                tenant_id: wamn_catalog::HOST_ROUTE_PACKAGE.to_owned(),
+                effective_release_id: wamn_catalog::EffectiveReleaseId::new(1)
+                    .expect("one is a release id"),
+                environment: "control".to_owned(),
+                packages: std::collections::BTreeSet::default(),
+            },
+            components: std::collections::BTreeSet::default(),
+            routes: std::collections::BTreeSet::default(),
+            attachments: std::collections::BTreeMap::default(),
+            workflow: wamn_catalog::WorkflowSection::default(),
+            host_routes: [wamn_catalog::HostRouteSet::Control].into(),
+        };
+        Self {
+            release: CarriedRelease {
+                effective_release_id: 1,
+                manifest_digest: manifest.digest(),
+            },
+            manifest,
+        }
+    }
+
     /// The release this pod carries.
     pub fn release(&self) -> &CarriedRelease {
         &self.release

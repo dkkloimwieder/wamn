@@ -967,6 +967,7 @@ mod tests {
                 .1,
                 registrations: BTreeMap::new(),
             },
+            host_routes: BTreeSet::new(),
         }
     }
 

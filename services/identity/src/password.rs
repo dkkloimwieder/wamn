@@ -18,6 +18,7 @@ use tokio_postgres::Client;
 use wamn_control_provision::{PlatformComponent, identity_issuer::IdentityIssuerConnection};
 use wamn_platform_identity::{
     PrincipalId,
+    control::{control_audience, control_orgs},
     password::{
         Password, PasswordError, PasswordErrorType, PasswordWork, RefusalCause,
         authenticate_password, enroll_password, issue_invitation, issue_reset, password_work,
@@ -104,12 +105,16 @@ impl Scope {
     }
 }
 
+/// One audience the login may select. A control audience has no project
+/// and no environment.
 #[derive(Serialize)]
 struct Environment<'a> {
-    aud: &'a str,
+    aud: std::borrow::Cow<'a, str>,
     org: &'a str,
-    project: &'a str,
-    env: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    project: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    env: Option<&'a str>,
 }
 
 #[derive(Deserialize)]
@@ -407,10 +412,10 @@ async fn handle(
                     match session::authorized_roles(inner, &principal, configured).await {
                         Ok(_) => {
                             environments.push(Environment {
-                                aud: target.audience(),
+                                aud: target.audience().into(),
                                 org: &triple.org,
-                                project: &triple.project,
-                                env: triple.env.as_str(),
+                                project: Some(&triple.project),
+                                env: Some(triple.env.as_str()),
                             });
                         }
                         Err(error) => match error.kind {
@@ -419,13 +424,30 @@ async fn handle(
                         },
                     }
                 }
+                let Ok(orgs) = control_orgs(&tx, principal.principal().id()).await else {
+                    return unavailable();
+                };
+                for org in orgs.iter().filter(|org| {
+                    scope.project.is_none()
+                        && scope.org.as_deref().is_none_or(|wanted| wanted == *org)
+                }) {
+                    let Ok(aud) = control_audience(org) else {
+                        return unavailable();
+                    };
+                    environments.push(Environment {
+                        aud: aud.into(),
+                        org,
+                        project: None,
+                        env: None,
+                    });
+                }
                 return match serde_json::to_vec(&serde_json::json!({"environments": environments}))
                 {
                     Ok(bytes) => response(StatusCode::OK, "application/json", bytes),
                     Err(_) => unavailable(),
                 };
             };
-            let Some(target) = inner.targets.get(&audience) else {
+            let Some(target) = session::audience(inner, &audience) else {
                 return session::unauthorized();
             };
             if tx
@@ -451,11 +473,14 @@ async fn handle(
                 Err(_) => return unavailable(),
             };
             let authority = wamn_session::token::SessionAuthority::Login(renewal.login.id.clone());
-            let claims =
-                match session::claims_for_principal(inner, &principal, target, authority).await {
-                    Ok(claims) => claims,
-                    Err(error) => return authority_failure(&error),
-                };
+            let claims = match session::claims_for_audience(
+                inner, &tx, &principal, &target, authority,
+            )
+            .await
+            {
+                Ok(claims) => claims,
+                Err(error) => return authority_failure(&error),
+            };
             finish_session(tx, claims, renewal, started_at, carrier).await
         }
         "/password/recover" | "/password/reset" => {
@@ -595,7 +620,7 @@ async fn handle(
                 }
                 return logged_out(request.carrier);
             }
-            let Some(target) = inner.targets.get(&request.aud) else {
+            let Some(target) = session::audience(inner, &request.aud) else {
                 return session::unauthorized();
             };
             let renewal =
@@ -611,11 +636,14 @@ async fn handle(
                     Err(_) => return unavailable(),
                 };
             let authority = wamn_session::token::SessionAuthority::Login(renewal.login.id.clone());
-            let claims =
-                match session::claims_for_principal(inner, &principal, target, authority).await {
-                    Ok(claims) => claims,
-                    Err(error) => return authority_failure(&error),
-                };
+            let claims = match session::claims_for_audience(
+                inner, &tx, &principal, &target, authority,
+            )
+            .await
+            {
+                Ok(claims) => claims,
+                Err(error) => return authority_failure(&error),
+            };
             finish_session(tx, claims, renewal, started_at, request.carrier).await
         }
         _ => invalid(),

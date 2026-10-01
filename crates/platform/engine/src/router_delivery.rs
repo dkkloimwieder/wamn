@@ -17,8 +17,8 @@ use std::task::{Context, Poll};
 use anyhow::Context as _;
 use tokio::sync::mpsc;
 use wamn_catalog::{
-    AdmittedComponent, AttachmentAuthPolicy, AttachmentTarget, ServingComponentOperation,
-    ServingManifest, parse_attachment_auth_policy,
+    AdmittedComponent, AttachmentAuthPolicy, AttachmentTarget, HostAttachment,
+    ServingComponentOperation, ServingManifest, parse_attachment_auth_policy,
 };
 use wamn_event_wire::Causation;
 use wamn_project_state::PlatformComponent;
@@ -357,6 +357,32 @@ pub fn resolve_authorized_target(
     Ok(target)
 }
 
+/// Resolve an attachment source to a host route of the release, and check
+/// its caller and the grant of an `admin`-only route. A host route is never
+/// anonymous. `None` when the source is not a host route.
+pub fn resolve_authorized_host_route(
+    manifest: &ServingManifest,
+    source: SourceRef<'_>,
+    caller: Option<&AuthenticatedCaller>,
+) -> Option<Result<&'static HostAttachment, DeliveryError>> {
+    let SourceRef::Attachment(id) = source else {
+        return None;
+    };
+    let attachment = manifest.host_attachment(id)?;
+    if !caller_matches_source(
+        source,
+        Some(false),
+        caller.map(AuthenticatedCaller::attachment_id),
+    ) {
+        return Some(Err(DeliveryError::InvalidRequest));
+    }
+    Some(
+        authorize_registered_operation(caller, attachment.registered_operation(), false)
+            .map(|()| attachment)
+            .map_err(|denial| lower_operation_refusal(&denial)),
+    )
+}
+
 /// Exercise the exact production attachment resolver and authorization gate.
 #[cfg(feature = "test-util")]
 pub fn authorize_attachment_for_test(
@@ -657,6 +683,58 @@ mod tests {
             resolve_target(&manifest(), SourceRef::Attachment("shipping")),
             None,
             "a wiring id is not an attachment id and cannot bypass the projection"
+        );
+    }
+
+    #[test]
+    fn a_host_route_resolves_only_for_its_own_authenticated_caller() {
+        let mut manifest = manifest();
+        assert!(
+            resolve_authorized_host_route(
+                &manifest,
+                SourceRef::Attachment("wamn-control-application-permission-mine"),
+                None,
+            )
+            .is_none(),
+            "a release without the set serves none of its routes"
+        );
+        manifest
+            .host_routes
+            .insert(wamn_catalog::HostRouteSet::Application);
+        let id = "wamn-control-application-permission-mine";
+        let caller = |attachment: &str| {
+            AuthenticatedCaller::new(
+                attachment,
+                "principal",
+                CredentialType::Session,
+                false,
+                HashSet::new(),
+            )
+        };
+        assert!(matches!(
+            resolve_authorized_host_route(&manifest, SourceRef::Attachment(id), None),
+            Some(Err(DeliveryError::InvalidRequest))
+        ));
+        assert!(matches!(
+            resolve_authorized_host_route(
+                &manifest,
+                SourceRef::Attachment(id),
+                Some(&caller("orders-http")),
+            ),
+            Some(Err(DeliveryError::InvalidRequest))
+        ));
+        let attachment =
+            resolve_authorized_host_route(&manifest, SourceRef::Attachment(id), Some(&caller(id)))
+                .expect("a host route")
+                .expect("a member route admits every authenticated caller");
+        assert_eq!(
+            attachment.reference,
+            "wamn_control:application/permission.mine"
+        );
+        assert!(
+            resolve_authorized_host_route(&manifest, SourceRef::Attachment("orders-http"), None)
+                .is_none(),
+            "an authored attachment is not a host route"
         );
     }
 

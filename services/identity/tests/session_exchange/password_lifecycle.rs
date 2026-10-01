@@ -367,6 +367,163 @@ async fn renewal_rotation_authority_expiry_and_logout_use_real_https() {
     cleanup(fixture).await;
 }
 
+/// A control session (docs/plan/platform-ui.md §4.3) is offered, issued and
+/// renewed only while the person holds `project-admin` in the org, carries
+/// no application role, and never comes from a PAT.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_control_session_follows_the_project_admin_role_of_its_org() {
+    const CONTROL: &str = "urn:wamn:control:demo";
+    let mut postgres = wamn_test_postgres::start(&[]).expect_redacted("owned PostgreSQL");
+    let db = postgres
+        .create_database("wamn_system")
+        .expect_redacted("owned system database");
+    let fixture = setup(db.url()).await;
+    let person = enroll(&fixture, EMAIL, PASSWORD).await;
+    let https = server(&fixture).await;
+    let audiences = |listed: &Value| -> Vec<Value> {
+        listed["environments"]
+            .as_array()
+            .expect_redacted("environments")
+            .clone()
+    };
+    let discover = async |https: &Https| {
+        discovery_window(&fixture).await;
+        let response = post(
+            https,
+            "/password/environments",
+            &json!({"email": EMAIL, "password": PASSWORD}),
+        )
+        .send()
+        .await
+        .expect_redacted("discovery");
+        assert_eq!(response.status(), 200);
+        response
+            .json::<Value>()
+            .await
+            .expect_redacted("discovery JSON")
+    };
+    let control_login = async |https: &Https| {
+        discovery_window(&fixture).await;
+        post(
+            https,
+            "/password/session",
+            &json!({"email": EMAIL, "password": PASSWORD, "aud": CONTROL}),
+        )
+        .send()
+        .await
+        .expect_redacted("control login")
+    };
+
+    assert!(
+        !audiences(&discover(&https).await)
+            .iter()
+            .any(|entry| entry["aud"] == CONTROL),
+        "no control role, no control audience"
+    );
+    assert_failure(
+        control_login(&https).await,
+        401,
+        "{\"error\":\"unauthorized\"}",
+    )
+    .await;
+
+    wamn_platform_identity::assign_project_role(
+        &fixture.system.client,
+        person.id(),
+        "demo",
+        "widgets",
+        "project-admin",
+    )
+    .await
+    .expect_redacted("project-admin");
+    assert!(
+        audiences(&discover(&https).await).contains(&json!({"aud": CONTROL, "org": "demo"})),
+        "a project-admin is offered the control audience of the org"
+    );
+    let session = body(control_login(&https).await).await;
+    let jwks = wamn_platform_identity::session_keys::session_jwks(&fixture.system.client, ISSUER)
+        .await
+        .expect_redacted("JWKS");
+    let token = session["access_token"].as_str().expect_redacted("token");
+    let kid = session_key_id(token).expect_redacted("kid");
+    let key = jwks
+        .keys
+        .iter()
+        .find(|key| key.kid == kid)
+        .expect_redacted("public key");
+    let claims = verify_session_token(
+        token,
+        key,
+        SessionScope {
+            issuer: ISSUER,
+            org: "demo",
+            audience: CONTROL,
+        },
+        unix_seconds(),
+    )
+    .expect_redacted("signed control session");
+    assert_eq!(claims.sub, person.id().as_str());
+    assert!(claims.roles.is_empty(), "a control session has no roles");
+    assert!(
+        wamn_platform_identity::control::control_session_is_active(&fixture.system.client, &claims)
+            .await
+            .expect_redacted("control authority")
+    );
+
+    let pat = issue_pat(
+        &fixture.system.client,
+        person.id(),
+        "control test",
+        Duration::from_secs(3600),
+    )
+    .await
+    .expect_redacted("human PAT");
+    super::refuse(&https, pat.token(), CONTROL).await;
+
+    let renewed = body(
+        post(
+            &https,
+            "/password/renew",
+            &json!({"aud": CONTROL, "renewal_token": session["renewal_token"]}),
+        )
+        .send()
+        .await
+        .expect_redacted("control renewal"),
+    )
+    .await;
+    fixture
+        .system
+        .client
+        .execute(
+            "DELETE FROM identity.project_roles WHERE principal_id = $1::text::uuid",
+            &[&person.id().as_str()],
+        )
+        .await
+        .expect_redacted("revoke project-admin");
+    assert!(
+        !wamn_platform_identity::control::control_session_is_active(
+            &fixture.system.client,
+            &claims
+        )
+        .await
+        .expect_redacted("control authority"),
+        "a revoked role ends the control session on the next request"
+    );
+    assert_failure(
+        post(
+            &https,
+            "/password/renew",
+            &json!({"aud": CONTROL, "renewal_token": renewed["renewal_token"]}),
+        )
+        .send()
+        .await
+        .expect_redacted("refused renewal"),
+        401,
+        "{\"error\":\"unauthorized\"}",
+    )
+    .await;
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn login_reset_and_renewal_logout_races_keep_transaction_order() {
     let mut postgres = wamn_test_postgres::start(&[]).expect_redacted("owned PostgreSQL");

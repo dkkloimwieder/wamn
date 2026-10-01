@@ -530,18 +530,20 @@ pub fn grant_http_admitter_surface_sql(schema: &str) -> String {
 }
 
 /// The application authorization relations the administration family reads
-/// (docs/plan/platform-ui.md §2.1). Its writes of them come from the
-/// `wamn_platform` grants in `deploy/sql/app-schema.sql`.
+/// and writes (docs/plan/platform-ui.md §2.1).
 pub const ADMINISTRATION_RELATIONS: [&str; 4] = ["users", "roles", "user_roles", "permissions"];
 
 /// Converge the stable administration role to its exact surface
 /// (`wamn-a40n.2`).
 ///
-/// The role reads [`ADMINISTRATION_RELATIONS`]. A write of one of them also
-/// renders the history entry through `wamn_history.row_image` with the
-/// writer's authority, and forms `<table>_tkey` index entries, so the role
-/// holds `USAGE` on `wamn_history`, `EXECUTE` on `row_image`, and `EXECUTE`
-/// on the tenant-key derivation. It holds nothing on the run plane or the
+/// The role reads and writes [`ADMINISTRATION_RELATIONS`]. The grant goes to
+/// this one family, not to [`PLATFORM_GROUP_ROLE`], which every platform
+/// family inherits (owner correction of 2026-09-30). A write of one of them
+/// also appends the entry of its `<table>_history` table and renders it
+/// through `wamn_history.row_image` with the writer's authority, and forms
+/// `<table>_tkey` index entries, so the role holds `INSERT` on the entry
+/// columns of those history tables, `USAGE` on `wamn_history`, `EXECUTE` on
+/// `row_image`, and `EXECUTE` on the tenant-key derivation. It holds nothing on the run plane or the
 /// catalog. `schema` is the run-plane revoke scope.
 pub fn grant_administration_surface_sql(schema: &str) -> String {
     let role = quote_ident(ADMINISTRATION_ROLE);
@@ -559,8 +561,11 @@ pub fn grant_administration_surface_sql(schema: &str) -> String {
     for relation in ADMINISTRATION_RELATIONS {
         write!(
             sql,
-            " GRANT SELECT ON TABLE app_system.{relation} TO {role};",
+            " GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE app_system.{relation} TO {role}; \
+             GRANT INSERT (tenant_id, row_key, type, operation, changed_by, changed_at, \
+             transaction_id, before, after) ON TABLE app_system.{history} TO {role};",
             relation = quote_ident(relation),
+            history = quote_ident(&format!("{relation}_history")),
         )
         .expect("writing to a String cannot fail");
     }

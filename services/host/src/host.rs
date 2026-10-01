@@ -34,14 +34,18 @@ use wamn_engine::flow_http_routing::{
 };
 use wamn_engine::release_manifest::LoadedRelease;
 use wamn_engine::router_delivery::{ROUTER_DELIVERY_ID, RouterDelivery};
-use wamn_execution_host::{OperationHost, OperationScope, RouterDeliveryBridge, WiringDelivery};
+use wamn_execution_host::{
+    HostRouteDelivery, HostRouteHandlers, OperationHost, OperationScope, RouterDeliveryBridge,
+    WiringDelivery,
+};
 use wamn_platform_identity::operator_subject;
 use wamn_runtime::component_artifact_source::{
     ComponentArtifactSource, ComponentArtifactSourceConfig,
 };
 use wamn_runtime::plugins::connection_http::transport::HttpTransport;
 use wamn_runtime::plugins::route_authentication::{
-    PlatformRouteAuthenticator, RouteAuthentication, SessionRouteAuthentication,
+    ControlRouteAuthenticator, PlatformRouteAuthenticator, RouteAuthentication,
+    SessionRouteAuthentication,
 };
 use wamn_runtime::plugins::wamn_credentials::WamnCredentials;
 use wamn_runtime::plugins::wamn_postgres::AuthorityClass;
@@ -322,12 +326,28 @@ pub struct HostArgs {
     pub org: Option<String>,
 
     /// Trusted HTTPS issuer for session routes, never discovered from a token.
-    #[arg(long, env = "WAMN_SESSION_ISSUER", requires_all = ["session_jwks_ca", "session_instance_suffix"])]
+    #[arg(long, env = "WAMN_SESSION_ISSUER", requires = "session_jwks_ca")]
     pub session_issuer: Option<String>,
 
     /// Public CA bundle for the configured identity service.
     #[arg(long, env = "WAMN_SESSION_JWKS_CA", requires = "session_issuer")]
     pub session_jwks_ca: Option<PathBuf>,
+
+    /// Serve the control serving root of `--org` in place of an application
+    /// release (docs/plan/platform-ui.md §4.2). A control host reads
+    /// `wamn_system` through the org's `control` login in
+    /// `WAMN_CONTROL_URL`, admits only browser sessions of the org's control
+    /// audience, and holds no project credential.
+    #[arg(
+        long,
+        env = "WAMN_CONTROL",
+        requires_all = ["org", "session_issuer"],
+        conflicts_with_all = [
+            "release_artifact_base", "release_manifest_digest", "local_application",
+            "session_instance_suffix"
+        ]
+    )]
+    pub control: bool,
 
     /// Provisioned database instance suffix for the exact session audience.
     #[arg(
@@ -527,6 +547,7 @@ fn host_credentials(
     executor_platform_url: Option<String>,
     http_admitter_url: Option<String>,
     event_materializer_url: Option<String>,
+    administration_url: Option<String>,
 ) -> ClassCredentials {
     let credentials = database_url.map_or_else(ClassCredentials::default, |url| {
         ClassCredentials::every_class(url)
@@ -539,11 +560,17 @@ fn host_credentials(
         Some(admitter) => credentials.with_class(AuthorityClass::CallableHttp, admitter),
         None => credentials.without_class(AuthorityClass::CallableHttp),
     };
-    match event_materializer_url {
+    let credentials = match event_materializer_url {
         Some(materializer) => {
             credentials.with_class(AuthorityClass::EventMaterializer, materializer)
         }
         None => credentials.without_class(AuthorityClass::EventMaterializer),
+    };
+    match administration_url {
+        Some(administration) => {
+            credentials.with_class(AuthorityClass::Administration, administration)
+        }
+        None => credentials.without_class(AuthorityClass::Administration),
     }
 }
 
@@ -605,6 +632,50 @@ fn session_verifier(
     endpoint.set_query(None);
     let keys = IssuerKeys::new(IssuerKeysConfig::new(issuer, endpoint.as_str(), &ca)?)?;
     SessionVerifier::new(keys, org, &audience).context("configure the host session verifier")
+}
+
+/// The control login, the control session verifier and the org of a control
+/// host. A control session is browser-only, so no PAT path exists here.
+async fn control_connection(
+    args: &HostArgs,
+) -> anyhow::Result<(
+    SessionVerifier<IssuerKeys>,
+    Arc<tokio_postgres::Client>,
+    String,
+)> {
+    let org = args
+        .org
+        .as_deref()
+        .context("a control host requires --org/WAMN_ORG")?;
+    let audience = wamn_platform_identity::control::control_audience(org)?;
+    let issuer = args
+        .session_issuer
+        .as_deref()
+        .context("a control host requires --session-issuer")?;
+    let ca_path = args
+        .session_jwks_ca
+        .as_deref()
+        .context("a control host requires --session-jwks-ca")?;
+    let ca = std::fs::read(ca_path).context("read the session issuer public CA bundle")?;
+    let mut endpoint = url::Url::parse(issuer).context("parse the configured session issuer")?;
+    endpoint.set_path("/.well-known/jwks.json");
+    endpoint.set_query(None);
+    let keys = IssuerKeys::new(IssuerKeysConfig::new(issuer, endpoint.as_str(), &ca)?)?;
+    let verifier = SessionVerifier::new(keys, org, &audience)
+        .context("configure the control session verifier")?;
+    let url = std::env::var("WAMN_CONTROL_URL")
+        .ok()
+        .filter(|url| !url.is_empty())
+        .context("a control host requires WAMN_CONTROL_URL")?;
+    let (client, connection) = tokio_postgres::connect(&url, NoTls)
+        .await
+        .context("connect the control login")?;
+    tokio::spawn(async move {
+        if let Err(error) = connection.await {
+            tracing::error!(%error, "the control login connection ended");
+        }
+    });
+    Ok((verifier, Arc::new(client), org.to_owned()))
 }
 
 /// The tracing target of the scheduler client's events. The `wasmcloud:nats`
@@ -755,7 +826,9 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
     //
     // It also runs after the CA install above, which is why the release pull can
     // reach a registry behind the chart's own CA.
-    let release = if let Some(directory) = args.local_application.as_deref() {
+    let release = if args.control {
+        Some(Arc::new(LoadedRelease::control_root()))
+    } else if let Some(directory) = args.local_application.as_deref() {
         let loaded = LoadedRelease::load_from(directory)?;
         anyhow::ensure!(
             Some(loaded.release().manifest_digest.as_str())
@@ -793,10 +866,12 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
         Some(directory) => Some(load_local_workload(directory).await?),
         None => None,
     };
-    let pat_routes = release
-        .as_ref()
+    // The control serving root authenticates through its own control login,
+    // never through the project credentials an application release needs.
+    let application = release.as_ref().filter(|_| !args.control);
+    let pat_routes = application
         .is_some_and(|loaded_release| requires_pat_route_authentication(loaded_release.manifest()));
-    let session_routes = release.as_ref().is_some_and(|loaded_release| {
+    let session_routes = application.is_some_and(|loaded_release| {
         requires_session_route_authentication(loaded_release.manifest())
     });
     let http_admitter_url = std::env::var("WAMN_HTTP_ADMITTER_PG_URL")
@@ -930,20 +1005,28 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
         .ok()
         .filter(|url| !url.is_empty());
     let queue_credentials_complete = require_queue_admission(
-        release.is_some(),
+        application.is_some(),
         guest_url.as_deref(),
         executor_platform_url.as_deref(),
     )?;
+    // The host routes of an application release read and write the
+    // authorization relations under their own credential
+    // (docs/plan/platform-ui.md §2.1).
+    let administration_url = std::env::var("WAMN_ADMINISTRATION_PG_URL")
+        .ok()
+        .filter(|url| !url.is_empty() && application.is_some());
     let postgres_credentials = if guest_url.is_some()
         || executor_platform_url.is_some()
         || http_admitter_url.is_some()
         || event_materializer_url.is_some()
+        || administration_url.is_some()
     {
         Some(host_credentials(
             guest_url.clone(),
             executor_platform_url.clone(),
             http_admitter_url,
             event_materializer_url,
+            administration_url,
         ))
     } else {
         None
@@ -967,7 +1050,7 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
     let postgres = Arc::new(postgres);
     let logging = Arc::new(WamnLogging::from_env().context("wamn:logging plugin init")?);
     let http_transport = Arc::new(HttpTransport::new().context("HTTP transport init")?);
-    let operations = match release.as_ref() {
+    let operations = match application {
         Some(release) => {
             let source: Arc<dyn ArtifactSource> =
                 if let Some(directory) = args.local_application.as_ref() {
@@ -1077,7 +1160,7 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
         oci_cache_dir: args.oci_cache_dir.clone(),
         oci_ca_paths: args.oci_ca_paths.clone(),
     };
-    let jetstream = Arc::new(WamnJetstream::from_env().with_release(release.clone()));
+    let jetstream = Arc::new(WamnJetstream::from_env().with_release(application.cloned()));
     jetstream
         .activate_events()
         .await
@@ -1119,7 +1202,17 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
         }
         None => authenticator,
     };
-    let flow_http = flow_http.with_authenticator(Arc::new(authenticator));
+    let control = if args.control {
+        Some(control_connection(&args).await?)
+    } else {
+        None
+    };
+    let flow_http = match &control {
+        Some((verifier, client, _)) => flow_http.with_authenticator(Arc::new(
+            ControlRouteAuthenticator::new(verifier.clone(), Arc::clone(client)),
+        )),
+        None => flow_http.with_authenticator(Arc::new(authenticator)),
+    };
 
     let mut plugins: Vec<Arc<dyn plugin::HostPlugin>> = vec![
         Arc::new(
@@ -1154,22 +1247,44 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
     ];
 
     if let Some(operations) = &operations {
+        let bridge = RouterDeliveryBridge::new(
+            Arc::clone(operations),
+            router_driver
+                .clone()
+                .map(|driver| driver as Arc<dyn WiringDelivery>),
+            Arc::clone(&jetstream),
+            &args.project,
+        )?
+        // The bridge defaults to no meter so a test can own its own provider
+        // and read back exactly the series one bridge emitted. Production has
+        // no second provider to own, so it takes the process-global one that
+        // `initialize_observability` installs — a no-op meter when no OTEL_
+        // variable is set. Without this call both `wamn.router.delivery`
+        // series exist and stay permanently silent (wamn-1fhk).
+        .with_metrics(&global::meter(ROUTER_DELIVERY_ID));
+        // The application administration routes run in the host, in front
+        // of the bridge (docs/plan/platform-ui.md §4.6).
         plugins.push(Arc::new(RouterDelivery::new(Arc::new(
-            RouterDeliveryBridge::new(
-                Arc::clone(operations),
-                router_driver
-                    .clone()
-                    .map(|driver| driver as Arc<dyn WiringDelivery>),
-                Arc::clone(&jetstream),
-                &args.project,
-            )?
-            // The bridge defaults to no meter so a test can own its own provider
-            // and read back exactly the series one bridge emitted. Production has
-            // no second provider to own, so it takes the process-global one that
-            // `initialize_observability` installs — a no-op meter when no OTEL_
-            // variable is set. Without this call both `wamn.router.delivery`
-            // series exist and stay permanently silent (wamn-1fhk).
-            .with_metrics(&global::meter(ROUTER_DELIVERY_ID)),
+            HostRouteDelivery::new(
+                Arc::clone(&operations.release),
+                HostRouteHandlers::Application {
+                    postgres: Arc::clone(&postgres),
+                    project: args.project.clone(),
+                },
+                Some(Arc::new(bridge)),
+            ),
+        ))));
+    }
+    if let (Some((_, client, org)), Some(root)) = (&control, &release) {
+        plugins.push(Arc::new(RouterDelivery::new(Arc::new(
+            HostRouteDelivery::new(
+                Arc::clone(root),
+                HostRouteHandlers::Control {
+                    control: Arc::clone(client),
+                    org: org.clone(),
+                },
+                None,
+            ),
         ))));
     }
 
@@ -1284,6 +1399,10 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
     // holds the process's only loaded manifest for as long as `run` is on the
     // stack, which is the whole serving period.
     match release.as_ref() {
+        Some(_) if args.control => tracing::info!(
+            org = args.org.as_deref(),
+            "wamn-host serves the control serving root"
+        ),
         Some(loaded_release) => tracing::info!(
             effective_release_id = loaded_release.release().effective_release_id,
             manifest_digest = %loaded_release.release().manifest_digest,
@@ -1942,6 +2061,7 @@ mod tests {
     const PLATFORM: &str = "postgres://platform@h/db";
     const ADMITTER: &str = "postgres://admitter@h/db";
     const MATERIALIZER: &str = "postgres://materializer@h/db";
+    const ADMINISTRATION: &str = "postgres://administration@h/db";
 
     /// THE GUEST URL IS NOT A CUT-OVER FAMILY'S CREDENTIAL (`wamn-0h0g.22.31`,
     /// `wamn-0h0g.22.11`).
@@ -1958,12 +2078,14 @@ mod tests {
             Some(PLATFORM.to_owned()),
             Some(ADMITTER.to_owned()),
             Some(MATERIALIZER.to_owned()),
+            Some(ADMINISTRATION.to_owned()),
         );
         for class in AuthorityClass::ALL {
             let expected = match class {
                 AuthorityClass::ExecutorPlatform => PLATFORM,
                 AuthorityClass::CallableHttp => ADMITTER,
                 AuthorityClass::EventMaterializer => MATERIALIZER,
+                AuthorityClass::Administration => ADMINISTRATION,
                 AuthorityClass::GuestSql => GUEST,
             };
             assert_eq!(
@@ -1989,6 +2111,7 @@ mod tests {
             Some(PLATFORM.to_owned()),
             None,
             Some(MATERIALIZER.to_owned()),
+            None,
         );
         assert_eq!(
             no_admitter.url(AuthorityClass::CallableHttp),
@@ -2007,6 +2130,7 @@ mod tests {
             None,
             Some(ADMITTER.to_owned()),
             Some(MATERIALIZER.to_owned()),
+            None,
         );
         assert_eq!(
             no_platform.url(AuthorityClass::ExecutorPlatform),
@@ -2025,6 +2149,7 @@ mod tests {
             Some(PLATFORM.to_owned()),
             Some(ADMITTER.to_owned()),
             None,
+            None,
         );
         assert_eq!(
             no_materializer.url(AuthorityClass::EventMaterializer),
@@ -2037,7 +2162,7 @@ mod tests {
             "unnaming the materializer must not disturb another class"
         );
 
-        let neither = host_credentials(Some(GUEST.to_owned()), None, None, None);
+        let neither = host_credentials(Some(GUEST.to_owned()), None, None, None, None);
         assert_eq!(neither.url(AuthorityClass::ExecutorPlatform), None);
         assert_eq!(neither.url(AuthorityClass::CallableHttp), None);
         assert_eq!(neither.url(AuthorityClass::EventMaterializer), None);
@@ -2047,7 +2172,8 @@ mod tests {
             "the guest class keeps its own credential either way"
         );
 
-        let materializer_only = host_credentials(None, None, None, Some(MATERIALIZER.to_owned()));
+        let materializer_only =
+            host_credentials(None, None, None, Some(MATERIALIZER.to_owned()), None);
         assert_eq!(
             materializer_only.url(AuthorityClass::EventMaterializer),
             Some(MATERIALIZER)

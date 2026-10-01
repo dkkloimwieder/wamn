@@ -10,8 +10,11 @@ use http_body_util::{BodyExt as _, Full, Limited};
 use hyper::{Request, Response, StatusCode, body::Incoming};
 use ring::rand::{SecureRandom as _, SystemRandom};
 use serde::{Deserialize, Serialize};
+use tokio_postgres::GenericClient;
 use wamn_platform_identity::{
-    AuthenticatedPrincipal, PrincipalType, authenticate_pat, has_project_env_membership,
+    AuthenticatedPrincipal, PrincipalType, authenticate_pat,
+    control::{control_audience_org, control_projects},
+    has_project_env_membership,
     session_token::{IssuedSessionToken, sign_session_token},
 };
 use wamn_session::token::{SessionAuthority, SessionClaims};
@@ -20,6 +23,7 @@ use crate::{ConfiguredTarget, IO_TIMEOUT, Inner, connect_database, response, una
 
 // The request contains one bounded provisioned audience, never user documents.
 const MAX_REQUEST_BYTES: usize = 1024;
+const REGISTERED_ORG_SQL: &str = "SELECT EXISTS (SELECT 1 FROM registry.orgs WHERE id = $1)";
 const CURRENT_TARGET_SQL: &str = "SELECT EXISTS (SELECT 1 FROM registry.project_envs \
     WHERE org = $1 AND project = $2 AND env = $3 AND instance_suffix = $4)";
 const ENVIRONMENT_ROLES_SQL: &str = "SELECT r.role_name FROM app_system.users u \
@@ -147,6 +151,66 @@ pub(super) async fn mint_for_principal(
         .map_err(|_| failed())
 }
 
+/// The audience a password login asks for: a configured project
+/// environment, or the control audience of an org
+/// (docs/plan/platform-ui.md §4.3), which is derived and never configured.
+pub(super) enum Audience<'a> {
+    Environment(&'a ConfiguredTarget),
+    Control { audience: &'a str, org: &'a str },
+}
+
+/// Resolve a requested audience. A control audience is for browser login
+/// sessions only, so the PAT exchange never calls this.
+pub(super) fn audience<'a>(inner: &'a Inner, audience: &'a str) -> Option<Audience<'a>> {
+    match inner.targets.get(audience) {
+        Some(configured) => Some(Audience::Environment(configured)),
+        None => control_audience_org(audience).map(|org| Audience::Control { audience, org }),
+    }
+}
+
+/// The claims of a password-login session for the resolved audience, after
+/// the same current authority checks as discovery.
+pub(super) async fn claims_for_audience(
+    inner: &Inner,
+    client: &(impl GenericClient + Sync),
+    principal: &AuthenticatedPrincipal,
+    audience: &Audience<'_>,
+    authority: SessionAuthority,
+) -> Result<SessionClaims, ExchangeFailure> {
+    match *audience {
+        Audience::Environment(configured) => {
+            claims_for_principal(inner, principal, configured, authority).await
+        }
+        Audience::Control { audience, org } => {
+            if !holds_control(client, principal, org).await? {
+                return Err(refused());
+            }
+            // A control session carries no application roles.
+            claims(inner, principal, org, audience, Vec::new(), authority)
+        }
+    }
+}
+
+/// Whether the principal holds a control role in the registered org.
+pub(super) async fn holds_control(
+    client: &(impl GenericClient + Sync),
+    principal: &AuthenticatedPrincipal,
+    org: &str,
+) -> Result<bool, ExchangeFailure> {
+    let registered: bool = client
+        .query_one(REGISTERED_ORG_SQL, &[&org])
+        .await
+        .map_err(|_| failed())?
+        .get(0);
+    if !registered {
+        return Ok(false);
+    }
+    Ok(!control_projects(client, principal.principal().id(), org)
+        .await
+        .map_err(|_| failed())?
+        .is_empty())
+}
+
 pub(super) async fn claims_for_principal(
     inner: &Inner,
     principal: &AuthenticatedPrincipal,
@@ -154,10 +218,25 @@ pub(super) async fn claims_for_principal(
     authority: SessionAuthority,
 ) -> Result<SessionClaims, ExchangeFailure> {
     let roles = authorized_roles(inner, principal, configured).await?;
-    let principal = principal.principal();
     let target = &configured.binding;
-    let triple = target.triple();
+    claims(
+        inner,
+        principal,
+        &target.triple().org,
+        target.audience(),
+        roles,
+        authority,
+    )
+}
 
+fn claims(
+    inner: &Inner,
+    principal: &AuthenticatedPrincipal,
+    org: &str,
+    audience: &str,
+    roles: Vec<String>,
+    authority: SessionAuthority,
+) -> Result<SessionClaims, ExchangeFailure> {
     let mut random = [0u8; 32];
     SystemRandom::new()
         .fill(&mut random)
@@ -169,9 +248,9 @@ pub(super) async fn claims_for_principal(
     });
     Ok(SessionClaims {
         iss: inner.issuer.clone(),
-        sub: principal.id().to_string(),
-        org: triple.org.clone(),
-        aud: target.audience().to_owned(),
+        sub: principal.principal().id().to_string(),
+        org: org.to_owned(),
+        aud: audience.to_owned(),
         roles,
         exp: 0,
         iat: 0,

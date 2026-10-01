@@ -25,8 +25,9 @@ use serde_json::Value;
 use crate::{
     AdmittedComponent, AdmittedComponentOperation, ArtifactHash, AttachmentType,
     CatalogIdentityError, ComponentOperationDependency, ComponentSqlStatement, DefinitionHash,
-    EffectiveReleaseId, HASH_PREFIX, ManifestDigest, PackageCoordinate,
-    package::validate_canonical_operation_for_package, validate_digest, validate_text,
+    EffectiveReleaseId, HASH_PREFIX, HostAttachment, HostRouteSet, ManifestDigest,
+    PackageCoordinate, package::validate_canonical_operation_for_package, validate_digest,
+    validate_text,
 };
 
 /// The only serving-manifest format admitted by this revision.
@@ -874,6 +875,44 @@ impl<'a> AttachmentRef<'a> {
     }
 }
 
+/// One attachment a release serves: authored by a package, or a fixed host
+/// route of the platform.
+#[derive(Debug, Clone, Copy)]
+pub enum ServedAttachment<'a> {
+    Authored(AttachmentRef<'a>),
+    Host(&'static HostAttachment),
+}
+
+impl<'a> ServedAttachment<'a> {
+    pub fn kind(self) -> AttachmentType {
+        match self {
+            Self::Authored(attachment) => attachment.kind(),
+            Self::Host(attachment) => attachment.kind(),
+        }
+    }
+
+    pub fn definition(self) -> &'a Value {
+        match self {
+            Self::Authored(attachment) => attachment.definition(),
+            Self::Host(attachment) => &attachment.definition,
+        }
+    }
+
+    pub fn auth_policy(self) -> &'a Value {
+        match self {
+            Self::Authored(attachment) => attachment.auth_policy(),
+            Self::Host(attachment) => &attachment.auth_policy,
+        }
+    }
+
+    pub fn registered_operation(self) -> Option<&'a str> {
+        match self {
+            Self::Authored(attachment) => attachment.registered_operation(),
+            Self::Host(attachment) => attachment.registered_operation(),
+        }
+    }
+}
+
 /// The workflow facts of one release: what `wamn-workflow` walks and delivers.
 ///
 /// A release with no wiring has an empty section, and the manifest omits it.
@@ -954,6 +993,11 @@ pub struct ServingManifest {
     pub attachments: BTreeMap<String, RouteAttachment>,
     #[serde(default, skip_serializing_if = "WorkflowSection::is_empty")]
     pub workflow: WorkflowSection,
+    /// The fixed host route sets this release serves
+    /// (docs/plan/platform-ui.md §4.2). The platform builds their routes, so
+    /// the manifest names only the sets.
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    pub host_routes: BTreeSet<HostRouteSet>,
 }
 
 impl ServingManifest {
@@ -984,6 +1028,7 @@ impl ServingManifest {
                 attachments: workflow_attachments,
                 registrations,
             },
+            host_routes: BTreeSet::new(),
         };
         manifest.validate()?;
         within_delivery_limit(manifest.canonical_bytes().len())?;
@@ -1025,6 +1070,32 @@ impl ServingManifest {
             .iter()
             .map(|(id, attachment)| (id.as_str(), AttachmentRef::Wiring(attachment)));
         routes.chain(wirings)
+    }
+
+    /// One host route of a set this release serves, by attachment id.
+    pub fn host_attachment(&self, id: &str) -> Option<&'static HostAttachment> {
+        self.host_routes.iter().find_map(|set| set.attachment(id))
+    }
+
+    /// One attachment that this release serves: an authored attachment or
+    /// a host route.
+    pub fn served_attachment(&self, id: &str) -> Option<ServedAttachment<'_>> {
+        self.attachment(id)
+            .map(ServedAttachment::Authored)
+            .or_else(|| self.host_attachment(id).map(ServedAttachment::Host))
+    }
+
+    /// Every attachment this release serves: the authored attachments, then
+    /// the host routes of its sets.
+    pub fn every_served_attachment(&self) -> impl Iterator<Item = (&str, ServedAttachment<'_>)> {
+        let authored = self
+            .every_attachment()
+            .map(|(id, attachment)| (id, ServedAttachment::Authored(attachment)));
+        let host = self.host_routes.iter().flat_map(|set| {
+            set.attachments()
+                .map(|(id, attachment)| (id, ServedAttachment::Host(attachment)))
+        });
+        authored.chain(host)
     }
 
     /// The RFC 8785 canonical bytes mounted by serving processes.

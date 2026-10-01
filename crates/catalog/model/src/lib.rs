@@ -13,6 +13,7 @@
 mod component_library;
 mod connection;
 pub mod edge_bundle;
+mod host_route;
 mod package;
 mod serving_manifest;
 mod wiring;
@@ -38,6 +39,10 @@ pub use connection::{
     ConnectionField, ConnectionFieldOwner, ConnectionFieldOwnership, ConnectionTypeDescriptor,
     CredentialInjection,
 };
+pub use host_route::{
+    HOST_ROUTE_PACKAGE, HOST_ROUTE_PATH_PREFIX, HostAttachment, HostHandler, HostRoute,
+    HostRouteAuthority, HostRouteSet,
+};
 pub use package::{EffectiveReleaseId, PackageCoordinate};
 pub use serving_manifest::{
     AttachmentAuthPolicy, AttachmentRef, AttachmentTarget, CanonicalSpelling,
@@ -45,11 +50,11 @@ pub use serving_manifest::{
     OperationType, PAT_AUTHENTICATION_MODE, RELEASE_MANIFEST_CONFIGMAP_PREFIX,
     RELEASE_MANIFEST_FILE_NAME, RELEASE_MANIFEST_MOUNT_PATH, RegistrationDelivery, RouteAttachment,
     RouteCanonicalization, RouteLineOrder, SERVING_MANIFEST_FORMAT_VERSION,
-    SESSION_AUTHENTICATION_MODE, ServingAttachment, ServingComponent, ServingComponentOperation,
-    ServingManifest, ServingRegistration, ServingRegistrationInput, ServingRelation,
-    ServingRelease, ServingRoute, ServingWiring, UNSUPPORTED_SERVING_MANIFEST_VERSION_REFUSAL,
-    WiringAttachment, WorkflowSection, parse_attachment_auth_policy,
-    release_manifest_configmap_name,
+    SESSION_AUTHENTICATION_MODE, ServedAttachment, ServingAttachment, ServingComponent,
+    ServingComponentOperation, ServingManifest, ServingRegistration, ServingRegistrationInput,
+    ServingRelation, ServingRelease, ServingRoute, ServingWiring,
+    UNSUPPORTED_SERVING_MANIFEST_VERSION_REFUSAL, WiringAttachment, WorkflowSection,
+    parse_attachment_auth_policy, release_manifest_configmap_name,
 };
 pub use wiring::{
     WIRING_DOCUMENT_FORMAT_VERSION, WiringDocument, WiringEdge, WiringEventOperation, WiringNode,

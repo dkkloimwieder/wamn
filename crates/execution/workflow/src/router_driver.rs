@@ -1493,6 +1493,7 @@ mod tests {
                     },
                 )]),
             },
+            host_routes: BTreeSet::new(),
         };
 
         assert_eq!(

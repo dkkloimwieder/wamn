@@ -32,8 +32,8 @@ use sha2::{Digest as _, Sha256};
 #[cfg(test)]
 use wamn_catalog::PAT_AUTHENTICATION_MODE;
 use wamn_catalog::{
-    AttachmentAuthPolicy, AttachmentRef, AttachmentType, OperationType, ServingManifest,
-    parse_attachment_auth_policy,
+    AttachmentAuthPolicy, AttachmentRef, AttachmentType, OperationType, ServedAttachment,
+    ServingManifest, parse_attachment_auth_policy,
 };
 use wamn_session::PAT_TOKEN_PREFIX;
 use wash_runtime::engine::ctx::{ActiveCtx, SharedCtx, extract_active_ctx};
@@ -291,7 +291,7 @@ impl InputSchemaValidators {
         };
         let mut attachment_hashes = HashMap::new();
         let mut validators = HashMap::new();
-        for (attachment_id, attachment) in release.manifest().every_attachment() {
+        for (attachment_id, attachment) in release.manifest().every_served_attachment() {
             if !carries_http_route(attachment.kind())
                 || route_definition(release.manifest(), attachment_id, attachment).is_none()
             {
@@ -512,7 +512,7 @@ pub struct AuthenticationRequest<'a> {
     /// The loaded release that carries the attachment.
     pub manifest: &'a ServingManifest,
     pub attachment_id: &'a str,
-    pub attachment: AttachmentRef<'a>,
+    pub attachment: ServedAttachment<'a>,
     /// The attachment's parsed policy. It is never `none`.
     pub policy: AttachmentAuthPolicy,
     pub headers: &'a [Header],
@@ -629,7 +629,7 @@ impl FlowHttpRouting {
         let loaded_release = self.release.as_ref().ok_or(NoRelease)?;
         Ok(loaded_release
             .manifest()
-            .attachment(attachment_id)
+            .served_attachment(attachment_id)
             .is_some_and(|attachment| carries_http_route(attachment.kind())))
     }
 
@@ -648,7 +648,7 @@ impl FlowHttpRouting {
             .ok_or_else(authentication_unavailable)?;
         let manifest = loaded_release.manifest();
         let attachment = manifest
-            .attachment(attachment_id)
+            .served_attachment(attachment_id)
             .filter(|attachment| carries_http_route(attachment.kind()))
             .ok_or_else(authentication_unavailable)?;
         let policy = parse_attachment_auth_policy(attachment.auth_policy()).ok_or_else(|| {
@@ -725,7 +725,7 @@ fn route_definitions(
     authority: &str,
 ) -> Vec<RouteDefinition> {
     manifest
-        .every_attachment()
+        .every_served_attachment()
         .filter(|(_, attachment)| carries_http_route(attachment.kind()))
         .filter_map(|(attachment_id, attachment)| {
             // Decoded before it is matched, so a malformed attachment is reported
@@ -756,7 +756,7 @@ fn carries_http_route(kind: AttachmentType) -> bool {
 /// neither expands them nor invents aliases from operator-managed Services.
 pub(crate) fn expected_http_hostnames(manifest: &ServingManifest) -> HashSet<String> {
     manifest
-        .every_attachment()
+        .every_served_attachment()
         .filter(|(_, attachment)| carries_http_route(attachment.kind()))
         .filter_map(|(id, attachment)| route_definition(manifest, id, attachment))
         .map(|definition| definition.host)
@@ -771,7 +771,7 @@ pub(crate) fn expected_http_hostnames(manifest: &ServingManifest) -> HashSet<Str
 /// host acquire route-authentication credentials it will never use.
 pub fn requires_pat_route_authentication(manifest: &ServingManifest) -> bool {
     manifest
-        .every_attachment()
+        .every_served_attachment()
         .filter(|(_, attachment)| carries_http_route(attachment.kind()))
         .any(|(attachment_id, attachment)| {
             route_definition(manifest, attachment_id, attachment).is_some()
@@ -783,7 +783,7 @@ pub fn requires_pat_route_authentication(manifest: &ServingManifest) -> bool {
 /// Return whether the release contains an externally selectable session route.
 pub fn requires_session_route_authentication(manifest: &ServingManifest) -> bool {
     manifest
-        .every_attachment()
+        .every_served_attachment()
         .filter(|(_, attachment)| carries_http_route(attachment.kind()))
         .any(|(id, attachment)| {
             route_definition(manifest, id, attachment).is_some()
@@ -816,7 +816,7 @@ fn matches_request(definition: &RouteDefinition, method: &str, authority: &str) 
 fn route_definition(
     manifest: &ServingManifest,
     attachment_id: &str,
-    attachment: AttachmentRef<'_>,
+    attachment: ServedAttachment<'_>,
 ) -> Option<RouteDefinition> {
     let route = attachment.definition().get("route")?;
     let body_limit = match attachment.definition().get("raw-body-bytes") {
@@ -1015,14 +1015,19 @@ pub fn session_cookie(headers: &[Header]) -> Result<Option<&str>, AuthRejection>
 /// Whether an attachment only reads: it targets a route whose operation kind is
 /// one of `OperationType::READ_KINDS`. A wiring can write, so it never reads
 /// only.
-pub fn serves_read(manifest: &ServingManifest, attachment: AttachmentRef<'_>) -> bool {
+pub fn serves_read(manifest: &ServingManifest, attachment: ServedAttachment<'_>) -> bool {
     route_kind(manifest, attachment).is_some_and(OperationType::is_read)
 }
 
 /// The operation kind of the route an attachment targets. A wiring has none.
-fn route_kind(manifest: &ServingManifest, attachment: AttachmentRef<'_>) -> Option<OperationType> {
-    let AttachmentRef::Route(attachment) = attachment else {
-        return None;
+fn route_kind(
+    manifest: &ServingManifest,
+    attachment: ServedAttachment<'_>,
+) -> Option<OperationType> {
+    let attachment = match attachment {
+        ServedAttachment::Authored(AttachmentRef::Route(attachment)) => attachment,
+        ServedAttachment::Authored(AttachmentRef::Wiring(_)) => return None,
+        ServedAttachment::Host(attachment) => return Some(attachment.route.type_),
     };
     manifest
         .route(
@@ -1421,6 +1426,38 @@ mod tests {
     /// Each kind's Cache-Control value (docs/architecture/execution.md).
     /// A read is private unless its route admits anonymous callers, and a
     /// route that is not a read, or a wiring, carries none.
+    #[test]
+    fn a_release_routes_the_host_routes_of_its_sets_and_the_control_root_only_its_own() {
+        let mut manifest = one_http_route();
+        manifest
+            .host_routes
+            .insert(wamn_catalog::HostRouteSet::Application);
+        let (manifest, _) = ServingManifest::from_canonical_bytes(&manifest.canonical_bytes())
+            .expect("a manifest with host routes is canonical");
+        let served = route_definitions(&manifest, "GET", "any.example.test");
+        assert_eq!(
+            served_ids(&served),
+            ["wamn-control-application-permission-mine"]
+        );
+        assert_eq!(served[0].path, "/wamn_control/application/permission.mine");
+        assert_eq!(
+            served[0].cache_control.as_deref(),
+            Some("private, no-cache"),
+            "a host route read is private"
+        );
+        assert!(requires_pat_route_authentication(&manifest));
+        assert!(requires_session_route_authentication(&manifest));
+
+        let root = LoadedRelease::control_root();
+        let served = route_definitions(root.manifest(), "GET", "any.example.test");
+        assert_eq!(served_ids(&served), ["wamn-control-control-control-mine"]);
+        assert!(
+            !requires_pat_route_authentication(root.manifest()),
+            "a control route admits no PAT"
+        );
+        assert!(requires_session_route_authentication(root.manifest()));
+    }
+
     #[test]
     fn a_read_route_carries_the_cache_control_of_its_kind_and_auth_policy() {
         const SHORT: &str = "max-age=10, stale-while-revalidate=60";

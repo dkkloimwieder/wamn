@@ -546,6 +546,7 @@ mod tests {
             routes: BTreeSet::new(),
             attachments: BTreeMap::new(),
             workflow: wamn_catalog::WorkflowSection::default(),
+            host_routes: BTreeSet::new(),
         }
     }
 

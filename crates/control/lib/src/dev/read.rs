@@ -853,6 +853,7 @@ mod tests {
                 .1,
                 ..wamn_catalog::WorkflowSection::default()
             },
+            host_routes: BTreeSet::new(),
         }
     }
 }

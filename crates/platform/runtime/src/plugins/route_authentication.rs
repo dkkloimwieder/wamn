@@ -336,6 +336,90 @@ impl RouteAuthenticator for PlatformRouteAuthenticator {
     }
 }
 
+/// Admits a request to a route of the control serving root
+/// (docs/plan/platform-ui.md §4.3).
+///
+/// Only a browser login session of the host's control audience passes. Every
+/// request rechecks, through the `control` login, that the login is live and
+/// that its principal still holds a control role in the token's org, so a
+/// revoked role takes effect on the next request. The caller holds no
+/// application role and no operation grant.
+pub struct ControlRouteAuthenticator {
+    verifier: SessionVerifier<IssuerKeys>,
+    control: Arc<tokio_postgres::Client>,
+}
+
+impl std::fmt::Debug for ControlRouteAuthenticator {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("ControlRouteAuthenticator")
+            .finish_non_exhaustive()
+    }
+}
+
+impl ControlRouteAuthenticator {
+    /// `verifier` is bound to the org and its control audience.
+    pub fn new(
+        verifier: SessionVerifier<IssuerKeys>,
+        control: Arc<tokio_postgres::Client>,
+    ) -> Self {
+        Self { verifier, control }
+    }
+}
+
+#[async_trait::async_trait]
+impl RouteAuthenticator for ControlRouteAuthenticator {
+    async fn authenticate(
+        &self,
+        request: AuthenticationRequest<'_>,
+    ) -> Result<AuthenticatedCaller, AuthRejection> {
+        let RouteCredential::Session { token, csrf } = route_credential(&request)? else {
+            return Err(unauthorized());
+        };
+        let session = self
+            .verifier
+            .verify(token)
+            .await
+            .map_err(|_| unauthorized())?;
+        if let Some(requires_csrf) = csrf {
+            check_csrf(
+                requires_csrf,
+                session.claims().csrf.as_deref(),
+                request.headers,
+            )?;
+        }
+        let active = tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            wamn_platform_identity::control::control_session_is_active(
+                self.control.as_ref(),
+                session.claims(),
+            ),
+        )
+        .await
+        .map_err(|_| authentication_unavailable())?
+        .map_err(|error| {
+            tracing::warn!(error = %error, "control authority unavailable");
+            authentication_unavailable()
+        })?;
+        if !active {
+            return Err(unauthorized());
+        }
+        if session.check_admission().is_err() {
+            self.verifier
+                .verify(token)
+                .await
+                .map_err(|_| unauthorized())?;
+        }
+        Ok(AuthenticatedCaller::new(
+            request.attachment_id,
+            session.claims().sub.as_str(),
+            CredentialType::Session,
+            false,
+            std::collections::HashSet::new(),
+        ))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::collections::{BTreeMap, BTreeSet};

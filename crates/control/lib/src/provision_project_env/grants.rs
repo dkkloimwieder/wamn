@@ -727,7 +727,27 @@ pub(super) fn verify_administration_grants(
         tuple("routine", "wamn_authority", "tenant_key", "EXECUTE"),
     ]);
     for relation in sql::ADMINISTRATION_RELATIONS {
-        expected.insert(tuple("relation", "app_system", relation, "SELECT"));
+        for privilege in ["SELECT", "INSERT", "UPDATE", "DELETE"] {
+            expected.insert(tuple("relation", "app_system", relation, privilege));
+        }
+        for column in [
+            "tenant_id",
+            "row_key",
+            "type",
+            "operation",
+            "changed_by",
+            "changed_at",
+            "transaction_id",
+            "before",
+            "after",
+        ] {
+            expected.insert(tuple(
+                "column",
+                "app_system",
+                &format!("{relation}_history.{column}"),
+                "INSERT",
+            ));
+        }
     }
     anyhow::ensure!(
         actual == expected,

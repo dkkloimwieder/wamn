@@ -685,6 +685,9 @@ pub fn assemble_local_release(
             attachments: wiring_attachments,
             registrations,
         },
+        // Every application release serves the fixed application
+        // administration routes (docs/plan/platform-ui.md §4.6).
+        host_routes: BTreeSet::from([wamn_catalog::HostRouteSet::Application]),
     };
     let canonical_bytes = manifest.canonical_bytes();
     let (manifest, digest) = ServingManifest::from_canonical_bytes(&canonical_bytes)?;
@@ -1405,6 +1408,9 @@ async fn mint_release_manifest_from_sources(
             attachments: wiring_attachments,
             registrations,
         },
+        // Every application release serves the fixed application
+        // administration routes (docs/plan/platform-ui.md §4.6).
+        host_routes: BTreeSet::from([wamn_catalog::HostRouteSet::Application]),
     };
     let canonical_bytes = projected.canonical_bytes();
     let (manifest, digest) =

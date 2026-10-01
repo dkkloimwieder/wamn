@@ -1289,6 +1289,7 @@ mod tests {
                 }]),
                 ..wamn_catalog::WorkflowSection::default()
             },
+            host_routes: BTreeSet::new(),
         }
     }
 

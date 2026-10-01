@@ -6,6 +6,7 @@
 //! layer is `wamn-workflow`, which sits above this crate. This crate links
 //! neither `wamn-workflow` nor `wamn-router`.
 
+mod host_route;
 mod operation;
 mod query_read;
 mod read_cache;
@@ -13,6 +14,7 @@ mod readiness;
 mod route;
 mod router_delivery;
 
+pub use host_route::{HostRouteDelivery, HostRouteHandlers};
 pub use operation::{
     CallIntents, InvocationSite, NativeFacts, NativePolicy, NodeAcquisition, OperationHost,
     OperationScope, component_invocation, invocation_span, node_trace_context,

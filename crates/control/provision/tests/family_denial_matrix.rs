@@ -285,15 +285,24 @@ const MATRIX: [FamilyReach; 10] = [
         ],
         routines: &[],
     },
-    // `wamn-a40n.2`: the host-run administration routes read the application
-    // authorization relations. `app_system.roles` and `wamn_history.row_image`
-    // are outside the matrix universe.
+    // `wamn-a40n.2`: the host-run administration routes read and write the
+    // application authorization relations. `app_system.roles`, the history
+    // tables and `wamn_history.row_image` are outside the matrix universe.
     FamilyReach {
         family: WorkloadRoleFamily::Administration,
         relations: &[
+            "app_system.permissions|DELETE|table",
+            "app_system.permissions|INSERT|table",
             "app_system.permissions|SELECT|table",
+            "app_system.permissions|UPDATE|table",
+            "app_system.user_roles|DELETE|table",
+            "app_system.user_roles|INSERT|table",
             "app_system.user_roles|SELECT|table",
+            "app_system.user_roles|UPDATE|table",
+            "app_system.users|DELETE|table",
+            "app_system.users|INSERT|table",
             "app_system.users|SELECT|table",
+            "app_system.users|UPDATE|table",
         ],
         routines: &["wamn_authority.tenant_key(text)"],
     },
@@ -947,9 +956,8 @@ fn every_ordered_pair_of_matrix_families_is_covered_exactly_once() {
 /// pairs the matrix cannot speak for, so it is spelled out rather than left to
 /// be counted. Pairs naming the MEASURED-EMPTY family as the object
 /// are excluded: those are asserted separately, by name, above.
-const CONTAINED_PAIRS: [(&str, &str); 7] = [
+const CONTAINED_PAIRS: [(&str, &str); 6] = [
     ("administration", "session-role-reader"),
-    ("app", "administration"),
     ("app", "event-materializer"),
     ("app", "http-admitter"),
     ("app", "retention"),
