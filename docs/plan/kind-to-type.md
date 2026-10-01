@@ -586,7 +586,7 @@ It prints release 1 with format 3 and release 2 with format 4. The table name ho
 
 **B8. WMS republish.** `T` names the WMS database.
 
-1. `apply-package`, `reconcile-package-data-access` and `reconcile-replica-identity` with `--package apps/wamn_wms --tenant wms` (`gcp.md` §5.2, `deployment.md:54` to `:59`).
+1. `apply-package` and `reconcile-package-data-access` with `--package apps/wamn_wms --database-url "$T" --tenant wms`, then `target/debug/wamn-ctl reconcile-replica-identity --admin-database-url "$T" --package apps/wamn_wms`. `reconcile-replica-identity` takes no tenant (`gcp.md` §5.2, `deployment.md:54` to `:59`).
 2. Render the three platform declarations with `s/__PACKAGE_VERSION__/2.0.0/g` in the `sed` of `gcp.md:1254`. Push `wms`, `label-render`, `blob-put` and `jsonata` under `wamn_wms` 2.0.0 with the admitted packages of the `gcp.md` §5.3 table. The palette bytes do not change, but they are admitted again under the new coordinate (§2.3). Each push writes a new `catalog.component_library` row keyed by `(wamn_wms, 2.0.0, digest)` in the WMS database and in wamn_system. The owner row of each palette digest already names `wamn_wms`, so the push is admitted. This works only with the key of §4.3.6, which B2 and B3 install. Under the old key the push refuses `component-fact-conflict` (`crates/control/lib/src/push_component.rs:1985`). Proof: the component listing of §5.3 shows each palette digest under both 1.0.0 and 2.0.0, and `SELECT component_digest, package_id FROM catalog.component_digest_owners` shows one row per digest.
 3. Gate the wiring. Run the new scenario-worker as `gcp.md:1275` to `:1278` does. Make the request with `cargo run -p wamn-test-infrastructure --example gate_request -- wamn_wms 2.0.0 wms dev apps/wamn_wms/publication/wirings/inventory_move_and_label.json` (`gcp.md:1279`). Post it with the WMS management-author PAT. The reply has `body.outcome.status` `completed`. Stop the service. The example derives the command id from the package id and the wiring id only (`test-support/infrastructure/examples/gate_request.rs:37`). The 1.0.0 gate already holds that id in `catalog.authoring_command_audit` for this principal (`control-portable-store.sql:287`). A new request under the old id is refused (§2.2 row W1, `services/scenario-worker/src/management.rs:984`). A11 puts the package version into that id, so the 2.0.0 gate uses `gate-wamn_wms-2.0.0-inventory_move_and_label`. The 1.0.0 audit row stays where it is.
 4. `author-wiring` with `--package-version 2.0.0` (`gcp.md:1286`). Record the wiring version `<V>` that it prints.
@@ -606,9 +606,9 @@ The event users and consumers need no change. The consumer names come from the p
 
    ```bash
    target/debug/wamn web upload apps/wamn_receiving --release <Receiving release 2 digest> --bucket gs://wamn-dev-web/clients --org dkk \
-     --database-url <Receiving database URL> --tenant dev --environment dev
+     --database-url <Receiving database URL>
    target/debug/wamn web upload apps/wamn_wms --release <WMS release 2 digest> --bucket gs://wamn-dev-web/clients --org dkk \
-     --database-url <WMS database URL> --tenant wms --environment dev
+     --database-url <WMS database URL>
    ```
 
    The upload is create-only and refuses a digest that is not the head of the environment (A5). Release 2 is the head after step 0, and its path is new, so both uploads pass. `--database-url` names the project-env database that holds the head. A5 fixes the exact flags.
