@@ -18,9 +18,9 @@ use wamn_control::enable_cdc_project_env::{
 use wamn_control::pat_client::PatIssuerConfig;
 use wamn_control::provision_org::{self, ProvisionOrgRequest, ProvisionedOrg};
 use wamn_control::provision_project_env::{
-    self, ProvisionProjectEnvOutcome, ProvisionProjectEnvRequest, WorkloadActionOutcome,
-    WorkloadActionRequest, WorkloadActionVerb, WorkloadGenerationAction, ensure_secret_path,
-    parse_pat_prefix, workload_action_flag, workload_secret_flag,
+    self, OrgWorkloadActionRequest, ProvisionProjectEnvOutcome, ProvisionProjectEnvRequest,
+    WorkloadActionOutcome, WorkloadActionRequest, WorkloadActionVerb, WorkloadGenerationAction,
+    ensure_secret_path, parse_pat_prefix, workload_action_flag, workload_secret_flag,
 };
 use wamn_control::provision_system::{self, ProvisionSystemRequest};
 use wamn_control_provision::{CredentialGeneration, DB_OWNER_ROLE, WorkloadRoleFamily};
@@ -221,6 +221,42 @@ pub const WORKLOAD_ACTION_GROUP: &str = "workload_generation_action";
 /// The id of the one group every derived credential-Secret flag belongs to.
 const WORKLOAD_SECRET_GROUP: &str = "workload_generation_secret";
 
+/// A closed set of families whose generation flags one verb carries.
+pub trait WorkloadFamilySet: fmt::Debug + Default + Clone + Send + Sync + 'static {
+    /// The id of the group every action flag of the set belongs to.
+    const ACTION_GROUP: &'static str;
+    /// The id of the group every credential-Secret flag of the set belongs to.
+    const SECRET_GROUP: &'static str;
+    /// The families of the set, in declaration order.
+    fn families() -> impl Iterator<Item = WorkloadRoleFamily>;
+}
+
+/// The families `provision-project-env` mints.
+#[derive(Debug, Default, Clone)]
+pub struct ProjectEnvFamilies;
+
+impl WorkloadFamilySet for ProjectEnvFamilies {
+    const ACTION_GROUP: &'static str = WORKLOAD_ACTION_GROUP;
+    const SECRET_GROUP: &'static str = WORKLOAD_SECRET_GROUP;
+    fn families() -> impl Iterator<Item = WorkloadRoleFamily> {
+        WorkloadRoleFamily::project_env_families()
+    }
+}
+
+/// The org-scoped families `provision-org` mints (`wamn-a40n.2`).
+#[derive(Debug, Default, Clone)]
+pub struct OrgFamilies;
+
+impl WorkloadFamilySet for OrgFamilies {
+    const ACTION_GROUP: &'static str = "org_generation_action";
+    const SECRET_GROUP: &'static str = "org_generation_secret";
+    fn families() -> impl Iterator<Item = WorkloadRoleFamily> {
+        WorkloadRoleFamily::ALL
+            .into_iter()
+            .filter(|family| !family.is_project_env_provisioned())
+    }
+}
+
 /// The workload-generation half of the parser, DERIVED from the closed
 /// [`WorkloadRoleFamily`] set (`wamn-0h0g.22.16`).
 ///
@@ -230,7 +266,7 @@ const WORKLOAD_SECRET_GROUP: &str = "workload_generation_secret";
 /// replaces. Mutual exclusion is one [`clap::ArgGroup`] per concern, so
 /// admitting a family joins its flags to those groups by construction.
 #[derive(Debug, Default, Clone)]
-pub struct WorkloadGenerationArgs {
+pub struct WorkloadGenerationArgs<S: WorkloadFamilySet = ProjectEnvFamilies> {
     /// The single selected action. `multiple(false)` on the action group makes
     /// "single" a parse-time guarantee rather than a convention.
     pub action: Option<WorkloadGenerationAction>,
@@ -238,6 +274,7 @@ pub struct WorkloadGenerationArgs {
     /// prepare — so a Secret can accompany neither another family's action nor
     /// a retire or abort.
     pub secret: Option<(WorkloadRoleFamily, PathBuf)>,
+    set: std::marker::PhantomData<S>,
 }
 
 fn workload_action_id(family: WorkloadRoleFamily, verb: WorkloadActionVerb) -> String {
@@ -248,12 +285,12 @@ fn workload_secret_id(family: WorkloadRoleFamily) -> String {
     workload_secret_flag(family).replace('-', "_")
 }
 
-impl clap::Args for WorkloadGenerationArgs {
+impl<S: WorkloadFamilySet> clap::Args for WorkloadGenerationArgs<S> {
     fn augment_args(command: clap::Command) -> clap::Command {
         let mut command = command;
         let mut action_ids: Vec<clap::Id> = Vec::new();
         let mut secret_ids: Vec<clap::Id> = Vec::new();
-        for family in WorkloadRoleFamily::ALL {
+        for family in S::families() {
             let stem = family.cli_stem();
             for verb in WorkloadActionVerb::ALL {
                 let id = workload_action_id(family, verb);
@@ -285,7 +322,7 @@ impl clap::Args for WorkloadGenerationArgs {
             // abort, or another family's prepare would silently satisfy the
             // requirement. Naming the conflict outright is what refuses them,
             // and it is derived here rather than written out per family.
-            for other in WorkloadRoleFamily::ALL {
+            for other in S::families() {
                 for verb in WorkloadActionVerb::ALL {
                     let id = workload_action_id(other, verb);
                     if id != own_prepare {
@@ -298,12 +335,12 @@ impl clap::Args for WorkloadGenerationArgs {
         }
         command
             .group(
-                clap::ArgGroup::new(WORKLOAD_ACTION_GROUP)
+                clap::ArgGroup::new(S::ACTION_GROUP)
                     .args(action_ids)
                     .multiple(false),
             )
             .group(
-                clap::ArgGroup::new(WORKLOAD_SECRET_GROUP)
+                clap::ArgGroup::new(S::SECRET_GROUP)
                     .args(secret_ids)
                     .multiple(false),
             )
@@ -314,7 +351,7 @@ impl clap::Args for WorkloadGenerationArgs {
     }
 }
 
-impl clap::FromArgMatches for WorkloadGenerationArgs {
+impl<S: WorkloadFamilySet> clap::FromArgMatches for WorkloadGenerationArgs<S> {
     fn from_arg_matches(matches: &clap::ArgMatches) -> Result<Self, clap::Error> {
         let mut parsed = Self::default();
         parsed.update_from_arg_matches(matches)?;
@@ -324,7 +361,7 @@ impl clap::FromArgMatches for WorkloadGenerationArgs {
     fn update_from_arg_matches(&mut self, matches: &clap::ArgMatches) -> Result<(), clap::Error> {
         self.action = None;
         self.secret = None;
-        for family in WorkloadRoleFamily::ALL {
+        for family in S::families() {
             for verb in WorkloadActionVerb::ALL {
                 if let Some(generation) =
                     matches.get_one::<CredentialGeneration>(&workload_action_id(family, verb))
@@ -804,6 +841,26 @@ pub fn print_provisioned(
     Ok(())
 }
 
+/// Print the line that reports one org credential action.
+fn print_org_workload_action(request: &OrgWorkloadActionRequest, outcome: &WorkloadActionOutcome) {
+    let WorkloadGenerationAction {
+        family, generation, ..
+    } = request.action;
+    let (label, generation, org) = (family.label(), generation.as_str(), &request.org);
+    match outcome {
+        WorkloadActionOutcome::Prepared { secret, .. } => println!(
+            "prepared and authenticated {label} credential generation {generation} for org {org}; wrote {}",
+            secret.display()
+        ),
+        WorkloadActionOutcome::Retired => {
+            println!("retired {label} credential generation {generation} for org {org}");
+        }
+        WorkloadActionOutcome::Aborted => {
+            println!("aborted {label} credential generation {generation} for org {org}");
+        }
+    }
+}
+
 /// Print the lines that report one workload-generation action.
 pub fn print_workload_action(request: &WorkloadActionRequest, outcome: &WorkloadActionOutcome) {
     let WorkloadGenerationAction {
@@ -1076,10 +1133,36 @@ pub struct ProvisionOrgArgs {
     #[cfg(feature = "ops")]
     #[arg(long)]
     pub emit_scheduled_backup: Option<PathBuf>,
+
+    /// The generation actions of the org's own credentials and their Secrets,
+    /// derived from the org-scoped families: today `control`, the login of the
+    /// org's control host (`wamn-a40n.2`). An action needs
+    /// `--system-database-url`.
+    #[command(flatten)]
+    pub credential: WorkloadGenerationArgs<OrgFamilies>,
+
+    /// Host the emitted credential URL names: the system database's
+    /// read-write service as a pod reaches it. A prepare requires it.
+    #[arg(long, requires = "system_database_url")]
+    pub db_host: Option<String>,
+
+    /// Port the emitted credential URL names.
+    #[arg(long, default_value_t = 5432)]
+    pub db_port: u16,
+
+    /// Namespace the emitted credential `Secret` is applied to: the namespace
+    /// of the org's control host.
+    #[arg(long, env = "WAMN_NAMESPACE", default_value = "hosts")]
+    pub namespace: String,
 }
 
 /// Stamp one org, then print what was recorded and write the CRs it owns.
 pub async fn provision_org(args: ProvisionOrgArgs) -> anyhow::Result<()> {
+    anyhow::ensure!(
+        args.credential.action.is_none() || args.system_database_url.is_some(),
+        "an org credential action requires --system-database-url"
+    );
+    let system_database_url = args.system_database_url.clone();
     let provisioned = provision_org::provision_org(ProvisionOrgRequest {
         org: args.org,
         template: args.template.template(),
@@ -1089,6 +1172,22 @@ pub async fn provision_org(args: ProvisionOrgArgs) -> anyhow::Result<()> {
     })
     .await?;
     print_provisioned_org(&provisioned);
+    if let Some(action) = args.credential.action {
+        let system_database_url = system_database_url
+            .context("an org credential action requires --system-database-url")?;
+        let secret = args.credential.secret.map(|(_, path)| path);
+        let request = OrgWorkloadActionRequest {
+            org: provisioned.org.id.clone(),
+            system_database_url,
+            db_host: args.db_host,
+            db_port: args.db_port,
+            namespace: args.namespace,
+            action,
+            secret,
+        };
+        let outcome = provision_project_env::run_org_workload_action(&request).await?;
+        print_org_workload_action(&request, &outcome);
+    }
     let Some(set) = &provisioned.clusters else {
         return Ok(());
     };

@@ -64,6 +64,7 @@ pub(super) fn stable_grant_set(family: WorkloadRoleFamily) -> Option<StableGrant
         // them.
         WorkloadRoleFamily::AuditRetention => Some(StableGrantSet::AuditRetention),
         WorkloadRoleFamily::Administration => Some(StableGrantSet::Administration),
+        WorkloadRoleFamily::Control => Some(StableGrantSet::Control),
         _ => None,
     }
 }
@@ -81,6 +82,7 @@ pub(super) enum StableGrantSet {
     EventMaterializer,
     AuditRetention,
     Administration,
+    Control,
 }
 
 impl StableGrantSet {
@@ -133,6 +135,15 @@ impl StableGrantSet {
             Self::Administration => {
                 verify_administration_grants(role, database, required_database, grants)
             }
+            Self::Control => verify_system_reader_grants(
+                WorkloadRoleFamily::Control.label(),
+                "identity",
+                &sql::CONTROL_RELATIONS,
+                role,
+                database,
+                required_database,
+                grants,
+            ),
         }
     }
 }
@@ -805,7 +816,7 @@ pub(super) fn verify_event_materializer_grants(
 /// the control database MUST carry the grant set, and every other database in
 /// the cluster must carry nothing at all.
 pub(super) fn verify_system_reader_grants(
-    reader: SystemReader,
+    reader: impl std::fmt::Display,
     schema: &str,
     relations: &[&str],
     role: &str,

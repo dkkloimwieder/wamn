@@ -77,9 +77,10 @@ use wamn_control_provision::{
     APP_ROLE, CredentialGeneration, INSTANCE_SUFFIX_LEN, PLATFORM_GROUP_ROLE, PlatformComponent,
     WorkloadRoleFamily, WorkloadRoleScope, WorkloadRoleScopeKind, WorkloadSecretBody,
     WorkloadSecretBodyKind, bind_platform_principal_sql, project_env_database_name,
-    project_env_namespace, project_env_secret_name, render_project_env_database,
-    render_project_env_secret_manifest, render_workload_secret_manifest, sql,
-    validate_instance_suffix, validate_project_env, workload_generation_role,
+    project_env_namespace, project_env_secret_name, render_org_workload_secret_manifest,
+    render_project_env_database, render_project_env_secret_manifest,
+    render_workload_secret_manifest, sql, validate_instance_suffix, validate_project_env,
+    workload_generation_role,
 };
 use wamn_control_registry::{Org, Placement, Triple, cluster_of};
 use wamn_pg_core::quote_ident;
@@ -115,7 +116,7 @@ pub use registry::{
     claim_environment_instance, project_tenant_environment, read_project_env_instance,
     resolve_cluster,
 };
-pub use workload::run_workload_action;
+pub use workload::{run_org_workload_action, run_workload_action};
 
 #[cfg(test)]
 use output::SECRET_TEMP_SEQUENCE;
@@ -280,6 +281,48 @@ pub struct WorkloadActionRequest {
     /// Write the shared App-login retirement role SQL here. Only App prepare may
     /// name it.
     pub emit_role_sql: Option<PathBuf>,
+}
+
+/// Inputs of one org-scoped workload-generation action, run by
+/// `provision-org`.
+pub struct OrgWorkloadActionRequest {
+    /// The org the credential is scoped to.
+    pub org: String,
+
+    /// Superuser Postgres URL to the T1 system DB (`wamn_system`), the
+    /// database the credential reaches.
+    pub system_database_url: String,
+
+    /// Host the emitted credential URL names. A prepare requires it: the
+    /// admin URL's host is often a port-forward that no pod can reach
+    /// (finding wamn-lczu).
+    pub db_host: Option<String>,
+
+    /// Port the emitted credential URL names.
+    pub db_port: u16,
+
+    /// Namespace the credential `Secret` is applied to.
+    pub namespace: String,
+
+    pub action: WorkloadGenerationAction,
+
+    /// Write the prepared credential `Secret` here. A prepare requires it.
+    pub secret: Option<PathBuf>,
+}
+
+impl std::fmt::Debug for OrgWorkloadActionRequest {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("OrgWorkloadActionRequest")
+            .field("org", &self.org)
+            .field("system_database_url", &"[REDACTED]")
+            .field("db_host", &self.db_host)
+            .field("db_port", &self.db_port)
+            .field("namespace", &self.namespace)
+            .field("action", &self.action)
+            .field("secret", &self.secret)
+            .finish()
+    }
 }
 
 /// What one workload-generation action did.

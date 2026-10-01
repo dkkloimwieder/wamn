@@ -468,8 +468,7 @@ fn the_credential_free_modes_parse_without_a_database_secret() {
 
 /// Every derived action flag, in family order.
 fn every_action_flag() -> Vec<String> {
-    WorkloadRoleFamily::ALL
-        .into_iter()
+    WorkloadRoleFamily::project_env_families()
         .flat_map(|family| {
             WorkloadActionVerb::ALL
                 .into_iter()
@@ -524,7 +523,7 @@ fn no_flag_exclusion_list_names_a_family_and_none_can() {
         "the database Secret is the only argument a provisioning-only invocation still owes"
     );
 
-    for family in WorkloadRoleFamily::ALL {
+    for family in WorkloadRoleFamily::project_env_families() {
         let mut spellings = vec![workload_secret_flag(family), workload_secret_id(family)];
         for verb in WorkloadActionVerb::ALL {
             spellings.push(workload_action_flag(family, verb));
@@ -558,16 +557,19 @@ fn every_family_gets_its_flags_from_the_one_derivation() {
     let actions = group(WORKLOAD_ACTION_GROUP);
     assert_eq!(
         actions.get_args().count(),
-        3 * WorkloadRoleFamily::ALL.len(),
+        3 * WorkloadRoleFamily::project_env_families().count(),
         "the action group is three verbs per family and nothing else"
     );
     // `multiple(false)` is not readable off a `&ArgGroup`, so the
     // one-action rule is checked where it bites, by parsing: see
     // `one_action_group_excludes_every_pair_across_every_family`.
     let secrets = group(WORKLOAD_SECRET_GROUP);
-    assert_eq!(secrets.get_args().count(), WorkloadRoleFamily::ALL.len());
+    assert_eq!(
+        secrets.get_args().count(),
+        WorkloadRoleFamily::project_env_families().count()
+    );
 
-    for family in WorkloadRoleFamily::ALL {
+    for family in WorkloadRoleFamily::project_env_families() {
         for verb in WorkloadActionVerb::ALL {
             let id = workload_action_id(family, verb);
             assert!(
@@ -595,7 +597,10 @@ fn every_family_gets_its_flags_from_the_one_derivation() {
 #[test]
 fn one_action_group_excludes_every_pair_across_every_family() {
     let flags = every_action_flag();
-    assert_eq!(flags.len(), 3 * WorkloadRoleFamily::ALL.len());
+    assert_eq!(
+        flags.len(),
+        3 * WorkloadRoleFamily::project_env_families().count()
+    );
     for (index, first) in flags.iter().enumerate() {
         for second in &flags[index + 1..] {
             assert!(
@@ -610,7 +615,7 @@ fn one_action_group_excludes_every_pair_across_every_family() {
 /// another family's action, never to a retire or abort, and never to stdout.
 #[test]
 fn every_family_secret_is_bound_to_its_own_prepare() {
-    for family in WorkloadRoleFamily::ALL {
+    for family in WorkloadRoleFamily::project_env_families() {
         let secret = format!("--{}", workload_secret_flag(family));
         let prepare = format!(
             "--{}",
@@ -643,7 +648,7 @@ fn every_family_secret_is_bound_to_its_own_prepare() {
                 "{secret} accompanied {other_verb}"
             );
         }
-        for other in WorkloadRoleFamily::ALL {
+        for other in WorkloadRoleFamily::project_env_families() {
             if other == family {
                 continue;
             }
@@ -832,4 +837,63 @@ fn render_path_emits_lists() {
     assert_eq!(stores["items"][0]["kind"], "ObjectStore");
     // An empty List (a pooled org has no clusters) is a harmless no-op apply.
     assert_eq!(k8s_list(&[])["items"].as_array().unwrap().len(), 0);
+}
+
+#[derive(Debug, Parser)]
+struct OrgCli {
+    #[command(flatten)]
+    args: ProvisionOrgArgs,
+}
+
+/// The org credential flags belong to `provision-org` only (`wamn-a40n.2`):
+/// a prepare binds its own Secret, and `provision-project-env` refuses them.
+#[test]
+fn provision_org_carries_the_control_credential_flags_and_project_env_does_not() {
+    let parsed = OrgCli::try_parse_from([
+        "test",
+        "--org",
+        "dkk",
+        "--template",
+        "trials",
+        "--system-database-url",
+        "postgres://postgres@sysdb/wamn_system",
+        "--prepare-control-generation",
+        "a",
+        "--emit-control-secret",
+        "/tmp/wamn-control-dkk.json",
+        "--db-host",
+        "wamn-sysdb-rw",
+    ])
+    .expect("provision-org parses a control prepare")
+    .args;
+    assert_eq!(
+        parsed.credential.action,
+        Some(WorkloadGenerationAction {
+            family: WorkloadRoleFamily::Control,
+            verb: WorkloadActionVerb::Prepare,
+            generation: CredentialGeneration::A,
+        })
+    );
+    assert_eq!(
+        parsed.credential.secret,
+        Some((
+            WorkloadRoleFamily::Control,
+            PathBuf::from("/tmp/wamn-control-dkk.json")
+        ))
+    );
+    assert_eq!(parsed.namespace, "hosts");
+    OrgCli::try_parse_from([
+        "test",
+        "--org",
+        "dkk",
+        "--template",
+        "trials",
+        "--retire-control-generation",
+        "a",
+        "--emit-control-secret",
+        "/tmp/wamn-control-dkk.json",
+    ])
+    .expect_err("a control Secret without its own prepare");
+    parse_argv(action_argv(&["--prepare-control-generation", "a"]))
+        .expect_err("provision-project-env does not mint the org credential");
 }

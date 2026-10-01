@@ -9,8 +9,8 @@ use serde_json::{Value, json};
 use wamn_control_registry::Triple;
 
 use crate::name::{
-    APP_ROLE, cdc_object_name, project_env_cdc_secret_name, project_env_secret_name,
-    workload_secret_name,
+    APP_ROLE, cdc_object_name, org_workload_secret_name, project_env_cdc_secret_name,
+    project_env_secret_name, workload_secret_name,
 };
 use crate::session_target::{SESSION_TARGET_KEY, SessionTarget};
 use crate::workload_role::{WorkloadRoleFamily, WorkloadSecretBodyKind};
@@ -138,6 +138,36 @@ pub fn render_workload_secret_manifest(
         "metadata": metadata,
         "type": "Opaque",
         "stringData": string_data,
+    })
+}
+
+/// Render the single-`url` credential Secret of an org-scoped family, named
+/// by [`org_workload_secret_name`] and labelled with its org only.
+pub fn render_org_workload_secret_manifest(
+    family: WorkloadRoleFamily,
+    org: &str,
+    namespace: &str,
+    url: &str,
+) -> Value {
+    assert_eq!(
+        family.secret_body_kind(),
+        WorkloadSecretBodyKind::Url,
+        "{family:?} does not publish a single-url Secret"
+    );
+    json!({
+        "apiVersion": "v1",
+        "kind": "Secret",
+        "metadata": {
+            "name": org_workload_secret_name(family, org),
+            "namespace": namespace,
+            "labels": {
+                "app.kubernetes.io/managed-by": "wamn",
+                "app.kubernetes.io/component": format!("{}-credentials", family.component_stem()),
+                "wamn.org": org,
+            },
+        },
+        "type": "Opaque",
+        "stringData": { "url": url },
     })
 }
 

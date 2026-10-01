@@ -213,6 +213,12 @@ pub fn workload_secret_name(
     format!("{}{org}--{project}--{env}", family.secret_prefix())
 }
 
+/// The credential Secret name of an org-scoped family:
+/// `<family secret prefix><org>`, for example `wamn-control-<org>`.
+pub fn org_workload_secret_name(family: WorkloadRoleFamily, org: &str) -> String {
+    format!("{}{org}", family.secret_prefix())
+}
+
 /// Scoped control-author Secret name consumed by scenario-worker.
 pub fn control_author_secret_name(org: &str, project: &str, env: &str) -> String {
     workload_secret_name(WorkloadRoleFamily::ControlAuthor, org, project, env)
