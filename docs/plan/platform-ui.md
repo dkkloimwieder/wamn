@@ -767,10 +767,11 @@ SELECT                          registry.projects, registry.project_envs
 ```
 
 It holds nothing on `principals` beyond `SELECT`, nothing on password or invitation tokens, and nothing in any project database.
+It holds nothing on `registry.orgs`, because the control host takes its org from `--org` and does not read that table.
 
 The control host never creates a principal.
 Identity creates or reuses the global human, issues the invitation credential and sends the mail, over the operator-certificate path that `wamn-ctl invite` uses.
-The control host never holds the Resend key or a token-minting role.
+The control host never holds the Resend key or a role that issues tokens.
 
 ### Org operations
 
@@ -846,6 +847,8 @@ An invitation with no effective role is valid. After enrollment the person sees:
 > **No access has been granted.**
 
 `wamn-ctl invite` accepts the same logical input and follows the same principal and enrollment rules.
+It writes the membership and grants as its sibling `grant-project-env-membership` does: with `--system-database-url`, as `wamn_system`, stamped `wamn:provisioning`.
+The operator path is provisioning, and the UI path is the `control` login as the session user.
 
 ### `person.deactivate`
 
@@ -1536,5 +1539,5 @@ New-project grant materialization and deterministic empty-environment copy from 
 ## 9. Questions for the owner
 
 1. Issue 4. How does an org-level write reach a project database? `org_admin.grant`, `org_admin.revoke` and `person.deactivate` must change `app_system.users` and `app_system.user_roles` in each environment of the org. The control serving root holds no project database (§4.2), and the control host holds no `wamn_administration` credential. This is a credential boundary, so the issue 4 spec answers it first.
-2. Issue 3. Which credential does `wamn-ctl invite` use for the membership and grants it writes? Its sibling `wamn-ctl grant-project-env-membership` takes `--system-database-url` and writes as `wamn_system`, stamped `wamn:provisioning`.
-3. Issue 3. Does the shell message "No access has been granted." land in issue 3 or with the web work of issue 6? Identity already returns an empty environment list for such a person.
+2. Issue 3, answered 2026-10-01. `wamn-ctl invite` writes as its sibling does: `--system-database-url`, as `wamn_system`, stamped `wamn:provisioning`.
+3. Issue 3, answered 2026-10-01. The shell text "No access has been granted." lands in issue 6. The exit of issue 3 stays an invitation with no access, whose login lists no environment.
