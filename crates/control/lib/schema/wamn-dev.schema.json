@@ -2,6 +2,44 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "additionalProperties": false,
   "definitions": {
+    "CdcReader": {
+      "additionalProperties": false,
+      "description": "The CDC reader the loop runs beside the host: the cluster's binary with the cluster's registration, credentials and broker identity.",
+      "properties": {
+        "binary": {
+          "description": "The built `wamn-cdc-reader`.",
+          "type": "string"
+        },
+        "cdc_sql_file": {
+          "description": "The CDC SQL of `enable-cdc-project-env`, applied to every new target.",
+          "type": "string"
+        },
+        "cdc_url": {
+          "description": "The replication credential, the `url` of the rendered CDC Secret.",
+          "type": "string"
+        },
+        "nats_password_file": {
+          "type": "string"
+        },
+        "nats_username": {
+          "description": "The event-broker credential that publishes the change events.",
+          "type": "string"
+        },
+        "system_database_url": {
+          "description": "The registry-reader generation that reads the registration.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "binary",
+        "cdc_sql_file",
+        "cdc_url",
+        "nats_password_file",
+        "nats_username",
+        "system_database_url"
+      ],
+      "type": "object"
+    },
     "LocalArtifacts": {
       "additionalProperties": false,
       "description": "Explicit local candidate files owned by one disposable development session.",
@@ -54,6 +92,18 @@
     },
     "catalog": {
       "type": "string"
+    },
+    "cdc_reader": {
+      "anyOf": [
+        {
+          "$ref": "#/definitions/CdcReader"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "The CDC reader that `wamn dev up` enabled. Absent means no reader runs."
     },
     "credentials_file": {
       "default": null,

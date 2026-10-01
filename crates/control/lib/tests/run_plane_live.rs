@@ -621,14 +621,14 @@ async fn environment_policy_row_security_live() {
 }
 
 #[tokio::test]
-async fn registry_durability_schema_ensure_live() {
+async fn registry_durability_column_migration_live() {
     let url = locked_database::database(wamn_test_postgres::database);
     let system_su = connect(&url).await;
     let database = project_env_database_name(CLI_ORG, CLI_PROJECT, CLI_ENV, CLI_INSTANCE);
     recreate_database(&system_su, &database).await;
     let target_url = database_url(&url, &database);
     let target_su = connect(&target_url).await;
-    registry_durability_schema_ensure_leg(&target_su, &system_su, &url, &target_url).await;
+    registry_durability_column_migration_leg(&target_su, &system_su, &url, &target_url).await;
     drop(target_su);
     drop_database(&system_su, &database).await;
 }
@@ -1474,10 +1474,12 @@ async fn registry_env_policy_catalog_snapshot(su: &Client) -> String {
     .get(0)
 }
 
-/// Missing-column mutant for the shared system-registry schema ensure. The
-/// real reconcile consumer must upgrade before it reads, and a second run must
-/// leave the exact column + CHECK catalog unchanged.
-async fn registry_durability_schema_ensure_leg(
+/// Missing-column mutant for the system migration
+/// `0004_env_policy_durability.sql` (`wamn-rjtf`). Reconcile only reads the
+/// registry: it refuses a registry without the column and never adds it. The
+/// migration adds it, and a second apply leaves the exact column + CHECK
+/// catalog unchanged.
+async fn registry_durability_column_migration_leg(
     target_su: &Client,
     system_su: &Client,
     system_url: &str,
@@ -1545,13 +1547,35 @@ async fn registry_durability_schema_ensure_leg(
 
     reconcile_run_plane::reconcile_run_plane(args(false))
         .await
-        .expect("reconcile upgrades the system env-policy schema");
+        .expect_err("reconcile refuses a registry without the durability column");
+    assert_eq!(
+        registry_env_policy_catalog_snapshot(system_su).await,
+        before_dry_run,
+        "reconcile must not change the registry schema"
+    );
+
+    let migration = wamn_control_provision::schema_migrations::SYSTEM_MIGRATIONS
+        .iter()
+        .find(|migration| {
+            migration
+                .relative_path
+                .ends_with("0004_env_policy_durability.sql")
+        })
+        .expect("the durability migration is listed");
+    let apply = format!("SET ROLE wamn_system; {} RESET ROLE", migration.sql);
+    system_su
+        .batch_execute(&apply)
+        .await
+        .expect("apply the durability migration");
     let first = registry_durability_schema_snapshot(system_su).await;
     assert!(first.contains("\"type\": \"text\""), "{first}");
     assert!(first.contains("\"not-null\": true"), "{first}");
     assert!(first.contains("'standard'::text"), "{first}");
     assert!(first.contains("'durable'::text"), "{first}");
 
+    reconcile_run_plane::reconcile_run_plane(args(false))
+        .await
+        .expect("reconcile reads the migrated registry");
     let projected_row = target_su
         .query_one(
             &format!(
@@ -1565,9 +1589,10 @@ async fn registry_durability_schema_ensure_leg(
     let projected = (projected_row.get(0), projected_row.get(1));
     assert_eq!(projected, ("dev".to_string(), "standard".to_string()));
 
-    reconcile_run_plane::reconcile_run_plane(args(true))
+    system_su
+        .batch_execute(&apply)
         .await
-        .expect("second registry schema ensure is idempotent");
+        .expect("apply the durability migration a second time");
     assert_eq!(registry_durability_schema_snapshot(system_su).await, first);
 }
 

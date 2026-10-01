@@ -78,7 +78,7 @@ spec:
           interfaces: [routing]
         - namespace: wamn
           package: router-delivery
-          version: "0.2.0"
+          version: "0.3.0"
           interfaces: [delivery]
       service:
         image: registry.wamn-system.svc.cluster.local:5000/wamn/materializer:dev

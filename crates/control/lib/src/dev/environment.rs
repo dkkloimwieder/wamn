@@ -62,6 +62,8 @@ pub struct DevEnvironmentInputs {
     pub package_sources: Vec<PathBuf>,
     /// The host credentials file in the private root, written by `wamn dev up`.
     pub credentials_file: Option<PathBuf>,
+    /// The CDC reader that `wamn dev up` enabled.
+    pub cdc_reader: Option<super::config::CdcReader>,
 }
 
 /// Everything the strict `wamn dev` configuration is written from.
@@ -960,6 +962,9 @@ pub fn write_dev_config(
     config["local_artifacts"] = serde_json::to_value(&inputs.local_artifacts)?;
     if let Some(path) = &inputs.credentials_file {
         config["credentials_file"] = serde_json::to_value(path)?;
+    }
+    if let Some(reader) = &inputs.cdc_reader {
+        config["cdc_reader"] = serde_json::to_value(reader)?;
     }
     if root.join("identity-trust.json").exists() {
         config["session_identity"] = read_json(&root.join("identity-trust.json"))?;

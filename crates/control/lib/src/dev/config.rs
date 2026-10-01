@@ -65,6 +65,7 @@ const RUNNER: &str = "runner";
 const HOST_BINARY: &str = "host_binary";
 const WASMTIME_CACHE_DIR: &str = "wasmtime_cache_dir";
 const CREDENTIALS_FILE: &str = "credentials_file";
+const CDC_READER: &str = "cdc_reader";
 const PACKAGE_MANIFEST_FILE: &str = "wamn.json";
 
 pub(super) const POSTGRES_SYSTEM_DATABASES: [&str; 3] = ["postgres", "template0", "template1"];
@@ -78,6 +79,38 @@ pub struct LocalArtifacts {
     pub flow_http_component: PathBuf,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub bindings: Option<PathBuf>,
+}
+
+/// The CDC reader the loop runs beside the host: the cluster's binary with the
+/// cluster's registration, credentials and broker identity.
+#[derive(Clone, Deserialize, serde::Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct CdcReader {
+    /// The built `wamn-cdc-reader`.
+    pub binary: PathBuf,
+    /// The registry-reader generation that reads the registration.
+    pub system_database_url: String,
+    /// The replication credential, the `url` of the rendered CDC Secret.
+    pub cdc_url: String,
+    /// The event-broker credential that publishes the change events.
+    pub nats_username: String,
+    pub nats_password_file: PathBuf,
+    /// The CDC SQL of `enable-cdc-project-env`, applied to every new target.
+    pub cdc_sql_file: PathBuf,
+}
+
+impl fmt::Debug for CdcReader {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("CdcReader")
+            .field("binary", &self.binary)
+            .field("system_database_url", &"[REDACTED]")
+            .field("cdc_url", &"[REDACTED]")
+            .field("nats_username", &self.nats_username)
+            .field("nats_password_file", &self.nats_password_file)
+            .field("cdc_sql_file", &self.cdc_sql_file)
+            .finish()
+    }
 }
 
 /// Public trust for the identity process owned by the development environment.
@@ -139,6 +172,9 @@ struct DevConfigDocument {
     #[serde(default)]
     #[schemars(with = "String")]
     credentials_file: Option<PathBuf>,
+    /// The CDC reader that `wamn dev up` enabled. Absent means no reader runs.
+    #[serde(default)]
+    cdc_reader: Option<CdcReader>,
 }
 
 /// Stable category of a development configuration refusal.
@@ -556,6 +592,7 @@ pub struct DevConfig {
     host_binary: PathBuf,
     wasmtime_cache_dir: PathBuf,
     credentials_file: Option<PathBuf>,
+    cdc_reader: Option<CdcReader>,
     probes: Box<[ReachabilityProbe]>,
 }
 
@@ -622,6 +659,7 @@ impl fmt::Debug for DevConfig {
             .field(HOST_BINARY, &self.host_binary)
             .field(WASMTIME_CACHE_DIR, &self.wasmtime_cache_dir)
             .field(CREDENTIALS_FILE, &self.credentials_file)
+            .field(CDC_READER, &self.cdc_reader)
             .finish_non_exhaustive()
     }
 }
@@ -808,6 +846,11 @@ impl DevConfig {
     pub fn credentials_file(&self) -> Option<&Path> {
         self.credentials_file.as_deref()
     }
+
+    /// The CDC reader the loop starts after each activation, when enabled.
+    pub const fn cdc_reader(&self) -> Option<&CdcReader> {
+        self.cdc_reader.as_ref()
+    }
 }
 
 /// Language-neutral JSON Schema generated from the strict `dev.json` input type.
@@ -889,6 +932,7 @@ pub fn parse_config(bytes: &[u8]) -> Result<DevConfig, DevConfigError> {
         host_binary,
         wasmtime_cache_dir,
         credentials_file,
+        cdc_reader,
     } = input;
 
     let target_database_url = nonempty_string(target_database_url, TARGET_DATABASE_URL)?;
@@ -1012,6 +1056,28 @@ pub fn parse_config(bytes: &[u8]) -> Result<DevConfig, DevConfigError> {
             CREDENTIALS_FILE,
             "the credentials file path must be absolute",
         ));
+    }
+    if let Some(reader) = &cdc_reader {
+        let paths = [
+            &reader.binary,
+            &reader.nats_password_file,
+            &reader.cdc_sql_file,
+        ];
+        if paths.iter().any(|path| !path.is_absolute())
+            || [
+                &reader.system_database_url,
+                &reader.cdc_url,
+                &reader.nats_username,
+            ]
+            .iter()
+            .any(|value| value.is_empty())
+        {
+            return Err(DevConfigError::new(
+                DevConfigErrorType::InvalidValue,
+                CDC_READER,
+                "the CDC reader needs absolute paths and nonempty URLs and username",
+            ));
+        }
     }
 
     validate_route_host(&route_host)?;
@@ -1141,6 +1207,7 @@ pub fn parse_config(bytes: &[u8]) -> Result<DevConfig, DevConfigError> {
         host_binary,
         wasmtime_cache_dir,
         credentials_file,
+        cdc_reader,
         probes: probes.into_boxed_slice(),
     })
 }
@@ -1329,6 +1396,16 @@ fn validate_config_document_shape(
                     DevConfigErrorType::InvalidValue,
                     key.as_str(),
                     "session identity requires issuer, ca, and instance_suffix",
+                )
+            })?;
+            continue;
+        }
+        if key == CDC_READER {
+            serde_json::from_value::<CdcReader>(value.clone()).map_err(|_| {
+                DevConfigError::new(
+                    DevConfigErrorType::InvalidValue,
+                    key.as_str(),
+                    "the CDC reader requires exactly its declared fields",
                 )
             })?;
             continue;

@@ -859,7 +859,7 @@ fn flow_http_request(request: &DevActivationRequest<'_>) -> v2::WorkloadStartReq
                         name: String::new(),
                     },
                     wit_interface("wamn", "flow-http-routing", "0.1.0", "routing"),
-                    wit_interface("wamn", "router-delivery", "0.2.0", "delivery"),
+                    wit_interface("wamn", "router-delivery", "0.3.0", "delivery"),
                 ],
             }),
             volumes: Vec::new(),

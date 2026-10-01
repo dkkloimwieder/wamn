@@ -88,6 +88,17 @@ pub struct DevUpArgs {
     #[arg(long, env = "WAMN_DEV_ENV_CREDENTIALS_FILE")]
     credentials_file: Option<PathBuf>,
 
+    /// The built `wamn-cdc-reader` the loop runs beside the host.
+    #[arg(long, env = "WAMN_DEV_ENV_CDC_READER_BIN")]
+    cdc_reader_binary: PathBuf,
+
+    /// Event-broker credential the CDC reader publishes change events with.
+    #[arg(long, env = "WAMN_DEV_ENV_EVENT_PUBLISHER_USERNAME")]
+    event_publisher_username: String,
+
+    #[arg(long, env = "WAMN_DEV_ENV_EVENT_PUBLISHER_PASSWORD_FILE")]
+    event_publisher_password_file: PathBuf,
+
     /// The built `wamn-host` the loop supervises.
     #[arg(long, env = "WAMN_DEV_ENV_HOST_BIN")]
     host_binary: PathBuf,
@@ -124,6 +135,9 @@ pub async fn run(args: DevUpArgs) -> anyhow::Result<()> {
         host_binary: args.host_binary,
         packages: args.packages,
         credentials_file: args.credentials_file,
+        cdc_reader_binary: args.cdc_reader_binary,
+        event_publisher_username: args.event_publisher_username,
+        event_publisher_password_file: args.event_publisher_password_file,
     })
     .await?;
 

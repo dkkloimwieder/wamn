@@ -17,7 +17,9 @@ use rustix::process::{Pid, Signal, kill_process_group};
 use serde_json::json;
 use tokio::process::Command;
 use tokio::signal::unix::{SignalKind, signal};
-use wamn_control_provision::events::{advisory_stream_config, source_stream_config};
+use wamn_control_provision::events::{
+    advisory_stream_config, registration_consumers, source_stream_config,
+};
 use wamn_control_registry::Triple;
 use wamn_test_infrastructure::event_broker;
 
@@ -112,6 +114,26 @@ impl Drop for Compose {
             .status();
         let _ = fs::remove_dir_all(&self.directory);
     }
+}
+
+/// The packages that the timing command gives `wamn dev up`.
+const RECEIVING_PACKAGES: [&str; 2] = ["wamn_receiving", "client_acme_receiving"];
+const WMS_PACKAGES: [&str; 1] = ["wamn_wms"];
+
+/// The manifest of each named application under `apps/`.
+fn application_manifests(
+    repository: &Path,
+    packages: &[&str],
+) -> anyhow::Result<Vec<wamn_schema_generator::PackageManifest>> {
+    packages
+        .iter()
+        .map(|package| {
+            let path = repository.join("apps").join(package).join("wamn.json");
+            Ok(wamn_schema_generator::PackageManifest::from_slice(
+                &fs::read(&path).with_context(|| format!("read {}", path.display()))?,
+            )?)
+        })
+        .collect()
 }
 
 fn private(path: &Path, bytes: &[u8]) -> anyhow::Result<()> {
@@ -214,14 +236,20 @@ async fn main() -> anyhow::Result<()> {
     let scope = Triple::new("acme", "receiving", "dev");
     let source = source_stream_config(&scope, 1, Duration::from_secs(120));
     let advisory = advisory_stream_config(&scope, 1);
-    let broker = event_broker::prepare(
-        &directory,
+    // The broker admits the materializer consumers of the packages that the
+    // timing command gives `wamn dev up`, which provisions those consumers.
+    let tenant = wamn_control::dev::environment::TENANT;
+    let packages: &[&str] = if wms {
+        &WMS_PACKAGES
+    } else {
+        &RECEIVING_PACKAGES
+    };
+    let consumers = registration_consumers(
         &scope,
-        "receiving-route-auth",
-        &source,
-        &advisory,
-        &[],
-    )?;
+        tenant,
+        &application_manifests(&repository, packages)?,
+    );
+    let broker = event_broker::prepare(&directory, &scope, tenant, &source, &advisory, &consumers)?;
     private(
         &directory.join("compose.json"),
         &serde_json::to_vec(&json!({"services":{"delivery-events":{
@@ -286,6 +314,18 @@ async fn main() -> anyhow::Result<()> {
         (
             "WAMN_RECEIVING_DEV_HOST_BIN",
             target.join("debug/wamn-host").display().to_string(),
+        ),
+        (
+            "WAMN_DEV_ENV_CDC_READER_BIN",
+            target.join("debug/wamn-cdc-reader").display().to_string(),
+        ),
+        (
+            "WAMN_DEV_ENV_EVENT_PUBLISHER_USERNAME",
+            broker.publisher.username.clone(),
+        ),
+        (
+            "WAMN_DEV_ENV_EVENT_PUBLISHER_PASSWORD_FILE",
+            broker.publisher.password_file.display().to_string(),
         ),
         (
             "WAMN_IDENTITY_BINARY",

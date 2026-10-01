@@ -199,13 +199,14 @@ fn workspace_version_violations(metadata: &Value, problems: &mut Problems) {
     }
 }
 
-fn tracked_wit_files(repository: &Path) -> Result<Vec<PathBuf>, String> {
+fn tracked_files(repository: &Path, patterns: &[&str]) -> Result<Vec<PathBuf>, String> {
     let output = Command::new("git")
         .args(["-C"])
         .arg(repository)
-        .args(["ls-files", "-z", "--", "*.wit"])
+        .args(["ls-files", "-z", "--"])
+        .args(patterns)
         .output()
-        .map_err(|error| format!("list tracked WIT files: {error}"))?;
+        .map_err(|error| format!("list tracked {patterns:?} files: {error}"))?;
     if !output.status.success() {
         return Err(format!(
             "git ls-files failed:\n{}",
@@ -226,8 +227,10 @@ fn tracked_wit_files(repository: &Path) -> Result<Vec<PathBuf>, String> {
 
 /// A WAMN WIT package keeps its own version (`docs/plan/operation-ids.md`),
 /// and the tree holds one version of it. Copies of that version may repeat.
+/// A YAML manifest names a package on separate lines (`namespace: wamn`,
+/// `package:`, `version:`), and those count too (`wamn-3vi3`).
 fn wamn_wit_packages_have_one_version(root: &Path, problems: &mut Problems) {
-    let files = match tracked_wit_files(root) {
+    let files = match tracked_files(root, &["*.wit"]) {
         Ok(files) => files,
         Err(problem) => {
             problems.push(problem);
@@ -270,6 +273,17 @@ fn wamn_wit_packages_have_one_version(root: &Path, problems: &mut Problems) {
     problems.require(!versions.is_empty(), || {
         "WAMN WIT package list must not be empty".to_owned()
     });
+    match tracked_files(root, &["*.yaml", "*.yml"]) {
+        Ok(files) => {
+            for path in files {
+                match std::fs::read_to_string(&path) {
+                    Ok(source) => yaml_wamn_packages(&path, &source, &mut versions),
+                    Err(error) => problems.push(format!("{}: {error}", path.display())),
+                }
+            }
+        }
+        Err(problem) => problems.push(problem),
+    }
     for (package, found) in &versions {
         problems.require(found.len() == 1, || {
             let found = found
@@ -280,6 +294,78 @@ fn wamn_wit_packages_have_one_version(root: &Path, problems: &mut Problems) {
             format!("WAMN WIT package `{package}` has more than one version in the tree: {found}")
         });
     }
+}
+
+/// One YAML list item that names a WIT package: its `namespace`, `package`
+/// and `version` keys sit at one indentation, each on its own line.
+#[derive(Default)]
+struct YamlPackage {
+    column: usize,
+    line: usize,
+    namespace: Option<String>,
+    package: Option<String>,
+    version: Option<String>,
+}
+
+fn yaml_wamn_packages(
+    path: &Path,
+    source: &str,
+    versions: &mut BTreeMap<String, BTreeMap<String, String>>,
+) {
+    let mut record = |item: Option<YamlPackage>| {
+        let Some(item) = item else { return };
+        if let (Some("wamn"), Some(package), Some(version)) =
+            (item.namespace.as_deref(), item.package, item.version)
+        {
+            versions
+                .entry(format!("wamn:{package}"))
+                .or_default()
+                .entry(version)
+                .or_insert_with(|| format!("{}:{}", path.display(), item.line));
+        }
+    };
+    let mut current: Option<YamlPackage> = None;
+    for (line_index, line) in source.lines().enumerate() {
+        let indent = line.len() - line.trim_start().len();
+        let mut text = line.trim_start();
+        if text.is_empty() || text.starts_with('#') {
+            continue;
+        }
+        let mut column = indent;
+        let item_start = text.starts_with("- ");
+        if item_start {
+            text = text[2..].trim_start();
+            column = line.len() - text.len();
+        }
+        if current
+            .as_ref()
+            .is_some_and(|item| column < item.column || (item_start && column == item.column))
+        {
+            record(current.take());
+        }
+        let Some((key, value)) = text.split_once(':') else {
+            continue;
+        };
+        let value = value.trim().trim_matches(|c| c == '"' || c == '\'');
+        if !matches!(key, "namespace" | "package" | "version") {
+            continue;
+        }
+        let item = current.get_or_insert_with(|| YamlPackage {
+            column,
+            line: line_index + 1,
+            ..YamlPackage::default()
+        });
+        if item.column != column {
+            continue;
+        }
+        let slot = match key {
+            "namespace" => &mut item.namespace,
+            "package" => &mut item.package,
+            _ => &mut item.version,
+        };
+        *slot = Some(value.to_owned());
+    }
+    record(current);
 }
 
 fn governed_literal_violations(repository: &Path, problems: &mut Problems) {

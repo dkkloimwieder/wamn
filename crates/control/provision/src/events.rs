@@ -53,6 +53,61 @@ pub fn advisory_stream_config(scope: &Triple, replicas: usize) -> stream::Config
     }
 }
 
+/// The materializer consumers of the event registrations that the package
+/// manifests declare: one per handler and per workflow registration. The
+/// cluster files and the development loop both derive them here.
+pub fn registration_consumers(
+    scope: &Triple,
+    tenant: &str,
+    manifests: &[wamn_schema_generator::PackageManifest],
+) -> Vec<pull::Config> {
+    let sanitize = |value: &str| {
+        value
+            .chars()
+            .map(|character| {
+                if character.is_ascii_alphanumeric() || matches!(character, '_' | '-') {
+                    character
+                } else {
+                    '_'
+                }
+            })
+            .collect::<String>()
+    };
+    let mut consumers = Vec::new();
+    for manifest in manifests {
+        let handlers = manifest
+            .custom_operations
+            .iter()
+            .filter_map(|(name, operation)| Some((name, operation.registration.as_ref()?)));
+        let workflows = manifest
+            .workflows
+            .iter()
+            .map(|(name, workflow)| (name, &workflow.registration));
+        for (name, registration) in handlers.chain(workflows) {
+            let durable = format!(
+                "mat_{}_{}_{}",
+                sanitize(tenant),
+                sanitize(&manifest.package.id),
+                sanitize(name)
+            );
+            let filter = format!(
+                "evt.{}.{}.{}.{}.>",
+                scope.org,
+                scope.project,
+                scope.env.as_str(),
+                wamn_event_wire::subject_token(&registration.entity)
+            );
+            consumers.push(materializer_consumer_config(
+                &durable,
+                &filter,
+                Duration::from_secs(30),
+                5,
+            ));
+        }
+    }
+    consumers
+}
+
 /// Declare the existing bounded materializer delivery policy.
 pub fn materializer_consumer_config(
     durable: &str,
