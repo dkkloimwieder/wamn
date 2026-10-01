@@ -135,6 +135,7 @@ async fn provision(work: &Path, admin_url: &str, system_url: &str) -> String {
         template: wamn_control_registry::Template::trials(),
         pool: CLUSTER.into(),
         cluster_namespace: "platform".into(),
+        owner_email: None,
         system_database_url: Some(system_url.into()),
     })
     .await

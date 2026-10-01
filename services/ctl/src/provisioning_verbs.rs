@@ -1111,6 +1111,13 @@ pub struct ProvisionOrgArgs {
     #[arg(long, env = "WAMN_SYSTEM_ADMIN_URL")]
     pub system_database_url: Option<String>,
 
+    /// The email of an existing human principal who owns the org. The run
+    /// writes that person's active org membership and `org-admin` row. It is
+    /// required with `--system-database-url` and refused without it, because
+    /// a render-only run cannot look the email up or write a row.
+    #[arg(long)]
+    pub owner_email: Option<String>,
+
     /// Namespace of the CNPG `Cluster`. Everything that lives beside it (the
     /// `Database`, the `ObjectStore`, the `ScheduledBackup`) shares it.
     #[arg(long, env = "WAMN_CLUSTER_NAMESPACE", default_value = "wamn-system")]
@@ -1162,6 +1169,14 @@ pub async fn provision_org(args: ProvisionOrgArgs) -> anyhow::Result<()> {
         args.credential.action.is_none() || args.system_database_url.is_some(),
         "an org credential action requires --system-database-url"
     );
+    anyhow::ensure!(
+        args.owner_email.is_none() || args.system_database_url.is_some(),
+        "--owner-email needs --system-database-url"
+    );
+    anyhow::ensure!(
+        args.owner_email.is_some() || args.system_database_url.is_none(),
+        "--system-database-url needs --owner-email"
+    );
     let system_database_url = args.system_database_url.clone();
     let provisioned = provision_org::provision_org(ProvisionOrgRequest {
         org: args.org,
@@ -1169,6 +1184,7 @@ pub async fn provision_org(args: ProvisionOrgArgs) -> anyhow::Result<()> {
         pool: args.pool,
         system_database_url: args.system_database_url,
         cluster_namespace: args.cluster_namespace,
+        owner_email: args.owner_email,
     })
     .await?;
     print_provisioned_org(&provisioned);

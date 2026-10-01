@@ -332,6 +332,7 @@ async fn delete_project_env_frees_the_triple_for_a_new_instance() {
         template: wamn_control_registry::Template::trials(),
         pool: CLUSTER.into(),
         cluster_namespace: "platform".into(),
+        owner_email: None,
         system_database_url: Some(system_url.clone()),
     })
     .await

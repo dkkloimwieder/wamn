@@ -77,6 +77,7 @@ pub(super) async fn run(resources: &Resources) -> anyhow::Result<()> {
         pool: "rc-pg".into(),
         system_database_url: Some(system_url.clone()),
         cluster_namespace: "wamn-system".into(),
+        owner_email: None,
     })
     .await?;
     save(

@@ -15,7 +15,9 @@
 //!    given): the placement row (idempotent upsert) plus the template's policy
 //!    rows — **insert-if-absent**, so re-provisioning keeps the org's per-env
 //!    customizations and a richer template only adds missing envs — in one
-//!    transaction, as the `wamn_system` owner;
+//!    transaction, as the `wamn_system` owner. With an owner email, the same
+//!    transaction writes that person's active org membership and `org-admin`
+//!    row, stamped `wamn:provisioning` (docs/plan/platform-ui.md §4.4);
 //! 3. for a dedicated org, renders one CNPG `Cluster` CR per distinct
 //!    recovery-domain owner across the org's (post-stamp) policies
 //!    ([`wamn_control_provision::org`]), sized by each owner env's policy, and emits
@@ -44,6 +46,7 @@ use tokio_postgres::NoTls;
 
 use crate::env_policies::read_env_policies;
 use wamn_control_provision::org::OrgClusters;
+use wamn_control_provision::{PlatformComponent, bind_platform_principal_sql};
 use wamn_control_registry::{EnvPolicy, Org, OrgEnvPolicy, Registry, SCHEMA_VERSION, Template};
 
 /// Inputs that name one org, the preset to stamp it from, and where to record it.
@@ -67,6 +70,12 @@ pub struct ProvisionOrgRequest {
 
     /// Namespace of the rendered `Cluster` CRs and of the backup CRs beside them.
     pub cluster_namespace: String,
+
+    /// The email of an existing human principal who owns the org: the run
+    /// writes that person's active org membership and `org-admin` row. It
+    /// needs `system_database_url`. A fixture that creates the org before any
+    /// person exists passes `None`.
+    pub owner_email: Option<String>,
 }
 
 /// What one org provisioning run recorded and rendered.
@@ -104,6 +113,10 @@ pub async fn provision_org(request: ProvisionOrgRequest) -> anyhow::Result<Provi
     };
     reg.validate()
         .map_err(|issues| anyhow::anyhow!("invalid org: {}", fmt_issues(&issues)))?;
+    anyhow::ensure!(
+        request.owner_email.is_none() || request.system_database_url.is_some(),
+        "--owner-email needs --system-database-url"
+    );
 
     // Connect to the system DB once (if given) — used to record the org + stamp
     // its policies, then read the org's (possibly customized) set back for
@@ -123,7 +136,7 @@ pub async fn provision_org(request: ProvisionOrgRequest) -> anyhow::Result<Provi
     // absent), missing template envs added.
     let (policies, stamped_policies) = match &client {
         Some((c, _)) => {
-            record_org(c, &org, &stamped).await?;
+            record_org(c, &org, &stamped, request.owner_email.as_deref()).await?;
             (read_env_policies(c, &org.id).await?, Some(stamped.len()))
         }
         None => (template.policies.clone(), None),
@@ -173,18 +186,27 @@ pub async fn provision_org(request: ProvisionOrgRequest) -> anyhow::Result<Provi
 /// (insert-if-absent) in ONE transaction, as the `wamn_system` owner (the
 /// registry owner role — the wamn-q3n.3 apply pattern). A crash mid-stamp rolls
 /// the whole record back; re-running is idempotent (the shared-cluster
-/// guardrail: refresh placement, never clobber a customized policy).
+/// guardrail: refresh placement, never clobber a customized policy). The
+/// owner's rows, when an owner is named, are written in the same transaction.
 async fn record_org(
     client: &tokio_postgres::Client,
     org: &Org,
     stamped: &[OrgEnvPolicy],
+    owner_email: Option<&str>,
 ) -> anyhow::Result<()> {
     client
         .batch_execute("SET ROLE wamn_system")
         .await
         .context("SET ROLE wamn_system")?;
     client.batch_execute("BEGIN").await.context("BEGIN")?;
-    let result = record_org_rows(client, org, stamped).await;
+    let result = async {
+        record_org_rows(client, org, stamped).await?;
+        match owner_email {
+            Some(email) => record_owner_rows(client, &org.id, email).await,
+            None => Ok(()),
+        }
+    }
+    .await;
     match result {
         Ok(()) => client.batch_execute("COMMIT").await.context("COMMIT")?,
         Err(e) => {
@@ -236,6 +258,51 @@ async fn record_org_rows(
             .await
             .with_context(|| format!("stamp env policy {name:?}"))?;
     }
+    Ok(())
+}
+
+/// The human principal an owner email names.
+const OWNER_PRINCIPAL_SQL: &str =
+    "SELECT id::text FROM identity.principals WHERE type = 'human' AND email = $1";
+
+/// The owner's active org membership. A re-run makes an inactive owner active.
+const OWNER_MEMBERSHIP_SQL: &str = "INSERT INTO identity.org_memberships \
+     (principal_id, org, status) VALUES ($1::text::uuid, $2, 'active') \
+     ON CONFLICT (principal_id, org) DO UPDATE SET status = 'active' \
+     WHERE identity.org_memberships.status <> 'active'";
+
+/// The owner's `org-admin` row.
+const OWNER_ORG_ADMIN_SQL: &str = "INSERT INTO identity.org_roles (principal_id, org, role) \
+     VALUES ($1::text::uuid, $2, 'org-admin') ON CONFLICT DO NOTHING";
+
+/// Write the owner's active org membership and `org-admin` row, stamped
+/// `wamn:provisioning`, inside the caller's transaction. An email that names
+/// no human principal is refused.
+async fn record_owner_rows(
+    client: &tokio_postgres::Client,
+    org: &str,
+    email: &str,
+) -> anyhow::Result<()> {
+    client
+        .batch_execute(&bind_platform_principal_sql(
+            PlatformComponent::Provisioning,
+        ))
+        .await
+        .context("bind wamn:provisioning as the actor")?;
+    let owner: String = client
+        .query_opt(OWNER_PRINCIPAL_SQL, &[&email])
+        .await
+        .context("look up the owner email")?
+        .with_context(|| format!("--owner-email {email:?} names no human principal"))?
+        .get(0);
+    client
+        .execute(OWNER_MEMBERSHIP_SQL, &[&owner, &org])
+        .await
+        .context("write the owner's org membership")?;
+    client
+        .execute(OWNER_ORG_ADMIN_SQL, &[&owner, &org])
+        .await
+        .context("write the owner's org-admin row")?;
     Ok(())
 }
 

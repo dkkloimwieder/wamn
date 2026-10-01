@@ -466,6 +466,7 @@ pub async fn provision_journey_control(system_url: &str, admin: &Client) -> anyh
         pool: "route-auth-pg18".to_owned(),
         system_database_url: Some(system_url.to_owned()),
         cluster_namespace: "wamn-system".to_owned(),
+        owner_email: None,
     })
     .await
     .context("stamp the journey org and environment policies through provision-org")
