@@ -39,6 +39,37 @@ A successful read also sends `Vary: Authorization, Cookie`.
 Every other response sends `Cache-Control: no-store`: a write, any status other than 200, and any request that carries `x-wamn-csrf`.
 [`read_cache_control`](../../crates/platform/engine/src/flow_http_routing.rs) owns the values.
 
+## Host-run routes
+
+A host-run route is a route that the host answers with a fixed handler instead of a component (docs/plan/platform-ui.md §4.2).
+It keeps the route table, the credentials, the CSRF treatment and the operation grant of any route.
+The fixed route sets live in [`wamn_catalog::host_route`](../../crates/catalog/model/src/host_route.rs) and are built with the platform.
+A serving manifest names the sets it serves in `host-routes`, and it leaves the member out when the list is empty.
+A host route carries its operation reference and no package version.
+
+There are two sets.
+Release mint writes `wamn_control:application` into every application release.
+Its routes admit a PAT or a session and read the project environment database of the release.
+The control serving root serves only `wamn_control:control`, whose routes admit a browser session only.
+The path of a host route is `/wamn_control/<interface>/<operation>`, and mint refuses an authored attachment under `/wamn_control/`.
+
+[`HostRouteDelivery`](../../crates/execution/host/src/host_route.rs) serves the host routes of the loaded release.
+It passes every other delivery to the router delivery bridge.
+The caller must match the attachment, and an `admin`-authority route checks its operation grant as any route does.
+
+| Route | Answer |
+| --- | --- |
+| `wamn_control:application/permission.mine` | `admin`, and the stable references the caller holds. An `admin` holds every operation the release serves. |
+| `wamn_control:control/control.mine` | `org_admin`, and the projects of the org where the caller holds `project-admin`. |
+
+`permission.mine` reads under the administration credential, in a host-owned READ COMMITTED transaction that binds the caller and the route reference.
+`control.mine` reads `wamn_system` through the `control` login of the org.
+`org_admin` is `false` until the org roles exist.
+
+The control serving root has no package, component, route, database or guest connection.
+`wamn-host --control` serves it for one org.
+A control host holds no project credential and no application release, and an application host never holds the `control` login.
+
 A read also carries an ETag, which the host derives and compares.
 A `get` has a strong ETag from the manifest digest of the release and the revision field of the record that it returns.
 The generator writes the revision column of the model into each `get` contract. The model's operations name that one column as `revision_field`.
@@ -332,6 +363,15 @@ Failed renewal or login expiry requires explicit login and submission. Quitting 
 [Terminal login](../operations/development-loop.md#receiving-password-login) describes configuration and prompts.
 External federation and unbuilt identity design remain in the [identity plan](../plan/identity.md).
 
+### Control sessions
+
+Every org in `registry.orgs` has the control audience `urn:wamn:control:<org>`, and nothing configures it.
+Discovery offers it to a person who holds `project-admin` in a project of that org.
+A control session comes from a password login only, because the PAT exchange refuses a control audience.
+It carries no roles.
+For each request, the control host reads the password login of the session, the active principal and its `project-admin` roles in the org.
+A revoked role therefore refuses the next request and the next renewal with 401.
+
 ### Consistent session access
 
 Sessions and PATs use the same operation permission checks, including the folded grant of an entry.
@@ -452,6 +492,7 @@ That transaction consumes outstanding email secrets and revokes renewal families
 `POST /password/environments` accepts only `email` and `password`.
 After password authentication, it returns the configured environments that pass those same access checks.
 Its response is `{"environments":[{"aud":"...","org":"...","project":"...","env":"..."}]}`.
+A control entry carries only `aud` and `org`.
 The list is ordered by audience and can be empty.
 
 Discovery returns no session, PAT, application address, or database credential.
