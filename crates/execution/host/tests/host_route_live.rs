@@ -1,4 +1,4 @@
-//! The host-run route `wamn_control:application/permission.mine` through a
+//! The host-run route `wamn-control:permission/mine@0.1.0` through a
 //! fixture serving release (docs/plan/platform-ui.md §4.2, wamn-a40n.2).
 //!
 //! The test starts its own PostgreSQL 18 server. A real session token is
@@ -201,7 +201,7 @@ fn load_release() -> anyhow::Result<Arc<LoadedRelease>> {
 fn permission_mine() -> String {
     HostRouteSet::Application
         .attachments()
-        .find(|(_, attachment)| attachment.reference == "wamn_control:application/permission.mine")
+        .find(|(_, attachment)| attachment.reference == "wamn-control:permission/mine")
         .map(|(id, _)| id.to_owned())
         .expect("the application set serves permission.mine")
 }
@@ -344,7 +344,7 @@ async fn permission_mine_answers_the_held_grants_of_the_session_caller() -> anyh
         json!({"admin": true, "permissions": [
             "session-test:purchase/read",
             "session-test:purchase/write",
-            "wamn_control:application/permission.mine",
+            "wamn-control:permission/mine",
         ]})
     );
 
@@ -404,7 +404,7 @@ async fn permission_mine_answers_the_held_grants_of_the_session_caller() -> anyh
     Ok(())
 }
 
-/// `wamn_control:control/control.mine` on a control host: the control
+/// `wamn-control:control/mine@0.1.0` on a control host: the control
 /// serving root, the control route authenticator and the org's real
 /// `control` login. Only a browser session of a current `project-admin` is
 /// admitted, and a revoked role refuses the next request.
@@ -471,7 +471,7 @@ async fn control_mine_admits_only_a_current_project_admin_session() -> anyhow::R
     );
     let route = HostRouteSet::Control
         .attachments()
-        .find(|(_, attachment)| attachment.reference == "wamn_control:control/control.mine")
+        .find(|(_, attachment)| attachment.reference == "wamn-control:control/mine")
         .map(|(id, _)| id.to_owned())
         .expect("the control set serves control.mine");
     let mut session = claims();

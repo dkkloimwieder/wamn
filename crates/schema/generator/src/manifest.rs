@@ -2247,12 +2247,12 @@ pub fn canonical_operation_identity(
     let (module, operation) = local_operation
         .split_once('.')
         .expect("validated operation identity has one separator");
-    Ok(format!(
-        "{}{}/{}@{}",
-        canonical_operation_prefix(package)?,
-        module.replace('_', "-"),
-        operation.replace('_', "-"),
-        package.version,
+    validate_package_identity(package)?;
+    Ok(wamn_catalog::operation_token(
+        &package.id,
+        &package.version,
+        module,
+        operation,
     ))
 }
 

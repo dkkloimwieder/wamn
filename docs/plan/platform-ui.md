@@ -617,6 +617,8 @@ Only execution changes.
 
 The router dispatches the operation to a fixed host handler instead of invoking a guest component.
 
+A host-run write stamps the route's sealed operation id, `wamn-control:<noun>/<verb>@<version>`.
+
 The implementation uses the host transaction model present on the `main` Issue 1 starts from; it does not recreate a separate administration transaction path.
 
 ### Application host routes
@@ -954,7 +956,7 @@ Ordinary environment membership and authored application roles remain.
 One fixed platform contract is served under every application audience:
 
 ```text
-wamn_control:application/...
+wamn-control:<noun>/<verb>@<version>
 ```
 
 It is one contract for the whole effective application, not one per package.
@@ -962,20 +964,20 @@ It is one contract for the whole effective application, not one per package.
 Host-run operations:
 
 ```text
-user.list
+wamn-control:user/list@<version>
 
-role.list
-role.create
-role.delete
+wamn-control:role/list@<version>
+wamn-control:role/create@<version>
+wamn-control:role/delete@<version>
 
-permission.list
-permission.grant
-permission.revoke
+wamn-control:permission/list@<version>
+wamn-control:permission/grant@<version>
+wamn-control:permission/revoke@<version>
 
-user_role.grant
-user_role.revoke
+wamn-control:user-role/grant@<version>
+wamn-control:user-role/revoke@<version>
 
-permission.mine
+wamn-control:permission/mine@<version>
 ```
 
 All except `permission.mine` require `admin`.

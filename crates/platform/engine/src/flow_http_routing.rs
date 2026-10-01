@@ -1435,11 +1435,8 @@ mod tests {
         let (manifest, _) = ServingManifest::from_canonical_bytes(&manifest.canonical_bytes())
             .expect("a manifest with host routes is canonical");
         let served = route_definitions(&manifest, "GET", "any.example.test");
-        assert_eq!(
-            served_ids(&served),
-            ["wamn-control-application-permission-mine"]
-        );
-        assert_eq!(served[0].path, "/wamn_control/application/permission.mine");
+        assert_eq!(served_ids(&served), ["wamn-control-permission-mine-http"]);
+        assert_eq!(served[0].path, "/wamn_control/permission/mine");
         assert_eq!(
             served[0].cache_control.as_deref(),
             Some("private, no-cache"),
@@ -1450,7 +1447,7 @@ mod tests {
 
         let root = LoadedRelease::control_root();
         let served = route_definitions(root.manifest(), "GET", "any.example.test");
-        assert_eq!(served_ids(&served), ["wamn-control-control-control-mine"]);
+        assert_eq!(served_ids(&served), ["wamn-control-control-mine-http"]);
         assert!(
             !requires_pat_route_authentication(root.manifest()),
             "a control route admits no PAT"

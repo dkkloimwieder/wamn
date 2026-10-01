@@ -97,7 +97,7 @@ impl HostRouteDelivery {
                         project,
                         &manifest.release.tenant_id,
                         &principal,
-                        &attachment.reference,
+                        &attachment.operation,
                     )
                     .await?;
                 let permissions = if held.admin {

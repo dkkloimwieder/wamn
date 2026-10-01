@@ -3,8 +3,12 @@
 //! A host route has the operation contract, request envelope, result shape,
 //! limits and CSRF treatment of any route, but the host serves it with a
 //! fixed handler instead of a guest component. The platform builds the routes
-//! of each set, so a route carries its operation reference with no package
-//! version. A serving manifest records only which sets it serves.
+//! of each set, and a serving manifest records only which sets it serves.
+//!
+//! The control contract authors its package id, its version and its route
+//! prefixes in `host_route/wamn.json`, as a package does in its `wamn.json`.
+//! Each route derives its operation token, path and attachment id from that
+//! file exactly as a generated package operation does.
 
 use std::collections::BTreeMap;
 use std::sync::LazyLock;
@@ -12,14 +16,47 @@ use std::sync::LazyLock;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
+use crate::route_identity::{operation_token, route_attachment_id, route_path};
 use crate::{AttachmentType, OperationType, PAT_AUTHENTICATION_MODE, SESSION_AUTHENTICATION_MODE};
 
-/// The package of every host route. No application package has this id.
-pub const HOST_ROUTE_PACKAGE: &str = "wamn_control";
+/// The control contract's manifest: the one place its version is authored.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ControlContract {
+    package: ControlPackage,
+    routes: ControlRoutes,
+}
 
-/// The path prefix of every host route. Publish refuses an authored route
-/// under it.
-pub const HOST_ROUTE_PATH_PREFIX: &str = "/wamn_control/";
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ControlPackage {
+    id: String,
+    version: String,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ControlRoutes {
+    path_prefix: String,
+    id_prefix: String,
+}
+
+static CONTRACT: LazyLock<ControlContract> = LazyLock::new(|| {
+    serde_json::from_str(include_str!("host_route/wamn.json"))
+        .expect("the control contract manifest is valid")
+});
+
+/// The package of every host route. No application package has this id.
+pub fn host_route_package() -> &'static str {
+    &CONTRACT.package.id
+}
+
+/// The path prefix of every host route, with its closing `/`. Publish
+/// refuses an authored route under it.
+pub fn host_route_path_prefix() -> &'static str {
+    static PREFIX: LazyLock<String> = LazyLock::new(|| format!("{}/", CONTRACT.routes.path_prefix));
+    &PREFIX
+}
 
 /// One fixed contract of host routes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
@@ -56,7 +93,8 @@ pub enum HostRouteAuthority {
 #[derive(Debug)]
 pub struct HostRoute {
     pub set: HostRouteSet,
-    /// The interface and operation, such as `application/permission.mine`.
+    /// The model and action, such as `permission.mine`, as a package
+    /// operation names them.
     pub operation: &'static str,
     pub type_: OperationType,
     pub authority: HostRouteAuthority,
@@ -66,14 +104,14 @@ pub struct HostRoute {
 const ROUTES: &[HostRoute] = &[
     HostRoute {
         set: HostRouteSet::Application,
-        operation: "application/permission.mine",
+        operation: "permission.mine",
         type_: OperationType::Get,
         authority: HostRouteAuthority::Member,
         handler: HostHandler::PermissionMine,
     },
     HostRoute {
         set: HostRouteSet::Control,
-        operation: "control/control.mine",
+        operation: "control.mine",
         type_: OperationType::Get,
         authority: HostRouteAuthority::Member,
         handler: HostHandler::ControlMine,
@@ -84,7 +122,10 @@ const ROUTES: &[HostRoute] = &[
 #[derive(Debug)]
 pub struct HostAttachment {
     pub route: &'static HostRoute,
-    /// `wamn_control:<interface>/<operation>`, with no package version.
+    /// The sealed operation id, such as `wamn-control:permission/mine@0.1.0`.
+    /// A host-run write stamps it.
+    pub operation: String,
+    /// The operation id without its version, as a stored permission names it.
     pub reference: String,
     pub definition: Value,
     pub auth_policy: Value,
@@ -98,7 +139,7 @@ impl HostAttachment {
     /// The operation an `admin`-only route requires. A member route
     /// requires none.
     pub fn registered_operation(&self) -> Option<&str> {
-        (self.route.authority == HostRouteAuthority::Admin).then_some(self.reference.as_str())
+        (self.route.authority == HostRouteAuthority::Admin).then_some(self.operation.as_str())
     }
 }
 
@@ -106,7 +147,17 @@ static ATTACHMENTS: LazyLock<BTreeMap<String, HostAttachment>> = LazyLock::new(|
     ROUTES
         .iter()
         .map(|route| {
-            let id = format!("wamn-control-{}", route.operation.replace(['/', '.'], "-"));
+            let (model, action) = route
+                .operation
+                .split_once('.')
+                .expect("a host route names its model and action");
+            let id = route_attachment_id(&CONTRACT.routes.id_prefix, model, action);
+            let operation = operation_token(
+                &CONTRACT.package.id,
+                &CONTRACT.package.version,
+                model,
+                action,
+            );
             let method = if route.type_.is_read() { "GET" } else { "POST" };
             let modes = match route.set {
                 HostRouteSet::Application => {
@@ -117,14 +168,19 @@ static ATTACHMENTS: LazyLock<BTreeMap<String, HostAttachment>> = LazyLock::new(|
             };
             let attachment = HostAttachment {
                 route,
-                reference: format!("{HOST_ROUTE_PACKAGE}:{}", route.operation),
+                reference: operation
+                    .rsplit_once('@')
+                    .expect("an operation token carries its version")
+                    .0
+                    .to_owned(),
+                operation,
                 definition: json!({
                     "id": id,
                     "type": "http",
                     "route": {
                         "host": "*",
                         "method": method,
-                        "path": format!("{HOST_ROUTE_PATH_PREFIX}{}", route.operation),
+                        "path": route_path(&CONTRACT.routes.path_prefix, model, action),
                     },
                 }),
                 auth_policy: json!({ "modes": modes }),
@@ -156,18 +212,16 @@ mod tests {
     use super::*;
 
     #[test]
-    fn host_routes_carry_versionless_references_and_their_set_policy() {
+    fn host_routes_derive_their_ids_from_the_control_contract() {
         let application = HostRouteSet::Application
-            .attachment("wamn-control-application-permission-mine")
+            .attachment("wamn-control-permission-mine-http")
             .expect("permission.mine is an application host route");
-        assert_eq!(
-            application.reference,
-            "wamn_control:application/permission.mine"
-        );
+        assert_eq!(application.operation, "wamn-control:permission/mine@0.1.0");
+        assert_eq!(application.reference, "wamn-control:permission/mine");
         assert_eq!(application.registered_operation(), None);
         assert_eq!(
             application.definition["route"]["path"],
-            "/wamn_control/application/permission.mine"
+            "/wamn_control/permission/mine"
         );
         assert_eq!(
             application.auth_policy,
@@ -175,14 +229,17 @@ mod tests {
         );
 
         let control = HostRouteSet::Control
-            .attachment("wamn-control-control-control-mine")
+            .attachment("wamn-control-control-mine-http")
             .expect("control.mine is a control host route");
+        assert_eq!(control.operation, "wamn-control:control/mine@0.1.0");
         assert_eq!(control.auth_policy, json!({"modes": ["session"]}));
         assert!(
             HostRouteSet::Application
-                .attachment("wamn-control-control-control-mine")
+                .attachment("wamn-control-control-mine-http")
                 .is_none(),
             "an application release never serves a control route"
         );
+        assert_eq!(host_route_package(), "wamn_control");
+        assert_eq!(host_route_path_prefix(), "/wamn_control/");
     }
 }

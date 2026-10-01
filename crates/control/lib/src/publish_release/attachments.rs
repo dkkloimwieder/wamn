@@ -338,13 +338,13 @@ pub(super) fn resolve_route_host_overlay(
         })?;
         if normalized
             .path
-            .starts_with(wamn_catalog::HOST_ROUTE_PATH_PREFIX)
+            .starts_with(wamn_catalog::host_route_path_prefix())
         {
             return Err(MintManifestError::new(
                 MintManifestErrorType::Document,
                 format!(
                     "attachment {attachment_id:?} uses the path prefix {:?} of the platform's host routes",
-                    wamn_catalog::HOST_ROUTE_PATH_PREFIX
+                    wamn_catalog::host_route_path_prefix()
                 ),
             ));
         }

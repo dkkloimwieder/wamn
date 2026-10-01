@@ -1,0 +1,10 @@
+{
+  "package": {
+    "id": "wamn_control",
+    "version": "0.1.0"
+  },
+  "routes": {
+    "path_prefix": "/wamn_control",
+    "id_prefix": "wamn-control"
+  }
+}

@@ -211,7 +211,7 @@ impl LoadedRelease {
         let manifest = ServingManifest {
             format_version: wamn_catalog::SERVING_MANIFEST_FORMAT_VERSION,
             release: wamn_catalog::ServingRelease {
-                tenant_id: wamn_catalog::HOST_ROUTE_PACKAGE.to_owned(),
+                tenant_id: wamn_catalog::host_route_package().to_owned(),
                 effective_release_id: wamn_catalog::EffectiveReleaseId::new(1)
                     .expect("one is a release id"),
                 environment: "control".to_owned(),

@@ -45,13 +45,15 @@ A host-run route is a route that the host answers with a fixed handler instead o
 It keeps the route table, the credentials, the CSRF treatment and the operation grant of any route.
 The fixed route sets live in [`wamn_catalog::host_route`](../../crates/catalog/model/src/host_route.rs) and are built with the platform.
 A serving manifest names the sets it serves in `host-routes`, and it leaves the member out when the list is empty.
-A host route carries its operation reference and no package version.
+The control contract authors its package id `wamn_control`, its version and its route prefixes in [`host_route/wamn.json`](../../crates/catalog/model/src/host_route/wamn.json).
+A host route derives its sealed operation id, its path and its attachment id from that file, as generation does for a package operation.
+For example, `permission.mine` is `wamn-control:permission/mine@0.1.0`, at `/wamn_control/permission/mine`, with the attachment id `wamn-control-permission-mine-http`.
 
 There are two sets.
 Release mint writes `wamn_control:application` into every application release.
 Its routes admit a PAT or a session and read the project environment database of the release.
 The control serving root serves only `wamn_control:control`, whose routes admit a browser session only.
-The path of a host route is `/wamn_control/<interface>/<operation>`, and mint refuses an authored attachment under `/wamn_control/`.
+Mint refuses an authored attachment under `/wamn_control/`.
 
 [`HostRouteDelivery`](../../crates/execution/host/src/host_route.rs) serves the host routes of the loaded release.
 It passes every other delivery to the router delivery bridge.
@@ -59,10 +61,11 @@ The caller must match the attachment, and an `admin`-authority route checks its 
 
 | Route | Answer |
 | --- | --- |
-| `wamn_control:application/permission.mine` | `admin`, and the stable references the caller holds. An `admin` holds every operation the release serves. |
-| `wamn_control:control/control.mine` | `org_admin`, and the projects of the org where the caller holds `project-admin`. |
+| `wamn-control:permission/mine@0.1.0` | `admin`, and the stable references the caller holds. An `admin` holds every operation the release serves. |
+| `wamn-control:control/mine@0.1.0` | `org_admin`, and the projects of the org where the caller holds `project-admin`. |
 
-`permission.mine` reads under the administration credential, in a host-owned READ COMMITTED transaction that binds the caller and the route reference.
+`permission.mine` reads under the administration credential, in a host-owned READ COMMITTED transaction that binds the caller and the sealed operation id.
+A host-run write stamps that sealed operation id in its history entries.
 `control.mine` reads `wamn_system` through the `control` login of the org.
 `org_admin` is `false` until the org roles exist.
 

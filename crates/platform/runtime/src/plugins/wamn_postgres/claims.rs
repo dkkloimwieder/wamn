@@ -1922,8 +1922,8 @@ impl WamnPostgres {
     /// The application roles and stored permissions a caller holds, read by
     /// a host route (docs/plan/platform-ui.md §4.2) in a host-owned READ
     /// COMMITTED transaction under the administration credential. The
-    /// transaction binds the caller and the host route's reference as
-    /// `app.user_id` and `app.operation`, as every host route write does.
+    /// transaction binds the caller and the host route's sealed operation id
+    /// as `app.user_id` and `app.operation`, as every host route write does.
     pub async fn held_operation_grants(
         &self,
         project: &str,

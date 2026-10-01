@@ -15,6 +15,7 @@ mod connection;
 pub mod edge_bundle;
 mod host_route;
 mod package;
+mod route_identity;
 mod serving_manifest;
 mod wiring;
 mod wiring_activation;
@@ -40,10 +41,11 @@ pub use connection::{
     CredentialInjection,
 };
 pub use host_route::{
-    HOST_ROUTE_PACKAGE, HOST_ROUTE_PATH_PREFIX, HostAttachment, HostHandler, HostRoute,
-    HostRouteAuthority, HostRouteSet,
+    HostAttachment, HostHandler, HostRoute, HostRouteAuthority, HostRouteSet, host_route_package,
+    host_route_path_prefix,
 };
 pub use package::{EffectiveReleaseId, PackageCoordinate};
+pub use route_identity::{operation_token, route_attachment_id, route_path};
 pub use serving_manifest::{
     AttachmentAuthPolicy, AttachmentRef, AttachmentTarget, CanonicalSpelling,
     INVALID_ATTACHMENT_AUTH_POLICY_REFUSAL, MAX_SERVING_MANIFEST_BYTES, NO_AUTHENTICATION_MODE,

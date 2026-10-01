@@ -692,7 +692,7 @@ mod tests {
         assert!(
             resolve_authorized_host_route(
                 &manifest,
-                SourceRef::Attachment("wamn-control-application-permission-mine"),
+                SourceRef::Attachment("wamn-control-permission-mine-http"),
                 None,
             )
             .is_none(),
@@ -701,7 +701,7 @@ mod tests {
         manifest
             .host_routes
             .insert(wamn_catalog::HostRouteSet::Application);
-        let id = "wamn-control-application-permission-mine";
+        let id = "wamn-control-permission-mine-http";
         let caller = |attachment: &str| {
             AuthenticatedCaller::new(
                 attachment,
@@ -727,10 +727,7 @@ mod tests {
             resolve_authorized_host_route(&manifest, SourceRef::Attachment(id), Some(&caller(id)))
                 .expect("a host route")
                 .expect("a member route admits every authenticated caller");
-        assert_eq!(
-            attachment.reference,
-            "wamn_control:application/permission.mine"
-        );
+        assert_eq!(attachment.reference, "wamn-control:permission/mine");
         assert!(
             resolve_authorized_host_route(&manifest, SourceRef::Attachment("orders-http"), None)
                 .is_none(),

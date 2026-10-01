@@ -40,7 +40,6 @@ pub(super) fn emit_package_publication(
     let mut attachments = BTreeMap::new();
     let mut declarations = BTreeMap::<&str, BTreeMap<String, Value>>::new();
     for (model_name, model) in &manifest.models {
-        let kebab = model_name.replace('_', "-");
         for (action, operation) in &model.operations {
             let action = action.as_str();
             let component = operation
@@ -51,15 +50,11 @@ pub(super) fn emit_package_publication(
             let registered =
                 canonical_operation_identity(package, &format!("{model_name}.{action}"))?;
             let schema = json!({"$ref": format!("{GENERATED_ROUTES}{model_name}/{action}.json")});
-            let id = if id_prefix.is_empty() {
-                format!("{kebab}-{action}-http")
-            } else {
-                format!("{id_prefix}-{kebab}-{action}-http")
-            };
+            let id = wamn_catalog::route_attachment_id(id_prefix, model_name, action);
             let definition = json!({
                 "id": id,
                 "type": "http",
-                "route": {"path": format!("{path_prefix}/{model_name}/{action}")},
+                "route": {"path": wamn_catalog::route_path(path_prefix, model_name, action)},
                 "input-schema": schema,
                 "raw-body-bytes": {"maximum": RAW_BODY_MAXIMUM},
             });
