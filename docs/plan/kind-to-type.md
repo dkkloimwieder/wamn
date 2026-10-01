@@ -548,7 +548,7 @@ Then run the open-run query of the drain once more on each project-env database.
 
 - B2. One run of `upgrade-schema` on wamn_system: `--baseline 1 --confirm`. It records `0001_capture_gap.sql`, which the database holds by hand. It then applies `0002_event_reader_schema.sql` and `0003_kind_to_type.sql` in the same run (§4.3.4, §4.8).
 - B3. One run of `upgrade-schema` on each of the two project-env databases: `--baseline 0 --confirm`. It creates the record table and applies `0001_kind_to_type.sql` in the same run (§4.3.4, §4.8).
-- B4. The new `reconcile-run-plane` for Receiving (`--project receiving --tenant dev`) and for WMS (`--project wms --tenant wms`), twice each. The second run reports no action (§4.3.2, §4.8, `gcp.md:534`).
+- B4. The new `reconcile-run-plane` for Receiving (`--project receiving --tenant dev`) and for WMS (`--project wms --tenant wms`), twice each. The second run reports no action (§4.3.2, §4.8, `gcp.md:534`). Then run `enable-cdc-project-env` once for Receiving and once for WMS, with the arguments of `gcp.md` §3.18 and §5.4. It writes the schema into each `registry.event_readers` row (`0002_event_reader_schema.sql`). A second run is safe since `wamn-fipl`. Apply the role SQL, the CDC SQL and the Secret of each run as `gcp.md` §3.18 does. Then restart the two readers once, so that they read the new Secret: `kubectl -n platform rollout restart deploy/cdc-reader` and `deploy/cdc-reader-wms`, each with its `rollout status` (`gcp.md:1800`). Proof: each reader logs `registration loaded`, the three `preflight` lines and `walsender session open`.
 - B5. One `kubectl annotate` per listed PAT Secret (§4.3.5).
 
 Proof: the check query of §4.3 returns no row in any of the three databases (§4.8).
