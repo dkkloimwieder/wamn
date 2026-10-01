@@ -110,7 +110,7 @@ pub const RELEASE_MANIFEST_MOUNT_PATH: &str = "/etc/wamn/release-manifest";
 /// The manifest ConfigMap's single key and mounted file name.
 pub const RELEASE_MANIFEST_FILE_NAME: &str = "manifest.json";
 
-/// Byte ceiling shared by the manifest mint and mount reader.
+/// Byte ceiling shared by the manifest publish and mount reader.
 pub const MAX_SERVING_MANIFEST_BYTES: usize = 1024 * 1024;
 
 /// The name of the ConfigMap carrying the manifest with this digest.
@@ -1004,7 +1004,7 @@ impl ServingManifest {
     /// Build and validate a manifest from authoritative current-record facts.
     ///
     /// The attachments are the authored ones, and this helper splits them the
-    /// way publish does. This helper is test-only. The production mint
+    /// way publish does. This helper is test-only. The production publish
     /// serializes its projected facts and admits those exact bytes through
     /// [`Self::from_canonical_bytes`].
     #[cfg(feature = "test-util")]

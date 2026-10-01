@@ -114,7 +114,7 @@ fn candidate_graph(wiring_id: &str, component: &str, operation: &str) -> serde_j
 
 /// The exact package version every seeded candidate is gated against.
 const CANDIDATE_PACKAGE_VERSION: &str = "1.0.0";
-/// The active effective release exercised later by publication and release minting.
+/// The active effective release exercised later by publication and release publishing.
 const CANDIDATE_EFFECTIVE_RELEASE_ID: i32 = 1;
 /// The identity the SERVER will derive for one submitted document.
 ///
@@ -721,14 +721,14 @@ async fn stored_wiring(project: &Client) -> Option<(String, u32, String, serde_j
         })
 }
 
-async fn minted_release_snapshot_count(project: &Client) -> i64 {
+async fn published_release_snapshot_count(project: &Client) -> i64 {
     project
         .query_one(
             "SELECT count(*) FROM catalog.release_manifest_snapshots WHERE tenant_id = $1",
             &[&TENANT],
         )
         .await
-        .expect("count minted release snapshots")
+        .expect("count published release snapshots")
         .get(0)
 }
 
@@ -2136,8 +2136,8 @@ async fn management_surface_authenticates_and_attributes_authoring_commands() {
     );
     assert_eq!(stored_wiring_count(&project).await, 0);
 
-    // ---- Publish is act 1: exact wiring append, never release mint ----------
-    assert_eq!(minted_release_snapshot_count(&project).await, 0);
+    // ---- Publish is act 1: exact wiring append, never release publish ----------
+    assert_eq!(published_release_snapshot_count(&project).await, 0);
     let published = post(
         "/authoring",
         Some(alice.token()),
@@ -2175,9 +2175,9 @@ async fn management_surface_authenticates_and_attributes_authoring_commands() {
         ))
     );
     assert_eq!(
-        minted_release_snapshot_count(&project).await,
+        published_release_snapshot_count(&project).await,
         0,
-        "act-1 Publish minted an act-2 release snapshot"
+        "act-1 Publish published an act-2 release snapshot"
     );
     assert_eq!(
         command_provenance(&admin, "publish-gated").await,
@@ -2232,7 +2232,7 @@ async fn management_surface_authenticates_and_attributes_authoring_commands() {
         reused_publish.body
     );
     assert_eq!(stored_wiring_count(&project).await, 1);
-    assert_eq!(minted_release_snapshot_count(&project).await, 0);
+    assert_eq!(published_release_snapshot_count(&project).await, 0);
 
     // Retry identity is a CONTROL-store fact and wins before project-side
     // validation. Reusing the completed id with the incompatible document

@@ -834,7 +834,7 @@ impl DevConfig {
         &self.package_sources
     }
 
-    /// Positive deployment-owned identity for the effective release minted by this loop.
+    /// Positive deployment-owned identity for the effective release published by this loop.
     pub const fn effective_release_id(&self) -> u32 {
         self.effective_release_id.get()
     }

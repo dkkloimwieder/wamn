@@ -27,7 +27,7 @@ const MANIFEST_DIGEST_FLAG: &str = "--release-manifest-digest";
 /// Arguments for the release-manifest distribution copy.
 #[derive(Debug, Args)]
 pub struct PushReleaseManifestArgs {
-    /// Owner URL to the database holding the minted release snapshot.
+    /// Owner URL to the database holding the published release snapshot.
     #[arg(long)]
     pub database_url: String,
 
@@ -41,11 +41,11 @@ pub struct PushReleaseManifestArgs {
     #[arg(long)]
     pub project: String,
 
-    /// Tenant claim carried by the minted release snapshot.
+    /// Tenant claim carried by the published release snapshot.
     #[arg(long)]
     pub tenant: String,
 
-    /// Integer identity of the minted effective release snapshot.
+    /// Integer identity of the published effective release snapshot.
     #[arg(long)]
     pub effective_release_id: u32,
 
@@ -95,18 +95,18 @@ impl PushReleaseManifestArgs {
     }
 }
 
-/// Arguments naming the minted release whose lines are printed.
+/// Arguments naming the published release whose lines are printed.
 #[derive(Debug, Args)]
 pub struct PrintReleaseEnvArgs {
-    /// URL to the database holding the minted release snapshot.
+    /// URL to the database holding the published release snapshot.
     #[arg(long)]
     pub database_url: String,
 
-    /// Tenant claim carried by the minted release snapshot.
+    /// Tenant claim carried by the published release snapshot.
     #[arg(long)]
     pub tenant: String,
 
-    /// Integer identity of the minted effective release snapshot.
+    /// Integer identity of the published effective release snapshot.
     #[arg(long)]
     pub effective_release_id: u32,
 
@@ -115,15 +115,15 @@ pub struct PrintReleaseEnvArgs {
     pub artifact_base: String,
 }
 
-/// Capture the existing minted release and explicit artifact locations for qualification.
+/// Capture the existing published release and explicit artifact locations for qualification.
 #[derive(Debug, Args)]
 pub struct PrepareReleaseArgs {
     #[command(flatten)]
     pub release: PrintReleaseEnvArgs,
-    /// Org of the minted release, written into the candidate.
+    /// Org of the published release, written into the candidate.
     #[arg(long)]
     pub org: String,
-    /// Project of the minted release, written into the candidate.
+    /// Project of the published release, written into the candidate.
     #[arg(long)]
     pub project: String,
     #[arg(long)]
@@ -235,7 +235,7 @@ pub struct CheckChangesArgs {
     pub result: PathBuf,
 }
 
-/// Print the release lines for one minted release.
+/// Print the release lines for one published release.
 pub async fn print_release_env(args: PrintReleaseEnvArgs) -> anyhow::Result<()> {
     let carrier = lookup_release_carrier(
         &args.database_url,
@@ -283,7 +283,7 @@ pub async fn prepare(args: PrepareReleaseArgs) -> anyhow::Result<()> {
     .await
 }
 
-/// Push one minted release manifest with no qualification commit, attest it in
+/// Push one published release manifest with no qualification commit, attest it in
 /// the control database, and print its digest. A deployment that is not a
 /// qualification, such as the first Google Cloud deployment, uses this verb.
 pub async fn push_release_manifest(args: PushReleaseManifestArgs) -> anyhow::Result<()> {
@@ -454,7 +454,7 @@ mod tests {
     }
 
     #[test]
-    fn minted_snapshot_does_not_publish_without_its_control_plane_placement() {
+    fn published_snapshot_is_not_pushed_without_its_control_plane_placement() {
         let source = [
             "--database-url",
             "postgres://release.invalid/env",
@@ -474,7 +474,7 @@ mod tests {
             argv.extend_from_slice(&placement);
             assert!(
                 PushProbe::try_parse_from(argv).is_err(),
-                "published with placement {placement:?}"
+                "pushed with placement {placement:?}"
             );
         }
 
@@ -489,10 +489,10 @@ mod tests {
         argv.extend_from_slice(&PLACEMENT);
         assert!(
             PushProbe::try_parse_from(argv).is_err(),
-            "published with no control database to attest into"
+            "pushed with no control database to attest into"
         );
 
-        let placed = parse(&source).expect("a placed minted snapshot parses");
+        let placed = parse(&source).expect("a placed published snapshot parses");
         assert_eq!(placed.org, "fixture");
         assert_eq!(placed.project, "billing");
         assert_eq!(
@@ -513,7 +513,7 @@ mod tests {
             "--effective-release-id",
             "3",
         ])
-        .expect("the minted snapshot source parses");
+        .expect("the published snapshot source parses");
         let (manifest, _) = ServingManifest::from_canonical_bytes(CANONICAL_MANIFEST)
             .expect("the fixture is canonical format-1 bytes");
         let coordinate = args.into_request().deployment_coordinate(&manifest.release);
@@ -525,7 +525,7 @@ mod tests {
     }
 
     #[test]
-    fn a_release_publishes_only_from_its_minted_snapshot() {
+    fn a_release_is_pushed_only_from_its_published_snapshot() {
         let snapshot = parse(&[
             "--database-url",
             "postgres://release.invalid/env",
@@ -534,7 +534,7 @@ mod tests {
             "--effective-release-id",
             "3",
         ])
-        .expect("the minted-snapshot source parses");
+        .expect("the published-snapshot source parses");
         assert_eq!(snapshot.database_url, "postgres://release.invalid/env");
         assert_eq!(snapshot.tenant, "tenant-a");
         assert_eq!(snapshot.effective_release_id, 3);
@@ -546,7 +546,7 @@ mod tests {
     }
 
     #[test]
-    fn a_complete_minted_snapshot_coordinate_is_required() {
+    fn a_complete_published_snapshot_coordinate_is_required() {
         let refusals: [Vec<&str>; 3] = [
             vec![],
             vec![

@@ -29,7 +29,7 @@ pub struct LocalApplicationFacts {
     pub bindings: Vec<LocalBindingFacts>,
 }
 
-/// The exact generated document and component selection used by release mint.
+/// The exact generated document and component selection used by release publish.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct LocalWiringFacts {

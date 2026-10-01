@@ -8,13 +8,13 @@ use wamn_catalog::ServingManifest;
 
 use super::Qualification;
 use crate::print_release_env::{ReleaseSnapshot, lookup_release_snapshot};
-use crate::push_release_manifest::{self, PublishedReleaseManifest, PushReleaseManifestRequest};
+use crate::push_release_manifest::{self, PushReleaseManifestRequest, PushedReleaseManifest};
 
 /// Publish an already qualified candidate through the existing OCI publisher.
 pub async fn publish(
     qualification: &Path,
     publication: &PushReleaseManifestRequest,
-) -> anyhow::Result<PublishedReleaseManifest> {
+) -> anyhow::Result<PushedReleaseManifest> {
     let qualification = Qualification::read(qualification)?;
     checked_snapshot(&qualification, publication).await?;
     // The existing publisher rereads the sealed snapshot, preserves exact
@@ -52,7 +52,7 @@ fn require_same_manifest(
 ) -> anyhow::Result<()> {
     ensure!(
         expected.canonical_bytes() == actual.canonical_bytes(),
-        "the minted snapshot differs from the qualified release"
+        "the published snapshot differs from the qualified release"
     );
     Ok(())
 }
@@ -123,7 +123,7 @@ mod tests {
     }
 
     #[test]
-    fn qualification_identity_cannot_be_reused_for_another_minted_release() {
+    fn qualification_identity_cannot_be_reused_for_another_published_release() {
         let (expected, digest) =
             ServingManifest::from_canonical_bytes(vector::CANONICAL_BYTES).unwrap();
         assert_eq!(digest.as_str(), vector::DIGEST);

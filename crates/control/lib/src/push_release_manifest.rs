@@ -1,11 +1,11 @@
-//! Publish canonical format-1 serving-manifest bytes as one OCI data artifact.
+//! Push canonical format-1 serving-manifest bytes as one OCI data artifact.
 //!
 //! The manifest's RFC 8785 SHA-256 identity derives its immutable OCI tag. An
 //! exact retry pulls and verifies the existing artifact and performs no push.
 //! A tag holding any other layout or bytes refuses instead of being replaced.
 //!
 //! The bytes come only from the `catalog.release_manifest_snapshots` row the
-//! mint froze. Publication therefore cannot attest caller-supplied bytes that
+//! publish froze. The push therefore cannot attest caller-supplied bytes that
 //! were never verified against the release identity.
 
 use std::fmt;
@@ -38,7 +38,7 @@ pub const RELEASE_MANIFEST_PUBLISH_REFUSAL: &str = "release-manifest-publish-ref
 
 /// Stable classification of a release-manifest publication refusal.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ReleaseManifestPublishErrorType {
+pub enum ReleaseManifestPushErrorType {
     Document,
     Reference,
     Credential,
@@ -47,7 +47,7 @@ pub enum ReleaseManifestPublishErrorType {
     Conflict,
 }
 
-impl ReleaseManifestPublishErrorType {
+impl ReleaseManifestPushErrorType {
     const fn as_str(self) -> &'static str {
         match self {
             Self::Document => "document",
@@ -62,16 +62,16 @@ impl ReleaseManifestPublishErrorType {
 
 /// Contextual refusal from the release-manifest OCI boundary.
 #[derive(Debug)]
-pub struct ReleaseManifestPublishError {
-    type_: ReleaseManifestPublishErrorType,
+pub struct ReleaseManifestPushError {
+    type_: ReleaseManifestPushErrorType,
     refusal: &'static str,
     detail: String,
     source: Option<Box<dyn std::error::Error + Send + Sync>>,
 }
 
-impl ReleaseManifestPublishError {
+impl ReleaseManifestPushError {
     /// Stable refusal class for callers that must not match display text.
-    pub const fn kind(&self) -> ReleaseManifestPublishErrorType {
+    pub const fn kind(&self) -> ReleaseManifestPushErrorType {
         self.type_
     }
 
@@ -81,7 +81,7 @@ impl ReleaseManifestPublishError {
     }
 
     fn new(
-        type_: ReleaseManifestPublishErrorType,
+        type_: ReleaseManifestPushErrorType,
         refusal: &'static str,
         detail: impl Into<String>,
     ) -> Self {
@@ -94,7 +94,7 @@ impl ReleaseManifestPublishError {
     }
 
     fn with_source(
-        type_: ReleaseManifestPublishErrorType,
+        type_: ReleaseManifestPushErrorType,
         refusal: &'static str,
         detail: impl Into<String>,
         source: impl std::error::Error + Send + Sync + 'static,
@@ -108,7 +108,7 @@ impl ReleaseManifestPublishError {
     }
 }
 
-impl fmt::Display for ReleaseManifestPublishError {
+impl fmt::Display for ReleaseManifestPushError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             formatter,
@@ -120,7 +120,7 @@ impl fmt::Display for ReleaseManifestPublishError {
     }
 }
 
-impl std::error::Error for ReleaseManifestPublishError {
+impl std::error::Error for ReleaseManifestPushError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         self.source.as_deref().map(|source| source as _)
     }
@@ -128,24 +128,24 @@ impl std::error::Error for ReleaseManifestPublishError {
 
 /// Whether this invocation created the artifact or matched an exact retry.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ReleaseManifestPublishDisposition {
+pub enum ReleaseManifestPushDisposition {
     Pushed,
     AlreadyPresent,
 }
 
-/// Verified result of publishing one canonical serving manifest.
+/// Verified result of pushing one canonical serving manifest.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct PublishedReleaseManifest {
+pub struct PushedReleaseManifest {
     pub digest: ManifestDigest,
-    pub disposition: ReleaseManifestPublishDisposition,
-    /// Effective-release coordinate carried by the published bytes.
+    pub disposition: ReleaseManifestPushDisposition,
+    /// Effective-release coordinate carried by the pushed bytes.
     pub release: ServingRelease,
 }
 
 /// Exact inputs of one release-manifest distribution copy.
 #[derive(Clone, Debug)]
 pub struct PushReleaseManifestRequest {
-    /// Owner URL to the database holding the minted release snapshot.
+    /// Owner URL to the database holding the published release snapshot.
     pub database_url: String,
 
     /// Registry organization the release is deployed into. Required in both
@@ -156,10 +156,10 @@ pub struct PushReleaseManifestRequest {
     /// Registry project the release is deployed into.
     pub project: String,
 
-    /// Tenant claim carried by the minted release snapshot.
+    /// Tenant claim carried by the published release snapshot.
     pub tenant: String,
 
-    /// Integer identity of the minted effective release snapshot.
+    /// Integer identity of the published effective release snapshot.
     pub effective_release_id: u32,
 
     /// Explicit `<registry>/<repository>` base for release manifests.
@@ -185,13 +185,13 @@ pub struct PushReleaseManifestRequest {
 }
 
 impl PushReleaseManifestRequest {
-    /// Key the published bytes for attestation under this invocation's placement.
+    /// Key the pushed bytes for attestation under this invocation's placement.
     pub fn deployment_coordinate(&self, release: &ServingRelease) -> DeploymentCoordinate {
         DeploymentCoordinate::new(&self.org, &self.project, release)
     }
 }
 
-/// Publish one canonical release manifest, optionally attributed to one clean
+/// Push one canonical release manifest, optionally attributed to one clean
 /// source commit, and return its verified identity.
 ///
 /// Bytes never sit in the registry without their attestation. The verb opens
@@ -201,7 +201,7 @@ impl PushReleaseManifestRequest {
 pub async fn push_release_manifest(
     request: &PushReleaseManifestRequest,
     source_commit: Option<&str>,
-) -> anyhow::Result<PublishedReleaseManifest> {
+) -> anyhow::Result<PushedReleaseManifest> {
     if let Some(source_commit) = source_commit {
         anyhow::ensure!(
             !source_commit.is_empty() && !source_commit.chars().any(char::is_whitespace),
@@ -210,7 +210,7 @@ pub async fn push_release_manifest(
     }
     crate::publish_release::on_control_plane(&request.control_database_url, async |control| {
         let canonical_bytes = canonical_release_bytes(request).await?;
-        publish_and_attest(control, request, &canonical_bytes, source_commit).await
+        push_and_attest(control, request, &canonical_bytes, source_commit).await
     })
     .await
 }
@@ -218,14 +218,14 @@ pub async fn push_release_manifest(
 /// Read the control release that `canonical_bytes` names, push the bytes, and
 /// attest the push on `control`. A refused read pushes nothing, and a refused
 /// push writes no attestation.
-pub async fn publish_and_attest(
+pub async fn push_and_attest(
     control: &mut PgClient,
     request: &PushReleaseManifestRequest,
     canonical_bytes: &[u8],
     source_commit: Option<&str>,
-) -> anyhow::Result<PublishedReleaseManifest> {
+) -> anyhow::Result<PushedReleaseManifest> {
     let (manifest, _) = ServingManifest::from_canonical_bytes(canonical_bytes)
-        .context("read the release that the minted bytes name")?;
+        .context("read the release that the published bytes name")?;
     let coordinate = request.deployment_coordinate(&manifest.release);
     let effective_release_id = i32::try_from(coordinate.effective_release_id)
         .context("effective-release-id exceeds PostgreSQL integer")?;
@@ -247,7 +247,7 @@ pub async fn publish_and_attest(
         coordinate.tenant_id,
         coordinate.triple.env.as_str()
     );
-    let published = publish_release_manifest(
+    let pushed = push_manifest_bytes(
         canonical_bytes,
         &request.artifact_base,
         request.insecure_registry,
@@ -255,20 +255,20 @@ pub async fn publish_and_attest(
         &request.registry_auth_file,
     )
     .await?;
-    report_deployment_coordinate(&coordinate, &published.digest);
+    report_deployment_coordinate(&coordinate, &pushed.digest);
     // wamn-0h0g.8.27: the OCI push IS the deployment event this attestation
     // records, so the write lands here and on no other verb.
     crate::publish_release::attest_deployment_on(
         control,
         &coordinate,
-        &published.digest,
+        &pushed.digest,
         source_commit,
     )
     .await?;
-    Ok(published)
+    Ok(pushed)
 }
 
-/// Read the bytes to publish from the release that minted them.
+/// Read the bytes to push from the release that published them.
 async fn canonical_release_bytes(request: &PushReleaseManifestRequest) -> anyhow::Result<Vec<u8>> {
     let effective_release_id = i32::try_from(request.effective_release_id)
         .context("effective-release-id exceeds the PostgreSQL integer carrier")?;
@@ -294,7 +294,7 @@ async fn canonical_release_bytes(request: &PushReleaseManifestRequest) -> anyhow
     }
 }
 
-/// Read one minted release's exact canonical bytes in its own transaction.
+/// Read one published release's exact canonical bytes in its own transaction.
 ///
 /// Shared with `print-release-env` (wamn-duyl) so the two readers of a frozen
 /// snapshot cannot drift apart on locking or on the absent-release refusal.
@@ -309,7 +309,7 @@ pub(crate) async fn select_snapshot(
         .context("begin the release snapshot read")?;
     let snapshot = read_release_snapshot(&transaction, tenant, effective_release_id)
         .await
-        .context("read the minted release snapshot")?;
+        .context("read the published release snapshot")?;
     transaction
         .commit()
         .await
@@ -317,23 +317,23 @@ pub(crate) async fn select_snapshot(
     snapshot.with_context(|| {
         format!(
             "tenant {tenant:?} effective release {effective_release_id} \
-             has no minted format-1 release snapshot"
+             has no published format-1 release snapshot"
         )
     })
 }
 
-/// Publish canonical format-1 bytes or check that their exact artifact already exists.
-pub async fn publish_release_manifest(
+/// Push canonical format-1 bytes or check that their exact artifact already exists.
+pub async fn push_manifest_bytes(
     canonical_bytes: &[u8],
     artifact_base: &str,
     insecure_registry: bool,
     oci_ca_paths: &[PathBuf],
     registry_auth_file: &Path,
-) -> Result<PublishedReleaseManifest, ReleaseManifestPublishError> {
+) -> Result<PushedReleaseManifest, ReleaseManifestPushError> {
     let (admitted, digest) =
         ServingManifest::from_canonical_bytes(canonical_bytes).map_err(|source| {
-            ReleaseManifestPublishError::with_source(
-                ReleaseManifestPublishErrorType::Document,
+            ReleaseManifestPushError::with_source(
+                ReleaseManifestPushErrorType::Document,
                 "release-manifest-document-refused",
                 "input is not canonical format-1 ServingManifest JSON",
                 source,
@@ -342,8 +342,8 @@ pub async fn publish_release_manifest(
     let release = admitted.release;
     let artifact =
         release_manifest_artifact_reference(artifact_base, digest.as_str()).map_err(|source| {
-            ReleaseManifestPublishError::with_source(
-                ReleaseManifestPublishErrorType::Reference,
+            ReleaseManifestPushError::with_source(
+                ReleaseManifestPushErrorType::Reference,
                 "release-manifest-artifact-reference-refused",
                 "artifact base or manifest digest cannot form an immutable OCI reference",
                 source,
@@ -351,8 +351,8 @@ pub async fn publish_release_manifest(
         })?;
     let credentials =
         read_registry_credentials(registry_auth_file, artifact.registry()).map_err(|source| {
-            ReleaseManifestPublishError::with_source(
-                ReleaseManifestPublishErrorType::Credential,
+            ReleaseManifestPushError::with_source(
+                ReleaseManifestPushErrorType::Credential,
                 "release-manifest-registry-credential-refused",
                 format!("load push credential for registry {}", artifact.registry()),
                 source,
@@ -364,8 +364,8 @@ pub async fn publish_release_manifest(
         artifact.tag().to_owned(),
     );
     let ca_bundles = read_ca_bundles(oci_ca_paths).map_err(|source| {
-        ReleaseManifestPublishError::with_source(
-            ReleaseManifestPublishErrorType::TrustAnchor,
+        ReleaseManifestPushError::with_source(
+            ReleaseManifestPushErrorType::TrustAnchor,
             "release-manifest-ca-bundle-unreadable",
             format!("read CA bundles for registry {}", artifact.registry()),
             source,
@@ -375,9 +375,9 @@ pub async fn publish_release_manifest(
     let auth = registry_auth(&credentials);
 
     if probe_exact_artifact(&client, &reference, &auth, canonical_bytes, &digest).await? {
-        return Ok(PublishedReleaseManifest {
+        return Ok(PushedReleaseManifest {
             digest,
-            disposition: ReleaseManifestPublishDisposition::AlreadyPresent,
+            disposition: ReleaseManifestPushDisposition::AlreadyPresent,
             release,
         });
     }
@@ -393,8 +393,8 @@ pub async fn publish_release_manifest(
         )
         .await
         .map_err(|source| {
-            ReleaseManifestPublishError::with_source(
-                ReleaseManifestPublishErrorType::Transport,
+            ReleaseManifestPushError::with_source(
+                ReleaseManifestPushErrorType::Transport,
                 "release-manifest-artifact-push-failed",
                 format!("push release-manifest artifact {reference}"),
                 source,
@@ -402,20 +402,20 @@ pub async fn publish_release_manifest(
         })?;
 
     if !probe_exact_artifact(&client, &reference, &auth, canonical_bytes, &digest).await? {
-        return Err(ReleaseManifestPublishError::new(
-            ReleaseManifestPublishErrorType::Transport,
+        return Err(ReleaseManifestPushError::new(
+            ReleaseManifestPushErrorType::Transport,
             "release-manifest-artifact-not-visible",
             format!("pushed release-manifest artifact {reference} is not readable"),
         ));
     }
-    Ok(PublishedReleaseManifest {
+    Ok(PushedReleaseManifest {
         digest,
-        disposition: ReleaseManifestPublishDisposition::Pushed,
+        disposition: ReleaseManifestPushDisposition::Pushed,
         release,
     })
 }
 
-/// One registry client for this publish, built here rather than borrowed from
+/// One registry client for this push, built here rather than borrowed from
 /// `wash_runtime::oci`.
 ///
 /// That module exposes no client-construction seam: its transfer surface is
@@ -435,7 +435,7 @@ fn registry_client(
     registry: &str,
     insecure_registry: bool,
     ca_bundles: Vec<Vec<u8>>,
-) -> Result<OciClient, ReleaseManifestPublishError> {
+) -> Result<OciClient, ReleaseManifestPushError> {
     let protocol = if insecure_registry {
         ClientProtocol::HttpsExcept(vec![registry.to_owned()])
     } else {
@@ -455,8 +455,8 @@ fn registry_client(
         ..ClientConfig::default()
     })
     .map_err(|source| {
-        ReleaseManifestPublishError::with_source(
-            ReleaseManifestPublishErrorType::TrustAnchor,
+        ReleaseManifestPushError::with_source(
+            ReleaseManifestPushErrorType::TrustAnchor,
             "release-manifest-registry-client-unusable",
             format!("build the push client for registry {registry}"),
             source,
@@ -477,13 +477,13 @@ async fn probe_exact_artifact(
     auth: &RegistryAuth,
     expected_bytes: &[u8],
     expected_digest: &ManifestDigest,
-) -> Result<bool, ReleaseManifestPublishError> {
+) -> Result<bool, ReleaseManifestPushError> {
     let (manifest, _) = match client.pull_image_manifest(reference, auth).await {
         Ok(found) => found,
         Err(source) if artifact_is_absent(&source) => return Ok(false),
         Err(source) => {
-            return Err(ReleaseManifestPublishError::with_source(
-                ReleaseManifestPublishErrorType::Transport,
+            return Err(ReleaseManifestPushError::with_source(
+                ReleaseManifestPushErrorType::Transport,
                 "release-manifest-artifact-probe-failed",
                 format!("probe release-manifest artifact {reference}"),
                 source,
@@ -502,8 +502,8 @@ async fn probe_exact_artifact(
         .pull_blob(reference, verified.layer, &mut body)
         .await
         .map_err(|source| {
-            ReleaseManifestPublishError::with_source(
-                ReleaseManifestPublishErrorType::Transport,
+            ReleaseManifestPushError::with_source(
+                ReleaseManifestPushErrorType::Transport,
                 "release-manifest-artifact-body-unavailable",
                 format!("pull release-manifest body {reference}"),
                 source,
@@ -521,8 +521,8 @@ async fn probe_exact_artifact(
         .pull_blob(reference, verified.config, &mut config)
         .await
         .map_err(|source| {
-            ReleaseManifestPublishError::with_source(
-                ReleaseManifestPublishErrorType::Transport,
+            ReleaseManifestPushError::with_source(
+                ReleaseManifestPushErrorType::Transport,
                 "release-manifest-artifact-config-unavailable",
                 format!("pull release-manifest config {reference}"),
                 source,
@@ -543,7 +543,7 @@ fn verify_manifest_layout<'a>(
     expected_digest: &str,
     expected_size: usize,
     reference: &Reference,
-) -> Result<ReleaseManifestArtifactBlobs<'a>, ReleaseManifestPublishError> {
+) -> Result<ReleaseManifestArtifactBlobs<'a>, ReleaseManifestPushError> {
     verify_release_manifest_artifact_layout(manifest, expected_digest, Some(expected_size))
         .map_err(|refusal| conflict(reference, refusal.refusal()))
 }
@@ -567,9 +567,9 @@ fn artifact_is_absent(error: &OciDistributionError) -> bool {
     }
 }
 
-fn conflict(reference: &Reference, refusal: &'static str) -> ReleaseManifestPublishError {
-    ReleaseManifestPublishError::new(
-        ReleaseManifestPublishErrorType::Conflict,
+fn conflict(reference: &Reference, refusal: &'static str) -> ReleaseManifestPushError {
+    ReleaseManifestPushError::new(
+        ReleaseManifestPushErrorType::Conflict,
         refusal,
         format!("existing release-manifest artifact {reference} is not exact"),
     )
@@ -593,7 +593,7 @@ mod tests {
     }
 
     #[test]
-    fn published_bytes_carry_their_own_half_of_the_attestation_key() {
+    fn pushed_bytes_carry_their_own_half_of_the_attestation_key() {
         let (manifest, _) = ServingManifest::from_canonical_bytes(CANONICAL_MANIFEST)
             .expect("the fixture is canonical format-4 bytes");
         let coordinate = DeploymentCoordinate::new("acme", "billing", &manifest.release);
@@ -618,7 +618,7 @@ mod tests {
             CANONICAL_MANIFEST.len(),
             &fixture_reference(),
         )
-        .expect("publisher layout verifies");
+        .expect("push layout verifies");
 
         assert_eq!(&layer.data[..], CANONICAL_MANIFEST);
         assert_eq!(&config.data[..], RELEASE_MANIFEST_CONFIG_BYTES);
@@ -653,7 +653,7 @@ mod tests {
             &fixture_reference(),
         )
         .expect_err("foreign layer layout refuses");
-        assert_eq!(error.kind(), ReleaseManifestPublishErrorType::Conflict);
+        assert_eq!(error.kind(), ReleaseManifestPushErrorType::Conflict);
         assert_eq!(error.refusal(), "release-manifest-artifact-layer-mismatch");
 
         let duplicate = manifest.layers[0].clone();
@@ -674,7 +674,7 @@ mod tests {
 
     #[tokio::test]
     #[ignore = "requires: WAMN_RELEASE_MANIFEST_ARTIFACT_BASE, WAMN_REGISTRY_AUTH_FILE"]
-    async fn production_publisher_exact_retry_is_a_no_push() {
+    async fn pushing_same_bytes_uploads_nothing() {
         wamn_test_postgres::require_prerequisites(&[
             "WAMN_RELEASE_MANIFEST_ARTIFACT_BASE",
             "WAMN_REGISTRY_AUTH_FILE",
@@ -689,7 +689,7 @@ mod tests {
             .unwrap_or_default();
         let insecure_registry = oci_ca_paths.is_empty();
 
-        let first = publish_release_manifest(
+        let first = push_manifest_bytes(
             CANONICAL_MANIFEST,
             &artifact_base,
             insecure_registry,
@@ -698,7 +698,7 @@ mod tests {
         )
         .await
         .expect("first publication converges");
-        let retry = publish_release_manifest(
+        let retry = push_manifest_bytes(
             CANONICAL_MANIFEST,
             &artifact_base,
             insecure_registry,
@@ -711,7 +711,7 @@ mod tests {
         assert_eq!(first.digest, retry.digest);
         assert_eq!(
             retry.disposition,
-            ReleaseManifestPublishDisposition::AlreadyPresent
+            ReleaseManifestPushDisposition::AlreadyPresent
         );
     }
 }

@@ -18,12 +18,12 @@ use crate::wms_runtime_live::{
 use crate::business_fixture::{LOCATION_A_ID, seed_fixture};
 pub(super) use crate::business_fixture::{PACKAGING_ID, runtime_phase};
 
-/// The artifacts and endpoint one application publication is minted from.
+/// The artifacts and endpoint one application publication is published from.
 pub(super) struct PublicationInputs<'a> {
     pub(super) scenario_worker: &'a Path,
     pub(super) label_render: &'a Path,
     pub(super) minio_endpoint: &'a str,
-    pub(super) mint_only: bool,
+    pub(super) publish_only: bool,
 }
 
 pub(super) async fn prepare_application(
@@ -65,7 +65,7 @@ pub(super) async fn prepare_application(
             scenario_worker: publication.scenario_worker,
             label_render_wasm: publication.label_render,
             minio_endpoint: publication.minio_endpoint,
-            mint_only: publication.mint_only,
+            publish_only: publication.publish_only,
         },
         evidence,
     )

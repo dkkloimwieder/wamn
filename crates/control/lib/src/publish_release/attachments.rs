@@ -1,7 +1,7 @@
 //! Package attachment documents and deployment route preparation.
 
 use super::{
-    AuthoredHttpRoute, BTreeMap, BTreeSet, MintManifestError, MintManifestErrorType, PathBuf,
+    AuthoredHttpRoute, BTreeMap, BTreeSet, PathBuf, PublishManifestError, PublishManifestErrorType,
     RouteContracts, ServingAttachment, canonical_http_route_template, normalize_http_route,
 };
 use wamn_catalog::AttachmentTarget;
@@ -23,7 +23,7 @@ struct AuthoredRoute {
 pub(super) fn read_package_attachments(
     paths: &[PathBuf],
     package_manifests: &[PathBuf],
-) -> Result<BTreeMap<String, ServingAttachment>, MintManifestError> {
+) -> Result<BTreeMap<String, ServingAttachment>, PublishManifestError> {
     let mut attachments = read_authored_attachments(paths, &package_owners(package_manifests)?)?;
     resolve_generated_input_schemas(&mut attachments, package_manifests)?;
     Ok(attachments)
@@ -32,20 +32,20 @@ pub(super) fn read_package_attachments(
 /// The operation owners of each package the release presents, by package id.
 fn package_owners(
     package_manifests: &[PathBuf],
-) -> Result<BTreeMap<String, wamn_schema_generator::OperationOwners>, MintManifestError> {
+) -> Result<BTreeMap<String, wamn_schema_generator::OperationOwners>, PublishManifestError> {
     let mut owners = BTreeMap::new();
     for path in package_manifests {
         let bytes = std::fs::read(path).map_err(|error| {
-            MintManifestError::with_source(
-                MintManifestErrorType::PackageManifest,
+            PublishManifestError::with_source(
+                PublishManifestErrorType::PackageManifest,
                 format!("read package manifest {}", path.display()),
                 error,
             )
         })?;
         let package =
             wamn_schema_generator::OperationOwners::from_slice(&bytes).map_err(|error| {
-                MintManifestError::with_source(
-                    MintManifestErrorType::PackageManifest,
+                PublishManifestError::with_source(
+                    PublishManifestErrorType::PackageManifest,
                     format!("parse package manifest {}", path.display()),
                     error,
                 )
@@ -58,7 +58,7 @@ fn package_owners(
 fn resolve_generated_input_schemas(
     attachments: &mut BTreeMap<String, ServingAttachment>,
     package_manifests: &[PathBuf],
-) -> Result<(), MintManifestError> {
+) -> Result<(), PublishManifestError> {
     let named = |attachment: &ServingAttachment| {
         wamn_schema_generator::route_schema::names_generated_schema(attachment)
     };
@@ -68,16 +68,16 @@ fn resolve_generated_input_schemas(
     let mut roots = BTreeMap::new();
     for path in package_manifests {
         let bytes = std::fs::read(path).map_err(|error| {
-            MintManifestError::with_source(
-                MintManifestErrorType::PackageManifest,
+            PublishManifestError::with_source(
+                PublishManifestErrorType::PackageManifest,
                 format!("read package manifest {}", path.display()),
                 error,
             )
         })?;
         let manifest =
             wamn_schema_generator::PackageManifest::from_slice(&bytes).map_err(|error| {
-                MintManifestError::with_source(
-                    MintManifestErrorType::PackageManifest,
+                PublishManifestError::with_source(
+                    PublishManifestErrorType::PackageManifest,
                     format!("parse package manifest {}", path.display()),
                     error,
                 )
@@ -90,8 +90,8 @@ fn resolve_generated_input_schemas(
             continue;
         }
         let root = roots.get(&attachment.package_id).ok_or_else(|| {
-            MintManifestError::new(
-                MintManifestErrorType::Document,
+            PublishManifestError::new(
+                PublishManifestErrorType::Document,
                 format!(
                     "attachment {attachment_id:?} names a generated input schema of package {:?}, and the release presents no wamn.json for it",
                     attachment.package_id
@@ -106,8 +106,8 @@ fn resolve_generated_input_schemas(
             },
         )
         .map_err(|error| {
-            MintManifestError::with_source(
-                MintManifestErrorType::Document,
+            PublishManifestError::with_source(
+                PublishManifestErrorType::Document,
                 format!("attachment {attachment_id:?} input schema"),
                 error,
             )
@@ -119,25 +119,25 @@ fn resolve_generated_input_schemas(
 fn read_authored_attachments(
     paths: &[PathBuf],
     owners: &BTreeMap<String, wamn_schema_generator::OperationOwners>,
-) -> Result<BTreeMap<String, ServingAttachment>, MintManifestError> {
+) -> Result<BTreeMap<String, ServingAttachment>, PublishManifestError> {
     if paths.is_empty() {
-        return Err(MintManifestError::new(
-            MintManifestErrorType::Document,
+        return Err(PublishManifestError::new(
+            PublishManifestErrorType::Document,
             "publish-release requires at least one package-owned --attachments document",
         ));
     }
     let mut documents = Vec::new();
     for path in paths {
         let bytes = std::fs::read(path).map_err(|error| {
-            MintManifestError::with_source(
-                MintManifestErrorType::Document,
+            PublishManifestError::with_source(
+                PublishManifestErrorType::Document,
                 format!("read package attachments {}", path.display()),
                 error,
             )
         })?;
         let parse = |error| {
-            MintManifestError::with_source(
-                MintManifestErrorType::Document,
+            PublishManifestError::with_source(
+                PublishManifestErrorType::Document,
                 format!("parse package attachments {}", path.display()),
                 error,
             )
@@ -152,8 +152,8 @@ fn read_authored_attachments(
                 .and_then(serde_json::Value::as_str)
                 .unwrap_or_default();
             let package = owners.get(package_id).ok_or_else(|| {
-                MintManifestError::new(
-                    MintManifestErrorType::Document,
+                PublishManifestError::new(
+                    PublishManifestErrorType::Document,
                     format!(
                         "attachment {attachment_id:?} names package {package_id:?}, and the release presents no wamn.json for it"
                     ),
@@ -165,8 +165,8 @@ fn read_authored_attachments(
                 package,
             )
             .map_err(|error| {
-                MintManifestError::with_source(
-                    MintManifestErrorType::Document,
+                PublishManifestError::with_source(
+                    PublishManifestErrorType::Document,
                     format!("package attachments {}", path.display()),
                     error,
                 )
@@ -189,8 +189,8 @@ fn read_authored_attachments(
         )
         .and_then(wamn_schema_generator::route_schema::generated_attachments)
         .map_err(|error| {
-            MintManifestError::with_source(
-                MintManifestErrorType::Document,
+            PublishManifestError::with_source(
+                PublishManifestErrorType::Document,
                 format!("read the generated attachments beside {}", path.display()),
                 error,
             )
@@ -207,14 +207,14 @@ fn read_authored_attachments(
 
 pub(super) fn merge_package_attachment_documents(
     documents: Vec<(PathBuf, BTreeMap<String, ServingAttachment>)>,
-) -> Result<BTreeMap<String, ServingAttachment>, MintManifestError> {
+) -> Result<BTreeMap<String, ServingAttachment>, PublishManifestError> {
     let mut merged = BTreeMap::new();
     let mut sources = BTreeMap::<String, PathBuf>::new();
     for (path, attachments) in documents {
         for (attachment_id, attachment) in attachments {
             if let Some(first_path) = sources.get(&attachment_id) {
-                return Err(MintManifestError::new(
-                    MintManifestErrorType::DuplicateAttachmentId,
+                return Err(PublishManifestError::new(
+                    PublishManifestErrorType::DuplicateAttachmentId,
                     format!(
                         "attachment {attachment_id:?} occurs in package documents {} and {}; keep exactly one package owner",
                         first_path.display(),
@@ -231,18 +231,18 @@ pub(super) fn merge_package_attachment_documents(
 
 /// Require every attachment hash to identify its exact canonical definition.
 ///
-/// The release mint is the production boundary that accepts the authored
+/// The release publish is the production boundary that accepts the authored
 /// attachment map. Comparing here prevents a caller from pairing an unchanged
 /// identity claim with different route or contract bytes before either can
 /// enter the immutable serving snapshot.
 pub(super) fn validate_attachment_definition_hashes(
     attachments: &BTreeMap<String, ServingAttachment>,
-) -> Result<(), MintManifestError> {
+) -> Result<(), PublishManifestError> {
     for (attachment_id, attachment) in attachments {
         let derived = wamn_execution_contract::canonical_json_sha256(&attachment.definition);
         if attachment.definition_hash.as_str() != derived {
-            return Err(MintManifestError::new(
-                MintManifestErrorType::Document,
+            return Err(PublishManifestError::new(
+                PublishManifestErrorType::Document,
                 format!(
                     "attachment {attachment_id:?} definition-hash {} differs from canonical definition hash {derived}",
                     attachment.definition_hash.as_str(),
@@ -260,7 +260,7 @@ pub(super) fn resolve_route_host_overlay(
     authored: &BTreeMap<String, ServingAttachment>,
     route_host: Option<&str>,
     route_contracts: &RouteContracts,
-) -> Result<BTreeMap<String, ServingAttachment>, MintManifestError> {
+) -> Result<BTreeMap<String, ServingAttachment>, PublishManifestError> {
     validate_authored_attachment_routes(authored)?;
     validate_attachment_definition_hashes(authored)?;
     let first_routed = authored.iter().find(|(_, attachment)| {
@@ -273,8 +273,8 @@ pub(super) fn resolve_route_host_overlay(
         return Ok(authored.clone());
     };
     let route_host = route_host.filter(|host| !host.is_empty()).ok_or_else(|| {
-        MintManifestError::new(
-            MintManifestErrorType::RouteHostUnbound,
+        PublishManifestError::new(
+            PublishManifestErrorType::RouteHostUnbound,
             format!(
                 "attachment {first_attachment_id:?} requires deployment route host; pass --route-host"
             ),
@@ -283,8 +283,8 @@ pub(super) fn resolve_route_host_overlay(
     if route_host != "*"
         && (route_host.contains('/') || route_host.chars().any(char::is_whitespace))
     {
-        return Err(MintManifestError::new(
-            MintManifestErrorType::Document,
+        return Err(PublishManifestError::new(
+            PublishManifestErrorType::Document,
             format!("deployment route host {route_host:?} is invalid"),
         ));
     }
@@ -305,8 +305,8 @@ pub(super) fn resolve_route_host_overlay(
             .and_then(|definition| definition.get_mut("route"))
             .and_then(serde_json::Value::as_object_mut)
             .ok_or_else(|| {
-                MintManifestError::new(
-                    MintManifestErrorType::Document,
+                PublishManifestError::new(
+                    PublishManifestErrorType::Document,
                     format!("attachment {attachment_id:?} carries no route object"),
                 )
             })?;
@@ -314,8 +314,8 @@ pub(super) fn resolve_route_host_overlay(
             route.clone(),
         ))
         .map_err(|error| {
-            MintManifestError::with_source(
-                MintManifestErrorType::Document,
+            PublishManifestError::with_source(
+                PublishManifestErrorType::Document,
                 format!(
                     "attachment {attachment_id:?} route must contain exactly a string path field"
                 ),
@@ -330,8 +330,8 @@ pub(super) fn resolve_route_host_overlay(
             attachment_id,
         )
         .map_err(|error| {
-            MintManifestError::with_source(
-                MintManifestErrorType::Document,
+            PublishManifestError::with_source(
+                PublishManifestErrorType::Document,
                 format!("attachment {attachment_id:?} carries an invalid route"),
                 error,
             )
@@ -340,8 +340,8 @@ pub(super) fn resolve_route_host_overlay(
             .path
             .starts_with(wamn_catalog::host_route_path_prefix())
         {
-            return Err(MintManifestError::new(
-                MintManifestErrorType::Document,
+            return Err(PublishManifestError::new(
+                PublishManifestErrorType::Document,
                 format!(
                     "attachment {attachment_id:?} uses the path prefix {:?} of the platform's host routes",
                     wamn_catalog::host_route_path_prefix()
@@ -352,8 +352,8 @@ pub(super) fn resolve_route_host_overlay(
             canonical_http_route_template(&normalized.path),
             normalized.method,
         )) {
-            return Err(MintManifestError::new(
-                MintManifestErrorType::Document,
+            return Err(PublishManifestError::new(
+                PublishManifestErrorType::Document,
                 format!(
                     "attachment {attachment_id:?} duplicates another attachment's canonical path and method"
                 ),
@@ -381,7 +381,7 @@ fn route_method(
     attachment_id: &str,
     attachment: &ServingAttachment,
     route_contracts: &RouteContracts,
-) -> Result<&'static str, MintManifestError> {
+) -> Result<&'static str, PublishManifestError> {
     let AttachmentTarget::Route { operation, .. } = &attachment.target else {
         return Ok("POST");
     };
@@ -389,8 +389,8 @@ fn route_method(
         .get(&(attachment.package_id.clone(), operation.clone()))
         .map(|contract| contract.kind.http_method())
         .ok_or_else(|| {
-            MintManifestError::new(
-                MintManifestErrorType::GeneratedPackageMetadata,
+            PublishManifestError::new(
+                PublishManifestErrorType::GeneratedPackageMetadata,
                 format!(
                     "route attachment {attachment_id:?} calls operation {operation:?}, which has no generated contract kind; regenerate the package evidence"
                 ),
@@ -403,11 +403,11 @@ fn route_method(
 /// publication, and the method follows from the operation kind.
 fn validate_authored_attachment_routes(
     authored: &BTreeMap<String, ServingAttachment>,
-) -> Result<(), MintManifestError> {
+) -> Result<(), PublishManifestError> {
     for (attachment_id, attachment) in authored {
         if attachment.definition.pointer("/route/host").is_some() {
-            return Err(MintManifestError::new(
-                MintManifestErrorType::Document,
+            return Err(PublishManifestError::new(
+                PublishManifestErrorType::Document,
                 format!(
                     "attachment {attachment_id:?} authors route.host; remove it and pass --route-host"
                 ),
@@ -418,8 +418,8 @@ fn validate_authored_attachment_routes(
             wamn_catalog::AttachmentType::Http | wamn_catalog::AttachmentType::Studio
         ) && attachment.definition.pointer("/route/method").is_some()
         {
-            return Err(MintManifestError::new(
-                MintManifestErrorType::Document,
+            return Err(PublishManifestError::new(
+                PublishManifestErrorType::Document,
                 format!(
                     "attachment {attachment_id:?} authors route.method; remove it, because the method follows from the operation kind"
                 ),

@@ -217,7 +217,7 @@ async fn a_published_release_pulls_back_byte_exact_and_loads_the_release_it_name
     );
     let effective_release_id: i32 = live_env(
         "WAMN_RELEASE_MANIFEST_EFFECTIVE_RELEASE_ID",
-        "the environment-local effective release id the mint froze into that manifest",
+        "the environment-local effective release id the publish froze into that manifest",
     )
     .parse()
     .expect("WAMN_RELEASE_MANIFEST_EFFECTIVE_RELEASE_ID is an i32");
@@ -253,7 +253,7 @@ async fn a_published_release_pulls_back_byte_exact_and_loads_the_release_it_name
     assert_eq!(
         loaded_release.release().effective_release_id,
         effective_release_id,
-        "the carried effective release id must be the identity the mint froze"
+        "the carried effective release id must be the identity the publish froze"
     );
     // Nothing was dropped on the way through the parse: the loaded document
     // re-encodes to the exact bytes the registry served.

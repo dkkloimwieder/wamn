@@ -323,7 +323,7 @@ pub(super) async fn test_prior_commit(test: PriorCommitTest<'_>) -> anyhow::Resu
         .get(0);
     anyhow::ensure!(
         attested == digest,
-        "prior-commit deployment attestation differs from its minted release"
+        "prior-commit deployment attestation differs from its published release"
     );
     let source = ReleaseManifestSource::new(
         &test.inputs.release_artifact_base,

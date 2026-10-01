@@ -533,7 +533,7 @@ impl ProductionDevStageRunner {
         Ok(())
     }
 
-    /// Exact release carrier minted and pushed by the Release stage.
+    /// Exact release carrier published and pushed by the Release stage.
     pub const fn release_carrier(&self) -> Option<&ReleaseCarrier> {
         self.release.as_ref()
     }
@@ -1110,7 +1110,7 @@ impl ProductionDevStageRunner {
     }
 
     /// Reconcile the authored roles of the target with the closures of the
-    /// release that the Release stage minted, before it activates.
+    /// release that the Release stage published, before it activates.
     async fn reconcile_role_permissions(&self) -> Result<(), ProductionDevStageError> {
         let snapshot = self.read_handle.snapshot();
         let release = snapshot.release().ok_or_else(|| {
@@ -1200,8 +1200,8 @@ impl ProductionDevStageRunner {
                 )
             })
             .collect();
-        let (minted, mut local_facts) =
-            publish_release::mint_local(request, &self.admissions, documents)
+        let (published, mut local_facts) =
+            publish_release::publish_local(request, &self.admissions, documents)
                 .await
                 .map_err(|source| {
                     ProductionDevStageError::owner("assemble local application", source)
@@ -1215,7 +1215,7 @@ impl ProductionDevStageRunner {
             .map_err(|source| {
                 ProductionDevStageError::owner("validate local connection selections", source)
             })?;
-        wamn_runtime::local_application::validate_local_facts(&local_facts, &minted.manifest)
+        wamn_runtime::local_application::validate_local_facts(&local_facts, &published.manifest)
             .map_err(|source| {
                 ProductionDevStageError::owner("validate complete local application", source)
             })?;
@@ -1253,7 +1253,7 @@ impl ProductionDevStageRunner {
             local
                 .directory
                 .join(wamn_catalog::RELEASE_MANIFEST_FILE_NAME),
-            &minted.canonical_bytes,
+            &published.canonical_bytes,
         )
         .map_err(|source| {
             ProductionDevStageError::owner("stage local application manifest", source.into())
@@ -1273,7 +1273,7 @@ impl ProductionDevStageRunner {
         })?;
         let carrier = ReleaseCarrier {
             artifact_base: format!("local:{}", local.directory.display()),
-            manifest_digest: minted.digest,
+            manifest_digest: published.digest,
         };
         activation::prepare_local(&DevActivationRequest {
             config: &self.config,
@@ -1291,7 +1291,7 @@ impl ProductionDevStageRunner {
             )
         })?;
         self.read_publisher
-            .set_release(minted.manifest, carrier.clone());
+            .set_release(published.manifest, carrier.clone());
         self.release = Some(carrier);
         self.local_bindings = local_facts.bindings;
         self.local_binding_inputs = binding_inputs;

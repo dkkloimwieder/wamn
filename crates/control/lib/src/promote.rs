@@ -24,8 +24,8 @@ use wamn_schema_control::BareSchemaName;
 use wamn_schema_control::connections::ComponentConnectionRequirement;
 
 use crate::publish_release::{
-    DeploymentCoordinate, MintReleaseManifest, ReleaseWiringTarget, mint_promoted_release_manifest,
-    project_release_identity, read_expected_environment, report_deployment_coordinate,
+    DeploymentCoordinate, PublishReleaseManifest, ReleaseWiringTarget, project_release_identity,
+    publish_promoted_release_manifest, read_expected_environment, report_deployment_coordinate,
     verify_provisioned_environment,
 };
 
@@ -167,7 +167,7 @@ pub struct PromoteRequest {
     pub source_effective_release_id: u32,
     /// Integer identity of the promoted target release.
     pub target_effective_release_id: u32,
-    /// Environment the source release was minted for.
+    /// Environment the source release was published for.
     pub source_environment: String,
     /// Environment the release is promoted into.
     pub target_environment: String,
@@ -192,7 +192,7 @@ pub struct PromoteRequest {
 pub struct PromoteOutcome {
     /// Manifest digest of the source release.
     pub source_manifest_digest: String,
-    /// Manifest digest of the minted target release.
+    /// Manifest digest of the published target release.
     pub target_manifest_digest: String,
     /// Number of component artifacts verified in the registry.
     pub verified_components: usize,
@@ -310,7 +310,7 @@ pub async fn promote(args: PromoteRequest) -> anyhow::Result<PromoteOutcome> {
     };
     let coordinate = DeploymentCoordinate::new(&args.org, &args.project, &target_release);
     let digest = wamn_catalog::ManifestDigest::parse(target_digest.clone())
-        .expect("the release mint returned a canonical digest");
+        .expect("the release publish returned a canonical digest");
     report_deployment_coordinate(&coordinate, &digest);
     project_release_identity(&args.control_database_url, &coordinate).await?;
     Ok(PromoteOutcome {
@@ -723,9 +723,9 @@ async fn promote_target(
         .every_attachment()
         .map(|(id, attachment)| (id.to_owned(), ServingAttachment::from(attachment)))
         .collect();
-    let minted = mint_promoted_release_manifest(
+    let published = publish_promoted_release_manifest(
         &tx,
-        &MintReleaseManifest {
+        &PublishReleaseManifest {
             tenant_id: &args.tenant,
             effective_release_id: target_release_id,
             environment: &args.target_environment,
@@ -741,15 +741,15 @@ async fn promote_target(
         &source.manifest.routes,
     )
     .await
-    .context("mint target format-4 release snapshot")?;
+    .context("publish target format-4 release snapshot")?;
     let expected = read_expected_environment(&tx, run_schema, &args.tenant).await?;
-    verify_provisioned_environment(expected.as_deref(), &minted.manifest.release, run_schema)?;
+    verify_provisioned_environment(expected.as_deref(), &published.manifest.release, run_schema)?;
     // Authored roles take the closures of the candidate before it becomes the
     // head, so no activated operation calls one its roles were not granted.
     crate::role_permissions::reconcile_release_permissions(
         &tx,
         &args.tenant,
-        &crate::role_permissions::ReleaseClosures::from_manifest(&minted.manifest),
+        &crate::role_permissions::ReleaseClosures::from_manifest(&published.manifest),
     )
     .await
     .context("reconcile the authored role permissions with the candidate release")?;
@@ -760,7 +760,7 @@ async fn promote_target(
     .await
     .context("advance target effective-release head")?;
     let mut activated = 0;
-    for wiring in &minted.manifest.workflow.wirings {
+    for wiring in &published.manifest.workflow.wirings {
         if activate_once(
             &tx,
             args,
@@ -774,7 +774,7 @@ async fn promote_target(
         }
     }
     tx.commit().await.context("commit target promotion")?;
-    Ok((minted.digest.as_str().to_owned(), activated))
+    Ok((published.digest.as_str().to_owned(), activated))
 }
 
 async fn verify_target_packages(

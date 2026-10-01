@@ -2,7 +2,7 @@
 
 use super::{
     AdmittedComponent, AdmittedComponentOperation, BTreeMap, BTreeSet, ComponentPackageScope,
-    DependencyDigestRule, MintManifestError, MintManifestErrorType, ReleaseWiringTarget,
+    DependencyDigestRule, PublishManifestError, PublishManifestErrorType, ReleaseWiringTarget,
     ServingAttachment, ServingComponent, VecDeque, WiringDocument,
 };
 
@@ -12,7 +12,7 @@ pub(super) fn resolve_wiring_components(
     component_facts: &BTreeMap<(String, String), Vec<AdmittedComponent>>,
     package_manifest: Option<&wamn_schema_generator::PackageManifest>,
     rule: DependencyDigestRule,
-) -> Result<BTreeMap<String, AdmittedComponent>, MintManifestError> {
+) -> Result<BTreeMap<String, AdmittedComponent>, PublishManifestError> {
     let mut resolved = BTreeMap::new();
     for (node_id, node) in &document.nodes {
         let (package_id, package_version, digest, registered_operation) = match &node
@@ -26,8 +26,8 @@ pub(super) fn resolve_wiring_components(
             ),
             Some(dependency) => {
                 let manifest = package_manifest.ok_or_else(|| {
-                        MintManifestError::new(
-                            MintManifestErrorType::OperationDependency,
+                        PublishManifestError::new(
+                            PublishManifestErrorType::OperationDependency,
                             format!(
                                 "wiring node {node_id:?} invokes dependency alias {:?}, but package {}@{} supplied no package manifest",
                                 dependency.alias, owner.package_id, owner.package_version
@@ -37,8 +37,8 @@ pub(super) fn resolve_wiring_components(
                 if manifest.package.id != owner.package_id
                     || manifest.package.version != owner.package_version
                 {
-                    return Err(MintManifestError::new(
-                        MintManifestErrorType::OperationDependency,
+                    return Err(PublishManifestError::new(
+                        PublishManifestErrorType::OperationDependency,
                         format!(
                             "wiring node {node_id:?} dependency manifest coordinate differs from {}@{}",
                             owner.package_id, owner.package_version
@@ -49,8 +49,8 @@ pub(super) fn resolve_wiring_components(
                     .base_dependencies
                     .get(&dependency.alias)
                     .ok_or_else(|| {
-                        MintManifestError::new(
-                            MintManifestErrorType::OperationDependency,
+                        PublishManifestError::new(
+                            PublishManifestErrorType::OperationDependency,
                             format!(
                                 "wiring node {node_id:?} names undeclared dependency alias {:?}",
                                 dependency.alias
@@ -58,8 +58,8 @@ pub(super) fn resolve_wiring_components(
                         )
                     })?;
                 if !requirement.operations.contains(&dependency.operation) {
-                    return Err(MintManifestError::new(
-                        MintManifestErrorType::OperationDependency,
+                    return Err(PublishManifestError::new(
+                        PublishManifestErrorType::OperationDependency,
                         format!(
                             "wiring node {node_id:?} operation {:?} is absent from dependency alias {:?}",
                             dependency.operation, dependency.alias
@@ -76,8 +76,8 @@ pub(super) fn resolve_wiring_components(
                     &dependency.operation,
                 )
                 .map_err(|error| {
-                    MintManifestError::with_source(
-                        MintManifestErrorType::OperationDependency,
+                    PublishManifestError::with_source(
+                        PublishManifestErrorType::OperationDependency,
                         format!("wiring node {node_id:?} dependency operation is not canonical"),
                         error,
                     )
@@ -94,8 +94,8 @@ pub(super) fn resolve_wiring_components(
         let facts = component_facts
             .get(&(package_id.to_owned(), package_version.to_owned()))
             .ok_or_else(|| {
-                MintManifestError::new(
-                    MintManifestErrorType::OperationDependency,
+                PublishManifestError::new(
+                    PublishManifestErrorType::OperationDependency,
                     format!(
                         "wiring node {node_id:?} target package {package_id}@{package_version} is absent from the effective release"
                     ),
@@ -113,11 +113,11 @@ pub(super) fn resolve_wiring_components(
         });
         let Some(component) = matches.next() else {
             let kind = if node.operation_dependency.is_some() {
-                MintManifestErrorType::OperationDependency
+                PublishManifestErrorType::OperationDependency
             } else {
-                MintManifestErrorType::Component
+                PublishManifestErrorType::Component
             };
-            return Err(MintManifestError::new(
+            return Err(PublishManifestError::new(
                 kind,
                 format!(
                     "wiring node {node_id:?} has no exact component tuple in {package_id}@{package_version}"
@@ -125,8 +125,8 @@ pub(super) fn resolve_wiring_components(
             ));
         };
         if matches.next().is_some() {
-            return Err(MintManifestError::new(
-                MintManifestErrorType::Component,
+            return Err(PublishManifestError::new(
+                PublishManifestErrorType::Component,
                 format!("wiring node {node_id:?} resolves more than one exact component fact"),
             ));
         }
@@ -138,11 +138,11 @@ pub(super) fn resolve_wiring_components(
 pub(super) fn resolved_wiring_entry_operation(
     document: &WiringDocument,
     resolved: &BTreeMap<String, AdmittedComponent>,
-) -> Result<String, MintManifestError> {
+) -> Result<String, PublishManifestError> {
     let entry = &document.nodes[&document.entry];
     let component = resolved.get(&document.entry).ok_or_else(|| {
-        MintManifestError::new(
-            MintManifestErrorType::Component,
+        PublishManifestError::new(
+            PublishManifestErrorType::Component,
             format!(
                 "wiring entry {:?} has no resolved component",
                 document.entry
@@ -150,8 +150,8 @@ pub(super) fn resolved_wiring_entry_operation(
         )
     })?;
     if component.operation(&entry.operation).is_none() {
-        return Err(MintManifestError::new(
-            MintManifestErrorType::Component,
+        return Err(PublishManifestError::new(
+            PublishManifestErrorType::Component,
             format!(
                 "wiring entry {:?} has no resolved export {:?}",
                 document.entry, entry.operation
@@ -167,7 +167,7 @@ pub(super) fn resolve_component_dependency_closure(
     roots: &BTreeMap<String, AdmittedComponent>,
     component_facts: &BTreeMap<(String, String), Vec<AdmittedComponent>>,
     rule: DependencyDigestRule,
-) -> Result<Vec<AdmittedComponent>, MintManifestError> {
+) -> Result<Vec<AdmittedComponent>, PublishManifestError> {
     let mut pending = roots.values().cloned().collect::<Vec<_>>();
     let mut closure = BTreeMap::<(String, String, String), AdmittedComponent>::new();
     while let Some(component) = pending.pop() {
@@ -178,8 +178,8 @@ pub(super) fn resolve_component_dependency_closure(
         );
         if let Some(existing) = closure.get(&key) {
             if existing != &component {
-                return Err(MintManifestError::new(
-                    MintManifestErrorType::OperationDependency,
+                return Err(PublishManifestError::new(
+                    PublishManifestErrorType::OperationDependency,
                     format!("component dependency tuple {key:?} resolves more than one fact"),
                 ));
             }
@@ -201,12 +201,12 @@ fn resolve_component_dependency<'a>(
     dependency: &wamn_catalog::ComponentOperationDependency,
     component_facts: &'a BTreeMap<(String, String), Vec<AdmittedComponent>>,
     rule: DependencyDigestRule,
-) -> Result<&'a AdmittedComponent, MintManifestError> {
+) -> Result<&'a AdmittedComponent, PublishManifestError> {
     let Some(facts) =
         component_facts.get(&(dependency.package.clone(), dependency.version.clone()))
     else {
-        return Err(MintManifestError::new(
-            MintManifestErrorType::OperationDependency,
+        return Err(PublishManifestError::new(
+            PublishManifestErrorType::OperationDependency,
             format!(
                 "component dependency {}@{} is absent from the effective release",
                 dependency.package, dependency.version
@@ -222,8 +222,8 @@ fn resolve_component_dependency<'a>(
                 })
     });
     let Some(component) = matches.next() else {
-        return Err(MintManifestError::new(
-            MintManifestErrorType::OperationDependency,
+        return Err(PublishManifestError::new(
+            PublishManifestErrorType::OperationDependency,
             format!(
                 "component dependency {}@{} digest {} operation {:?} has no exact admitted fact",
                 dependency.package, dependency.version, dependency.digest, dependency.operation
@@ -231,8 +231,8 @@ fn resolve_component_dependency<'a>(
         ));
     };
     if matches.next().is_some() {
-        return Err(MintManifestError::new(
-            MintManifestErrorType::OperationDependency,
+        return Err(PublishManifestError::new(
+            PublishManifestErrorType::OperationDependency,
             format!(
                 "component dependency {}@{} digest {} operation {:?} resolves more than one admitted fact",
                 dependency.package, dependency.version, dependency.digest, dependency.operation
@@ -254,7 +254,7 @@ fn resolve_component_dependency<'a>(
 /// is sufficient evidence. A dependency stays out of the set if its facts do not
 /// resolve exactly. The exact-resolution refusal belongs to
 /// `resolve_component_dependency_closure`, which walks the same facts when the
-/// release is minted.
+/// release is published.
 pub fn effect_free_operation_dependencies(
     declaration: &wamn_catalog::ComponentDeclaration,
     component_facts: &BTreeMap<(String, String), Vec<AdmittedComponent>>,
@@ -283,7 +283,7 @@ fn validate_component_dependency_cycles<'a>(
     components: impl Iterator<Item = &'a AdmittedComponent>,
     component_facts: &BTreeMap<(String, String), Vec<AdmittedComponent>>,
     rule: DependencyDigestRule,
-) -> Result<(), MintManifestError> {
+) -> Result<(), PublishManifestError> {
     let mut graph = BTreeMap::<ComponentOperationKey, Vec<ComponentOperationKey>>::new();
     for component in components {
         for (operation_name, operation) in &component.operations {
@@ -303,10 +303,10 @@ fn validate_component_dependency_cycles<'a>(
                         dependency.operation.clone(),
                     ))
                 })
-                .collect::<Result<Vec<_>, MintManifestError>>()?;
+                .collect::<Result<Vec<_>, PublishManifestError>>()?;
             if graph.insert(key.clone(), dependencies).is_some() {
-                return Err(MintManifestError::new(
-                    MintManifestErrorType::OperationDependency,
+                return Err(PublishManifestError::new(
+                    PublishManifestErrorType::OperationDependency,
                     format!("component operation tuple {key:?} occurs more than once"),
                 ));
             }
@@ -340,8 +340,8 @@ fn validate_component_dependency_cycles<'a>(
         }
     }
     if visited != graph.len() {
-        return Err(MintManifestError::new(
-            MintManifestErrorType::OperationDependency,
+        return Err(PublishManifestError::new(
+            PublishManifestErrorType::OperationDependency,
             "component operation dependency closure contains a cycle",
         ));
     }
@@ -357,13 +357,13 @@ pub(super) fn project_serving_component(
     fact: &AdmittedComponent,
     component_facts: &BTreeMap<(String, String), Vec<AdmittedComponent>>,
     rule: DependencyDigestRule,
-) -> Result<ServingComponent, MintManifestError> {
+) -> Result<ServingComponent, PublishManifestError> {
     let resolve = |dependency: &wamn_catalog::ComponentOperationDependency| {
         resolve_component_dependency(dependency, component_facts, rule).ok()
     };
     ServingComponent::project(fact, &resolve).map_err(|error| {
-        MintManifestError::with_source(
-            MintManifestErrorType::OperationDependency,
+        PublishManifestError::with_source(
+            PublishManifestErrorType::OperationDependency,
             format!(
                 "component {:?} does not fold into one release component",
                 fact.component
@@ -380,14 +380,14 @@ pub(super) fn project_serving_component(
 ///
 /// The attachment itself cannot carry this fact for nested calls: reachability
 /// exists only in the exact stored wiring plus its admitted component facts, so
-/// release mint is the first boundary that can make the invalid composition
+/// release publish is the first boundary that can make the invalid composition
 /// unrepresentable without adding another manifest field (`wamn-10yt.3.2`).
 pub(super) fn validate_anonymous_wiring_closure(
     attachments: &BTreeMap<String, ServingAttachment>,
     target: &ReleaseWiringTarget,
     document: &WiringDocument,
     component_facts: &BTreeMap<String, AdmittedComponent>,
-) -> Result<(), MintManifestError> {
+) -> Result<(), PublishManifestError> {
     let anonymous_attachments = attachments.iter().filter(|(_, attachment)| {
         attachment.package_id == target.package_id
             && attachment.target
@@ -428,13 +428,13 @@ pub(super) fn resolve_route_component<'a>(
     component: &str,
     operation: &str,
     facts: &'a [AdmittedComponent],
-) -> Result<&'a AdmittedComponent, MintManifestError> {
+) -> Result<&'a AdmittedComponent, PublishManifestError> {
     let mut matches = facts
         .iter()
         .filter(|fact| fact.component == component && fact.operation(operation).is_some());
     let Some(fact) = matches.next() else {
-        return Err(MintManifestError::new(
-            MintManifestErrorType::Component,
+        return Err(PublishManifestError::new(
+            PublishManifestErrorType::Component,
             format!(
                 "route attachment {attachment_id:?} names component {component:?} operation \
                  {operation:?}, which no admitted component of package {:?} exports",
@@ -443,8 +443,8 @@ pub(super) fn resolve_route_component<'a>(
         ));
     };
     if matches.next().is_some() {
-        return Err(MintManifestError::new(
-            MintManifestErrorType::Component,
+        return Err(PublishManifestError::new(
+            PublishManifestErrorType::Component,
             format!(
                 "route attachment {attachment_id:?} operation {operation:?} resolves more than \
                  one admitted component"
@@ -468,10 +468,10 @@ fn refuse_anonymous_reach(
     attachment_id: &str,
     operation: &AdmittedComponentOperation,
     site: &str,
-) -> Result<(), MintManifestError> {
+) -> Result<(), PublishManifestError> {
     if let Some(operation) = operation.registered_operation.as_deref() {
-        return Err(MintManifestError::new(
-            MintManifestErrorType::UnauthenticatedRegisteredOperation,
+        return Err(PublishManifestError::new(
+            PublishManifestErrorType::UnauthenticatedRegisteredOperation,
             format!(
                 "attachment {attachment_id:?} reaches registered operation \
                  {operation:?} at {site}; set auth-policy modes = \
@@ -481,8 +481,8 @@ fn refuse_anonymous_reach(
         ));
     }
     if let Some(dependency) = operation.dependencies.first() {
-        return Err(MintManifestError::new(
-            MintManifestErrorType::UnauthenticatedRegisteredOperation,
+        return Err(PublishManifestError::new(
+            PublishManifestErrorType::UnauthenticatedRegisteredOperation,
             format!(
                 "attachment {attachment_id:?} reaches registered operation \
                  {:?} through component dependency at {site}; set \
@@ -497,8 +497,8 @@ fn refuse_anonymous_reach(
         .values()
         .find(|statement| statement.transactional)
     {
-        return Err(MintManifestError::new(
-            MintManifestErrorType::UnauthenticatedWrite,
+        return Err(PublishManifestError::new(
+            PublishManifestErrorType::UnauthenticatedWrite,
             format!(
                 "attachment {attachment_id:?} reaches transactional statement \
                  {:?} at {site}; set auth-policy modes = [{mode:?}]",

@@ -453,7 +453,7 @@ async fn run_created(
             scenario_worker: &target.join("debug/wamn-scenario-worker"),
             label_render: &target.join("wasm32-wasip2/release/label_render.wasm"),
             minio_endpoint: &minio_endpoint,
-            mint_only: matches!(case, Case::Delivery),
+            publish_only: matches!(case, Case::Delivery),
         },
         evidence,
     )

@@ -4,7 +4,7 @@ Updated through: 2026-10-01, `main` at `01ca2425d`. Finding `wamn-ld93.33`. The 
 
 ## 1. Goal
 
-`wamn-ctl qualify-release` qualifies the release of any environment from its candidate. The kind cases take every release input from the candidate, never from constants. These are the tenant, the environment, the org, the project, the release id, the route host and the package set. They mint that release in the disposable stack, and the stack reproduces the bytes of the candidate.
+`wamn-ctl qualify-release` qualifies the release of any environment from its candidate. The kind cases take every release input from the candidate, never from constants. These are the tenant, the environment, the org, the project, the release id, the route host and the package set. They publish that release in the disposable stack, and the stack reproduces the bytes of the candidate.
 
 After this work, B7 and B8 of the cutover can qualify release 2 of the wamn-dev Receiving and WMS environments.
 
@@ -42,9 +42,9 @@ The six cases are listed at `qualification.rs:15-24`. Each one runs as `<exe> <c
 
 ### 3.2 The constants each case pins
 
-Receiving. The three cases share one mint path:
+Receiving. The three cases share one publish path:
 
-- Org `acme`, project `receiving`, environment `dev`, tenant `receiving-route-auth` and release id 1 (`crates/control/lib/src/dev/environment.rs:237-245`). The mint uses them at `apps/wamn_receiving/tests/route_authentication_live/environment.rs:595-599`.
+- Org `acme`, project `receiving`, environment `dev`, tenant `receiving-route-auth` and release id 1 (`crates/control/lib/src/dev/environment.rs:237-245`). The publish uses them at `apps/wamn_receiving/tests/route_authentication_live/environment.rs:595-599`.
 - The packages are `JOURNEY_PACKAGES` (`apps/wamn_receiving/tests/route_authentication_live.rs:375-389`). These are `wamn_receiving` and `client_acme_receiving`, with versions read from each `wamn.json`.
 - The wiring is `client_acme_receiving::quality_create_inspection`, with version 1 written in the code (`route_authentication_live.rs:387`, `environment.rs:582-591`).
 - The route host is `receiving.localhost` (`route_authentication_live/cluster.rs:173`).
@@ -102,12 +102,12 @@ The cases reach a host through a NodePort with a `Host` header. There is no ingr
 The candidate already carries the manifest, and the manifest names the tenant, the environment, the release id and the packages. The design adds what the manifest does not name, and it moves every case input from a constant to the candidate.
 
 - `prepare-release` takes `--org` and `--project`, and writes them into the candidate. They are not in the bytes, but the policy row and the publication record use them (§3.4).
-- The Receiving and WMS fixtures provision the stack with the org, the project, the tenant and the environment of the candidate. They mint the release id of the candidate, with its packages, its wirings and its route host. The scope checks of `delivery.rs` compare with the candidate instead of the constants.
+- The Receiving and WMS fixtures provision the stack with the org, the project, the tenant and the environment of the candidate. They publish the release id of the candidate, with its packages, its wirings and its route host. The scope checks of `delivery.rs` compare with the candidate instead of the constants.
 - With no candidate, each fixture builds its default candidate from today's constants, so the existing cases run unchanged.
 
 ### 4.1 Fresh store
 
-The fixture mints the release id of the candidate directly into a fresh store. The schema checks only `effective_release_id > 0` (`deploy/sql/control-portable-store.sql:52`). The next-id rule of `publish_release.rs:492-500` belongs to the dev loop only. No placeholder release 1 is minted. A copy of an installed database stays with the package-upgrade epic.
+The fixture publishes the release id of the candidate directly into a fresh store. The schema checks only `effective_release_id > 0` (`deploy/sql/control-portable-store.sql:52`). The next-id rule of `publish_release.rs:492-500` belongs to the dev loop only. No placeholder release 1 is published. A copy of an installed database stays with the package-upgrade epic.
 
 ### 4.2 Route host
 
@@ -123,7 +123,7 @@ The route host comes from the candidate. The cases send it as the `Host` header,
 | `{wamn_receiving, client_acme_receiving}` | All three Receiving cases of §3.1. |
 | `{wamn_wms}` | The three WMS cases of §3.1. |
 
-Any other set fails as it does today. The Receiving-alone mint is part of this change: with the set `{wamn_receiving}`, the Receiving fixture mints `wamn_receiving` alone and no Acme wiring. No release is qualified by a case that needs a package that the release does not carry.
+Any other set fails as it does today. The Receiving-alone publish is part of this change: with the set `{wamn_receiving}`, the Receiving fixture publishes `wamn_receiving` alone and no Acme wiring. No release is qualified by a case that needs a package that the release does not carry.
 
 These Receiving cases touch no overlay, measured at `01ca2425d`:
 
@@ -138,7 +138,7 @@ Acme takes part in `record_receipt` only through its own route `/acme/receiving/
 
 ### 4.4 WMS auth policy
 
-The WMS fixture mints the authored attachments unchanged, so the bytes keep `["pat","session"]`. The change deletes `pat_only_attachments` (`apps/wamn_wms/tests/environment.rs:394-425` at `01ca2425d`) and its caller. The fixture installs the session issuer the way `route_authentication_live/sessions.rs` does (`prepare_session_host_fixture`, `sessions.rs:6`). The WMS cases keep calling PAT routes.
+The WMS fixture publishes the authored attachments unchanged, so the bytes keep `["pat","session"]`. The change deletes `pat_only_attachments` (`apps/wamn_wms/tests/environment.rs:394-425` at `01ca2425d`) and its caller. The fixture installs the session issuer the way `route_authentication_live/sessions.rs` does (`prepare_session_host_fixture`, `sessions.rs:6`). The WMS cases keep calling PAT routes.
 
 ## 5. Issues
 
@@ -149,7 +149,7 @@ The owner set this order on 2026-10-01. The deployment agent builds all four in 
 1. The fixture identity comes from the candidate: the tenant, the environment, the org, the project, the release id, the route host and the package set (§4, §4.1, §4.2). The result record of `command_histories` follows the candidate too (§4.3).
 2. The three-arm selection and the Receiving-alone cases (§4.3).
 3. The WMS session issuer and the deletion of the rewrite (§4.4).
-4. A kind dry run of `prepare-release` and `qualify-release` for both wamn-dev release 2 candidates. The run compares the candidate bytes with a mint from the same inputs.
+4. A kind dry run of `prepare-release` and `qualify-release` for both wamn-dev release 2 candidates. The run compares the candidate bytes with a publish from the same inputs.
 
 ## 6. Out of scope
 
@@ -163,15 +163,15 @@ The owner ruled on 2026-10-01 (recorded on `wamn-ld93.33`):
 
 1. Fresh store. The copy mechanism stays with the package-upgrade epic (§4.1).
 2. The route host comes from the candidate and is sent as the `Host` header. Nothing else changes (§4.2).
-3. Case selection matches the package set exactly, in three arms. The Receiving-alone mint is part of the change (§4.3).
+3. Case selection matches the package set exactly, in three arms. The Receiving-alone publish is part of the change (§4.3).
 4. The WMS fixture installs the session issuer, and the rewrite is deleted (§4.4).
 
 The forks as they were put to the owner:
 
 1. Release id. No rule requires release 1 before release 2 (§3.4). So the source does not support the premise that release 2 needs a release 1.
-   - Fresh store. The fixture mints release 2 directly. It costs nothing beyond issues 3 and 4.
+   - Fresh store. The fixture publishes release 2 directly. It costs nothing beyond issues 3 and 4.
    - Copy of the installed project database, restored into the kind stack, then `upgrade-schema` on the copy. This rehearses B3. `copy-project-env` copies one data schema only and needs a provisioned destination (§3.6), so the copy needs a whole-database dump and restore. The copy brings the `dkk` policy row, which needs a matching `registry.env_policies` row in the kind `wamn_system`. It also brings the application rows of wamn-dev, which hold the owner's data, into the kind stack.
    - Placeholder release 1. It is not needed, because no rule asks for it.
 2. Route host. The cases send a `Host` header to a NodePort, with no TLS (§3.5). If the cases take the host from the candidate, kind can serve `receiving.wamn.dev` and `wms.wamn.dev`. The cases need no change to how they name their host beyond that.
 3. Receiving package set. Acme is not on wamn-dev, and release 2 is `wamn_receiving@2.0.0` alone (`kind-to-type.md` §3.2 "No overlay", `gcp.md` §5.3 "Receiving ran the same"). Case selection refuses that set (§3.1), and `baseline_overlay_and_materializer_progress` exercises the overlay. The owner decides which cases qualify a Receiving release without Acme.
-4. WMS auth policy. The WMS fixture rewrites every route to `["pat"]` because the kind stack installs no session issuer (`apps/wamn_wms/tests/environment.rs:375-380`). The wamn-dev release keeps `["pat","session"]`, so its bytes differ. The owner decides between two options. The WMS fixture installs a session issuer, or the cases mint the authored policy and call only the PAT routes.
+4. WMS auth policy. The WMS fixture rewrites every route to `["pat"]` because the kind stack installs no session issuer (`apps/wamn_wms/tests/environment.rs:375-380`). The wamn-dev release keeps `["pat","session"]`, so its bytes differ. The owner decides between two options. The WMS fixture installs a session issuer, or the cases publish the authored policy and call only the PAT routes.

@@ -153,7 +153,7 @@ Publication freezes the effective release and its canonical manifest digest.
 The push requires that result, reads the frozen snapshot, and refuses conflicting artifact bytes.
 It takes the same `--oci-ca-path` input as `push-component`.
 `print-release-env` prints the host release settings without editing files.
-A deployment that is not a qualification pushes the minted manifest with `wamn-ctl push-release-manifest`, which takes the same arguments as `publish-qualified-release` without `--qualification`. It attests the push in the control database and records no source commit.
+A deployment that is not a qualification pushes the published manifest with `wamn-ctl push-release-manifest`, which takes the same arguments as `publish-qualified-release` without `--qualification`. It attests the push in the control database and records no source commit.
 
 Copy its output into the selected complete host overlay.
 Commit those configuration changes together.

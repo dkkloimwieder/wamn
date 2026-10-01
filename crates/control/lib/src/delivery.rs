@@ -15,18 +15,18 @@ pub mod publication;
 pub mod qualification;
 pub mod sqlx;
 
-/// Exact minted release and explicit artifact locations captured for qualification.
+/// Exact published release and explicit artifact locations captured for qualification.
 #[derive(Clone, Debug)]
 pub struct PrepareReleaseRequest {
-    /// URL to the database holding the minted release snapshot.
+    /// URL to the database holding the published release snapshot.
     pub database_url: String,
-    /// Org of the minted release, which its manifest does not name.
+    /// Org of the published release, which its manifest does not name.
     pub org: String,
-    /// Project of the minted release, which its manifest does not name.
+    /// Project of the published release, which its manifest does not name.
     pub project: String,
-    /// Tenant claim carried by the minted release snapshot.
+    /// Tenant claim carried by the published release snapshot.
     pub tenant: String,
-    /// Integer identity of the minted effective release snapshot.
+    /// Integer identity of the published effective release snapshot.
     pub effective_release_id: u32,
     /// The `<registry>/<repository>` the release manifest was pushed to.
     pub artifact_base: String,
@@ -83,7 +83,7 @@ pub async fn prepare(request: PrepareReleaseRequest) -> anyhow::Result<()> {
     serde_json::to_writer_pretty(output, &candidate).context("write the candidate artifact inputs")
 }
 
-/// The release inputs that a qualification fixture provisions and mints.
+/// The release inputs that a qualification fixture provisions and publishes.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ReleaseIdentity {
     pub org: String,
@@ -189,11 +189,11 @@ impl Candidate {
         ServingManifest::from_canonical_bytes(&bytes).context("admit candidate serving manifest")
     }
 
-    /// The release inputs that a fixture provisions and mints: the org and the
+    /// The release inputs that a fixture provisions and publishes: the org and the
     /// project of the candidate, and the rest from its manifest.
     pub fn identity(&self) -> anyhow::Result<ReleaseIdentity> {
         let (manifest, _) = self.manifest()?;
-        // The mint writes one deployment route host into every routed
+        // The publish writes one deployment route host into every routed
         // attachment (publish_release/attachments.rs resolve_route_host_overlay).
         let hosts = manifest
             .attachments

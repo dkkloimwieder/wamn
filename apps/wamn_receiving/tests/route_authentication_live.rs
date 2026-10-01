@@ -87,7 +87,7 @@ use wasmtime_wasi_http::p3::bindings::http::types::ErrorCode;
 use environment::{
     JourneyReleaseTarget, author_journey_wirings, gate_journey_wirings, install_journey_project,
     journey_package_root, journey_publication_root, journey_scenario_worker_binary,
-    overlay_package_root, overlay_route_path, package_root, publish_journey_release,
+    overlay_package_root, overlay_route_path, package_root, publish_and_push_journey_release,
     push_journey_components, reconcile_journey_data_access, reference_of,
     released_component_digests, render_component_declarations, repository_root, required_journey,
     required_journey_path, seed_materializer_order, seed_materializer_trigger_rows,
@@ -204,7 +204,7 @@ static OVERLAY_RECEIPT_PARTICIPANT: LazyLock<&'static str> =
     LazyLock::new(|| sealed("client-acme-receiving:receiving/record-receipt-participant").leak());
 const PREEXISTING_QUALITY_RECEIPT_ID: &str = "00000000-0000-0000-0000-000000000603";
 
-/// The release this fixture provisions and mints. A supplied candidate names
+/// The release this fixture provisions and publishes. A supplied candidate names
 /// it, and with no candidate it is the default Receiving journey release.
 fn identity() -> &'static ReleaseIdentity {
     static IDENTITY: LazyLock<ReleaseIdentity> = LazyLock::new(|| {

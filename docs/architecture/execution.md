@@ -22,7 +22,7 @@ The host checks that grant once, before the entry runs, under the original calle
 Component membership alone grants no permission to call an operation.
 
 An attachment with auth policy `none` has no principal, so it cannot write.
-If the reachable wiring of an anonymous attachment holds a registered operation or a transactional statement, [release mint](../../crates/control/lib/src/publish_release/components.rs) refuses it.
+If the reachable wiring of an anonymous attachment holds a registered operation or a transactional statement, [release publish](../../crates/control/lib/src/publish_release/components.rs) refuses it.
 
 The method of a route follows from the kind of its operation, and no author writes it.
 Publish writes GET for a route to a `get`, `query` or `projection` operation, and POST for every other route and every wiring.
@@ -50,10 +50,10 @@ A host route derives its sealed operation id, its path and its attachment id fro
 For example, `permission.mine` is `wamn-control:permission/mine@0.1.0`, at `/wamn_control/permission/mine`, with the attachment id `wamn-control-permission-mine-http`.
 
 There are two sets.
-Release mint writes the set `application` into every application release.
+Release publish writes the set `application` into every application release.
 Its routes admit a PAT or a session and read the project environment database of the release.
 The control serving root serves only the set `control`, whose routes admit a browser session only.
-Mint refuses an authored attachment under `/wamn_control/`.
+Publish refuses an authored attachment under `/wamn_control/`.
 
 [`HostRouteDelivery`](../../crates/execution/host/src/host_route.rs) serves the host routes of the loaded release.
 It passes every other delivery to the router delivery bridge.

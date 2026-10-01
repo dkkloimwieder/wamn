@@ -12,7 +12,7 @@ pub(crate) fn candidate() -> anyhow::Result<Option<(Candidate, ServingManifest)>
     };
     let (manifest, _) = candidate.manifest()?;
     // The fixture takes the rest of its identity from the candidate, and it
-    // mints only the WMS package of this checkout.
+    // publishes only the WMS package of this checkout.
     ensure!(
         manifest.release.packages
             == std::collections::BTreeSet::from([crate::environment::package_coordinate()?]),

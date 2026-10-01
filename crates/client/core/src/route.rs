@@ -84,7 +84,7 @@ impl std::error::Error for RouteError {}
 ///
 /// Method and template only — both release facts, both emittable from the
 /// client-contract IR. The host deliberately is NOT here: publication refuses
-/// an authored `route.host` and stamps one in at release mint, so a host is
+/// an authored `route.host` and stamps one in at release publish, so a host is
 /// deployment fact and lives on the client beside its base URL. Carrying it
 /// in this struct put a deployment fact in the same value as two release
 /// facts, which is the mixing ruling 3 exists to prevent.

@@ -116,7 +116,7 @@ impl WamnClient {
     /// `host` is the header the deployment routes on, when it routes by host.
     /// It sits HERE and not on a route because a release does not record one —
     /// publication refuses an authored `route.host` and the deployment stamps
-    /// it in at mint — so it is deployment config exactly like the base URL.
+    /// it in at publish — so it is deployment config exactly like the base URL.
     #[must_use]
     pub fn new(
         base_url: impl Into<String>,

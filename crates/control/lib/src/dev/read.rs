@@ -117,7 +117,7 @@ pub struct DevReleaseSnapshot {
 }
 
 impl DevReleaseSnapshot {
-    /// Immutable serving manifest minted by Release.
+    /// Immutable serving manifest published by Release.
     pub const fn manifest(&self) -> &ServingManifest {
         &self.manifest
     }

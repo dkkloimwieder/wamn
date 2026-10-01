@@ -569,7 +569,7 @@ pub(super) struct JourneyReleaseTarget<'a> {
     pub(super) attachments: Vec<PathBuf>,
 }
 
-pub(super) async fn mint_journey_release(
+pub(super) async fn publish_journey_release(
     inputs: &JourneyDocument,
     target: JourneyReleaseTarget<'_>,
 ) -> anyhow::Result<String> {
@@ -615,7 +615,7 @@ pub(super) async fn mint_journey_release(
             .collect(),
     })
     .await
-    .context("mint the production Receiving release")?;
+    .context("publish the production Receiving release")?;
     let inactive = control
         .query_opt(
             "SELECT deployed_manifest_hash FROM catalog.deployment_attestations \
@@ -630,10 +630,10 @@ pub(super) async fn mint_journey_release(
             ],
         )
         .await
-        .context("verify the minted Receiving release remains inactive")?;
+        .context("verify the published Receiving release remains inactive")?;
     anyhow::ensure!(
         inactive.is_none(),
-        "minting the Receiving release activated it before deployment"
+        "publishing the Receiving release activated it before deployment"
     );
     let digest: String = project
         .query_one(
@@ -642,7 +642,7 @@ pub(super) async fn mint_journey_release(
             &[&identity().tenant.as_str(), &release_id.cast_signed()],
         )
         .await
-        .context("read the production-minted release digest")?
+        .context("read the production-published release digest")?
         .get(0);
     if let Some(candidate) = wamn_control::delivery::Candidate::from_env()? {
         let bytes: Vec<u8> = project.query_one(
@@ -655,7 +655,7 @@ pub(super) async fn mint_journey_release(
     Ok(digest)
 }
 
-pub(super) async fn publish_journey_release(
+pub(super) async fn publish_and_push_journey_release(
     inputs: &JourneyDocument,
     target: JourneyReleaseTarget<'_>,
 ) -> anyhow::Result<(String, Arc<LoadedRelease>)> {
@@ -663,7 +663,7 @@ pub(super) async fn publish_journey_release(
     let system_url = target.system_url;
     let control = target.control;
     let release_id = target.release_id;
-    let digest = mint_journey_release(inputs, target).await?;
+    let digest = publish_journey_release(inputs, target).await?;
     push_release_manifest::push_release_manifest(
         &PushReleaseManifestRequest {
             database_url: project_url.to_owned(),
@@ -699,7 +699,7 @@ pub(super) async fn publish_journey_release(
         .get(0);
     anyhow::ensure!(
         serving == digest,
-        "serving attestation {serving} differs from minted release {digest}"
+        "serving attestation {serving} differs from published release {digest}"
     );
     let source = ReleaseManifestSource::new(
         &inputs.release_artifact_base,

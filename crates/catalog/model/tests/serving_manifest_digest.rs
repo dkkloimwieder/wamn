@@ -11,7 +11,7 @@ use wamn_catalog::{
     parse_attachment_auth_policy,
 };
 
-mod mint_vector {
+mod publish_vector {
     include!("fixtures/release_manifest_mint_vector.rs");
 }
 
@@ -196,15 +196,15 @@ fn sorted_keys(value: &Value) -> Vec<String> {
 #[test]
 fn the_format_four_preimage_and_digest_are_pinned() {
     let expected = manifest();
-    assert_eq!(expected.canonical_bytes(), mint_vector::CANONICAL_BYTES);
-    assert_eq!(expected.digest().as_str(), mint_vector::DIGEST);
+    assert_eq!(expected.canonical_bytes(), publish_vector::CANONICAL_BYTES);
+    assert_eq!(expected.digest().as_str(), publish_vector::DIGEST);
 
-    let (read, digest) = ServingManifest::from_canonical_bytes(mint_vector::CANONICAL_BYTES)
+    let (read, digest) = ServingManifest::from_canonical_bytes(publish_vector::CANONICAL_BYTES)
         .expect("the format-four vector is admitted by the reader");
     assert_eq!(read, expected);
-    assert_eq!(digest.as_str(), mint_vector::DIGEST);
+    assert_eq!(digest.as_str(), publish_vector::DIGEST);
 
-    let raw = <sha2::Sha256 as sha2::Digest>::digest(mint_vector::CANONICAL_BYTES);
+    let raw = <sha2::Sha256 as sha2::Digest>::digest(publish_vector::CANONICAL_BYTES);
     let hex: String = raw.iter().fold(String::new(), |mut out, byte| {
         use std::fmt::Write as _;
         write!(out, "{byte:02x}").expect("writing to a string is infallible");
@@ -256,7 +256,7 @@ fn fresh_only_is_digest_bound_without_changing_format_four_default_bytes() {
     assert_eq!(admitted, fresh);
     assert_eq!(admitted.format_version, 4);
     assert_ne!(digest, baseline.digest());
-    assert_eq!(baseline.canonical_bytes(), mint_vector::CANONICAL_BYTES);
+    assert_eq!(baseline.canonical_bytes(), publish_vector::CANONICAL_BYTES);
 }
 
 #[test]
@@ -399,7 +399,7 @@ fn malformed_authentication_lists_are_refused_by_parser_and_release_reader() {
 /// package id, as `crates/control/lib/src/push_release_manifest.rs:529` shows
 /// with `http-request` under `"package-id":"orders"`. Deriving the id from the
 /// namespace produced the reserved id `wamn`, which is not a manifest any
-/// publisher can mint.
+/// publisher can publish.
 fn operation_provider_manifest(package: &str, export: &str, version: &str) -> ServingManifest {
     let operation = ServingComponentOperation {
         pre_commit: None,

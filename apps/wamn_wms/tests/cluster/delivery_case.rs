@@ -1,4 +1,4 @@
-//! Real delivery commands while the WMS fixture retains its minted release store.
+//! Real delivery commands while the WMS fixture retains its published release store.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -348,7 +348,7 @@ pub(super) async fn run(
                 result[identity_field] == release_identity
                     && result["result"] == "pass"
                     && result["manifest_digest"] == release.manifest_digest.as_str(),
-                "the delivery command did not confirm the minted release digest"
+                "the delivery command did not confirm the published release digest"
             );
         }
     }

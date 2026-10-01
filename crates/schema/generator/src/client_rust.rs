@@ -8,7 +8,7 @@
 //!
 //! No base URL and no host. Those are deployment facts a release does not
 //! record — publication refuses an authored `route.host` and stamps one in at
-//! mint — so a binding that carried one would be wrong the first time the same
+//! publish — so a binding that carried one would be wrong the first time the same
 //! release ran anywhere else. They stay construction-time config on the client
 //! (ruling 3).
 //!

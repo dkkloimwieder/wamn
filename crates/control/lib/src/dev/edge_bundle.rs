@@ -1,6 +1,6 @@
 //! Write the edge release bundle of the local release that the loop published.
 //!
-//! The loop's release stage mints the serving manifest and admits each
+//! The loop's release stage publishes the serving manifest and admits each
 //! component into its local artifacts directory. This writer copies those exact
 //! bytes into a new directory, adds the grants and the ingress guest, and pins
 //! every file in `edge-release.json` (docs/plan/edge.md section 4.6). The
@@ -119,7 +119,7 @@ pub fn write_package(
     };
     let assembled = assemble_local_release(&request, std::slice::from_ref(&admission), Vec::new())?;
     write_bundle(
-        &assembled.minted.canonical_bytes,
+        &assembled.published.canonical_bytes,
         &assembled.facts,
         |digest| {
             ensure!(

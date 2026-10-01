@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Existing app fixtures own the stores, release mint, assertions, and cleanup.
+# Existing app fixtures own the stores, release publish, assertions, and cleanup.
 set -euo pipefail
 umask 077
 action=${1:?receiving, wms, native-registry, load-native, remove-native, or render-host}

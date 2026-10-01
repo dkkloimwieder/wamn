@@ -214,7 +214,7 @@ pub async fn author(args: AuthorWiringArgs) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Mint one effective release and print its manifest digest.
+/// Publish one effective release and print its manifest digest.
 pub async fn publish(args: PublishReleaseArgs) -> anyhow::Result<()> {
     let digest = publish_release::publish_release(PublishReleaseRequest {
         database_url: args.database_url,

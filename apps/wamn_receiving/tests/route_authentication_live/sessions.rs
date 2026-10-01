@@ -102,7 +102,7 @@ pub(super) async fn prepare_session_host_fixture(
         changed == 1,
         "session fixture must change exactly one copied attachment"
     );
-    let (manifest_digest, release) = publish_journey_release(
+    let (manifest_digest, release) = publish_and_push_journey_release(
         inputs,
         JourneyReleaseTarget {
             project_url: project_url.as_str(),
@@ -402,7 +402,7 @@ pub(super) async fn assert_nested_session(
         changed == selected_attachments.len(),
         "caller test must change exactly the selected copied route policies"
     );
-    let (_, release) = publish_journey_release(
+    let (_, release) = publish_and_push_journey_release(
         &inputs,
         JourneyReleaseTarget {
             project_url: project_url.as_str(),

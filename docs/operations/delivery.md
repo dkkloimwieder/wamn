@@ -28,11 +28,11 @@ The application build owners and qualification use this same command.
 It selects the host and four helper packages together, with locked dependencies, default features, and the development profile.
 It fixes compiler flags and the build environment, disables incremental compilation, and normalizes output-directory paths.
 Reproduction requires the same clean checkout path, pinned Rust version, native tools, and Cargo configuration.
-Mint its release through the existing release command.
+Publish its release through the existing release command.
 Upload native images as inactive artifacts when the disposable cluster needs registry access.
 Record their immutable `repository@sha256:digest` references.
 
-Capture the minted manifest and explicit artifact locations:
+Capture the published manifest and explicit artifact locations:
 
 ```bash
 wamn-ctl prepare-release \
@@ -91,7 +91,7 @@ tools/delivery-owned wms
 ```
 
 Each fixture creates its own services, database, kind cluster, and native image registry.
-It keeps the minted release store until preparation, qualification, publication, selection, and deployment finish.
+It keeps the published release store until preparation, qualification, publication, selection, and deployment finish.
 The application owner supplies the authenticated request and expected response.
 Receiving and WMS both supply the combined host image.
 The fixture reports failure if an operation or cleanup fails.

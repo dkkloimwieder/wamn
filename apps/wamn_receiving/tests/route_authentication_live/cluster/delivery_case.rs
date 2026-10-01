@@ -77,7 +77,7 @@ async fn exercise(
     cancelled: &pg_walstream::CancellationToken,
 ) -> anyhow::Result<()> {
     let resources = &cluster.resources;
-    let route = super::super::routes::mint_receiving_release(
+    let route = super::super::routes::publish_receiving_release(
         &cluster.inputs,
         &cluster.artifacts.target.join("debug/wamn-scenario-worker"),
     )
@@ -365,7 +365,7 @@ async fn exercise(
                 result[identity_field] == release_identity
                     && result["result"] == "pass"
                     && result["manifest_digest"] == carrier.manifest_digest.as_str(),
-                "the delivery command did not confirm the minted release digest"
+                "the delivery command did not confirm the published release digest"
             );
         }
     }

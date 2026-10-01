@@ -9,9 +9,9 @@ use wamn_control_provision::CONTROL_BOOTSTRAP_SQL;
 use wamn_engine::component_admission::{ComponentAdmissionRequest, validate_component_admission};
 
 use super::{
-    DependencyDigestRule, MintManifestErrorType, MintReleaseManifest, MintedReleaseManifest,
+    DependencyDigestRule, PublishManifestErrorType, PublishReleaseManifest, PublishedRelease,
     ReleaseWiringTarget, effect_free_operation_dependencies,
-    mint_release_manifest_with_package_manifests, read_package_attachments, read_package_manifests,
+    publish_release_with_package_manifests, read_package_attachments, read_package_manifests,
     resolve_route_host_overlay, sha256, validate_package_metadata,
 };
 use crate::apply_package::{self, ApplyPackageRequest};
@@ -321,24 +321,19 @@ async fn author_one_node_wiring(project: &mut Client, control: &Client) -> Relea
     }
 }
 
-async fn mint(
+async fn publish(
     project: &mut Client,
-    request: &MintReleaseManifest<'_>,
+    request: &PublishReleaseManifest<'_>,
     manifests: &BTreeMap<String, wamn_schema_generator::PackageManifest>,
     hashes: &BTreeMap<String, String>,
     kinds: &super::RouteContracts,
-) -> MintedReleaseManifest {
-    let transaction = project.transaction().await.expect("begin release mint");
-    let release = mint_release_manifest_with_package_manifests(
-        &transaction,
-        request,
-        manifests,
-        hashes,
-        kinds,
-    )
-    .await
-    .expect("mint the exact fresh two-package release");
-    transaction.commit().await.expect("commit release mint");
+) -> PublishedRelease {
+    let transaction = project.transaction().await.expect("begin release publish");
+    let release =
+        publish_release_with_package_manifests(&transaction, request, manifests, hashes, kinds)
+            .await
+            .expect("publish the exact fresh two-package release");
+    transaction.commit().await.expect("commit release publish");
     release
 }
 
@@ -360,16 +355,16 @@ fn assert_typed_metadata_refusal(input: &PackageInput) {
     )
     .unwrap();
     let refusal = validate_package_metadata(&manifest, &metadata)
-        .expect_err("unsatisfied package metadata must refuse release mint");
+        .expect_err("unsatisfied package metadata must refuse release publish");
     assert_eq!(
         refusal.kind(),
-        MintManifestErrorType::PolicyContractUnsatisfied
+        PublishManifestErrorType::PolicyContractUnsatisfied
     );
 }
 
 #[tokio::test]
 #[ignore = "requires: WAMN_EFFECTIVE_RELEASE_BASE_COMPONENT_WASM, WAMN_EFFECTIVE_RELEASE_OVERLAY_COMPONENT_WASM"]
-async fn fresh_base_and_overlay_mint_byte_identically_and_refuse_drift() {
+async fn fresh_base_and_overlay_publish_byte_identically_and_refuse_drift() {
     wamn_test_postgres::require_prerequisites(&[
         "WAMN_EFFECTIVE_RELEASE_BASE_COMPONENT_WASM",
         "WAMN_EFFECTIVE_RELEASE_OVERLAY_COMPONENT_WASM",
@@ -414,7 +409,7 @@ async fn fresh_base_and_overlay_mint_byte_identically_and_refuse_drift() {
     let attachments =
         resolve_route_host_overlay(&authored_attachments, Some("fixture.localhost"), &kinds)
             .expect("bind the deployment-owned route hostname");
-    let request = MintReleaseManifest {
+    let request = PublishReleaseManifest {
         tenant_id: TENANT,
         effective_release_id: RELEASE_ID,
         environment: ENVIRONMENT,
@@ -425,8 +420,8 @@ async fn fresh_base_and_overlay_mint_byte_identically_and_refuse_drift() {
         environment_is_disposable: false,
     };
 
-    let first = mint(&mut project, &request, &manifests, &manifest_hashes, &kinds).await;
-    let second = mint(&mut project, &request, &manifests, &manifest_hashes, &kinds).await;
+    let first = publish(&mut project, &request, &manifests, &manifest_hashes, &kinds).await;
+    let second = publish(&mut project, &request, &manifests, &manifest_hashes, &kinds).await;
     assert_eq!(first.canonical_bytes, second.canonical_bytes);
     assert_eq!(first.digest, second.digest);
     assert_eq!(first.manifest, second.manifest);
@@ -506,10 +501,10 @@ async fn fresh_base_and_overlay_mint_byte_identically_and_refuse_drift() {
         wamn_fixture_package::OVERLAY_PACKAGE_ID.to_owned(),
         format!("sha256:{}", "f".repeat(64)),
     );
-    let transaction = project.transaction().await.expect("begin refused mint");
-    let refusal = mint_release_manifest_with_package_manifests(
+    let transaction = project.transaction().await.expect("begin refused publish");
+    let refusal = publish_release_with_package_manifests(
         &transaction,
-        &MintReleaseManifest {
+        &PublishReleaseManifest {
             effective_release_id: RELEASE_ID + 1,
             ..request
         },
@@ -519,7 +514,7 @@ async fn fresh_base_and_overlay_mint_byte_identically_and_refuse_drift() {
     )
     .await
     .expect_err("manifest bytes other than apply-package's exact input must refuse");
-    assert_eq!(refusal.kind(), MintManifestErrorType::PackageManifest);
+    assert_eq!(refusal.kind(), PublishManifestErrorType::PackageManifest);
     assert!(refusal.detail().contains(&format!(
         "{}@{PACKAGE_VERSION}",
         wamn_fixture_package::OVERLAY_PACKAGE_ID
@@ -528,15 +523,15 @@ async fn fresh_base_and_overlay_mint_byte_identically_and_refuse_drift() {
     transaction
         .rollback()
         .await
-        .expect("close the refused mint");
+        .expect("close the refused publish");
 
     // A graph with no edges is a route, so publish refuses a one-node wiring
     // that no registration names.
     let one_node = BTreeSet::from([author_one_node_wiring(&mut project, &control).await]);
-    let transaction = project.transaction().await.expect("begin refused mint");
-    let refusal = mint_release_manifest_with_package_manifests(
+    let transaction = project.transaction().await.expect("begin refused publish");
+    let refusal = publish_release_with_package_manifests(
         &transaction,
-        &MintReleaseManifest {
+        &PublishReleaseManifest {
             effective_release_id: RELEASE_ID + 2,
             wirings: &one_node,
             ..request
@@ -547,12 +542,12 @@ async fn fresh_base_and_overlay_mint_byte_identically_and_refuse_drift() {
     )
     .await
     .expect_err("a one-node wiring must refuse");
-    assert_eq!(refusal.kind(), MintManifestErrorType::Wiring);
+    assert_eq!(refusal.kind(), PublishManifestErrorType::Wiring);
     assert!(refusal.detail().contains("has no edges"), "{refusal}");
     transaction
         .rollback()
         .await
-        .expect("close the refused mint");
+        .expect("close the refused publish");
 
     project
         .batch_execute(

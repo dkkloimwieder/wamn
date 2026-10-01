@@ -1,4 +1,4 @@
-//! Mint one immutable format-1 effective-release closure.
+//! Publish one immutable format-1 effective-release closure.
 //!
 //! A release is an independent integer identity plus exact package membership.
 //! The publisher resolves every wiring and component from those package pairs,
@@ -167,7 +167,7 @@ fn ensure_token(value: &str, name: &str) -> Result<(), String> {
 
 /// Inputs owned by the release publisher.
 #[derive(Debug)]
-pub struct MintReleaseManifest<'a> {
+pub struct PublishReleaseManifest<'a> {
     pub tenant_id: &'a str,
     pub effective_release_id: i32,
     pub environment: &'a str,
@@ -235,7 +235,7 @@ impl DeploymentCoordinate {
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub struct MintedReleaseManifest {
+pub struct PublishedRelease {
     pub manifest: ServingManifest,
     pub digest: ManifestDigest,
     pub canonical_bytes: Vec<u8>,
@@ -244,7 +244,7 @@ pub struct MintedReleaseManifest {
 pub const RELEASE_MANIFEST_MINT_REFUSAL: &str = "release-manifest-mint-refused";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum MintManifestErrorType {
+pub enum PublishManifestErrorType {
     Storage,
     Release,
     PackageManifest,
@@ -265,7 +265,7 @@ pub enum MintManifestErrorType {
     EnvironmentPolicySourceMismatch,
 }
 
-impl MintManifestErrorType {
+impl PublishManifestErrorType {
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::Storage => "storage",
@@ -291,14 +291,14 @@ impl MintManifestErrorType {
 }
 
 #[derive(Debug)]
-pub struct MintManifestError {
-    type_: MintManifestErrorType,
+pub struct PublishManifestError {
+    type_: PublishManifestErrorType,
     detail: String,
     source: Option<Box<dyn std::error::Error + Send + Sync>>,
 }
 
-impl MintManifestError {
-    pub fn new(kind: MintManifestErrorType, detail: impl Into<String>) -> Self {
+impl PublishManifestError {
+    pub fn new(kind: PublishManifestErrorType, detail: impl Into<String>) -> Self {
         Self {
             type_: kind,
             detail: detail.into(),
@@ -307,7 +307,7 @@ impl MintManifestError {
     }
 
     pub fn with_source(
-        type_: MintManifestErrorType,
+        type_: PublishManifestErrorType,
         detail: impl Into<String>,
         source: impl std::error::Error + Send + Sync + 'static,
     ) -> Self {
@@ -318,7 +318,7 @@ impl MintManifestError {
         }
     }
 
-    pub const fn kind(&self) -> MintManifestErrorType {
+    pub const fn kind(&self) -> PublishManifestErrorType {
         self.type_
     }
 
@@ -327,7 +327,7 @@ impl MintManifestError {
     }
 }
 
-impl std::fmt::Display for MintManifestError {
+impl std::fmt::Display for PublishManifestError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             formatter,
@@ -338,7 +338,7 @@ impl std::fmt::Display for MintManifestError {
     }
 }
 
-impl std::error::Error for MintManifestError {
+impl std::error::Error for PublishManifestError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         self.source.as_deref().map(|source| source as _)
     }
@@ -404,7 +404,7 @@ struct ReleaseComponentMembership {
 /// Inputs of one effective-release publication.
 #[derive(Debug)]
 pub struct PublishReleaseRequest {
-    /// Owner connection to the project-environment database the release is minted in.
+    /// Owner connection to the project-environment database the release is published in.
     pub database_url: String,
     /// Owner connection to the control database the release identity is projected to.
     pub control_database_url: String,
@@ -416,7 +416,7 @@ pub struct PublishReleaseRequest {
     pub tenant: String,
     /// Integer identity of the release.
     pub effective_release_id: u32,
-    /// Environment the release is minted for.
+    /// Environment the release is published for.
     pub environment: String,
     /// Principal already authenticated by the publication boundary.
     pub verified_publisher_principal: String,
@@ -453,22 +453,22 @@ impl PublishReleaseRequest {
     }
 }
 
-/// Mint one effective release, project its identity, and return its manifest digest.
+/// Publish one effective release, project its identity, and return its manifest digest.
 pub async fn publish_release(request: PublishReleaseRequest) -> anyhow::Result<ManifestDigest> {
-    let minted = mint_candidate(&request, false).await?;
-    let coordinate = request.deployment_coordinate(&minted.manifest.release);
-    report_deployment_coordinate(&coordinate, &minted.digest);
+    let published = publish_candidate(&request, false).await?;
+    let coordinate = request.deployment_coordinate(&published.manifest.release);
+    report_deployment_coordinate(&coordinate, &published.digest);
     project_release_identity(&request.control_database_url, &coordinate).await?;
-    Ok(minted.digest)
+    Ok(published.digest)
 }
 
 /// Assemble a candidate only in a provisioned disposable target, without publication.
-pub async fn mint_local(
+pub async fn publish_local(
     mut args: PublishReleaseRequest,
     admissions: &[crate::push_component::ComponentAdmission],
     documents: Vec<(ComponentPackageScope, WiringDocument)>,
 ) -> anyhow::Result<(
-    MintedReleaseManifest,
+    PublishedRelease,
     wamn_runtime::local_application::LocalApplicationFacts,
 )> {
     wamn_runtime::local_application::require_local_target(
@@ -513,7 +513,7 @@ pub async fn mint_local(
     verify_projected_environment_policy(
         projected.as_ref(),
         &policy,
-        &assembled.minted.manifest.release,
+        &assembled.published.manifest.release,
         &run_schema,
     )?;
     // The retained run-plane FK needs only this session-local identity and
@@ -522,13 +522,13 @@ pub async fn mint_local(
     transaction.commit().await?;
     drop(client);
     driver.abort();
-    Ok((assembled.minted, assembled.facts))
+    Ok((assembled.published, assembled.facts))
 }
 
 /// A local release assembled from its package files and admitted components.
 #[derive(Debug)]
 pub struct AssembledLocalRelease {
-    pub minted: MintedReleaseManifest,
+    pub published: PublishedRelease,
     pub facts: wamn_runtime::local_application::LocalApplicationFacts,
     effective_release_id: i32,
     packages: BTreeSet<PackageCoordinate>,
@@ -537,9 +537,9 @@ pub struct AssembledLocalRelease {
 }
 
 impl AssembledLocalRelease {
-    /// The identity that [`mint_local`] records for this release.
-    fn request<'a>(&'a self, args: &'a PublishReleaseRequest) -> MintReleaseManifest<'a> {
-        MintReleaseManifest {
+    /// The identity that [`publish_local`] records for this release.
+    fn request<'a>(&'a self, args: &'a PublishReleaseRequest) -> PublishReleaseManifest<'a> {
+        PublishReleaseManifest {
             tenant_id: &args.tenant,
             effective_release_id: self.effective_release_id,
             environment: &args.environment,
@@ -553,7 +553,7 @@ impl AssembledLocalRelease {
 }
 
 /// Assemble the manifest and local facts of a local release from its package
-/// files and admitted components, as [`mint_local`] does once it holds the
+/// files and admitted components, as [`publish_local`] does once it holds the
 /// release identity. It reads no database, so the two database URLs of `args`
 /// go unused.
 pub fn assemble_local_release(
@@ -572,7 +572,7 @@ pub fn assemble_local_release(
         packages.len() == args.packages.len() && targets.len() == args.wirings.len(),
         "local candidate repeats a package or wiring"
     );
-    let request = MintReleaseManifest {
+    let request = PublishReleaseManifest {
         tenant_id: &args.tenant,
         effective_release_id: i32::try_from(args.effective_release_id)?,
         environment: &args.environment,
@@ -721,7 +721,7 @@ pub fn assemble_local_release(
         bindings: Vec::new(),
     };
     Ok(AssembledLocalRelease {
-        minted: MintedReleaseManifest {
+        published: PublishedRelease {
             manifest,
             digest,
             canonical_bytes,
@@ -734,10 +734,10 @@ pub fn assemble_local_release(
     })
 }
 
-async fn mint_candidate(
+async fn publish_candidate(
     args: &PublishReleaseRequest,
     local: bool,
-) -> anyhow::Result<MintedReleaseManifest> {
+) -> anyhow::Result<PublishedRelease> {
     ensure!(
         args.effective_release_id > 0,
         "effective-release-id must be greater than zero"
@@ -803,7 +803,7 @@ async fn mint_candidate(
         !local || environment_is_disposable,
         "local candidates require a provisioned disposable environment"
     );
-    let request = MintReleaseManifest {
+    let request = PublishReleaseManifest {
         tenant_id: &args.tenant,
         effective_release_id: release_id,
         environment: &args.environment,
@@ -821,13 +821,13 @@ async fn mint_candidate(
         false,
     )
     .await
-    .context("read the authoritative environment policy before release mint")?;
+    .context("read the authoritative environment policy before release publish")?;
 
     let (mut client, connection) = tokio_postgres::connect(&args.database_url, NoTls)
         .await
         .context("connect to the release project environment")?;
     let connection_task = tokio::spawn(connection);
-    let minted = mint_in_transaction(
+    let published = publish_in_transaction(
         &mut client,
         &request,
         &package_manifests,
@@ -837,14 +837,14 @@ async fn mint_candidate(
         &source_policy,
     )
     .await;
-    match minted {
-        Ok(minted) => {
+    match published {
+        Ok(published) => {
             drop(client);
             connection_task
                 .await
-                .context("join the release mint connection")?
-                .context("drive the release mint connection")?;
-            Ok(minted)
+                .context("join the release publish connection")?
+                .context("drive the release publish connection")?;
+            Ok(published)
         }
         Err(error) => {
             connection_task.abort();
@@ -853,20 +853,20 @@ async fn mint_candidate(
     }
 }
 
-async fn mint_in_transaction(
+async fn publish_in_transaction(
     client: &mut Client,
-    request: &MintReleaseManifest<'_>,
+    request: &PublishReleaseManifest<'_>,
     package_manifests: &BTreeMap<String, wamn_schema_generator::PackageManifest>,
     package_manifest_hashes: &BTreeMap<String, String>,
     route_contracts: &RouteContracts,
     run_schema: &BareSchemaName,
     source_policy: &AuthoritativeEnvironmentPolicy,
-) -> anyhow::Result<MintedReleaseManifest> {
+) -> anyhow::Result<PublishedRelease> {
     let transaction = client
         .transaction()
         .await
-        .context("begin the release mint")?;
-    let minted = mint_release_manifest_with_package_manifests(
+        .context("begin the release publish")?;
+    let published = publish_release_with_package_manifests(
         &transaction,
         request,
         package_manifests,
@@ -879,14 +879,14 @@ async fn mint_in_transaction(
     verify_projected_environment_policy(
         projected.as_ref(),
         source_policy,
-        &minted.manifest.release,
+        &published.manifest.release,
         run_schema,
     )?;
     transaction
         .commit()
         .await
-        .context("commit the release mint")?;
-    Ok(minted)
+        .context("commit the release publish")?;
+    Ok(published)
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -900,7 +900,7 @@ pub(crate) async fn read_projected_environment_policy(
     transaction: &Transaction<'_>,
     run_schema: &BareSchemaName,
     tenant_id: &str,
-) -> Result<Option<ProjectedEnvironmentPolicy>, MintManifestError> {
+) -> Result<Option<ProjectedEnvironmentPolicy>, PublishManifestError> {
     transaction
         .query_opt(&projected_environment_policy_sql(run_schema), &[&tenant_id])
         .await
@@ -918,7 +918,7 @@ pub(crate) async fn read_expected_environment(
     transaction: &Transaction<'_>,
     run_schema: &BareSchemaName,
     tenant_id: &str,
-) -> Result<Option<String>, MintManifestError> {
+) -> Result<Option<String>, PublishManifestError> {
     transaction
         .query_opt(&expected_environment_sql(run_schema), &[&tenant_id])
         .await
@@ -930,7 +930,7 @@ pub(crate) fn verify_provisioned_environment(
     expected_environment: Option<&str>,
     release: &ServingRelease,
     run_schema: &BareSchemaName,
-) -> Result<(), MintManifestError> {
+) -> Result<(), PublishManifestError> {
     let Some(expected_environment) = expected_environment else {
         return Err(environment_policy_absent(release, run_schema));
     };
@@ -942,7 +942,7 @@ pub(crate) fn verify_projected_environment_policy(
     source_policy: &AuthoritativeEnvironmentPolicy,
     release: &ServingRelease,
     run_schema: &BareSchemaName,
-) -> Result<(), MintManifestError> {
+) -> Result<(), PublishManifestError> {
     let Some(projected) = projected else {
         return Err(environment_policy_absent(release, run_schema));
     };
@@ -951,8 +951,8 @@ pub(crate) fn verify_projected_environment_policy(
         || projected.source_policy_hash.as_deref()
             != Some(source_policy.source_policy_hash.as_ref())
     {
-        return Err(MintManifestError::new(
-            MintManifestErrorType::EnvironmentPolicySourceMismatch,
+        return Err(PublishManifestError::new(
+            PublishManifestErrorType::EnvironmentPolicySourceMismatch,
             format!(
                 "environment {:?} policy source differs: projected-org={:?}, authoritative-org={:?}, projected-hash={:?}, authoritative-hash={:?}; rerun the verification policy projection",
                 release.environment,
@@ -972,9 +972,9 @@ pub(crate) fn verify_projected_environment_policy(
 fn environment_policy_absent(
     release: &ServingRelease,
     run_schema: &BareSchemaName,
-) -> MintManifestError {
-    MintManifestError::new(
-        MintManifestErrorType::EnvironmentPolicyAbsent,
+) -> PublishManifestError {
+    PublishManifestError::new(
+        PublishManifestErrorType::EnvironmentPolicyAbsent,
         format!(
             "tenant {:?} has no row in {}.environment_policies; run reconcile-run-plane",
             release.tenant_id,
@@ -986,10 +986,10 @@ fn environment_policy_absent(
 fn verify_environment_name(
     expected_environment: &str,
     release: &ServingRelease,
-) -> Result<(), MintManifestError> {
+) -> Result<(), PublishManifestError> {
     if expected_environment != release.environment {
-        return Err(MintManifestError::new(
-            MintManifestErrorType::EnvironmentPolicyMismatch,
+        return Err(PublishManifestError::new(
+            PublishManifestErrorType::EnvironmentPolicyMismatch,
             format!(
                 "release environment {:?} differs from provisioned environment {:?}",
                 release.environment, expected_environment
@@ -1017,7 +1017,7 @@ pub fn report_deployment_coordinate(
 /// Whether provisioning marked this tenant's environment disposable.
 ///
 /// The same projection the admit path reads (wamn-10yt.38), from the same
-/// control store, read ONCE per release mint rather than once per fact. The
+/// control store, read ONCE per release publish rather than once per fact. The
 /// control database always carries `catalog`, because the release identity is
 /// projected into it a few lines later, so an absent relation is a stale store
 /// and says so rather than defaulting quietly. A tenant with no projected row
@@ -1234,17 +1234,17 @@ fn sha256(bytes: &[u8]) -> String {
     )
 }
 
-/// Mint a release promoted from a published one.
+/// Publish a release promoted from a published one.
 ///
 /// The source manifest is the authority once published, so its registrations
 /// and the contract facts of its routes carry over. Promotion never reads a
 /// package folder.
-pub async fn mint_promoted_release_manifest(
+pub async fn publish_promoted_release_manifest(
     transaction: &Transaction<'_>,
-    request: &MintReleaseManifest<'_>,
+    request: &PublishReleaseManifest<'_>,
     registrations: &BTreeMap<String, ServingRegistration>,
     routes: &BTreeSet<ServingRoute>,
-) -> Result<MintedReleaseManifest, MintManifestError> {
+) -> Result<PublishedRelease, PublishManifestError> {
     let package_manifests = BTreeMap::new();
     let route_contracts = routes
         .iter()
@@ -1262,7 +1262,7 @@ pub async fn mint_promoted_release_manifest(
             )
         })
         .collect();
-    mint_release_manifest_from_sources(
+    publish_release_from_sources(
         transaction,
         request,
         &package_manifests,
@@ -1273,14 +1273,14 @@ pub async fn mint_promoted_release_manifest(
     .await
 }
 
-async fn mint_release_manifest_with_package_manifests(
+async fn publish_release_with_package_manifests(
     transaction: &Transaction<'_>,
-    request: &MintReleaseManifest<'_>,
+    request: &PublishReleaseManifest<'_>,
     package_manifests: &BTreeMap<String, wamn_schema_generator::PackageManifest>,
     package_manifest_hashes: &BTreeMap<String, String>,
     route_contracts: &RouteContracts,
-) -> Result<MintedReleaseManifest, MintManifestError> {
-    mint_release_manifest_from_sources(
+) -> Result<PublishedRelease, PublishManifestError> {
+    publish_release_from_sources(
         transaction,
         request,
         package_manifests,
@@ -1291,14 +1291,14 @@ async fn mint_release_manifest_with_package_manifests(
     .await
 }
 
-async fn mint_release_manifest_from_sources(
+async fn publish_release_from_sources(
     transaction: &Transaction<'_>,
-    request: &MintReleaseManifest<'_>,
+    request: &PublishReleaseManifest<'_>,
     package_manifests: &BTreeMap<String, wamn_schema_generator::PackageManifest>,
     package_manifest_hashes: Option<&BTreeMap<String, String>>,
     route_contracts: &RouteContracts,
     promoted_registrations: Option<&BTreeMap<String, ServingRegistration>>,
-) -> Result<MintedReleaseManifest, MintManifestError> {
+) -> Result<PublishedRelease, PublishManifestError> {
     transaction
         .query_one(CLAIM_TENANT_SQL, &[&request.tenant_id])
         .await
@@ -1337,8 +1337,8 @@ async fn mint_release_manifest_from_sources(
         let package = PackageCoordinate::new(&target.package_id, &target.package_version)
             .expect("ReleaseWiringTarget parsing admitted this coordinate");
         if !request.packages.contains(&package) {
-            return Err(MintManifestError::new(
-                MintManifestErrorType::Wiring,
+            return Err(PublishManifestError::new(
+                PublishManifestErrorType::Wiring,
                 format!(
                     "wiring {}@{}::{}/{} is outside the effective release membership",
                     target.package_id,
@@ -1415,8 +1415,8 @@ async fn mint_release_manifest_from_sources(
     let canonical_bytes = projected.canonical_bytes();
     let (manifest, digest) =
         ServingManifest::from_canonical_bytes(&canonical_bytes).map_err(|error| {
-            MintManifestError::with_source(
-                MintManifestErrorType::Document,
+            PublishManifestError::with_source(
+                PublishManifestErrorType::Document,
                 format!(
                     "effective release {} does not project a deliverable format-4 manifest",
                     request.effective_release_id
@@ -1425,26 +1425,26 @@ async fn mint_release_manifest_from_sources(
             )
         })?;
     freeze_release(transaction, request, &membership, &digest, &canonical_bytes).await?;
-    Ok(MintedReleaseManifest {
+    Ok(PublishedRelease {
         manifest,
         digest,
         canonical_bytes,
     })
 }
 
-fn validate_request(request: &MintReleaseManifest<'_>) -> Result<(), MintManifestError> {
+fn validate_request(request: &PublishReleaseManifest<'_>) -> Result<(), PublishManifestError> {
     if request.effective_release_id <= 0
         || request.environment.is_empty()
         || request.verified_publisher_principal.is_empty()
     {
-        return Err(MintManifestError::new(
-            MintManifestErrorType::Release,
+        return Err(PublishManifestError::new(
+            PublishManifestErrorType::Release,
             "effective release id, environment, and publisher principal are required",
         ));
     }
     if request.packages.is_empty() {
-        return Err(MintManifestError::new(
-            MintManifestErrorType::Release,
+        return Err(PublishManifestError::new(
+            PublishManifestErrorType::Release,
             "an effective release requires at least one exact package pair",
         ));
     }
@@ -1454,8 +1454,8 @@ fn validate_request(request: &MintReleaseManifest<'_>) -> Result<(), MintManifes
         .iter()
         .all(|package| ids.insert(package.package_id()))
     {
-        return Err(MintManifestError::new(
-            MintManifestErrorType::Release,
+        return Err(PublishManifestError::new(
+            PublishManifestErrorType::Release,
             "an effective release cannot contain two versions of one package",
         ));
     }
@@ -1464,8 +1464,8 @@ fn validate_request(request: &MintReleaseManifest<'_>) -> Result<(), MintManifes
         .values()
         .any(|attachment| matches!(attachment.target, AttachmentTarget::Route { .. }));
     if request.wirings.is_empty() && !routed {
-        return Err(MintManifestError::new(
-            MintManifestErrorType::Wiring,
+        return Err(PublishManifestError::new(
+            PublishManifestErrorType::Wiring,
             "a release with no route and no wiring has no executable closure",
         ));
     }
@@ -1477,10 +1477,10 @@ fn validate_request(request: &MintReleaseManifest<'_>) -> Result<(), MintManifes
 /// already admitted by `apply-package`.
 async fn validate_release_package_manifests(
     transaction: &Transaction<'_>,
-    request: &MintReleaseManifest<'_>,
+    request: &PublishReleaseManifest<'_>,
     package_manifests: &BTreeMap<String, wamn_schema_generator::PackageManifest>,
     package_manifest_hashes: &BTreeMap<String, String>,
-) -> Result<(), MintManifestError> {
+) -> Result<(), PublishManifestError> {
     let expected_package_ids = request
         .packages
         .iter()
@@ -1495,8 +1495,8 @@ async fn validate_release_package_manifests(
         .map(String::as_str)
         .collect::<BTreeSet<_>>();
     if presented_package_ids != expected_package_ids || hashed_package_ids != expected_package_ids {
-        return Err(MintManifestError::new(
-            MintManifestErrorType::PackageManifest,
+        return Err(PublishManifestError::new(
+            PublishManifestErrorType::PackageManifest,
             format!(
                 "release package manifests must exactly match membership; expected={expected_package_ids:?}, presented={presented_package_ids:?}, hashed={hashed_package_ids:?}; supply one exact wamn.json per release package"
             ),
@@ -1507,8 +1507,8 @@ async fn validate_release_package_manifests(
         let manifest = package_manifests
             .get(package.package_id())
             .ok_or_else(|| {
-                MintManifestError::new(
-                    MintManifestErrorType::PackageManifest,
+                PublishManifestError::new(
+                    PublishManifestErrorType::PackageManifest,
                     format!(
                         "package {coordinate} has no presented manifest; supply the exact wamn.json applied by apply-package"
                     ),
@@ -1517,8 +1517,8 @@ async fn validate_release_package_manifests(
         if manifest.package.id != package.package_id()
             || manifest.package.version != package.package_version()
         {
-            return Err(MintManifestError::new(
-                MintManifestErrorType::PackageManifest,
+            return Err(PublishManifestError::new(
+                PublishManifestErrorType::PackageManifest,
                 format!(
                     "package {coordinate} is paired with manifest {}@{}; supply the exact wamn.json applied by apply-package",
                     manifest.package.id, manifest.package.version
@@ -1528,8 +1528,8 @@ async fn validate_release_package_manifests(
         let presented_hash = package_manifest_hashes
             .get(package.package_id())
             .ok_or_else(|| {
-                MintManifestError::new(
-                    MintManifestErrorType::PackageManifest,
+                PublishManifestError::new(
+                    PublishManifestErrorType::PackageManifest,
                     format!(
                         "package {coordinate} has no presented manifest hash; supply the exact wamn.json applied by apply-package"
                     ),
@@ -1547,8 +1547,8 @@ async fn validate_release_package_manifests(
             .await
             .map_err(|error| storage("read the applied package manifest identity", error))?
         else {
-            return Err(MintManifestError::new(
-                MintManifestErrorType::PackageManifest,
+            return Err(PublishManifestError::new(
+                PublishManifestErrorType::PackageManifest,
                 format!(
                     "package {coordinate} is not applied; run apply-package against the target project environment"
                 ),
@@ -1556,8 +1556,8 @@ async fn validate_release_package_manifests(
         };
         let applied_hash: String = row.get(0);
         if applied_hash != *presented_hash {
-            return Err(MintManifestError::new(
-                MintManifestErrorType::PackageManifest,
+            return Err(PublishManifestError::new(
+                PublishManifestErrorType::PackageManifest,
                 format!(
                     "package {coordinate} presented manifest hash {presented_hash} differs from applied hash {applied_hash}; use the exact wamn.json recorded by apply-package"
                 ),
@@ -1569,8 +1569,8 @@ async fn validate_release_package_manifests(
 
 async fn establish_release(
     transaction: &Transaction<'_>,
-    request: &MintReleaseManifest<'_>,
-) -> Result<(), MintManifestError> {
+    request: &PublishReleaseManifest<'_>,
+) -> Result<(), PublishManifestError> {
     transaction
         .execute(
             INSERT_RELEASE_SQL,
@@ -1593,8 +1593,8 @@ async fn establish_release(
     let environment: String = row.get(0);
     let publisher: String = row.get(1);
     if environment != request.environment || publisher != request.verified_publisher_principal {
-        return Err(MintManifestError::new(
-            MintManifestErrorType::ClosureConflict,
+        return Err(PublishManifestError::new(
+            PublishManifestErrorType::ClosureConflict,
             "effective release identity already carries other environment or publisher facts",
         ));
     }
@@ -1626,8 +1626,8 @@ async fn establish_release(
         })
         .collect::<BTreeSet<_>>();
     if observed != *request.packages {
-        return Err(MintManifestError::new(
-            MintManifestErrorType::ClosureConflict,
+        return Err(PublishManifestError::new(
+            PublishManifestErrorType::ClosureConflict,
             "effective release package membership is already frozen to another exact set",
         ));
     }
@@ -1637,7 +1637,7 @@ async fn establish_release(
 pub async fn load_component_facts(
     transaction: &Transaction<'_>,
     scope: &ComponentPackageScope,
-) -> Result<Vec<AdmittedComponent>, MintManifestError> {
+) -> Result<Vec<AdmittedComponent>, PublishManifestError> {
     transaction
         .query(
             SELECT_COMPONENT_FACTS_SQL,
@@ -1667,8 +1667,8 @@ pub async fn load_component_facts(
                 )?,
             };
             wamn_catalog::verify_stored_effect_projection(&decoded).map_err(|error| {
-                MintManifestError::with_source(
-                    MintManifestErrorType::Component,
+                PublishManifestError::with_source(
+                    PublishManifestErrorType::Component,
                     format!("component {component:?} stores an invalid effect projection"),
                     error,
                 )
@@ -1682,10 +1682,10 @@ fn decode_json<T: DeserializeOwned>(
     stored: &str,
     component: &str,
     field: &'static str,
-) -> Result<T, MintManifestError> {
+) -> Result<T, PublishManifestError> {
     serde_json::from_str(stored).map_err(|error| {
-        MintManifestError::with_source(
-            MintManifestErrorType::Component,
+        PublishManifestError::with_source(
+            PublishManifestErrorType::Component,
             format!("component {component:?} stores unreadable {field}"),
             error,
         )
@@ -1698,12 +1698,12 @@ fn check_registration_source(
     package_manifests: &BTreeMap<String, wamn_schema_generator::PackageManifest>,
     subject: &str,
     declaration: &wamn_schema_generator::EventRegistrationDeclaration,
-) -> Result<(), MintManifestError> {
+) -> Result<(), PublishManifestError> {
     let source_manifest = package_manifests
         .get(&declaration.source_package)
         .ok_or_else(|| {
-            MintManifestError::new(
-                MintManifestErrorType::Registration,
+            PublishManifestError::new(
+                PublishManifestErrorType::Registration,
                 format!(
                     "{subject} source package {:?} is absent while resolving entity {:?}",
                     declaration.source_package, declaration.entity
@@ -1711,8 +1711,8 @@ fn check_registration_source(
             )
         })?;
     if !source_manifest.models.contains_key(&declaration.entity) {
-        return Err(MintManifestError::new(
-            MintManifestErrorType::Registration,
+        return Err(PublishManifestError::new(
+            PublishManifestErrorType::Registration,
             format!(
                 "{subject} source package {:?} does not own entity {:?}",
                 declaration.source_package, declaration.entity
@@ -1739,7 +1739,7 @@ fn serving_ops(
 fn derive_serving_registrations(
     package_manifests: &BTreeMap<String, wamn_schema_generator::PackageManifest>,
     entry_targets: &BTreeMap<String, Vec<ReleaseWiringTarget>>,
-) -> Result<BTreeMap<String, ServingRegistration>, MintManifestError> {
+) -> Result<BTreeMap<String, ServingRegistration>, PublishManifestError> {
     let mut registrations = BTreeMap::new();
     for manifest in package_manifests.values() {
         for (operation_key, operation) in &manifest.custom_operations {
@@ -1756,8 +1756,8 @@ fn derive_serving_registrations(
                 operation_key,
             )
             .map_err(|error| {
-                MintManifestError::with_source(
-                    MintManifestErrorType::Registration,
+                PublishManifestError::with_source(
+                    PublishManifestErrorType::Registration,
                     format!("derive exact handler operation {operation_key:?}"),
                     error,
                 )
@@ -1772,8 +1772,8 @@ fn derive_serving_registrations(
                 })
                 .collect::<Vec<_>>();
             if targets.len() != 1 {
-                return Err(MintManifestError::new(
-                    MintManifestErrorType::Registration,
+                return Err(PublishManifestError::new(
+                    PublishManifestErrorType::Registration,
                     format!(
                         "event handler {operation_id:?} resolves to {} selected owner wiring(s); expected exactly one",
                         targets.len()
@@ -1814,8 +1814,8 @@ fn derive_serving_registrations(
                 })
                 .collect::<Vec<_>>();
             if targets.len() != 1 {
-                return Err(MintManifestError::new(
-                    MintManifestErrorType::Registration,
+                return Err(PublishManifestError::new(
+                    PublishManifestErrorType::Registration,
                     format!(
                         "workflow {workflow_id:?} names wiring {:?}, which resolves to {} selected wiring(s); expected exactly one",
                         workflow.wiring,
@@ -1845,7 +1845,7 @@ fn derive_serving_registrations(
 #[allow(clippy::too_many_arguments)]
 async fn resolve_wiring(
     transaction: &Transaction<'_>,
-    request: &MintReleaseManifest<'_>,
+    request: &PublishReleaseManifest<'_>,
     target: &ReleaseWiringTarget,
     scope: &ComponentPackageScope,
     component_facts: &BTreeMap<(String, String), Vec<AdmittedComponent>>,
@@ -1854,10 +1854,10 @@ async fn resolve_wiring(
     wirings: &mut BTreeSet<ServingWiring>,
     membership: &mut BTreeSet<ReleaseComponentMembership>,
     one_node: &mut Vec<ReleaseWiringTarget>,
-) -> Result<String, MintManifestError> {
+) -> Result<String, PublishManifestError> {
     let version = i32::try_from(target.wiring_version).map_err(|error| {
-        MintManifestError::with_source(
-            MintManifestErrorType::Wiring,
+        PublishManifestError::with_source(
+            PublishManifestErrorType::Wiring,
             "wiring version exceeds PostgreSQL integer",
             error,
         )
@@ -1876,8 +1876,8 @@ async fn resolve_wiring(
         .await
         .map_err(|error| storage("read a release wiring", error))?
     else {
-        return Err(MintManifestError::new(
-            MintManifestErrorType::Wiring,
+        return Err(PublishManifestError::new(
+            PublishManifestErrorType::Wiring,
             format!(
                 "package {}@{} has no wiring {} version {}",
                 target.package_id, target.package_version, target.wiring_id, target.wiring_version
@@ -1887,29 +1887,29 @@ async fn resolve_wiring(
     let stored_hash: String = row.get(0);
     let stored_document: String = row.get(1);
     let document_value = serde_json::from_str(&stored_document).map_err(|error| {
-        MintManifestError::with_source(
-            MintManifestErrorType::Wiring,
+        PublishManifestError::with_source(
+            PublishManifestErrorType::Wiring,
             format!("wiring {:?} stores unreadable graph JSON", target.wiring_id),
             error,
         )
     })?;
     let document = WiringDocument::parse(&document_value).map_err(|error| {
-        MintManifestError::with_source(
-            MintManifestErrorType::Wiring,
+        PublishManifestError::with_source(
+            PublishManifestErrorType::Wiring,
             format!("wiring {:?} stores an invalid document", target.wiring_id),
             error,
         )
     })?;
     if document.wiring_id != target.wiring_id || document.version != target.wiring_version {
-        return Err(MintManifestError::new(
-            MintManifestErrorType::Wiring,
+        return Err(PublishManifestError::new(
+            PublishManifestErrorType::Wiring,
             "wiring row identity differs from its stored document",
         ));
     }
     let derived_hash = document.wiring_hash();
     if stored_hash != derived_hash.as_str() {
-        return Err(MintManifestError::new(
-            MintManifestErrorType::Wiring,
+        return Err(PublishManifestError::new(
+            PublishManifestErrorType::Wiring,
             "wiring row hash differs from its canonical document hash",
         ));
     }
@@ -1932,7 +1932,7 @@ async fn resolve_wiring(
     reason = "existing release projection inputs are independent facts"
 )]
 fn project_wiring_document(
-    request: &MintReleaseManifest<'_>,
+    request: &PublishReleaseManifest<'_>,
     target: &ReleaseWiringTarget,
     scope: &ComponentPackageScope,
     document: &WiringDocument,
@@ -1942,7 +1942,7 @@ fn project_wiring_document(
     wirings: &mut BTreeSet<ServingWiring>,
     membership: &mut BTreeSet<ReleaseComponentMembership>,
     one_node: &mut Vec<ReleaseWiringTarget>,
-) -> Result<String, MintManifestError> {
+) -> Result<String, PublishManifestError> {
     if document.edges.is_empty() {
         one_node.push(target.clone());
     }
@@ -1955,8 +1955,8 @@ fn project_wiring_document(
         rule,
     )?;
     validate_resolved_wiring_compatibility(document, &resolved).map_err(|error| {
-        MintManifestError::with_source(
-            MintManifestErrorType::Component,
+        PublishManifestError::with_source(
+            PublishManifestErrorType::Component,
             format!(
                 "wiring {:?} version {} is incompatible with its resolved component facts",
                 target.wiring_id, target.wiring_version
@@ -1999,12 +1999,12 @@ fn project_wiring_document(
 /// The kind comes from the generated contract of the operation, or from the
 /// published manifest a promotion copies.
 fn project_routes(
-    request: &MintReleaseManifest<'_>,
+    request: &PublishReleaseManifest<'_>,
     route_contracts: &RouteContracts,
     component_facts: &BTreeMap<(String, String), Vec<AdmittedComponent>>,
     components: &mut BTreeSet<ServingComponent>,
     membership: &mut BTreeSet<ReleaseComponentMembership>,
-) -> Result<BTreeSet<ServingRoute>, MintManifestError> {
+) -> Result<BTreeSet<ServingRoute>, PublishManifestError> {
     let rule = DependencyDigestRule::for_environment(request.environment_is_disposable);
     let mut routes = BTreeSet::new();
     for (attachment_id, attachment) in request.attachments {
@@ -2020,8 +2020,8 @@ fn project_routes(
             .iter()
             .find(|package| package.package_id() == attachment.package_id)
             .ok_or_else(|| {
-                MintManifestError::new(
-                    MintManifestErrorType::Component,
+                PublishManifestError::new(
+                    PublishManifestErrorType::Component,
                     format!(
                         "route attachment {attachment_id:?} names package {:?} outside the effective release membership",
                         attachment.package_id
@@ -2038,8 +2038,8 @@ fn project_routes(
         let contract = route_contracts
             .get(&(attachment.package_id.clone(), operation.clone()))
             .ok_or_else(|| {
-                MintManifestError::new(
-                    MintManifestErrorType::GeneratedPackageMetadata,
+                PublishManifestError::new(
+                    PublishManifestErrorType::GeneratedPackageMetadata,
                     format!(
                         "route operation {operation:?} of package {:?} has no generated contract kind; regenerate the package evidence",
                         attachment.package_id
@@ -2080,7 +2080,7 @@ fn project_routes(
 fn refuse_unregistered_one_node_wirings(
     one_node: &[ReleaseWiringTarget],
     registrations: &BTreeMap<String, ServingRegistration>,
-) -> Result<(), MintManifestError> {
+) -> Result<(), PublishManifestError> {
     for target in one_node {
         let registered = registrations.values().any(|registration| {
             registration.package_id == target.package_id
@@ -2088,8 +2088,8 @@ fn refuse_unregistered_one_node_wirings(
                 && registration.wiring_version == target.wiring_version
         });
         if !registered {
-            return Err(MintManifestError::new(
-                MintManifestErrorType::Wiring,
+            return Err(PublishManifestError::new(
+                PublishManifestErrorType::Wiring,
                 format!(
                     "wiring {}@{}::{}/{} has no edges; a graph with no edges is a route, so attach its operation as a route",
                     target.package_id,
@@ -2105,11 +2105,11 @@ fn refuse_unregistered_one_node_wirings(
 
 async fn freeze_release(
     transaction: &Transaction<'_>,
-    request: &MintReleaseManifest<'_>,
+    request: &PublishReleaseManifest<'_>,
     expected: &BTreeSet<ReleaseComponentMembership>,
     digest: &ManifestDigest,
     canonical_bytes: &[u8],
-) -> Result<(), MintManifestError> {
+) -> Result<(), PublishManifestError> {
     let observed = transaction
         .query(
             SELECT_RELEASE_COMPONENTS_SQL,
@@ -2139,7 +2139,7 @@ async fn freeze_release(
                 component_digest: row.get(7),
             })
         })
-        .collect::<Result<BTreeSet<_>, MintManifestError>>()?;
+        .collect::<Result<BTreeSet<_>, PublishManifestError>>()?;
     let snapshot = transaction
         .query_opt(
             SELECT_RELEASE_SNAPSHOT_SQL,
@@ -2156,8 +2156,8 @@ async fn freeze_release(
                 || frozen_digest != digest.as_str()
                 || frozen_bytes != canonical_bytes
             {
-                return Err(MintManifestError::new(
-                    MintManifestErrorType::ClosureConflict,
+                return Err(PublishManifestError::new(
+                    PublishManifestErrorType::ClosureConflict,
                     "effective release is already frozen to another closure",
                 ));
             }
@@ -2165,8 +2165,8 @@ async fn freeze_release(
         }
         (true, None) => {}
         _ => {
-            return Err(MintManifestError::new(
-                MintManifestErrorType::ClosureConflict,
+            return Err(PublishManifestError::new(
+                PublishManifestErrorType::ClosureConflict,
                 "release membership and format-1 snapshot are partially frozen",
             ));
         }
@@ -2240,7 +2240,7 @@ pub async fn read_release_snapshot(
     transaction: &Transaction<'_>,
     tenant_id: &str,
     effective_release_id: i32,
-) -> Result<Option<Vec<u8>>, MintManifestError> {
+) -> Result<Option<Vec<u8>>, PublishManifestError> {
     transaction
         .query_one(CLAIM_TENANT_SQL, &[&tenant_id])
         .await
@@ -2255,25 +2255,25 @@ pub async fn read_release_snapshot(
         .map_err(|error| storage("read the frozen format-1 snapshot", error))
 }
 
-fn positive_u32(value: i32, field: &'static str) -> Result<u32, MintManifestError> {
+fn positive_u32(value: i32, field: &'static str) -> Result<u32, PublishManifestError> {
     let value = u32::try_from(value).map_err(|error| {
-        MintManifestError::with_source(
-            MintManifestErrorType::Release,
+        PublishManifestError::with_source(
+            PublishManifestErrorType::Release,
             format!("{field} is outside the serving-manifest width"),
             error,
         )
     })?;
     if value == 0 {
-        return Err(MintManifestError::new(
-            MintManifestErrorType::Release,
+        return Err(PublishManifestError::new(
+            PublishManifestErrorType::Release,
             format!("{field} must be greater than zero"),
         ));
     }
     Ok(value)
 }
 
-fn storage(context: &'static str, error: tokio_postgres::Error) -> MintManifestError {
-    MintManifestError::with_source(MintManifestErrorType::Storage, context, error)
+fn storage(context: &'static str, error: tokio_postgres::Error) -> PublishManifestError {
+    PublishManifestError::with_source(PublishManifestErrorType::Storage, context, error)
 }
 
 #[cfg(test)]
@@ -2453,7 +2453,10 @@ mod tests {
         ])
         .expect_err("one attachment identity cannot have two package owners");
 
-        assert_eq!(error.kind(), MintManifestErrorType::DuplicateAttachmentId);
+        assert_eq!(
+            error.kind(),
+            PublishManifestErrorType::DuplicateAttachmentId
+        );
         assert_eq!(error.kind().as_str(), "duplicate-attachment-id");
         assert!(error.detail().contains("fixture-http"));
         assert!(error.detail().contains("apps/source_fixture"));
@@ -2494,12 +2497,12 @@ mod tests {
         )
         .expect_err("canonical route collisions remain refused after package merging");
 
-        assert_eq!(error.kind(), MintManifestErrorType::Document);
+        assert_eq!(error.kind(), PublishManifestErrorType::Document);
         assert!(error.detail().contains("canonical path and method"));
     }
 
     #[test]
-    fn release_mint_binds_each_attachment_hash_to_its_definition() {
+    fn release_publish_binds_each_attachment_hash_to_its_definition() {
         let definition = serde_json::json!({
             "id": "fixture-http",
             "kind": "http",
@@ -2530,11 +2533,11 @@ mod tests {
             changed,
         )]))
         .expect_err("changed definition bytes cannot retain the old identity");
-        assert_eq!(error.kind(), MintManifestErrorType::Document);
+        assert_eq!(error.kind(), PublishManifestErrorType::Document);
     }
 
     #[test]
-    fn release_mint_requires_and_applies_the_deployment_route_host() {
+    fn release_publish_requires_and_applies_the_deployment_route_host() {
         let definition = serde_json::json!({
             "id": "fixture-http",
             "kind": "http",
@@ -2558,7 +2561,7 @@ mod tests {
 
         let missing = resolve_route_host_overlay(&authored, None, &RouteContracts::new())
             .expect_err("a routed release requires its deployment hostname");
-        assert_eq!(missing.kind(), MintManifestErrorType::RouteHostUnbound);
+        assert_eq!(missing.kind(), PublishManifestErrorType::RouteHostUnbound);
         assert_eq!(missing.kind().as_str(), "route-host-unbound");
         assert!(missing.detail().contains("fixture-http"));
         assert!(missing.detail().contains("--route-host"));
@@ -2597,7 +2600,7 @@ mod tests {
         let package_host =
             resolve_route_host_overlay(&package_authored, None, &RouteContracts::new())
                 .expect_err("package content cannot author a deployment hostname");
-        assert_eq!(package_host.kind(), MintManifestErrorType::Document);
+        assert_eq!(package_host.kind(), PublishManifestErrorType::Document);
         assert!(package_host.detail().contains("remove it"));
         assert!(package_host.detail().contains("--route-host"));
 
@@ -2608,7 +2611,7 @@ mod tests {
             .type_ = wamn_catalog::AttachmentType::Internal;
         let package_host = resolve_route_host_overlay(&non_routed, None, &RouteContracts::new())
             .expect_err("every attachment kind refuses an authored route hostname");
-        assert_eq!(package_host.kind(), MintManifestErrorType::Document);
+        assert_eq!(package_host.kind(), PublishManifestErrorType::Document);
 
         let mut extra_route_field = authored.clone();
         extra_route_field
@@ -2626,7 +2629,7 @@ mod tests {
             &RouteContracts::new(),
         )
         .expect_err("package route schema admits only a path");
-        assert_eq!(extra.kind(), MintManifestErrorType::Document);
+        assert_eq!(extra.kind(), PublishManifestErrorType::Document);
         assert!(extra.detail().contains("exactly a string path field"));
 
         let mut colliding = authored;
@@ -2643,12 +2646,12 @@ mod tests {
         let collision =
             resolve_route_host_overlay(&colliding, Some("route.example"), &RouteContracts::new())
                 .expect_err("one overlay host cannot carry ambiguous route templates");
-        assert_eq!(collision.kind(), MintManifestErrorType::Document);
+        assert_eq!(collision.kind(), PublishManifestErrorType::Document);
         assert!(collision.detail().contains("canonical path and method"));
     }
 
     #[test]
-    fn release_mint_writes_the_method_from_the_operation_kind() {
+    fn release_publish_writes_the_method_from_the_operation_kind() {
         let route = |id: &str, operation: &str, path: &str| {
             let mut attachment = package_http_attachment(id, "source_fixture", id, operation, path);
             attachment.target = wamn_catalog::AttachmentTarget::Route {
@@ -2726,7 +2729,7 @@ mod tests {
                 .expect_err("a route to an operation with no contract kind refuses");
         assert_eq!(
             unknown.kind(),
-            MintManifestErrorType::GeneratedPackageMetadata
+            PublishManifestErrorType::GeneratedPackageMetadata
         );
 
         let mut authored_method = authored;
@@ -2737,7 +2740,7 @@ mod tests {
         refresh_definition_hash(get);
         let refusal = resolve_route_host_overlay(&authored_method, Some("route.example"), &kinds)
             .expect_err("an authored method refuses");
-        assert_eq!(refusal.kind(), MintManifestErrorType::Document);
+        assert_eq!(refusal.kind(), PublishManifestErrorType::Document);
         assert!(
             refusal.detail().contains("route.method"),
             "{}",
@@ -2879,7 +2882,7 @@ mod tests {
     }
 
     #[test]
-    fn release_mint_consumes_package_metadata_and_refuses_unsatisfied_policy() {
+    fn release_publish_consumes_package_metadata_and_refuses_unsatisfied_policy() {
         let manifest_bytes = include_bytes!("../tests/fixtures/component_package/wamn.json");
         let manifest = wamn_schema_generator::PackageManifest::from_slice(manifest_bytes)
             .expect("the fixture manifest is valid");
@@ -2912,7 +2915,7 @@ mod tests {
             .expect_err("unsatisfied generated metadata cannot enter a release");
         assert_eq!(
             refusal.kind(),
-            MintManifestErrorType::PolicyContractUnsatisfied
+            PublishManifestErrorType::PolicyContractUnsatisfied
         );
         assert!(refusal.detail().contains("fixture_data_access"));
         assert!(refusal.detail().contains("regenerate"));
@@ -2929,7 +2932,7 @@ mod tests {
             .expect_err("metadata cannot restate the manifest policy requirement");
         assert_eq!(
             refusal.kind(),
-            MintManifestErrorType::GeneratedPackageMetadata
+            PublishManifestErrorType::GeneratedPackageMetadata
         );
     }
 
@@ -3059,7 +3062,7 @@ mod tests {
             let targets = BTreeMap::from([(operation.clone(), selected)]);
             let error = derive_serving_registrations(&manifests, &targets)
                 .expect_err("zero or multiple handler entry wirings were accepted");
-            assert_eq!(error.kind(), MintManifestErrorType::Registration);
+            assert_eq!(error.kind(), PublishManifestErrorType::Registration);
         }
 
         let manifests = BTreeMap::from([
@@ -3071,7 +3074,7 @@ mod tests {
         ]);
         let error = derive_serving_registrations(&manifests, &targets)
             .expect_err("a registration source entity absent from its package was accepted");
-        assert_eq!(error.kind(), MintManifestErrorType::Registration);
+        assert_eq!(error.kind(), PublishManifestErrorType::Registration);
         for fact in ["audit.observe", "source_fixture", "missing"] {
             assert!(
                 error.detail().contains(fact),
@@ -3133,7 +3136,7 @@ mod tests {
         )]);
         let error = derive_serving_registrations(&manifests, &unselected)
             .expect_err("a workflow whose wiring is not selected was accepted");
-        assert_eq!(error.kind(), MintManifestErrorType::Registration);
+        assert_eq!(error.kind(), PublishManifestErrorType::Registration);
         assert!(error.detail().contains("item_label"));
     }
 
@@ -3224,7 +3227,7 @@ mod tests {
         .expect_err("digest drift refuses the dependency");
         assert_eq!(
             digest_error.kind(),
-            MintManifestErrorType::OperationDependency
+            PublishManifestErrorType::OperationDependency
         );
 
         let membership_error = resolve_wiring_components(
@@ -3237,7 +3240,7 @@ mod tests {
         .expect_err("a dependency outside the release refuses publication");
         assert_eq!(
             membership_error.kind(),
-            MintManifestErrorType::OperationDependency
+            PublishManifestErrorType::OperationDependency
         );
         assert!(
             membership_error
@@ -3289,7 +3292,7 @@ mod tests {
         .expect_err("a dependency outside the release refuses on either rule");
         assert_eq!(
             membership_error.kind(),
-            MintManifestErrorType::OperationDependency
+            PublishManifestErrorType::OperationDependency
         );
     }
 
@@ -3371,7 +3374,7 @@ mod tests {
         let error =
             resolve_component_dependency_closure(&roots, &cyclic, DependencyDigestRule::Declared)
                 .expect_err("an exact component dependency cycle was accepted");
-        assert_eq!(error.kind(), MintManifestErrorType::OperationDependency);
+        assert_eq!(error.kind(), PublishManifestErrorType::OperationDependency);
         assert!(error.detail().contains("cycle"));
     }
 
@@ -3414,7 +3417,10 @@ mod tests {
         let refusal =
             resolve_component_dependency_closure(&roots, &facts, DependencyDigestRule::Declared)
                 .expect_err("a durable release still demands the declared bytes");
-        assert_eq!(refusal.kind(), MintManifestErrorType::OperationDependency);
+        assert_eq!(
+            refusal.kind(),
+            PublishManifestErrorType::OperationDependency
+        );
 
         let closure =
             resolve_component_dependency_closure(&roots, &facts, DependencyDigestRule::Built)
@@ -3545,7 +3551,7 @@ mod tests {
     }
 
     #[test]
-    fn release_mint_refuses_an_anonymous_path_to_a_registered_operation() {
+    fn release_publish_refuses_an_anonymous_path_to_a_registered_operation() {
         let target = ReleaseWiringTarget {
             package_id: "base".to_owned(),
             package_version: "1.0.0".to_owned(),
@@ -3568,10 +3574,10 @@ mod tests {
         )]);
         let error =
             validate_anonymous_wiring_closure(&anonymous, &target, &closure_document(true), &facts)
-                .expect_err("anonymous reachability must fail at release mint");
+                .expect_err("anonymous reachability must fail at release publish");
         assert_eq!(
             error.kind(),
-            MintManifestErrorType::UnauthenticatedRegisteredOperation
+            PublishManifestErrorType::UnauthenticatedRegisteredOperation
         );
         assert_eq!(
             error.detail(),
@@ -3600,10 +3606,10 @@ mod tests {
             &closure_document(false),
             &dependency_facts,
         )
-        .expect_err("anonymous dependency reachability must fail at release mint");
+        .expect_err("anonymous dependency reachability must fail at release publish");
         assert_eq!(
             error.kind(),
-            MintManifestErrorType::UnauthenticatedRegisteredOperation
+            PublishManifestErrorType::UnauthenticatedRegisteredOperation
         );
         assert!(error.detail().contains("through component dependency"));
 
@@ -3641,7 +3647,7 @@ mod tests {
     /// Spec test 14: an anonymous attachment cannot reach a statement that
     /// writes or locks, and it still reaches a statement that only reads.
     #[test]
-    fn release_mint_refuses_an_anonymous_closure_that_can_write() {
+    fn release_publish_refuses_an_anonymous_closure_that_can_write() {
         let target = ReleaseWiringTarget {
             package_id: "base".to_owned(),
             package_version: "1.0.0".to_owned(),
@@ -3684,7 +3690,7 @@ mod tests {
             &closure_document(false),
             &closure(true),
         )
-        .expect_err("an anonymous closure that can write must fail at release mint");
+        .expect_err("an anonymous closure that can write must fail at release publish");
         assert_eq!(error.kind().as_str(), "unauthenticated-write");
         assert_eq!(
             error.detail(),
@@ -3744,7 +3750,7 @@ mod tests {
             verify_projected_environment_policy(None, &source_policy, &release, &schema)
                 .unwrap_err()
                 .kind(),
-            MintManifestErrorType::EnvironmentPolicyAbsent
+            PublishManifestErrorType::EnvironmentPolicyAbsent
         );
         let wrong_environment = ProjectedEnvironmentPolicy {
             expected_environment: "dev".to_owned(),
@@ -3760,7 +3766,7 @@ mod tests {
             )
             .unwrap_err()
             .kind(),
-            MintManifestErrorType::EnvironmentPolicyMismatch
+            PublishManifestErrorType::EnvironmentPolicyMismatch
         );
         let stale = ProjectedEnvironmentPolicy {
             expected_environment: "prod".to_owned(),
@@ -3772,7 +3778,7 @@ mod tests {
                 .unwrap_err();
         assert_eq!(
             mismatch.kind(),
-            MintManifestErrorType::EnvironmentPolicySourceMismatch
+            PublishManifestErrorType::EnvironmentPolicySourceMismatch
         );
         assert!(mismatch.detail().contains("environment \"prod\""));
         assert!(mismatch.detail().contains(&stale_hash));

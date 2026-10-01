@@ -928,7 +928,7 @@ async fn publish_route(
 /// Publish one compatibility-validated, green-gated wiring definition.
 ///
 /// This is act 1 only: it appends `catalog.wirings` and returns that immutable
-/// definition's server-derived identity. Release-manifest minting is a separate
+/// definition's server-derived identity. Release-manifest publishing is a separate
 /// act and is never called from this transport.
 async fn publish(
     backend: &mut InternalAuthoringBackend,

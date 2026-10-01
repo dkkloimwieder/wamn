@@ -73,7 +73,7 @@ impl PostgresWorkflows {
         &self.environment
     }
 
-    /// The minted release of the request, in this tenant and environment.
+    /// The published release of the request, in this tenant and environment.
     async fn release(
         &self,
         transaction: &Transaction<'_>,
@@ -86,7 +86,7 @@ impl PostgresWorkflows {
             .ok_or_else(|| {
                 WorkflowError::new(
                     WorkflowErrorType::Refused,
-                    format!("release {release_id} has no minted snapshot"),
+                    format!("release {release_id} has no published snapshot"),
                 )
             })?
             .try_get(0)

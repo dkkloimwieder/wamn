@@ -393,7 +393,7 @@ fn registry_client(
     .map_err(|_| ReleaseManifestFetchError::registry_client())
 }
 
-/// The mint and the mount reader share this ceiling; the puller enforces it too.
+/// The publish and the mount reader share this ceiling; the puller enforces it too.
 fn manifest_byte_ceiling() -> i64 {
     i64::try_from(MAX_SERVING_MANIFEST_BYTES).unwrap_or(i64::MAX)
 }

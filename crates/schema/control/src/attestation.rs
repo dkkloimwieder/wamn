@@ -187,7 +187,7 @@ pub enum AttestationErrorType {
     ContentConflict,
     /// The release coordinate is already projected onto the control plane with
     /// DIFFERENT release facts. The remedy is to find out which environment
-    /// actually minted it, never to overwrite the record.
+    /// actually published it, never to overwrite the record.
     IdentityProjectionConflict,
     /// Any other failure the driver reported.
     Storage,

@@ -1,4 +1,4 @@
-//! Read one minted release snapshot and derive the carrier its workloads take.
+//! Read one published release snapshot and derive the carrier its workloads take.
 //!
 //! The operator path that shipped with `wamn-cdky` is manual: read the digest
 //! off `publish-release` stdout and hand-edit the template. This reader removes
@@ -32,7 +32,7 @@ pub struct ReleaseSnapshot {
     pub carrier: ReleaseCarrier,
 }
 
-/// Read and derive the exact carrier for one minted release.
+/// Read and derive the exact carrier for one published release.
 pub async fn lookup_release_carrier(
     database_url: &str,
     tenant: &str,

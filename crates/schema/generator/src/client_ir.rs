@@ -160,7 +160,7 @@ pub struct ModelIr {
 /// publication refuses one outright — `validate_authored_attachment_routes`
 /// (`crates/control/lib/src/publish_release.rs:1293`) rejects an authored
 /// `route.host` with "remove it and pass --route-host", and the host is
-/// stamped in later at release mint from that flag. So the client's base URL
+/// stamped in later at release publish from that flag. So the client's base URL
 /// and host stay construction-time deployment config, and generated code
 /// carries no deployment fact — not by our restraint, but because the fact is
 /// structurally absent from what we read.

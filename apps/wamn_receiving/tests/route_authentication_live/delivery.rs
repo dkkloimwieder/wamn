@@ -16,7 +16,7 @@ pub(super) fn candidate() -> anyhow::Result<Option<(Candidate, ServingManifest)>
         .map(|package| wamn_catalog::PackageCoordinate::new(package.id, package.version()))
         .collect::<Result<std::collections::BTreeSet<_>, _>>()?;
     // The fixture takes the rest of its identity from the candidate, and it
-    // mints only the Receiving and Acme packages of this checkout.
+    // publishes only the Receiving and Acme packages of this checkout.
     ensure!(
         manifest.release.packages == packages,
         "supplied Receiving artifacts require the exact Receiving and Acme packages of this checkout"

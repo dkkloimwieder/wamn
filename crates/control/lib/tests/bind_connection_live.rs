@@ -9,7 +9,7 @@
 //! between the verb and the resolver is this file's: the fixture is a
 //! package applied by the real verb, a component admitted the way
 //! push-component admits one, a wiring authored by the real author under a
-//! green report, and a release row of the shape the mint writes.
+//! green report, and a release row of the shape the publish writes.
 //!
 //! Two databases on the PostgreSQL server of the test process: a project
 //! database with the tenant+app_system floor and a control database with the
@@ -240,7 +240,7 @@ async fn provision_project(project: &Client, project_url: &str) {
             &[&TENANT, &RELEASE_ID, &ENVIRONMENT],
         )
         .await
-        .expect("mint the fixture release");
+        .expect("publish the fixture release");
     project
         .execute(
             "INSERT INTO catalog.effective_release_packages \

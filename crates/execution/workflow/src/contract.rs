@@ -49,7 +49,7 @@ pub enum Trigger {
 /// One run to admit.
 #[derive(Debug, Clone, PartialEq)]
 pub struct StartRequest {
-    /// The minted release whose wiring the run executes.
+    /// The published release whose wiring the run executes.
     pub effective_release_id: u32,
     pub package_id: String,
     pub wiring_id: String,

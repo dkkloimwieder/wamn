@@ -112,7 +112,7 @@ pub(super) async fn receiving_pat_journey(
     receiving_release_journey(inputs, scenario_worker, fresh_only, false).await
 }
 
-pub(super) async fn mint_receiving_release(
+pub(super) async fn publish_receiving_release(
     inputs: &JourneyDocument,
     scenario_worker: &Path,
 ) -> anyhow::Result<wamn_control::provision_project_env::ProvisionedRoute> {
@@ -123,7 +123,7 @@ async fn receiving_release_journey(
     inputs: &JourneyDocument,
     scenario_worker: &Path,
     fresh_only: bool,
-    mint_only: bool,
+    publish_only: bool,
 ) -> anyhow::Result<wamn_control::provision_project_env::ProvisionedRoute> {
     anyhow::ensure!(
         inputs.fresh_only_packages.is_some() == fresh_only,
@@ -285,8 +285,8 @@ async fn receiving_release_journey(
             })
             .collect(),
     };
-    if mint_only {
-        super::environment::mint_journey_release(inputs, target).await?;
+    if publish_only {
+        super::environment::publish_journey_release(inputs, target).await?;
         seed_receiving_business_rows(project.as_ref()).await?;
         let stopped = management_server.shutdown().await;
         project_task.abort();
@@ -294,7 +294,7 @@ async fn receiving_release_journey(
         stopped?;
         return Ok(route);
     }
-    let (_, release) = publish_journey_release(inputs, target).await?;
+    let (_, release) = publish_and_push_journey_release(inputs, target).await?;
     let component_digests = released_component_digests(&release, &inputs.route_host)?;
     anyhow::ensure!(
         component_digests == admitted_component_digests,

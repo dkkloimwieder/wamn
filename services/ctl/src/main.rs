@@ -34,13 +34,13 @@ struct Cli {
 enum Command {
     /// Publish only the release that passed required qualification.
     PublishQualifiedRelease(delivery_verbs::PublishArgs),
-    /// Push one minted release manifest with no qualification commit and attest it.
+    /// Push one published release manifest with no qualification commit and attest it.
     PushReleaseManifest(delivery_verbs::PushReleaseManifestArgs),
     /// Select one published release for its environment.
     SelectRelease(delivery_verbs::SelectArgs),
     /// Deploy exact qualified artifacts while the selection remains current.
     DeployRelease(delivery_verbs::DeployArgs),
-    /// Capture a minted release and exact artifact locations for qualification.
+    /// Capture a published release and exact artifact locations for qualification.
     PrepareRelease(delivery_verbs::PrepareReleaseArgs),
     /// Execute selected existing tests before integration.
     CheckChanges(delivery_verbs::CheckChangesArgs),
@@ -93,11 +93,11 @@ enum Command {
     /// Bind one admitted component's declared connection alias to an
     /// environment-owned instance carrying a host-held credential handle.
     BindConnection(component_verbs::BindConnectionArgs),
-    /// Mint one immutable format-1 effective release from exact package-owned facts.
+    /// Publish one immutable format-1 effective release from exact package-owned facts.
     ///
     /// PRECONDITION: run `reconcile-run-plane` for this tenant and this `--run-schema` FIRST. This verb reads the tenant's `environment_policies` row before it commits and refuses when the row is absent (`environment-policy-not-converged`) as well as when it names another environment than the release carries (`environment-policy-environment-mismatch`), so publishing into a never-reconciled run plane fails rather than passing unchecked.
     PublishRelease(release_verbs::PublishReleaseArgs),
-    /// Print the release lines a pod template carries for one minted release (wamn-duyl)
+    /// Print the release lines a pod template carries for one published release (wamn-duyl)
     PrintReleaseEnv(delivery_verbs::PrintReleaseEnvArgs),
     /// Print the SQL that creates the platform principal rows of one tenant.
     PrintPlatformPrincipals(print_platform_principals::PrintPlatformPrincipalsArgs),

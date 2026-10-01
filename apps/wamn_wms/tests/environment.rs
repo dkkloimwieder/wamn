@@ -43,7 +43,7 @@ const CLUSTER: &str = "route-auth-pg18";
 /// Platform rows take the email `<component>@example.invalid` in this test.
 const PLATFORM_DOMAIN: &str = "example.invalid";
 
-/// The release this fixture provisions and mints. A supplied candidate names
+/// The release this fixture provisions and publishes. A supplied candidate names
 /// it, and with no candidate it is the default WMS journey release.
 pub(crate) fn identity() -> &'static ReleaseIdentity {
     static IDENTITY: LazyLock<ReleaseIdentity> = LazyLock::new(|| {
@@ -469,12 +469,12 @@ fn as_authored_entry(entry: &mut serde_json::Value) {
 }
 
 /// Publish WMS and its label components, author its wirings, then bind and attest.
-/// The artifacts and endpoint one release publication is minted from.
+/// The artifacts and endpoint one release publication is published from.
 pub struct PublicationArtifacts<'a> {
     pub scenario_worker: &'a Path,
     pub label_render_wasm: &'a Path,
     pub minio_endpoint: &'a str,
-    pub mint_only: bool,
+    pub publish_only: bool,
 }
 
 pub async fn publish(
@@ -488,7 +488,7 @@ pub async fn publish(
         scenario_worker,
         label_render_wasm,
         minio_endpoint,
-        mint_only,
+        publish_only,
     } = *artifacts;
     let package = package_coordinate()?;
     let root = package_root();
@@ -664,7 +664,7 @@ pub async fn publish(
         store_alias,
     })
     .await?;
-    if !mint_only {
+    if !publish_only {
         push_release_manifest::push_release_manifest(
             &PushReleaseManifestRequest {
                 database_url: route.database_url.clone(),
