@@ -874,18 +874,19 @@ It prints release 1 with format 3 and release 2 with format 4. The table name ho
    WAMN_SYSTEM_URL="$(url $P/identity-reader.json)" WAMN_CONTROL_AUTHORING_PG_URL="$(url $G/control-author.json)" \
    WAMN_MANAGEMENT_ADMISSION_PG_URL="$(url $G/management-admitter.json)" WAMN_MANAGEMENT_ORG=dkk \
    WAMN_MANAGEMENT_PROJECT=wms WAMN_MANAGEMENT_ENVIRONMENT=dev WAMN_MANAGEMENT_TENANT=wms \
-     target/debug/wamn-scenario-worker serve --bind 127.0.0.1:18090 &
+     target/debug/wamn-scenario-worker serve --bind 127.0.0.1:18090 > $P/gate.log 2>&1 &
    GATE=$!
+   until grep -q listening $P/gate.log; do sleep 1; done
    jq -r '"Authorization: Bearer " + .stringData.token' $G/management-author-pat.json |
      curl -sS -H @- -H 'Content-Type: application/json' --data-binary @$P/gate-request.json \
        http://127.0.0.1:18090/authoring > $P/gate-reply.json
    kill $GATE
-   jq '.body.outcome.status, .body.outcome["report-id"]' $P/gate-reply.json
+   jq '.body.outcome.status, .body.outcome.value.result["report-id"]' $P/gate-reply.json
    ```
 
-   The reply has `body.outcome.status` `completed` and a `report-id`. The example derives the command id `gate-<package>-<version>-<wiring>` (`test-support/infrastructure/examples/gate_request.rs`, since A11), so the 2.0.0 gate uses `gate-wamn_wms-2.0.0-inventory_move_and_label`. The 1.0.0 gate holds its own id in `catalog.authoring_command_audit` for this principal (`control-portable-store.sql:287`), and that row stays where it is. In branch `b`, shred the PAT file after B8 with `shred -u $P/management-author-pat.json`. B12 retires generation `a` and revokes the old PAT prefix, and records both.
+   The service needs about one second before it listens, so the post waits for its "listening" line. The reply has `body.outcome.status` `completed` and a `report-id`. The example derives the command id `gate-<package>-<version>-<wiring>` (`test-support/infrastructure/examples/gate_request.rs`, since A11), so the 2.0.0 gate uses `gate-wamn_wms-2.0.0-inventory_move_and_label`. The 1.0.0 gate holds its own id in `catalog.authoring_command_audit` for this principal (`control-portable-store.sql:287`), and that row stays where it is. In branch `b`, shred the PAT file after B8 with `shred -u $P/management-author-pat.json`. B12 retires generation `a` and revokes the old PAT prefix, and records both.
 
-4. Record the wiring, and record the wiring version `<V>` that it prints (`gcp.md` §5.3 "target/debug/wamn-ctl author-wiring"):
+4. Record the wiring (`gcp.md` §5.3 "target/debug/wamn-ctl author-wiring"). It prints the digest of the validated draft, which equals the `report-id` of the gate. The wiring version `<V>` of step 5 is the `version` field of the wiring document (`wamn-ld93.33.5`):
 
    ```bash
    target/debug/wamn-ctl author-wiring --database-url "$T" --control-database-url "$SYS" --tenant wms \
