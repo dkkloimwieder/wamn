@@ -578,6 +578,23 @@ async fn a_control_session_follows_the_admin_roles_of_its_org() {
         .expect_redacted("control authority"),
         "a revoked org-admin ends the control session on the next request"
     );
+
+    // An org member with no grant, as an invitation with no access leaves
+    // it, signs in and is offered no environment.
+    fixture
+        .system
+        .client
+        .execute(
+            "DELETE FROM identity.project_env_memberships WHERE principal_id = $1::text::uuid",
+            &[&user.id().as_str()],
+        )
+        .await
+        .expect_redacted("remove the memberships");
+    assert_eq!(
+        discover(&https).await,
+        json!({"environments": []}),
+        "a member with no access is offered no environment"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
