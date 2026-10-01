@@ -58,6 +58,8 @@ The verb sets REPLICA IDENTITY FULL on each table that such a registration names
 wamn-ctl reconcile-replica-identity --admin-database-url "$PG_ADMIN_URL" --package apps/wamn_wms
 ```
 
+The development loop applies this rule itself. After the package data access, it reconciles the replica identity of every package on each activation.
+
 Without it, the old row carries only the key, so the condition cannot compare the old location.
 
 Provisioning owns database schema, privileges, environment bindings, and broker stream configuration.

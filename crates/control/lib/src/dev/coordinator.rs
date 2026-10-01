@@ -1092,6 +1092,18 @@ impl ProductionDevStageRunner {
         .map_err(|source| {
             ProductionDevStageError::owner("reconcile generated package data access", source)
         })?;
+        // The cluster runs `reconcile-replica-identity` after `apply-package`
+        // (deployment.md), and a recreated target loses the identities.
+        let packages = self
+            .package_inputs()?
+            .into_iter()
+            .map(|package| package.root)
+            .collect::<Vec<_>>();
+        reconcile_local_replica_identity(self.config.target_database_url(), &packages, apply)
+            .await
+            .map_err(|source| {
+                ProductionDevStageError::owner("reconcile package replica identity", source)
+            })?;
         Ok(())
     }
 
@@ -2354,6 +2366,38 @@ async fn resolve_local_bindings(
             })
             .await?;
         Ok::<_, anyhow::Error>(bindings)
+    }
+    .await;
+    drop(client);
+    driver.abort();
+    result
+}
+
+async fn reconcile_local_replica_identity(
+    database_url: &str,
+    packages: &[PathBuf],
+    apply: bool,
+) -> anyhow::Result<()> {
+    let (client, connection) = tokio_postgres::connect(database_url, NoTls)
+        .await
+        .context("connect to the local target for replica identity")?;
+    let driver = tokio::spawn(connection);
+    let result = async {
+        for root in packages {
+            let directory = apply_package::read_package_directory(root)?;
+            let package = wamn_schema_control::plan_package_migrations(&directory, None)
+                .context("derive package model mapping")?;
+            let package_id = package.coordinate.package_id();
+            let plan = crate::reconcile_replica_identity::reconcile(
+                &client,
+                package_id,
+                &package.models,
+                apply,
+            )
+            .await?;
+            tracing::info!(package = %package_id, flips = plan.flips.len(), apply, "reconciled package replica identity");
+        }
+        Ok::<_, anyhow::Error>(())
     }
     .await;
     drop(client);
