@@ -11,15 +11,16 @@ pub(super) fn candidate() -> anyhow::Result<Option<(Candidate, ServingManifest)>
         return Ok(None);
     };
     let (manifest, _) = candidate.manifest()?;
-    let packages = super::JOURNEY_PACKAGES
-        .iter()
+    // The candidate selects its journey packages (wamn-ld93.33.2): Receiving
+    // alone, or Receiving and Acme. Each must be the package of this checkout.
+    let packages = super::released_journey_packages()
         .map(|package| wamn_catalog::PackageCoordinate::new(package.id, package.version()))
         .collect::<Result<std::collections::BTreeSet<_>, _>>()?;
     // The fixture takes the rest of its identity from the candidate, and it
-    // publishes only the Receiving and Acme packages of this checkout.
+    // publishes only the journey packages of this checkout.
     ensure!(
         manifest.release.packages == packages,
-        "supplied Receiving artifacts require the exact Receiving and Acme packages of this checkout"
+        "supplied Receiving artifacts require journey packages of this checkout only"
     );
     let result = std::env::var_os("WAMN_DELIVERY_RESULT")
         .context("WAMN_DELIVERY_RESULT is required for supplied-artifact execution")?;
