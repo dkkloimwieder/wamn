@@ -1310,6 +1310,9 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
 
         return Err(error);
     }
+    // The host is subscribed, its release is compiled and its local
+    // workloads run, so `/readyz` may now report ready.
+    probe_state.started();
     tracing::info!(
         elapsed_ms = %startup_started.elapsed().as_millis(),
         cleanup_budget_secs = cleanup_budget.as_secs(),
