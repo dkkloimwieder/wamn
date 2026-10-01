@@ -47,7 +47,7 @@ enum Command {
     /// Mint private credentials only inside an explicitly armed disposable fixture.
     #[command(name = "identity-session-fixture")]
     IdentitySessionFixture(identity_session_test::IdentitySessionFixtureArgs),
-    /// Test fresh human membership through a deployed Receiving HTTP route.
+    /// Test fresh user membership through a deployed Receiving HTTP route.
     MembershipTest(membership_test::MembershipTestArgs),
     /// Assert an EVT_ stream holds a CDC reader's exact write program (order / dedupe / envelope shape) — the l5i9.10 gate's stream-side step
     Readerbench(readerbench::ReaderBenchArgs),

@@ -569,11 +569,12 @@ Provisioning binds `wamn:provisioning`.
 apply-package binds `wamn:apply-package` for package writes and operation grants.
 The retention task binds `wamn:audit-retention`.
 The binding of a platform component also sets `app.operation` to the same `wamn:<component>` name.
-Administrative SQL must bind the operator's person row, and test fixtures must bind a provisioned test principal.
+Administrative SQL must bind the operator's user row, and test fixtures must bind a provisioned test principal.
 Administrative SQL and test fixtures also bind `app.operation` as `admin:<kebab-purpose>`, including a transaction that only deletes rows.
 
-`app_system.users.type` is `person`, `service`, or `platform`, and it has no default.
-People have `person` rows, stations and integrations have `service` rows, and platform components have `platform` rows.
+`app_system.users.type` is `user`, `service`, or `platform`, and it has no default.
+Users have `user` rows, stations and integrations have `service` rows, and platform components have `platform` rows.
+The migrations that renamed `person` and `human` to `user` bind `wamn:provisioning`, so each changed row records that principal and that run, and old history rows keep the old name in their JSON.
 The type does not change how a principal authenticates.
 A `platform` row carries its `wamn:<component>` name in `display_name` and its derived id.
 Its email is `<component>@<platform-domain>`.
@@ -615,7 +616,7 @@ The `SYSTEM_SCHEMA_SQL` composition in [provisioning](../../crates/control/provi
 `record-history.sql` grants to `wamn_db_owner`, so an applier that runs as `wamn_system` creates that role first.
 `SYSTEM_SCHEMA_SQL` does not carry `record-history-app-grants.sql`.
 
-`identity.principals.type` is `human`, `service`, or `platform`.
+`identity.principals.type` is `user`, `service`, or `platform`.
 A `platform` row carries its `wamn:<component>` name in `subject` and in `display_name`, and its derived id.
 The `principals_platform_principal_check` constraint pins that subject, display name, and id.
 It also refuses a `wamn:` display name on another kind, and the subject pattern of another kind refuses a colon.
@@ -685,12 +686,12 @@ On those paths, the triggers exist and every writer binds its executing principa
 `reconcile-run-plane` applies `app-schema.sql` to the project database and writes its platform rows.
 It writes a service row for each service principal of the project.
 It reads the platform domain from `registry.meta.platform_domain`, and it refuses while that value is unset.
-It writes a person row for each human with a membership in that project environment.
-`wamn-ctl-ops create-human` creates that human in `identity.principals`, and it is the only path that creates one.
+It writes a user row for each user with a membership in that project environment.
+`wamn-ctl-ops create-user` creates that user in `identity.principals`, and it is the only path that creates one.
 The verb ships in the operational binary, and only a platform operator runs it.
 One email address names one principal for the whole platform.
-A human who works in two organizations holds one principal and two memberships.
-A person row carries the email of that human from `identity.principals`.
+A user who works in two organizations holds one principal and two memberships.
+A user row carries the email of that user from `identity.principals`.
 A new member gains the row at the next reconcile, because the membership grant holds no tenant connection.
 A principal with no users row cannot write in the tenant.
 The invocation bind refuses it.
@@ -719,7 +720,7 @@ The history read has two more limits:
 
 The system database has two more limits:
 
-- The issuer and the revoker of a token read `wamn:provisioning` until Beads `wamn-0h0g.9` gives issuance a person caller.
+- The issuer and the revoker of a token read `wamn:provisioning` until Beads `wamn-0h0g.9` gives issuance a user caller.
 - The system database keeps stamps only. A delete gets no stamp, so role, membership, and PAT removals stay unattributed. Beads `wamn-emtx.24` is the closed record of the system database log. Its reopen trigger is a need to attribute those removals beyond the stamps, for example a security review that asks for revoke history.
 
 ## Model versions

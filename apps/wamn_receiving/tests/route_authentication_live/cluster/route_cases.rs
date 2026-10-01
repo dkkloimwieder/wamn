@@ -1,4 +1,4 @@
-//! Receiving command histories and human membership on the deployed route.
+//! Receiving command histories and user membership on the deployed route.
 
 use std::fs;
 
@@ -59,7 +59,7 @@ async fn run_histories(evidence: &std::path::Path) -> anyhow::Result<()> {
 
 #[tokio::test]
 #[ignore = "requires: docker, kind, kubectl, helm, jq, curl"]
-async fn human_membership_and_permission_revocation() -> anyhow::Result<()> {
+async fn user_membership_and_permission_revocation() -> anyhow::Result<()> {
     wamn_test_postgres::require_prerequisites(&["docker", "kind", "kubectl", "helm", "jq", "curl"]);
     let evidence = evidence_directory()?;
     Box::pin(super::with_signals(&evidence, run_membership(&evidence))).await

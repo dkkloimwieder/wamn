@@ -135,7 +135,7 @@ async fn seed(admin: &Client) -> anyhow::Result<()> {
         (first.as_str(), "first@example.test"),
         (SECOND_PRINCIPAL, "second@example.test"),
     ] {
-        admin.execute("INSERT INTO app_system.users (tenant_id, id, type, email) VALUES ($1, $2::text::uuid, 'person', $3)",
+        admin.execute("INSERT INTO app_system.users (tenant_id, id, type, email) VALUES ($1, $2::text::uuid, 'user', $3)",
             &[&TENANT, &principal, &email]).await?;
         admin.execute("INSERT INTO app_system.user_roles (tenant_id, user_id, role_name) VALUES ($1, $2::text::uuid, 'purchase-reader')",
             &[&TENANT, &principal]).await?;
@@ -329,7 +329,7 @@ async fn sessions_use_one_fresh_scoped_permission_union_and_preserve_the_signed_
     let labels = permission_reader(url.as_str())?;
     admin.execute("UPDATE app_system.users SET display_name = 'Alice Operator' WHERE tenant_id = $1 AND id = $2::text::uuid",
         &[&TENANT, &SECOND_PRINCIPAL]).await?;
-    admin.execute("INSERT INTO app_system.users (tenant_id, id, type, email, display_name) VALUES ('tenant-b', $1::text::uuid, 'person', 'other@example.test', 'Other tenant')",
+    admin.execute("INSERT INTO app_system.users (tenant_id, id, type, email, display_name) VALUES ('tenant-b', $1::text::uuid, 'user', 'other@example.test', 'Other tenant')",
         &[&SECOND_PRINCIPAL]).await?;
     let first_id = claims()["sub"].as_str().unwrap().to_owned();
     let missing = "01234567-89ab-cdef-0123-456789abcdef".to_owned();

@@ -128,7 +128,7 @@ async fn tenant_postgres(admin_url: &str) -> anyhow::Result<Arc<WamnPostgres>> {
     admin
         .execute(
             "INSERT INTO app_system.users (tenant_id, id, type, email) \
-             VALUES ($1, $2::text::uuid, 'person', 'fixture@example.invalid')",
+             VALUES ($1, $2::text::uuid, 'user', 'fixture@example.invalid')",
             &[&TENANT, &FIXTURE_PRINCIPAL],
         )
         .await?;
@@ -227,7 +227,7 @@ async fn authentication_fixture(admin_url: &str) -> anyhow::Result<(Server, Flow
         (&*first, "alice@example.test"),
         (second, "bob@example.test"),
     ] {
-        admin.execute("INSERT INTO app_system.users (tenant_id,id,type,email) VALUES ($1,$2::text::uuid,'person',$3)", &[&TENANT,&principal,&email]).await?;
+        admin.execute("INSERT INTO app_system.users (tenant_id,id,type,email) VALUES ($1,$2::text::uuid,'user',$3)", &[&TENANT,&principal,&email]).await?;
         for role in ["native-parent", "native-child"] {
             admin.execute("INSERT INTO app_system.user_roles (tenant_id,user_id,role_name) VALUES ($1,$2::text::uuid,$3)", &[&TENANT,&principal,&role]).await?;
         }
@@ -920,7 +920,7 @@ async fn warm_postgres_with_pool(
         .await?;
     admin.execute("SELECT set_config('app.user_id', $1, false), set_config('app.operation', 'admin:warm-test', false)", &[&FIXTURE_PRINCIPAL]).await?;
     for principal in principals {
-        admin.execute("INSERT INTO app_system.users (tenant_id, id, type, email) VALUES ($1, $2::text::uuid, 'person', $2 || '@example.invalid')", &[&TENANT, principal]).await?;
+        admin.execute("INSERT INTO app_system.users (tenant_id, id, type, email) VALUES ($1, $2::text::uuid, 'user', $2 || '@example.invalid')", &[&TENANT, principal]).await?;
     }
     let mut url = url::Url::parse(admin_url)?;
     url.set_username(&role)
@@ -1084,7 +1084,7 @@ async fn pat_caller(
     postgres: Arc<WamnPostgres>,
     release: &LoadedRelease,
 ) -> anyhow::Result<AuthenticatedCaller> {
-    use wamn_platform_identity::{create_human, grant_project_env_membership, issue_pat};
+    use wamn_platform_identity::{create_user, grant_project_env_membership, issue_pat};
     use wamn_runtime::plugins::route_authentication::RouteAuthentication;
 
     let system_database = wamn_control_provision::test_database::system();
@@ -1104,7 +1104,7 @@ async fn pat_caller(
             &[&ORG, &PROJECT],
         )
         .await?;
-    let principal = create_human(
+    let principal = create_user(
         &system,
         "warm-pat@example.invalid",
         "warm-pat@example.invalid",
@@ -1123,7 +1123,7 @@ async fn pat_caller(
     .await?;
     let admin = connect(admin_url).await?;
     admin.execute("SELECT set_config('app.user_id', $1, false), set_config('app.operation', 'admin:warm-pat-test', false)", &[&FIXTURE_PRINCIPAL]).await?;
-    admin.execute("INSERT INTO app_system.users (tenant_id,id,type,email) VALUES ($1,$2::text::uuid,'person','warm-pat@example.invalid')", &[&TENANT, &principal.id().as_str()]).await?;
+    admin.execute("INSERT INTO app_system.users (tenant_id,id,type,email) VALUES ($1,$2::text::uuid,'user','warm-pat@example.invalid')", &[&TENANT, &principal.id().as_str()]).await?;
     admin.execute("INSERT INTO app_system.user_roles (tenant_id,user_id,role_name) VALUES ($1,$2::text::uuid,'native-child')", &[&TENANT, &principal.id().as_str()]).await?;
     let reader_role = workload_generation_role(
         WorkloadRoleFamily::IdentityReader,
@@ -1168,7 +1168,7 @@ async fn pat_caller(
                     postgres,
                     ORG,
                     PROJECT,
-                    "unused-human-subject",
+                    "unused-user-subject",
                 )
                 .await?,
             )),

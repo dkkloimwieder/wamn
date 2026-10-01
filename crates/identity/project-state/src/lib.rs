@@ -110,8 +110,8 @@ impl std::fmt::Display for UserStatus {
 /// change how a principal authenticates.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum UserType {
-    /// A person.
-    Person,
+    /// A user.
+    User,
     /// A station or an integration.
     Service,
     /// A platform component named `wamn:<component>`.
@@ -120,12 +120,12 @@ pub enum UserType {
 
 impl UserType {
     /// Every type. Order is presentational.
-    pub const ALL: [UserType; 3] = [UserType::Person, UserType::Service, UserType::Platform];
+    pub const ALL: [UserType; 3] = [UserType::User, UserType::Service, UserType::Platform];
 
-    /// The CHECK-literal form (`person` / `service` / `platform`).
+    /// The CHECK-literal form (`user` / `service` / `platform`).
     pub fn as_str(self) -> &'static str {
         match self {
-            UserType::Person => "person",
+            UserType::User => "user",
             UserType::Service => "service",
             UserType::Platform => "platform",
         }
@@ -301,7 +301,7 @@ mod tests {
 
     #[test]
     fn user_type_as_str_is_stable() {
-        assert_eq!(UserType::Person.as_str(), "person");
+        assert_eq!(UserType::User.as_str(), "user");
         assert_eq!(UserType::Service.as_str(), "service");
         assert_eq!(UserType::Platform.as_str(), "platform");
         for t in UserType::ALL {

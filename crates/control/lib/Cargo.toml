@@ -11,10 +11,10 @@ test-util = []
 # The operational verbs that ship in the separate `wamn-ctl-ops` binary.
 ops = ["wamn-control-provision/ops"]
 
-# `create_human` is an `ops` verb, so its live test needs the feature.
+# `create_user` is an `ops` verb, so its live test needs the feature.
 [[test]]
-name = "create_human_live"
-path = "tests/create_human_live.rs"
+name = "create_user_live"
+path = "tests/create_user_live.rs"
 required-features = ["ops"]
 
 [dependencies]

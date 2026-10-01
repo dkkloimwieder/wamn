@@ -34,7 +34,7 @@ pub struct UserRoleArgs {
     #[arg(long)]
     pub tenant: String,
 
-    /// Email of the person or service in the tenant.
+    /// Email of the user or service in the tenant.
     #[arg(long)]
     pub user: String,
 

@@ -31,7 +31,7 @@ use wamn_identity::{IdentityConfig, IdentityService, serve, tls_config};
 use wamn_pg_core::quote_ident;
 use wamn_platform_identity::session_keys::{activate_session_key, publish_session_key};
 use wamn_platform_identity::{
-    Principal, create_human, create_service, disable_principal, grant_project_env_membership,
+    Principal, create_service, create_user, disable_principal, grant_project_env_membership,
     issue_pat, revoke_pat, revoke_project_env_membership,
 };
 use wamn_session::keys::SessionJwks;
@@ -151,22 +151,22 @@ async fn session_exchange_uses_fresh_scoped_authority_without_session_state() {
 async fn exercise(fixture: &Fixture, https: &Https) {
     let system = &fixture.system.client;
     let dev = &fixture.environments[0].client;
-    let alice = create_human(
+    let alice = create_user(
         system,
         "session-alice",
         "session-alice@example.invalid",
         "Session Alice",
     )
     .await
-    .expect_redacted("human fixture");
-    let bob = create_human(
+    .expect_redacted("user fixture");
+    let bob = create_user(
         system,
         "session-bob",
         "session-bob@example.invalid",
         "Session Bob",
     )
     .await
-    .expect_redacted("other human fixture");
+    .expect_redacted("other user fixture");
     let service = create_service(system, "session-machine", "Session Machine")
         .await
         .expect_redacted("service fixture");
@@ -177,7 +177,7 @@ async fn exercise(fixture: &Fixture, https: &Https) {
         Duration::from_secs(3600),
     )
     .await
-    .expect_redacted("human PAT");
+    .expect_redacted("user PAT");
     let bob_pat = issue_pat(system, bob.id(), "session test", Duration::from_secs(3600))
         .await
         .expect_redacted("other PAT");
@@ -429,7 +429,7 @@ async fn exercise(fixture: &Fixture, https: &Https) {
     refuse(https, expired.token(), aud).await;
     revoke_pat(system, alice_pat.record().prefix())
         .await
-        .expect_redacted("revoke human PAT");
+        .expect_redacted("revoke user PAT");
     assert!(
         !wamn_platform_identity::session_token::session_is_active(system, &first, "widgets", "dev")
             .await
@@ -1107,7 +1107,7 @@ async fn snapshots(fixture: &Fixture) -> Vec<(String, Vec<String>)> {
 }
 
 async fn seed_user(client: &Client, principal: &Principal, tenant: &str, role: &str) {
-    client.execute("INSERT INTO app_system.users (tenant_id,id,type,email) VALUES ($1,$2::text::uuid,'person',$3) ON CONFLICT (tenant_id,id) DO UPDATE SET status='active'", &[&tenant, &principal.id().as_str(), &format!("{}@fixture.invalid", principal.id())])
+    client.execute("INSERT INTO app_system.users (tenant_id,id,type,email) VALUES ($1,$2::text::uuid,'user',$3) ON CONFLICT (tenant_id,id) DO UPDATE SET status='active'", &[&tenant, &principal.id().as_str(), &format!("{}@fixture.invalid", principal.id())])
         .await.expect_redacted("tenant user fixture");
     client
         .execute(
@@ -1275,7 +1275,7 @@ async fn setup(raw: &str) -> Fixture {
                 "SET app.user_id = '{FIXTURE_PRINCIPAL}'; \
                  SET app.operation = 'admin:session-exchange-fixture'; \
                  INSERT INTO app_system.users (tenant_id,id,type,email) \
-                 VALUES ('{TENANT}','{FIXTURE_PRINCIPAL}','person','fixture@example.invalid');"
+                 VALUES ('{TENANT}','{FIXTURE_PRINCIPAL}','user','fixture@example.invalid');"
             ))
             .await
             .expect_redacted("environment test principal");
@@ -1483,14 +1483,14 @@ async fn password_enrollment_and_sessions_preserve_current_authority() {
         .create_database("wamn_system")
         .expect_redacted("password system database");
     let fixture = setup(db.url()).await;
-    let alice = create_human(
+    let alice = create_user(
         &fixture.system.client,
         "password-alice",
         "password-alice@example.invalid",
         "Alice",
     )
     .await
-    .expect_redacted("password human");
+    .expect_redacted("password user");
     seed_user(&fixture.environments[0].client, &alice, TENANT, "receiver").await;
     grant(&fixture.system.client, &alice, "demo", "dev").await;
     let actor = PlatformComponent::Provisioning
@@ -1668,14 +1668,14 @@ async fn password_environment_discovery_requires_current_authority() {
         .create_database("wamn_system")
         .expect_redacted("discovery database");
     let fixture = setup(db.url()).await;
-    let alice = create_human(
+    let alice = create_user(
         &fixture.system.client,
         "discovery-alice",
         "discovery@example.invalid",
         "Alice",
     )
     .await
-    .expect_redacted("discovery human");
+    .expect_redacted("discovery user");
     for database in &fixture.environments {
         seed_user(&database.client, &alice, TENANT, "receiver").await;
     }

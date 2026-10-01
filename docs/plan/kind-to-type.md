@@ -614,6 +614,7 @@ target/debug/wamn-ctl upgrade-schema --system-database-url "$SYS" --baseline 1 -
 ```
 
 It records `0001_capture_gap.sql`, which the database holds by hand. It then applies `0002_event_reader_schema.sql`, `0003_kind_to_type.sql` and `0004_env_policy_durability.sql` in the same run.
+The same run applies every later system file. `0007_org_administration.sql` changes the principal type `human` to `user` (`wamn-a40n.3`). No hand statement does this.
 
 B3. Run `upgrade-schema` once on each project-env database (§4.3.4, §4.8):
 
@@ -623,6 +624,7 @@ target/debug/wamn-ctl upgrade-schema --system-database-url "$SYS" --admin-databa
 ```
 
 Each run creates the record table and applies `0001_kind_to_type.sql`.
+The same run applies every later project file. `0004_user_type.sql` changes the user type `person` to `user` (`wamn-a40n.3`). No hand statement does this.
 
 B4. Run the new `reconcile-run-plane` twice for each environment (§4.3.2, §4.8, `gcp.md` §3.8, §5.2). The second run of each reports no action:
 

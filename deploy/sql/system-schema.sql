@@ -52,7 +52,7 @@
 --       The separate identity issuer has explicit key, credential, and throttle grants.
 --   (2) no tenant-database credentials (R8b) — `project_envs` stores a Secret
 --       *reference* (secret_name + optional secret_namespace) and NO tenant DB
---       credential column (no url/password/dsn). First-party human login hashes
+--       credential column (no url/password/dsn). First-party user login hashes
 --       live separately under `identity`. Session signing keys are the explicit
 --       authority-only exception: only wamn-identity receives their private part.
 --   (3) no tenant data — the only tables here are the control-plane set below
@@ -79,7 +79,7 @@
 -- Schemas. `registry` = the org/project placement model (wamn-q3n.1);
 -- `provisioning` = the saga state that orchestrates it (10.1's
 -- exactly-once/resumable steps); `identity` = first-party platform principals,
--- local human credential hashes, project-role assignments (wamn-ctc8.6), and
+-- local user credential hashes, project-role assignments (wamn-ctc8.6), and
 -- personal-access-token digests (wamn-ctc8.7), and signing generations (wamn-ctc8.15.1).
 -- Distinct schemas keep each control-plane subsystem namespaced.
 -- Owned by the `wamn_system` role the T1 cluster bootstraps (wamn-q3n.2).
@@ -214,12 +214,12 @@ CREATE TABLE registry.projects (
 -- ---------------------------------------------------------------------------
 -- First-party platform identity (wamn-ctc8.6). This is platform-plane
 -- authentication state, distinct from per-project `app_system` identities.
--- Humans and services are passwordless subjects. PATs are the MVP presenter;
--- an external OIDC adapter may resolve a human subject through this same core.
+-- Users and services are passwordless subjects. PATs are the MVP presenter;
+-- an external OIDC adapter may resolve a user subject through this same core.
 -- Role slugs are opaque: permission meaning belongs to the management
 -- authorization boundary.
 --
--- `type` is human, service, or platform. A platform row names a platform
+-- `type` is user, service, or platform. A platform row names a platform
 -- component that writes in this database, and only wamn:provisioning does. The
 -- row carries its `wamn:<component>` name in `subject` and in `display_name`,
 -- and the id that `wamn-project-state` derives from that name.
@@ -229,23 +229,23 @@ CREATE TABLE registry.projects (
 -- UUIDv5, so a Rust test compares the literal with the derivation. A platform
 -- principal cannot authenticate.
 --
--- `email` is the deliverable address of a human. `reconcile-run-plane` copies
--- it into the `app_system.users` person row of every tenant the human can write
--- in (wamn-0h0g.9.18). Only a human carries one: `principals_email_check`
--- refuses an email on another type and refuses a human without one. `subject`
+-- `email` is the deliverable address of a user. `reconcile-run-plane` copies
+-- it into the `app_system.users` user row of every tenant the user can write
+-- in (wamn-0h0g.9.18). Only a user carries one: `principals_email_check`
+-- refuses an email on another type and refuses a user without one. `subject`
 -- is email-shaped by its own CHECK, but it is an authentication token, so
 -- nothing reads it as an address. A service and a platform row take
 -- `<subject>@<platform-domain>` in the tenant, built from
 -- `registry.meta.platform_domain`, so neither needs a column here.
 --
--- `UNIQUE (email)` says the rule plainly: an address names one person. It needs
+-- `UNIQUE (email)` says the rule plainly: an address names one user. It needs
 -- no `type`, because `principals_email_check` already forces NULL on every
 -- other type, and PostgreSQL treats repeated NULLs as distinct. So the
 -- constraint touches no service or platform row.
 --
 -- The refusal belongs here, where the address is entered.
 -- `app_system.users` is `UNIQUE (tenant_id, email)`, so without this the two
--- people collide inside a tenant instead. That failure stops a whole
+-- users collide inside a tenant instead. That failure stops a whole
 -- `reconcile-run-plane` run, unrelated schema repair included.
 -- ---------------------------------------------------------------------------
 CREATE TABLE identity.principals (
@@ -264,13 +264,13 @@ CREATE TABLE identity.principals (
     UNIQUE (type, subject),
     UNIQUE (email),
     CONSTRAINT principals_type_check
-        CHECK (type IN ('human', 'service', 'platform')),
+        CHECK (type IN ('user', 'service', 'platform')),
     CONSTRAINT principals_subject_check
         CHECK (type = 'platform'
                OR (subject ~ '^[a-z0-9][a-z0-9._@+-]*$'
                    AND char_length(subject) <= 254)),
     CONSTRAINT principals_email_check
-        CHECK ((type = 'human') = (email IS NOT NULL)
+        CHECK ((type = 'user') = (email IS NOT NULL)
                AND (email IS NULL
                     OR (email ~ '^[^@[:space:]]+@[^@[:space:]]+\.[^@[:space:]]+$'
                         AND char_length(email) <= 254))),
@@ -324,12 +324,12 @@ CREATE TRIGGER wamn_record_history_stamp
 
 -- ---------------------------------------------------------------------------
 
--- A person's membership of one org (docs/plan/platform-ui.md §2.7). The
+-- A user's membership of one org (docs/plan/platform-ui.md §2.7). The
 -- principal stays global, and the membership status is org-local: an
 -- inactive member keeps the row and holds no access in the org.
 CREATE TABLE identity.org_memberships (
     principal_id   uuid NOT NULL,
-    principal_type text NOT NULL DEFAULT 'human',
+    principal_type text NOT NULL DEFAULT 'user',
     org            text NOT NULL
         REFERENCES registry.orgs (id) ON DELETE CASCADE,
     status         text NOT NULL,
@@ -340,8 +340,8 @@ CREATE TABLE identity.org_memberships (
     PRIMARY KEY (principal_id, org),
     FOREIGN KEY (principal_id, principal_type)
         REFERENCES identity.principals (id, type) ON DELETE CASCADE,
-    CONSTRAINT org_memberships_human_check
-        CHECK (principal_type = 'human'),
+    CONSTRAINT org_memberships_user_check
+        CHECK (principal_type = 'user'),
     CONSTRAINT org_memberships_status_check
         CHECK (status IN ('active', 'inactive'))
 );
@@ -350,8 +350,8 @@ CREATE TRIGGER wamn_record_history_stamp
     FOR EACH ROW
     EXECUTE FUNCTION wamn_history.stamp_row('created_at', 'created_by', 'updated_at', 'updated_by');
 
--- A person's administrative role in one org (docs/plan/platform-ui.md §4.4).
--- A role needs the person's membership of the org, and deleting the
+-- A user's administrative role in one org (docs/plan/platform-ui.md §4.4).
+-- A role needs the user's membership of the org, and deleting the
 -- membership deletes the role.
 CREATE TABLE identity.org_roles (
     principal_id uuid NOT NULL,
@@ -374,7 +374,7 @@ CREATE TRIGGER wamn_record_history_stamp
 
 -- ---------------------------------------------------------------------------
 -- Personal access tokens (wamn-ctc8.7) — the opaque bearer presenter both
--- humans and services use headlessly. INVARIANT: no token material is stored.
+-- users and services use headlessly. INVARIANT: no token material is stored.
 -- `token_prefix` is the non-secret lookup half (hex of the token's random
 -- lookup bytes, UNIQUE so verification is a single index probe);
 -- `token_hash` is the hex SHA-256 of the WHOLE token string, which is
@@ -400,7 +400,7 @@ CREATE TABLE identity.pats (
     FOREIGN KEY (principal_id, principal_type)
         REFERENCES identity.principals (id, type) ON DELETE RESTRICT,
     CONSTRAINT pats_principal_type_check
-        CHECK (principal_type IN ('human', 'service')),
+        CHECK (principal_type IN ('user', 'service')),
     CONSTRAINT pats_token_prefix_check
         CHECK (token_prefix ~ '^[0-9a-f]{16}$'),
     CONSTRAINT pats_token_hash_check
@@ -418,14 +418,14 @@ CREATE TRIGGER wamn_record_history_stamp
 
 CREATE INDEX pats_principal_idx ON identity.pats (principal_id);
 
--- Password enrollment (wamn-a045.1). Only human principals can enroll.
+-- Password enrollment (wamn-a045.1). Only user principals can enroll.
 -- These tables hold credential material and stamps, never row-image history.
 -- The identity library serializes enrollment on the principal row and consumes
 -- all outstanding invitations in the same transaction as password creation.
 -- Scoped issuer grants belong to the password endpoint implementation.
 CREATE TABLE identity.password_credentials (
     principal_id uuid PRIMARY KEY,
-    principal_type text NOT NULL DEFAULT 'human' CHECK (principal_type = 'human'),
+    principal_type text NOT NULL DEFAULT 'user' CHECK (principal_type = 'user'),
     password_hash text NOT NULL CHECK (octet_length(password_hash) <= 256
                                       AND password_hash LIKE '$argon2id$v=19$%'),
     created_at timestamptz NOT NULL,
@@ -443,7 +443,7 @@ CREATE TRIGGER wamn_record_history_stamp
 CREATE TABLE identity.password_tokens (
     token_hash bytea PRIMARY KEY CHECK (octet_length(token_hash) = 32),
     principal_id uuid NOT NULL,
-    principal_type text NOT NULL DEFAULT 'human' CHECK (principal_type = 'human'),
+    principal_type text NOT NULL DEFAULT 'user' CHECK (principal_type = 'user'),
     purpose text NOT NULL CHECK (purpose IN ('invitation', 'reset')),
     expires_at timestamptz NOT NULL,
     consumed_at timestamptz,
@@ -466,7 +466,7 @@ CREATE TRIGGER wamn_record_history_stamp
 CREATE TABLE identity.password_logins (
     id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
     principal_id uuid NOT NULL,
-    principal_type text NOT NULL DEFAULT 'human' CHECK (principal_type = 'human'),
+    principal_type text NOT NULL DEFAULT 'user' CHECK (principal_type = 'user'),
     issuer text NOT NULL CHECK (octet_length(issuer) BETWEEN 1 AND 2048),
     audience text NOT NULL CHECK (octet_length(audience) BETWEEN 1 AND 1024),
     authenticated_at timestamptz NOT NULL,
@@ -613,7 +613,7 @@ CREATE TABLE registry.project_envs (
         CHECK (instance_suffix ~ '^[a-z0-9]{8}$')
 );
 
--- Human project access is an explicit grant to one project-environment
+-- User project access is an explicit grant to one project-environment
 -- (wamn-ctc8.19). Keep the platform-issued principal UUID: app_system.users
 -- uses that same UUID for the environment's roles and permissions. Management
 -- project roles do not grant membership, and services use their existing
@@ -621,7 +621,7 @@ CREATE TABLE registry.project_envs (
 -- grants, so provisioning the same triple again cannot inherit them.
 CREATE TABLE identity.project_env_memberships (
     principal_id   uuid NOT NULL,
-    principal_type text NOT NULL DEFAULT 'human',
+    principal_type text NOT NULL DEFAULT 'user',
     org            text NOT NULL,
     project        text NOT NULL,
     env            text NOT NULL,
@@ -634,8 +634,8 @@ CREATE TABLE identity.project_env_memberships (
         REFERENCES identity.principals (id, type) ON DELETE CASCADE,
     FOREIGN KEY (org, project, env)
         REFERENCES registry.project_envs (org, project, env) ON DELETE CASCADE,
-    CONSTRAINT project_env_memberships_human_check
-        CHECK (principal_type = 'human')
+    CONSTRAINT project_env_memberships_user_check
+        CHECK (principal_type = 'user')
 );
 CREATE TRIGGER wamn_record_history_stamp
     BEFORE INSERT OR UPDATE ON identity.project_env_memberships
@@ -800,7 +800,7 @@ CREATE FUNCTION identity.lock_password_principal(principal uuid) RETURNS boolean
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog AS $$
 DECLARE eligible boolean;
 BEGIN
-    SELECT status = 'active' AND type = 'human' INTO eligible
+    SELECT status = 'active' AND type = 'user' INTO eligible
     FROM identity.principals WHERE id = principal FOR UPDATE;
     RETURN COALESCE(eligible, false);
 END;

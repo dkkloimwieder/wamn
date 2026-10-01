@@ -136,7 +136,7 @@ async fn install(admin: &Client, database: &str) -> anyhow::Result<(String, Stri
         admin
             .execute(
                 "INSERT INTO app_system.users (tenant_id, id, type, email) \
-                 VALUES ($1, $2::text::uuid, 'person', $3)",
+                 VALUES ($1, $2::text::uuid, 'user', $3)",
                 &[&TENANT, &principal, &email],
             )
             .await?;

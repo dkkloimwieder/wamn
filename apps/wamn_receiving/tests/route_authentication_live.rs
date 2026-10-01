@@ -61,7 +61,7 @@ use wamn_engine::release_manifest::LoadedRelease;
 use wamn_execution_host::{OperationHost, OperationScope, RouterDeliveryBridge};
 use wamn_gate_harness::journey::{BaseCandidate, JourneyDocument, MaterializerPhase};
 use wamn_platform_identity::{
-    PrincipalType, create_human, issue_pat, operator_subject, resolve_subject,
+    PrincipalType, create_user, issue_pat, operator_subject, resolve_subject,
 };
 use wamn_runtime::component_artifact_source::{
     ComponentArtifactSource, ComponentArtifactSourceConfig,

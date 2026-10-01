@@ -226,8 +226,8 @@ async fn development_identity_survives_target_recreation_and_owned_teardown() {
     use wamn_control::dev::environment::{
         ENVIRONMENT, ORG, PROJECT, provision, reconcile_journey_run_plane,
     };
-    use wamn_platform_identity::{assign_project_role, create_human, grant_project_env_membership};
-    async fn application_role(url: &str, person: &str, actor: &str) {
+    use wamn_platform_identity::{assign_project_role, create_user, grant_project_env_membership};
+    async fn application_role(url: &str, user: &str, actor: &str) {
         let (project, task) = connect(url).await.ok().expect("application connection");
         project
             .execute("SELECT set_config('app.user_id', $1, false), set_config('app.operation', 'admin:seed-identity-fixture', false)", &[&actor])
@@ -236,7 +236,7 @@ async fn development_identity_survives_target_recreation_and_owned_teardown() {
         project.execute("INSERT INTO app_system.roles (tenant_id,name) VALUES ($1,'admin') ON CONFLICT DO NOTHING",
             &[&wamn_control::dev::environment::TENANT]).await.unwrap();
         project.execute("INSERT INTO app_system.user_roles (tenant_id,user_id,role_name) VALUES ($1,$2::text::uuid,'admin')",
-            &[&wamn_control::dev::environment::TENANT, &person]).await.unwrap();
+            &[&wamn_control::dev::environment::TENANT, &user]).await.unwrap();
         task.abort();
     }
     wamn_test_postgres::require_prerequisites(&["RESEND_API_KEY", "RESEND_FROM"]);
@@ -285,28 +285,28 @@ async fn development_identity_survives_target_recreation_and_owned_teardown() {
         .execute("SELECT set_config('app.user_id', $1, false), set_config('app.operation', 'admin:seed-identity-fixture', false)", &[&actor])
         .await
         .unwrap();
-    let human = create_human(
+    let user = create_user(
         &*admin,
-        "development-person",
+        "development-user",
         "development@example.invalid",
         "Developer",
     )
     .await
     .ok()
-    .expect("create invited person");
-    grant_project_env_membership(&*admin, human.id(), ORG, PROJECT, ENVIRONMENT)
+    .expect("create invited user");
+    grant_project_env_membership(&*admin, user.id(), ORG, PROJECT, ENVIRONMENT)
         .await
         .ok()
         .expect("grant environment membership");
-    assign_project_role(&*admin, human.id(), ORG, PROJECT, "admin")
+    assign_project_role(&*admin, user.id(), ORG, PROJECT, "admin")
         .await
         .ok()
         .expect("assign the existing application role");
     reconcile_journey_run_plane(system.url(), &environment.route.database_url)
         .await
         .ok()
-        .expect("project the person into the application");
-    application_role(&environment.route.database_url, human.id().as_str(), &actor).await;
+        .expect("project the user into the application");
+    application_role(&environment.route.database_url, user.id().as_str(), &actor).await;
     let (mut password_admin, connection) =
         tokio_postgres::connect(system.url(), tokio_postgres::NoTls)
             .await
@@ -316,13 +316,13 @@ async fn development_identity_survives_target_recreation_and_owned_teardown() {
     let invitation = wamn_platform_identity::password::issue_invitation(
         &mut password_admin,
         &actor.parse().unwrap(),
-        human.id(),
+        user.id(),
     )
     .await
     .ok()
     .expect("issue invitation");
     let enrolled = http.post(format!("{endpoint}/password/enroll"))
-        .json(&json!({"principal_id":human.id().as_str(), "invitation":invitation.secret(), "password":PASSWORD}))
+        .json(&json!({"principal_id":user.id().as_str(), "invitation":invitation.secret(), "password":PASSWORD}))
         .send().await.ok().expect("HTTPS enrollment");
     assert_eq!(enrolled.status(), reqwest::StatusCode::NO_CONTENT);
     let login = || {
@@ -380,7 +380,7 @@ async fn development_identity_survives_target_recreation_and_owned_teardown() {
         .await
         .ok()
         .expect("restore application membership after recreation");
-    application_role(&environment.route.database_url, human.id().as_str(), &actor).await;
+    application_role(&environment.route.database_url, user.id().as_str(), &actor).await;
     let second = login()
         .send()
         .await

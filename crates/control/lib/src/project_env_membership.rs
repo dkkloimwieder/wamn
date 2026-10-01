@@ -1,4 +1,4 @@
-//! Grant or revoke a human's membership in one project environment.
+//! Grant or revoke a user's membership in one project environment.
 //!
 //! These commands use the provisioning administrator for the system database.
 //! They change membership only and do not create users, roles, or tokens.
@@ -11,7 +11,7 @@ use wamn_platform_identity::{
     PrincipalId, grant_project_env_membership, revoke_project_env_membership,
 };
 
-/// Inputs that name one existing human and one existing project environment.
+/// Inputs that name one existing user and one existing project environment.
 #[derive(Debug)]
 pub struct ProjectEnvMembershipRequest {
     /// Organization that owns the project environment.
@@ -23,7 +23,7 @@ pub struct ProjectEnvMembershipRequest {
     /// Exact environment within the project.
     pub env: String,
 
-    /// Existing human principal UUID from the system database.
+    /// Existing user principal UUID from the system database.
     pub principal_id: String,
 
     /// Provisioning administrator URL for the system database.

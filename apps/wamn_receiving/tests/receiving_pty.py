@@ -39,7 +39,7 @@ def seed(db, ids, prefix):
 SELECT set_config('app.user_id', '{FIXTURE_PRINCIPAL}', true),
        set_config('app.operation', 'admin:seed-receiving-pty-fixture', true);
 INSERT INTO app_system.users (tenant_id, id, type, email)
-SELECT tenant_id, '{FIXTURE_PRINCIPAL}', 'person', 'fixture@example.invalid'
+SELECT tenant_id, '{FIXTURE_PRINCIPAL}', 'user', 'fixture@example.invalid'
 FROM app_system.users WHERE display_name = 'wamn:provisioning'
 ON CONFLICT DO NOTHING;
 INSERT INTO receiving.item (id, item_number) VALUES

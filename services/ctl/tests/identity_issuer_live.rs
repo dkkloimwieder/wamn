@@ -541,7 +541,7 @@ async fn pat_authority(admin: &Client, a: &Client, b: &Client) -> anyhow::Result
     let id: String = admin
         .query_one(
             "INSERT INTO identity.principals (type,subject,email,display_name) \
-         VALUES ('human','issuer-pat-test','issuer-pat-test@example.invalid', \
+         VALUES ('user','issuer-pat-test','issuer-pat-test@example.invalid', \
                  'Issuer PAT test') RETURNING id::text",
             &[],
         )
@@ -595,8 +595,8 @@ async fn pat_authority(admin: &Client, a: &Client, b: &Client) -> anyhow::Result
             "INSERT INTO identity.pats (created_at) VALUES (DEFAULT)",
             "INSERT INTO identity.pats (revoked_at) VALUES (NULL)",
             "UPDATE identity.principals SET display_name = 'Escape'",
-            "INSERT INTO identity.principals (id,type,subject,display_name) VALUES (gen_random_uuid(),'human','escape','Escape')",
-            "INSERT INTO identity.principals (type,subject,display_name,status) VALUES ('human','escape','Escape','disabled')",
+            "INSERT INTO identity.principals (id,type,subject,display_name) VALUES (gen_random_uuid(),'user','escape','Escape')",
+            "INSERT INTO identity.principals (type,subject,display_name,status) VALUES ('user','escape','Escape','disabled')",
             "DELETE FROM identity.project_env_memberships",
             "INSERT INTO identity.project_env_memberships (principal_id,org,project,env) VALUES ('00000000-0000-0000-0000-000000000001','fixture','widgets','dev')",
             "INSERT INTO identity.project_roles (principal_id,org,project,role) VALUES ('00000000-0000-0000-0000-000000000001','fixture','widgets','owner')",

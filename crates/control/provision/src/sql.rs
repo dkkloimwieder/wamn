@@ -481,7 +481,7 @@ fn quoted_column_list(columns: &[&str]) -> String {
 /// The connection-effect snapshot and fresh operation-permission reads use
 /// [`HTTP_ADMITTER_CATALOG_RELATIONS`] and the three app-system relations of
 /// [`http_admitter_relations`].
-/// Human permission reads join the active application user to its role grants;
+/// User permission reads join the active application user to its role grants;
 /// service permission reads continue to read `app_system.permissions` alone.
 /// A read route's ETag reads `wamn_cache.model_versions`
 /// (`deploy/sql/model-versions.sql`). `USAGE` on those three schemas plus
@@ -760,10 +760,10 @@ pub const SYSTEM_PLANE_SCHEMAS: [&str; 3] = ["identity", "provisioning", "regist
 /// is its whole authority (`wamn-59z6`: the reader reads its gap row).
 pub const REGISTRY_READER_RELATIONS: [&str; 2] = ["event_readers", "capture_gap"];
 
-/// The relations the management and human route identity reads touch.
+/// The relations the management and user route identity reads touch.
 ///
 /// `SELECT_PAT_BY_PREFIX_SQL` joins `pats` to `principals`; `SELECT_PROJECT_ROLES_SQL`
-/// reads `project_roles`; human routes require `project_env_memberships`
+/// reads `project_roles`; user routes require `project_env_memberships`
 /// (all in `crates/identity/platform/src/lib.rs`).
 /// PostgreSQL checks privileges on every relation a statement references, so all
 /// relations are required, including password login revocation state.
@@ -864,7 +864,7 @@ const CONTROL_WRITE: &[&str] = &["SELECT", "INSERT", "UPDATE", "DELETE"];
 
 /// The control database relations an org's control host reaches, with the
 /// privileges it holds on each (docs/plan/platform-ui.md §4.4, owner rulings
-/// of 2026-10-01 on `wamn-a40n.3`). It reads who is a person and whether the
+/// of 2026-10-01 on `wamn-a40n.3`). It reads who is a user and whether the
 /// password login of a control session is live. It writes the org
 /// memberships and the org, project and environment grants of the org
 /// operations, and it reads the projects and environments those grants

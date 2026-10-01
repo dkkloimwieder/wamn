@@ -333,13 +333,13 @@ pub fn print_reconciled(
     }
     if identity.platform_rows_written > 0
         || identity.service_rows_written > 0
-        || identity.person_rows_written > 0
+        || identity.user_rows_written > 0
     {
         println!(
-            "  {verb} identity rows tenant={tenant:?} platform={} service={} person={}",
+            "  {verb} identity rows tenant={tenant:?} platform={} service={} user={}",
             identity.platform_rows_written,
             identity.service_rows_written,
-            identity.person_rows_written,
+            identity.user_rows_written,
         );
     }
 }

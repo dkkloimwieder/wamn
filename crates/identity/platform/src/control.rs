@@ -20,18 +20,18 @@ pub const PROJECT_ADMIN_ROLE: &str = "project-admin";
 const CONTROL_PROJECTS_SQL: &str = "SELECT r.project FROM identity.project_roles r \
     JOIN identity.principals p ON p.id = r.principal_id \
     WHERE r.principal_id = $1::text::uuid AND r.org = $2 AND r.role = $3 \
-    AND p.type = 'human' AND p.status = 'active' \
+    AND p.type = 'user' AND p.status = 'active' \
     ORDER BY r.project";
 
 const CONTROL_ORGS_SQL: &str = "SELECT o.id FROM registry.orgs o \
     WHERE EXISTS (SELECT 1 FROM identity.project_roles r \
     JOIN identity.principals p ON p.id = r.principal_id \
     WHERE r.principal_id = $1::text::uuid AND r.org = o.id AND r.role = $2 \
-    AND p.type = 'human' AND p.status = 'active') \
+    AND p.type = 'user' AND p.status = 'active') \
     ORDER BY o.id";
 
 const CONTROL_SESSION_ACTIVE_SQL: &str = "SELECT EXISTS (SELECT 1 FROM identity.principals p \
-    WHERE p.id = $1::text::uuid AND p.type = 'human' AND p.status = 'active' \
+    WHERE p.id = $1::text::uuid AND p.type = 'user' AND p.status = 'active' \
     AND EXISTS (SELECT 1 FROM identity.project_roles r \
     WHERE r.principal_id = p.id AND r.org = $2 AND r.role = $3) \
     AND EXISTS (SELECT 1 FROM identity.password_logins l WHERE l.id = $4::text::uuid \
@@ -68,7 +68,7 @@ pub fn control_audience_org(audience: &str) -> Option<&str> {
         .filter(|org| valid_org(org))
 }
 
-/// The projects of `org` where the active human principal is
+/// The projects of `org` where the active user principal is
 /// `project-admin`. An empty list means no control authority in the org.
 pub async fn control_projects(
     client: &(impl GenericClient + Sync),
@@ -90,7 +90,7 @@ pub async fn control_projects(
         .collect())
 }
 
-/// Every registered org where the active human principal holds control
+/// Every registered org where the active user principal holds control
 /// authority.
 pub async fn control_orgs(
     client: &(impl GenericClient + Sync),

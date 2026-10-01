@@ -249,13 +249,13 @@ pub struct InvitationReply {
     pub body: String,
 }
 
-/// The invitation request body for one human principal.
+/// The invitation request body for one user principal.
 fn invitation_body(principal_id: &PrincipalId) -> anyhow::Result<Vec<u8>> {
     serde_json::to_vec(&serde_json::json!({ "principal_id": principal_id.as_str() }))
         .map_err(|_| anyhow::anyhow!("invitation request encoding failed"))
 }
 
-/// Ask identity to mail an invitation to one human principal, as the operator
+/// Ask identity to mail an invitation to one user principal, as the operator
 /// of `config`. The request is not retried.
 pub async fn send_invitation(
     config: &PatIssuerConfig,

@@ -206,11 +206,11 @@ async fn serve_passwords(cluster: &ReceivingCluster) -> anyhow::Result<()> {
 }
 
 struct Account {
-    human: String,
+    user: String,
     invitation: String,
 }
 
-/// One person with the operator role and an unused invitation.
+/// One user with the operator role and an unused invitation.
 async fn account(cluster: &ReceivingCluster, project_url: &str) -> anyhow::Result<Account> {
     let system = &cluster.inputs.system_pg_url;
     let (admin, admin_task) = super::super::connect(system).await?;
@@ -220,13 +220,13 @@ async fn account(cluster: &ReceivingCluster, project_url: &str) -> anyhow::Resul
     admin
         .execute("SELECT set_config('app.user_id', $1, false)", &[&actor])
         .await?;
-    let human =
-        wamn_platform_identity::create_human(admin.as_ref(), EMAIL, EMAIL, "Edge operator").await?;
+    let user =
+        wamn_platform_identity::create_user(admin.as_ref(), EMAIL, EMAIL, "Edge operator").await?;
     project_env_membership::grant(ProjectEnvMembershipRequest {
         org: ORG.to_owned(),
         project: PROJECT.to_owned(),
         env: ENVIRONMENT.to_owned(),
-        principal_id: human.id().to_string(),
+        principal_id: user.id().to_string(),
         system_database_url: system.clone(),
     })
     .await?;
@@ -248,7 +248,7 @@ async fn account(cluster: &ReceivingCluster, project_url: &str) -> anyhow::Resul
         .execute(
             "INSERT INTO identity.password_tokens (token_hash, principal_id, purpose, expires_at) \
              VALUES ($1, $2::text::uuid, 'invitation', now() + interval '2 hours')",
-            &[&hash, &human.id().as_str()],
+            &[&hash, &user.id().as_str()],
         )
         .await?;
     admin_task.abort();
@@ -257,20 +257,20 @@ async fn account(cluster: &ReceivingCluster, project_url: &str) -> anyhow::Resul
     project
         .execute(
             "INSERT INTO app_system.users (tenant_id, id, type, email, status) \
-             VALUES ($1, $2::text::uuid, 'person', $3, 'active')",
-            &[&TENANT, &human.id().as_str(), &EMAIL],
+             VALUES ($1, $2::text::uuid, 'user', $3, 'active')",
+            &[&TENANT, &user.id().as_str(), &EMAIL],
         )
         .await?;
     project
         .execute(
             "INSERT INTO app_system.user_roles (tenant_id, user_id, role_name) \
              VALUES ($1, $2::text::uuid, $3)",
-            &[&TENANT, &human.id().as_str(), &ADMIN_ROLE],
+            &[&TENANT, &user.id().as_str(), &ADMIN_ROLE],
         )
         .await?;
     project_task.abort();
     Ok(Account {
-        human: human.id().to_string(),
+        user: user.id().to_string(),
         invitation,
     })
 }
@@ -431,7 +431,7 @@ async fn check_edge(
 
     let enroll = http
         .post(format!("{base}/password/enroll"))
-        .json(&json!({"principal_id": account.human, "invitation": account.invitation, "password": PASSWORD}))
+        .json(&json!({"principal_id": account.user, "invitation": account.invitation, "password": PASSWORD}))
         .send()
         .await?;
     ensure!(

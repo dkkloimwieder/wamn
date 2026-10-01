@@ -144,6 +144,10 @@ pub const PROJECT_MIGRATIONS: &[Migration] = &[
             "../../../../deploy/sql/migrations/project/0003_administration_grants.sql"
         ),
     },
+    Migration {
+        relative_path: "migrations/project/0004_user_type.sql",
+        sql: include_str!("../../../../deploy/sql/migrations/project/0004_user_type.sql"),
+    },
 ];
 
 #[cfg(test)]
@@ -245,5 +249,21 @@ mod tests {
             "{} does not carry the rendered control surface",
             migration.relative_path
         );
+    }
+
+    #[test]
+    fn the_user_type_migrations_bind_the_provisioning_principal() {
+        let binding = crate::bind_platform_principal_sql(crate::PlatformComponent::Provisioning);
+        for (migrations, ordinal) in [(SYSTEM_MIGRATIONS, 7), (PROJECT_MIGRATIONS, 4)] {
+            let migration = migrations
+                .iter()
+                .find(|migration| migration.ordinal() == ordinal)
+                .expect("the user type migration exists");
+            assert!(
+                migration.sql.contains(&binding),
+                "{} does not bind wamn:provisioning",
+                migration.relative_path
+            );
+        }
     }
 }

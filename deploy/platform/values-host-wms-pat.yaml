@@ -20,7 +20,7 @@
 # intentionally not mounted here: callers present that PAT, while the host
 # verifies it against sysdb and derives the expected environment-scoped service
 # subject from this trusted org/project plus the released environment.
-# Human org-user membership remains owned by the identity epic and Slice v; it
+# User org-user membership remains owned by the identity epic and Slice v; it
 # is not fabricated as deployment configuration here.
 #
 # Supply the external labels-store credentials before applying this overlay.

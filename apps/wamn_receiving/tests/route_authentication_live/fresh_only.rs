@@ -63,7 +63,7 @@ pub(super) struct PriorCommitTest<'a> {
     pub pat: &'a str,
     pub body: Bytes,
     pub expected_base: &'a Value,
-    pub human_id: &'a str,
+    pub user_id: &'a str,
     pub traces: &'a TraceHarness,
     pub client_credentials: Option<Arc<dyn wamn_client::CredentialProvider>>,
 }
@@ -651,7 +651,7 @@ fn assert_counter_trace(
         WIRING,
         OPERATION,
         parent_digest,
-        test.human_id,
+        test.user_id,
     );
     anyhow::ensure!(
         span_attribute(parent, "wamn.caller_credential_type").as_deref() == Some(credential)

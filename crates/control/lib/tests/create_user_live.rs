@@ -1,4 +1,4 @@
-//! Live test of `create-human` against a disposable PostgreSQL server.
+//! Live test of `create-user` against a disposable PostgreSQL server.
 //!
 //! `wamn-t8co`. The verb had one caller and no test at all. The rules it has to
 //! satisfy belong to the server, so this file states them against a real one.
@@ -12,7 +12,7 @@
 
 use tokio_postgres::error::SqlState;
 use tokio_postgres::{Client, NoTls};
-use wamn_control::create_human::{CreateHumanRequest, create_human_principal};
+use wamn_control::create_user::{CreateUserRequest, create_user_principal};
 use wamn_control_provision::{
     PlatformComponent, SYSTEM_SCHEMA_SQL, bind_platform_principal_sql, sql,
 };
@@ -66,23 +66,23 @@ async fn system_database(url: &str) -> Client {
     client
 }
 
-fn request(url: &str, subject: &str, email: &str) -> CreateHumanRequest {
-    CreateHumanRequest {
+fn request(url: &str, subject: &str, email: &str) -> CreateUserRequest {
+    CreateUserRequest {
         subject: subject.to_owned(),
         email: email.to_owned(),
-        display_name: "A Person".to_owned(),
+        display_name: "A User".to_owned(),
         system_database_url: url.to_owned(),
     }
 }
 
 #[tokio::test]
-async fn create_human_stores_the_email_folded_to_lower_case() {
+async fn create_user_stores_the_email_folded_to_lower_case() {
     let url = locked_database::database(wamn_test_postgres::database);
     let observer = system_database(&url).await;
 
-    let principal = create_human_principal(request(&url, "A.Person@Example.Test", EMAIL))
+    let principal = create_user_principal(request(&url, "A.Person@Example.Test", EMAIL))
         .await
-        .expect("create the human principal");
+        .expect("create the user principal");
 
     let id = principal.id().as_str().to_owned();
     let stored: String = observer
@@ -95,14 +95,14 @@ async fn create_human_stores_the_email_folded_to_lower_case() {
         .get(0);
     assert_eq!(stored, EMAIL);
 
-    // The address the caller typed in mixed case names the same person.
-    let mixed = create_human_principal(request(
+    // The address the caller typed in mixed case names the same user.
+    let mixed = create_user_principal(request(
         &url,
         "second.person@example.test",
         "Second.Person@Example.Test",
     ))
     .await
-    .expect("create a second human principal from a mixed-case address");
+    .expect("create a second user principal from a mixed-case address");
     let mixed_id = mixed.id().as_str().to_owned();
     let folded: String = observer
         .query_one(
@@ -120,12 +120,12 @@ async fn one_email_address_names_one_principal() {
     let url = locked_database::database(wamn_test_postgres::database);
     let mut observer = system_database(&url).await;
 
-    create_human_principal(request(&url, "first.person@example.test", EMAIL))
+    create_user_principal(request(&url, "first.person@example.test", EMAIL))
         .await
-        .expect("create the first human principal");
+        .expect("create the first user principal");
 
     // A different subject and a different spelling of the same address.
-    let error = create_human_principal(request(
+    let error = create_user_principal(request(
         &url,
         "second.person@example.test",
         "A.PERSON@Example.Test",
@@ -167,7 +167,7 @@ async fn one_email_address_names_one_principal() {
     let refused = transaction
         .execute(
             "INSERT INTO identity.principals (type, subject, email, display_name) \
-             VALUES ('human', 'third.person@example.test', $1, 'A Person')",
+             VALUES ('user', 'third.person@example.test', $1, 'A User')",
             &[&EMAIL],
         )
         .await
@@ -180,7 +180,7 @@ async fn one_email_address_names_one_principal() {
 }
 
 #[tokio::test]
-async fn only_a_human_row_carries_an_email() {
+async fn only_a_user_row_carries_an_email() {
     let url = locked_database::database(wamn_test_postgres::database);
     let mut client = system_database(&url).await;
     client
@@ -205,9 +205,9 @@ async fn only_a_human_row_carries_an_email() {
             ),
         ),
         (
-            "a human row without an email",
+            "a user row without an email",
             "INSERT INTO identity.principals (type, subject, display_name) \
-             VALUES ('human', 'a.person@example.test', 'A Person')"
+             VALUES ('user', 'a.person@example.test', 'A User')"
                 .to_owned(),
         ),
     ];

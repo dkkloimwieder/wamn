@@ -1111,8 +1111,8 @@ pub struct ProvisionOrgArgs {
     #[arg(long, env = "WAMN_SYSTEM_ADMIN_URL")]
     pub system_database_url: Option<String>,
 
-    /// The email of an existing human principal who owns the org. The run
-    /// writes that person's active org membership and `org-admin` row. It is
+    /// The email of an existing user principal who owns the org. The run
+    /// writes that user's active org membership and `org-admin` row. It is
     /// required with `--system-database-url` and refused without it, because
     /// a render-only run cannot look the email up or write a row.
     #[arg(long)]

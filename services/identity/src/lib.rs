@@ -1,4 +1,4 @@
-//! The identity authority serves public keys, human login, and operator credential issuance.
+//! The identity authority serves public keys, user login, and operator credential issuance.
 
 pub mod cli;
 pub mod mail;

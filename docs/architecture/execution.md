@@ -311,9 +311,9 @@ Both modes use the same operation permissions. Private event handlers remain pri
 A personal access token, or PAT, is an opaque bearer credential.
 PAT authentication reads the current principal, credential, organization scope, and applicable membership before admitting the request.
 Authorization reads current operation permissions.
-Service credentials retain their declared scope and cannot mint a human session.
+Service credentials retain their declared scope and cannot mint a user session.
 
-A session token carries the human roles selected at minting and its revocable authority.
+A session token carries the user roles selected at minting and its revocable authority.
 For each new request, the host reads the current principal, environment membership, and password login or source PAT.
 It intersects signed roles with current assignments and reads current permissions for the active tenant user.
 A caller that holds `admin` holds every operation of the serving release. Any other role holds its stored stable references `<package>:<interface>/<operation>`, and the host matches each sealed operation of the release by its reference (docs/plan/platform-ui.md §2.3).
@@ -369,7 +369,7 @@ External federation and unbuilt identity design remain in the [identity plan](..
 ### Control sessions
 
 Every org in `registry.orgs` has the control audience `urn:wamn:control:<org>`, and nothing configures it.
-Discovery offers it to a person who holds `project-admin` in a project of that org.
+Discovery offers it to a user who holds `project-admin` in a project of that org.
 A control session comes from a password login only, because the PAT exchange refuses a control audience.
 It carries no roles.
 For each request, the control host reads the password login of the session, the active principal and its `project-admin` roles in the org.
@@ -379,13 +379,13 @@ A revoked role therefore refuses the next request and the next renewal with 401.
 
 Sessions and PATs use the same operation permission checks, including the folded grant of an entry.
 The legacy `fresh-only` metadata and client methods no longer require a PAT.
-Every human session receives the same current authority checks without operation-specific password prompts.
+Every user session receives the same current authority checks without operation-specific password prompts.
 Renewal stays automatic during active use and never extends the absolute login deadline.
 
 Deploy the issuer, host, and client changes together. Reconcile identity-reader grants before restarting hosts.
 The identity reader needs SELECT on `identity.password_logins` in addition to its existing identity tables.
 Session-only hosts also require their scoped `WAMN_SYSTEM_URL` identity reader.
-Existing tokens lack the required authority claim, so hosts reject them after this update. People must sign in again.
+Existing tokens lack the required authority claim, so hosts reject them after this update. Users must sign in again.
 
 ## Password enrollment foundation
 
@@ -395,7 +395,7 @@ The [identity plan](../plan/identity-plan.md) owns the remaining delivery scope.
 
 The [login storage library](../../crates/identity/platform/src/password_login.rs) supplies database primitives for renewal and revocation.
 The HTTP service and terminal use these primitives for renewal and server-side logout.
-Each login binds one human, issuer, and exact environment audience.
+Each login binds one user, issuer, and exact environment audience.
 Its authentication time and eight-hour absolute deadline remain fixed.
 Successful renewal extends the inactivity deadline by 30 minutes, capped at the absolute deadline.
 
@@ -415,9 +415,9 @@ All writes require an actor, and credential tables have no row-image history.
 Consumed credentials remain until absolute expiry.
 Global request admission removes at most 100 expired families per call, including their credentials.
 
-Enrollment accepts an active, unenrolled human principal and a matching, unexpired invitation.
+Enrollment accepts an active, unenrolled user principal and a matching, unexpired invitation.
 The library locks that principal, creates its password, and consumes every outstanding invitation in one database transaction.
-Issuance records the authorized operator. Successful enrollment records the invited person.
+Issuance records the authorized operator. Successful enrollment records the invited user.
 The existing principal, memberships, and PATs remain unchanged.
 The identity issuer has narrow grants for enrollment and authentication.
 A restricted database function locks a principal without granting permission to change that principal.
@@ -459,7 +459,7 @@ There is no retry grace period or automatic application request replay.
 `POST /password/logout` accepts `renewal_token` and `aud` and revokes that login family.
 It returns HTTP 204, including when the credential is already unusable.
 `POST /password/logout-all` accepts the same fields and requires a currently usable renewal credential.
-It revokes all password login families for that person and returns HTTP 204.
+It revokes all password login families for that user and returns HTTP 204.
 Neither operation requires continued application access. Neither revokes PATs.
 Previously issued password tokens fail new admission after logout commits.
 
@@ -474,7 +474,7 @@ Renew and logout read the renewal token from its cookie and refuse a `renewal_to
 Logout clears all three cookies with `Max-Age=0`. `/password/logout-all` accepts only the bearer carrier.
 
 `POST /password/recover` accepts `email` and shares the global, source, and account limits.
-The service sends a reset secret only for an active human with an established password.
+The service sends a reset secret only for an active user with an established password.
 After admission, the account-dependent path has a six-second deadline and a fixed response delay.
 Known and unknown accounts receive HTTP 202 with `{"status":"if_eligible_email_will_arrive"}`.
 That response does not promise delivery. Provider failure does not expose account existence.
@@ -482,7 +482,7 @@ The service makes no automatic mail retry.
 
 `POST /password/reset` accepts `email`, `secret`, and `password`.
 It requires a matching, unexpired reset credential and the existing password policy.
-One transaction replaces the password, consumes all outstanding invitation/reset secrets, and revokes all renewal families for that person.
+One transaction replaces the password, consumes all outstanding invitation/reset secrets, and revokes all renewal families for that user.
 The service sends a password-change notification after commit and creates no session.
 HTTP 200 reports `{"status":"password_reset","notification":"accepted_for_delivery"}` when the provider accepts the notification.
 If notification fails, the response reports `"notification":"unavailable"`. The password change remains committed.
@@ -490,7 +490,7 @@ Normal login uses the replacement password. Existing PATs retain their separate 
 The terminal supports recovery through the same endpoints and requires normal login after reset.
 The web shell does the same at `/recover` and `/reset#<secret>`, and then opens sign in.
 For mailbox loss, an authorized administrator updates the existing principal's email through the [operator procedure](../operations/deployment.md#mailbox-loss-recovery).
-That transaction consumes outstanding email secrets and revokes renewal families. The person then uses normal recovery at the replacement address.
+That transaction consumes outstanding email secrets and revokes renewal families. The user then uses normal recovery at the replacement address.
 
 `POST /password/environments` accepts only `email` and `password`.
 After password authentication, it returns the configured environments that pass those same access checks.
@@ -504,7 +504,7 @@ An unavailable authority read fails the whole request instead of returning an in
 Session issuance repeats the access checks after selection. A discovery result grants no access.
 
 The terminal matches this list against deployment-owned application addresses.
-It opens one match directly and asks the person to select among several matches.
+It opens one match directly and asks the user to select among several matches.
 An empty match refuses login. The issuer never supplies application addresses.
 
 The development environment owns a separate identity process from startup until explicit teardown.
@@ -744,7 +744,7 @@ A turn beyond the budget retains the existing durable lease for recovery.
 The [workflow start command](../operations/queued-automation.md) admits production automation under an active service principal.
 The host reads that principal and its current application permissions before each delivery.
 The normal operation checks also apply to the folded grant of each entry.
-The legacy `fresh-only` restriction still refuses queued service callers. Human session support does not widen queued automation.
+The legacy `fresh-only` restriction still refuses queued service callers. User session support does not widen queued automation.
 SIGTERM and SIGINT share the host cleanup budget. The budget retains the native drain and plugin shutdown allowances.
 An aborted call loses its invocation authority, and native teardown releases its store.
 After the lease expires, recovery takes a new lease generation. The old generation cannot complete the run.

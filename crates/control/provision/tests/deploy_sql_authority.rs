@@ -1255,7 +1255,7 @@ fn the_stamp_trigger_refuses_a_write_without_an_actor_on_postgres() {
     as_guest(&db_url, &guest, "", &refusals);
 
     // 12. Administrative SQL without app.user_id refuses. Bound to the
-    //     operator's person row, it stamps that row and replaces a supplied
+    //     operator's user row, it stamps that row and replaces a supplied
     //     value. The users insert also binds its operation for the log.
     apply(
         &db_url,
@@ -1264,7 +1264,7 @@ fn the_stamp_trigger_refuses_a_write_without_an_actor_on_postgres() {
              SELECT set_config('app.user_id', '{OPERATOR}', true), \
                     set_config('app.operation', 'admin:seed-operator-fixture', true);\n\
              INSERT INTO app_system.users (tenant_id, id, type, email) \
-               VALUES ('t1', '{OPERATOR}', 'person', 'operator@example.test');\n\
+               VALUES ('t1', '{OPERATOR}', 'user', 'operator@example.test');\n\
              COMMIT;\n\
              BEGIN;\n{refusals}COMMIT;\n\
              BEGIN;\n\
@@ -1275,7 +1275,7 @@ fn the_stamp_trigger_refuses_a_write_without_an_actor_on_postgres() {
              DO $$ BEGIN\n\
                ASSERT (SELECT created_by = '{ACTOR_A}' AND updated_by = '{OPERATOR}' \
                         FROM rh_probe.stamped WHERE id = 1), \
-                      'administrative SQL must stamp the operator person row';\n\
+                      'administrative SQL must stamp the operator user row';\n\
                ASSERT (SELECT created_by = '{OPERATOR}' AND updated_by = '{OPERATOR}' \
                         FROM rh_probe.stamped WHERE id = 3), \
                       'administrative SQL must not keep a supplied stamp value';\n\

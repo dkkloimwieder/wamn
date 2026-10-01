@@ -49,7 +49,7 @@ The remainder of this specification assumes the post-migration `type` vocabulary
 
 One administration surface at three levels, using the same contract, router, client IR, screen plan and shell architecture as applications:
 
-- **Org** — people, projects, org admins, invitations.
+- **Org** — users, projects, org admins, invitations.
 - **Project** — environments, members, project admins.
 - **Application** — users, roles, the operations each role holds, and the roles each user holds.
 
@@ -251,7 +251,7 @@ The fixed application-administration operations are **not grantable** to authore
 
 ### 2.6 Grant timing
 
-For a human session:
+For a user session:
 
 - permission-row changes take effect on the next request;
 - role revocation takes effect on the next request because current `user_roles` still intersects the signed role names;
@@ -286,7 +286,7 @@ An active org member may have:
 
 A valid account with no effective audience is **not an authentication error**.
 
-After password authentication, `/password/environments` returns only audiences in which the person currently has effective access. If that list is empty, the shell renders only:
+After password authentication, `/password/environments` returns only audiences in which the user currently has effective access. If that list is empty, the shell renders only:
 
 > **No access has been granted.**
 
@@ -329,7 +329,7 @@ New projects and environments materialize the corresponding grants for already-e
 Authorization never asks:
 
 ```text
-is this person an org admin?
+is this user an org admin?
 → pretend they are an application admin
 ```
 
@@ -372,9 +372,9 @@ Revoke at the scope that owns the authority.
 
 Downward administrative revocation is deliberately destructive for the subordinate administrative grant. If a lower-level administrative grant should remain independently, it is granted again explicitly after the higher-level revoke.
 
-### 2.10 Scoped person deactivation
+### 2.10 Scoped user deactivation
 
-Deactivating a person at the org level removes all authority below that org:
+Deactivating a user at the org level removes all authority below that org:
 
 ```text
 application users / roles
@@ -397,7 +397,7 @@ project/environment removal
 
 Reactivation restores only the active org membership. It does **not** restore previous project memberships or roles.
 
-The person sees:
+The user sees:
 
 > **No access has been granted.**
 
@@ -440,8 +440,8 @@ Issue 1 therefore remeasures this entire table against its starting `main` and c
 | Tenant | One project-env database may contain several packages of one effective application. |
 | System identity | `identity.principals` is global. `identity.project_env_memberships` and `identity.project_roles` exist. There is no org-membership or org-role relation. |
 | Project roles | Existing slugs include `project-author` and `project-admin`; meaning is attached by the management boundary. |
-| Invitation | Invitation credentials are issued only for active humans that have not yet enrolled a password. |
-| Run-plane mirror | `reconcile-run-plane` creates application `users` rows from system identity but does not remove stale person rows. |
+| Invitation | Invitation credentials are issued only for active users that have not yet enrolled a password. |
+| Run-plane mirror | `reconcile-run-plane` creates application `users` rows from system identity but does not remove stale user rows. |
 | Shell | Environment choice, invitation/recovery/reset, and application screens. No administration route. |
 | Provisioning | Environment creation and release installation are CLI/runbook operations with infrastructure credentials. |
 | Installed schema changes | No general installed-schema upgrade verb exists. Hand-applied wamn-dev statements are recorded in `docs/operations/gcp.md` §7 under `wamn-o8b9`. |
@@ -466,8 +466,8 @@ Issue 1 starts from `main` `4495e0d20`, 163 commits after `3a81dcfec`. The kind 
 | Tenant | `ServingRelease.packages` holds several packages (`serving_manifest.rs:133`). Grant reconciliation deletes only one package's rows (`operation_grants.rs:236–238`). | None. |
 | System identity | `identity.principals` is global (`system-schema.sql:257–292`). `project_roles` (310–325) and `project_env_memberships` (578–596) exist. No org membership or org role relation exists. | The principal column `kind` is now `type`. |
 | Project roles | `project-author` and `project-admin` get meaning at the management boundary (`services/scenario-worker/src/management.rs:100–128`). `provision-project-env` writes `project-author` for the management PAT and `operator` for the operator PAT (`pat_secrets.rs:33–46`). | None. |
-| Invitation | Issued only for an active human without a password (`crates/identity/platform/src/password.rs:326–418`, `system-schema.sql:755–763`). | Refusals are typed `RefusalCause` values. `Invitation` returns `expires_at`. |
-| Run-plane mirror | `reconcile-run-plane` inserts service and person `users` rows and never deletes or updates stale rows (`crates/control/lib/src/reconcile_run_plane.rs:404–424`, 570–684). | It now also records the fresh-install migrations (632–641). |
+| Invitation | Issued only for an active user without a password (`crates/identity/platform/src/password.rs:326–418`, `system-schema.sql:755–763`). | Refusals are typed `RefusalCause` values. `Invitation` returns `expires_at`. |
+| Run-plane mirror | `reconcile-run-plane` inserts service and user `users` rows and never deletes or updates stale rows (`crates/control/lib/src/reconcile_run_plane.rs:404–424`, 570–684). | It now also records the fresh-install migrations (632–641). |
 | Shell | Routes `/`, `/invite`, `/recover`, `/reset` and `/:aud` with application screens (`web/shell/src/shell.tsx:215–239`). No administration route. | A Suspense root and direct navigation to the first screen (`wamn-28n8`). |
 | Provisioning | CLI verbs in `services/ctl/src/main.rs` and the runbook `docs/operations/gcp.md` §3.6–3.8. `provisioning.sagas` runs in process (`crates/control/provision/src/saga.rs`). No separate worker. | `upgrade-schema` added. |
 | Installed schema changes | `wamn-ctl upgrade-schema` applies numbered files in one transaction each (`crates/control/lib/src/upgrade_schema.rs`). The files are `deploy/sql/migrations/system/0001` to `0003` and `project/0001`. | The verb exists (`wamn-o8b9`). The owner ruled on 2026-09-30 that issue 1 ships its installed-database change as `system/0004` and `project/0002`, not as hand statements. |
@@ -747,8 +747,8 @@ org-admin
 ```
 
 `provision-org --owner-email <email>` is required.
-It names an existing human principal and refuses an unknown email.
-It writes that person's active org membership and `org-admin` row, stamped `wamn:provisioning` as every provisioning row is ([data access](../architecture/data-access.md#actors)).
+It names an existing user principal and refuses an unknown email.
+It writes that user's active org membership and `org-admin` row, stamped `wamn:provisioning` as every provisioning row is ([data access](../architecture/data-access.md#actors)).
 An org provisioned before the flag gets its owner through `wamn-ctl invite` with `org-admin`.
 
 ### Control writes
@@ -770,7 +770,7 @@ It holds nothing on `principals` beyond `SELECT`, nothing on password or invitat
 It holds nothing on `registry.orgs`, because the control host takes its org from `--org` and does not read that table.
 
 The control host never creates a principal.
-Identity creates or reuses the global human, issues the invitation credential and sends the mail, over the operator-certificate path that `wamn-ctl invite` uses.
+Identity creates or reuses the global user, issues the invitation credential and sends the mail, over the operator-certificate path that `wamn-ctl invite` uses.
 The control host never holds the Resend key or a role that issues tokens.
 
 ### Org operations
@@ -779,10 +779,10 @@ Each org operation, except `control.mine`, requires a current `org-admin` row fo
 The handler repeats that check in its write transaction.
 
 ```text
-wamn-control:person/list@0.1.0
-wamn-control:person/invite@0.1.0
-wamn-control:person/activate@0.1.0
-wamn-control:person/deactivate@0.1.0
+wamn-control:user/list@0.1.0
+wamn-control:user/invite@0.1.0
+wamn-control:user/activate@0.1.0
+wamn-control:user/deactivate@0.1.0
 
 wamn-control:project/list@0.1.0
 
@@ -792,13 +792,13 @@ wamn-control:org-admin/revoke@0.1.0
 wamn-control:control/mine@0.1.0
 ```
 
-### `person.list`
+### `user.list`
 
 Returns active and inactive memberships of the org, with each principal's email and display name.
 
 The global principal remains an identity fact. Membership status is org-local.
 
-### `person.invite`
+### `user.invite`
 
 Input names:
 
@@ -814,35 +814,35 @@ Direct application roles follow in issue 4.
 The operation runs in three steps:
 
 ```text
-identity: create or reuse the human by email     → principal id
+identity: create or reuse the user by email     → principal id
 control:  create or reactivate the org membership
           + write the requested system grants     (one transaction)
 identity: issue the invitation and mail it        (only when no password credential exists)
 ```
 
-The identity call that creates or reuses a human is idempotent on the email and returns the principal id.
+The identity call that creates or reuses a user is idempotent on the email and returns the principal id.
 Identity's database role gains `INSERT` on `identity.principals` for it.
 
 #### New principal
 
-Identity creates the human.
+Identity creates the user.
 The invitation is issued and mailed.
 
 #### Existing enrolled principal
 
-The human already has a password credential.
+The user already has a password credential.
 Identity reuses it, and no invitation or informational email is sent.
 This is the normal second-org case.
 
 #### Existing unenrolled principal
 
-The human exists but has no password credential.
+The user exists but has no password credential.
 Identity reuses it, and the invitation is issued and mailed.
 Principal existence alone therefore does not suppress enrollment.
 
-Only email and display name identify the global human. Org membership and access remain org-local.
+Only email and display name identify the global user. Org membership and access remain org-local.
 
-An invitation with no effective role is valid. After enrollment the person sees:
+An invitation with no effective role is valid. After enrollment the user sees:
 
 > **No access has been granted.**
 
@@ -850,7 +850,7 @@ An invitation with no effective role is valid. After enrollment the person sees:
 It writes the membership and grants as its sibling `grant-project-env-membership` does: with `--system-database-url`, as `wamn_system`, stamped `wamn:provisioning`.
 The operator path is provisioning, and the UI path is the `control` login as the session user.
 
-### `person.deactivate`
+### `user.deactivate`
 
 Revokes from the leaves upward, in one transaction:
 
@@ -864,7 +864,7 @@ It does not disable the global principal.
 Until issue 4, application `users` and role rows in each environment remain after a deactivation.
 The rule that the operation reports success only after all downward access is removed is not met until issue 4.
 
-### `person.activate`
+### `user.activate`
 
 Marks the org membership active.
 
@@ -938,25 +938,25 @@ project_admin.revoke
 
 `member.grant` requires an active org membership.
 
-It writes `identity.project_env_memberships` and converges the person row into the target application's `app_system.users`.
+It writes `identity.project_env_memberships` and converges the user row into the target application's `app_system.users`.
 
-`member.revoke` removes the target environment membership and deletes that person's application `users` row. Existing FKs cascade its application role assignments.
+`member.revoke` removes the target environment membership and deletes that user's application `users` row. Existing FKs cascade its application role assignments.
 
-It does not affect the person's org membership or another environment.
+It does not affect the user's org membership or another environment.
 
-If the person still holds `org-admin` or `project-admin` covering that environment, `member.revoke` refuses. The covering authority must be revoked first.
+If the user still holds `org-admin` or `project-admin` covering that environment, `member.revoke` refuses. The covering authority must be revoked first.
 
-`reconcile-run-plane` converges human membership in both directions:
+`reconcile-run-plane` converges user membership in both directions:
 
 ```text
-system membership exists + person row absent
-→ add person row
+system membership exists + user row absent
+→ add user row
 
-person row exists + system membership absent
-→ remove stale person row
+user row exists + system membership absent
+→ remove stale user row
 ```
 
-This removal applies only to human/person rows. Service and platform rows retain their separate authoritative sources.
+This removal applies only to user rows. Service and platform rows retain their separate authoritative sources.
 
 ### `project_admin.grant`
 
@@ -973,7 +973,7 @@ A later environment creation performs the same materialization for every current
 
 ### `project_admin.revoke`
 
-Refuses while the person remains `org-admin`.
+Refuses while the user remains `org-admin`.
 
 Otherwise it removes application `admin` from every environment in the project, then removes `project-admin`.
 
@@ -1014,9 +1014,9 @@ All except `permission.mine` require `admin`.
 
 ### Users
 
-`user.list` reads current human application users.
+`user.list` reads current user application users.
 
-A person reaches this relation through project-env membership.
+A user reaches this relation through project-env membership.
 
 Membership remains authoritative; application administration cannot manufacture a user.
 
@@ -1112,9 +1112,9 @@ This makes:
 
 answerable directly from the screen.
 
-### Person grid
+### User grid
 
-For one person:
+For one user:
 
 ```text
 all application roles
@@ -1287,7 +1287,7 @@ Inactive means:
 
 `project.inactivate` inactivates every environment of the project.
 
-It does not deactivate the person's org membership or alter org/project role rows.
+It does not deactivate the user's org membership or alter org/project role rows.
 
 ## 5.5 Provisioning worker
 
@@ -1412,16 +1412,16 @@ Measured starting state:
 - `provision-org` writes `registry.orgs` and `registry.env_policies` only, and binds no actor.
 - `wamn-ctl invite` sends `POST /invitations {principal_id}` over the operator certificate. The principal must already exist, and identity's database role cannot insert one.
 - Control admission (`control_session_is_active`, `control_orgs`) and `control.mine` know `project-admin` only.
-- `/password/environments` already returns an empty list for a person with no access.
+- `/password/environments` already returns an empty list for a user with no access.
 - The system identity tables carry the stamp trigger, which records `app.user_id` only.
 
 Commits, each one green:
 
 1. System migration `0007` and the provisioning builders. The migration creates `identity.org_memberships` and `identity.org_roles` with their keys, checks and stamp triggers. It carries the grant changes of §4.4 as the rendered builder output. `system-schema.sql` gains the same tables for a fresh install. `family_denial_matrix` pins the new `control` writes and reads and the identity issuer's new `SELECT` and `INSERT`.
 2. `provision-org --owner-email`, required, which writes the owner's membership and `org-admin` row.
-3. The identity call that creates or reuses a human by email and display name. `wamn-ctl invite` takes the logical input of `person.invite`.
+3. The identity call that creates or reuses a user by email and display name. `wamn-ctl invite` takes the logical input of `user.invite`.
 4. Control admission and `control.mine` accept `org-admin`.
-5. The org host routes of §4.4: `person.list`, `person.invite`, `person.activate`, `person.deactivate`, `project.list`, `org_admin.grant` and `org_admin.revoke`. Each write runs in one transaction on the `control` login, with `app.user_id` and `app.operation` bound.
+5. The org host routes of §4.4: `user.list`, `user.invite`, `user.activate`, `user.deactivate`, `project.list`, `org_admin.grant` and `org_admin.revoke`. Each write runs in one transaction on the `control` login, with `app.user_id` and `app.operation` bound.
 6. Documentation: execution, data access (the system identity tables record the actor only), and `gcp.md` §7, which records `0007` as a migration run and the dkk owner as a `wamn-ctl invite` with `org-admin`.
 
 Exit includes:
@@ -1429,14 +1429,14 @@ Exit includes:
 - `0007` on an installed `wamn_system` gives the same ACL surface as a fresh install
 - the denial matrix rows of the `control` family and the identity issuer
 - `provision-org` with a known and an unknown owner email
-- the new, enrolled and unenrolled `person.invite` cases, including mail only where no password credential exists
+- the new, enrolled and unenrolled `user.invite` cases, including mail only where no password credential exists
 - an invitation with no access, whose login lists no environment
-- `person.deactivate` and `person.activate` at the system level
+- `user.deactivate` and `user.activate` at the system level
 - `org_admin.grant` materialization over every project and environment, and `org_admin.revoke`
 - every org route refusing a caller without `org-admin`, and a revoked `org-admin` refused on the next request
 - `wamn-ctl invite` parity
 
-The application rows of `org_admin.grant`, `org_admin.revoke` and `person.deactivate` move to issue 4.
+The application rows of `org_admin.grant`, `org_admin.revoke` and `user.deactivate` move to issue 4.
 
 **4. Project administration and convergence.**
 
@@ -1444,7 +1444,7 @@ The application rows of `org_admin.grant`, `org_admin.revoke` and `person.deacti
 - project-admin operations;
 - real lower-level grants;
 - forward grant and leaf-first revoke ordering;
-- `reconcile-run-plane` person deletion;
+- `reconcile-run-plane` user deletion;
 - future-project/environment materialization.
 
 **5. Application administration contract.**
@@ -1461,7 +1461,7 @@ The application rows of `org_admin.grant`, `org_admin.revoke` and `person.deacti
 - role grid;
 - direct-vs-effective permission state;
 - required-by display;
-- person grid;
+- user grid;
 - hierarchy-controlled administrative grant display.
 
 **7. Shell.**
@@ -1522,9 +1522,9 @@ New-project grant materialization and deterministic empty-environment copy from 
 
 1. **Permission model — accepted.** Stable operation references are stored for application roles, with directly selected roots and their released permission closure materialized as provenance-bearing rows. Candidate-release reconciliation updates that closure before activation. Request admission resolves the resulting stored effective references to exact sealed ids. `authorize_released_operation` remains unchanged. Removing a direct selection does not remove authority still required by another selected root.
 
-2. **Hierarchy — accepted.** `org-admin → project-admin → admin` is materialized as real grants. Higher-level role revocation removes subordinate administrative grants; org-person deactivation removes all lower access; lower-level changes never revoke higher authority.
+2. **Hierarchy — accepted.** `org-admin → project-admin → admin` is materialized as real grants. Higher-level role revocation removes subordinate administrative grants; org-user deactivation removes all lower access; lower-level changes never revoke higher authority.
 
-3. **Org membership — accepted.** `identity.org_memberships` allows an invited person to exist in an org with zero effective access and gives org-local activation/deactivation without misusing global `identity.principals.status`.
+3. **Org membership — accepted.** `identity.org_memberships` allows an invited user to exist in an org with zero effective access and gives org-local activation/deactivation without misusing global `identity.principals.status`.
 
 4. **Control session — accepted.** The control audience is org-scoped and available only to `org-admin` and `project-admin`. Every org/project action rechecks current `wamn_system` roles. `control.mine` supplies the shell's current control view.
 
@@ -1538,6 +1538,6 @@ New-project grant materialization and deterministic empty-environment copy from 
 
 ## 9. Questions for the owner
 
-1. Issue 4. How does an org-level write reach a project database? `org_admin.grant`, `org_admin.revoke` and `person.deactivate` must change `app_system.users` and `app_system.user_roles` in each environment of the org. The control serving root holds no project database (§4.2), and the control host holds no `wamn_administration` credential. This is a credential boundary, so the issue 4 spec answers it first.
+1. Issue 4. How does an org-level write reach a project database? `org_admin.grant`, `org_admin.revoke` and `user.deactivate` must change `app_system.users` and `app_system.user_roles` in each environment of the org. The control serving root holds no project database (§4.2), and the control host holds no `wamn_administration` credential. This is a credential boundary, so the issue 4 spec answers it first.
 2. Issue 3, answered 2026-10-01. `wamn-ctl invite` writes as its sibling does: `--system-database-url`, as `wamn_system`, stamped `wamn:provisioning`.
 3. Issue 3, answered 2026-10-01. The shell text "No access has been granted." lands in issue 6. The exit of issue 3 stays an invitation with no access, whose login lists no environment.

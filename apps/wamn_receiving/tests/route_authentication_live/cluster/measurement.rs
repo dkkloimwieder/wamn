@@ -288,7 +288,7 @@ async fn requests(
     }
     if let Some(project_database_url) = project_database_url {
         if fresh_auth {
-            human_runs(state, cold, project_database_url, service_secret, &endpoint).await?;
+            user_runs(state, cold, project_database_url, service_secret, &endpoint).await?;
         } else {
             throughput_sweep(
                 state,
@@ -797,7 +797,7 @@ fn overhead_median(ratios: &[f64]) -> anyhow::Result<f64> {
     Ok(median)
 }
 
-async fn human_runs(
+async fn user_runs(
     state: &ReceivingCluster,
     cold: &ColdHost,
     project_database_url: &str,
@@ -805,8 +805,8 @@ async fn human_runs(
     endpoint: &str,
 ) -> anyhow::Result<()> {
     let resources = &state.resources;
-    let human_pat = resources.work.join("throughput-human-pat");
-    let human_secret = "wamn-throughput-human";
+    let user_pat = resources.work.join("throughput-user-pat");
+    let user_secret = "wamn-throughput-user";
     wamn_integration_tests::membership_test::run(
         wamn_integration_tests::membership_test::MembershipTestArgs {
             system_database_url: state.inputs.system_pg_url.clone(),
@@ -817,18 +817,18 @@ async fn human_runs(
             project: super::super::PROJECT.to_owned(),
             env: super::super::ENVIRONMENT.to_owned(),
             tenant: super::super::TENANT.to_owned(),
-            throughput_pat_file: Some(human_pat.clone()),
+            throughput_pat_file: Some(user_pat.clone()),
         },
     )
     .await?;
     ensure!(
-        fs::metadata(&human_pat)?.permissions().mode() & 0o777 == 0o600,
-        "the human PAT file must be private"
+        fs::metadata(&user_pat)?.permissions().mode() & 0o777 == 0o600,
+        "the user PAT file must be private"
     );
     write_result(
         &resources.evidence,
-        "human-benchmark-fixture.json",
-        &json!({"ready":true,"credential":"human-pat","cleanup":"owned-cluster"}),
+        "user-benchmark-fixture.json",
+        &json!({"ready":true,"credential":"user-pat","cleanup":"owned-cluster"}),
     )?;
     checked(
         super::kubectl(resources)
@@ -838,21 +838,21 @@ async fn human_runs(
                 "create",
                 "secret",
                 "generic",
-                human_secret,
+                user_secret,
             ])
-            .arg(format!("--from-file=token={}", human_pat.display())),
+            .arg(format!("--from-file=token={}", user_pat.display())),
     )
     .await?;
-    let human_token = fs::read_to_string(&human_pat)?;
+    let user_token = fs::read_to_string(&user_pat)?;
     let mut observations = Vec::new();
     for sample in 1..=5 {
-        let name = format!("human-{sample}");
+        let name = format!("user-{sample}");
         let id = format!("4444444444444444444444444444000{sample}");
         let elapsed = request(
             state,
             endpoint,
             &name,
-            &human_token,
+            &user_token,
             &id,
             &format!("444444444444000{sample}"),
         )
@@ -871,7 +871,7 @@ async fn human_runs(
         .await?;
     }
     let mut order = Vec::new();
-    for (credential, repetition, secret) in fresh_runs(service_secret, human_secret) {
+    for (credential, repetition, secret) in fresh_runs(service_secret, user_secret) {
         let output = resources
             .evidence
             .join("throughput")
@@ -897,18 +897,18 @@ async fn human_runs(
 
 fn fresh_runs<'a>(
     service_secret: &'a str,
-    human_secret: &'a str,
+    user_secret: &'a str,
 ) -> Vec<(&'static str, u32, &'a str)> {
     let mut runs = Vec::new();
     for repetition in 1..=3 {
         let credentials = if repetition == 2 {
-            ["human", "service"]
+            ["user", "service"]
         } else {
-            ["service", "human"]
+            ["service", "user"]
         };
         for credential in credentials {
-            let secret = if credential == "human" {
-                human_secret
+            let secret = if credential == "user" {
+                user_secret
             } else {
                 service_secret
             };
@@ -1412,14 +1412,14 @@ printf '0 1 471 0 1788644700 907135\n0 2 103 0 1788644700 907251\n' >"$TEST_DIRE
     #[test]
     fn fresh_runs_keep_three_pairs_with_the_second_pair_reversed() {
         assert_eq!(
-            fresh_runs("service-secret", "human-secret"),
+            fresh_runs("service-secret", "user-secret"),
             [
                 ("service", 1, "service-secret"),
-                ("human", 1, "human-secret"),
-                ("human", 2, "human-secret"),
+                ("user", 1, "user-secret"),
+                ("user", 2, "user-secret"),
                 ("service", 2, "service-secret"),
                 ("service", 3, "service-secret"),
-                ("human", 3, "human-secret"),
+                ("user", 3, "user-secret"),
             ]
         );
     }

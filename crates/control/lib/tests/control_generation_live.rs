@@ -85,18 +85,18 @@ async fn the_control_login_reads_the_control_authority_of_its_org_and_nothing_el
         .batch_execute("SET ROLE wamn_system")
         .await
         .expect("assume the control owner");
-    let (person, login) = {
+    let (user, login) = {
         let transaction = provisioning_transaction(&mut admin)
             .await
             .expect("bind wamn:provisioning");
-        let person = wamn_platform_identity::create_human(
+        let user = wamn_platform_identity::create_user(
             &transaction,
             "control-live",
             "control.live@example.test",
             "Control Live",
         )
         .await
-        .expect("create the person");
+        .expect("create the user");
         transaction
             .batch_execute(&format!(
                 "INSERT INTO registry.orgs (id, placement_type, pool_cluster) \
@@ -107,7 +107,7 @@ async fn the_control_login_reads_the_control_authority_of_its_org_and_nothing_el
             .expect("record the org and its project");
         wamn_platform_identity::assign_project_role(
             &transaction,
-            person.id(),
+            user.id(),
             ORG,
             "billing",
             "project-admin",
@@ -122,7 +122,7 @@ async fn the_control_login_reads_the_control_authority_of_its_org_and_nothing_el
                          now() + interval '1 hour') \
                  RETURNING id::text",
                 &[
-                    &person.id().as_str(),
+                    &user.id().as_str(),
                     &ISSUER,
                     &format!("urn:wamn:control:{ORG}"),
                 ],
@@ -131,7 +131,7 @@ async fn the_control_login_reads_the_control_authority_of_its_org_and_nothing_el
             .expect("record a password login")
             .get(0);
         transaction.commit().await.expect("commit the fixture");
-        (person, login)
+        (user, login)
     };
     admin.batch_execute("RESET ROLE").await.expect("reset role");
 
@@ -170,20 +170,20 @@ async fn the_control_login_reads_the_control_authority_of_its_org_and_nothing_el
     );
 
     assert_eq!(
-        control_projects(&control, person.id(), ORG)
+        control_projects(&control, user.id(), ORG)
             .await
             .expect("read the control projects"),
         ["billing"]
     );
     assert!(
-        control_projects(&control, person.id(), "otherorg")
+        control_projects(&control, user.id(), "otherorg")
             .await
             .expect("read another org")
             .is_empty()
     );
     let claims = |login: &str| SessionClaims {
         iss: ISSUER.to_owned(),
-        sub: person.id().as_str().to_owned(),
+        sub: user.id().as_str().to_owned(),
         org: ORG.to_owned(),
         aud: format!("urn:wamn:control:{ORG}"),
         roles: Vec::new(),

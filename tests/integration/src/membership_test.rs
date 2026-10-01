@@ -1,4 +1,4 @@
-//! Show human membership and permission revocation through the deployed Receiving HTTP route.
+//! Show user membership and permission revocation through the deployed Receiving HTTP route.
 //!
 //! The caller supplies an already provisioned disposable Receiving fixture.
 //! Only this run's new identity, PAT, tenant user, and role are created and removed.
@@ -14,7 +14,7 @@ use anyhow::{Context as _, anyhow, ensure};
 use clap::Args;
 use serde_json::{Value, json};
 use tokio_postgres::{Client, NoTls};
-use wamn_platform_identity::{PrincipalId, assign_project_role, create_human, issue_pat};
+use wamn_platform_identity::{PrincipalId, assign_project_role, create_user, issue_pat};
 use wamn_schema_generator::{
     PackageIdentity, canonical_operation_identity, sealed_operation_reference,
 };
@@ -55,7 +55,7 @@ pub struct MembershipTestArgs {
     /// Tenant already attached to the released route.
     #[arg(long)]
     pub tenant: String,
-    /// Seed a disposable human benchmark fixture and write its PAT to a new mode-0600 file.
+    /// Seed a disposable user benchmark fixture and write its PAT to a new mode-0600 file.
     /// The journey teardown owns these retained facts; this mode runs no HTTP test.
     #[arg(long)]
     pub throughput_pat_file: Option<PathBuf>,
@@ -102,17 +102,17 @@ pub async fn run(args: MembershipTestArgs) -> anyhow::Result<()> {
         .context("allocate a unique test identity")?
         .get(0);
     let subject = format!("membership-test-{nonce}@example.test");
-    let human = create_human(&system, &subject, &subject, "Disposable membership test")
+    let user = create_user(&system, &subject, &subject, "Disposable membership test")
         .await
-        .context("create the test human")?;
+        .context("create the test user")?;
     let role = format!("membership-test-{nonce}");
     if let Some(path) = &args.throughput_pat_file {
         let result = tokio::time::timeout(TEST_TIMEOUT, async {
-            seed_tenant_role(&args, &mut project, human.id(), &role).await?;
-            membership(&args, human.id(), "grant-project-env-membership").await?;
+            seed_tenant_role(&args, &mut project, user.id(), &role).await?;
+            membership(&args, user.id(), "grant-project-env-membership").await?;
             let token = issue_pat(
                 &system,
-                human.id(),
+                user.id(),
                 "Disposable fresh-auth benchmark",
                 Duration::from_hours(2),
             )
@@ -121,25 +121,25 @@ pub async fn run(args: MembershipTestArgs) -> anyhow::Result<()> {
             write_benchmark_pat(path, token.token())
         })
         .await
-        .map_err(|_| anyhow!("human benchmark fixture timed out"))
+        .map_err(|_| anyhow!("user benchmark fixture timed out"))
         .and_then(|result| result);
         if result.is_err() {
-            cleanup(&mut system, &mut project, &args.tenant, human.id(), &role).await?;
+            cleanup(&mut system, &mut project, &args.tenant, user.id(), &role).await?;
         }
         result?;
-        println!("MEMBERSHIP_BENCH fixture=ready credential=human-pat cleanup=journey");
+        println!("MEMBERSHIP_BENCH fixture=ready credential=user-pat cleanup=journey");
         return Ok(());
     }
     let result = tokio::time::timeout(
         TEST_TIMEOUT,
-        exercise(&args, &http, &system, &mut project, human.id(), &role),
+        exercise(&args, &http, &system, &mut project, user.id(), &role),
     )
     .await
     .map_err(|_| anyhow!("membership test exceeded its five-minute deadline"))
     .and_then(|result| result);
     let cleaned = tokio::time::timeout(
         TEST_TIMEOUT,
-        cleanup(&mut system, &mut project, &args.tenant, human.id(), &role),
+        cleanup(&mut system, &mut project, &args.tenant, user.id(), &role),
     )
     .await
     .map_err(|_| anyhow!("membership test cleanup timed out"))
@@ -217,7 +217,7 @@ async fn exercise(
             &[&args.tenant, &principal.as_str(), &role],
         )
         .await
-        .context("remove this human's permission-bearing role")?;
+        .context("remove this user's permission-bearing role")?;
     ensure!(
         removed == 1,
         "test role assignment was missing before removal"
@@ -230,7 +230,7 @@ async fn exercise(
             &[&args.tenant, &principal.as_str(), &role],
         )
         .await
-        .context("restore this human's tenant role")?;
+        .context("restore this user's tenant role")?;
     request("role_restored", 200).await?;
     for case in ["revoked", "repeated_revoke"] {
         membership(args, principal, "revoke-project-env-membership").await?;
@@ -245,7 +245,7 @@ async fn seed_tenant_role(
     principal: &PrincipalId,
     role: &str,
 ) -> anyhow::Result<()> {
-    // The fixture writes as the test human, whose row stamps itself. Both
+    // The fixture writes as the test user, whose row stamps itself. Both
     // bindings stay on this session for the role restore and the cleanup.
     project
         .execute(
@@ -254,14 +254,14 @@ async fn seed_tenant_role(
             &[&principal.as_str()],
         )
         .await
-        .context("bind the test human as the fixture actor")?;
+        .context("bind the test user as the fixture actor")?;
     let tx = project
         .transaction()
         .await
         .context("begin test fixture seed")?;
     tx.execute(
         "INSERT INTO app_system.users (tenant_id, id, type, email) \
-         VALUES ($1, $2::text::uuid, 'person', $3)",
+         VALUES ($1, $2::text::uuid, 'user', $3)",
         &[
             &args.tenant,
             &principal.as_str(),
@@ -289,7 +289,7 @@ async fn seed_tenant_role(
         &[&args.tenant, &principal.as_str(), &role],
     )
     .await
-    .context("link the test human to its tenant role")?;
+    .context("link the test user to its tenant role")?;
     tx.commit().await.context("commit test fixture seed")?;
     Ok(())
 }

@@ -29,7 +29,7 @@ pub async fn bind_fixture_principal(client: &Client, tenant: &str) -> Result<()>
     client
         .execute(
             "INSERT INTO app_system.users (tenant_id, id, type, email) \
-             VALUES ($1, $2::text::uuid, 'person', 'fixture@example.invalid') \
+             VALUES ($1, $2::text::uuid, 'user', 'fixture@example.invalid') \
              ON CONFLICT DO NOTHING",
             &[&tenant, &FIXTURE_PRINCIPAL],
         )

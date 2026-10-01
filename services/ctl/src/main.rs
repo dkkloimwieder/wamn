@@ -54,15 +54,15 @@ enum Command {
     ProvisionProjectEnv(provisioning_verbs::ProvisionProjectEnvArgs),
     /// Provision the scoped database credential for the identity service.
     ProvisionIdentityIssuer(identity_verbs::IdentityIssuerArgs),
-    /// Grant one human access to one project environment.
+    /// Grant one user access to one project environment.
     GrantProjectEnvMembership(identity_verbs::ProjectEnvMembershipArgs),
-    /// Revoke one human's access to one project environment.
+    /// Revoke one user's access to one project environment.
     RevokeProjectEnvMembership(identity_verbs::ProjectEnvMembershipArgs),
-    /// Ask identity to mail an invitation to one human principal.
+    /// Ask identity to mail an invitation to one user principal.
     Invite(identity_verbs::InviteArgs),
-    /// Give a person or a service one existing role in one environment.
+    /// Give a user or a service one existing role in one environment.
     GrantRole(role_verbs::UserRoleArgs),
-    /// Take one role from a person or a service in one environment.
+    /// Take one role from a user or a service in one environment.
     RevokeRole(role_verbs::UserRoleArgs),
     /// Create an empty authored role in one environment.
     CreateRole(role_verbs::RoleArgs),

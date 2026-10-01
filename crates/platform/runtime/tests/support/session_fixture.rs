@@ -226,7 +226,7 @@ pub(super) async fn install_authority(
     for principal in principals {
         client
             .execute(
-                "INSERT INTO identity.principals VALUES ($1::text::uuid,'human','active')",
+                "INSERT INTO identity.principals VALUES ($1::text::uuid,'user','active')",
                 &[principal],
             )
             .await?;

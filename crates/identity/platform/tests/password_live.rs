@@ -8,7 +8,7 @@ use wamn_platform_identity::password::{
     issue_invitation, password_work,
 };
 use wamn_platform_identity::{
-    Principal, PrincipalId, authenticate_pat, create_human, create_service, disable_principal,
+    Principal, PrincipalId, authenticate_pat, create_service, create_user, disable_principal,
     issue_pat,
 };
 
@@ -40,8 +40,8 @@ async fn connect(url: &str) -> Client {
         .unwrap();
     client
 }
-async fn human(client: &Client, name: &str) -> Principal {
-    create_human(
+async fn new_user(client: &Client, name: &str) -> Principal {
+    create_user(
         client,
         &format!("{name}@example.invalid"),
         &format!("{name}@example.invalid"),
@@ -56,12 +56,12 @@ async fn enrollment_preserves_identity_and_pat_and_consumes_all_invitations() {
     let _lock = wamn_test_postgres::lock();
     let database = test_database::system();
     let mut client = connect(database.url()).await;
-    let person = human(&client, "alice").await;
-    let other = human(&client, "bob").await;
+    let user = new_user(&client, "alice").await;
+    let other = new_user(&client, "bob").await;
     let work = password_work();
     let pat = issue_pat(
         &client,
-        person.id(),
+        user.id(),
         "existing",
         std::time::Duration::from_secs(3600),
     )
@@ -75,27 +75,27 @@ async fn enrollment_preserves_identity_and_pat_and_consumes_all_invitations() {
         VALUES ('password-test', 'widgets', 'dev', 'password-test-secret', 'a1b2c3d4')").await.unwrap();
     wamn_platform_identity::grant_project_env_membership(
         &client,
-        person.id(),
+        user.id(),
         "password-test",
         "widgets",
         "dev",
     )
     .await
     .unwrap();
-    let membership: String = client.query_one("SELECT row_to_json(m)::text FROM identity.project_env_memberships m WHERE principal_id = $1::text::uuid", &[&person.id().as_str()]).await.unwrap().get(0);
+    let membership: String = client.query_one("SELECT row_to_json(m)::text FROM identity.project_env_memberships m WHERE principal_id = $1::text::uuid", &[&user.id().as_str()]).await.unwrap().get(0);
     // Capture principal and authority rows as they exist before enrollment.
     let before: String = client
         .query_one(
             "SELECT row_to_json(p)::text FROM identity.principals p WHERE id = $1::text::uuid",
-            &[&person.id().as_str()],
+            &[&user.id().as_str()],
         )
         .await
         .unwrap()
         .get(0);
-    let first = issue_invitation(&mut client, &actor(), person.id())
+    let first = issue_invitation(&mut client, &actor(), user.id())
         .await
         .unwrap();
-    let second = issue_invitation(&mut client, &actor(), person.id())
+    let second = issue_invitation(&mut client, &actor(), user.id())
         .await
         .unwrap();
     assert_ne!(first.secret(), second.secret());
@@ -111,18 +111,18 @@ async fn enrollment_preserves_identity_and_pat_and_consumes_all_invitations() {
     );
     let short = Password::new("short".into()).unwrap();
     assert_eq!(
-        enroll_password(&mut client, &work, person.id(), first.secret(), short)
+        enroll_password(&mut client, &work, user.id(), first.secret(), short)
             .await
             .unwrap_err()
             .cause(),
         Some(RefusalCause::PasswordRule)
     );
-    enroll_password(&mut client, &work, person.id(), first.secret(), password())
+    enroll_password(&mut client, &work, user.id(), first.secret(), password())
         .await
         .unwrap();
     for secret in [first.secret(), second.secret()] {
         assert_eq!(
-            enroll_password(&mut client, &work, person.id(), secret, password())
+            enroll_password(&mut client, &work, user.id(), secret, password())
                 .await
                 .unwrap_err()
                 .cause(),
@@ -130,7 +130,7 @@ async fn enrollment_preserves_identity_and_pat_and_consumes_all_invitations() {
         );
     }
     assert_eq!(
-        issue_invitation(&mut client, &actor(), person.id())
+        issue_invitation(&mut client, &actor(), user.id())
             .await
             .unwrap_err()
             .cause(),
@@ -139,18 +139,18 @@ async fn enrollment_preserves_identity_and_pat_and_consumes_all_invitations() {
     let after: String = client
         .query_one(
             "SELECT row_to_json(p)::text FROM identity.principals p WHERE id = $1::text::uuid",
-            &[&person.id().as_str()],
+            &[&user.id().as_str()],
         )
         .await
         .unwrap()
         .get(0);
     assert_eq!(before, after);
-    assert_eq!(membership, client.query_one("SELECT row_to_json(m)::text FROM identity.project_env_memberships m WHERE principal_id = $1::text::uuid", &[&person.id().as_str()]).await.unwrap().get::<_, String>(0));
+    assert_eq!(membership, client.query_one("SELECT row_to_json(m)::text FROM identity.project_env_memberships m WHERE principal_id = $1::text::uuid", &[&user.id().as_str()]).await.unwrap().get::<_, String>(0));
     let authenticated = authenticate_password(&client, &work, "alice@example.invalid", password())
         .await
         .unwrap()
         .unwrap();
-    assert_eq!(authenticated.principal().id(), person.id());
+    assert_eq!(authenticated.principal().id(), user.id());
     assert_eq!(
         authenticate_pat(&client, pat.token())
             .await
@@ -158,7 +158,7 @@ async fn enrollment_preserves_identity_and_pat_and_consumes_all_invitations() {
             .unwrap()
             .principal()
             .id(),
-        person.id()
+        user.id()
     );
     assert!(
         authenticate_password(
@@ -183,12 +183,12 @@ async fn enrollment_preserves_identity_and_pat_and_consumes_all_invitations() {
             .unwrap()
             .is_none()
     );
-    let row = client.query_one("SELECT password_hash, created_by::text FROM identity.password_credentials WHERE principal_id = $1::text::uuid", &[&person.id().as_str()]).await.unwrap();
+    let row = client.query_one("SELECT password_hash, created_by::text FROM identity.password_credentials WHERE principal_id = $1::text::uuid", &[&user.id().as_str()]).await.unwrap();
     let hash: String = row.get(0);
     assert!(hash.starts_with("$argon2id$v=19$m=19456,t=2,p=1$"));
     assert!(!hash.contains(PASSWORD));
-    assert_eq!(row.get::<_, &str>(1), person.id().as_str());
-    let rows = client.query("SELECT token_hash, consumed_at IS NOT NULL, created_by::text FROM identity.password_tokens WHERE principal_id = $1::text::uuid", &[&person.id().as_str()]).await.unwrap();
+    assert_eq!(row.get::<_, &str>(1), user.id().as_str());
+    let rows = client.query("SELECT token_hash, consumed_at IS NOT NULL, created_by::text FROM identity.password_tokens WHERE principal_id = $1::text::uuid", &[&user.id().as_str()]).await.unwrap();
     assert_eq!(rows.len(), 2);
     assert!(
         rows.iter()
@@ -198,7 +198,7 @@ async fn enrollment_preserves_identity_and_pat_and_consumes_all_invitations() {
         rows.iter()
             .any(|r| r.get::<_, Vec<u8>>(0) == Sha256::digest(first.secret().as_bytes()).to_vec())
     );
-    disable_principal(&client, person.id()).await.unwrap();
+    disable_principal(&client, user.id()).await.unwrap();
     assert!(
         authenticate_password(&client, &work, "alice@example.invalid", password())
             .await
@@ -224,17 +224,17 @@ async fn invitation_expiry_kind_purpose_and_transaction_rollback_refuse() {
     let _lock = wamn_test_postgres::lock();
     let database = test_database::system();
     let mut client = connect(database.url()).await;
-    let person = human(&client, "expired").await;
+    let user = new_user(&client, "expired").await;
     let work = password_work();
-    let invitation = issue_invitation(&mut client, &actor(), person.id())
+    let invitation = issue_invitation(&mut client, &actor(), user.id())
         .await
         .unwrap();
-    client.execute("UPDATE identity.password_tokens SET expires_at = created_at + interval '1 microsecond' WHERE principal_id = $1::text::uuid", &[&person.id().as_str()]).await.unwrap();
+    client.execute("UPDATE identity.password_tokens SET expires_at = created_at + interval '1 microsecond' WHERE principal_id = $1::text::uuid", &[&user.id().as_str()]).await.unwrap();
     assert_eq!(
         enroll_password(
             &mut client,
             &work,
-            person.id(),
+            user.id(),
             invitation.secret(),
             password()
         )
@@ -260,11 +260,11 @@ async fn invitation_expiry_kind_purpose_and_transaction_rollback_refuse() {
             .cause(),
         Some(RefusalCause::NoSuchAccount)
     );
-    let error = client.execute("INSERT INTO identity.password_tokens (token_hash, principal_id, purpose, expires_at) VALUES ($1, $2::text::uuid, 'unknown-purpose', clock_timestamp() + interval '1 hour')", &[&vec![1u8;32], &person.id().as_str()]).await.unwrap_err();
+    let error = client.execute("INSERT INTO identity.password_tokens (token_hash, principal_id, purpose, expires_at) VALUES ($1, $2::text::uuid, 'unknown-purpose', clock_timestamp() + interval '1 hour')", &[&vec![1u8;32], &user.id().as_str()]).await.unwrap_err();
     assert_eq!(error.code(), Some(&SqlState::CHECK_VIOLATION));
     let error = client.execute("INSERT INTO identity.password_tokens (token_hash, principal_id, purpose, expires_at) VALUES ($1, $2::text::uuid, 'invitation', clock_timestamp() + interval '1 hour')", &[&vec![2u8;32], &service.id().as_str()]).await.unwrap_err();
     assert_eq!(error.code(), Some(&SqlState::FOREIGN_KEY_VIOLATION));
-    let invitation = issue_invitation(&mut client, &actor(), person.id())
+    let invitation = issue_invitation(&mut client, &actor(), user.id())
         .await
         .unwrap();
     client.batch_execute("CREATE FUNCTION identity.refuse_consumption() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'test refusal'; END $$; CREATE TRIGGER test_refuse BEFORE UPDATE ON identity.password_tokens FOR EACH ROW EXECUTE FUNCTION identity.refuse_consumption()").await.unwrap();
@@ -272,7 +272,7 @@ async fn invitation_expiry_kind_purpose_and_transaction_rollback_refuse() {
         enroll_password(
             &mut client,
             &work,
-            person.id(),
+            user.id(),
             invitation.secret(),
             password()
         )
@@ -296,7 +296,7 @@ async fn invitation_expiry_kind_purpose_and_transaction_rollback_refuse() {
     enroll_password(
         &mut client,
         &work,
-        person.id(),
+        user.id(),
         invitation.secret(),
         password(),
     )
@@ -310,20 +310,20 @@ async fn concurrent_enrollment_creates_exactly_one_password() {
     let database = test_database::system();
     let mut left = connect(database.url()).await;
     let mut right = connect(database.url()).await;
-    let person = human(&left, "concurrent").await;
-    let first = issue_invitation(&mut left, &actor(), person.id())
+    let user = new_user(&left, "concurrent").await;
+    let first = issue_invitation(&mut left, &actor(), user.id())
         .await
         .unwrap();
-    let second = issue_invitation(&mut right, &actor(), person.id())
+    let second = issue_invitation(&mut right, &actor(), user.id())
         .await
         .unwrap();
     let work = password_work();
     let (a, b) = tokio::join!(
-        enroll_password(&mut left, &work, person.id(), first.secret(), password()),
+        enroll_password(&mut left, &work, user.id(), first.secret(), password()),
         enroll_password(
             &mut right,
             &work,
-            person.id(),
+            user.id(),
             second.secret(),
             Password::new("another uncommon passphrase".into()).unwrap()
         )
@@ -361,16 +361,16 @@ async fn reset_consumes_email_credentials_and_revokes_renewal_but_preserves_pat(
     let _lock = wamn_test_postgres::lock();
     let database = test_database::system();
     let mut client = connect(database.url()).await;
-    let person = human(&client, "reset-person").await;
-    let other = human(&client, "reset-other").await;
+    let user = new_user(&client, "reset-user").await;
+    let other = new_user(&client, "reset-other").await;
     let work = password_work();
-    let invitation = issue_invitation(&mut client, &actor(), person.id())
+    let invitation = issue_invitation(&mut client, &actor(), user.id())
         .await
         .unwrap();
     enroll_password(
         &mut client,
         &work,
-        person.id(),
+        user.id(),
         invitation.secret(),
         password(),
     )
@@ -378,32 +378,31 @@ async fn reset_consumes_email_credentials_and_revokes_renewal_but_preserves_pat(
     .unwrap();
     let pat = issue_pat(
         &client,
-        person.id(),
+        user.id(),
         "preserved",
         std::time::Duration::from_secs(3600),
     )
     .await
     .unwrap();
     let tx = client.transaction().await.unwrap();
-    let renewal =
-        password_login::create_login(&tx, person.id(), "https://reset.invalid", "widgets")
-            .await
-            .unwrap()
-            .unwrap();
+    let renewal = password_login::create_login(&tx, user.id(), "https://reset.invalid", "widgets")
+        .await
+        .unwrap()
+        .unwrap();
     tx.commit().await.unwrap();
     let first = issue_reset(
         &mut client,
         &actor(),
-        person.id(),
-        "reset-person@example.invalid",
+        user.id(),
+        "reset-user@example.invalid",
     )
     .await
     .unwrap();
     let second = issue_reset(
         &mut client,
         &actor(),
-        person.id(),
-        "reset-person@example.invalid",
+        user.id(),
+        "reset-user@example.invalid",
     )
     .await
     .unwrap();
@@ -413,36 +412,24 @@ async fn reset_consumes_email_credentials_and_revokes_renewal_but_preserves_pat(
             .is_err()
     );
     assert!(
-        enroll_password(&mut client, &work, person.id(), first.secret(), password())
+        enroll_password(&mut client, &work, user.id(), first.secret(), password())
             .await
             .is_err()
     );
     let replacement = || Password::new("the new long replacement password".into()).unwrap();
-    reset_password(
-        &mut client,
-        &work,
-        person.id(),
-        first.secret(),
-        replacement(),
-    )
-    .await
-    .unwrap();
-    assert!(
-        reset_password(
-            &mut client,
-            &work,
-            person.id(),
-            first.secret(),
-            replacement()
-        )
+    reset_password(&mut client, &work, user.id(), first.secret(), replacement())
         .await
-        .is_err()
+        .unwrap();
+    assert!(
+        reset_password(&mut client, &work, user.id(), first.secret(), replacement())
+            .await
+            .is_err()
     );
     assert!(
         reset_password(
             &mut client,
             &work,
-            person.id(),
+            user.id(),
             second.secret(),
             replacement()
         )
@@ -450,21 +437,16 @@ async fn reset_consumes_email_credentials_and_revokes_renewal_but_preserves_pat(
         .is_err()
     );
     assert!(
-        authenticate_password(&client, &work, "reset-person@example.invalid", password())
+        authenticate_password(&client, &work, "reset-user@example.invalid", password())
             .await
             .unwrap()
             .is_none()
     );
     assert!(
-        authenticate_password(
-            &client,
-            &work,
-            "reset-person@example.invalid",
-            replacement()
-        )
-        .await
-        .unwrap()
-        .is_some()
+        authenticate_password(&client, &work, "reset-user@example.invalid", replacement())
+            .await
+            .unwrap()
+            .is_some()
     );
     let tx = client.transaction().await.unwrap();
     assert!(
@@ -480,13 +462,13 @@ async fn reset_consumes_email_credentials_and_revokes_renewal_but_preserves_pat(
             .unwrap()
             .is_some()
     );
-    client.execute("UPDATE identity.principals SET email='replacement@example.invalid' WHERE id=$1::text::uuid", &[&person.id().as_str()]).await.unwrap();
+    client.execute("UPDATE identity.principals SET email='replacement@example.invalid' WHERE id=$1::text::uuid", &[&user.id().as_str()]).await.unwrap();
     assert!(
         issue_reset(
             &mut client,
             &actor(),
-            person.id(),
-            "reset-person@example.invalid"
+            user.id(),
+            "reset-user@example.invalid"
         )
         .await
         .is_err()
@@ -494,7 +476,7 @@ async fn reset_consumes_email_credentials_and_revokes_renewal_but_preserves_pat(
     let expired = issue_reset(
         &mut client,
         &actor(),
-        person.id(),
+        user.id(),
         "replacement@example.invalid",
     )
     .await
@@ -504,7 +486,7 @@ async fn reset_consumes_email_credentials_and_revokes_renewal_but_preserves_pat(
         reset_password(
             &mut client,
             &work,
-            person.id(),
+            user.id(),
             expired.secret(),
             replacement()
         )

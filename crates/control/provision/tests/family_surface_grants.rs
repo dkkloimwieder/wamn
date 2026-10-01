@@ -845,11 +845,11 @@ fn the_http_admitter_role_adds_exactly_the_fresh_permission_reads() {
         writeln!(
             probes,
             "  ASSERT has_table_privilege(r, 'app_system.{relation}', 'SELECT'), \
-               'cannot read the human permission relation app_system.{relation}'; \
+               'cannot read the user permission relation app_system.{relation}'; \
              ASSERT NOT has_table_privilege(r, 'app_system.{relation}', 'INSERT') \
                AND NOT has_table_privilege(r, 'app_system.{relation}', 'UPDATE') \
                AND NOT has_table_privilege(r, 'app_system.{relation}', 'DELETE'), \
-               'the callable-HTTP admitter writes human permission authority'; "
+               'the callable-HTTP admitter writes user permission authority'; "
         )
         .expect("writing to a String cannot fail");
     }
@@ -952,7 +952,7 @@ fn the_http_admitter_role_adds_exactly_the_fresh_permission_reads() {
              INSERT INTO app_system.roles (tenant_id, name) \
              VALUES ('tenant-a', 'widget-reader');\n\
              INSERT INTO app_system.users (tenant_id, id, type, email) \
-             VALUES ('tenant-a', '00000000-0000-4000-8000-000000000001', 'person', 'caller@example.test');\n\
+             VALUES ('tenant-a', '00000000-0000-4000-8000-000000000001', 'user', 'caller@example.test');\n\
              INSERT INTO app_system.user_roles (tenant_id, user_id, role_name) \
              VALUES ('tenant-a', '00000000-0000-4000-8000-000000000001', 'widget-reader');\n\
              INSERT INTO app_system.permissions (tenant_id, role_name, permission, required_by) \
@@ -1006,6 +1006,6 @@ fn the_http_admitter_role_adds_exactly_the_fresh_permission_reads() {
                AND u.status = 'active'"
         ),
         "wamn-widgets:widget/get",
-        "the callable-HTTP generation cannot read the human user's fresh permission"
+        "the callable-HTTP generation cannot read the user's fresh permission"
     );
 }

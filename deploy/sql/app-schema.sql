@@ -180,7 +180,7 @@ $wamn_authority_bootstrap$;
 -- `status` gates whether the account may authenticate (enforced by 4.2, not this
 -- schema). Email is unique within a tenant.
 --
--- `type` names the kind of principal: a person, a service (a station or an
+-- `type` names the kind of principal: a user, a service (a station or an
 -- integration), or a platform component. It has no default, so every insert
 -- names its type. A platform row carries its `wamn:<component>` name in
 -- `display_name` and the id that `wamn-project-state` derives from that name.
@@ -205,7 +205,7 @@ CREATE TABLE app_system.users (
     CONSTRAINT users_status_check
         CHECK (status IN ('active', 'disabled', 'invited')),
     CONSTRAINT users_type_check
-        CHECK (type IN ('person', 'service', 'platform')),
+        CHECK (type IN ('user', 'service', 'platform')),
     CONSTRAINT users_platform_principal_check
         CHECK (CASE WHEN type = 'platform'
                     THEN COALESCE((display_name, id) IN (
@@ -241,7 +241,7 @@ GRANT SELECT ON app_system.users TO wamn_app;
 -- (a role gate is COALESCE(app.role,'') IN ('r1', …)), so the NAME is the
 -- load-bearing identity (the composite PK). `admin` is the one built-in role:
 -- apply-package writes it, and it holds every operation the serving release
--- serves with no permission rows. Every other role is authored. A person or
+-- serves with no permission rows. Every other role is authored. A user or
 -- service holds a role through `wamn-ctl grant-role`. `roles_name_check` is the
 -- role slug of identity (`wamn_session::token::is_role_slug`), so no stored
 -- role name is one that a session refuses.

@@ -1,4 +1,4 @@
-//! `grant-role` and `revoke-role`: give a person or a service one user role
+//! `grant-role` and `revoke-role`: give a user or a service one user role
 //! of an environment, or take it away.
 //!
 //! `apply-package` writes the built-in role `admin`, and every other role is
@@ -30,7 +30,7 @@ pub struct UserRoleRequest {
     pub env: String,
     /// Tenant of the environment.
     pub tenant: String,
-    /// Email of the person or service in the tenant `users` table.
+    /// Email of the user or service in the tenant `users` table.
     pub user: String,
     /// A role that exists in the tenant, such as `admin`.
     pub role: String,

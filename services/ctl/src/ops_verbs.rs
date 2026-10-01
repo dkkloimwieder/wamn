@@ -7,7 +7,7 @@ use std::path::PathBuf;
 
 use clap::Args;
 use wamn_control::copy_project_env::{CopyProjectEnvRequest, plan_project_env_copy};
-use wamn_control::create_human::{CreateHumanRequest, create_human_principal};
+use wamn_control::create_user::{CreateUserRequest, create_user_principal};
 use wamn_control::event_advisories::{EventAdvisoriesRequest, read_retained_advisories};
 use wamn_control::prune_record_history::{
     PruneRecordHistoryRequest, PrunedHistory, prune_expired_record_history,
@@ -61,20 +61,20 @@ pub async fn event_advisories(args: EventAdvisoriesArgs) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Inputs that name one new human principal.
+/// Inputs that name one new user principal.
 #[derive(Debug, Args)]
-pub struct CreateHumanArgs {
-    /// Subject that the identity provider asserts for this human.
+pub struct CreateUserArgs {
+    /// Subject that the identity provider asserts for this user.
     #[arg(long)]
     pub subject: String,
 
-    /// Deliverable address of this human. One address names one principal for
-    /// the whole platform, so a human who works in two organizations holds one
+    /// Deliverable address of this user. One address names one principal for
+    /// the whole platform, so a user who works in two organizations holds one
     /// principal and two memberships.
     #[arg(long)]
     pub email: String,
 
-    /// Name shown for this human.
+    /// Name shown for this user.
     #[arg(long)]
     pub display_name: String,
 
@@ -83,12 +83,12 @@ pub struct CreateHumanArgs {
     pub system_database_url: String,
 }
 
-/// Create one human principal and print its minted id.
+/// Create one user principal and print its minted id.
 ///
 /// The principal carries no access. Run `grant-project-env-membership` with the
-/// printed id to admit the human to one project environment.
-pub async fn create_human(args: CreateHumanArgs) -> anyhow::Result<()> {
-    let principal = create_human_principal(CreateHumanRequest {
+/// printed id to admit the user to one project environment.
+pub async fn create_user(args: CreateUserArgs) -> anyhow::Result<()> {
+    let principal = create_user_principal(CreateUserRequest {
         subject: args.subject,
         email: args.email,
         display_name: args.display_name,
@@ -96,7 +96,7 @@ pub async fn create_human(args: CreateHumanArgs) -> anyhow::Result<()> {
     })
     .await?;
     println!(
-        "human created principal_id={} subject={}",
+        "user created principal_id={} subject={}",
         principal.id(),
         principal.subject()
     );

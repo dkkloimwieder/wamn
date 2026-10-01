@@ -2,7 +2,7 @@
 //!
 //! MVP outcome: management auth.
 //!
-//! This crate owns human and service principals, project-role assignments,
+//! This crate owns user and service principals, project-role assignments,
 //! project-environment memberships, passwords, invitations, personal access tokens, and session keys.
 //! It owns the fixed session-token profile but contains no HTTP, OIDC,
 //! or per-project `app_system` authority: every function here is
@@ -39,8 +39,8 @@ const PAT_COLUMNS: [&str; 6] = [
     "to_char(expires_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"')",
     "to_char(revoked_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"')",
 ];
-const INSERT_HUMAN_SQL: &str = "INSERT INTO identity.principals \
-    (type, subject, email, display_name) VALUES ('human', $1, $2, $3) \
+const INSERT_USER_SQL: &str = "INSERT INTO identity.principals \
+    (type, subject, email, display_name) VALUES ('user', $1, $2, $3) \
     RETURNING id::text, type, subject, display_name, status";
 const INSERT_SERVICE_SQL: &str = "INSERT INTO identity.principals \
     (type, subject, display_name) VALUES ('service', $1, $2) \
@@ -93,7 +93,7 @@ const SELECT_ROUTE_PAT_SQL: &str = "SELECT p.id::text, p.type, p.subject, \
     WHERE identity.pats.token_prefix = $1 AND CASE p.type \
         WHEN 'service' THEN EXISTS (SELECT 1 FROM identity.project_roles r \
             WHERE r.principal_id = p.id AND r.org = $2 AND r.project = $3 AND r.role = ANY($5::text[])) \
-        WHEN 'human' THEN EXISTS (SELECT 1 FROM identity.project_env_memberships m \
+        WHEN 'user' THEN EXISTS (SELECT 1 FROM identity.project_env_memberships m \
             WHERE m.principal_id = p.id AND m.org = $2 AND m.project = $3 AND m.env = $4) \
         ELSE false END";
 const SELECT_PATS_SQL: &str = "SELECT id::text, token_prefix, label, \
@@ -141,8 +141,8 @@ const TOKEN_SECRET_BYTES: usize = 32;
 /// The kind of first-party platform principal.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PrincipalType {
-    /// A person resolved from an external identity or represented by a PAT.
-    Human,
+    /// A user resolved from an external identity or represented by a PAT.
+    User,
     /// A non-human client that authenticates through a machine presenter.
     Service,
     /// A platform component that writes in the system database. It cannot
@@ -154,7 +154,7 @@ impl PrincipalType {
     /// Return the stable database literal.
     pub const fn as_str(self) -> &'static str {
         match self {
-            Self::Human => "human",
+            Self::User => "user",
             Self::Service => "service",
             Self::Platform => "platform",
         }
@@ -162,7 +162,7 @@ impl PrincipalType {
 
     fn parse(value: &str) -> Result<Self, IdentityError> {
         match value {
-            "human" => Ok(Self::Human),
+            "user" => Ok(Self::User),
             "service" => Ok(Self::Service),
             "platform" => Ok(Self::Platform),
             other => Err(IdentityError::new(
@@ -265,7 +265,7 @@ impl Principal {
         &self.id
     }
 
-    /// Return whether this is a human, service, or platform principal.
+    /// Return whether this is a user, service, or platform principal.
     pub const fn kind(&self) -> PrincipalType {
         self.kind
     }
@@ -484,15 +484,15 @@ impl From<wamn_session::SessionError> for IdentityError {
     }
 }
 
-/// Create a passwordless human principal for an externally authenticated
+/// Create a passwordless user principal for an externally authenticated
 /// subject.
 ///
-/// `email` is the person's deliverable address. It is separate from `subject`,
+/// `email` is the user's deliverable address. It is separate from `subject`,
 /// which authenticates and carries no promise of delivery.
-/// `reconcile-run-plane` copies the email into the `app_system.users` person
-/// row of every tenant this human can write in (`wamn-0h0g.9.18`), so a human
+/// `reconcile-run-plane` copies the email into the `app_system.users` user
+/// row of every tenant this user can write in (`wamn-0h0g.9.18`), so a user
 /// principal always has one.
-pub async fn create_human(
+pub async fn create_user(
     client: &(impl GenericClient + Sync),
     subject: &str,
     email: &str,
@@ -502,7 +502,7 @@ pub async fn create_human(
     let email = checked_email(email)?;
     let display_name = checked_display_name(display_name)?;
     let row = client
-        .query_one(INSERT_HUMAN_SQL, &[&subject, &email, &display_name])
+        .query_one(INSERT_USER_SQL, &[&subject, &email, &display_name])
         .await
         .map_err(|error| database_error(&error))?;
     decode_principal(&row)
@@ -573,7 +573,7 @@ pub async fn disable_principal(
 /// Issue a personal access token for an active principal.
 ///
 /// This is the trusted-context issuance path: the caller must already have
-/// authorized the request. It serves humans and services identically and reads
+/// authorized the request. It serves users and services identically and reads
 /// no client-supplied identity field — only the principal ID the caller already
 /// resolved. A missing or disabled principal is `NotFound`.
 pub async fn issue_pat(
@@ -748,7 +748,7 @@ fn decode_project_roles(rows: Vec<Row>) -> Result<Vec<ProjectRole>, IdentityErro
         .collect()
 }
 
-/// Grant a human principal membership in one registered project-environment.
+/// Grant a user principal membership in one registered project-environment.
 ///
 /// Repeated grants are harmless. The database rejects service principals and
 /// missing environments. Membership does not create tenant users or assign roles.
@@ -853,7 +853,7 @@ impl PreparedIdentityReads {
 
     /// Authenticate a route PAT and its system scope in one round trip.
     ///
-    /// Services need one of the accepted project roles. Humans need explicit membership
+    /// Services need one of the accepted project roles. Users need explicit membership
     /// in the exact project environment. The caller must still enforce the
     /// configured service identity and read tenant permissions.
     pub async fn authenticate_route_pat(
@@ -1015,7 +1015,7 @@ fn canonical_subject(value: &str) -> Result<String, IdentityError> {
     Ok(value)
 }
 
-/// Accept the same human email `principals_email_check` accepts: one `@`, no
+/// Accept the same user email `principals_email_check` accepts: one `@`, no
 /// space on either side, a dot in the domain, and at most 254 bytes. The rule
 /// is deliberately loose, because the address is delivered to, not parsed.
 ///
@@ -1180,7 +1180,7 @@ mod tests {
     #[test]
     fn principal_kind_literals_round_trip() {
         for kind in [
-            PrincipalType::Human,
+            PrincipalType::User,
             PrincipalType::Service,
             PrincipalType::Platform,
         ] {
@@ -1217,12 +1217,12 @@ mod tests {
         }
     }
 
-    /// A human email folds to lower case in full, like a subject, so two
+    /// A user email folds to lower case in full, like a subject, so two
     /// spellings of one address become one value (`wamn-0h0g.9.18`). The
     /// `UNIQUE (email)` in `deploy/sql/system-schema.sql` then refuses
-    /// the second human, and `identity_live` pins that refusal.
+    /// the second user, and `identity_live` pins that refusal.
     #[test]
-    fn a_human_email_folds_to_one_lowercase_address() {
+    fn a_user_email_folds_to_one_lowercase_address() {
         assert_eq!(
             checked_email("  Case.User@Example.Test ").unwrap(),
             "case.user@example.test"
@@ -1376,7 +1376,7 @@ mod tests {
     fn principal_columns_are_shared_by_every_record_decoder() {
         for column in PRINCIPAL_COLUMNS.split(", ") {
             let column = column.trim_end_matches("::text");
-            assert!(INSERT_HUMAN_SQL.contains(column));
+            assert!(INSERT_USER_SQL.contains(column));
             assert!(INSERT_SERVICE_SQL.contains(column));
             assert!(SELECT_PRINCIPAL_BY_ID_SQL.contains(column));
             assert!(SELECT_PRINCIPAL_BY_SUBJECT_SQL.contains(column));

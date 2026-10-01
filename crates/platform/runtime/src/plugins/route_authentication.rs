@@ -306,9 +306,9 @@ impl RouteAuthenticator for PlatformRouteAuthenticator {
                 {
                     return Err(unauthorized());
                 }
-                PrincipalType::Service | PrincipalType::Human => {}
+                PrincipalType::Service | PrincipalType::User => {}
             }
-            // A service and a person hold their roles the same way, through
+            // A service and a user hold their roles the same way, through
             // `wamn-ctl grant-role`.
             let permissions = authentication
                 .postgres

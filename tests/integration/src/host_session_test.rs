@@ -1,7 +1,7 @@
 //! Observe one actual session token on two deployed hosts before and after key removal.
 //!
 //! The runner owns key removal and service shutdown after the flushed warm marker.
-//! This observer holds a human PAT and public keys, without database or signing authority.
+//! This observer holds a user PAT and public keys, without database or signing authority.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::Write as _;
@@ -48,8 +48,8 @@ pub struct HostSessionTestArgs {
 #[serde(deny_unknown_fields)]
 struct Fixture {
     manifest_digest: String,
-    human_pat: String,
-    human_id: String,
+    user_pat: String,
+    user_id: String,
     audience: String,
     org: String,
     project: String,
@@ -127,15 +127,13 @@ fn fixture(bytes: &[u8]) -> anyhow::Result<Fixture> {
     wamn_catalog::ManifestDigest::parse(&fixture.manifest_digest)
         .map_err(|_| anyhow!("host fixture manifest digest refused"))?;
     let principal = fixture
-        .human_id
+        .user_id
         .parse::<wamn_platform_identity::PrincipalId>()
         .map_err(|_| anyhow!("host fixture principal refused"))?;
     ensure!(
-        principal.as_str() == fixture.human_id
-            && fixture
-                .human_pat
-                .starts_with(wamn_session::PAT_TOKEN_PREFIX),
-        "host fixture human credential refused"
+        principal.as_str() == fixture.user_id
+            && fixture.user_pat.starts_with(wamn_session::PAT_TOKEN_PREFIX),
+        "host fixture user credential refused"
     );
     let roles = fixture.roles.iter().collect::<BTreeSet<_>>();
     ensure!(
@@ -331,7 +329,7 @@ async fn observe(args: HostSessionTestArgs) -> anyhow::Result<()> {
     let started_at = unix_seconds()?;
     let response = http
         .post(exchange_url)
-        .bearer_auth(&fixture.human_pat)
+        .bearer_auth(&fixture.user_pat)
         .json(&serde_json::json!({"aud": fixture.audience}))
         .send()
         .await
@@ -369,7 +367,7 @@ async fn observe(args: HostSessionTestArgs) -> anyhow::Result<()> {
     let expected_roles = fixture.roles.iter().collect::<BTreeSet<_>>();
     let actual_roles = claims.roles.iter().collect::<BTreeSet<_>>();
     ensure!(
-        claims.sub == fixture.human_id
+        claims.sub == fixture.user_id
             && claims.org == fixture.org
             && claims.aud == fixture.audience
             && actual_roles == expected_roles

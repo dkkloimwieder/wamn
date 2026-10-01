@@ -6,7 +6,7 @@ use wamn_control::dev::environment::{
     DevEnvironment, ENVIRONMENT, ORG, PROJECT, TENANT, connect, reconcile_journey_run_plane,
 };
 use wamn_control_provision::PlatformComponent;
-use wamn_platform_identity::{create_human, grant_project_env_membership};
+use wamn_platform_identity::{create_user, grant_project_env_membership};
 
 const EMAIL: &str = "managed-development@example.invalid";
 const PASSWORD: &str = "managed-development-disposable-fixture-password";
@@ -17,7 +17,7 @@ pub(super) struct Login {
     endpoint: String,
     audience: String,
     keys: Value,
-    human: String,
+    user: String,
     ca: std::path::PathBuf,
     invitation: String,
     operator: reqwest::Client,
@@ -61,8 +61,8 @@ impl Login {
         admin
             .execute("SELECT set_config('app.user_id', $1, false)", &[&actor])
             .await?;
-        let human = create_human(&*admin, EMAIL, EMAIL, "Development fixture").await?;
-        grant_project_env_membership(&*admin, human.id(), ORG, PROJECT, ENVIRONMENT).await?;
+        let user = create_user(&*admin, EMAIL, EMAIL, "Development fixture").await?;
+        grant_project_env_membership(&*admin, user.id(), ORG, PROJECT, ENVIRONMENT).await?;
         reconcile_journey_run_plane(system, &environment.route.database_url).await?;
         let (project, project_task) = connect(&environment.route.database_url).await?;
         project.execute("SELECT set_config('app.user_id', $1, false), set_config('app.operation','admin:seed-identity-fixture',false)", &[&actor]).await?;
@@ -72,7 +72,7 @@ impl Login {
                 &[&TENANT],
             )
             .await?;
-        project.execute("INSERT INTO app_system.user_roles (tenant_id,user_id,role_name) VALUES ($1,$2::text::uuid,'development-fixture')", &[&TENANT,&human.id().as_str()]).await?;
+        project.execute("INSERT INTO app_system.user_roles (tenant_id,user_id,role_name) VALUES ($1,$2::text::uuid,'development-fixture')", &[&TENANT,&user.id().as_str()]).await?;
         project_task.abort();
         task.abort();
         let mut operator_pem = std::fs::read(
@@ -101,7 +101,7 @@ impl Login {
             .build()?;
         let refused = http
             .post(format!("{endpoint}/invitations"))
-            .json(&json!({"principal_id":human.id().as_str()}))
+            .json(&json!({"principal_id":user.id().as_str()}))
             .send()
             .await?;
         ensure!(
@@ -110,7 +110,7 @@ impl Login {
         );
         let response = operator
             .post(format!("{endpoint}/invitations"))
-            .json(&json!({"principal_id":human.id().as_str()}))
+            .json(&json!({"principal_id":user.id().as_str()}))
             .send()
             .await?;
         ensure!(
@@ -129,7 +129,7 @@ impl Login {
             .context("invitation code")?;
         let (principal, invitation) = code.split_once(':').context("invitation account binding")?;
         ensure!(
-            principal == human.id().as_str(),
+            principal == user.id().as_str(),
             "invitation principal differs"
         );
         let invitation = invitation.to_owned();
@@ -144,7 +144,7 @@ impl Login {
             endpoint,
             audience,
             keys,
-            human: human.id().as_str().to_owned(),
+            user: user.id().as_str().to_owned(),
             ca: ca_path.clone(),
             invitation,
             operator,
@@ -187,7 +187,7 @@ impl Login {
         let (project, task) = connect(&environment.route.database_url).await?;
         let actor = PlatformComponent::Provisioning.principal_id().to_string();
         project.execute("SELECT set_config('app.user_id', $1, false), set_config('app.tenant_id', $2, false), set_config('app.operation','admin:seed-identity-fixture',false)", &[&actor, &TENANT]).await?;
-        project.execute("INSERT INTO app_system.user_roles (tenant_id,user_id,role_name) VALUES ($1,$2::text::uuid,'admin') ON CONFLICT DO NOTHING", &[&TENANT,&self.human]).await?;
+        project.execute("INSERT INTO app_system.user_roles (tenant_id,user_id,role_name) VALUES ($1,$2::text::uuid,'admin') ON CONFLICT DO NOTHING", &[&TENANT,&self.user]).await?;
         project.execute("INSERT INTO receiving.supplier (id,name) VALUES ('00000000-0000-0000-0000-000000000401','SUPPLIER-401') ON CONFLICT ON CONSTRAINT supplier_id_pkey DO NOTHING", &[]).await?;
         project.execute("INSERT INTO receiving.purchase_order (id,purchase_order_number,supplier_id) VALUES (gen_random_uuid(),'PASSWORD-JOURNEY','00000000-0000-0000-0000-000000000401')", &[]).await?;
         let repository = super::super::repository_root()?;
@@ -210,7 +210,7 @@ impl Login {
             .write_all(&serde_json::to_vec(&json!({
                 "url":served.url,"host":served.host,"instance":served.instance,
                 "issuer":self.endpoint,"audience":self.audience,"ca":self.ca,
-                "email":EMAIL,"password":PASSWORD,"reset_password":RESET_PASSWORD,"principal":self.human,"invitation":self.invitation,
+                "email":EMAIL,"password":PASSWORD,"reset_password":RESET_PASSWORD,"principal":self.user,"invitation":self.invitation,
             }))?)
             .await?;
         let output = child.wait_with_output().await?;
@@ -293,7 +293,7 @@ impl Login {
             "logout allowed renewal"
         );
         let replay = self.http.post(format!("{}/password/enroll", self.endpoint))
-            .json(&json!({"principal_id":self.human,"invitation":self.invitation,"password":"a different disposable password"}))
+            .json(&json!({"principal_id":self.user,"invitation":self.invitation,"password":"a different disposable password"}))
             .send().await?;
         ensure!(
             replay.status() == reqwest::StatusCode::BAD_REQUEST,
@@ -302,14 +302,14 @@ impl Login {
         let repeat = self
             .operator
             .post(format!("{}/invitations", self.endpoint))
-            .json(&json!({"principal_id":self.human}))
+            .json(&json!({"principal_id":self.user}))
             .send()
             .await?;
         ensure!(
             repeat.status() == reqwest::StatusCode::BAD_REQUEST,
             "an enrolled account accepted a replacement invitation"
         );
-        project.execute("DELETE FROM app_system.user_roles WHERE tenant_id=$1 AND user_id=$2::text::uuid AND role_name='admin'", &[&TENANT,&self.human]).await?;
+        project.execute("DELETE FROM app_system.user_roles WHERE tenant_id=$1 AND user_id=$2::text::uuid AND role_name='admin'", &[&TENANT,&self.user]).await?;
         task.abort();
         let response = self
             .http
@@ -346,7 +346,7 @@ impl Login {
             .await?;
         let removed = wamn_platform_identity::revoke_project_env_membership(
             &*admin,
-            &self.human.parse()?,
+            &self.user.parse()?,
             ORG,
             PROJECT,
             ENVIRONMENT,

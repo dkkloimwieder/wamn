@@ -2,7 +2,7 @@
 
 Federated login connects an external identity provider to WAMN.
 Future work belongs to `wamn-jpx2`; historical issues `wamn-117` and `wamn-0h0g.9` remain closed.
-The [human identity plan](identity-plan.md) settles password-first delivery and retains OIDC as future work.
+The [user identity plan](identity-plan.md) settles password-first delivery and retains OIDC as future work.
 Reassess the preceding implementation at the OIDC epic start before planning its child issues.
 Current PAT issuance, session exchange, request authorization, and revocation limits belong in [execution](../architecture/execution.md).
 

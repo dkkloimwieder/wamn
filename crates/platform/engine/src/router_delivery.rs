@@ -586,7 +586,7 @@ pub fn authorize_registered_operation(
     let caller = caller
         .filter(|caller| caller.permits(operation))
         .ok_or_else(|| OperationRefusal::new(OperationRefusalKind::PermissionDenied, operation))?;
-    // Human sessions now receive a current authority check at request admission.
+    // User sessions now receive a current authority check at request admission.
     // This does not widen the separately admitted queued-service contract.
     if fresh_only && caller.credential_type() == CredentialType::QueuedService {
         return Err(OperationRefusal::new(

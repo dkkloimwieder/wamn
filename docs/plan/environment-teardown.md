@@ -86,7 +86,7 @@ One row for each run: `org`, `project`, `env`, the deleted `instance_suffix`, an
 
 ### 4.5 What stays
 
-- The org, the project, `identity.project_roles` and every human principal.
+- The org, the project, `identity.project_roles` and every user principal.
 - The control-family generation roles and their `author_login_tenants` rows. They belong to the triple, not the instance, and a new provision of the triple uses the same names.
 - The service principals of the triple and their PATs, as in the hand procedure.
 

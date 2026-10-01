@@ -38,7 +38,7 @@ pub enum SessionAuthority {
 pub struct SessionClaims {
     /// Configured identity issuer.
     pub iss: String,
-    /// Canonical org-issued human principal UUID.
+    /// Canonical org-issued user principal UUID.
     pub sub: String,
     /// Organization identity.
     pub org: String,

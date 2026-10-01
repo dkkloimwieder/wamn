@@ -213,7 +213,7 @@ fn dedicated_session_reader_columns_and_generations_execute_on_postgres() {
             SET app.user_id = '{PRINCIPAL}'; \
             SET app.operation = 'admin:seed-session-role-reader-fixture'; \
             INSERT INTO app_system.users (tenant_id,id,type,email) VALUES \
-              ('fixture-a','{PRINCIPAL}','person','a@fixture.invalid'), ('fixture-b','{PRINCIPAL}','person','b@fixture.invalid'); \
+              ('fixture-a','{PRINCIPAL}','user','a@fixture.invalid'), ('fixture-b','{PRINCIPAL}','user','b@fixture.invalid'); \
             INSERT INTO app_system.roles (tenant_id,name) VALUES ('fixture-a','receiver'), ('fixture-b','outsider'); \
             INSERT INTO app_system.user_roles (tenant_id,user_id,role_name) VALUES \
               ('fixture-a','{PRINCIPAL}','receiver'), ('fixture-b','{PRINCIPAL}','outsider');"
@@ -293,7 +293,7 @@ fn dedicated_session_reader_columns_and_generations_execute_on_postgres() {
                 "SELECT * FROM app_system.roles",
                 "SELECT * FROM catalog.packages",
                 "SELECT * FROM wamn_run.runs",
-                "INSERT INTO app_system.users (tenant_id,id,type,status) VALUES ('fixture-a','00000000-0000-0000-0000-000000000002','person','active')",
+                "INSERT INTO app_system.users (tenant_id,id,type,status) VALUES ('fixture-a','00000000-0000-0000-0000-000000000002','user','active')",
                 "UPDATE app_system.users SET status = 'disabled'",
                 "DELETE FROM app_system.user_roles",
                 "TRUNCATE app_system.users CASCADE",

@@ -66,7 +66,7 @@ impl fmt::Debug for IdentityIssuerArgs {
     }
 }
 
-/// Arguments that name one existing human and one existing project environment.
+/// Arguments that name one existing user and one existing project environment.
 #[derive(Debug, Args)]
 pub struct ProjectEnvMembershipArgs {
     /// Organization that owns the project environment.
@@ -81,7 +81,7 @@ pub struct ProjectEnvMembershipArgs {
     #[arg(long)]
     pub env: String,
 
-    /// Existing human principal UUID from the system database.
+    /// Existing user principal UUID from the system database.
     #[arg(long)]
     pub principal_id: String,
 
@@ -90,10 +90,10 @@ pub struct ProjectEnvMembershipArgs {
     pub system_database_url: String,
 }
 
-/// Arguments that name one human principal and the operator identity client.
+/// Arguments that name one user principal and the operator identity client.
 #[derive(Debug, Args)]
 pub struct InviteArgs {
-    /// Existing human principal UUID that receives the invitation mail.
+    /// Existing user principal UUID that receives the invitation mail.
     #[arg(long)]
     pub principal: String,
 
@@ -166,14 +166,14 @@ pub async fn invite(args: InviteArgs) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Grant one human's project environment membership and print the new state.
+/// Grant one user's project environment membership and print the new state.
 pub async fn grant(args: ProjectEnvMembershipArgs) -> anyhow::Result<()> {
     let principal_id = project_env_membership::grant(membership_request(&args)).await?;
     print_membership("granted", &args, &principal_id);
     Ok(())
 }
 
-/// Revoke one human's project environment membership and print the new state.
+/// Revoke one user's project environment membership and print the new state.
 pub async fn revoke(args: ProjectEnvMembershipArgs) -> anyhow::Result<()> {
     let principal_id = project_env_membership::revoke(membership_request(&args)).await?;
     print_membership("revoked", &args, &principal_id);

@@ -208,11 +208,11 @@ const SYSTEM_IDENTITY_FIXTURE_SQL: &str = "DROP SCHEMA IF EXISTS identity CASCAD
        ('11111111-1111-4111-8111-111111111111', 'service', \
         'wamn-management-author-acme--billing--dev', NULL, \
         'WAMN management author acme/billing/dev'), \
-       ('22222222-2222-4222-8222-222222222222', 'human', \
-        'person@example.invalid', 'person@example.invalid', 'A person'), \
-       ('33333333-3333-4333-8333-333333333333', 'human', \
+       ('22222222-2222-4222-8222-222222222222', 'user', \
+        'person@example.invalid', 'person@example.invalid', 'A user'), \
+       ('33333333-3333-4333-8333-333333333333', 'user', \
         'other-env@example.invalid', 'other-env@example.invalid', \
-        'A person in another environment'); \
+        'A user in another environment'); \
      INSERT INTO identity.project_roles (principal_id, org, project, role) VALUES \
        ('11111111-1111-4111-8111-111111111111', 'acme', 'billing', 'project-author'), \
        ('22222222-2222-4222-8222-222222222222', 'acme', 'billing', 'project-author'), \
@@ -225,8 +225,8 @@ const SYSTEM_IDENTITY_FIXTURE_SQL: &str = "DROP SCHEMA IF EXISTS identity CASCAD
 /// The one service principal the fixture gives project `acme/billing`.
 const FIXTURE_SERVICE_ID: &str = "11111111-1111-4111-8111-111111111111";
 
-/// The one human the fixture admits to `acme/billing/dev` (`wamn-0h0g.9.18`).
-const FIXTURE_PERSON_ID: &str = "22222222-2222-4222-8222-222222222222";
+/// The one user the fixture admits to `acme/billing/dev` (`wamn-0h0g.9.18`).
+const FIXTURE_USER_ID: &str = "22222222-2222-4222-8222-222222222222";
 
 async fn seed_pre_durability_system_env_policy(su: &Client) {
     su.batch_execute(
@@ -269,11 +269,11 @@ async fn seed_pre_durability_system_env_policy(su: &Client) {
 /// hand. Every row is written as `wamn:provisioning`, and the
 /// `wamn:provisioning` row stamps itself.
 ///
-/// The fixture's first human holds a membership in `acme/billing/dev` and gets
-/// a person row carrying its own `identity.principals.email`
-/// (`wamn-0h0g.9.18`). The second human holds the same project role but its
+/// The fixture's first user holds a membership in `acme/billing/dev` and gets
+/// a user row carrying its own `identity.principals.email`
+/// (`wamn-0h0g.9.18`). The second user holds the same project role but its
 /// membership names `prod`, so this tenant gives it NO row: the membership
-/// admits a person, and it admits one environment.
+/// admits a user, and it admits one environment.
 ///
 /// Called after each apply in this leg, so a second run writing a second time
 /// fails here.
@@ -318,8 +318,8 @@ async fn tenant_identity_leg(su: &Client) {
                 provisioning.to_string(),
             ),
             (
-                FIXTURE_PERSON_ID.to_string(),
-                "person".to_string(),
+                FIXTURE_USER_ID.to_string(),
+                "user".to_string(),
                 "person@example.invalid".to_string(),
                 provisioning.to_string(),
             ),
@@ -336,21 +336,21 @@ async fn tenant_identity_leg(su: &Client) {
                 provisioning.to_string(),
             ),
         ],
-        "the tenant carries its five platform rows, one service row and one person row, each \
+        "the tenant carries its five platform rows, one service row and one user row, each \
          stamped by wamn:provisioning, and no row for the member of another environment",
     );
-    let person_display_name: String = su
+    let user_display_name: String = su
         .query_one(
             "SELECT display_name FROM app_system.users \
               WHERE tenant_id = 't1' AND id = $1::text::uuid",
-            &[&FIXTURE_PERSON_ID],
+            &[&FIXTURE_USER_ID],
         )
         .await
-        .expect("read the person row display name")
+        .expect("read the user row display name")
         .get(0);
     assert_eq!(
-        person_display_name, "A person",
-        "a person row carries the display name of its identity.principals row",
+        user_display_name, "A user",
+        "a user row carries the display name of its identity.principals row",
     );
 }
 

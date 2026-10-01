@@ -75,7 +75,7 @@ It takes the email domain of those rows from `registry.meta.platform_domain` in 
 
 If the value is unset, `reconcile-run-plane` refuses with `platform-domain-unset`.
 `wamn-ctl print-platform-principals --tenant "$TENANT" --platform-domain "$PLATFORM_DOMAIN"` prints the same SQL for an operator who applies it by hand.
-Person rows are not written yet, as the [record history limits](../architecture/data-access.md#limits) state.
+User rows are not written yet, as the [record history limits](../architecture/data-access.md#limits) state.
 
 After `provision-project-env` and `provision-identity-issuer`, and before any package step, reconcile the target run schema and its environment policy:
 
@@ -245,7 +245,7 @@ Set `inviteUrl` to the web client base, for example `https://receiving.wamn.dev`
 An operator sends an invitation with `wamn-ctl invite`, which uses the operator certificate flags of the PAT mint. Identity mails the invitation, and the command prints only identity's reply:
 
 ```bash
-wamn-ctl invite --principal <human principal id> --pat-issuer <identity URL> \
+wamn-ctl invite --principal <user principal id> --pat-issuer <identity URL> \
   --pat-server-ca <identity CA> --pat-client-cert <operator certificate> --pat-client-key <operator key>
 ```
 
@@ -261,7 +261,7 @@ Use the [Receiving password login](development-loop.md#receiving-password-login)
 `apply-package` writes the built-in role `admin` in each tenant.
 `admin` has no permission rows and holds every operation that the serving release serves.
 Every other role is authored in the tenant, and it holds the stable operation references `<package>:<interface>/<operation>` selected for it, with the operations that each selection requires (docs/plan/platform-ui.md §2.3).
-A person or a service reaches no route and no environment at sign-in until it holds a role.
+A user or a service reaches no route and no environment at sign-in until it holds a role.
 
 Give a role with `wamn-ctl grant-role`, and take it away with `wamn-ctl revoke-role`.
 Both verbs name the environment in the registry, as `reconcile-run-plane` does, and the user by email:
@@ -304,15 +304,15 @@ A selection that the new release does not serve is removed.
 
 ## Mailbox-loss recovery
 
-An authorized administrator approves the replacement email and updates the existing human principal.
+An authorized administrator approves the replacement email and updates the existing user principal.
 There is no separate trusted-contact channel or self-service email change.
-The person then uses normal password recovery at the replacement address.
+The user then uses normal password recovery at the replacement address.
 
 Use an authorized administrative connection to the identity service's `wamn_system` database.
 The connection must permit `SET ROLE wamn_system`.
 Do not use the scoped identity issuer credential, which cannot edit principals.
 Use the administrator's existing principal UUID as the audit actor.
-Use the affected person's existing principal UUID as the target.
+Use the affected user's existing principal UUID as the target.
 Do not create another principal or change its subject, memberships, or roles.
 
 Run this transaction in `psql` on that administrative connection:
@@ -320,20 +320,20 @@ Run this transaction in `psql` on that administrative connection:
 ```sql
 \set ON_ERROR_STOP on
 \prompt 'Administrator principal UUID: ' administrator_id
-\prompt 'Affected human principal UUID: ' principal_id
+\prompt 'Affected user principal UUID: ' principal_id
 \prompt 'Replacement email: ' replacement_email
 BEGIN;
 SET LOCAL ROLE wamn_system;
 SELECT set_config('app.user_id', :'administrator_id', true);
 SELECT EXISTS (
     SELECT 1 FROM identity.principals
-    WHERE id = :'principal_id'::uuid AND kind = 'human'
+    WHERE id = :'principal_id'::uuid AND kind = 'user'
     FOR UPDATE
 ) AS account_found \gset
 \if :account_found
 UPDATE identity.principals
 SET email = lower(btrim(:'replacement_email'))
-WHERE id = :'principal_id'::uuid AND kind = 'human';
+WHERE id = :'principal_id'::uuid AND kind = 'user';
 UPDATE identity.password_tokens
 SET consumed_at = clock_timestamp()
 WHERE principal_id = :'principal_id'::uuid AND consumed_at IS NULL;
@@ -343,7 +343,7 @@ WHERE principal_id = :'principal_id'::uuid AND revoked_at IS NULL;
 COMMIT;
 \else
 ROLLBACK;
-\echo 'No matching human principal. Nothing changed.'
+\echo 'No matching user principal. Nothing changed.'
 \endif
 ```
 
@@ -354,12 +354,12 @@ Old email secrets and renewal credentials cannot survive a successful correction
 Issued password tokens fail new admission after this transaction commits. PATs retain their separate revocation procedure.
 The correction does not reactivate a disabled account or replace its password.
 
-After commit, ask the person to request normal recovery with the replacement email.
+After commit, ask the user to request normal recovery with the replacement email.
 The recovery endpoint and reset fields are in [password enrollment](../architecture/execution.md#password-enrollment-foundation).
 Use `R` in the [Receiving sign-in screen](development-loop.md#receiving-password-login) to request recovery.
 Keep reset secrets and passwords out of command arguments and logs.
 After reset, require normal login with the new email and password.
-Run the existing `reconcile-run-plane` procedure for affected environments to update their copied person rows.
+Run the existing `reconcile-run-plane` procedure for affected environments to update their copied user rows.
 
 ## Identity target credentials
 

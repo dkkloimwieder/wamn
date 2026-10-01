@@ -6,7 +6,7 @@ use tokio_postgres::error::SqlState;
 use tokio_postgres::{Client, Transaction};
 use wamn_control_provision::{PlatformComponent, SYSTEM_SCHEMA_SQL, bind_platform_principal_sql};
 use wamn_platform_identity::{
-    IdentityErrorType, PrincipalId, PrincipalType, authenticate_pat, create_human, create_service,
+    IdentityErrorType, PrincipalId, PrincipalType, authenticate_pat, create_service, create_user,
     disable_principal, issue_pat, list_pats, revoke_pat,
 };
 use wamn_session::PAT_TOKEN_PREFIX;
@@ -47,17 +47,17 @@ async fn platform_pat_round_trip_on_postgres() {
 
     // Issuance binds wamn:provisioning in its own transaction.
     let transaction = provisioning_transaction(&mut client).await;
-    let human = create_human(
+    let user = create_user(
         &transaction,
         "author@example.com",
         "author@example.com",
         "Widget Author",
     )
     .await
-    .expect("create human principal");
-    let issued = issue_pat(&transaction, human.id(), " laptop ", TTL)
+    .expect("create user principal");
+    let issued = issue_pat(&transaction, user.id(), " laptop ", TTL)
         .await
-        .expect("issue human token from trusted context");
+        .expect("issue user token from trusted context");
     transaction.commit().await.expect("commit the issuance");
     let issued_stamps = pat_stamps(&client, issued.record().prefix()).await;
     assert_eq!(issued_stamps.created_by, provisioning);
@@ -98,7 +98,7 @@ async fn platform_pat_round_trip_on_postgres() {
         .await
         .expect("authenticate token")
         .expect("a valid token must authenticate");
-    assert_eq!(authenticated.principal().id(), human.id());
+    assert_eq!(authenticated.principal().id(), user.id());
 
     // A forged secret under a known lookup prefix is refused like any other.
     let forged = flip_last_hex_digit(&token);
@@ -160,7 +160,7 @@ async fn platform_pat_round_trip_on_postgres() {
     // Revocation is a one-way stamp and repeating it changes nothing. It
     // binds wamn:provisioning in a later transaction and keeps the created pair.
     let transaction = provisioning_transaction(&mut client).await;
-    let revocable = issue_pat(&transaction, human.id(), "revocable", TTL)
+    let revocable = issue_pat(&transaction, user.id(), "revocable", TTL)
         .await
         .expect("issue revocable token");
     transaction.commit().await.expect("commit the issuance");
@@ -189,11 +189,11 @@ async fn platform_pat_round_trip_on_postgres() {
         .await
         .expect("bind wamn:provisioning for the fixture session");
     platform_principal_cannot_hold_a_token(&client, &provisioning).await;
-    token_rows_refuse_malformed_values(&client, human.id(), &prefix).await;
+    token_rows_refuse_malformed_values(&client, user.id(), &prefix).await;
 
     // An elapsed expiry refuses without any revocation. The stamp trigger keeps
     // created_at, so the fixture moves expires_at to just after it.
-    let expired = issue_pat(&client, human.id(), "expiring", TTL)
+    let expired = issue_pat(&client, user.id(), "expiring", TTL)
         .await
         .expect("issue expiring token");
     client
@@ -261,9 +261,9 @@ async fn platform_pat_round_trip_on_postgres() {
     );
 
     // Listing returns the stored metadata, newest first, and no token material.
-    let listed = list_pats(&client, human.id())
+    let listed = list_pats(&client, user.id())
         .await
-        .expect("list human tokens");
+        .expect("list user tokens");
     assert_eq!(
         listed
             .iter()
@@ -275,9 +275,9 @@ async fn platform_pat_round_trip_on_postgres() {
     assert!(!format!("{listed:?}").contains(&token));
 
     // Disabling the principal refuses live tokens and further issuance.
-    disable_principal(&client, human.id())
+    disable_principal(&client, user.id())
         .await
-        .expect("disable human");
+        .expect("disable user");
     assert!(
         authenticate_pat(&client, &token)
             .await
@@ -285,7 +285,7 @@ async fn platform_pat_round_trip_on_postgres() {
             .is_none()
     );
     assert_eq!(
-        issue_pat(&client, human.id(), "after-disable", TTL)
+        issue_pat(&client, user.id(), "after-disable", TTL)
             .await
             .expect_err("disabled principals must not gain tokens")
             .kind(),
@@ -365,7 +365,7 @@ async fn platform_principal_cannot_hold_a_token(client: &Client, provisioning: &
     );
     for (kind, code) in [
         ("platform", SqlState::CHECK_VIOLATION),
-        ("human", SqlState::FOREIGN_KEY_VIOLATION),
+        ("user", SqlState::FOREIGN_KEY_VIOLATION),
         ("service", SqlState::FOREIGN_KEY_VIOLATION),
     ] {
         let error = client
@@ -440,7 +440,7 @@ async fn token_rows_refuse_malformed_values(
                 &format!(
                     "INSERT INTO identity.pats \
                        (principal_id, principal_type, token_prefix, token_hash, label, expires_at) \
-                     VALUES ($1::text::uuid, 'human', $2, $3, 'malformed', {expiry})"
+                     VALUES ($1::text::uuid, 'user', $2, $3, 'malformed', {expiry})"
                 ),
                 &[&principal.as_str(), &token_prefix, &token_hash],
             )

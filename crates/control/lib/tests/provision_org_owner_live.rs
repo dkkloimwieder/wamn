@@ -80,7 +80,7 @@ async fn provision_org_writes_the_owner_of_a_known_email_and_refuses_an_unknown_
             .await
             .expect("bind wamn:provisioning");
         let owner =
-            wamn_platform_identity::create_human(&transaction, "owner", OWNER_EMAIL, "Org Owner")
+            wamn_platform_identity::create_user(&transaction, "owner", OWNER_EMAIL, "Org Owner")
                 .await
                 .expect("create the owner");
         transaction.commit().await.expect("commit the owner");
@@ -99,7 +99,7 @@ async fn provision_org_writes_the_owner_of_a_known_email_and_refuses_an_unknown_
     .await
     .expect_err("an unknown owner email is refused");
     assert!(
-        format!("{error:#}").contains("names no human principal"),
+        format!("{error:#}").contains("names no user principal"),
         "{error:#}"
     );
     assert!(

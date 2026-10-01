@@ -18,7 +18,7 @@ use wamn_engine::release_manifest::LoadedRelease;
 use wamn_engine::router_delivery::authorize_attachment_for_test;
 use wamn_gate_harness::journey::{journey_document_schema_bytes, parse_journey_document};
 use wamn_platform_identity::{
-    PrincipalType, assign_project_role, create_human, create_service, disable_principal, issue_pat,
+    PrincipalType, assign_project_role, create_service, create_user, disable_principal, issue_pat,
     operator_subject, resolve_subject, revoke_pat,
 };
 use wamn_project_state::ADMIN_ROLE;
@@ -173,7 +173,7 @@ async fn install_project_and_reconcile(project: &Client, project_url: &str) -> a
     project
         .execute(
             "INSERT INTO app_system.users (tenant_id, id, type, email) \
-             VALUES ($1, $2::text::uuid, 'person', 'fixture@example.invalid')",
+             VALUES ($1, $2::text::uuid, 'user', 'fixture@example.invalid')",
             &[&TENANT, &FIXTURE_PRINCIPAL],
         )
         .await
@@ -394,7 +394,7 @@ fn flip_last_hex_digit(token: &str) -> String {
     format!("{head}{replacement}")
 }
 
-async fn assert_human_environment_membership(
+async fn assert_user_environment_membership(
     admin: &Client,
     admin_url: &str,
     identity_url: &str,
@@ -402,14 +402,14 @@ async fn assert_human_environment_membership(
     route_auth: &FlowHttpRouting,
     loaded_release: &LoadedRelease,
 ) -> anyhow::Result<()> {
-    let human = create_human(
+    let user = create_user(
         admin,
         "member@example.test",
         "member@example.test",
         "Environment member",
     )
     .await?;
-    let other = create_human(
+    let other = create_user(
         admin,
         "other@example.test",
         "other@example.test",
@@ -418,7 +418,7 @@ async fn assert_human_environment_membership(
     .await?;
     let token = issue_pat(
         admin,
-        human.id(),
+        user.id(),
         "membership test",
         Duration::from_secs(3600),
     )
@@ -447,40 +447,40 @@ async fn assert_human_environment_membership(
     project
         .execute(
             "INSERT INTO app_system.users (tenant_id, id, type, email) \
-         VALUES ($1, $2::text::uuid, 'person', 'member@example.test'), \
-                ($1, $3::text::uuid, 'person', 'other@example.test'), \
-                ('other-tenant', $2::text::uuid, 'person', 'member@example.test')",
-            &[&TENANT, &human.id().as_str(), &other.id().as_str()],
+         VALUES ($1, $2::text::uuid, 'user', 'member@example.test'), \
+                ($1, $3::text::uuid, 'user', 'other@example.test'), \
+                ('other-tenant', $2::text::uuid, 'user', 'member@example.test')",
+            &[&TENANT, &user.id().as_str(), &other.id().as_str()],
         )
         .await?;
     project
         .execute(
             "INSERT INTO app_system.roles (tenant_id, name) \
-         VALUES ($1, 'human-reader'), ($1, 'human-extra'), \
-                ('other-tenant', 'human-reader')",
+         VALUES ($1, 'user-reader'), ($1, 'user-extra'), \
+                ('other-tenant', 'user-reader')",
             &[&TENANT],
         )
         .await?;
     project
         .execute(
             "INSERT INTO app_system.user_roles (tenant_id, user_id, role_name) \
-         VALUES ($1, $2::text::uuid, 'human-reader'), ($1, $2::text::uuid, 'human-extra'), \
-                ('other-tenant', $2::text::uuid, 'human-reader')",
-            &[&TENANT, &human.id().as_str()],
+         VALUES ($1, $2::text::uuid, 'user-reader'), ($1, $2::text::uuid, 'user-extra'), \
+                ('other-tenant', $2::text::uuid, 'user-reader')",
+            &[&TENANT, &user.id().as_str()],
         )
         .await?;
     project
         .execute(
             "INSERT INTO app_system.permissions (tenant_id, role_name, permission, required_by) \
-         VALUES ($1, 'human-reader', $2, $2), \
-                ($1, 'human-extra', 'route-auth-fixture:item/extra', 'route-auth-fixture:item/extra'), \
-                ('other-tenant', 'human-reader', 'route-auth-fixture:item/other-tenant', \
+         VALUES ($1, 'user-reader', $2, $2), \
+                ($1, 'user-extra', 'route-auth-fixture:item/extra', 'route-auth-fixture:item/extra'), \
+                ('other-tenant', 'user-reader', 'route-auth-fixture:item/other-tenant', \
                  'route-auth-fixture:item/other-tenant')",
             &[&TENANT, &OPERATION_REFERENCE],
         )
         .await?;
     // A project-wide role and another environment's membership cannot authorize this route.
-    assign_project_role(admin, human.id(), ORG, PROJECT, ADMIN_ROLE).await?;
+    assign_project_role(admin, user.id(), ORG, PROJECT, ADMIN_ROLE).await?;
     let unauthorized = Refusal::Authentication(401, "unauthorized".to_owned());
     let mut admissions = 0;
     assert_eq!(
@@ -494,7 +494,7 @@ async fn assert_human_environment_membership(
         Err(unauthorized.clone())
     );
     for (org, env) in [(ORG, OTHER_ENVIRONMENT), ("other-org", ENVIRONMENT)] {
-        project_env_membership::grant(membership(org, env, human.id().as_str())).await?;
+        project_env_membership::grant(membership(org, env, user.id().as_str())).await?;
         assert_eq!(
             invoke(
                 route_auth,
@@ -507,7 +507,7 @@ async fn assert_human_environment_membership(
             "membership in {org}/{PROJECT}/{env} authorized a different environment"
         );
     }
-    let mut other_project = membership(ORG, ENVIRONMENT, human.id().as_str());
+    let mut other_project = membership(ORG, ENVIRONMENT, user.id().as_str());
     other_project.project = OTHER_PROJECT.to_owned();
     project_env_membership::grant(other_project).await?;
     assert_eq!(
@@ -521,7 +521,7 @@ async fn assert_human_environment_membership(
         Err(unauthorized.clone()),
         "membership in another project authorized this route"
     );
-    let mut forbidden_writer = membership(ORG, ENVIRONMENT, human.id().as_str());
+    let mut forbidden_writer = membership(ORG, ENVIRONMENT, user.id().as_str());
     forbidden_writer.system_database_url = identity_url.to_owned();
     project_env_membership::grant(forbidden_writer)
         .await
@@ -539,14 +539,14 @@ async fn assert_human_environment_membership(
     assert_eq!(admissions, 0, "a nonmember reached application admission");
 
     for _ in 0..2 {
-        project_env_membership::grant(membership(ORG, ENVIRONMENT, human.id().as_str())).await?;
+        project_env_membership::grant(membership(ORG, ENVIRONMENT, user.id().as_str())).await?;
     }
     assert_eq!(
         admin
             .query_one(
                 "SELECT count(*) FROM identity.project_env_memberships \
          WHERE principal_id = $1::text::uuid AND org = $2 AND project = $3 AND env = $4",
-                &[&human.id().as_str(), &ORG, &PROJECT, &ENVIRONMENT],
+                &[&user.id().as_str(), &ORG, &PROJECT, &ENVIRONMENT],
             )
             .await?
             .get::<_, i64>(0),
@@ -563,9 +563,9 @@ async fn assert_human_environment_membership(
     let caller = route_auth
         .authenticate_authorization_for_test(ATTACHMENT_ID, Some(&authorization))
         .await
-        .expect("authenticate human PAT")
+        .expect("authenticate user PAT")
         .expect("authenticated caller");
-    assert_eq!(caller.principal_id(), human.id().as_str());
+    assert_eq!(caller.principal_id(), user.id().as_str());
     assert!(caller.permits(OPERATION));
     assert!(
         caller.permits("route-auth-fixture:item/extra@1.0.0"),
@@ -578,7 +578,7 @@ async fn assert_human_environment_membership(
 
     let expired = issue_pat(
         admin,
-        human.id(),
+        user.id(),
         "expired member",
         Duration::from_secs(3600),
     )
@@ -592,7 +592,7 @@ async fn assert_human_environment_membership(
         .await?;
     let revoked = issue_pat(
         admin,
-        human.id(),
+        user.id(),
         "revoked member",
         Duration::from_secs(3600),
     )
@@ -602,14 +602,14 @@ async fn assert_human_environment_membership(
         route_auth
             .authenticate_authorization_for_test(ATTACHMENT_ID, Some(&revoked_authorization))
             .await
-            .expect("authenticate human before PAT revocation")
+            .expect("authenticate user before PAT revocation")
             .is_some()
     );
     revoke_pat(admin, revoked.record().prefix()).await?;
     for (label, invalid) in [
-        ("forged human PAT", flip_last_hex_digit(token.token())),
-        ("expired human PAT", expired.token().to_owned()),
-        ("revoked human PAT", revoked.token().to_owned()),
+        ("forged user PAT", flip_last_hex_digit(token.token())),
+        ("expired user PAT", expired.token().to_owned()),
+        ("revoked user PAT", revoked.token().to_owned()),
     ] {
         assert_eq!(
             invoke(
@@ -639,8 +639,8 @@ async fn assert_human_environment_membership(
         "membership alone cannot supply another user's permissions"
     );
     project.execute(
-        "DELETE FROM app_system.user_roles WHERE tenant_id = $1 AND user_id = $2::text::uuid AND role_name = 'human-reader'",
-        &[&TENANT, &human.id().as_str()],
+        "DELETE FROM app_system.user_roles WHERE tenant_id = $1 AND user_id = $2::text::uuid AND role_name = 'user-reader'",
+        &[&TENANT, &user.id().as_str()],
     ).await?;
     assert_eq!(
         invoke(
@@ -654,12 +654,12 @@ async fn assert_human_environment_membership(
         "role removal must affect the next request"
     );
     project.execute(
-        "INSERT INTO app_system.user_roles (tenant_id, user_id, role_name) VALUES ($1, $2::text::uuid, 'human-reader')",
-        &[&TENANT, &human.id().as_str()],
+        "INSERT INTO app_system.user_roles (tenant_id, user_id, role_name) VALUES ($1, $2::text::uuid, 'user-reader')",
+        &[&TENANT, &user.id().as_str()],
     ).await?;
     project.execute(
         "UPDATE app_system.users SET status = 'disabled' WHERE tenant_id = $1 AND id = $2::text::uuid",
-        &[&TENANT, &human.id().as_str()],
+        &[&TENANT, &user.id().as_str()],
     ).await?;
     assert_eq!(
         invoke(
@@ -673,7 +673,7 @@ async fn assert_human_environment_membership(
     );
     project.execute(
         "UPDATE app_system.users SET status = 'active' WHERE tenant_id = $1 AND id = $2::text::uuid",
-        &[&TENANT, &human.id().as_str()],
+        &[&TENANT, &user.id().as_str()],
     ).await?;
     invoke(
         route_auth,
@@ -684,7 +684,7 @@ async fn assert_human_environment_membership(
     .await
     .expect("restored environment role authorizes again");
     for _ in 0..2 {
-        project_env_membership::revoke(membership(ORG, ENVIRONMENT, human.id().as_str())).await?;
+        project_env_membership::revoke(membership(ORG, ENVIRONMENT, user.id().as_str())).await?;
         assert_eq!(
             invoke(
                 route_auth,
@@ -696,8 +696,8 @@ async fn assert_human_environment_membership(
             Err(unauthorized.clone())
         );
     }
-    project_env_membership::grant(membership(ORG, ENVIRONMENT, human.id().as_str())).await?;
-    disable_principal(admin, human.id()).await?;
+    project_env_membership::grant(membership(ORG, ENVIRONMENT, user.id().as_str())).await?;
+    disable_principal(admin, user.id()).await?;
     assert_eq!(
         invoke(
             route_auth,
@@ -710,7 +710,7 @@ async fn assert_human_environment_membership(
     );
     assert_eq!(
         admissions, 2,
-        "a refused human request reached application admission"
+        "a refused user request reached application admission"
     );
     Ok(())
 }
@@ -812,7 +812,7 @@ async fn production_operator_authentication_and_operation_authorization() {
     .await
     .expect("build route authentication");
 
-    assert_human_environment_membership(
+    assert_user_environment_membership(
         &admin,
         &admin_url,
         &identity_url,
@@ -821,9 +821,7 @@ async fn production_operator_authentication_and_operation_authorization() {
         &loaded_release,
     )
     .await
-    .expect(
-        "test human environment membership through the production CLI and route authentication",
-    );
+    .expect("test user environment membership through the production CLI and route authentication");
 
     let mut router_admissions = 0;
     let valid = format!("Bearer {}", route.token);
@@ -1131,9 +1129,9 @@ async fn role_verbs_grant_and_revoke_existing_roles() {
         .await
         .expect("publish the fixture package");
     for (email, kind) in [
-        ("person@example.invalid", "person"),
-        ("twin@example.invalid", "person"),
-        ("TWIN@example.invalid", "person"),
+        ("person@example.invalid", "user"),
+        ("twin@example.invalid", "user"),
+        ("TWIN@example.invalid", "user"),
         ("service@example.invalid", "service"),
     ] {
         project

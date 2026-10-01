@@ -53,7 +53,7 @@ use wamn_control_provision::{
     system_reader_generation_role,
 };
 use wamn_platform_identity::{
-    IssuedPat, assign_project_role, create_human, create_service, issue_pat, resolve_subject,
+    IssuedPat, assign_project_role, create_service, create_user, issue_pat, resolve_subject,
     revoke_pat,
 };
 use wamn_schema_control::connections::ComponentConnectionRequirement;
@@ -972,14 +972,14 @@ async fn provision(admin: &mut Client, admin_url: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Create one human with a project role and mint a token for it.
-async fn admitted_human(
+/// Create one user with a project role and mint a token for it.
+async fn admitted_user(
     admin: &Client,
     subject: &str,
     project: &str,
     role: &str,
 ) -> anyhow::Result<IssuedPat> {
-    let principal = create_human(admin, subject, subject, subject).await?;
+    let principal = create_user(admin, subject, subject, subject).await?;
     assign_project_role(admin, principal.id(), ORG, project, role).await?;
     issue_pat(admin, principal.id(), "gate", TTL)
         .await
@@ -1184,7 +1184,7 @@ async fn run_connection_gate_case(case: ConnectionGateCase) {
     let (project, project_task) = provision_project(&admin, url)
         .await
         .expect("provision the project plane");
-    let principal = admitted_human(
+    let principal = admitted_user(
         &admin,
         "connection-gate@example.com",
         PROJECT,
@@ -1244,7 +1244,7 @@ async fn management_surface_reconnects_after_the_verification_database_is_recrea
     let (project, project_task) = provision_project(&admin, url)
         .await
         .expect("provision the first verification database");
-    let principal = admitted_human(&admin, "reconnect@example.com", PROJECT, "project-author")
+    let principal = admitted_user(&admin, "reconnect@example.com", PROJECT, "project-author")
         .await
         .expect("admit the reconnect test principal");
     let surface = start_management_surface(url).await;
@@ -1329,10 +1329,10 @@ async fn management_surface_authenticates_and_attributes_authoring_commands() {
 
     // Two admitted principals for the same project, one service principal, one
     // principal admitted only for a different project, and one with no role.
-    let alice = admitted_human(&admin, "alice@example.com", PROJECT, "project-author")
+    let alice = admitted_user(&admin, "alice@example.com", PROJECT, "project-author")
         .await
         .expect("admit alice");
-    let bob = admitted_human(&admin, "bob@example.com", PROJECT, "project-admin")
+    let bob = admitted_user(&admin, "bob@example.com", PROJECT, "project-admin")
         .await
         .expect("admit bob");
     let service = create_service(&admin, "ci-runner", "CI runner")
@@ -1344,7 +1344,7 @@ async fn management_surface_authenticates_and_attributes_authoring_commands() {
     let service_token = issue_pat(&admin, service.id(), "gate", TTL)
         .await
         .expect("mint a service token");
-    let stranger = admitted_human(
+    let stranger = admitted_user(
         &admin,
         "stranger@example.com",
         OTHER_PROJECT,
@@ -1352,7 +1352,7 @@ async fn management_surface_authenticates_and_attributes_authoring_commands() {
     )
     .await
     .expect("admit the stranger elsewhere");
-    let roleless = create_human(
+    let roleless = create_user(
         &admin,
         "roleless@example.com",
         "roleless@example.com",
@@ -1365,13 +1365,13 @@ async fn management_surface_authenticates_and_attributes_authoring_commands() {
         .expect("mint a roleless token");
 
     // A revoked token and an expired token, both otherwise well formed.
-    let revoked = admitted_human(&admin, "revoked@example.com", PROJECT, "project-author")
+    let revoked = admitted_user(&admin, "revoked@example.com", PROJECT, "project-author")
         .await
         .expect("admit the revoked principal");
     revoke_pat(&admin, revoked.record().prefix())
         .await
         .expect("revoke a token");
-    let expired = admitted_human(&admin, "expired@example.com", PROJECT, "project-author")
+    let expired = admitted_user(&admin, "expired@example.com", PROJECT, "project-author")
         .await
         .expect("admit the expiring principal");
     admin
@@ -1606,7 +1606,7 @@ async fn management_surface_authenticates_and_attributes_authoring_commands() {
 
     let alice_principal = resolve_subject(
         &admin,
-        wamn_platform_identity::PrincipalType::Human,
+        wamn_platform_identity::PrincipalType::User,
         "alice@example.com",
     )
     .await
@@ -1614,7 +1614,7 @@ async fn management_surface_authenticates_and_attributes_authoring_commands() {
     .expect("alice exists");
     let bob_principal = resolve_subject(
         &admin,
-        wamn_platform_identity::PrincipalType::Human,
+        wamn_platform_identity::PrincipalType::User,
         "bob@example.com",
     )
     .await
@@ -1885,7 +1885,7 @@ async fn management_surface_authenticates_and_attributes_authoring_commands() {
     assert_eq!(bob_row.2, "gate");
     assert_eq!(bob_row.3, "project-admin");
 
-    // A SERVICE token reaches the same command on the same terms as a human
+    // A SERVICE token reaches the same command on the same terms as a user
     // one, and is attributed as itself.
     let by_service = post(
         "/authoring",

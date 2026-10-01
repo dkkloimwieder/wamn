@@ -15,7 +15,7 @@ pub mod component_declaration;
 #[cfg(feature = "ops")]
 pub mod copy_project_env;
 #[cfg(feature = "ops")]
-pub mod create_human;
+pub mod create_user;
 pub mod delete_project_env;
 pub mod delivery;
 pub mod dev;

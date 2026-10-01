@@ -654,7 +654,7 @@ async fn exact_runner_commits_once_refuses_drift_and_rolls_back_a_failing_suffix
              SELECT set_config('app.user_id', '{FIXTURE_PRINCIPAL}', true), \
                     set_config('app.operation', 'admin:seed-grant-residue-fixture', true); \
              INSERT INTO app_system.users (tenant_id, id, type, email) \
-                 VALUES ('{TENANT}', '{FIXTURE_PRINCIPAL}', 'person', 'fixture@example.invalid'); \
+                 VALUES ('{TENANT}', '{FIXTURE_PRINCIPAL}', 'user', 'fixture@example.invalid'); \
              INSERT INTO app_system.roles (tenant_id, name) \
                  VALUES ('{TENANT}', 'clerk'); \
              INSERT INTO app_system.permissions (tenant_id, role_name, permission, required_by) VALUES \

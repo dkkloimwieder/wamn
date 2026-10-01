@@ -184,7 +184,7 @@ impl AuthorizedAuthor {
         &self.principal_id
     }
 
-    /// Return whether a human or a service presented the token.
+    /// Return whether a user or a service presented the token.
     pub const fn principal_type(&self) -> PrincipalType {
         self.principal_type
     }

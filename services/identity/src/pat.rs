@@ -72,7 +72,7 @@ async fn issue(inner: &Inner, request: Request<Incoming>) -> Response<Full<Bytes
     let Ok(principal) = request.principal_id.parse::<PrincipalId>() else {
         return invalid_request();
     };
-    // Issuance has no person caller yet, so the token row stamps wamn:provisioning.
+    // Issuance has no user caller yet, so the token row stamps wamn:provisioning.
     let mut issuance = inner.issuance.lock().await;
     if inner.reopen(&mut issuance).await.is_err() {
         return unavailable();

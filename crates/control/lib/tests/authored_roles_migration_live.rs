@@ -22,7 +22,7 @@ const OLD_APP_SCHEMA: &str = include_str!("fixtures/app-schema-before-authored-r
 const PROVISIONING: &str = "770df186-ac15-579e-b46b-c297cae2011b";
 const SERVICE: &str = "00000000-0000-4000-8000-0000000000a1";
 const BOTH: &str = "00000000-0000-4000-8000-0000000000a2";
-const PERSON: &str = "00000000-0000-4000-8000-0000000000a3";
+const USER: &str = "00000000-0000-4000-8000-0000000000a3";
 
 async fn connect(url: &str) -> Client {
     let (client, connection) = tokio_postgres::connect(url, NoTls)
@@ -72,10 +72,10 @@ async fn system_migration_moves_operator_services_to_admin() {
              INSERT INTO registry.projects (org, id) VALUES ('acme', 'shop'); \
              INSERT INTO identity.principals (id, type, subject, display_name) VALUES \
                ('{SERVICE}', 'service', 'svc-a', 'A'), ('{BOTH}', 'service', 'svc-b', 'B'), \
-               ('{PERSON}', 'service', 'svc-c', 'C'); \
+               ('{USER}', 'service', 'svc-c', 'C'); \
              INSERT INTO identity.project_roles (principal_id, org, project, role) VALUES \
                ('{SERVICE}', 'acme', 'shop', 'operator'), ('{BOTH}', 'acme', 'shop', 'operator'), \
-               ('{BOTH}', 'acme', 'shop', 'admin'), ('{PERSON}', 'acme', 'shop', 'project-author'); \
+               ('{BOTH}', 'acme', 'shop', 'admin'), ('{USER}', 'acme', 'shop', 'project-author'); \
              COMMIT;"
         ))
         .await
@@ -94,7 +94,7 @@ async fn system_migration_moves_operator_services_to_admin() {
         [
             format!("{SERVICE} admin"),
             format!("{BOTH} admin"),
-            format!("{PERSON} project-author"),
+            format!("{USER} project-author"),
         ]
     );
 }
@@ -122,12 +122,12 @@ async fn project_migration_moves_roles_and_permissions_to_references() {
              INSERT INTO app_system.users (tenant_id, id, type, email) VALUES \
                ('t1', '{SERVICE}', 'service', 'a@example.invalid'), \
                ('t1', '{BOTH}', 'person', 'b@example.invalid'), \
-               ('t1', '{PERSON}', 'person', 'c@example.invalid'); \
+               ('t1', '{USER}', 'person', 'c@example.invalid'); \
              INSERT INTO app_system.roles (tenant_id, name) VALUES \
                ('t1', 'operator'), ('t1', 'admin'), ('t1', 'clerk'); \
              INSERT INTO app_system.user_roles (tenant_id, user_id, role_name) VALUES \
                ('t1', '{SERVICE}', 'operator'), ('t1', '{BOTH}', 'operator'), \
-               ('t1', '{BOTH}', 'admin'), ('t1', '{PERSON}', 'clerk'); \
+               ('t1', '{BOTH}', 'admin'), ('t1', '{USER}', 'clerk'); \
              INSERT INTO app_system.permissions (tenant_id, role_name, permission) VALUES \
                ('t1', 'operator', 'shop:order/get@1.0.0'), ('t1', 'admin', 'shop:order/get@1.0.0'), \
                ('t1', 'clerk', 'shop:order/get@1.0.0'), ('t1', 'clerk', 'shop:order/get@1.1.0'), \
@@ -154,7 +154,7 @@ async fn project_migration_moves_roles_and_permissions_to_references() {
         [
             format!("{SERVICE} admin"),
             format!("{BOTH} admin"),
-            format!("{PERSON} clerk"),
+            format!("{USER} clerk"),
         ]
     );
     assert_eq!(

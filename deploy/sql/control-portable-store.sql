@@ -280,13 +280,15 @@ CREATE TABLE catalog.tenant_environments (
     CONSTRAINT tenant_environments_pkey PRIMARY KEY (tenant_id)
 );
 
+-- `principal_type` admits `human`, because the audit is immutable and rows
+-- written before system migration 0007 keep the old name of `user`.
 CREATE TABLE catalog.authoring_command_audit (
     tenant_id         text        NOT NULL CHECK (tenant_id <> ''),
     audit_id          uuid        NOT NULL DEFAULT gen_random_uuid(),
     command_id        text        NOT NULL CHECK (command_id <> ''),
     command_type      text        NOT NULL CHECK (command_type IN ('gate', 'publish')),
     principal_id      text        NOT NULL CHECK (principal_id <> ''),
-    principal_type    text        NOT NULL CHECK (principal_type IN ('human', 'service')),
+    principal_type    text        NOT NULL CHECK (principal_type IN ('user', 'service', 'human')),
     principal_subject text        NOT NULL CHECK (principal_subject <> ''),
     effective_role    text        NOT NULL
         CHECK (effective_role IN ('project-author', 'project-admin')),

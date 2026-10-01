@@ -16,7 +16,7 @@
 //!    rows — **insert-if-absent**, so re-provisioning keeps the org's per-env
 //!    customizations and a richer template only adds missing envs — in one
 //!    transaction, as the `wamn_system` owner. With an owner email, the same
-//!    transaction writes that person's active org membership and `org-admin`
+//!    transaction writes that user's active org membership and `org-admin`
 //!    row, stamped `wamn:provisioning` (docs/plan/platform-ui.md §4.4);
 //! 3. for a dedicated org, renders one CNPG `Cluster` CR per distinct
 //!    recovery-domain owner across the org's (post-stamp) policies
@@ -71,10 +71,10 @@ pub struct ProvisionOrgRequest {
     /// Namespace of the rendered `Cluster` CRs and of the backup CRs beside them.
     pub cluster_namespace: String,
 
-    /// The email of an existing human principal who owns the org: the run
-    /// writes that person's active org membership and `org-admin` row. It
+    /// The email of an existing user principal who owns the org: the run
+    /// writes that user's active org membership and `org-admin` row. It
     /// needs `system_database_url`. A fixture that creates the org before any
-    /// person exists passes `None`.
+    /// user exists passes `None`.
     pub owner_email: Option<String>,
 }
 
@@ -261,9 +261,9 @@ async fn record_org_rows(
     Ok(())
 }
 
-/// The human principal an owner email names.
+/// The user principal an owner email names.
 const OWNER_PRINCIPAL_SQL: &str =
-    "SELECT id::text FROM identity.principals WHERE type = 'human' AND email = $1";
+    "SELECT id::text FROM identity.principals WHERE type = 'user' AND email = $1";
 
 /// The owner's active org membership. A re-run makes an inactive owner active.
 const OWNER_MEMBERSHIP_SQL: &str = "INSERT INTO identity.org_memberships \
@@ -277,7 +277,7 @@ const OWNER_ORG_ADMIN_SQL: &str = "INSERT INTO identity.org_roles (principal_id,
 
 /// Write the owner's active org membership and `org-admin` row, stamped
 /// `wamn:provisioning`, inside the caller's transaction. An email that names
-/// no human principal is refused.
+/// no user principal is refused.
 async fn record_owner_rows(
     client: &tokio_postgres::Client,
     org: &str,
@@ -293,7 +293,7 @@ async fn record_owner_rows(
         .query_opt(OWNER_PRINCIPAL_SQL, &[&email])
         .await
         .context("look up the owner email")?
-        .with_context(|| format!("--owner-email {email:?} names no human principal"))?
+        .with_context(|| format!("--owner-email {email:?} names no user principal"))?
         .get(0);
     client
         .execute(OWNER_MEMBERSHIP_SQL, &[&owner, &org])

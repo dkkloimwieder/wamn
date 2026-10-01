@@ -382,15 +382,15 @@ session_target() {
     --tenant "$tenant" --platform-domain example.invalid >"$evidence_dir/session-$label-platform-principals.sql"
   run "${kube[@]}" -n "$namespace" exec -i "deployment/$postgres" -- psql -U postgres -d "$database" -v ON_ERROR_STOP=1 \
     --single-transaction <"$evidence_dir/session-$label-platform-principals.sql" >"$evidence_dir/session-$label-platform-principals.log" 2>&1
-  # The fixture writes as the session human, whose row stamps itself, under
+  # The fixture writes as the session user, whose row stamps itself, under
   # an administrative operation, because every app_system table keeps a log.
-  printf '%s\n' "SET app.user_id = '$session_human_id';" \
+  printf '%s\n' "SET app.user_id = '$session_user_id';" \
     "SET app.operation = 'admin:seed-session-journey-fixture';" \
     "CREATE SCHEMA catalog; CREATE SCHEMA wamn_run;" \
     "REVOKE CONNECT, TEMPORARY ON DATABASE \"$database\" FROM PUBLIC;" \
-    "INSERT INTO app_system.users (tenant_id,id,type,email) VALUES ('$tenant','$session_human_id','person','session@example.invalid');" \
+    "INSERT INTO app_system.users (tenant_id,id,type,email) VALUES ('$tenant','$session_user_id','user','session@example.invalid');" \
     "INSERT INTO app_system.roles (tenant_id,name) VALUES ('$tenant','$role');" \
-    "INSERT INTO app_system.user_roles (tenant_id,user_id,role_name) VALUES ('$tenant','$session_human_id','$role');" \
+    "INSERT INTO app_system.user_roles (tenant_id,user_id,role_name) VALUES ('$tenant','$session_user_id','$role');" \
     >"$evidence_dir/session-$label-data.sql"
   run "${kube[@]}" -n "$namespace" exec -i "deployment/$postgres" -- psql -U postgres -d "$database" -v ON_ERROR_STOP=1 \
     <"$evidence_dir/session-$label-data.sql" >"$evidence_dir/session-$label-data.log" 2>&1
@@ -421,7 +421,7 @@ session_target() {
   run "${kube[@]}" -n "$namespace" delete secret "$admin_secret" --wait=true --timeout=60s
 }
 session_journey() {
-  local session_human_id session_kid index
+  local session_user_id session_kid index
   local -a session_target_secrets=() session_audiences=()
   # Registry rows and app roles are fixture data in the owned PG18 server.
   # Raw PATs are created below by the production identity library, not SQL.
@@ -440,13 +440,13 @@ session_journey() {
     /usr/local/bin/wamn-gates identity-session-fixture --output /tmp/identity-session.json \
     >"$evidence_dir/session-pat-fixture.log" 2>&1
   run "${kube[@]}" -n "$namespace" exec "$provisioner" -- cat /tmp/identity-session.json >"$work_dir/identity-session.json"
-  session_human_id=$(jq -er '.human_id | select(test("^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$"))' "$work_dir/identity-session.json")
-  jq '{human_id,service_id}' "$work_dir/identity-session.json" >"$evidence_dir/session-principals.json"
+  session_user_id=$(jq -er '.user_id | select(test("^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$"))' "$work_dir/identity-session.json")
+  jq '{user_id,service_id}' "$work_dir/identity-session.json" >"$evidence_dir/session-principals.json"
   session_target acme dev k3m9x2p7 t1 member
   session_target acme prod p7x2m9k3 t2 administrator
   session_target other dev q2n5r8t4 t3 outsider
   run "${kube[@]}" -n "$namespace" exec "$provisioner" -- /usr/local/bin/wamn-ctl grant-project-env-membership \
-    --org acme --project shared --env dev --principal-id "$session_human_id" \
+    --org acme --project shared --env dev --principal-id "$session_user_id" \
     >"$evidence_dir/session-grant-membership.log" 2>&1
   # The five foundation Jobs ran with no target files, including their absent
   # /session assertion. Configure exchange only after those Jobs have passed.
@@ -464,16 +464,16 @@ session_journey() {
   jq -n --slurpfile fixture "$work_dir/identity-session.json" \
     --arg dev "${session_audiences[0]}" --arg prod "${session_audiences[1]}" --arg other "${session_audiences[2]}" \
     '$fixture[0] as $f | [
-      {name:"human-dev",pat:$f.human_pat,audience:$dev,expected_status:200,subject:$f.human_id,org:"acme",roles:["member"]},
-      {name:"human-prod-no-membership",pat:$f.human_pat,audience:$prod,expected_status:401,subject:"",org:"",roles:[]},
-      {name:"human-wrong-org",pat:$f.human_pat,audience:$other,expected_status:401,subject:"",org:"",roles:[]},
+      {name:"user-dev",pat:$f.user_pat,audience:$dev,expected_status:200,subject:$f.user_id,org:"acme",roles:["member"]},
+      {name:"user-prod-no-membership",pat:$f.user_pat,audience:$prod,expected_status:401,subject:"",org:"",roles:[]},
+      {name:"user-wrong-org",pat:$f.user_pat,audience:$other,expected_status:401,subject:"",org:"",roles:[]},
       {name:"service-pat",pat:$f.service_pat,audience:$dev,expected_status:401,subject:"",org:"",roles:[]}
     ]' >"$work_dir/session-initial-cases.json"
   session_gate initial "$work_dir/session-initial-cases.json"
   run "${kube[@]}" -n "$namespace" exec "$provisioner" -- /usr/local/bin/wamn-ctl revoke-project-env-membership \
-    --org acme --project shared --env dev --principal-id "$session_human_id" \
+    --org acme --project shared --env dev --principal-id "$session_user_id" \
     >"$evidence_dir/session-revoke-membership.log" 2>&1
-  jq '[.[] | select(.name == "human-dev") | .name="membership-revoked" | .expected_status=401 | .subject="" | .org="" | .roles=[]]' \
+  jq '[.[] | select(.name == "user-dev") | .name="membership-revoked" | .expected_status=401 | .subject="" | .org="" | .roles=[]]' \
     "$work_dir/session-initial-cases.json" >"$work_dir/session-revoked-cases.json"
   session_gate revoked "$work_dir/session-revoked-cases.json"
   run "${kube[@]}" -n "$namespace" delete pod "$provisioner" --wait=true --timeout=60s

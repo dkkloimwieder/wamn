@@ -254,7 +254,7 @@ async fn handle(
             let Ok(principal) = request.principal_id.parse::<PrincipalId>() else {
                 return invalid();
             };
-            let Ok(row) = database.client.query_opt("SELECT email FROM identity.principals WHERE id = $1::text::uuid AND type = 'human' AND status = 'active'", &[&principal.as_str()]).await else { return unavailable(); };
+            let Ok(row) = database.client.query_opt("SELECT email FROM identity.principals WHERE id = $1::text::uuid AND type = 'user' AND status = 'active'", &[&principal.as_str()]).await else { return unavailable(); };
             let Some(row) = row else {
                 tracing::info!(principal = %principal, cause = %RefusalCause::NoSuchAccount, "password request refused");
                 return invalid();
@@ -381,7 +381,7 @@ async fn handle(
             };
             let Ok(row) = tx
                 .query_opt(
-                    "SELECT id::text FROM identity.principals WHERE email=$1 AND type='human'",
+                    "SELECT id::text FROM identity.principals WHERE email=$1 AND type='user'",
                     &[&email],
                 )
                 .await
@@ -513,7 +513,7 @@ async fn handle(
             // No mail task outlives the request or performs automatic retries.
             let deadline = tokio::time::Instant::now() + Duration::from_secs(6);
             let action = async {
-                let Ok(row) = database.client.query_opt("SELECT p.id::text FROM identity.principals p JOIN identity.password_credentials c ON c.principal_id=p.id WHERE p.email=$1 AND p.type='human' AND p.status='active'", &[&email]).await else { return unavailable(); };
+                let Ok(row) = database.client.query_opt("SELECT p.id::text FROM identity.principals p JOIN identity.password_credentials c ON c.principal_id=p.id WHERE p.email=$1 AND p.type='user' AND p.status='active'", &[&email]).await else { return unavailable(); };
                 let Some(row) = row else {
                     tracing::info!(email = %email, cause = %RefusalCause::NoSuchAccount, "password request refused");
                     return invalid();
@@ -957,7 +957,7 @@ mod tests {
             .execute("SELECT set_config('app.user_id', $1, false)", &[&actor])
             .await
             .unwrap();
-        let alice = wamn_platform_identity::create_human(
+        let alice = wamn_platform_identity::create_user(
             &admin.client,
             "alice",
             "alice@example.invalid",
@@ -965,14 +965,10 @@ mod tests {
         )
         .await
         .unwrap();
-        let bob = wamn_platform_identity::create_human(
-            &admin.client,
-            "bob",
-            "bob@example.invalid",
-            "Bob",
-        )
-        .await
-        .unwrap();
+        let bob =
+            wamn_platform_identity::create_user(&admin.client, "bob", "bob@example.invalid", "Bob")
+                .await
+                .unwrap();
         let mut url = url::Url::parse(db.url()).unwrap();
         url.set_username(
             &identity_issuer_generation_role(issuer, CredentialGeneration::A).unwrap(),

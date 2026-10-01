@@ -168,7 +168,7 @@ fn app_schema_applies_and_enforces_isolation_on_postgres() {
         "SET app.user_id = '{U1}';\n\
          SET app.operation = 'admin:seed-isolation-fixture';\n\
          INSERT INTO app_system.users (tenant_id, id, type, email) VALUES \
-           ('t1','{U1}','person','u1@t1'),('t1','{U2}','service','u2@t1'),('t2','{U3}','person','u3@t2');\n\
+           ('t1','{U1}','user','u1@t1'),('t1','{U2}','service','u2@t1'),('t2','{U3}','user','u3@t2');\n\
          INSERT INTO app_system.roles (tenant_id, name) VALUES ('t1','admin'),('t1','clerk');\n\
          INSERT INTO app_system.user_roles (tenant_id, user_id, role_name) VALUES ('t1','{U1}','admin');\n\
          INSERT INTO app_system.permissions (tenant_id, role_name, permission, required_by) VALUES ('t1','clerk','platform-fixture:widget/get','platform-fixture:widget/get');\n\
@@ -237,11 +237,11 @@ fn app_schema_applies_and_enforces_isolation_on_postgres() {
     writeln!(
         script,
         "DO $$ BEGIN BEGIN\n\
-           INSERT INTO app_system.users (tenant_id, id, type, email, status) VALUES ('t1','{U3}','person','x@t1','zombie');\n\
+           INSERT INTO app_system.users (tenant_id, id, type, email, status) VALUES ('t1','{U3}','user','x@t1','zombie');\n\
            ASSERT false, 'an unknown user status must be rejected';\n\
          EXCEPTION WHEN check_violation THEN NULL; END; END $$;\n\
          DO $$ BEGIN BEGIN\n\
-           INSERT INTO app_system.users (tenant_id, id, type, email) VALUES ('','{U4}','person','x@none');\n\
+           INSERT INTO app_system.users (tenant_id, id, type, email) VALUES ('','{U4}','user','x@none');\n\
            ASSERT false, 'a ''-tenant row must be rejected (a45)';\n\
          EXCEPTION WHEN check_violation THEN NULL; END; END $$;"
     )
@@ -312,7 +312,7 @@ fn app_schema_applies_and_enforces_isolation_on_postgres() {
         writeln!(
             script,
             "INSERT INTO app_system.users (tenant_id, id, type, email, status) \
-             VALUES ('t1', '55555555-5555-5555-5555-{index:012}', 'person', 'status-{index}@t1', '{}');",
+             VALUES ('t1', '55555555-5555-5555-5555-{index:012}', 'user', 'status-{index}@t1', '{}');",
             status.as_str()
         )
         .expect("writing to a String cannot fail");
@@ -381,13 +381,13 @@ fn run(url: &str, script: &str) -> String {
 /// function renders, with the ids that `PlatformComponent::principal_id`
 /// derives. The users CHECKs refuse every other shape: a missing or unknown
 /// type, a platform row with a name or id outside the pinned pairs, and a
-/// person or service row with a `wamn:` name.
+/// user or service row with a `wamn:` name.
 #[test]
 fn platform_rows_carry_their_pinned_ids_on_postgres() {
     const TENANT: &str = "t1";
     const DOMAIN: &str = "example.invalid";
-    const PERSON: &str = "11111111-1111-1111-1111-111111111111";
-    const FIXTURE_PERSON: &str = "00000000-0000-0000-0000-000000000000";
+    const USER: &str = "11111111-1111-1111-1111-111111111111";
+    const FIXTURE_USER: &str = "00000000-0000-0000-0000-000000000000";
 
     let _serialized = wamn_test_postgres::lock();
     let test_database = wamn_test_postgres::database();
@@ -404,10 +404,10 @@ fn platform_rows_carry_their_pinned_ids_on_postgres() {
     script.push_str(
         &platform_principals_sql(TENANT, DOMAIN).expect("example.invalid is a domain name"),
     );
-    // The fixture writes as its first admitted person row below.
+    // The fixture writes as its first admitted user row below.
     writeln!(
         script,
-        "COMMIT;\nSET app.user_id = '{FIXTURE_PERSON}';\n\
+        "COMMIT;\nSET app.user_id = '{FIXTURE_USER}';\n\
          SET app.operation = 'admin:seed-platform-row-fixture';"
     )
     .expect("writing to a String cannot fail");
@@ -418,21 +418,21 @@ fn platform_rows_carry_their_pinned_ids_on_postgres() {
             "not_null_violation",
             format!(
                 "INSERT INTO app_system.users (tenant_id, id, email) \
-                 VALUES ('{TENANT}', '{PERSON}', 'untyped@{DOMAIN}')"
+                 VALUES ('{TENANT}', '{USER}', 'untyped@{DOMAIN}')"
             ),
         ),
         (
             "check_violation",
             format!(
                 "INSERT INTO app_system.users (tenant_id, id, type, email) \
-                 VALUES ('{TENANT}', '{PERSON}', 'robot', 'robot@{DOMAIN}')"
+                 VALUES ('{TENANT}', '{USER}', 'robot', 'robot@{DOMAIN}')"
             ),
         ),
         (
             "check_violation",
             format!(
                 "INSERT INTO app_system.users (tenant_id, id, type, email) \
-                 VALUES ('{TENANT}', '{PERSON}', 'platform', 'unnamed@{DOMAIN}')"
+                 VALUES ('{TENANT}', '{USER}', 'platform', 'unnamed@{DOMAIN}')"
             ),
         ),
         (
@@ -448,20 +448,20 @@ fn platform_rows_carry_their_pinned_ids_on_postgres() {
             "check_violation",
             format!(
                 "INSERT INTO app_system.users (tenant_id, id, type, email, display_name) \
-                 VALUES ('{TENANT}', '{PERSON}', 'platform', 'unknown@{DOMAIN}', 'wamn:unknown')"
+                 VALUES ('{TENANT}', '{USER}', 'platform', 'unknown@{DOMAIN}', 'wamn:unknown')"
             ),
         ),
     ]
     .into_iter()
     .chain(
-        [UserType::Person, UserType::Service]
+        [UserType::User, UserType::Service]
             .into_iter()
             .flat_map(|user_type| {
                 let user_type = user_type.as_str();
                 [
                     format!(
                         "INSERT INTO app_system.users (tenant_id, id, type, email, display_name) \
-                         VALUES ('{TENANT}', '{PERSON}', '{user_type}', 'named@{DOMAIN}', 'wamn:person')"
+                         VALUES ('{TENANT}', '{USER}', '{user_type}', 'named@{DOMAIN}', 'wamn:user')"
                     ),
                     format!(
                         "INSERT INTO app_system.users (tenant_id, id, type, email, display_name) \
@@ -709,7 +709,7 @@ fn app_system_relations_log_every_row_change_on_postgres() {
          SET LOCAL app.user_id = '{U1}';\n\
          SET LOCAL app.operation = '{SEED}';\n\
          INSERT INTO app_system.users (tenant_id, id, type, email) VALUES \
-           ('t1', '{U1}', 'person', 'u1@t1'), ('t2', '{U2}', 'person', 'u2@t2'), \
+           ('t1', '{U1}', 'user', 'u1@t1'), ('t2', '{U2}', 'user', 'u2@t2'), \
            ('t1', '{U3}', 'service', 'u3@t1');\n\
          INSERT INTO app_system.roles (tenant_id, name) VALUES ('t1', 'admin'), ('t1', 'auditor');\n\
          INSERT INTO app_system.user_roles (tenant_id, user_id, role_name) VALUES \
@@ -806,12 +806,12 @@ entry|user_roles|t1|delete|admin:change-history-fixture|U2|{"user_id": "U3", "ro
 entry|user_roles|t1|insert|admin:change-history-fixture|U2|{"user_id": "U3", "role_name": "auditor", "tenant_id": "t1"}|{}|{"user_id": "U3", "role_name": "auditor", "tenant_id": "t1"}
 entry|user_roles|t1|delete|admin:remove-history-fixture|U3|{"user_id": "U3", "role_name": "auditor", "tenant_id": "t1"}|{"user_id": "U3", "role_name": "auditor", "tenant_id": "t1"}|{}
 entry|user_roles|t1|delete|admin:remove-history-fixture|U3|{"user_id": "U1", "role_name": "admin", "tenant_id": "t1"}|{"user_id": "U1", "role_name": "admin", "tenant_id": "t1"}|{}
-entry|users|t1|insert|admin:seed-history-fixture|U1|{"id": "U1", "tenant_id": "t1"}|{}|{"id": "U1", "type": "person", "email": "u1@t1", "status": "active", "tenant_id": "t1", "display_name": null}
-entry|users|t2|insert|admin:seed-history-fixture|U1|{"id": "U2", "tenant_id": "t2"}|{}|{"id": "U2", "type": "person", "email": "u2@t2", "status": "active", "tenant_id": "t2", "display_name": null}
+entry|users|t1|insert|admin:seed-history-fixture|U1|{"id": "U1", "tenant_id": "t1"}|{}|{"id": "U1", "type": "user", "email": "u1@t1", "status": "active", "tenant_id": "t1", "display_name": null}
+entry|users|t2|insert|admin:seed-history-fixture|U1|{"id": "U2", "tenant_id": "t2"}|{}|{"id": "U2", "type": "user", "email": "u2@t2", "status": "active", "tenant_id": "t2", "display_name": null}
 entry|users|t1|insert|admin:seed-history-fixture|U1|{"id": "U3", "tenant_id": "t1"}|{}|{"id": "U3", "type": "service", "email": "u3@t1", "status": "active", "tenant_id": "t1", "display_name": null}
 entry|users|t2|update|admin:change-history-fixture|U2|{"id": "U2", "tenant_id": "t2"}|{"status": "active"}|{"status": "disabled"}
-entry|users|t1|delete|admin:remove-history-fixture|U3|{"id": "U1", "tenant_id": "t1"}|{"id": "U1", "type": "person", "email": "u1@t1", "status": "active", "tenant_id": "t1", "display_name": null}|{}
-entry|users|t2|delete|admin:remove-history-fixture|U3|{"id": "U2", "tenant_id": "t2"}|{"id": "U2", "type": "person", "email": "u2@t2", "status": "disabled", "tenant_id": "t2", "display_name": null}|{}"#
+entry|users|t1|delete|admin:remove-history-fixture|U3|{"id": "U1", "tenant_id": "t1"}|{"id": "U1", "type": "user", "email": "u1@t1", "status": "active", "tenant_id": "t1", "display_name": null}|{}
+entry|users|t2|delete|admin:remove-history-fixture|U3|{"id": "U2", "tenant_id": "t2"}|{"id": "U2", "type": "user", "email": "u2@t2", "status": "disabled", "tenant_id": "t2", "display_name": null}|{}"#
             .lines()
             .map(str::to_owned),
     );

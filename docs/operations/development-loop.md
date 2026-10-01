@@ -257,7 +257,7 @@ Menu choices and email addresses are visible. Passwords and email secrets displa
 Paste is supported, and Esc or Ctrl-C cancels.
 For recovery, enter your email, the emailed reset secret, and your new password twice.
 After reset, use normal login. A notification delivery failure does not undo the password change.
-Do not put human passwords or invitation secrets in arguments, environment variables, or files.
+Do not put user passwords or invitation secrets in arguments, environment variables, or files.
 
 For several environments, set `WAMN_RECEIVING_TARGETS` to a public JSON file with these fields:
 

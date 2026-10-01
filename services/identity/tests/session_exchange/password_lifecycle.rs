@@ -9,30 +9,30 @@ use wamn_platform_identity::password::{
 const EMAIL: &str = "renewal-alice@example.invalid";
 
 async fn enroll(fixture: &Fixture, email: &str, password: &str) -> Principal {
-    let person = create_human(&fixture.system.client, email, email, "Renewal person")
+    let user = create_user(&fixture.system.client, email, email, "Renewal user")
         .await
-        .expect_redacted("human");
-    seed_user(&fixture.environments[0].client, &person, TENANT, "receiver").await;
-    grant(&fixture.system.client, &person, "demo", "dev").await;
+        .expect_redacted("user");
+    seed_user(&fixture.environments[0].client, &user, TENANT, "receiver").await;
+    grant(&fixture.system.client, &user, "demo", "dev").await;
     let actor = PlatformComponent::Provisioning
         .principal_id()
         .to_string()
         .parse()
         .unwrap();
     let mut issuer = connect(&fixture.issuer_url).await;
-    let invitation = issue_invitation(&mut issuer.client, &actor, person.id())
+    let invitation = issue_invitation(&mut issuer.client, &actor, user.id())
         .await
         .expect_redacted("invitation");
     enroll_password(
         &mut issuer.client,
         &password_work(),
-        person.id(),
+        user.id(),
         invitation.secret(),
         Password::new(password.to_owned()).unwrap(),
     )
     .await
     .expect_redacted("enrollment");
-    person
+    user
 }
 async fn server(fixture: &Fixture) -> Https {
     start_config(
@@ -143,11 +143,11 @@ async fn renewal_rotation_authority_expiry_and_logout_use_real_https() {
         .create_database("wamn_system")
         .expect_redacted("owned system database");
     let fixture = setup(db.url()).await;
-    let person = enroll(&fixture, EMAIL, PASSWORD).await;
+    let user = enroll(&fixture, EMAIL, PASSWORD).await;
     let https = server(&fixture).await;
     let first = login(&https, &fixture).await;
     let verified = claims(&fixture, &first).await;
-    assert_eq!(verified.sub, person.id().as_str());
+    assert_eq!(verified.sub, user.id().as_str());
     assert_eq!(verified.roles, vec!["receiver"]);
     assert!(active(&fixture, &first).await);
     let second = body(
@@ -197,15 +197,9 @@ async fn renewal_rotation_authority_expiry_and_logout_use_real_https() {
     .await
     .unwrap();
     assert_failure(wrong, 401, "{\"error\":\"unauthorized\"}").await;
-    revoke_project_env_membership(
-        &fixture.system.client,
-        person.id(),
-        "demo",
-        "widgets",
-        "dev",
-    )
-    .await
-    .unwrap();
+    revoke_project_env_membership(&fixture.system.client, user.id(), "demo", "widgets", "dev")
+        .await
+        .unwrap();
     assert_eq!(
         request(&https, &fixture, "/password/renew", &active)
             .send()
@@ -214,12 +208,12 @@ async fn renewal_rotation_authority_expiry_and_logout_use_real_https() {
             .status(),
         401
     );
-    grant(&fixture.system.client, &person, "demo", "dev").await;
+    grant(&fixture.system.client, &user, "demo", "dev").await;
     fixture.environments[0]
         .client
         .execute(
             "UPDATE app_system.users SET status='disabled' WHERE id=$1::text::uuid",
-            &[&person.id().as_str()],
+            &[&user.id().as_str()],
         )
         .await
         .unwrap();
@@ -235,7 +229,7 @@ async fn renewal_rotation_authority_expiry_and_logout_use_real_https() {
         .client
         .execute(
             "UPDATE app_system.users SET status='active' WHERE id=$1::text::uuid",
-            &[&person.id().as_str()],
+            &[&user.id().as_str()],
         )
         .await
         .unwrap();
@@ -243,7 +237,7 @@ async fn renewal_rotation_authority_expiry_and_logout_use_real_https() {
         .client
         .execute(
             "DELETE FROM app_system.user_roles WHERE user_id=$1::text::uuid",
-            &[&person.id().as_str()],
+            &[&user.id().as_str()],
         )
         .await
         .unwrap();
@@ -255,7 +249,7 @@ async fn renewal_rotation_authority_expiry_and_logout_use_real_https() {
             .status(),
         401
     );
-    fixture.environments[0].client.execute("INSERT INTO app_system.user_roles (tenant_id,user_id,role_name) VALUES ($1,$2::text::uuid,'receiver')",&[&TENANT,&person.id().as_str()]).await.unwrap();
+    fixture.environments[0].client.execute("INSERT INTO app_system.user_roles (tenant_id,user_id,role_name) VALUES ($1,$2::text::uuid,'receiver')",&[&TENANT,&user.id().as_str()]).await.unwrap();
     fixture.system.client.batch_execute("UPDATE registry.project_envs SET instance_suffix='replaced' WHERE org='demo' AND env='dev'").await.unwrap();
     assert_eq!(
         request(&https, &fixture, "/password/renew", &active)
@@ -320,7 +314,7 @@ async fn renewal_rotation_authority_expiry_and_logout_use_real_https() {
         401
     );
     let near_expiry = login(&https, &fixture).await;
-    fixture.system.client.execute("WITH deadline AS (SELECT date_trunc('second',clock_timestamp())+interval '60 seconds' AS at) UPDATE identity.password_logins SET authenticated_at=deadline.at-interval '8 hours',expires_at=deadline.at,renewal_expires_at=deadline.at FROM deadline WHERE principal_id=$1::text::uuid AND revoked_at IS NULL",&[&person.id().as_str()]).await.unwrap();
+    fixture.system.client.execute("WITH deadline AS (SELECT date_trunc('second',clock_timestamp())+interval '60 seconds' AS at) UPDATE identity.password_logins SET authenticated_at=deadline.at-interval '8 hours',expires_at=deadline.at,renewal_expires_at=deadline.at FROM deadline WHERE principal_id=$1::text::uuid AND revoked_at IS NULL",&[&user.id().as_str()]).await.unwrap();
     let bounded = body(
         request(&https, &fixture, "/password/renew", &near_expiry)
             .send()
@@ -330,7 +324,7 @@ async fn renewal_rotation_authority_expiry_and_logout_use_real_https() {
     .await;
     assert_eq!(bounded["expires_at"], bounded["login_expires_at"]);
     assert!(claims(&fixture, &bounded).await.exp <= unix_seconds() + 60);
-    fixture.system.client.execute("UPDATE identity.password_logins SET authenticated_at=authenticated_at-interval '9 hours',expires_at=expires_at-interval '9 hours',renewal_expires_at=renewal_expires_at-interval '9 hours' WHERE principal_id=$1::text::uuid",&[&person.id().as_str()]).await.unwrap();
+    fixture.system.client.execute("UPDATE identity.password_logins SET authenticated_at=authenticated_at-interval '9 hours',expires_at=expires_at-interval '9 hours',renewal_expires_at=renewal_expires_at-interval '9 hours' WHERE principal_id=$1::text::uuid",&[&user.id().as_str()]).await.unwrap();
     assert_eq!(
         request(&https, &fixture, "/password/renew", &bounded)
             .send()
@@ -351,7 +345,7 @@ async fn renewal_rotation_authority_expiry_and_logout_use_real_https() {
     );
     let disabled = login(&https, &fixture).await;
     assert!(self::active(&fixture, &disabled).await);
-    disable_principal(&fixture.system.client, person.id())
+    disable_principal(&fixture.system.client, user.id())
         .await
         .unwrap();
     assert!(!self::active(&fixture, &disabled).await);
@@ -368,7 +362,7 @@ async fn renewal_rotation_authority_expiry_and_logout_use_real_https() {
 }
 
 /// A control session (docs/plan/platform-ui.md §4.3) is offered, issued and
-/// renewed only while the person holds `project-admin` in the org, carries
+/// renewed only while the user holds `project-admin` in the org, carries
 /// no application role, and never comes from a PAT.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn a_control_session_follows_the_project_admin_role_of_its_org() {
@@ -378,7 +372,7 @@ async fn a_control_session_follows_the_project_admin_role_of_its_org() {
         .create_database("wamn_system")
         .expect_redacted("owned system database");
     let fixture = setup(db.url()).await;
-    let person = enroll(&fixture, EMAIL, PASSWORD).await;
+    let user = enroll(&fixture, EMAIL, PASSWORD).await;
     let https = server(&fixture).await;
     let audiences = |listed: &Value| -> Vec<Value> {
         listed["environments"]
@@ -429,7 +423,7 @@ async fn a_control_session_follows_the_project_admin_role_of_its_org() {
 
     wamn_platform_identity::assign_project_role(
         &fixture.system.client,
-        person.id(),
+        user.id(),
         "demo",
         "widgets",
         "project-admin",
@@ -462,7 +456,7 @@ async fn a_control_session_follows_the_project_admin_role_of_its_org() {
         unix_seconds(),
     )
     .expect_redacted("signed control session");
-    assert_eq!(claims.sub, person.id().as_str());
+    assert_eq!(claims.sub, user.id().as_str());
     assert!(claims.roles.is_empty(), "a control session has no roles");
     assert!(
         wamn_platform_identity::control::control_session_is_active(&fixture.system.client, &claims)
@@ -472,12 +466,12 @@ async fn a_control_session_follows_the_project_admin_role_of_its_org() {
 
     let pat = issue_pat(
         &fixture.system.client,
-        person.id(),
+        user.id(),
         "control test",
         Duration::from_secs(3600),
     )
     .await
-    .expect_redacted("human PAT");
+    .expect_redacted("user PAT");
     super::refuse(&https, pat.token(), CONTROL).await;
 
     let renewed = body(
@@ -496,7 +490,7 @@ async fn a_control_session_follows_the_project_admin_role_of_its_org() {
         .client
         .execute(
             "DELETE FROM identity.project_roles WHERE principal_id = $1::text::uuid",
-            &[&person.id().as_str()],
+            &[&user.id().as_str()],
         )
         .await
         .expect_redacted("revoke project-admin");
@@ -531,7 +525,7 @@ async fn login_reset_and_renewal_logout_races_keep_transaction_order() {
         .create_database("wamn_system")
         .expect_redacted("owned system database");
     let fixture = setup(db.url()).await;
-    let person = enroll(&fixture, EMAIL, PASSWORD).await;
+    let user = enroll(&fixture, EMAIL, PASSWORD).await;
     let https = server(&fixture).await;
     let first = login(&https, &fixture).await;
     fixture
@@ -576,7 +570,7 @@ async fn login_reset_and_renewal_logout_races_keep_transaction_order() {
     let reset_secret = wamn_platform_identity::password::issue_reset(
         &mut reset_connection.client,
         &actor,
-        person.id(),
+        user.id(),
         EMAIL,
     )
     .await
@@ -588,11 +582,11 @@ async fn login_reset_and_renewal_logout_races_keep_transaction_order() {
         .client
         .query_one(
             "SELECT id FROM identity.principals WHERE id=$1::text::uuid FOR UPDATE",
-            &[&person.id().as_str()],
+            &[&user.id().as_str()],
         )
         .await
         .unwrap();
-    let reset_principal = person.id().clone();
+    let reset_principal = user.id().clone();
     let reset = tokio::spawn(async move {
         wamn_platform_identity::password::reset_password(
             &mut reset_connection.client,
@@ -623,7 +617,7 @@ async fn login_reset_and_renewal_logout_races_keep_transaction_order() {
         "{\"error\":\"unauthorized\"}",
     )
     .await;
-    assert_eq!(fixture.system.client.query_one("SELECT count(*) FROM identity.password_logins WHERE principal_id=$1::text::uuid AND revoked_at IS NULL",&[&person.id().as_str()]).await.unwrap().get::<_,i64>(0),0);
+    assert_eq!(fixture.system.client.query_one("SELECT count(*) FROM identity.password_logins WHERE principal_id=$1::text::uuid AND revoked_at IS NULL",&[&user.id().as_str()]).await.unwrap().get::<_,i64>(0),0);
     drop(https);
     cleanup(fixture).await;
 }

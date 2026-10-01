@@ -166,7 +166,7 @@ These delivery rules do not create exactly-once application effects.
 
 ## Session role reader
 
-`POST /session` exchanges a current human PAT for a bounded session token.
+`POST /session` exchanges a current user PAT for a bounded session token.
 The request supplies the audience and cannot supply roles, tenant identity, or a database URL.
 A mounted target declaration selects the exact audience, tenant, database, and dedicated `SessionRoleReader` credential.
 
@@ -185,7 +185,7 @@ The [execution page](execution.md#caller-authentication) owns token acceptance a
 ## PAT issuance
 
 `POST /pats` requires a client certificate under the dedicated operator CA.
-An accepted operator certificate can mint for an existing active human or service principal.
+An accepted operator certificate can mint for an existing active user or service principal.
 A PAT, session JWT, or caller identity header cannot grant issuance authority.
 Absent operator trust roots refuse issuance.
 

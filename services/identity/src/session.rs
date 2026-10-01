@@ -128,7 +128,7 @@ async fn exchange(
         .await
         .map_err(|_| failed())?
         .ok_or_else(refused)?;
-    if principal.principal().kind() != PrincipalType::Human {
+    if principal.principal().kind() != PrincipalType::User {
         return Err(refused());
     }
     mint_for_principal(inner, &principal, target, started_at).await

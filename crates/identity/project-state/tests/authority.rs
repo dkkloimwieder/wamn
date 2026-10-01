@@ -31,7 +31,7 @@ use wamn_control_provision::{
 /// The tenant every probe runs under, and the user its seeded rows belong to.
 const TENANT: &str = "t1";
 const U1: &str = "11111111-1111-1111-1111-111111111111";
-/// An unused person id for the refused inserts.
+/// An unused user id for the refused inserts.
 const U2: &str = "22222222-2222-2222-2222-222222222222";
 /// The pinned `wamn:provisioning` id, the row a tenant must not create.
 const PROVISIONING: &str = "770df186-ac15-579e-b46b-c297cae2011b";
@@ -102,7 +102,7 @@ fn prelude(url: &str) -> (String, String) {
         r#"
 SET app.user_id = '{U1}';
 SET app.operation = 'admin:seed-authority-fixture';
-INSERT INTO app_system.users (tenant_id, id, type, email) VALUES ('{TENANT}','{U1}','person','u1@t1');
+INSERT INTO app_system.users (tenant_id, id, type, email) VALUES ('{TENANT}','{U1}','user','u1@t1');
 INSERT INTO app_system.roles (tenant_id, name) VALUES ('{TENANT}','admin'),('{TENANT}','auditor');
 INSERT INTO app_system.user_roles (tenant_id, user_id, role_name) VALUES ('{TENANT}','{U1}','admin');
 INSERT INTO app_system.permissions (tenant_id, role_name, permission, required_by) VALUES ('{TENANT}','auditor','platform-fixture:widget/get','platform-fixture:widget/get');
@@ -191,7 +191,7 @@ DO $$
 DECLARE probe_sql text;
 BEGIN
   FOREACH probe_sql IN ARRAY ARRAY[
-    'INSERT INTO app_system.users (tenant_id, id, type, email) VALUES (''{TENANT}'', ''{U2}'', ''person'', ''intruder@t1'')',
+    'INSERT INTO app_system.users (tenant_id, id, type, email) VALUES (''{TENANT}'', ''{U2}'', ''user'', ''intruder@t1'')',
     'INSERT INTO app_system.users (tenant_id, id, type, email, display_name) VALUES (''{TENANT}'', ''{PROVISIONING}'', ''platform'', ''provisioning@example.invalid'', ''wamn:provisioning'')',
     'UPDATE app_system.users SET status = ''disabled''',
     'UPDATE app_system.users SET display_name = ''wamn:intruder''',

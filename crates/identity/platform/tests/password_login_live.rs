@@ -4,7 +4,7 @@ use sha2::{Digest as _, Sha256};
 use tokio_postgres::Client;
 use wamn_control_provision::{identity_issuer::grant_identity_issuer_surface_sql, test_database};
 use wamn_platform_identity::password_login::{self as login, Renewal};
-use wamn_platform_identity::{PrincipalId, create_human, disable_principal};
+use wamn_platform_identity::{PrincipalId, create_user, disable_principal};
 
 const ISSUER: &str = "https://identity.example.invalid";
 const AUDIENCE: &str = "demo:widgets:dev:a1b2c3d4";
@@ -25,8 +25,8 @@ async fn connect(url: &str, role: &str) -> Client {
         .unwrap();
     client
 }
-async fn person(client: &Client) -> PrincipalId {
-    create_human(
+async fn user(client: &Client) -> PrincipalId {
+    create_user(
         client,
         "alice@example.invalid",
         "alice@example.invalid",
@@ -37,9 +37,9 @@ async fn person(client: &Client) -> PrincipalId {
     .id()
     .clone()
 }
-async fn create(client: &mut Client, person: &PrincipalId) -> Renewal {
+async fn create(client: &mut Client, user: &PrincipalId) -> Renewal {
     let tx = client.transaction().await.unwrap();
-    let issued = login::create_login(&tx, person, ISSUER, AUDIENCE)
+    let issued = login::create_login(&tx, user, ISSUER, AUDIENCE)
         .await
         .unwrap()
         .unwrap();
@@ -60,10 +60,10 @@ async fn scoped_rotation_preserves_deadline_and_replay_revokes_successor() {
     let _lock = wamn_test_postgres::lock();
     let db = test_database::system();
     let owner = connect(db.url(), "wamn_system").await;
-    let person = person(&owner).await;
+    let user = user(&owner).await;
     db.execute(&[&grant_identity_issuer_surface_sql()]).unwrap();
     let mut issuer = connect(db.url(), "wamn_identity_issuer").await;
-    let first = create(&mut issuer, &person).await;
+    let first = create(&mut issuer, &user).await;
     assert_eq!(first.login.expires_at - first.login.authenticated_at, 28800);
     assert!(!format!("{first:?}").contains(first.secret()));
     let stored: String = owner
@@ -146,16 +146,16 @@ async fn inactivity_absolute_expiry_and_bounded_cleanup() {
     let _lock = wamn_test_postgres::lock();
     let db = test_database::system();
     let mut owner = connect(db.url(), "wamn_system").await;
-    let person = person(&owner).await;
-    let idle = create(&mut owner, &person).await;
+    let user = user(&owner).await;
+    let idle = create(&mut owner, &user).await;
     owner.execute("UPDATE identity.password_logins SET authenticated_at=authenticated_at-interval '1 hour',expires_at=expires_at-interval '1 hour',renewal_expires_at=clock_timestamp()-interval '1 second' WHERE id=$1::text::uuid",&[&idle.login.id]).await.unwrap();
     assert!(rotate(&mut owner, idle.secret()).await.is_none());
-    let final_credential = create(&mut owner, &person).await;
+    let final_credential = create(&mut owner, &user).await;
     owner.execute("UPDATE identity.password_logins SET authenticated_at=authenticated_at-interval '7 hours 55 minutes',expires_at=expires_at-interval '7 hours 55 minutes',renewal_expires_at=expires_at-interval '7 hours 55 minutes' WHERE id=$1::text::uuid",&[&final_credential.login.id]).await.unwrap();
     let last = rotate(&mut owner, final_credential.secret()).await.unwrap();
     assert!(owner.query_one("SELECT renewal_expires_at=expires_at FROM identity.password_logins WHERE id=$1::text::uuid",&[&last.login.id]).await.unwrap().get::<_,bool>(0));
     for _ in 0..99 {
-        create(&mut owner, &person).await;
+        create(&mut owner, &user).await;
     }
     owner.batch_execute("UPDATE identity.password_logins SET authenticated_at=authenticated_at-interval '9 hours',expires_at=expires_at-interval '9 hours',renewal_expires_at=renewal_expires_at-interval '9 hours'").await.unwrap();
     assert!(rotate(&mut owner, last.secret()).await.is_none());
@@ -205,8 +205,8 @@ async fn simultaneous_rotation_and_logout_cannot_leave_a_usable_successor() {
     let mut first = connect(db.url(), "wamn_system").await;
     let mut second = connect(db.url(), "wamn_system").await;
     let observer = connect(db.url(), "wamn_system").await;
-    let person = person(&first).await;
-    let issued = create(&mut first, &person).await;
+    let user = user(&first).await;
+    let issued = create(&mut first, &user).await;
     let tx = first.transaction().await.unwrap();
     let replacement = login::rotate_login(&tx, ISSUER, AUDIENCE, issued.secret())
         .await
@@ -223,7 +223,7 @@ async fn simultaneous_rotation_and_logout_cannot_leave_a_usable_successor() {
     assert!(racing.await.unwrap().is_none());
     assert!(rotate(&mut first, replacement.secret()).await.is_none());
 
-    let issued = create(&mut first, &person).await;
+    let issued = create(&mut first, &user).await;
     let mut second = connect(db.url(), "wamn_system").await;
     let pid: i32 = second
         .query_one("SELECT pg_backend_pid()", &[])
@@ -255,18 +255,18 @@ async fn disable_waits_for_issuance_and_reenable_cannot_restore_a_family() {
     let mut first = connect(db.url(), "wamn_system").await;
     let second = connect(db.url(), "wamn_system").await;
     let observer = connect(db.url(), "wamn_system").await;
-    let person = person(&first).await;
+    let user = user(&first).await;
     let pid: i32 = second
         .query_one("SELECT pg_backend_pid()", &[])
         .await
         .unwrap()
         .get(0);
     let tx = first.transaction().await.unwrap();
-    let issued = login::create_login(&tx, &person, ISSUER, AUDIENCE)
+    let issued = login::create_login(&tx, &user, ISSUER, AUDIENCE)
         .await
         .unwrap()
         .unwrap();
-    let principal = person.clone();
+    let principal = user.clone();
     let racing = tokio::spawn(async move {
         disable_principal(&second, &principal).await.unwrap();
     });
@@ -274,11 +274,11 @@ async fn disable_waits_for_issuance_and_reenable_cannot_restore_a_family() {
     tx.commit().await.unwrap();
     racing.await.unwrap();
     assert!(rotate(&mut first, issued.secret()).await.is_none());
-    first.execute("UPDATE identity.principals SET status='active',disabled_at=NULL WHERE id=$1::text::uuid",&[&person.as_str()]).await.unwrap();
+    first.execute("UPDATE identity.principals SET status='active',disabled_at=NULL WHERE id=$1::text::uuid",&[&user.as_str()]).await.unwrap();
     assert!(rotate(&mut first, issued.secret()).await.is_none());
-    let fresh = create(&mut first, &person).await;
+    let fresh = create(&mut first, &user).await;
     let tx = first.transaction().await.unwrap();
-    login::revoke_all(&tx, &person).await.unwrap();
+    login::revoke_all(&tx, &user).await.unwrap();
     tx.commit().await.unwrap();
     assert!(rotate(&mut first, fresh.secret()).await.is_none());
 }

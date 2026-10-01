@@ -1200,11 +1200,11 @@ On 2026-09-27 the results were these:
 
 ### 4.5 Invitation
 
-Make the owner's human principal, admit it to the environment, and write its tenant person row. Keep the port-forward and `WAMN_SYSTEM_ADMIN_URL` of section 3.6 and `T` of section 3.8:
+Make the owner's user principal, admit it to the environment, and write its tenant user row. Keep the port-forward and `WAMN_SYSTEM_ADMIN_URL` of section 3.6 and `T` of section 3.8:
 
 ```bash
 cargo build -p wamn-ctl --features ops --bin wamn-ctl-ops
-target/debug/wamn-ctl-ops create-human --subject dkkloimwieder@gmail.com --email dkkloimwieder@gmail.com --display-name dkk
+target/debug/wamn-ctl-ops create-user --subject dkkloimwieder@gmail.com --email dkkloimwieder@gmail.com --display-name dkk
 target/debug/wamn-ctl grant-project-env-membership --org dkk --project receiving --env dev \
   --principal-id <principal id> --system-database-url "$WAMN_SYSTEM_ADMIN_URL"
 target/debug/wamn-ctl reconcile-run-plane --system-database-url "$WAMN_SYSTEM_ADMIN_URL" --admin-database-url "$T" \

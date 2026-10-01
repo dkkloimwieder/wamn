@@ -338,7 +338,7 @@ const CONTROL_MATRIX: [FamilyReach; 3] = [
         ],
         routines: &[],
     },
-    // The org control host reads who is a person and whether a control
+    // The org control host reads who is a user and whether a control
     // session's password login is live. It writes the org memberships and the
     // org, project and environment grants of the org operations, and reads
     // the projects and environments those grants cover.

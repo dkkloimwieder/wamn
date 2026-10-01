@@ -270,7 +270,7 @@ pub(super) async fn assert_session_client(
     test: fresh_only::PriorCommitTest<'_>,
     login: &Login,
     transport: Arc<RouteTransport>,
-    human: &Principal,
+    user: &Principal,
     base_digest: &str,
     direct_path: &str,
 ) -> anyhow::Result<()> {
@@ -325,7 +325,7 @@ pub(super) async fn assert_session_client(
 
     let expired = issue_pat(
         test.control,
-        human.id(),
+        user.id(),
         "client expired login",
         Duration::from_secs(3600),
     )
@@ -345,7 +345,7 @@ pub(super) async fn assert_session_client(
     refused_login(login, expired.token(), &transport).await?;
     let revoked = issue_pat(
         test.control,
-        human.id(),
+        user.id(),
         "client revoked login",
         Duration::from_secs(3600),
     )
@@ -375,7 +375,7 @@ fn assert_kind(
 ) -> anyhow::Result<()> {
     let (trace, _) = journey_trace(index);
     let spans = test.traces.spans();
-    assert_direct_route_trace(&spans, &trace, wiring, operation, digest, test.human_id);
+    assert_direct_route_trace(&spans, &trace, wiring, operation, digest, test.user_id);
     let invocations = trace_component_invocations(&spans, &trace);
     anyhow::ensure!(
         invocations.len() == 1

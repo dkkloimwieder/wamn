@@ -17,7 +17,7 @@ use serde::{Deserialize, Serialize};
 use tokio::io::AsyncReadExt as _;
 use wamn_control_provision::identity_issuer::validate_identity_issuer;
 use wamn_control_provision::{PlatformComponent, bind_platform_principal_sql};
-use wamn_platform_identity::{create_human, create_service, issue_pat};
+use wamn_platform_identity::{create_service, create_user, issue_pat};
 use wamn_session::keys::{PublicSessionKey, SessionJwks, decode_public_key};
 use wamn_session::token::{
     MAXIMUM_LIFETIME, SessionScope, TOLERANCE, session_key_id, verify_session_token,
@@ -318,8 +318,8 @@ async fn observe(args: IdentitySessionTestArgs) -> anyhow::Result<()> {
 
 #[derive(Serialize)]
 struct FixtureDocument<'a> {
-    human_id: &'a str,
-    human_pat: &'a str,
+    user_id: &'a str,
+    user_pat: &'a str,
     service_id: &'a str,
     service_pat: &'a str,
 }
@@ -389,18 +389,18 @@ async fn create_fixture(url: &str) -> anyhow::Result<Vec<u8>> {
         // The fixture identity is platform setup, so it writes as wamn:provisioning.
         transaction.batch_execute(&bind_platform_principal_sql(PlatformComponent::Provisioning)).await
             .map_err(|_| anyhow!("bind identity session fixture actor failed"))?;
-        let human_subject = format!("session-fixture-human-{suffix}-{}", std::process::id());
-        let human_email = format!("{human_subject}@example.invalid");
-        let human = create_human(&transaction, &human_subject, &human_email, "Disposable session test human").await
-            .map_err(|_| anyhow!("create identity session fixture human failed"))?;
+        let user_subject = format!("session-fixture-user-{suffix}-{}", std::process::id());
+        let user_email = format!("{user_subject}@example.invalid");
+        let user = create_user(&transaction, &user_subject, &user_email, "Disposable session test user").await
+            .map_err(|_| anyhow!("create identity session fixture user failed"))?;
         let service = create_service(&transaction, &format!("session-fixture-service-{suffix}-{}", std::process::id()), "Disposable session test service").await
             .map_err(|_| anyhow!("create identity session fixture service failed"))?;
-        let human_pat = issue_pat(&transaction, human.id(), "Disposable session test", Duration::from_secs(3600)).await
-            .map_err(|_| anyhow!("issue identity session fixture human PAT failed"))?;
+        let user_pat = issue_pat(&transaction, user.id(), "Disposable session test", Duration::from_secs(3600)).await
+            .map_err(|_| anyhow!("issue identity session fixture user PAT failed"))?;
         let service_pat = issue_pat(&transaction, service.id(), "Disposable session test", Duration::from_secs(3600)).await
             .map_err(|_| anyhow!("issue identity session fixture service PAT failed"))?;
         let bytes = serde_json::to_vec(&FixtureDocument {
-            human_id: human.id().as_str(), human_pat: human_pat.token(),
+            user_id: user.id().as_str(), user_pat: user_pat.token(),
             service_id: service.id().as_str(), service_pat: service_pat.token(),
         }).map_err(|_| anyhow!("encode private identity session fixture failed"))?;
         transaction.commit().await.map_err(|_| anyhow!("commit identity session fixture failed"))?;
@@ -418,7 +418,7 @@ mod tests {
 
     fn valid() -> serde_json::Value {
         json!([{"name":"dev_allowed","pat":"fixture-secret","audience":"environment",
-            "expected_status":200,"subject":"human","org":"acme","roles":["receiver"]}])
+            "expected_status":200,"subject":"user","org":"acme","roles":["receiver"]}])
     }
 
     #[test]

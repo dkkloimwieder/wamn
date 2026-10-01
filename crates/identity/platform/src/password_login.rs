@@ -99,7 +99,7 @@ async fn credential(tx: &Transaction<'_>, login: Login) -> Result<Renewal, Ident
     Ok(Renewal { login, secret })
 }
 
-/// Lock an active human through password verification and login creation.
+/// Lock an active user through password verification and login creation.
 ///
 /// Reset, revocation and renewal take this same lock before writing credentials.
 /// A false result still locks an existing disabled principal until transaction end.
@@ -166,7 +166,7 @@ async fn lookup(
         .transpose()
 }
 
-/// Authenticate a renewal credential and bind its human actor under the principal lock.
+/// Authenticate a renewal credential and bind its user actor under the principal lock.
 ///
 /// Commit a refused result: replay revokes its family. This does not establish
 /// current environment authority; the service checks that before issuing tokens.

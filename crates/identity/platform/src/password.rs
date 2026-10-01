@@ -1,4 +1,4 @@
-//! Human password enrollment and authentication, without HTTP or session lifecycle.
+//! User password enrollment and authentication, without HTTP or session lifecycle.
 //!
 //! Writers own a transaction and bind the actor. Enrollment serializes on the
 //! principal row, then consumes every outstanding invitation atomically. The
@@ -56,9 +56,9 @@ pub enum RefusalCause {
     Consumed,
     /// No stored email credential matches the secret.
     UnknownSecret,
-    /// No active human account fits the request.
+    /// No active user account fits the request.
     NoSuchAccount,
-    /// The invitation names a human who already has a password.
+    /// The invitation names a user who already has a password.
     AlreadyEnrolled,
     /// The password breaks the password rule.
     PasswordRule,
@@ -346,7 +346,7 @@ async fn lock_account(
     })
 }
 
-/// Issue an invitation for an active, unenrolled human under an authorized actor.
+/// Issue an invitation for an active, unenrolled user under an authorized actor.
 ///
 /// The caller must authenticate and authorize the operator before calling this
 /// library. The database client must hold identity-writer authority.
@@ -358,7 +358,7 @@ pub async fn issue_invitation(
     issue_token(client, actor, principal, INVITATION_PURPOSE, None).await
 }
 
-/// Issue a reset credential for an active human who already has a password.
+/// Issue a reset credential for an active user who already has a password.
 pub async fn issue_reset(
     client: &mut Client,
     actor: &PrincipalId,
@@ -430,7 +430,7 @@ async fn usable_token(
     hash: &[u8],
     purpose: &str,
 ) -> Result<Option<RefusalCause>, PasswordError> {
-    let row = client.query_opt("SELECT t.consumed_at IS NOT NULL, t.expires_at <= clock_timestamp(), p.status = 'active' AND p.type = 'human' FROM identity.password_tokens t JOIN identity.principals p ON p.id = t.principal_id WHERE t.token_hash = $1 AND t.principal_id = $2::text::uuid AND t.purpose = $3", &[&hash, &principal.as_str(), &purpose]).await.map_err(|source| database(&source))?;
+    let row = client.query_opt("SELECT t.consumed_at IS NOT NULL, t.expires_at <= clock_timestamp(), p.status = 'active' AND p.type = 'user' FROM identity.password_tokens t JOIN identity.principals p ON p.id = t.principal_id WHERE t.token_hash = $1 AND t.principal_id = $2::text::uuid AND t.purpose = $3", &[&hash, &principal.as_str(), &purpose]).await.map_err(|source| database(&source))?;
     let Some(row) = row else {
         return Ok(Some(RefusalCause::UnknownSecret));
     };
@@ -455,7 +455,7 @@ fn enrollment_policy(password: &Password) -> Result<(), PasswordError> {
     Ok(())
 }
 
-/// Establish a human's first password using a correctly bound invitation.
+/// Establish a user's first password using a correctly bound invitation.
 ///
 /// Expensive hashing precedes the principal lock. The transaction rechecks
 /// the invitation and active, unenrolled principal after acquiring that lock.
@@ -547,7 +547,7 @@ pub async fn authenticate_password(
     email: &str,
     password: Password,
 ) -> Result<Option<AuthenticatedPrincipal>, PasswordError> {
-    let row = client.query_opt("SELECT p.id::text, p.type, p.subject, p.display_name, p.status, c.password_hash FROM identity.principals p JOIN identity.password_credentials c ON c.principal_id = p.id WHERE p.email = $1 AND p.type = 'human'", &[&email]).await.map_err(|source| database(&source))?;
+    let row = client.query_opt("SELECT p.id::text, p.type, p.subject, p.display_name, p.status, c.password_hash FROM identity.principals p JOIN identity.password_credentials c ON c.principal_id = p.id WHERE p.email = $1 AND p.type = 'user'", &[&email]).await.map_err(|source| database(&source))?;
     let Some(row) = row else {
         work.hash(password).await?;
         return Ok(None);

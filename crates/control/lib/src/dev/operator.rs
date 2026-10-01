@@ -28,7 +28,7 @@ pub(super) struct LaunchSpec {
     pub authentication: Authentication,
 }
 
-/// Human login uses the managed issuer; explicit legacy environments retain PAT access.
+/// User login uses the managed issuer; explicit legacy environments retain PAT access.
 #[derive(Clone)]
 pub(super) enum Authentication {
     Pat(String),

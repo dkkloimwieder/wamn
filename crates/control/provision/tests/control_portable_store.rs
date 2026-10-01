@@ -465,7 +465,7 @@ INSERT INTO catalog.authoring_command_audit
    principal_subject, effective_role, org, project, environment, target_ref,
    request_hash, outcome_bytes)
 VALUES
-  ('tenant-a', 'command-1', 'gate', 'principal-1', 'human', 'someone',
+  ('tenant-a', 'command-1', 'gate', 'principal-1', 'user', 'someone',
    'project-author', 'acme', 'widgets', 'dev', 'widgets@1.0.0',
    'sha256:' || repeat('1', 64), '\x7b7d'::bytea);
 INSERT INTO wamn_run.gate_reports
@@ -481,7 +481,7 @@ DO $narrowed$ BEGIN
        principal_subject, effective_role, org, project, environment, target_ref,
        request_hash, outcome_bytes)
     VALUES
-      ('tenant-b', 'forged', 'gate', 'principal-1', 'human', 'someone',
+      ('tenant-b', 'forged', 'gate', 'principal-1', 'user', 'someone',
        'project-author', 'acme', 'shipping', 'dev', 'forged',
        'sha256:' || repeat('3', 64), '\x7b7d'::bytea);
     ASSERT false, 'app.tenant widened the author mapping';

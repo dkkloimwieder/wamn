@@ -33,7 +33,7 @@ use wamn_pg_core::quote_ident;
 use wamn_platform_identity::session_keys::{activate_session_key, publish_session_key};
 use wamn_platform_identity::session_token::sign_session_token;
 use wamn_platform_identity::{
-    PrincipalId, authenticate_pat, create_human, create_service, disable_principal, revoke_pat,
+    PrincipalId, authenticate_pat, create_service, create_user, disable_principal, revoke_pat,
 };
 use wamn_session::token::SessionClaims;
 
@@ -202,18 +202,13 @@ async fn operator_pat_issuance_over_https() {
         )
         .await
         .expect_redacted("bind wamn:provisioning for the fixture session");
-    let human = create_human(
-        &system,
-        "pat-human",
-        "pat-human@example.invalid",
-        "PAT Human",
-    )
-    .await
-    .expect_redacted("human fixture");
+    let user = create_user(&system, "pat-user", "pat-human@example.invalid", "PAT User")
+        .await
+        .expect_redacted("user fixture");
     let machine = create_service(&system, "pat-machine", "PAT Machine")
         .await
         .expect_redacted("service fixture");
-    let disabled = create_human(
+    let disabled = create_user(
         &system,
         "pat-disabled",
         "pat-disabled@example.invalid",
@@ -240,7 +235,7 @@ async fn operator_pat_issuance_over_https() {
         &mut system,
         SessionClaims {
             iss: ISSUER.to_owned(),
-            sub: human.id().to_string(),
+            sub: user.id().to_string(),
             org: "acme".to_owned(),
             aud: target.audience().to_owned(),
             roles: vec!["admin".to_owned()],
@@ -285,7 +280,7 @@ async fn operator_pat_issuance_over_https() {
     for material in [&foreign, &expired, &wrong_usage] {
         let client = https_client(&server_ca, Some(material));
         assert!(
-            request(&client, &process.endpoint, human.id(), "refused", 3600)
+            request(&client, &process.endpoint, user.id(), "refused", 3600)
                 .send()
                 .await
                 .is_err(),
@@ -296,7 +291,7 @@ async fn operator_pat_issuance_over_https() {
         request(
             &anonymous,
             &process.endpoint,
-            human.id(),
+            user.id(),
             "absent certificate",
             3600,
         )
@@ -311,7 +306,7 @@ async fn operator_pat_issuance_over_https() {
         request(
             &anonymous,
             &process.endpoint,
-            human.id(),
+            user.id(),
             "header spoof",
             3600,
         )
@@ -331,11 +326,11 @@ async fn operator_pat_issuance_over_https() {
         "refused callers cannot change any system row"
     );
 
-    let human_pat = success(
+    let user_pat = success(
         &authorized,
         &process.endpoint,
-        human.id(),
-        "  operator human  ",
+        user.id(),
+        "  operator user  ",
         &system,
     )
     .await;
@@ -352,11 +347,11 @@ async fn operator_pat_issuance_over_https() {
         request(
             &anonymous,
             &process.endpoint,
-            human.id(),
+            user.id(),
             "PAT refusal",
             3600,
         )
-        .bearer_auth(human_pat["token"].as_str().expect("PAT string"))
+        .bearer_auth(user_pat["token"].as_str().expect("PAT string"))
         .send()
         .await
         .expect_redacted("PAT cannot authenticate an operator"),
@@ -365,7 +360,7 @@ async fn operator_pat_issuance_over_https() {
     )
     .await;
     let before_refusals = snapshots(&system, false).await;
-    malformed_requests(&authorized, &process.endpoint, human.id(), disabled.id()).await;
+    malformed_requests(&authorized, &process.endpoint, user.id(), disabled.id()).await;
     assert!(
         before_refusals == snapshots(&system, false).await,
         "all request refusals preserve every system row"
@@ -375,7 +370,7 @@ async fn operator_pat_issuance_over_https() {
         "PAT issuance cannot create principals, roles, or membership grants"
     );
 
-    let token = human_pat["token"].as_str().expect("PAT string");
+    let token = user_pat["token"].as_str().expect("PAT string");
     let mut forged = token.to_owned();
     let end = forged.pop().expect("token secret");
     forged.push(if end == 'a' { 'b' } else { 'a' });
@@ -386,7 +381,7 @@ async fn operator_pat_issuance_over_https() {
             .is_none(),
         "known prefix alone is insufficient"
     );
-    let prefix = human_pat["token_prefix"].as_str().expect("PAT prefix");
+    let prefix = user_pat["token_prefix"].as_str().expect("PAT prefix");
     revoke_pat(&system, prefix)
         .await
         .expect_redacted("revoke service-issued PAT");
@@ -409,7 +404,7 @@ async fn operator_pat_issuance_over_https() {
     let expired_pat = success(
         &authorized,
         &process.endpoint,
-        human.id(),
+        user.id(),
         "expiry control",
         &system,
     )
@@ -439,7 +434,7 @@ async fn operator_pat_issuance_over_https() {
         request(
             &authorized,
             &process.endpoint,
-            human.id(),
+            user.id(),
             "database secret control",
             3600,
         )
@@ -470,7 +465,7 @@ async fn operator_pat_issuance_over_https() {
         request(
             &authorized,
             &no_ca.endpoint,
-            human.id(),
+            user.id(),
             "no configured CA",
             3600,
         )

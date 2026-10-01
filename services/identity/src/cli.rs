@@ -76,7 +76,7 @@ impl fmt::Debug for MailArgs {
 
 #[derive(Debug, Subcommand)]
 enum Command {
-    /// Serve public keys and configured human authentication endpoints over HTTPS.
+    /// Serve public keys and configured user authentication endpoints over HTTPS.
     Serve {
         #[command(flatten)]
         mail: MailArgs,

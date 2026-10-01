@@ -87,7 +87,7 @@ The Receiving tests observe stamps and the log through real routes and commands:
 - In the same tests, `receiving.record_receipt` stamps the order and its receipt with one instant, and an Acme overlay update stamps the base columns.
 - The route tests also fold the purchase order history that the server served. No served image carries an Acme column, and the fold matches the purchase order that the database holds.
 - In the same tests, an operator who holds every grant except the history token gets `permission-denied` before the component runs.
-- The [session tests](../../apps/wamn_receiving/tests/route_authentication_live/sessions.rs) show that one person stamps the same id through a session token and through a PAT.
+- The [session tests](../../apps/wamn_receiving/tests/route_authentication_live/sessions.rs) show that one user stamps the same id through a session token and through a PAT.
 - The [materializer test](../../apps/wamn_receiving/tests/route_authentication_live/materializer.rs) shows that `quality.create_inspection` stamps `wamn:materializer` as `created_by`.
 - The materializer test also makes sure that CDC publishes no history table row. The purchase order entry and the line entry of the receipt carry the event `txid` in the low 32 bits of their transaction id.
 - The [data access test](../../apps/wamn_receiving/tests/receiving_data_access.rs) installs the declared triggers with its own SQL and tests insert, update, and no-op stamps.

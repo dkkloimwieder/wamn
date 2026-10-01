@@ -125,7 +125,7 @@ pub(super) async fn prepare_session_host_fixture(
         "session release changed facts beyond the copied attachment policy"
     );
 
-    let human = create_human(
+    let user = create_user(
         admin.as_ref(),
         "session-host@example.test",
         "session-host@example.test",
@@ -136,7 +136,7 @@ pub(super) async fn prepare_session_host_fixture(
         org: ORG.to_owned(),
         project: PROJECT.to_owned(),
         env: ENVIRONMENT.to_owned(),
-        principal_id: human.id().to_string(),
+        principal_id: user.id().to_string(),
         system_database_url: inputs.system_pg_url.clone(),
     })
     .await?;
@@ -157,17 +157,17 @@ pub(super) async fn prepare_session_host_fixture(
     project
         .execute(
             "INSERT INTO app_system.users (tenant_id, id, type, email, status) \
-         VALUES ($1, $2::text::uuid, 'person', 'session-host@example.test', 'active')",
-            &[&TENANT, &human.id().as_str()],
+         VALUES ($1, $2::text::uuid, 'user', 'session-host@example.test', 'active')",
+            &[&TENANT, &user.id().as_str()],
         )
         .await?;
     project.execute(
         "INSERT INTO app_system.user_roles (tenant_id, user_id, role_name) VALUES ($1, $2::text::uuid, $3)",
-        &[&TENANT, &human.id().as_str(), &SESSION_ROLE],
+        &[&TENANT, &user.id().as_str(), &SESSION_ROLE],
     ).await?;
     let pat = issue_pat(
         admin.as_ref(),
-        human.id(),
+        user.id(),
         "deployed host session test",
         Duration::from_secs(3600),
     )
@@ -187,8 +187,8 @@ pub(super) async fn prepare_session_host_fixture(
     ).await.context("read the independent expected purchase-order GET result")?.get(0);
     let document = serde_json::json!({
         "manifest_digest": manifest_digest,
-        "human_pat": pat.token(),
-        "human_id": human.id().as_str(),
+        "user_pat": pat.token(),
+        "user_id": user.id().as_str(),
         "audience": audience,
         "org": ORG,
         "project": PROJECT,
@@ -432,7 +432,7 @@ pub(super) async fn assert_nested_session(
         "nested fixture changed the deployed release 2"
     );
 
-    let human = create_human(
+    let user = create_user(
         admin.as_ref(),
         "session-nested@example.test",
         "session-nested@example.test",
@@ -443,7 +443,7 @@ pub(super) async fn assert_nested_session(
         org: ORG.to_owned(),
         project: PROJECT.to_owned(),
         env: ENVIRONMENT.to_owned(),
-        principal_id: human.id().to_string(),
+        principal_id: user.id().to_string(),
         system_database_url: inputs.system_pg_url.clone(),
     })
     .await?;
@@ -471,17 +471,17 @@ pub(super) async fn assert_nested_session(
     project
         .execute(
             "INSERT INTO app_system.users (tenant_id, id, type, email, status) \
-         VALUES ($1, $2::text::uuid, 'person', 'session-nested@example.test', 'active')",
-            &[&TENANT, &human.id().as_str()],
+         VALUES ($1, $2::text::uuid, 'user', 'session-nested@example.test', 'active')",
+            &[&TENANT, &user.id().as_str()],
         )
         .await?;
     project.execute(
         "INSERT INTO app_system.user_roles (tenant_id, user_id, role_name) VALUES ($1, $2::text::uuid, $3)",
-        &[&TENANT, &human.id().as_str(), &ROLE],
+        &[&TENANT, &user.id().as_str(), &ROLE],
     ).await?;
     let pat = issue_pat(
         admin.as_ref(),
-        human.id(),
+        user.id(),
         "nested session test",
         Duration::from_secs(600),
     )
@@ -525,7 +525,7 @@ pub(super) async fn assert_nested_session(
     let verifier = SessionVerifier::new(keys, ORG, &audience)?;
     let verified_claims = verifier.verify(token).await?;
     anyhow::ensure!(
-        verified_claims.claims().sub == human.id().as_str()
+        verified_claims.claims().sub == user.id().as_str()
             && verified_claims.claims().roles == [ROLE]
             && exchange
                 .as_ref()
@@ -603,13 +603,13 @@ pub(super) async fn assert_nested_session(
                 pat: pat.token(),
                 body: request_body,
                 expected_base: &expected_base,
-                human_id: human.id().as_str(),
+                user_id: user.id().as_str(),
                 traces: &traces,
                 client_credentials: Some(login.credentials.clone()),
             },
             &login,
             transport,
-            &human,
+            &user,
             &digests[BASE_PACKAGE_ID],
             direct_attachment.path,
         )
@@ -649,7 +649,7 @@ pub(super) async fn assert_nested_session(
             &traces.spans(),
             &trace_id,
             &digests[OVERLAY_PACKAGE_ID],
-            human.id().as_str(),
+            user.id().as_str(),
             "session",
         );
         anyhow::ensure!(
@@ -657,7 +657,7 @@ pub(super) async fn assert_nested_session(
             "session replay changed the committed result"
         );
 
-        // This is an explicit new request from the same human, not a host retry.
+        // This is an explicit new request from the same user, not a host retry.
         let (pat_trace, pat_parent) = journey_trace(32);
         let response = invoke_journey_route(
             &JourneyRuntime {
@@ -675,13 +675,13 @@ pub(super) async fn assert_nested_session(
         .await?;
         anyhow::ensure!(
             successful_value(&response, "session-nested-replay")? == expected_replay,
-            "the same human's valid PAT failed the fresh-only operation"
+            "the same user's valid PAT failed the fresh-only operation"
         );
         assert_nested_record_receipt_trace(
             &traces.spans(),
             &pat_trace,
             &digests[OVERLAY_PACKAGE_ID],
-            human.id().as_str(),
+            user.id().as_str(),
             "pat",
         );
         anyhow::ensure!(
@@ -715,7 +715,7 @@ pub(super) async fn assert_nested_session(
             "",
             *BASE_RECORD_RECEIPT,
             &digests[BASE_PACKAGE_ID],
-            human.id().as_str(),
+            user.id().as_str(),
         );
         anyhow::ensure!(
             nested_receipt_state(project.as_ref()).await? == before,
@@ -745,7 +745,7 @@ pub(super) async fn assert_nested_session(
         });
         anyhow::ensure!(
             successful_value(&response, "session-nested-replay")? == expected_base,
-            "the same human's PAT failed the direct fresh-only operation"
+            "the same user's PAT failed the direct fresh-only operation"
         );
         let direct_spans = traces.spans();
         assert_direct_route_trace(
@@ -754,7 +754,7 @@ pub(super) async fn assert_nested_session(
             "",
             *BASE_RECORD_RECEIPT,
             &digests[BASE_PACKAGE_ID],
-            human.id().as_str(),
+            user.id().as_str(),
         );
         let direct_invocations = trace_component_invocations(&direct_spans, &direct_pat_trace);
         anyhow::ensure!(
@@ -779,7 +779,7 @@ pub(super) async fn assert_nested_session(
             pat: pat.token(),
             body: request_body.clone(),
             expected_base: &expected_base,
-            human_id: human.id().as_str(),
+            user_id: user.id().as_str(),
             traces: &traces,
             client_credentials: None,
         })
@@ -789,12 +789,12 @@ pub(super) async fn assert_nested_session(
             .execute(
                 "DELETE FROM app_system.user_roles \
              WHERE tenant_id = $1 AND user_id = $2::text::uuid AND role_name = $3",
-                &[&TENANT, &human.id().as_str(), &ROLE],
+                &[&TENANT, &user.id().as_str(), &ROLE],
             )
             .await?;
         anyhow::ensure!(
             removed == 1,
-            "role removal must remove the human's one assignment"
+            "role removal must remove the user's one assignment"
         );
         let (role_trace, role_parent) = journey_trace(33);
         let response = invoke_journey_route(
@@ -817,14 +817,14 @@ pub(super) async fn assert_nested_session(
             .execute(
                 "INSERT INTO app_system.user_roles (tenant_id, user_id, role_name) \
              VALUES ($1, $2::text::uuid, $3)",
-                &[&TENANT, &human.id().as_str(), &ROLE],
+                &[&TENANT, &user.id().as_str(), &ROLE],
             )
             .await?;
         project_env_membership::revoke(ProjectEnvMembershipRequest {
             org: ORG.to_owned(),
             project: PROJECT.to_owned(),
             env: ENVIRONMENT.to_owned(),
-            principal_id: human.id().to_string(),
+            principal_id: user.id().to_string(),
             system_database_url: inputs.system_pg_url.clone(),
         })
         .await?;
@@ -863,7 +863,7 @@ pub(super) async fn assert_nested_session(
             &traces.spans(),
             &trace_id,
             &digests[OVERLAY_PACKAGE_ID],
-            human.id().as_str(),
+            user.id().as_str(),
             "session",
         );
         assert_pat_and_session_stamp_one_actor(
@@ -875,7 +875,7 @@ pub(super) async fn assert_nested_session(
             StampCredentials {
                 session: token,
                 pat: pat.token(),
-                human_id: human.id().as_str(),
+                user_id: user.id().as_str(),
             },
             project.as_ref(),
         )
@@ -901,14 +901,14 @@ static BASE_UPDATE: LazyLock<&'static str> =
 static OVERLAY_UPDATE: LazyLock<&'static str> =
     LazyLock::new(|| sealed("client-acme-receiving:purchase-order/update").leak());
 
-/// Two credentials of one person.
+/// Two credentials of one user.
 struct StampCredentials<'a> {
     session: &'a str,
     pat: &'a str,
-    human_id: &'a str,
+    user_id: &'a str,
 }
 
-/// A person stamps the same users id through a session token and through a
+/// A user stamps the same users id through a session token and through a
 /// personal access token.
 ///
 /// The session updates a new order through the Acme route, and the PAT then
@@ -985,11 +985,11 @@ async fn assert_pat_and_session_stamp_one_actor(
     anyhow::ensure!(
         session["row_version"] == 2
             && pat["row_version"] == 3
-            && session["updated_by"] == credentials.human_id
-            && pat["updated_by"] == credentials.human_id
+            && session["updated_by"] == credentials.user_id
+            && pat["updated_by"] == credentials.user_id
             && session["created_by"] == FIXTURE_PRINCIPAL
             && pat["created_by"] == FIXTURE_PRINCIPAL,
-        "a session and a PAT of one person stamped different actors: session={session} pat={pat}"
+        "a session and a PAT of one user stamped different actors: session={session} pat={pat}"
     );
     let stored: String = project
         .query_one(
@@ -1000,8 +1000,8 @@ async fn assert_pat_and_session_stamp_one_actor(
         .context("read the stamped order")?
         .get(0);
     anyhow::ensure!(
-        stored == credentials.human_id,
-        "the stored order does not carry the person's users id"
+        stored == credentials.user_id,
+        "the stored order does not carry the user's id"
     );
     Ok(())
 }
