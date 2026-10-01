@@ -307,7 +307,16 @@ async fn qualify_candidate(
         }
     }
     let executable =
-        compile_tests(root, app.package, None, &target_env, &mut result.checks).await?;
+        // The kind cases compile only with the `cluster` feature (wamn-ld93.33.6).
+        compile_tests(
+            root,
+            app.package,
+            None,
+            Some("cluster"),
+            &target_env,
+            &mut result.checks,
+        )
+        .await?;
     // Compiling check harnesses cannot replace deployment artifacts.
     result.assert_artifacts()?;
     let temporary = TemporaryResults::create()?;
@@ -496,6 +505,7 @@ pub async fn check_changes(request: CheckChangesRequest) -> anyhow::Result<()> {
             &workspace,
             &request.package,
             request.test.as_deref(),
+            None,
             &[],
             &mut result.checks,
         )
@@ -672,9 +682,24 @@ async fn compile_tests(
     root: &Path,
     package: &str,
     test: Option<&str>,
+    feature: Option<&str>,
     env: &[(String, String)],
     checks: &mut Vec<CheckResult>,
 ) -> anyhow::Result<PathBuf> {
+    artifact_executable(
+        &run(
+            root,
+            &test_build_command(package, test, feature),
+            env,
+            checks,
+        )
+        .await?,
+        test.unwrap_or(&package.replace('-', "_")),
+    )
+}
+
+/// The `cargo test --no-run` command that builds one test executable.
+fn test_build_command(package: &str, test: Option<&str>, feature: Option<&str>) -> Vec<String> {
     let mut args = strings(&[
         "cargo",
         "test",
@@ -685,14 +710,14 @@ async fn compile_tests(
         "--no-run",
         "--message-format=json",
     ]);
+    if let Some(feature) = feature {
+        args.extend(["--features".to_owned(), feature.to_owned()]);
+    }
     match test {
         Some(test) => args.extend(["--test".to_owned(), test.to_owned()]),
         None => args.push("--lib".to_owned()),
     }
-    artifact_executable(
-        &run(root, &args, env, checks).await?,
-        test.unwrap_or(&package.replace('-', "_")),
-    )
+    args
 }
 
 fn artifact_executable(output: &Output, name: &str) -> anyhow::Result<PathBuf> {
@@ -815,6 +840,19 @@ mod tests {
         ] {
             assert!(require_one_case(&failed).is_err());
         }
+    }
+
+    #[test]
+    fn qualification_builds_the_cases_with_the_cluster_feature() {
+        let command = test_build_command("wamn-wms-tests", None, Some("cluster"));
+        assert!(
+            command
+                .windows(2)
+                .any(|pair| pair == ["--features", "cluster"])
+        );
+        assert!(
+            !test_build_command("wamn-wms-tests", None, None).contains(&"--features".to_owned())
+        );
     }
 
     #[test]
