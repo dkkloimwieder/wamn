@@ -88,7 +88,7 @@ use wamn_platform_identity::{
     authenticate_pat, create_service, operator_subject, resolve_subject, revoke_pat,
 };
 
-use crate::env_policies::{ensure_env_policy_durability_schema, read_env_policy};
+use crate::env_policies::read_env_policy;
 use crate::pat_client::{PatClient, PatIssuerConfig};
 
 mod database;

@@ -1,5 +1,5 @@
 //! Live test of the two migrations of wamn-a40n.1 on databases installed
-//! before them: `system/0004_admin_role.sql` and
+//! before them: `system/0005_admin_role.sql` and
 //! `project/0002_authored_roles.sql` (docs/plan/platform-ui.md §6 issue 1).
 //!
 //! The project database takes the frozen `app-schema.sql` of `4495e0d20`, the
@@ -11,7 +11,7 @@ use wamn_control::provision_system::{ProvisionSystemRequest, provision_system};
 use wamn_test_infrastructure::locked_database;
 
 const SYSTEM_MIGRATION: &str =
-    include_str!("../../../../deploy/sql/migrations/system/0004_admin_role.sql");
+    include_str!("../../../../deploy/sql/migrations/system/0005_admin_role.sql");
 const PROJECT_MIGRATION: &str =
     include_str!("../../../../deploy/sql/migrations/project/0002_authored_roles.sql");
 const RECORD_HISTORY: &str = include_str!("../../../../deploy/sql/record-history.sql");
@@ -84,7 +84,7 @@ async fn system_migration_moves_operator_services_to_admin() {
     client
         .batch_execute(&format!("BEGIN; {SYSTEM_MIGRATION} COMMIT;"))
         .await
-        .expect("apply system/0004");
+        .expect("apply system/0005");
     assert_eq!(
         column(
             &client,

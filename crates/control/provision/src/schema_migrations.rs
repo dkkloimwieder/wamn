@@ -107,8 +107,14 @@ pub const SYSTEM_MIGRATIONS: &[Migration] = &[
         sql: include_str!("../../../../deploy/sql/migrations/system/0003_kind_to_type.sql"),
     },
     Migration {
-        relative_path: "migrations/system/0004_admin_role.sql",
-        sql: include_str!("../../../../deploy/sql/migrations/system/0004_admin_role.sql"),
+        relative_path: "migrations/system/0004_env_policy_durability.sql",
+        sql: include_str!(
+            "../../../../deploy/sql/migrations/system/0004_env_policy_durability.sql"
+        ),
+    },
+    Migration {
+        relative_path: "migrations/system/0005_admin_role.sql",
+        sql: include_str!("../../../../deploy/sql/migrations/system/0005_admin_role.sql"),
     },
 ];
 

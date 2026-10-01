@@ -1334,7 +1334,7 @@ Then:
 Installed databases move by `upgrade-schema` (owner ruling 2026-09-30, `wamn-a40n.1`), not by hand statements. Issue 1 ships two migration files:
 
 - `deploy/sql/migrations/project/0002_authored_roles.sql`, for each project-environment database. A holder of `operator` holds `admin`, and the role `operator` goes. `admin` loses its permission rows. A surviving authored permission becomes a stable reference and a direct selection. The table gains `required_by`, the self-referencing key, the admin and reference CHECKs, and the role-name CHECK. The closure rows of each selection are written when the next candidate release is reconciled before activation.
-- `deploy/sql/migrations/system/0004_admin_role.sql`, for `wamn_system`. A service that holds the project role `operator` holds `admin`, because route PAT admission accepts only `admin`.
+- `deploy/sql/migrations/system/0005_admin_role.sql`, for `wamn_system`. A service that holds the project role `operator` holds `admin`, because route PAT admission accepts only `admin`.
 
 A fresh install records both files as applied.
 
