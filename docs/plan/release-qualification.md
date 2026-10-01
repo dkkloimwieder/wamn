@@ -1,6 +1,6 @@
 # Release qualification
 
-Updated through: 2026-10-01, `main` at `9f5331e25`. Finding `wamn-ld93.33`. This spec is a draft for the owner. The cutover of `docs/plan/kind-to-type.md` §3.2 waits on it, because no head is set without a qualification.
+Updated through: 2026-10-01, `main` at `01ca2425d`. Finding `wamn-ld93.33`. The owner ruled the four forks of §7 on 2026-10-01. The cutover of `docs/plan/kind-to-type.md` §3.2 waits on it, because no head is set without a qualification.
 
 ## 1. Goal
 
@@ -57,7 +57,7 @@ WMS. The three cases go through `run_case`:
 - The package is read from `apps/wamn_wms/wamn.json` (`environment.rs:334-345`).
 - The wirings are every `publication/wirings/*.json`, with the version from each document (`environment.rs:526-555`).
 - The route host is `wms.localhost` (`apps/wamn_wms/tests/cluster.rs:437`).
-- `pat_only_attachments` rewrites every `auth-policy.modes` to `["pat"]` (`environment.rs:381-404`). The authored file has `["pat","session"]` (`apps/wamn_wms/publication/attachments.json:69-70`).
+- `pat_only_attachments` rewrites every `auth-policy.modes` to `["pat"]` (`environment.rs:394-425` at `01ca2425d`). The authored file has `["pat","session"]` (`apps/wamn_wms/publication/attachments.json:69-70`).
 - The candidate scope check is at `apps/wamn_wms/tests/delivery.rs:13-21`.
 
 Both applications take the publisher from the PAT Secret annotation of the fixture (`routes.rs:266-269`, `environment.rs:564-567`) and use the run schema `wamn_run`. The guests come from `candidate.target_directory` (`cluster/build.rs:28-32`). Each manifest component digest must be in the candidate files (`delivery.rs:229-239`).
@@ -102,21 +102,54 @@ The cases reach a host through a NodePort with a `Host` header. There is no ingr
 The candidate already carries the manifest, and the manifest names the tenant, the environment, the release id and the packages. The design adds what the manifest does not name, and it moves every case input from a constant to the candidate.
 
 - `prepare-release` takes `--org` and `--project`, and writes them into the candidate. They are not in the bytes, but the policy row and the publication record use them (§3.4).
-- `qualify-release` picks the case set from the packages of the candidate. The choice of cases for a Receiving release without Acme is fork 3 of §7.
 - The Receiving and WMS fixtures provision the stack with the org, the project, the tenant and the environment of the candidate. They mint the release id of the candidate, with its packages, its wirings and its route host. The scope checks of `delivery.rs` compare with the candidate instead of the constants.
 - With no candidate, each fixture builds its default candidate from today's constants, so the existing cases run unchanged.
-- The bytes come from the attachments of the candidate as authored. The WMS rewrite to `["pat"]` changes the bytes, and fork 4 of §7 decides how it goes.
+
+### 4.1 Fresh store
+
+The fixture mints the release id of the candidate directly into a fresh store. The schema checks only `effective_release_id > 0` (`deploy/sql/control-portable-store.sql:52`). The next-id rule of `publish_release.rs:492-500` belongs to the dev loop only. No placeholder release 1 is minted. A copy of an installed database stays with the package-upgrade epic.
+
+### 4.2 Route host
+
+The route host comes from the candidate. The cases send it as the `Host` header, as `postcommit_case.rs:283` does today. Nothing else changes.
+
+### 4.3 Case selection
+
+`application` at `qualification.rs:108-125` matches the package set of the candidate exactly, in three arms:
+
+| Package set | Cases |
+| --- | --- |
+| `{wamn_receiving}` | The Receiving cases that touch no overlay, listed below. |
+| `{wamn_receiving, client_acme_receiving}` | All three Receiving cases of §3.1. |
+| `{wamn_wms}` | The three WMS cases of §3.1. |
+
+Any other set fails as it does today. The Receiving-alone mint is part of this change: with the set `{wamn_receiving}`, the Receiving fixture mints `wamn_receiving` alone and no Acme wiring. No release is qualified by a case that needs a package that the release does not carry.
+
+These Receiving cases touch no overlay, measured at `01ca2425d`:
+
+| Case | Defined at | What it calls |
+| --- | --- | --- |
+| `route_cases::command_histories` | `apps/wamn_receiving/tests/route_authentication_live/cluster/route_cases.rs:16` | The base routes `/receiving/record_receipt` and `/purchase_order/update` (`apps/wamn_receiving/tests/receiving_command_histories_live.rs:27`, `:356`). |
+| `queue_recovery::interrupted_durable_queue_item_completes_after_host_restart` | `…/cluster/queue_recovery.rs:17` | The base wiring `receiving_record_receipt` of `BASE_PACKAGE_ID` (`queue_recovery.rs:163-165`). |
+
+Acme takes part in `record_receipt` only through its own route `/acme/receiving/record_receipt` (`apps/client_acme_receiving/publication/attachments.json:11`). `postcommit_case::baseline_overlay_and_materializer_progress` exercises the overlay (`postcommit_case.rs:44-54`), so it runs only in the Acme arm.
+
+`command_histories` calls no Acme route. But its result record reads Acme files: the digest of `client_acme_receiving.wasm` (`route_cases.rs:29`), and the schema identity and provenance of `apps/client_acme_receiving/generated/package-weld.json` (`receiving_command_histories_live.rs:953-960`, `:1020`). That record is an open question to the owner.
+
+### 4.4 WMS auth policy
+
+The WMS fixture mints the authored attachments unchanged, so the bytes keep `["pat","session"]`. The change deletes `pat_only_attachments` (`apps/wamn_wms/tests/environment.rs:394-425` at `01ca2425d`) and its caller. The fixture installs the session issuer the way `route_authentication_live/sessions.rs` does (`prepare_session_host_fixture`, `sessions.rs:6`). The WMS cases keep calling PAT routes.
 
 ## 5. Issues
 
 All issues land on one branch. They change the workspace and the kind cases only. No issue runs against wamn-dev.
 
-1. The candidate carries the org and the project: `prepare-release --org --project`, the `Candidate` fields, and the default candidate of each fixture.
-2. Case selection by the candidate, with the case set of fork 3.
-3. The Receiving fixture provisions and mints from the candidate. The scope check compares with the candidate.
-4. The WMS fixture provisions and mints from the candidate, with the attachments of fork 4. The scope check compares with the candidate.
-5. The store of fork 1 for a release id above 1.
-6. A dry run of the B7 and B8 qualification on a kind stack, against the store of fork 1. It records the time of each case, which becomes the stop budget of `kind-to-type.md` §3.2.
+The owner set this order on 2026-10-01:
+
+1. The fixture identity comes from the candidate: the tenant, the environment, the org, the project, the release id, the route host and the package set (§4, §4.1, §4.2).
+2. The three-arm selection and the Receiving-alone cases (§4.3).
+3. The WMS session issuer and the deletion of the rewrite (§4.4).
+4. A kind dry run of `prepare-release` and `qualify-release` for both wamn-dev release 2 candidates. The run compares the candidate bytes with a mint from the same inputs.
 
 ## 6. Out of scope
 
@@ -126,10 +159,19 @@ All issues land on one branch. They change the workspace and the kind cases only
 
 ## 7. Design forks
 
+The owner ruled on 2026-10-01 (recorded on `wamn-ld93.33`):
+
+1. Fresh store. The copy mechanism stays with the package-upgrade epic (§4.1).
+2. The route host comes from the candidate and is sent as the `Host` header. Nothing else changes (§4.2).
+3. Case selection matches the package set exactly, in three arms. The Receiving-alone mint is part of the change (§4.3).
+4. The WMS fixture installs the session issuer, and the rewrite is deleted (§4.4).
+
+The forks as they were put to the owner:
+
 1. Release id. No rule requires release 1 before release 2 (§3.4). So the source does not support the premise that release 2 needs a release 1.
    - Fresh store. The fixture mints release 2 directly. It costs nothing beyond issues 3 and 4.
    - Copy of the installed project database, restored into the kind stack, then `upgrade-schema` on the copy. This rehearses B3. `copy-project-env` copies one data schema only and needs a provisioned destination (§3.6), so the copy needs a whole-database dump and restore. The copy brings the `dkk` policy row, which needs a matching `registry.env_policies` row in the kind `wamn_system`. It also brings the application rows of wamn-dev, which hold the owner's data, into the kind stack.
    - Placeholder release 1. It is not needed, because no rule asks for it.
-2. Route host. The cases send a `Host` header to a NodePort, with no TLS (§3.5). So `receiving.wamn.dev` and `wms.wamn.dev` can be served inside kind when the cases take the host from the candidate. The cases need no change to how they name their host beyond that.
+2. Route host. The cases send a `Host` header to a NodePort, with no TLS (§3.5). If the cases take the host from the candidate, kind can serve `receiving.wamn.dev` and `wms.wamn.dev`. The cases need no change to how they name their host beyond that.
 3. Receiving package set. Acme is not on wamn-dev, and release 2 is `wamn_receiving@2.0.0` alone (`kind-to-type.md` §3.2 "No overlay", `gcp.md` §5.3 "Receiving ran the same"). Case selection refuses that set (§3.1), and `baseline_overlay_and_materializer_progress` exercises the overlay. The owner decides which cases qualify a Receiving release without Acme.
 4. WMS auth policy. The WMS fixture rewrites every route to `["pat"]` because the kind stack installs no session issuer (`apps/wamn_wms/tests/environment.rs:375-380`). The wamn-dev release keeps `["pat","session"]`, so its bytes differ. The owner decides between two options. The WMS fixture installs a session issuer, or the cases mint the authored policy and call only the PAT routes.
