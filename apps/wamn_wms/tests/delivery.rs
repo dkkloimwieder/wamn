@@ -11,13 +11,12 @@ pub(crate) fn candidate() -> anyhow::Result<Option<(Candidate, ServingManifest)>
         return Ok(None);
     };
     let (manifest, _) = candidate.manifest()?;
+    // The fixture takes the rest of its identity from the candidate, and it
+    // mints only the WMS package of this checkout.
     ensure!(
-        manifest.release.tenant_id == crate::environment::TENANT
-            && manifest.release.environment == crate::environment::ENVIRONMENT
-            && manifest.release.effective_release_id.get() == crate::environment::RELEASE_ID
-            && manifest.release.packages
-                == std::collections::BTreeSet::from([crate::environment::package_coordinate()?]),
-        "supplied WMS artifacts require the wms-route-auth/dev release 1 with the exact WMS package"
+        manifest.release.packages
+            == std::collections::BTreeSet::from([crate::environment::package_coordinate()?]),
+        "supplied WMS artifacts require the exact WMS package of this checkout"
     );
     let result = std::env::var_os("WAMN_DELIVERY_RESULT")
         .context("WAMN_DELIVERY_RESULT is required for supplied-artifact execution")?;

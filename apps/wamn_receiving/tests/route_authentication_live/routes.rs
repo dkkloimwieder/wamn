@@ -155,7 +155,7 @@ async fn receiving_release_journey(
         "journey requires PostgreSQL 18 or newer"
     );
 
-    provision_journey_control(&system_url, admin.as_ref()).await?;
+    provision_journey_control(&scope(), &system_url, admin.as_ref()).await?;
     admin
         .execute(
             "UPDATE registry.meta SET platform_domain = $1",
@@ -164,8 +164,14 @@ async fn receiving_release_journey(
         .await
         .context("set the disposable journey platform domain")?;
     let management_secret = root.join("management-author-pat.json");
-    let route =
-        provision_route(&system_url, admin.as_ref(), root, Some(&management_secret)).await?;
+    let route = provision_route(
+        &scope(),
+        &system_url,
+        admin.as_ref(),
+        root,
+        Some(&management_secret),
+    )
+    .await?;
     let caller_principal_id = resolve_subject(
         admin.as_ref(),
         PrincipalType::Service,
@@ -197,17 +203,18 @@ async fn receiving_release_journey(
     let (project, project_task) = connect(&route.database_url).await?;
     install_journey_project(inputs, project.as_ref(), &route.database_url, fresh_only).await?;
     verify_journey_operation_grants(project.as_ref()).await?;
-    reconcile_journey_run_plane(&system_url, &route.database_url).await?;
+    reconcile_journey_run_plane(&scope(), &system_url, &route.database_url).await?;
     wamn_control::dev::environment::grant_operator_admin_role(
         &route.database_url,
-        ORG,
-        PROJECT,
-        ENVIRONMENT,
-        TENANT,
+        identity().org.as_str(),
+        identity().project.as_str(),
+        identity().environment.as_str(),
+        identity().tenant.as_str(),
         PLATFORM_DOMAIN,
     )
     .await?;
     let credentials = prepare_journey_credentials(
+        &scope(),
         &system_url,
         &route.database_url,
         root,
@@ -238,6 +245,7 @@ async fn receiving_release_journey(
     // (wamn-10yt.10.32). The in-process exemption this test used to hold died
     // with that ruling.
     let mut management_server = spawn_journey_management_gate(
+        &scope(),
         scenario_worker,
         &credentials,
         &credentials.management_admitter,
@@ -259,7 +267,7 @@ async fn receiving_release_journey(
     .await?;
     verify_zero_case_gate_reports(admin.as_ref(), &gate_reports).await?;
     author_journey_wirings(inputs, &route.database_url, &system_url).await?;
-    reconcile_journey_run_plane(&system_url, &route.database_url).await?;
+    reconcile_journey_run_plane(&scope(), &system_url, &route.database_url).await?;
     let target = JourneyReleaseTarget {
         project_url: &route.database_url,
         system_url: &system_url,
@@ -269,7 +277,7 @@ async fn receiving_release_journey(
             .context("project provisioning emitted no management-author principal")?,
         project: project.as_ref(),
         control: admin.as_ref(),
-        release_id: RELEASE_ID,
+        release_id: identity().effective_release_id,
         attachments: JOURNEY_PACKAGES
             .iter()
             .map(|package| {
@@ -775,7 +783,11 @@ async fn receiving_release_journey(
         .execute(
             "DELETE FROM app_system.permissions \
              WHERE tenant_id = $1 AND role_name = $2 AND permission = $3",
-            &[&TENANT, &AUTHORED_ROLE, &reference_of(&HISTORY_OPERATION)],
+            &[
+                &identity().tenant.as_str(),
+                &AUTHORED_ROLE,
+                &reference_of(&HISTORY_OPERATION),
+            ],
         )
         .await
         .context("remove only the purchase order history permission")?;
@@ -808,7 +820,11 @@ async fn receiving_release_journey(
         .execute(
             "DELETE FROM app_system.permissions \
              WHERE tenant_id = $1 AND role_name = $2 AND permission = $3",
-            &[&TENANT, &AUTHORED_ROLE, &reference_of(&BASE_RECORD_RECEIPT)],
+            &[
+                &identity().tenant.as_str(),
+                &AUTHORED_ROLE,
+                &reference_of(&BASE_RECORD_RECEIPT),
+            ],
         )
         .await
         .context("remove only the pinned-base record_receipt permission")?;
@@ -1254,7 +1270,7 @@ async fn narrow_admins_to_authored_role(project: &Client) -> anyhow::Result<()> 
     project
         .execute(
             "INSERT INTO app_system.roles (tenant_id, name) VALUES ($1, $2)",
-            &[&TENANT, &AUTHORED_ROLE],
+            &[&identity().tenant.as_str(), &AUTHORED_ROLE],
         )
         .await
         .context("create the authored denial role")?;
@@ -1262,7 +1278,7 @@ async fn narrow_admins_to_authored_role(project: &Client) -> anyhow::Result<()> 
         .execute(
             "INSERT INTO app_system.permissions (tenant_id, role_name, permission, required_by) \
              SELECT $1, $2, reference, reference FROM unnest($3::text[]) AS reference",
-            &[&TENANT, &AUTHORED_ROLE, &references],
+            &[&identity().tenant.as_str(), &AUTHORED_ROLE, &references],
         )
         .await
         .context("select every installed operation for the authored role")?;
@@ -1270,9 +1286,10 @@ async fn narrow_admins_to_authored_role(project: &Client) -> anyhow::Result<()> 
         .batch_execute(&format!(
             "INSERT INTO app_system.user_roles (tenant_id, user_id, role_name) \
              SELECT tenant_id, user_id, '{AUTHORED_ROLE}' FROM app_system.user_roles \
-              WHERE tenant_id = '{TENANT}' AND role_name = '{ADMIN_ROLE}'; \
+              WHERE tenant_id = '{tenant}' AND role_name = '{ADMIN_ROLE}'; \
              DELETE FROM app_system.user_roles \
-              WHERE tenant_id = '{TENANT}' AND role_name = '{ADMIN_ROLE}';"
+              WHERE tenant_id = '{tenant}' AND role_name = '{ADMIN_ROLE}';",
+            tenant = identity().tenant,
         ))
         .await
         .context("move the admin holders to the authored role")
@@ -1284,9 +1301,10 @@ async fn restore_admins_from_authored_role(project: &Client) -> anyhow::Result<(
         .batch_execute(&format!(
             "INSERT INTO app_system.user_roles (tenant_id, user_id, role_name) \
              SELECT tenant_id, user_id, '{ADMIN_ROLE}' FROM app_system.user_roles \
-              WHERE tenant_id = '{TENANT}' AND role_name = '{AUTHORED_ROLE}'; \
+              WHERE tenant_id = '{tenant}' AND role_name = '{AUTHORED_ROLE}'; \
              DELETE FROM app_system.roles \
-              WHERE tenant_id = '{TENANT}' AND name = '{AUTHORED_ROLE}';"
+              WHERE tenant_id = '{tenant}' AND name = '{AUTHORED_ROLE}';",
+            tenant = identity().tenant,
         ))
         .await
         .context("return the authored role holders to admin")
@@ -1320,7 +1338,11 @@ async fn assert_unauthorized_no_op_refuses(
         .execute(
             "DELETE FROM app_system.permissions \
              WHERE tenant_id = $1 AND role_name = $2 AND permission = $3",
-            &[&TENANT, &AUTHORED_ROLE, &reference_of(&update_operation)],
+            &[
+                &identity().tenant.as_str(),
+                &AUTHORED_ROLE,
+                &reference_of(&update_operation),
+            ],
         )
         .await
         .context("remove only the purchase_order.update permission")?;

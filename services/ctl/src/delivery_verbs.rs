@@ -120,6 +120,12 @@ pub struct PrintReleaseEnvArgs {
 pub struct PrepareReleaseArgs {
     #[command(flatten)]
     pub release: PrintReleaseEnvArgs,
+    /// Org of the minted release, written into the candidate.
+    #[arg(long)]
+    pub org: String,
+    /// Project of the minted release, written into the candidate.
+    #[arg(long)]
+    pub project: String,
     #[arg(long)]
     pub target_directory: PathBuf,
     #[arg(long)]
@@ -259,6 +265,8 @@ fn release_lines(carrier: &ReleaseCarrier) -> String {
 pub async fn prepare(args: PrepareReleaseArgs) -> anyhow::Result<()> {
     wamn_control::delivery::prepare(PrepareReleaseRequest {
         database_url: args.release.database_url,
+        org: args.org,
+        project: args.project,
         tenant: args.release.tenant,
         effective_release_id: args.release.effective_release_id,
         artifact_base: args.release.artifact_base,

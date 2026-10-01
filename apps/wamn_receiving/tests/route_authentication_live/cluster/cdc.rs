@@ -4,6 +4,7 @@ use std::fs;
 use std::os::unix::fs::PermissionsExt as _;
 use std::path::{Path, PathBuf};
 
+use crate::route_authentication_live::scope;
 use anyhow::{Context as _, ensure};
 use wamn_cdc_reader::EventReaderArgs;
 use wamn_control::dev::environment::{connect, generation_args};
@@ -12,7 +13,7 @@ use wamn_control::provision_project_env::{self, ProvisionedRoute, read_json, sec
 use wamn_control_provision::workload_role::WorkloadRoleFamily;
 use wamn_gate_harness::journey::JourneyDocument;
 
-use super::super::{ENVIRONMENT, ORG, PROJECT};
+use super::super::identity;
 
 /// The broker identity one CDC reader publishes under.
 pub(super) struct BrokerBinding<'a> {
@@ -51,9 +52,9 @@ pub(super) async fn configure(
     let (project, project_task) = connect(&route.database_url).await?;
     let configured = wamn_gate_harness::environment::configure_cdc(
         EnableCdcProjectEnvRequest {
-            org: ORG.to_owned(),
-            project: PROJECT.to_owned(),
-            env: ENVIRONMENT.to_owned(),
+            org: identity().org.clone(),
+            project: identity().project.clone(),
+            env: identity().environment.clone(),
             schema: "receiving".to_owned(),
             system_database_url: Some(inputs.system_pg_url.clone()),
             cluster: Some("route-auth-pg18".to_owned()),
@@ -84,6 +85,7 @@ pub(super) async fn configure(
     admin_task.abort();
     configured?;
     let mut generation = generation_args(
+        &scope(),
         WorkloadRoleFamily::RegistryReader,
         &inputs.system_pg_url,
         None,
@@ -124,9 +126,9 @@ pub(super) fn reader_args(
     source: &async_nats::jetstream::stream::Config,
 ) -> anyhow::Result<EventReaderArgs> {
     Ok(EventReaderArgs {
-        org: ORG.to_owned(),
-        project: PROJECT.to_owned(),
-        env: ENVIRONMENT.to_owned(),
+        org: identity().org.clone(),
+        project: identity().project.clone(),
+        env: identity().environment.clone(),
         system_database_url: secret_value(&work.join("registry-reader.json"), "url")?,
         cdc_url: secret_value(&work.join("cdc-reader.json"), "url")?,
         nats_url: nats_url.to_owned(),
@@ -170,10 +172,10 @@ pub(super) async fn ready(
     observer: &async_nats::Client,
     evidence: &Path,
 ) -> anyhow::Result<()> {
-    use super::super::MATERIALIZER_STREAM;
+    use super::super::materializer_stream;
     use std::time::{Duration, Instant};
     let jetstream = async_nats::jetstream::new(observer.clone());
-    let advisory_name = wamn_event_wire::delivery_advisory_stream(MATERIALIZER_STREAM);
+    let advisory_name = wamn_event_wire::delivery_advisory_stream(materializer_stream());
     let log = evidence.join("cdc-reader.log");
     let deadline = Instant::now() + Duration::from_secs(120);
     loop {
@@ -182,7 +184,7 @@ pub(super) async fn ready(
             "the production CDC reader stopped before stream readiness"
         );
         if let (Ok(mut source), Ok(mut advisories)) = (
-            jetstream.get_stream(MATERIALIZER_STREAM).await,
+            jetstream.get_stream(materializer_stream()).await,
             jetstream.get_stream(&advisory_name).await,
         ) {
             let reader_log = fs::read_to_string(&log)?;
@@ -190,7 +192,7 @@ pub(super) async fn ready(
                 let source_info = source.info().await?;
                 let advisory_info = advisories.info().await?;
                 ensure!(
-                    source_info.config.name == MATERIALIZER_STREAM
+                    source_info.config.name == materializer_stream()
                         && advisory_info.config.name == advisory_name,
                     "the reader must use its declared event and advisory streams"
                 );

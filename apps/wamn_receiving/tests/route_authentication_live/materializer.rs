@@ -20,11 +20,11 @@ pub(super) async fn materializer_baseline(
 ) -> anyhow::Result<MaterializerBaseline> {
     let jetstream = async_nats::jetstream::new(nats);
     let stream = jetstream
-        .get_stream(MATERIALIZER_STREAM)
+        .get_stream(materializer_stream())
         .await
         .context("read the production reader's event stream")?;
     let consumer = stream
-        .consumer_info(MATERIALIZER_DURABLE)
+        .consumer_info(materializer_durable())
         .await
         .context("read the exact materializer durable")?;
     anyhow::ensure!(
@@ -35,7 +35,7 @@ pub(super) async fn materializer_baseline(
     );
     let advisories = jetstream
         .get_stream(wamn_event_wire::delivery_advisory_stream(
-            MATERIALIZER_STREAM,
+            materializer_stream(),
         ))
         .await
         .context("read the production reader's broker advisory stream")?
@@ -65,7 +65,7 @@ pub(super) async fn assert_materializer_causation(
         .query(
             "SELECT package_id, entity_id, registration::text FROM catalog.event_registrations \
              WHERE tenant_id = $1 ORDER BY package_id COLLATE \"C\", registration_id COLLATE \"C\"",
-            &[&TENANT],
+            &[&identity().tenant.as_str()],
         )
         .await
         .context("read the installed event-registration set")?;
@@ -90,7 +90,7 @@ pub(super) async fn assert_materializer_causation(
 
     let jetstream = async_nats::jetstream::new(nats);
     let mut stream = jetstream
-        .get_stream(MATERIALIZER_STREAM)
+        .get_stream(materializer_stream())
         .await
         .context("read the production reader's event stream")?;
     let deadline = std::time::Instant::now() + Duration::from_secs(120);
@@ -147,7 +147,8 @@ pub(super) async fn assert_materializer_causation(
         }
         anyhow::ensure!(
             std::time::Instant::now() < deadline,
-            "causal receipt and inspection events did not both reach {MATERIALIZER_STREAM}"
+            "causal receipt and inspection events did not both reach {}",
+            materializer_stream()
         );
         tokio::time::sleep(Duration::from_millis(200)).await;
     };
@@ -212,10 +213,10 @@ pub(super) async fn assert_materializer_causation(
     let settled_deadline = std::time::Instant::now() + Duration::from_secs(30);
     let consumer = loop {
         let consumer = stream
-            .consumer_info(MATERIALIZER_DURABLE)
+            .consumer_info(materializer_durable())
             .await
             .context("read the exact materializer durable")?;
-        if consumer.name == MATERIALIZER_DURABLE
+        if consumer.name == materializer_durable()
             && consumer.delivered.consumer_sequence == baseline.consumer_sequence + 1
             && consumer.delivered.stream_sequence == receipt_sequence
             && consumer.ack_floor.consumer_sequence == baseline.consumer_sequence + 1
@@ -234,7 +235,7 @@ pub(super) async fn assert_materializer_causation(
     };
     let mut delivery_advisories = jetstream
         .get_stream(wamn_event_wire::delivery_advisory_stream(
-            MATERIALIZER_STREAM,
+            materializer_stream(),
         ))
         .await
         .context("read the production reader's broker advisory stream")?;

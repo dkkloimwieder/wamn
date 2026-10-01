@@ -97,7 +97,7 @@ pub(super) fn assert_invocation_identity(
     );
     assert_eq!(
         span_attribute(component, "wamn.project").as_deref(),
-        Some(PROJECT),
+        Some(identity().project.as_str()),
         "trace {trace_id} escaped the Receiving project"
     );
     assert_eq!(
@@ -361,7 +361,7 @@ pub(super) async fn build_journey_runtime(
             Arc::clone(&release),
             Arc::new(source),
             OperationScope {
-                project: PROJECT.to_owned(),
+                project: identity().project.clone(),
                 schema: Some("receiving".to_owned()),
                 owner_prefix: "receiving-route-live".to_owned(),
                 warm_reuse: wamn_engine::warm_reuse::WarmReuse::default(),
@@ -382,23 +382,31 @@ pub(super) async fn build_journey_runtime(
         driver.operations(),
         Some(driver as Arc<dyn wamn_execution_host::WiringDelivery>),
         jetstream,
-        PROJECT,
+        identity().project.as_str(),
     )?);
     let (identity_reader, identity_task) = connect(&credentials.identity_reader).await?;
     let mut authenticator = PlatformRouteAuthenticator::default().with_authentication(Arc::new(
         RouteAuthentication::new(
             Arc::clone(&identity_reader),
             Arc::clone(&postgres),
-            ORG,
-            PROJECT,
-            operator_subject(ORG, PROJECT, ENVIRONMENT)?,
+            identity().org.as_str(),
+            identity().project.as_str(),
+            operator_subject(
+                identity().org.as_str(),
+                identity().project.as_str(),
+                identity().environment.as_str(),
+            )?,
         )
         .await?,
     ));
     if let Some(verifier) = session_verifier {
-        authenticator = authenticator.with_session_authentication(Arc::new(
-            SessionRouteAuthentication::new(verifier, identity_reader, postgres, PROJECT),
-        ));
+        authenticator =
+            authenticator.with_session_authentication(Arc::new(SessionRouteAuthentication::new(
+                verifier,
+                identity_reader,
+                postgres,
+                identity().project.as_str(),
+            )));
     }
     let routing = Arc::new(
         FlowHttpRouting::new(Some(release), RouteInFlightLimit::default())

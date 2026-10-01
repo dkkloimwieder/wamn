@@ -15,7 +15,7 @@ use wamn_test_infrastructure::platform;
 use wamn_test_infrastructure::rendering::kubernetes_documents;
 
 use super::{application, bootstrap, checked, deployment, kubectl};
-use crate::environment::{ORG, PROJECT, RELEASE_ID, TENANT};
+use crate::environment::identity;
 
 pub(super) async fn run(
     context: &super::CaseContext<'_>,
@@ -192,10 +192,14 @@ pub(super) async fn run(
         .args([
             "--database-url",
             &route.database_url,
+            "--org",
+            identity().org.as_str(),
+            "--project",
+            identity().project.as_str(),
             "--tenant",
-            TENANT,
+            identity().tenant.as_str(),
             "--effective-release-id",
-            &RELEASE_ID.to_string(),
+            &identity().effective_release_id.to_string(),
             "--artifact-base",
             &release.artifact_base,
         ])
@@ -263,13 +267,13 @@ pub(super) async fn run(
         "--control-database-url",
         &document.system_pg_url,
         "--org",
-        ORG,
+        identity().org.as_str(),
         "--project",
-        PROJECT,
+        identity().project.as_str(),
         "--tenant",
-        TENANT,
+        identity().tenant.as_str(),
         "--effective-release-id",
-        "1",
+        &identity().effective_release_id.to_string(),
         "--artifact-base",
         &release.artifact_base,
         "--insecure-registry",

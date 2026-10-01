@@ -757,7 +757,8 @@ The hosts stay stopped until B10. At this point the host values name only format
 5. Capture the minted release and its exact artifact locations as the candidate (`docs/operations/delivery.md` §Candidate qualification). `HOST_IMAGE` and `DELIVERY_TARGET` come from B0:
 
    ```bash
-   target/debug/wamn-ctl prepare-release --database-url "$T" --tenant dev --effective-release-id 2 \
+   target/debug/wamn-ctl prepare-release --database-url "$T" --org dkk --project receiving \
+     --tenant dev --effective-release-id 2 \
      --artifact-base us-central1-docker.pkg.dev/wamn-dev/wamn/releases --target-directory "$DELIVERY_TARGET" \
      --host-image "$HOST_IMAGE" \
      --manifest-output $P/receiving-manifest.json --candidate-output $P/receiving-candidate.json
@@ -902,7 +903,8 @@ It prints release 1 with format 3 and release 2 with format 4. The table name ho
 7. Prepare, qualify, publish and print release 2, as B7 steps 5 to 8 do:
 
    ```bash
-   target/debug/wamn-ctl prepare-release --database-url "$T" --tenant wms --effective-release-id 2 \
+   target/debug/wamn-ctl prepare-release --database-url "$T" --org dkk --project wms \
+     --tenant wms --effective-release-id 2 \
      --artifact-base us-central1-docker.pkg.dev/wamn-dev/wamn/releases --target-directory "$DELIVERY_TARGET" \
      --host-image "$HOST_IMAGE" \
      --manifest-output $P/wms-manifest.json --candidate-output $P/wms-candidate.json

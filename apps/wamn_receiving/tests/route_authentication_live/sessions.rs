@@ -10,7 +10,7 @@ pub(super) async fn prepare_session_host_fixture(
     const SESSION_ATTACHMENT: &str = "purchase-order-get-http";
     const SESSION_ROLE: &str = "session-host-reader";
     const ORDER_ID: &str = "00000000-0000-0000-0000-000000000301";
-    const SESSION_RELEASE_ID: u32 = RELEASE_ID + 1;
+    let session_release_id = identity().effective_release_id + 1;
 
     anyhow::ensure!(
         output.is_absolute() && !output.exists(),
@@ -31,18 +31,22 @@ pub(super) async fn prepare_session_host_fixture(
     let instance_suffix: String = admin
         .query_one(
             "SELECT instance_suffix FROM registry.project_envs WHERE org = $1 AND project = $2 AND env = $3",
-            &[&ORG, &PROJECT, &ENVIRONMENT],
+            &[&identity().org.as_str(), &identity().project.as_str(), &identity().environment.as_str()],
         )
         .await
         .context("read the existing Receiving environment instance")?
         .get(0);
-    let triple = wamn_control_registry::Triple::new(ORG, PROJECT, ENVIRONMENT);
+    let triple = wamn_control_registry::Triple::new(
+        identity().org.as_str(),
+        identity().project.as_str(),
+        identity().environment.as_str(),
+    );
     let audience =
         wamn_control_provision::session_target::session_audience(&triple, &instance_suffix)?;
     let database = wamn_control_provision::project_env_database_name(
-        ORG,
-        PROJECT,
-        ENVIRONMENT,
+        identity().org.as_str(),
+        identity().project.as_str(),
+        identity().environment.as_str(),
         &instance_suffix,
     );
     let mut project_url = reqwest::Url::parse(&inputs.system_pg_url)?;
@@ -55,7 +59,10 @@ pub(super) async fn prepare_session_host_fixture(
              JOIN catalog.release_manifest_snapshots AS snapshots \
                USING (tenant_id, effective_release_id) \
              WHERE releases.tenant_id = $1 AND releases.effective_release_id = $2",
-            &[&TENANT, &RELEASE_ID.cast_signed()],
+            &[
+                &identity().tenant.as_str(),
+                &identity().effective_release_id.cast_signed(),
+            ],
         )
         .await
         .context("read the completed PAT journey release")?;
@@ -103,7 +110,7 @@ pub(super) async fn prepare_session_host_fixture(
             publisher: &publisher,
             project: project.as_ref(),
             control: admin.as_ref(),
-            release_id: SESSION_RELEASE_ID,
+            release_id: session_release_id,
             attachments,
         },
     )
@@ -133,37 +140,37 @@ pub(super) async fn prepare_session_host_fixture(
     )
     .await?;
     project_env_membership::grant(ProjectEnvMembershipRequest {
-        org: ORG.to_owned(),
-        project: PROJECT.to_owned(),
-        env: ENVIRONMENT.to_owned(),
+        org: identity().org.clone(),
+        project: identity().project.clone(),
+        env: identity().environment.clone(),
         principal_id: user.id().to_string(),
         system_database_url: inputs.system_pg_url.clone(),
     })
     .await?;
-    bind_fixture_principal(project.as_ref(), TENANT).await?;
+    bind_fixture_principal(project.as_ref(), identity().tenant.as_str()).await?;
     project
         .execute(
             "INSERT INTO app_system.roles (tenant_id, name) VALUES ($1, $2)",
-            &[&TENANT, &SESSION_ROLE],
+            &[&identity().tenant.as_str(), &SESSION_ROLE],
         )
         .await?;
     project
         .execute(
             "INSERT INTO app_system.permissions (tenant_id, role_name, permission, required_by) \
          VALUES ($1, $2, regexp_replace($3, '@[^@]*$', ''), regexp_replace($3, '@[^@]*$', ''))",
-            &[&TENANT, &SESSION_ROLE, &*OPERATION],
+            &[&identity().tenant.as_str(), &SESSION_ROLE, &*OPERATION],
         )
         .await?;
     project
         .execute(
             "INSERT INTO app_system.users (tenant_id, id, type, email, status) \
          VALUES ($1, $2::text::uuid, 'user', 'session-host@example.test', 'active')",
-            &[&TENANT, &user.id().as_str()],
+            &[&identity().tenant.as_str(), &user.id().as_str()],
         )
         .await?;
     project.execute(
         "INSERT INTO app_system.user_roles (tenant_id, user_id, role_name) VALUES ($1, $2::text::uuid, $3)",
-        &[&TENANT, &user.id().as_str(), &SESSION_ROLE],
+        &[&identity().tenant.as_str(), &user.id().as_str(), &SESSION_ROLE],
     ).await?;
     let pat = issue_pat(
         admin.as_ref(),
@@ -190,10 +197,10 @@ pub(super) async fn prepare_session_host_fixture(
         "user_pat": pat.token(),
         "user_id": user.id().as_str(),
         "audience": audience,
-        "org": ORG,
-        "project": PROJECT,
-        "environment": ENVIRONMENT,
-        "tenant": TENANT,
+        "org": identity().org.as_str(),
+        "project": identity().project.as_str(),
+        "environment": identity().environment.as_str(),
+        "tenant": identity().tenant.as_str(),
         "instance_suffix": instance_suffix,
         "roles": [SESSION_ROLE],
         "route_path": "/purchase_order/get",
@@ -300,19 +307,23 @@ pub(super) async fn assert_nested_session(
         .context("bind wamn:provisioning for the system fixture session")?;
     let instance_suffix: String = admin.query_one(
         "SELECT instance_suffix FROM registry.project_envs WHERE org = $1 AND project = $2 AND env = $3",
-        &[&ORG, &PROJECT, &ENVIRONMENT],
+        &[&identity().org.as_str(), &identity().project.as_str(), &identity().environment.as_str()],
     ).await?.get(0);
     let audience = wamn_control_provision::session_target::session_audience(
-        &wamn_control_registry::Triple::new(ORG, PROJECT, ENVIRONMENT),
+        &wamn_control_registry::Triple::new(
+            identity().org.as_str(),
+            identity().project.as_str(),
+            identity().environment.as_str(),
+        ),
         &instance_suffix,
     )?;
     let mut project_url = reqwest::Url::parse(&inputs.system_pg_url)?;
     project_url.set_path(&format!(
         "/{}",
         wamn_control_provision::project_env_database_name(
-            ORG,
-            PROJECT,
-            ENVIRONMENT,
+            identity().org.as_str(),
+            identity().project.as_str(),
+            identity().environment.as_str(),
             &instance_suffix,
         )
     ));
@@ -322,7 +333,7 @@ pub(super) async fn assert_nested_session(
          FROM catalog.effective_releases AS releases \
          JOIN catalog.release_manifest_snapshots AS snapshots USING (tenant_id, effective_release_id) \
          WHERE releases.tenant_id = $1 AND releases.effective_release_id = 1",
-        &[&TENANT],
+        &[&identity().tenant.as_str()],
     ).await?;
     let publisher: String = previous.get(0);
     let previous = LoadedRelease::load_canonical_bytes(
@@ -347,7 +358,7 @@ pub(super) async fn assert_nested_session(
         .query_one(
             "SELECT canonical_bytes FROM catalog.release_manifest_snapshots \
          WHERE tenant_id = $1 AND effective_release_id = 2",
-            &[&TENANT],
+            &[&identity().tenant.as_str()],
         )
         .await?
         .get(0);
@@ -423,7 +434,7 @@ pub(super) async fn assert_nested_session(
         .query_one(
             "SELECT canonical_bytes FROM catalog.release_manifest_snapshots \
          WHERE tenant_id = $1 AND effective_release_id = 2",
-            &[&TENANT],
+            &[&identity().tenant.as_str()],
         )
         .await?
         .get(0);
@@ -440,18 +451,18 @@ pub(super) async fn assert_nested_session(
     )
     .await?;
     project_env_membership::grant(ProjectEnvMembershipRequest {
-        org: ORG.to_owned(),
-        project: PROJECT.to_owned(),
-        env: ENVIRONMENT.to_owned(),
+        org: identity().org.clone(),
+        project: identity().project.clone(),
+        env: identity().environment.clone(),
         principal_id: user.id().to_string(),
         system_database_url: inputs.system_pg_url.clone(),
     })
     .await?;
-    bind_fixture_principal(project.as_ref(), TENANT).await?;
+    bind_fixture_principal(project.as_ref(), identity().tenant.as_str()).await?;
     project
         .execute(
             "INSERT INTO app_system.roles (tenant_id, name) VALUES ($1, $2)",
-            &[&TENANT, &ROLE],
+            &[&identity().tenant.as_str(), &ROLE],
         )
         .await?;
     let mut permitted_operations = vec![*OVERLAY_RECORD_RECEIPT, *BASE_RECORD_RECEIPT];
@@ -465,19 +476,19 @@ pub(super) async fn assert_nested_session(
         project.execute(
             "INSERT INTO app_system.permissions (tenant_id, role_name, permission, required_by) \
          VALUES ($1, $2, regexp_replace($3, '@[^@]*$', ''), regexp_replace($3, '@[^@]*$', ''))",
-            &[&TENANT, &ROLE, &operation],
+            &[&identity().tenant.as_str(), &ROLE, &operation],
         ).await?;
     }
     project
         .execute(
             "INSERT INTO app_system.users (tenant_id, id, type, email, status) \
          VALUES ($1, $2::text::uuid, 'user', 'session-nested@example.test', 'active')",
-            &[&TENANT, &user.id().as_str()],
+            &[&identity().tenant.as_str(), &user.id().as_str()],
         )
         .await?;
     project.execute(
         "INSERT INTO app_system.user_roles (tenant_id, user_id, role_name) VALUES ($1, $2::text::uuid, $3)",
-        &[&TENANT, &user.id().as_str(), &ROLE],
+        &[&identity().tenant.as_str(), &user.id().as_str(), &ROLE],
     ).await?;
     let pat = issue_pat(
         admin.as_ref(),
@@ -522,7 +533,7 @@ pub(super) async fn assert_nested_session(
         (token, Some(exchange))
     };
     let token = token.as_str();
-    let verifier = SessionVerifier::new(keys, ORG, &audience)?;
+    let verifier = SessionVerifier::new(keys, identity().org.as_str(), &audience)?;
     let verified_claims = verifier.verify(token).await?;
     anyhow::ensure!(
         verified_claims.claims().sub == user.id().as_str()
@@ -789,7 +800,7 @@ pub(super) async fn assert_nested_session(
             .execute(
                 "DELETE FROM app_system.user_roles \
              WHERE tenant_id = $1 AND user_id = $2::text::uuid AND role_name = $3",
-                &[&TENANT, &user.id().as_str(), &ROLE],
+                &[&identity().tenant.as_str(), &user.id().as_str(), &ROLE],
             )
             .await?;
         anyhow::ensure!(
@@ -817,13 +828,13 @@ pub(super) async fn assert_nested_session(
             .execute(
                 "INSERT INTO app_system.user_roles (tenant_id, user_id, role_name) \
              VALUES ($1, $2::text::uuid, $3)",
-                &[&TENANT, &user.id().as_str(), &ROLE],
+                &[&identity().tenant.as_str(), &user.id().as_str(), &ROLE],
             )
             .await?;
         project_env_membership::revoke(ProjectEnvMembershipRequest {
-            org: ORG.to_owned(),
-            project: PROJECT.to_owned(),
-            env: ENVIRONMENT.to_owned(),
+            org: identity().org.clone(),
+            project: identity().project.clone(),
+            env: identity().environment.clone(),
             principal_id: user.id().to_string(),
             system_database_url: inputs.system_pg_url.clone(),
         })
@@ -923,7 +934,7 @@ async fn assert_pat_and_session_stamp_one_actor(
     project: &Client,
 ) -> anyhow::Result<()> {
     let order = uuid::Uuid::new_v4().to_string();
-    bind_fixture_principal(project, TENANT).await?;
+    bind_fixture_principal(project, identity().tenant.as_str()).await?;
     project
         .execute(
             "INSERT INTO receiving.supplier (id, name) VALUES \

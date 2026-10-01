@@ -39,7 +39,7 @@ use wamn_test_infrastructure::rendering::{
 };
 use wamn_test_infrastructure::secrets::{HostSecretsInput, derive_host_secrets};
 
-use super::{ENVIRONMENT, ORG, PROJECT, RELEASE_ID, TENANT, connect, repository_root, routes};
+use super::{connect, identity, repository_root, routes};
 use build::Artifacts;
 use resources::{Resources, checked, write_private};
 use wamn_control_provision::events::{
@@ -71,14 +71,18 @@ async fn start_with(
     let artifacts =
         build::components_and_tools(&repository, &cluster.evidence, startup_burst).await?;
     let registry_password = resources::prepare_files(&cluster).await?;
-    let scope = Triple::new(ORG, PROJECT, ENVIRONMENT);
+    let scope = Triple::new(
+        identity().org.as_str(),
+        identity().project.as_str(),
+        identity().environment.as_str(),
+    );
     let source = source_stream_config(&scope, 1, Duration::from_secs(120));
     let advisory = advisory_stream_config(&scope, 1);
     let consumers = declared_consumers()?;
     let broker = event_broker::prepare(
         &cluster.work,
         &scope,
-        TENANT,
+        identity().tenant.as_str(),
         &source,
         &advisory,
         &consumers,
@@ -170,7 +174,7 @@ fn journey_inputs(
         flow_http_wasm: artifacts.http.clone(),
         component_artifact_base: format!("{authority}/wamn/components"),
         release_artifact_base: format!("{authority}/wamn/releases"),
-        route_host: "receiving.localhost".to_owned(),
+        route_host: super::identity().route_host.clone(),
         registry_auth_file,
         host_secret_directory: cluster.work.join("host-secrets"),
         host_secret_namespace: cluster.name.clone(),
@@ -204,7 +208,7 @@ fn declared_consumers() -> anyhow::Result<Vec<async_nats::jetstream::consumer::p
             if let Some(registration) = &operation.registration {
                 let durable = format!(
                     "mat_{}_{}_{}",
-                    sanitize(TENANT),
+                    sanitize(identity().tenant.as_str()),
                     sanitize(&manifest.package.id),
                     sanitize(name)
                 );
@@ -218,7 +222,10 @@ fn declared_consumers() -> anyhow::Result<Vec<async_nats::jetstream::consumer::p
                     "the app registrations have colliding durable names"
                 );
                 let filter = format!(
-                    "evt.{ORG}.{PROJECT}.{ENVIRONMENT}.{}.>",
+                    "evt.{}.{}.{}.{}.>",
+                    identity().org,
+                    identity().project,
+                    identity().environment,
                     wamn_event_wire::subject_token(&registration.entity)
                 );
                 consumers.push(materializer_consumer_config(
@@ -302,8 +309,8 @@ async fn provision(
     .await?;
     let carrier = lookup_release_carrier(
         &route.database_url,
-        TENANT,
-        RELEASE_ID,
+        identity().tenant.as_str(),
+        identity().effective_release_id,
         &inputs.release_artifact_base,
     )
     .await?;
@@ -447,9 +454,9 @@ async fn prepare_host(
             manifest_digest: carrier.manifest_digest.to_string(),
             nats_url: nats_url.to_owned(),
             event: EventIdentity {
-                org: ORG.to_owned(),
-                project: PROJECT.to_owned(),
-                environment: ENVIRONMENT.to_owned(),
+                org: identity().org.clone(),
+                project: identity().project.clone(),
+                environment: identity().environment.clone(),
             },
             guest_secret_name: guest.name.clone(),
             role_secrets: roles,
@@ -464,8 +471,8 @@ async fn prepare_host(
     assert_rendered_identity(
         &values.overlay,
         &HostIdentity {
-            org: ORG.to_owned(),
-            project: PROJECT.to_owned(),
+            org: identity().org.clone(),
+            project: identity().project.clone(),
             schema: "receiving".to_owned(),
         },
     )?;

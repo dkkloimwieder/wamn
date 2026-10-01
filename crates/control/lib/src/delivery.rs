@@ -1,12 +1,14 @@
 //! Repository commands and exact artifact inputs for release qualification.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs::{self, OpenOptions};
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context as _, ensure};
 use serde::{Deserialize, Serialize};
-use wamn_catalog::{ManifestDigest, ServingManifest, ServingRelease};
+use wamn_catalog::{
+    AttachmentType, ManifestDigest, PackageCoordinate, ServingManifest, ServingRelease,
+};
 
 pub mod deployment;
 pub mod publication;
@@ -18,6 +20,10 @@ pub mod sqlx;
 pub struct PrepareReleaseRequest {
     /// URL to the database holding the minted release snapshot.
     pub database_url: String,
+    /// Org of the minted release, which its manifest does not name.
+    pub org: String,
+    /// Project of the minted release, which its manifest does not name.
+    pub project: String,
     /// Tenant claim carried by the minted release snapshot.
     pub tenant: String,
     /// Integer identity of the minted effective release snapshot.
@@ -53,6 +59,8 @@ pub async fn prepare(request: PrepareReleaseRequest) -> anyhow::Result<()> {
     )
     .await?;
     let candidate = Candidate {
+        org: request.org,
+        project: request.project,
         manifest_path: request.manifest_output,
         target_directory: fs::canonicalize(request.target_directory)?,
         host_image: request.host_image,
@@ -75,10 +83,26 @@ pub async fn prepare(request: PrepareReleaseRequest) -> anyhow::Result<()> {
     serde_json::to_writer_pretty(output, &candidate).context("write the candidate artifact inputs")
 }
 
+/// The release inputs that a qualification fixture provisions and mints.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ReleaseIdentity {
+    pub org: String,
+    pub project: String,
+    pub environment: String,
+    pub tenant: String,
+    pub effective_release_id: u32,
+    pub route_host: String,
+    pub packages: BTreeSet<PackageCoordinate>,
+}
+
 /// Locations of already built artifacts, with the existing application manifest.
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Candidate {
+    /// Org of the release. The manifest does not name it.
+    pub org: String,
+    /// Project of the release. The manifest does not name it.
+    pub project: String,
     pub manifest_path: PathBuf,
     pub target_directory: PathBuf,
     pub host_image: String,
@@ -163,6 +187,44 @@ impl Candidate {
         let bytes = fs::read(&self.manifest_path)
             .with_context(|| format!("read manifest {}", self.manifest_path.display()))?;
         ServingManifest::from_canonical_bytes(&bytes).context("admit candidate serving manifest")
+    }
+
+    /// The release inputs that a fixture provisions and mints: the org and the
+    /// project of the candidate, and the rest from its manifest.
+    pub fn identity(&self) -> anyhow::Result<ReleaseIdentity> {
+        let (manifest, _) = self.manifest()?;
+        // The mint writes one deployment route host into every routed
+        // attachment (publish_release/attachments.rs resolve_route_host_overlay).
+        let hosts = manifest
+            .attachments
+            .iter()
+            .filter(|(_, attachment)| {
+                matches!(
+                    attachment.type_,
+                    AttachmentType::Http | AttachmentType::Studio
+                )
+            })
+            .map(|(id, attachment)| {
+                attachment
+                    .definition
+                    .pointer("/route/host")
+                    .and_then(serde_json::Value::as_str)
+                    .with_context(|| format!("candidate attachment {id:?} carries no route host"))
+            })
+            .collect::<anyhow::Result<BTreeSet<_>>>()?;
+        let mut hosts = hosts.into_iter();
+        let (Some(route_host), None) = (hosts.next(), hosts.next()) else {
+            anyhow::bail!("the candidate manifest must carry exactly one route host");
+        };
+        Ok(ReleaseIdentity {
+            org: self.org.clone(),
+            project: self.project.clone(),
+            environment: manifest.release.environment.clone(),
+            tenant: manifest.release.tenant_id.clone(),
+            effective_release_id: manifest.release.effective_release_id.get(),
+            route_host: route_host.to_owned(),
+            packages: manifest.release.packages,
+        })
     }
 
     /// Require the fresh fixture to reproduce the candidate's exact release bytes.
@@ -386,6 +448,8 @@ mod tests {
     #[test]
     fn registry_mapping_refuses_implicit_insecure_and_credential_endpoints() {
         let mut candidate = super::Candidate {
+            org: "acme".into(),
+            project: "unused".into(),
             manifest_path: "unused".into(),
             target_directory: "unused".into(),
             host_image: format!("localhost:5000/host@sha256:{}", "a".repeat(64)),

@@ -30,7 +30,7 @@ use wamn_runtime::plugins::wamn_postgres::{
 };
 
 use wamn_control::dev::environment::{
-    ENVIRONMENT, ORG, PROJECT, TENANT, connect, generation_args, provision_route,
+    ENVIRONMENT, JourneyScope, ORG, PROJECT, TENANT, connect, generation_args, provision_route,
     reset_control_store,
 };
 use wamn_test_infrastructure::scratch::ScratchRoot;
@@ -747,7 +747,7 @@ async fn production_operator_authentication_and_operation_authorization() {
     reset_and_install_control(&admin)
         .await
         .expect("install the control plane");
-    let route = provision_route(&admin_url, &admin, root, None)
+    let route = provision_route(&JourneyScope::receiving(), &admin_url, &admin, root, None)
         .await
         .expect("mint the production operator service");
     assert_eq!(
@@ -772,6 +772,7 @@ async fn production_operator_authentication_and_operation_authorization() {
 
     let identity_secret = root.join("identity-reader.json");
     provision_project_env::run_workload_action(&generation_args(
+        &JourneyScope::receiving(),
         WorkloadRoleFamily::IdentityReader,
         &admin_url,
         None,
@@ -781,6 +782,7 @@ async fn production_operator_authentication_and_operation_authorization() {
     .expect("prepare the production identity-reader generation");
     let http_secret = root.join("http-admitter.json");
     provision_project_env::run_workload_action(&generation_args(
+        &JourneyScope::receiving(),
         WorkloadRoleFamily::HttpAdmitter,
         &admin_url,
         Some(&route.database_url),
@@ -1119,9 +1121,15 @@ async fn role_verbs_grant_and_revoke_existing_roles() {
     reset_and_install_control(&admin)
         .await
         .expect("install the control plane");
-    let route = provision_route(&admin_url, &admin, scratch.path(), None)
-        .await
-        .expect("provision the environment");
+    let route = provision_route(
+        &JourneyScope::receiving(),
+        &admin_url,
+        &admin,
+        scratch.path(),
+        None,
+    )
+    .await
+    .expect("provision the environment");
     let (project, project_task) = connect(&route.database_url)
         .await
         .expect("connect project database");

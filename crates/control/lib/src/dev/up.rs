@@ -240,6 +240,7 @@ async fn enable_cdc(
         .to_owned();
     let reader_secret = args.root.join("registry-reader.json");
     crate::provision_project_env::run_workload_action(&super::environment::generation_args(
+        &super::environment::JourneyScope::receiving(),
         wamn_control_provision::WorkloadRoleFamily::RegistryReader,
         &args.system_database_url,
         None,

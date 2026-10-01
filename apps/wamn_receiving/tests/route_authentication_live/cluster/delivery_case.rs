@@ -10,7 +10,7 @@ use tokio::process::Command;
 use wamn_control::delivery::Candidate;
 use wamn_test_infrastructure::rendering::kubernetes_documents;
 
-use super::super::{ORG, PROJECT, RELEASE_ID, TENANT};
+use super::super::identity;
 use super::{ReceivingCluster, apply, checked, deployment, kubectl, resources};
 
 #[tokio::test]
@@ -84,8 +84,8 @@ async fn exercise(
     .await?;
     let carrier = wamn_control::print_release_env::lookup_release_carrier(
         &route.database_url,
-        TENANT,
-        RELEASE_ID,
+        identity().tenant.as_str(),
+        identity().effective_release_id,
         &cluster.inputs.release_artifact_base,
     )
     .await?;
@@ -216,10 +216,14 @@ async fn exercise(
         .args([
             "--database-url",
             &route.database_url,
+            "--org",
+            identity().org.as_str(),
+            "--project",
+            identity().project.as_str(),
             "--tenant",
-            TENANT,
+            identity().tenant.as_str(),
             "--effective-release-id",
-            &RELEASE_ID.to_string(),
+            &identity().effective_release_id.to_string(),
             "--artifact-base",
             &carrier.artifact_base,
         ])
@@ -288,13 +292,13 @@ async fn exercise(
         "--control-database-url",
         &cluster.inputs.system_pg_url,
         "--org",
-        ORG,
+        identity().org.as_str(),
         "--project",
-        PROJECT,
+        identity().project.as_str(),
         "--tenant",
-        TENANT,
+        identity().tenant.as_str(),
         "--effective-release-id",
-        "1",
+        &identity().effective_release_id.to_string(),
         "--artifact-base",
         &carrier.artifact_base,
         "--insecure-registry",

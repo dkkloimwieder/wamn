@@ -36,7 +36,8 @@ Capture the minted manifest and explicit artifact locations:
 
 ```bash
 wamn-ctl prepare-release \
-  --database-url "$DELIVERY_DATABASE_URL" --tenant "$DELIVERY_TENANT" \
+  --database-url "$DELIVERY_DATABASE_URL" --org "$DELIVERY_ORG" --project "$DELIVERY_PROJECT" \
+  --tenant "$DELIVERY_TENANT" \
   --effective-release-id "$DELIVERY_RELEASE_ID" --artifact-base "$DELIVERY_ARTIFACT_BASE" \
   --target-directory "$DELIVERY_TARGET" \
   --host-image "$DELIVERY_HOST_IMAGE" \
@@ -44,6 +45,8 @@ wamn-ctl prepare-release \
 ```
 
 Use unused absolute paths for both output files.
+The candidate records the org and the project, because the manifest does not name them.
+The qualification fixtures take the org, the project, the tenant, the environment, the release id, the route host and the packages from the candidate.
 Add each deployment document, application request, and expected response with `--deployment-file` before qualification.
 For an owned registry reached through another address inside kind, add `--native-registry-endpoint HOST:PORT`.
 If that endpoint uses HTTP, also add `--native-registry-insecure`.

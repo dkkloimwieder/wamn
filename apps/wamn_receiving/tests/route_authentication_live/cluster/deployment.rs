@@ -11,7 +11,7 @@ use wamn_control_provision::materializer_workload::{
 };
 use wamn_test_infrastructure::rendering::{HttpClaims, HttpWorkloadInput, render_http_workload};
 
-use super::super::{ENVIRONMENT, ORG, PROJECT, TENANT};
+use super::super::identity;
 use super::{ReceivingCluster, apply, checked, kubectl, write_private};
 
 pub(super) fn native_secrets(cluster: &ReceivingCluster) -> anyhow::Result<Vec<PathBuf>> {
@@ -25,7 +25,7 @@ pub(super) fn native_secrets(cluster: &ReceivingCluster) -> anyhow::Result<Vec<P
             "stringData":{
                 "username":cluster.broker.runtime.username,
                 "password":fs::read_to_string(&cluster.broker.runtime.password_file)?,
-                "org":ORG,"project":PROJECT,"environment":ENVIRONMENT,
+                "org":identity().org.as_str(),"project":identity().project.as_str(),"environment":identity().environment.as_str(),
                 "stream_replicas":cluster.source.num_replicas.to_string(),
                 "dup_window_secs":cluster.source.duplicate_window.as_secs().to_string(),
             },
@@ -131,10 +131,10 @@ pub(super) fn http_workload(cluster: &ReceivingCluster, image: &str) -> anyhow::
         image: image.to_owned(),
         route_host: cluster.inputs.route_host.clone(),
         claims: HttpClaims {
-            tenant: TENANT.to_owned(),
+            tenant: identity().tenant.clone(),
             catalog: "default".to_owned(),
             environment: cluster.resources.name.clone(),
-            project: PROJECT.to_owned(),
+            project: identity().project.clone(),
             schema: "receiving".to_owned(),
         },
     };
@@ -174,11 +174,11 @@ pub(super) async fn install_materializer(
         workload: "receiving-materializer".to_owned(),
         namespace: cluster.resources.name.clone(),
         image: image.to_owned(),
-        tenant: TENANT.to_owned(),
+        tenant: identity().tenant.clone(),
         event: EventIdentity {
-            org: ORG.to_owned(),
-            project: PROJECT.to_owned(),
-            environment: ENVIRONMENT.to_owned(),
+            org: identity().org.clone(),
+            project: identity().project.clone(),
+            environment: identity().environment.clone(),
         },
         event_stream: cluster.source.name.clone(),
         fetch_ms: 500,

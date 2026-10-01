@@ -12,7 +12,7 @@ const FIXTURE_PRINCIPAL: &str = "00000000-0000-4000-8000-0000000000f1";
 
 pub(crate) async fn seed_fixture(project: &Client, initial_revision: i64) -> anyhow::Result<()> {
     // The fixture writes as its test principal, whose row stamps itself.
-    let tenant = crate::environment::TENANT;
+    let tenant = crate::environment::identity().tenant.as_str();
     project.batch_execute(&format!(
         "BEGIN;\n\
          SELECT set_config('app.user_id', '{FIXTURE_PRINCIPAL}', true), \

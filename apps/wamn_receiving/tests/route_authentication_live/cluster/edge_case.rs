@@ -16,7 +16,7 @@ use wamn_control::project_env_membership::{self, ProjectEnvMembershipRequest};
 use wamn_test_infrastructure::rendering::{HttpClaims, HttpWorkloadInput, render_http_workload};
 use wamn_test_infrastructure::workload;
 
-use super::super::{ADMIN_ROLE, ENVIRONMENT, ORG, PROJECT, RELEASE_ID, TENANT};
+use super::super::{ADMIN_ROLE, identity};
 use super::resources::{self, checked, write_private};
 use super::{ReceivingCluster, apply, deployment, install_host, kubectl, provision, route_cases};
 use super::{session_cluster, start};
@@ -49,8 +49,8 @@ async fn run(evidence: &Path) -> anyhow::Result<()> {
         super::super::sessions::prepare_session_host_fixture(&cluster.inputs, &fixture).await?;
         let carrier = lookup_release_carrier(
             &route.database_url,
-            TENANT,
-            RELEASE_ID + 1,
+            identity().tenant.as_str(),
+            identity().effective_release_id + 1,
             &cluster.inputs.release_artifact_base,
         )
         .await?;
@@ -129,10 +129,10 @@ async fn route_ingress(cluster: &ReceivingCluster, http_image: &str) -> anyhow::
             image: http_image.to_owned(),
             route_host: cluster.inputs.route_host.clone(),
             claims: HttpClaims {
-                tenant: TENANT.to_owned(),
+                tenant: identity().tenant.clone(),
                 catalog: "default".to_owned(),
                 environment: resources.name.clone(),
-                project: PROJECT.to_owned(),
+                project: identity().project.clone(),
                 schema: "receiving".to_owned(),
             },
         },
@@ -223,9 +223,9 @@ async fn account(cluster: &ReceivingCluster, project_url: &str) -> anyhow::Resul
     let user =
         wamn_platform_identity::create_user(admin.as_ref(), EMAIL, EMAIL, "Edge operator").await?;
     project_env_membership::grant(ProjectEnvMembershipRequest {
-        org: ORG.to_owned(),
-        project: PROJECT.to_owned(),
-        env: ENVIRONMENT.to_owned(),
+        org: identity().org.clone(),
+        project: identity().project.clone(),
+        env: identity().environment.clone(),
         principal_id: user.id().to_string(),
         system_database_url: system.clone(),
     })
@@ -241,7 +241,7 @@ async fn account(cluster: &ReceivingCluster, project_url: &str) -> anyhow::Resul
         .execute(
             "SELECT set_config('app.operation', 'admin:seed-identity-fixture', false), \
              set_config('app.tenant_id', $1, false)",
-            &[&TENANT],
+            &[&identity().tenant.as_str()],
         )
         .await?;
     admin
@@ -253,19 +253,23 @@ async fn account(cluster: &ReceivingCluster, project_url: &str) -> anyhow::Resul
         .await?;
     admin_task.abort();
     let (project, project_task) = super::super::connect(project_url).await?;
-    super::super::bind_fixture_principal(project.as_ref(), TENANT).await?;
+    super::super::bind_fixture_principal(project.as_ref(), identity().tenant.as_str()).await?;
     project
         .execute(
             "INSERT INTO app_system.users (tenant_id, id, type, email, status) \
              VALUES ($1, $2::text::uuid, 'user', $3, 'active')",
-            &[&TENANT, &user.id().as_str(), &EMAIL],
+            &[&identity().tenant.as_str(), &user.id().as_str(), &EMAIL],
         )
         .await?;
     project
         .execute(
             "INSERT INTO app_system.user_roles (tenant_id, user_id, role_name) \
              VALUES ($1, $2::text::uuid, $3)",
-            &[&TENANT, &user.id().as_str(), &ADMIN_ROLE],
+            &[
+                &identity().tenant.as_str(),
+                &user.id().as_str(),
+                &ADMIN_ROLE,
+            ],
         )
         .await?;
     project_task.abort();

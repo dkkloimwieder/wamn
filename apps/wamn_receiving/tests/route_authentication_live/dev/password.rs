@@ -1,10 +1,9 @@
 //! Password access to the actual identity process during a Receiving rebuild.
 
+use crate::route_authentication_live::{identity, scope};
 use anyhow::{Context as _, ensure};
 use serde_json::{Value, json};
-use wamn_control::dev::environment::{
-    DevEnvironment, ENVIRONMENT, ORG, PROJECT, TENANT, connect, reconcile_journey_run_plane,
-};
+use wamn_control::dev::environment::{DevEnvironment, connect, reconcile_journey_run_plane};
 use wamn_control_provision::PlatformComponent;
 use wamn_platform_identity::{create_user, grant_project_env_membership};
 
@@ -62,17 +61,24 @@ impl Login {
             .execute("SELECT set_config('app.user_id', $1, false)", &[&actor])
             .await?;
         let user = create_user(&*admin, EMAIL, EMAIL, "Development fixture").await?;
-        grant_project_env_membership(&*admin, user.id(), ORG, PROJECT, ENVIRONMENT).await?;
-        reconcile_journey_run_plane(system, &environment.route.database_url).await?;
+        grant_project_env_membership(
+            &*admin,
+            user.id(),
+            identity().org.as_str(),
+            identity().project.as_str(),
+            identity().environment.as_str(),
+        )
+        .await?;
+        reconcile_journey_run_plane(&scope(), system, &environment.route.database_url).await?;
         let (project, project_task) = connect(&environment.route.database_url).await?;
         project.execute("SELECT set_config('app.user_id', $1, false), set_config('app.operation','admin:seed-identity-fixture',false)", &[&actor]).await?;
         project
             .execute(
                 "INSERT INTO app_system.roles (tenant_id,name) VALUES ($1,'development-fixture')",
-                &[&TENANT],
+                &[&identity().tenant.as_str()],
             )
             .await?;
-        project.execute("INSERT INTO app_system.user_roles (tenant_id,user_id,role_name) VALUES ($1,$2::text::uuid,'development-fixture')", &[&TENANT,&user.id().as_str()]).await?;
+        project.execute("INSERT INTO app_system.user_roles (tenant_id,user_id,role_name) VALUES ($1,$2::text::uuid,'development-fixture')", &[&identity().tenant.as_str(),&user.id().as_str()]).await?;
         project_task.abort();
         task.abort();
         let mut operator_pem = std::fs::read(
@@ -186,8 +192,8 @@ impl Login {
         use tokio::io::AsyncWriteExt as _;
         let (project, task) = connect(&environment.route.database_url).await?;
         let actor = PlatformComponent::Provisioning.principal_id().to_string();
-        project.execute("SELECT set_config('app.user_id', $1, false), set_config('app.tenant_id', $2, false), set_config('app.operation','admin:seed-identity-fixture',false)", &[&actor, &TENANT]).await?;
-        project.execute("INSERT INTO app_system.user_roles (tenant_id,user_id,role_name) VALUES ($1,$2::text::uuid,'admin') ON CONFLICT DO NOTHING", &[&TENANT,&self.user]).await?;
+        project.execute("SELECT set_config('app.user_id', $1, false), set_config('app.tenant_id', $2, false), set_config('app.operation','admin:seed-identity-fixture',false)", &[&actor, &identity().tenant.as_str()]).await?;
+        project.execute("INSERT INTO app_system.user_roles (tenant_id,user_id,role_name) VALUES ($1,$2::text::uuid,'admin') ON CONFLICT DO NOTHING", &[&identity().tenant.as_str(),&self.user]).await?;
         project.execute("INSERT INTO receiving.supplier (id,name) VALUES ('00000000-0000-0000-0000-000000000401','SUPPLIER-401') ON CONFLICT ON CONSTRAINT supplier_id_pkey DO NOTHING", &[]).await?;
         project.execute("INSERT INTO receiving.purchase_order (id,purchase_order_number,supplier_id) VALUES (gen_random_uuid(),'PASSWORD-JOURNEY','00000000-0000-0000-0000-000000000401')", &[]).await?;
         let repository = super::super::repository_root()?;
@@ -309,7 +315,7 @@ impl Login {
             repeat.status() == reqwest::StatusCode::BAD_REQUEST,
             "an enrolled account accepted a replacement invitation"
         );
-        project.execute("DELETE FROM app_system.user_roles WHERE tenant_id=$1 AND user_id=$2::text::uuid AND role_name='admin'", &[&TENANT,&self.user]).await?;
+        project.execute("DELETE FROM app_system.user_roles WHERE tenant_id=$1 AND user_id=$2::text::uuid AND role_name='admin'", &[&identity().tenant.as_str(),&self.user]).await?;
         task.abort();
         let response = self
             .http
@@ -347,9 +353,9 @@ impl Login {
         let removed = wamn_platform_identity::revoke_project_env_membership(
             &*admin,
             &self.user.parse()?,
-            ORG,
-            PROJECT,
-            ENVIRONMENT,
+            identity().org.as_str(),
+            identity().project.as_str(),
+            identity().environment.as_str(),
         )
         .await?;
         task.abort();

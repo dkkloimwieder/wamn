@@ -214,12 +214,14 @@ async fn prepare(
     target: Option<&str>,
     secret: &Path,
 ) -> String {
-    let mut args =
-        wamn_control::dev::environment::generation_args(family, system_url, target, secret);
-    args.org = ORG.into();
-    args.project = PROJECT.into();
-    args.env = ENV.into();
-    args.tenant = Some(TENANT.into());
+    let scope = wamn_control::dev::environment::JourneyScope {
+        org: ORG.into(),
+        project: PROJECT.into(),
+        environment: ENV.into(),
+        tenant: TENANT.into(),
+    };
+    let args =
+        wamn_control::dev::environment::generation_args(&scope, family, system_url, target, secret);
     run_workload_action(&args)
         .await
         .unwrap_or_else(|error| panic!("prepare {family:?} a: {error:#}"));

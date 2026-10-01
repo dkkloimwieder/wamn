@@ -90,8 +90,8 @@ async fn exercise(cluster: &ReceivingCluster) -> anyhow::Result<()> {
     let workflows = PostgresWorkflows::new(
         workflow_client,
         "wamn_run",
-        super::super::TENANT,
-        super::super::ENVIRONMENT,
+        super::super::identity().tenant.as_str(),
+        super::super::identity().environment.as_str(),
     );
     let result = recover(cluster, &mut client, &lock, &workflows, principal, name).await;
     drop(workflows);
@@ -135,7 +135,7 @@ async fn recover(
     principal: &str,
     pod: &str,
 ) -> anyhow::Result<()> {
-    let tenant = super::super::TENANT;
+    let tenant = super::super::identity().tenant.as_str();
     client.query_one(
         "SELECT set_config('app.tenant',$1,false), set_config('app.user_id',$2,false), set_config('app.operation','admin:queue-recovery-fixture',false)",
         &[&tenant, &wamn_control_provision::PlatformComponent::Provisioning.principal_id().to_string()],
@@ -160,7 +160,7 @@ async fn recover(
     lock.query_one("SELECT id FROM receiving.purchase_order WHERE id='00000000-0000-0000-0000-000000000304' FOR UPDATE", &[]).await?;
     let blocker: i32 = lock.query_one("SELECT pg_backend_pid()", &[]).await?.get(0);
     let request = StartRequest {
-        effective_release_id: super::super::RELEASE_ID,
+        effective_release_id: super::super::identity().effective_release_id,
         package_id: super::super::BASE_PACKAGE_ID.to_owned(),
         wiring_id: "receiving_record_receipt".to_owned(),
         wiring_version: 1,

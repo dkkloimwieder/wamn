@@ -81,11 +81,11 @@ pub(super) async fn assert_startup(
             test_id:format!("startup-{}",uuid::Uuid::new_v4().simple()),
             component_artifact_base:cluster.inputs.component_artifact_base.clone(), release_artifact_base:carrier.artifact_base.clone(),
             session_issuer:issuer.to_owned(), session_instance:instance.to_owned(), session_ca:cluster.resources.work.join("session-ca.crt"),
-            manifest_digest:carrier.manifest_digest.to_string(), org:super::super::ORG.to_owned(), project:super::super::PROJECT.to_owned(),
+            manifest_digest:carrier.manifest_digest.to_string(), org:super::super::identity().org.clone(), project:super::super::identity().project.clone(),
             schema:"receiving".to_owned(), environment:cluster.resources.name.clone(), route_host:cluster.inputs.route_host.clone(),
             route_path:"/purchase_order/get".to_owned(), probe_body:json!({"id":"00000000-0000-0000-0000-000000000301"}), max_concurrent_starts:limit,
         };
-        let scope = wamn_control_registry::Triple::new(super::super::ORG,super::super::PROJECT,super::super::ENVIRONMENT);
+        let scope = wamn_control_registry::Triple::new(super::super::identity().org.as_str(),super::super::identity().project.as_str(),super::super::identity().environment.as_str());
         let budget = 2 * 120 + 2 * 30 + 4 * limit as u64 * 30 + 70 + 5;
         tokio::time::timeout(Duration::from_secs(budget), super::super::startup_burst::assert_startup(
             &inputs, &cluster.broker.runtime, &scope, &cluster.source)).await.context("the retained native startup test exceeded its combined operation budgets")??;

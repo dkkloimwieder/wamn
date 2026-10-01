@@ -20,7 +20,7 @@ use wamn_control_provision::{CredentialGeneration, WorkloadRoleFamily, workload_
 use wamn_test_infrastructure::rendering::{HttpClaims, HttpWorkloadInput, render_http_workload};
 use wamn_test_infrastructure::workload;
 
-use super::super::{ENVIRONMENT, ORG, PROJECT, TENANT, sessions};
+use super::super::{identity, sessions};
 use super::resources::{checked, write_private};
 use super::{ReceivingCluster, Resources, apply, kubectl};
 
@@ -35,12 +35,16 @@ pub(super) async fn prepare_application(
     let (database, task) = super::super::connect(&cluster.inputs.system_pg_url).await?;
     let instance: String = database.query_one(
         "SELECT instance_suffix FROM registry.project_envs WHERE org = $1 AND project = $2 AND env = $3",
-        &[&ORG, &PROJECT, &ENVIRONMENT],
+        &[&identity().org.as_str(), &identity().project.as_str(), &identity().environment.as_str()],
     ).await?.get(0);
     drop(database);
     task.abort();
     let audience = wamn_control_provision::session_target::session_audience(
-        &wamn_control_registry::Triple::new(ORG, PROJECT, ENVIRONMENT),
+        &wamn_control_registry::Triple::new(
+            identity().org.as_str(),
+            identity().project.as_str(),
+            identity().environment.as_str(),
+        ),
         &instance,
     )?;
     let fixture = cluster.resources.work.join("application-session.json");
@@ -116,23 +120,23 @@ pub(super) async fn prepare(
     let target_file = resources.work.join("session-target.json");
     let target_name = workload_secret_name(
         WorkloadRoleFamily::SessionRoleReader,
-        ORG,
-        PROJECT,
-        ENVIRONMENT,
+        identity().org.as_str(),
+        identity().project.as_str(),
+        identity().environment.as_str(),
     );
     let database = wamn_control_provision::project_env_database_name(
-        ORG,
-        PROJECT,
-        ENVIRONMENT,
+        identity().org.as_str(),
+        identity().project.as_str(),
+        identity().environment.as_str(),
         text(&fixture, "/instance_suffix")?,
     );
     let mut target_url = reqwest::Url::parse(&cluster.inputs.system_pg_url)?;
     target_url.set_path(&format!("/{database}"));
     provision_project_env::run_workload_action(&WorkloadActionRequest {
-        org: ORG.to_owned(),
-        project: PROJECT.to_owned(),
-        env: ENVIRONMENT.to_owned(),
-        tenant: Some(TENANT.to_owned()),
+        org: identity().org.clone(),
+        project: identity().project.clone(),
+        env: identity().environment.clone(),
+        tenant: Some(identity().tenant.clone()),
         system_database_url: Some(cluster.inputs.system_pg_url.clone()),
         target_admin_database_url: Some(target_url.to_string()),
         cluster: None,
@@ -800,10 +804,10 @@ pub(super) async fn assert_session(
             image: http_image.to_owned(),
             route_host: cluster.inputs.route_host.clone(),
             claims: HttpClaims {
-                tenant: TENANT.to_owned(),
+                tenant: identity().tenant.clone(),
                 catalog: "default".to_owned(),
                 environment: resources.name.clone(),
-                project: PROJECT.to_owned(),
+                project: identity().project.clone(),
                 schema: "receiving".to_owned(),
             },
         },

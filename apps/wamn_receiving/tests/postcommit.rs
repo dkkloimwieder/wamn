@@ -17,8 +17,8 @@ use wamn_runtime::plugins::wamn_jetstream::{
 };
 
 use super::{
-    BASE_PACKAGE_ID, ENVIRONMENT, JourneyDocument, MATERIALIZER_DURABLE, MATERIALIZER_STREAM,
-    OVERLAY_PACKAGE_ID, PROJECT, TENANT, connect, overlay_route_path, secret_value,
+    BASE_PACKAGE_ID, JourneyDocument, OVERLAY_PACKAGE_ID, connect, identity, materializer_durable,
+    materializer_stream, overlay_route_path, secret_value,
 };
 
 const REGISTRATION: &str = "client_acme_receiving::quality.create_inspection";
@@ -270,7 +270,7 @@ async fn delivery_taps(
 async fn fixture(project: &Client, label: &str) -> anyhow::Result<(String, String)> {
     let order = uuid::Uuid::new_v4().to_string();
     let line = uuid::Uuid::new_v4().to_string();
-    super::bind_fixture_principal(project, super::TENANT).await?;
+    super::bind_fixture_principal(project, super::identity().tenant.as_str()).await?;
     // The order references a supplier, and every label reuses the same one.
     project
         .execute(
@@ -320,7 +320,7 @@ async fn matching_delivery_advisory(
 ) -> anyhow::Result<Option<(String, DeliveryAdvisory)>> {
     let mut stream = jetstream
         .get_stream(wamn_event_wire::delivery_advisory_stream(
-            MATERIALIZER_STREAM,
+            materializer_stream(),
         ))
         .await?;
     let state = stream.info().await?.state.clone();
@@ -330,8 +330,8 @@ async fn matching_delivery_advisory(
     for index in state.first_sequence..=state.last_sequence {
         let message = stream.get_raw_message(index).await?;
         let advisory = DeliveryAdvisory::from_slice(&message.payload)?;
-        if advisory.stream == MATERIALIZER_STREAM
-            && advisory.consumer == MATERIALIZER_DURABLE
+        if advisory.stream == materializer_stream()
+            && advisory.consumer == materializer_durable()
             && advisory.stream_seq == sequence
         {
             return Ok(Some((message.subject.to_string(), advisory)));
@@ -360,17 +360,21 @@ async fn assert_replay_and_progress(
         .timeout(Duration::from_secs(60))
         .build()?;
     let jetstream = async_nats::jetstream::new(nats.clone());
-    let mut events = jetstream.get_stream(MATERIALIZER_STREAM).await?;
+    let mut events = jetstream.get_stream(materializer_stream()).await?;
     let mut taps = nats
         .subscribe(
-            router_tap_environment_filter(TENANT, PROJECT, ENVIRONMENT)
-                .context("the journey identifies a router tap subject")?,
+            router_tap_environment_filter(
+                identity().tenant.as_str(),
+                identity().project.as_str(),
+                identity().environment.as_str(),
+            )
+            .context("the journey identifies a router tap subject")?,
         )
         .await?;
     nats.flush().await?;
     let graph: Value = project.query_one(
         "SELECT graph_json FROM catalog.wirings WHERE tenant_id=$1 AND package_id=$2 AND wiring_id=$3 AND version=1",
-        &[&TENANT, &OVERLAY_PACKAGE_ID, &WIRING],
+        &[&identity().tenant.as_str(), &OVERLAY_PACKAGE_ID, &WIRING],
     ).await?.get(0);
     ensure!(
         graph["nodes"]
@@ -387,11 +391,11 @@ async fn assert_replay_and_progress(
     evidence["wiring"] = graph;
     let registration: Value = project.query_one(
         "SELECT registration FROM catalog.event_registrations WHERE tenant_id=$1 AND package_id=$2 AND registration_id='quality.create_inspection'",
-        &[&TENANT, &OVERLAY_PACKAGE_ID],
+        &[&identity().tenant.as_str(), &OVERLAY_PACKAGE_ID],
     ).await?.get(0);
     evidence["registration"] = registration;
     let original = source(&mut events, &materializer.receipt_id).await?;
-    let before_consumer = events.consumer_info(MATERIALIZER_DURABLE).await?;
+    let before_consumer = events.consumer_info(materializer_durable()).await?;
     ensure!(
         before_consumer.num_ack_pending == 0
             && before_consumer.num_pending == 0
@@ -432,19 +436,23 @@ async fn assert_replay_and_progress(
         .await?;
     ensure!(
         !replay.duplicate
-            && replay.stream == MATERIALIZER_STREAM
+            && replay.stream == materializer_stream()
             && replay.sequence > original.sequence,
         "broker deduplication prevented the required second handler delivery"
     );
     let envelope: Envelope = serde_json::from_slice(&original.payload)?;
-    let source_id = wamn_event_wire::msg_id(PROJECT, ENVIRONMENT, envelope.lsn);
+    let source_id = wamn_event_wire::msg_id(
+        identity().project.as_str(),
+        identity().environment.as_str(),
+        envelope.lsn,
+    );
     let expected_input = json!({"event":"insert", "new":envelope.new});
     let replay_id = format!("{REGISTRATION}:event:{}:{source_id}", replay.sequence);
     evidence["replay_taps"] =
         json!(delivery_taps(&mut taps, &replay_id, &expected_input, "discard").await?);
     let deadline = Instant::now() + Duration::from_secs(30);
     loop {
-        let consumer = events.consumer_info(MATERIALIZER_DURABLE).await?;
+        let consumer = events.consumer_info(materializer_durable()).await?;
         if consumer.ack_floor.stream_sequence >= replay.sequence && consumer.num_ack_pending == 0 {
             ensure!(
                 consumer.ack_floor.consumer_sequence
@@ -556,7 +564,7 @@ async fn assert_replay_and_progress(
         ensure!(resumed["spec"]["template"] == original_deployment["spec"]["template"], "materializer restart changed the deployed artifacts or configuration");
         evidence["deployment_resumed"] = resumed;
         ensure!(attempts.len() == 3, "expected three real blocked handler attempts, observed {}", attempts.len());
-        ensure!(subject == format!("$JS.EVENT.ADVISORY.CONSUMER.MSG_TERMINATED.{MATERIALIZER_STREAM}.{MATERIALIZER_DURABLE}")
+        ensure!(subject == format!("$JS.EVENT.ADVISORY.CONSUMER.MSG_TERMINATED.{}.{}", materializer_stream(), materializer_durable())
             && advisory.type_ == DeliveryAdvisoryType::Terminated
             && advisory.deliveries == 1
             && advisory.stream_seq == poison_source.sequence,
@@ -579,7 +587,7 @@ async fn assert_replay_and_progress(
         ensure!(valid_source.sequence > poison_source.sequence, "independent valid event did not follow poison");
         evidence["independent_source"] = source_message(&valid_source);
         loop {
-            let consumer = events.consumer_info(MATERIALIZER_DURABLE).await?;
+            let consumer = events.consumer_info(materializer_durable()).await?;
             if consumer.ack_floor.stream_sequence >= valid_source.sequence
                 && consumer.num_ack_pending == 0 && consumer.num_pending == 0
             {
@@ -616,7 +624,7 @@ async fn assert_replay_and_progress(
     result?;
     let registration_after: Value = project.query_one(
         "SELECT registration FROM catalog.event_registrations WHERE tenant_id=$1 AND package_id=$2 AND registration_id='quality.create_inspection'",
-        &[&TENANT, &OVERLAY_PACKAGE_ID],
+        &[&identity().tenant.as_str(), &OVERLAY_PACKAGE_ID],
     ).await?.get(0);
     ensure!(
         registration_after == evidence["registration"],

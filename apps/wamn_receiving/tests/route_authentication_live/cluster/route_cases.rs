@@ -26,7 +26,7 @@ async fn run_histories(evidence: &std::path::Path) -> anyhow::Result<()> {
         let endpoint = materializer_case::endpoint(&cluster, "receiving-correctness-nodeport").await?;
         postcommit_case::assert_unknown_route(&cluster, &endpoint).await?;
         let mut digests = serde_json::Map::new();
-        for component in ["receiving", "client_acme_receiving"] {
+        for component in super::super::released_package_roots().into_keys() {
             let bytes = fs::read(cluster.artifacts.components.join(format!("{component}.wasm")))?;
             digests.insert(component.into(), json!(format!("sha256:{}", hex::encode(Sha256::digest(bytes)))));
         }
@@ -36,8 +36,9 @@ async fn run_histories(evidence: &std::path::Path) -> anyhow::Result<()> {
         let inputs = serde_json::from_value(json!({
             "project_pg_url":route.database_url,"route_endpoint":endpoint,
             "route_host":cluster.inputs.route_host,"operator_secret":cluster.inputs.operator_secret_output,
-            "tenant":super::super::TENANT,"caller_role":"admin","evidence_file":path,
+            "tenant":super::super::identity().tenant.as_str(),"caller_role":"admin","evidence_file":path,
             "source_commit":cluster.resources.source,"component_digests":digests,
+            "packages":super::super::released_package_roots(),
             "corpus_sha256":package["application_sql_corpus_identity"],"seed":7701,"cases":16,"history":null,
         }))?;
         let cancellation = pg_walstream::CancellationToken::new();
@@ -99,8 +100,8 @@ async fn membership_job(cluster: &ReceivingCluster, project_url: &str) -> anyhow
             "name":"membership-test","image":image,"imagePullPolicy":"Never",
             "command":["/usr/local/bin/wamn-gates","membership-test"],
             "args":["--endpoint-url",format!("http://flow-http.{}.svc.cluster.local",resources.name),
-                "--host",cluster.inputs.route_host,"--org",super::super::ORG,
-                "--project",super::super::PROJECT,"--env",super::super::ENVIRONMENT,"--tenant",super::super::TENANT],
+                "--host",cluster.inputs.route_host,"--org",super::super::identity().org.as_str(),
+                "--project",super::super::identity().project.as_str(),"--env",super::super::identity().environment.as_str(),"--tenant",super::super::identity().tenant.as_str()],
             "env":[{"name":"WAMN_SYSTEM_ADMIN_URL","valueFrom":{"secretKeyRef":{"name":"membership-test-fixture","key":"system-url"}}},
                 {"name":"WAMN_PROJECT_ADMIN_URL","valueFrom":{"secretKeyRef":{"name":"membership-test-fixture","key":"project-url"}}}],
         }]

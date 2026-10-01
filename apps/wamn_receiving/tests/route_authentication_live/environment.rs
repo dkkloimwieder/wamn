@@ -115,12 +115,12 @@ pub(super) async fn install_journey_project(
     project_url: &str,
     fresh_only: bool,
 ) -> anyhow::Result<()> {
-    install_journey_platform_floor(project, TENANT, PLATFORM_DOMAIN).await?;
+    install_journey_platform_floor(project, identity().tenant.as_str(), PLATFORM_DOMAIN).await?;
     for package in JOURNEY_PACKAGES {
         apply_package::apply_package(ApplyPackageRequest {
             package: journey_package_root(package, Some(inputs)),
             database_url: project_url.to_owned(),
-            tenant: TENANT.to_owned(),
+            tenant: identity().tenant.clone(),
         })
         .await
         .with_context(|| {
@@ -155,7 +155,7 @@ pub(super) async fn reconcile_journey_data_access(
         ReconcilePackageDataAccessRequest {
             packages,
             database_url: project_url.to_owned(),
-            tenant: TENANT.to_owned(),
+            tenant: identity().tenant.clone(),
         },
     )
     .await
@@ -168,7 +168,7 @@ pub(super) async fn verify_journey_operation_grants(project: &Client) -> anyhow:
     let roles = project
         .query(
             "SELECT name FROM app_system.roles WHERE tenant_id = $1 ORDER BY name COLLATE \"C\"",
-            &[&TENANT],
+            &[&identity().tenant.as_str()],
         )
         .await
         .context("read the installed roles")?
@@ -178,7 +178,7 @@ pub(super) async fn verify_journey_operation_grants(project: &Client) -> anyhow:
     let permissions: i64 = project
         .query_one(
             "SELECT count(*) FROM app_system.permissions WHERE tenant_id = $1",
-            &[&TENANT],
+            &[&identity().tenant.as_str()],
         )
         .await
         .context("count the installed permission rows")?
@@ -234,7 +234,7 @@ pub(super) fn render_component_declarations(
             }
             let declaration = wamn_control::component_declaration::render_declaration_document(
                 &source,
-                TENANT,
+                identity().tenant.as_str(),
                 &base_digests,
             )
             .with_context(|| format!("render {}", source.display()))?;
@@ -346,7 +346,7 @@ pub(super) async fn verify_journey_components_are_effectful(
                  FROM catalog.component_library \
                  WHERE tenant_id = $1 AND package_id = $2 AND package_version = $3 \
                  ORDER BY component COLLATE \"C\"",
-                &[&TENANT, &package.id, &package.version()],
+                &[&identity().tenant.as_str(), &package.id, &package.version()],
             )
             .await
             .with_context(|| format!("read the admitted {} effect projection", package.id))?;
@@ -426,8 +426,8 @@ pub(super) fn gate_document(
             command_id: command_id.to_owned(),
             package: PackageCoordinate::new(package.id, package.version())?,
             scope: wamn_authoring_model::AuthoringScope {
-                project_id: PROJECT.to_owned(),
-                environment: ENVIRONMENT.to_owned(),
+                project_id: identity().project.clone(),
+                environment: identity().environment.clone(),
             },
         },
         &serde_json::to_string(document)?,
@@ -515,7 +515,7 @@ pub(super) async fn verify_zero_case_gate_reports(
             .query_one(
                 "SELECT passed, summary FROM wamn_run.gate_reports \
                  WHERE tenant_id = $1 AND wiring_hash = $2",
-                &[&TENANT, report_id],
+                &[&identity().tenant.as_str(), report_id],
             )
             .await
             .with_context(|| format!("read production Gate report {report_id}"))?;
@@ -546,7 +546,7 @@ pub(super) async fn author_journey_wirings(
                 project_url,
                 system_url,
                 &AuthorWiringRequest {
-                    tenant_id: TENANT,
+                    tenant_id: identity().tenant.as_str(),
                     package_id: package.id,
                     package_version: package.version(),
                     document: &document,
@@ -595,11 +595,11 @@ pub(super) async fn mint_journey_release(
     publish_release::publish_release(PublishReleaseRequest {
         database_url: project_url.to_owned(),
         control_database_url: system_url.to_owned(),
-        org: ORG.to_owned(),
-        project: PROJECT.to_owned(),
-        tenant: TENANT.to_owned(),
+        org: identity().org.clone(),
+        project: identity().project.clone(),
+        tenant: identity().tenant.clone(),
         effective_release_id: release_id,
-        environment: ENVIRONMENT.to_owned(),
+        environment: identity().environment.clone(),
         verified_publisher_principal: publisher.to_owned(),
         run_schema: "wamn_run".to_owned(),
         packages: JOURNEY_PACKAGES
@@ -622,11 +622,11 @@ pub(super) async fn mint_journey_release(
              WHERE tenant_id = $1 AND effective_release_id = $2 \
                AND org_id = $3 AND project_id = $4 AND environment = $5",
             &[
-                &TENANT,
+                &identity().tenant.as_str(),
                 &release_id.cast_signed(),
-                &ORG,
-                &PROJECT,
-                &ENVIRONMENT,
+                &identity().org.as_str(),
+                &identity().project.as_str(),
+                &identity().environment.as_str(),
             ],
         )
         .await
@@ -639,7 +639,7 @@ pub(super) async fn mint_journey_release(
         .query_one(
             "SELECT manifest_digest FROM catalog.release_manifest_snapshots \
              WHERE tenant_id = $1 AND effective_release_id = $2",
-            &[&TENANT, &release_id.cast_signed()],
+            &[&identity().tenant.as_str(), &release_id.cast_signed()],
         )
         .await
         .context("read the production-minted release digest")?
@@ -647,7 +647,7 @@ pub(super) async fn mint_journey_release(
     if let Some(candidate) = wamn_control::delivery::Candidate::from_env()? {
         let bytes: Vec<u8> = project.query_one(
             "SELECT canonical_bytes FROM catalog.release_manifest_snapshots WHERE tenant_id = $1 AND effective_release_id = $2",
-            &[&TENANT, &release_id.cast_signed()],
+            &[&identity().tenant.as_str(), &release_id.cast_signed()],
         ).await?.get(0);
         let (manifest, _) = wamn_catalog::ServingManifest::from_canonical_bytes(&bytes)?;
         candidate.assert_manifest(&manifest)?;
@@ -667,9 +667,9 @@ pub(super) async fn publish_journey_release(
     push_release_manifest::push_release_manifest(
         &PushReleaseManifestRequest {
             database_url: project_url.to_owned(),
-            org: ORG.to_owned(),
-            project: PROJECT.to_owned(),
-            tenant: TENANT.to_owned(),
+            org: identity().org.clone(),
+            project: identity().project.clone(),
+            tenant: identity().tenant.clone(),
             effective_release_id: release_id,
             artifact_base: inputs.release_artifact_base.clone(),
             registry_auth_file: inputs.registry_auth_file.clone(),
@@ -687,11 +687,11 @@ pub(super) async fn publish_journey_release(
              WHERE tenant_id = $1 AND effective_release_id = $2 \
                AND org_id = $3 AND project_id = $4 AND environment = $5",
             &[
-                &TENANT,
+                &identity().tenant.as_str(),
                 &release_id.cast_signed(),
-                &ORG,
-                &PROJECT,
-                &ENVIRONMENT,
+                &identity().org.as_str(),
+                &identity().project.as_str(),
+                &identity().environment.as_str(),
             ],
         )
         .await
@@ -830,7 +830,7 @@ pub(super) fn released_component_digests(
 }
 
 pub(super) async fn seed_receiving_business_rows(project: &Client) -> anyhow::Result<()> {
-    bind_fixture_principal(project, TENANT).await?;
+    bind_fixture_principal(project, identity().tenant.as_str()).await?;
     project
         .batch_execute(
             "INSERT INTO receiving.item (id, item_number) VALUES \
@@ -873,7 +873,7 @@ pub(super) async fn seed_receiving_business_rows(project: &Client) -> anyhow::Re
 // Distinct route-only approval precondition. This fixture does not claim that
 // CDC or a materializer created the inspection; `.15.25.4` owns that test.
 pub(super) async fn seed_preexisting_quality_fixture(project: &Client) -> anyhow::Result<()> {
-    bind_fixture_principal(project, TENANT).await?;
+    bind_fixture_principal(project, identity().tenant.as_str()).await?;
     project
         .batch_execute(
             "INSERT INTO receiving.receipt \
@@ -907,7 +907,7 @@ pub(super) async fn seed_materializer_order(
     line_id: &str,
     number: &str,
 ) -> anyhow::Result<()> {
-    bind_fixture_principal(project, TENANT).await?;
+    bind_fixture_principal(project, identity().tenant.as_str()).await?;
     project
         .batch_execute(
             "INSERT INTO receiving.supplier (id, name) VALUES \

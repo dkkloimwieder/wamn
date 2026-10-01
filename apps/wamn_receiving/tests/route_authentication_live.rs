@@ -21,7 +21,7 @@ mod runtime;
 mod session_client;
 mod sessions;
 
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fs::Permissions;
 use std::io::Write;
 use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
@@ -106,9 +106,10 @@ use runtime::{
     trace_component_invocations,
 };
 use sessions::{assert_operation_refusal, nested_receipt_state};
+use wamn_control::delivery::{Candidate, ReleaseIdentity};
 use wamn_control::dev::environment::{
-    DevEnvironmentInputs, ENVIRONMENT, JourneyCredentials, ORG, PROJECT, RELEASE_ID, TENANT,
-    connect, install_journey_platform_floor, prepare_journey_credentials,
+    DevEnvironmentInputs, ENVIRONMENT, JourneyCredentials, JourneyScope, ORG, PROJECT, RELEASE_ID,
+    TENANT, connect, install_journey_platform_floor, prepare_journey_credentials,
     provision_journey_control, provision_route, reconcile_journey_run_plane,
     spawn_journey_management_gate, write_dev_config,
 };
@@ -202,9 +203,80 @@ static OVERLAY_RECORD_RECEIPT: LazyLock<&'static str> =
 static OVERLAY_RECEIPT_PARTICIPANT: LazyLock<&'static str> =
     LazyLock::new(|| sealed("client-acme-receiving:receiving/record-receipt-participant").leak());
 const PREEXISTING_QUALITY_RECEIPT_ID: &str = "00000000-0000-0000-0000-000000000603";
-const MATERIALIZER_STREAM: &str = "EVT_4_acme_9_receiving_3_dev";
-const MATERIALIZER_DURABLE: &str =
-    "mat_receiving-route-auth_client_acme_receiving_quality_create_inspection";
+
+/// The release this fixture provisions and mints. A supplied candidate names
+/// it, and with no candidate it is the default Receiving journey release.
+fn identity() -> &'static ReleaseIdentity {
+    static IDENTITY: LazyLock<ReleaseIdentity> = LazyLock::new(|| {
+        let candidate = Candidate::from_env().expect("read the supplied Receiving candidate");
+        match candidate {
+            Some(candidate) => candidate
+                .identity()
+                .expect("read the release identity of the supplied Receiving candidate"),
+            None => ReleaseIdentity {
+                org: ORG.to_owned(),
+                project: PROJECT.to_owned(),
+                environment: ENVIRONMENT.to_owned(),
+                tenant: TENANT.to_owned(),
+                effective_release_id: RELEASE_ID,
+                route_host: "receiving.localhost".to_owned(),
+                packages: JOURNEY_PACKAGES
+                    .iter()
+                    .map(|package| {
+                        wamn_catalog::PackageCoordinate::new(package.id, package.version())
+                    })
+                    .collect::<Result<_, _>>()
+                    .expect("read the Receiving journey package coordinates"),
+            },
+        }
+    });
+    &IDENTITY
+}
+
+/// The journey packages that the release of [`identity`] carries.
+fn released_journey_packages() -> impl Iterator<Item = JourneyPackage> {
+    JOURNEY_PACKAGES.into_iter().filter(|package| {
+        identity()
+            .packages
+            .iter()
+            .any(|coordinate| coordinate.package_id() == package.id)
+    })
+}
+
+/// The root of each released journey package, by component.
+fn released_package_roots() -> BTreeMap<&'static str, PathBuf> {
+    released_journey_packages()
+        .map(|package| (package.component, journey_package_root(package, None)))
+        .collect()
+}
+
+/// The scope of [`identity`], as the shared provisioning steps take it.
+fn scope() -> JourneyScope {
+    identity().into()
+}
+
+/// The event stream of the journey environment.
+fn materializer_stream() -> &'static str {
+    static STREAM: LazyLock<String> = LazyLock::new(|| {
+        wamn_control_provision::event_stream_name(
+            &identity().org,
+            &identity().project,
+            &identity().environment,
+        )
+    });
+    &STREAM
+}
+
+/// The durable consumer of the Acme inspection handler.
+fn materializer_durable() -> &'static str {
+    static DURABLE: LazyLock<String> = LazyLock::new(|| {
+        format!(
+            "mat_{}_client_acme_receiving_quality_create_inspection",
+            identity().tenant
+        )
+    });
+    &DURABLE
+}
 
 #[derive(Clone, Copy)]
 struct JourneyAttachment {

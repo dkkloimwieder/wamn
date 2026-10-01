@@ -12,8 +12,8 @@ use tokio::io::{AsyncBufReadExt as _, BufReader, Lines};
 use tokio::process::{Child, ChildStderr, ChildStdout, Command};
 
 use super::super::{
-    GitSource, GitSourceState, PLATFORM_DOMAIN, ScratchRoot, TENANT, connect,
-    environment::seed_receiving_business_rows, repository_root, required_journey,
+    GitSource, GitSourceState, PLATFORM_DOMAIN, ScratchRoot, connect,
+    environment::seed_receiving_business_rows, identity, repository_root, required_journey,
     required_journey_path, write_dev_config,
 };
 use super::{DEV_COMMAND_TIMEOUT, DevJourneyInputs, current_database_acl};
@@ -250,14 +250,14 @@ async fn require_local_facts(
             .join(wamn_catalog::RELEASE_MANIFEST_FILE_NAME),
     )?)?;
     ensure!(
-        manifest.release.tenant_id == TENANT,
+        manifest.release.tenant_id == identity().tenant.as_str(),
         "the local manifest names another tenant"
     );
-    let published: i64 = control.query_one("SELECT count(*) FROM catalog.authoring_command_audit WHERE tenant_id=$1 AND command_type='publish'", &[&TENANT]).await?.get(0);
+    let published: i64 = control.query_one("SELECT count(*) FROM catalog.authoring_command_audit WHERE tenant_id=$1 AND command_type='publish'", &[&identity().tenant.as_str()]).await?.get(0);
     let attestations: i64 = control
         .query_one(
             "SELECT count(*) FROM catalog.deployment_attestations WHERE tenant_id=$1",
-            &[&TENANT],
+            &[&identity().tenant.as_str()],
         )
         .await?
         .get(0);
@@ -269,7 +269,7 @@ async fn require_local_facts(
              (SELECT count(*) FROM catalog.component_library WHERE tenant_id=$1), \
              (SELECT count(*) FROM catalog.wirings WHERE tenant_id=$1), \
              (SELECT count(*) FROM catalog.release_components WHERE tenant_id=$1)",
-            &[&TENANT],
+            &[&identity().tenant.as_str()],
         )
         .await?;
     // The local run plane needs a disposable release FK and package membership,
@@ -279,7 +279,7 @@ async fn require_local_facts(
         .query_one(
             "SELECT environment FROM catalog.effective_releases \
              WHERE tenant_id=$1 AND effective_release_id=$2",
-            &[&TENANT, &release_id],
+            &[&identity().tenant.as_str(), &release_id],
         )
         .await?
         .get(0);
@@ -287,7 +287,7 @@ async fn require_local_facts(
         .query(
             "SELECT package_id, package_version FROM catalog.effective_release_packages \
              WHERE tenant_id=$1 AND effective_release_id=$2",
-            &[&TENANT, &release_id],
+            &[&identity().tenant.as_str(), &release_id],
         )
         .await?
         .into_iter()

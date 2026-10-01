@@ -16,7 +16,7 @@ use wamn_schema_introspection::ir::{
     Constraint, ForeignKeyAction, ForeignKeyColumn, postgres_type,
 };
 
-use super::{BASE_PACKAGE_ID, JourneyPackage, OVERLAY_COMPONENT, OVERLAY_PACKAGE_ID, TENANT};
+use super::{BASE_PACKAGE_ID, JourneyPackage, OVERLAY_COMPONENT, OVERLAY_PACKAGE_ID, identity};
 
 const INITIAL_MIGRATION: &str = "migrations/0001_initial.sql";
 const ORDER_HEADER: &str = "CREATE TABLE receiving.purchase_order (\n";
@@ -394,12 +394,12 @@ async fn breaking_install(base: &Path, database_url: &str) -> anyhow::Result<Val
     let (project, connection_task) = super::connect(database_url).await?;
     let result = async {
         project.batch_execute("SET statement_timeout = '20s'; SET lock_timeout = '10s'").await?;
-        super::install_journey_platform_floor(project.as_ref(), TENANT, super::PLATFORM_DOMAIN).await?;
+        super::install_journey_platform_floor(project.as_ref(), identity().tenant.as_str(), super::PLATFORM_DOMAIN).await?;
         let apply = |package: PathBuf| apply_package::apply_package(ApplyPackageRequest {
-            package,database_url:database_url.to_owned(),tenant:TENANT.to_owned(),
+            package,database_url:database_url.to_owned(),tenant:identity().tenant.clone(),
         });
         apply(base.to_owned()).await.context("apply the breaking base through the production boundary")?;
-        let before = project.query_one("SELECT count(*) FROM catalog.packages WHERE tenant_id = $1", &[&TENANT]).await?.get::<_, i64>(0);
+        let before = project.query_one("SELECT count(*) FROM catalog.packages WHERE tenant_id = $1", &[&identity().tenant.as_str()]).await?.get::<_, i64>(0);
         let error = apply(super::overlay_package_root()).await.err().context("unchanged overlay must refuse a base-owned field collision")?;
         let refusal = error.downcast_ref::<ApplyPackageError>().context("breaking combination must produce a typed package refusal")?;
         ensure!(refusal.kind() == ApplyPackageErrorType::BaseDefinitionMutation
@@ -412,7 +412,7 @@ async fn breaking_install(base: &Path, database_url: &str) -> anyhow::Result<Val
              to_regclass('receiving.quality_inspection') IS NULL, \
              NOT EXISTS (SELECT FROM information_schema.columns WHERE table_schema = 'receiving' \
              AND table_name = 'purchase_order' AND column_name = 'acme_quality_status')",
-            &[&TENANT, &OVERLAY_PACKAGE_ID]).await?;
+            &[&identity().tenant.as_str(), &OVERLAY_PACKAGE_ID]).await?;
         ensure!(before == 1 && after.get::<_, i64>(0) == before && after.get::<_, i64>(1) == 0
             && after.get::<_, bool>(2) && after.get::<_, bool>(3),
             "refused overlay left package metadata or partial business schema");
@@ -565,12 +565,17 @@ async fn installed_contract_observer_reads_a_production_install_and_refuses_chan
             server.get(1),
         ))
         .await?;
-    super::install_journey_platform_floor(&project, TENANT, super::PLATFORM_DOMAIN).await?;
+    super::install_journey_platform_floor(
+        &project,
+        identity().tenant.as_str(),
+        super::PLATFORM_DOMAIN,
+    )
+    .await?;
     for package in [super::package_root(), super::overlay_package_root()] {
         apply_package::apply_package(ApplyPackageRequest {
             package,
             database_url: url.clone(),
-            tenant: TENANT.to_owned(),
+            tenant: identity().tenant.clone(),
         })
         .await?;
     }
@@ -578,7 +583,7 @@ async fn installed_contract_observer_reads_a_production_install_and_refuses_chan
         wamn_control::reconcile_package_data_access::ReconcilePackageDataAccessRequest {
             packages: vec![super::package_root(), super::overlay_package_root()],
             database_url: url.clone(),
-            tenant: TENANT.to_owned(),
+            tenant: identity().tenant.clone(),
         },
     )
     .await?;

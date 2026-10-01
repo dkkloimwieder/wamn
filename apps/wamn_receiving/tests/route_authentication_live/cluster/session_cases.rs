@@ -52,8 +52,8 @@ async fn run(evidence: &Path, fresh_only: bool, session_client: bool) -> anyhow:
         super::super::sessions::prepare_session_host_fixture(&cluster.inputs, &fixture).await?;
         let carrier = lookup_release_carrier(
             &route.database_url,
-            super::super::TENANT,
-            super::super::RELEASE_ID + 1,
+            super::super::identity().tenant.as_str(),
+            super::super::identity().effective_release_id + 1,
             &cluster.inputs.release_artifact_base,
         )
         .await?;

@@ -181,17 +181,17 @@ pub(super) fn render_host(
             manifest_digest: manifest_digest.to_owned(),
             nats_url: nats_url.to_owned(),
             event: EventIdentity {
-                org: crate::environment::ORG.to_owned(),
-                project: crate::environment::PROJECT.to_owned(),
-                environment: crate::environment::ENVIRONMENT.to_owned(),
+                org: crate::environment::identity().org.clone(),
+                project: crate::environment::identity().project.clone(),
+                environment: crate::environment::identity().environment.clone(),
             },
             guest_secret_name: guest.name.clone(),
             role_secrets,
             object_store_secret_name: Some(format!(
                 "wamn-object-store-credentials-{}--{}--{}",
-                crate::environment::ORG,
-                crate::environment::PROJECT,
-                crate::environment::ENVIRONMENT,
+                crate::environment::identity().org.as_str(),
+                crate::environment::identity().project.as_str(),
+                crate::environment::identity().environment.as_str(),
             )),
         },
     )?;
@@ -204,8 +204,8 @@ pub(super) fn render_host(
     assert_rendered_identity(
         &rendered.overlay,
         &HostIdentity {
-            org: crate::environment::ORG.to_owned(),
-            project: crate::environment::PROJECT.to_owned(),
+            org: crate::environment::identity().org.clone(),
+            project: crate::environment::identity().project.clone(),
             schema: crate::environment::SCHEMA.to_owned(),
         },
     )?;
@@ -234,10 +234,10 @@ pub(super) fn render_workload(
             image: image.to_owned(),
             route_host: inputs.route_host.clone(),
             claims: HttpClaims {
-                tenant: crate::environment::TENANT.to_owned(),
+                tenant: crate::environment::identity().tenant.clone(),
                 catalog: "default".to_owned(),
-                environment: crate::environment::ENVIRONMENT.to_owned(),
-                project: crate::environment::PROJECT.to_owned(),
+                environment: crate::environment::identity().environment.clone(),
+                project: crate::environment::identity().project.clone(),
                 schema: crate::environment::SCHEMA.to_owned(),
             },
         },

@@ -1,9 +1,11 @@
 //! WMS environment preparation through the existing control library.
 
+use std::collections::BTreeSet;
 use std::fs;
 use std::os::unix::fs::PermissionsExt as _;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
+use std::sync::LazyLock;
 use std::time::Duration;
 
 use anyhow::{Context as _, ensure};
@@ -14,6 +16,7 @@ use wamn_control::apply_package::{self, ApplyPackageRequest};
 use wamn_control::author_wiring::{self, AuthorWiringRequest};
 use wamn_control::bind_connection::{self, BindConnectionRequest, RequirementType};
 use wamn_control::component_declaration::declared_platform_packages;
+use wamn_control::delivery::{Candidate, ReleaseIdentity};
 use wamn_control::dev::environment::{JourneyCredentials, connect};
 use wamn_control::enable_cdc_project_env::EnableCdcProjectEnvRequest;
 use wamn_control::pat_client::PatIssuerConfig;
@@ -35,15 +38,35 @@ use wamn_test_infrastructure::declarations::{
     GateInput, gate_document, render_component_declaration,
 };
 
-pub const ORG: &str = "acme";
-pub const PROJECT: &str = "wms";
-pub const ENVIRONMENT: &str = "dev";
-pub const TENANT: &str = "wms-route-auth";
 pub(super) const SCHEMA: &str = "wms";
 const CLUSTER: &str = "route-auth-pg18";
 /// Platform rows take the email `<component>@example.invalid` in this test.
 const PLATFORM_DOMAIN: &str = "example.invalid";
-pub(super) const RELEASE_ID: u32 = 1;
+
+/// The release this fixture provisions and mints. A supplied candidate names
+/// it, and with no candidate it is the default WMS journey release.
+pub(crate) fn identity() -> &'static ReleaseIdentity {
+    static IDENTITY: LazyLock<ReleaseIdentity> = LazyLock::new(|| {
+        let candidate = Candidate::from_env().expect("read the supplied WMS candidate");
+        match candidate {
+            Some(candidate) => candidate
+                .identity()
+                .expect("read the release identity of the supplied WMS candidate"),
+            None => ReleaseIdentity {
+                org: "acme".to_owned(),
+                project: "wms".to_owned(),
+                environment: "dev".to_owned(),
+                tenant: "wms-route-auth".to_owned(),
+                effective_release_id: 1,
+                route_host: "wms.localhost".to_owned(),
+                packages: BTreeSet::from([
+                    package_coordinate().expect("read the WMS package coordinate")
+                ]),
+            },
+        }
+    });
+    &IDENTITY
+}
 
 fn package_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -102,7 +125,7 @@ pub async fn provision_project(
     pat_issuer: PatIssuerConfig,
 ) -> anyhow::Result<ProvisionedRoute> {
     provision_org::provision_org(ProvisionOrgRequest {
-        org: ORG.to_owned(),
+        org: identity().org.clone(),
         template: wamn_control_registry::Template::trials(),
         pool: CLUSTER.to_owned(),
         cluster_namespace: "wamn-system".into(),
@@ -111,10 +134,10 @@ pub async fn provision_project(
     })
     .await?;
     let args = ProvisionProjectEnvRequest {
-        org: ORG.into(),
-        project: PROJECT.into(),
-        env: ENVIRONMENT.into(),
-        tenant: Some(TENANT.into()),
+        org: identity().org.clone(),
+        project: identity().project.clone(),
+        env: identity().environment.clone(),
+        tenant: Some(identity().tenant.clone()),
         disposable: false,
         system_database_url: Some(inputs.system_pg_url.clone()),
         cluster: Some(CLUSTER.into()),
@@ -154,7 +177,7 @@ pub async fn prepare_project(
     let (project, task) = connect(&route.database_url).await?;
     let installed = wamn_control::dev::environment::install_journey_platform_floor(
         project.as_ref(),
-        TENANT,
+        identity().tenant.as_str(),
         PLATFORM_DOMAIN,
     )
     .await;
@@ -164,10 +187,10 @@ pub async fn prepare_project(
     reconcile_run_plane::reconcile_run_plane(ReconcileRunPlaneRequest {
         system_database_url: inputs.system_pg_url.clone(),
         admin_database_url: route.database_url.clone(),
-        org: ORG.into(),
-        project: PROJECT.into(),
-        tenant: TENANT.into(),
-        env: ENVIRONMENT.into(),
+        org: identity().org.clone(),
+        project: identity().project.clone(),
+        tenant: identity().tenant.clone(),
+        env: identity().environment.clone(),
         schema: "wamn_run".into(),
         dry_run: false,
     })
@@ -261,22 +284,22 @@ pub async fn prepare_project(
     apply_package::apply_package(ApplyPackageRequest {
         package: package_root(),
         database_url: route.database_url.clone(),
-        tenant: TENANT.into(),
+        tenant: identity().tenant.clone(),
     })
     .await?;
     wamn_control::dev::environment::grant_operator_admin_role(
         &route.database_url,
-        ORG,
-        PROJECT,
-        ENVIRONMENT,
-        TENANT,
+        identity().org.as_str(),
+        identity().project.as_str(),
+        identity().environment.as_str(),
+        identity().tenant.as_str(),
         PLATFORM_DOMAIN,
     )
     .await?;
     shared::reconcile_package_data_access(ReconcilePackageDataAccessRequest {
         packages: vec![package_root()],
         database_url: route.database_url.clone(),
-        tenant: TENANT.into(),
+        tenant: identity().tenant.clone(),
     })
     .await?;
     // The label workflow's condition reads the old packaging row, so the
@@ -300,15 +323,12 @@ fn generation_args(
     namespace: &str,
 ) -> WorkloadActionRequest {
     let mut args = wamn_control::dev::environment::generation_args(
+        &identity().into(),
         family,
         &inputs.system_pg_url,
         target,
         secret,
     );
-    args.org = ORG.into();
-    args.project = PROJECT.into();
-    args.env = ENVIRONMENT.into();
-    args.tenant = Some(TENANT.into());
     args.namespace = namespace.to_owned();
     args
 }
@@ -375,8 +395,11 @@ fn component_declaration(
         route_schema::GENERATED_COMPONENT_OPERATIONS,
     )?;
     route_schema::merge_operations(&mut source, generated.as_ref())?;
-    let scope =
-        ComponentPackageScope::new(TENANT, package.package_id(), package.package_version())?;
+    let scope = ComponentPackageScope::new(
+        identity().tenant.as_str(),
+        package.package_id(),
+        package.package_version(),
+    )?;
     let declaration = render_component_declaration(&source.to_string(), &scope, alias)?;
     fs::write(output, serde_json::to_vec_pretty(&declaration)?)?;
     // The grant is the platform packages the declaration states, as the dev
@@ -587,11 +610,11 @@ pub async fn publish(
     publish_release::publish_release(PublishReleaseRequest {
         database_url: route.database_url.clone(),
         control_database_url: inputs.system_pg_url.clone(),
-        org: ORG.into(),
-        project: PROJECT.into(),
-        tenant: TENANT.into(),
-        effective_release_id: RELEASE_ID,
-        environment: ENVIRONMENT.into(),
+        org: identity().org.clone(),
+        project: identity().project.clone(),
+        tenant: identity().tenant.clone(),
+        effective_release_id: identity().effective_release_id,
+        environment: identity().environment.clone(),
         verified_publisher_principal: route
             .management_principal_subject
             .clone()
@@ -611,7 +634,7 @@ pub async fn publish(
         let (project, task) = connect(&route.database_url).await?;
         let snapshot = project.query_one(
             "SELECT canonical_bytes FROM catalog.release_manifest_snapshots WHERE tenant_id = $1 AND effective_release_id = $2",
-            &[&TENANT, &RELEASE_ID.cast_signed()],
+            &[&identity().tenant.as_str(), &identity().effective_release_id.cast_signed()],
         ).await;
         drop(project);
         task.abort();
@@ -630,13 +653,13 @@ pub async fn publish(
     )?;
     bind_connection::bind(&BindConnectionRequest {
         database_url: route.database_url.clone(),
-        tenant: TENANT.into(),
-        environment: ENVIRONMENT.into(),
+        tenant: identity().tenant.clone(),
+        environment: identity().environment.clone(),
         instance_id: "labels-store".into(),
         requirement_type: RequirementType::Blobstore,
         definition,
         credential_handle: Some("labels-store".into()),
-        effective_release_id: RELEASE_ID,
+        effective_release_id: identity().effective_release_id,
         component_digest: blob_digest,
         store_alias,
     })
@@ -646,10 +669,10 @@ pub async fn publish(
             &PushReleaseManifestRequest {
                 database_url: route.database_url.clone(),
                 control_database_url: inputs.system_pg_url.clone(),
-                org: ORG.into(),
-                project: PROJECT.into(),
-                tenant: TENANT.into(),
-                effective_release_id: RELEASE_ID,
+                org: identity().org.clone(),
+                project: identity().project.clone(),
+                tenant: identity().tenant.clone(),
+                effective_release_id: identity().effective_release_id,
                 artifact_base: inputs.release_artifact_base.clone(),
                 registry_auth_file: inputs.registry_auth_file.clone(),
                 insecure_registry: true,
@@ -661,8 +684,8 @@ pub async fn publish(
     }
     print_release_env::lookup_release_carrier(
         &route.database_url,
-        TENANT,
-        RELEASE_ID,
+        identity().tenant.as_str(),
+        identity().effective_release_id,
         &inputs.release_artifact_base,
     )
     .await
@@ -690,10 +713,13 @@ async fn author_wirings(
             "WAMN_MANAGEMENT_ADMISSION_PG_URL",
             &credentials.management_admitter,
         )
-        .env("WAMN_MANAGEMENT_ORG", ORG)
-        .env("WAMN_MANAGEMENT_PROJECT", PROJECT)
-        .env("WAMN_MANAGEMENT_ENVIRONMENT", ENVIRONMENT)
-        .env("WAMN_MANAGEMENT_TENANT", TENANT)
+        .env("WAMN_MANAGEMENT_ORG", identity().org.as_str())
+        .env("WAMN_MANAGEMENT_PROJECT", identity().project.as_str())
+        .env(
+            "WAMN_MANAGEMENT_ENVIRONMENT",
+            identity().environment.as_str(),
+        )
+        .env("WAMN_MANAGEMENT_TENANT", identity().tenant.as_str())
         .stdin(Stdio::null())
         .stdout(log.try_clone()?)
         .stderr(log)
@@ -728,8 +754,8 @@ async fn author_wirings(
                     command_id: format!("gate-{}-{}", package.package_id(), document.wiring_id),
                     package: package.clone(),
                     scope: AuthoringScope {
-                        project_id: PROJECT.into(),
-                        environment: ENVIRONMENT.into(),
+                        project_id: identity().project.clone(),
+                        environment: identity().environment.clone(),
                     },
                 },
                 // The gate judges sealed ids, so the authored references
@@ -765,7 +791,7 @@ async fn author_wirings(
                 &route.database_url,
                 &inputs.system_pg_url,
                 &AuthorWiringRequest {
-                    tenant_id: TENANT,
+                    tenant_id: identity().tenant.as_str(),
                     package_id: package.package_id(),
                     package_version: package.package_version(),
                     document: &document,
@@ -820,12 +846,15 @@ pub fn declared_consumers() -> anyhow::Result<Vec<async_nats::jetstream::consume
             wamn_control_provision::events::materializer_consumer_config(
                 &format!(
                     "mat_{}_{}_{}",
-                    sanitize(TENANT),
+                    sanitize(identity().tenant.as_str()),
                     sanitize(&manifest.package.id),
                     sanitize(name)
                 ),
                 &format!(
-                    "evt.{ORG}.{PROJECT}.{ENVIRONMENT}.{}.>",
+                    "evt.{}.{}.{}.{}.>",
+                    identity().org,
+                    identity().project,
+                    identity().environment,
                     wamn_event_wire::subject_token(&registration.entity)
                 ),
                 Duration::from_secs(30),
@@ -854,9 +883,9 @@ pub async fn configure_cdc(
     let secret_path = work.join("cdc-reader.json");
     let registry_path = work.join("registry-reader.json");
     let args = EnableCdcProjectEnvRequest {
-        org: ORG.into(),
-        project: PROJECT.into(),
-        env: ENVIRONMENT.into(),
+        org: identity().org.clone(),
+        project: identity().project.clone(),
+        env: identity().environment.clone(),
         schema: SCHEMA.into(),
         system_database_url: Some(inputs.system_pg_url.clone()),
         cluster: Some(CLUSTER.into()),

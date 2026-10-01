@@ -22,9 +22,9 @@ use wamn_test_infrastructure::event_broker;
 use wamn_test_infrastructure::workload::{self, HostObservation};
 
 use super::{
-    ENVIRONMENT, ORG, PROJECT, RELEASE_ID, ReceivingCluster, TENANT, build, cdc, checked,
-    deployment, install_host, journey_inputs, kubectl, materializer_case, postcommit_case,
-    provision, repository_root, resources, route_cases, startup_case, write_private,
+    ReceivingCluster, build, cdc, checked, deployment, identity, install_host, journey_inputs,
+    kubectl, materializer_case, postcommit_case, provision, repository_root, resources,
+    route_cases, startup_case, write_private,
 };
 
 const KEPT: &str = "stage.json";
@@ -173,9 +173,9 @@ pub(super) async fn materializer(
             work: &resources.work,
             namespace: &resources.name,
             source: &resources.source,
-            tenant: super::super::TENANT,
-            project: super::super::PROJECT,
-            environment: super::super::ENVIRONMENT,
+            tenant: super::super::identity().tenant.as_str(),
+            project: super::super::identity().project.as_str(),
+            environment: super::super::identity().environment.as_str(),
             requests: [("update", &update_trace), ("receipt", &receipt_trace)],
             evidence: &resources.evidence.join("telemetry"),
         },
@@ -300,7 +300,11 @@ async fn attach(evidence: &Path, startup_burst: bool) -> anyhow::Result<(Receivi
     let resources = resources::attach(&repository, evidence, &kept, &test_source).await?;
     let artifacts = build::components_and_tools(&repository, evidence, startup_burst).await?;
     let broker = event_broker::load(&resources.work)?;
-    let scope = Triple::new(ORG, PROJECT, ENVIRONMENT);
+    let scope = Triple::new(
+        identity().org.as_str(),
+        identity().project.as_str(),
+        identity().environment.as_str(),
+    );
     let source = source_stream_config(&scope, 1, Duration::from_secs(120));
     let inputs = journey_inputs(
         &resources,
@@ -311,8 +315,8 @@ async fn attach(evidence: &Path, startup_burst: bool) -> anyhow::Result<(Receivi
     );
     let carrier = lookup_release_carrier(
         &kept.route_database_url,
-        TENANT,
-        RELEASE_ID,
+        identity().tenant.as_str(),
+        identity().effective_release_id,
         &inputs.release_artifact_base,
     )
     .await?;

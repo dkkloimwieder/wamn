@@ -5,7 +5,9 @@ use std::path::PathBuf;
 use std::process::Stdio;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use wamn_control::dev::environment::{connect, provision_journey_control, provision_route};
+use wamn_control::dev::environment::{
+    JourneyScope, connect, provision_journey_control, provision_route,
+};
 use wamn_control_provision::PlatformComponent;
 use wamn_platform_identity::{PrincipalType, authenticate_pat};
 
@@ -55,7 +57,7 @@ async fn cli_bootstrap_mints_first_service_pats_over_https() {
         .mode(0o700)
         .create(&files.0)
         .expect("create private test directory");
-    provision_journey_control(&url, admin.as_ref())
+    provision_journey_control(&JourneyScope::receiving(), &url, admin.as_ref())
         .await
         .expect(
             "provision system authority; it requires a built wamn-identity binary beside wamn-ctl or named by WAMN_IDENTITY_BINARY",
@@ -76,6 +78,7 @@ async fn cli_bootstrap_mints_first_service_pats_over_https() {
         .await
         .expect("install test-only writer observation");
     let route = provision_route(
+        &JourneyScope::receiving(),
         &url,
         admin.as_ref(),
         &files.0,
@@ -224,7 +227,7 @@ async fn development_identity_survives_target_recreation_and_owned_teardown() {
     const PASSWORD: &str = "owned-development-identity-fixture-password";
     use serde_json::{Value, json};
     use wamn_control::dev::environment::{
-        ENVIRONMENT, ORG, PROJECT, provision, reconcile_journey_run_plane,
+        ENVIRONMENT, JourneyScope, ORG, PROJECT, provision, reconcile_journey_run_plane,
     };
     use wamn_platform_identity::{assign_project_role, create_user, grant_project_env_membership};
     async fn application_role(url: &str, user: &str, actor: &str) {
@@ -302,10 +305,14 @@ async fn development_identity_survives_target_recreation_and_owned_teardown() {
         .await
         .ok()
         .expect("assign the existing application role");
-    reconcile_journey_run_plane(system.url(), &environment.route.database_url)
-        .await
-        .ok()
-        .expect("project the user into the application");
+    reconcile_journey_run_plane(
+        &JourneyScope::receiving(),
+        system.url(),
+        &environment.route.database_url,
+    )
+    .await
+    .ok()
+    .expect("project the user into the application");
     application_role(&environment.route.database_url, user.id().as_str(), &actor).await;
     let (mut password_admin, connection) =
         tokio_postgres::connect(system.url(), tokio_postgres::NoTls)
@@ -376,10 +383,14 @@ async fn development_identity_survives_target_recreation_and_owned_teardown() {
         .batch_execute(&std::fs::read_to_string(files.0.join("database-acl.sql")).unwrap())
         .await
         .unwrap();
-    reconcile_journey_run_plane(system.url(), &environment.route.database_url)
-        .await
-        .ok()
-        .expect("restore application membership after recreation");
+    reconcile_journey_run_plane(
+        &JourneyScope::receiving(),
+        system.url(),
+        &environment.route.database_url,
+    )
+    .await
+    .ok()
+    .expect("restore application membership after recreation");
     application_role(&environment.route.database_url, user.id().as_str(), &actor).await;
     let second = login()
         .send()

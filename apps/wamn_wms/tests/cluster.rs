@@ -173,16 +173,16 @@ async fn run_case(case: Case) -> anyhow::Result<()> {
             .await?;
             let files = bootstrap::prepare(&repository, work.path())?;
             let scope = Triple::new(
-                crate::environment::ORG,
-                crate::environment::PROJECT,
-                crate::environment::ENVIRONMENT,
+                crate::environment::identity().org.as_str(),
+                crate::environment::identity().project.as_str(),
+                crate::environment::identity().environment.as_str(),
             );
             let source = source_stream_config(&scope, 1, Duration::from_secs(120));
             let advisory = advisory_stream_config(&scope, source.num_replicas);
             let broker = event_broker::prepare(
                 work.path(),
                 &scope,
-                crate::environment::TENANT,
+                crate::environment::identity().tenant.as_str(),
                 &source,
                 &advisory,
                 &crate::environment::declared_consumers()?,
@@ -434,7 +434,7 @@ async fn run_created(
         flow_http_wasm: target.join("wasm32-wasip2/release/http_route.wasm"),
         component_artifact_base: format!("{registry_authority}/wamn/components"),
         release_artifact_base: format!("{registry_authority}/wamn/releases"),
-        route_host: "wms.localhost".into(),
+        route_host: crate::environment::identity().route_host.clone(),
         registry_auth_file: registry_auth,
         host_secret_directory: host_secrets,
         host_secret_namespace: cluster.to_owned(),
@@ -643,10 +643,13 @@ async fn run_created(
         // The movement_label workflow runs on the materializer's delivery of
         // the move's row event, so the materializer serves before any move.
         let materializer_input = MaterializerInput {
-            workload: format!("{}-materializer", crate::environment::PROJECT),
+            workload: format!(
+                "{}-materializer",
+                crate::environment::identity().project.as_str()
+            ),
             namespace: cluster.to_owned(),
             image: materializer,
-            tenant: crate::environment::TENANT.to_owned(),
+            tenant: crate::environment::identity().tenant.clone(),
             event: EventIdentity {
                 org: scope.org.clone(),
                 project: scope.project.clone(),
@@ -777,7 +780,7 @@ async fn install_event_secrets(
     deployment::apply_secret(cluster, work, &json!({"apiVersion":"v1","kind":"Secret",
         "metadata":{"name":"wamn-event-nats","namespace":cluster},"type":"Opaque",
         "stringData":{"username":broker.runtime.username,"password":runtime_password,
-            "org":crate::environment::ORG,"project":crate::environment::PROJECT,"environment":crate::environment::ENVIRONMENT,
+            "org":crate::environment::identity().org.as_str(),"project":crate::environment::identity().project.as_str(),"environment":crate::environment::identity().environment.as_str(),
             "stream_replicas":source.num_replicas.to_string(),"dup_window_secs":source.duplicate_window.as_secs().to_string()}
     })).await?;
     let binding = fs::read_to_string(&broker.binding)?;

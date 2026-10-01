@@ -103,10 +103,10 @@ async fn command_histories() -> anyhow::Result<()> {
         scratch: scratch.path(),
         component_directory: &components,
         flow_http_wasm: &flow_http,
-        tenant: super::TENANT,
-        org: super::ORG,
-        project: super::PROJECT,
-        environment: super::ENVIRONMENT,
+        tenant: super::identity().tenant.as_str(),
+        org: super::identity().org.as_str(),
+        project: super::identity().project.as_str(),
+        environment: super::identity().environment.as_str(),
         schema: "receiving",
         caller_role: "admin",
         route_host: "receiving.local.test",
@@ -141,7 +141,7 @@ async fn transactional_participation(
     let (project, connection) =
         tokio_postgres::connect(database_url, tokio_postgres::NoTls).await?;
     let connection = tokio::spawn(connection);
-    super::bind_fixture_principal(&project, super::TENANT).await?;
+    super::bind_fixture_principal(&project, super::identity().tenant.as_str()).await?;
     project
         .batch_execute(
             "INSERT INTO receiving.item (id, item_number) VALUES \
@@ -500,9 +500,10 @@ async fn histories(
     let inputs = serde_json::from_value(json!({
         "project_pg_url":database_url,"route_endpoint":application.endpoint,
         "route_host":application.route_host,"operator_secret":application.caller_secret_path,
-        "tenant":super::TENANT,"caller_role":"admin","evidence_file":path,
+        "tenant":super::identity().tenant.as_str(),"caller_role":"admin","evidence_file":path,
         "source_commit":std::str::from_utf8(&source.stdout)?.trim(),
         "component_digests":application.component_digests,
+        "packages":super::released_package_roots(),
         "corpus_sha256":package["application_sql_corpus_identity"],"seed":7701,"cases":16,"history":null,
     }))?;
     let cancellation = pg_walstream::CancellationToken::new();

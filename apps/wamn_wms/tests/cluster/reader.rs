@@ -17,9 +17,9 @@ pub(super) fn args(
 ) -> anyhow::Result<EventReaderArgs> {
     use wamn_control::provision_project_env::secret_value;
     Ok(EventReaderArgs {
-        org: crate::environment::ORG.into(),
-        project: crate::environment::PROJECT.into(),
-        env: crate::environment::ENVIRONMENT.into(),
+        org: crate::environment::identity().org.clone(),
+        project: crate::environment::identity().project.clone(),
+        env: crate::environment::identity().environment.clone(),
         system_database_url: secret_value(&work.join("registry-reader.json"), "url")?,
         cdc_url: secret_value(&work.join("cdc-reader.json"), "url")?,
         nats_url: nats_url.to_owned(),

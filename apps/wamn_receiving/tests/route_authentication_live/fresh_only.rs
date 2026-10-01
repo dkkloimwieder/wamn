@@ -8,6 +8,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use crate::route_authentication_live::{identity, scope};
 use anyhow::Context as _;
 use bytes::Bytes;
 use serde_json::{Value, json};
@@ -15,9 +16,7 @@ use tokio_postgres::Client;
 use wamn_catalog::{ComponentDeclaration, PackageCoordinate};
 use wamn_control::apply_package::{self, ApplyPackageRequest};
 use wamn_control::author_wiring::{self, AuthorWiringRequest};
-use wamn_control::dev::environment::{
-    ENVIRONMENT, JourneyCredentials, ORG, PROJECT, TENANT, connect, spawn_journey_management_gate,
-};
+use wamn_control::dev::environment::{JourneyCredentials, connect, spawn_journey_management_gate};
 use wamn_control::provision_project_env::secret_value;
 use wamn_control::publish_release::{self, PublishReleaseRequest, ReleaseWiringTarget};
 use wamn_control::push_component::{self, AdmitComponentRequest, PublishAdmittedComponentRequest};
@@ -112,7 +111,7 @@ pub(super) async fn test_prior_commit(test: PriorCommitTest<'_>) -> anyhow::Resu
     apply_package::apply_package(ApplyPackageRequest {
         package: package.clone(),
         database_url: test.project_url.to_owned(),
-        tenant: TENANT.to_owned(),
+        tenant: identity().tenant.clone(),
     })
     .await?;
     wamn_schema_generator::materialize_package_verified(
@@ -141,7 +140,7 @@ pub(super) async fn test_prior_commit(test: PriorCommitTest<'_>) -> anyhow::Resu
             "INSERT INTO fresh_only_probe.counter (id, tenant_id, count) \
          VALUES ('00000000-0000-0000-0000-000000000904', $1, 0), \
                 ('00000000-0000-0000-0000-000000000905', $2, 0)",
-            &[&TENANT, &FOREIGN_TENANT],
+            &[&identity().tenant.as_str(), &FOREIGN_TENANT],
         )
         .await?;
     assert_counter_authority(&test).await?;
@@ -157,7 +156,7 @@ pub(super) async fn test_prior_commit(test: PriorCommitTest<'_>) -> anyhow::Resu
     )?;
     let ports = &source["operations"][*BASE_RECORD_RECEIPT];
     let declaration = json!({
-        "scope": {"tenant-id": TENANT, "package-id": PACKAGE, "package-version": VERSION},
+        "scope": {"tenant-id": identity().tenant.as_str(), "package-id": PACKAGE, "package-version": VERSION},
         "component": WIRING, "interface-version": "0.1.0", "connections": [],
         "operations": {(OPERATION): {
             "fresh-only": false,
@@ -230,7 +229,7 @@ pub(super) async fn test_prior_commit(test: PriorCommitTest<'_>) -> anyhow::Resu
         test.project_url,
         &test.inputs.system_pg_url,
         &AuthorWiringRequest {
-            tenant_id: TENANT,
+            tenant_id: identity().tenant.as_str(),
             package_id: PACKAGE,
             package_version: VERSION,
             document: &document,
@@ -264,11 +263,11 @@ pub(super) async fn test_prior_commit(test: PriorCommitTest<'_>) -> anyhow::Resu
     publish_release::publish_release(PublishReleaseRequest {
         database_url: test.project_url.to_owned(),
         control_database_url: test.inputs.system_pg_url.clone(),
-        org: ORG.to_owned(),
-        project: PROJECT.to_owned(),
-        tenant: TENANT.to_owned(),
+        org: identity().org.clone(),
+        project: identity().project.clone(),
+        tenant: identity().tenant.clone(),
         effective_release_id: 4,
-        environment: ENVIRONMENT.to_owned(),
+        environment: identity().environment.clone(),
         verified_publisher_principal: test.publisher.to_owned(),
         run_schema: "wamn_run".to_owned(),
         packages,
@@ -285,9 +284,9 @@ pub(super) async fn test_prior_commit(test: PriorCommitTest<'_>) -> anyhow::Resu
     push_release_manifest::push_release_manifest(
         &PushReleaseManifestRequest {
             database_url: test.project_url.to_owned(),
-            org: ORG.to_owned(),
-            project: PROJECT.to_owned(),
-            tenant: TENANT.to_owned(),
+            org: identity().org.clone(),
+            project: identity().project.clone(),
+            tenant: identity().tenant.clone(),
             effective_release_id: 4,
             artifact_base: test.inputs.release_artifact_base.clone(),
             registry_auth_file: test.inputs.registry_auth_file.clone(),
@@ -303,7 +302,7 @@ pub(super) async fn test_prior_commit(test: PriorCommitTest<'_>) -> anyhow::Resu
         .query_one(
             "SELECT manifest_digest FROM catalog.release_manifest_snapshots \
          WHERE tenant_id = $1 AND effective_release_id = 4",
-            &[&TENANT],
+            &[&identity().tenant.as_str()],
         )
         .await?
         .get(0);
@@ -313,7 +312,12 @@ pub(super) async fn test_prior_commit(test: PriorCommitTest<'_>) -> anyhow::Resu
             "SELECT deployed_manifest_hash FROM catalog.deployment_attestations \
              WHERE tenant_id = $1 AND effective_release_id = 4 \
                AND org_id = $2 AND project_id = $3 AND environment = $4",
-            &[&TENANT, &ORG, &PROJECT, &ENVIRONMENT],
+            &[
+                &identity().tenant.as_str(),
+                &identity().org.as_str(),
+                &identity().project.as_str(),
+                &identity().environment.as_str(),
+            ],
         )
         .await?
         .get(0);
@@ -397,7 +401,7 @@ pub(super) async fn test_prior_commit(test: PriorCommitTest<'_>) -> anyhow::Resu
             counter(&test, &counter_read).await? == 0,
             "counter must start at zero"
         );
-        let removed = test.project.query("DELETE FROM app_system.permissions WHERE tenant_id=$1 AND permission=regexp_replace($2, '@[^@]*$', '') AND required_by=permission RETURNING role_name", &[&TENANT,&*BASE_RECORD_RECEIPT]).await?;
+        let removed = test.project.query("DELETE FROM app_system.permissions WHERE tenant_id=$1 AND permission=regexp_replace($2, '@[^@]*$', '') AND required_by=permission RETURNING role_name", &[&identity().tenant.as_str(),&*BASE_RECORD_RECEIPT]).await?;
         anyhow::ensure!(!removed.is_empty(), "nested permission fixture requires a grant");
         let (trace, parent) = journey_trace(41);
         let client_items: Vec<Value> = serde_json::from_slice(&test.body)?;
@@ -448,7 +452,7 @@ pub(super) async fn test_prior_commit(test: PriorCommitTest<'_>) -> anyhow::Resu
         assert_counter_trace(&test, &trace, &parent_digest, "session", false)?;
         for row in removed {
             let role: String = row.get(0);
-            test.project.execute("INSERT INTO app_system.permissions (tenant_id,role_name,permission,required_by) VALUES ($1,$2,regexp_replace($3, '@[^@]*$', ''),regexp_replace($3, '@[^@]*$', ''))", &[&TENANT,&role,&*BASE_RECORD_RECEIPT]).await?;
+            test.project.execute("INSERT INTO app_system.permissions (tenant_id,role_name,permission,required_by) VALUES ($1,$2,regexp_replace($3, '@[^@]*$', ''),regexp_replace($3, '@[^@]*$', ''))", &[&identity().tenant.as_str(),&role,&*BASE_RECORD_RECEIPT]).await?;
         }
         let (trace, parent) = journey_trace(42);
         if let Some(client) = &client {
@@ -509,7 +513,7 @@ pub(super) async fn test_prior_commit(test: PriorCommitTest<'_>) -> anyhow::Resu
 async fn diagnose_prior_commit_failure(test: &PriorCommitTest<'_>, trace: &str) {
     let counter = test.project.query_one(
         "SELECT count FROM fresh_only_probe.counter WHERE tenant_id = $1 AND id = $2::text::uuid",
-        &[&TENANT, &COUNTER_ID],
+        &[&identity().tenant.as_str(), &COUNTER_ID],
     ).await.and_then(|row| row.try_get::<_, i64>(0))
         .map_or_else(|_| json!("read-failed"), |value| json!(value));
     let spans = test.traces.spans();
@@ -655,7 +659,7 @@ fn assert_counter_trace(
     );
     anyhow::ensure!(
         span_attribute(parent, "wamn.caller_credential_type").as_deref() == Some(credential)
-            && span_attribute(parent, "wamn.tenant").as_deref() == Some(TENANT),
+            && span_attribute(parent, "wamn.tenant").as_deref() == Some(identity().tenant.as_str()),
         "counter wiring changed the original credential kind or tenant"
     );
     if ran {
@@ -680,12 +684,12 @@ async fn counter(test: &PriorCommitTest<'_>, generated_get: &str) -> anyhow::Res
         let row = guest.query_typed_one(generated_get,
             &[(&COUNTER_ID, tokio_postgres::types::Type::TEXT)]).await?;
         let count: i64 = row.try_get("count")?;
-        anyhow::ensure!(row.try_get::<_, String>("tenant_id")? == TENANT,
+        anyhow::ensure!(row.try_get::<_, String>("tenant_id")? == identity().tenant.as_str(),
             "generated counter read crossed tenant scope");
         guest.batch_execute("ROLLBACK").await?;
         let independent: i64 = test.project.query_one(
             "SELECT count FROM fresh_only_probe.counter WHERE tenant_id = $1 AND id = $2::text::uuid",
-            &[&TENANT, &COUNTER_ID]).await?.get(0);
+            &[&identity().tenant.as_str(), &COUNTER_ID]).await?.get(0);
         anyhow::ensure!(count == independent, "generated and independent counter reads disagree");
         let foreign: i64 = test.project.query_one(
             "SELECT count FROM fresh_only_probe.counter WHERE tenant_id = $1 AND id = $2::text::uuid",
@@ -703,7 +707,7 @@ async fn release_snapshots(project: &Client) -> anyhow::Result<Vec<(i32, Vec<u8>
             "SELECT effective_release_id, canonical_bytes \
         FROM catalog.release_manifest_snapshots WHERE tenant_id = $1 \
         AND effective_release_id BETWEEN 1 AND 3 ORDER BY effective_release_id",
-            &[&TENANT],
+            &[&identity().tenant.as_str()],
         )
         .await?
         .into_iter()
@@ -726,12 +730,12 @@ async fn assert_counter_authority(test: &PriorCommitTest<'_>) -> anyhow::Result<
             current_user = session_user AND NOT rolsuper AND NOT rolbypassrls \
             AND current_setting('app.tenant', true) IS NULL \
             AND wamn_authority.current_tenant_key() = wamn_authority.tenant_key($1) \
-            FROM pg_roles WHERE rolname = current_user", &[&TENANT]).await?.get(0);
+            FROM pg_roles WHERE rolname = current_user", &[&identity().tenant.as_str()]).await?.get(0);
         anyhow::ensure!(login_bound, "counter requires an ordinary tenant-bound GuestSql login");
         guest.batch_execute("BEGIN").await?;
         guest.query_one("SELECT set_config('app.tenant', $1, true)", &[&FOREIGN_TENANT]).await?;
         let rows = guest.query(&format!("{COUNTER_SQL} RETURNING tenant_id, count"), &[]).await?;
-        anyhow::ensure!(rows.len() == 1 && rows[0].get::<_, String>(0) == TENANT
+        anyhow::ensure!(rows.len() == 1 && rows[0].get::<_, String>(0) == identity().tenant.as_str()
             && rows[0].get::<_, i64>(1) == 1,
             "forged GUC changed the counter's login-bound authority");
         let foreign = guest.execute(&format!("{COUNTER_SQL} WHERE tenant_id = $1"),
@@ -772,6 +776,7 @@ async fn gate_wiring(test: &PriorCommitTest<'_>, wiring: &Value) -> anyhow::Resu
     )
     .await?;
     let mut gate = spawn_journey_management_gate(
+        &scope(),
         &journey_scenario_worker_binary()?,
         &credentials,
         &credentials.management_admitter,
@@ -789,7 +794,7 @@ async fn gate_wiring(test: &PriorCommitTest<'_>, wiring: &Value) -> anyhow::Resu
             .json(
                 &json!({"document": "request", "body": {"schema-version": "0.2",
                 "command-id": "gate-prior-commit-fixture", "command": {"type": "gate", "input": {
-                    "scope": {"project-id": PROJECT, "environment": ENVIRONMENT},
+                    "scope": {"project-id": identity().project.as_str(), "environment": identity().environment.as_str()},
                     "package-id": PACKAGE, "package-version": VERSION, "document": wiring
                 }}}}),
             )
@@ -1053,7 +1058,7 @@ mod execution_tests {
         let role = workload_generation_role(
             WorkloadRoleFamily::App,
             WorkloadRoleScope::Tenant {
-                tenant: super::TENANT,
+                tenant: super::identity().tenant.as_str(),
                 database: DATABASE,
             },
             CredentialGeneration::A,
@@ -1093,7 +1098,7 @@ mod execution_tests {
         project
             .execute(
                 "INSERT INTO fresh_only_probe.counter VALUES ($1, 0), ($2, 0)",
-                &[&super::TENANT, &super::FOREIGN_TENANT],
+                &[&super::identity().tenant.as_str(), &super::FOREIGN_TENANT],
             )
             .await?;
         let mut guest_config = project_config.clone();
@@ -1112,7 +1117,7 @@ mod execution_tests {
             AND current_setting('app.tenant', true) IS NULL \
             AND wamn_authority.current_tenant_key() = wamn_authority.tenant_key($2) \
             FROM pg_roles WHERE rolname = current_user",
-                &[&role, &super::TENANT],
+                &[&role, &super::identity().tenant.as_str()],
             )
             .await?
             .get(0);
@@ -1184,7 +1189,7 @@ mod execution_tests {
             for row in rows {
                 let tenant: String = row.get(0);
                 let count: i64 = row.get(1);
-                let expected_count = if tenant == super::TENANT {
+                let expected_count = if tenant == super::identity().tenant.as_str() {
                     expected
                 } else {
                     anyhow::ensure!(tenant == super::FOREIGN_TENANT, "unexpected counter tenant");

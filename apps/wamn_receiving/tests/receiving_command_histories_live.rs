@@ -43,6 +43,9 @@ pub(crate) struct Inputs {
     evidence_file: PathBuf,
     source_commit: String,
     component_digests: BTreeMap<String, String>,
+    /// The root of each released package, by component, whose generated
+    /// identity the record names.
+    packages: BTreeMap<String, PathBuf>,
     corpus_sha256: String,
     seed: u64,
     cases: u32,
@@ -959,15 +962,19 @@ pub(crate) fn assert_histories_with_cancellation(
         metadata["application_sql_corpus_identity"] == inputs.corpus_sha256,
         "Receiving test SQL corpus identity differs from the package contract"
     );
-    let overlay_metadata: Value = serde_json::from_slice(&std::fs::read(
-        repository.join("apps/client_acme_receiving/generated/package-weld.json"),
-    )?)?;
-    let schema_state_ids = json!({
-        "receiving": metadata["verified_schema_state_id"].as_str()
-            .context("Receiving package contract has no verified schema identity")?,
-        "client_acme_receiving": overlay_metadata["verified_schema_state_id"].as_str()
-            .context("Acme package contract has no verified schema identity")?,
-    });
+    let mut schema_state_ids = serde_json::Map::new();
+    let mut generation_provenance = serde_json::Map::new();
+    for (component, root) in &inputs.packages {
+        let package: Value =
+            serde_json::from_slice(&std::fs::read(root.join("generated/package-weld.json"))?)?;
+        let schema_state_id = package["verified_schema_state_id"]
+            .as_str()
+            .with_context(|| {
+                format!("{component} package contract has no verified schema identity")
+            })?;
+        schema_state_ids.insert(component.clone(), json!(schema_state_id));
+        generation_provenance.insert(component.clone(), package["provenance"].clone());
+    }
     let compiler = std::process::Command::new("rustc")
         .args(["--version", "--verbose"])
         .current_dir(&repository)
@@ -1025,8 +1032,7 @@ pub(crate) fn assert_histories_with_cancellation(
         &json!({"case":"identity","source_commit":inputs.source_commit,
         "component_digests":inputs.component_digests,"corpus_sha256":inputs.corpus_sha256,
         "postgres_server_version_num":version,"schema_state_ids":schema_state_ids,
-        "generation_provenance":{"receiving":metadata["provenance"],
-            "client_acme_receiving":overlay_metadata["provenance"]},
+        "generation_provenance":generation_provenance,
         "test_compiler_version":compiler_version,
         "seed":inputs.seed,"generated_cases":inputs.cases,"max_shrink_iterations":64,
         "invariants":["REC-HISTORY","REC-REFUSAL","REC-REPLAY","REC-CONTENTION",
