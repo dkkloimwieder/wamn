@@ -36,13 +36,13 @@ use std::sync::OnceLock;
 
 use url::Url;
 
-use wamn_control_provision::CredentialGeneration;
 use wamn_control_provision::audit_retention::reconcile_audit_retention_grants_sql;
 use wamn_control_provision::sql;
 use wamn_control_provision::workload_role::{
     PLATFORM_GROUP_ROLE, WorkloadRoleFamily, WorkloadRoleScope, WorkloadRoleScopeKind,
     workload_generation_role,
 };
+use wamn_control_provision::{CONTROL_PORTABLE_STORE_SQL, CredentialGeneration, SYSTEM_SCHEMA_SQL};
 
 const POSTGRES_INIT: &str = include_str!("../../../../deploy/sql/postgres-init.sql");
 const CATALOG_SCHEMA: &str = wamn_catalog::CATALOG_SCHEMA_SQL;
@@ -53,6 +53,10 @@ const APP_SCHEMA: &str = include_str!("../../../../deploy/sql/app-schema.sql");
 /// The database `deploy/sql/postgres-init.sql` creates. Also the scope every
 /// generation login's digest is taken over, so it cannot be chosen freely.
 const DATABASE: &str = "wamn";
+
+/// The control database of this gate. The control-plane families reach it
+/// and nothing else.
+const CONTROL_DATABASE: &str = "wamn_matrix_control";
 
 const ORG: &str = "acme";
 const PROJECT: &str = "billing";
@@ -159,10 +163,11 @@ struct FamilyReach {
 
 /// The ten families whose credentials reach a project-environment database.
 ///
-/// `ControlAuthor`, `RegistryReader` and `IdentityReader` are absent because
-/// their scope is [`WorkloadRoleScopeKind::Control`]: their credentials reach
-/// the CONTROL database, whose grants and whose authority derivation are a
-/// different plane. `wamn_scenario_author` is absent because it is a host group,
+/// `RegistryReader`, `IdentityReader` and `Control` are absent because their
+/// credentials reach the CONTROL database, a different plane with its own
+/// matrix, [`CONTROL_MATRIX`]. `ControlAuthor` is absent from both: no
+/// [`sql::stable_surface_sql`] batch grants its surface.
+/// `wamn_scenario_author` is absent because it is a host group,
 /// not a [`WorkloadRoleFamily`] — it has no generation lifecycle to mint a
 /// principal from.
 const MATRIX: [FamilyReach; 10] = [
@@ -308,6 +313,54 @@ const MATRIX: [FamilyReach; 10] = [
     },
 ];
 
+/// The families whose credentials reach the control database, with their reach
+/// over every table of [`sql::SYSTEM_PLANE_SCHEMAS`] (`wamn-a40n.2`).
+///
+/// The same pairwise and exactness claims as [`MATRIX`], on the other plane.
+/// No family here holds a routine.
+const CONTROL_MATRIX: [FamilyReach; 3] = [
+    FamilyReach {
+        family: WorkloadRoleFamily::RegistryReader,
+        relations: &[
+            "registry.capture_gap|SELECT|table",
+            "registry.event_readers|SELECT|table",
+        ],
+        routines: &[],
+    },
+    FamilyReach {
+        family: WorkloadRoleFamily::IdentityReader,
+        relations: &[
+            "identity.password_logins|SELECT|table",
+            "identity.pats|SELECT|table",
+            "identity.principals|SELECT|table",
+            "identity.project_env_memberships|SELECT|table",
+            "identity.project_roles|SELECT|table",
+        ],
+        routines: &[],
+    },
+    // The org control host reads who holds `project-admin` and whether a
+    // control session's password login is live. It writes nothing.
+    FamilyReach {
+        family: WorkloadRoleFamily::Control,
+        relations: &[
+            "identity.password_logins|SELECT|table",
+            "identity.principals|SELECT|table",
+            "identity.project_roles|SELECT|table",
+        ],
+        routines: &[],
+    },
+];
+
+/// The control-plane universe: every table of [`sql::SYSTEM_PLANE_SCHEMAS`], read
+/// from the server, so a widening onto a table added later is still seen.
+fn control_universe() -> String {
+    format!(
+        "ARRAY(SELECT schemaname || '.' || tablename FROM pg_catalog.pg_tables \
+                WHERE schemaname = ANY({schemas}))",
+        schemas = sql_array(sql::SYSTEM_PLANE_SCHEMAS),
+    )
+}
+
 // ---------------------------------------------------------------------------
 // psql
 // ---------------------------------------------------------------------------
@@ -408,6 +461,14 @@ fn login_url(admin_url: &str, role: &str) -> String {
     url.into()
 }
 
+/// The database a family's credential reaches.
+fn database_of(family: WorkloadRoleFamily) -> &'static str {
+    match family.scope_kind() {
+        WorkloadRoleScopeKind::Tenant | WorkloadRoleScopeKind::ProjectEnvironment => DATABASE,
+        WorkloadRoleScopeKind::Control | WorkloadRoleScopeKind::Org => CONTROL_DATABASE,
+    }
+}
+
 // ---------------------------------------------------------------------------
 // The fixture
 // ---------------------------------------------------------------------------
@@ -416,6 +477,7 @@ struct Fixture {
     _server: wamn_test_postgres::OwnedPostgres,
     admin: String,
     db_url: String,
+    control_url: String,
 }
 
 /// The deterministic generation name the real mint would issue for one family.
@@ -431,10 +493,16 @@ fn generation(family: WorkloadRoleFamily) -> String {
             environment: ENVIRONMENT,
             database: DATABASE,
         },
-        WorkloadRoleScopeKind::Control | WorkloadRoleScopeKind::Org => panic!(
-            "{family:?} is control-scoped: its credential reaches the control \
-             database and it is not a subject of this matrix"
-        ),
+        WorkloadRoleScopeKind::Control => WorkloadRoleScope::Control {
+            org: ORG,
+            project: PROJECT,
+            environment: ENVIRONMENT,
+            database: CONTROL_DATABASE,
+        },
+        WorkloadRoleScopeKind::Org => WorkloadRoleScope::Org {
+            org: ORG,
+            database: CONTROL_DATABASE,
+        },
     };
     workload_generation_role(family, scope, CredentialGeneration::A)
         .unwrap_or_else(|error| panic!("mint a {family:?} generation: {error}"))
@@ -444,6 +512,7 @@ fn generation(family: WorkloadRoleFamily) -> String {
 fn managed_roles() -> Vec<String> {
     let mut roles: Vec<String> = MATRIX
         .iter()
+        .chain(&CONTROL_MATRIX)
         .flat_map(|reach| [reach.family.acl_role().to_owned(), generation(reach.family)])
         .collect();
     // The probe comes BEFORE the group it inherits: a role still named by a
@@ -465,8 +534,11 @@ fn managed_roles() -> Vec<String> {
 fn reset(admin: &str) {
     apply(
         admin,
-        "drop the project database",
-        "DROP DATABASE IF EXISTS \"wamn\";\n",
+        "drop the project and control databases",
+        &format!(
+            "DROP DATABASE IF EXISTS \"{DATABASE}\";\n\
+             DROP DATABASE IF EXISTS \"{CONTROL_DATABASE}\";\n"
+        ),
     );
     for role in managed_roles() {
         apply(
@@ -615,11 +687,54 @@ fn build() -> Fixture {
         ),
     );
 
+    let control_url = build_control_plane(&admin);
+
     Fixture {
         _server: server,
         admin,
         db_url,
+        control_url,
     }
+}
+
+/// The control database as a fresh control bootstrap leaves it, and one minted
+/// generation login per [`CONTROL_MATRIX`] family. Returns its admin URL.
+///
+/// `wamn_system` owns the database and applies the control store, as the
+/// control bootstrap does.
+fn build_control_plane(admin: &str) -> String {
+    apply(
+        admin,
+        "create the control owner role and the control database",
+        &format!(
+            "DO $system_role$ BEGIN \
+               IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = 'wamn_system') THEN \
+                 CREATE ROLE wamn_system NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE \
+                   NOINHERIT NOREPLICATION NOBYPASSRLS; \
+               END IF; \
+             END $system_role$;\n\
+             {control_author}\n\
+             {db_owner}\n\
+             CREATE DATABASE \"{CONTROL_DATABASE}\" OWNER wamn_system;\n\
+             REVOKE CONNECT, TEMPORARY ON DATABASE \"{CONTROL_DATABASE}\" FROM PUBLIC;\n",
+            control_author = sql::ensure_control_author_acl_role_sql(),
+            db_owner = sql::ensure_db_owner_role_sql(),
+        ),
+    );
+    let mut control = Url::parse(admin).expect("the test server URL is a URL");
+    control.set_path(CONTROL_DATABASE);
+    let control_url = control.to_string();
+    apply(
+        &control_url,
+        "install the control store as its owner",
+        &format!(
+            "SET ROLE wamn_system;\n{SYSTEM_SCHEMA_SQL}\n{CONTROL_PORTABLE_STORE_SQL}\nRESET ROLE;\n"
+        ),
+    );
+    for reach in &CONTROL_MATRIX {
+        mint(&control_url, reach.family);
+    }
+    control_url
 }
 
 /// Prepare one family's stable surface and one generation login.
@@ -636,7 +751,7 @@ fn mint(db_url: &str, family: WorkloadRoleFamily) {
         "prepare a workload generation",
         &sql::prepare_workload_generation_sql(
             family,
-            DATABASE,
+            database_of(family),
             &login,
             PROBE_PASSWORD,
             "2099-01-01T00:00:00Z",
@@ -672,7 +787,7 @@ fn sql_array(values: impl IntoIterator<Item = impl AsRef<str>>) -> String {
 /// ignores `_`, so `catalog.wirings` sorts BEFORE `catalog.wiring_tombstones`
 /// there and a pinned list would be ordered by the container's locale rather
 /// than by its bytes.
-fn observed_relations(db_url: &str, role: &str) -> Vec<String> {
+fn observed_relations(db_url: &str, role: &str, universe: &str) -> Vec<String> {
     rows(
         db_url,
         &format!(
@@ -680,12 +795,11 @@ fn observed_relations(db_url: &str, role: &str) -> Vec<String> {
                SELECT rel || '|' || priv || '|' || \
                       CASE WHEN has_table_privilege('{role}', rel, priv) \
                            THEN 'table' ELSE 'column' END AS row \
-                 FROM unnest({relations}) AS rel, unnest({privileges}) AS priv \
+                 FROM unnest({universe}) AS rel, unnest({privileges}) AS priv \
                 WHERE has_table_privilege('{role}', rel, priv) \
                    OR CASE WHEN priv = 'DELETE' THEN false \
                            ELSE has_any_column_privilege('{role}', rel, priv) END \
              ) q ORDER BY row COLLATE \"C\"",
-            relations = sql_array(MATRIX_RELATIONS),
             privileges = sql_array(MATRIX_PRIVILEGES),
         ),
     )
@@ -735,11 +849,27 @@ fn pinned_capabilities(reach: &FamilyReach) -> BTreeSet<String> {
     set
 }
 
-fn family(subject: WorkloadRoleFamily) -> &'static FamilyReach {
-    MATRIX
-        .iter()
-        .find(|reach| reach.family == subject)
-        .unwrap_or_else(|| panic!("{subject:?} is not a matrix family"))
+/// One database plane: its families, its database and its relation universe.
+struct Plane {
+    reaches: &'static [FamilyReach],
+    db_url: &'static str,
+    universe: String,
+}
+
+fn project_plane() -> Plane {
+    Plane {
+        reaches: &MATRIX,
+        db_url: &fixture().db_url,
+        universe: sql_array(MATRIX_RELATIONS),
+    }
+}
+
+fn control_plane() -> Plane {
+    Plane {
+        reaches: &CONTROL_MATRIX,
+        db_url: &fixture().control_url,
+        universe: control_universe(),
+    }
 }
 
 /// One family's own row of the matrix, plus the ordered pairs it is the SUBJECT
@@ -748,9 +878,12 @@ fn family(subject: WorkloadRoleFamily) -> &'static FamilyReach {
 /// Two claims, and neither subsumes the other. The exactness half catches a
 /// widening onto an object NO family owns; the pairwise half NAMES the family
 /// whose operation was taken.
-fn assert_family_row(subject: WorkloadRoleFamily) {
-    let fixture = fixture();
-    let reach = family(subject);
+fn assert_family_row(plane: &Plane, subject: WorkloadRoleFamily) {
+    let reach = plane
+        .reaches
+        .iter()
+        .find(|reach| reach.family == subject)
+        .unwrap_or_else(|| panic!("{subject:?} is not a family of this plane"));
     let login = generation(subject);
     let label = subject.label();
 
@@ -758,7 +891,7 @@ fn assert_family_row(subject: WorkloadRoleFamily) {
     // past RLS, or every denial below is satisfied for the wrong reason.
     assert_eq!(
         query(
-            &fixture.db_url,
+            plane.db_url,
             &format!(
                 "SELECT (rolcanlogin AND NOT rolsuper AND NOT rolbypassrls)::text \
                    FROM pg_roles WHERE rolname = '{login}'"
@@ -775,8 +908,8 @@ fn assert_family_row(subject: WorkloadRoleFamily) {
     // widening trips both arms — so running exactness first would shadow the
     // more informative message behind a diff of two long lists.
     let mine = pinned_capabilities(reach);
-    let held = observed_capabilities(&fixture.db_url, &login, subject.acl_role());
-    for other in &MATRIX {
+    let held = observed_capabilities(plane, &login, subject.acl_role());
+    for other in plane.reaches {
         if other.family == subject {
             continue;
         }
@@ -795,13 +928,13 @@ fn assert_family_row(subject: WorkloadRoleFamily) {
     // What the pairwise arm cannot see: a widening onto an object NO family
     // owns, and an under-holding that silently strands this family's own reader.
     assert_eq!(
-        observed_relations(&fixture.db_url, &login),
+        observed_relations(plane.db_url, &login, &plane.universe),
         reach.relations,
         "the {label} family's relation reach is not its pinned surface — it \
          over-holds or under-holds somewhere in the matrix universe"
     );
     assert_eq!(
-        observed_routines(&fixture.db_url, subject.acl_role()),
+        observed_routines(plane.db_url, subject.acl_role()),
         reach.routines,
         "the {label} family's routine grants are not its pinned surface"
     );
@@ -809,8 +942,8 @@ fn assert_family_row(subject: WorkloadRoleFamily) {
 
 /// Everything the principal reaches, grain-free, in the same vocabulary as
 /// [`pinned_capabilities`].
-fn observed_capabilities(db_url: &str, login: &str, acl_role: &str) -> BTreeSet<String> {
-    let mut held: BTreeSet<String> = observed_relations(db_url, login)
+fn observed_capabilities(plane: &Plane, login: &str, acl_role: &str) -> BTreeSet<String> {
+    let mut held: BTreeSet<String> = observed_relations(plane.db_url, login, &plane.universe)
         .into_iter()
         .map(|row| {
             row.rsplit_once('|')
@@ -820,7 +953,7 @@ fn observed_capabilities(db_url: &str, login: &str, acl_role: &str) -> BTreeSet<
         })
         .collect();
     held.extend(
-        observed_routines(db_url, acl_role)
+        observed_routines(plane.db_url, acl_role)
             .into_iter()
             .map(|routine| format!("routine|{routine}")),
     );
@@ -833,52 +966,102 @@ fn observed_capabilities(db_url: &str, login: &str, acl_role: &str) -> BTreeSet<
 
 #[test]
 fn the_guest_sql_family_is_refused_the_other_families_operations() {
-    assert_family_row(WorkloadRoleFamily::App);
+    assert_family_row(&project_plane(), WorkloadRoleFamily::App);
 }
 
 #[test]
 fn the_retention_family_is_refused_the_other_families_operations() {
-    assert_family_row(WorkloadRoleFamily::Retention);
+    assert_family_row(&project_plane(), WorkloadRoleFamily::Retention);
 }
 
 #[test]
 fn the_management_admitter_family_is_refused_the_other_families_operations() {
-    assert_family_row(WorkloadRoleFamily::ManagementAdmitter);
+    assert_family_row(&project_plane(), WorkloadRoleFamily::ManagementAdmitter);
 }
 
 #[test]
 fn the_executor_platform_family_is_refused_the_other_families_operations() {
-    assert_family_row(WorkloadRoleFamily::ExecutorPlatform);
+    assert_family_row(&project_plane(), WorkloadRoleFamily::ExecutorPlatform);
 }
 
 #[test]
 fn the_http_admitter_family_is_refused_the_other_families_operations() {
-    assert_family_row(WorkloadRoleFamily::HttpAdmitter);
+    assert_family_row(&project_plane(), WorkloadRoleFamily::HttpAdmitter);
 }
 
 #[test]
 fn the_session_role_reader_is_refused_the_other_families_operations() {
-    assert_family_row(WorkloadRoleFamily::SessionRoleReader);
+    assert_family_row(&project_plane(), WorkloadRoleFamily::SessionRoleReader);
 }
 
 #[test]
 fn the_service_reader_family_is_refused_the_other_families_operations() {
-    assert_family_row(WorkloadRoleFamily::ServiceReader);
+    assert_family_row(&project_plane(), WorkloadRoleFamily::ServiceReader);
 }
 
 #[test]
 fn the_event_materializer_family_is_refused_the_other_families_operations() {
-    assert_family_row(WorkloadRoleFamily::EventMaterializer);
+    assert_family_row(&project_plane(), WorkloadRoleFamily::EventMaterializer);
 }
 
 #[test]
 fn the_audit_retention_family_is_refused_the_other_families_operations() {
-    assert_family_row(WorkloadRoleFamily::AuditRetention);
+    assert_family_row(&project_plane(), WorkloadRoleFamily::AuditRetention);
 }
 
 #[test]
 fn the_administration_family_is_refused_the_other_families_operations() {
-    assert_family_row(WorkloadRoleFamily::Administration);
+    assert_family_row(&project_plane(), WorkloadRoleFamily::Administration);
+}
+
+#[test]
+fn the_registry_reader_family_is_refused_the_other_control_families_operations() {
+    assert_family_row(&control_plane(), WorkloadRoleFamily::RegistryReader);
+}
+
+#[test]
+fn the_identity_reader_family_is_refused_the_other_control_families_operations() {
+    assert_family_row(&control_plane(), WorkloadRoleFamily::IdentityReader);
+}
+
+#[test]
+fn the_control_family_is_refused_the_other_control_families_operations() {
+    assert_family_row(&control_plane(), WorkloadRoleFamily::Control);
+}
+
+/// The control plane holds each family whose credential reaches the control
+/// database once, and only the identity reader's surface contains another
+/// family's whole surface: the control family's.
+#[test]
+fn every_control_database_family_is_covered_exactly_once() {
+    let mut seen = BTreeSet::new();
+    for reach in &CONTROL_MATRIX {
+        assert!(
+            seen.insert(reach.family.acl_role()),
+            "{:?} appears twice in the control matrix",
+            reach.family
+        );
+        assert_eq!(
+            database_of(reach.family),
+            CONTROL_DATABASE,
+            "{:?} does not reach the control database",
+            reach.family
+        );
+    }
+    let mut contained = Vec::new();
+    for subject in &CONTROL_MATRIX {
+        let mine = pinned_capabilities(subject);
+        for other in &CONTROL_MATRIX {
+            if other.family != subject.family && pinned_capabilities(other).is_subset(&mine) {
+                contained.push((subject.family.label(), other.family.label()));
+            }
+        }
+    }
+    assert_eq!(
+        contained,
+        vec![("identity-reader".to_owned(), "control".to_owned())],
+        "the control-plane ordered pairs that carry NO denial moved"
+    );
 }
 
 /// The matrix is PAIRWISE, and this is what makes that literally true.
@@ -896,9 +1079,10 @@ fn every_ordered_pair_of_matrix_families_is_covered_exactly_once() {
             "{:?} appears twice in the matrix",
             reach.family
         );
-        assert!(
-            !matches!(reach.family.scope_kind(), WorkloadRoleScopeKind::Control),
-            "{:?} is control-scoped and reaches a different database plane",
+        assert_eq!(
+            database_of(reach.family),
+            DATABASE,
+            "{:?} reaches a different database plane",
             reach.family
         );
     }

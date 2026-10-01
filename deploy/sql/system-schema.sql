@@ -16,8 +16,8 @@
 -- catalog-schema.sql: the system DB is the platform's own single-tenant
 -- control-plane state. There is NO `app.tenant` claim, NO per-tenant RLS floor,
 -- NO NULLIF/CHECK(tenant_id <> '') pattern here. The top-level key is `org_id`;
--- access is the `wamn_system` owner role (from wamn-q3n.2) plus a future
--- least-privilege control-plane role (the 8.1 RBAC seam — GRANT lines below).
+-- access is the `wamn_system` owner role (from wamn-q3n.2). The control-plane
+-- families get their grants from `stable_surface_sql` in wamn-control-provision.
 --
 -- APPLY AS THE `wamn_system` OWNER (it owns the system DB, so it can CREATE
 -- SCHEMA): the registry is then owned by — and usable by — that role, which is
@@ -87,12 +87,6 @@
 CREATE SCHEMA registry AUTHORIZATION wamn_system;
 CREATE SCHEMA provisioning AUTHORIZATION wamn_system;
 CREATE SCHEMA identity AUTHORIZATION wamn_system;
-
--- RBAC seam (8.1): a future least-privilege control-plane role (builder/admin/
--- viewer, distinct from the tenant `wamn_app`) is GRANTed here. The `wamn_system`
--- owner needs no grant. Left as a documented seam — RBAC is a separate subsystem.
---   GRANT USAGE ON SCHEMA registry, provisioning, identity TO wamn_control;
---   GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA registry TO wamn_control;
 
 -- ---------------------------------------------------------------------------
 -- Registry format version (singleton). Records the storage-format version,

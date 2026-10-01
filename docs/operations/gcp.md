@@ -943,10 +943,13 @@ It has no application release and no project credential.
 It reads `wamn_system` through the `control` login of the org, from the Secret `wamn-control-dkk`.
 Run these steps only with a host image that contains `wamn-a40n.2`.
 
-Apply the pending system migrations first, because `system/0006_control_audience_reads.sql` gives the identity issuer the reads of the control audience.
-Keep the port-forward and `WAMN_SYSTEM_ADMIN_URL` of section 3.6. Prepare the control credential with `provision-org`. The run changes no registry row:
+Keep the port-forward and `WAMN_SYSTEM_ADMIN_URL` of section 3.6.
+Apply system migration `0006_control_audience_reads.sql` before `provision-org` emits the control credential.
+The migration gives the identity issuer its two reads of the control audience.
+Then prepare the control credential with `provision-org`. The run changes no registry row:
 
 ```bash
+target/debug/wamn-ctl upgrade-schema --system-database-url "$WAMN_SYSTEM_ADMIN_URL" --confirm
 target/debug/wamn-ctl provision-org --org dkk --template trials --pool wamn-pg \
   --system-database-url "$WAMN_SYSTEM_ADMIN_URL" --db-host wamn-pg-rw.platform.svc.cluster.local \
   --namespace hosts --prepare-control-generation a --emit-control-secret $P/control.json
