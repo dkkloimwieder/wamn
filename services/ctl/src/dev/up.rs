@@ -83,6 +83,11 @@ pub struct DevUpArgs {
     #[arg(long, env = "WAMN_DEV_ENV_LOCAL_BINDINGS")]
     local_bindings: Option<PathBuf>,
 
+    /// The host credentials file, `{project: {name: secret}}`. The command
+    /// copies it into `--root` with mode 0600 and names the copy in `dev.json`.
+    #[arg(long, env = "WAMN_DEV_ENV_CREDENTIALS_FILE")]
+    credentials_file: Option<PathBuf>,
+
     /// The built `wamn-host` the loop supervises.
     #[arg(long, env = "WAMN_DEV_ENV_HOST_BIN")]
     host_binary: PathBuf,
@@ -118,6 +123,7 @@ pub async fn run(args: DevUpArgs) -> anyhow::Result<()> {
         local_bindings: args.local_bindings,
         host_binary: args.host_binary,
         packages: args.packages,
+        credentials_file: args.credentials_file,
     })
     .await?;
 

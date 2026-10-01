@@ -754,6 +754,12 @@ fn host_process_spec(request: &DevActivationRequest<'_>) -> HostProcessSpec {
             OTEL_BSP_MAX_EXPORT_BATCH_SIZE.to_owned(),
         ),
     ];
+    if let Some(path) = request.config.credentials_file() {
+        env.push((
+            "WAMN_CREDENTIALS_FILE".to_owned(),
+            path.display().to_string(),
+        ));
+    }
     if let Some(identity) = request.config.session_identity() {
         env.extend([
             ("WAMN_SESSION_ISSUER".to_owned(), identity.issuer.clone()),
@@ -1750,6 +1756,47 @@ mod tests {
             );
         }
         document["session_identity"]["issuer"] = "http://127.0.0.1:8443".into();
+        assert!(parse_config(&serde_json::to_vec(&document).unwrap()).is_err());
+    }
+
+    /// The host reads its credentials from the file `dev.json` names, as the
+    /// cluster host reads its mounted Secret (wamn-hw3n).
+    #[test]
+    fn the_credentials_file_reaches_the_host() {
+        let mut document = config_document();
+        let config = parse_config(&serde_json::to_vec(&document).unwrap()).unwrap();
+        let release = release();
+        let identity = identity();
+        let request = DevActivationRequest {
+            config: &config,
+            release: &release,
+            identity: &identity,
+            host_binary: config.host_binary(),
+            wasmtime_cache_dir: config.wasmtime_cache_dir(),
+            host_output_log: None,
+            local_admission_digest: None,
+        };
+        let spec = host_process_spec(&request);
+        assert!(
+            !spec
+                .env
+                .iter()
+                .any(|(key, _)| key == "WAMN_CREDENTIALS_FILE")
+        );
+        document["credentials_file"] = "/tmp/owned-root/credentials.json".into();
+        let config = parse_config(&serde_json::to_vec(&document).unwrap()).unwrap();
+        let request = DevActivationRequest {
+            config: &config,
+            ..request
+        };
+        let spec = host_process_spec(&request);
+        assert!(
+            spec.env
+                .iter()
+                .any(|(key, value)| key == "WAMN_CREDENTIALS_FILE"
+                    && value == "/tmp/owned-root/credentials.json")
+        );
+        document["credentials_file"] = "credentials.json".into();
         assert!(parse_config(&serde_json::to_vec(&document).unwrap()).is_err());
     }
 

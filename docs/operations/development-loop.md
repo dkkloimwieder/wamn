@@ -28,6 +28,9 @@ Supply `--flow-http-component` with the absolute path to the built `http_route.w
 The emitted `local_artifacts` configuration names the local output directory and this component.
 For declared connections, pass `--local-bindings` with an absolute path to the selection file.
 The emitted configuration stores that path in `local_artifacts.bindings`.
+If the host needs credentials, pass `--credentials-file` with a file of the form `{project: {handle: secret}}`.
+The command copies the file into the environment directory with mode 0600, and `credentials_file` names the copy.
+The loop passes that path to the host as `WAMN_CREDENTIALS_FILE`, as the cluster passes its mounted Secret.
 
 Supply `--platform-domain` with the domain of the platform principal emails, for example `example.invalid`.
 The emitted configuration stores it in `platform_domain`.
@@ -139,7 +142,7 @@ The local Gate uses the same wiring rules as release authoring and authenticates
 A wiring can name a palette component, which is a platform component with a `declaration.json.in` under `apps/platform/*/*/`.
 `tools/build-components` builds each palette component that a wiring of a selected package names.
 The loop admits it into the scope of that package, with the platform packages that its declaration states.
-A `__STORE_ALIAS__` connection takes the `store_alias` parameter of the wiring node, and it needs its own selection in `--local-bindings`.
+The loop refuses a declaration that leaves a connection alias as `__STORE_ALIAS__`, because it names no store alias for it.
 The runtime still enforces operation grants, connection bindings, and credentials for each database role.
 
 Local preparation limits each metadata or version command to 60 seconds.

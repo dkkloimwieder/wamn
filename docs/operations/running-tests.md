@@ -461,6 +461,9 @@ WAMN_DEV_ENV_FLOW_HTTP_COMPONENT="$CARGO_TARGET_DIR/wasm32-wasip2/debug/http_rou
 ```
 
 The fixture starts Compose services on assigned loopback ports.
+If you put `--wms` before `--`, the fixture also starts MinIO and makes the `labels` bucket.
+It then sets `WAMN_DEV_ENV_CREDENTIALS_FILE` to a mode 0600 file with the MinIO credential under the handle `labels-store`.
+It sets `WAMN_RECEIVING_DEV_MINIO_ENDPOINT` to the MinIO address.
 It sets every variable that the case declares, except the two that the command sets.
 The case starts its own PostgreSQL server, because the development environment resets the control store of the whole server.
 The case requires authenticated application results after code, SQL, and schema edits.

@@ -63,6 +63,7 @@ const HOST_NAME: &str = "host_name";
 const RUNNER: &str = "runner";
 const HOST_BINARY: &str = "host_binary";
 const WASMTIME_CACHE_DIR: &str = "wasmtime_cache_dir";
+const CREDENTIALS_FILE: &str = "credentials_file";
 const PACKAGE_MANIFEST_FILE: &str = "wamn.json";
 
 pub(super) const POSTGRES_SYSTEM_DATABASES: [&str; 3] = ["postgres", "template0", "template1"];
@@ -131,6 +132,11 @@ struct DevConfigDocument {
     runner: String,
     host_binary: PathBuf,
     wasmtime_cache_dir: PathBuf,
+    /// The host credentials file in the environment's private root, as the
+    /// cluster mounts its Secret. Absent means the host has no credentials.
+    #[serde(default)]
+    #[schemars(with = "String")]
+    credentials_file: Option<PathBuf>,
 }
 
 /// Stable category of a development configuration refusal.
@@ -546,6 +552,7 @@ pub struct DevConfig {
     activation_identity: DevActivationIdentity,
     host_binary: PathBuf,
     wasmtime_cache_dir: PathBuf,
+    credentials_file: Option<PathBuf>,
     probes: Box<[ReachabilityProbe]>,
 }
 
@@ -607,6 +614,7 @@ impl fmt::Debug for DevConfig {
             .field("activation_identity", &self.activation_identity)
             .field(HOST_BINARY, &self.host_binary)
             .field(WASMTIME_CACHE_DIR, &self.wasmtime_cache_dir)
+            .field(CREDENTIALS_FILE, &self.credentials_file)
             .finish_non_exhaustive()
     }
 }
@@ -783,6 +791,11 @@ impl DevConfig {
     pub fn wasmtime_cache_dir(&self) -> &Path {
         &self.wasmtime_cache_dir
     }
+
+    /// The host credentials file, passed to the host as `WAMN_CREDENTIALS_FILE`.
+    pub fn credentials_file(&self) -> Option<&Path> {
+        self.credentials_file.as_deref()
+    }
 }
 
 /// Language-neutral JSON Schema generated from the strict `dev.json` input type.
@@ -862,6 +875,7 @@ pub fn parse_config(bytes: &[u8]) -> Result<DevConfig, DevConfigError> {
         runner,
         host_binary,
         wasmtime_cache_dir,
+        credentials_file,
     } = input;
 
     let target_database_url = nonempty_string(target_database_url, TARGET_DATABASE_URL)?;
@@ -974,6 +988,16 @@ pub fn parse_config(bytes: &[u8]) -> Result<DevConfig, DevConfigError> {
     };
     let host_binary = nonempty_path(host_binary, HOST_BINARY)?;
     let wasmtime_cache_dir = nonempty_path(wasmtime_cache_dir, WASMTIME_CACHE_DIR)?;
+    if credentials_file
+        .as_ref()
+        .is_some_and(|path| !path.is_absolute())
+    {
+        return Err(DevConfigError::new(
+            DevConfigErrorType::InvalidValue,
+            CREDENTIALS_FILE,
+            "the credentials file path must be absolute",
+        ));
+    }
 
     validate_route_host(&route_host)?;
 
@@ -1096,6 +1120,7 @@ pub fn parse_config(bytes: &[u8]) -> Result<DevConfig, DevConfigError> {
         activation_identity,
         host_binary,
         wasmtime_cache_dir,
+        credentials_file,
         probes: probes.into_boxed_slice(),
     })
 }

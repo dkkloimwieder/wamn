@@ -211,12 +211,11 @@ struct SelectedComponentArtifact {
 }
 
 /// A palette component admitted into the scope of the package whose wiring
-/// names it, with the store alias that its wiring node sets.
+/// names it.
 #[derive(Clone, Debug)]
 struct SelectedPaletteArtifact {
     artifact: SelectedComponentArtifact,
     declaration: PathBuf,
-    store_alias: Option<Box<str>>,
 }
 
 #[derive(Clone, Debug)]
@@ -924,12 +923,8 @@ impl ProductionDevStageRunner {
                 package_id: artifact.package_id.to_string(),
                 package_version: artifact.package_version.to_string(),
             };
-            let document = render_palette_declaration(
-                &palette.declaration,
-                &scope,
-                palette.store_alias.as_deref(),
-            )
-            .map_err(declaration_stage_error)?;
+            let document = render_palette_declaration(&palette.declaration, &scope)
+                .map_err(declaration_stage_error)?;
             let admitted_platform_packages =
                 declared_platform_packages(&palette.declaration, &document)
                     .map_err(declaration_stage_error)?;
@@ -2367,48 +2362,32 @@ fn select_component_artifacts(
     Ok(selected)
 }
 
-/// The palette components that the wirings of each package name, each with the
-/// one store alias its nodes set. A node component that the plan does not list
-/// as palette is a package component, or Gate refuses it.
+/// The palette components that the wirings of each package name. A node
+/// component that the plan does not list as palette is a package component, or
+/// Gate refuses it.
 fn select_palette_artifacts(
     packages: &[PackageInput],
     plan: &[PaletteArtifactPlan],
 ) -> Result<Vec<SelectedPaletteArtifact>, ProductionDevStageError> {
-    let mut named = BTreeMap::<(Box<str>, Box<str>, usize), BTreeSet<&str>>::new();
+    let mut named = BTreeSet::<(Box<str>, Box<str>, usize)>::new();
     let wirings = load_wirings(packages)?;
     for input in &wirings {
         for node in input.wiring.nodes.values() {
-            let Some(palette) = plan
+            if let Some(palette) = plan
                 .iter()
                 .position(|palette| palette.component == node.component)
-            else {
-                continue;
-            };
-            let aliases = named
-                .entry((
+            {
+                named.insert((
                     input.package_id.clone(),
                     input.package_version.clone(),
                     palette,
-                ))
-                .or_default();
-            if let Some(alias) = node.params.get("store_alias").and_then(Value::as_str) {
-                aliases.insert(alias);
+                ));
             }
         }
     }
     let mut selected = Vec::with_capacity(named.len());
-    for ((package_id, package_version, palette), aliases) in named {
+    for (package_id, package_version, palette) in named {
         let palette = &plan[palette];
-        if aliases.len() > 1 {
-            return Err(ProductionDevStageError::invalid(
-                "select palette component artifact",
-                format!(
-                    "{package_id}@{package_version} names palette component {} with more than \
-                     one store_alias: {aliases:?}",
-                    palette.component
-                ),
-            ));
-        }
         let bytes = fs::read(&palette.artifact).map_err(|source| {
             ProductionDevStageError::owner(
                 "read palette component output",
@@ -2430,7 +2409,6 @@ fn select_palette_artifacts(
                 digest: wamn_engine::component_admission::component_digest(&bytes).into_boxed_str(),
             },
             declaration: palette.declaration.clone(),
-            store_alias: aliases.into_iter().next().map(Box::from),
         });
     }
     Ok(selected)
