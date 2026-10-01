@@ -9,7 +9,8 @@ use wamn_test_infrastructure::workload;
 use wamn_workflow::{PostgresWorkflows, StartRequest, Trigger, Workflows as _};
 
 use super::{
-    ReceivingCluster, checked, deployment, install_host, kubectl, provision, route_cases, start,
+    ReceivingCluster, checked, deployment, install_host, kubectl, publish_and_push, route_cases,
+    start,
 };
 
 #[tokio::test]
@@ -26,7 +27,8 @@ async fn interrupted_durable_queue_item_completes_after_host_restart() -> anyhow
 }
 
 async fn exercise(cluster: &ReceivingCluster) -> anyhow::Result<()> {
-    let (route, carrier) = provision(&cluster.inputs, &cluster.artifacts).await?;
+    let (route, carrier) = publish_and_push(&cluster.inputs, &cluster.artifacts).await?;
+    seed_queue_rows(&route.database_url).await?;
     let secrets = deployment::native_secrets(cluster)?;
     let (issuer, instance) = super::session_cluster::prepare_application(cluster, &carrier).await?;
     install_host(
@@ -125,6 +127,38 @@ async fn exercise(cluster: &ReceivingCluster) -> anyhow::Result<()> {
         "the same host pod must restart before durable completion"
     );
     super::assert_source_unchanged(resources).await
+}
+
+/// The rows the queued receipt names, seeded as the fixture principal: item
+/// 101, location 201, and purchase order PO-304 with its line 504.
+async fn seed_queue_rows(project_url: &str) -> anyhow::Result<()> {
+    let (project, task) = wamn_control::dev::environment::connect(project_url).await?;
+    let seeded = async {
+        super::super::bind_fixture_principal(
+            project.as_ref(),
+            super::super::identity().tenant.as_str(),
+        )
+        .await?;
+        project
+            .batch_execute(
+                "INSERT INTO receiving.item (id, item_number) VALUES \
+                   ('00000000-0000-0000-0000-000000000101', 'ITEM-101'); \
+                 INSERT INTO receiving.location (id, location_code) VALUES \
+                   ('00000000-0000-0000-0000-000000000201', 'DOCK-1');",
+            )
+            .await
+            .context("seed the queued receipt item and location")?;
+        super::super::seed_materializer_order(
+            project.as_ref(),
+            "00000000-0000-0000-0000-000000000304",
+            "00000000-0000-0000-0000-000000000504",
+            "PO-304",
+        )
+        .await
+    }
+    .await;
+    task.abort();
+    seeded
 }
 
 async fn recover(

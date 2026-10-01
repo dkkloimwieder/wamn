@@ -8,7 +8,8 @@ use sha2::{Digest as _, Sha256};
 
 use super::{
     ReceivingCluster, apply, assert_source_unchanged, checked, evidence_directory, kubectl,
-    materializer_case, postcommit_case, released_http, resources, start, write_private,
+    materializer_case, postcommit_case, publish_and_push, released_http, resources,
+    serve_released_http, start, write_private,
 };
 
 #[tokio::test]
@@ -22,7 +23,8 @@ async fn command_histories() -> anyhow::Result<()> {
 async fn run_histories(evidence: &std::path::Path) -> anyhow::Result<()> {
     let mut cluster = start(evidence, true).await?;
     let result = async {
-        let (route, _, _, _) = released_http(&cluster, 3).await?;
+        let (route, carrier) = publish_and_push(&cluster.inputs, &cluster.artifacts).await?;
+        let (route, _, _, _) = serve_released_http(&cluster, 3, route, carrier).await?;
         let endpoint = materializer_case::endpoint(&cluster, "receiving-correctness-nodeport").await?;
         postcommit_case::assert_unknown_route(&cluster, &endpoint).await?;
         let mut digests = serde_json::Map::new();

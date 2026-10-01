@@ -82,6 +82,11 @@ async fn exercise(
         &cluster.artifacts.target.join("debug/wamn-scenario-worker"),
     )
     .await?;
+    let (project, project_task) =
+        wamn_control::dev::environment::connect(&route.database_url).await?;
+    let seeded = super::super::seed_receiving_business_rows(project.as_ref()).await;
+    project_task.abort();
+    seeded?;
     let carrier = wamn_control::print_release_env::lookup_release_carrier(
         &route.database_url,
         identity().tenant.as_str(),

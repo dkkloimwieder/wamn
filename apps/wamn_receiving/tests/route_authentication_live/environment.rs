@@ -116,7 +116,7 @@ pub(super) async fn install_journey_project(
     fresh_only: bool,
 ) -> anyhow::Result<()> {
     install_journey_platform_floor(project, identity().tenant.as_str(), PLATFORM_DOMAIN).await?;
-    for package in JOURNEY_PACKAGES {
+    for package in released_journey_packages() {
         apply_package::apply_package(ApplyPackageRequest {
             package: journey_package_root(package, Some(inputs)),
             database_url: project_url.to_owned(),
@@ -147,9 +147,8 @@ pub(super) async fn reconcile_journey_data_access(
     inputs: &JourneyDocument,
     project_url: &str,
 ) -> anyhow::Result<()> {
-    let packages = JOURNEY_PACKAGES
-        .iter()
-        .map(|package| journey_package_root(*package, Some(inputs)))
+    let packages = released_journey_packages()
+        .map(|package| journey_package_root(package, Some(inputs)))
         .collect::<Vec<_>>();
     wamn_gate_harness::environment::reconcile_package_data_access(
         ReconcilePackageDataAccessRequest {
@@ -210,8 +209,7 @@ pub(super) fn render_component_declarations(
 ) -> anyhow::Result<Vec<JourneyComponentDeclaration>> {
     let output = root.join("component-declarations");
     std::fs::create_dir_all(&output).context("create rendered declaration directory")?;
-    JOURNEY_PACKAGES
-        .into_iter()
+    released_journey_packages()
         .map(|package| {
             let source = journey_publication_root(package, inputs)
                 .join("components")
@@ -222,7 +220,7 @@ pub(super) fn render_component_declarations(
             let mut base_digests =
                 wamn_control::component_declaration::authored_base_digests(&package_root)
                     .with_context(|| format!("read {} base pins", package_root.display()))?;
-            for base in JOURNEY_PACKAGES {
+            for base in released_journey_packages() {
                 let coordinate = format!("{}@{}", base.id, base.version());
                 if let Some(digest) = base_digests.get_mut(coordinate.as_str()) {
                     let artifact = component_directory.join(format!("{}.wasm", base.component));
@@ -339,7 +337,7 @@ pub(super) async fn verify_journey_components_are_effectful(
     project: &Client,
 ) -> anyhow::Result<HashMap<String, String>> {
     let mut digests = HashMap::new();
-    for package in JOURNEY_PACKAGES {
+    for package in released_journey_packages() {
         let rows = project
             .query(
                 "SELECT component, operations, effects, component_digest \
@@ -441,12 +439,11 @@ pub(super) async fn gate_journey_wirings(
 ) -> anyhow::Result<Vec<String>> {
     let client = reqwest::Client::new();
     let mut reports = Vec::with_capacity(
-        JOURNEY_PACKAGES
-            .iter()
+        released_journey_packages()
             .map(|package| package.wirings.len())
             .sum(),
     );
-    for package in JOURNEY_PACKAGES {
+    for package in released_journey_packages() {
         for wiring in package.wirings {
             let path = journey_publication_root(package, Some(inputs))
                 .join("wirings")
@@ -501,8 +498,7 @@ pub(super) async fn verify_zero_case_gate_reports(
     control: &Client,
     report_ids: &[String],
 ) -> anyhow::Result<()> {
-    let expected_count = JOURNEY_PACKAGES
-        .iter()
+    let expected_count = released_journey_packages()
         .map(|package| package.wirings.len())
         .sum::<usize>();
     anyhow::ensure!(
@@ -534,7 +530,7 @@ pub(super) async fn author_journey_wirings(
     project_url: &str,
     system_url: &str,
 ) -> anyhow::Result<()> {
-    for package in JOURNEY_PACKAGES {
+    for package in released_journey_packages() {
         for wiring in package.wirings {
             let document = author_wiring::read_wiring_document(
                 &journey_publication_root(package, Some(inputs))
@@ -582,8 +578,7 @@ pub(super) async fn publish_journey_release(
         release_id,
         attachments,
     } = target;
-    let wirings = JOURNEY_PACKAGES
-        .iter()
+    let wirings = released_journey_packages()
         .flat_map(|package| {
             package.wirings.iter().map(move |wiring| {
                 format!("{}@{}::{wiring}=1", package.id, package.version())
@@ -602,16 +597,14 @@ pub(super) async fn publish_journey_release(
         environment: identity().environment.clone(),
         verified_publisher_principal: publisher.to_owned(),
         run_schema: "wamn_run".to_owned(),
-        packages: JOURNEY_PACKAGES
-            .iter()
+        packages: released_journey_packages()
             .map(|package| PackageCoordinate::new(package.id, package.version()))
             .collect::<Result<Vec<_>, _>>()?,
         wirings,
         attachments,
         route_host: Some(inputs.route_host.clone()),
-        package_manifests: JOURNEY_PACKAGES
-            .iter()
-            .map(|package| journey_package_root(*package, Some(inputs)).join("wamn.json"))
+        package_manifests: released_journey_packages()
+            .map(|package| journey_package_root(package, Some(inputs)).join("wamn.json"))
             .collect(),
     })
     .await

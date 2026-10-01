@@ -278,16 +278,12 @@ async fn receiving_release_journey(
         project: project.as_ref(),
         control: admin.as_ref(),
         release_id: identity().effective_release_id,
-        attachments: JOURNEY_PACKAGES
-            .iter()
-            .map(|package| {
-                journey_publication_root(*package, Some(inputs)).join("attachments.json")
-            })
+        attachments: released_journey_packages()
+            .map(|package| journey_publication_root(package, Some(inputs)).join("attachments.json"))
             .collect(),
     };
     if publish_only {
         super::environment::publish_journey_release(inputs, target).await?;
-        seed_receiving_business_rows(project.as_ref()).await?;
         let stopped = management_server.shutdown().await;
         project_task.abort();
         admin_task.abort();
