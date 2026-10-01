@@ -354,6 +354,90 @@ async fn tenant_identity_leg(su: &Client) {
     );
 }
 
+/// A user row whose membership is gone goes at the next reconcile, with its
+/// role assignments, and the service and platform rows stay
+/// (docs/plan/platform-ui.md §4.5). The membership then comes back, and the
+/// row with it.
+async fn stale_user_leg(su: &Client, system_su: &Client, system_url: &str, target_url: &str) {
+    let reconcile = async || {
+        reconcile_run_plane::reconcile_run_plane(ReconcileRunPlaneRequest {
+            system_database_url: system_url.to_string(),
+            admin_database_url: target_url.to_string(),
+            org: "acme".to_string(),
+            project: "billing".to_string(),
+            tenant: "t1".to_string(),
+            env: "dev".to_string(),
+            schema: SCHEMA.to_string(),
+            dry_run: false,
+        })
+        .await
+        .expect("reconcile-run-plane applies")
+    };
+    su.execute(
+        "SELECT set_config('app.user_id', $1, false), \
+                set_config('app.operation', 'admin:seed-stale-user-fixture', false)",
+        &[&FIXTURE_USER_ID],
+    )
+    .await
+    .expect("bind the fixture actor");
+    su.batch_execute(&format!(
+        "INSERT INTO app_system.roles (tenant_id, name) VALUES ('t1', 'stale-reader'); \
+         INSERT INTO app_system.user_roles (tenant_id, user_id, role_name) \
+           VALUES ('t1', '{FIXTURE_USER_ID}', 'stale-reader')"
+    ))
+    .await
+    .expect("give the fixture user a role");
+    system_su
+        .execute(
+            "DELETE FROM identity.project_env_memberships WHERE principal_id = $1::text::uuid",
+            &[&FIXTURE_USER_ID],
+        )
+        .await
+        .expect("revoke the fixture user's membership");
+    let outcome = reconcile().await;
+    assert_eq!(outcome.tenant_identity.user_rows_removed, 1);
+    let rows: Vec<(String, i64)> = su
+        .query(
+            "SELECT type, count(*) FROM app_system.users WHERE tenant_id = 't1' \
+             GROUP BY type ORDER BY type",
+            &[],
+        )
+        .await
+        .expect("count the tenant identity rows")
+        .into_iter()
+        .map(|row| (row.get(0), row.get(1)))
+        .collect();
+    assert_eq!(
+        rows,
+        [("platform".to_owned(), 5), ("service".to_owned(), 1)],
+        "the user row goes, and the platform and service rows stay"
+    );
+    let roles: i64 = su
+        .query_one(
+            "SELECT count(*) FROM app_system.user_roles WHERE tenant_id = 't1'",
+            &[],
+        )
+        .await
+        .expect("count the role assignments")
+        .get(0);
+    assert_eq!(roles, 0, "the role assignment goes with the user row");
+
+    system_su
+        .execute(
+            "INSERT INTO identity.project_env_memberships (principal_id, org, project, env) \
+             VALUES ($1::text::uuid, 'acme', 'billing', 'dev')",
+            &[&FIXTURE_USER_ID],
+        )
+        .await
+        .expect("grant the membership again");
+    assert_eq!(reconcile().await.tenant_identity.user_rows_written, 1);
+    su.batch_execute(
+        "DELETE FROM app_system.roles WHERE tenant_id = 't1' AND name = 'stale-reader'",
+    )
+    .await
+    .expect("remove the fixture role");
+}
+
 fn schema() -> BareSchemaName {
     BareSchemaName::new(SCHEMA).expect("live-test schema is valid")
 }
@@ -994,6 +1078,7 @@ async fn v1_era_drifted_leg(su: &Client, system_su: &Client, system_url: &str, t
     .expect("reconcile changed environment policy");
     // A second apply writes no second copy of any identity row.
     tenant_identity_leg(su).await;
+    stale_user_leg(su, system_su, system_url, target_url).await;
     su.batch_execute(&format!(
         "INSERT INTO {SCHEMA}.runs \
            (tenant_id,run_id,flow_id,flow_version,package_id,effective_release_id, \

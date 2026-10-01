@@ -488,6 +488,9 @@ pub struct TenantIdentityOutcome {
     pub service_rows_written: usize,
     /// User rows written for users with a membership in this environment.
     pub user_rows_written: usize,
+    /// User rows removed because their user has no membership in this
+    /// environment any more, or is no longer an active user.
+    pub user_rows_removed: usize,
 }
 
 /// Install the tenant's `app_system` schema and its identity rows
@@ -513,6 +516,11 @@ pub struct TenantIdentityOutcome {
 /// `identity.principals.email` and display name. A new member gets the row at
 /// the next reconcile, not at the moment of the grant, because the grant flow
 /// holds no tenant connection.
+///
+/// A user row whose user is not in that source any more is removed, and the
+/// foreign keys remove its role assignments and API keys
+/// (docs/plan/platform-ui.md §4.5). Service and platform rows keep their own
+/// sources, so this removes neither.
 ///
 /// `apply=false` observes only and writes nothing.
 async fn converge_tenant_identity(
@@ -568,20 +576,27 @@ async fn converge_tenant_identity(
         PlatformComponent::ALL.into_iter().collect()
     };
 
-    let present_users: BTreeSet<String> = if app_schema_present {
-        client
-            .query(
-                "SELECT id::text FROM app_system.users WHERE tenant_id = $1",
-                &[&tenant_id],
-            )
-            .await
-            .context("read the tenant's users rows")?
-            .into_iter()
-            .map(|row| row.get::<_, String>(0))
-            .collect()
-    } else {
-        BTreeSet::new()
-    };
+    let (present_users, present_user_type): (BTreeSet<String>, BTreeSet<String>) =
+        if app_schema_present {
+            client
+                .query(
+                    "SELECT id::text, type = 'user' FROM app_system.users WHERE tenant_id = $1",
+                    &[&tenant_id],
+                )
+                .await
+                .context("read the tenant's users rows")?
+                .into_iter()
+                .fold(Default::default(), |(mut all, mut users), row| {
+                    let id: String = row.get(0);
+                    if row.get::<_, bool>(1) {
+                        users.insert(id.clone());
+                    }
+                    all.insert(id);
+                    (all, users)
+                })
+        } else {
+            Default::default()
+        };
     let missing_services: Vec<&ServicePrincipal> = source
         .services
         .iter()
@@ -596,12 +611,19 @@ async fn converge_tenant_identity(
     outcome.app_schema_installed = !app_schema_present;
     outcome.platform_rows_written = missing_platform.len();
     outcome.service_rows_written = missing_services.len();
+    let members: BTreeSet<&str> = source.users.iter().map(|user| user.id.as_str()).collect();
+    let stale_users: Vec<&String> = present_user_type
+        .iter()
+        .filter(|id| !members.contains(id.as_str()))
+        .collect();
     outcome.user_rows_written = missing_users.len();
+    outcome.user_rows_removed = stale_users.len();
     if !apply
         || (app_schema_present
             && missing_platform.is_empty()
             && missing_services.is_empty()
-            && missing_users.is_empty())
+            && missing_users.is_empty()
+            && stale_users.is_empty())
     {
         return Ok(outcome);
     }
@@ -644,13 +666,23 @@ async fn converge_tenant_identity(
         .batch_execute(&platform_rows)
         .await
         .context("write the tenant's platform principal rows")?;
-    if !missing_services.is_empty() || !missing_users.is_empty() {
+    if !missing_services.is_empty() || !missing_users.is_empty() || !stale_users.is_empty() {
         transaction
             .batch_execute(&bind_platform_principal_sql(
                 PlatformComponent::Provisioning,
             ))
             .await
             .context("bind wamn:provisioning for the service and user rows")?;
+        for id in &stale_users {
+            transaction
+                .execute(
+                    "DELETE FROM app_system.users \
+                     WHERE tenant_id = $1 AND id = $2::text::uuid AND type = 'user'",
+                    &[&tenant_id, id],
+                )
+                .await
+                .with_context(|| format!("remove the user row of principal {id}"))?;
+        }
         for service in &missing_services {
             transaction
                 .execute(

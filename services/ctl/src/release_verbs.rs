@@ -342,6 +342,13 @@ pub fn print_reconciled(
             identity.user_rows_written,
         );
     }
+    if identity.user_rows_removed > 0 {
+        let removed = if dry_run { "would remove" } else { "removed" };
+        println!(
+            "  {removed} user rows tenant={tenant:?} user={}",
+            identity.user_rows_removed
+        );
+    }
 }
 
 /// Terminalize one effect-uncertain run and print its result.
