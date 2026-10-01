@@ -927,6 +927,7 @@ impl ProductionDevStageRunner {
         // Each palette component a wiring names, admitted into the scope of
         // its package with the packages its own declaration states, as the
         // cluster path pushes it (wamn-hw3n).
+        let wirings = load_wirings(&self.package_inputs()?)?;
         for palette in self.palette_artifacts.clone() {
             let artifact = palette.artifact;
             let package = self.package_input(&artifact.package_id)?;
@@ -937,6 +938,7 @@ impl ProductionDevStageRunner {
             };
             let store_alias = selected_store_alias(&self.config, &artifact)
                 .map_err(|source| ProductionDevStageError::owner("read store alias", source))?;
+            require_wiring_store_alias(&wirings, &artifact, store_alias.as_deref())?;
             let document =
                 render_palette_declaration(&palette.declaration, &scope, store_alias.as_deref())
                     .map_err(declaration_stage_error)?;
@@ -2251,6 +2253,51 @@ fn selected_store_alias(
     Ok(alias)
 }
 
+/// Refuse a binding store alias that differs from the `params.store_alias` a
+/// wiring node of the same package gives the component (wamn-qj68). The wiring
+/// node is the authored source; the binding selection only repeats it.
+fn require_wiring_store_alias(
+    wirings: &[WiringInput],
+    artifact: &SelectedComponentArtifact,
+    store_alias: Option<&str>,
+) -> Result<(), ProductionDevStageError> {
+    let Some(store_alias) = store_alias else {
+        return Ok(());
+    };
+    let nodes = wirings
+        .iter()
+        .filter(|input| {
+            input.package_id == artifact.package_id
+                && input.package_version == artifact.package_version
+        })
+        .flat_map(|input| {
+            input
+                .wiring
+                .nodes
+                .iter()
+                .map(move |(node, value)| (input, node, value))
+        });
+    for (input, node, value) in nodes {
+        if *value.component != *artifact.component {
+            continue;
+        }
+        let Some(wired) = value.params.get("store_alias").and_then(Value::as_str) else {
+            continue;
+        };
+        if wired != store_alias {
+            return Err(ProductionDevStageError::invalid(
+                "check store alias",
+                format!(
+                    "the binding selections give {}::{} store alias {store_alias:?}, but node \
+                     {node:?} of wiring {:?} gives params.store_alias {wired:?}",
+                    artifact.package_id, artifact.component, input.wiring.wiring_id
+                ),
+            ));
+        }
+    }
+    Ok(())
+}
+
 fn read_local_binding_selections(config: &DevConfig) -> anyhow::Result<Vec<LocalBindingSelection>> {
     Ok(config
         .local_artifacts()
@@ -3483,5 +3530,47 @@ mod tests {
         assert_eq!(selected[0].component.as_ref(), "inventory");
         assert_eq!(selected[1].component.as_ref(), "client_north_inventory");
         fs::remove_dir_all(directory).expect("remove fixture directory");
+    }
+
+    /// The binding store alias must be the one the wiring node names
+    /// (wamn-qj68).
+    #[test]
+    fn a_binding_store_alias_that_differs_from_the_wiring_node_is_refused() {
+        let document = serde_json::json!({
+            "format-version": "0.1",
+            "wiring-id": "inventory_move_and_label",
+            "version": 2,
+            "entry": "store",
+            "nodes": {"store": {
+                "component": "blob-put",
+                "interface-version": "0.1.0",
+                "operation": "wamn:node/async-handler@0.1.0",
+                "params": {"store_alias": "labels"}
+            }},
+            "edges": []
+        });
+        let wirings = [WiringInput {
+            package_id: "wamn_wms".into(),
+            package_version: "0.1.0".into(),
+            wiring: WiringDocument::parse(&document).expect("fixture wiring"),
+            document,
+        }];
+        let artifact = SelectedComponentArtifact {
+            package_id: "wamn_wms".into(),
+            package_version: "0.1.0".into(),
+            component: "blob-put".into(),
+            path: PathBuf::new(),
+            digest: "sha256:fixture".into(),
+        };
+
+        require_wiring_store_alias(&wirings, &artifact, Some("labels"))
+            .expect("the wiring alias is accepted");
+        let refusal = require_wiring_store_alias(&wirings, &artifact, Some("archive"))
+            .expect_err("another alias is refused")
+            .to_string();
+        assert!(
+            refusal.contains("\"archive\"") && refusal.contains("\"labels\""),
+            "the refusal names both aliases: {refusal}"
+        );
     }
 }
