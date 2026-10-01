@@ -10,7 +10,7 @@ import { clearMember, completePair, readMember, writeControl, writeMember } from
 import { canAdd, canRemove } from "../src/group.js";
 import { appendPage, emptyPage, firstPage, hasNextPage, startRead, stopRead } from "../src/page.js";
 import { refusalSentence } from "../src/refusal.js";
-import { checkedMember, refusalMarks, refusedMember } from "../src/transport.js";
+import { checkedMember, refusalMarks, refusalMarksGroup, refusedMember } from "../src/transport.js";
 
 describe("the page state", () => {
   it("appends the next page and keeps the rows already shown", () => {
@@ -164,10 +164,17 @@ describe("the control a refused path marks", () => {
     expect(refusalMarks("value.line[2].quantity", "value.line[].quantity", 1)).toBe(false);
   });
 
-  it("marks every line when the refusal names no index", () => {
-    expect(refusalMarks("value.line[].quantity", "value.line[].quantity", 0)).toBe(true);
-    expect(refusalMarks("value.line[].quantity", "value.line[].quantity", 7)).toBe(true);
-    expect(refusalMarks("value.line[].quantity", "value.line[].location_id", 0)).toBe(false);
+  it("marks no line when the refusal names no index", () => {
+    expect(refusalMarks("value.line[].quantity", "value.line[].quantity", 0)).toBe(false);
+    expect(refusalMarks("value.line[].quantity", "value.line[].quantity", 7)).toBe(false);
+  });
+
+  it("marks the group heading when the refusal names no index", () => {
+    expect(refusalMarksGroup("value.line[].quantity", "value.line")).toBe(true);
+    expect(refusalMarksGroup("value.line", "value.line")).toBe(true);
+    expect(refusalMarksGroup("value.line[2].quantity", "value.line")).toBe(false);
+    expect(refusalMarksGroup("value.lines[].quantity", "value.line")).toBe(false);
+    expect(refusalMarksGroup(null, "value.line")).toBe(false);
   });
 });
 

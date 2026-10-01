@@ -9,9 +9,11 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@solidjs/testing-library";
 import { afterEach, describe, expect, it } from "vitest";
 
+import type { JsonValue, Outcome, Transport, WireRequest } from "@wamn/web-runtime";
+
 import { WidgetRecordBatchForm } from "../fixture/components/widget.js";
-import { choose } from "./choose.js";
-import { groupStub as stub } from "../stubs/index.js";
+import { choose, selector } from "./choose.js";
+import { MAKER, WIDGET, batchStub, groupStub as stub } from "../stubs/index.js";
 
 afterEach(cleanup);
 
@@ -75,4 +77,56 @@ describe("a repeated group", () => {
     expect(quantity.getAttribute("aria-invalid")).toBe("true");
     expect(sent.filter((request) => request.operation.includes("record-batch"))).toHaveLength(0);
   });
+
+  it("marks the group heading, not every line, for a refusal with no index", async () => {
+    await submitRefused({ field: "value.line[].amount" });
+    const mark = screen.getByRole("alert");
+    expect(mark.textContent).toBe("Quantity exceeds remaining.");
+    expect(mark.closest("fieldset")?.querySelector("legend")?.nextElementSibling).toBe(mark);
+    expect(quantities().map((line) => line.getAttribute("aria-invalid"))).toEqual([null, null]);
+  });
+
+  it("marks the one line a schema refusal names by its index", async () => {
+    await submitRefused({ pointer: "/0/value/line/1/amount" });
+    expect(screen.getAllByRole("alert")).toHaveLength(1);
+    expect(quantities().map((line) => line.getAttribute("aria-invalid"))).toEqual([null, "true"]);
+  });
 });
+
+/** The quantity control of each line. */
+function quantities(): HTMLInputElement[] {
+  return screen.getAllByLabelText("Quantity received") as HTMLInputElement[];
+}
+
+/** Submits a filled batch of two lines that the operation refuses with `detail`. */
+async function submitRefused(detail: JsonValue) {
+  const { transport } = batchStub();
+  const refusing: Transport = {
+    invoke: (request: WireRequest) =>
+      request.operation.includes("record-batch")
+        ? Promise.resolve({ status: "refused", code: "quantity_exceeds_remaining", detail })
+        : transport.invoke(request),
+  };
+  const seen: Outcome<unknown>[] = [];
+  render(() => (
+    <WidgetRecordBatchForm
+      transport={refusing}
+      initial={{
+        value: {
+          grade: "first",
+          inspectorId: MAKER,
+          makerId: MAKER,
+          note: "a note",
+          line: [
+            { amount: "5", widgetId: WIDGET },
+            { amount: "6", widgetId: WIDGET },
+          ],
+        },
+      }}
+      onSubmitted={(outcome) => seen.push(outcome)}
+    />
+  ));
+  await waitFor(() => expect(selector("Inspector").value).toBe("Northwind"));
+  fireEvent.submit(screen.getByRole("button", { name: "submit" }).closest("form")!);
+  await waitFor(() => expect(seen).toHaveLength(1));
+}

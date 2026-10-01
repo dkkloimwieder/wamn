@@ -747,8 +747,9 @@ export function checkedMember(path: readonly (string | number)[] | undefined, fi
  *
  * A control states the path the contract declares, such as
  * `value.line[].quantity`. A refusal that names an index marks the control of
- * that element alone. A refusal that names none marks the control of every
- * element, because the operation refused the group without saying which line.
+ * that element alone. A refusal that names none marks no element, because the
+ * operation did not say which line it refused. The heading of the group
+ * carries that refusal (see `refusalMarksGroup`).
  */
 export function refusalMarks(member: string | null, declared: string, index?: number): boolean {
   if (member === null) {
@@ -759,5 +760,22 @@ export function refusalMarks(member: string | null, declared: string, index?: nu
     return false;
   }
   const named = /\[(\d+)\]/.exec(member);
-  return named === null || index === undefined || Number(named[1]) === index;
+  if (named === null) {
+    return index === undefined;
+  }
+  return index === undefined || Number(named[1]) === index;
+}
+
+/**
+ * Does a refusal name a path inside this repeated group without an index?
+ *
+ * The group states its declared path, such as `value.line`. A refusal that the
+ * guest raises spells the declared path, such as `value.line[].quantity`, and
+ * does not say which line it refused. The heading of the group carries it.
+ */
+export function refusalMarksGroup(member: string | null, group: string): boolean {
+  if (member === null || /\[\d+\]/.test(member)) {
+    return false;
+  }
+  return member === group || member.startsWith(`${group}[]`);
 }

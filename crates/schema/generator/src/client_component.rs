@@ -1817,7 +1817,7 @@ fn emit_form(
         .iter()
         .any(|input| repeated_ancestor(&input.path).is_some())
     {
-        runtime.extend(["canAdd", "canRemove"]);
+        runtime.extend(["canAdd", "canRemove", "refusalMarksGroup"]);
     }
     let mut fields = String::new();
     for input in &inputs {
@@ -2322,6 +2322,13 @@ fn emit_repeated_group(
         source,
         "        <FieldLegend>{}</FieldLegend>",
         group.map_or_else(|| derived_label(ancestor), label)
+    )
+    .expect("write");
+    // A refusal that names a path of the group and no index does not say
+    // which line it refused, so it marks the heading and no line.
+    writeln!(
+        source,
+        "        <Show when={{refusalMarksGroup(refusal()?.member ?? null, {ancestor:?})}}>\n          <FieldError>{{refusal()?.text}}</FieldError>\n        </Show>"
     )
     .expect("write");
     // `Index` keeps each element's controls while the operator types, because

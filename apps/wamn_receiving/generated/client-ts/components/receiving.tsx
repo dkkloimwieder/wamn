@@ -21,6 +21,7 @@ import {
   occurredAt,
   readMember,
   refusalMarks,
+  refusalMarksGroup,
   refusalSentence,
   refusedMember,
   type JsonValue,
@@ -427,6 +428,9 @@ export function ReceivingRecordReceiptForm(props: ReceivingRecordReceiptFormProp
       <FieldGroup>
         <FieldSet>
           <FieldLegend>Receipt lines</FieldLegend>
+          <Show when={refusalMarksGroup(refusal()?.member ?? null, "value.line")}>
+            <FieldError>{refusal()?.text}</FieldError>
+          </Show>
           <Index each={valueLineValue() ?? []}>
             {(element, index) => (
               <FieldGroup>
