@@ -2,13 +2,14 @@
 //! (docs/plan/platform-ui.md §4.3).
 //!
 //! A control session is org-scoped and carries no application roles. Its
-//! audience is derived from the org, so nothing is configured per org. Until
-//! org roles exist, only the project role `project-admin` grants control
-//! authority, in the org of that project.
+//! audience is derived from the org, so nothing is configured per org. The
+//! org role `org-admin`, or the project role `project-admin` in a project of
+//! the org, grants control authority in that org.
 
 use tokio_postgres::GenericClient;
 use wamn_session::token::{SessionAuthority, SessionClaims};
 
+use crate::org::ORG_ADMIN_ROLE;
 use crate::{IdentityError, IdentityErrorType, PrincipalId, database_error};
 
 /// The prefix of every control audience.
@@ -23,17 +24,28 @@ const CONTROL_PROJECTS_SQL: &str = "SELECT r.project FROM identity.project_roles
     AND p.type = 'user' AND p.status = 'active' \
     ORDER BY r.project";
 
-const CONTROL_ORGS_SQL: &str = "SELECT o.id FROM registry.orgs o \
-    WHERE EXISTS (SELECT 1 FROM identity.project_roles r \
+const ORG_PROJECTS_SQL: &str = "SELECT id FROM registry.projects WHERE org = $1 ORDER BY id";
+
+const ORG_ADMIN_SQL: &str = "SELECT EXISTS (SELECT 1 FROM identity.org_roles r \
     JOIN identity.principals p ON p.id = r.principal_id \
-    WHERE r.principal_id = $1::text::uuid AND r.org = o.id AND r.role = $2 \
-    AND p.type = 'user' AND p.status = 'active') \
+    WHERE r.principal_id = $1::text::uuid AND r.org = $2 AND r.role = $3 \
+    AND p.type = 'user' AND p.status = 'active')";
+
+const CONTROL_ORGS_SQL: &str = "SELECT o.id FROM registry.orgs o \
+    JOIN identity.principals p ON p.id = $1::text::uuid \
+    WHERE p.type = 'user' AND p.status = 'active' \
+    AND (EXISTS (SELECT 1 FROM identity.project_roles r \
+    WHERE r.principal_id = p.id AND r.org = o.id AND r.role = $2) \
+    OR EXISTS (SELECT 1 FROM identity.org_roles r \
+    WHERE r.principal_id = p.id AND r.org = o.id AND r.role = $3)) \
     ORDER BY o.id";
 
 const CONTROL_SESSION_ACTIVE_SQL: &str = "SELECT EXISTS (SELECT 1 FROM identity.principals p \
     WHERE p.id = $1::text::uuid AND p.type = 'user' AND p.status = 'active' \
-    AND EXISTS (SELECT 1 FROM identity.project_roles r \
+    AND (EXISTS (SELECT 1 FROM identity.project_roles r \
     WHERE r.principal_id = p.id AND r.org = $2 AND r.role = $3) \
+    OR EXISTS (SELECT 1 FROM identity.org_roles r \
+    WHERE r.principal_id = p.id AND r.org = $2 AND r.role = $7)) \
     AND EXISTS (SELECT 1 FROM identity.password_logins l WHERE l.id = $4::text::uuid \
     AND l.principal_id = p.id AND l.issuer = $5 AND l.audience = $6 AND l.revoked_at IS NULL \
     AND l.expires_at > clock_timestamp() AND l.renewal_expires_at > clock_timestamp()))";
@@ -90,6 +102,43 @@ pub async fn control_projects(
         .collect())
 }
 
+/// Whether the active user principal holds `org-admin` in `org`.
+pub async fn is_org_admin(
+    client: &(impl GenericClient + Sync),
+    principal_id: &PrincipalId,
+    org: &str,
+) -> Result<bool, IdentityError> {
+    if !valid_org(org) {
+        return Err(invalid_org());
+    }
+    client
+        .query_one(
+            ORG_ADMIN_SQL,
+            &[&principal_id.as_str(), &org, &ORG_ADMIN_ROLE],
+        )
+        .await
+        .map_err(|error| database_error(&error))?
+        .try_get(0)
+        .map_err(|error| database_error(&error))
+}
+
+/// Every project of `org`, which an `org-admin` administers.
+pub async fn org_projects(
+    client: &(impl GenericClient + Sync),
+    org: &str,
+) -> Result<Vec<String>, IdentityError> {
+    if !valid_org(org) {
+        return Err(invalid_org());
+    }
+    Ok(client
+        .query(ORG_PROJECTS_SQL, &[&org])
+        .await
+        .map_err(|error| database_error(&error))?
+        .iter()
+        .map(|row| row.get(0))
+        .collect())
+}
+
 /// Every registered org where the active user principal holds control
 /// authority.
 pub async fn control_orgs(
@@ -99,7 +148,7 @@ pub async fn control_orgs(
     Ok(client
         .query(
             CONTROL_ORGS_SQL,
-            &[&principal_id.as_str(), &PROJECT_ADMIN_ROLE],
+            &[&principal_id.as_str(), &PROJECT_ADMIN_ROLE, &ORG_ADMIN_ROLE],
         )
         .await
         .map_err(|error| database_error(&error))?
@@ -134,6 +183,7 @@ pub async fn control_session_is_active(
                 login,
                 &claims.iss,
                 &claims.aud,
+                &ORG_ADMIN_ROLE,
             ],
         )
         .await

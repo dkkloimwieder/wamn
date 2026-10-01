@@ -362,10 +362,10 @@ async fn renewal_rotation_authority_expiry_and_logout_use_real_https() {
 }
 
 /// A control session (docs/plan/platform-ui.md §4.3) is offered, issued and
-/// renewed only while the user holds `project-admin` in the org, carries
-/// no application role, and never comes from a PAT.
+/// renewed only while the user holds `project-admin` or `org-admin` in the
+/// org, carries no application role, and never comes from a PAT.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn a_control_session_follows_the_project_admin_role_of_its_org() {
+async fn a_control_session_follows_the_admin_roles_of_its_org() {
     const CONTROL: &str = "urn:wamn:control:demo";
     let mut postgres = wamn_test_postgres::start(&[]).expect_redacted("owned PostgreSQL");
     let db = postgres
@@ -516,6 +516,68 @@ async fn a_control_session_follows_the_project_admin_role_of_its_org() {
         "{\"error\":\"unauthorized\"}",
     )
     .await;
+
+    // `org-admin` alone, with no project role, holds the control audience.
+    fixture
+        .system
+        .client
+        .execute(
+            "INSERT INTO identity.org_memberships (principal_id, org, status) \
+             VALUES ($1::text::uuid, 'demo', 'active')",
+            &[&user.id().as_str()],
+        )
+        .await
+        .expect_redacted("org membership");
+    fixture
+        .system
+        .client
+        .execute(
+            "INSERT INTO identity.org_roles (principal_id, org, role) \
+             VALUES ($1::text::uuid, 'demo', 'org-admin')",
+            &[&user.id().as_str()],
+        )
+        .await
+        .expect_redacted("org-admin");
+    assert!(
+        audiences(&discover(&https).await).contains(&json!({"aud": CONTROL, "org": "demo"})),
+        "an org-admin is offered the control audience of the org"
+    );
+    let session = body(control_login(&https).await).await;
+    let token = session["access_token"].as_str().expect_redacted("token");
+    let claims = verify_session_token(
+        token,
+        key,
+        SessionScope {
+            issuer: ISSUER,
+            org: "demo",
+            audience: CONTROL,
+        },
+        unix_seconds(),
+    )
+    .expect_redacted("signed org-admin control session");
+    assert!(
+        wamn_platform_identity::control::control_session_is_active(&fixture.system.client, &claims)
+            .await
+            .expect_redacted("control authority")
+    );
+    fixture
+        .system
+        .client
+        .execute(
+            "DELETE FROM identity.org_roles WHERE principal_id = $1::text::uuid",
+            &[&user.id().as_str()],
+        )
+        .await
+        .expect_redacted("revoke org-admin");
+    assert!(
+        !wamn_platform_identity::control::control_session_is_active(
+            &fixture.system.client,
+            &claims
+        )
+        .await
+        .expect_redacted("control authority"),
+        "a revoked org-admin ends the control session on the next request"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]

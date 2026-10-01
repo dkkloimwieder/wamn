@@ -20,7 +20,7 @@ use wamn_engine::router_delivery::{
     SourceRef, StreamedDelivery, resolve_authorized_host_route,
 };
 use wamn_platform_identity::PrincipalId;
-use wamn_platform_identity::control::control_projects;
+use wamn_platform_identity::control::{control_projects, is_org_admin, org_projects};
 use wamn_runtime::plugins::wamn_postgres::WamnPostgres;
 
 /// What the handlers of one host read.
@@ -108,10 +108,14 @@ impl HostRouteDelivery {
                 Ok(json!({ "admin": held.admin, "permissions": permissions }))
             }
             (HostHandler::ControlMine, HostRouteHandlers::Control { control, org }) => {
-                let projects = control_projects(control.as_ref(), &principal, org).await?;
-                // Org roles arrive with issue 3 of the administration epic.
+                let org_admin = is_org_admin(control.as_ref(), &principal, org).await?;
+                let projects = if org_admin {
+                    org_projects(control.as_ref(), org).await?
+                } else {
+                    control_projects(control.as_ref(), &principal, org).await?
+                };
                 Ok(json!({
-                    "org_admin": false,
+                    "org_admin": org_admin,
                     "projects": projects
                         .iter()
                         .map(|project| json!({ "project": project, "project_admin": true }))

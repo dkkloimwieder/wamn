@@ -649,7 +649,7 @@ This is the route source for the control UI.
 
 ## 4.3 Control authentication
 
-Issue 2 built the control audience, discovery, login, renewal and `control.mine` for `project-admin`; [execution](../architecture/execution.md#control-sessions) holds the current behavior. The org-admin check is issue 3.
+Issue 2 built the control audience, discovery, login, renewal and `control.mine` for `project-admin`, and issue 3 added `org-admin`; [execution](../architecture/execution.md#control-sessions) holds the current behavior.
 
 Control sessions are org-scoped.
 

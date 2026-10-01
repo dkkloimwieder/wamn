@@ -406,10 +406,11 @@ async fn permission_mine_answers_the_held_grants_of_the_session_caller() -> anyh
 
 /// `wamn-control:control/mine@0.1.0` on a control host: the control
 /// serving root, the control route authenticator and the org's real
-/// `control` login. Only a browser session of a current `project-admin` is
-/// admitted, and a revoked role refuses the next request.
+/// `control` login. Only a browser session of a current `project-admin` or
+/// `org-admin` is admitted, and a revoked role refuses the next request.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn control_mine_admits_only_a_current_project_admin_session() -> anyhow::Result<()> {
+async fn control_mine_admits_only_a_current_project_admin_or_org_admin_session()
+-> anyhow::Result<()> {
     let mut postgres = wamn_test_postgres::start(&[])?;
     let test_database = postgres.create_database("control_route")?;
     let admin_url = test_database.url();
@@ -544,6 +545,49 @@ async fn control_mine_admits_only_a_current_project_admin_session() -> anyhow::R
             .authenticate_authorization_for_test(&route, Some(&bearer))
             .await
             .expect_err("a revoked role refuses the next request")
+            .0,
+        401
+    );
+
+    // An org-admin is admitted and holds every project of the org.
+    admin
+        .execute(
+            "INSERT INTO identity.org_roles VALUES ($1::text::uuid, $2, 'org-admin')",
+            &[&principal, &ORG],
+        )
+        .await?;
+    admin
+        .execute(
+            "INSERT INTO registry.projects VALUES ($1, 'shop'), ($1, $2), ('otherorg', 'mail')",
+            &[&ORG, &PROJECT],
+        )
+        .await?;
+    let caller = routing
+        .authenticate_authorization_for_test(&route, Some(&bearer))
+        .await
+        .expect("an org-admin session is admitted")
+        .expect("a host-owned caller");
+    let projects = [PROJECT, "shop"];
+    assert_eq!(
+        deliver(&delivery, &route, Some(caller))
+            .await
+            .expect("the host answers"),
+        json!({"org_admin": true, "projects": projects
+            .iter()
+            .map(|project| json!({"project": project, "project_admin": true}))
+            .collect::<Vec<_>>()})
+    );
+    admin
+        .execute(
+            "DELETE FROM identity.org_roles WHERE principal_id = $1::text::uuid",
+            &[&principal],
+        )
+        .await?;
+    assert_eq!(
+        routing
+            .authenticate_authorization_for_test(&route, Some(&bearer))
+            .await
+            .expect_err("a revoked org-admin refuses the next request")
             .0,
         401
     );

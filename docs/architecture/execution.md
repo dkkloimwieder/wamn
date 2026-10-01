@@ -62,12 +62,11 @@ The caller must match the attachment, and an `admin`-authority route checks its 
 | Route | Answer |
 | --- | --- |
 | `wamn-control:permission/mine@0.1.0` | `admin`, and the stable references the caller holds. An `admin` holds every operation the release serves. |
-| `wamn-control:control/mine@0.1.0` | `org_admin`, and the projects of the org where the caller holds `project-admin`. |
+| `wamn-control:control/mine@0.1.0` | `org_admin`, and the projects of the org that the caller administers: every project for an `org-admin`, else the projects where the caller holds `project-admin`. |
 
 `permission.mine` reads under the administration credential, in a host-owned READ COMMITTED transaction that binds the caller and the sealed operation id.
 A host-run write stamps that sealed operation id in its history entries.
 `control.mine` reads `wamn_system` through the `control` login of the org.
-`org_admin` is `false` until the org roles exist.
 
 The control serving root has no package, component, route, database or guest connection.
 `wamn-host --control` serves it for one org.
@@ -369,10 +368,10 @@ External federation and unbuilt identity design remain in the [identity plan](..
 ### Control sessions
 
 Every org in `registry.orgs` has the control audience `urn:wamn:control:<org>`, and nothing configures it.
-Discovery offers it to a user who holds `project-admin` in a project of that org.
+Discovery offers it to a user who holds `org-admin` in that org or `project-admin` in a project of that org.
 A control session comes from a password login only, because the PAT exchange refuses a control audience.
 It carries no roles.
-For each request, the control host reads the password login of the session, the active principal and its `project-admin` roles in the org.
+For each request, the control host reads the password login of the session, the active principal and its `org-admin` and `project-admin` roles in the org.
 A revoked role therefore refuses the next request and the next renewal with 401.
 
 ### Consistent session access

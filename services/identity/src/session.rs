@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 use tokio_postgres::GenericClient;
 use wamn_platform_identity::{
     AuthenticatedPrincipal, PrincipalType, authenticate_pat,
-    control::{control_audience_org, control_projects},
+    control::{control_audience_org, control_projects, is_org_admin},
     has_project_env_membership,
     session_token::{IssuedSessionToken, sign_session_token},
 };
@@ -205,10 +205,14 @@ pub(super) async fn holds_control(
     if !registered {
         return Ok(false);
     }
-    Ok(!control_projects(client, principal.principal().id(), org)
+    let principal_id = principal.principal().id();
+    Ok(is_org_admin(client, principal_id, org)
         .await
         .map_err(|_| failed())?
-        .is_empty())
+        || !control_projects(client, principal_id, org)
+            .await
+            .map_err(|_| failed())?
+            .is_empty())
 }
 
 pub(super) async fn claims_for_principal(
