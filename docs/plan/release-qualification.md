@@ -130,7 +130,8 @@ These Receiving cases touch no overlay, measured at `01ca2425d`:
 | Case | Defined at | What it calls |
 | --- | --- | --- |
 | `route_cases::command_histories` | `apps/wamn_receiving/tests/route_authentication_live/cluster/route_cases.rs:16` | The base routes `/receiving/record_receipt` and `/purchase_order/update` (`apps/wamn_receiving/tests/receiving_command_histories_live.rs:27`, `:356`). |
-| `queue_recovery::interrupted_durable_queue_item_completes_after_host_restart` | `…/cluster/queue_recovery.rs:17` | The base wiring `receiving_record_receipt` of `BASE_PACKAGE_ID` (`queue_recovery.rs:163-165`). |
+
+`queue_recovery::interrupted_durable_queue_item_completes_after_host_restart` is not in the Receiving-alone set. Its durable queue item starts only from the wiring `receiving_record_receipt` of `BASE_PACKAGE_ID` (`queue_recovery.rs`). Receiving alone carries no wiring since `0fae1369d`, and a test-only wiring would break the byte contract of the qualification. The case stays in the Acme arm. Owner ruling of 2026-10-01 on `wamn-ld93.33.11`.
 
 Acme takes part in `record_receipt` only through its own route `/acme/receiving/record_receipt` (`apps/client_acme_receiving/publication/attachments.json:11`). `postcommit_case::baseline_overlay_and_materializer_progress` exercises the overlay (`postcommit_case.rs:44-54`), so it runs only in the Acme arm.
 
