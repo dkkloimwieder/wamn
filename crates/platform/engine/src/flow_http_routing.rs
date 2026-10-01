@@ -1446,6 +1446,8 @@ mod tests {
             served_ids(&served),
             [
                 "wamn-control-control-mine-http",
+                "wamn-control-environment-list-http",
+                "wamn-control-member-list-http",
                 "wamn-control-project-list-http",
                 "wamn-control-user-list-http",
             ]

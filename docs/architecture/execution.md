@@ -70,16 +70,24 @@ The caller must match the attachment, and an `admin`-authority route checks its 
 | `wamn-control:project/list@0.1.0` | `projects`: every project of the org. |
 | `wamn-control:org-admin/grant@0.1.0` | Takes `principal_id` of an active member and writes `org-admin`, `project-admin` in every project of the org and a membership in every environment of the org. |
 | `wamn-control:org-admin/revoke@0.1.0` | Takes `principal_id` and removes `project-admin` throughout the org, then `org-admin`. Memberships stay. |
+| `wamn-control:environment/list@0.1.0` | Takes `project`. Answers `environments`: every environment of the project. |
+| `wamn-control:member/list@0.1.0` | Takes `project`. Answers `members`: each user with a membership or `project-admin` in the project, with `principal_id`, `email`, `display_name`, `org_admin`, `project_admin` and `environments`. |
+| `wamn-control:member/grant@0.1.0` | Takes `project`, `env` and `principal_id` of an active member, and writes the membership of that environment. |
+| `wamn-control:member/revoke@0.1.0` | Takes `project`, `env` and `principal_id`, and removes the membership of that environment. It refuses while `org-admin` or `project-admin` covers the environment. |
+| `wamn-control:project-admin/grant@0.1.0` | Takes `project` and `principal_id` of an active member, and writes `project-admin` and a membership in every environment of the project. |
+| `wamn-control:project-admin/revoke@0.1.0` | Takes `project` and `principal_id`, and removes `project-admin` in the project. It refuses while the user holds `org-admin`. Memberships stay. |
 
 `permission.mine` reads under the administration credential, in a host-owned READ COMMITTED transaction that binds the caller and the sealed operation id.
 A host-run write stamps that sealed operation id in its history entries.
 `control.mine` reads `wamn_system` through the `control` login of the org.
 
-Every other `control` route needs a current `org-admin` row of the caller in the token's org, and answers 403 `permission-denied` without it.
+Every other org route needs a current `org-admin` row of the caller in the token's org, and answers 403 `permission-denied` without it.
+A project route needs that row, or a current `project-admin` row of the caller in the project that the request names.
 A write runs in one transaction on a second `control` login, which holds one write at a time.
-The transaction binds `app.user_id` to the caller and `app.operation` to the sealed operation id, and it checks `org-admin` again.
+The transaction binds `app.user_id` to the caller and `app.operation` to the sealed operation id, and it checks the role again.
 The writes are the functions of [`wamn_platform_identity::org`](../../crates/identity/platform/src/org.rs), which `wamn-ctl invite` and `provision-org --owner-email` also call.
 A refusal, for example a principal that is not an active member, answers 400 `invalid-input` with its reason.
+These routes write system rows only, and no application row.
 `user.invite` calls identity `POST /users` and `POST /invitations` with the operator certificate of `--pat-issuer`, `--pat-client-cert`, `--pat-client-key` and `--pat-server-ca`, through [`wamn-identity-client`](../../crates/identity/client/src/lib.rs).
 It writes the membership and the grants between the two calls, and it calls `/invitations` only when the user has no password.
 Application rows of these routes follow in issue 4 of the administration epic.

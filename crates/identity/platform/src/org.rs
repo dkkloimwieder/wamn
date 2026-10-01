@@ -4,8 +4,8 @@
 //! Each grant here is the one write of its row. `wamn-ctl invite`, the
 //! provisioning of an org owner and the control routes call these functions,
 //! inside the caller's transaction and under the caller's bound actor.
-//! Application `admin` rows, and the application rows that a deactivation
-//! or an `org-admin` revoke removes, follow in issue 4.
+//! These functions write system rows only. How an administrative grant
+//! reaches an application database is §9 question 1 of the plan.
 
 use tokio_postgres::GenericClient;
 
@@ -126,6 +126,134 @@ pub async fn grant_project_admin(
         .execute(ENV_MEMBERSHIPS_SQL, &[&principal, &org, &one])
         .await
         .map_err(|error| database_error(&error))?;
+    Ok(())
+}
+
+const ENV_IN_PROJECT_SQL: &str = "SELECT EXISTS (SELECT 1 FROM registry.project_envs \
+    WHERE org = $1 AND project = $2 AND env = $3)";
+
+/// Grant a membership of one environment of the org to an active org member.
+/// An environment outside the org is refused.
+pub async fn grant_member(
+    client: &(impl GenericClient + Sync),
+    principal_id: &PrincipalId,
+    org: &str,
+    project: &str,
+    env: &str,
+) -> Result<(), IdentityError> {
+    let org = active_member(client, principal_id, org).await?;
+    let project = checked_scope_segment("project", project)?;
+    let env = checked_scope_segment("env", env)?;
+    let found: bool = client
+        .query_one(ENV_IN_PROJECT_SQL, &[&org, &project, &env])
+        .await
+        .map_err(|error| database_error(&error))?
+        .get(0);
+    if !found {
+        return Err(IdentityError::new(
+            IdentityErrorType::NotFound,
+            format!("environment {project}/{env} is not an environment of org {org}"),
+        ));
+    }
+    crate::grant_project_env_membership(client, principal_id, &org, &project, &env).await
+}
+
+const HOLDS_ORG_ADMIN_SQL: &str = "SELECT EXISTS (SELECT 1 FROM identity.org_roles \
+    WHERE principal_id = $1::text::uuid AND org = $2 AND role = $3)";
+
+const HOLDS_PROJECT_ADMIN_SQL: &str = "SELECT EXISTS (SELECT 1 FROM identity.project_roles \
+    WHERE principal_id = $1::text::uuid AND org = $2 AND project = $3 AND role = $4)";
+
+/// Revoke a membership of one environment. The user's org membership and
+/// other environments stay. While `org-admin` or `project-admin` covers the
+/// environment, the revoke is refused: the covering grant goes first.
+pub async fn revoke_member(
+    client: &(impl GenericClient + Sync),
+    principal_id: &PrincipalId,
+    org: &str,
+    project: &str,
+    env: &str,
+) -> Result<(), IdentityError> {
+    let org = checked_scope_segment("org", org)?;
+    let project = checked_scope_segment("project", project)?;
+    refuse_under_org_admin(client, principal_id, &org).await?;
+    let covered: bool = client
+        .query_one(
+            HOLDS_PROJECT_ADMIN_SQL,
+            &[
+                &principal_id.as_str(),
+                &org,
+                &project,
+                &control::PROJECT_ADMIN_ROLE,
+            ],
+        )
+        .await
+        .map_err(|error| database_error(&error))?
+        .get(0);
+    if covered {
+        return Err(IdentityError::new(
+            IdentityErrorType::Conflict,
+            format!(
+                "principal {principal_id} holds project-admin in project {project}. \
+                 Revoke project-admin first"
+            ),
+        ));
+    }
+    crate::revoke_project_env_membership(client, principal_id, &org, &project, env).await?;
+    Ok(())
+}
+
+const DROP_PROJECT_ADMIN_SQL: &str = "DELETE FROM identity.project_roles \
+    WHERE principal_id = $1::text::uuid AND org = $2 AND project = $3 AND role = $4";
+
+/// Revoke `project-admin` in one project. Environment memberships stay.
+/// While the user holds `org-admin`, the revoke is refused.
+pub async fn revoke_project_admin(
+    client: &(impl GenericClient + Sync),
+    principal_id: &PrincipalId,
+    org: &str,
+    project: &str,
+) -> Result<(), IdentityError> {
+    let org = checked_scope_segment("org", org)?;
+    let project = checked_scope_segment("project", project)?;
+    refuse_under_org_admin(client, principal_id, &org).await?;
+    client
+        .execute(
+            DROP_PROJECT_ADMIN_SQL,
+            &[
+                &principal_id.as_str(),
+                &org,
+                &project,
+                &control::PROJECT_ADMIN_ROLE,
+            ],
+        )
+        .await
+        .map_err(|error| database_error(&error))?;
+    Ok(())
+}
+
+/// Refuse a project-level revoke while `org-admin` covers it.
+async fn refuse_under_org_admin(
+    client: &(impl GenericClient + Sync),
+    principal_id: &PrincipalId,
+    org: &str,
+) -> Result<(), IdentityError> {
+    let covered: bool = client
+        .query_one(
+            HOLDS_ORG_ADMIN_SQL,
+            &[&principal_id.as_str(), &org, &ORG_ADMIN_ROLE],
+        )
+        .await
+        .map_err(|error| database_error(&error))?
+        .get(0);
+    if covered {
+        return Err(IdentityError::new(
+            IdentityErrorType::Conflict,
+            format!(
+                "principal {principal_id} holds org-admin in org {org}. Revoke org-admin first"
+            ),
+        ));
+    }
     Ok(())
 }
 
@@ -309,6 +437,93 @@ pub async fn org_users(
                 email: row.try_get(1).map_err(|error| database_error(&error))?,
                 display_name: row.try_get(2).map_err(|error| database_error(&error))?,
                 status: row.try_get(3).map_err(|error| database_error(&error))?,
+            })
+        })
+        .collect()
+}
+
+const PROJECT_ENVS_SQL: &str =
+    "SELECT env FROM registry.project_envs WHERE org = $1 AND project = $2 ORDER BY env";
+
+/// The environments of one project of `org`.
+pub async fn project_envs(
+    client: &(impl GenericClient + Sync),
+    org: &str,
+    project: &str,
+) -> Result<Vec<String>, IdentityError> {
+    let org = checked_scope_segment("org", org)?;
+    let project = checked_scope_segment("project", project)?;
+    Ok(client
+        .query(PROJECT_ENVS_SQL, &[&org, &project])
+        .await
+        .map_err(|error| database_error(&error))?
+        .iter()
+        .map(|row| row.get(0))
+        .collect())
+}
+
+/// Every user with a membership or a project role in the project, with the
+/// administrative grants that cover the project.
+const PROJECT_MEMBERS_SQL: &str = "SELECT p.id::text, p.email, p.display_name, \
+    EXISTS (SELECT 1 FROM identity.org_roles o \
+        WHERE o.principal_id = p.id AND o.org = $1 AND o.role = $4), \
+    EXISTS (SELECT 1 FROM identity.project_roles r \
+        WHERE r.principal_id = p.id AND r.org = $1 AND r.project = $2 AND r.role = $3), \
+    ARRAY(SELECT m.env FROM identity.project_env_memberships m \
+        WHERE m.principal_id = p.id AND m.org = $1 AND m.project = $2 ORDER BY m.env) \
+    FROM identity.principals p \
+    WHERE EXISTS (SELECT 1 FROM identity.project_env_memberships m \
+        WHERE m.principal_id = p.id AND m.org = $1 AND m.project = $2) \
+    OR EXISTS (SELECT 1 FROM identity.project_roles r \
+        WHERE r.principal_id = p.id AND r.org = $1 AND r.project = $2) \
+    ORDER BY p.email";
+
+/// One user of a project.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct ProjectMember {
+    /// The user principal.
+    pub principal_id: String,
+    /// The user's email.
+    pub email: String,
+    /// The user's display name.
+    pub display_name: String,
+    /// Whether `org-admin` covers the project.
+    pub org_admin: bool,
+    /// Whether the user holds `project-admin` in the project.
+    pub project_admin: bool,
+    /// The environments of the project where the user is a member.
+    pub environments: Vec<String>,
+}
+
+/// The users of one project of `org`, by email.
+pub async fn project_members(
+    client: &(impl GenericClient + Sync),
+    org: &str,
+    project: &str,
+) -> Result<Vec<ProjectMember>, IdentityError> {
+    let org = checked_scope_segment("org", org)?;
+    let project = checked_scope_segment("project", project)?;
+    client
+        .query(
+            PROJECT_MEMBERS_SQL,
+            &[
+                &org,
+                &project,
+                &control::PROJECT_ADMIN_ROLE,
+                &ORG_ADMIN_ROLE,
+            ],
+        )
+        .await
+        .map_err(|error| database_error(&error))?
+        .iter()
+        .map(|row| {
+            Ok(ProjectMember {
+                principal_id: row.try_get(0).map_err(|error| database_error(&error))?,
+                email: row.try_get(1).map_err(|error| database_error(&error))?,
+                display_name: row.try_get(2).map_err(|error| database_error(&error))?,
+                org_admin: row.try_get(3).map_err(|error| database_error(&error))?,
+                project_admin: row.try_get(4).map_err(|error| database_error(&error))?,
+                environments: row.try_get(5).map_err(|error| database_error(&error))?,
             })
         })
         .collect()

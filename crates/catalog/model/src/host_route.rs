@@ -95,6 +95,19 @@ pub enum HostHandler {
     OrgAdminGrant,
     /// Revoke `org-admin` and `project-admin` throughout the org.
     OrgAdminRevoke,
+    /// The environments of one project (docs/plan/platform-ui.md §4.5).
+    EnvironmentList,
+    /// The users with a membership or `project-admin` in one project.
+    MemberList,
+    /// Grant a membership of one environment to an active org member.
+    MemberGrant,
+    /// Revoke a membership of one environment.
+    MemberRevoke,
+    /// Grant `project-admin` and a membership of every environment of the
+    /// project.
+    ProjectAdminGrant,
+    /// Revoke `project-admin` in one project.
+    ProjectAdminRevoke,
 }
 
 /// Who may call one host route, beside a valid credential.
@@ -107,6 +120,10 @@ pub enum HostRouteAuthority {
     /// A holder of `org-admin` in the token's org. The handler checks the
     /// role, again in its write transaction.
     OrgAdmin,
+    /// A holder of `org-admin` in the token's org, or of `project-admin` in
+    /// the project that the request names. The handler checks the role,
+    /// again in its write transaction.
+    ProjectAdmin,
 }
 
 /// One fixed host route.
@@ -184,6 +201,48 @@ const ROUTES: &[HostRoute] = &[
         type_: OperationType::Command,
         authority: HostRouteAuthority::OrgAdmin,
         handler: HostHandler::OrgAdminRevoke,
+    },
+    HostRoute {
+        set: HostRouteSet::Control,
+        operation: "environment.list",
+        type_: OperationType::Get,
+        authority: HostRouteAuthority::ProjectAdmin,
+        handler: HostHandler::EnvironmentList,
+    },
+    HostRoute {
+        set: HostRouteSet::Control,
+        operation: "member.list",
+        type_: OperationType::Get,
+        authority: HostRouteAuthority::ProjectAdmin,
+        handler: HostHandler::MemberList,
+    },
+    HostRoute {
+        set: HostRouteSet::Control,
+        operation: "member.grant",
+        type_: OperationType::Command,
+        authority: HostRouteAuthority::ProjectAdmin,
+        handler: HostHandler::MemberGrant,
+    },
+    HostRoute {
+        set: HostRouteSet::Control,
+        operation: "member.revoke",
+        type_: OperationType::Command,
+        authority: HostRouteAuthority::ProjectAdmin,
+        handler: HostHandler::MemberRevoke,
+    },
+    HostRoute {
+        set: HostRouteSet::Control,
+        operation: "project_admin.grant",
+        type_: OperationType::Command,
+        authority: HostRouteAuthority::ProjectAdmin,
+        handler: HostHandler::ProjectAdminGrant,
+    },
+    HostRoute {
+        set: HostRouteSet::Control,
+        operation: "project_admin.revoke",
+        type_: OperationType::Command,
+        authority: HostRouteAuthority::ProjectAdmin,
+        handler: HostHandler::ProjectAdminRevoke,
     },
 ];
 

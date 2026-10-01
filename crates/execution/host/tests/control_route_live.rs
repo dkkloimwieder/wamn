@@ -1,5 +1,6 @@
-//! The org routes of the control serving root (docs/plan/platform-ui.md §4.4,
-//! wamn-a40n.3) on the org's real `control` login over the system schema.
+//! The org and project routes of the control serving root
+//! (docs/plan/platform-ui.md §4.4 and §4.5, wamn-a40n.3 and wamn-a40n.6) on
+//! the org's real `control` login over the system schema.
 //!
 //! The test starts its own PostgreSQL 18 server and a fake identity service
 //! that requires the operator certificate. It calls the host route delivery
@@ -519,6 +520,201 @@ async fn org_routes_write_through_the_control_login_and_refuse_a_non_admin() -> 
     assert_eq!(
         call(&delivery, "user/list", boss, json!({})).await,
         Err("permission denied wamn-control:user/list@0.1.0".to_owned())
+    );
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn project_routes_admit_a_project_admin_and_refuse_a_covered_revoke() -> anyhow::Result<()> {
+    let mut postgres = wamn_test_postgres::start(&[])?;
+    let test_database = postgres.create_database("control_project_routes")?;
+    let admin_url = test_database.url();
+    let admin = connect(admin_url).await?;
+    let control_url = install(&admin, admin_url).await?;
+
+    // An org admin, a project admin of billing and a plain member.
+    let provisioning = PlatformComponent::Provisioning.principal_id().to_string();
+    admin
+        .execute(
+            "SELECT set_config('app.user_id', $1, false)",
+            &[&provisioning],
+        )
+        .await?;
+    let mut ids = Vec::new();
+    for (email, name, grants) in [
+        (
+            "boss@example.test",
+            "Boss",
+            MemberGrants {
+                org_admin: true,
+                ..MemberGrants::default()
+            },
+        ),
+        (
+            "cat@example.test",
+            "Cat",
+            MemberGrants {
+                project_admins: vec!["billing".to_owned()],
+                ..MemberGrants::default()
+            },
+        ),
+        ("ann@example.test", "Ann", MemberGrants::default()),
+    ] {
+        let user = create_or_reuse_user(&admin, email, name)
+            .await?
+            .principal_id;
+        invite_member(&admin, &user, ORG, &grants).await?;
+        ids.push(user);
+    }
+    let [boss, cat, ann]: [PrincipalId; 3] = ids.try_into().expect("three users");
+    let (boss, cat, ann) = (boss.as_str(), cat.as_str(), ann.as_str());
+    let delivery = HostRouteDelivery::new(
+        Arc::new(LoadedRelease::control_root()),
+        HostRouteHandlers::Control {
+            control: Arc::new(connect(&control_url).await?),
+            writer: Arc::new(tokio::sync::Mutex::new(connect(&control_url).await?)),
+            identity: None,
+            org: ORG.to_owned(),
+        },
+        None,
+    );
+    let member = |principal: &str, env: &str| json!({"project": "billing", "env": env, "principal_id": principal});
+    let project_admin = |principal: &str| json!({"project": "billing", "principal_id": principal});
+
+    // Every project route refuses a caller without org-admin or project-admin
+    // in the named project, and a project admin holds no org route.
+    for (operation, payload) in [
+        ("environment/list", json!({"project": "billing"})),
+        ("member/list", json!({"project": "billing"})),
+        ("member/grant", member(ann, "dev")),
+        ("member/revoke", member(ann, "dev")),
+        ("project-admin/grant", project_admin(ann)),
+        ("project-admin/revoke", project_admin(ann)),
+    ] {
+        assert_eq!(
+            call(&delivery, operation, ann, payload).await,
+            Err(format!("permission denied wamn-control:{operation}@0.1.0"))
+        );
+    }
+    assert_eq!(
+        call(
+            &delivery,
+            "environment/list",
+            cat,
+            json!({"project": "shop"})
+        )
+        .await,
+        Err("permission denied wamn-control:environment/list@0.1.0".to_owned())
+    );
+    assert_eq!(
+        call(&delivery, "user/list", cat, json!({})).await,
+        Err("permission denied wamn-control:user/list@0.1.0".to_owned())
+    );
+    assert_eq!(
+        call(
+            &delivery,
+            "environment/list",
+            cat,
+            json!({"project": "billing"})
+        )
+        .await,
+        Ok(json!({"environments": ["dev"]}))
+    );
+
+    // A membership goes to an active org member in an environment of the
+    // project.
+    assert_eq!(
+        call(&delivery, "member/grant", cat, member(ann, "dev")).await,
+        Ok(json!({"principal_id": ann, "project": "billing", "env": "dev", "member": true}))
+    );
+    assert_eq!(
+        grants(&admin, ann).await,
+        [
+            "env billing/dev".to_owned(),
+            format!("member active {provisioning}")
+        ]
+    );
+    assert_eq!(
+        call(&delivery, "member/grant", cat, member(ann, "prod")).await,
+        Err(format!(
+            "environment billing/prod is not an environment of org {ORG}"
+        ))
+    );
+    assert_eq!(
+        call(&delivery, "member/list", cat, json!({"project": "billing"})).await,
+        Ok(json!({"members": [
+            {"principal_id": ann, "email": "ann@example.test", "display_name": "Ann",
+             "org_admin": false, "project_admin": false, "environments": ["dev"]},
+            {"principal_id": boss, "email": "boss@example.test", "display_name": "Boss",
+             "org_admin": true, "project_admin": true, "environments": ["dev"]},
+            {"principal_id": cat, "email": "cat@example.test", "display_name": "Cat",
+             "org_admin": false, "project_admin": true, "environments": ["dev"]},
+        ]}))
+    );
+
+    // A covering grant refuses the revoke below it.
+    assert_eq!(
+        call(&delivery, "member/revoke", boss, member(cat, "dev")).await,
+        Err(format!(
+            "principal {cat} holds project-admin in project billing. Revoke project-admin first"
+        ))
+    );
+    assert_eq!(
+        call(&delivery, "member/revoke", cat, member(boss, "dev")).await,
+        Err(format!(
+            "principal {boss} holds org-admin in org {ORG}. Revoke org-admin first"
+        ))
+    );
+    assert_eq!(
+        call(&delivery, "project-admin/revoke", cat, project_admin(boss)).await,
+        Err(format!(
+            "principal {boss} holds org-admin in org {ORG}. Revoke org-admin first"
+        ))
+    );
+
+    // project-admin covers every environment of the project, and its revoke
+    // leaves the memberships.
+    assert_eq!(
+        call(&delivery, "project-admin/grant", cat, project_admin(ann)).await,
+        Ok(json!({"principal_id": ann, "project": "billing", "project_admin": true}))
+    );
+    assert_eq!(
+        grants(&admin, ann).await,
+        [
+            "env billing/dev".to_owned(),
+            format!("member active {provisioning}"),
+            "project billing project-admin".to_owned(),
+        ]
+    );
+    assert_eq!(
+        call(&delivery, "project-admin/revoke", cat, project_admin(ann)).await,
+        Ok(json!({"principal_id": ann, "project": "billing", "project_admin": false}))
+    );
+    assert_eq!(
+        call(&delivery, "member/revoke", cat, member(ann, "dev")).await,
+        Ok(json!({"principal_id": ann, "project": "billing", "env": "dev", "member": false}))
+    );
+    assert_eq!(
+        grants(&admin, ann).await,
+        [format!("member active {provisioning}")]
+    );
+
+    // A revoked project admin is refused on the next request.
+    admin
+        .execute(
+            "DELETE FROM identity.project_roles WHERE principal_id = $1::text::uuid",
+            &[&cat],
+        )
+        .await?;
+    assert_eq!(
+        call(
+            &delivery,
+            "environment/list",
+            cat,
+            json!({"project": "billing"})
+        )
+        .await,
+        Err("permission denied wamn-control:environment/list@0.1.0".to_owned())
     );
     Ok(())
 }

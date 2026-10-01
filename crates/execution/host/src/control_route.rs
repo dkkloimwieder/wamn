@@ -1,23 +1,27 @@
-//! The org routes of the control serving root (docs/plan/platform-ui.md §4.4).
+//! The org and project routes of the control serving root
+//! (docs/plan/platform-ui.md §4.4 and §4.5).
 //!
 //! Every org route needs a current `org-admin` row of the caller in the
-//! token's org. A write runs in one transaction on the org's `control`
-//! login, binds `app.user_id` to the caller and `app.operation` to the
-//! route's sealed operation id, and checks the role again inside it. The
-//! writes are the functions of `wamn_platform_identity::org`, which
-//! `wamn-ctl invite` also calls, so no second writer exists.
+//! token's org. A project route needs that row or a current `project-admin`
+//! row of the caller in the project that the request names. A write runs in
+//! one transaction on the org's `control` login, binds `app.user_id` to the
+//! caller and `app.operation` to the route's sealed operation id, and checks
+//! the role again inside it. The writes are the functions of
+//! `wamn_platform_identity::org`, which `wamn-ctl invite` also calls, so no
+//! second writer exists.
 
 use serde::Deserialize;
 use serde_json::{Value, json};
 use tokio::sync::Mutex;
 use tokio_postgres::{Client, Transaction};
-use wamn_catalog::{HostAttachment, HostHandler};
+use wamn_catalog::{HostAttachment, HostHandler, HostRouteAuthority};
 use wamn_engine::router_delivery::{DeliveryError, PermissionDenial};
 use wamn_identity_client::{PatIssuerConfig, UserRefused, create_user, send_invitation};
-use wamn_platform_identity::control::{is_org_admin, org_projects};
+use wamn_platform_identity::control::{is_org_admin, is_project_admin, org_projects};
 use wamn_platform_identity::org::{
-    MemberGrants, deactivate_org_membership, grant_org_admin, invite_member, org_users,
-    reactivate_org_membership, revoke_org_admin,
+    MemberGrants, deactivate_org_membership, grant_member, grant_org_admin, grant_project_admin,
+    invite_member, org_users, project_envs, project_members, reactivate_org_membership,
+    revoke_member, revoke_org_admin, revoke_project_admin,
 };
 use wamn_platform_identity::{IdentityError, IdentityErrorType, PrincipalId};
 
@@ -72,6 +76,33 @@ struct PrincipalRequest {
     principal_id: String,
 }
 
+/// The project that a project route names, read before its own request.
+#[derive(Deserialize)]
+struct ProjectScope {
+    project: String,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ProjectRequest {
+    project: String,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ProjectPrincipalRequest {
+    project: String,
+    principal_id: String,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct MemberRequest {
+    project: String,
+    env: String,
+    principal_id: String,
+}
+
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct InviteRequest {
@@ -93,14 +124,26 @@ struct MembershipRequest {
 }
 
 impl ControlRoutes<'_> {
-    /// Serve one org route for `caller`.
+    /// Serve one org or project route for `caller`.
     pub(crate) async fn handle(
         &self,
         attachment: &HostAttachment,
         caller: &PrincipalId,
         payload: &str,
     ) -> Result<Value, Refusal> {
-        if !is_org_admin(self.control, caller, self.org).await? {
+        let project = match attachment.route.authority {
+            HostRouteAuthority::OrgAdmin => None,
+            HostRouteAuthority::ProjectAdmin => Some(parse::<ProjectScope>(payload)?.project),
+            authority => {
+                return Err(Refusal::Failed(anyhow::anyhow!(
+                    "the control host does not admit the authority {authority:?}"
+                )));
+            }
+        };
+        if !self
+            .admits(self.control, caller, project.as_deref())
+            .await?
+        {
             return Err(denied(attachment));
         }
         match attachment.route.handler {
@@ -142,6 +185,92 @@ impl ControlRoutes<'_> {
                 revoke_org_admin(&transaction, &principal, self.org).await?;
                 transaction.commit().await?;
                 Ok(json!({ "principal_id": principal.as_str(), "org_admin": false }))
+            }
+            HostHandler::EnvironmentList => {
+                let request: ProjectRequest = parse(payload)?;
+                let environments = project_envs(self.control, self.org, &request.project).await?;
+                Ok(json!({ "environments": environments }))
+            }
+            HostHandler::MemberList => {
+                let request: ProjectRequest = parse(payload)?;
+                let members = project_members(self.control, self.org, &request.project).await?;
+                Ok(json!({ "members": members }))
+            }
+            HostHandler::MemberGrant => {
+                let request: MemberRequest = parse(payload)?;
+                let principal: PrincipalId = request.principal_id.parse()?;
+                let mut writer = self.writer.lock().await;
+                let transaction = self
+                    .begin_in(&mut writer, attachment, caller, Some(&request.project))
+                    .await?;
+                grant_member(
+                    &transaction,
+                    &principal,
+                    self.org,
+                    &request.project,
+                    &request.env,
+                )
+                .await?;
+                transaction.commit().await?;
+                Ok(json!({
+                    "principal_id": principal.as_str(),
+                    "project": request.project,
+                    "env": request.env,
+                    "member": true,
+                }))
+            }
+            HostHandler::MemberRevoke => {
+                let request: MemberRequest = parse(payload)?;
+                let principal: PrincipalId = request.principal_id.parse()?;
+                let mut writer = self.writer.lock().await;
+                let transaction = self
+                    .begin_in(&mut writer, attachment, caller, Some(&request.project))
+                    .await?;
+                revoke_member(
+                    &transaction,
+                    &principal,
+                    self.org,
+                    &request.project,
+                    &request.env,
+                )
+                .await?;
+                transaction.commit().await?;
+                Ok(json!({
+                    "principal_id": principal.as_str(),
+                    "project": request.project,
+                    "env": request.env,
+                    "member": false,
+                }))
+            }
+            HostHandler::ProjectAdminGrant => {
+                let request: ProjectPrincipalRequest = parse(payload)?;
+                let principal: PrincipalId = request.principal_id.parse()?;
+                let mut writer = self.writer.lock().await;
+                let transaction = self
+                    .begin_in(&mut writer, attachment, caller, Some(&request.project))
+                    .await?;
+                grant_project_admin(&transaction, &principal, self.org, &request.project).await?;
+                transaction.commit().await?;
+                Ok(json!({
+                    "principal_id": principal.as_str(),
+                    "project": request.project,
+                    "project_admin": true,
+                }))
+            }
+            HostHandler::ProjectAdminRevoke => {
+                let request: ProjectPrincipalRequest = parse(payload)?;
+                let principal: PrincipalId = request.principal_id.parse()?;
+                let mut writer = self.writer.lock().await;
+                let transaction = self
+                    .begin_in(&mut writer, attachment, caller, Some(&request.project))
+                    .await?;
+                revoke_project_admin(&transaction, &principal, self.org, &request.project).await?;
+                transaction.commit().await?;
+                Ok(json!({
+                    "principal_id": principal.as_str(),
+                    "project": request.project,
+                    "project_admin": false,
+                }))
             }
             handler => Err(Refusal::Failed(anyhow::anyhow!(
                 "the control host does not serve the host handler {handler:?}"
@@ -202,13 +331,24 @@ impl ControlRoutes<'_> {
         }))
     }
 
-    /// Open the write transaction of one route: bind the caller and the
-    /// sealed operation id, and check `org-admin` again inside it.
+    /// Open the write transaction of one org route.
     async fn begin<'c>(
         &self,
         writer: &'c mut Client,
         attachment: &HostAttachment,
         caller: &PrincipalId,
+    ) -> Result<Transaction<'c>, Refusal> {
+        self.begin_in(writer, attachment, caller, None).await
+    }
+
+    /// Open the write transaction of one route: bind the caller and the
+    /// sealed operation id, and check the route's role again inside it.
+    async fn begin_in<'c>(
+        &self,
+        writer: &'c mut Client,
+        attachment: &HostAttachment,
+        caller: &PrincipalId,
+        project: Option<&str>,
     ) -> Result<Transaction<'c>, Refusal> {
         let transaction = writer.transaction().await?;
         transaction
@@ -218,11 +358,34 @@ impl ControlRoutes<'_> {
                 &[&caller.as_str(), &attachment.operation],
             )
             .await?;
-        if !is_org_admin(&transaction, caller, self.org).await? {
+        if !self.admits(&transaction, caller, project).await? {
             return Err(denied(attachment));
         }
         Ok(transaction)
     }
+
+    /// Whether `caller` holds `org-admin` in the org, or `project-admin` in
+    /// `project` when a project route names one.
+    async fn admits(
+        &self,
+        client: &(impl tokio_postgres::GenericClient + Sync),
+        caller: &PrincipalId,
+        project: Option<&str>,
+    ) -> Result<bool, Refusal> {
+        if is_org_admin(client, caller, self.org).await? {
+            return Ok(true);
+        }
+        Ok(match project {
+            Some(project) => is_project_admin(client, caller, self.org, project).await?,
+            None => false,
+        })
+    }
+}
+
+/// The request of a route, or the delivery refusal of a payload that is not
+/// one.
+fn parse<T: serde::de::DeserializeOwned>(payload: &str) -> Result<T, Refusal> {
+    serde_json::from_str(payload).map_err(|_| Refusal::Delivery(DeliveryError::InvalidPayload))
 }
 
 /// The principal a write route names.

@@ -31,6 +31,11 @@ const ORG_ADMIN_SQL: &str = "SELECT EXISTS (SELECT 1 FROM identity.org_roles r \
     WHERE r.principal_id = $1::text::uuid AND r.org = $2 AND r.role = $3 \
     AND p.type = 'user' AND p.status = 'active')";
 
+const PROJECT_ADMIN_SQL: &str = "SELECT EXISTS (SELECT 1 FROM identity.project_roles r \
+    JOIN identity.principals p ON p.id = r.principal_id \
+    WHERE r.principal_id = $1::text::uuid AND r.org = $2 AND r.project = $3 AND r.role = $4 \
+    AND p.type = 'user' AND p.status = 'active')";
+
 const CONTROL_ORGS_SQL: &str = "SELECT o.id FROM registry.orgs o \
     JOIN identity.principals p ON p.id = $1::text::uuid \
     WHERE p.type = 'user' AND p.status = 'active' \
@@ -115,6 +120,29 @@ pub async fn is_org_admin(
         .query_one(
             ORG_ADMIN_SQL,
             &[&principal_id.as_str(), &org, &ORG_ADMIN_ROLE],
+        )
+        .await
+        .map_err(|error| database_error(&error))?
+        .try_get(0)
+        .map_err(|error| database_error(&error))
+}
+
+/// Whether the active user principal holds `project-admin` in `project` of
+/// `org`.
+pub async fn is_project_admin(
+    client: &(impl GenericClient + Sync),
+    principal_id: &PrincipalId,
+    org: &str,
+    project: &str,
+) -> Result<bool, IdentityError> {
+    if !valid_org(org) {
+        return Err(invalid_org());
+    }
+    let project = crate::checked_scope_segment("project", project)?;
+    client
+        .query_one(
+            PROJECT_ADMIN_SQL,
+            &[&principal_id.as_str(), &org, &project, &PROJECT_ADMIN_ROLE],
         )
         .await
         .map_err(|error| database_error(&error))?
