@@ -825,7 +825,7 @@ pub enum AttachmentRef<'a> {
 }
 
 impl<'a> AttachmentRef<'a> {
-    pub fn kind(self) -> AttachmentType {
+    pub fn attachment_type(self) -> AttachmentType {
         match self {
             Self::Route(attachment) => attachment.type_,
             Self::Wiring(attachment) => attachment.type_,
@@ -886,7 +886,7 @@ pub enum ServedAttachment<'a> {
 impl<'a> ServedAttachment<'a> {
     pub fn attachment_type(self) -> AttachmentType {
         match self {
-            Self::Authored(attachment) => attachment.kind(),
+            Self::Authored(attachment) => attachment.attachment_type(),
             Self::Host(attachment) => attachment.attachment_type(),
         }
     }

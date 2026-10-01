@@ -255,7 +255,7 @@ pub enum SourceRef<'a> {
 impl<'a> SourceRef<'a> {
     /// The bridge's two ingress kinds, as the label a metric attribute and a
     /// delivery preview both carry.
-    pub fn kind(self) -> &'static str {
+    pub fn source_type(self) -> &'static str {
         match self {
             SourceRef::Attachment(_) => "attachment",
             SourceRef::Registration(_) => "registration",
@@ -427,9 +427,9 @@ pub fn lower_operation_refusal(denial: &OperationRefusal) -> DeliveryError {
     let detail = PermissionDenial {
         operation: denial.operation().to_owned(),
     };
-    match denial.kind() {
-        OperationRefusalKind::PermissionDenied => DeliveryError::PermissionDenied(detail),
-        OperationRefusalKind::FreshCredentialRequired => {
+    match denial.refusal_type() {
+        OperationRefusalType::PermissionDenied => DeliveryError::PermissionDenied(detail),
+        OperationRefusalType::FreshCredentialRequired => {
             DeliveryError::FreshCredentialRequired(detail)
         }
     }
@@ -514,7 +514,7 @@ pub fn settle_route(
 
 /// Why an originating caller cannot invoke a registered operation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum OperationRefusalKind {
+pub enum OperationRefusalType {
     PermissionDenied,
     FreshCredentialRequired,
 }
@@ -522,20 +522,20 @@ pub enum OperationRefusalKind {
 /// Exact operation authority missing from the originating caller.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OperationRefusal {
-    kind: OperationRefusalKind,
+    type_: OperationRefusalType,
     operation: Box<str>,
 }
 
 impl OperationRefusal {
-    pub fn new(kind: OperationRefusalKind, operation: impl Into<Box<str>>) -> Self {
+    pub fn new(type_: OperationRefusalType, operation: impl Into<Box<str>>) -> Self {
         Self {
-            kind,
+            type_,
             operation: operation.into(),
         }
     }
 
-    pub fn kind(&self) -> OperationRefusalKind {
-        self.kind
+    pub fn refusal_type(&self) -> OperationRefusalType {
+        self.type_
     }
 
     pub fn operation(&self) -> &str {
@@ -545,9 +545,9 @@ impl OperationRefusal {
 
 impl fmt::Display for OperationRefusal {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let reason = match self.kind {
-            OperationRefusalKind::PermissionDenied => "permission denied",
-            OperationRefusalKind::FreshCredentialRequired => "fresh-credential-required",
+        let reason = match self.type_ {
+            OperationRefusalType::PermissionDenied => "permission denied",
+            OperationRefusalType::FreshCredentialRequired => "fresh-credential-required",
         };
         write!(formatter, "{reason} for operation {}", self.operation)
     }
@@ -585,12 +585,12 @@ pub fn authorize_registered_operation(
     };
     let caller = caller
         .filter(|caller| caller.permits(operation))
-        .ok_or_else(|| OperationRefusal::new(OperationRefusalKind::PermissionDenied, operation))?;
+        .ok_or_else(|| OperationRefusal::new(OperationRefusalType::PermissionDenied, operation))?;
     // Human sessions now receive a current authority check at request admission.
     // This does not widen the separately admitted queued-service contract.
     if fresh_only && caller.credential_type() == CredentialType::QueuedService {
         return Err(OperationRefusal::new(
-            OperationRefusalKind::FreshCredentialRequired,
+            OperationRefusalType::FreshCredentialRequired,
             operation,
         ));
     }
@@ -815,7 +815,7 @@ mod tests {
     fn nested_permission_denial_uses_the_direct_call_wire_contract() {
         let operation = "platform-fixture:widget/record-batch@1.0.0";
         let error = anyhow::Error::new(OperationRefusal::new(
-            OperationRefusalKind::PermissionDenied,
+            OperationRefusalType::PermissionDenied,
             operation,
         ))
         .context("invoke nested operation");
@@ -835,7 +835,7 @@ mod tests {
     fn nested_fresh_only_refusal_retains_its_exact_wire_contract() {
         let operation = "platform-fixture:widget/record-batch@1.0.0";
         let error = anyhow::Error::new(OperationRefusal::new(
-            OperationRefusalKind::FreshCredentialRequired,
+            OperationRefusalType::FreshCredentialRequired,
             operation,
         ))
         .context("invoke nested operation");
@@ -844,8 +844,8 @@ mod tests {
             .expect("the nested host boundary must retain the operation refusal")
             .clone();
         assert_eq!(
-            refusal.kind(),
-            OperationRefusalKind::FreshCredentialRequired
+            refusal.refusal_type(),
+            OperationRefusalType::FreshCredentialRequired
         );
         assert!(matches!(
             lower_operation_refusal(&refusal),

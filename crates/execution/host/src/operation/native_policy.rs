@@ -10,7 +10,7 @@ use wamn_engine::flow_http_routing::AuthenticatedCaller;
 use wamn_engine::invocation_trace::{INVOCATION_TRACES_ID, InvocationTrace, InvocationTraces};
 use wamn_engine::release_manifest::LoadedRelease;
 use wamn_engine::router_delivery::{
-    OperationRefusal, OperationRefusalKind, authorize_released_operation,
+    OperationRefusal, OperationRefusalType, authorize_released_operation,
 };
 use wamn_runtime::plugins::connection_http::{self, CONNECTION_HTTP_ID, ConnectionHttp};
 use wamn_runtime::plugins::wamn_blobstore::plugin::{
@@ -215,7 +215,7 @@ impl NativePolicy {
                 "native invocation refused: the executing principal is not provisioned"
             );
             return Err(
-                OperationRefusal::new(OperationRefusalKind::PermissionDenied, operation).into(),
+                OperationRefusal::new(OperationRefusalType::PermissionDenied, operation).into(),
             );
         }
         Err(error)

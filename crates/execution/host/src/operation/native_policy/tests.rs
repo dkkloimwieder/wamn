@@ -18,7 +18,7 @@ use wamn_catalog::{
 };
 use wamn_engine::component_admission::component_digest;
 use wamn_engine::release_manifest::LoadedRelease;
-use wamn_engine::router_delivery::{OperationRefusal, OperationRefusalKind};
+use wamn_engine::router_delivery::{OperationRefusal, OperationRefusalType};
 use wamn_project_state::PlatformComponent;
 use wamn_runtime::plugins::connection_http::transport::HttpTransport;
 use wamn_runtime::plugins::connection_http::{
@@ -986,7 +986,10 @@ async fn run_case(case: Case) {
                 let refusal = error.downcast_ref::<OperationRefusal>().unwrap_or_else(|| {
                     panic!("native boundary retains typed operation refusal: {error:#}")
                 });
-                assert_eq!(refusal.kind(), OperationRefusalKind::PermissionDenied);
+                assert_eq!(
+                    refusal.refusal_type(),
+                    OperationRefusalType::PermissionDenied
+                );
                 assert_eq!(refusal.operation(), CHILD);
             }
             Case::StartDeadline | Case::RunDeadline => {

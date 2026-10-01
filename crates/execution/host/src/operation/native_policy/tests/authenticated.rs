@@ -27,7 +27,7 @@ use wamn_session::verifier::SessionVerifier;
 use super::invoke_native;
 use super::trace::TraceCapture;
 use super::{
-    CHILD, CHILD_MARKER, CLEANUP, Case, Fixture, OperationRefusal, OperationRefusalKind,
+    CHILD, CHILD_MARKER, CLEANUP, Case, Fixture, OperationRefusal, OperationRefusalType,
     PARTICIPANT, ROOT,
 };
 
@@ -384,7 +384,10 @@ async fn assert_case(
             .downcast_ref::<OperationRefusal>()
             .unwrap_or_else(|| panic!("native dispatch retains typed refusal: {error:#}"));
         assert_eq!(refusal.operation(), CHILD);
-        assert_eq!(refusal.kind(), OperationRefusalKind::PermissionDenied);
+        assert_eq!(
+            refusal.refusal_type(),
+            OperationRefusalType::PermissionDenied
+        );
     }
     fixture.assert_clean().await;
     let observations = fixture.events.lock().expect("observations lock").clone();
@@ -619,7 +622,10 @@ fn native_authenticated_transaction_participant() {
             let refusal = error
                 .downcast_ref::<OperationRefusal>()
                 .expect("participant refusal remains typed");
-            assert_eq!(refusal.kind(), OperationRefusalKind::PermissionDenied);
+            assert_eq!(
+                refusal.refusal_type(),
+                OperationRefusalType::PermissionDenied
+            );
             assert_eq!(refusal.operation(), PARTICIPANT);
             fixture.assert_clean().await;
 
@@ -759,8 +765,8 @@ fn native_warm_alternating_callers_and_fresh_only_grant() {
                 error
                     .downcast_ref::<OperationRefusal>()
                     .expect("typed permission refusal")
-                    .kind(),
-                OperationRefusalKind::PermissionDenied
+                    .refusal_type(),
+                OperationRefusalType::PermissionDenied
             );
             super::warm::close(&fixture).await;
 
