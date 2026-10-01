@@ -708,7 +708,7 @@ mod tests {
         std::fs::write(&acl, "GRANT CONNECT ON DATABASE target TO fixture_reader;")?;
         let endpoint: std::net::SocketAddr =
             url::Url::parse(admin_database.url())?.socket_addrs(|| None)?[0];
-        let mut document = crate::dev::config::tests::complete_document(&[endpoint; 11]);
+        let mut document = crate::dev::config::tests::complete_document(&[endpoint; 12]);
         document["target_database_url"] = json!(target_database.url());
         document["target_template_database"] = json!("target_template");
         document["target_privileges_file"] = json!(privileges);

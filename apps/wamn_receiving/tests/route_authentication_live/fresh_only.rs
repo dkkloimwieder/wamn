@@ -755,6 +755,7 @@ async fn gate_wiring(test: &PriorCommitTest<'_>, wiring: &Value) -> anyhow::Resu
         executor_platform: test.credentials.executor_platform.clone(),
         event_materializer: test.credentials.event_materializer.clone(),
         http_admitter: test.credentials.http_admitter.clone(),
+        administration: test.credentials.administration.clone(),
         identity_reader: test.credentials.identity_reader.clone(),
         control_author: secret_value(&copies.join("control-author.json"), "url")?,
         management_admitter: secret_value(&copies.join("management-admitter.json"), "url")?,

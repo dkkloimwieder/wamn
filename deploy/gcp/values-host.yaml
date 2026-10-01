@@ -74,6 +74,12 @@ runtime:
           name: wamn-event-materializer-dkk--receiving--dev
           key: url
           optional: false
+    - name: WAMN_ADMINISTRATION_PG_URL
+      valueFrom:
+        secretKeyRef:
+          name: wamn-administration-dkk--receiving--dev
+          key: url
+          optional: false
     - name: WAMN_SESSION_ISSUER
       value: https://identity.identity.svc.cluster.local
     - name: WAMN_SESSION_INSTANCE_SUFFIX

@@ -211,6 +211,15 @@ pub async fn prepare_project(
             true,
         )
         .await?,
+        administration: prepare_family(
+            inputs,
+            route,
+            WorkloadRoleFamily::Administration,
+            &inputs.host_secret_directory.join("administration.json"),
+            &inputs.host_secret_namespace,
+            true,
+        )
+        .await?,
         identity_reader: prepare_family(
             inputs,
             route,

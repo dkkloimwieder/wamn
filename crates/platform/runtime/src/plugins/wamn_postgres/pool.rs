@@ -574,7 +574,8 @@ impl PoolLifecycle {
             AuthorityClass::GuestSql => Self::Guest,
             AuthorityClass::ExecutorPlatform
             | AuthorityClass::CallableHttp
-            | AuthorityClass::EventMaterializer => Self::Platform,
+            | AuthorityClass::EventMaterializer
+            | AuthorityClass::Administration => Self::Platform,
         }
     }
 

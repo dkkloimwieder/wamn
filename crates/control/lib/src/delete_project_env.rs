@@ -546,9 +546,9 @@ mod tests {
             plan.advisory_stream,
             "WAMN_EVENT_ADVISORIES_EVT_3_dkk_9_receiving_3_dev"
         );
-        // The CDC role, then a and b of the nine instance families.
-        assert_eq!(instance_families().count(), 9);
-        assert_eq!(plan.roles.len(), 1 + 9 * 2);
+        // The CDC role, then a and b of the ten instance families.
+        assert_eq!(instance_families().count(), 10);
+        assert_eq!(plan.roles.len(), 1 + 10 * 2);
         assert_eq!(plan.roles[0], plan.cdc_object);
         assert!(plan.roles.iter().all(|role| role.len() <= 63));
         let secrets: Vec<&str> = plan.secrets.iter().map(|(name, _)| name.as_str()).collect();
@@ -566,6 +566,7 @@ mod tests {
                 "wamn-event-materializer-dkk--receiving--dev",
                 "wamn-session-role-reader-dkk--receiving--dev",
                 "wamn-audit-retention-dkk--receiving--dev",
+                "wamn-administration-dkk--receiving--dev",
             ]
         );
         let lines = plan.lines();
@@ -591,7 +592,7 @@ mod tests {
         let tenant_families = instance_families()
             .filter(|family| family.scope_kind() == WorkloadRoleScopeKind::Tenant)
             .count();
-        assert_eq!(plan.roles.len(), 1 + (9 - tenant_families) * 2);
+        assert_eq!(plan.roles.len(), 1 + (10 - tenant_families) * 2);
     }
 
     #[test]

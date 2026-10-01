@@ -395,6 +395,7 @@ pub struct JourneyCredentials {
     pub executor_platform: String,
     pub event_materializer: String,
     pub http_admitter: String,
+    pub administration: String,
     pub identity_reader: String,
     pub control_author: String,
     pub management_admitter: String,
@@ -667,6 +668,15 @@ pub async fn prepare_journey_credentials(
             "http-admitter",
         )
         .await?,
+        administration: prepare(
+            WorkloadRoleFamily::Administration,
+            system_url,
+            Some(project_url),
+            host_secret_directory,
+            host_secret_namespace,
+            "administration",
+        )
+        .await?,
         identity_reader: prepare(
             WorkloadRoleFamily::IdentityReader,
             system_url,
@@ -916,6 +926,7 @@ pub fn write_dev_config(
         "executor_platform_database_url": credentials.executor_platform.as_str(),
         "http_admitter_database_url": credentials.http_admitter.as_str(),
         "event_materializer_database_url": credentials.event_materializer.as_str(),
+        "administration_database_url": credentials.administration.as_str(),
         "scheduler_nats_url": inputs.nats_url.as_str(),
         "event_nats_url": inputs.event_nats_url.as_str(),
         "event_nats_username": inputs.event_nats_username.as_str(),

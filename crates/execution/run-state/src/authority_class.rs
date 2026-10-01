@@ -42,15 +42,19 @@ pub enum AuthorityClass {
     CallableHttp,
     /// Materializer-owned event consumption and admission SQL.
     EventMaterializer,
+    /// Host-run administration routes and their writes of the application
+    /// authorization relations (docs/plan/platform-ui.md §2.1).
+    Administration,
 }
 
 impl AuthorityClass {
     /// Every class, in declaration order, for table-driven tests.
-    pub const ALL: [Self; 4] = [
+    pub const ALL: [Self; 5] = [
         Self::GuestSql,
         Self::ExecutorPlatform,
         Self::CallableHttp,
         Self::EventMaterializer,
+        Self::Administration,
     ];
 
     /// The stable NOLOGIN ACL role this authority's generations inherit.
@@ -67,6 +71,7 @@ impl AuthorityClass {
             Self::ExecutorPlatform => "wamn_executor_platform",
             Self::CallableHttp => "wamn_http_admitter",
             Self::EventMaterializer => "wamn_event_materializer",
+            Self::Administration => "wamn_administration",
         }
     }
 
@@ -80,6 +85,7 @@ impl AuthorityClass {
             Self::ExecutorPlatform => "executor-platform",
             Self::CallableHttp => "callable-http",
             Self::EventMaterializer => "event-materializer",
+            Self::Administration => "administration",
         }
     }
 }
@@ -98,7 +104,7 @@ mod tests {
     /// guarantee for a new variant comes from the exhaustive matches in
     /// `as_str` and in the provisioning projection, not from this array.
     #[test]
-    fn all_carries_four_distinct_classes() {
+    fn all_carries_five_distinct_classes() {
         let mut seen = Vec::new();
         for class in AuthorityClass::ALL {
             assert!(
@@ -107,7 +113,7 @@ mod tests {
             );
             seen.push(class);
         }
-        assert_eq!(seen.len(), 4, "AuthorityClass::ALL must list every class");
+        assert_eq!(seen.len(), 5, "AuthorityClass::ALL must list every class");
     }
 
     #[test]
@@ -117,6 +123,7 @@ mod tests {
         assert_eq!(
             labels,
             [
+                "administration",
                 "callable-http",
                 "event-materializer",
                 "executor-platform",

@@ -593,6 +593,7 @@ Each history table has the tenant floor of its relation: forced row security, a 
 A history table has no `tenant_id <> ''` CHECK, and each entry copies `tenant_id` from its row.
 `wamn_app` holds `INSERT` on the entry columns of `configurations_history`, because a guest writes only `configurations`.
 `wamn_app` holds no other privilege on a history table, so a guest reads no `app_system` history and cannot set `position`.
+The administration family role `wamn_administration` holds `SELECT` on the four relations, `USAGE` on `wamn_history`, and `EXECUTE` on `wamn_history.row_image` and the tenant key derivation.
 The audit retention role holds no grant on these history tables, because their retention is `unlimited`.
 A foreign key cascade writes its delete entries with the actor and the operation of the deleting transaction.
 The log copies full rows, including `api_keys.key_hash`.

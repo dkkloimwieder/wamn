@@ -48,8 +48,8 @@ pub use cdc::{
 
 use crate::name::{APP_ROLE, DB_OWNER_ROLE};
 use crate::workload_role::{
-    EVENT_MATERIALIZER_ROLE, EXECUTOR_PLATFORM_ROLE, HTTP_ADMITTER_ROLE, MANAGEMENT_ADMITTER_ROLE,
-    PLATFORM_GROUP_ROLE, SESSION_ROLE_READER_ROLE, WorkloadRoleFamily,
+    ADMINISTRATION_ROLE, EVENT_MATERIALIZER_ROLE, EXECUTOR_PLATFORM_ROLE, HTTP_ADMITTER_ROLE,
+    MANAGEMENT_ADMITTER_ROLE, PLATFORM_GROUP_ROLE, SESSION_ROLE_READER_ROLE, WorkloadRoleFamily,
 };
 pub(crate) use wamn_pg_core::quote_ident;
 use wamn_pg_core::quote_literal;
@@ -529,6 +529,46 @@ pub fn grant_http_admitter_surface_sql(schema: &str) -> String {
     sql
 }
 
+/// The application authorization relations the administration family reads
+/// (docs/plan/platform-ui.md §2.1). Its writes of them come from the
+/// `wamn_platform` grants in `deploy/sql/app-schema.sql`.
+pub const ADMINISTRATION_RELATIONS: [&str; 4] = ["users", "roles", "user_roles", "permissions"];
+
+/// Converge the stable administration role to its exact surface
+/// (`wamn-a40n.2`).
+///
+/// The role reads [`ADMINISTRATION_RELATIONS`]. A write of one of them also
+/// renders the history entry through `wamn_history.row_image` with the
+/// writer's authority, and forms `<table>_tkey` index entries, so the role
+/// holds `USAGE` on `wamn_history`, `EXECUTE` on `row_image`, and `EXECUTE`
+/// on the tenant-key derivation. It holds nothing on the run plane or the
+/// catalog. `schema` is the run-plane revoke scope.
+pub fn grant_administration_surface_sql(schema: &str) -> String {
+    let role = quote_ident(ADMINISTRATION_ROLE);
+    let schema = quote_ident(schema);
+    let mut sql = format!(
+        "{ensure} \
+         REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA catalog, app_system, {schema} FROM {role}; \
+         REVOKE ALL PRIVILEGES ON ALL ROUTINES IN SCHEMA catalog, app_system, wamn_history, {schema} \
+         FROM {role}; \
+         REVOKE ALL PRIVILEGES ON SCHEMA catalog, app_system, wamn_history, {schema} FROM {role}; \
+         GRANT USAGE ON SCHEMA app_system, wamn_history TO {role}; \
+         GRANT EXECUTE ON FUNCTION wamn_history.row_image(record) TO {role};",
+        ensure = ensure_workload_acl_role_sql(WorkloadRoleFamily::Administration),
+    );
+    for relation in ADMINISTRATION_RELATIONS {
+        write!(
+            sql,
+            " GRANT SELECT ON TABLE app_system.{relation} TO {role};",
+            relation = quote_ident(relation),
+        )
+        .expect("writing to a String cannot fail");
+    }
+    sql.push(' ');
+    sql.push_str(&grant_tenant_key_execute_sql(ADMINISTRATION_ROLE));
+    sql
+}
+
 /// Converge the session role reader onto six columns and no execution authority.
 ///
 /// Apply after the project schemas exist. The existing platform RLS arm admits
@@ -836,6 +876,7 @@ pub fn stable_surface_sql(family: WorkloadRoleFamily) -> Option<String> {
         WorkloadRoleFamily::EventMaterializer => {
             Some(grant_event_materializer_surface_sql("wamn_run"))
         }
+        WorkloadRoleFamily::Administration => Some(grant_administration_surface_sql("wamn_run")),
         _ => None,
     }
 }
