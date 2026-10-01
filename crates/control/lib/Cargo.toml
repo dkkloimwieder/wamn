@@ -49,6 +49,7 @@ wamn-event-wire = { workspace = true }
 wamn-execution-contract = { workspace = true }
 wamn-pg-core = { workspace = true }
 wamn-platform-identity = { workspace = true }
+wamn-identity-client = { workspace = true }
 wamn-project-state = { workspace = true }
 wamn-session = { workspace = true }
 wamn-record-history = { workspace = true }

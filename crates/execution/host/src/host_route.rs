@@ -16,12 +16,15 @@ use wamn_catalog::{HostAttachment, HostHandler};
 use wamn_engine::flow_http_routing::{AuthenticatedCaller, operation_reference};
 use wamn_engine::release_manifest::LoadedRelease;
 use wamn_engine::router_delivery::{
-    DeliveryError, DeliveryOutcome, DeliveryReport, DeliveryRequest, RouteDelivery, Source,
-    SourceRef, StreamedDelivery, resolve_authorized_host_route,
+    DeliveryError, DeliveryFailure, DeliveryOutcome, DeliveryReport, DeliveryRequest, FailureType,
+    RouteDelivery, Source, SourceRef, StreamedDelivery, resolve_authorized_host_route,
 };
+use wamn_identity_client::PatIssuerConfig;
 use wamn_platform_identity::PrincipalId;
 use wamn_platform_identity::control::{control_projects, is_org_admin, org_projects};
 use wamn_runtime::plugins::wamn_postgres::WamnPostgres;
+
+use crate::control_route::{ControlRoutes, Refusal};
 
 /// What the handlers of one host read.
 pub enum HostRouteHandlers {
@@ -30,9 +33,15 @@ pub enum HostRouteHandlers {
         postgres: Arc<WamnPostgres>,
         project: String,
     },
-    /// The control routes of one org, read through its `control` login.
+    /// The control routes of one org, through its `control` login.
     Control {
+        /// The `control` login for reads.
         control: Arc<tokio_postgres::Client>,
+        /// A second `control` login that holds one write transaction at a
+        /// time, so a read never runs inside a write.
+        writer: Arc<tokio::sync::Mutex<tokio_postgres::Client>>,
+        /// The operator client of the identity service, for `user.invite`.
+        identity: Option<PatIssuerConfig>,
         org: String,
     },
 }
@@ -87,8 +96,11 @@ impl HostRouteDelivery {
         &self,
         attachment: &HostAttachment,
         caller: &AuthenticatedCaller,
-    ) -> anyhow::Result<serde_json::Value> {
-        let principal: PrincipalId = caller.principal_id().parse()?;
+        payload: &str,
+    ) -> Result<serde_json::Value, Refusal> {
+        let principal: PrincipalId = caller.principal_id().parse().map_err(
+            |error: wamn_platform_identity::IdentityError| Refusal::Failed(error.into()),
+        )?;
         match (attachment.route.handler, &self.handlers) {
             (HostHandler::PermissionMine, HostRouteHandlers::Application { postgres, project }) => {
                 let manifest = self.release.manifest();
@@ -99,7 +111,8 @@ impl HostRouteDelivery {
                         &principal,
                         &attachment.operation,
                     )
-                    .await?;
+                    .await
+                    .map_err(Refusal::Failed)?;
                 let permissions = if held.admin {
                     served_references(&self.release)
                 } else {
@@ -107,7 +120,7 @@ impl HostRouteDelivery {
                 };
                 Ok(json!({ "admin": held.admin, "permissions": permissions }))
             }
-            (HostHandler::ControlMine, HostRouteHandlers::Control { control, org }) => {
+            (HostHandler::ControlMine, HostRouteHandlers::Control { control, org, .. }) => {
                 let org_admin = is_org_admin(control.as_ref(), &principal, org).await?;
                 let projects = if org_admin {
                     org_projects(control.as_ref(), org).await?
@@ -122,7 +135,27 @@ impl HostRouteDelivery {
                         .collect::<Vec<_>>(),
                 }))
             }
-            (handler, _) => anyhow::bail!("this host does not serve the host handler {handler:?}"),
+            (
+                _,
+                HostRouteHandlers::Control {
+                    control,
+                    writer,
+                    identity,
+                    org,
+                },
+            ) => {
+                ControlRoutes {
+                    control,
+                    writer,
+                    identity: identity.as_ref(),
+                    org,
+                }
+                .handle(attachment, &principal, payload)
+                .await
+            }
+            (handler, _) => Err(Refusal::Failed(anyhow::anyhow!(
+                "this host does not serve the host handler {handler:?}"
+            ))),
         }
     }
 }
@@ -183,9 +216,17 @@ impl RouteDelivery for HostRouteDelivery {
             return report(Err(DeliveryError::InvalidRequest));
         }
         let caller = caller.expect("a resolved host route has its caller");
-        match self.handle(attachment, &caller).await {
+        match self.handle(attachment, &caller, &request.payload).await {
             Ok(result) => report(Ok(DeliveryOutcome::Respond(result.to_string()))),
-            Err(error) => {
+            Err(Refusal::Delivery(error)) => report(Err(error)),
+            Err(Refusal::Invalid(message)) => {
+                report(Ok(DeliveryOutcome::Failed(DeliveryFailure {
+                    failure_type: FailureType::InvalidInput,
+                    code: None,
+                    message,
+                })))
+            }
+            Err(Refusal::Failed(error)) => {
                 tracing::warn!(
                     error = %error,
                     reference = attachment.reference,

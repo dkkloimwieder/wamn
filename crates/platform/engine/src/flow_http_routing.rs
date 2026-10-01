@@ -1447,7 +1447,14 @@ mod tests {
 
         let root = LoadedRelease::control_root();
         let served = route_definitions(root.manifest(), "GET", "any.example.test");
-        assert_eq!(served_ids(&served), ["wamn-control-control-mine-http"]);
+        assert_eq!(
+            served_ids(&served),
+            [
+                "wamn-control-control-mine-http",
+                "wamn-control-project-list-http",
+                "wamn-control-user-list-http",
+            ]
+        );
         assert!(
             !requires_pat_route_authentication(root.manifest()),
             "a control route admits no PAT"

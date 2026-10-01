@@ -10,8 +10,8 @@ use anyhow::Context as _;
 use tokio_postgres::NoTls;
 use wamn_control_provision::validate_project_env;
 use wamn_platform_identity::{
-    PrincipalId, grant_project_env_membership,
-    org::{activate_org_membership, grant_org_admin, grant_project_admin},
+    PrincipalId,
+    org::{MemberGrants, invite_member},
 };
 
 use crate::pat_client::{self, InvitationReply, PatIssuerConfig};
@@ -26,13 +26,8 @@ pub struct InviteRequest {
     pub display_name: String,
     /// The org the user joins.
     pub org: String,
-    /// Grant `org-admin` in the org.
-    pub org_admin: bool,
-    /// Projects of the org where the user gets `project-admin`.
-    pub project_admins: Vec<String>,
-    /// Environments of the org, as `(project, env)`, where the user gets a
-    /// membership.
-    pub memberships: Vec<(String, String)>,
+    /// The grants beside the org membership.
+    pub grants: MemberGrants,
     /// Provisioning administrator URL for the system database.
     pub system_database_url: String,
     /// The operator client of the identity service.
@@ -51,7 +46,7 @@ pub struct InviteOutcome {
 
 /// Run the three steps of one invitation.
 pub async fn invite(request: &InviteRequest) -> anyhow::Result<InviteOutcome> {
-    for (project, env) in &request.memberships {
+    for (project, env) in &request.grants.memberships {
         validate_project_env(&request.org, project, env)
             .with_context(|| format!("invalid --membership {project}/{env}"))?;
     }
@@ -88,25 +83,9 @@ async fn write_grants(request: &InviteRequest, principal_id: &PrincipalId) -> an
             .await
             .context("SET ROLE wamn_system for the invitation")?;
         let transaction = provisioning_transaction(&mut client).await?;
-        let org = request.org.as_str();
-        activate_org_membership(&transaction, principal_id, org)
+        invite_member(&transaction, principal_id, &request.org, &request.grants)
             .await
-            .context("write the org membership")?;
-        if request.org_admin {
-            grant_org_admin(&transaction, principal_id, org)
-                .await
-                .context("grant org-admin")?;
-        }
-        for project in &request.project_admins {
-            grant_project_admin(&transaction, principal_id, org, project)
-                .await
-                .with_context(|| format!("grant project-admin in {project}"))?;
-        }
-        for (project, env) in &request.memberships {
-            grant_project_env_membership(&transaction, principal_id, org, project, env)
-                .await
-                .with_context(|| format!("grant the membership of {project}/{env}"))?;
-        }
+            .context("write the org membership and the grants")?;
         transaction
             .commit()
             .await

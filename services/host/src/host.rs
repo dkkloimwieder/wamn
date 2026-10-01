@@ -38,6 +38,7 @@ use wamn_execution_host::{
     HostRouteDelivery, HostRouteHandlers, OperationHost, OperationScope, RouterDeliveryBridge,
     WiringDelivery,
 };
+use wamn_identity_client::PatIssuerConfig;
 use wamn_platform_identity::operator_subject;
 use wamn_runtime::component_artifact_source::{
     ComponentArtifactSource, ComponentArtifactSourceConfig,
@@ -349,6 +350,29 @@ pub struct HostArgs {
     )]
     pub control: bool,
 
+    /// HTTPS base URL of the identity service, which a control host calls
+    /// with the operator certificate for `user.invite`. Its path is
+    /// preserved. Without it, `user.invite` fails and the other routes serve.
+    #[arg(
+        long = "pat-issuer",
+        env = "WAMN_PAT_ISSUER",
+        hide_env_values = true,
+        requires_all = ["control", "pat_client_cert", "pat_client_key"]
+    )]
+    pub pat_issuer: Option<String>,
+
+    /// PEM certificate chain of the operator for the identity service.
+    #[arg(long, env = "WAMN_PAT_CLIENT_CERT", requires = "pat_issuer")]
+    pub pat_client_cert: Option<PathBuf>,
+
+    /// PEM private key of the operator for the identity service.
+    #[arg(long, env = "WAMN_PAT_CLIENT_KEY", requires = "pat_issuer")]
+    pub pat_client_key: Option<PathBuf>,
+
+    /// PEM roots that replace the default trust roots for the identity service.
+    #[arg(long, env = "WAMN_PAT_SERVER_CA", requires = "pat_issuer")]
+    pub pat_server_ca: Option<PathBuf>,
+
     /// Provisioned database instance suffix for the exact session audience.
     #[arg(
         long,
@@ -636,13 +660,28 @@ fn session_verifier(
 
 /// The control login, the control session verifier and the org of a control
 /// host. A control session is browser-only, so no PAT path exists here.
-async fn control_connection(
-    args: &HostArgs,
-) -> anyhow::Result<(
-    SessionVerifier<IssuerKeys>,
-    Arc<tokio_postgres::Client>,
-    String,
-)> {
+/// The verifier, the read and write logins and the org of a control host.
+struct ControlConnection {
+    verifier: SessionVerifier<IssuerKeys>,
+    client: Arc<tokio_postgres::Client>,
+    writer: Arc<tokio::sync::Mutex<tokio_postgres::Client>>,
+    org: String,
+}
+
+/// One connection of the `control` login.
+async fn connect_control(url: &str) -> anyhow::Result<tokio_postgres::Client> {
+    let (client, connection) = tokio_postgres::connect(url, NoTls)
+        .await
+        .context("connect the control login")?;
+    tokio::spawn(async move {
+        if let Err(error) = connection.await {
+            tracing::error!(%error, "the control login connection ended");
+        }
+    });
+    Ok(client)
+}
+
+async fn control_connection(args: &HostArgs) -> anyhow::Result<ControlConnection> {
     let org = args
         .org
         .as_deref()
@@ -667,15 +706,12 @@ async fn control_connection(
         .ok()
         .filter(|url| !url.is_empty())
         .context("a control host requires WAMN_CONTROL_URL")?;
-    let (client, connection) = tokio_postgres::connect(&url, NoTls)
-        .await
-        .context("connect the control login")?;
-    tokio::spawn(async move {
-        if let Err(error) = connection.await {
-            tracing::error!(%error, "the control login connection ended");
-        }
-    });
-    Ok((verifier, Arc::new(client), org.to_owned()))
+    Ok(ControlConnection {
+        verifier,
+        client: Arc::new(connect_control(&url).await?),
+        writer: Arc::new(tokio::sync::Mutex::new(connect_control(&url).await?)),
+        org: org.to_owned(),
+    })
 }
 
 /// The tracing target of the scheduler client's events. The `wasmcloud:nats`
@@ -1180,9 +1216,10 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
         None
     };
     let flow_http = match &control {
-        Some((verifier, client, _)) => flow_http.with_authenticator(Arc::new(
-            ControlRouteAuthenticator::new(verifier.clone(), Arc::clone(client)),
-        )),
+        Some(connection) => flow_http.with_authenticator(Arc::new(ControlRouteAuthenticator::new(
+            connection.verifier.clone(),
+            Arc::clone(&connection.client),
+        ))),
         None => flow_http.with_authenticator(Arc::new(authenticator)),
     };
 
@@ -1247,13 +1284,21 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
             ),
         ))));
     }
-    if let (Some((_, client, org)), Some(root)) = (&control, &release) {
+    if let (Some(connection), Some(root)) = (&control, &release) {
+        let identity = args.pat_issuer.clone().map(|endpoint| PatIssuerConfig {
+            endpoint: Some(endpoint),
+            client_cert: args.pat_client_cert.clone(),
+            client_key: args.pat_client_key.clone(),
+            server_ca: args.pat_server_ca.clone(),
+        });
         plugins.push(Arc::new(RouterDelivery::new(Arc::new(
             HostRouteDelivery::new(
                 Arc::clone(root),
                 HostRouteHandlers::Control {
-                    control: Arc::clone(client),
-                    org: org.clone(),
+                    control: Arc::clone(&connection.client),
+                    writer: Arc::clone(&connection.writer),
+                    identity,
+                    org: connection.org.clone(),
                 },
                 None,
             ),

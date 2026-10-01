@@ -1,4 +1,6 @@
-//! Operator-authenticated HTTPS transport for PAT issuance.
+//! The operator client of the identity service: operator-authenticated
+//! HTTPS for PAT issuance, user creation and invitations. `wamn-ctl` and the
+//! control host use it.
 
 use std::fmt;
 use std::path::PathBuf;
@@ -53,7 +55,8 @@ impl fmt::Debug for PatIssuerConfig {
     }
 }
 
-pub(crate) struct PatClient {
+/// The operator HTTPS client of one identity route.
+pub struct PatClient {
     http: reqwest::Client,
     endpoint: Url,
 }
@@ -65,7 +68,8 @@ impl fmt::Debug for PatClient {
 }
 
 impl PatClient {
-    pub(crate) fn new(args: &PatIssuerConfig) -> anyhow::Result<Self> {
+    /// The client of the PAT route.
+    pub fn new(args: &PatIssuerConfig) -> anyhow::Result<Self> {
         Self::for_route(args, "pats")
     }
 
@@ -118,7 +122,8 @@ impl PatClient {
         Ok(Self { http, endpoint })
     }
 
-    pub(crate) async fn issue(
+    /// Issue one PAT. The request is not retried.
+    pub async fn issue(
         &self,
         principal_id: &PrincipalId,
         label: &str,
@@ -166,12 +171,16 @@ impl PatClient {
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct PatResponse {
-    pub(crate) token: String,
-    pub(crate) token_prefix: String,
+/// One issued PAT.
+pub struct PatResponse {
+    /// The token, shown once.
+    pub token: String,
+    /// The lookup prefix of the token.
+    pub token_prefix: String,
     principal_id: String,
     created_at: String,
-    pub(crate) expires_at: String,
+    /// The expiry instant, RFC 3339.
+    pub expires_at: String,
 }
 
 impl fmt::Debug for PatResponse {
@@ -306,6 +315,19 @@ struct RefusalBody {
     error: String,
 }
 
+/// Identity refused the user, with identity's reason: for example an email
+/// that the identity rules refuse, or a disabled user.
+#[derive(Debug)]
+pub struct UserRefused(pub String);
+
+impl fmt::Display for UserRefused {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(formatter, "identity refused the user: {}", self.0)
+    }
+}
+
+impl std::error::Error for UserRefused {}
+
 /// The request body of one user.
 fn user_body(email: &str, display_name: &str) -> anyhow::Result<Vec<u8>> {
     serde_json::to_vec(&serde_json::json!({ "email": email, "display_name": display_name }))
@@ -313,8 +335,9 @@ fn user_body(email: &str, display_name: &str) -> anyhow::Result<Vec<u8>> {
 }
 
 /// Ask identity to create the user of `email`, or to reuse the user that has
-/// it, as the operator of `config`. A refusal names identity's reason. The
-/// request is not retried, and a repeated request reuses the user.
+/// it, as the operator of `config`. A refusal is a [`UserRefused`] with
+/// identity's reason. The request is not retried, and a repeated request
+/// reuses the user.
 pub async fn create_user(
     config: &PatIssuerConfig,
     email: &str,
@@ -340,11 +363,17 @@ pub async fn create_user(
         bytes.len() <= MAX_RESPONSE_BYTES,
         "user reply exceeds the size limit"
     );
-    if status != reqwest::StatusCode::OK {
-        let reason = serde_json::from_slice::<RefusalBody>(&bytes)
-            .map_or_else(|_| status.to_string(), |body| body.error);
-        anyhow::bail!("identity refused the user: {reason}");
+    if matches!(
+        status,
+        reqwest::StatusCode::BAD_REQUEST | reqwest::StatusCode::CONFLICT
+    ) && let Ok(body) = serde_json::from_slice::<RefusalBody>(&bytes)
+    {
+        return Err(UserRefused(body.error).into());
     }
+    anyhow::ensure!(
+        status == reqwest::StatusCode::OK,
+        "identity did not create the user: {status}"
+    );
     let body: UserBody =
         serde_json::from_slice(&bytes).map_err(|_| anyhow::anyhow!("user reply is invalid"))?;
     Ok(UserReply {

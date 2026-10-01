@@ -13,6 +13,7 @@ use wamn_control::invite::{InviteRequest, invite as run_invite};
 use wamn_control::project_env_membership::{self, ProjectEnvMembershipRequest};
 use wamn_control_provision::CredentialGeneration;
 use wamn_platform_identity::PrincipalId;
+use wamn_platform_identity::org::MemberGrants;
 
 use crate::provisioning_verbs::PatIssuerArgs;
 
@@ -189,9 +190,11 @@ pub async fn invite(args: InviteArgs) -> anyhow::Result<()> {
         email: args.email,
         display_name: args.display_name,
         org: args.org.clone(),
-        org_admin: args.org_admin,
-        project_admins: args.project_admins,
-        memberships: args.memberships,
+        grants: MemberGrants {
+            org_admin: args.org_admin,
+            project_admins: args.project_admins,
+            memberships: args.memberships,
+        },
         system_database_url: args.system_database_url,
         identity: args.pat_issuer.into(),
     })

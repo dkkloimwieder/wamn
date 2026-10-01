@@ -449,6 +449,9 @@ async fn control_mine_admits_only_a_current_project_admin_or_org_admin_session()
         ))
         .await?;
     let control = Arc::new(connect(&login(admin_url, &role)?).await?);
+    let writer = Arc::new(tokio::sync::Mutex::new(
+        connect(&login(admin_url, &role)?).await?,
+    ));
 
     let mut server = Server::start().await;
     let (keys, _key_clock) = server.cache();
@@ -466,6 +469,8 @@ async fn control_mine_admits_only_a_current_project_admin_or_org_admin_session()
         release,
         HostRouteHandlers::Control {
             control,
+            writer,
+            identity: None,
             org: ORG.to_owned(),
         },
         None,

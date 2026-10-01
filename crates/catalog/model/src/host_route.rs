@@ -80,6 +80,21 @@ pub enum HostHandler {
     PermissionMine,
     /// The caller's current control authority in the token's org.
     ControlMine,
+    /// The members of the org (docs/plan/platform-ui.md §4.4).
+    UserList,
+    /// Create or reuse a user, make it a member of the org with the
+    /// requested grants, and mail the invitation when it has no password.
+    UserInvite,
+    /// Make an org membership active.
+    UserActivate,
+    /// Revoke a member's access in the org from the leaves upward.
+    UserDeactivate,
+    /// The projects of the org.
+    ProjectList,
+    /// Grant `org-admin` and its project roles and memberships.
+    OrgAdminGrant,
+    /// Revoke `org-admin` and `project-admin` throughout the org.
+    OrgAdminRevoke,
 }
 
 /// Who may call one host route, beside a valid credential.
@@ -89,6 +104,9 @@ pub enum HostRouteAuthority {
     Member,
     /// A holder of the application role `admin`.
     Admin,
+    /// A holder of `org-admin` in the token's org. The handler checks the
+    /// role, again in its write transaction.
+    OrgAdmin,
 }
 
 /// One fixed host route.
@@ -117,6 +135,55 @@ const ROUTES: &[HostRoute] = &[
         type_: OperationType::Get,
         authority: HostRouteAuthority::Member,
         handler: HostHandler::ControlMine,
+    },
+    HostRoute {
+        set: HostRouteSet::Control,
+        operation: "user.list",
+        type_: OperationType::Get,
+        authority: HostRouteAuthority::OrgAdmin,
+        handler: HostHandler::UserList,
+    },
+    HostRoute {
+        set: HostRouteSet::Control,
+        operation: "user.invite",
+        type_: OperationType::Command,
+        authority: HostRouteAuthority::OrgAdmin,
+        handler: HostHandler::UserInvite,
+    },
+    HostRoute {
+        set: HostRouteSet::Control,
+        operation: "user.activate",
+        type_: OperationType::Command,
+        authority: HostRouteAuthority::OrgAdmin,
+        handler: HostHandler::UserActivate,
+    },
+    HostRoute {
+        set: HostRouteSet::Control,
+        operation: "user.deactivate",
+        type_: OperationType::Command,
+        authority: HostRouteAuthority::OrgAdmin,
+        handler: HostHandler::UserDeactivate,
+    },
+    HostRoute {
+        set: HostRouteSet::Control,
+        operation: "project.list",
+        type_: OperationType::Get,
+        authority: HostRouteAuthority::OrgAdmin,
+        handler: HostHandler::ProjectList,
+    },
+    HostRoute {
+        set: HostRouteSet::Control,
+        operation: "org_admin.grant",
+        type_: OperationType::Command,
+        authority: HostRouteAuthority::OrgAdmin,
+        handler: HostHandler::OrgAdminGrant,
+    },
+    HostRoute {
+        set: HostRouteSet::Control,
+        operation: "org_admin.revoke",
+        type_: OperationType::Command,
+        authority: HostRouteAuthority::OrgAdmin,
+        handler: HostHandler::OrgAdminRevoke,
     },
 ];
 

@@ -4,7 +4,8 @@
 //! Each grant here is the one write of its row. `wamn-ctl invite`, the
 //! provisioning of an org owner and the control routes call these functions,
 //! inside the caller's transaction and under the caller's bound actor.
-//! Application `admin` rows follow in issue 4.
+//! Application `admin` rows, and the application rows that a deactivation
+//! or an `org-admin` revoke removes, follow in issue 4.
 
 use tokio_postgres::GenericClient;
 
@@ -144,6 +145,191 @@ async fn active_member(
         return Err(IdentityError::new(
             IdentityErrorType::NotFound,
             format!("principal {principal_id} is not an active member of org {org}"),
+        ));
+    }
+    Ok(org)
+}
+
+const REACTIVATE_MEMBERSHIP_SQL: &str = "UPDATE identity.org_memberships SET status = 'active' \
+    WHERE principal_id = $1::text::uuid AND org = $2 AND status <> 'active'";
+
+const MEMBER_SQL: &str = "SELECT EXISTS (SELECT 1 FROM identity.org_memberships \
+    WHERE principal_id = $1::text::uuid AND org = $2)";
+
+const DROP_ENV_MEMBERSHIPS_SQL: &str = "DELETE FROM identity.project_env_memberships \
+    WHERE principal_id = $1::text::uuid AND org = $2";
+
+/// Every project role in the org, or only `$3` when it names one.
+const DROP_PROJECT_ROLES_SQL: &str = "DELETE FROM identity.project_roles \
+    WHERE principal_id = $1::text::uuid AND org = $2 AND ($3::text IS NULL OR role = $3)";
+
+/// Every org role in the org, or only `$3` when it names one.
+const DROP_ORG_ROLES_SQL: &str = "DELETE FROM identity.org_roles \
+    WHERE principal_id = $1::text::uuid AND org = $2 AND ($3::text IS NULL OR role = $3)";
+
+const DEACTIVATE_MEMBERSHIP_SQL: &str = "UPDATE identity.org_memberships SET status = 'inactive' \
+    WHERE principal_id = $1::text::uuid AND org = $2 AND status <> 'inactive'";
+
+const ORG_USERS_SQL: &str = "SELECT p.id::text, p.email, p.display_name, m.status \
+    FROM identity.org_memberships m JOIN identity.principals p ON p.id = m.principal_id \
+    WHERE m.org = $1 ORDER BY p.email";
+
+/// The grants an invitation asks for, beside the org membership.
+#[derive(Debug, Default)]
+pub struct MemberGrants {
+    /// Grant `org-admin` in the org.
+    pub org_admin: bool,
+    /// Projects of the org where the user gets `project-admin`.
+    pub project_admins: Vec<String>,
+    /// Environments of the org, as `(project, env)`, where the user gets a
+    /// membership.
+    pub memberships: Vec<(String, String)>,
+}
+
+/// Write the active org membership of an invited user, then each requested
+/// grant through its one write. `wamn-ctl invite` and `user.invite` call it.
+pub async fn invite_member(
+    client: &(impl GenericClient + Sync),
+    principal_id: &PrincipalId,
+    org: &str,
+    grants: &MemberGrants,
+) -> Result<(), IdentityError> {
+    activate_org_membership(client, principal_id, org).await?;
+    if grants.org_admin {
+        grant_org_admin(client, principal_id, org).await?;
+    }
+    for project in &grants.project_admins {
+        grant_project_admin(client, principal_id, org, project).await?;
+    }
+    for (project, env) in &grants.memberships {
+        crate::grant_project_env_membership(client, principal_id, org, project, env).await?;
+    }
+    Ok(())
+}
+
+/// Make an existing org membership active. It restores no project,
+/// environment or role access. A principal that is not a member is refused.
+pub async fn reactivate_org_membership(
+    client: &(impl GenericClient + Sync),
+    principal_id: &PrincipalId,
+    org: &str,
+) -> Result<(), IdentityError> {
+    let org = member(client, principal_id, org).await?;
+    client
+        .execute(REACTIVATE_MEMBERSHIP_SQL, &[&principal_id.as_str(), &org])
+        .await
+        .map_err(|error| database_error(&error))?;
+    Ok(())
+}
+
+/// Revoke from the leaves upward: the environment memberships, the project
+/// roles and the org roles of the user in the org, then mark the membership
+/// inactive. The global principal stays as it is. A principal that is not a
+/// member is refused.
+pub async fn deactivate_org_membership(
+    client: &(impl GenericClient + Sync),
+    principal_id: &PrincipalId,
+    org: &str,
+) -> Result<(), IdentityError> {
+    let org = member(client, principal_id, org).await?;
+    let principal = principal_id.as_str();
+    let every: Option<&str> = None;
+    client
+        .execute(DROP_ENV_MEMBERSHIPS_SQL, &[&principal, &org])
+        .await
+        .map_err(|error| database_error(&error))?;
+    client
+        .execute(DROP_PROJECT_ROLES_SQL, &[&principal, &org, &every])
+        .await
+        .map_err(|error| database_error(&error))?;
+    client
+        .execute(DROP_ORG_ROLES_SQL, &[&principal, &org, &every])
+        .await
+        .map_err(|error| database_error(&error))?;
+    client
+        .execute(DEACTIVATE_MEMBERSHIP_SQL, &[&principal, &org])
+        .await
+        .map_err(|error| database_error(&error))?;
+    Ok(())
+}
+
+/// Remove `project-admin` throughout the org, then the `org-admin` row.
+/// Ordinary memberships stay.
+pub async fn revoke_org_admin(
+    client: &(impl GenericClient + Sync),
+    principal_id: &PrincipalId,
+    org: &str,
+) -> Result<(), IdentityError> {
+    let org = checked_scope_segment("org", org)?;
+    let principal = principal_id.as_str();
+    client
+        .execute(
+            DROP_PROJECT_ROLES_SQL,
+            &[&principal, &org, &Some(control::PROJECT_ADMIN_ROLE)],
+        )
+        .await
+        .map_err(|error| database_error(&error))?;
+    client
+        .execute(
+            DROP_ORG_ROLES_SQL,
+            &[&principal, &org, &Some(ORG_ADMIN_ROLE)],
+        )
+        .await
+        .map_err(|error| database_error(&error))?;
+    Ok(())
+}
+
+/// One member of an org.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct OrgUser {
+    /// The user principal.
+    pub principal_id: String,
+    /// The user's email.
+    pub email: String,
+    /// The user's display name.
+    pub display_name: String,
+    /// The org-local status: `active` or `inactive`.
+    pub status: String,
+}
+
+/// The active and inactive members of `org`, by email.
+pub async fn org_users(
+    client: &(impl GenericClient + Sync),
+    org: &str,
+) -> Result<Vec<OrgUser>, IdentityError> {
+    let org = checked_scope_segment("org", org)?;
+    client
+        .query(ORG_USERS_SQL, &[&org])
+        .await
+        .map_err(|error| database_error(&error))?
+        .iter()
+        .map(|row| {
+            Ok(OrgUser {
+                principal_id: row.try_get(0).map_err(|error| database_error(&error))?,
+                email: row.try_get(1).map_err(|error| database_error(&error))?,
+                display_name: row.try_get(2).map_err(|error| database_error(&error))?,
+                status: row.try_get(3).map_err(|error| database_error(&error))?,
+            })
+        })
+        .collect()
+}
+
+/// The checked org, when the principal is a member of it, active or not.
+async fn member(
+    client: &(impl GenericClient + Sync),
+    principal_id: &PrincipalId,
+    org: &str,
+) -> Result<String, IdentityError> {
+    let org = checked_scope_segment("org", org)?;
+    let found: bool = client
+        .query_one(MEMBER_SQL, &[&principal_id.as_str(), &org])
+        .await
+        .map_err(|error| database_error(&error))?
+        .get(0);
+    if !found {
+        return Err(IdentityError::new(
+            IdentityErrorType::NotFound,
+            format!("principal {principal_id} is not a member of org {org}"),
         ));
     }
     Ok(org)

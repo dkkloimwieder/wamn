@@ -5780,6 +5780,7 @@ dependencies = [
  "wamn-event-wire",
  "wamn-execution-contract",
  "wamn-fixture-package",
+ "wamn-identity-client",
  "wamn-pg-core",
  "wamn-platform-identity",
  "wamn-project-state",
@@ -6003,6 +6004,7 @@ dependencies = [
  "wamn-event-wire",
  "wamn-execution-contract",
  "wamn-fixture-package",
+ "wamn-identity-client",
  "wamn-platform-identity",
  "wamn-project-state",
  "wamn-run-state",
@@ -6176,6 +6178,7 @@ dependencies = [
  "wamn-control-registry",
  "wamn-engine",
  "wamn-execution-host",
+ "wamn-identity-client",
  "wamn-platform-identity",
  "wamn-runtime",
  "wamn-session",
@@ -6216,6 +6219,23 @@ dependencies = [
  "wamn-session",
  "wamn-test-postgres",
  "zeroize",
+]
+
+[[package]]
+name = "wamn-identity-client"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "rcgen",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tokio-rustls",
+ "url",
+ "wamn-platform-identity",
+ "wamn-session",
 ]
 
 [[package]]
