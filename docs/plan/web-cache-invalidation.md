@@ -85,20 +85,23 @@ The TypeScript emitter writes them as two `ResponseContract` members, `reads: re
 
 `onWrite` listeners receive the write's `writes`: `onWrite?(listener: (writes: readonly string[] | null) => void)`. A listener that takes no argument keeps its behavior, so no generated component changes.
 
-`createRecordLabels` reads its keys again only when the write touches the label read's relations, by the same rule as the store. It takes the relations from `recordRead.read.contract.reads`. The intersection is one exported function of `web/runtime`, so the store and the labels use one definition.
+`createRecordLabels` reads its keys again only when the write touches the label read's relations, by the same rule as the store. It takes the relations from `recordRead.read.contract.reads`.
+
+The four other listeners follow the same rule. A generated detail (`readAgain`), a table load, an edit cell and each form selector list pass the `reads` of their own read, and read again only on a write that touches them.
+
+The intersection is one exported function of `web/runtime`, so the store, the labels and the listeners use one definition.
 
 ## 5. Issues
 
 One chain, the routes agent. Each issue lands with its tests.
 
 1. Generator and IR. The generated create, update and delete contracts state `relations`. The client IR carries `reads` and `writes` into the response, and the emitter writes them into `ResponseContract`. Generator tests on the fixture cover the three generated write contracts, an authored command with a lock-only relation, and the history-table read.
-2. `web/runtime` store rule. `ResponseContract` gains the two members. The store and `onWrite` take the written relations. Tests: an intersecting write marks the read stale. A non-intersecting write leaves it fresh. A lock-only relation invalidates nothing. A write with null `writes` marks everything stale. A record label reads again only on an intersecting write. Hand-written contracts in the runtime and component tests and the gallery gain the two members.
+2. `web/runtime` store rule. `ResponseContract` gains the two members. The store and `onWrite` take the written relations. Tests: an intersecting write marks the read stale. A non-intersecting write leaves it fresh. A lock-only relation invalidates nothing. A write with null `writes` marks everything stale. A record label reads again only on an intersecting write. A generated detail, a table load, an edit cell and a selector list read again only on an intersecting write. Hand-written contracts in the runtime and component tests and the gallery gain the two members.
 3. Regenerate the served applications. Receiving and WMS, and the component fixture. Their binding bytes change only in `ResponseContract`. Their contracts change only in the generated write contracts.
-4. Closeout. `docs/architecture/execution.md` states the rule in place of "Any write marks every stored read stale", with the materializer limit. Workspace test run, times on the bead. This plan is archived when no unbuilt work remains.
+4. Closeout. `docs/architecture/execution.md` states the rule in place of "Any write marks every stored read stale", with the materializer limit. The requests for each write on the gallery, before and after, go in one table on the bead. Workspace test run, times on the bead. This plan is archived when no unbuilt work remains.
 
 ## 6. Out of scope
 
 - Column granularity.
 - The materializer's later writes, described in section 2.
-- The other `onWrite` listeners. A generated detail, a table load, an edit cell and a form selector list still read again after every write. Section 3 measures what this costs.
 - A write by another session or another client. ETag revalidation covers it, as today.
