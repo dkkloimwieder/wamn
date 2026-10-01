@@ -4,12 +4,12 @@
 # port-forward. The operator certificate reaches the Job only as the mounted
 # Secret operator-dkk.
 #
-# Fill __ORG__, __PROJECT__, __ENV__, __TENANT__, __NAMESPACE__,
-# __SECRET_NAMESPACE__ and __PAT_FLAG__ in a private copy of this file in the
-# scratchpad, at mode 0600, apply the copy and remove it. __PAT_FLAG__ is
-# --emit-operator-pat-secret or --emit-management-author-pat-secret. The run
-# rewrites secret_namespace of registry.project_envs, so __SECRET_NAMESPACE__
-# must be the recorded value (wamn-rjtf). Then make the Secret wamn-system-admin
+# Fill __ORG__, __PROJECT__, __ENV__, __TENANT__, __NAMESPACE__ and
+# __PAT_FLAG__ in a private copy of this file in the scratchpad, at mode 0600,
+# apply the copy and remove it. __PAT_FLAG__ is --emit-operator-pat-secret or
+# --emit-management-author-pat-secret. A run with only a PAT flag reads the
+# recorded environment and writes nothing to the registry (wamn-rjtf). Then
+# make the Secret wamn-system-admin
 # with an owner reference to this Job (docs/operations/gcp.md section 3.16).
 # The pod waits for that Secret before it starts.
 #
@@ -38,7 +38,7 @@ spec:
               umask 077
               /usr/local/bin/wamn-ctl provision-project-env \
                 --org __ORG__ --project __PROJECT__ --env __ENV__ --tenant __TENANT__ \
-                --namespace __NAMESPACE__ --secret-namespace __SECRET_NAMESPACE__ \
+                --namespace __NAMESPACE__ \
                 __PAT_FLAG__ /out/pat.json
               waited=0
               while [ -e /out/pat.json ] && [ "$waited" -lt 300 ]; do

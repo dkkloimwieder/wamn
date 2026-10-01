@@ -739,11 +739,11 @@ Run the check of section 3.10 again. The key set now lists the `kid`. On 2026-09
 
 The Job `deploy/gcp/operator/mint-pat.yaml` mints a PAT inside the cluster, in namespace `identity` (`docs/plan/operator-image.md`, `wamn-n5d1`). It runs the operator image `wamn-ctl`, which the manifest pins by digest. It reads the `operator-dkk` certificate as a mounted Secret, so the certificate never reaches this machine. It needs no `/etc/hosts` line and no identity port-forward.
 
-Fill the run values in a private copy of the manifest, apply the copy and remove it. This run mints the management-author PAT of Receiving. The run writes `secret_namespace` of `registry.project_envs` again, so pass the recorded value `hosts` (`wamn-rjtf`):
+Fill the run values in a private copy of the manifest, apply the copy and remove it. This run mints the management-author PAT of Receiving. A run with only a PAT flag reads the recorded environment and writes nothing to the registry. It refuses `--secret-namespace` and `--disposable`, and it refuses an environment that the registry does not hold (`wamn-rjtf`):
 
 ```bash
 (umask 077; sed -e 's/__ORG__/dkk/' -e 's/__PROJECT__/receiving/' -e 's/__ENV__/dev/' -e 's/__TENANT__/dev/' \
-  -e 's/__NAMESPACE__/platform/' -e 's/__SECRET_NAMESPACE__/hosts/' \
+  -e 's/__NAMESPACE__/platform/' \
   -e 's/__PAT_FLAG__/--emit-management-author-pat-secret/' deploy/gcp/operator/mint-pat.yaml > $P/mint-pat.yaml)
 kubectl apply -f $P/mint-pat.yaml
 rm $P/mint-pat.yaml

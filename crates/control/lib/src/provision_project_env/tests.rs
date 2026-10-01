@@ -1227,3 +1227,37 @@ fn workload_url_names_the_cluster_host_not_the_admin_url_host() {
         "postgresql://wamn_role:p%40ss@wamn-pg-rw.platform.svc.cluster.local:5432/wamn-db-dkk--receiving--dev--4pqjfmli"
     );
 }
+
+/// A run with only PAT outputs mints for a recorded environment and writes
+/// nothing to the registry, so it refuses the two registry values (wamn-rjtf).
+#[tokio::test(flavor = "current_thread")]
+async fn a_pat_only_run_refuses_the_registry_values_of_a_provisioning_run() {
+    for (secret_namespace, disposable) in [(Some("hosts".to_owned()), false), (None, true)] {
+        let error = provision_project_env(&ProvisionProjectEnvRequest {
+            org: "acme".into(),
+            project: "billing".into(),
+            env: "dev".into(),
+            tenant: None,
+            disposable,
+            system_database_url: Some("postgres://unused.invalid/wamn_system".into()),
+            cluster: None,
+            connection_limit: None,
+            cluster_namespace: "platform".into(),
+            namespace: "hosts".into(),
+            secret_namespace,
+            emit_database: None,
+            emit_role_sql: None,
+            emit_privilege_sql: None,
+            emit_secret: None,
+            pat_issuer: PatIssuerConfig::default(),
+            emit_management_author_pat_secret: None,
+            emit_operator_pat_secret: Some("/tmp/wamn-rjtf-unused.json".into()),
+        })
+        .await
+        .expect_err("a PAT-only run must refuse a registry value");
+        assert_eq!(
+            error.to_string(),
+            "--secret-namespace and --disposable belong to a provisioning run, which passes an --emit-* output"
+        );
+    }
+}
