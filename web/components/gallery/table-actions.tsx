@@ -162,7 +162,7 @@ export function actionStub(size: number) {
     invoke: async (request) => {
       const item = request.items[0] as { [name: string]: JsonValue } | undefined;
       switch (request.operation) {
-        case "platform-fixture:widget/query@1.0.0": {
+        case "platform-fixture:widget/query@2.0.0": {
           const limit = (item?.["limit"] as number | undefined) ?? 100;
           const codes = (item?.["filter"] as { code?: string[] } | undefined)?.code;
           const kept = codes === undefined ? widgets : widgets.filter((widget) => codes.includes(widget.code));
@@ -171,7 +171,7 @@ export function actionStub(size: number) {
             next_cursor: kept.length > limit ? "more" : null,
           });
         }
-        case "platform-fixture:widget/update@1.0.0": {
+        case "platform-fixture:widget/update@2.0.0": {
           const widget = find(item?.["id"]);
           if (widget === undefined) {
             return refused("not_found", { field: "id", id: item?.["id"] ?? null });
@@ -192,11 +192,11 @@ export function actionStub(size: number) {
           }
           return completed({ ...widget });
         }
-        case "platform-fixture:widget-maker/query@1.0.0":
+        case "platform-fixture:widget-maker/query@2.0.0":
           return completed({ item: [MAKER], next_cursor: null });
-        case "platform-fixture:widget-maker/get@1.0.0":
+        case "platform-fixture:widget-maker/get@2.0.0":
           return completed(MAKER);
-        case "platform-fixture:widget/list@1.0.0":
+        case "platform-fixture:widget/list@2.0.0":
           return completed({ rows: [] });
         case EVENT_QUERY_ROUTE.operation: {
           const scope = (item?.["filter"] as { widget_id?: string[] } | undefined)?.widget_id ?? [];

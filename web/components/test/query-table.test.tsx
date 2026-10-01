@@ -70,7 +70,7 @@ const WIDGETS: QueryTableDefinition<WidgetQueryRow> = {
   },
   actions: [
     {
-      operation: "platform-fixture:widget/get@1.0.0",
+      operation: "platform-fixture:widget/get@2.0.0",
       reference: "platform-fixture:widget/get",
       label: "get",
       many: false,
@@ -78,7 +78,7 @@ const WIDGETS: QueryTableDefinition<WidgetQueryRow> = {
       fill: [],
     },
     {
-      operation: "platform-fixture:widget/archive@1.0.0",
+      operation: "platform-fixture:widget/archive@2.0.0",
       reference: "platform-fixture:widget/archive",
       label: "archive",
       many: false,
