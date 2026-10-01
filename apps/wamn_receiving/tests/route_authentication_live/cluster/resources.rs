@@ -408,18 +408,31 @@ pub(super) fn write_private(path: &Path, bytes: &[u8]) -> anyhow::Result<()> {
 }
 
 pub(super) async fn checked(command: &mut Command) -> anyhow::Result<Vec<u8>> {
+    let program = command
+        .as_std()
+        .get_program()
+        .to_string_lossy()
+        .into_owned();
     let output = command
         .kill_on_drop(true)
         .output()
         .await
         .context("run the Receiving test command")?;
+    // The error reaches failure.json in the evidence directory, so a failed
+    // command keeps the end of its stderr there (wamn-ld93.33.8).
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let tail = &stderr[stderr.floor_char_boundary(stderr.len().saturating_sub(STDERR_TAIL))..];
     ensure!(
         output.status.success(),
-        "Receiving test command failed with {}",
-        output.status
+        "Receiving test command {program} failed with {}: {}",
+        output.status,
+        tail.trim()
     );
     Ok(output.stdout)
 }
+
+/// The bytes of stderr that a failed command keeps in its error.
+const STDERR_TAIL: usize = 4096;
 
 pub(super) async fn capture_failure(cluster: &Resources) {
     for (name, args) in [
@@ -586,5 +599,21 @@ impl Drop for Resources {
             }
         }
         let _ = fs::remove_dir_all(&self.work);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[tokio::test]
+    async fn a_failed_command_keeps_its_stderr() {
+        let error = super::checked(
+            tokio::process::Command::new("sh")
+                .args(["-c", "echo 'Cannot pull supplied image' >&2; exit 3"]),
+        )
+        .await
+        .unwrap_err()
+        .to_string();
+        assert!(error.contains("sh failed with exit status: 3"), "{error}");
+        assert!(error.contains("Cannot pull supplied image"), "{error}");
     }
 }
