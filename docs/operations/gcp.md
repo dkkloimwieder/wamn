@@ -416,10 +416,12 @@ On 2026-09-26 the host image took 419 seconds to build and the identity image 59
 | `wamn-identity:src-cb10274981e78f44` | `sha256:0fe43f6bc52e98e327cb7abd9898a3e1268f9298e37ec56e12504fe7ffdeab42` |
 | `wamn-ctl:src-4efb827f3fd6ab78` | `sha256:1322d637113f2934340620556f1ef491d2d2e28f4991ddeb9236a7d4f48eae10` |
 | `wamn-identity:src-4d7d761fa53551b2` | `sha256:5ba5e9dc09043d36f6fbc2cf830b09d08dea2f5a63bde2be74dc246411a55164` |
+| `wamn-ctl:src-61412780c14f9a3b` | `sha256:94a87fe53ba0765c61ae03075c5f81c294ae2e79c617071dc1966d4d105d3584` |
 
 On 2026-09-27 the second identity image, with the invitation link, took 53 seconds to build and 5 seconds to push. Roll it out with `helm upgrade identity deploy/platform/identity -n identity -f deploy/gcp/values-identity.yaml`.
 
 On 2026-09-30 the `wamn-ctl` image of `b89dd2ea5` took 1 second to build from warm layers and 6 seconds to push. The two Jobs of `deploy/gcp/operator/` pin it by digest.
+On 2026-10-01 the `wamn-ctl` image of `87c406afa` (`wamn-rjtf`) took 960 seconds to build and 6 seconds to push. The two Jobs pin it in place of `src-4efb827f3fd6ab78`. Do not run the old image again: it writes the registry row on a PAT run, and without `--secret-namespace` it records NULL.
 On 2026-09-27 the third identity image, with the org and project filter of finding `wamn-9a3v`, took 102 seconds to build and 6 seconds to push. The rollout took 9 seconds.
 
 ### 3.5 Event NATS

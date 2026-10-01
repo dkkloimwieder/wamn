@@ -1,4 +1,7 @@
 //! Own the existing Receiving development fixtures around one timing command.
+//!
+//! With `--wms`, the fixtures also hold the WMS label store: MinIO with the
+//! `labels` bucket, and the host credentials file that names its credential.
 
 use std::collections::BTreeMap;
 use std::fs::{self, DirBuilder, OpenOptions};
@@ -18,11 +21,19 @@ use wamn_control_provision::events::{advisory_stream_config, source_stream_confi
 use wamn_control_registry::Triple;
 use wamn_test_infrastructure::event_broker;
 
+/// The MinIO root user of the label store. The password is random per run.
+const MINIO_USER: &str = "wamn-labels-store";
+/// The bucket the WMS wiring writes its labels into.
+const LABELS_BUCKET: &str = "labels";
+/// The credential handle of the label store, under the dev project.
+const LABELS_CREDENTIAL: &str = "labels-store";
+
 #[derive(Debug)]
 struct Compose {
     repository: PathBuf,
     directory: PathBuf,
     project: String,
+    minio_password: String,
 }
 
 impl Compose {
@@ -48,6 +59,9 @@ impl Compose {
             .env("WAMN_RECEIVING_DEV_NATS_PORT", "0")
             .env("WAMN_RECEIVING_DEV_TEMPO_PORT", "0")
             .env("WAMN_RECEIVING_DEV_OTLP_PORT", "0")
+            .env("WAMN_RECEIVING_DEV_MINIO_PORT", "0")
+            .env("WAMN_RECEIVING_DEV_MINIO_USER", MINIO_USER)
+            .env("WAMN_RECEIVING_DEV_MINIO_PASSWORD", &self.minio_password)
             .kill_on_drop(true);
         command
     }
@@ -156,20 +170,24 @@ async fn run(command: &mut Command) -> anyhow::Result<std::process::ExitStatus> 
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> anyhow::Result<()> {
     let mut arguments = std::env::args_os().skip(1);
-    let repository = PathBuf::from(
-        arguments
-            .next()
-            .context("usage: delivery_timings BASELINE TARGET RESULT_ROOT -- COMMAND...")?,
-    )
-    .canonicalize()?;
+    let repository =
+        PathBuf::from(arguments.next().context(
+            "usage: delivery_timings BASELINE TARGET RESULT_ROOT [--wms] -- COMMAND...",
+        )?)
+        .canonicalize()?;
     let target = PathBuf::from(arguments.next().context("missing baseline target")?);
     let results = PathBuf::from(
         arguments
             .next()
             .context("missing temporary results directory")?,
     );
+    let mut separator = arguments.next();
+    let wms = separator.as_deref() == Some(std::ffi::OsStr::new("--wms"));
+    if wms {
+        separator = arguments.next();
+    }
     ensure!(
-        arguments.next().as_deref() == Some(std::ffi::OsStr::new("--")),
+        separator.as_deref() == Some(std::ffi::OsStr::new("--")),
         "missing command separator"
     );
     let executable = arguments.next().context("missing timing command")?;
@@ -191,6 +209,7 @@ async fn main() -> anyhow::Result<()> {
         repository: repository.clone(),
         directory: directory.clone(),
         project: format!("wamn-delivery-timings-{}", hex::encode(&nonce[..8])),
+        minio_password: hex::encode(&nonce[8..24]),
     };
     let scope = Triple::new("acme", "receiving", "dev");
     let source = source_stream_config(&scope, 1, Duration::from_secs(120));
@@ -217,16 +236,20 @@ async fn main() -> anyhow::Result<()> {
             .is_empty(),
         "timing project already owns containers"
     );
-    checked(compose.command().args([
-        "up",
-        "--detach",
-        "--wait",
-        "--wait-timeout",
-        "90",
+    let mut services = vec![
         "receiving-dev-nats",
         "receiving-dev-tempo",
         "delivery-events",
-    ]))
+    ];
+    if wms {
+        services.push("receiving-dev-minio");
+    }
+    checked(
+        compose
+            .command()
+            .args(["up", "--detach", "--wait", "--wait-timeout", "90"])
+            .args(&services),
+    )
     .await?;
     let scheduler = compose.port("receiving-dev-nats", "4222").await?;
     let events = compose.port("delivery-events", "4222").await?;
@@ -295,6 +318,47 @@ async fn main() -> anyhow::Result<()> {
         ),
         ("WAMN_ROUTE_HOST", "receiving.localhost".to_owned()),
     ]);
+    let mut variables = variables;
+    if wms {
+        let minio = compose.port("receiving-dev-minio", "9000").await?;
+        checked(compose.command().args([
+            "exec",
+            "-T",
+            "-e",
+            &format!(
+                "MC_HOST_store=http://{MINIO_USER}:{}@127.0.0.1:9000",
+                compose.minio_password
+            ),
+            "receiving-dev-minio",
+            "mc",
+            "mb",
+            &format!("store/{LABELS_BUCKET}"),
+        ]))
+        .await
+        .context("create the labels bucket")?;
+        // The host reads `{project: {handle: secret}}`, as the cluster host
+        // reads its mounted Secret. `wamn dev up` copies it into its root.
+        let credentials = directory.join("credentials.json");
+        let secret = json!({
+            "ACCESS_KEY_ID": MINIO_USER,
+            "ACCESS_SECRET_KEY": compose.minio_password,
+        })
+        .to_string();
+        private(
+            &credentials,
+            &serde_json::to_vec(&json!({
+                wamn_control::dev::environment::PROJECT: {LABELS_CREDENTIAL: secret}
+            }))?,
+        )?;
+        variables.insert(
+            "WAMN_DEV_ENV_CREDENTIALS_FILE",
+            credentials.display().to_string(),
+        );
+        variables.insert(
+            "WAMN_RECEIVING_DEV_MINIO_ENDPOINT",
+            format!("http://{minio}"),
+        );
+    }
     let mut command = Command::new(executable);
     command
         .args(arguments)

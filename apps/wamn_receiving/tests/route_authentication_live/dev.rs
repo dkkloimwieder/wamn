@@ -69,6 +69,7 @@ impl DevJourneyInputs {
                         .canonicalize()
                         .context("resolve the base package root")?,
                 ],
+                credentials_file: None,
             },
         };
         anyhow::ensure!(

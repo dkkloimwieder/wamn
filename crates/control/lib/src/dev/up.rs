@@ -1,7 +1,9 @@
 //! Provision a disposable development environment and write its configuration.
 use super::environment::{DevEnvironmentInputs, connect, provision, write_dev_config};
 use anyhow::Context as _;
-use std::fs::Permissions;
+use std::fs::{OpenOptions, Permissions};
+use std::io::Write as _;
+use std::os::unix::fs::OpenOptionsExt as _;
 use std::os::unix::fs::PermissionsExt as _;
 use std::path::PathBuf;
 
@@ -26,7 +28,13 @@ pub struct DevUpRequest {
     pub local_bindings: Option<PathBuf>,
     pub host_binary: PathBuf,
     pub packages: Vec<PathBuf>,
+    /// The host credentials file, `{project: {name: secret}}`. It is copied
+    /// into the private root, never referenced where it lies.
+    pub credentials_file: Option<PathBuf>,
 }
+
+/// The private copy of the host credentials file inside the root.
+const CREDENTIALS_FILE: &str = "credentials.json";
 
 /// Provision the environment and return the configuration file.
 pub async fn provision_environment(mut args: DevUpRequest) -> anyhow::Result<PathBuf> {
@@ -50,6 +58,11 @@ pub async fn provision_environment(mut args: DevUpRequest) -> anyhow::Result<Pat
                 .with_context(|| format!("resolve package source {}", package.display()))?,
         );
     }
+    let credentials_file = args
+        .credentials_file
+        .as_ref()
+        .map(|source| copy_private(source, &args.root.join(CREDENTIALS_FILE)))
+        .transpose()?;
     let local_artifacts = super::config::LocalArtifacts {
         directory: args.root.canonicalize()?.join("local-artifacts"),
         bindings: args
@@ -78,6 +91,7 @@ pub async fn provision_environment(mut args: DevUpRequest) -> anyhow::Result<Pat
         route_host: args.route_host,
         platform_domain: args.platform_domain,
         package_sources,
+        credentials_file,
     };
 
     let broker_options = crate::event_streams::connection_options(
@@ -125,4 +139,22 @@ pub async fn provision_environment(mut args: DevUpRequest) -> anyhow::Result<Pat
     environment.issuer.retain(&args.root.canonicalize()?)?;
     admin_task.abort();
     Ok(config)
+}
+
+/// Copy a secret-bearing file to `target` with mode 0600 and return `target`.
+fn copy_private(source: &std::path::Path, target: &std::path::Path) -> anyhow::Result<PathBuf> {
+    let bytes = std::fs::read(source)
+        .with_context(|| format!("read the credentials file {}", source.display()))?;
+    let mut file = OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .mode(0o600)
+        .open(target)
+        .with_context(|| format!("create {}", target.display()))?;
+    // A file left by an earlier run keeps its old mode, so set it again.
+    file.set_permissions(Permissions::from_mode(0o600))?;
+    file.write_all(&bytes)
+        .with_context(|| format!("write {}", target.display()))?;
+    Ok(target.to_owned())
 }

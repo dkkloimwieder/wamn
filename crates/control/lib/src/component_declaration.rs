@@ -271,7 +271,7 @@ pub fn render_declaration_document(
     Ok(document)
 }
 
-/// Slot a palette declaration leaves for the store alias of its wiring node.
+/// Slot a palette declaration leaves for the store alias of its connection.
 pub const COMPONENT_DECLARATION_STORE_ALIAS_PLACEHOLDER: &str = "__STORE_ALIAS__";
 
 /// Renders one palette declaration (`apps/platform/*/*/declaration.json.in`)
@@ -279,13 +279,12 @@ pub const COMPONENT_DECLARATION_STORE_ALIAS_PLACEHOLDER: &str = "__STORE_ALIAS__
 /// into (wamn-hw3n).
 ///
 /// A palette component belongs to no package, so its template leaves the whole
-/// scope as placeholders. A connection whose alias is
-/// [`COMPONENT_DECLARATION_STORE_ALIAS_PLACEHOLDER`] takes `store_alias`, the
-/// `store_alias` parameter of the wiring node that names the component.
+/// scope as placeholders. A connection whose alias is still
+/// [`COMPONENT_DECLARATION_STORE_ALIAS_PLACEHOLDER`] is refused, because the
+/// loop names no store alias for it.
 pub fn render_palette_declaration(
     template: &Path,
     scope: &wamn_catalog::ComponentPackageScope,
-    store_alias: Option<&str>,
 ) -> Result<Value, ComponentDeclarationError> {
     let bytes =
         fs::read(template).map_err(|source| ComponentDeclarationError::read(template, source))?;
@@ -321,25 +320,20 @@ pub fn render_palette_declaration(
         }
         *slot = Value::String(value.clone());
     }
-    for connection in document
-        .get_mut("connections")
-        .and_then(Value::as_array_mut)
+    let unnamed = document
+        .get("connections")
+        .and_then(Value::as_array)
         .into_iter()
         .flatten()
-    {
-        let Some(alias) = connection.get_mut("store-alias") else {
-            continue;
-        };
-        if alias.as_str() != Some(COMPONENT_DECLARATION_STORE_ALIAS_PLACEHOLDER) {
-            continue;
-        }
-        let store_alias = store_alias.ok_or_else(|| {
-            invalid(format!(
-                "leaves a store alias as {COMPONENT_DECLARATION_STORE_ALIAS_PLACEHOLDER}, and \
-                 no wiring node that names the component sets store_alias"
-            ))
-        })?;
-        *alias = Value::String(store_alias.to_owned());
+        .any(|connection| {
+            connection.get("store-alias").and_then(Value::as_str)
+                == Some(COMPONENT_DECLARATION_STORE_ALIAS_PLACEHOLDER)
+        });
+    if unnamed {
+        return Err(invalid(format!(
+            "leaves a store alias as {COMPONENT_DECLARATION_STORE_ALIAS_PLACEHOLDER}, and the \
+             loop names no store alias for it"
+        )));
     }
     Ok(document)
 }
@@ -548,31 +542,32 @@ mod tests {
         );
     }
 
-    /// The blob-put palette template renders into the package scope with the
-    /// store alias of its node, and states the two packages the WMS cluster
-    /// test grants it (wamn-hw3n).
+    /// A palette template renders into the package scope and states the
+    /// packages it imports. The blob-put template, whose store alias nothing
+    /// names, is refused (wamn-hw3n).
     #[test]
-    fn a_palette_declaration_renders_its_scope_alias_and_imports() {
-        let template = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../../apps/platform/execution/blob-put/declaration.json.in");
+    fn a_palette_declaration_renders_its_scope_and_imports() {
+        let palette = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../apps/platform");
         let scope = wamn_catalog::ComponentPackageScope {
             tenant_id: "tenant-a".to_owned(),
             package_id: "wamn_wms".to_owned(),
             package_version: "1.0.0".to_owned(),
         };
-        let document = render_palette_declaration(&template, &scope, Some("labels"))
-            .expect("the template renders");
+        let template = palette.join("execution/jsonata/declaration.json.in");
+        let document = render_palette_declaration(&template, &scope).expect("the template renders");
         assert_eq!(document["scope"]["package-id"], "wamn_wms");
-        assert_eq!(document["connections"][0]["store-alias"], "labels");
         assert_eq!(
             declared_platform_packages(&template, &document).expect("the declaration parses"),
-            ["wamn:node", "wasmcloud:blobstore"]
+            ["wamn:node"]
         );
-        let refusal = render_palette_declaration(&template, &scope, None)
-            .expect_err("an unfilled store alias is refused");
+        let refusal = render_palette_declaration(
+            &palette.join("execution/blob-put/declaration.json.in"),
+            &scope,
+        )
+        .expect_err("an unnamed store alias is refused");
         assert!(
-            refusal.to_string().contains("store_alias"),
-            "the refusal names the missing parameter: {refusal}"
+            refusal.to_string().contains("names no store alias"),
+            "the refusal names the missing alias: {refusal}"
         );
     }
 

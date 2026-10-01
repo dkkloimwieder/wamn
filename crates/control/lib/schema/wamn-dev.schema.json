@@ -52,6 +52,11 @@
     "catalog": {
       "type": "string"
     },
+    "credentials_file": {
+      "default": null,
+      "description": "The host credentials file in the environment's private root, as the cluster mounts its Secret. Absent means the host has no credentials.",
+      "type": "string"
+    },
     "dup_window_secs": {
       "format": "uint64",
       "minimum": 0.0,

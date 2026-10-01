@@ -60,6 +60,8 @@ pub struct DevEnvironmentInputs {
     /// Domain of the platform principal emails, `<component>@<platform-domain>`.
     pub platform_domain: String,
     pub package_sources: Vec<PathBuf>,
+    /// The host credentials file in the private root, written by `wamn dev up`.
+    pub credentials_file: Option<PathBuf>,
 }
 
 /// Everything the strict `wamn dev` configuration is written from.
@@ -945,6 +947,9 @@ pub fn write_dev_config(
     // A separate insert keeps the literal above inside the json! recursion limit.
     config["platform_domain"] = inputs.platform_domain.as_str().into();
     config["local_artifacts"] = serde_json::to_value(&inputs.local_artifacts)?;
+    if let Some(path) = &inputs.credentials_file {
+        config["credentials_file"] = serde_json::to_value(path)?;
+    }
     if root.join("identity-trust.json").exists() {
         config["session_identity"] = read_json(&root.join("identity-trust.json"))?;
     }
