@@ -375,6 +375,7 @@ async fn prepare_host(
                 WorkloadRoleFamily::IdentityReader,
                 WorkloadRoleFamily::HttpAdmitter,
                 WorkloadRoleFamily::EventMaterializer,
+                WorkloadRoleFamily::Administration,
             ],
             guest_secret_file: PathBuf::from("guest-sql.json"),
             namespace: cluster.name.clone(),

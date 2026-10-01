@@ -151,7 +151,7 @@ async fn recover(
     )
     .await?;
     ensure!(
-        caller.permits(super::super::BASE_RECORD_RECEIPT),
+        caller.permits(*super::super::BASE_RECORD_RECEIPT),
         "queue fixture must authorize its receipt operation before admission"
     );
     lock.batch_execute("BEGIN").await?;

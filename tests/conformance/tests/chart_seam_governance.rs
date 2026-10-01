@@ -795,6 +795,7 @@ fn receiving_pat_overlay_renders_a_complete_scoped_host() {
         "WAMN_EXECUTOR_PLATFORM_PG_URL",
         "WAMN_HTTP_ADMITTER_PG_URL",
         "WAMN_EVENT_MATERIALIZER_PG_URL",
+        "WAMN_ADMINISTRATION_PG_URL",
     ] {
         assert!(
             environment_entry(base_container, name).is_none(),
@@ -834,6 +835,7 @@ fn receiving_pat_overlay_renders_a_complete_scoped_host() {
         "WAMN_EXECUTOR_PLATFORM_PG_URL",
         "WAMN_HTTP_ADMITTER_PG_URL",
         "WAMN_EVENT_MATERIALIZER_PG_URL",
+        "WAMN_ADMINISTRATION_PG_URL",
     ];
     // The generic host reads its event stream identity from the Secret. The
     // Receiving overlay states the same five entries as fixed project values.
@@ -890,7 +892,7 @@ fn receiving_pat_overlay_renders_a_complete_scoped_host() {
             .expect("rendered Receiving host carries env")
             .len(),
         base_env.len() + receiving_names.len(),
-        "Receiving overlay must add exactly its seven scoped environment entries"
+        "Receiving overlay must add exactly its eight scoped environment entries"
     );
 
     for (name, expected) in [
@@ -920,6 +922,10 @@ fn receiving_pat_overlay_renders_a_complete_scoped_host() {
         (
             "WAMN_EVENT_MATERIALIZER_PG_URL",
             "wamn-event-materializer-acme--receiving--dev",
+        ),
+        (
+            "WAMN_ADMINISTRATION_PG_URL",
+            "wamn-administration-acme--receiving--dev",
         ),
     ] {
         let selector = &environment_entry(receiving_container, name)

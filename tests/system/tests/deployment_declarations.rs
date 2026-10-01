@@ -92,7 +92,10 @@ const EXTERNAL_PREREQUISITES: [(&str, &str); 7] = [
 /// literals without pinning the demo triple into the test. What a prefix is
 /// allowed to absorb is [`absorbed_by_a_prerequisite_prefix`], not
 /// `starts_with`.
-const EXTERNAL_PREREQUISITE_PREFIXES: [&str; 6] = [
+const EXTERNAL_PREREQUISITE_PREFIXES: [&str; 7] = [
+    // `wamn-a40n.2` adds the administration credential beside the other
+    // `provision-project-env` outputs the host mounts.
+    "wamn-administration-",
     "wamn-authoring-",
     // `values-host-receiving-pat.yaml` mounts all four `provision-project-env`
     // outputs with `optional: false`, but only two were listed here. The
@@ -691,6 +694,7 @@ fn only_identity_receives_issuer_credentials_and_other_consumers_keep_their_clas
                 ("WAMN_EXECUTOR_PLATFORM_PG_URL", "executor-platform"),
                 ("WAMN_HTTP_ADMITTER_PG_URL", "http-admitter"),
                 ("WAMN_EVENT_MATERIALIZER_PG_URL", "event-materializer"),
+                ("WAMN_ADMINISTRATION_PG_URL", "administration"),
             ] {
                 expected.insert(
                     variable.to_owned(),

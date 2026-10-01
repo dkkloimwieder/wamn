@@ -12,6 +12,12 @@
 //! Receiving group in `values-host.yaml`, and names the WMS Secrets. Its label
 //! store signs with the pod's service account, so it mounts no credentials.
 //!
+//! The control host group of the org (docs/plan/platform-ui.md §4.2) joins
+//! them as `hostgroup-control`. It serves the control serving root, so it has
+//! no release, no project credential and no event stream. It reads
+//! `wamn_system` through the org's `control` login from Secret
+//! `wamn-control-<org>`, which `wamn-ctl-ops provision-org` emits.
+//!
 //! cargo run -p wamn-test-infrastructure --example host_values_files -- \
 //!   <output directory> <release artifact base> <Receiving manifest digest> \
 //!   <WMS manifest digest>
@@ -71,11 +77,12 @@ const WMS: Application = Application {
     event_secret: "wamn-event-nats-wms",
     materializer_secret: "wamn-materializer-nats-wms",
 };
-const ROLE_FAMILIES: [WorkloadRoleFamily; 4] = [
+const ROLE_FAMILIES: [WorkloadRoleFamily; 5] = [
     WorkloadRoleFamily::ExecutorPlatform,
     WorkloadRoleFamily::IdentityReader,
     WorkloadRoleFamily::HttpAdmitter,
     WorkloadRoleFamily::EventMaterializer,
+    WorkloadRoleFamily::Administration,
 ];
 
 fn main() -> anyhow::Result<()> {
@@ -94,6 +101,11 @@ fn main() -> anyhow::Result<()> {
         .as_sequence_mut()
         .context("the Receiving values have runtime.hostGroups")?
         .push(group);
+    let control = control_group(&overlay["runtime"]["hostGroups"][0])?;
+    overlay["runtime"]["hostGroups"]
+        .as_sequence_mut()
+        .context("the Receiving values have runtime.hostGroups")?
+        .push(control);
     fs::write(
         output.join("values-host-base.yaml"),
         google_cloud_base(&host_values(&base, HOST_IMAGE)?)?,
@@ -186,7 +198,7 @@ fn repository_root() -> PathBuf {
 }
 
 /// Name org `dkk` where the checked-in overlay names `acme`: the `WAMN_ORG`
-/// value and the four role Secret names.
+/// value and the role Secret names.
 fn overlay_for_org(overlay: &str, project: &str) -> anyhow::Result<String> {
     let mut document: Value = serde_yaml::from_str(overlay)?;
     let env = group_mut(&mut document)?
@@ -221,7 +233,8 @@ fn overlay_for_org(overlay: &str, project: &str) -> anyhow::Result<String> {
     }
     ensure!(
         renamed == ROLE_FAMILIES.len(),
-        "the overlay names {renamed} of the four role Secrets"
+        "the overlay names {renamed} of the {} role Secrets",
+        ROLE_FAMILIES.len()
     );
     Ok(serde_yaml::to_string(&document)?)
 }
@@ -307,6 +320,50 @@ fn google_cloud_overlay(overlay: &str, application: &Application) -> anyhow::Res
     resources["limits"]["cpu"] = "2".into();
     resources["limits"]["memory"] = "4Gi".into();
     Ok(serde_yaml::to_string(&document)?)
+}
+
+/// The control host group, from the Receiving group's listener, resources
+/// and identity CA: control mode, the org, the session issuer and the
+/// `control` login, and nothing of the application.
+fn control_group(application: &Value) -> anyhow::Result<Value> {
+    let mut group = Mapping::new();
+    for key in [
+        "namespace",
+        "replicas",
+        "http",
+        "ociCaPaths",
+        "resources",
+        "service",
+    ] {
+        let value = application
+            .get(key)
+            .with_context(|| format!("the Receiving host group has {key}"))?;
+        group.insert(key.into(), value.clone());
+    }
+    group.insert("name".into(), "control".into());
+    let mut env = vec![
+        entry(&[("name", "WAMN_CONTROL"), ("value", "true")]),
+        entry(&[("name", "WAMN_ORG"), ("value", ORG)]),
+        entry(&[("name", "WAMN_SESSION_ISSUER"), ("value", ISSUER)]),
+        entry(&[
+            ("name", "WAMN_SESSION_JWKS_CA"),
+            ("value", "/etc/identity-ca/ca.crt"),
+        ]),
+    ];
+    env.push(serde_yaml::from_str(&format!(
+        "{{name: WAMN_CONTROL_URL, valueFrom: {{secretKeyRef: \
+         {{name: wamn-control-{ORG}, key: url, optional: false}}}}}}"
+    ))?);
+    group.insert("env".into(), Value::Sequence(env));
+    group.insert(
+        "volumes".into(),
+        serde_yaml::from_str("[{name: identity-ca, configMap: {name: identity-ca}}]")?,
+    );
+    group.insert(
+        "volumeMounts".into(),
+        serde_yaml::from_str("[{name: identity-ca, mountPath: /etc/identity-ca, readOnly: true}]")?,
+    );
+    Ok(Value::Mapping(group))
 }
 
 /// Point every env reference and volume of Secret `from` at Secret `to`.

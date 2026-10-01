@@ -220,6 +220,12 @@ runtime:
           name: wamn-event-materializer-dkk--wms--dev
           key: url
           optional: false
+    - name: WAMN_ADMINISTRATION_PG_URL
+      valueFrom:
+        secretKeyRef:
+          name: wamn-administration-dkk--wms--dev
+          key: url
+          optional: false
     - name: WAMN_SESSION_ISSUER
       value: https://identity.identity.svc.cluster.local
     - name: WAMN_SESSION_INSTANCE_SUFFIX
@@ -283,6 +289,50 @@ runtime:
     - name: registry-pull
       mountPath: /etc/wamn/registry
       readOnly: true
+    - name: identity-ca
+      mountPath: /etc/identity-ca
+      readOnly: true
+  - namespace: hosts
+    replicas: 1
+    http:
+      enabled: true
+      port: 80
+    ociCaPaths:
+    - /runtime-cert/ca.crt
+    resources:
+      requests:
+        memory: 256Mi
+        cpu: 500m
+      limits:
+        memory: 4Gi
+        cpu: '2'
+      defaultHeapMemory: 256MiB
+      coreInstances: 512
+      guestMemoryMode: count
+      maxConcurrentStarts: 4
+    service:
+      type: ClusterIP
+    name: control
+    env:
+    - name: WAMN_CONTROL
+      value: 'true'
+    - name: WAMN_ORG
+      value: dkk
+    - name: WAMN_SESSION_ISSUER
+      value: https://identity.identity.svc.cluster.local
+    - name: WAMN_SESSION_JWKS_CA
+      value: /etc/identity-ca/ca.crt
+    - name: WAMN_CONTROL_URL
+      valueFrom:
+        secretKeyRef:
+          name: wamn-control-dkk
+          key: url
+          optional: false
+    volumes:
+    - name: identity-ca
+      configMap:
+        name: identity-ca
+    volumeMounts:
     - name: identity-ca
       mountPath: /etc/identity-ca
       readOnly: true

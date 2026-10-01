@@ -1,0 +1,405 @@
+//! The host-run route `wamn_control:application/permission.mine` through a
+//! fixture serving release (docs/plan/platform-ui.md §4.2, wamn-a40n.2).
+//!
+//! The test starts its own PostgreSQL 18 server. A real session token is
+//! verified against local HTTPS keys, the scoped session permission reader
+//! admits the caller, and the host answers the route under the scoped
+//! administration login.
+
+use std::sync::Arc;
+
+use serde_json::{Value, json};
+use sha2::{Digest as _, Sha256};
+use tokio_postgres::{Client, NoTls};
+use wamn_catalog::{HostRouteSet, SERVING_MANIFEST_FORMAT_VERSION};
+use wamn_control_provision::{
+    CredentialGeneration, WorkloadRoleFamily, WorkloadRoleScope, sql, workload_generation_role,
+};
+use wamn_engine::flow_http_routing::{AuthenticatedCaller, FlowHttpRouting, RouteInFlightLimit};
+use wamn_engine::release_manifest::LoadedRelease;
+use wamn_engine::router_delivery::{
+    DeliveryError, DeliveryOutcome, DeliveryRequest, RouteDelivery, Source,
+};
+use wamn_execution_host::{HostRouteDelivery, HostRouteHandlers};
+use wamn_runtime::plugins::route_authentication::{
+    PlatformRouteAuthenticator, SessionRouteAuthentication,
+};
+use wamn_runtime::plugins::wamn_postgres::{
+    AuthorityClass, StaticCredentialProvider, WamnPostgres, WamnPostgresConfig,
+};
+
+#[path = "../../../platform/runtime/tests/support/session_fixture.rs"]
+#[expect(
+    dead_code,
+    reason = "The shared fixture also provides verifier-only fetch barriers."
+)]
+mod session_fixture;
+use session_fixture::{AUDIENCE, ORG, Server, claims, header, signed};
+
+const PROJECT: &str = "project";
+const TENANT: &str = "tenant-a";
+const READ: &str = "session-test:purchase/read@1.0.0";
+const WRITE: &str = "session-test:purchase/write@1.0.0";
+const MEMBER: &str = "34f2085c-19d8-474f-b87a-2a29a5357b9b";
+const PASSWORD: &str = "host-route-test-only";
+
+async fn connect(url: &str) -> anyhow::Result<Client> {
+    let (client, connection) = tokio_postgres::connect(url, NoTls).await?;
+    tokio::spawn(async move { connection.await.expect("fixture database connection") });
+    Ok(client)
+}
+
+fn login(admin_url: &str, role: &str) -> anyhow::Result<String> {
+    let mut url = url::Url::parse(admin_url)?;
+    url.set_username(role)
+        .map_err(|()| anyhow::anyhow!("set fixture login"))?;
+    url.set_password(Some(PASSWORD))
+        .map_err(|()| anyhow::anyhow!("set fixture password"))?;
+    Ok(url.into())
+}
+
+fn generation(family: WorkloadRoleFamily, database: &str) -> anyhow::Result<String> {
+    Ok(workload_generation_role(
+        family,
+        WorkloadRoleScope::ProjectEnvironment {
+            org: ORG,
+            project: PROJECT,
+            environment: "dev",
+            database,
+        },
+        CredentialGeneration::A,
+    )?)
+}
+
+/// The project database, its two scoped logins, and the fixture rows: the
+/// first principal holds `admin`, and the member holds one authored role.
+async fn install(admin: &Client, database: &str) -> anyhow::Result<(String, String)> {
+    admin
+        .batch_execute(
+            "CREATE ROLE wamn_app NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS; \
+             CREATE ROLE wamn_scenario_author NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS; \
+             CREATE SCHEMA wamn_run AUTHORIZATION postgres;",
+        )
+        .await?;
+    admin
+        .batch_execute(wamn_catalog::CATALOG_SCHEMA_SQL)
+        .await?;
+    admin
+        .batch_execute(include_str!("../../../../deploy/sql/app-schema.sql"))
+        .await?;
+    let admitter = generation(WorkloadRoleFamily::HttpAdmitter, database)?;
+    let administration = generation(WorkloadRoleFamily::Administration, database)?;
+    for (family, role) in [
+        (WorkloadRoleFamily::HttpAdmitter, &admitter),
+        (WorkloadRoleFamily::Administration, &administration),
+    ] {
+        admin
+            .batch_execute(&sql::prepare_workload_generation_sql(
+                family,
+                database,
+                role,
+                PASSWORD,
+                "2099-01-01T00:00:00Z",
+            ))
+            .await?;
+    }
+    let first = claims()["sub"]
+        .as_str()
+        .expect("fixture principal")
+        .to_owned();
+    admin
+        .execute(
+            "SELECT set_config('app.user_id', $1, false), \
+                    set_config('app.operation', 'admin:seed-host-route-fixture', false)",
+            &[&first],
+        )
+        .await?;
+    for role in ["admin", "purchase-reader"] {
+        admin
+            .execute(
+                "INSERT INTO app_system.roles (tenant_id, name) VALUES ($1, $2)",
+                &[&TENANT, &role],
+            )
+            .await?;
+    }
+    admin
+        .execute(
+            "INSERT INTO app_system.permissions (tenant_id, role_name, permission, required_by) \
+             VALUES ($1, 'purchase-reader', 'session-test:purchase/read', 'session-test:purchase/read')",
+            &[&TENANT],
+        )
+        .await?;
+    for (principal, email, role) in [
+        (first.as_str(), "first@example.test", "admin"),
+        (MEMBER, "member@example.test", "purchase-reader"),
+    ] {
+        admin
+            .execute(
+                "INSERT INTO app_system.users (tenant_id, id, type, email) \
+                 VALUES ($1, $2::text::uuid, 'person', $3)",
+                &[&TENANT, &principal, &email],
+            )
+            .await?;
+        admin
+            .execute(
+                "INSERT INTO app_system.user_roles (tenant_id, user_id, role_name) \
+                 VALUES ($1, $2::text::uuid, $3)",
+                &[&TENANT, &principal, &role],
+            )
+            .await?;
+    }
+    Ok((admitter, administration))
+}
+
+fn credentials(admitter: &str, administration: &str) -> anyhow::Result<Arc<WamnPostgres>> {
+    let base = WamnPostgresConfig {
+        credentials: None,
+        guest_pool_max_size: 1,
+        platform_pool_max_size: 1,
+        wait_timeout_ms: 2000,
+        statement_timeout_ms: 5000,
+        row_limit: 100,
+    };
+    let configuration = json!({PROJECT: {"credentials": {
+        (AuthorityClass::CallableHttp.as_str()): admitter,
+        (AuthorityClass::Administration.as_str()): administration,
+    }}});
+    let projects = StaticCredentialProvider::projects_from_json(&configuration.to_string(), &base)?;
+    Ok(Arc::new(WamnPostgres::with_provider(Arc::new(
+        StaticCredentialProvider::new(projects, None),
+    ))))
+}
+
+/// A release of one component with two registered operations that serves
+/// the application host route set.
+fn load_release() -> anyhow::Result<Arc<LoadedRelease>> {
+    let manifest = json!({
+        "format-version": SERVING_MANIFEST_FORMAT_VERSION,
+        "release": {"tenant-id": TENANT, "effective-release-id": 1, "environment": "dev",
+            "packages": [{"package-id": "session_test", "package-version": "1.0.0"}]},
+        "components": [{"package-id": "session_test", "component": "purchase", "interface-version": "0.1.0",
+            "digest": format!("sha256:{}", "a".repeat(64)), "operations": {
+                READ: {"registered-operation": READ, "permissions": [READ]},
+                WRITE: {"registered-operation": WRITE, "permissions": [WRITE]}
+            }}],
+        "routes": [
+            {"package-id": "session_test", "component": "purchase", "operation": READ, "type": "get"},
+            {"package-id": "session_test", "component": "purchase", "operation": WRITE, "type": "create"}
+        ],
+        "attachments": {},
+        "workflow": {"wirings": [], "attachments": {}},
+        "host-routes": [HostRouteSet::Application],
+    });
+    // The manifest's own serialization leaves out its empty sections.
+    let manifest: wamn_catalog::ServingManifest = serde_json::from_value(manifest)?;
+    Ok(Arc::new(LoadedRelease::load_canonical_bytes(
+        &wamn_execution_contract::canonical_json_bytes(&serde_json::to_value(&manifest)?),
+        "host route test",
+    )?))
+}
+
+fn permission_mine() -> String {
+    HostRouteSet::Application
+        .attachments()
+        .find(|(_, attachment)| attachment.reference == "wamn_control:application/permission.mine")
+        .map(|(id, _)| id.to_owned())
+        .expect("the application set serves permission.mine")
+}
+
+async fn deliver(
+    delivery: &HostRouteDelivery,
+    attachment: &str,
+    caller: Option<AuthenticatedCaller>,
+) -> Result<Value, DeliveryError> {
+    let report = delivery
+        .deliver(
+            DeliveryRequest {
+                source: Source::Attachment(attachment.to_owned()),
+                delivery_id: "host-route-test".to_owned(),
+                payload: "{}".to_owned(),
+                caller: None,
+                trace: None,
+                parent_causation: None,
+                if_none_match: None,
+            },
+            caller,
+        )
+        .await;
+    match report.outcome? {
+        DeliveryOutcome::Respond(body) => Ok(serde_json::from_str(&body).expect("JSON answer")),
+        other => panic!("a host route responds: {other:?}"),
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn permission_mine_answers_the_held_grants_of_the_session_caller() -> anyhow::Result<()> {
+    let mut postgres = wamn_test_postgres::start(&[])?;
+    let test_database = postgres.create_database("host_route")?;
+    let admin_url = test_database.url();
+    let admin = connect(admin_url).await?;
+    let database: String = admin
+        .query_one("SELECT current_database()::text", &[])
+        .await?
+        .get(0);
+    let (admitter, administration) = install(&admin, &database).await?;
+
+    // The administration login writes the authorization relations and
+    // appends their history entries, and reads nothing on the run plane.
+    let scoped = connect(&login(admin_url, &administration)?).await?;
+    let identity = scoped
+        .query_one(
+            "SELECT rolsuper OR rolbypassrls, \
+                    has_schema_privilege(current_user, 'wamn_run', 'USAGE') \
+             FROM pg_roles WHERE rolname = current_user",
+            &[],
+        )
+        .await?;
+    assert!(!identity.get::<_, bool>(0) && !identity.get::<_, bool>(1));
+    scoped
+        .batch_execute(&format!(
+            "BEGIN; \
+             SELECT set_config('app.user_id', '{MEMBER}', true), \
+                    set_config('app.operation', 'admin:host-route-fixture', true); \
+             INSERT INTO app_system.roles (tenant_id, name) VALUES ('{TENANT}', 'written'); \
+             DELETE FROM app_system.roles WHERE tenant_id = '{TENANT}' AND name = 'written'; \
+             COMMIT;"
+        ))
+        .await?;
+    let entries: i64 = admin
+        .query_one(
+            "SELECT count(*) FROM app_system.roles_history WHERE (before ->> 'name') = 'written' \
+                OR (after ->> 'name') = 'written'",
+            &[],
+        )
+        .await?
+        .get(0);
+    assert_eq!(
+        entries, 2,
+        "each administration write appends its history entry"
+    );
+    drop(scoped);
+
+    let mut server = Server::start().await;
+    let (verifier, _token_clock, _key_clock) = server.verifier();
+    session_fixture::install_authority(
+        &admin,
+        PROJECT,
+        "dev",
+        AUDIENCE,
+        &[claims()["sub"].as_str().unwrap(), MEMBER],
+    )
+    .await?;
+    admin
+        .batch_execute(&sql::grant_identity_reader_surface_sql())
+        .await?;
+    admin
+        .batch_execute(
+            "CREATE ROLE host_route_identity_reader LOGIN; \
+             GRANT wamn_identity_reader TO host_route_identity_reader;",
+        )
+        .await?;
+    let identity_reader = connect(admin_url).await?;
+    identity_reader
+        .batch_execute("SET ROLE host_route_identity_reader")
+        .await?;
+    let postgres_credentials = credentials(
+        &login(admin_url, &admitter)?,
+        &login(admin_url, &administration)?,
+    )?;
+    let release = load_release()?;
+    let routing = FlowHttpRouting::new(Some(Arc::clone(&release)), RouteInFlightLimit::default())
+        .with_authenticator(Arc::new(
+            PlatformRouteAuthenticator::default().with_session_authentication(Arc::new(
+                SessionRouteAuthentication::new(
+                    verifier,
+                    Arc::new(identity_reader),
+                    Arc::clone(&postgres_credentials),
+                    PROJECT,
+                ),
+            )),
+        ));
+    let delivery = HostRouteDelivery::new(
+        Arc::clone(&release),
+        HostRouteHandlers::Application {
+            postgres: postgres_credentials,
+            project: PROJECT.to_owned(),
+        },
+        None,
+    );
+    let route = permission_mine();
+    let bearer = |body: &Value| format!("Bearer {}", signed(&header(), body));
+
+    // An admin holds every operation the release serves, without version.
+    let mut first = claims();
+    first["roles"] = json!(["admin"]);
+    let caller = routing
+        .authenticate_authorization_for_test(&route, Some(&bearer(&first)))
+        .await
+        .expect("an admin session is admitted")
+        .expect("a host-owned caller");
+    assert_eq!(
+        deliver(&delivery, &route, Some(caller))
+            .await
+            .expect("the host answers"),
+        json!({"admin": true, "permissions": [
+            "session-test:purchase/read",
+            "session-test:purchase/write",
+            "wamn_control:application/permission.mine",
+        ]})
+    );
+
+    // A member holds the stored permissions of its roles.
+    let mut member = claims();
+    member["sub"] = json!(MEMBER);
+    member["authority"] = json!({"login": MEMBER});
+    member["roles"] = json!(["purchase-reader"]);
+    let caller = routing
+        .authenticate_authorization_for_test(&route, Some(&bearer(&member)))
+        .await
+        .expect("a member session is admitted")
+        .expect("a host-owned caller");
+    assert_eq!(
+        deliver(&delivery, &route, Some(caller))
+            .await
+            .expect("the host answers"),
+        json!({"admin": false, "permissions": ["session-test:purchase/read"]})
+    );
+
+    // A read route by cookie needs the CSRF claim and no header.
+    let csrf = "fixture-csrf-token";
+    let mut carried = member.clone();
+    carried["csrf"] = json!(hex::encode(Sha256::digest(csrf.as_bytes())));
+    let cookie = format!("__Host-wamn-session={}", signed(&header(), &carried));
+    assert!(
+        routing
+            .authenticate_headers_for_test(&route, &[("cookie", &cookie)])
+            .await
+            .expect("a cookie read without the header is admitted")
+            .is_some()
+    );
+    let bare = format!("__Host-wamn-session={}", signed(&header(), &member));
+    assert_eq!(
+        routing
+            .authenticate_headers_for_test(&route, &[("cookie", &bare)])
+            .await
+            .expect_err("a cookie without the CSRF claim is refused")
+            .0,
+        401
+    );
+
+    // No caller, no answer, and a PAT is unavailable without PAT authentication.
+    assert!(matches!(
+        deliver(&delivery, &route, None).await,
+        Err(DeliveryError::InvalidRequest)
+    ));
+    assert_eq!(
+        routing
+            .authenticate_authorization_for_test(&route, Some("Bearer wamn_pat_unknown"))
+            .await
+            .expect_err("no PAT authentication is configured")
+            .0,
+        503
+    );
+    server.stop().await;
+    Ok(())
+}

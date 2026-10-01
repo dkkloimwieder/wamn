@@ -114,6 +114,7 @@ pub(super) fn host_secrets(
                 WorkloadRoleFamily::IdentityReader,
                 WorkloadRoleFamily::HttpAdmitter,
                 WorkloadRoleFamily::EventMaterializer,
+                WorkloadRoleFamily::Administration,
             ],
             guest_secret_file: "guest-sql.json".into(),
             namespace: inputs.host_secret_namespace.clone(),
