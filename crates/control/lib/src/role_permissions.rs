@@ -13,7 +13,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use anyhow::Context as _;
 use tokio_postgres::{Client, Transaction};
-use wamn_catalog::{ServingComponent, ServingManifest};
+use wamn_catalog::{ServingComponent, ServingManifest, sealed_operation_reference};
 
 use crate::user_roles::{EnvironmentTarget, connect_target};
 use wamn_control_provision::operation_grants::{
@@ -21,7 +21,6 @@ use wamn_control_provision::operation_grants::{
     operation_grant_floor_check_sql,
 };
 use wamn_control_provision::{PlatformComponent, bind_platform_principal_sql};
-use wamn_engine::flow_http_routing::operation_reference;
 use wamn_project_state::ADMIN_ROLE;
 
 /// The permission closure of every operation a serving release registers,
@@ -48,14 +47,14 @@ impl ReleaseClosures {
             let Some(sealed) = &operation.registered_operation else {
                 continue;
             };
-            let root = operation_reference(sealed).to_owned();
+            let root = sealed_operation_reference(sealed).to_owned();
             let closure = closures.entry(root.clone()).or_default();
             closure.insert(root);
             closure.extend(
                 operation
                     .permissions
                     .iter()
-                    .map(|permission| operation_reference(permission).to_owned()),
+                    .map(|permission| sealed_operation_reference(permission).to_owned()),
             );
         }
         Self { closures }

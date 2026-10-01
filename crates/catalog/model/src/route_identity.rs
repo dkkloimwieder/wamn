@@ -13,11 +13,15 @@ pub fn operation_token(package: &str, version: &str, model: &str, action: &str) 
     )
 }
 
+/// A sealed operation id split at its last `@` into its reference and its
+/// version, or `None` when the id carries no version.
+pub fn split_sealed_operation(sealed: &str) -> Option<(&str, &str)> {
+    sealed.rsplit_once('@')
+}
+
 /// The reference of a sealed operation id: the id without its `@version`.
 pub fn sealed_operation_reference(sealed: &str) -> &str {
-    sealed
-        .rsplit_once('@')
-        .map_or(sealed, |(reference, _)| reference)
+    split_sealed_operation(sealed).map_or(sealed, |(reference, _)| reference)
 }
 
 /// The route path `<path_prefix>/<model>/<action>`.

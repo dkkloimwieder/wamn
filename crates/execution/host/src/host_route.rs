@@ -13,7 +13,7 @@ use std::sync::Arc;
 
 use serde_json::json;
 use wamn_catalog::{HostAttachment, HostHandler};
-use wamn_engine::flow_http_routing::{AuthenticatedCaller, operation_reference};
+use wamn_engine::flow_http_routing::AuthenticatedCaller;
 use wamn_engine::release_manifest::LoadedRelease;
 use wamn_engine::router_delivery::{
     DeliveryError, DeliveryOutcome, DeliveryReport, DeliveryRequest, RouteDelivery, Source,
@@ -132,7 +132,7 @@ fn served_references(release: &LoadedRelease) -> BTreeSet<String> {
         .iter()
         .flat_map(|component| component.operations.values())
         .filter_map(|operation| operation.registered_operation.as_deref())
-        .map(|operation| operation_reference(operation).to_owned());
+        .map(|operation| wamn_catalog::sealed_operation_reference(operation).to_owned());
     let host = manifest
         .host_routes
         .iter()

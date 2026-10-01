@@ -467,16 +467,11 @@ impl AuthenticatedCaller {
     /// the serving release, so a stored reference the release does not serve
     /// grants nothing.
     pub fn permits(&self, operation: &str) -> bool {
-        self.admin || self.permissions.contains(operation_reference(operation))
+        self.admin
+            || self
+                .permissions
+                .contains(wamn_catalog::sealed_operation_reference(operation))
     }
-}
-
-/// The stable reference of a sealed operation token: the token without its
-/// last `@<version>`.
-pub fn operation_reference(operation: &str) -> &str {
-    operation
-        .rsplit_once('@')
-        .map_or(operation, |(reference, _)| reference)
 }
 
 /// This process was given no release, so it can answer no route.
@@ -2137,7 +2132,7 @@ mod tests {
         };
         assert!(admin.permits("platform-fixture:widget/query@1.0.0"));
         assert_eq!(
-            operation_reference("platform-fixture:widget/get@1.0.0"),
+            wamn_catalog::sealed_operation_reference("platform-fixture:widget/get@1.0.0"),
             "platform-fixture:widget/get"
         );
         assert_eq!(caller.credential_type(), CredentialType::Pat);

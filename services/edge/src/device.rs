@@ -16,7 +16,7 @@ use chrono::{SecondsFormat, Utc};
 use serde_json::json;
 use tokio::sync::{mpsc, watch};
 use tokio::task::JoinHandle;
-use wamn_engine::flow_http_routing::{AuthenticatedCaller, CredentialType, operation_reference};
+use wamn_engine::flow_http_routing::{AuthenticatedCaller, CredentialType};
 use wamn_engine::operation::logs_intent;
 use wamn_engine::router_delivery::{DeliveryOutcome, SourceRef};
 
@@ -71,7 +71,7 @@ pub fn start(
             .grants()
             .permissions(std::slice::from_ref(&config.role))
             .iter()
-            .map(|permission| operation_reference(permission).to_owned())
+            .map(|permission| wamn_catalog::sealed_operation_reference(permission).to_owned())
             .collect(),
     );
     let route = delivery.device_route(&config.attachment, &caller)?;
