@@ -653,8 +653,9 @@ done
 
 On 2026-09-26 the five generations took 107 seconds and the apply 13 seconds.
 
-Since `wamn-a40n.2`, a host also reads a sixth credential, `WAMN_ADMINISTRATION_PG_URL`, from the Secret `wamn-administration-dkk--receiving--dev`.
-Prepare it and apply it the same way:
+Since `wamn-a40n.2`, a host also reads a sixth credential, `WAMN_ADMINISTRATION_PG_URL`, from the Secret `wamn-administration-dkk--<project>--dev`.
+On an installed project database, `upgrade-schema` applies its grants as `project/0003_administration_grants.sql`.
+Prepare it and apply it the same way for `receiving`, and again with `--project wms` for the WMS host group:
 
 ```bash
 target/debug/wamn-ctl provision-project-env --org dkk --project receiving --env dev --tenant dev \
