@@ -424,6 +424,8 @@ RESEND_API_KEY=unused-development-fixture RESEND_FROM='WAMN <fixture@example.inv
   development_identity_survives_target_recreation_and_owned_teardown -- --ignored --exact
 ```
 
+On a disposable stack, the `pat_for_disposable_stack` example of `wamn-test-infrastructure` issues one management-author PAT into a mode 0600 file. It starts and stops this identity process, and its header gives the usage.
+
 ### Local saved-edit acceptance
 
 Use a clean linked worktree reserved for this test.

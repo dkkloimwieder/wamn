@@ -6671,6 +6671,7 @@ dependencies = [
  "url",
  "wamn-authoring-model",
  "wamn-catalog",
+ "wamn-control",
  "wamn-control-provision",
  "wamn-control-registry",
  "wamn-event-wire",
