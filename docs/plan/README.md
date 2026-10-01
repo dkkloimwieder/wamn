@@ -18,7 +18,6 @@ These pages describe unbuilt work and its limits. Current behavior belongs in [a
 - [Release qualification](release-qualification.md): Draft design for `qualify-release` of any environment from its candidate (finding `wamn-ld93.33`).
 - [Schema upgrade](schema-upgrade.md): Design for `upgrade-schema`, the verb that applies a platform schema change to an installed database (finding `wamn-o8b9`).
 - [Upgrades](upgrades.md): Design for changing a schema after installation.
-- [Web cache invalidation](web-cache-invalidation.md): A write marks stale only the stored reads whose relations it writes (`wamn-fjdo`).
 - [Web deployment](web-deployment.md): Epic 20 rules for the web client host, and its remaining real deployment.
 - [Web operator client](web-operator-client.md): Generated browser UIs from the release contract, scoped one epic at a time.
 - [Write log](write-log.md): Epic 24 design for one idempotency record per database, `app_system.write_log`, in place of the claim tables.

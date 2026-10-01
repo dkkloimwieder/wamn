@@ -607,10 +607,16 @@ A stale entry with an ETag sends `If-None-Match`, and a 304 reuses the stored re
 The store keeps only a 200 reply that classifies as completed or refused.
 A read that sends the store's tag calls fetch with `cache: "no-store"`, so its 304 reaches the store.
 A read that the store does not hold, as after a reload, calls fetch with `cache: "no-cache"`. The browser revalidates its own copy, and a 304 saves the body.
-Any write marks every stored read stale, because the browser cannot tell which models a write changed.
+Every operation contract lists its `relations`, and the generated `ResponseContract` carries them as `reads` and `writes`, each a list of `schema.table`.
+A read names every relation that it selects from, and a history table counts as its model table.
+A write names each relation that it inserts into, updates or deletes from. A relation that it only locks is not written.
+A write marks stale only the stored reads that share a relation with it, by the one rule `writeTouches` in the runtime.
+A write whose contract names no relation, or a read whose contract names none, counts as touching, so that pair behaves as before.
+A materializer runs after the write's response and can write other tables, which the browser cannot see. A stored read of such a table stays fresh until its `max-age` ends, and its ETag then reads the change.
 A new CSRF cookie empties the store, so one session's reads never answer the next session.
-The transport also calls each `onWrite` listener after a write settles.
-A generated detail, a table, the record text in a table's reference column and a form's selector list use it to read again, so an unchanged read costs one 304.
+The transport also calls each `onWrite` listener with the write's relations after the write settles.
+A generated detail, a table, an edit cell, the record text in a table's reference column and a form's selector list listen through `afterWrites` with the relations of their own read.
+Each reads again only after a write that touches them, so an unchanged read costs one 304 and an untouched read costs nothing.
 A form's own record read does not read again, because the form sends the revision that it read when it opened.
 
 A package that generates TypeScript also generates [SolidJS components](../../crates/schema/generator/src/client_component.rs), one for each operation the plan gives a role.
