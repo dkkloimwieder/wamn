@@ -13,6 +13,13 @@ pub fn operation_token(package: &str, version: &str, model: &str, action: &str) 
     )
 }
 
+/// The reference of a sealed operation id: the id without its `@version`.
+pub fn sealed_operation_reference(sealed: &str) -> &str {
+    sealed
+        .rsplit_once('@')
+        .map_or(sealed, |(reference, _)| reference)
+}
+
 /// The route path `<path_prefix>/<model>/<action>`.
 pub fn route_path(path_prefix: &str, model: &str, action: &str) -> String {
     format!("{path_prefix}/{model}/{action}")

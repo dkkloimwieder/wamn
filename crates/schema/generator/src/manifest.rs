@@ -2262,12 +2262,7 @@ pub fn canonical_operation_prefix(package: &PackageIdentity) -> Result<String, G
     Ok(format!("{}:", package.id.replace('_', "-")))
 }
 
-/// The reference of a sealed operation id: the id without its `@version`.
-pub fn sealed_operation_reference(sealed: &str) -> &str {
-    sealed
-        .rsplit_once('@')
-        .map_or(sealed, |(reference, _)| reference)
-}
+pub use wamn_catalog::sealed_operation_reference;
 
 /// Resolve an authored operation reference, `<package>:<interface>/<operation>`,
 /// to its sealed operation id.

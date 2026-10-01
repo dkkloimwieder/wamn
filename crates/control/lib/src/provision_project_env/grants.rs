@@ -706,9 +706,10 @@ pub(super) fn verify_http_admitter_grants(
 }
 
 /// Exact surface of the administration family (`wamn-a40n.2`): `USAGE` on
-/// `app_system` and `wamn_history`, a `SELECT` on each relation of
-/// `sql::ADMINISTRATION_RELATIONS`, and `EXECUTE` on `row_image` and on the
-/// tenant-key derivation. Its writes come through `wamn_platform`.
+/// `app_system` and `wamn_history`, `SELECT`, `INSERT`, `UPDATE` and `DELETE`
+/// on each relation of `sql::ADMINISTRATION_RELATIONS`, `INSERT` on the entry
+/// columns of its history table, and `EXECUTE` on `row_image` and on the
+/// tenant-key derivation. The grants go to `wamn_administration` alone.
 pub(super) fn verify_administration_grants(
     role: &str,
     database: &str,

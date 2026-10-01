@@ -194,4 +194,35 @@ mod tests {
             }
         }
     }
+
+    /// The header of the generated project migration 0003.
+    const ADMINISTRATION_GRANTS_HEADER: &str = "\
+-- GENERATED FILE. Do not edit. It is the output of
+-- wamn_control_provision::sql::grant_administration_surface_sql(\"wamn_run\"),
+-- and a test in crates/control/provision/src/schema_migrations.rs renders that
+-- function and compares the bytes.
+--
+-- The administration family surface of docs/plan/platform-ui.md §2.1 in an
+-- installed project-environment database (wamn-a40n.2). upgrade-schema runs
+-- this file once in one transaction and records it. A fresh install records
+-- it as applied, because provision-project-env applies the same surface when
+-- it prepares the administration credential.
+";
+
+    #[test]
+    fn project_migration_0003_is_the_rendered_administration_surface() {
+        let rendered = format!(
+            "{ADMINISTRATION_GRANTS_HEADER}\n{}\n",
+            crate::sql::grant_administration_surface_sql("wamn_run")
+        );
+        let migration = PROJECT_MIGRATIONS
+            .iter()
+            .find(|migration| migration.ordinal() == 3)
+            .expect("project migration 0003 exists");
+        assert_eq!(
+            migration.sql, rendered,
+            "{} is not the rendered administration surface",
+            migration.relative_path
+        );
+    }
 }

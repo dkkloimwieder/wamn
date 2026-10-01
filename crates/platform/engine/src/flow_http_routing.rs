@@ -292,7 +292,7 @@ impl InputSchemaValidators {
         let mut attachment_hashes = HashMap::new();
         let mut validators = HashMap::new();
         for (attachment_id, attachment) in release.manifest().every_served_attachment() {
-            if !carries_http_route(attachment.kind())
+            if !carries_http_route(attachment.attachment_type())
                 || route_definition(release.manifest(), attachment_id, attachment).is_none()
             {
                 continue;
@@ -630,7 +630,7 @@ impl FlowHttpRouting {
         Ok(loaded_release
             .manifest()
             .served_attachment(attachment_id)
-            .is_some_and(|attachment| carries_http_route(attachment.kind())))
+            .is_some_and(|attachment| carries_http_route(attachment.attachment_type())))
     }
 
     fn validate_input(&self, attachment_id: &str, payload: &str) -> Result<(), String> {
@@ -649,7 +649,7 @@ impl FlowHttpRouting {
         let manifest = loaded_release.manifest();
         let attachment = manifest
             .served_attachment(attachment_id)
-            .filter(|attachment| carries_http_route(attachment.kind()))
+            .filter(|attachment| carries_http_route(attachment.attachment_type()))
             .ok_or_else(authentication_unavailable)?;
         let policy = parse_attachment_auth_policy(attachment.auth_policy()).ok_or_else(|| {
             AuthRejection {
@@ -726,7 +726,7 @@ fn route_definitions(
 ) -> Vec<RouteDefinition> {
     manifest
         .every_served_attachment()
-        .filter(|(_, attachment)| carries_http_route(attachment.kind()))
+        .filter(|(_, attachment)| carries_http_route(attachment.attachment_type()))
         .filter_map(|(attachment_id, attachment)| {
             // Decoded before it is matched, so a malformed attachment is reported
             // whenever this pod serves at all rather than only once some request
@@ -757,7 +757,7 @@ fn carries_http_route(kind: AttachmentType) -> bool {
 pub(crate) fn expected_http_hostnames(manifest: &ServingManifest) -> HashSet<String> {
     manifest
         .every_served_attachment()
-        .filter(|(_, attachment)| carries_http_route(attachment.kind()))
+        .filter(|(_, attachment)| carries_http_route(attachment.attachment_type()))
         .filter_map(|(id, attachment)| route_definition(manifest, id, attachment))
         .map(|definition| definition.host)
         .filter(|host| !host.is_empty() && host != WILDCARD_HOST)
@@ -772,7 +772,7 @@ pub(crate) fn expected_http_hostnames(manifest: &ServingManifest) -> HashSet<Str
 pub fn requires_pat_route_authentication(manifest: &ServingManifest) -> bool {
     manifest
         .every_served_attachment()
-        .filter(|(_, attachment)| carries_http_route(attachment.kind()))
+        .filter(|(_, attachment)| carries_http_route(attachment.attachment_type()))
         .any(|(attachment_id, attachment)| {
             route_definition(manifest, attachment_id, attachment).is_some()
                 && parse_attachment_auth_policy(attachment.auth_policy())
@@ -784,7 +784,7 @@ pub fn requires_pat_route_authentication(manifest: &ServingManifest) -> bool {
 pub fn requires_session_route_authentication(manifest: &ServingManifest) -> bool {
     manifest
         .every_served_attachment()
-        .filter(|(_, attachment)| carries_http_route(attachment.kind()))
+        .filter(|(_, attachment)| carries_http_route(attachment.attachment_type()))
         .any(|(id, attachment)| {
             route_definition(manifest, id, attachment).is_some()
                 && parse_attachment_auth_policy(attachment.auth_policy())

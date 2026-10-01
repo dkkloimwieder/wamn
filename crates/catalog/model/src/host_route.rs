@@ -16,7 +16,9 @@ use std::sync::LazyLock;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
-use crate::route_identity::{operation_token, route_attachment_id, route_path};
+use crate::route_identity::{
+    operation_token, route_attachment_id, route_path, sealed_operation_reference,
+};
 use crate::{AttachmentType, OperationType, PAT_AUTHENTICATION_MODE, SESSION_AUTHENTICATION_MODE};
 
 /// The control contract's manifest: the one place its version is authored.
@@ -63,11 +65,11 @@ pub fn host_route_path_prefix() -> &'static str {
 pub enum HostRouteSet {
     /// The application administration contract, served under every
     /// application audience against that environment's database.
-    #[serde(rename = "wamn_control:application")]
+    #[serde(rename = "application")]
     Application,
     /// The org and project administration contract of the control serving
     /// root.
-    #[serde(rename = "wamn_control:control")]
+    #[serde(rename = "control")]
     Control,
 }
 
@@ -132,7 +134,7 @@ pub struct HostAttachment {
 }
 
 impl HostAttachment {
-    pub fn kind(&self) -> AttachmentType {
+    pub fn attachment_type(&self) -> AttachmentType {
         AttachmentType::Http
     }
 
@@ -168,11 +170,7 @@ static ATTACHMENTS: LazyLock<BTreeMap<String, HostAttachment>> = LazyLock::new(|
             };
             let attachment = HostAttachment {
                 route,
-                reference: operation
-                    .rsplit_once('@')
-                    .expect("an operation token carries its version")
-                    .0
-                    .to_owned(),
+                reference: sealed_operation_reference(&operation).to_owned(),
                 operation,
                 definition: json!({
                     "id": id,

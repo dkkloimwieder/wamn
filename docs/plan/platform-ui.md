@@ -619,6 +619,9 @@ The router dispatches the operation to a fixed host handler instead of invoking 
 
 A host-run write stamps the route's sealed operation id, `wamn-control:<noun>/<verb>@<version>`.
 
+Control routes carry the package prefix in their path (`/wamn_control/…`) and attachment id (`wamn-control-…-http`), because every release serves them beside its application routes, which stay unprefixed.
+Publish refuses that path prefix to an application.
+
 The implementation uses the host transaction model present on the `main` Issue 1 starts from; it does not recreate a separate administration transaction path.
 
 ### Application host routes

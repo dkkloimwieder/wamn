@@ -50,9 +50,9 @@ A host route derives its sealed operation id, its path and its attachment id fro
 For example, `permission.mine` is `wamn-control:permission/mine@0.1.0`, at `/wamn_control/permission/mine`, with the attachment id `wamn-control-permission-mine-http`.
 
 There are two sets.
-Release mint writes `wamn_control:application` into every application release.
+Release mint writes the set `application` into every application release.
 Its routes admit a PAT or a session and read the project environment database of the release.
-The control serving root serves only `wamn_control:control`, whose routes admit a browser session only.
+The control serving root serves only the set `control`, whose routes admit a browser session only.
 Mint refuses an authored attachment under `/wamn_control/`.
 
 [`HostRouteDelivery`](../../crates/execution/host/src/host_route.rs) serves the host routes of the loaded release.

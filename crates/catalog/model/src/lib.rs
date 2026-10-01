@@ -45,7 +45,9 @@ pub use host_route::{
     host_route_path_prefix,
 };
 pub use package::{EffectiveReleaseId, PackageCoordinate};
-pub use route_identity::{operation_token, route_attachment_id, route_path};
+pub use route_identity::{
+    operation_token, route_attachment_id, route_path, sealed_operation_reference,
+};
 pub use serving_manifest::{
     AttachmentAuthPolicy, AttachmentRef, AttachmentTarget, CanonicalSpelling,
     INVALID_ATTACHMENT_AUTH_POLICY_REFUSAL, MAX_SERVING_MANIFEST_BYTES, NO_AUTHENTICATION_MODE,
