@@ -116,20 +116,24 @@ impl Drop for Compose {
     }
 }
 
-/// The manifest of every application under `apps/`.
+/// The packages that the timing command gives `wamn dev up`.
+const RECEIVING_PACKAGES: [&str; 2] = ["wamn_receiving", "client_acme_receiving"];
+const WMS_PACKAGES: [&str; 1] = ["wamn_wms"];
+
+/// The manifest of each named application under `apps/`.
 fn application_manifests(
     repository: &Path,
+    packages: &[&str],
 ) -> anyhow::Result<Vec<wamn_schema_generator::PackageManifest>> {
-    let mut manifests = Vec::new();
-    for entry in fs::read_dir(repository.join("apps"))? {
-        let path = entry?.path().join("wamn.json");
-        if path.is_file() {
-            manifests.push(wamn_schema_generator::PackageManifest::from_slice(
+    packages
+        .iter()
+        .map(|package| {
+            let path = repository.join("apps").join(package).join("wamn.json");
+            Ok(wamn_schema_generator::PackageManifest::from_slice(
                 &fs::read(&path).with_context(|| format!("read {}", path.display()))?,
-            )?);
-        }
-    }
-    Ok(manifests)
+            )?)
+        })
+        .collect()
 }
 
 fn private(path: &Path, bytes: &[u8]) -> anyhow::Result<()> {
@@ -232,10 +236,19 @@ async fn main() -> anyhow::Result<()> {
     let scope = Triple::new("acme", "receiving", "dev");
     let source = source_stream_config(&scope, 1, Duration::from_secs(120));
     let advisory = advisory_stream_config(&scope, 1);
-    // The broker admits the materializer consumers of every application,
-    // because `wamn dev up` provisions those of the packages it is given.
+    // The broker admits the materializer consumers of the packages that the
+    // timing command gives `wamn dev up`, which provisions those consumers.
     let tenant = wamn_control::dev::environment::TENANT;
-    let consumers = registration_consumers(&scope, tenant, &application_manifests(&repository)?);
+    let packages: &[&str] = if wms {
+        &WMS_PACKAGES
+    } else {
+        &RECEIVING_PACKAGES
+    };
+    let consumers = registration_consumers(
+        &scope,
+        tenant,
+        &application_manifests(&repository, packages)?,
+    );
     let broker = event_broker::prepare(&directory, &scope, tenant, &source, &advisory, &consumers)?;
     private(
         &directory.join("compose.json"),

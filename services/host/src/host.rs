@@ -1040,37 +1040,6 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
             },
         ))
     });
-    // SCHEDULE-TIME PRELOAD. prepare_synchronous_release pulls and compiles
-    // every digest this release serves and populates the driver's digest-keyed
-    // component cache; without it the FIRST request pays a full pull and compile
-    // -- measured at 35.8 s in the record retained by commit 1106dc4e6792.
-    //
-    // It ran only in services/executor before this: the probe was constructed
-    // there and nowhere else, so the host that actually serves HTTP routes never
-    // preloaded anything. Readiness is gated on the same call, so a host that
-    // reports ready has the entries rather than a promise of them.
-    if let Some(operations) = operations.as_ref() {
-        let readiness = wamn_execution_host::RouterReadinessProbe::new(
-            Arc::clone(operations),
-            router_driver
-                .clone()
-                .map(|driver| driver as Arc<dyn WiringDelivery>),
-        );
-        let snapshot = readiness.refresh().await;
-        anyhow::ensure!(
-            matches!(
-                snapshot.status,
-                wamn_execution_host::RouterReadinessStatus::Ready
-            ),
-            "release preload did not reach ready: {:?} ({})",
-            snapshot.status,
-            snapshot.refusal.unwrap_or("no refusal recorded")
-        );
-        tracing::info!(
-            target: "wamn::host",
-            "release preload completed; component cache warm"
-        );
-    }
     let host_config = HostConfig {
         allow_oci_insecure: args.allow_insecure_registries,
         oci_pull_timeout: Some(Duration::from_secs(30)),
@@ -1305,42 +1274,49 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
         .start()
         .await
         .context("failed to start cluster host")?;
-    if let Some(workload) = local_workload {
-        let started = native_host.workload_start(workload).await;
-        if let Err(error) = started.as_ref() {
-            tracing::error!(%error, "local workload startup failed");
-        }
-        let started = match started {
-            Ok(started)
-                if started.workload_status.workload_state
-                    == wash_runtime::types::WorkloadState::Running =>
-            {
-                Ok(())
+    // The host heartbeats from here on. The preload compiles after it, so a
+    // cold compile cache delays the workload and not the heartbeat.
+    let preloaded = preload_release(operations.as_ref(), router_driver.as_ref()).await;
+    let started = match (preloaded, local_workload) {
+        (Err(error), _) => Err(error),
+        (Ok(()), None) => Ok(()),
+        (Ok(()), Some(workload)) => {
+            let started = native_host.workload_start(workload).await;
+            if let Err(error) = started.as_ref() {
+                tracing::error!(%error, "local workload startup failed");
             }
-            Ok(started) => Err(anyhow::anyhow!(
-                "local workload refused: {:?}",
-                started.workload_status
-            )),
-            Err(error) => Err(error),
-        };
-        if let Err(error) = started {
-            let _ = stop_queue.send(true);
-            wamn_engine::lifecycle::bounded_cleanup(cleanup_budget, async {
-                let had_ingress = ingress_handler.is_some();
-                let explicit_stop = match ingress_handler.as_ref() {
-                    Some(handler) => handler.stop().await.context("stop HTTP admission"),
-                    None => Ok(()),
-                };
-                let native_result = normalize_explicit_ingress_stop(
-                    native_cleanup.await,
-                    had_ingress && explicit_stop.is_ok(),
-                );
-                explicit_stop.and(native_result)
-            })
-            .await?;
-
-            return Err(error);
+            match started {
+                Ok(started)
+                    if started.workload_status.workload_state
+                        == wash_runtime::types::WorkloadState::Running =>
+                {
+                    Ok(())
+                }
+                Ok(started) => Err(anyhow::anyhow!(
+                    "local workload refused: {:?}",
+                    started.workload_status
+                )),
+                Err(error) => Err(error),
+            }
         }
+    };
+    if let Err(error) = started {
+        let _ = stop_queue.send(true);
+        wamn_engine::lifecycle::bounded_cleanup(cleanup_budget, async {
+            let had_ingress = ingress_handler.is_some();
+            let explicit_stop = match ingress_handler.as_ref() {
+                Some(handler) => handler.stop().await.context("stop HTTP admission"),
+                None => Ok(()),
+            };
+            let native_result = normalize_explicit_ingress_stop(
+                native_cleanup.await,
+                had_ingress && explicit_stop.is_ok(),
+            );
+            explicit_stop.and(native_result)
+        })
+        .await?;
+
+        return Err(error);
     }
     tracing::info!(
         elapsed_ms = %startup_started.elapsed().as_millis(),
@@ -1435,6 +1411,43 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
     })
     .await;
     result.and(identity_result).and(probe_result)
+}
+
+/// Pull and compile every component that the release serves.
+async fn preload_release(
+    operations: Option<&Arc<OperationHost>>,
+    router_driver: Option<&Arc<RouterDriver>>,
+) -> anyhow::Result<()> {
+    // SCHEDULE-TIME PRELOAD. prepare_synchronous_release pulls and compiles
+    // every digest this release serves and populates the driver's digest-keyed
+    // component cache; without it the FIRST request pays a full pull and compile
+    // -- measured at 35.8 s in the record retained by commit 1106dc4e6792.
+    //
+    // It ran only in services/executor before this: the probe was constructed
+    // there and nowhere else, so the host that actually serves HTTP routes never
+    // preloaded anything. The local workload starts after this call, so a host
+    // whose workload runs has the entries rather than a promise of them.
+    if let Some(operations) = operations {
+        let readiness = wamn_execution_host::RouterReadinessProbe::new(
+            Arc::clone(operations),
+            router_driver.map(|driver| Arc::clone(driver) as Arc<dyn WiringDelivery>),
+        );
+        let snapshot = readiness.refresh().await;
+        anyhow::ensure!(
+            matches!(
+                snapshot.status,
+                wamn_execution_host::RouterReadinessStatus::Ready
+            ),
+            "release preload did not reach ready: {:?} ({})",
+            snapshot.status,
+            snapshot.refusal.unwrap_or("no refusal recorded")
+        );
+        tracing::info!(
+            target: "wamn::host",
+            "release preload completed; component cache warm"
+        );
+    }
+    Ok(())
 }
 
 /// Load the existing workload description with explicitly local component bytes.

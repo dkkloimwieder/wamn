@@ -464,7 +464,8 @@ The fixture starts Compose services on assigned loopback ports.
 If you put `--wms` before `--`, the fixture also starts MinIO and makes the `labels` bucket.
 It then sets `WAMN_DEV_ENV_CREDENTIALS_FILE` to a mode 0600 file with the MinIO credential under the handle `labels-store`.
 It sets `WAMN_RECEIVING_DEV_MINIO_ENDPOINT` to the MinIO address.
-The owned event broker admits the materializer consumers of every application under `apps/`.
+The owned event broker admits the materializer consumers of the packages that the command gives `wamn dev up`.
+These are `wamn_receiving` and `client_acme_receiving`, or `wamn_wms` with `--wms`.
 The fixture sets the CDC reader binary and the event publisher credential for `wamn dev up`.
 `wamn-test-postgres` starts its server with `wal_level=logical`.
 It sets every variable that the case declares, except the two that the command sets.
