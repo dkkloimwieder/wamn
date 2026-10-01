@@ -135,15 +135,7 @@ impl StableGrantSet {
             Self::Administration => {
                 verify_administration_grants(role, database, required_database, grants)
             }
-            Self::Control => verify_system_reader_grants(
-                WorkloadRoleFamily::Control.label(),
-                "identity",
-                &sql::CONTROL_RELATIONS,
-                role,
-                database,
-                required_database,
-                grants,
-            ),
+            Self::Control => verify_control_grants(role, database, required_database, grants),
         }
     }
 }
@@ -866,6 +858,61 @@ pub(super) fn verify_system_reader_grants(
     anyhow::ensure!(
         actual == expected,
         "stable role {role:?} ACLs in database {database:?} are not the exact {reader} grant set"
+    );
+    Ok(())
+}
+
+/// The exact control grant set, [`sql::CONTROL_SURFACE`], held in the control
+/// database alone.
+pub(super) fn verify_control_grants(
+    role: &str,
+    database: &str,
+    required_database: &str,
+    grants: &[RoleAcl],
+) -> anyhow::Result<()> {
+    if database != required_database {
+        anyhow::ensure!(
+            grants.is_empty(),
+            "stable role {role:?} carries a control ACL in database {database:?}, \
+             which is not the control database"
+        );
+        return Ok(());
+    }
+    let actual = grants
+        .iter()
+        .map(|acl| {
+            (
+                acl.object_type.clone(),
+                acl.schema_name.clone(),
+                acl.object_name.clone(),
+                acl.privilege.clone(),
+            )
+        })
+        .collect::<BTreeSet<_>>();
+    let mut expected = sql::CONTROL_SCHEMAS
+        .iter()
+        .map(|schema| {
+            (
+                "schema".to_string(),
+                (*schema).to_string(),
+                (*schema).to_string(),
+                "USAGE".to_string(),
+            )
+        })
+        .collect::<BTreeSet<_>>();
+    for (schema, relation, privileges) in sql::CONTROL_SURFACE {
+        for privilege in privileges {
+            expected.insert((
+                "relation".to_string(),
+                schema.to_string(),
+                relation.to_string(),
+                (*privilege).to_string(),
+            ));
+        }
+    }
+    anyhow::ensure!(
+        actual == expected,
+        "stable role {role:?} ACLs in database {database:?} are not the exact control grant set"
     );
     Ok(())
 }

@@ -338,14 +338,33 @@ const CONTROL_MATRIX: [FamilyReach; 3] = [
         ],
         routines: &[],
     },
-    // The org control host reads who holds `project-admin` and whether a
-    // control session's password login is live. It writes nothing.
+    // The org control host reads who is a person and whether a control
+    // session's password login is live. It writes the org memberships and the
+    // org, project and environment grants of the org operations, and reads
+    // the projects and environments those grants cover.
     FamilyReach {
         family: WorkloadRoleFamily::Control,
         relations: &[
+            "identity.org_memberships|DELETE|table",
+            "identity.org_memberships|INSERT|table",
+            "identity.org_memberships|SELECT|table",
+            "identity.org_memberships|UPDATE|table",
+            "identity.org_roles|DELETE|table",
+            "identity.org_roles|INSERT|table",
+            "identity.org_roles|SELECT|table",
+            "identity.org_roles|UPDATE|table",
             "identity.password_logins|SELECT|table",
             "identity.principals|SELECT|table",
+            "identity.project_env_memberships|DELETE|table",
+            "identity.project_env_memberships|INSERT|table",
+            "identity.project_env_memberships|SELECT|table",
+            "identity.project_env_memberships|UPDATE|table",
+            "identity.project_roles|DELETE|table",
+            "identity.project_roles|INSERT|table",
             "identity.project_roles|SELECT|table",
+            "identity.project_roles|UPDATE|table",
+            "registry.project_envs|SELECT|table",
+            "registry.projects|SELECT|table",
         ],
         routines: &[],
     },
@@ -1059,7 +1078,7 @@ fn every_control_database_family_is_covered_exactly_once() {
     }
     assert_eq!(
         contained,
-        vec![("identity-reader".to_owned(), "control".to_owned())],
+        Vec::<(String, String)>::new(),
         "the control-plane ordered pairs that carry NO denial moved"
     );
 }

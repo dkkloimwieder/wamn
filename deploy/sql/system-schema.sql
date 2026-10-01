@@ -323,6 +323,56 @@ CREATE TRIGGER wamn_record_history_stamp
     EXECUTE FUNCTION wamn_history.stamp_row('created_at', 'created_by', 'updated_at', 'updated_by');
 
 -- ---------------------------------------------------------------------------
+
+-- A person's membership of one org (docs/plan/platform-ui.md §2.7). The
+-- principal stays global, and the membership status is org-local: an
+-- inactive member keeps the row and holds no access in the org.
+CREATE TABLE identity.org_memberships (
+    principal_id   uuid NOT NULL,
+    principal_type text NOT NULL DEFAULT 'human',
+    org            text NOT NULL
+        REFERENCES registry.orgs (id) ON DELETE CASCADE,
+    status         text NOT NULL,
+    created_at     timestamptz NOT NULL,
+    created_by     uuid NOT NULL,
+    updated_at     timestamptz NOT NULL,
+    updated_by     uuid NOT NULL,
+    PRIMARY KEY (principal_id, org),
+    FOREIGN KEY (principal_id, principal_type)
+        REFERENCES identity.principals (id, type) ON DELETE CASCADE,
+    CONSTRAINT org_memberships_human_check
+        CHECK (principal_type = 'human'),
+    CONSTRAINT org_memberships_status_check
+        CHECK (status IN ('active', 'inactive'))
+);
+CREATE TRIGGER wamn_record_history_stamp
+    BEFORE INSERT OR UPDATE ON identity.org_memberships
+    FOR EACH ROW
+    EXECUTE FUNCTION wamn_history.stamp_row('created_at', 'created_by', 'updated_at', 'updated_by');
+
+-- A person's administrative role in one org (docs/plan/platform-ui.md §4.4).
+-- A role needs the person's membership of the org, and deleting the
+-- membership deletes the role.
+CREATE TABLE identity.org_roles (
+    principal_id uuid NOT NULL,
+    org          text NOT NULL,
+    role         text NOT NULL,
+    created_at   timestamptz NOT NULL,
+    created_by   uuid NOT NULL,
+    updated_at   timestamptz NOT NULL,
+    updated_by   uuid NOT NULL,
+    PRIMARY KEY (principal_id, org, role),
+    FOREIGN KEY (principal_id, org)
+        REFERENCES identity.org_memberships (principal_id, org) ON DELETE CASCADE,
+    CONSTRAINT org_roles_role_check
+        CHECK (role = 'org-admin')
+);
+CREATE TRIGGER wamn_record_history_stamp
+    BEFORE INSERT OR UPDATE ON identity.org_roles
+    FOR EACH ROW
+    EXECUTE FUNCTION wamn_history.stamp_row('created_at', 'created_by', 'updated_at', 'updated_by');
+
+-- ---------------------------------------------------------------------------
 -- Personal access tokens (wamn-ctc8.7) — the opaque bearer presenter both
 -- humans and services use headlessly. INVARIANT: no token material is stored.
 -- `token_prefix` is the non-secret lookup half (hex of the token's random

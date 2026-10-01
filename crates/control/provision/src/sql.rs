@@ -859,19 +859,73 @@ pub fn grant_identity_reader_surface_sql() -> String {
     )
 }
 
-/// The `identity` relations an org's control host reads
-/// (docs/plan/platform-ui.md §4.2): who holds `project-admin` in the org,
-/// whether that person is an active human, and whether the password login of
-/// a control session is live. Issue 3 of the administration epic adds the
-/// writes of the org and project operations.
-pub const CONTROL_RELATIONS: [&str; 3] = ["principals", "project_roles", "password_logins"];
+/// The privileges the control host holds on a relation that it writes.
+const CONTROL_WRITE: &[&str] = &["SELECT", "INSERT", "UPDATE", "DELETE"];
 
-/// Converge the stable control role to exactly `SELECT` on
-/// [`CONTROL_RELATIONS`] in the control database (owner ruling of 2026-09-30
-/// on `wamn-a40n.2`). The role is not a [`PLATFORM_GROUP_ROLE`] member and
+/// The control database relations an org's control host reaches, with the
+/// privileges it holds on each (docs/plan/platform-ui.md §4.4, owner rulings
+/// of 2026-10-01 on `wamn-a40n.3`). It reads who is a person and whether the
+/// password login of a control session is live. It writes the org
+/// memberships and the org, project and environment grants of the org
+/// operations, and it reads the projects and environments those grants
+/// cover. It holds nothing else in the control database.
+pub const CONTROL_SURFACE: [(&str, &str, &[&str]); 8] = [
+    ("identity", "org_memberships", CONTROL_WRITE),
+    ("identity", "org_roles", CONTROL_WRITE),
+    ("identity", "password_logins", &["SELECT"]),
+    ("identity", "principals", &["SELECT"]),
+    ("identity", "project_env_memberships", CONTROL_WRITE),
+    ("identity", "project_roles", CONTROL_WRITE),
+    ("registry", "project_envs", &["SELECT"]),
+    ("registry", "projects", &["SELECT"]),
+];
+
+/// The schemas of [`CONTROL_SURFACE`], in which the control role holds `USAGE`.
+pub const CONTROL_SCHEMAS: [&str; 2] = ["identity", "registry"];
+
+/// Converge the stable control role to exactly [`CONTROL_SURFACE`] in the
+/// control database. The role is not a [`PLATFORM_GROUP_ROLE`] member and
 /// holds nothing else.
 pub fn grant_control_surface_sql() -> String {
-    grant_system_reader_surface_sql(WorkloadRoleFamily::Control, "identity", &CONTROL_RELATIONS)
+    format!(
+        "{} {}",
+        ensure_workload_acl_role_sql(WorkloadRoleFamily::Control),
+        control_surface_grants_sql()
+    )
+}
+
+/// The grants of [`grant_control_surface_sql`] without the role bootstrap.
+///
+/// System migration 0007 runs these as `wamn_system`, which owns the tables
+/// and cannot create a role, so it carries the grants alone.
+pub fn control_surface_grants_sql() -> String {
+    let role = quote_ident(WorkloadRoleFamily::Control.acl_role());
+    let plane = SYSTEM_PLANE_SCHEMAS
+        .iter()
+        .map(|name| quote_ident(name))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let schemas = CONTROL_SCHEMAS
+        .iter()
+        .map(|name| quote_ident(name))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let mut sql = format!(
+        "REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA {plane} FROM {role}; \
+         REVOKE ALL PRIVILEGES ON SCHEMA {plane} FROM {role}; \
+         GRANT USAGE ON SCHEMA {schemas} TO {role};"
+    );
+    for (schema, relation, privileges) in CONTROL_SURFACE {
+        write!(
+            sql,
+            " GRANT {privileges} ON TABLE {schema}.{relation} TO {role};",
+            privileges = privileges.join(", "),
+            schema = quote_ident(schema),
+            relation = quote_ident(relation),
+        )
+        .expect("writing to a String cannot fail");
+    }
+    sql
 }
 
 /// The family-specific privilege batch that converges one family's STABLE ACL

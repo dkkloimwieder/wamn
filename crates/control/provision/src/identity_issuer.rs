@@ -30,7 +30,7 @@ pub const IDENTITY_ISSUER_PAT_INSERT_COLUMNS: [&str; 6] = [
     "expires_at",
 ];
 /// Fresh exchange inputs and non-secret metadata returned by PAT issuance.
-pub const IDENTITY_ISSUER_READ_COLUMNS: [(&str, &str, &[&str]); 6] = [
+pub const IDENTITY_ISSUER_READ_COLUMNS: [(&str, &str, &[&str]); 7] = [
     (
         "identity",
         "principals",
@@ -68,11 +68,19 @@ pub const IDENTITY_ISSUER_READ_COLUMNS: [(&str, &str, &[&str]); 6] = [
         &["principal_id", "org", "project", "role"],
     ),
     ("registry", "orgs", &["id"]),
+    ("identity", "org_roles", &["principal_id", "org", "role"]),
 ];
 
-/// Narrow password endpoint column grants; principal administration stays separate.
+/// Narrow password and invitation endpoint column grants. Identity creates a
+/// human that an invitation names (docs/plan/platform-ui.md §4.4), and
+/// changes no principal it did not create.
 pub const IDENTITY_ISSUER_PASSWORD_COLUMNS: &[(&str, &str, &[&str])] = &[
     ("principals", "SELECT", &["email"]),
+    (
+        "principals",
+        "INSERT",
+        &["type", "subject", "email", "display_name"],
+    ),
     (
         "password_credentials",
         "SELECT",
@@ -481,6 +489,8 @@ mod tests {
              GRANT SELECT (\"principal_id\", \"org\", \"project\", \"role\") \
              ON TABLE \"identity\".\"project_roles\" TO \"wamn_identity_issuer\"; \
              GRANT SELECT (\"id\") ON TABLE \"registry\".\"orgs\" TO \"wamn_identity_issuer\"; \
+             GRANT SELECT (\"principal_id\", \"org\", \"role\") \
+             ON TABLE \"identity\".\"org_roles\" TO \"wamn_identity_issuer\"; \
              GRANT INSERT (\"principal_id\", \"principal_type\", \"token_prefix\", \"token_hash\", \"label\", \"expires_at\") \
              ON TABLE identity.pats TO \"wamn_identity_issuer\";"
         );

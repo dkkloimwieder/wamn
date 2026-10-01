@@ -1,9 +1,10 @@
 //! Live test of the org `control` credential (`wamn-a40n.2`).
 //!
-//! `provision-org` mints the credential through the shared generation
-//! lifecycle. The login reads exactly what an org's control host reads: who
-//! holds `project-admin` in the org, and whether a control session's password
-//! login is live. It writes nothing and reads nothing else.
+//! `provision-org` prepares the credential through the shared generation
+//! lifecycle. The login reads who holds `project-admin` in the org and whether
+//! a control session's password login is live. It writes the org and project
+//! grants of the org operations (`wamn-a40n.3`) and nothing else, and it reads
+//! no other relation.
 //!
 //! The test runs on the PostgreSQL server of its test process. It creates
 //! cluster-global roles and revokes PUBLIC CONNECT on every non-template
@@ -204,15 +205,16 @@ async fn the_control_login_reads_the_control_authority_of_its_org_and_nothing_el
     );
 
     for statement in [
-        "INSERT INTO identity.project_roles (principal_id, org, project, role) \
-           SELECT principal_id, org, 'other', role FROM identity.project_roles",
+        "INSERT INTO identity.principals (type, subject, display_name) \
+           VALUES ('service', 'escape', 'Escape')",
         "UPDATE identity.password_logins SET revoked_at = now()",
+        "UPDATE registry.projects SET id = id",
         "DELETE FROM identity.principals",
         "SELECT 1 FROM identity.pats",
         "SELECT 1 FROM identity.password_credentials",
         "SELECT 1 FROM identity.session_keys",
         "SELECT 1 FROM registry.orgs",
-        "SELECT 1 FROM registry.project_envs",
+        "SELECT 1 FROM identity.password_tokens",
     ] {
         refused(&control, statement).await;
     }

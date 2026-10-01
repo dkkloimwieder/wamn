@@ -192,6 +192,9 @@ async fn stable_acl(admin: &Client) -> anyhow::Result<Vec<String>> {
 
 fn approved_identity_issuer_acl() -> Vec<String> {
     [
+        "column|identity|org_roles.org|SELECT|false",
+        "column|identity|org_roles.principal_id|SELECT|false",
+        "column|identity|org_roles.role|SELECT|false",
         "column|identity|password_credentials.password_hash|INSERT|false",
         "column|identity|password_credentials.password_hash|SELECT|false",
         "column|identity|password_credentials.password_hash|UPDATE|false",
@@ -237,22 +240,31 @@ fn approved_identity_issuer_acl() -> Vec<String> {
         "column|identity|pats.token_hash|SELECT|false",
         "column|identity|pats.token_prefix|INSERT|false",
         "column|identity|pats.token_prefix|SELECT|false",
+        "column|identity|principals.display_name|INSERT|false",
         "column|identity|principals.display_name|SELECT|false",
+        "column|identity|principals.email|INSERT|false",
         "column|identity|principals.email|SELECT|false",
         "column|identity|principals.id|SELECT|false",
         "column|identity|principals.status|SELECT|false",
+        "column|identity|principals.subject|INSERT|false",
         "column|identity|principals.subject|SELECT|false",
+        "column|identity|principals.type|INSERT|false",
         "column|identity|principals.type|SELECT|false",
         "column|identity|project_env_memberships.env|SELECT|false",
         "column|identity|project_env_memberships.org|SELECT|false",
         "column|identity|project_env_memberships.principal_id|SELECT|false",
         "column|identity|project_env_memberships.project|SELECT|false",
+        "column|identity|project_roles.org|SELECT|false",
+        "column|identity|project_roles.principal_id|SELECT|false",
+        "column|identity|project_roles.project|SELECT|false",
+        "column|identity|project_roles.role|SELECT|false",
         "column|identity|renewal_credentials.consumed_at|SELECT|false",
         "column|identity|renewal_credentials.consumed_at|UPDATE|false",
         "column|identity|renewal_credentials.login_id|INSERT|false",
         "column|identity|renewal_credentials.login_id|SELECT|false",
         "column|identity|renewal_credentials.token_hash|INSERT|false",
         "column|identity|renewal_credentials.token_hash|SELECT|false",
+        "column|registry|orgs.id|SELECT|false",
         "column|registry|project_envs.env|SELECT|false",
         "column|registry|project_envs.instance_suffix|SELECT|false",
         "column|registry|project_envs.org|SELECT|false",
@@ -280,6 +292,9 @@ fn approved_identity_issuer_acl() -> Vec<String> {
 
 fn approved_pat_issuance_acl() -> Vec<String> {
     [
+        "column|identity|org_roles.org|SELECT|false",
+        "column|identity|org_roles.principal_id|SELECT|false",
+        "column|identity|org_roles.role|SELECT|false",
         "column|identity|pats.created_at|SELECT|false",
         "column|identity|pats.expires_at|INSERT|false",
         "column|identity|pats.expires_at|SELECT|false",
@@ -303,6 +318,11 @@ fn approved_pat_issuance_acl() -> Vec<String> {
         "column|identity|project_env_memberships.org|SELECT|false",
         "column|identity|project_env_memberships.principal_id|SELECT|false",
         "column|identity|project_env_memberships.project|SELECT|false",
+        "column|identity|project_roles.org|SELECT|false",
+        "column|identity|project_roles.principal_id|SELECT|false",
+        "column|identity|project_roles.project|SELECT|false",
+        "column|identity|project_roles.role|SELECT|false",
+        "column|registry|orgs.id|SELECT|false",
         "column|registry|project_envs.env|SELECT|false",
         "column|registry|project_envs.instance_suffix|SELECT|false",
         "column|registry|project_envs.org|SELECT|false",
@@ -375,6 +395,9 @@ async fn upgrade_foundation_surface(
          REVOKE INSERT (principal_id,principal_type,token_prefix,token_hash,label,expires_at) ON identity.pats FROM wamn_identity_issuer; \
          REVOKE SELECT (principal_id,org,project,env) ON identity.project_env_memberships FROM wamn_identity_issuer; \
          REVOKE SELECT (org,project,env,instance_suffix) ON registry.project_envs FROM wamn_identity_issuer; \
+         REVOKE SELECT (principal_id,org,project,role) ON identity.project_roles FROM wamn_identity_issuer; \
+         REVOKE SELECT (id) ON registry.orgs FROM wamn_identity_issuer; \
+         REVOKE SELECT (principal_id,org,role) ON identity.org_roles FROM wamn_identity_issuer; \
          REVOKE USAGE ON SCHEMA registry FROM wamn_identity_issuer;"
     ).await?;
     let foundation = stable_acl(admin).await?;
@@ -451,8 +474,8 @@ async fn upgrade_read_only_pat_surface(
     ).await?;
     let previous = stable_acl(admin).await?;
     anyhow::ensure!(
-        previous.len() == 28,
-        "exchange fixture must retain its 28 grants"
+        previous.len() == 36,
+        "exchange fixture must retain its 36 grants"
     );
     for (grant, revoke) in [
         (
@@ -572,7 +595,8 @@ async fn pat_authority(admin: &Client, a: &Client, b: &Client) -> anyhow::Result
             "INSERT INTO identity.pats (created_at) VALUES (DEFAULT)",
             "INSERT INTO identity.pats (revoked_at) VALUES (NULL)",
             "UPDATE identity.principals SET display_name = 'Escape'",
-            "INSERT INTO identity.principals (type,subject,display_name) VALUES ('human','escape','Escape')",
+            "INSERT INTO identity.principals (id,type,subject,display_name) VALUES (gen_random_uuid(),'human','escape','Escape')",
+            "INSERT INTO identity.principals (type,subject,display_name,status) VALUES ('human','escape','Escape','disabled')",
             "DELETE FROM identity.project_env_memberships",
             "INSERT INTO identity.project_env_memberships (principal_id,org,project,env) VALUES ('00000000-0000-0000-0000-000000000001','fixture','widgets','dev')",
             "INSERT INTO identity.project_roles (principal_id,org,project,role) VALUES ('00000000-0000-0000-0000-000000000001','fixture','widgets','owner')",
