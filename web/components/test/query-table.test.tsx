@@ -198,6 +198,9 @@ describe("QueryTable", () => {
         if (opens === 1) {
           // The first load waits until the reload cancels it, and ends as the
           // transport ends an aborted fetch.
+          if (signal === undefined) {
+            throw new Error("the first load carries no abort signal");
+          }
           await new Promise<void>((resolve) => signal.addEventListener("abort", () => resolve()));
           return {
             status: "uncertain",
