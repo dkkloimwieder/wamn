@@ -116,6 +116,12 @@ pub const SYSTEM_MIGRATIONS: &[Migration] = &[
         relative_path: "migrations/system/0005_admin_role.sql",
         sql: include_str!("../../../../deploy/sql/migrations/system/0005_admin_role.sql"),
     },
+    Migration {
+        relative_path: "migrations/system/0006_control_audience_reads.sql",
+        sql: include_str!(
+            "../../../../deploy/sql/migrations/system/0006_control_audience_reads.sql"
+        ),
+    },
 ];
 
 /// Every file of `deploy/sql/migrations/project/`, in order.

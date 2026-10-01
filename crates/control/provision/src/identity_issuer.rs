@@ -478,6 +478,9 @@ mod tests {
              ON TABLE \"identity\".\"project_env_memberships\" TO \"wamn_identity_issuer\"; \
              GRANT SELECT (\"org\", \"project\", \"env\", \"instance_suffix\") \
              ON TABLE \"registry\".\"project_envs\" TO \"wamn_identity_issuer\"; \
+             GRANT SELECT (\"principal_id\", \"org\", \"project\", \"role\") \
+             ON TABLE \"identity\".\"project_roles\" TO \"wamn_identity_issuer\"; \
+             GRANT SELECT (\"id\") ON TABLE \"registry\".\"orgs\" TO \"wamn_identity_issuer\"; \
              GRANT INSERT (\"principal_id\", \"principal_type\", \"token_prefix\", \"token_hash\", \"label\", \"expires_at\") \
              ON TABLE identity.pats TO \"wamn_identity_issuer\";"
         );

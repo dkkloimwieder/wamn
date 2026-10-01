@@ -7,15 +7,15 @@ use super::grants::{
     RoleAclExpectation, stable_grant_set, verify_public_access_floor, verify_role_grants,
 };
 use super::{
-    CredentialGeneration, DateTime, GenericClient, PLATFORM_GROUP_ROLE, PgConfig, SecondsFormat,
-    SessionTarget, SystemRandom, Triple, Utc, WorkloadActionOutcome, WorkloadActionRequest,
-    WorkloadActionVerb, WorkloadGenerationAction, WorkloadRoleFamily, WorkloadRoleScope,
-    WorkloadRoleScopeKind, WorkloadSecretBody, WorkloadSecretBodyKind, connect_config,
-    ensure_secret_path, exact_project_database_config, named_database_config,
-    project_env_database_name, read_project_env_instance, render_workload_secret_manifest,
-    resolve_cluster, role_sql, sql, tenant_key, validate_project_env, validate_session_tenant_id,
-    workload_action_flag, workload_config, workload_generation_role, workload_secret_flag,
-    workload_url, write_output, write_secret_json,
+    CredentialGeneration, DateTime, GenericClient, OrgWorkloadActionRequest, PLATFORM_GROUP_ROLE,
+    PgConfig, SecondsFormat, SessionTarget, SystemRandom, Triple, Utc, WorkloadActionOutcome,
+    WorkloadActionRequest, WorkloadActionVerb, WorkloadGenerationAction, WorkloadRoleFamily,
+    WorkloadRoleScope, WorkloadRoleScopeKind, WorkloadSecretBody, WorkloadSecretBodyKind,
+    connect_config, ensure_secret_path, exact_project_database_config, named_database_config,
+    project_env_database_name, read_project_env_instance, render_org_workload_secret_manifest,
+    render_workload_secret_manifest, resolve_cluster, role_sql, sql, tenant_key,
+    validate_project_env, validate_session_tenant_id, workload_action_flag, workload_config,
+    workload_generation_role, workload_secret_flag, workload_url, write_output, write_secret_json,
 };
 
 const WORKLOAD_CREDENTIAL_TTL_DAYS: i64 = 30;
@@ -227,6 +227,7 @@ pub(super) fn workload_lifecycle<'a>(
             environment,
             database,
         },
+        WorkloadRoleScopeKind::Org => WorkloadRoleScope::Org { org, database },
     };
     WorkloadLifecycle {
         family,
@@ -376,6 +377,10 @@ pub async fn run_workload_action(
         generation,
     } = args.action;
     let label = family.label();
+    anyhow::ensure!(
+        family.is_project_env_provisioned(),
+        "{label} is an org credential; provision-org mints it"
+    );
     let emits_app_retirement_sql =
         family == WorkloadRoleFamily::App && verb == WorkloadActionVerb::Prepare;
     anyhow::ensure!(
@@ -515,6 +520,88 @@ pub async fn run_workload_action(
             Ok(WorkloadActionOutcome::Prepared {
                 secret: secret_path.to_path_buf(),
                 app_retirement_role_sql,
+            })
+        }
+        WorkloadActionVerb::Retire => {
+            retire_workload_generation(&admin_config, lifecycle, generation).await?;
+            Ok(WorkloadActionOutcome::Retired)
+        }
+        WorkloadActionVerb::Abort => {
+            abort_workload_generation(&admin_config, lifecycle, generation).await?;
+            Ok(WorkloadActionOutcome::Aborted)
+        }
+    }
+}
+
+/// ONE org-scoped generation action (`wamn-a40n.2`), run by `provision-org`.
+///
+/// The same lifecycle as [`run_workload_action`]: an org family addresses the
+/// control database the system URL names, and its Secret carries one `url`.
+pub async fn run_org_workload_action(
+    args: &OrgWorkloadActionRequest,
+) -> anyhow::Result<WorkloadActionOutcome> {
+    let WorkloadGenerationAction {
+        family,
+        verb,
+        generation,
+    } = args.action;
+    let label = family.label();
+    anyhow::ensure!(
+        family.scope_kind() == WorkloadRoleScopeKind::Org,
+        "{label} is not an org credential; provision-project-env mints it"
+    );
+    let admin_config = named_database_config(&args.system_database_url, &format!("{label} admin"))?;
+    let database = admin_config
+        .get_dbname()
+        .expect("named_database_config requires a database name")
+        .to_string();
+    let lifecycle = WorkloadLifecycle {
+        family,
+        scope: WorkloadRoleScope::Org {
+            org: &args.org,
+            database: &database,
+        },
+        control_tenant: None,
+    };
+    match verb {
+        WorkloadActionVerb::Prepare => {
+            let secret_path = args.secret.as_deref().with_context(|| {
+                format!("--prepare-{label}-generation requires --emit-{label}-secret PATH")
+            })?;
+            ensure_secret_path(secret_path, &format!("--emit-{label}-secret"))?;
+            let db_host = args
+                .db_host
+                .as_deref()
+                .with_context(|| format!("--prepare-{label}-generation requires --db-host"))?;
+            let expires_at = workload_expires_at(Utc::now());
+            prepare_workload_generation(
+                &admin_config,
+                lifecycle,
+                generation,
+                &expires_at,
+                |role, password| {
+                    let credential_url = workload_url(
+                        &args.system_database_url,
+                        db_host,
+                        args.db_port,
+                        role,
+                        password,
+                        &database,
+                    )?;
+                    let secret = render_org_workload_secret_manifest(
+                        family,
+                        &args.org,
+                        &args.namespace,
+                        &credential_url,
+                    );
+                    write_secret_json(secret_path, &secret)
+                        .with_context(|| format!("write authenticated {label} Secret"))
+                },
+            )
+            .await?;
+            Ok(WorkloadActionOutcome::Prepared {
+                secret: secret_path.to_path_buf(),
+                app_retirement_role_sql: None,
             })
         }
         WorkloadActionVerb::Retire => {

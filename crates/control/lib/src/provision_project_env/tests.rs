@@ -380,6 +380,9 @@ fn every_family_derives_a_lifecycle_and_only_a_grant_set_stays_per_family() {
             // `wamn-a40n.2`: the administration family reads the application
             // authorization relations, with its denial matrix row.
             WorkloadRoleFamily::Administration,
+            // `wamn-a40n.2`: the control family reads the identity relations
+            // of the control host.
+            WorkloadRoleFamily::Control,
         ],
         "a family acquired a grant set without acquiring authority"
     );
@@ -400,6 +403,7 @@ fn every_family_derives_a_lifecycle_and_only_a_grant_set_stays_per_family() {
         WorkloadRoleFamily::IdentityReader,
         WorkloadRoleFamily::SessionRoleReader,
         WorkloadRoleFamily::Administration,
+        WorkloadRoleFamily::Control,
     ] {
         assert!(sql::stable_surface_sql(family).is_some(), "{family:?}");
     }
@@ -414,6 +418,7 @@ fn every_family_derives_a_lifecycle_and_only_a_grant_set_stays_per_family() {
                 | WorkloadRoleFamily::IdentityReader
                 | WorkloadRoleFamily::SessionRoleReader
                 | WorkloadRoleFamily::Administration
+                | WorkloadRoleFamily::Control
         ) {
             assert!(sql::stable_surface_sql(family).is_none(), "{family:?}");
         }
@@ -922,6 +927,7 @@ fn every_workload_family_carries_a_distinct_frozen_label() {
         (WorkloadRoleFamily::SessionRoleReader, "session-role-reader"),
         (WorkloadRoleFamily::AuditRetention, "audit-retention"),
         (WorkloadRoleFamily::Administration, "administration"),
+        (WorkloadRoleFamily::Control, "control"),
     ];
     assert_eq!(expected.len(), WorkloadRoleFamily::ALL.len());
     let mut seen = Vec::new();

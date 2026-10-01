@@ -60,6 +60,9 @@ pub use wamn_record_history::AUDIT_RETENTION_ROLE;
 /// Stable NOLOGIN role used by administration generations. Its 19 bytes
 /// mint a 62-byte login, so the role name is its own generation prefix.
 pub const ADMINISTRATION_ROLE: &str = "wamn_administration";
+/// Stable NOLOGIN role used by control generations, the credential of an
+/// org's control host (docs/plan/platform-ui.md §4.2).
+pub const CONTROL_ROLE: &str = "wamn_control";
 
 /// The shared NOLOGIN group role every non-guest tenant-floor arm targets
 /// (`wamn-0h0g.22.17`).
@@ -106,7 +109,8 @@ pub(crate) const SCOPE_HASH_HEX_LEN: usize = 40;
 /// `wamn-0h0g.10.15` removes the effect-writer family, which had no runtime
 /// consumer.
 /// `wamn-a40n.2` adds the project-environment administration family, the
-/// credential of the host-run administration routes.
+/// credential of the host-run administration routes, and the org-scoped
+/// control family, the credential of an org's control host.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WorkloadRoleFamily {
     ControlAuthor,
@@ -122,6 +126,7 @@ pub enum WorkloadRoleFamily {
     SessionRoleReader,
     AuditRetention,
     Administration,
+    Control,
 }
 
 impl WorkloadRoleFamily {
@@ -131,7 +136,7 @@ impl WorkloadRoleFamily {
     /// provisioning's flag set, action dispatch and Secret naming are all
     /// derived by walking it, so an admitted family reaches every one of them
     /// without a list anywhere being appended to by hand.
-    pub const ALL: [Self; 13] = [
+    pub const ALL: [Self; 14] = [
         Self::ControlAuthor,
         Self::ManagementAdmitter,
         Self::ServiceReader,
@@ -145,6 +150,7 @@ impl WorkloadRoleFamily {
         Self::SessionRoleReader,
         Self::AuditRetention,
         Self::Administration,
+        Self::Control,
     ];
 
     /// Stable NOLOGIN ACL role inherited by this family's generations.
@@ -163,6 +169,7 @@ impl WorkloadRoleFamily {
             Self::SessionRoleReader => SESSION_ROLE_READER_ROLE,
             Self::AuditRetention => AUDIT_RETENTION_ROLE,
             Self::Administration => ADMINISTRATION_ROLE,
+            Self::Control => CONTROL_ROLE,
         }
     }
 
@@ -204,7 +211,23 @@ impl WorkloadRoleFamily {
             Self::ControlAuthor | Self::RegistryReader | Self::IdentityReader => {
                 WorkloadRoleScopeKind::Control
             }
+            // One credential per org on the control database; `provision-org`
+            // mints it (owner ruling of 2026-09-30 on `wamn-a40n.2`).
+            Self::Control => WorkloadRoleScopeKind::Org,
         }
+    }
+
+    /// Whether `provision-project-env` mints this family. An org-scoped
+    /// family belongs to `provision-org` instead.
+    pub const fn is_project_env_provisioned(self) -> bool {
+        !matches!(self.scope_kind(), WorkloadRoleScopeKind::Org)
+    }
+
+    /// The families `provision-project-env` mints, in declaration order.
+    pub fn project_env_families() -> impl Iterator<Item = Self> {
+        Self::ALL
+            .into_iter()
+            .filter(|family| family.is_project_env_provisioned())
     }
 
     /// Whether this family's generations are membered into
@@ -215,8 +238,8 @@ impl WorkloadRoleFamily {
     /// * [`Self::App`] is the GUEST. The floor exists to admit it, and a
     ///   platform arm would hand it every tenant's rows — the exact
     ///   cross-tenant read `wamn-0h0g.22.6` closed.
-    /// * A [`WorkloadRoleScopeKind::Control`] family's credentials reach the
-    ///   CONTROL database, whose store carries its own restrictive
+    /// * A [`WorkloadRoleScopeKind::Control`] or [`WorkloadRoleScopeKind::Org`]
+    ///   family's credentials reach the CONTROL database, whose store carries its own restrictive
     ///   `TO wamn_control_author` arm on a different authority derivation
     ///   (`deploy/sql/control-portable-store.sql`). None of them holds a grant
     ///   on any relation carrying the project-plane floor, so membership would
@@ -240,7 +263,10 @@ impl WorkloadRoleFamily {
     /// keeps in its own statements is what re-narrows it.
     pub const fn is_platform_grain(self) -> bool {
         !matches!(self, Self::App | Self::AuditRetention)
-            && !matches!(self.scope_kind(), WorkloadRoleScopeKind::Control)
+            && !matches!(
+                self.scope_kind(),
+                WorkloadRoleScopeKind::Control | WorkloadRoleScopeKind::Org
+            )
     }
 
     /// The family's operator-facing name, in the hyphenated convention.
@@ -329,6 +355,7 @@ impl WorkloadRoleFamily {
             Self::SessionRoleReader => b"wamn.session-role-reader.scope.v0.1",
             Self::AuditRetention => b"wamn.audit-retention.scope.v0.1",
             Self::Administration => b"wamn.administration.scope.v0.1",
+            Self::Control => b"wamn.control.scope.v0.1",
         }
     }
 }
@@ -368,12 +395,14 @@ pub enum WorkloadSecretBodyKind {
     SessionTarget,
 }
 
-/// The three admitted provisioning scope shapes.
+/// The four admitted provisioning scope shapes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WorkloadRoleScopeKind {
     Tenant,
     ProjectEnvironment,
     Control,
+    /// One org on the control database.
+    Org,
 }
 
 impl WorkloadRoleScopeKind {
@@ -382,6 +411,7 @@ impl WorkloadRoleScopeKind {
             Self::Tenant => "tenant",
             Self::ProjectEnvironment => "project-environment",
             Self::Control => "control",
+            Self::Org => "org",
         }
     }
 }
@@ -405,6 +435,10 @@ pub enum WorkloadRoleScope<'a> {
         environment: &'a str,
         database: &'a str,
     },
+    Org {
+        org: &'a str,
+        database: &'a str,
+    },
 }
 
 impl<'a> WorkloadRoleScope<'a> {
@@ -413,7 +447,8 @@ impl<'a> WorkloadRoleScope<'a> {
         match self {
             Self::Tenant { database, .. }
             | Self::ProjectEnvironment { database, .. }
-            | Self::Control { database, .. } => database,
+            | Self::Control { database, .. }
+            | Self::Org { database, .. } => database,
         }
     }
 
@@ -422,6 +457,7 @@ impl<'a> WorkloadRoleScope<'a> {
             Self::Tenant { .. } => WorkloadRoleScopeKind::Tenant,
             Self::ProjectEnvironment { .. } => WorkloadRoleScopeKind::ProjectEnvironment,
             Self::Control { .. } => WorkloadRoleScopeKind::Control,
+            Self::Org { .. } => WorkloadRoleScopeKind::Org,
         }
     }
 }
@@ -495,6 +531,10 @@ pub fn workload_role_scope_hash(
             push_field(&mut preimage, "org", org);
             push_field(&mut preimage, "project", project);
             push_field(&mut preimage, "environment", environment);
+            push_field(&mut preimage, "database", database);
+        }
+        WorkloadRoleScope::Org { org, database } => {
+            push_field(&mut preimage, "org", org);
             push_field(&mut preimage, "database", database);
         }
     }
@@ -612,8 +652,8 @@ mod tests {
     /// The exact vocabulary, in declaration order (`wamn-0fqa`: seven to ten;
     /// `wamn-0h0g.13.63`: ten to twelve; `wamn-ctc8.15.2`: thirteen;
     /// `wamn-emtx.13`: fourteen; `wamn-0h0g.10.15`: thirteen; `wamn-a40n.2`:
-    /// administration).
-    const FAMILIES: [WorkloadRoleFamily; 13] = [
+    /// administration and control).
+    const FAMILIES: [WorkloadRoleFamily; 14] = [
         WorkloadRoleFamily::ControlAuthor,
         WorkloadRoleFamily::ManagementAdmitter,
         WorkloadRoleFamily::ServiceReader,
@@ -627,11 +667,12 @@ mod tests {
         WorkloadRoleFamily::SessionRoleReader,
         WorkloadRoleFamily::AuditRetention,
         WorkloadRoleFamily::Administration,
+        WorkloadRoleFamily::Control,
     ];
 
     #[test]
     fn family_set_and_scope_classes_are_closed() {
-        // A fourteenth variant fails to compile here as well as in the
+        // A fifteenth variant fails to compile here as well as in the
         // implementation, so the pinned vocabulary cannot silently grow.
         for (index, family) in FAMILIES.into_iter().enumerate() {
             let pinned = match family {
@@ -648,6 +689,7 @@ mod tests {
                 WorkloadRoleFamily::SessionRoleReader => 10,
                 WorkloadRoleFamily::AuditRetention => 11,
                 WorkloadRoleFamily::Administration => 12,
+                WorkloadRoleFamily::Control => 13,
             };
             assert_eq!(index, pinned, "{family:?}");
         }
@@ -667,6 +709,7 @@ mod tests {
                 WorkloadRoleScopeKind::ProjectEnvironment,
                 WorkloadRoleScopeKind::Tenant,
                 WorkloadRoleScopeKind::ProjectEnvironment,
+                WorkloadRoleScopeKind::Org,
             ],
         );
         assert_eq!(
@@ -685,7 +728,19 @@ mod tests {
                 "wamn_session_role_reader",
                 "wamn_audit_retention",
                 "wamn_administration",
+                "wamn_control",
             ],
+        );
+        assert_eq!(
+            WorkloadRoleFamily::project_env_families().collect::<Vec<_>>(),
+            FAMILIES[..13],
+            "only the org-scoped control family is left to provision-org"
+        );
+        assert!(!WorkloadRoleFamily::Control.is_platform_grain());
+        assert_eq!(WorkloadRoleFamily::Control.label(), "control");
+        assert_eq!(
+            crate::name::org_workload_secret_name(WorkloadRoleFamily::Control, "dkk"),
+            "wamn-control-dkk"
         );
     }
 
@@ -818,6 +873,13 @@ mod tests {
                     project: "p",
                     environment: "dev",
                     database: "db",
+                },
+            ),
+            (
+                WorkloadRoleFamily::Control,
+                WorkloadRoleScope::Org {
+                    org: "o",
+                    database: "control",
                 },
             ),
         ];

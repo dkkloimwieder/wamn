@@ -859,6 +859,21 @@ pub fn grant_identity_reader_surface_sql() -> String {
     )
 }
 
+/// The `identity` relations an org's control host reads
+/// (docs/plan/platform-ui.md §4.2): who holds `project-admin` in the org,
+/// whether that person is an active human, and whether the password login of
+/// a control session is live. Issue 3 of the administration epic adds the
+/// writes of the org and project operations.
+pub const CONTROL_RELATIONS: [&str; 3] = ["principals", "project_roles", "password_logins"];
+
+/// Converge the stable control role to exactly `SELECT` on
+/// [`CONTROL_RELATIONS`] in the control database (owner ruling of 2026-09-30
+/// on `wamn-a40n.2`). The role is not a [`PLATFORM_GROUP_ROLE`] member and
+/// holds nothing else.
+pub fn grant_control_surface_sql() -> String {
+    grant_system_reader_surface_sql(WorkloadRoleFamily::Control, "identity", &CONTROL_RELATIONS)
+}
+
 /// The family-specific privilege batch that converges one family's STABLE ACL
 /// role to its exact grant set, when this crate owns that convergence.
 ///
@@ -882,6 +897,7 @@ pub fn stable_surface_sql(family: WorkloadRoleFamily) -> Option<String> {
             Some(grant_event_materializer_surface_sql("wamn_run"))
         }
         WorkloadRoleFamily::Administration => Some(grant_administration_surface_sql("wamn_run")),
+        WorkloadRoleFamily::Control => Some(grant_control_surface_sql()),
         _ => None,
     }
 }

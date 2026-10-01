@@ -431,7 +431,7 @@ fn generation(family: WorkloadRoleFamily) -> String {
             environment: ENVIRONMENT,
             database: DATABASE,
         },
-        WorkloadRoleScopeKind::Control => panic!(
+        WorkloadRoleScopeKind::Control | WorkloadRoleScopeKind::Org => panic!(
             "{family:?} is control-scoped: its credential reaches the control \
              database and it is not a subject of this matrix"
         ),

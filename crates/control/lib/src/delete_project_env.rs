@@ -113,12 +113,15 @@ pub struct TeardownPlan {
 }
 
 /// The families whose generation roles the run drops: their scope names the
-/// database of the instance. A control family's scope names the control
-/// database, so its roles stay with the triple.
+/// database of the instance. A control or org family's scope names the
+/// control database, so its roles stay with the triple or the org.
 pub fn instance_families() -> impl Iterator<Item = WorkloadRoleFamily> {
-    WorkloadRoleFamily::ALL
-        .into_iter()
-        .filter(|family| family.scope_kind() != WorkloadRoleScopeKind::Control)
+    WorkloadRoleFamily::ALL.into_iter().filter(|family| {
+        matches!(
+            family.scope_kind(),
+            WorkloadRoleScopeKind::Tenant | WorkloadRoleScopeKind::ProjectEnvironment
+        )
+    })
 }
 
 /// Derive the plan. `db_namespace` and `cdc_namespace` are the Secret
