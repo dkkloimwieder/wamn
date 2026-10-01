@@ -474,7 +474,9 @@ async fn project_environment_membership_round_trip(
 /// Each identity authority relation carries the four stamp columns as NOT NULL
 /// with no default, and one static stamp trigger.
 async fn identity_relations_carry_stamps(client: &tokio_postgres::Client) {
-    const RELATIONS: [&str; 8] = [
+    const RELATIONS: [&str; 10] = [
+        "org_memberships",
+        "org_roles",
         "password_credentials",
         "password_logins",
         "password_tokens",

@@ -222,7 +222,11 @@ pub(super) async fn install_authority(
         CREATE TABLE identity.password_logins (id uuid PRIMARY KEY, principal_id uuid, issuer text, audience text,
             revoked_at timestamptz, expires_at timestamptz, renewal_expires_at timestamptz);
         CREATE TABLE identity.pats (id uuid PRIMARY KEY, principal_id uuid, revoked_at timestamptz, expires_at timestamptz);
-        CREATE TABLE identity.project_roles (principal_id uuid, org text, project text, role text);").await?;
+        CREATE TABLE identity.project_roles (principal_id uuid, org text, project text, role text);
+        CREATE TABLE identity.org_memberships (principal_id uuid, org text, status text);
+        CREATE TABLE identity.org_roles (principal_id uuid, org text, role text);
+        CREATE TABLE registry.projects (org text, id text);
+        CREATE TABLE registry.project_envs (org text, project text, env text);").await?;
     for principal in principals {
         client
             .execute(
