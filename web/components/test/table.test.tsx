@@ -77,7 +77,9 @@ describe("the generated table for a page", () => {
     expect(within(first).getByRole("button", { name: "archive" })).toBeDefined();
     // "get" and "archive": 7.2 px a character, 22 px a button, 8 between, 24 of cell.
     const table = screen.getAllByRole("columnheader")[0]!.closest("table")!;
-    expect(table.style.getPropertyValue("--header-rowActions-size")).toBe(String(Math.ceil(10 * 7.2 + 2 * 22 + 8 + 24)));
+    expect(table.style.getPropertyValue("--header-rowActions-size")).toBe(
+      String(Math.ceil(10 * 7.2 + 2 * 22 + 8 + 24)),
+    );
   });
 
   it("shows the maker a widget names by its name, reading each maker once (wamn-zrrg)", async () => {
