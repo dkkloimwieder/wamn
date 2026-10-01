@@ -63,10 +63,26 @@ The caller must match the attachment, and an `admin`-authority route checks its 
 | --- | --- |
 | `wamn-control:permission/mine@0.1.0` | `admin`, and the stable references the caller holds. An `admin` holds every operation the release serves. |
 | `wamn-control:control/mine@0.1.0` | `org_admin`, and the projects of the org that the caller administers: every project for an `org-admin`, else the projects where the caller holds `project-admin`. |
+| `wamn-control:user/list@0.1.0` | `users`: each member of the org with `principal_id`, `email`, `display_name` and the org-local `status`. |
+| `wamn-control:user/invite@0.1.0` | Takes `email`, `display_name` and the optional `org_admin`, `project_admins` and `memberships` (`project`, `env`). Answers `principal_id`, `enrolled` and `invited`. |
+| `wamn-control:user/activate@0.1.0` | Takes `principal_id` and makes the org membership active. It restores no access. |
+| `wamn-control:user/deactivate@0.1.0` | Takes `principal_id`, removes the member's environment memberships, project roles and org roles in the org, then makes the membership inactive. |
+| `wamn-control:project/list@0.1.0` | `projects`: every project of the org. |
+| `wamn-control:org-admin/grant@0.1.0` | Takes `principal_id` of an active member and writes `org-admin`, `project-admin` in every project of the org and a membership in every environment of the org. |
+| `wamn-control:org-admin/revoke@0.1.0` | Takes `principal_id` and removes `project-admin` throughout the org, then `org-admin`. Memberships stay. |
 
 `permission.mine` reads under the administration credential, in a host-owned READ COMMITTED transaction that binds the caller and the sealed operation id.
 A host-run write stamps that sealed operation id in its history entries.
 `control.mine` reads `wamn_system` through the `control` login of the org.
+
+Every other `control` route needs a current `org-admin` row of the caller in the token's org, and answers 403 `permission-denied` without it.
+A write runs in one transaction on a second `control` login, which holds one write at a time.
+The transaction binds `app.user_id` to the caller and `app.operation` to the sealed operation id, and it checks `org-admin` again.
+The writes are the functions of [`wamn_platform_identity::org`](../../crates/identity/platform/src/org.rs), which `wamn-ctl invite` and `provision-org --owner-email` also call.
+A refusal, for example a principal that is not an active member, answers 400 `invalid-input` with its reason.
+`user.invite` calls identity `POST /users` and `POST /invitations` with the operator certificate of `--pat-issuer`, `--pat-client-cert`, `--pat-client-key` and `--pat-server-ca`, through [`wamn-identity-client`](../../crates/identity/client/src/lib.rs).
+It writes the membership and the grants between the two calls, and it calls `/invitations` only when the user has no password.
+Application rows of these routes follow in issue 4 of the administration epic.
 
 The control serving root has no package, component, route, database or guest connection.
 `wamn-host --control` serves it for one org.

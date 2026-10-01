@@ -606,10 +606,11 @@ An applier installs `record-history.sql` and then `record-history-app-grants.sql
 ### System database
 
 The system database (`wamn_system`) stamps its identity authority relations.
-These relations are `identity.principals`, `identity.project_roles`, `identity.project_env_memberships`, and `identity.pats`.
+These relations are `identity.principals`, `identity.org_memberships`, `identity.org_roles`, `identity.project_roles`, `identity.project_env_memberships`, and `identity.pats`.
 Each relation carries the four stamp columns as `NOT NULL` with no default, and a static `wamn_record_history_stamp` trigger.
 The registry, the sagas, the session keys, the operations tables, and the control store carry no stamps.
 In the system database, the actor is an `identity.principals` id.
+The system identity tables record the actor only. A control route binds `app.operation` to its sealed operation id, and no column stores it.
 The system database keeps stamps only and no history table, as its [limits](#limits) state.
 
 The `SYSTEM_SCHEMA_SQL` composition in [provisioning](../../crates/control/provision/src/lib.rs) installs `record-history.sql` before [`deploy/sql/system-schema.sql`](../../deploy/sql/system-schema.sql).
@@ -629,6 +630,8 @@ Every path that turns a stored principal into a caller also refuses the platform
 The identity issuer and wamn-ctl bind `wamn:provisioning` in each write transaction.
 wamn-identity issues each token in its own transaction.
 wamn-ctl creates service principals, assigns project roles, grants and revokes memberships, and revokes tokens in the same way.
+`wamn-ctl invite` and `provision-org --owner-email` write org memberships and org roles in the same way.
+A control route of the control serving root binds the calling org admin, as the [execution page](execution.md#host-run-routes) states.
 Test fixtures bind `wamn:provisioning` for platform setup, or a principal row that they insert.
 The trigger keeps `created_at`, so an expired-token fixture moves `expires_at` to just after `created_at`.
 

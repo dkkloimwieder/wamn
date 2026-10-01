@@ -1888,3 +1888,16 @@ kubectl -n platform exec -i wamn-pg-1 -c postgres -- psql -U postgres -d wamn_sy
 ```
 
 The apply took 1 second. The table owner is `wamn_system`, and `wamn_registry_reader` holds `SELECT` only.
+
+System migration `0007_org_administration.sql` (`wamn-a40n.3`) does not run by hand. It creates `identity.org_memberships` and `identity.org_roles`, renames the principal type `human` to `user` and carries the grants of the `control` family and the identity issuer. `wamn-ctl upgrade-schema --system-database-url` applies it on wamn-dev with the other migrations of its run, after the cutover entry above.
+
+The org `dkk` was provisioned before `provision-org --owner-email` existed, so it has no owner rows. After `0007`, run the invitation Job of section 4.5 for the owner with `--org-admin`. The owner is enrolled, so identity reuses the user and sends no mail:
+
+```bash
+(umask 077; sed -e 's/__EMAIL__/dkkloimwieder@gmail.com/' -e 's/__DISPLAY_NAME__/dkk/' -e 's/__ORG__/dkk/' \
+  -e 's|__GRANT_FLAGS__|--org-admin|' deploy/gcp/operator/invite.yaml > $P/invite.yaml)
+kubectl apply -f $P/invite.yaml
+rm $P/invite.yaml
+```
+
+Then make the Secret `wamn-system-admin`, wait for the Job and save its log as in section 4.5.
