@@ -134,7 +134,7 @@ These Receiving cases touch no overlay, measured at `01ca2425d`:
 
 Acme takes part in `record_receipt` only through its own route `/acme/receiving/record_receipt` (`apps/client_acme_receiving/publication/attachments.json:11`). `postcommit_case::baseline_overlay_and_materializer_progress` exercises the overlay (`postcommit_case.rs:44-54`), so it runs only in the Acme arm.
 
-`command_histories` calls no Acme route. But its result record reads Acme files: the digest of `client_acme_receiving.wasm` (`route_cases.rs:29`), and the schema identity and provenance of `apps/client_acme_receiving/generated/package-weld.json` (`receiving_command_histories_live.rs:953-960`, `:1020`). That record is an open question to the owner.
+`command_histories` calls no Acme route. But its result record reads Acme files: the digest of `client_acme_receiving.wasm` (`route_cases.rs:29`), and the schema identity and provenance of `apps/client_acme_receiving/generated/package-weld.json` (`receiving_command_histories_live.rs:953-960`, `:1020`). The owner ruled on 2026-10-01 that the case stays in the Receiving-alone set. The record follows the candidate: it holds the digest and package identity of each package that the candidate carries. The hard-coded Acme entries are a fixture constant that issue 1 replaces.
 
 ### 4.4 WMS auth policy
 
@@ -144,9 +144,9 @@ The WMS fixture mints the authored attachments unchanged, so the bytes keep `["p
 
 All issues land on one branch. They change the workspace and the kind cases only. No issue runs against wamn-dev.
 
-The owner set this order on 2026-10-01:
+The owner set this order on 2026-10-01. The deployment agent builds all four in order, on one branch, in the workspace and kind only, and every commit is green.
 
-1. The fixture identity comes from the candidate: the tenant, the environment, the org, the project, the release id, the route host and the package set (§4, §4.1, §4.2).
+1. The fixture identity comes from the candidate: the tenant, the environment, the org, the project, the release id, the route host and the package set (§4, §4.1, §4.2). The result record of `command_histories` follows the candidate too (§4.3).
 2. The three-arm selection and the Receiving-alone cases (§4.3).
 3. The WMS session issuer and the deletion of the rewrite (§4.4).
 4. A kind dry run of `prepare-release` and `qualify-release` for both wamn-dev release 2 candidates. The run compares the candidate bytes with a mint from the same inputs.
