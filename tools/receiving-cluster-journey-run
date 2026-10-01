@@ -44,7 +44,17 @@ case "$action" in
             printf 'Cannot pull supplied image %s into owned node %s; its registry must permit access without additional credentials.\n' "$image" "$node" >&2
             exit 1
           }
-          docker exec "$node" crictl inspecti -o json "$image" >/dev/null
+          # CRI records an image that ctr pulled from an event, after ctr returns.
+          for wait in 1 2 3 4 5 6 7 8 9 10; do
+            docker exec "$node" crictl inspecti -o json "$image" >/dev/null 2>&1 && break
+            if [[ $wait == 10 ]]; then
+              docker exec "$node" crictl images >&2 || true
+              docker exec "$node" ctr --namespace k8s.io images ls -q >&2 || true
+              docker exec "$node" crictl inspecti -o json "$image" >/dev/null
+            fi
+            printf 'CRI shows no %s on %s after %s s\n' "$image" "$node" "$wait" | tee -a "$work/node-image-waits.log" >&2
+            sleep 1
+          done
         done
       done
     else
