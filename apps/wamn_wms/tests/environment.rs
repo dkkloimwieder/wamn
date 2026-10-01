@@ -410,6 +410,34 @@ fn component_declaration(
     )?)
 }
 
+/// Render the WMS template as `push-component` does: the version comes from
+/// the package's `wamn.json`, and the template authors none (wamn-uqs5.3).
+fn wms_component_declaration(root: &Path, tenant: &str, output: &Path) -> anyhow::Result<()> {
+    let declaration = wamn_control::component_declaration::render_declaration_document(
+        &root.join("publication/components/wms.json.in"),
+        tenant,
+        &wamn_control::component_declaration::authored_base_digests(root)?,
+    )?;
+    fs::write(output, serde_json::to_vec_pretty(&declaration)?)?;
+    Ok(())
+}
+
+#[test]
+fn the_wms_declaration_takes_its_version_from_the_package() -> anyhow::Result<()> {
+    let output = std::env::temp_dir().join(format!("wms-declaration-{}.json", std::process::id()));
+    let rendered = wms_component_declaration(&package_root(), "wms", &output)
+        .and_then(|()| Ok(serde_json::from_slice::<Value>(&fs::read(&output)?)?));
+    let _ = fs::remove_file(&output);
+    let scope = &rendered?["scope"];
+    assert_eq!(scope["tenant-id"], "wms");
+    assert_eq!(scope["package-id"], "wamn_wms");
+    assert_eq!(
+        scope["package-version"].as_str(),
+        Some(package_coordinate()?.package_version())
+    );
+    Ok(())
+}
+
 /// The store alias the label wiring's blob-put node names: the one authored
 /// alias, which the declaration and the binding both take.
 fn label_store_alias(root: &Path) -> anyhow::Result<String> {
@@ -454,12 +482,7 @@ pub async fn publish(
     let blob_declaration = evidence.join("blob-put.declaration.json");
     let jsonata_declaration = evidence.join("jsonata.declaration.json");
     let store_alias = label_store_alias(&root)?;
-    component_declaration(
-        &root.join("publication/components/wms.json.in"),
-        &wms_declaration,
-        &package,
-        "",
-    )?;
+    wms_component_declaration(&root, identity().tenant.as_str(), &wms_declaration)?;
     let label_packages = component_declaration(
         &repository.join("apps/platform/no-std/label-render/declaration.json.in"),
         &label_declaration,
