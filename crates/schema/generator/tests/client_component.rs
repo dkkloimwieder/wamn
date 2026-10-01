@@ -433,6 +433,11 @@ fn a_repeated_control_states_its_declared_path_and_its_index() {
         "a control inside the group states its declared path and its index"
     );
     assert!(
+        batch
+            .contains("<Show when={refusalMarksGroup(refusal()?.member ?? null, \"value.line\")}>"),
+        "the group heading carries a refusal that names no index"
+    );
+    assert!(
         batch.contains("error={refusalMarks(refusal()?.member ?? null, \"value.note\") ?"),
         "a control outside the group states no index"
     );

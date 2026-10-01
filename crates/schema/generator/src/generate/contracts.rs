@@ -275,8 +275,7 @@ fn emit_custom_operation_contracts(
         operation_contract.insert("dependency".to_owned(), Value::Object(dependency_contract));
     }
     if operation.pre_commit.is_some() {
-        let (prefix, version) = operation_id
-            .rsplit_once('@')
+        let (prefix, version) = wamn_catalog::split_sealed_operation(&operation_id)
             .expect("canonical operation identity has a version");
         operation_contract.insert(
             "pre_commit".to_owned(),
@@ -424,9 +423,7 @@ fn operation_row_columns(wamn_api: &WamnApi, row: &str) -> Vec<StatementValueCon
 fn idempotency_contract(key: &str, operation_id: &str) -> Value {
     // The operation without its `@version`, so a retry across a release
     // answers the stored result.
-    let operation = operation_id
-        .rsplit_once('@')
-        .map_or(operation_id, |(operation, _)| operation);
+    let operation = wamn_catalog::sealed_operation_reference(operation_id);
     json!({
         "key": key,
         "log": {

@@ -70,9 +70,8 @@ impl ReleaseFiles {
                             "route": {"path": route.template}},
                         "auth-policy": {"modes": ["pat"]},
                         // An authored entry names its operation by reference.
-                        "registered-operation": operation
-                            .rsplit_once('@')
-                            .map_or(operation.as_str(), |(reference, _)| reference)
+                        "registered-operation":
+                            wamn_schema_generator::sealed_operation_reference(&operation)
                     }),
                 )
             })

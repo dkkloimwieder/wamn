@@ -745,7 +745,7 @@ fn require_released_route(
                     .pointer(&format!("/route/{member}"))
                     .and_then(Value::as_str)
             };
-            (attachment.kind() == wamn_catalog::AttachmentType::Http
+            (attachment.attachment_type() == wamn_catalog::AttachmentType::Http
                 && route("path") == Some(url.path())
                 && route("method") == Some(method)
                 && route("host") == Some(host)

@@ -70,7 +70,7 @@ const WIDGETS: QueryTableDefinition<WidgetQueryRow> = {
   },
   actions: [
     {
-      operation: "platform-fixture:widget/get@1.0.0",
+      operation: "platform-fixture:widget/get@2.0.0",
       reference: "platform-fixture:widget/get",
       label: "get",
       many: false,
@@ -78,7 +78,7 @@ const WIDGETS: QueryTableDefinition<WidgetQueryRow> = {
       fill: [],
     },
     {
-      operation: "platform-fixture:widget/archive@1.0.0",
+      operation: "platform-fixture:widget/archive@2.0.0",
       reference: "platform-fixture:widget/archive",
       label: "archive",
       many: false,
@@ -198,6 +198,9 @@ describe("QueryTable", () => {
         if (opens === 1) {
           // The first load waits until the reload cancels it, and ends as the
           // transport ends an aborted fetch.
+          if (signal === undefined) {
+            throw new Error("the first load carries no abort signal");
+          }
           await new Promise<void>((resolve) => signal.addEventListener("abort", () => resolve()));
           return {
             status: "uncertain",

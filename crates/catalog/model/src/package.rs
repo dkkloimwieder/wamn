@@ -15,7 +15,7 @@ pub(crate) fn validate_canonical_operation(value: &str) -> Result<(), CatalogIde
     if local.contains(':') {
         return invalid("registered operation contains more than one package separator");
     }
-    let Some((local, package_version)) = local.rsplit_once('@') else {
+    let Some((local, package_version)) = crate::split_sealed_operation(local) else {
         return invalid("registered operation must carry an exact package version");
     };
     if local.contains('@') {

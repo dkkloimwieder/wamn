@@ -12,7 +12,7 @@ use wamn_engine::flow_http_routing::AuthenticatedCaller;
 use wamn_engine::release_manifest::LoadedRelease;
 use wamn_engine::router_delivery::{
     DeliveryClass, DeliveryError, DeliveryOutcome, DeliveryReport, DeliveryRequest,
-    EXECUTION_FAILED, FRESH_CREDENTIAL_REQUIRED, OperationRefusal, OperationRefusalKind,
+    EXECUTION_FAILED, FRESH_CREDENTIAL_REQUIRED, OperationRefusal, OperationRefusalType,
     PERMISSION_DENIED, ROUTER_DELIVERY_ID, RouteDelivery, RouteSettlement, Source, SourceRef,
     StreamedDelivery, derived_causation, lower_operation_refusal, resolve_authorized_target,
     settle_route,
@@ -391,11 +391,11 @@ impl RouterDeliveryBridge {
                     .downcast_ref::<OperationRefusal>()
                     .expect("the guarded branch carries an operation refusal")
                     .clone();
-                let (class, literal) = match denial.kind() {
-                    OperationRefusalKind::PermissionDenied => {
+                let (class, literal) = match denial.refusal_type() {
+                    OperationRefusalType::PermissionDenied => {
                         (DeliveryClass::PermissionDenied, PERMISSION_DENIED)
                     }
-                    OperationRefusalKind::FreshCredentialRequired => (
+                    OperationRefusalType::FreshCredentialRequired => (
                         DeliveryClass::FreshCredentialRequired,
                         FRESH_CREDENTIAL_REQUIRED,
                     ),
@@ -459,7 +459,7 @@ impl RouterDeliveryBridge {
                 RouterTapPreview {
                     delivery_id,
                     target,
-                    source_type: source.kind(),
+                    source_type: source.source_type(),
                     source_id: source.id(),
                     phase,
                     payload,
@@ -918,7 +918,7 @@ impl DeliveryMetrics {
 /// delivery rate. A route has no wiring, so its source names it alone.
 fn delivery_attributes(source: SourceRef<'_>, target: &AttachmentTarget) -> Vec<KeyValue> {
     let mut attributes = vec![
-        KeyValue::new(SOURCE_KIND, source.kind()),
+        KeyValue::new(SOURCE_KIND, source.source_type()),
         KeyValue::new(SOURCE_ID, source.id().to_owned()),
     ];
     if let AttachmentTarget::Wiring {

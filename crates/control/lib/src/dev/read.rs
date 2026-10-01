@@ -344,7 +344,7 @@ impl DevSnapshot {
             .flat_map(|release| release.manifest.every_attachment())
             .filter(|(_, attachment)| {
                 matches!(
-                    attachment.kind(),
+                    attachment.attachment_type(),
                     AttachmentType::Http | AttachmentType::Studio
                 )
             })

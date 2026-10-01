@@ -75,7 +75,7 @@ The verb reads the registry row, the tenant row and the event reader row first. 
 Each refusal names its reason on one line and changes nothing.
 
 - No `registry.project_envs` row for the triple.
-- `--admin-database-url` reaches a database other than `postgres`, or its `cluster_name` differs from `registry.orgs.pool_cluster`. A dedicated org records no cluster, so the verb refuses it with "no recorded cluster" (`wamn-3icz`). A missing database is not a refusal, because a second run after the drop must go on.
+- `--admin-database-url` reaches a database other than `postgres`, or its `cluster_name` differs from the cluster of the environment. The verb derives that cluster with `cluster_of`, the rule that provisioning places it with: the pool of a pooled org, or `<org>-<owner(env policy)>` for a dedicated org (`wamn-3icz`). A missing database is not a refusal, because a second run after the drop must go on.
 - The replication slot is active: a reader still streams from it.
 - The database has a session of a login other than the verb. The refusal names each login it found, so the operator knows which workload still runs.
 - A `catalog.tenant_environments` row names the tenant with another triple or another suffix.

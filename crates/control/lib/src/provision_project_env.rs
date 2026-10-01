@@ -104,6 +104,7 @@ use database::{
     workload_url,
 };
 use pat_secrets::issue_pat_secrets;
+pub(crate) use registry::resolve_cluster_on;
 use registry::{mint_instance_suffix, record_project_env};
 
 pub(crate) use output::write_output;

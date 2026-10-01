@@ -2,7 +2,7 @@ use wamn_catalog::{AdmittedComponentOperation, ComponentPackageScope};
 use wamn_runtime::plugins::connection_http::WiringPosition;
 
 use super::*;
-use wamn_engine::router_delivery::{OperationRefusalKind, authorize_registered_operation};
+use wamn_engine::router_delivery::{OperationRefusalType, authorize_registered_operation};
 
 fn component_with_operations(
     operations: BTreeMap<String, AdmittedComponentOperation>,
@@ -140,8 +140,8 @@ fn a_custom_read_refuses_a_caller_without_its_grant() {
     let denial = authorize_registered_operation(None, Some(operation), false)
         .expect_err("a caller without the grant is refused");
     assert_eq!(
-        (denial.kind(), denial.operation()),
-        (OperationRefusalKind::PermissionDenied, operation.as_str())
+        (denial.refusal_type(), denial.operation()),
+        (OperationRefusalType::PermissionDenied, operation.as_str())
     );
 }
 

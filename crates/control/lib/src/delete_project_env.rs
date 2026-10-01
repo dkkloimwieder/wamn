@@ -311,16 +311,12 @@ pub async fn delete_project_env(args: &DeleteProjectEnvRequest) -> anyhow::Resul
         }
         None => None,
     };
-    // The cluster of the environment. Only a pooled org records it
-    // (`wamn-3icz`).
-    let cluster: Option<String> = system
-        .query_opt(
-            wamn_control_registry::sql::select_org_placement_sql(),
-            &[&triple.org],
-        )
+    // The cluster of the environment, by the one rule that provisioning places
+    // it with: the pool of a pooled org, `<org>-<owner(env policy)>` of a
+    // dedicated one (`wamn-3icz`).
+    let cluster = crate::provision_project_env::resolve_cluster_on(&system, &triple.org, env)
         .await
-        .context("read the registry.orgs row")?
-        .and_then(|row| row.get("pool_cluster"));
+        .context("derive the cluster of the environment")?;
     let cdc_namespace: Option<String> = system
         .query_opt(
             "SELECT replication_secret_namespace FROM registry.event_readers \
@@ -351,9 +347,6 @@ pub async fn delete_project_env(args: &DeleteProjectEnvRequest) -> anyhow::Resul
     if current != "postgres" {
         bail!("refused: --admin-database-url reaches database {current}, not postgres");
     }
-    let Some(cluster) = cluster else {
-        bail!("refused: org {} has no recorded cluster", triple.org);
-    };
     // CloudNativePG sets cluster_name to the name of its Cluster.
     let reached: String = admin
         .query_one("SHOW cluster_name", &[])
@@ -362,8 +355,8 @@ pub async fn delete_project_env(args: &DeleteProjectEnvRequest) -> anyhow::Resul
         .get(0);
     if reached != cluster {
         bail!(
-            "refused: --admin-database-url reaches cluster {reached:?}, and org {} records {cluster}",
-            triple.org
+            "refused: --admin-database-url reaches cluster {reached:?}, and {triple} is placed on \
+             {cluster}"
         );
     }
     let active = admin
