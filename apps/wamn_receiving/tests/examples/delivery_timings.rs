@@ -136,6 +136,35 @@ fn application_manifests(
         .collect()
 }
 
+/// The compiled modules in a Wasmtime cache, without its statistics files,
+/// as the cluster measurement counts them. A missing cache has none.
+fn cache_entries(modules: &Path) -> anyhow::Result<usize> {
+    let mut count = 0;
+    let mut directories = vec![modules.to_owned()];
+    while let Some(directory) = directories.pop() {
+        let entries = match fs::read_dir(&directory) {
+            Ok(entries) => entries,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(error) => return Err(error.into()),
+        };
+        for entry in entries {
+            let entry = entry?;
+            let kind = entry.file_type()?;
+            if kind.is_dir() {
+                directories.push(entry.path());
+            } else if kind.is_file()
+                && entry
+                    .path()
+                    .extension()
+                    .is_none_or(|extension| extension != "stats")
+            {
+                count += 1;
+            }
+        }
+    }
+    Ok(count)
+}
+
 fn private(path: &Path, bytes: &[u8]) -> anyhow::Result<()> {
     OpenOptions::new()
         .write(true)
@@ -301,6 +330,20 @@ async fn main() -> anyhow::Result<()> {
     })
     .await
     .context("owned Tempo readiness")?;
+    // The environment root lives in the target directory and survives runs,
+    // so its compile cache does. The result records the cache state first, so
+    // that a cold number reads as cold.
+    let root = target.join("delivery-timings/env");
+    DirBuilder::new()
+        .recursive(true)
+        .mode(0o700)
+        .create(&root)?;
+    let cache_entries = cache_entries(&root.join("dev-wasmtime-cache/modules"))?;
+    private(
+        &results.join("cache-state.json"),
+        &serde_json::to_vec(&json!({"cache_entries_before": cache_entries}))?,
+    )?;
+    println!("wasmtime cache entries before the run: {cache_entries}");
     let event_url = format!("nats://{events}");
     event_broker::connect(&broker.provisioning, &event_url).await?;
     event_broker::connect(&broker.runtime, &event_url).await?;
@@ -327,6 +370,15 @@ async fn main() -> anyhow::Result<()> {
             "WAMN_DEV_ENV_EVENT_PUBLISHER_PASSWORD_FILE",
             broker.publisher.password_file.display().to_string(),
         ),
+        (
+            "WAMN_DEV_ENV_EVENT_MATERIALIZER_USERNAME",
+            broker.materializer.username.clone(),
+        ),
+        (
+            "WAMN_DEV_ENV_EVENT_MATERIALIZER_PASSWORD_FILE",
+            broker.materializer.password_file.display().to_string(),
+        ),
+        ("WAMN_DEV_ENV_ROOT", root.display().to_string()),
         (
             "WAMN_IDENTITY_BINARY",
             target.join("debug/wamn-identity").display().to_string(),

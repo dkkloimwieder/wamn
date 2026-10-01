@@ -34,6 +34,8 @@ ring = { workspace = true }
 rustix = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
+# The loop reads the rendered materializer workload.
+serde_yaml = { workspace = true }
 tokio = { workspace = true, features = ["io-util", "macros", "process", "rt", "signal", "sync", "time"] }
 tokio-postgres = { workspace = true, features = ["with-chrono-0_4"] }
 tracing = { workspace = true }

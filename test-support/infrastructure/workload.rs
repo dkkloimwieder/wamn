@@ -10,7 +10,7 @@ use anyhow::{Context as _, ensure};
 use serde_json::{Value, json};
 use tokio::process::Command;
 
-use crate::rendering::MaterializerInput;
+use wamn_control_provision::materializer_workload::MaterializerInput;
 
 /// Pinned curl 8.12.1 client used by in-cluster HTTP probes (linux/amd64).
 pub const HTTP_PROBE_IMAGE: &str =

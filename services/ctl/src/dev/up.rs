@@ -99,6 +99,17 @@ pub struct DevUpArgs {
     #[arg(long, env = "WAMN_DEV_ENV_EVENT_PUBLISHER_PASSWORD_FILE")]
     event_publisher_password_file: PathBuf,
 
+    /// Built platform materializer the loop runs beside the release.
+    #[arg(long, env = "WAMN_DEV_ENV_MATERIALIZER_COMPONENT")]
+    materializer_component: PathBuf,
+
+    /// Event-broker credential the materializer consumes change events with.
+    #[arg(long, env = "WAMN_DEV_ENV_EVENT_MATERIALIZER_USERNAME")]
+    event_materializer_username: String,
+
+    #[arg(long, env = "WAMN_DEV_ENV_EVENT_MATERIALIZER_PASSWORD_FILE")]
+    event_materializer_password_file: PathBuf,
+
     /// The built `wamn-host` the loop supervises.
     #[arg(long, env = "WAMN_DEV_ENV_HOST_BIN")]
     host_binary: PathBuf,
@@ -138,6 +149,9 @@ pub async fn run(args: DevUpArgs) -> anyhow::Result<()> {
         cdc_reader_binary: args.cdc_reader_binary,
         event_publisher_username: args.event_publisher_username,
         event_publisher_password_file: args.event_publisher_password_file,
+        materializer_component: args.materializer_component,
+        event_materializer_username: args.event_materializer_username,
+        event_materializer_password_file: args.event_materializer_password_file,
     })
     .await?;
 

@@ -59,6 +59,7 @@ mod error;
 pub mod events;
 pub mod identity_issuer;
 pub mod management_admitter;
+pub mod materializer_workload;
 mod name;
 pub mod operation_grants;
 pub mod org;

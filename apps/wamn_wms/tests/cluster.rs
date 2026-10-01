@@ -19,10 +19,12 @@ use futures_util::FutureExt as _;
 use serde_json::json;
 use tokio::process::Command;
 use wamn_control_provision::events::{advisory_stream_config, source_stream_config};
+use wamn_control_provision::materializer_workload::{
+    EventIdentity, MaterializerInput, render_materializer,
+};
 use wamn_control_registry::Triple;
 use wamn_gate_harness::journey::JourneyDocument;
 use wamn_test_infrastructure::event_broker::EventBroker;
-use wamn_test_infrastructure::rendering::{EventIdentity, MaterializerInput, render_materializer};
 use wamn_test_infrastructure::scratch::ScratchRoot;
 use wamn_test_infrastructure::{event_broker, platform, workload};
 

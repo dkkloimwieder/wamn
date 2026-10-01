@@ -23,7 +23,6 @@ def main():
         "WAMN_DEV_ENV_ROUTE_HOST": "WAMN_ROUTE_HOST",
     }.items():
         environment[target] = environment[original]
-    environment["WAMN_DEV_ENV_ROOT"] = str(root / "environment")
     environment["WAMN_DEV_ENV_PLATFORM_DOMAIN"] = "example.invalid"
     wamn = environment["WAMN_RECEIVING_DEV_BIN"]
     subprocess.run([
@@ -32,7 +31,7 @@ def main():
     ], env=environment, check=True)
     return subprocess.call([
         sys.executable, str(source / "apps/wamn_receiving/tests/generated_operator_live.py"),
-        "--wamn", wamn, "--config", str(root / "environment/dev.json"),
+        "--wamn", wamn, "--config", str(Path(environment["WAMN_DEV_ENV_ROOT"]) / "dev.json"),
         "--overlay-root", str(source / "apps/client_acme_receiving"),
         "--evidence-dir", str(root / "result"),
     ], env=environment)

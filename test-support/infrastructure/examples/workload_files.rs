@@ -2,7 +2,7 @@
 //! and 5.
 //!
 //! The documents come from `rendering::render_http_workload` and
-//! `rendering::render_materializer`, the derivations of the cluster tests,
+//! `materializer_workload::render_materializer`, the derivations of the cluster tests,
 //! over `deploy/platform/http-route-workload.example.yaml` and
 //! `deploy/platform/materializer.example.yaml`. The program writes
 //! `flow-http.yaml` and `materializer.yaml` for Receiving on host group
@@ -19,17 +19,14 @@ use std::path::PathBuf;
 use anyhow::{Context as _, ensure};
 use serde::Deserialize as _;
 use serde_yaml::Value;
-use wamn_test_infrastructure::rendering::{
-    EventIdentity, HttpClaims, HttpWorkloadInput, MaterializerInput, render_http_workload,
-    render_materializer,
+use wamn_control_provision::materializer_workload::{
+    EventIdentity, FETCH_MS, MaterializerInput, SWEEP_MS, render_materializer,
 };
+use wamn_test_infrastructure::rendering::{HttpClaims, HttpWorkloadInput, render_http_workload};
 
 const ORG: &str = "dkk";
 const ENVIRONMENT: &str = "dev";
 const NAMESPACE: &str = "hosts";
-/// Deployment values, not the test-speed values of the kind cases.
-const FETCH_MS: u64 = 1000;
-const SWEEP_MS: u64 = 5000;
 
 /// One application's workloads.
 struct Application {

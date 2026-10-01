@@ -34,6 +34,8 @@ serde = { workspace = true, features = ["derive"] }
 # JSON manifests). No schemars — this is a provisioning tool, not a published
 # contract.
 serde_json = { workspace = true }
+# The materializer workload renders from its YAML template.
+serde_yaml = { workspace = true }
 
 # wamn-q3n.6 provision-org: the org Cluster-PAIR renderer takes the registry's
 # Org / Tier / Side vocabulary and derives cluster names via `cluster_name`, so

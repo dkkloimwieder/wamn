@@ -6,10 +6,10 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context as _, ensure};
 use serde_json::{Value, json};
 use tokio::process::Command;
-use wamn_test_infrastructure::rendering::{
-    EventIdentity, HttpClaims, HttpWorkloadInput, MaterializerInput, render_http_workload,
-    render_materializer,
+use wamn_control_provision::materializer_workload::{
+    EventIdentity, MaterializerInput, render_materializer,
 };
+use wamn_test_infrastructure::rendering::{HttpClaims, HttpWorkloadInput, render_http_workload};
 
 use super::super::{ENVIRONMENT, ORG, PROJECT, TENANT};
 use super::{ReceivingCluster, apply, checked, kubectl, write_private};

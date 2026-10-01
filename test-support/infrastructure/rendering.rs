@@ -5,6 +5,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use anyhow::{Context as _, bail, ensure};
 use serde::{Deserialize, Serialize};
 use serde_yaml::Value;
+pub use wamn_control_provision::materializer_workload::EventIdentity;
 use wamn_control_provision::{workload_role::WorkloadRoleFamily, workload_secret_name};
 
 /// Parse rendered Kubernetes objects without accepting command output as a document.
@@ -32,14 +33,6 @@ pub fn kubernetes_documents(bytes: &[u8]) -> anyhow::Result<Vec<serde_json::Valu
         "rendered Kubernetes document stream is empty"
     );
     Ok(documents)
-}
-
-/// Event coordinates declared by the environment owner.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct EventIdentity {
-    pub org: String,
-    pub project: String,
-    pub environment: String,
 }
 
 /// A provisioned role and the Secret selected for this test run.
@@ -137,19 +130,6 @@ pub struct HttpWorkloadInput {
     pub image: String,
     pub route_host: String,
     pub claims: HttpClaims,
-}
-
-/// Inputs for the materializer's existing workload template.
-#[derive(Debug, Clone)]
-pub struct MaterializerInput {
-    pub workload: String,
-    pub namespace: String,
-    pub image: String,
-    pub tenant: String,
-    pub event: EventIdentity,
-    pub event_stream: String,
-    pub fetch_ms: u64,
-    pub sweep_ms: u64,
 }
 
 /// Render host values without reading process state or opening files.
@@ -417,31 +397,6 @@ pub fn render_http_workload(template: &str, input: &HttpWorkloadInput) -> anyhow
     Ok(rendered.join("---\n"))
 }
 
-/// Render the materializer while retaining its native binding and retry limit.
-pub fn render_materializer(template: &str, input: &MaterializerInput) -> anyhow::Result<String> {
-    let mut workload: MaterializerDocument =
-        serde_yaml::from_str(template).context("parse materializer workload")?;
-    workload.metadata.name.clone_from(&input.workload);
-    workload.metadata.namespace.clone_from(&input.namespace);
-    let spec = &mut workload.spec.template.spec;
-    spec.environment.clone_from(&input.namespace);
-    let service = &mut spec.service;
-    service.image.clone_from(&input.image);
-    let config = &mut service.local_resources.config;
-    config.tenant.clone_from(&input.tenant);
-    config.project.clone_from(&input.event.project);
-    config.environment.clone_from(&input.event.environment);
-    let environment = &mut service.local_resources.environment.config;
-    environment.stream.clone_from(&input.event_stream);
-    environment.org.clone_from(&input.event.org);
-    environment.project.clone_from(&input.event.project);
-    environment.environment.clone_from(&input.event.environment);
-    environment.tenant.clone_from(&input.tenant);
-    environment.fetch_ms = Some(input.fetch_ms.to_string());
-    environment.sweep_ms = Some(input.sweep_ms.to_string());
-    serde_yaml::to_string(&workload).context("serialize materializer workload")
-}
-
 /// Remove host port mappings from the existing three-node kind template.
 pub fn render_kind_cluster(template: &str) -> anyhow::Result<String> {
     let mut cluster: KindCluster = serde_yaml::from_str(template).context("parse kind cluster")?;
@@ -629,22 +584,6 @@ struct HttpDeployment {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct MaterializerDocument {
-    api_version: String,
-    kind: WorkloadKind,
-    metadata: Metadata,
-    spec: DeploymentSpec<MaterializerWorkload>,
-    #[serde(flatten)]
-    extra: Extra,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-enum WorkloadKind {
-    WorkloadDeployment,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
 struct DeploymentSpec<T> {
     replicas: u32,
     template: WorkloadTemplate<T>,
@@ -665,16 +604,6 @@ struct HttpWorkload {
     environment: String,
     host_interfaces: Vec<HostInterface>,
     components: Vec<HttpComponent>,
-    #[serde(flatten)]
-    extra: Extra,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct MaterializerWorkload {
-    environment: String,
-    host_interfaces: Vec<HostInterface>,
-    service: MaterializerService,
     #[serde(flatten)]
     extra: Extra,
 }
@@ -713,78 +642,6 @@ struct HttpResources {
     config: HttpClaims,
     #[serde(flatten)]
     extra: Extra,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct MaterializerService {
-    image: String,
-    local_resources: MaterializerResources,
-    #[serde(flatten)]
-    extra: Extra,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct MaterializerResources {
-    config: MaterializerClaims,
-    environment: MaterializerEnvironment,
-    #[serde(flatten)]
-    extra: Extra,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct MaterializerClaims {
-    #[serde(rename = "wamn.tenant")]
-    tenant: String,
-    #[serde(rename = "wamn.project")]
-    project: String,
-    #[serde(rename = "wamn.environment")]
-    environment: String,
-    #[serde(rename = "wamn.postgres.authority")]
-    authority: MaterializerAuthority,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-enum MaterializerAuthority {
-    #[serde(rename = "event-materializer")]
-    EventMaterializer,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct MaterializerEnvironment {
-    config: MaterializerConfig,
-    #[serde(flatten)]
-    extra: Extra,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct MaterializerConfig {
-    #[serde(rename = "WAMN_MAT_STREAM")]
-    stream: String,
-    #[serde(rename = "WAMN_MAT_ORG")]
-    org: String,
-    #[serde(rename = "WAMN_MAT_PROJECT")]
-    project: String,
-    #[serde(rename = "WAMN_MAT_ENV")]
-    environment: String,
-    #[serde(rename = "WAMN_MAT_TENANT")]
-    tenant: String,
-    #[serde(rename = "WAMN_MAT_MAX_DELIVER")]
-    max_deliver: String,
-    #[serde(
-        rename = "WAMN_MAT_FETCH_MS",
-        default,
-        skip_serializing_if = "Option::is_none"
-    )]
-    fetch_ms: Option<String>,
-    #[serde(
-        rename = "WAMN_MAT_SWEEP_MS",
-        default,
-        skip_serializing_if = "Option::is_none"
-    )]
-    sweep_ms: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -443,8 +443,11 @@ cargo build --locked --offline \
   -p wamn-test-infrastructure -p wamn-receiving-tests --bins --example delivery_timings
 cargo build --locked --offline --manifest-path apps/Cargo.toml \
   --target wasm32-wasip2 -p http-route
+tools/build-components all
 cargo test --locked --offline -p wamn-receiving-tests --lib --no-run
 ```
+
+Set `WAMN_DEV_ENV_MATERIALIZER_COMPONENT` to the absolute path of the `materializer.wasm` that `tools/build-components` writes.
 
 Set `WAMN_LOCAL_TEST_BINARY` to the absolute executable path printed by the last command.
 Set `WAMN_LOCAL_RESULTS` to an unused private directory outside the worktree.
@@ -467,6 +470,10 @@ It sets `WAMN_RECEIVING_DEV_MINIO_ENDPOINT` to the MinIO address.
 The owned event broker admits the materializer consumers of the packages that the command gives `wamn dev up`.
 These are `wamn_receiving` and `client_acme_receiving`, or `wamn_wms` with `--wms`.
 The fixture sets the CDC reader binary and the event publisher credential for `wamn dev up`.
+It also sets the event materializer credential, which the broker scopes to the source stream.
+It sets `WAMN_DEV_ENV_ROOT` to `delivery-timings/env` in the target directory, which survives runs, so the compile cache survives too.
+Before the command starts, the fixture counts the files under `dev-wasmtime-cache/modules` in that root, without the `.stats` files.
+It writes the count to `cache-state.json` in the results directory, so that you can read a cold run as cold.
 `wamn-test-postgres` starts its server with `wal_level=logical`.
 It sets every variable that the case declares, except the two that the command sets.
 The case starts its own PostgreSQL server, because the development environment resets the control store of the whole server.

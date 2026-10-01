@@ -63,6 +63,7 @@ const HOST_NAME: &str = "host_name";
 const RUNNER: &str = "runner";
 const HOST_BINARY: &str = "host_binary";
 const WASMTIME_CACHE_DIR: &str = "wasmtime_cache_dir";
+const MATERIALIZER_NATS_BINDING_FILE: &str = "materializer_nats_binding_file";
 const CREDENTIALS_FILE: &str = "credentials_file";
 const CDC_READER: &str = "cdc_reader";
 const PACKAGE_MANIFEST_FILE: &str = "wamn.json";
@@ -76,6 +77,9 @@ const POSTGRES_ROUTING_QUERY_KEYS: [&str; 5] = ["host", "hostaddr", "port", "dbn
 pub struct LocalArtifacts {
     pub directory: PathBuf,
     pub flow_http_component: PathBuf,
+    /// The built platform materializer, which the loop runs beside the
+    /// release as the cluster does.
+    pub materializer_component: PathBuf,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub bindings: Option<PathBuf>,
 }
@@ -165,6 +169,9 @@ struct DevConfigDocument {
     runner: String,
     host_binary: PathBuf,
     wasmtime_cache_dir: PathBuf,
+    /// The materializer's events binding in the environment's private root,
+    /// as the cluster mounts its Secret.
+    materializer_nats_binding_file: PathBuf,
     /// The host credentials file in the environment's private root, as the
     /// cluster mounts its Secret. Absent means the host has no credentials.
     #[serde(default)]
@@ -588,6 +595,7 @@ pub struct DevConfig {
     activation_identity: DevActivationIdentity,
     host_binary: PathBuf,
     wasmtime_cache_dir: PathBuf,
+    materializer_nats_binding_file: PathBuf,
     credentials_file: Option<PathBuf>,
     cdc_reader: Option<CdcReader>,
     probes: Box<[ReachabilityProbe]>,
@@ -651,6 +659,10 @@ impl fmt::Debug for DevConfig {
             .field("activation_identity", &self.activation_identity)
             .field(HOST_BINARY, &self.host_binary)
             .field(WASMTIME_CACHE_DIR, &self.wasmtime_cache_dir)
+            .field(
+                MATERIALIZER_NATS_BINDING_FILE,
+                &self.materializer_nats_binding_file,
+            )
             .field(CREDENTIALS_FILE, &self.credentials_file)
             .field(CDC_READER, &self.cdc_reader)
             .finish_non_exhaustive()
@@ -830,6 +842,12 @@ impl DevConfig {
         &self.wasmtime_cache_dir
     }
 
+    /// The materializer's events binding, passed to the host as
+    /// `--materializer-nats-binding-file`.
+    pub fn materializer_nats_binding_file(&self) -> &Path {
+        &self.materializer_nats_binding_file
+    }
+
     /// The host credentials file, passed to the host as `WAMN_CREDENTIALS_FILE`.
     pub fn credentials_file(&self) -> Option<&Path> {
         self.credentials_file.as_deref()
@@ -918,6 +936,7 @@ pub fn parse_config(bytes: &[u8]) -> Result<DevConfig, DevConfigError> {
         runner,
         host_binary,
         wasmtime_cache_dir,
+        materializer_nats_binding_file,
         credentials_file,
         cdc_reader,
     } = input;
@@ -971,6 +990,7 @@ pub fn parse_config(bytes: &[u8]) -> Result<DevConfig, DevConfigError> {
     for path in [
         &local_artifacts.directory,
         &local_artifacts.flow_http_component,
+        &local_artifacts.materializer_component,
     ]
     .into_iter()
     .chain(local_artifacts.bindings.iter())
@@ -1032,6 +1052,13 @@ pub fn parse_config(bytes: &[u8]) -> Result<DevConfig, DevConfigError> {
     };
     let host_binary = nonempty_path(host_binary, HOST_BINARY)?;
     let wasmtime_cache_dir = nonempty_path(wasmtime_cache_dir, WASMTIME_CACHE_DIR)?;
+    if !materializer_nats_binding_file.is_absolute() {
+        return Err(DevConfigError::new(
+            DevConfigErrorType::InvalidValue,
+            MATERIALIZER_NATS_BINDING_FILE,
+            "the materializer binding file path must be absolute",
+        ));
+    }
     if credentials_file
         .as_ref()
         .is_some_and(|path| !path.is_absolute())
@@ -1186,6 +1213,7 @@ pub fn parse_config(bytes: &[u8]) -> Result<DevConfig, DevConfigError> {
         activation_identity,
         host_binary,
         wasmtime_cache_dir,
+        materializer_nats_binding_file,
         credentials_file,
         cdc_reader,
         probes: probes.into_boxed_slice(),
@@ -1395,7 +1423,7 @@ fn validate_config_document_shape(
                 DevConfigError::new(
                     DevConfigErrorType::InvalidValue,
                     key.as_str(),
-                    "local artifacts require only directory and flow_http_component paths",
+                    "local artifacts require only directory, flow_http_component and materializer_component paths",
                 )
             })?;
             continue;
@@ -1754,7 +1782,8 @@ pub(crate) mod tests {
             (ROUTE_HOST): "fixture.localhost",
             (PLATFORM_DOMAIN): "example.invalid",
             (LOCAL_ARTIFACTS): {"directory": "/tmp/wamn-local-candidate",
-                "flow_http_component": "/tmp/wamn-flow-http.wasm"},
+                "flow_http_component": "/tmp/wamn-flow-http.wasm",
+                "materializer_component": "/tmp/wamn-materializer.wasm"},
             (PACKAGE_SOURCES): [],
             (EFFECTIVE_RELEASE_ID): 1,
             (TENANT): "00000000-0000-0000-0000-000000000001",
@@ -1768,6 +1797,7 @@ pub(crate) mod tests {
             (RUNNER): "wamn-dev-fixture-1",
             (HOST_BINARY): "/opt/wamn/bin/wamn-host",
             (WASMTIME_CACHE_DIR): "/tmp/wamn-dev-cache",
+            (MATERIALIZER_NATS_BINDING_FILE): "/tmp/wamn-dev/materializer-nats.json",
         })
     }
 

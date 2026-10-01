@@ -55,11 +55,16 @@
         },
         "flow_http_component": {
           "type": "string"
+        },
+        "materializer_component": {
+          "description": "The built platform materializer, which the loop runs beside the release as the cluster does.",
+          "type": "string"
         }
       },
       "required": [
         "directory",
-        "flow_http_component"
+        "flow_http_component",
+        "materializer_component"
       ],
       "type": "object"
     },
@@ -159,6 +164,10 @@
     "local_artifacts": {
       "$ref": "#/definitions/LocalArtifacts"
     },
+    "materializer_nats_binding_file": {
+      "description": "The materializer's events binding in the environment's private root, as the cluster mounts its Secret.",
+      "type": "string"
+    },
     "operator_bearer_token": {
       "default": null,
       "type": "string"
@@ -252,6 +261,7 @@
     "http_admitter_database_url",
     "identity_database_url",
     "local_artifacts",
+    "materializer_nats_binding_file",
     "org",
     "otel_exporter_otlp_endpoint",
     "package_sources",

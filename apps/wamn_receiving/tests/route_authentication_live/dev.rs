@@ -47,6 +47,9 @@ impl DevJourneyInputs {
                     flow_http_component: required_journey_path("WAMN_DEV_ENV_FLOW_HTTP_COMPONENT")?
                         .canonicalize()
                         .context("resolve the local flow-http component named by WAMN_DEV_ENV_FLOW_HTTP_COMPONENT")?,
+                    materializer_component: required_journey_path("WAMN_DEV_ENV_MATERIALIZER_COMPONENT")?
+                        .canonicalize()
+                        .context("resolve the local materializer component named by WAMN_DEV_ENV_MATERIALIZER_COMPONENT")?,
                     bindings: None,
                 },
                 host_binary: required_journey_path("WAMN_RECEIVING_DEV_HOST_BIN")?,
@@ -71,6 +74,12 @@ impl DevJourneyInputs {
                 ],
                 credentials_file: None,
                 cdc_reader: None,
+                event_materializer_username: required_journey(
+                    "WAMN_DEV_ENV_EVENT_MATERIALIZER_USERNAME",
+                )?,
+                event_materializer_password_file: required_journey_path(
+                    "WAMN_DEV_ENV_EVENT_MATERIALIZER_PASSWORD_FILE",
+                )?,
             },
         };
         anyhow::ensure!(
@@ -400,7 +409,7 @@ pub(super) async fn current_database_acl(
 }
 
 #[tokio::test]
-#[ignore = "requires: test-util identity binary, local invitation capture, RESEND_API_KEY, RESEND_FROM, WAMN_RECEIVING_DEV_BIN, WAMN_DEV_ENV_FLOW_HTTP_COMPONENT, WAMN_RECEIVING_DEV_HOST_BIN, WAMN_RECEIVING_DEV_NATS_URL, WAMN_EVT_NATS_URL, WAMN_EVT_NATS_USERNAME, WAMN_EVT_NATS_PASSWORD_FILE, WAMN_EVT_STREAM_REPLICAS, WAMN_EVT_DUP_WINDOW_SECS, WAMN_RECEIVING_DEV_TEMPO_QUERY_URL, WAMN_RECEIVING_DEV_OTEL_EXPORTER_OTLP_ENDPOINT, WAMN_ROUTE_HOST, WAMN_DEV_ENV_EVENT_PROVISIONING_USERNAME, WAMN_DEV_ENV_EVENT_PROVISIONING_PASSWORD_FILE, cargo-sqlx, jq"]
+#[ignore = "requires: test-util identity binary, local invitation capture, RESEND_API_KEY, RESEND_FROM, WAMN_RECEIVING_DEV_BIN, WAMN_DEV_ENV_FLOW_HTTP_COMPONENT, WAMN_DEV_ENV_MATERIALIZER_COMPONENT, WAMN_DEV_ENV_EVENT_MATERIALIZER_USERNAME, WAMN_DEV_ENV_EVENT_MATERIALIZER_PASSWORD_FILE, WAMN_RECEIVING_DEV_HOST_BIN, WAMN_RECEIVING_DEV_NATS_URL, WAMN_EVT_NATS_URL, WAMN_EVT_NATS_USERNAME, WAMN_EVT_NATS_PASSWORD_FILE, WAMN_EVT_STREAM_REPLICAS, WAMN_EVT_DUP_WINDOW_SECS, WAMN_RECEIVING_DEV_TEMPO_QUERY_URL, WAMN_RECEIVING_DEV_OTEL_EXPORTER_OTLP_ENDPOINT, WAMN_ROUTE_HOST, WAMN_DEV_ENV_EVENT_PROVISIONING_USERNAME, WAMN_DEV_ENV_EVENT_PROVISIONING_PASSWORD_FILE, cargo-sqlx, jq"]
 async fn product_dev_command_owns_the_clean_ten_stage_output_and_cleanup() -> anyhow::Result<()> {
     wamn_test_postgres::require_prerequisites(&[
         "RESEND_API_KEY",
@@ -409,6 +418,9 @@ async fn product_dev_command_owns_the_clean_ten_stage_output_and_cleanup() -> an
         "WAMN_TEST_RESEND_ENDPOINT",
         "WAMN_RECEIVING_DEV_BIN",
         "WAMN_DEV_ENV_FLOW_HTTP_COMPONENT",
+        "WAMN_DEV_ENV_MATERIALIZER_COMPONENT",
+        "WAMN_DEV_ENV_EVENT_MATERIALIZER_USERNAME",
+        "WAMN_DEV_ENV_EVENT_MATERIALIZER_PASSWORD_FILE",
         "WAMN_RECEIVING_DEV_HOST_BIN",
         "WAMN_RECEIVING_DEV_NATS_URL",
         "WAMN_EVT_NATS_URL",

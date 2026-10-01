@@ -16,7 +16,7 @@ use wash_runtime::engine::WasmProposal;
 use wash_runtime::engine::host_memory::HostMemoryBudgets;
 use wash_runtime::host::http::{ConnectionLimit, HostHandler as _, Ingress};
 use wash_runtime::host::probes::{self, Liveness, ProbeState};
-use wash_runtime::host::{HostApi as _, HostConfig};
+use wash_runtime::host::{HostApi, HostConfig};
 use wash_runtime::observability::{MeterKind, Meters};
 use wash_runtime::plugin;
 use wash_runtime::washlet::ClusterHostBuilder;
@@ -790,7 +790,10 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
         .await?
     };
     let local_workload = match args.local_application.as_deref() {
-        Some(directory) => Some(load_local_workload(directory).await?),
+        Some(directory) => Some((
+            load_local_workload(directory).await?,
+            load_local_materializer(directory).await?,
+        )),
         None => None,
     };
     let pat_routes = release
@@ -1280,22 +1283,11 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
     let started = match (preloaded, local_workload) {
         (Err(error), _) => Err(error),
         (Ok(()), None) => Ok(()),
-        (Ok(()), Some(workload)) => {
-            let started = native_host.workload_start(workload).await;
-            if let Err(error) = started.as_ref() {
-                tracing::error!(%error, "local workload startup failed");
-            }
-            match started {
-                Ok(started)
-                    if started.workload_status.workload_state
-                        == wash_runtime::types::WorkloadState::Running =>
-                {
-                    Ok(())
-                }
-                Ok(started) => Err(anyhow::anyhow!(
-                    "local workload refused: {:?}",
-                    started.workload_status
-                )),
+        (Ok(()), Some((workload, materializer))) => {
+            // The materializer is a platform workload beside the release, so
+            // it starts after the release's flow-http workload runs.
+            match start_local(&native_host, workload).await {
+                Ok(()) => start_local(&native_host, materializer).await,
                 Err(error) => Err(error),
             }
         }
@@ -1454,7 +1446,6 @@ async fn preload_release(
 async fn load_local_workload(
     directory: &Path,
 ) -> anyhow::Result<wash_runtime::types::WorkloadStartRequest> {
-    use wash_runtime::component_source::ComponentSource;
     use wash_runtime::types::{Component, Workload, WorkloadStartRequest};
     use wash_runtime::washlet::types::v2;
 
@@ -1490,14 +1481,7 @@ async fn load_local_workload(
             && component.image_pull_policy == v2::ImagePullPolicy::Never as i32,
         "local flow-http must use explicit local bytes without registry credentials"
     );
-    let path = wamn_engine::artifact_source::local_component_path(directory, &component.image)?;
-    let loaded = ComponentSource::File(path)
-        .load(wash_runtime::oci::OciConfig::default())
-        .await?;
-    anyhow::ensure!(
-        loaded.digest.as_deref() == Some(component.image.as_str()),
-        "local flow-http component digest does not match the selected bytes"
-    );
+    let loaded = load_local_bytes(directory, &component.image, "local flow-http").await?;
     Ok(WorkloadStartRequest {
         workload_id: request.workload_id,
         workload: Workload {
@@ -1522,6 +1506,109 @@ async fn load_local_workload(
                 reclaim_window_seconds: component.reclaim_window_seconds,
                 reclaim_min_instances: component.reclaim_min_instances,
             }],
+        },
+    })
+}
+
+/// Start one local workload and require it to run.
+async fn start_local(
+    host: &impl HostApi,
+    workload: wash_runtime::types::WorkloadStartRequest,
+) -> anyhow::Result<()> {
+    let name = workload.workload.name.clone();
+    let started = host.workload_start(workload).await;
+    if let Err(error) = started.as_ref() {
+        tracing::error!(%error, workload = %name, "local workload startup failed");
+    }
+    match started {
+        Ok(started)
+            if started.workload_status.workload_state
+                == wash_runtime::types::WorkloadState::Running =>
+        {
+            Ok(())
+        }
+        Ok(started) => Err(anyhow::anyhow!(
+            "local workload {name} refused: {:?}",
+            started.workload_status
+        )),
+        Err(error) => Err(error),
+    }
+}
+
+/// Load the explicitly local bytes of one image and require its digest.
+async fn load_local_bytes(
+    directory: &Path,
+    image: &str,
+    label: &str,
+) -> anyhow::Result<wash_runtime::component_source::LoadedComponent> {
+    use wash_runtime::component_source::ComponentSource;
+
+    let path = wamn_engine::artifact_source::local_component_path(directory, image)?;
+    let loaded = ComponentSource::File(path)
+        .load(wash_runtime::oci::OciConfig::default())
+        .await?;
+    anyhow::ensure!(
+        loaded.digest.as_deref() == Some(image),
+        "{label} component digest does not match the selected bytes"
+    );
+    Ok(loaded)
+}
+
+/// Load the platform materializer's service workload with explicitly local
+/// bytes. The cluster declares it as a service, so it must carry one and no
+/// components.
+async fn load_local_materializer(
+    directory: &Path,
+) -> anyhow::Result<wash_runtime::types::WorkloadStartRequest> {
+    use wash_runtime::types::{Service, Workload, WorkloadStartRequest};
+    use wash_runtime::washlet::types::v2;
+
+    let bytes = std::fs::read(directory.join("materializer.json"))
+        .context("read the local materializer workload description")?;
+    let request: v2::WorkloadStartRequest = serde_json::from_slice(&bytes)
+        .context("decode the local materializer workload description")?;
+    let workload = request
+        .workload
+        .context("local materializer description has no workload")?;
+    let service = workload
+        .service
+        .context("local materializer must declare a service")?;
+    anyhow::ensure!(
+        workload.volumes.is_empty(),
+        "local materializer must declare no volumes"
+    );
+    let world = workload
+        .wit_world
+        .context("local materializer has no component world")?;
+    anyhow::ensure!(
+        world.components.is_empty(),
+        "local materializer must declare its service and no components"
+    );
+    anyhow::ensure!(
+        service.image_pull_secret.is_none()
+            && service.image_pull_policy == v2::ImagePullPolicy::Never as i32,
+        "local materializer must use explicit local bytes without registry credentials"
+    );
+    let loaded = load_local_bytes(directory, &service.image, "local materializer").await?;
+    Ok(WorkloadStartRequest {
+        workload_id: request.workload_id,
+        workload: Workload {
+            namespace: workload.namespace,
+            name: workload.name,
+            annotations: workload.annotations,
+            service: Some(Service {
+                bytes: loaded.bytes,
+                digest: loaded.digest,
+                local_resources: service
+                    .local_resources
+                    .map(TryInto::try_into)
+                    .transpose()?
+                    .unwrap_or_default(),
+                max_restarts: service.max_restarts,
+            }),
+            volumes: Vec::new(),
+            host_interfaces: world.host_interfaces.into_iter().map(Into::into).collect(),
+            components: Vec::new(),
         },
     })
 }
@@ -2066,6 +2153,86 @@ mod tests {
             Some(MATERIALIZER)
         );
         assert_eq!(materializer_only.url(AuthorityClass::GuestSql), None);
+    }
+
+    #[tokio::test]
+    async fn local_materializer_requires_its_service_and_no_components() {
+        use wash_runtime::washlet::types::v2;
+
+        let directory = std::env::temp_dir().join(format!(
+            "wamn-host-local-materializer-{}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&directory).unwrap();
+        let bytes = b"local materializer transport fixture";
+        let digest = wamn_engine::component_admission::component_digest(bytes);
+        let path = wamn_engine::artifact_source::local_component_path(&directory, &digest).unwrap();
+        std::fs::write(&path, bytes).unwrap();
+        let mut request = v2::WorkloadStartRequest {
+            workload_id: "wamn-dev-materializer".to_owned(),
+            workload: Some(v2::Workload {
+                namespace: "local".to_owned(),
+                name: "materializer".to_owned(),
+                service: Some(v2::Service {
+                    image: digest.clone(),
+                    image_pull_policy: v2::ImagePullPolicy::Never as i32,
+                    max_restarts: 5,
+                    local_resources: Some(v2::LocalResources {
+                        environment: HashMap::from([(
+                            "WAMN_MAT_MAX_DELIVER".to_owned(),
+                            "5".to_owned(),
+                        )]),
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                }),
+                wit_world: Some(v2::WitWorld::default()),
+                ..Default::default()
+            }),
+        };
+        let write = |request: &v2::WorkloadStartRequest| {
+            std::fs::write(
+                directory.join("materializer.json"),
+                serde_json::to_vec(request).unwrap(),
+            )
+            .unwrap();
+        };
+        write(&request);
+        let loaded = load_local_materializer(&directory).await.unwrap();
+        assert!(loaded.workload.components.is_empty());
+        let service = loaded.workload.service.as_ref().unwrap();
+        assert_eq!(service.bytes.as_ref(), bytes);
+        assert_eq!(service.max_restarts, 5);
+        assert_eq!(
+            service.local_resources.environment["WAMN_MAT_MAX_DELIVER"],
+            "5"
+        );
+        let workload = request.workload.as_mut().unwrap();
+        workload.wit_world.as_mut().unwrap().components = vec![v2::Component {
+            name: "extra".to_owned(),
+            image: digest.clone(),
+            ..Default::default()
+        }];
+        write(&request);
+        assert!(
+            load_local_materializer(&directory)
+                .await
+                .unwrap_err()
+                .to_string()
+                .contains("no components")
+        );
+        let workload = request.workload.as_mut().unwrap();
+        workload.wit_world.as_mut().unwrap().components.clear();
+        workload.service = None;
+        write(&request);
+        assert!(
+            load_local_materializer(&directory)
+                .await
+                .unwrap_err()
+                .to_string()
+                .contains("service")
+        );
+        std::fs::remove_dir_all(directory).unwrap();
     }
 
     #[tokio::test]
