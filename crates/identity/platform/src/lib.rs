@@ -2,7 +2,7 @@
 //!
 //! MVP outcome: management auth.
 //!
-//! This crate owns user and service principals, project-role assignments,
+//! This crate owns user and service principals, org memberships and roles, project-role assignments,
 //! project-environment memberships, passwords, invitations, personal access tokens, and session keys.
 //! It owns the fixed session-token profile but contains no HTTP, OIDC,
 //! or per-project `app_system` authority: every function here is
@@ -23,6 +23,7 @@ use tokio_postgres::{GenericClient, Row, Statement, error::SqlState};
 use wamn_session::PAT_TOKEN_PREFIX;
 
 pub mod control;
+pub mod org;
 pub mod password;
 pub mod password_login;
 pub mod session_keys;
@@ -42,6 +43,14 @@ const PAT_COLUMNS: [&str; 6] = [
 const INSERT_USER_SQL: &str = "INSERT INTO identity.principals \
     (type, subject, email, display_name) VALUES ('user', $1, $2, $3) \
     RETURNING id::text, type, subject, display_name, status";
+/// The user insert of [`create_or_reuse_user`]. An existing email or subject
+/// skips it.
+const INSERT_USER_IF_ABSENT_SQL: &str = "INSERT INTO identity.principals \
+    (type, subject, email, display_name) VALUES ('user', $1, $2, $3) \
+    ON CONFLICT DO NOTHING";
+const SELECT_USER_BY_EMAIL_SQL: &str = "SELECT p.id::text, p.status, EXISTS (\
+    SELECT 1 FROM identity.password_credentials c WHERE c.principal_id = p.id) \
+    FROM identity.principals p WHERE p.type = 'user' AND p.email = $1";
 const INSERT_SERVICE_SQL: &str = "INSERT INTO identity.principals \
     (type, subject, display_name) VALUES ('service', $1, $2) \
     RETURNING id::text, type, subject, display_name, status";
@@ -506,6 +515,63 @@ pub async fn create_user(
         .await
         .map_err(|error| database_error(&error))?;
     decode_principal(&row)
+}
+
+/// The user that [`create_or_reuse_user`] names.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UserAccount {
+    /// The user principal.
+    pub principal_id: PrincipalId,
+    /// Whether the user has a password credential.
+    pub enrolled: bool,
+}
+
+/// Create the user principal of `email`, or reuse the user that has it.
+///
+/// The email folds as [`checked_email`] folds it, and the folded email is
+/// also the subject, admitted by [`canonical_subject`]. A reused user keeps
+/// its display name. A disabled user is refused. The caller binds the actor
+/// in the same transaction.
+pub async fn create_or_reuse_user(
+    client: &(impl GenericClient + Sync),
+    email: &str,
+    display_name: &str,
+) -> Result<UserAccount, IdentityError> {
+    let email = checked_email(email)?;
+    let subject = canonical_subject(&email)?;
+    let display_name = checked_display_name(display_name)?;
+    client
+        .execute(
+            INSERT_USER_IF_ABSENT_SQL,
+            &[&subject, &email, &display_name],
+        )
+        .await
+        .map_err(|error| database_error(&error))?;
+    let row = client
+        .query_opt(SELECT_USER_BY_EMAIL_SQL, &[&email])
+        .await
+        .map_err(|error| database_error(&error))?
+        .ok_or_else(|| {
+            IdentityError::new(
+                IdentityErrorType::Conflict,
+                "the subject of this email belongs to another principal",
+            )
+        })?;
+    let principal_id: PrincipalId = row
+        .try_get::<_, String>(0)
+        .map_err(|error| database_error(&error))?
+        .parse()?;
+    let status: String = row.try_get(1).map_err(|error| database_error(&error))?;
+    if status != "active" {
+        return Err(IdentityError::new(
+            IdentityErrorType::Conflict,
+            format!("principal {principal_id} is disabled"),
+        ));
+    }
+    Ok(UserAccount {
+        principal_id,
+        enrolled: row.try_get(2).map_err(|error| database_error(&error))?,
+    })
 }
 
 /// Create a service principal. Machine authentication is supplied by a later

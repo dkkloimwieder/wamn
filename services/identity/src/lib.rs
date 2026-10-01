@@ -232,6 +232,7 @@ impl IdentityService {
             && matches!(
                 request.uri().path(),
                 "/invitations"
+                    | "/users"
                     | "/password/enroll"
                     | "/password/session"
                     | "/password/environments"

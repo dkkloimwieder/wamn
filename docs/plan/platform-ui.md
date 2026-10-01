@@ -850,6 +850,12 @@ An invitation with no effective role is valid. After enrollment the user sees:
 It writes the membership and grants as its sibling `grant-project-env-membership` does: with `--system-database-url`, as `wamn_system`, stamped `wamn:provisioning`.
 The operator path is provisioning, and the UI path is the `control` login as the session user.
 
+An `org-admin` row is written one way only: `user.invite` and `wamn-ctl invite --org-admin` call the write of [`org_admin.grant`](#org_admingrant) in their transaction.
+Application `admin` rows wait for issue 4 in both paths.
+
+The invite's `project-admin` list and `wamn-ctl invite --project-admin <project>` call the write of [`project_admin.grant`](#project_admingrant): the row, then a membership in every environment of that project.
+Application `admin` rows wait for issue 4 in both paths.
+
 ### `user.deactivate`
 
 Revokes from the leaves upward, in one transaction:

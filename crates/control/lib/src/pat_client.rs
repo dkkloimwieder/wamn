@@ -285,6 +285,77 @@ pub async fn send_invitation(
     })
 }
 
+/// The user identity created or reused for one email.
+#[derive(Debug)]
+pub struct UserReply {
+    /// The user principal.
+    pub principal_id: PrincipalId,
+    /// Whether the user has a password credential.
+    pub enrolled: bool,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct UserBody {
+    principal_id: String,
+    enrolled: bool,
+}
+
+#[derive(Deserialize)]
+struct RefusalBody {
+    error: String,
+}
+
+/// The request body of one user.
+fn user_body(email: &str, display_name: &str) -> anyhow::Result<Vec<u8>> {
+    serde_json::to_vec(&serde_json::json!({ "email": email, "display_name": display_name }))
+        .map_err(|_| anyhow::anyhow!("user request encoding failed"))
+}
+
+/// Ask identity to create the user of `email`, or to reuse the user that has
+/// it, as the operator of `config`. A refusal names identity's reason. The
+/// request is not retried, and a repeated request reuses the user.
+pub async fn create_user(
+    config: &PatIssuerConfig,
+    email: &str,
+    display_name: &str,
+) -> anyhow::Result<UserReply> {
+    let client = PatClient::for_route(config, "users")?;
+    let response = client
+        .http
+        .post(client.endpoint.clone())
+        .header(reqwest::header::CONTENT_TYPE, "application/json")
+        .body(user_body(email, display_name)?)
+        .send()
+        .await
+        .map_err(|_| {
+            anyhow::anyhow!("user request transport failed; the request was not retried")
+        })?;
+    let status = response.status();
+    let bytes = response
+        .bytes()
+        .await
+        .map_err(|_| anyhow::anyhow!("user reply read failed"))?;
+    anyhow::ensure!(
+        bytes.len() <= MAX_RESPONSE_BYTES,
+        "user reply exceeds the size limit"
+    );
+    if status != reqwest::StatusCode::OK {
+        let reason = serde_json::from_slice::<RefusalBody>(&bytes)
+            .map_or_else(|_| status.to_string(), |body| body.error);
+        anyhow::bail!("identity refused the user: {reason}");
+    }
+    let body: UserBody =
+        serde_json::from_slice(&bytes).map_err(|_| anyhow::anyhow!("user reply is invalid"))?;
+    Ok(UserReply {
+        principal_id: body
+            .principal_id
+            .parse()
+            .map_err(|_| anyhow::anyhow!("user reply is invalid"))?,
+        enrolled: body.enrolled,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -588,6 +659,40 @@ mod tests {
         );
         assert_eq!(fixture.requests.load(Ordering::SeqCst), 1);
         assert!(!format!("{client:?}").contains("/identity"));
+    }
+
+    #[tokio::test]
+    async fn a_user_request_posts_the_email_and_names_a_refusal() {
+        for (status, body, expected) in [
+            (
+                "200 OK",
+                format!(r#"{{"principal_id":"{PRINCIPAL}","enrolled":true}}"#),
+                format!("{PRINCIPAL} true"),
+            ),
+            (
+                "409 Conflict",
+                format!(r#"{{"error":"principal {PRINCIPAL} is disabled"}}"#),
+                format!("identity refused the user: principal {PRINCIPAL} is disabled"),
+            ),
+        ] {
+            let mut fixture = https_fixture("127.0.0.1", |_| {
+                format!("HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len())
+            })
+            .await;
+            let result = create_user(&fixture.args, "ann@example.test", "Ann").await;
+            let request = fixture.received.recv().await.unwrap();
+            assert!(request.starts_with("POST /identity/users HTTP/1.1\r\n"));
+            let (_, sent) = request.split_once("\r\n\r\n").unwrap();
+            assert_eq!(
+                serde_json::from_str::<serde_json::Value>(sent).unwrap(),
+                serde_json::json!({ "email": "ann@example.test", "display_name": "Ann" })
+            );
+            let outcome = match result {
+                Ok(reply) => format!("{} {}", reply.principal_id, reply.enrolled),
+                Err(error) => error.to_string(),
+            };
+            assert_eq!(outcome, expected);
+        }
     }
 
     #[tokio::test]

@@ -242,10 +242,21 @@ For Kubernetes, create a Secret with the `api-key` entry in the identity namespa
 Set the identity chart's `resendSecret` to that Secret and `resendFrom` to the verified sender.
 Set `operatorCaSecret` to permit operator invitation requests.
 Set `inviteUrl` to the web client base, for example `https://receiving.wamn.dev`. The invitation mail then carries one link to `<inviteUrl>/invite#<code>`, and the reset mail one link to `<inviteUrl>/reset#<secret>`. If `inviteUrl` is empty, each mail shows the code to paste into the terminal client.
-An operator sends an invitation with `wamn-ctl invite`, which uses the operator certificate flags of the PAT mint. Identity mails the invitation, and the command prints only identity's reply:
+An operator invites a user to an org with `wamn-ctl invite`, which uses the operator certificate flags of the PAT mint.
+The command runs three steps:
+
+1. Identity creates the user of the email, or reuses the user that has it. Identity refuses a disabled user.
+2. One system database transaction, as `wamn_system` stamped `wamn:provisioning`, writes the active org membership and the requested grants.
+3. Identity mails the invitation only when the user has no password. The command prints only identity's reply.
+
+`--org-admin` and each `--project-admin` write the rows that `org_admin.grant` and `project_admin.grant` write (docs/plan/platform-ui.md §4.4).
+Each `--membership <project>/<env>` writes one environment membership.
+All three flags are optional, and `--project-admin` and `--membership` can repeat:
 
 ```bash
-wamn-ctl invite --principal <user principal id> --pat-issuer <identity URL> \
+wamn-ctl invite --email <email> --display-name <name> --org <org> \
+  [--org-admin] [--project-admin <project>]... [--membership <project>/<env>]... \
+  --system-database-url "$WAMN_SYSTEM_ADMIN_URL" --pat-issuer <identity URL> \
   --pat-server-ca <identity CA> --pat-client-cert <operator certificate> --pat-client-key <operator key>
 ```
 

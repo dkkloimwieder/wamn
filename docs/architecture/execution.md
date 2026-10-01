@@ -446,6 +446,11 @@ The service sends the one-time secret through Resend to that principal's stored 
 A successful provider response means accepted for delivery, not confirmed inbox delivery.
 The service makes no automatic send retry and reports failed or uncertain sends as unavailable.
 
+`POST /users` requires the operator certificate and accepts `email` and `display_name`.
+It creates the user of the email as `wamn:provisioning`, or reuses the user that has it, and answers 200 with `principal_id` and `enrolled`.
+The email folds to lower case and is also the subject. `enrolled` is true when the user has a password.
+An email that the identity rules refuse answers 400 with the reason, and a disabled user answers 409.
+
 `POST /password/enroll` accepts `principal_id`, `invitation`, and `password`.
 `POST /password/session` accepts `email`, `password`, and `aud`.
 It reuses the PAT exchange's membership, current environment, active tenant user, role, and signing checks.

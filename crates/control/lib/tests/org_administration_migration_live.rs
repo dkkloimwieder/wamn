@@ -24,7 +24,7 @@ const TYPED_RELATIONS: &str = "'identity.principals'::regclass, 'identity.pats':
 
 /// The principal type as 0006 left it: `human` in every check, default and
 /// foreign key, and in the principal lock.
-const HUMAN_TYPE: &str = r#"
+const HUMAN_TYPE: &str = r"
 ALTER TABLE identity.pats DROP CONSTRAINT pats_principal_id_principal_type_fkey,
   DROP CONSTRAINT pats_principal_type_check;
 ALTER TABLE identity.password_credentials
@@ -79,10 +79,10 @@ ALTER TABLE catalog.authoring_command_audit
   DROP CONSTRAINT authoring_command_audit_principal_type_check,
   ADD CONSTRAINT authoring_command_audit_principal_type_check
     CHECK (principal_type IN ('human', 'service'));
-"#;
+";
 
 /// A user as 0006 stored one, with a password and a token, and one audit row.
-const HUMAN_ROWS: &str = r#"
+const HUMAN_ROWS: &str = r"
 SELECT pg_catalog.set_config('app.user_id', '00000000-0000-4000-8000-0000000000aa', true);
 INSERT INTO identity.principals (id, type, subject, email, display_name)
   VALUES ('00000000-0000-4000-8000-000000000001', 'human', 'owner', 'owner@example.test', 'Owner');
@@ -97,7 +97,7 @@ INSERT INTO catalog.authoring_command_audit (tenant_id, command_id, command_type
   VALUES ('tenant', 'command', 'gate', '00000000-0000-4000-8000-000000000001', 'human',
           'owner', 'project-admin', 'acme', 'shop', 'dev', 'ref', 'sha256:' || repeat('0', 64),
           '\x01');
-"#;
+";
 
 async fn connect(url: &str) -> Client {
     let (client, connection) = tokio_postgres::connect(url, NoTls)

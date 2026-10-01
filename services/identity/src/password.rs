@@ -17,8 +17,9 @@ use tokio::sync::Semaphore;
 use tokio_postgres::Client;
 use wamn_control_provision::{PlatformComponent, identity_issuer::IdentityIssuerConnection};
 use wamn_platform_identity::{
-    PrincipalId,
+    IdentityErrorType, PrincipalId,
     control::{control_audience, control_orgs},
+    create_or_reuse_user,
     password::{
         Password, PasswordError, PasswordErrorType, PasswordWork, RefusalCause,
         authenticate_password, enroll_password, issue_invitation, issue_reset, password_work,
@@ -68,6 +69,12 @@ impl State {
 #[serde(deny_unknown_fields)]
 struct InvitationRequest {
     principal_id: String,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct UserRequest {
+    email: String,
+    display_name: String,
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -181,7 +188,7 @@ pub(super) async fn respond(
     operator: bool,
     source: IpAddr,
 ) -> Response<Full<Bytes>> {
-    if request.uri().path() == "/invitations" && !operator {
+    if matches!(request.uri().path(), "/invitations" | "/users") && !operator {
         return response(
             StatusCode::FORBIDDEN,
             "application/json",
@@ -247,6 +254,12 @@ async fn handle(
     };
     let bytes = Zeroizing::new(body.to_bytes().to_vec());
     match parts.uri.path() {
+        "/users" => {
+            let Ok(request) = serde_json::from_slice::<UserRequest>(&bytes) else {
+                return invalid();
+            };
+            create_user(&mut database.client, &request).await
+        }
         "/invitations" => {
             let Ok(request) = serde_json::from_slice::<InvitationRequest>(&bytes) else {
                 return invalid();
@@ -873,6 +886,46 @@ fn password_failure(error: &PasswordError) -> Response<Full<Bytes>> {
         PasswordErrorType::Policy | PasswordErrorType::Refused => invalid(),
     }
 }
+/// Create or reuse the user of one email, as `wamn:provisioning`, and reply
+/// with the principal and whether it has a password credential.
+async fn create_user(client: &mut Client, request: &UserRequest) -> Response<Full<Bytes>> {
+    let actor = PlatformComponent::Provisioning.principal_id().to_string();
+    let Ok(tx) = client.transaction().await else {
+        return unavailable();
+    };
+    if tx
+        .execute("SELECT set_config('app.user_id', $1, true)", &[&actor])
+        .await
+        .is_err()
+    {
+        return unavailable();
+    }
+    let account = match create_or_reuse_user(&tx, &request.email, &request.display_name).await {
+        Ok(account) => account,
+        Err(error) => {
+            let status = match error.kind() {
+                IdentityErrorType::InvalidInput => StatusCode::BAD_REQUEST,
+                IdentityErrorType::Conflict => StatusCode::CONFLICT,
+                _ => return unavailable(),
+            };
+            let body = serde_json::json!({ "error": error.to_string() });
+            return response(status, "application/json", body.to_string().into_bytes());
+        }
+    };
+    if tx.commit().await.is_err() {
+        return unavailable();
+    }
+    let body = serde_json::json!({
+        "principal_id": account.principal_id.as_str(),
+        "enrolled": account.enrolled,
+    });
+    response(
+        StatusCode::OK,
+        "application/json",
+        body.to_string().into_bytes(),
+    )
+}
+
 fn invalid() -> Response<Full<Bytes>> {
     response(
         StatusCode::BAD_REQUEST,
@@ -1025,7 +1078,7 @@ mod tests {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let endpoint = format!("http://{}", listener.local_addr().unwrap());
         let requests = tokio::spawn(async move {
-            for _ in 0..7 {
+            for _ in 0..13 {
                 let (tcp, _) = listener.accept().await.unwrap();
                 let service = service.clone();
                 let handler = service_fn(move |request| {
@@ -1090,6 +1143,79 @@ mod tests {
             .unwrap()
             .get(0);
         assert_eq!(remaining, 0);
+        // `/users` creates a user once, folds its email into the subject and
+        // reports whether it has a password credential.
+        let mut users = Vec::new();
+        for (email, display_name) in [
+            (" Carol@Example.Invalid ", "Carol"),
+            ("carol@example.invalid", "Other"),
+            ("alice@example.invalid", "Alice"),
+            ("bob@example.invalid", "Bob"),
+            ("not-an-email", "Nobody"),
+        ] {
+            let reply = client
+                .post(format!("{endpoint}/users"))
+                .json(&json!({"email": email, "display_name": display_name}))
+                .send()
+                .await
+                .unwrap();
+            users.push((
+                reply.status().as_u16(),
+                reply.json::<serde_json::Value>().await.unwrap(),
+            ));
+        }
+        let carol = users[0].1["principal_id"].as_str().unwrap().to_owned();
+        assert_eq!(
+            users,
+            [
+                (200, json!({"principal_id": carol, "enrolled": false})),
+                (200, json!({"principal_id": carol, "enrolled": false})),
+                (
+                    200,
+                    json!({"principal_id": alice.id().as_str(), "enrolled": true})
+                ),
+                (
+                    200,
+                    json!({"principal_id": bob.id().as_str(), "enrolled": false})
+                ),
+                (
+                    400,
+                    json!({"error": "email must be a local part, an @, and a dotted domain, in at most 254 bytes"})
+                ),
+            ]
+        );
+        let row = admin
+            .client
+            .query_one(
+                "SELECT subject, email, display_name, updated_by::text \
+                 FROM identity.principals WHERE id = $1::text::uuid",
+                &[&carol],
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            (0..4).map(|index| row.get(index)).collect::<Vec<String>>(),
+            [
+                "carol@example.invalid",
+                "carol@example.invalid",
+                "Carol",
+                actor.as_str()
+            ]
+        );
+        wamn_platform_identity::disable_principal(&admin.client, bob.id())
+            .await
+            .unwrap();
+        let disabled = client
+            .post(format!("{endpoint}/users"))
+            .json(&json!({"email": "bob@example.invalid", "display_name": "Bob"}))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(disabled.status(), 409);
+        assert_eq!(
+            disabled.json::<serde_json::Value>().await.unwrap(),
+            json!({"error": format!("principal {} is disabled", bob.id())})
+        );
         let unknown = client
             .post(format!("{endpoint}/password/recover"))
             .json(&json!({"email":"unknown@example.invalid"}))

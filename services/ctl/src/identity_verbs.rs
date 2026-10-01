@@ -9,7 +9,7 @@ use clap::{ArgGroup, Args};
 use wamn_control::identity_issuer::{
     IdentityIssuerAction, IdentityIssuerRequest, provision_identity_issuer,
 };
-use wamn_control::pat_client;
+use wamn_control::invite::{InviteRequest, invite as run_invite};
 use wamn_control::project_env_membership::{self, ProjectEnvMembershipRequest};
 use wamn_control_provision::CredentialGeneration;
 use wamn_platform_identity::PrincipalId;
@@ -90,15 +90,52 @@ pub struct ProjectEnvMembershipArgs {
     pub system_database_url: String,
 }
 
-/// Arguments that name one user principal and the operator identity client.
+/// Arguments that name one user, one org, the grants and the operator
+/// identity client.
 #[derive(Debug, Args)]
 pub struct InviteArgs {
-    /// Existing user principal UUID that receives the invitation mail.
+    /// The user's email. Identity creates the user or reuses the user that
+    /// has it.
     #[arg(long)]
-    pub principal: String,
+    pub email: String,
+
+    /// The display name of a new user.
+    #[arg(long)]
+    pub display_name: String,
+
+    /// The org the user joins.
+    #[arg(long)]
+    pub org: String,
+
+    /// Grant `org-admin` in the org.
+    #[arg(long)]
+    pub org_admin: bool,
+
+    /// A project of the org where the user gets `project-admin`. Repeatable.
+    #[arg(long = "project-admin", value_name = "PROJECT")]
+    pub project_admins: Vec<String>,
+
+    /// An environment of the org, as `<project>/<env>`, where the user gets a
+    /// membership. Repeatable.
+    #[arg(long = "membership", value_name = "PROJECT/ENV", value_parser = parse_membership)]
+    pub memberships: Vec<(String, String)>,
+
+    /// Provisioning administrator URL for the system database.
+    #[arg(long, env = "WAMN_SYSTEM_ADMIN_URL")]
+    pub system_database_url: String,
 
     #[command(flatten)]
     pub pat_issuer: PatIssuerArgs,
+}
+
+/// Split `<project>/<env>`.
+fn parse_membership(value: &str) -> Result<(String, String), String> {
+    match value.split_once('/') {
+        Some((project, env)) if !project.is_empty() && !env.is_empty() && !env.contains('/') => {
+            Ok((project.to_owned(), env.to_owned()))
+        }
+        _ => Err("a membership is <project>/<env>".to_owned()),
+    }
 }
 
 /// Run one identity credential generation action and print what it did.
@@ -145,24 +182,33 @@ fn print_membership(state: &str, args: &ProjectEnvMembershipArgs, principal_id: 
     );
 }
 
-/// Ask identity to mail an invitation and print identity's reply. The reply
-/// carries no token, because identity mails the invitation secret.
+/// Invite one user to an org and print what it did. Identity's reply carries
+/// no token, because identity mails the invitation secret.
 pub async fn invite(args: InviteArgs) -> anyhow::Result<()> {
-    let principal: PrincipalId = args
-        .principal
-        .parse()
-        .map_err(|_| anyhow::anyhow!("--principal must be a principal UUID"))?;
-    let reply = pat_client::send_invitation(&args.pat_issuer.into(), &principal).await?;
-    println!(
-        "invitation for {}: {} {}",
-        principal.as_str(),
-        reply.status,
-        reply.body.trim()
-    );
-    anyhow::ensure!(
-        reply.status == 201,
-        "identity did not accept the invitation for delivery"
-    );
+    let outcome = run_invite(&InviteRequest {
+        email: args.email,
+        display_name: args.display_name,
+        org: args.org.clone(),
+        org_admin: args.org_admin,
+        project_admins: args.project_admins,
+        memberships: args.memberships,
+        system_database_url: args.system_database_url,
+        identity: args.pat_issuer.into(),
+    })
+    .await?;
+    match outcome.invitation {
+        Some(reply) => println!(
+            "invited principal_id={} org={}: {} {}",
+            outcome.principal_id,
+            args.org,
+            reply.status,
+            reply.body.trim()
+        ),
+        None => println!(
+            "invited principal_id={} org={}: enrolled, no invitation sent",
+            outcome.principal_id, args.org
+        ),
+    }
     Ok(())
 }
 
@@ -184,7 +230,7 @@ pub async fn revoke(args: ProjectEnvMembershipArgs) -> anyhow::Result<()> {
 mod tests {
     use clap::{CommandFactory as _, Parser};
 
-    use super::{IdentityIssuerArgs, ProjectEnvMembershipArgs};
+    use super::{IdentityIssuerArgs, InviteArgs, ProjectEnvMembershipArgs};
 
     #[derive(Parser)]
     struct IssuerCli {
@@ -196,6 +242,64 @@ mod tests {
     struct MembershipCli {
         #[command(flatten)]
         args: ProjectEnvMembershipArgs,
+    }
+
+    #[derive(Parser)]
+    struct InviteCli {
+        #[command(flatten)]
+        args: InviteArgs,
+    }
+
+    fn invite_arguments() -> Vec<&'static str> {
+        vec![
+            "invite",
+            "--email",
+            "ann@example.test",
+            "--display-name",
+            "Ann",
+            "--org",
+            "acme",
+            "--system-database-url",
+            "postgres://admin:secret@localhost/wamn_system",
+        ]
+    }
+
+    #[test]
+    fn invite_arguments_repeat_grants_and_split_memberships() {
+        let mut values = invite_arguments();
+        values.extend([
+            "--org-admin",
+            "--project-admin",
+            "billing",
+            "--project-admin",
+            "shop",
+            "--membership",
+            "billing/dev",
+            "--membership",
+            "shop/prod",
+        ]);
+        let args = InviteCli::try_parse_from(values).unwrap().args;
+        assert!(args.org_admin);
+        assert_eq!(args.project_admins, ["billing", "shop"]);
+        assert_eq!(
+            args.memberships,
+            [
+                ("billing".to_owned(), "dev".to_owned()),
+                ("shop".to_owned(), "prod".to_owned())
+            ]
+        );
+        let args = InviteCli::try_parse_from(invite_arguments()).unwrap().args;
+        assert!(!args.org_admin && args.project_admins.is_empty() && args.memberships.is_empty());
+        for extra in [
+            ["--membership", "billing"],
+            ["--membership", "billing/dev/x"],
+            ["--membership", "/dev"],
+            ["--principal", "00112233-4455-6677-8899-aabbccddeeff"],
+        ] {
+            let mut values = invite_arguments();
+            values.extend(extra);
+            assert!(InviteCli::try_parse_from(values).is_err(), "{extra:?}");
+        }
     }
 
     fn issuer_arguments() -> Vec<&'static str> {

@@ -48,6 +48,10 @@ use crate::env_policies::read_env_policies;
 use wamn_control_provision::org::OrgClusters;
 use wamn_control_provision::{PlatformComponent, bind_platform_principal_sql};
 use wamn_control_registry::{EnvPolicy, Org, OrgEnvPolicy, Registry, SCHEMA_VERSION, Template};
+use wamn_platform_identity::{
+    PrincipalId,
+    org::{activate_org_membership, grant_org_admin},
+};
 
 /// Inputs that name one org, the preset to stamp it from, and where to record it.
 #[derive(Debug)]
@@ -265,19 +269,10 @@ async fn record_org_rows(
 const OWNER_PRINCIPAL_SQL: &str =
     "SELECT id::text FROM identity.principals WHERE type = 'user' AND email = $1";
 
-/// The owner's active org membership. A re-run makes an inactive owner active.
-const OWNER_MEMBERSHIP_SQL: &str = "INSERT INTO identity.org_memberships \
-     (principal_id, org, status) VALUES ($1::text::uuid, $2, 'active') \
-     ON CONFLICT (principal_id, org) DO UPDATE SET status = 'active' \
-     WHERE identity.org_memberships.status <> 'active'";
-
-/// The owner's `org-admin` row.
-const OWNER_ORG_ADMIN_SQL: &str = "INSERT INTO identity.org_roles (principal_id, org, role) \
-     VALUES ($1::text::uuid, $2, 'org-admin') ON CONFLICT DO NOTHING";
-
 /// Write the owner's active org membership and `org-admin` row, stamped
-/// `wamn:provisioning`, inside the caller's transaction. An email that names
-/// no user principal is refused.
+/// `wamn:provisioning`, inside the caller's transaction, through the one write
+/// of each. A re-run makes an inactive owner active. An email that names no
+/// user principal is refused.
 async fn record_owner_rows(
     client: &tokio_postgres::Client,
     org: &str,
@@ -289,18 +284,18 @@ async fn record_owner_rows(
         ))
         .await
         .context("bind wamn:provisioning as the actor")?;
-    let owner: String = client
+    let owner: PrincipalId = client
         .query_opt(OWNER_PRINCIPAL_SQL, &[&email])
         .await
         .context("look up the owner email")?
         .with_context(|| format!("--owner-email {email:?} names no user principal"))?
-        .get(0);
-    client
-        .execute(OWNER_MEMBERSHIP_SQL, &[&owner, &org])
+        .get::<_, String>(0)
+        .parse()
+        .context("the owner principal id")?;
+    activate_org_membership(client, &owner, org)
         .await
         .context("write the owner's org membership")?;
-    client
-        .execute(OWNER_ORG_ADMIN_SQL, &[&owner, &org])
+    grant_org_admin(client, &owner, org)
         .await
         .context("write the owner's org-admin row")?;
     Ok(())

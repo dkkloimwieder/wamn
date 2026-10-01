@@ -27,6 +27,7 @@ pub mod event_streams;
 pub mod git_source;
 pub mod ident;
 pub mod identity_issuer;
+pub mod invite;
 #[cfg(feature = "ops")]
 mod ops_schema;
 pub mod owned_command;
