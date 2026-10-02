@@ -722,7 +722,7 @@ Each actual control operation independently repeats its authoritative role check
 ## 4.4 Org level
 
 Issue 3 (`wamn-a40n.3`) builds the system-level part of this section.
-The application rows (`app_system.user_roles` in each environment's project database) follow in issue 4, because the control host holds no project database credential ([§9](#9-questions-for-the-owner)).
+Issue 4 (`wamn-a40n.6`) builds the application rows (`app_system.users` and `app_system.user_roles` in each environment's project database), through the administration logins of [application writes](#application-writes) (D's answer to [§9](#9-questions-for-the-owner) question 1, option A).
 
 Add, in `wamn_system`:
 
@@ -769,6 +769,22 @@ SELECT                          registry.projects, registry.project_envs
 It holds nothing on `principals` beyond `SELECT`, nothing on password or invitation tokens, and nothing in any project database.
 It holds nothing on `registry.orgs`, because the control host takes its org from `--org` and does not read that table.
 
+### Application writes
+
+The control host of an org holds the `wamn_administration` login of every environment in that org, and of no other org.
+It is the login that the application host of the environment holds: one login per environment, the same family and the same privileges.
+In each project database the login holds `SELECT`, `INSERT`, `UPDATE` and `DELETE` on `app_system.users`, `app_system.roles`, `app_system.user_roles` and `app_system.permissions`, and nothing else beside the history writes of those tables.
+
+The logins of an org are in one Secret, `wamn-control-administration-<org>`, with one key per environment named `<project>--<env>`.
+The control host mounts the Secret as a volume and reads it at each write, so a new environment needs no restart.
+`provision-project-env` adds the key of its environment with a patch, and each generation rotation patches the key again, so the rotation reaches both holders.
+`delete-project-env` removes the key.
+
+A write that reaches the application rows uses one transaction in each project database, after the system transaction for a grant and before it for a revoke or a deactivation ([§4.9](#49-consistency-and-convergence)).
+The operation reports success only when every environment is done.
+If an environment fails, the operation refuses and names the environments that completed.
+`reconcile-run-plane` repairs an interrupted run.
+
 The control host never creates a principal.
 Identity creates or reuses the global user, issues the invitation credential and sends the mail, over the operator-certificate path that `wamn-ctl invite` uses.
 The control host never holds the Resend key or a role that issues tokens.
@@ -809,7 +825,7 @@ Input names:
 - optional `project-admin` grants.
 
 All lists can be empty.
-Direct application roles follow in issue 4.
+The invitation grants no authored application role.
 
 The operation runs in three steps:
 
@@ -851,24 +867,20 @@ It writes the membership and grants as its sibling `grant-project-env-membership
 The operator path is provisioning, and the UI path is the `control` login as the session user.
 
 An `org-admin` row is written one way only: `user.invite` and `wamn-ctl invite --org-admin` call the write of [`org_admin.grant`](#org_admingrant) in their transaction.
-Application `admin` rows wait for issue 4 in both paths.
 
 The invite's `project-admin` list and `wamn-ctl invite --project-admin <project>` call the write of [`project_admin.grant`](#project_admingrant): the row, then a membership in every environment of that project.
-Application `admin` rows wait for issue 4 in both paths.
+
+`user.invite` then writes the application rows of its grants, as each grant operation does.
+`wamn-ctl invite` holds no administration login, so `reconcile-run-plane` writes the application rows of its grants.
 
 ### `user.deactivate`
 
-Revokes from the leaves upward, in one transaction:
+Revokes from the leaves upward:
 
-1. project-env memberships in the org
-2. project roles in the org
-3. org roles
-4. mark the org membership inactive.
+1. the user's `users` row in each environment of the org, which removes its role rows, one transaction per environment
+2. then, in one system transaction, project-env memberships in the org, project roles in the org and org roles, and the org membership marked inactive.
 
 It does not disable the global principal.
-
-Until issue 4, application `users` and role rows in each environment remain after a deactivation.
-The rule that the operation reports success only after all downward access is removed is not met until issue 4.
 
 ### `user.activate`
 
@@ -887,14 +899,14 @@ project-admin in every existing project of the org
 membership in every existing environment of the org
 ```
 
-`admin` in every existing application follows in issue 4.
+Then it writes the user's `users` row and `admin` row in every existing environment of the org.
 
 A later project/environment creation performs the same materialization for all current org admins.
 
 ### `org_admin.revoke`
 
-Removes `project-admin` rows throughout the org, then the `org-admin` row, in one transaction.
-Removing application `admin` first follows in issue 4.
+Removes the user's `admin` row in every environment of the org first.
+Then it removes `project-admin` rows throughout the org and the `org-admin` row, in one system transaction.
 
 Ordinary memberships remain.
 
@@ -1448,12 +1460,7 @@ The application rows of `org_admin.grant`, `org_admin.revoke` and `user.deactiva
 
 Issue 4 (`wamn-a40n.6`) builds §4.5 and the application rows that issue 3 left: `users` and `admin` rows for `org_admin.grant`, their removal for `org_admin.revoke` and `user.deactivate`, and the same rows for the project operations.
 
-Question for D, first: [§9](#9-questions-for-the-owner) question 1. How does a control write reach the project database of each environment? Commits 1 and 2 below do not depend on the answer. Commits 3 and 4 do. The options:
-
-- A. The control host holds the `wamn_administration` login of every environment of its org. It writes the application rows itself, after the system transaction on a grant and before it on a revoke. A revoke then reports success only after every environment is done. Cost: §4.2 and §4.4 change, because the control host then holds project database credentials, one per environment, and it must reach every cluster of the org.
-- B. The control host calls the application host of each environment, which writes the rows with the `wamn_administration` login it already holds. Cost: a new control-to-application credential and route. A revoke waits for every application host, and an environment whose host is down blocks the revoke.
-- C. A reconciler writes the rows from the system grants, as `reconcile-run-plane` writes `users` rows today. The control write commits the system rows only. Cost: §4.9 changes, because a revoke reports success while stale application rows remain until the reconciler runs. An application route would then need the system check of option D to stay safe.
-- D. No application row for administrative authority. Admission on the application host reads `org-admin`, `project-admin` and the membership from `wamn_system`, as control admission does, and treats a holder as `admin`. Only ordinary users and authored roles keep `app_system` rows. Cost: §2.8 changes, because the hierarchy is read, not materialized. Each application request reads `wamn_system`, which the session check already does for membership.
+D answered [§9](#9-questions-for-the-owner) question 1 on 2026-10-01 with option A: the control host holds the `wamn_administration` login of every environment of its org ([application writes](#application-writes)). The rows stay stored, and nothing is read at request time.
 
 Measured on main `ea471e14a` on 2026-10-01:
 
@@ -1468,9 +1475,12 @@ Commits, each one green:
 
 1. `reconcile-run-plane` removes a user row whose system membership is gone, as §4.5 states. Service and platform rows keep their own sources. The foreign keys remove the user's `user_roles` rows.
 2. The project routes of §4.5 on the control serving root, system rows only: `environment.list`, `member.list`, `member.grant`, `member.revoke`, `project_admin.grant` and `project_admin.revoke`. A route needs `org-admin` in the org or `project-admin` in the named project, and checks it again in its write transaction. The writes are functions of `wamn_platform_identity::org`, beside `grant_project_admin`. `member.revoke` refuses while `org-admin` or `project-admin` covers the environment, and `project_admin.revoke` refuses while the user is `org-admin`.
-3. Future materialization. `provision-project-env` writes `project-admin` for each current org admin in a new project, and a membership for each current org admin and project admin of the project in a new environment, in its provisioning transaction, through the same functions.
-4. The application rows, by the answer to question 1: `users` and `admin` on a grant after the system rows, and their removal on a revoke or a deactivation before the system rows (§4.9).
-5. Documentation: execution, data access and the operations pages of the new routes and verbs.
+3. This amendment of §4.4, this issue and §9.
+4. Future materialization. `provision-project-env` writes `project-admin` for each current org admin in a new project, and a membership for each current org admin and project admin of the project in a new environment, in its provisioning transaction, through the same functions.
+5. The administration logins of the control host. `provision-org` emits the empty Secret `wamn-control-administration-<org>`. `provision-project-env` emits the patch that adds or rotates the key of its environment, and `delete-project-env` emits the patch that removes it. The control host reads the mounted Secret at each write.
+6. The application rows. `org_admin.grant`, `org_admin.revoke`, `user.deactivate`, `user.invite`, `project_admin.grant`, `project_admin.revoke`, `member.grant` and `member.revoke` write `users` and `admin` rows on a grant after the system rows, and remove them on a revoke or a deactivation before the system rows (§4.9). A failed environment refuses with the completed environments named.
+7. `reconcile-run-plane` writes a missing `admin` row for each holder of `project-admin` in the environment's project, so it repairs an interrupted grant and the grants of `wamn-ctl invite`.
+8. Documentation: execution, data access and the operations pages of the new routes, verbs and Secret.
 
 Exit includes:
 
@@ -1481,6 +1491,8 @@ Exit includes:
 - a new project and a new environment receiving the rows of the current org admins and project admins
 - the application rows of `org_admin.grant`, `org_admin.revoke`, `user.deactivate`, `project_admin.grant` and `project_admin.revoke` in each environment, in the order of §4.9
 - an interrupted revoke that never reports success while an application row remains
+- a failed environment refused with the completed environments named
+- a new environment's login reaching a running control host without a restart, and a removed environment's login gone
 
 **5. Application administration contract.**
 
@@ -1573,6 +1585,6 @@ New-project grant materialization and deterministic empty-environment copy from 
 
 ## 9. Questions for the owner
 
-1. Issue 4, open. How does an org-level write reach a project database? `org_admin.grant`, `org_admin.revoke` and `user.deactivate` must change `app_system.users` and `app_system.user_roles` in each environment of the org. The control serving root holds no project database (§4.2), and the control host holds no `wamn_administration` credential. This is a credential boundary. [§6 issue 4](#administration-epic) lists four options, A to D, with their costs.
+1. Issue 4, answered 2026-10-01 with option A. The control host of an org holds the `wamn_administration` login of every environment in that org, the login the application host holds, in the Secret `wamn-control-administration-<org>` ([application writes](#application-writes)). A write reaches each project database in its own transaction, leaves first on a revoke, and reports success only when every environment is done.
 2. Issue 3, answered 2026-10-01. `wamn-ctl invite` writes as its sibling does: `--system-database-url`, as `wamn_system`, stamped `wamn:provisioning`.
 3. Issue 3, answered 2026-10-01. The shell text "No access has been granted." lands in issue 6. The exit of issue 3 stays an invitation with no access, whose login lists no environment.
