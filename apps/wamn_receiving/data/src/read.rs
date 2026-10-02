@@ -206,7 +206,8 @@ mod tests {
 
     #[test]
     fn history_columns_are_the_declared_purchase_order_columns() {
-        let manifest: Value = serde_json::from_str(include_str!("../../wamn.json")).unwrap();
+        let manifest: Value =
+            serde_json::from_str(include_str!("../../generated/wamn.json")).unwrap();
         let declared =
             manifest["custom_operations"]["receiving.load_purchase_order_history"]["relations"]
                 .as_array()

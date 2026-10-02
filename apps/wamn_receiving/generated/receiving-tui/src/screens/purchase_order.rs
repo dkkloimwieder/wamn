@@ -5,7 +5,7 @@ use wamn_client_tui::{screen, submission};
 pub static GET_SPEC: screen::ScreenSpec = screen::ScreenSpec {
     model: "purchase_order",
     name: "get",
-    operation: "wamn-receiving:purchase-order/get@2.0.0",
+    operation: "wamn-receiving:purchase-order/get@2.1.0",
     type_: "get",
     input: crate::purchase_order::PURCHASE_ORDER_GET_INPUT_SCHEMA,
     input_schema: Some(
@@ -74,7 +74,7 @@ pub fn get(binding: submission::SessionBinding) -> screen::Screen {
 pub static QUERY_SPEC: screen::ScreenSpec = screen::ScreenSpec {
     model: "purchase_order",
     name: "query",
-    operation: "wamn-receiving:purchase-order/query@2.0.0",
+    operation: "wamn-receiving:purchase-order/query@2.1.0",
     type_: "query",
     input: crate::purchase_order::PURCHASE_ORDER_QUERY_INPUT_SCHEMA,
     input_schema: Some(
@@ -138,7 +138,7 @@ pub fn query(binding: submission::SessionBinding) -> screen::Screen {
 pub static UPDATE_SPEC: screen::ScreenSpec = screen::ScreenSpec {
     model: "purchase_order",
     name: "update",
-    operation: "wamn-receiving:purchase-order/update@2.0.0",
+    operation: "wamn-receiving:purchase-order/update@2.1.0",
     type_: "update",
     input: crate::purchase_order::PURCHASE_ORDER_UPDATE_INPUT_SCHEMA,
     input_schema: Some(
@@ -204,7 +204,7 @@ pub static UPDATE_SPEC: screen::ScreenSpec = screen::ScreenSpec {
         key_input: Some("id"),
     }),
     revision: Some(screen::RevisionBinding {
-        read_operation: "wamn-receiving:purchase-order/get@2.0.0",
+        read_operation: "wamn-receiving:purchase-order/get@2.1.0",
         read_key_input: "id",
         key_field: "id",
         revision_field: "row_version",

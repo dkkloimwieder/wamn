@@ -22,7 +22,7 @@ import {
   LocationListTableLabel,
 } from "./labels.js";
 
-/** What the table for `wamn-receiving:location/list@2.0.0` takes. */
+/** What the table for `wamn-receiving:location/list@2.1.0` takes. */
 export interface LocationListTableProps {
   /** The transport the application supplies. */
   readonly transport: Transport;
@@ -36,7 +36,7 @@ export interface LocationListTableProps {
   readonly onOutcome?: (outcome: Outcome<LocationListResult>) => void;
 }
 
-/** The table for `wamn-receiving:location/list@2.0.0`: the QueryTable over `LOCATION_LIST_TABLE`, in the table screen. */
+/** The table for `wamn-receiving:location/list@2.1.0`: the QueryTable over `LOCATION_LIST_TABLE`, in the table screen. */
 export function LocationListTable(props: LocationListTableProps) {
   return (
     <TableScreen>
@@ -45,7 +45,7 @@ export function LocationListTable(props: LocationListTableProps) {
   );
 }
 
-/** The table definition of `wamn-receiving:location/list@2.0.0`. */
+/** The table definition of `wamn-receiving:location/list@2.1.0`. */
 export const LOCATION_LIST_TABLE = {
   name: "location",
   read: { route: LOCATION_LIST_ROUTE, request: LOCATION_LIST_REQUEST_FIELDS, result: LOCATION_LIST_RESULT_FIELDS },
@@ -65,7 +65,7 @@ export const LOCATION_LIST_TABLE = {
     { field: "locationCode", label: "Location code", type: "text", role: "value" },
   ],
   actions: [
-    { operation: "wamn-receiving:receiving/record-receipt@2.0.0", reference: "wamn-receiving:receiving/record-receipt", label: "record-receipt", many: true, opens: "form", fill: [{ field: "id", input: ["value", "line", "[]", "locationId"] }], form: () => import("./receiving.js").then((module) => ({ default: module.ReceivingRecordReceiptForm })) },
+    { operation: "wamn-receiving:receiving/record-receipt@2.1.0", reference: "wamn-receiving:receiving/record-receipt", label: "record-receipt", many: true, opens: "form", fill: [{ field: "id", input: ["value", "line", "[]", "locationId"] }], form: () => import("./receiving.js").then((module) => ({ default: module.ReceivingRecordReceiptForm })) },
   ],
   childTables: [],
 } as const;

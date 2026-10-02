@@ -12,8 +12,9 @@ mod tests {
     use uuid::Uuid;
     use wamn_execution_contract::canonical_json_bytes;
 
-    const MANIFEST: &[u8] = include_bytes!("../../../apps/wamn_receiving/wamn.json");
-    const OVERLAY_MANIFEST: &[u8] = include_bytes!("../../../apps/client_acme_receiving/wamn.json");
+    const MANIFEST: &[u8] = include_bytes!("../../../apps/wamn_receiving/generated/wamn.json");
+    const OVERLAY_MANIFEST: &[u8] =
+        include_bytes!("../../../apps/client_acme_receiving/generated/wamn.json");
     const MIGRATION: &str =
         include_str!("../../../apps/wamn_receiving/migrations/0001_initial.sql");
     const RECORD_HISTORY_SQL: &str = include_str!("../../../deploy/sql/record-history.sql");

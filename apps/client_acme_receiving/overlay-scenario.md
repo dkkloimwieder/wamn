@@ -1,7 +1,7 @@
 # Acme Receiving overlay
 
 Acme adds inspection behavior to the Receiving base without copying its source.
-The [manifest](wamn.json) names an exact `wamn_receiving` dependency through `base_receiving`.
+The [manifest](wamn.k) names an exact `wamn_receiving` dependency through `base_receiving`.
 The base and overlay keep separate package versions, migration histories, artifacts, and permissions.
 Shared definition ownership belongs in [data access](../../docs/architecture/data-access.md).
 

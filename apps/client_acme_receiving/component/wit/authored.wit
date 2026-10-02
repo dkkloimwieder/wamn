@@ -1,4 +1,4 @@
-package client-acme-receiving:component@4.0.0;
+package client-acme-receiving:component@4.1.0;
 
 /// The Acme Receiving overlay component: every generated operation, and the
 /// custom operations it authors.

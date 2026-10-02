@@ -5,7 +5,7 @@ use wamn_client_tui::{screen, submission};
 pub static LIST_SPEC: screen::ScreenSpec = screen::ScreenSpec {
     model: "location",
     name: "list",
-    operation: "wamn-receiving:location/list@2.0.0",
+    operation: "wamn-receiving:location/list@2.1.0",
     type_: "projection",
     input: crate::location::LOCATION_LIST_INPUT_SCHEMA,
     input_schema: Some(

@@ -202,7 +202,9 @@ fn declared_consumers() -> anyhow::Result<Vec<async_nats::jetstream::consumer::p
             .collect::<String>()
     };
     for package in super::released_journey_packages() {
-        let path = super::journey_package_root(package, None).join("wamn.json");
+        let path = wamn_schema_generator::package_manifest_path(&super::journey_package_root(
+            package, None,
+        ));
         let manifest = wamn_schema_generator::PackageManifest::from_slice(&fs::read(path)?)?;
         for (name, operation) in &manifest.custom_operations {
             if let Some(registration) = &operation.registration {

@@ -2,7 +2,7 @@ Receiving owns package `wamn_receiving`, its SQL, guest, generated code, operato
 
 [Receiving scenario](receiving-scenario.md): Application behavior, limits, and source owners.
 [Operator guide](operator-guide.md): Sign-in, receipt entry, keyboard controls, history, recovery, and logout.
-[Manifest](wamn.json): Package identity and declared operations.
+[Manifest](wamn.k): Package identity and declared operations. The generator compiles it to `generated/wamn.json`.
 [Migrations](migrations/): Authored application schema.
 [Data access](data/): SQL-backed operation implementations.
 [Generated output](generated/): Derived contracts, SQL, and client code.

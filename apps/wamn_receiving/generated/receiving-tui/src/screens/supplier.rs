@@ -5,7 +5,7 @@ use wamn_client_tui::{screen, submission};
 pub static CREATE_SPEC: screen::ScreenSpec = screen::ScreenSpec {
     model: "supplier",
     name: "create",
-    operation: "wamn-receiving:supplier/create@2.0.0",
+    operation: "wamn-receiving:supplier/create@2.1.0",
     type_: "create",
     input: crate::supplier::SUPPLIER_CREATE_INPUT_SCHEMA,
     input_schema: Some(
@@ -88,7 +88,7 @@ pub fn create(binding: submission::SessionBinding) -> screen::Screen {
 pub static QUERY_SPEC: screen::ScreenSpec = screen::ScreenSpec {
     model: "supplier",
     name: "query",
-    operation: "wamn-receiving:supplier/query@2.0.0",
+    operation: "wamn-receiving:supplier/query@2.1.0",
     type_: "query",
     input: crate::supplier::SUPPLIER_QUERY_INPUT_SCHEMA,
     input_schema: Some(

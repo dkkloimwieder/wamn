@@ -20,11 +20,11 @@ pub const LOCATION_FIELDS: &[FieldDescriptor] = &[
     },
 ];
 
-/// Input for `wamn-receiving:location/list@2.0.0`.
+/// Input for `wamn-receiving:location/list@2.1.0`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct LocationListRequest {}
 
-/// Result of `wamn-receiving:location/list@2.0.0`.
+/// Result of `wamn-receiving:location/list@2.1.0`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct LocationListResult {
     /// `uuid`
@@ -33,10 +33,10 @@ pub struct LocationListResult {
     pub location_code: String,
 }
 
-/// Input descriptors for `wamn-receiving:location/list@2.0.0`.
+/// Input descriptors for `wamn-receiving:location/list@2.1.0`.
 pub const LOCATION_LIST_INPUT: &[FieldDescriptor] = &[];
 
-/// Result descriptors for `wamn-receiving:location/list@2.0.0`.
+/// Result descriptors for `wamn-receiving:location/list@2.1.0`.
 pub const LOCATION_LIST_RESULT: &[FieldDescriptor] = &[
     FieldDescriptor {
         path: "id",
@@ -86,10 +86,10 @@ pub const LOCATION_LIST_REQUIRES_COMPOSITION: bool = false;
 pub const LOCATION_LIST_REPLAY: Option<&str> = None;
 pub const LOCATION_LIST_RESPONSE_CONTRACT: Option<&str> = Some("{\"type\":\"array\"}");
 pub const LOCATION_LIST_RESULT_OPAQUE: bool = false;
-/// The grant a caller presents to invoke `wamn-receiving:location/list@2.0.0`.
-pub const LOCATION_LIST_GRANT: &str = "wamn-receiving:location/list@2.0.0";
+/// The grant a caller presents to invoke `wamn-receiving:location/list@2.1.0`.
+pub const LOCATION_LIST_GRANT: &str = "wamn-receiving:location/list@2.1.0";
 
-/// Typed refusals `wamn-receiving:location/list@2.0.0` declares.
+/// Typed refusals `wamn-receiving:location/list@2.1.0` declares.
 pub const LOCATION_LIST_ERRORS: &[&str] = &[
     "internal_error",
     "invalid_input",
@@ -98,7 +98,7 @@ pub const LOCATION_LIST_ERRORS: &[&str] = &[
     "timeout",
 ];
 
-/// Where the release publishes `wamn-receiving:location/list@2.0.0`.
+/// Where the release publishes `wamn-receiving:location/list@2.1.0`.
 ///
 /// Method and template only — the host and base URL are the client's
 /// deployment config, not this release's facts.
@@ -110,7 +110,7 @@ pub fn list_route() -> RouteMetadata {
     }
 }
 
-/// Invoke `wamn-receiving:location/list@2.0.0` through a bound client.
+/// Invoke `wamn-receiving:location/list@2.1.0` through a bound client.
 ///
 /// # Errors
 ///

@@ -14,10 +14,10 @@ export * from "./supplier.js";
 
 // These selectors read the first page and render no search, because the
 // list they read declares no filter on its display field:
-// wamn-receiving:purchase-order/update@2.0.0 change.supplier_id: wamn-receiving:supplier/query@2.0.0
-// wamn-receiving:receiving/record-receipt@2.0.0 value.line[].location_id: wamn-receiving:location/list@2.0.0
-// wamn-receiving:receiving/record-receipt@2.0.0 value.line[].purchase_order_line_id: wamn-receiving:receiving/load-receipt-screen@2.0.0
+// wamn-receiving:purchase-order/update@2.1.0 change.supplier_id: wamn-receiving:supplier/query@2.1.0
+// wamn-receiving:receiving/record-receipt@2.1.0 value.line[].location_id: wamn-receiving:location/list@2.1.0
+// wamn-receiving:receiving/record-receipt@2.1.0 value.line[].purchase_order_line_id: wamn-receiving:receiving/load-receipt-screen@2.1.0
 
 // These table columns show the record key, because the model they name
 // serves no list whose rows open a record read that returns its text:
-// wamn-receiving:purchase-order/query@2.0.0 supplier_id: supplier
+// wamn-receiving:purchase-order/query@2.1.0 supplier_id: supplier

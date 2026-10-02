@@ -1,4 +1,4 @@
-package wamn-receiving:supplier@2.0.0;
+package wamn-receiving:supplier@2.1.0;
 
 interface query {
   use wamn:node/types@0.1.0.{node-context, node-error};

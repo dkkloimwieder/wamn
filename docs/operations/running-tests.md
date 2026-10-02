@@ -570,7 +570,7 @@ To check Receiving, run:
 cargo run --locked --offline -p wamn-test-infrastructure --bin wamn-test-postgres -- \
   --database wamn_receiving --schema receiving \
   --migration-dir apps/wamn_receiving/migrations \
-  --history-manifest apps/wamn_receiving/wamn.json \
+  --history-manifest apps/wamn_receiving/wamn.k \
   --url-env DATABASE_URL -- \
   cargo run --locked --offline -p wamn-schema-generator --example materialize_package \
   -- check apps/wamn_receiving
@@ -595,7 +595,7 @@ Review the generated files before building the guest and operator.
 Do not edit generated Rust directly.
 
 For Acme, pass `--migration-dir apps/wamn_receiving/migrations` before `--migration-dir apps/client_acme_receiving/migrations`.
-Pass `--history-manifest apps/client_acme_receiving/wamn.json`, and use `apps/client_acme_receiving` as the generation input.
+Pass `--history-manifest apps/client_acme_receiving/wamn.k`, and use `apps/client_acme_receiving` as the generation input.
 For WMS, pass `--schema wms` and only `--migration-dir apps/wamn_wms/migrations`.
 Pass `--history-manifest apps/wamn_wms/wamn.k`, and use `apps/wamn_wms` as the input.
 
@@ -636,7 +636,7 @@ The verifier requires SQLx CLI 0.9.0 and reads the database URL from `DATABASE_U
 cargo run --locked --offline -p wamn-test-infrastructure --bin wamn-test-postgres -- \
   --database wamn_receiving --schema receiving \
   --migration-dir apps/wamn_receiving/migrations \
-  --history-manifest apps/wamn_receiving/wamn.json \
+  --history-manifest apps/wamn_receiving/wamn.k \
   --url-env DATABASE_URL -- \
   cargo run --locked --offline -p wamn-schema-generator --example sqlx_metadata -- \
     prepare apps/wamn_receiving

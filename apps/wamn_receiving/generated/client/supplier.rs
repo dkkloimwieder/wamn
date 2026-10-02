@@ -26,7 +26,7 @@ pub const SUPPLIER_FIELDS: &[FieldDescriptor] = &[
     },
 ];
 
-/// Input for `wamn-receiving:supplier/create@2.0.0`.
+/// Input for `wamn-receiving:supplier/create@2.1.0`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct SupplierCreateRequest {
     /// `text`
@@ -37,7 +37,7 @@ pub struct SupplierCreateRequest {
     pub request_id: String,
 }
 
-/// Result of `wamn-receiving:supplier/create@2.0.0`.
+/// Result of `wamn-receiving:supplier/create@2.1.0`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct SupplierCreateResult {
     /// `timestamptz`
@@ -48,7 +48,7 @@ pub struct SupplierCreateResult {
     pub name: String,
 }
 
-/// Input descriptors for `wamn-receiving:supplier/create@2.0.0`.
+/// Input descriptors for `wamn-receiving:supplier/create@2.1.0`.
 pub const SUPPLIER_CREATE_INPUT: &[FieldDescriptor] = &[
     FieldDescriptor {
         path: "idempotency_key",
@@ -70,7 +70,7 @@ pub const SUPPLIER_CREATE_INPUT: &[FieldDescriptor] = &[
     },
 ];
 
-/// Result descriptors for `wamn-receiving:supplier/create@2.0.0`.
+/// Result descriptors for `wamn-receiving:supplier/create@2.1.0`.
 pub const SUPPLIER_CREATE_RESULT: &[FieldDescriptor] = &[
     FieldDescriptor {
         path: "created_at",
@@ -175,10 +175,10 @@ pub const SUPPLIER_CREATE_REQUIRES_COMPOSITION: bool = false;
 pub const SUPPLIER_CREATE_REPLAY: Option<&str> = Some("claim");
 pub const SUPPLIER_CREATE_RESPONSE_CONTRACT: Option<&str> = Some("{\"type\":\"array\"}");
 pub const SUPPLIER_CREATE_RESULT_OPAQUE: bool = false;
-/// The grant a caller presents to invoke `wamn-receiving:supplier/create@2.0.0`.
-pub const SUPPLIER_CREATE_GRANT: &str = "wamn-receiving:supplier/create@2.0.0";
+/// The grant a caller presents to invoke `wamn-receiving:supplier/create@2.1.0`.
+pub const SUPPLIER_CREATE_GRANT: &str = "wamn-receiving:supplier/create@2.1.0";
 
-/// Typed refusals `wamn-receiving:supplier/create@2.0.0` declares.
+/// Typed refusals `wamn-receiving:supplier/create@2.1.0` declares.
 pub const SUPPLIER_CREATE_ERRORS: &[&str] = &[
     "idempotency_conflict",
     "internal_error",
@@ -189,7 +189,7 @@ pub const SUPPLIER_CREATE_ERRORS: &[&str] = &[
     "unique_violation",
 ];
 
-/// Where the release publishes `wamn-receiving:supplier/create@2.0.0`.
+/// Where the release publishes `wamn-receiving:supplier/create@2.1.0`.
 ///
 /// Method and template only — the host and base URL are the client's
 /// deployment config, not this release's facts.
@@ -201,7 +201,7 @@ pub fn create_route() -> RouteMetadata {
     }
 }
 
-/// Invoke `wamn-receiving:supplier/create@2.0.0` through a bound client.
+/// Invoke `wamn-receiving:supplier/create@2.1.0` through a bound client.
 ///
 /// # Errors
 ///
@@ -216,7 +216,7 @@ pub async fn create(
         .await
 }
 
-/// Input for `wamn-receiving:supplier/query@2.0.0`.
+/// Input for `wamn-receiving:supplier/query@2.1.0`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct SupplierQueryRequest {
     /// `text`, omittable
@@ -225,7 +225,7 @@ pub struct SupplierQueryRequest {
     pub limit: Option<i32>,
 }
 
-/// Result of `wamn-receiving:supplier/query@2.0.0`.
+/// Result of `wamn-receiving:supplier/query@2.1.0`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct SupplierQueryResult {
     /// `timestamptz`
@@ -236,7 +236,7 @@ pub struct SupplierQueryResult {
     pub name: String,
 }
 
-/// Input descriptors for `wamn-receiving:supplier/query@2.0.0`.
+/// Input descriptors for `wamn-receiving:supplier/query@2.1.0`.
 pub const SUPPLIER_QUERY_INPUT: &[FieldDescriptor] = &[
     FieldDescriptor {
         path: "cursor",
@@ -252,7 +252,7 @@ pub const SUPPLIER_QUERY_INPUT: &[FieldDescriptor] = &[
     },
 ];
 
-/// Result descriptors for `wamn-receiving:supplier/query@2.0.0`.
+/// Result descriptors for `wamn-receiving:supplier/query@2.1.0`.
 pub const SUPPLIER_QUERY_RESULT: &[FieldDescriptor] = &[
     FieldDescriptor {
         path: "created_at",
@@ -345,10 +345,10 @@ pub const SUPPLIER_QUERY_REQUIRES_COMPOSITION: bool = false;
 pub const SUPPLIER_QUERY_REPLAY: Option<&str> = None;
 pub const SUPPLIER_QUERY_RESPONSE_CONTRACT: Option<&str> = Some("{\"type\":\"array\"}");
 pub const SUPPLIER_QUERY_RESULT_OPAQUE: bool = false;
-/// The grant a caller presents to invoke `wamn-receiving:supplier/query@2.0.0`.
-pub const SUPPLIER_QUERY_GRANT: &str = "wamn-receiving:supplier/query@2.0.0";
+/// The grant a caller presents to invoke `wamn-receiving:supplier/query@2.1.0`.
+pub const SUPPLIER_QUERY_GRANT: &str = "wamn-receiving:supplier/query@2.1.0";
 
-/// Typed refusals `wamn-receiving:supplier/query@2.0.0` declares.
+/// Typed refusals `wamn-receiving:supplier/query@2.1.0` declares.
 pub const SUPPLIER_QUERY_ERRORS: &[&str] = &[
     "internal_error",
     "invalid_input",
@@ -357,7 +357,7 @@ pub const SUPPLIER_QUERY_ERRORS: &[&str] = &[
     "timeout",
 ];
 
-/// Where the release publishes `wamn-receiving:supplier/query@2.0.0`.
+/// Where the release publishes `wamn-receiving:supplier/query@2.1.0`.
 ///
 /// Method and template only — the host and base URL are the client's
 /// deployment config, not this release's facts.
@@ -369,7 +369,7 @@ pub fn query_route() -> RouteMetadata {
     }
 }
 
-/// Invoke `wamn-receiving:supplier/query@2.0.0` through a bound client.
+/// Invoke `wamn-receiving:supplier/query@2.1.0` through a bound client.
 ///
 /// # Errors
 ///

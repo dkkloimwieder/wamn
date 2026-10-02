@@ -234,7 +234,7 @@ fn acme_direct_operations_and_private_handler_have_exact_publication_inputs() {
 
 #[test]
 fn receipt_insert_registration_selects_one_private_owner_wiring() {
-    let manifest = read_json(&package_root().join("wamn.json"));
+    let manifest = read_json(&package_root().join("generated/wamn.json"));
     let handler = &manifest["custom_operations"]["quality.create_inspection"];
     assert_eq!(handler["type"], "event_handler");
     assert_eq!(handler["visibility"], "private");

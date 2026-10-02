@@ -1,7 +1,7 @@
 # Receiving scenario
 
 Receiving records delivered quantities against a purchase order.
-The package owns its [manifest](wamn.json), [migration SQL](migrations/0001_initial.sql), command implementation, generated artifacts, and application assertions.
+The package owns its [manifest](wamn.k), [migration SQL](migrations/0001_initial.sql), command implementation, generated artifacts, and application assertions.
 The [Acme overlay](../client_acme_receiving/overlay-scenario.md) adds separate client-owned behavior.
 Shared naming and execution rules belong in [architecture](../../docs/architecture/README.md).
 
@@ -27,7 +27,7 @@ The public operations are declared in the manifest:
 | `receiving.load_purchase_order_history` | Read one page of the change log of a purchase order. |
 
 Each public operation has its own operation grant. The built-in role `admin` holds every grant, and an authored role holds the stable reference of each grant selected for it.
-The history read has the grant `wamn-receiving:receiving/load-purchase-order-history@2.0.0`, and its stable reference is `wamn-receiving:receiving/load-purchase-order-history`.
+The history read has the grant `wamn-receiving:receiving/load-purchase-order-history@2.1.0`, and its stable reference is `wamn-receiving:receiving/load-purchase-order-history`.
 
 The query filters on `supplier_id` and `status`.
 Its declared sort fields are `purchase_order_number`, `status`, and `created_at`.
@@ -51,7 +51,7 @@ A refusal or failure before commit rolls back that item's business changes.
 The command accepts 1 through 100 outer items.
 Each item contains 1 through 100 receipt lines with distinct `purchase_order_line_id` values.
 The ingress body limit is 1 MiB.
-The timestamp and numeric carriers follow the declared [input contract](wamn.json).
+The timestamp and numeric carriers follow the declared [input contract](wamn.k).
 
 The same key and canonical body return the original result without another receipt.
 A different body under that key returns `idempotency_conflict`.

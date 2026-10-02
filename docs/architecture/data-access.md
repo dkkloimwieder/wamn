@@ -55,7 +55,7 @@ The native runtime refuses absent membership at the existing guest error boundar
 The generator supplies fixed protocol rules. It rejects their former authored fields.
 Receiving, Acme, and WMS use the same declaration format.
 
-A package can author its manifest in `wamn.k`, a KCL file, instead.
+Every package under `apps/` authors its manifest in `wamn.k`, a KCL file, and `tools/repo-lint` refuses a `wamn.json` at its root. Test fixtures outside `apps/` keep a hand-written `wamn.json`.
 The generator compiles it to `generated/wamn.json`, and every reader reads that compiled file.
 The table below does not change: the author still writes everything that it retains.
 The schema module fills only authoring defaults, and the compiled file states what an authored `wamn.json` states.
@@ -650,7 +650,7 @@ The trigger keeps `created_at`, so an expired-token fixture moves `expires_at` t
 A history read is an ordinary public custom projection with its own operation token and grant.
 Its authored fields decide which prior data it shows.
 The log carries copied business values, so a grant of a history read is a new read surface.
-The `receiving.load_purchase_order_history` operation of [Receiving](../../apps/wamn_receiving/wamn.json) shows the pattern.
+The `receiving.load_purchase_order_history` operation of [Receiving](../../apps/wamn_receiving/wamn.k) shows the pattern.
 
 The read is one flat `bounded_list` over the history table of one relation:
 

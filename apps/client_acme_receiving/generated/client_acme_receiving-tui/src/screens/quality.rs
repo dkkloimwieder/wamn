@@ -5,7 +5,7 @@ use wamn_client_tui::{screen, submission};
 pub static APPROVE_INSPECTION_SPEC: screen::ScreenSpec = screen::ScreenSpec {
     model: "quality",
     name: "approve_inspection",
-    operation: "client-acme-receiving:quality/approve-inspection@4.0.0",
+    operation: "client-acme-receiving:quality/approve-inspection@4.1.0",
     type_: "command",
     input: crate::quality::QUALITY_APPROVE_INSPECTION_INPUT_SCHEMA,
     input_schema: Some(
@@ -78,7 +78,7 @@ pub fn approve_inspection(binding: submission::SessionBinding) -> screen::Screen
 pub static LOAD_PURCHASE_ORDER_DETAIL_SPEC: screen::ScreenSpec = screen::ScreenSpec {
     model: "quality",
     name: "load_purchase_order_detail",
-    operation: "client-acme-receiving:quality/load-purchase-order-detail@4.0.0",
+    operation: "client-acme-receiving:quality/load-purchase-order-detail@4.1.0",
     type_: "projection",
     input: crate::quality::QUALITY_LOAD_PURCHASE_ORDER_DETAIL_INPUT_SCHEMA,
     input_schema: Some(

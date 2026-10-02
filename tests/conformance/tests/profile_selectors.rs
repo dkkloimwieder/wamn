@@ -410,7 +410,7 @@ fn selector_tools_execute_exact_fake_cargo_argv() {
         let application_arguments = if profile == "app" { vec![app] } else { vec![] };
         let selected = if profile == "app" {
             let manifest: Value = serde_json::from_slice(
-                &fs::read(application_arguments[0].join("wamn.json"))
+                &fs::read(application_arguments[0].join("generated/wamn.json"))
                     .expect("read Receiving manifest"),
             )
             .expect("parse Receiving manifest");

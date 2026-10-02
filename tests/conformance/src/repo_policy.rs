@@ -4,6 +4,7 @@
 //! Each lint reads the repository under one root and reports every violation it
 //! finds. They read source and repository files, so they are lints, not tests.
 
+mod authored_manifests;
 mod docker_provenance;
 mod run_state_projection;
 mod session_claims;
@@ -15,6 +16,7 @@ use std::path::Path;
 /// Every policy violation under `root`, one line each.
 pub fn check(root: &Path) -> Vec<String> {
     let mut problems = Problems::default();
+    authored_manifests::check(root, &mut problems);
     docker_provenance::check(root, &mut problems);
     version_identity::check(root, &mut problems);
     session_claims::check(root, &mut problems);

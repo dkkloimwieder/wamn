@@ -3,9 +3,10 @@
 //! A package authors its manifest in KCL. The generator compiles `wamn.k` with
 //! the pinned `kcl` CLI against the `manifest` schema module that ships in this
 //! crate, and writes the JSON to `generated/wamn.json`. Every other reader reads
-//! that file and never `wamn.k` (docs/plan/manifest-authoring.md §4.3). A
-//! package without `wamn.k` keeps its hand-written `wamn.json` until its next
-//! version converts it.
+//! that file and never `wamn.k` (docs/plan/manifest-authoring.md §4.3). Every
+//! package under `apps/` authors `wamn.k`, and the repository policy lint
+//! refuses a root `wamn.json` there. A test fixture keeps its hand-written
+//! `wamn.json`.
 
 use std::fs;
 use std::path::{Path, PathBuf};

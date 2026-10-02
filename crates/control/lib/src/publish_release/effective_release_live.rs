@@ -338,7 +338,8 @@ async fn publish(
 }
 
 fn assert_typed_metadata_refusal(input: &PackageInput) {
-    let manifest_bytes = std::fs::read(input.root.join("wamn.json")).unwrap();
+    let manifest_bytes =
+        std::fs::read(wamn_schema_generator::package_manifest_path(&input.root)).unwrap();
     let mut manifest: serde_json::Value = serde_json::from_slice(&manifest_bytes).unwrap();
     manifest["required_platform_policy_contract"]["state"] = serde_json::json!("unsatisfied");
     let manifest =
@@ -387,7 +388,7 @@ async fn fresh_base_and_overlay_publish_byte_identically_and_refuse_drift() {
 
     let manifest_paths = inputs
         .iter()
-        .map(|input| input.root.join("wamn.json"))
+        .map(|input| wamn_schema_generator::package_manifest_path(&input.root))
         .collect::<Vec<_>>();
     let (manifests, manifest_hashes, kinds) = read_package_manifests(&manifest_paths)
         .expect("consume exact package manifests and package contracts");

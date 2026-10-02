@@ -44,14 +44,14 @@ pub const RECEIPT_FIELDS: &[FieldDescriptor] = &[
     },
 ];
 
-/// Input for `wamn-receiving:receipt/get@2.0.0`.
+/// Input for `wamn-receiving:receipt/get@2.1.0`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ReceiptGetRequest {
     /// `uuid`
     pub id: uuid::Uuid,
 }
 
-/// Result of `wamn-receiving:receipt/get@2.0.0`.
+/// Result of `wamn-receiving:receipt/get@2.1.0`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ReceiptGetResult {
     /// `timestamptz`
@@ -68,7 +68,7 @@ pub struct ReceiptGetResult {
     pub receipt_reference: String,
 }
 
-/// Input descriptors for `wamn-receiving:receipt/get@2.0.0`.
+/// Input descriptors for `wamn-receiving:receipt/get@2.1.0`.
 pub const RECEIPT_GET_INPUT: &[FieldDescriptor] = &[FieldDescriptor {
     path: "id",
     type_name: "uuid",
@@ -76,7 +76,7 @@ pub const RECEIPT_GET_INPUT: &[FieldDescriptor] = &[FieldDescriptor {
     values: &[],
 }];
 
-/// Result descriptors for `wamn-receiving:receipt/get@2.0.0`.
+/// Result descriptors for `wamn-receiving:receipt/get@2.1.0`.
 pub const RECEIPT_GET_RESULT: &[FieldDescriptor] = &[
     FieldDescriptor {
         path: "created_at",
@@ -210,10 +210,10 @@ pub const RECEIPT_GET_REQUIRES_COMPOSITION: bool = false;
 pub const RECEIPT_GET_REPLAY: Option<&str> = None;
 pub const RECEIPT_GET_RESPONSE_CONTRACT: Option<&str> = Some("{\"type\":\"array\"}");
 pub const RECEIPT_GET_RESULT_OPAQUE: bool = false;
-/// The grant a caller presents to invoke `wamn-receiving:receipt/get@2.0.0`.
-pub const RECEIPT_GET_GRANT: &str = "wamn-receiving:receipt/get@2.0.0";
+/// The grant a caller presents to invoke `wamn-receiving:receipt/get@2.1.0`.
+pub const RECEIPT_GET_GRANT: &str = "wamn-receiving:receipt/get@2.1.0";
 
-/// Typed refusals `wamn-receiving:receipt/get@2.0.0` declares.
+/// Typed refusals `wamn-receiving:receipt/get@2.1.0` declares.
 pub const RECEIPT_GET_ERRORS: &[&str] = &[
     "internal_error",
     "invalid_input",
@@ -223,7 +223,7 @@ pub const RECEIPT_GET_ERRORS: &[&str] = &[
     "timeout",
 ];
 
-/// Where the release publishes `wamn-receiving:receipt/get@2.0.0`.
+/// Where the release publishes `wamn-receiving:receipt/get@2.1.0`.
 ///
 /// Method and template only — the host and base URL are the client's
 /// deployment config, not this release's facts.
@@ -235,7 +235,7 @@ pub fn get_route() -> RouteMetadata {
     }
 }
 
-/// Invoke `wamn-receiving:receipt/get@2.0.0` through a bound client.
+/// Invoke `wamn-receiving:receipt/get@2.1.0` through a bound client.
 ///
 /// # Errors
 ///
@@ -250,7 +250,7 @@ pub async fn get(
         .await
 }
 
-/// Input for `wamn-receiving:receipt/query@2.0.0`.
+/// Input for `wamn-receiving:receipt/query@2.1.0`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ReceiptQueryRequest {
     /// `text`, omittable
@@ -259,7 +259,7 @@ pub struct ReceiptQueryRequest {
     pub limit: Option<i32>,
 }
 
-/// Result of `wamn-receiving:receipt/query@2.0.0`.
+/// Result of `wamn-receiving:receipt/query@2.1.0`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ReceiptQueryResult {
     /// `timestamptz`
@@ -276,7 +276,7 @@ pub struct ReceiptQueryResult {
     pub receipt_reference: String,
 }
 
-/// Input descriptors for `wamn-receiving:receipt/query@2.0.0`.
+/// Input descriptors for `wamn-receiving:receipt/query@2.1.0`.
 pub const RECEIPT_QUERY_INPUT: &[FieldDescriptor] = &[
     FieldDescriptor {
         path: "cursor",
@@ -292,7 +292,7 @@ pub const RECEIPT_QUERY_INPUT: &[FieldDescriptor] = &[
     },
 ];
 
-/// Result descriptors for `wamn-receiving:receipt/query@2.0.0`.
+/// Result descriptors for `wamn-receiving:receipt/query@2.1.0`.
 pub const RECEIPT_QUERY_RESULT: &[FieldDescriptor] = &[
     FieldDescriptor {
         path: "created_at",
@@ -439,10 +439,10 @@ pub const RECEIPT_QUERY_REQUIRES_COMPOSITION: bool = false;
 pub const RECEIPT_QUERY_REPLAY: Option<&str> = None;
 pub const RECEIPT_QUERY_RESPONSE_CONTRACT: Option<&str> = Some("{\"type\":\"array\"}");
 pub const RECEIPT_QUERY_RESULT_OPAQUE: bool = false;
-/// The grant a caller presents to invoke `wamn-receiving:receipt/query@2.0.0`.
-pub const RECEIPT_QUERY_GRANT: &str = "wamn-receiving:receipt/query@2.0.0";
+/// The grant a caller presents to invoke `wamn-receiving:receipt/query@2.1.0`.
+pub const RECEIPT_QUERY_GRANT: &str = "wamn-receiving:receipt/query@2.1.0";
 
-/// Typed refusals `wamn-receiving:receipt/query@2.0.0` declares.
+/// Typed refusals `wamn-receiving:receipt/query@2.1.0` declares.
 pub const RECEIPT_QUERY_ERRORS: &[&str] = &[
     "internal_error",
     "invalid_input",
@@ -451,7 +451,7 @@ pub const RECEIPT_QUERY_ERRORS: &[&str] = &[
     "timeout",
 ];
 
-/// Where the release publishes `wamn-receiving:receipt/query@2.0.0`.
+/// Where the release publishes `wamn-receiving:receipt/query@2.1.0`.
 ///
 /// Method and template only — the host and base URL are the client's
 /// deployment config, not this release's facts.
@@ -463,7 +463,7 @@ pub fn query_route() -> RouteMetadata {
     }
 }
 
-/// Invoke `wamn-receiving:receipt/query@2.0.0` through a bound client.
+/// Invoke `wamn-receiving:receipt/query@2.1.0` through a bound client.
 ///
 /// # Errors
 ///

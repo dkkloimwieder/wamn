@@ -32,7 +32,7 @@ pub const RECEIVING_FIELDS: &[FieldDescriptor] = &[
     },
 ];
 
-/// Input for `client-acme-receiving:receiving/record-receipt@4.0.0`.
+/// Input for `client-acme-receiving:receiving/record-receipt@4.1.0`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ReceivingRecordReceiptRequest {
     /// `text`
@@ -65,7 +65,7 @@ pub struct ReceivingRecordReceiptRequestValueLine {
     pub quantity: rust_decimal::Decimal,
 }
 
-/// Result of `client-acme-receiving:receiving/record-receipt@4.0.0`.
+/// Result of `client-acme-receiving:receiving/record-receipt@4.1.0`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ReceivingRecordReceiptResult {
     /// `uuid`
@@ -78,7 +78,7 @@ pub struct ReceivingRecordReceiptResult {
     pub row_version: i32,
 }
 
-/// Input descriptors for `client-acme-receiving:receiving/record-receipt@4.0.0`.
+/// Input descriptors for `client-acme-receiving:receiving/record-receipt@4.1.0`.
 pub const RECEIVING_RECORD_RECEIPT_INPUT: &[FieldDescriptor] = &[
     FieldDescriptor {
         path: "request_id",
@@ -130,7 +130,7 @@ pub const RECEIVING_RECORD_RECEIPT_INPUT: &[FieldDescriptor] = &[
     },
 ];
 
-/// Result descriptors for `client-acme-receiving:receiving/record-receipt@4.0.0`.
+/// Result descriptors for `client-acme-receiving:receiving/record-receipt@4.1.0`.
 pub const RECEIVING_RECORD_RECEIPT_RESULT: &[FieldDescriptor] = &[
     FieldDescriptor {
         path: "purchase_order_id",
@@ -339,11 +339,11 @@ pub const RECEIVING_RECORD_RECEIPT_REQUIRES_COMPOSITION: bool = false;
 pub const RECEIVING_RECORD_RECEIPT_REPLAY: Option<&str> = None;
 pub const RECEIVING_RECORD_RECEIPT_RESPONSE_CONTRACT: Option<&str> = Some("{\"type\":\"array\"}");
 pub const RECEIVING_RECORD_RECEIPT_RESULT_OPAQUE: bool = false;
-/// The grant a caller presents to invoke `client-acme-receiving:receiving/record-receipt@4.0.0`.
+/// The grant a caller presents to invoke `client-acme-receiving:receiving/record-receipt@4.1.0`.
 pub const RECEIVING_RECORD_RECEIPT_GRANT: &str =
-    "client-acme-receiving:receiving/record-receipt@4.0.0";
+    "client-acme-receiving:receiving/record-receipt@4.1.0";
 
-/// Typed refusals `client-acme-receiving:receiving/record-receipt@4.0.0` declares.
+/// Typed refusals `client-acme-receiving:receiving/record-receipt@4.1.0` declares.
 pub const RECEIVING_RECORD_RECEIPT_ERRORS: &[&str] = &[
     "idempotency_conflict",
     "internal_error",
@@ -360,7 +360,7 @@ pub const RECEIVING_RECORD_RECEIPT_ERRORS: &[&str] = &[
     "timeout",
 ];
 
-/// Where the release publishes `client-acme-receiving:receiving/record-receipt@4.0.0`.
+/// Where the release publishes `client-acme-receiving:receiving/record-receipt@4.1.0`.
 ///
 /// Method and template only — the host and base URL are the client's
 /// deployment config, not this release's facts.
@@ -372,7 +372,7 @@ pub fn record_receipt_route() -> RouteMetadata {
     }
 }
 
-/// Invoke `client-acme-receiving:receiving/record-receipt@4.0.0` through a bound client.
+/// Invoke `client-acme-receiving:receiving/record-receipt@4.1.0` through a bound client.
 ///
 /// # Errors
 ///

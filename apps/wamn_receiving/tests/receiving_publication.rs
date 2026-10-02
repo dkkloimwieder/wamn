@@ -147,7 +147,8 @@ fn declaration() -> ComponentDeclaration {
 
 #[test]
 fn package_owned_inputs_declare_the_exact_eleven_route_closure() {
-    let package_manifest = read_json(&repository_root().join("apps/wamn_receiving/wamn.json"));
+    let package_manifest =
+        read_json(&repository_root().join("apps/wamn_receiving/generated/wamn.json"));
     let attachments: BTreeMap<String, wamn_catalog::ServingAttachment> =
         serde_json::from_value(attachments_document())
             .expect("the attachment map has the serving wire shape");

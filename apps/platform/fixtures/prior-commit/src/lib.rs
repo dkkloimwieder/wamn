@@ -12,7 +12,7 @@ mod bindings {
 
             world prior-commit {
               import wamn:postgres/client@0.3.0;
-              import wamn-receiving:receiving/record-receipt@2.0.0;
+              import wamn-receiving:receiving/record-receipt@2.1.0;
               export wamn:node/async-handler@0.1.0;
             }
         "#,

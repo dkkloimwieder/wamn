@@ -10,7 +10,7 @@
       "registered-operation": "client-acme-receiving:receiving/record-receipt",
       "dependencies": [{
         "package": "wamn_receiving",
-        "version": "2.0.0",
+        "version": "2.1.0",
         "digest": "__BASE_DIGEST__",
         "operation": "wamn-receiving:receiving/record-receipt",
         "participant": "client-acme-receiving:receiving/record-receipt-participant"

@@ -139,7 +139,7 @@ wamn-ctl publish-release \
   --package "$PACKAGE_ID@$PACKAGE_VERSION" \
   --attachments apps/wamn_receiving/publication/attachments.json \
   --route-host "$ROUTE_HOST" \
-  --package-manifest apps/wamn_receiving/wamn.json
+  --package-manifest apps/wamn_receiving/generated/wamn.json
 
 wamn-ctl publish-qualified-release \
   --qualification "$DELIVERY_QUALIFICATION" \

@@ -1,14 +1,14 @@
 {
   "package": {
     "id": "client_acme_receiving",
-    "version": "4.0.0",
-    "predecessor_version": "3.0.0"
+    "version": "4.1.0",
+    "predecessor_version": "4.0.0"
   },
   "base_dependencies": {
     "base_receiving": {
       "package": "wamn_receiving",
-      "version": "2.0.0",
-      "digest": "sha256:0855fd4cfc5bd6202321134a6bf8331b5266b521f6814bc7c88c3689029fba81",
+      "version": "2.1.0",
+      "digest": "sha256:e34d0218af83ea540111cb9096f9b13ca5d2b9e5e3f14ddd9763b7b6ed71dba0",
       "operations": [
         "receiving.record_receipt"
       ]
@@ -97,13 +97,6 @@
       "type": "command",
       "visibility": "public",
       "permission": "receiving.record_receipt",
-      "idempotent_by": {
-        "inherited": {
-          "base": "base_receiving",
-          "operation": "receiving.record_receipt"
-        }
-      },
-      "participant": "receiving.record_receipt_participant",
       "input": {
         "raw_body_maximum": 1048576,
         "envelope": {
@@ -157,6 +150,7 @@
           }
         ]
       },
+      "participant": "receiving.record_receipt_participant",
       "result": {
         "class": "one",
         "fields": [
@@ -250,20 +244,19 @@
       },
       "constraint_errors": {},
       "relations": [],
-      "statements": {}
+      "statements": {},
+      "idempotent_by": {
+        "inherited": {
+          "base": "base_receiving",
+          "operation": "receiving.record_receipt"
+        }
+      }
     },
     "receiving.record_receipt_participant": {
       "type": "command",
       "visibility": "public",
       "permission": "receiving.record_receipt_participant",
       "connection": "postgres",
-      "transaction": "participant",
-      "idempotent_by": {
-        "inherited": {
-          "base": "base_receiving",
-          "operation": "receiving.record_receipt"
-        }
-      },
       "input": {
         "fields": [
           {
@@ -345,6 +338,13 @@
               "nullable": true
             }
           ]
+        }
+      },
+      "transaction": "participant",
+      "idempotent_by": {
+        "inherited": {
+          "base": "base_receiving",
+          "operation": "receiving.record_receipt"
         }
       }
     },
@@ -497,15 +497,6 @@
       "visibility": "public",
       "permission": "quality.approve_inspection",
       "connection": "postgres",
-      "transaction": "explicit_per_input",
-      "automatic_retry": false,
-      "idempotent_by": {
-        "state": {
-          "guards": {
-            "quality_inspection": "expected_row_version"
-          }
-        }
-      },
       "input": {
         "fields": [
           {
@@ -669,6 +660,15 @@
               "nullable": true
             }
           ]
+        }
+      },
+      "transaction": "explicit_per_input",
+      "automatic_retry": false,
+      "idempotent_by": {
+        "state": {
+          "guards": {
+            "quality_inspection": "expected_row_version"
+          }
         }
       }
     },

@@ -42,12 +42,12 @@ import {
   PURCHASE_ORDER_GET_ROUTE,
 } from "../purchase_order.js";
 
-/** The record that the detail for `wamn-receiving:receipt/get@2.0.0` reads. */
+/** The record that the detail for `wamn-receiving:receipt/get@2.1.0` reads. */
 export interface ReceiptGetDetailInput {
   readonly id: Uuid;
 }
 
-/** What the detail screen for `wamn-receiving:receipt/get@2.0.0` takes. */
+/** What the detail screen for `wamn-receiving:receipt/get@2.1.0` takes. */
 export interface ReceiptGetDetailProps {
   /** The transport the application supplies. */
   readonly transport: Transport;
@@ -58,7 +58,7 @@ export interface ReceiptGetDetailProps {
 }
 
 /**
- * The detail screen for `wamn-receiving:receipt/get@2.0.0`.
+ * The detail screen for `wamn-receiving:receipt/get@2.1.0`.
  *
  * It reads when it mounts and again whenever its input changes, because the
  * input names the record it shows.
@@ -101,7 +101,7 @@ export function ReceiptGetDetail(props: ReceiptGetDetailProps) {
   );
 }
 
-/** What the table for `wamn-receiving:receipt/query@2.0.0` takes. */
+/** What the table for `wamn-receiving:receipt/query@2.1.0` takes. */
 export interface ReceiptQueryTableProps {
   /** The transport the application supplies. */
   readonly transport: Transport;
@@ -115,7 +115,7 @@ export interface ReceiptQueryTableProps {
   readonly onOutcome?: (outcome: Outcome<ReceiptQueryResult>) => void;
 }
 
-/** The table for `wamn-receiving:receipt/query@2.0.0`: the QueryTable over `RECEIPT_QUERY_TABLE`, in the table screen. */
+/** The table for `wamn-receiving:receipt/query@2.1.0`: the QueryTable over `RECEIPT_QUERY_TABLE`, in the table screen. */
 export function ReceiptQueryTable(props: ReceiptQueryTableProps) {
   return (
     <TableScreen>
@@ -124,7 +124,7 @@ export function ReceiptQueryTable(props: ReceiptQueryTableProps) {
   );
 }
 
-/** The table definition of `wamn-receiving:receipt/query@2.0.0`. */
+/** The table definition of `wamn-receiving:receipt/query@2.1.0`. */
 export const RECEIPT_QUERY_TABLE = {
   name: "receipt",
   read: { route: RECEIPT_QUERY_ROUTE, request: RECEIPT_QUERY_REQUEST_FIELDS, result: RECEIPT_QUERY_RESULT_FIELDS },
@@ -148,7 +148,7 @@ export const RECEIPT_QUERY_TABLE = {
     { field: "receiptReference", label: "Receipt reference", type: "text", role: "value" },
   ],
   actions: [
-    { operation: "wamn-receiving:receipt/get@2.0.0", reference: "wamn-receiving:receipt/get", label: "get", many: false, opens: "record", fill: [] },
+    { operation: "wamn-receiving:receipt/get@2.1.0", reference: "wamn-receiving:receipt/get", label: "get", many: false, opens: "record", fill: [] },
   ],
   childTables: [],
 } as const;

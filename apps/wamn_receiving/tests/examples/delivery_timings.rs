@@ -128,7 +128,9 @@ fn application_manifests(
     packages
         .iter()
         .map(|package| {
-            let path = repository.join("apps").join(package).join("wamn.json");
+            let path = wamn_schema_generator::package_manifest_path(
+                &repository.join("apps").join(package),
+            );
             Ok(wamn_schema_generator::PackageManifest::from_slice(
                 &fs::read(&path).with_context(|| format!("read {}", path.display()))?,
             )?)

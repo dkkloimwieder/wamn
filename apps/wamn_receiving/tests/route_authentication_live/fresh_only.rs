@@ -257,7 +257,10 @@ pub(super) async fn test_prior_commit(test: PriorCommitTest<'_>) -> anyhow::Resu
         PackageCoordinate::new(PACKAGE, VERSION)?,
     ];
     let manifests = vec![
-        journey_package_root(base_package, Some(test.inputs)).join("wamn.json"),
+        wamn_schema_generator::package_manifest_path(&journey_package_root(
+            base_package,
+            Some(test.inputs),
+        )),
         package.join("wamn.json"),
     ];
     publish_release::publish_release(PublishReleaseRequest {
@@ -957,7 +960,7 @@ mod execution_tests {
 
                 world host {
                   import wamn:postgres/client@0.3.0;
-                  import wamn-receiving:receiving/record-receipt@2.0.0;
+                  import wamn-receiving:receiving/record-receipt@2.1.0;
                   export wamn:node/async-handler@0.1.0;
                 }
             "#,

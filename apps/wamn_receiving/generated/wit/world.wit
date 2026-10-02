@@ -4,18 +4,18 @@ package wamn-receiving:generated;
 
 /// Every operation of the package. An authored world includes it.
 world generated {
-  import wamn-receiving:receiving/record-receipt-pre-commit@2.0.0;
+  import wamn-receiving:receiving/record-receipt-pre-commit@2.1.0;
   import wamn:postgres/types@0.3.0;
   import wamn:postgres/statements@0.3.0;
-  export wamn-receiving:location/%list@2.0.0;
-  export wamn-receiving:receiving/load-purchase-order-history@2.0.0;
-  export wamn-receiving:receiving/load-receipt-screen@2.0.0;
-  export wamn-receiving:receiving/record-receipt@2.0.0;
-  export wamn-receiving:purchase-order/get@2.0.0;
-  export wamn-receiving:purchase-order/query@2.0.0;
-  export wamn-receiving:purchase-order/update@2.0.0;
-  export wamn-receiving:receipt/get@2.0.0;
-  export wamn-receiving:receipt/query@2.0.0;
-  export wamn-receiving:supplier/query@2.0.0;
-  export wamn-receiving:supplier/create@2.0.0;
+  export wamn-receiving:location/%list@2.1.0;
+  export wamn-receiving:receiving/load-purchase-order-history@2.1.0;
+  export wamn-receiving:receiving/load-receipt-screen@2.1.0;
+  export wamn-receiving:receiving/record-receipt@2.1.0;
+  export wamn-receiving:purchase-order/get@2.1.0;
+  export wamn-receiving:purchase-order/query@2.1.0;
+  export wamn-receiving:purchase-order/update@2.1.0;
+  export wamn-receiving:receipt/get@2.1.0;
+  export wamn-receiving:receipt/query@2.1.0;
+  export wamn-receiving:supplier/query@2.1.0;
+  export wamn-receiving:supplier/create@2.1.0;
 }

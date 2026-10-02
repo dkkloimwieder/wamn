@@ -1,8 +1,8 @@
 {
   "package": {
     "id": "wamn_receiving",
-    "version": "2.0.0",
-    "predecessor_version": "1.0.0"
+    "version": "2.1.0",
+    "predecessor_version": "2.0.0"
   },
   "client_package": {
     "name": "@wamn/receiving-client"
@@ -320,14 +320,14 @@
       "schema": "receiving",
       "table": "supplier",
       "owner": "wamn_receiving",
-      "min_lengths": {
-        "name": 1
-      },
       "server_owned_fields": [
         "id",
         "created_at"
       ],
       "enum_fields": {},
+      "min_lengths": {
+        "name": 1
+      },
       "field_text": {
         "name": {
           "label": "Supplier name"
@@ -343,14 +343,6 @@
         "retention": "none"
       },
       "operations": {
-        "create": {
-          "permission": "supplier.create",
-          "writable_fields": [
-            "name"
-          ],
-          "label": "Add a supplier",
-          "result": "one"
-        },
         "query": {
           "permission": "supplier.query",
           "pagination": {
@@ -369,6 +361,14 @@
           },
           "label": "Suppliers",
           "result": "page"
+        },
+        "create": {
+          "permission": "supplier.create",
+          "writable_fields": [
+            "name"
+          ],
+          "label": "Add a supplier",
+          "result": "one"
         }
       }
     }
@@ -376,28 +376,9 @@
   "custom_operations": {
     "receiving.record_receipt": {
       "type": "command",
-      "label": "Record a receipt",
-      "description": "One submission records every line of one receipt against one purchase order.",
       "visibility": "public",
       "permission": "receiving.record_receipt",
       "connection": "postgres",
-      "transaction": "explicit_per_input",
-      "automatic_retry": false,
-      "idempotent_by": "claim",
-      "pre_commit": {
-        "fields": [
-          {
-            "path": "receipt_id",
-            "type": "uuid",
-            "nullable": false
-          },
-          {
-            "path": "purchase_order_id",
-            "type": "uuid",
-            "nullable": false
-          }
-        ]
-      },
       "input": {
         "raw_body_maximum": 1048576,
         "envelope": {
@@ -470,6 +451,20 @@
           }
         ]
       },
+      "pre_commit": {
+        "fields": [
+          {
+            "path": "receipt_id",
+            "type": "uuid",
+            "nullable": false
+          },
+          {
+            "path": "purchase_order_id",
+            "type": "uuid",
+            "nullable": false
+          }
+        ]
+      },
       "result": {
         "class": "one",
         "fields": [
@@ -503,16 +498,6 @@
             "label": "Revision"
           }
         ]
-      },
-      "canonicalization": {
-        "excluded_fields": [
-          "request_id",
-          "value.idempotency_key"
-        ],
-        "line_order": {
-          "ascending_by": "purchase_order_line_id",
-          "positive_member": "quantity"
-        }
       },
       "errors": [
         "invalid_input",
@@ -801,16 +786,25 @@
             }
           ]
         }
-      }
+      },
+      "transaction": "explicit_per_input",
+      "automatic_retry": false,
+      "idempotent_by": "claim",
+      "canonicalization": {
+        "excluded_fields": [
+          "request_id",
+          "value.idempotency_key"
+        ],
+        "line_order": {
+          "ascending_by": "purchase_order_line_id",
+          "positive_member": "quantity"
+        }
+      },
+      "label": "Record a receipt",
+      "description": "One submission records every line of one receipt against one purchase order."
     },
     "receiving.load_receipt_screen": {
       "type": "projection",
-      "label": "Receiving screen",
-      "lists": {
-        "model": "purchase_order_line",
-        "key_field": "line_id",
-        "display_field": "item_number"
-      },
       "visibility": "public",
       "permission": "receiving.load_receipt_screen",
       "connection": "postgres",
@@ -1035,14 +1029,16 @@
             }
           ]
         }
+      },
+      "label": "Receiving screen",
+      "lists": {
+        "model": "purchase_order_line",
+        "key_field": "line_id",
+        "display_field": "item_number"
       }
     },
     "receiving.load_purchase_order_history": {
       "type": "projection",
-      "label": "Purchase order history",
-      "lists": {
-        "key_field": "id"
-      },
       "visibility": "public",
       "permission": "receiving.load_purchase_order_history",
       "connection": "postgres",
@@ -1250,15 +1246,14 @@
             }
           ]
         }
+      },
+      "label": "Purchase order history",
+      "lists": {
+        "key_field": "id"
       }
     },
     "location.list": {
       "type": "projection",
-      "label": "Locations",
-      "lists": {
-        "model": "location",
-        "key_field": "id"
-      },
       "visibility": "public",
       "permission": "location.list",
       "connection": "postgres",
@@ -1321,6 +1316,11 @@
             }
           ]
         }
+      },
+      "label": "Locations",
+      "lists": {
+        "model": "location",
+        "key_field": "id"
       }
     }
   },

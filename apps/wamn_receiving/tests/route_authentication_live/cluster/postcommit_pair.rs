@@ -91,7 +91,7 @@ fn installation(directory: &Path, base: &str) -> anyhow::Result<(String, Value)>
         .as_object()
         .context("the overlay has its file identities")?;
     ensure!(
-        files.contains_key("wamn.json")
+        files.contains_key("wamn.k")
             && files.contains_key("generated/package-weld.json")
             && files.values().all(digest),
         "the immutable overlay file identities are incomplete"

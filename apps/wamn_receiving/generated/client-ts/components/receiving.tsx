@@ -93,7 +93,7 @@ const UUID_TEXT = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-
 /** What the release accepts: decimal text without an exponent. */
 const NUMERIC_TEXT = /^[+-]?(\d+(\.\d*)?|\.\d+)$/;
 
-/** What the table for `wamn-receiving:receiving/load-purchase-order-history@2.0.0` takes. */
+/** What the table for `wamn-receiving:receiving/load-purchase-order-history@2.1.0` takes. */
 export interface ReceivingLoadPurchaseOrderHistoryTableProps {
   /** The transport the application supplies. */
   readonly transport: Transport;
@@ -107,7 +107,7 @@ export interface ReceivingLoadPurchaseOrderHistoryTableProps {
   readonly onOutcome?: (outcome: Outcome<ReceivingLoadPurchaseOrderHistoryResult>) => void;
 }
 
-/** The table for `wamn-receiving:receiving/load-purchase-order-history@2.0.0`: the QueryTable over `RECEIVING_LOAD_PURCHASE_ORDER_HISTORY_TABLE`, in the table screen. */
+/** The table for `wamn-receiving:receiving/load-purchase-order-history@2.1.0`: the QueryTable over `RECEIVING_LOAD_PURCHASE_ORDER_HISTORY_TABLE`, in the table screen. */
 export function ReceivingLoadPurchaseOrderHistoryTable(props: ReceivingLoadPurchaseOrderHistoryTableProps) {
   return (
     <TableScreen>
@@ -116,7 +116,7 @@ export function ReceivingLoadPurchaseOrderHistoryTable(props: ReceivingLoadPurch
   );
 }
 
-/** The table definition of `wamn-receiving:receiving/load-purchase-order-history@2.0.0`. */
+/** The table definition of `wamn-receiving:receiving/load-purchase-order-history@2.1.0`. */
 export const RECEIVING_LOAD_PURCHASE_ORDER_HISTORY_TABLE = {
   name: "receiving",
   read: { route: RECEIVING_LOAD_PURCHASE_ORDER_HISTORY_ROUTE, request: RECEIVING_LOAD_PURCHASE_ORDER_HISTORY_REQUEST_FIELDS, result: RECEIVING_LOAD_PURCHASE_ORDER_HISTORY_RESULT_FIELDS },
@@ -146,7 +146,7 @@ export const RECEIVING_LOAD_PURCHASE_ORDER_HISTORY_TABLE = {
   childTables: [],
 } as const;
 
-/** What the table for `wamn-receiving:receiving/load-receipt-screen@2.0.0` takes. */
+/** What the table for `wamn-receiving:receiving/load-receipt-screen@2.1.0` takes. */
 export interface ReceivingLoadReceiptScreenTableProps {
   /** The transport the application supplies. */
   readonly transport: Transport;
@@ -160,7 +160,7 @@ export interface ReceivingLoadReceiptScreenTableProps {
   readonly onOutcome?: (outcome: Outcome<ReceivingLoadReceiptScreenResult>) => void;
 }
 
-/** The table for `wamn-receiving:receiving/load-receipt-screen@2.0.0`: the QueryTable over `RECEIVING_LOAD_RECEIPT_SCREEN_TABLE`, in the table screen. */
+/** The table for `wamn-receiving:receiving/load-receipt-screen@2.1.0`: the QueryTable over `RECEIVING_LOAD_RECEIPT_SCREEN_TABLE`, in the table screen. */
 export function ReceivingLoadReceiptScreenTable(props: ReceivingLoadReceiptScreenTableProps) {
   return (
     <TableScreen>
@@ -169,7 +169,7 @@ export function ReceivingLoadReceiptScreenTable(props: ReceivingLoadReceiptScree
   );
 }
 
-/** The table definition of `wamn-receiving:receiving/load-receipt-screen@2.0.0`. */
+/** The table definition of `wamn-receiving:receiving/load-receipt-screen@2.1.0`. */
 export const RECEIVING_LOAD_RECEIPT_SCREEN_TABLE = {
   name: "receiving",
   read: { route: RECEIVING_LOAD_RECEIPT_SCREEN_ROUTE, request: RECEIVING_LOAD_RECEIPT_SCREEN_REQUEST_FIELDS, result: RECEIVING_LOAD_RECEIPT_SCREEN_RESULT_FIELDS },
@@ -199,12 +199,12 @@ export const RECEIVING_LOAD_RECEIPT_SCREEN_TABLE = {
     { field: "supplierId", label: "Supplier", type: "uuid", role: "value" },
   ],
   actions: [
-    { operation: "wamn-receiving:receiving/record-receipt@2.0.0", reference: "wamn-receiving:receiving/record-receipt", label: "record-receipt", many: true, opens: "form", fill: [{ field: "lineId", input: ["value", "line", "[]", "purchaseOrderLineId"] }], form: async () => ({ default: ReceivingRecordReceiptForm }) },
+    { operation: "wamn-receiving:receiving/record-receipt@2.1.0", reference: "wamn-receiving:receiving/record-receipt", label: "record-receipt", many: true, opens: "form", fill: [{ field: "lineId", input: ["value", "line", "[]", "purchaseOrderLineId"] }], form: async () => ({ default: ReceivingRecordReceiptForm }) },
   ],
   childTables: [],
 } as const;
 
-/** What an operator types for `wamn-receiving:receiving/record-receipt@2.0.0`. */
+/** What an operator types for `wamn-receiving:receiving/record-receipt@2.1.0`. */
 const RECORD_RECEIPT_INPUT = z.object({
   value: z.optional(
     z.object({
@@ -223,7 +223,7 @@ const RECORD_RECEIPT_INPUT = z.object({
   ),
 });
 
-/** What the form for `wamn-receiving:receiving/record-receipt@2.0.0` can start with. */
+/** What the form for `wamn-receiving:receiving/record-receipt@2.1.0` can start with. */
 export interface ReceivingRecordReceiptFormInitial {
   value?: {
     line?: {
@@ -236,7 +236,7 @@ export interface ReceivingRecordReceiptFormInitial {
   };
 }
 
-/** What the form for `wamn-receiving:receiving/record-receipt@2.0.0` takes. */
+/** What the form for `wamn-receiving:receiving/record-receipt@2.1.0` takes. */
 export interface ReceivingRecordReceiptFormProps {
   /** The transport the application supplies. */
   readonly transport: Transport;
@@ -254,7 +254,7 @@ export interface ReceivingRecordReceiptFormProps {
 }
 
 /**
- * The form for `wamn-receiving:receiving/record-receipt@2.0.0`.
+ * The form for `wamn-receiving:receiving/record-receipt@2.1.0`.
  *
  * It renders what the operator fills and nothing else. The reserved inputs
  * come from the runtime at submit time, and the operator never sees them.

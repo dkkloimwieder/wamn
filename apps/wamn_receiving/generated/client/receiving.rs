@@ -140,7 +140,7 @@ pub const RECEIVING_FIELDS: &[FieldDescriptor] = &[
     },
 ];
 
-/// Input for `wamn-receiving:receiving/load-purchase-order-history@2.0.0`.
+/// Input for `wamn-receiving:receiving/load-purchase-order-history@2.1.0`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ReceivingLoadPurchaseOrderHistoryRequest {
     /// `text`, omittable
@@ -151,7 +151,7 @@ pub struct ReceivingLoadPurchaseOrderHistoryRequest {
     pub limit: i32,
 }
 
-/// Result of `wamn-receiving:receiving/load-purchase-order-history@2.0.0`.
+/// Result of `wamn-receiving:receiving/load-purchase-order-history@2.1.0`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ReceivingLoadPurchaseOrderHistoryResult {
     /// `text`
@@ -174,7 +174,7 @@ pub struct ReceivingLoadPurchaseOrderHistoryResult {
     pub type_: String,
 }
 
-/// Input descriptors for `wamn-receiving:receiving/load-purchase-order-history@2.0.0`.
+/// Input descriptors for `wamn-receiving:receiving/load-purchase-order-history@2.1.0`.
 pub const RECEIVING_LOAD_PURCHASE_ORDER_HISTORY_INPUT: &[FieldDescriptor] = &[
     FieldDescriptor {
         path: "after_cursor",
@@ -196,7 +196,7 @@ pub const RECEIVING_LOAD_PURCHASE_ORDER_HISTORY_INPUT: &[FieldDescriptor] = &[
     },
 ];
 
-/// Result descriptors for `wamn-receiving:receiving/load-purchase-order-history@2.0.0`.
+/// Result descriptors for `wamn-receiving:receiving/load-purchase-order-history@2.1.0`.
 pub const RECEIVING_LOAD_PURCHASE_ORDER_HISTORY_RESULT: &[FieldDescriptor] = &[
     FieldDescriptor {
         path: "after",
@@ -412,11 +412,11 @@ pub const RECEIVING_LOAD_PURCHASE_ORDER_HISTORY_REPLAY: Option<&str> = None;
 pub const RECEIVING_LOAD_PURCHASE_ORDER_HISTORY_RESPONSE_CONTRACT: Option<&str> =
     Some("{\"type\":\"array\"}");
 pub const RECEIVING_LOAD_PURCHASE_ORDER_HISTORY_RESULT_OPAQUE: bool = false;
-/// The grant a caller presents to invoke `wamn-receiving:receiving/load-purchase-order-history@2.0.0`.
+/// The grant a caller presents to invoke `wamn-receiving:receiving/load-purchase-order-history@2.1.0`.
 pub const RECEIVING_LOAD_PURCHASE_ORDER_HISTORY_GRANT: &str =
-    "wamn-receiving:receiving/load-purchase-order-history@2.0.0";
+    "wamn-receiving:receiving/load-purchase-order-history@2.1.0";
 
-/// Typed refusals `wamn-receiving:receiving/load-purchase-order-history@2.0.0` declares.
+/// Typed refusals `wamn-receiving:receiving/load-purchase-order-history@2.1.0` declares.
 pub const RECEIVING_LOAD_PURCHASE_ORDER_HISTORY_ERRORS: &[&str] = &[
     "internal_error",
     "invalid_input",
@@ -425,7 +425,7 @@ pub const RECEIVING_LOAD_PURCHASE_ORDER_HISTORY_ERRORS: &[&str] = &[
     "timeout",
 ];
 
-/// Where the release publishes `wamn-receiving:receiving/load-purchase-order-history@2.0.0`.
+/// Where the release publishes `wamn-receiving:receiving/load-purchase-order-history@2.1.0`.
 ///
 /// Method and template only — the host and base URL are the client's
 /// deployment config, not this release's facts.
@@ -437,7 +437,7 @@ pub fn load_purchase_order_history_route() -> RouteMetadata {
     }
 }
 
-/// Invoke `wamn-receiving:receiving/load-purchase-order-history@2.0.0` through a bound client.
+/// Invoke `wamn-receiving:receiving/load-purchase-order-history@2.1.0` through a bound client.
 ///
 /// # Errors
 ///
@@ -456,14 +456,14 @@ pub async fn load_purchase_order_history(
         .await
 }
 
-/// Input for `wamn-receiving:receiving/load-receipt-screen@2.0.0`.
+/// Input for `wamn-receiving:receiving/load-receipt-screen@2.1.0`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ReceivingLoadReceiptScreenRequest {
     /// `uuid`
     pub purchase_order_id: uuid::Uuid,
 }
 
-/// Result of `wamn-receiving:receiving/load-receipt-screen@2.0.0`.
+/// Result of `wamn-receiving:receiving/load-receipt-screen@2.1.0`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ReceivingLoadReceiptScreenResult {
     /// `uuid`
@@ -492,7 +492,7 @@ pub struct ReceivingLoadReceiptScreenResult {
     pub supplier_id: uuid::Uuid,
 }
 
-/// Input descriptors for `wamn-receiving:receiving/load-receipt-screen@2.0.0`.
+/// Input descriptors for `wamn-receiving:receiving/load-receipt-screen@2.1.0`.
 pub const RECEIVING_LOAD_RECEIPT_SCREEN_INPUT: &[FieldDescriptor] = &[FieldDescriptor {
     path: "purchase_order_id",
     type_name: "uuid",
@@ -500,7 +500,7 @@ pub const RECEIVING_LOAD_RECEIPT_SCREEN_INPUT: &[FieldDescriptor] = &[FieldDescr
     values: &[],
 }];
 
-/// Result descriptors for `wamn-receiving:receiving/load-receipt-screen@2.0.0`.
+/// Result descriptors for `wamn-receiving:receiving/load-receipt-screen@2.1.0`.
 pub const RECEIVING_LOAD_RECEIPT_SCREEN_RESULT: &[FieldDescriptor] = &[
     FieldDescriptor {
         path: "item_id",
@@ -743,11 +743,11 @@ pub const RECEIVING_LOAD_RECEIPT_SCREEN_REPLAY: Option<&str> = None;
 pub const RECEIVING_LOAD_RECEIPT_SCREEN_RESPONSE_CONTRACT: Option<&str> =
     Some("{\"type\":\"array\"}");
 pub const RECEIVING_LOAD_RECEIPT_SCREEN_RESULT_OPAQUE: bool = false;
-/// The grant a caller presents to invoke `wamn-receiving:receiving/load-receipt-screen@2.0.0`.
+/// The grant a caller presents to invoke `wamn-receiving:receiving/load-receipt-screen@2.1.0`.
 pub const RECEIVING_LOAD_RECEIPT_SCREEN_GRANT: &str =
-    "wamn-receiving:receiving/load-receipt-screen@2.0.0";
+    "wamn-receiving:receiving/load-receipt-screen@2.1.0";
 
-/// Typed refusals `wamn-receiving:receiving/load-receipt-screen@2.0.0` declares.
+/// Typed refusals `wamn-receiving:receiving/load-receipt-screen@2.1.0` declares.
 pub const RECEIVING_LOAD_RECEIPT_SCREEN_ERRORS: &[&str] = &[
     "internal_error",
     "invalid_input",
@@ -757,7 +757,7 @@ pub const RECEIVING_LOAD_RECEIPT_SCREEN_ERRORS: &[&str] = &[
     "timeout",
 ];
 
-/// Where the release publishes `wamn-receiving:receiving/load-receipt-screen@2.0.0`.
+/// Where the release publishes `wamn-receiving:receiving/load-receipt-screen@2.1.0`.
 ///
 /// Method and template only — the host and base URL are the client's
 /// deployment config, not this release's facts.
@@ -769,7 +769,7 @@ pub fn load_receipt_screen_route() -> RouteMetadata {
     }
 }
 
-/// Invoke `wamn-receiving:receiving/load-receipt-screen@2.0.0` through a bound client.
+/// Invoke `wamn-receiving:receiving/load-receipt-screen@2.1.0` through a bound client.
 ///
 /// # Errors
 ///
@@ -788,7 +788,7 @@ pub async fn load_receipt_screen(
         .await
 }
 
-/// Input for `wamn-receiving:receiving/record-receipt@2.0.0`.
+/// Input for `wamn-receiving:receiving/record-receipt@2.1.0`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ReceivingRecordReceiptRequest {
     /// `text`
@@ -821,7 +821,7 @@ pub struct ReceivingRecordReceiptRequestValueLine {
     pub quantity: rust_decimal::Decimal,
 }
 
-/// Result of `wamn-receiving:receiving/record-receipt@2.0.0`.
+/// Result of `wamn-receiving:receiving/record-receipt@2.1.0`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ReceivingRecordReceiptResult {
     /// `uuid`
@@ -834,7 +834,7 @@ pub struct ReceivingRecordReceiptResult {
     pub row_version: i32,
 }
 
-/// Input descriptors for `wamn-receiving:receiving/record-receipt@2.0.0`.
+/// Input descriptors for `wamn-receiving:receiving/record-receipt@2.1.0`.
 pub const RECEIVING_RECORD_RECEIPT_INPUT: &[FieldDescriptor] = &[
     FieldDescriptor {
         path: "request_id",
@@ -886,7 +886,7 @@ pub const RECEIVING_RECORD_RECEIPT_INPUT: &[FieldDescriptor] = &[
     },
 ];
 
-/// Result descriptors for `wamn-receiving:receiving/record-receipt@2.0.0`.
+/// Result descriptors for `wamn-receiving:receiving/record-receipt@2.1.0`.
 pub const RECEIVING_RECORD_RECEIPT_RESULT: &[FieldDescriptor] = &[
     FieldDescriptor {
         path: "purchase_order_id",
@@ -1095,10 +1095,10 @@ pub const RECEIVING_RECORD_RECEIPT_REQUIRES_COMPOSITION: bool = false;
 pub const RECEIVING_RECORD_RECEIPT_REPLAY: Option<&str> = Some("claim");
 pub const RECEIVING_RECORD_RECEIPT_RESPONSE_CONTRACT: Option<&str> = Some("{\"type\":\"array\"}");
 pub const RECEIVING_RECORD_RECEIPT_RESULT_OPAQUE: bool = false;
-/// The grant a caller presents to invoke `wamn-receiving:receiving/record-receipt@2.0.0`.
-pub const RECEIVING_RECORD_RECEIPT_GRANT: &str = "wamn-receiving:receiving/record-receipt@2.0.0";
+/// The grant a caller presents to invoke `wamn-receiving:receiving/record-receipt@2.1.0`.
+pub const RECEIVING_RECORD_RECEIPT_GRANT: &str = "wamn-receiving:receiving/record-receipt@2.1.0";
 
-/// Typed refusals `wamn-receiving:receiving/record-receipt@2.0.0` declares.
+/// Typed refusals `wamn-receiving:receiving/record-receipt@2.1.0` declares.
 pub const RECEIVING_RECORD_RECEIPT_ERRORS: &[&str] = &[
     "idempotency_conflict",
     "internal_error",
@@ -1115,7 +1115,7 @@ pub const RECEIVING_RECORD_RECEIPT_ERRORS: &[&str] = &[
     "timeout",
 ];
 
-/// Where the release publishes `wamn-receiving:receiving/record-receipt@2.0.0`.
+/// Where the release publishes `wamn-receiving:receiving/record-receipt@2.1.0`.
 ///
 /// Method and template only — the host and base URL are the client's
 /// deployment config, not this release's facts.
@@ -1127,7 +1127,7 @@ pub fn record_receipt_route() -> RouteMetadata {
     }
 }
 
-/// Invoke `wamn-receiving:receiving/record-receipt@2.0.0` through a bound client.
+/// Invoke `wamn-receiving:receiving/record-receipt@2.1.0` through a bound client.
 ///
 /// # Errors
 ///

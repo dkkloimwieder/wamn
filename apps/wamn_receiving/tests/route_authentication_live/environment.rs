@@ -255,7 +255,7 @@ fn disposable_component_declarations_follow_built_base_bytes() -> anyhow::Result
     std::fs::create_dir(root.path())?;
     let artifacts = root.path().join("components");
     std::fs::create_dir(&artifacts)?;
-    let manifest = overlay_package_root().join("wamn.json");
+    let manifest = wamn_schema_generator::package_manifest_path(&overlay_package_root());
     let template = overlay_package_root()
         .join("publication/components")
         .join(format!("{OVERLAY_COMPONENT}.json.in"));
@@ -604,7 +604,12 @@ pub(super) async fn publish_journey_release(
         attachments,
         route_host: Some(inputs.route_host.clone()),
         package_manifests: released_journey_packages()
-            .map(|package| journey_package_root(package, Some(inputs)).join("wamn.json"))
+            .map(|package| {
+                wamn_schema_generator::package_manifest_path(&journey_package_root(
+                    package,
+                    Some(inputs),
+                ))
+            })
             .collect(),
     })
     .await

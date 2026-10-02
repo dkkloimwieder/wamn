@@ -5,7 +5,7 @@
 import type { FieldMap, Numeric, OperationRoute, Outcome, Timestamptz, Transport, Uuid } from "@wamn/web-runtime";
 import { reviveOutcome, toWire } from "@wamn/web-runtime";
 
-/** Input for `wamn-receiving:receiving/load-purchase-order-history@2.0.0`. */
+/** Input for `wamn-receiving:receiving/load-purchase-order-history@2.1.0`. */
 export interface ReceivingLoadPurchaseOrderHistoryRequest {
   /**
    * The cursor of the last entry you read. Leave it empty for the first page.
@@ -19,14 +19,14 @@ export interface ReceivingLoadPurchaseOrderHistoryRequest {
   limit: number;
 }
 
-/** What `wamn-receiving:receiving/load-purchase-order-history@2.0.0` calls its input members. */
+/** What `wamn-receiving:receiving/load-purchase-order-history@2.1.0` calls its input members. */
 export const RECEIVING_LOAD_PURCHASE_ORDER_HISTORY_REQUEST_FIELDS: FieldMap = {
   "after_cursor": "afterCursor",
   "id": "id",
   "limit": "limit",
 };
 
-/** One row of `wamn-receiving:receiving/load-purchase-order-history@2.0.0`. */
+/** One row of `wamn-receiving:receiving/load-purchase-order-history@2.1.0`. */
 export interface ReceivingLoadPurchaseOrderHistoryRow {
   /** `text` */
   readonly after: string;
@@ -48,13 +48,13 @@ export interface ReceivingLoadPurchaseOrderHistoryRow {
   readonly type: "delete" | "insert" | "update";
 }
 
-/** Result of `wamn-receiving:receiving/load-purchase-order-history@2.0.0`. */
+/** Result of `wamn-receiving:receiving/load-purchase-order-history@2.1.0`. */
 export interface ReceivingLoadPurchaseOrderHistoryResult {
   /** Every row the release served. */
   readonly rows: readonly ReceivingLoadPurchaseOrderHistoryRow[];
 }
 
-/** What `wamn-receiving:receiving/load-purchase-order-history@2.0.0` calls its result members. */
+/** What `wamn-receiving:receiving/load-purchase-order-history@2.1.0` calls its result members. */
 export const RECEIVING_LOAD_PURCHASE_ORDER_HISTORY_RESULT_FIELDS: FieldMap = {
   "rows": {
     member: "rows",
@@ -73,13 +73,13 @@ export const RECEIVING_LOAD_PURCHASE_ORDER_HISTORY_RESULT_FIELDS: FieldMap = {
 };
 
 /**
- * Where the release publishes `wamn-receiving:receiving/load-purchase-order-history@2.0.0`.
+ * Where the release publishes `wamn-receiving:receiving/load-purchase-order-history@2.1.0`.
  *
  * Method and template only. The host and base URL are the application's
  * deployment configuration, not this release's facts.
  */
 export const RECEIVING_LOAD_PURCHASE_ORDER_HISTORY_ROUTE: OperationRoute = {
-  operation: "wamn-receiving:receiving/load-purchase-order-history@2.0.0",
+  operation: "wamn-receiving:receiving/load-purchase-order-history@2.1.0",
   method: "GET",
   template: "/receiving/load_purchase_order_history",
   freshOnly: false,
@@ -102,7 +102,7 @@ export const RECEIVING_LOAD_PURCHASE_ORDER_HISTORY_ROUTE: OperationRoute = {
   },
 };
 
-/** Invoke `wamn-receiving:receiving/load-purchase-order-history@2.0.0` through a transport the application supplies. */
+/** Invoke `wamn-receiving:receiving/load-purchase-order-history@2.1.0` through a transport the application supplies. */
 export async function loadPurchaseOrderHistory(
   transport: Transport,
   items: readonly ReceivingLoadPurchaseOrderHistoryRequest[],
@@ -116,18 +116,18 @@ export async function loadPurchaseOrderHistory(
   );
 }
 
-/** Input for `wamn-receiving:receiving/load-receipt-screen@2.0.0`. */
+/** Input for `wamn-receiving:receiving/load-receipt-screen@2.1.0`. */
 export interface ReceivingLoadReceiptScreenRequest {
   /** `uuid` */
   purchaseOrderId: Uuid;
 }
 
-/** What `wamn-receiving:receiving/load-receipt-screen@2.0.0` calls its input members. */
+/** What `wamn-receiving:receiving/load-receipt-screen@2.1.0` calls its input members. */
 export const RECEIVING_LOAD_RECEIPT_SCREEN_REQUEST_FIELDS: FieldMap = {
   "purchase_order_id": "purchaseOrderId",
 };
 
-/** One row of `wamn-receiving:receiving/load-receipt-screen@2.0.0`. */
+/** One row of `wamn-receiving:receiving/load-receipt-screen@2.1.0`. */
 export interface ReceivingLoadReceiptScreenRow {
   /** `uuid` */
   readonly itemId: Uuid | null;
@@ -155,13 +155,13 @@ export interface ReceivingLoadReceiptScreenRow {
   readonly supplierId: Uuid;
 }
 
-/** Result of `wamn-receiving:receiving/load-receipt-screen@2.0.0`. */
+/** Result of `wamn-receiving:receiving/load-receipt-screen@2.1.0`. */
 export interface ReceivingLoadReceiptScreenResult {
   /** Every row the release served. */
   readonly rows: readonly ReceivingLoadReceiptScreenRow[];
 }
 
-/** What `wamn-receiving:receiving/load-receipt-screen@2.0.0` calls its result members. */
+/** What `wamn-receiving:receiving/load-receipt-screen@2.1.0` calls its result members. */
 export const RECEIVING_LOAD_RECEIPT_SCREEN_RESULT_FIELDS: FieldMap = {
   "rows": {
     member: "rows",
@@ -183,13 +183,13 @@ export const RECEIVING_LOAD_RECEIPT_SCREEN_RESULT_FIELDS: FieldMap = {
 };
 
 /**
- * Where the release publishes `wamn-receiving:receiving/load-receipt-screen@2.0.0`.
+ * Where the release publishes `wamn-receiving:receiving/load-receipt-screen@2.1.0`.
  *
  * Method and template only. The host and base URL are the application's
  * deployment configuration, not this release's facts.
  */
 export const RECEIVING_LOAD_RECEIPT_SCREEN_ROUTE: OperationRoute = {
-  operation: "wamn-receiving:receiving/load-receipt-screen@2.0.0",
+  operation: "wamn-receiving:receiving/load-receipt-screen@2.1.0",
   method: "GET",
   template: "/receiving/load_receipt_screen",
   freshOnly: false,
@@ -213,7 +213,7 @@ export const RECEIVING_LOAD_RECEIPT_SCREEN_ROUTE: OperationRoute = {
   },
 };
 
-/** Invoke `wamn-receiving:receiving/load-receipt-screen@2.0.0` through a transport the application supplies. */
+/** Invoke `wamn-receiving:receiving/load-receipt-screen@2.1.0` through a transport the application supplies. */
 export async function loadReceiptScreen(
   transport: Transport,
   items: readonly ReceivingLoadReceiptScreenRequest[],
@@ -228,7 +228,7 @@ export async function loadReceiptScreen(
 }
 
 /**
- * Input for `wamn-receiving:receiving/record-receipt@2.0.0`.
+ * Input for `wamn-receiving:receiving/record-receipt@2.1.0`.
  *
  * One submission records every line of one receipt against one purchase order.
  */
@@ -269,7 +269,7 @@ export interface ReceivingRecordReceiptRequestValueLine {
   quantity: Numeric;
 }
 
-/** What `wamn-receiving:receiving/record-receipt@2.0.0` calls its input members. */
+/** What `wamn-receiving:receiving/record-receipt@2.1.0` calls its input members. */
 export const RECEIVING_RECORD_RECEIPT_REQUEST_FIELDS: FieldMap = {
   "request_id": "requestId",
   "value": {
@@ -291,7 +291,7 @@ export const RECEIVING_RECORD_RECEIPT_REQUEST_FIELDS: FieldMap = {
   },
 };
 
-/** Result of `wamn-receiving:receiving/record-receipt@2.0.0`. */
+/** Result of `wamn-receiving:receiving/record-receipt@2.1.0`. */
 export interface ReceivingRecordReceiptResult {
   /** `uuid` */
   readonly purchaseOrderId: Uuid;
@@ -303,7 +303,7 @@ export interface ReceivingRecordReceiptResult {
   readonly rowVersion: number;
 }
 
-/** What `wamn-receiving:receiving/record-receipt@2.0.0` calls its result members. */
+/** What `wamn-receiving:receiving/record-receipt@2.1.0` calls its result members. */
 export const RECEIVING_RECORD_RECEIPT_RESULT_FIELDS: FieldMap = {
   "purchase_order_id": "purchaseOrderId",
   "purchase_order_status": "purchaseOrderStatus",
@@ -312,13 +312,13 @@ export const RECEIVING_RECORD_RECEIPT_RESULT_FIELDS: FieldMap = {
 };
 
 /**
- * Where the release publishes `wamn-receiving:receiving/record-receipt@2.0.0`.
+ * Where the release publishes `wamn-receiving:receiving/record-receipt@2.1.0`.
  *
  * Method and template only. The host and base URL are the application's
  * deployment configuration, not this release's facts.
  */
 export const RECEIVING_RECORD_RECEIPT_ROUTE: OperationRoute = {
-  operation: "wamn-receiving:receiving/record-receipt@2.0.0",
+  operation: "wamn-receiving:receiving/record-receipt@2.1.0",
   method: "POST",
   template: "/receiving/record_receipt",
   freshOnly: false,
@@ -349,7 +349,7 @@ export const RECEIVING_RECORD_RECEIPT_ROUTE: OperationRoute = {
   },
 };
 
-/** Invoke `wamn-receiving:receiving/record-receipt@2.0.0` through a transport the application supplies. */
+/** Invoke `wamn-receiving:receiving/record-receipt@2.1.0` through a transport the application supplies. */
 export async function recordReceipt(
   transport: Transport,
   items: readonly ReceivingRecordReceiptRequest[],

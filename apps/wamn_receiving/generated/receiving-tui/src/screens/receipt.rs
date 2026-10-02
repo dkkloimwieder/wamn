@@ -5,7 +5,7 @@ use wamn_client_tui::{screen, submission};
 pub static GET_SPEC: screen::ScreenSpec = screen::ScreenSpec {
     model: "receipt",
     name: "get",
-    operation: "wamn-receiving:receipt/get@2.0.0",
+    operation: "wamn-receiving:receipt/get@2.1.0",
     type_: "get",
     input: crate::receipt::RECEIPT_GET_INPUT_SCHEMA,
     input_schema: Some(
@@ -74,7 +74,7 @@ pub fn get(binding: submission::SessionBinding) -> screen::Screen {
 pub static QUERY_SPEC: screen::ScreenSpec = screen::ScreenSpec {
     model: "receipt",
     name: "query",
-    operation: "wamn-receiving:receipt/query@2.0.0",
+    operation: "wamn-receiving:receipt/query@2.1.0",
     type_: "query",
     input: crate::receipt::RECEIPT_QUERY_INPUT_SCHEMA,
     input_schema: Some(

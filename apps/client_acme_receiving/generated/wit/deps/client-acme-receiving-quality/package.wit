@@ -1,4 +1,4 @@
-package client-acme-receiving:quality@4.0.0;
+package client-acme-receiving:quality@4.1.0;
 
 interface approve-inspection {
   use wamn:node/types@0.1.0.{emission, node-context, node-error};

@@ -56,7 +56,7 @@ pub(super) fn prepare_fresh_only_packages(root: &Path) -> anyhow::Result<()> {
         copy_fresh_only_package(&source, &root.join(directory))?;
     }
     let base = root.join("wamn_receiving");
-    let manifest_path = base.join("wamn.json");
+    let manifest_path = wamn_schema_generator::package_manifest_path(&base);
     let mut manifest: Value = serde_json::from_slice(&std::fs::read(&manifest_path)?)?;
     let operation = manifest["custom_operations"]
         .get_mut("receiving.record_receipt")
@@ -75,7 +75,7 @@ pub(super) fn prepare_fresh_only_packages(root: &Path) -> anyhow::Result<()> {
 
 #[test]
 fn fresh_only_fixture_changes_copies_without_changing_business_policy() -> anyhow::Result<()> {
-    let source_manifest = package_root().join("wamn.json");
+    let source_manifest = wamn_schema_generator::package_manifest_path(&package_root());
     let source_declaration = package_root().join("publication/components/receiving.json.in");
     let manifest_before = std::fs::read(&source_manifest)?;
     let declaration_before = std::fs::read(&source_declaration)?;
@@ -83,7 +83,9 @@ fn fresh_only_fixture_changes_copies_without_changing_business_policy() -> anyho
     let copies = scratch.path().join("packages");
     prepare_fresh_only_packages(&copies)?;
     let base = copies.join("wamn_receiving");
-    let manifest: Value = serde_json::from_slice(&std::fs::read(base.join("wamn.json"))?)?;
+    let manifest: Value = serde_json::from_slice(&std::fs::read(
+        wamn_schema_generator::package_manifest_path(&base),
+    )?)?;
     let declaration: Value = serde_json::from_slice(&std::fs::read(
         base.join("publication/components/receiving.json.in"),
     )?)?;
