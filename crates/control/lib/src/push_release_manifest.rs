@@ -431,7 +431,7 @@ pub async fn push_manifest_bytes(
 /// rejected configuration with a warning and a wholly default client, which
 /// drops the trust roots, the protocol and the timeouts and turns an unusable
 /// CA bundle into a confusing TLS failure on the push itself.
-fn registry_client(
+pub(crate) fn registry_client(
     registry: &str,
     insecure_registry: bool,
     ca_bundles: Vec<Vec<u8>>,
@@ -465,7 +465,7 @@ fn registry_client(
 }
 
 /// No credential: the auth file states an anonymous push for this registry.
-fn registry_auth(credentials: Option<&RegistryCredentials>) -> RegistryAuth {
+pub(crate) fn registry_auth(credentials: Option<&RegistryCredentials>) -> RegistryAuth {
     credentials.map_or(RegistryAuth::Anonymous, |credentials| {
         RegistryAuth::Basic(
             credentials.username().to_owned(),
@@ -551,7 +551,7 @@ fn verify_manifest_layout<'a>(
         .map_err(|refusal| conflict(reference, refusal.refusal()))
 }
 
-fn artifact_is_absent(error: &OciDistributionError) -> bool {
+pub(crate) fn artifact_is_absent(error: &OciDistributionError) -> bool {
     match error {
         OciDistributionError::RegistryError { envelope, .. } => {
             !envelope.errors.is_empty()

@@ -149,6 +149,9 @@ opentelemetry_sdk = { version = "0.31", default-features = false }
 # Disable the crate's test-only default feature; wash-runtime already resolves
 # the same oci-client version with rustls.
 oci-client = { version = "0.17", default-features = false, features = ["rustls-tls"] }
+# The one tar layer of a package artifact (wamn-zua8.3). No xattr: the layer
+# carries regular files with a fixed owner, mode and mtime only.
+tar = { version = "0.4", default-features = false }
 # The S3 client for the blobstore capability. Chosen by the phase-1c spike
 # (wamn-15ny.4) and ratified: it is the ONLY candidate that resolves to a
 # single rustls, and that single version is 0.23 — the workspace pin. aws-sdk-s3

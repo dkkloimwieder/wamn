@@ -350,6 +350,22 @@ CREATE TABLE catalog.deployment_attestations (
             (tenant_id, effective_release_id, environment)
 );
 
+-- One row per package artifact that `push-package` pushed (wamn-zua8.3). A
+-- package artifact belongs to no tenant, so its policy admits every row; the
+-- catalog keeps its RLS floor.
+CREATE TABLE catalog.package_artifacts (
+    package_id    text        NOT NULL CHECK (package_id <> ''),
+    version       text        NOT NULL CHECK (version <> ''),
+    digest        text        NOT NULL CHECK (digest ~ '^sha256:[0-9a-f]{64}$'),
+    source_commit text        CHECK (source_commit IS NULL OR source_commit <> ''),
+    attested_at   timestamptz NOT NULL DEFAULT clock_timestamp(),
+    CONSTRAINT package_artifacts_pkey PRIMARY KEY (package_id, version)
+);
+ALTER TABLE catalog.package_artifacts ENABLE ROW LEVEL SECURITY;
+ALTER TABLE catalog.package_artifacts FORCE ROW LEVEL SECURITY;
+CREATE POLICY package_artifacts_all ON catalog.package_artifacts
+    USING (true) WITH CHECK (true);
+
 -- Tenant isolation is structural even for owner-only tables.
 DO $tenant_policies$
 DECLARE
@@ -392,7 +408,8 @@ BEGIN
         'catalog.effective_releases', 'catalog.effective_release_packages',
         'catalog.authoring_command_audit', 'catalog.component_digest_owners',
         'catalog.component_library', 'catalog.connection_requirements',
-        'catalog.deployment_attestations', 'wamn_run.gate_reports'
+        'catalog.deployment_attestations', 'catalog.package_artifacts',
+        'wamn_run.gate_reports'
     ] LOOP
         trigger_name := split_part(relation_name, '.', 2) || '_immutable';
         EXECUTE format(
@@ -485,8 +502,8 @@ BEGIN
         'authoring_command_audit', 'component_digest_owners', 'component_library',
         'connection_requirements', 'deployment_attestations',
         'effective_release_heads', 'effective_release_packages',
-        'effective_releases', 'package_migrations', 'packages',
-        'tenant_environments'
+        'effective_releases', 'package_artifacts', 'package_migrations',
+        'packages', 'tenant_environments'
     ]::text[] THEN
         RAISE EXCEPTION USING ERRCODE = '55000',
             MESSAGE = 'control-portable-catalog-inventory-drift';

@@ -31,6 +31,7 @@ pub mod invite;
 #[cfg(feature = "ops")]
 mod ops_schema;
 pub mod owned_command;
+pub mod package_artifact;
 pub use wamn_identity_client as pat_client;
 pub mod print_release_env;
 pub mod project_env_membership;
