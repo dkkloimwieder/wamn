@@ -1227,6 +1227,17 @@ Every write carries normal record-history attribution and an administrative oper
 
 ---
 
+## 4.10 Provisioning credentials
+
+The provisioning worker of [§5.5](#55-provisioning-worker) runs the role and privilege SQL as `wamn_provisioner`, which has `CREATEROLE` and `CREATEDB` and is not a superuser. The superuser stays in the CNPG operator. Four statements of today's role SQL need a superuser, and each one changes (owner ruling of 2026-10-02, [§9](#9-questions-for-the-owner) question 32):
+
+- `CREATE PUBLICATION ... FOR TABLES IN SCHEMA` becomes a CNPG `Publication` CR with `target.objects[].tablesInSchema`. The worker applies it under the RBAC that it holds for `Database` CRs, extended to `publications.postgresql.cnpg.io`, and the operator creates the publication as superuser. `create_publication_sql` in `crates/control/provision/src/sql/cdc.rs` leaves the SQL path.
+- A role hardener reads `pg_roles.rolsuper` and writes the `NOSUPERUSER` clause only when it is true. A role that was never a superuser gets no clause, so a replay stays idempotent.
+- Role attributes come from `pg_roles`, not `pg_authid`. Prepare does not read `rolpassword`. It records a fingerprint of the password of the generation in the system database and compares the fingerprint there.
+- The `Database` CR sets the owner in `spec.owner` when it creates the database, so the worker never runs `ALTER DATABASE ... OWNER TO`. For the two existing databases on wamn-dev, the operator runs that statement once by hand, recorded in `docs/operations/gcp.md` §7.
+
+---
+
 ## 5. Lifecycle — second epic
 
 Lifecycle work begins only after the administration epic closes and teardown has a supported verb.
@@ -1769,4 +1780,5 @@ The epic closes on one kind run after B13 of the cutover.
 29. Issue 9, answered 2026-10-02. `wamn_app` reads `app_system.environment`, with SELECT only, as on every `app_system` authority table. The administration login writes it.
 30. Issue 9, answered 2026-10-02. `app_system.environment` follows the full pattern of its sibling tables: the tenant key, the stamp columns and trigger, forced RLS with the tenant and platform policies, a `_history` table, and the project-state list that the schema tests check.
 31. Issue 9, answered 2026-10-02. No row means `active`. The first status route writes the row.
-32. Issue 10. Ruling 20 says to stop when the role SQL needs a superuser, and four statements do, measured on PostgreSQL 18 as a `CREATEROLE CREATEDB` login (notes of `wamn-zua8.3`): `CREATE PUBLICATION ... FOR TABLES IN SCHEMA`, the `NOSUPERUSER` clause of every role hardener, the reads of `pg_authid`, and `ALTER DATABASE ... OWNER TO` on a database that the cluster superuser owns. How does the worker run them?
+32. Issue 10, answered 2026-10-02. Four statements of the role SQL need a superuser, measured on PostgreSQL 18 as a `CREATEROLE CREATEDB` login (notes of `wamn-zua8.3`). The superuser stays in the CNPG operator, and the worker never has it. [§4.10](#410-provisioning-credentials) records how each statement changes.
+33. Issue 9, answered 2026-10-02. The control contract moves to `0.3.0`, because `0.2.0` is on main and a reader moves with its writer.
