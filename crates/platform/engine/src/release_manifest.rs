@@ -101,7 +101,7 @@ impl ReleaseLoadError {
     }
 
     /// The stable classification of this refusal.
-    pub fn kind(&self) -> ReleaseLoadErrorType {
+    pub fn error_type(&self) -> ReleaseLoadErrorType {
         self.type_
     }
 }
@@ -422,7 +422,10 @@ mod tests {
         let mounts = Mounts::new("no-manifest");
 
         assert_eq!(
-            mounts.load().expect_err("absent manifest refuses").kind(),
+            mounts
+                .load()
+                .expect_err("absent manifest refuses")
+                .error_type(),
             ReleaseLoadErrorType::ManifestUnreadable
         );
     }
@@ -433,7 +436,7 @@ mod tests {
         mounts.write_manifest_bytes(b"{ not a manifest");
 
         assert_eq!(
-            mounts.load().expect_err("garbage refuses").kind(),
+            mounts.load().expect_err("garbage refuses").error_type(),
             ReleaseLoadErrorType::ManifestRejected
         );
     }
@@ -448,7 +451,7 @@ mod tests {
         let error = mounts
             .load()
             .expect_err("unsupported format refuses at the loaded release");
-        assert_eq!(error.kind(), ReleaseLoadErrorType::ManifestRejected);
+        assert_eq!(error.error_type(), ReleaseLoadErrorType::ManifestRejected);
         assert!(
             error
                 .to_string()
@@ -468,7 +471,10 @@ mod tests {
         // trimmed and never re-canonicalized: a repaired document would derive a
         // digest naming content nobody shipped.
         assert_eq!(
-            mounts.load().expect_err("trailing newline refuses").kind(),
+            mounts
+                .load()
+                .expect_err("trailing newline refuses")
+                .error_type(),
             ReleaseLoadErrorType::ManifestRejected
         );
     }
@@ -484,7 +490,10 @@ mod tests {
         // Same content, different encoding: refused rather than served under a
         // digest it would not derive.
         assert_eq!(
-            mounts.load().expect_err("non-canonical refuses").kind(),
+            mounts
+                .load()
+                .expect_err("non-canonical refuses")
+                .error_type(),
             ReleaseLoadErrorType::ManifestRejected
         );
     }

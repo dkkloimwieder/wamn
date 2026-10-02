@@ -126,7 +126,7 @@ impl WorkflowError {
         Self::with_source(WorkflowErrorType::Storage, context, source)
     }
 
-    pub fn kind(&self) -> WorkflowErrorType {
+    pub fn error_type(&self) -> WorkflowErrorType {
         self.type_
     }
 }

@@ -31,7 +31,7 @@ pub struct SessionRoleReaderUrlError {
 
 impl SessionRoleReaderUrlError {
     /// The predicate that refused the credential.
-    pub const fn kind(&self) -> SessionRoleReaderUrlErrorType {
+    pub const fn error_type(&self) -> SessionRoleReaderUrlErrorType {
         self.type_
     }
 }
@@ -229,7 +229,7 @@ mod tests {
             assert_eq!(
                 parse(&url(family, SCOPE, CredentialGeneration::A))
                     .unwrap_err()
-                    .kind(),
+                    .error_type(),
                 SessionRoleReaderUrlErrorType::Role
             );
         }
@@ -241,7 +241,7 @@ mod tests {
         ] {
             let raw = format!("postgres://{role}:fixture-password@database.invalid/{DATABASE}");
             let error = parse(&raw).unwrap_err();
-            assert_eq!(error.kind(), SessionRoleReaderUrlErrorType::Role);
+            assert_eq!(error.error_type(), SessionRoleReaderUrlErrorType::Role);
             assert!(!format!("{error:?} {error}").contains("fixture-password"));
         }
     }
@@ -271,7 +271,7 @@ mod tests {
         let mut changed = Url::parse(&raw).unwrap();
         changed.set_path("/wamn-db-acme--widgets--dev--z9z9z9z9");
         assert_eq!(
-            parse(changed.as_str()).unwrap_err().kind(),
+            parse(changed.as_str()).unwrap_err().error_type(),
             SessionRoleReaderUrlErrorType::Database
         );
     }
@@ -312,7 +312,7 @@ mod tests {
             ),
         ] {
             let error = parse(&input).unwrap_err();
-            assert_eq!(error.kind(), kind);
+            assert_eq!(error.error_type(), kind);
             assert!(!format!("{error:?} {error}").contains("fixture-password"));
         }
     }

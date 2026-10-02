@@ -117,7 +117,7 @@ fn unknown_extra_fields_are_ignored() {
 #[test]
 fn an_unknown_template_is_refused() {
     let error = render("shipping_manifest", &json!({})).expect_err("must refuse");
-    assert_eq!(error.kind(), RenderErrorType::UnknownTemplate);
+    assert_eq!(error.error_type(), RenderErrorType::UnknownTemplate);
     assert_eq!(error.code(), "unknown_template");
 }
 
@@ -125,7 +125,7 @@ fn an_unknown_template_is_refused() {
 fn a_missing_required_field_is_refused() {
     let error =
         render("packaging", &json!({"packaging_id": "PAL-000042"})).expect_err("must refuse");
-    assert_eq!(error.kind(), RenderErrorType::MissingField);
+    assert_eq!(error.error_type(), RenderErrorType::MissingField);
     assert!(error.detail().contains("location_id"), "{}", error.detail());
 }
 
@@ -139,7 +139,11 @@ fn a_zpl_control_character_is_refused() {
             &json!({"packaging_id": injected, "location_id": "LOC-0007"}),
         )
         .expect_err("must refuse");
-        assert_eq!(error.kind(), RenderErrorType::InvalidField, "{injected}");
+        assert_eq!(
+            error.error_type(),
+            RenderErrorType::InvalidField,
+            "{injected}"
+        );
     }
 }
 
@@ -151,6 +155,6 @@ fn a_non_string_or_empty_field_is_refused() {
             &json!({"packaging_id": bad, "location_id": "LOC-0007"}),
         )
         .expect_err("must refuse");
-        assert_eq!(error.kind(), RenderErrorType::InvalidField, "{bad}");
+        assert_eq!(error.error_type(), RenderErrorType::InvalidField, "{bad}");
     }
 }

@@ -285,7 +285,7 @@ async fn publish_emit(
         .map_err(|error| {
             tracing::warn!(
                 error = %error,
-                error_kind = ?error.kind(),
+                error_kind = ?error.error_type(),
                 "derived-event publication did not receive a server ACK"
             );
             DeliveryError::ExecutionFailed

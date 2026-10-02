@@ -517,7 +517,7 @@ async fn load_release(
         LoadedRelease::load_canonical_bytes(&canonical_bytes, &origin).map_err(|error| {
             anyhow::anyhow!(
                 "serving release manifest {origin} is unusable ({:?}): {error}",
-                error.kind()
+                error.error_type()
             )
         })?;
     // Shared by reference-count rather than by borrow: every release-gated

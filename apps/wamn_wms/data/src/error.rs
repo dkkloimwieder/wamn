@@ -133,7 +133,7 @@ impl AccessError {
 
     /// What went wrong.
     #[must_use]
-    pub const fn kind(&self) -> AccessErrorType {
+    pub const fn error_type(&self) -> AccessErrorType {
         self.type_
     }
 
@@ -179,7 +179,7 @@ mod tests {
     #[test]
     fn a_conflict_carries_both_revisions() {
         let error = AccessError::conflict(4, 7);
-        assert_eq!(error.kind().literal(), "concurrency_conflict");
+        assert_eq!(error.error_type().literal(), "concurrency_conflict");
         assert_eq!(error.detail()["expected_row_version"], 4);
         assert_eq!(error.detail()["observed_row_version"], 7);
     }

@@ -67,7 +67,7 @@ pub enum WiringErrorType {
 
 impl WiringError {
     /// What the wiring broke.
-    pub fn kind(&self) -> &WiringErrorType {
+    pub fn error_type(&self) -> &WiringErrorType {
         &self.type_
     }
 }

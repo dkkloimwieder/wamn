@@ -235,7 +235,7 @@ impl EdgeReleaseError {
     }
 
     /// Return the stable failure class.
-    pub fn kind(&self) -> EdgeReleaseErrorType {
+    pub fn error_type(&self) -> EdgeReleaseErrorType {
         self.type_
     }
 }

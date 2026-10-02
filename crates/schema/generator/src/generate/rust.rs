@@ -438,7 +438,7 @@ fn mutation_constraint_names(
     let mut foreign_key = Vec::new();
     let mut check = Vec::new();
     for constraint in operation_constraints(catalog, table, action, operation, model) {
-        match constraint.kind() {
+        match constraint.constraint_type() {
             ConstraintType::PrimaryKey { .. } | ConstraintType::Unique { .. } => {
                 unique.push(constraint.name().to_owned());
             }

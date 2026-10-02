@@ -85,7 +85,7 @@ impl ClientTsError {
 
     /// What went wrong.
     #[must_use]
-    pub const fn kind(&self) -> ClientTsErrorType {
+    pub const fn error_type(&self) -> ClientTsErrorType {
         self.type_
     }
 }
@@ -1066,7 +1066,7 @@ mod tests {
     #[test]
     fn an_unknown_contract_type_refuses_by_name() {
         let refusal = ts_type("geography").expect_err("an unmapped type refuses");
-        assert_eq!(refusal.kind(), ClientTsErrorType::UnknownType);
+        assert_eq!(refusal.error_type(), ClientTsErrorType::UnknownType);
         assert!(refusal.to_string().contains("geography"), "{refusal}");
         assert!(
             refusal.to_string().starts_with("unknown_type: "),

@@ -249,7 +249,7 @@ async fn reconcile_target_identity_guard_live() {
                 .unwrap_or_else(|| {
                     panic!("{label} returned an untyped refusal with dry_run={dry_run}: {error}")
                 });
-            assert_eq!(refusal.kind(), kind, "{label}, dry_run={dry_run}");
+            assert_eq!(refusal.error_type(), kind, "{label}, dry_run={dry_run}");
             assert_eq!(
                 refusal.is_registry_target(),
                 kind == ReconcileTargetErrorType::RegistryTarget,

@@ -320,7 +320,7 @@ fn author_from_authenticated(
     let principal = authenticated.principal();
     AuthorizedAuthor {
         principal_id: principal.id().as_str().into(),
-        principal_type: principal.kind(),
+        principal_type: principal.principal_type(),
         subject: principal.subject().into(),
         role,
     }
@@ -760,7 +760,7 @@ async fn authoring_command(
     };
     let document = match decode_document(text) {
         Ok(document) => document,
-        Err(error) if error.kind() == ContractDecodeErrorType::UnsupportedContractVersion => {
+        Err(error) if error.error_type() == ContractDecodeErrorType::UnsupportedContractVersion => {
             return Ok(json(
                 StatusCode::BAD_REQUEST,
                 &serde_json::json!({

@@ -48,7 +48,7 @@ pub struct ComponentArtifactFetchError {
 
 impl ComponentArtifactFetchError {
     /// Stable refusal class for callers that must not match display text.
-    pub fn kind(&self) -> ComponentArtifactFetchErrorType {
+    pub fn error_type(&self) -> ComponentArtifactFetchErrorType {
         self.type_
     }
 
@@ -274,18 +274,30 @@ mod tests {
         assert_eq!(source.pull_verified(&component).await.unwrap(), bytes);
         std::fs::write(&path, b"changed-local-component").unwrap();
         assert_eq!(
-            source.pull_verified(&component).await.unwrap_err().kind(),
+            source
+                .pull_verified(&component)
+                .await
+                .unwrap_err()
+                .error_type(),
             ComponentArtifactFetchErrorType::Mismatched
         );
         std::fs::remove_file(&path).unwrap();
         assert_eq!(
-            source.pull_verified(&component).await.unwrap_err().kind(),
+            source
+                .pull_verified(&component)
+                .await
+                .unwrap_err()
+                .error_type(),
             ComponentArtifactFetchErrorType::Unavailable
         );
         let mut invalid = component;
         invalid.component_digest = "sha256:../../outside".to_owned();
         assert_eq!(
-            source.pull_verified(&invalid).await.unwrap_err().kind(),
+            source
+                .pull_verified(&invalid)
+                .await
+                .unwrap_err()
+                .error_type(),
             ComponentArtifactFetchErrorType::InvalidReference
         );
         std::fs::remove_dir(root).unwrap();

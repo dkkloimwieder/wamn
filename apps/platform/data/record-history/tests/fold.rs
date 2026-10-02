@@ -234,7 +234,7 @@ fn every_value_spelling_survives_the_fold() {
 fn the_fold_refuses_rows_that_do_not_form_one_read() {
     let refusal = |rows: &[HistoryRow<'_>]| {
         let error = state_at(rows, 1).expect_err("the rows must refuse");
-        (error.kind(), error.position())
+        (error.error_type(), error.position())
     };
     assert_eq!(
         refusal(&[

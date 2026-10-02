@@ -73,7 +73,7 @@ pub struct ClientIrError {
 impl ClientIrError {
     /// Stable refusal class.
     #[must_use]
-    pub const fn kind(&self) -> ClientIrErrorType {
+    pub const fn error_type(&self) -> ClientIrErrorType {
         self.type_
     }
 
@@ -1598,7 +1598,7 @@ mod tests {
                 &BTreeMap::new(),
             )
             .expect_err("private or malformed freshness policy is refused");
-            assert_eq!(error.kind(), ClientIrErrorType::MalformedContract);
+            assert_eq!(error.error_type(), ClientIrErrorType::MalformedContract);
         }
     }
 }

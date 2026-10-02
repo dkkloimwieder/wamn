@@ -598,7 +598,10 @@ mod tests {
                 "registry.example/wamn/components:tag",
             )
             .expect_err("manifest drift refuses");
-            assert_eq!(error.kind(), ComponentArtifactFetchErrorType::Mismatched);
+            assert_eq!(
+                error.error_type(),
+                ComponentArtifactFetchErrorType::Mismatched
+            );
             assert!(error.refusal().contains(case.split('-').next().unwrap()));
         }
     }
@@ -648,7 +651,7 @@ mod tests {
             .await
             .expect_err("invalid admitted digest refuses locally");
         assert_eq!(
-            error.kind(),
+            error.error_type(),
             ComponentArtifactFetchErrorType::InvalidReference
         );
         let rendered = format!("{error:?} {error}");

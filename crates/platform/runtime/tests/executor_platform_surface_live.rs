@@ -596,7 +596,7 @@ async fn executor_platform_surface_live() -> anyhow::Result<()> {
         .await
         .expect_err("a connection on another database must be refused");
     assert_eq!(
-        wrong_database.kind(),
+        wrong_database.error_type(),
         CredentialProbeErrorType::PredicateMismatch
     );
     assert_eq!(
@@ -631,7 +631,7 @@ async fn executor_platform_surface_live() -> anyhow::Result<()> {
     .await
     .expect_err("a membership the generation does not hold must be refused");
     assert_eq!(
-        wrong_membership.kind(),
+        wrong_membership.error_type(),
         CredentialProbeErrorType::PredicateMismatch
     );
     assert_eq!(
@@ -689,7 +689,7 @@ async fn executor_platform_surface_live() -> anyhow::Result<()> {
     .await
     .expect_err("an ACL fact the family does not hold must be refused");
     assert_eq!(
-        wrong_acl.kind(),
+        wrong_acl.error_type(),
         CredentialProbeErrorType::PredicateMismatch
     );
     assert_eq!(wrong_acl.predicate(), CredentialProbePredicate::Acl);
@@ -718,7 +718,7 @@ async fn executor_platform_surface_live() -> anyhow::Result<()> {
     )
     .expect_err("a credential paired with another tenant's expectation must be refused");
     assert_eq!(
-        wrong_binding.kind(),
+        wrong_binding.error_type(),
         CredentialProbeErrorType::PredicateMismatch
     );
     assert_eq!(
@@ -780,7 +780,7 @@ async fn executor_platform_surface_live() -> anyhow::Result<()> {
             .map(|_| ()),
     ] {
         let error = result.expect_err("broad table grants must not replace executor membership");
-        assert_eq!(error.kind(), ProductionClaimErrorType::Identity);
+        assert_eq!(error.error_type(), ProductionClaimErrorType::Identity);
         assert_eq!(error.operation(), "check executor authority");
         assert!(
             error

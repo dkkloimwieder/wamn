@@ -614,7 +614,7 @@ impl ContractDecodeError {
         }
     }
 
-    pub const fn kind(&self) -> ContractDecodeErrorType {
+    pub const fn error_type(&self) -> ContractDecodeErrorType {
         self.type_
     }
 

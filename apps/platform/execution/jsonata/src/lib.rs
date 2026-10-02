@@ -53,7 +53,7 @@ pub struct EvaluationError {
 }
 
 impl EvaluationError {
-    pub fn kind(&self) -> EvaluationErrorType {
+    pub fn error_type(&self) -> EvaluationErrorType {
         self.type_
     }
 
@@ -107,7 +107,7 @@ impl Guest for Component {
                     })
             })
             .transpose()?;
-        let payload = evaluate(expression, &input).map_err(|error| match error.kind() {
+        let payload = evaluate(expression, &input).map_err(|error| match error.error_type() {
             EvaluationErrorType::Expression => terminal(
                 "invalid_expression",
                 format!("the expression does not parse: {}", error.message()),
@@ -202,13 +202,13 @@ mod tests {
     #[test]
     fn an_expression_that_does_not_parse_is_an_expression_fault() {
         let error = evaluate("new.[", &json!({})).unwrap_err();
-        assert_eq!(error.kind(), EvaluationErrorType::Expression);
+        assert_eq!(error.error_type(), EvaluationErrorType::Expression);
     }
 
     #[test]
     fn a_failure_on_the_input_is_an_evaluation_fault() {
         let error = evaluate("new.id + 1", &json!({"new": {"id": "m-1"}})).unwrap_err();
-        assert_eq!(error.kind(), EvaluationErrorType::Evaluation);
+        assert_eq!(error.error_type(), EvaluationErrorType::Evaluation);
         assert!(!error.message().is_empty());
     }
 }

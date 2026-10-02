@@ -127,7 +127,7 @@ impl CandidateExecutionRefusal {
     }
 
     /// Host-only class used by the queue persistence adapter.
-    pub fn kind(&self) -> CandidateExecutionRefusalKind {
+    pub fn refusal_type(&self) -> CandidateExecutionRefusalKind {
         self.kind
     }
 
@@ -891,7 +891,9 @@ impl RouterDriver {
                 Ok(bytes) => {
                     bytes_by_digest.insert(component.component_digest.clone(), bytes);
                 }
-                Err(error) if error.kind() == ComponentArtifactFetchErrorType::Unavailable => {
+                Err(error)
+                    if error.error_type() == ComponentArtifactFetchErrorType::Unavailable =>
+                {
                     return Err(error.into());
                 }
                 Err(error) => {
@@ -1208,7 +1210,10 @@ mod tests {
             CandidateExecutionRefusalKind::Binding,
             "candidate-binding-world-drift",
         );
-        assert_eq!(refusal.kind(), CandidateExecutionRefusalKind::Binding);
+        assert_eq!(
+            refusal.refusal_type(),
+            CandidateExecutionRefusalKind::Binding
+        );
         assert_eq!(refusal.refusal(), "candidate-binding-world-drift");
         assert_eq!(refusal.to_string(), "candidate-binding-world-drift");
     }

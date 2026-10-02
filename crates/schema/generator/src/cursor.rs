@@ -114,7 +114,7 @@ pub struct CursorError {
 
 impl CursorError {
     /// Stable refusal class; malformed cursors never become first-page requests.
-    pub const fn kind(&self) -> CursorErrorType {
+    pub const fn error_type(&self) -> CursorErrorType {
         self.type_
     }
 

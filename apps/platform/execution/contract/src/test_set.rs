@@ -46,7 +46,7 @@ impl TestSetCasesError {
     }
 
     /// Stable failure classification.
-    pub const fn kind(&self) -> TestSetCasesErrorType {
+    pub const fn error_type(&self) -> TestSetCasesErrorType {
         self.type_
     }
 }
@@ -130,7 +130,7 @@ mod tests {
 
     fn refusal(cases: &[TestSetCase], expected_kind: TestSetCasesErrorType) -> String {
         let error = validate_cases(cases).expect_err("cases must be refused");
-        assert_eq!(error.kind(), expected_kind);
+        assert_eq!(error.error_type(), expected_kind);
         error.to_string()
     }
 

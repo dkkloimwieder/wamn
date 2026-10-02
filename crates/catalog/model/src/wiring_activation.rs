@@ -36,7 +36,7 @@ pub struct WiringActivationError {
 
 impl WiringActivationError {
     /// Return the refusal reason without parsing its text.
-    pub fn kind(&self) -> WiringActivationErrorType {
+    pub fn error_type(&self) -> WiringActivationErrorType {
         self.type_
     }
 }
@@ -200,7 +200,7 @@ mod tests {
             },
         )
         .expect_err("a retired wiring cannot be enabled");
-        assert_eq!(error.kind(), WiringActivationErrorType::Tombstoned);
+        assert_eq!(error.error_type(), WiringActivationErrorType::Tombstoned);
         assert_eq!(
             error.to_string(),
             "wiring-activation-tombstoned: shop/prod/orders-create"

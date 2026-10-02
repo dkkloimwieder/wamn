@@ -681,7 +681,7 @@ async fn complete_in_transaction(
                     &run_id,
                     &runner,
                     &lease_generation,
-                    &caller.kind(),
+                    &caller.outcome_type(),
                     &body_json,
                     &http_status,
                     &release_node_id,
@@ -696,7 +696,7 @@ async fn complete_in_transaction(
             CallerReleaseResult::Released => {}
             CallerReleaseResult::AlreadyReleased(stored)
                 if stored.exactly_matches(
-                    caller.kind(),
+                    caller.outcome_type(),
                     caller.body(),
                     Some(caller.http_status()),
                     release_node_id,
@@ -1510,7 +1510,7 @@ mod tests {
                     .map(|_| ()),
             ] {
                 let error = result.expect_err("a different role must not enter executor work");
-                assert_eq!(error.kind(), ProductionClaimErrorType::Identity);
+                assert_eq!(error.error_type(), ProductionClaimErrorType::Identity);
                 assert_eq!(error.operation(), "check executor authority");
                 assert!(
                     error
@@ -1538,7 +1538,7 @@ mod tests {
         let missing = require_executor_authority(&connection)
             .await
             .expect_err("an absent role must return the native refusal");
-        assert_eq!(missing.kind(), ProductionClaimErrorType::Identity);
+        assert_eq!(missing.error_type(), ProductionClaimErrorType::Identity);
         assert!(
             missing
                 .to_string()
@@ -1553,7 +1553,10 @@ mod tests {
     #[test]
     fn missing_and_corrupt_wiring_identity_are_dedicated_stable_refusals() {
         let missing = decode_wiring_identity(None, None).unwrap_err();
-        assert_eq!(missing.kind(), ProductionClaimErrorType::WiringIdentity);
+        assert_eq!(
+            missing.error_type(),
+            ProductionClaimErrorType::WiringIdentity
+        );
         assert!(missing.to_string().contains("run-wiring-identity-missing"));
 
         for corrupt in [
@@ -1563,7 +1566,7 @@ mod tests {
             decode_wiring_identity(Some("orders".into()), Some(0)),
         ] {
             let error = corrupt.unwrap_err();
-            assert_eq!(error.kind(), ProductionClaimErrorType::WiringIdentity);
+            assert_eq!(error.error_type(), ProductionClaimErrorType::WiringIdentity);
             assert!(error.to_string().contains("run-wiring-identity-corrupt"));
         }
     }

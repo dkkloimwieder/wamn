@@ -299,7 +299,7 @@ impl RouteAuthenticator for PlatformRouteAuthenticator {
                 })?
                 .ok_or_else(unauthorized)?;
             let principal = principal.principal();
-            match principal.kind() {
+            match principal.principal_type() {
                 PrincipalType::Platform => return Err(unauthorized()),
                 PrincipalType::Service
                     if principal.subject() != authentication.expected_subject.as_ref() =>

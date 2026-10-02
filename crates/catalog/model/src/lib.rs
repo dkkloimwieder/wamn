@@ -648,7 +648,7 @@ impl Source {
         &self.id
     }
 
-    pub fn kind(&self) -> SourceKind {
+    pub fn source_type(&self) -> SourceKind {
         self.kind
     }
 
@@ -760,7 +760,7 @@ impl Attachment {
         &self.id
     }
 
-    pub fn kind(&self) -> AttachmentType {
+    pub fn attachment_type(&self) -> AttachmentType {
         self.kind
     }
 

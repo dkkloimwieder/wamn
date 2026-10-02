@@ -105,7 +105,7 @@ impl TargetDatabaseError {
     }
 
     /// Stable refusal category.
-    pub const fn kind(&self) -> TargetDatabaseErrorType {
+    pub const fn error_type(&self) -> TargetDatabaseErrorType {
         self.type_
     }
 
@@ -754,7 +754,7 @@ mod tests {
 
         let lease = acquire(&config).await?;
         assert_eq!(
-            acquire(&config).await.unwrap_err().kind(),
+            acquire(&config).await.unwrap_err().error_type(),
             TargetDatabaseErrorType::LeaseUnavailable
         );
         let first = lease.recreate(&config).await?;
@@ -788,7 +788,7 @@ mod tests {
             "retained"
         );
         assert_eq!(
-            recreate(&config).await.unwrap_err().kind(),
+            recreate(&config).await.unwrap_err().error_type(),
             TargetDatabaseErrorType::LeaseUnavailable
         );
         std::fs::write(&acl, "REVOKE ALL ON DATABASE target FROM PUBLIC;")?;

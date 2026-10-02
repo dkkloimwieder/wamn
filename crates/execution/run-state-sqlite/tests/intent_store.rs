@@ -151,7 +151,7 @@ async fn reopen_after_kill_finds_the_uncertain_intent() {
 
     let error = SqliteIntentStore::open(&path)
         .expect_err("the child holds the file, so a second open fails");
-    assert_eq!(error.kind(), StoreErrorType::Storage);
+    assert_eq!(error.error_type(), StoreErrorType::Storage);
 
     // `Child::kill` sends SIGKILL on Unix: no destructor and no close runs.
     child.kill().expect("kill the child");

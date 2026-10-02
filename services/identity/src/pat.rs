@@ -99,7 +99,7 @@ async fn issue(inner: &Inner, request: Request<Incoming>) -> Response<Full<Bytes
     {
         Ok(token) => token,
         Err(error) => {
-            return match error.kind() {
+            return match error.error_type() {
                 IdentityErrorType::InvalidInput | IdentityErrorType::NotFound => invalid_request(),
                 _ => unavailable(),
             };

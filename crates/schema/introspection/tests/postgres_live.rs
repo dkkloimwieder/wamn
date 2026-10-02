@@ -363,7 +363,7 @@ async fn assert_control_owned_relations_are_outside_package_ir(client: &Client) 
         .await
         .expect_err("raw catalog reader admitted a host-owned oid column");
     assert_eq!(
-        unscoped.kind(),
+        unscoped.error_type(),
         PostgresIntrospectionErrorType::UnsupportedColumnType
     );
 
@@ -718,11 +718,11 @@ async fn refusal_case(
             ));
             None
         }
-        Err(error) if error.kind() == expected => Some(error),
+        Err(error) if error.error_type() == expected => Some(error),
         Err(error) => {
             matrix.failures.push(format!(
                 "{case}: expected {expected:?}, the reader refused as {:?}: {error}",
-                error.kind()
+                error.error_type()
             ));
             None
         }
@@ -1144,7 +1144,10 @@ async fn assert_platform_grants_are_skipped(admin: &Client, reader: &Client, oth
         .await
         .expect("remove the other role");
     let error = refused.expect_err("a schema grant to another role refuses");
-    assert_eq!(error.kind(), PostgresIntrospectionErrorType::UnsupportedAcl);
+    assert_eq!(
+        error.error_type(),
+        PostgresIntrospectionErrorType::UnsupportedAcl
+    );
 }
 
 async fn run_gate(admin_config: Config, fixture: Fixture) {

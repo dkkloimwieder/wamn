@@ -79,7 +79,7 @@ impl CredentialProbeError {
     }
 
     /// Return the stable refusal category.
-    pub fn kind(&self) -> CredentialProbeErrorType {
+    pub fn error_type(&self) -> CredentialProbeErrorType {
         self.type_
     }
 
@@ -668,7 +668,10 @@ mod tests {
         predicate: CredentialProbePredicate,
         connection_kind: Option<CredentialConnectionKind>,
     ) {
-        assert_eq!(error.kind(), CredentialProbeErrorType::PredicateMismatch);
+        assert_eq!(
+            error.error_type(),
+            CredentialProbeErrorType::PredicateMismatch
+        );
         assert_eq!(error.predicate(), predicate);
         assert_eq!(error.connection_kind(), connection_kind);
     }
@@ -677,7 +680,7 @@ mod tests {
     fn exact_source_rejects_an_ambient_conflict_without_disclosure() {
         let error = explicit_credential_source(URL, "tenant-a", AmbientCredentialState::Present)
             .unwrap_err();
-        assert_eq!(error.kind(), CredentialProbeErrorType::SourceConflict);
+        assert_eq!(error.error_type(), CredentialProbeErrorType::SourceConflict);
         assert_eq!(
             error.predicate(),
             CredentialProbePredicate::CredentialSource

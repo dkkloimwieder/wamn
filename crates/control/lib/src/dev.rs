@@ -260,7 +260,7 @@ impl DevRunError {
     }
 
     /// Stable error category.
-    pub const fn kind(&self) -> DevRunErrorType {
+    pub const fn error_type(&self) -> DevRunErrorType {
         self.type_
     }
 
@@ -826,7 +826,7 @@ mod tests {
             .await
             .expect_err("synthetic virtualization failure must stop the run");
 
-        assert_eq!(error.kind(), DevRunErrorType::StageFailed);
+        assert_eq!(error.error_type(), DevRunErrorType::StageFailed);
         assert_eq!(error.stage(), DevStage::Virtualize);
         assert_eq!(
             runner.invoked,
@@ -997,7 +997,7 @@ mod tests {
             .await
             .expect_err("a target that cannot be prepared must not run a stage against it");
 
-        assert_eq!(error.kind(), DevRunErrorType::StageFailed);
+        assert_eq!(error.error_type(), DevRunErrorType::StageFailed);
         assert_eq!(error.stage(), DevStage::Migrate);
         assert!(
             runner.invoked.is_empty(),
@@ -1115,7 +1115,7 @@ mod tests {
             .result()
             .as_ref()
             .expect_err("first run fails at the injected stage");
-        assert_eq!(first.kind(), DevRunErrorType::StageFailed);
+        assert_eq!(first.error_type(), DevRunErrorType::StageFailed);
         assert_eq!(first.stage(), DevStage::Gate);
         assert!(observer.outcomes[1].result().is_ok());
     }

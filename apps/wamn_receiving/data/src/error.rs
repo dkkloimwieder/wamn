@@ -105,7 +105,7 @@ pub struct AccessError {
 
 impl AccessError {
     /// Stable class; callers must not match display text.
-    pub const fn kind(&self) -> AccessErrorType {
+    pub const fn error_type(&self) -> AccessErrorType {
         self.type_
     }
 

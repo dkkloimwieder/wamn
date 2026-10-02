@@ -318,7 +318,7 @@ impl PublishManifestError {
         }
     }
 
-    pub const fn kind(&self) -> PublishManifestErrorType {
+    pub const fn error_type(&self) -> PublishManifestErrorType {
         self.type_
     }
 
@@ -2454,10 +2454,10 @@ mod tests {
         .expect_err("one attachment identity cannot have two package owners");
 
         assert_eq!(
-            error.kind(),
+            error.error_type(),
             PublishManifestErrorType::DuplicateAttachmentId
         );
-        assert_eq!(error.kind().as_str(), "duplicate-attachment-id");
+        assert_eq!(error.error_type().as_str(), "duplicate-attachment-id");
         assert!(error.detail().contains("fixture-http"));
         assert!(error.detail().contains("apps/source_fixture"));
         assert!(error.detail().contains("apps/observer_fixture"));
@@ -2497,7 +2497,7 @@ mod tests {
         )
         .expect_err("canonical route collisions remain refused after package merging");
 
-        assert_eq!(error.kind(), PublishManifestErrorType::Document);
+        assert_eq!(error.error_type(), PublishManifestErrorType::Document);
         assert!(error.detail().contains("canonical path and method"));
     }
 
@@ -2533,7 +2533,7 @@ mod tests {
             changed,
         )]))
         .expect_err("changed definition bytes cannot retain the old identity");
-        assert_eq!(error.kind(), PublishManifestErrorType::Document);
+        assert_eq!(error.error_type(), PublishManifestErrorType::Document);
     }
 
     #[test]
@@ -2561,8 +2561,11 @@ mod tests {
 
         let missing = resolve_route_host_overlay(&authored, None, &RouteContracts::new())
             .expect_err("a routed release requires its deployment hostname");
-        assert_eq!(missing.kind(), PublishManifestErrorType::RouteHostUnbound);
-        assert_eq!(missing.kind().as_str(), "route-host-unbound");
+        assert_eq!(
+            missing.error_type(),
+            PublishManifestErrorType::RouteHostUnbound
+        );
+        assert_eq!(missing.error_type().as_str(), "route-host-unbound");
         assert!(missing.detail().contains("fixture-http"));
         assert!(missing.detail().contains("--route-host"));
 
@@ -2600,7 +2603,10 @@ mod tests {
         let package_host =
             resolve_route_host_overlay(&package_authored, None, &RouteContracts::new())
                 .expect_err("package content cannot author a deployment hostname");
-        assert_eq!(package_host.kind(), PublishManifestErrorType::Document);
+        assert_eq!(
+            package_host.error_type(),
+            PublishManifestErrorType::Document
+        );
         assert!(package_host.detail().contains("remove it"));
         assert!(package_host.detail().contains("--route-host"));
 
@@ -2611,7 +2617,10 @@ mod tests {
             .type_ = wamn_catalog::AttachmentType::Internal;
         let package_host = resolve_route_host_overlay(&non_routed, None, &RouteContracts::new())
             .expect_err("every attachment kind refuses an authored route hostname");
-        assert_eq!(package_host.kind(), PublishManifestErrorType::Document);
+        assert_eq!(
+            package_host.error_type(),
+            PublishManifestErrorType::Document
+        );
 
         let mut extra_route_field = authored.clone();
         extra_route_field
@@ -2629,7 +2638,7 @@ mod tests {
             &RouteContracts::new(),
         )
         .expect_err("package route schema admits only a path");
-        assert_eq!(extra.kind(), PublishManifestErrorType::Document);
+        assert_eq!(extra.error_type(), PublishManifestErrorType::Document);
         assert!(extra.detail().contains("exactly a string path field"));
 
         let mut colliding = authored;
@@ -2646,7 +2655,7 @@ mod tests {
         let collision =
             resolve_route_host_overlay(&colliding, Some("route.example"), &RouteContracts::new())
                 .expect_err("one overlay host cannot carry ambiguous route templates");
-        assert_eq!(collision.kind(), PublishManifestErrorType::Document);
+        assert_eq!(collision.error_type(), PublishManifestErrorType::Document);
         assert!(collision.detail().contains("canonical path and method"));
     }
 
@@ -2728,7 +2737,7 @@ mod tests {
             resolve_route_host_overlay(&authored, Some("route.example"), &RouteContracts::new())
                 .expect_err("a route to an operation with no contract kind refuses");
         assert_eq!(
-            unknown.kind(),
+            unknown.error_type(),
             PublishManifestErrorType::GeneratedPackageMetadata
         );
 
@@ -2740,7 +2749,7 @@ mod tests {
         refresh_definition_hash(get);
         let refusal = resolve_route_host_overlay(&authored_method, Some("route.example"), &kinds)
             .expect_err("an authored method refuses");
-        assert_eq!(refusal.kind(), PublishManifestErrorType::Document);
+        assert_eq!(refusal.error_type(), PublishManifestErrorType::Document);
         assert!(
             refusal.detail().contains("route.method"),
             "{}",
@@ -2914,7 +2923,7 @@ mod tests {
         let refusal = validate_package_metadata(&unsatisfied_manifest, &unsatisfied_metadata)
             .expect_err("unsatisfied generated metadata cannot enter a release");
         assert_eq!(
-            refusal.kind(),
+            refusal.error_type(),
             PublishManifestErrorType::PolicyContractUnsatisfied
         );
         assert!(refusal.detail().contains("fixture_data_access"));
@@ -2931,7 +2940,7 @@ mod tests {
         let refusal = validate_package_metadata(&manifest, &mismatched_metadata)
             .expect_err("metadata cannot restate the manifest policy requirement");
         assert_eq!(
-            refusal.kind(),
+            refusal.error_type(),
             PublishManifestErrorType::GeneratedPackageMetadata
         );
     }
@@ -3062,7 +3071,7 @@ mod tests {
             let targets = BTreeMap::from([(operation.clone(), selected)]);
             let error = derive_serving_registrations(&manifests, &targets)
                 .expect_err("zero or multiple handler entry wirings were accepted");
-            assert_eq!(error.kind(), PublishManifestErrorType::Registration);
+            assert_eq!(error.error_type(), PublishManifestErrorType::Registration);
         }
 
         let manifests = BTreeMap::from([
@@ -3074,7 +3083,7 @@ mod tests {
         ]);
         let error = derive_serving_registrations(&manifests, &targets)
             .expect_err("a registration source entity absent from its package was accepted");
-        assert_eq!(error.kind(), PublishManifestErrorType::Registration);
+        assert_eq!(error.error_type(), PublishManifestErrorType::Registration);
         for fact in ["audit.observe", "source_fixture", "missing"] {
             assert!(
                 error.detail().contains(fact),
@@ -3136,7 +3145,7 @@ mod tests {
         )]);
         let error = derive_serving_registrations(&manifests, &unselected)
             .expect_err("a workflow whose wiring is not selected was accepted");
-        assert_eq!(error.kind(), PublishManifestErrorType::Registration);
+        assert_eq!(error.error_type(), PublishManifestErrorType::Registration);
         assert!(error.detail().contains("item_label"));
     }
 
@@ -3226,7 +3235,7 @@ mod tests {
         )
         .expect_err("digest drift refuses the dependency");
         assert_eq!(
-            digest_error.kind(),
+            digest_error.error_type(),
             PublishManifestErrorType::OperationDependency
         );
 
@@ -3239,7 +3248,7 @@ mod tests {
         )
         .expect_err("a dependency outside the release refuses publication");
         assert_eq!(
-            membership_error.kind(),
+            membership_error.error_type(),
             PublishManifestErrorType::OperationDependency
         );
         assert!(
@@ -3291,7 +3300,7 @@ mod tests {
         )
         .expect_err("a dependency outside the release refuses on either rule");
         assert_eq!(
-            membership_error.kind(),
+            membership_error.error_type(),
             PublishManifestErrorType::OperationDependency
         );
     }
@@ -3374,7 +3383,10 @@ mod tests {
         let error =
             resolve_component_dependency_closure(&roots, &cyclic, DependencyDigestRule::Declared)
                 .expect_err("an exact component dependency cycle was accepted");
-        assert_eq!(error.kind(), PublishManifestErrorType::OperationDependency);
+        assert_eq!(
+            error.error_type(),
+            PublishManifestErrorType::OperationDependency
+        );
         assert!(error.detail().contains("cycle"));
     }
 
@@ -3418,7 +3430,7 @@ mod tests {
             resolve_component_dependency_closure(&roots, &facts, DependencyDigestRule::Declared)
                 .expect_err("a durable release still demands the declared bytes");
         assert_eq!(
-            refusal.kind(),
+            refusal.error_type(),
             PublishManifestErrorType::OperationDependency
         );
 
@@ -3576,7 +3588,7 @@ mod tests {
             validate_anonymous_wiring_closure(&anonymous, &target, &closure_document(true), &facts)
                 .expect_err("anonymous reachability must fail at release publish");
         assert_eq!(
-            error.kind(),
+            error.error_type(),
             PublishManifestErrorType::UnauthenticatedRegisteredOperation
         );
         assert_eq!(
@@ -3608,7 +3620,7 @@ mod tests {
         )
         .expect_err("anonymous dependency reachability must fail at release publish");
         assert_eq!(
-            error.kind(),
+            error.error_type(),
             PublishManifestErrorType::UnauthenticatedRegisteredOperation
         );
         assert!(error.detail().contains("through component dependency"));
@@ -3691,7 +3703,7 @@ mod tests {
             &closure(true),
         )
         .expect_err("an anonymous closure that can write must fail at release publish");
-        assert_eq!(error.kind().as_str(), "unauthenticated-write");
+        assert_eq!(error.error_type().as_str(), "unauthenticated-write");
         assert_eq!(
             error.detail(),
             "attachment \"fixture-http\" reaches transactional statement \"note\" at \
@@ -3749,7 +3761,7 @@ mod tests {
         assert_eq!(
             verify_projected_environment_policy(None, &source_policy, &release, &schema)
                 .unwrap_err()
-                .kind(),
+                .error_type(),
             PublishManifestErrorType::EnvironmentPolicyAbsent
         );
         let wrong_environment = ProjectedEnvironmentPolicy {
@@ -3765,7 +3777,7 @@ mod tests {
                 &schema,
             )
             .unwrap_err()
-            .kind(),
+            .error_type(),
             PublishManifestErrorType::EnvironmentPolicyMismatch
         );
         let stale = ProjectedEnvironmentPolicy {
@@ -3777,7 +3789,7 @@ mod tests {
             verify_projected_environment_policy(Some(&stale), &source_policy, &release, &schema)
                 .unwrap_err();
         assert_eq!(
-            mismatch.kind(),
+            mismatch.error_type(),
             PublishManifestErrorType::EnvironmentPolicySourceMismatch
         );
         assert!(mismatch.detail().contains("environment \"prod\""));

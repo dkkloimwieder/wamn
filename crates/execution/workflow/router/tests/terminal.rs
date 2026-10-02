@@ -146,7 +146,7 @@ fn respond_with_no_caller_attached_is_rejected_and_leaves_the_walk_untouched() {
         .expect_err("responding to nobody is a wiring contract violation");
 
     assert_eq!(
-        error.kind(),
+        error.error_type(),
         &ApplyErrorType::RespondWithoutCaller("a".to_string())
     );
     assert_eq!(walk, before, "a rejected verdict must not mutate the walk");
@@ -177,7 +177,7 @@ fn a_second_terminal_node_is_rejected() {
         .expect_err("one delivery ends once");
 
     assert_eq!(
-        error.kind(),
+        error.error_type(),
         &ApplyErrorType::SecondVerdict("b".to_string())
     );
     assert_eq!(

@@ -55,7 +55,7 @@ pub struct RegistryCredentialsError {
 
 impl RegistryCredentialsError {
     /// Stable refusal class for startup and command boundaries.
-    pub fn kind(&self) -> RegistryCredentialsErrorType {
+    pub fn error_type(&self) -> RegistryCredentialsErrorType {
         self.type_
     }
 

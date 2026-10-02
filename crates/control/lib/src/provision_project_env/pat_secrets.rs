@@ -199,7 +199,7 @@ async fn resolve_or_create_service(
                 .context("commit service principal")?;
             Ok(principal)
         }
-        Err(error) if error.kind() == IdentityErrorType::Conflict => {
+        Err(error) if error.error_type() == IdentityErrorType::Conflict => {
             transaction
                 .rollback()
                 .await

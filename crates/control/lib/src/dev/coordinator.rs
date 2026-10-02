@@ -138,7 +138,7 @@ impl ProductionDevStageError {
     }
 
     /// Stable failure category.
-    pub const fn kind(&self) -> ProductionDevStageErrorType {
+    pub const fn error_type(&self) -> ProductionDevStageErrorType {
         self.type_
     }
 
@@ -2748,7 +2748,7 @@ fn authoring_command_id(
 /// Translate a failure to read authored base digests into its stage failure.
 fn base_digests_stage_error(source: ComponentDeclarationError) -> ProductionDevStageError {
     const OPERATION: &str = "read authored base digests";
-    match source.kind() {
+    match source.error_type() {
         ComponentDeclarationErrorType::Read | ComponentDeclarationErrorType::Parse => {
             ProductionDevStageError::owner(OPERATION, source.into())
         }
@@ -2761,7 +2761,7 @@ fn base_digests_stage_error(source: ComponentDeclarationError) -> ProductionDevS
 
 /// Translate a failure to render a component declaration into its stage failure.
 fn declaration_stage_error(source: ComponentDeclarationError) -> ProductionDevStageError {
-    match source.kind() {
+    match source.error_type() {
         ComponentDeclarationErrorType::Read => {
             ProductionDevStageError::owner("read component declaration template", source.into())
         }

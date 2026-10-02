@@ -102,7 +102,7 @@ impl ProductionClaimError {
     }
 
     /// Return the stable failure category.
-    pub fn kind(&self) -> ProductionClaimErrorType {
+    pub fn error_type(&self) -> ProductionClaimErrorType {
         self.type_
     }
 
@@ -163,7 +163,7 @@ impl ProductionCallerOutcome {
     }
 
     /// The persisted outcome kind: `responded` or `failed`.
-    pub fn kind(&self) -> &'static str {
+    pub fn outcome_type(&self) -> &'static str {
         self.kind
     }
 

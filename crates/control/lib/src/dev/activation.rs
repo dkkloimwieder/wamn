@@ -154,7 +154,7 @@ impl DevActivationError {
     }
 
     /// Stable error category.
-    pub const fn kind(&self) -> DevActivationErrorType {
+    pub const fn error_type(&self) -> DevActivationErrorType {
         self.type_
     }
 
@@ -2471,7 +2471,10 @@ mod tests {
             .await
             .expect_err("a zero HTTP port is not a usable endpoint");
 
-        assert_eq!(error.kind(), DevActivationErrorType::ProtocolViolation);
+        assert_eq!(
+            error.error_type(),
+            DevActivationErrorType::ProtocolViolation
+        );
         assert!(
             error.to_string().contains("invalid port 0"),
             "{error} must name the refused port"
@@ -2500,7 +2503,7 @@ mod tests {
             panic!("missing exact identity must refuse")
         };
 
-        assert_eq!(error.kind(), DevActivationErrorType::InvalidInput);
+        assert_eq!(error.error_type(), DevActivationErrorType::InvalidInput);
         assert_eq!(error.step(), "validate-identity");
         assert!(error.detail().contains("org"));
         assert!(

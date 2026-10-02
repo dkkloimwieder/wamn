@@ -203,7 +203,7 @@ mod tests {
             assert_eq!(
                 release_manifest_artifact_reference(base, &digest)
                     .expect_err("invalid release artifact base refuses")
-                    .kind(),
+                    .error_type(),
                 ComponentArtifactReferenceErrorType::InvalidBase,
                 "accepted {base:?}"
             );

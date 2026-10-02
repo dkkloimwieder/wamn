@@ -267,7 +267,10 @@ async fn release_identity_and_attestation_decisions_preserve_concurrent_winners(
     changed.triple.env = "dev".into();
     let error = project_release_identity(&url, &changed).await.unwrap_err();
     assert_eq!(
-        error.downcast_ref::<AttestationError>().unwrap().kind(),
+        error
+            .downcast_ref::<AttestationError>()
+            .unwrap()
+            .error_type(),
         AttestationErrorType::IdentityProjectionConflict
     );
     assert!(
@@ -291,7 +294,10 @@ async fn release_identity_and_attestation_decisions_preserve_concurrent_winners(
     );
     let refusal = first.err().or_else(|| second.err()).unwrap();
     assert_eq!(
-        refusal.downcast_ref::<AttestationError>().unwrap().kind(),
+        refusal
+            .downcast_ref::<AttestationError>()
+            .unwrap()
+            .error_type(),
         AttestationErrorType::IdentityProjectionConflict
     );
     let winner_env: String = inspector.query_one("SELECT environment FROM catalog.effective_releases WHERE tenant_id = $1 AND effective_release_id = 8", &[&TENANT]).await.unwrap().get(0);
@@ -312,7 +318,10 @@ async fn release_identity_and_attestation_decisions_preserve_concurrent_winners(
     transaction.commit().await.unwrap();
     let error = waiting.await.unwrap_err();
     assert_eq!(
-        error.downcast_ref::<AttestationError>().unwrap().kind(),
+        error
+            .downcast_ref::<AttestationError>()
+            .unwrap()
+            .error_type(),
         AttestationErrorType::IdentityProjectionConflict
     );
     let mut other_tenant = changed.clone();
@@ -338,7 +347,10 @@ async fn release_identity_and_attestation_decisions_preserve_concurrent_winners(
             .await
             .unwrap_err();
         assert_eq!(
-            error.downcast_ref::<AttestationError>().unwrap().kind(),
+            error
+                .downcast_ref::<AttestationError>()
+                .unwrap()
+                .error_type(),
             AttestationErrorType::ContentConflict
         );
         assert!(
@@ -365,7 +377,10 @@ async fn release_identity_and_attestation_decisions_preserve_concurrent_winners(
         .await
         .unwrap_err();
     assert_eq!(
-        error.downcast_ref::<AttestationError>().unwrap().kind(),
+        error
+            .downcast_ref::<AttestationError>()
+            .unwrap()
+            .error_type(),
         AttestationErrorType::ContentConflict
     );
     inspector.execute("UPDATE catalog.tenant_environments SET environment_instance='16384' WHERE tenant_id=$1", &[&TENANT]).await.unwrap();
@@ -382,7 +397,10 @@ async fn release_identity_and_attestation_decisions_preserve_concurrent_winners(
         let error = attest_deployment(&url, &coordinate, &other_hash, source)
             .await
             .unwrap_err();
-        let kind = error.downcast_ref::<AttestationError>().unwrap().kind();
+        let kind = error
+            .downcast_ref::<AttestationError>()
+            .unwrap()
+            .error_type();
         assert_eq!(
             kind,
             if source == Some("") {
@@ -396,7 +414,10 @@ async fn release_identity_and_attestation_decisions_preserve_concurrent_winners(
         .await
         .unwrap_err();
     assert_eq!(
-        error.downcast_ref::<AttestationError>().unwrap().kind(),
+        error
+            .downcast_ref::<AttestationError>()
+            .unwrap()
+            .error_type(),
         AttestationErrorType::ContentConflict
     );
     assert_eq!(
@@ -426,14 +447,20 @@ async fn release_identity_and_attestation_decisions_preserve_concurrent_winners(
     let (winning_at, expected_hash) = match (first, second) {
         (Ok(at), Err(error)) => {
             assert_eq!(
-                error.downcast_ref::<AttestationError>().unwrap().kind(),
+                error
+                    .downcast_ref::<AttestationError>()
+                    .unwrap()
+                    .error_type(),
                 AttestationErrorType::ContentConflict
             );
             (at, hash.as_str())
         }
         (Err(error), Ok(at)) => {
             assert_eq!(
-                error.downcast_ref::<AttestationError>().unwrap().kind(),
+                error
+                    .downcast_ref::<AttestationError>()
+                    .unwrap()
+                    .error_type(),
                 AttestationErrorType::ContentConflict
             );
             (at, other_hash.as_str())
@@ -477,7 +504,10 @@ async fn release_identity_and_attestation_decisions_preserve_concurrent_winners(
         .await
         .unwrap_err();
     assert_eq!(
-        error.downcast_ref::<AttestationError>().unwrap().kind(),
+        error
+            .downcast_ref::<AttestationError>()
+            .unwrap()
+            .error_type(),
         AttestationErrorType::Storage
     );
     assert_eq!(inspector.query_one("SELECT count(*) FROM catalog.deployment_attestations WHERE effective_release_id=99", &[]).await.unwrap().get::<_, i64>(0), 0);

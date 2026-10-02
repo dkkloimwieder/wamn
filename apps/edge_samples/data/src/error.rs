@@ -65,7 +65,7 @@ impl AccessError {
 
     /// What went wrong.
     #[must_use]
-    pub const fn kind(&self) -> AccessErrorType {
+    pub const fn error_type(&self) -> AccessErrorType {
         self.type_
     }
 

@@ -136,7 +136,7 @@ pub(super) async fn reconcile_definition_ownership(
                     tenant,
                     coordinate,
                     planned,
-                    mutation.kind(),
+                    mutation.definition_type(),
                     mutation.definition(),
                     package_id,
                     false,
@@ -161,7 +161,7 @@ async fn ensure_definition_present(
         tx,
         mutation.schema(),
         mutation.relation(),
-        mutation.kind(),
+        mutation.definition_type(),
         mutation.definition(),
     )
     .await?
@@ -312,7 +312,7 @@ pub(super) fn definition_error(
         type_,
         coordinate,
         planned,
-        planned.mutation.kind(),
+        planned.mutation.definition_type(),
         planned.mutation.definition(),
         owner_package,
         detail,

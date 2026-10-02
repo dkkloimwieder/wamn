@@ -218,7 +218,7 @@ fn crud_refuses_authored_protocol_metadata_but_custom_business_errors_remain_aut
         let error = PackageManifest::from_slice(&bytes)
             .expect_err("obsolete CRUD protocol metadata was accepted");
         assert_eq!(
-            error.kind(),
+            error.error_type(),
             GenerateErrorType::InvalidManifest,
             "{action}.{field}"
         );
@@ -232,7 +232,7 @@ fn crud_refuses_authored_protocol_metadata_but_custom_business_errors_remain_aut
     assert_eq!(
         PackageManifest::from_slice(&serde_json::to_vec(&envelope).unwrap())
             .expect_err("obsolete fixed envelope protocol was accepted")
-            .kind(),
+            .error_type(),
         GenerateErrorType::InvalidManifest
     );
 

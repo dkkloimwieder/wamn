@@ -183,7 +183,7 @@ impl FoldError {
     }
 
     /// The reason for the refusal.
-    pub const fn kind(&self) -> FoldErrorType {
+    pub const fn error_type(&self) -> FoldErrorType {
         self.type_
     }
 
@@ -229,7 +229,7 @@ pub fn state_at(rows: &[HistoryRow<'_>], position: i64) -> Result<RowState, Fold
         if index > 0 && rows[index - 1].position >= row.position {
             return Err(FoldError::new(FoldErrorType::PositionOrder, row.position));
         }
-        kinds.push(kind(row)?);
+        kinds.push(row_type(row)?);
     }
     if newest.position != newest.head_position {
         return Err(FoldError::new(
@@ -264,7 +264,7 @@ pub fn state_at(rows: &[HistoryRow<'_>], position: i64) -> Result<RowState, Fold
     Ok(state.map_or(RowState::Absent, RowState::Present))
 }
 
-fn kind(row: &HistoryRow<'_>) -> Result<Kind, FoldError> {
+fn row_type(row: &HistoryRow<'_>) -> Result<Kind, FoldError> {
     match row.type_ {
         "insert" => Ok(Kind::Insert),
         "update" => Ok(Kind::Update),

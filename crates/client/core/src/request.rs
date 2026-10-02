@@ -53,7 +53,7 @@ pub struct RequestError {
 }
 
 impl RequestError {
-    pub const fn kind(&self) -> RequestErrorType {
+    pub const fn error_type(&self) -> RequestErrorType {
         self.type_
     }
 

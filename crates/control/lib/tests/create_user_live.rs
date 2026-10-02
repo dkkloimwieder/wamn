@@ -136,7 +136,7 @@ async fn one_email_address_names_one_principal() {
     let identity = error
         .downcast_ref::<IdentityError>()
         .expect("the refusal carries the identity error");
-    assert_eq!(identity.kind(), IdentityErrorType::Conflict);
+    assert_eq!(identity.error_type(), IdentityErrorType::Conflict);
 
     let rows: i64 = observer
         .query_one(

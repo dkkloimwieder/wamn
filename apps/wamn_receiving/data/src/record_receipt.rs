@@ -165,7 +165,7 @@ impl RecordReceiptError {
     }
 
     /// Stable class; callers must not match display text.
-    pub const fn kind(&self) -> RecordReceiptErrorType {
+    pub const fn error_type(&self) -> RecordReceiptErrorType {
         self.type_
     }
 
@@ -257,7 +257,7 @@ impl RecordReceiptError {
         allowed_constraints: AllowedConstraints,
     ) -> Self {
         let classified = AccessError::from_statement(context, &source, allowed_constraints);
-        Self::from_classified_statement(classified.kind(), context, source)
+        Self::from_classified_statement(classified.error_type(), context, source)
     }
 
     fn from_classified_statement(
@@ -513,7 +513,7 @@ where
     .await
     .map_err(|source| {
         let error = AccessError::from_statement("insert receipt", &source, receipt_constraints);
-        if error.kind() == AccessErrorType::UniqueViolation
+        if error.error_type() == AccessErrorType::UniqueViolation
             && error.constraint() == Some("receipt_purchase_order_id_receipt_reference_key")
         {
             RecordReceiptError::with_constraint_source(
@@ -523,7 +523,11 @@ where
                 source,
             )
         } else {
-            RecordReceiptError::from_classified_statement(error.kind(), "insert receipt", source)
+            RecordReceiptError::from_classified_statement(
+                error.error_type(),
+                "insert receipt",
+                source,
+            )
         }
     })?
     .id
@@ -802,7 +806,7 @@ mod tests {
         );
         input.occurred_at = "yesterday".into();
         assert_eq!(
-            prepare(&input).unwrap_err().kind(),
+            prepare(&input).unwrap_err().error_type(),
             RecordReceiptErrorType::InvalidInput
         );
     }
@@ -836,7 +840,7 @@ mod tests {
             "private database diagnostic",
         )));
 
-        assert_eq!(error.kind(), RecordReceiptErrorType::InternalError);
+        assert_eq!(error.error_type(), RecordReceiptErrorType::InternalError);
         assert!(error.source().is_some());
         assert!(!error.to_string().contains("private database diagnostic"));
     }
@@ -852,25 +856,25 @@ mod tests {
                     MAX_RECORD_RECEIPT_LINES,
                 )
                 .unwrap_err()
-                .kind(),
+                .error_type(),
                 RecordReceiptErrorType::InvalidInput
             );
         }
         let duplicate = command(vec![line(FIRST_LINE_ID, "1.0"), line(FIRST_LINE_ID, "2.0")]);
         assert_eq!(
-            prepare(&duplicate).unwrap_err().kind(),
+            prepare(&duplicate).unwrap_err().error_type(),
             RecordReceiptErrorType::InvalidInput
         );
         for quantity in ["", ".", "0", "0.0000", "-1", "1e2", "1,5"] {
             assert_eq!(
                 prepare(&command(vec![line(FIRST_LINE_ID, quantity)]))
                     .unwrap_err()
-                    .kind(),
+                    .error_type(),
                 RecordReceiptErrorType::InvalidInput
             );
         }
         assert_eq!(
-            prepare(&command(Vec::new())).unwrap_err().kind(),
+            prepare(&command(Vec::new())).unwrap_err().error_type(),
             RecordReceiptErrorType::InvalidInput
         );
     }

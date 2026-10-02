@@ -88,7 +88,7 @@ impl GitSourceError {
     }
 
     /// Stable error category.
-    pub const fn kind(&self) -> GitSourceErrorType {
+    pub const fn error_type(&self) -> GitSourceErrorType {
         self.type_
     }
 }

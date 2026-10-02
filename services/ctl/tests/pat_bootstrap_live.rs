@@ -114,7 +114,10 @@ async fn cli_bootstrap_mints_first_service_pats_over_https() {
             .ok()
             .flatten()
             .expect("full PAT authentication");
-        assert_eq!(principal.principal().kind(), PrincipalType::Service);
+        assert_eq!(
+            principal.principal().principal_type(),
+            PrincipalType::Service
+        );
         let plaintext: bool = admin
             .query_one(
                 "SELECT EXISTS (SELECT FROM identity.pats WHERE token_hash=$1)",

@@ -276,7 +276,7 @@ impl Principal {
     }
 
     /// Return whether this is a user, service, or platform principal.
-    pub const fn kind(&self) -> PrincipalType {
+    pub const fn principal_type(&self) -> PrincipalType {
         self.kind
     }
 
@@ -474,7 +474,7 @@ impl IdentityError {
     }
 
     /// Return the stable failure class.
-    pub const fn kind(&self) -> IdentityErrorType {
+    pub const fn error_type(&self) -> IdentityErrorType {
         self.type_
     }
 }
@@ -1197,7 +1197,7 @@ mod tests {
             " a56f21c8-591a-4b4b-b4e9-15357c0b4a81",
         ] {
             assert_eq!(
-                invalid.parse::<PrincipalId>().unwrap_err().kind(),
+                invalid.parse::<PrincipalId>().unwrap_err().error_type(),
                 IdentityErrorType::InvalidInput,
                 "accepted invalid principal ID {invalid:?}"
             );
@@ -1255,7 +1255,7 @@ mod tests {
         }
         assert_eq!(PrincipalType::Platform.as_str(), "platform");
         assert_eq!(
-            PrincipalType::parse("robot").unwrap_err().kind(),
+            PrincipalType::parse("robot").unwrap_err().error_type(),
             IdentityErrorType::CorruptData
         );
     }

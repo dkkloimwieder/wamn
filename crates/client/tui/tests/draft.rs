@@ -97,7 +97,7 @@ fn repeated_edits_enforce_bounds_and_fail_without_changing_the_draft() {
         .insert_row("/value/line", 0, json!({"code": "A"}))
         .unwrap();
     assert_eq!(
-        draft.remove_row("/value/line", 0).unwrap_err().kind(),
+        draft.remove_row("/value/line", 0).unwrap_err().error_type(),
         DraftErrorType::RowBounds
     );
     draft
@@ -111,12 +111,12 @@ fn repeated_edits_enforce_bounds_and_fail_without_changing_the_draft() {
         draft
             .insert_row("/value/line", 3, json!({}))
             .unwrap_err()
-            .kind(),
+            .error_type(),
         DraftErrorType::RowBounds
     );
     assert_eq!(draft.item(), &full);
     assert_eq!(
-        draft.remove_row("/value/line", 5).unwrap_err().kind(),
+        draft.remove_row("/value/line", 5).unwrap_err().error_type(),
         DraftErrorType::RowIndex
     );
     assert_eq!(draft.item(), &full);
@@ -131,7 +131,7 @@ fn repeated_edits_enforce_bounds_and_fail_without_changing_the_draft() {
         empty
             .edit("/value/line/2/code", FieldState::Value(json!("A")))
             .unwrap_err()
-            .kind(),
+            .error_type(),
         DraftErrorType::RowIndex
     );
     assert_eq!(empty.item(), &json!({}));
@@ -151,7 +151,7 @@ fn explicit_bindings_protect_only_declared_paths_and_their_containers() {
             draft
                 .edit(pointer, FieldState::Value(json!("user value")))
                 .unwrap_err()
-                .kind(),
+                .error_type(),
             DraftErrorType::Protected
         );
     }
@@ -170,7 +170,7 @@ fn explicit_bindings_protect_only_declared_paths_and_their_containers() {
         FieldState::Value(json!({})),
     ] {
         assert_eq!(
-            draft.edit("/value", state).unwrap_err().kind(),
+            draft.edit("/value", state).unwrap_err().error_type(),
             DraftErrorType::Protected
         );
         assert_eq!(draft.item(), &bound);
@@ -204,11 +204,14 @@ fn repeated_edits_preserve_the_identity_of_bound_rows() {
             draft
                 .insert_row("/value/line", index, json!({}))
                 .unwrap_err()
-                .kind(),
+                .error_type(),
             DraftErrorType::Protected
         );
         assert_eq!(
-            draft.remove_row("/value/line", index).unwrap_err().kind(),
+            draft
+                .remove_row("/value/line", index)
+                .unwrap_err()
+                .error_type(),
             DraftErrorType::Protected
         );
         assert_eq!(draft.item(), &bound);
@@ -222,7 +225,7 @@ fn repeated_edits_preserve_the_identity_of_bound_rows() {
         draft
             .edit("/value/line/1", FieldState::Value(json!({})))
             .unwrap_err()
-            .kind(),
+            .error_type(),
         DraftErrorType::Protected
     );
     draft
@@ -257,7 +260,7 @@ fn unsupported_fields_do_not_offer_or_accept_an_unrestricted_text_editor() {
             draft
                 .edit(&pointer, FieldState::Value(json!("anything")))
                 .unwrap_err()
-                .kind(),
+                .error_type(),
             DraftErrorType::UnsupportedField
         );
     }
@@ -266,7 +269,7 @@ fn unsupported_fields_do_not_offer_or_accept_an_unrestricted_text_editor() {
         draft
             .insert_row("/untyped_array", 0, json!("anything"))
             .unwrap_err()
-            .kind(),
+            .error_type(),
         DraftErrorType::UnsupportedField
     );
     assert_eq!(draft.item(), &json!({}));
@@ -350,7 +353,10 @@ fn json_pointer_escaping_and_scalar_array_items_are_editable() {
         .unwrap();
     assert_eq!(draft.item().get("a/b~c"), Some(&json!("escaped")));
     assert_eq!(
-        draft.edit("/a~2b", FieldState::Null).unwrap_err().kind(),
+        draft
+            .edit("/a~2b", FieldState::Null)
+            .unwrap_err()
+            .error_type(),
         DraftErrorType::InvalidPointer
     );
     draft.insert_row("/tags", 0, json!("first")).unwrap();
@@ -365,7 +371,7 @@ fn json_pointer_escaping_and_scalar_array_items_are_editable() {
         draft
             .edit("/tags/0", FieldState::Absent)
             .unwrap_err()
-            .kind(),
+            .error_type(),
         DraftErrorType::InvalidShape
     );
     draft.remove_row("/tags", 0).unwrap();

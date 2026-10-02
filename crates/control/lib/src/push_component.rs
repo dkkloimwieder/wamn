@@ -202,7 +202,7 @@ impl ComponentProjectionError {
         }
     }
 
-    pub const fn kind(&self) -> ComponentProjectionErrorType {
+    pub const fn error_type(&self) -> ComponentProjectionErrorType {
         self.type_
     }
 
@@ -1577,7 +1577,7 @@ async fn persist_with_client(
                 .downcast_ref::<wamn_schema_control::PackageMigrationError>()
                 .is_some_and(|error| {
                     matches!(
-                        error.kind(),
+                        error.error_type(),
                         PackageMigrationErrorType::CoordinateContentConflict
                             | PackageMigrationErrorType::CoordinatePredecessorConflict
                     )
@@ -1702,7 +1702,7 @@ async fn require_exact_applied_package(
         .into());
     }
     let exact = plan_package_migrations(directory, Some(&applied)).map_err(|error| {
-        let kind = if error.kind() == PackageMigrationErrorType::ManifestDrift {
+        let kind = if error.error_type() == PackageMigrationErrorType::ManifestDrift {
             ComponentProjectionErrorType::PackageManifestMismatch
         } else {
             ComponentProjectionErrorType::SourcePackageMigrationMismatch
@@ -2279,7 +2279,7 @@ mod tests {
             } else {
                 let error = assignment.expect_err("authored and component flags differ");
                 assert_eq!(
-                    error.kind(),
+                    error.error_type(),
                     ComponentProjectionErrorType::StatementOperationMismatch
                 );
                 assert!(error.to_string().contains("fresh-only="));
@@ -2287,7 +2287,7 @@ mod tests {
             let error = load_component_statement_facts(&package_root, &manifest, &component)
                 .expect_err("at least one of the three freshness declarations differs");
             assert_eq!(
-                error.kind(),
+                error.error_type(),
                 ComponentProjectionErrorType::StatementOperationMismatch
             );
             if authored == declared {
@@ -2327,7 +2327,7 @@ mod tests {
         )
         .expect_err("a path traversal was admitted");
         assert_eq!(
-            path_error.kind(),
+            path_error.error_type(),
             ComponentProjectionErrorType::StatementPathInvalid
         );
 
@@ -2348,7 +2348,7 @@ mod tests {
         )
         .expect_err("statement digest drift was admitted");
         assert_eq!(
-            digest_error.kind(),
+            digest_error.error_type(),
             ComponentProjectionErrorType::StatementDigestMismatch
         );
     }
@@ -2435,7 +2435,7 @@ mod tests {
             .expect_err("a private export assigned to another component was accepted");
 
         assert_eq!(
-            error.kind(),
+            error.error_type(),
             ComponentProjectionErrorType::StatementComponentMismatch
         );
     }
@@ -2524,7 +2524,7 @@ mod tests {
         .expect_err("a stranger registering a manifest operation was admitted");
 
         assert_eq!(
-            error.kind(),
+            error.error_type(),
             ComponentProjectionErrorType::StatementComponentMismatch
         );
         assert!(
@@ -2686,7 +2686,7 @@ mod tests {
             missing
                 .downcast_ref::<ComponentProjectionError>()
                 .expect("missing package is a typed refusal")
-                .kind(),
+                .error_type(),
             ComponentProjectionErrorType::SourcePackageNotApplied
         );
         project
@@ -2710,7 +2710,7 @@ mod tests {
             incomplete
                 .downcast_ref::<ComponentProjectionError>()
                 .expect("incomplete migration records cause a typed refusal")
-                .kind(),
+                .error_type(),
             ComponentProjectionErrorType::SourcePackageMigrationMismatch
         );
         let mut manifest_drift = directory.clone();
@@ -2727,7 +2727,7 @@ mod tests {
             drift
                 .downcast_ref::<ComponentProjectionError>()
                 .expect("manifest drift is a typed refusal")
-                .kind(),
+                .error_type(),
             ComponentProjectionErrorType::PackageManifestMismatch
         );
         for migration in &package.pending {
@@ -2766,7 +2766,7 @@ mod tests {
             drift
                 .downcast_ref::<ComponentProjectionError>()
                 .expect("migration drift is a typed refusal")
-                .kind(),
+                .error_type(),
             ComponentProjectionErrorType::SourcePackageMigrationMismatch
         );
 
@@ -2777,7 +2777,7 @@ mod tests {
             unverified
                 .downcast_ref::<ComponentProjectionError>()
                 .expect("missing verification projection is a typed refusal")
-                .kind(),
+                .error_type(),
             ComponentProjectionErrorType::VerificationProjectionMissing
         );
 
@@ -2919,7 +2919,7 @@ mod tests {
             extra
                 .downcast_ref::<ComponentProjectionError>()
                 .expect("extra requirements return a typed refusal")
-                .kind(),
+                .error_type(),
             ComponentProjectionErrorType::ConnectionFactConflict
         );
 
@@ -2956,7 +2956,7 @@ mod tests {
             drift
                 .downcast_ref::<ComponentProjectionError>()
                 .expect("verification drift is a typed refusal")
-                .kind(),
+                .error_type(),
             ComponentProjectionErrorType::ConnectionFactConflict
         );
 
@@ -3030,7 +3030,7 @@ mod tests {
                 .downcast_ref::<ComponentProjectionError>()
                 .expect("a typed refusal");
             assert_eq!(
-                refusal.kind(),
+                refusal.error_type(),
                 ComponentProjectionErrorType::ComponentFactConflict
             );
             assert!(
@@ -3049,7 +3049,7 @@ mod tests {
                 error
                     .downcast_ref::<ComponentProjectionError>()
                     .expect("a typed refusal")
-                    .kind(),
+                    .error_type(),
                 ComponentProjectionErrorType::ComponentFactConflict
             );
             assert_eq!(count(&client, "component_library").await, 2);
@@ -3212,7 +3212,7 @@ mod tests {
             unprojected
                 .downcast_ref::<ComponentProjectionError>()
                 .expect("a moved digest is a typed refusal")
-                .kind(),
+                .error_type(),
             ComponentProjectionErrorType::ComponentFactConflict
         );
 
@@ -3225,7 +3225,7 @@ mod tests {
             durable
                 .downcast_ref::<ComponentProjectionError>()
                 .expect("a moved digest is a typed refusal")
-                .kind(),
+                .error_type(),
             ComponentProjectionErrorType::ComponentFactConflict
         );
         assert_eq!(stored_digest("").await, first.component_digest);
@@ -3243,7 +3243,7 @@ mod tests {
             same_instance
                 .downcast_ref::<ComponentProjectionError>()
                 .expect("a moved digest is a typed refusal")
-                .kind(),
+                .error_type(),
             ComponentProjectionErrorType::ComponentFactConflict
         );
         assert_eq!(stored_digest("").await, first.component_digest);
@@ -3277,7 +3277,7 @@ mod tests {
             refrozen
                 .downcast_ref::<ComponentProjectionError>()
                 .expect("a moved digest is a typed refusal")
-                .kind(),
+                .error_type(),
             ComponentProjectionErrorType::ComponentFactConflict
         );
 

@@ -508,7 +508,7 @@ impl ConnectionHttp {
 fn authority_denied(phase: &'static str, error: &AuthorityError) -> ConnectionError {
     tracing::warn!(
         phase,
-        kind = ?error.kind(),
+        kind = ?error.error_type(),
         error = %error,
         "trusted HTTP connection authority denied"
     );

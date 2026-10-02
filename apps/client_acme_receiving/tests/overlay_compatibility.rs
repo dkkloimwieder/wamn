@@ -402,7 +402,7 @@ async fn breaking_install(base: &Path, database_url: &str) -> anyhow::Result<Val
         let before = project.query_one("SELECT count(*) FROM catalog.packages WHERE tenant_id = $1", &[&identity().tenant.as_str()]).await?.get::<_, i64>(0);
         let error = apply(super::overlay_package_root()).await.err().context("unchanged overlay must refuse a base-owned field collision")?;
         let refusal = error.downcast_ref::<ApplyPackageError>().context("breaking combination must produce a typed package refusal")?;
-        ensure!(refusal.kind() == ApplyPackageErrorType::BaseDefinitionMutation
+        ensure!(refusal.error_type() == ApplyPackageErrorType::BaseDefinitionMutation
             && refusal.schema() == Some("receiving") && refusal.relation() == Some("purchase_order")
             && refusal.definition() == Some(CONFLICT_FIELD) && refusal.owner_package() == Some(BASE_PACKAGE_ID),
             "breaking combination refused for a different reason: {refusal}");
@@ -416,7 +416,7 @@ async fn breaking_install(base: &Path, database_url: &str) -> anyhow::Result<Val
         ensure!(before == 1 && after.get::<_, i64>(0) == before && after.get::<_, i64>(1) == 0
             && after.get::<_, bool>(2) && after.get::<_, bool>(3),
             "refused overlay left package metadata or partial business schema");
-        Ok(json!({"code":refusal.kind().as_str(),"schema":refusal.schema(),"relation":refusal.relation(),
+        Ok(json!({"code":refusal.error_type().as_str(),"schema":refusal.schema(),"relation":refusal.relation(),
             "definition":refusal.definition(),"owner":refusal.owner_package(),"partial_overlay_state":false}))
     }.await;
     drop(project);

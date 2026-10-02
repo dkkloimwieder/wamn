@@ -113,22 +113,22 @@ fn a_repeated_kid_or_an_invalid_key_refuses_the_file() {
     let (_, again) = key("key-one", 2);
     let error = FileKeys::load(key_file(&json!({"keys": [one, again]})), ISSUER)
         .expect_err("a repeated key ID refuses the file");
-    assert_eq!(error.kind(), SessionErrorType::InvalidKey);
+    assert_eq!(error.error_type(), SessionErrorType::InvalidKey);
 
     let mut invalid = one.clone();
     invalid.alg = "EdDSA".into();
     let error = FileKeys::load(key_file(&json!({"keys": [invalid]})), ISSUER)
         .expect_err("a key off the Ed25519 profile refuses the file");
-    assert_eq!(error.kind(), SessionErrorType::InvalidKey);
+    assert_eq!(error.error_type(), SessionErrorType::InvalidKey);
 
     let error = FileKeys::load(key_file(&json!({"keys": [one], "extra": 1})), ISSUER)
         .expect_err("an unknown member refuses the file");
-    assert_eq!(error.kind(), SessionErrorType::KeyFile);
+    assert_eq!(error.error_type(), SessionErrorType::KeyFile);
 
     let error = FileKeys::load(
         PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("missing.json"),
         ISSUER,
     )
     .expect_err("a missing file is refused");
-    assert_eq!(error.kind(), SessionErrorType::KeyFile);
+    assert_eq!(error.error_type(), SessionErrorType::KeyFile);
 }

@@ -471,7 +471,7 @@ async fn drive_claim(
             let Some((wiring_id, wiring_version)) = candidate_coordinate else {
                 return Err(error);
             };
-            let fail_type = match refusal.kind() {
+            let fail_type = match refusal.refusal_type() {
                 CandidateExecutionRefusalKind::Identity => FailType::ForeignRevision,
                 CandidateExecutionRefusalKind::Definition => FailType::IncompatibleContract,
                 CandidateExecutionRefusalKind::Binding => FailType::UnboundRequirement,
@@ -559,7 +559,7 @@ async fn drive_claim(
                     tracing::warn!(
                         run_id,
                         error = %error,
-                        error_kind = ?error.kind(),
+                        error_kind = ?error.error_type(),
                         "derived event was not server-acknowledged; lease left for replay"
                     );
                     return Ok(());

@@ -452,7 +452,7 @@ impl<'a> WorkloadRoleScope<'a> {
         }
     }
 
-    const fn kind(self) -> WorkloadRoleScopeKind {
+    const fn scope_type(self) -> WorkloadRoleScopeKind {
         match self {
             Self::Tenant { .. } => WorkloadRoleScopeKind::Tenant,
             Self::ProjectEnvironment { .. } => WorkloadRoleScopeKind::ProjectEnvironment,
@@ -489,7 +489,7 @@ pub fn workload_role_scope_hash(
     family: WorkloadRoleFamily,
     scope: WorkloadRoleScope<'_>,
 ) -> Result<String, WorkloadRoleScopeError> {
-    let actual = scope.kind();
+    let actual = scope.scope_type();
     let expected = family.scope_kind();
     if actual != expected {
         return Err(WorkloadRoleScopeError {

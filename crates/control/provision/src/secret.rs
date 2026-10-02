@@ -77,7 +77,7 @@ pub enum WorkloadSecretBody<'a> {
 }
 
 impl WorkloadSecretBody<'_> {
-    fn kind(self) -> WorkloadSecretBodyKind {
+    fn body_type(self) -> WorkloadSecretBodyKind {
         match self {
             Self::Url(_) => WorkloadSecretBodyKind::Url,
             Self::TenantUrl { .. } => WorkloadSecretBodyKind::TenantUrl,
@@ -101,11 +101,11 @@ pub fn render_workload_secret_manifest(
     body: WorkloadSecretBody<'_>,
 ) -> Value {
     assert_eq!(
-        body.kind(),
+        body.body_type(),
         family.secret_body_kind(),
         "{family:?} publishes a {:?} Secret body, not a {:?} one",
         family.secret_body_kind(),
-        body.kind(),
+        body.body_type(),
     );
     let mut metadata = json!({
         "name": workload_secret_name(family, &triple.org, &triple.project, triple.env.as_str()),

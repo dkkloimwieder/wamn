@@ -81,7 +81,7 @@ pub struct PostgresIntrospectionError {
 
 impl PostgresIntrospectionError {
     /// Stable refusal class.
-    pub const fn kind(&self) -> PostgresIntrospectionErrorType {
+    pub const fn error_type(&self) -> PostgresIntrospectionErrorType {
         self.type_
     }
 
@@ -702,7 +702,7 @@ fn database_error(
 }
 
 fn ir_error(schema: &str, object: &str, error: &IrError) -> PostgresIntrospectionError {
-    let kind = match error.kind() {
+    let kind = match error.error_type() {
         IrErrorType::EmptyName => PostgresIntrospectionErrorType::UnsupportedConstraint,
         IrErrorType::UnsupportedType => PostgresIntrospectionErrorType::UnsupportedColumnType,
         IrErrorType::UnsupportedDefault => PostgresIntrospectionErrorType::UnsupportedColumnDefault,

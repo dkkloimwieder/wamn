@@ -65,7 +65,7 @@ impl SessionError {
     }
 
     /// Return the stable failure class.
-    pub const fn kind(&self) -> SessionErrorType {
+    pub const fn error_type(&self) -> SessionErrorType {
         self.type_
     }
 }

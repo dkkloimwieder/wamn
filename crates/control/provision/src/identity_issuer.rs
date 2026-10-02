@@ -170,7 +170,7 @@ pub struct IdentityIssuerUrlError {
 
 impl IdentityIssuerUrlError {
     /// The predicate that refused the input.
-    pub const fn kind(&self) -> IdentityIssuerUrlErrorType {
+    pub const fn error_type(&self) -> IdentityIssuerUrlErrorType {
         self.type_
     }
 }
@@ -561,7 +561,7 @@ mod tests {
             ),
         ] {
             let error = parse_identity_issuer_url(&raw, ISSUER).unwrap_err();
-            assert_eq!(error.kind(), kind);
+            assert_eq!(error.error_type(), kind);
             assert!(!format!("{error:?} {error}").contains("hidden-value"));
         }
     }

@@ -124,7 +124,7 @@ impl DerivedPublishError {
         }
     }
 
-    pub fn kind(&self) -> DerivedPublishErrorType {
+    pub fn error_type(&self) -> DerivedPublishErrorType {
         self.type_
     }
 }
@@ -1719,7 +1719,7 @@ mod tests {
         };
         let error = prepare_derived_publication(claim, &coordinates, request)
             .expect_err("a noncanonical package identity must refuse");
-        assert_eq!(error.kind(), DerivedPublishErrorType::InvalidInput);
+        assert_eq!(error.error_type(), DerivedPublishErrorType::InvalidInput);
     }
 
     #[test]
@@ -1729,7 +1729,7 @@ mod tests {
             plugin
                 .required_derived_claim("component-1")
                 .unwrap_err()
-                .kind(),
+                .error_type(),
             DerivedPublishErrorType::UnboundScope
         );
         plugin.set_claim("component-1", Some("fixture"), Some("app"), None);
@@ -1737,7 +1737,7 @@ mod tests {
             plugin
                 .required_derived_claim("component-1")
                 .unwrap_err()
-                .kind(),
+                .error_type(),
             DerivedPublishErrorType::UnboundScope
         );
         plugin.set_claim(
@@ -1750,7 +1750,7 @@ mod tests {
             plugin
                 .required_derived_claim("component-1")
                 .unwrap_err()
-                .kind(),
+                .error_type(),
             DerivedPublishErrorType::UnboundScope
         );
         assert!(
@@ -1808,7 +1808,7 @@ mod tests {
                 .publish_derived(derived_request("component-1", "author:orders:7"))
                 .await
                 .expect_err("missing or foreign event coordinates must refuse before connection");
-            assert_eq!(error.kind(), DerivedPublishErrorType::UnboundScope);
+            assert_eq!(error.error_type(), DerivedPublishErrorType::UnboundScope);
         }
     }
 

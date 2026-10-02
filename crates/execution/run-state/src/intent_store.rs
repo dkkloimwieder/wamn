@@ -109,7 +109,7 @@ impl StoreError {
     }
 
     /// Return the stable failure category.
-    pub fn kind(&self) -> StoreErrorType {
+    pub fn error_type(&self) -> StoreErrorType {
         self.type_
     }
 

@@ -368,7 +368,7 @@ async fn production_claim_live() -> anyhow::Result<()> {
         .claim_next(COMPONENT, &release_package_ids, ENVIRONMENT, 30_000)
         .await
         .expect_err("the probed grant refuses");
-    assert_eq!(starved.kind(), ProductionClaimErrorType::Storage);
+    assert_eq!(starved.error_type(), ProductionClaimErrorType::Storage);
     assert_eq!(starved.operation(), "grant production lease");
     assert!(
         starved.to_string().contains("probe-grant-refused"),
@@ -537,7 +537,7 @@ async fn production_claim_live() -> anyhow::Result<()> {
         .claim_next(ROLLED_COMPONENT, &release_package_ids, ENVIRONMENT, 30_000)
         .await
         .expect_err("a different effective release cannot claim an admitted run");
-    assert_eq!(mismatched.kind(), ProductionClaimErrorType::Contract);
+    assert_eq!(mismatched.error_type(), ProductionClaimErrorType::Contract);
     assert_eq!(
         mismatched.to_string(),
         "production claim grant production lease failed: claiming effective release does not match the run admission pin"

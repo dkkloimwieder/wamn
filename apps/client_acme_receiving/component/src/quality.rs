@@ -63,7 +63,7 @@ pub(super) async fn handle_create(
 }
 
 fn detail_error(error: &AccessError, id: &str) -> detail_contract::LoadPurchaseOrderDetailError {
-    detail_codec::map_error(error.kind().literal(), |key| {
+    detail_codec::map_error(error.error_type().literal(), |key| {
         access_detail(
             error,
             key,
@@ -79,7 +79,7 @@ fn approve_error(
     id: &str,
     expected: i32,
 ) -> approve_contract::ApproveInspectionError {
-    approve_codec::map_error(error.kind().literal(), |key| {
+    approve_codec::map_error(error.error_type().literal(), |key| {
         access_detail(
             error,
             key,

@@ -22,7 +22,7 @@ mod archive {
             .await
             .map(|row| codec::row!(row, contract::ArchiveResult))
             .map_err(|error| {
-                codec::map_error(error.kind().literal(), |key| {
+                codec::map_error(error.error_type().literal(), |key| {
                     detail(&error, "widget.archive", key)
                 })
             })
@@ -62,7 +62,7 @@ mod list {
                     .collect(),
             })
             .map_err(|error| {
-                codec::map_error(error.kind().literal(), |key| {
+                codec::map_error(error.error_type().literal(), |key| {
                     detail(&error, "widget.list", key)
                 })
             })
@@ -112,7 +112,7 @@ mod record_batch {
             .await
             .map(|row| codec::row!(row, contract::RecordBatchResult))
             .map_err(|error| {
-                codec::map_error(error.kind().literal(), |key| {
+                codec::map_error(error.error_type().literal(), |key| {
                     detail(&error, "widget.record_batch", key)
                 })
             })

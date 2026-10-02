@@ -380,13 +380,16 @@ fn two_names_that_take_one_typescript_name_refuse_by_name() {
         ir.models[0].operations.push(operation);
     }
     let refusal = emit_ts_client(&ir).expect_err("a duplicate TypeScript name refuses");
-    assert_eq!(refusal.kind(), ClientTsErrorType::NameCollision);
+    assert_eq!(refusal.error_type(), ClientTsErrorType::NameCollision);
     assert!(refusal.to_string().contains("\"delete_\""), "{refusal}");
 
     let mut unnameable = release();
     unnameable.models[0].operations[0].name = "9lives".to_owned();
     let refusal = emit_ts_client(&unnameable).expect_err("a name with no spelling refuses");
-    assert_eq!(refusal.kind(), ClientTsErrorType::UnnameableIdentifier);
+    assert_eq!(
+        refusal.error_type(),
+        ClientTsErrorType::UnnameableIdentifier
+    );
     assert!(refusal.to_string().contains("9lives"), "{refusal}");
 }
 
@@ -397,7 +400,7 @@ fn a_contract_name_that_does_not_reverse_refuses_and_names_its_path() {
     let mut operation_name = release();
     operation_name.models[0].operations[0].name = "listWidgets".to_owned();
     let refusal = emit_ts_client(&operation_name).expect_err("a capital does not reverse");
-    assert_eq!(refusal.kind(), ClientTsErrorType::IrreversibleName);
+    assert_eq!(refusal.error_type(), ClientTsErrorType::IrreversibleName);
     let text = refusal.to_string();
     assert!(text.starts_with("irreversible_name: "), "{text}");
     assert!(text.contains("platform-fixture:widget/"), "{text}");
@@ -411,7 +414,7 @@ fn a_contract_name_that_does_not_reverse_refuses_and_names_its_path() {
         .expect("the fixture declares widget.archive");
     archive.input_fields[0].path = "editVersion".to_owned();
     let refusal = emit_ts_client(&field_name).expect_err("a field that does not reverse refuses");
-    assert_eq!(refusal.kind(), ClientTsErrorType::IrreversibleName);
+    assert_eq!(refusal.error_type(), ClientTsErrorType::IrreversibleName);
     let text = refusal.to_string();
     assert!(
         text.contains("platform-fixture:widget/archive@2.0.0"),
@@ -541,7 +544,7 @@ fn an_invalid_client_package_name_refuses_and_names_the_package() {
         let refusal = fixture::try_generate_with(&catalog, &value)
             .expect_err("an invalid client package name refuses");
         assert_eq!(
-            refusal.kind(),
+            refusal.error_type(),
             GenerateErrorType::InvalidClientPackage,
             "{name:?}"
         );

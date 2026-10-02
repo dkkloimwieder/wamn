@@ -88,7 +88,7 @@ pub fn read_authored_document(path: &Path, kind: AuthoredDocument) -> Result<Val
     let (_, owners) = package_owners_of(path)?;
     resolve_authored_document(&mut document, kind, &owners).map_err(|error| {
         GenerateError::new(
-            error.kind(),
+            error.error_type(),
             format!("{}: {}", path.display(), error.context()),
         )
     })?;

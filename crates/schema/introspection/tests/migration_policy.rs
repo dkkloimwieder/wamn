@@ -67,7 +67,10 @@ fn admits_every_manifest_schema_and_refuses_an_out_of_set_target() {
     );
     let error = validate_migration_file_for_schemas(refused.path(), &["inventory", "warehouse"])
         .expect_err("a target outside the manifest schema set must refuse");
-    assert_eq!(error.kind(), MigrationPolicyErrorType::CrossSchemaMutation);
+    assert_eq!(
+        error.error_type(),
+        MigrationPolicyErrorType::CrossSchemaMutation
+    );
     assert_eq!(error.statement_index(), Some(2));
     assert!(error.to_string().contains("control"));
 }
@@ -136,7 +139,7 @@ fn a_nullable_column_admits_no_further_clause_and_no_unmodeled_type() {
     ] {
         let error = refusal(sql);
         assert_eq!(
-            error.kind(),
+            error.error_type(),
             MigrationPolicyErrorType::UnsupportedStatement,
             "{sql}"
         );
@@ -165,7 +168,7 @@ DROP TABLE inventory.widget_maker;
         .map(|mutation| {
             (
                 mutation.action(),
-                mutation.kind(),
+                mutation.definition_type(),
                 mutation.schema(),
                 mutation.relation(),
                 mutation.definition(),
@@ -237,7 +240,7 @@ fn overlay_additions_require_an_unquoted_qualified_target() {
     ] {
         let error = refusal(sql);
         assert_eq!(
-            error.kind(),
+            error.error_type(),
             MigrationPolicyErrorType::CrossSchemaMutation,
             "{sql}"
         );
@@ -257,7 +260,7 @@ fn overlay_additions_refuse_broader_alter_table_authority() {
     ] {
         let error = refusal(sql);
         assert_eq!(
-            error.kind(),
+            error.error_type(),
             MigrationPolicyErrorType::UnsupportedStatement,
             "{sql}"
         );
@@ -269,19 +272,25 @@ fn overlay_constraints_require_one_explicit_short_name() {
     let unnamed = refusal(
         "ALTER TABLE inventory.widget_maker ADD CHECK (overlay_quality_status <> 'unknown');",
     );
-    assert_eq!(unnamed.kind(), MigrationPolicyErrorType::UnnamedConstraint);
+    assert_eq!(
+        unnamed.error_type(),
+        MigrationPolicyErrorType::UnnamedConstraint
+    );
 
     let quoted = refusal(
         "ALTER TABLE inventory.widget_maker ADD CONSTRAINT \"overlay_check\" CHECK (true);",
     );
-    assert_eq!(quoted.kind(), MigrationPolicyErrorType::UnnamedConstraint);
+    assert_eq!(
+        quoted.error_type(),
+        MigrationPolicyErrorType::UnnamedConstraint
+    );
 
     let overlength = "a".repeat(64);
     let error = refusal(&format!(
         "ALTER TABLE inventory.widget_maker ADD CONSTRAINT {overlength} CHECK (true);"
     ));
     assert_eq!(
-        error.kind(),
+        error.error_type(),
         MigrationPolicyErrorType::ConstraintNameTooLong
     );
 }
@@ -295,7 +304,7 @@ fn reads_sql_artifacts_and_refuses_rust_sources() {
     let error = validate_migration_file(artifact.path(), "inventory")
         .expect_err("Rust source must never be the migration-policy subject");
 
-    assert_eq!(error.kind(), MigrationPolicyErrorType::NotSqlArtifact);
+    assert_eq!(error.error_type(), MigrationPolicyErrorType::NotSqlArtifact);
     assert_eq!(error.path(), artifact.path());
     assert_eq!(error.statement_index(), None);
 }
@@ -325,7 +334,7 @@ fn a_real_statement_after_quoted_content_is_still_refused() {
     let error =
         refusal("CREATE TABLE inventory.safe (note text DEFAULT 'SET ROLE;'); SET ROLE attacker;");
 
-    assert_eq!(error.kind(), MigrationPolicyErrorType::SetRole);
+    assert_eq!(error.error_type(), MigrationPolicyErrorType::SetRole);
     assert_eq!(error.statement_index(), Some(2));
 }
 
@@ -338,7 +347,11 @@ fn refuses_session_authorization_switches() {
         "RESET ROLE;",
     ] {
         let error = refusal(sql);
-        assert_eq!(error.kind(), MigrationPolicyErrorType::SetRole, "{sql}");
+        assert_eq!(
+            error.error_type(),
+            MigrationPolicyErrorType::SetRole,
+            "{sql}"
+        );
         assert!(error.to_string().contains("statement 1"), "{sql}");
     }
 }
@@ -354,7 +367,7 @@ fn refuses_role_operations() {
     ] {
         let error = refusal(sql);
         assert_eq!(
-            error.kind(),
+            error.error_type(),
             MigrationPolicyErrorType::RoleOperation,
             "{sql}"
         );
@@ -370,7 +383,7 @@ fn refuses_grant_operations() {
     ] {
         let error = refusal(sql);
         assert_eq!(
-            error.kind(),
+            error.error_type(),
             MigrationPolicyErrorType::GrantOperation,
             "{sql}"
         );
@@ -387,7 +400,7 @@ fn refuses_nontransactional_operations() {
     ] {
         let error = refusal(sql);
         assert_eq!(
-            error.kind(),
+            error.error_type(),
             MigrationPolicyErrorType::NontransactionalOperation,
             "{sql}"
         );
@@ -398,7 +411,10 @@ fn refuses_nontransactional_operations() {
 fn refuses_cross_schema_mutation() {
     let error = refusal("CREATE TABLE public.escape (id uuid);");
 
-    assert_eq!(error.kind(), MigrationPolicyErrorType::CrossSchemaMutation);
+    assert_eq!(
+        error.error_type(),
+        MigrationPolicyErrorType::CrossSchemaMutation
+    );
     assert!(error.to_string().contains("public"));
     assert!(error.to_string().contains("inventory"));
 }
@@ -425,7 +441,7 @@ fn refuses_unnamed_supported_constraints_with_table_and_kind() {
     ] {
         let error = refusal(sql);
         assert_eq!(
-            error.kind(),
+            error.error_type(),
             MigrationPolicyErrorType::UnnamedConstraint,
             "{sql}"
         );
@@ -452,7 +468,7 @@ fn refuses_constraint_names_at_postgresqls_truncation_boundary() {
         "CREATE TABLE inventory.name_over_limit (id uuid CONSTRAINT {refused_name} PRIMARY KEY);"
     ));
     assert_eq!(
-        error.kind(),
+        error.error_type(),
         MigrationPolicyErrorType::ConstraintNameTooLong
     );
     let display = error.to_string();
@@ -466,14 +482,17 @@ fn quoted_constraint_names_remain_fail_loud_at_the_truncation_boundary() {
     let error = refusal(&format!(
         "CREATE TABLE inventory.quoted_name (id uuid CONSTRAINT \"{under_limit}\" PRIMARY KEY);"
     ));
-    assert_eq!(error.kind(), MigrationPolicyErrorType::UnnamedConstraint);
+    assert_eq!(
+        error.error_type(),
+        MigrationPolicyErrorType::UnnamedConstraint
+    );
 
     let at_limit = "a".repeat(64);
     let error = refusal(&format!(
         "CREATE TABLE inventory.quoted_name (id uuid CONSTRAINT \"{at_limit}\" PRIMARY KEY);"
     ));
     assert_eq!(
-        error.kind(),
+        error.error_type(),
         MigrationPolicyErrorType::ConstraintNameTooLong
     );
     let display = error.to_string();
@@ -502,7 +521,7 @@ fn refuses_every_documented_ruled_object_class() {
     ] {
         let error = refusal(sql);
         assert_eq!(
-            error.kind(),
+            error.error_type(),
             MigrationPolicyErrorType::RuledOperation,
             "{sql}"
         );
@@ -521,7 +540,7 @@ fn refuses_every_statement_outside_the_demanded_migration_grammar() {
     ] {
         let error = refusal(sql);
         assert_eq!(
-            error.kind(),
+            error.error_type(),
             MigrationPolicyErrorType::UnsupportedStatement,
             "{sql}"
         );
@@ -536,7 +555,7 @@ fn refuses_unqualified_or_quoted_mutation_targets() {
     ] {
         let error = refusal(sql);
         assert_eq!(
-            error.kind(),
+            error.error_type(),
             MigrationPolicyErrorType::CrossSchemaMutation,
             "{sql}"
         );
@@ -552,6 +571,10 @@ fn refuses_unterminated_lexical_regions() {
         "CREATE TABLE inventory.item (id uuid); /* open",
     ] {
         let error = refusal(sql);
-        assert_eq!(error.kind(), MigrationPolicyErrorType::InvalidSql, "{sql}");
+        assert_eq!(
+            error.error_type(),
+            MigrationPolicyErrorType::InvalidSql,
+            "{sql}"
+        );
     }
 }

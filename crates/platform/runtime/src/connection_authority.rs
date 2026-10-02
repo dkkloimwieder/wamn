@@ -163,7 +163,7 @@ impl AuthorityError {
         }
     }
 
-    pub fn kind(&self) -> AuthorityErrorType {
+    pub fn error_type(&self) -> AuthorityErrorType {
         self.type_
     }
 
@@ -659,6 +659,6 @@ mod tests {
         let error = resolve_target(&connection, outside, &[], &DenyNetwork, &EmptyDns)
             .await
             .expect_err("resolved target escaped its configured base");
-        assert_eq!(error.kind(), AuthorityErrorType::BasePathEscape);
+        assert_eq!(error.error_type(), AuthorityErrorType::BasePathEscape);
     }
 }

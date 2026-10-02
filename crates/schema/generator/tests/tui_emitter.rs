@@ -600,7 +600,7 @@ fn invalid_paths_and_generated_module_collisions_are_refused() {
         assert_eq!(
             emit_tui(&ir, directory, None, "../../../..")
                 .unwrap_err()
-                .kind(),
+                .error_type(),
             ClientTuiErrorType::InvalidName
         );
     }
@@ -609,7 +609,7 @@ fn invalid_paths_and_generated_module_collisions_are_refused() {
     assert_eq!(
         emit_tui(&collision, "example", None, "../../../..")
             .unwrap_err()
-            .kind(),
+            .error_type(),
         ClientTuiErrorType::NameCollision
     );
     let mut invalid = ir;
@@ -617,7 +617,7 @@ fn invalid_paths_and_generated_module_collisions_are_refused() {
     assert_eq!(
         emit_tui(&invalid, "example", None, "../../../..")
             .unwrap_err()
-            .kind(),
+            .error_type(),
         ClientTuiErrorType::InvalidName
     );
 }

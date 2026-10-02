@@ -86,7 +86,7 @@ pub struct PasswordError {
 }
 impl PasswordError {
     /// Return the internal failure class.
-    pub fn kind(&self) -> PasswordErrorType {
+    pub fn error_type(&self) -> PasswordErrorType {
         self.type_
     }
     /// Return the cause of a policy or refused failure.
@@ -615,7 +615,7 @@ mod tests {
             work.verify(Password::new("test".into()).unwrap(), oversized)
                 .await
                 .unwrap_err()
-                .kind(),
+                .error_type(),
             PasswordErrorType::Infrastructure
         );
         let wrong_version = hash.replace("v=19", "v=16");
@@ -652,7 +652,7 @@ mod tests {
             assert!(task.await.unwrap_err().is_cancelled());
         }
         assert_eq!(
-            work.run(|| Ok(())).await.unwrap_err().kind(),
+            work.run(|| Ok(())).await.unwrap_err().error_type(),
             PasswordErrorType::Busy
         );
         for release in releases {

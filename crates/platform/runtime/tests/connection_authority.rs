@@ -184,7 +184,7 @@ async fn request_authority_and_base_path_injection_fail_before_dns() {
             .expect_err(spelling);
         assert!(
             matches!(
-                error.kind(),
+                error.error_type(),
                 AuthorityErrorType::InvalidRequestTarget | AuthorityErrorType::BasePathEscape
             ),
             "unexpected failure for {spelling}: {error:?}"
@@ -222,7 +222,7 @@ async fn dns_rebinding_cannot_change_an_already_pinned_transport_address() {
     let error = resolve_http_request(&connection, &request, &policy, &network, &dns)
         .await
         .expect_err("rebound address is outside the network ceiling");
-    assert_eq!(error.kind(), AuthorityErrorType::NetworkDenied);
+    assert_eq!(error.error_type(), AuthorityErrorType::NetworkDenied);
     assert_eq!(
         first_endpoint.address, admitted,
         "first decision remains pinned"
@@ -249,7 +249,10 @@ async fn both_outer_policy_ceiling_denials_are_final() {
     )
     .await
     .expect_err("host ceiling denies");
-    assert_eq!(host_error.kind(), AuthorityErrorType::PlatformHostDenied);
+    assert_eq!(
+        host_error.error_type(),
+        AuthorityErrorType::PlatformHostDenied
+    );
 
     let network_error = resolve_http_request(
         &connection,
@@ -260,7 +263,10 @@ async fn both_outer_policy_ceiling_denials_are_final() {
     )
     .await
     .expect_err("network ceiling denies");
-    assert_eq!(network_error.kind(), AuthorityErrorType::NetworkDenied);
+    assert_eq!(
+        network_error.error_type(),
+        AuthorityErrorType::NetworkDenied
+    );
 }
 
 #[tokio::test]
@@ -351,7 +357,7 @@ async fn redirects_reenter_policy_and_cannot_change_authority_or_base_path() {
         .expect_err(location);
         assert!(
             matches!(
-                error.kind(),
+                error.error_type(),
                 AuthorityErrorType::RedirectDenied | AuthorityErrorType::BasePathEscape
             ),
             "unexpected failure for {location}: {error:?}"

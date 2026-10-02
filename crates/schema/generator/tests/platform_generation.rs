@@ -72,7 +72,7 @@ fn public_freshness_and_business_error_details_are_closed() {
     assert_eq!(
         validate_operation_vocabulary(&parsed(&platform_detail))
             .expect_err("platform error detail was authored")
-            .kind(),
+            .error_type(),
         GenerateErrorType::InvalidOperation
     );
 
@@ -81,7 +81,7 @@ fn public_freshness_and_business_error_details_are_closed() {
     assert_eq!(
         validate_operation_vocabulary(&parsed(&missing_business_detail))
             .expect_err("business error detail was omitted")
-            .kind(),
+            .error_type(),
         GenerateErrorType::InvalidOperation
     );
 
@@ -99,7 +99,7 @@ fn public_freshness_and_business_error_details_are_closed() {
     assert_eq!(
         validate_operation_vocabulary(&parsed(&private))
             .expect_err("private operation required a fresh caller")
-            .kind(),
+            .error_type(),
         GenerateErrorType::InvalidOperation
     );
 
@@ -121,7 +121,7 @@ fn authored_sql_access_must_match_declared_reads_and_row_locks() {
         manifest["custom_operations"]["widget.archive"]["relations"][0][field] = value;
         let error = fixture::try_generate_with(&fixture::catalog(), &manifest)
             .expect_err("SQL authority mismatch was accepted");
-        assert_eq!(error.kind(), GenerateErrorType::InvalidOperation);
+        assert_eq!(error.error_type(), GenerateErrorType::InvalidOperation);
         assert_eq!(error.object(), Some("inventory.widget"));
         let message = error.to_string();
         assert!(message.contains("privilege declaration does not match verified SQL"));
@@ -138,7 +138,7 @@ fn a_whole_row_reference_reads_every_column_of_its_relation() {
         json!(["code", "edit_version", "id"]);
     let error = fixture::try_generate_with(&fixture::catalog(), &manifest)
         .expect_err("a whole-row read was admitted under a narrower declaration");
-    assert_eq!(error.kind(), GenerateErrorType::InvalidOperation);
+    assert_eq!(error.error_type(), GenerateErrorType::InvalidOperation);
     assert_eq!(error.object(), Some("inventory.widget"));
     let message = error.to_string();
     assert!(
@@ -187,7 +187,7 @@ fn a_statement_takes_exactly_the_parameters_its_accessor_binds() {
         let error =
             fixture::try_generate_with_sql(&fixture::catalog(), &fixture::manifest(), &authored)
                 .expect_err("a statement that does not take its accessor's binds was admitted");
-        assert_eq!(error.kind(), GenerateErrorType::InvalidOperation);
+        assert_eq!(error.error_type(), GenerateErrorType::InvalidOperation);
         assert_eq!(error.path(), Some(path));
         assert!(error.to_string().contains(expected), "{error}");
     }
@@ -208,7 +208,7 @@ fn state_idempotence_requires_its_exact_shape() {
         assert_eq!(
             validate_operation_vocabulary(&parsed)
                 .expect_err("invalid state guard was accepted")
-                .kind(),
+                .error_type(),
             GenerateErrorType::InvalidOperation
         );
     }
@@ -220,7 +220,7 @@ fn state_idempotence_requires_its_exact_shape() {
         .remove("idempotent_by");
     let error = validate_operation_vocabulary(&parsed(&absent))
         .expect_err("command without idempotence was accepted");
-    assert_eq!(error.kind(), GenerateErrorType::InvalidOperation);
+    assert_eq!(error.error_type(), GenerateErrorType::InvalidOperation);
     for remedy in [
         "idempotent_by",
         "claim",
@@ -264,7 +264,7 @@ fn stateless_idempotence_is_only_for_a_command_without_sql() {
     with_sql["custom_operations"]["widget.archive"]["idempotent_by"] = json!("stateless");
     let error = validate_operation_vocabulary(&parsed(&with_sql))
         .expect_err("a stateless command with SQL was accepted");
-    assert_eq!(error.kind(), GenerateErrorType::InvalidOperation);
+    assert_eq!(error.error_type(), GenerateErrorType::InvalidOperation);
     assert!(
         error
             .to_string()
@@ -311,7 +311,7 @@ fn a_package_with_no_sql_generates_without_a_model() {
     manifest["components"]["device"]["connections"] = json!(["postgres"]);
     let error = fixture::try_generate_with_sql(&empty, &manifest, &[])
         .expect_err("a package with a connection and no model generated");
-    assert_eq!(error.kind(), GenerateErrorType::InvalidManifest);
+    assert_eq!(error.error_type(), GenerateErrorType::InvalidManifest);
     assert!(
         error
             .to_string()
@@ -362,7 +362,7 @@ fn internal_relations_are_not_models_and_their_vocabulary_is_closed() {
         &wamn_schema_generator::StatementTransactionality::default(),
     ))
     .expect_err("model/internal relation overlap was accepted");
-    assert_eq!(error.kind(), GenerateErrorType::InvalidManifest);
+    assert_eq!(error.error_type(), GenerateErrorType::InvalidManifest);
 
     let mut open = with_internal_relation();
     open["internal_relations"][fixture::UNREAD_TABLE]["cdc"] = json!("ignored");
@@ -477,7 +477,7 @@ fn ownership_only_models_and_exclusion_owners_are_exact() {
         assert_eq!(
             fixture::try_generate_with(&catalog, &invalid)
                 .expect_err("invalid exclusion ownership was accepted")
-                .kind(),
+                .error_type(),
             GenerateErrorType::InvalidModel
         );
     }
@@ -578,7 +578,7 @@ fn event_registration_and_line_profiles_are_closed() {
         assert_eq!(
             validate_operation_vocabulary(&parsed(&invalid))
                 .expect_err("invalid event registration was accepted")
-                .kind(),
+                .error_type(),
             GenerateErrorType::InvalidOperation
         );
     }
@@ -616,7 +616,7 @@ fn event_registration_and_line_profiles_are_closed() {
         assert_eq!(
             validate_operation_vocabulary(&parsed(&invalid))
                 .expect_err("line input/profile mismatch was accepted")
-                .kind(),
+                .error_type(),
             GenerateErrorType::InvalidOperation
         );
     }
@@ -629,7 +629,7 @@ fn event_registration_and_line_profiles_are_closed() {
     assert_eq!(
         validate_operation_vocabulary(&parsed(&missing_positive))
             .expect_err("canonical line profile omitted its positive member")
-            .kind(),
+            .error_type(),
         GenerateErrorType::InvalidOperation
     );
 
@@ -641,7 +641,7 @@ fn event_registration_and_line_profiles_are_closed() {
     assert_eq!(
         validate_operation_vocabulary(&parsed(&unknown_member))
             .expect_err("canonical line profile ordered by an undeclared member")
-            .kind(),
+            .error_type(),
         GenerateErrorType::InvalidOperation
     );
 
@@ -766,7 +766,7 @@ fn custom_statement_declarations_drive_projections_and_require_unique_paths() {
     assert_eq!(
         fixture::try_generate_with(&fixture::catalog(), &duplicate)
             .expect_err("two statements consumed one SQL path")
-            .kind(),
+            .error_type(),
         GenerateErrorType::InvalidOperation
     );
 }
@@ -869,7 +869,7 @@ fn inherited_composition_is_exact_and_carries_its_contract() {
         assert_eq!(
             fixture::try_generate_with(&fixture::catalog(), &invalid)
                 .expect_err(field)
-                .kind(),
+                .error_type(),
             kind
         );
     }
@@ -888,7 +888,7 @@ fn inherited_composition_is_exact_and_carries_its_contract() {
         assert_eq!(
             validate_operation_vocabulary(&parsed(&invalid))
                 .expect_err("inexact dependency identity was accepted")
-                .kind(),
+                .error_type(),
             GenerateErrorType::InvalidIdentity
         );
     }
@@ -898,7 +898,7 @@ fn inherited_composition_is_exact_and_carries_its_contract() {
     assert_eq!(
         validate_operation_vocabulary(&parsed(&missing))
             .expect_err("undeclared inherited base was accepted")
-            .kind(),
+            .error_type(),
         GenerateErrorType::InvalidOperation
     );
 
@@ -912,7 +912,7 @@ fn inherited_composition_is_exact_and_carries_its_contract() {
     assert_eq!(
         validate_operation_vocabulary(&parsed(&ambiguous))
             .expect_err("ambiguous composition dependency was accepted")
-            .kind(),
+            .error_type(),
         GenerateErrorType::InvalidOperation
     );
 
@@ -1066,7 +1066,7 @@ fn a_claim_command_declares_no_claim_object() {
     });
     let error = fixture::try_generate_with(&fixture::catalog(), &claim_object)
         .expect_err("a claim object refuses");
-    assert_eq!(error.kind(), GenerateErrorType::InvalidManifest);
+    assert_eq!(error.error_type(), GenerateErrorType::InvalidManifest);
     assert!(names_the_member(&error, "claim"), "{error}");
 
     let mut keyless = manifest.clone();
@@ -1074,7 +1074,7 @@ fn a_claim_command_declares_no_claim_object() {
     keyless["custom_operations"]["widget.archive"]["canonicalization"]["excluded_fields"] =
         json!(["key"]);
     let error = validate_operation_vocabulary(&parsed(&keyless)).unwrap_err();
-    assert_eq!(error.kind(), GenerateErrorType::InvalidOperation);
+    assert_eq!(error.error_type(), GenerateErrorType::InvalidOperation);
     assert!(error.to_string().contains("idempotency_key"), "{error}");
 
     let mut no_transaction = manifest;
@@ -1084,7 +1084,7 @@ fn a_claim_command_declares_no_claim_object() {
     operation.remove("transaction");
     operation.remove("automatic_retry");
     let error = validate_operation_vocabulary(&parsed(&no_transaction)).unwrap_err();
-    assert_eq!(error.kind(), GenerateErrorType::InvalidOperation);
+    assert_eq!(error.error_type(), GenerateErrorType::InvalidOperation);
     assert!(
         error
             .to_string()
@@ -1115,7 +1115,7 @@ fn a_delete_mode_needs_no_delete_route() {
         .unwrap()
         .remove("delete_mode");
     let error = validate_operation_vocabulary(&parsed(&action_without_mode)).unwrap_err();
-    assert_eq!(error.kind(), GenerateErrorType::InvalidModel);
+    assert_eq!(error.error_type(), GenerateErrorType::InvalidModel);
     assert!(
         error
             .to_string()
@@ -1218,7 +1218,7 @@ fn authored_text_is_optional_and_its_key_is_closed() {
     let error =
         PackageManifest::from_slice(&serde_json::to_vec(&model_text).expect("serialize manifest"))
             .expect_err("a misspelled model label key was accepted");
-    assert_eq!(error.kind(), GenerateErrorType::InvalidManifest);
+    assert_eq!(error.error_type(), GenerateErrorType::InvalidManifest);
     assert!(names_the_member(&error, "labels"), "{error}");
 
     let mut field_text = fixture::manifest();
@@ -1227,7 +1227,7 @@ fn authored_text_is_optional_and_its_key_is_closed() {
     let error =
         PackageManifest::from_slice(&serde_json::to_vec(&field_text).expect("serialize manifest"))
             .expect_err("a misspelled field label key was accepted");
-    assert_eq!(error.kind(), GenerateErrorType::InvalidManifest);
+    assert_eq!(error.error_type(), GenerateErrorType::InvalidManifest);
     assert!(names_the_member(&error, "labels"), "{error}");
 
     for path in [
@@ -1247,7 +1247,7 @@ fn authored_text_is_optional_and_its_key_is_closed() {
             &serde_json::to_vec(&spelling).expect("serialize manifest"),
         )
         .expect_err("a misspelled operation label key was accepted");
-        assert_eq!(error.kind(), GenerateErrorType::InvalidManifest);
+        assert_eq!(error.error_type(), GenerateErrorType::InvalidManifest);
         assert!(names_the_member(&error, "labels"), "{error}");
     }
 }
@@ -1496,7 +1496,7 @@ fn screen_text_on_the_envelope_bound_refuses_and_names_the_line_bound() {
         json!("Batch");
     let error = fixture::try_generate_with(&fixture::catalog(), &misplaced)
         .expect_err("screen text on the envelope bound was accepted");
-    assert_eq!(error.kind(), GenerateErrorType::InvalidOperation);
+    assert_eq!(error.error_type(), GenerateErrorType::InvalidOperation);
     let message = error.to_string();
     assert!(message.contains("widget.record_batch"), "{message}");
     assert!(message.contains("line bound"), "{message}");
@@ -1608,7 +1608,11 @@ fn a_route_member_publish_cannot_serve_refuses() {
         manifest["routes"][member] = value.clone();
         let error = fixture::try_generate_with(&fixture::catalog(), &manifest)
             .expect_err("the route member refuses");
-        assert_eq!(error.kind(), GenerateErrorType::InvalidManifest, "{value}");
+        assert_eq!(
+            error.error_type(),
+            GenerateErrorType::InvalidManifest,
+            "{value}"
+        );
         assert!(
             error.to_string().contains(&format!("routes.{member}")),
             "{error}"
@@ -1625,7 +1629,7 @@ fn a_minimum_length_without_its_check_refuses() {
     manifest["models"]["widget"]["min_lengths"] = json!({"code": 1});
     let error = fixture::try_generate_with(&fixture::catalog(), &manifest)
         .expect_err("the fixture table has no CHECK on code");
-    assert_eq!(error.kind(), GenerateErrorType::InvalidModel);
+    assert_eq!(error.error_type(), GenerateErrorType::InvalidModel);
     assert!(
         error
             .to_string()

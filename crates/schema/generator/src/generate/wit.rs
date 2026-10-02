@@ -2723,7 +2723,9 @@ fn guarded_fields(
         .iter()
         .filter_map(|constraint| {
             super::constraint_field(constraint, action, operation).map(|field| GuardedField {
-                code: access_error_literal(super::constraint_error_code(constraint.kind())),
+                code: access_error_literal(super::constraint_error_code(
+                    constraint.constraint_type(),
+                )),
                 constraint: constraint.name().to_owned(),
                 field,
             })

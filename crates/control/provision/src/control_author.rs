@@ -115,7 +115,7 @@ pub struct ControlAuthoringUrlError {
 
 impl ControlAuthoringUrlError {
     /// Which predicate refused the input.
-    pub const fn kind(&self) -> ControlAuthoringUrlErrorType {
+    pub const fn error_type(&self) -> ControlAuthoringUrlErrorType {
         self.type_
     }
 
@@ -363,7 +363,7 @@ mod tests {
         ] {
             let error = parse_control_authoring_url(input, ORG, PROJECT, ENVIRONMENT)
                 .expect_err("out-of-scope input must refuse");
-            assert_eq!(error.kind(), expected, "{input:?}");
+            assert_eq!(error.error_type(), expected, "{input:?}");
         }
 
         // A path that names no database, or more than one.
@@ -372,7 +372,7 @@ mod tests {
                 parse_control_authoring_url(&url(&admitted, path), ORG, PROJECT, ENVIRONMENT)
                     .expect_err("a non-database path must refuse");
             assert_eq!(
-                error.kind(),
+                error.error_type(),
                 ControlAuthoringUrlErrorType::Database,
                 "{path:?}"
             );
@@ -388,7 +388,7 @@ mod tests {
             )
             .expect_err("a decorated connection input must refuse");
             assert_eq!(
-                error.kind(),
+                error.error_type(),
                 ControlAuthoringUrlErrorType::Extra,
                 "{suffix:?}"
             );
@@ -407,7 +407,11 @@ mod tests {
             let error =
                 parse_control_authoring_url(&url(user, DATABASE), ORG, PROJECT, ENVIRONMENT)
                     .expect_err("an out-of-scope identity must refuse");
-            assert_eq!(error.kind(), ControlAuthoringUrlErrorType::Role, "{user}");
+            assert_eq!(
+                error.error_type(),
+                ControlAuthoringUrlErrorType::Role,
+                "{user}"
+            );
         }
 
         // The project database with this scope's control role: the database name
@@ -419,7 +423,7 @@ mod tests {
             ENVIRONMENT,
         )
         .expect_err("a project-database URL must refuse");
-        assert_eq!(error.kind(), ControlAuthoringUrlErrorType::Role);
+        assert_eq!(error.error_type(), ControlAuthoringUrlErrorType::Role);
     }
 
     #[test]

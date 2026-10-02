@@ -46,7 +46,7 @@ mod adjust {
             packaging_status: value.packaging_status,
             row_version: value.row_version,
         })
-        .map_err(|error| codec::map_error(error.kind().literal(), |key| detail(&error, key)))
+        .map_err(|error| codec::map_error(error.error_type().literal(), |key| detail(&error, key)))
     }
     codec::export_operation!(
         crate::Component,
@@ -74,7 +74,9 @@ mod aggregate {
     ) -> Result<contract::AggregateResult, contract::AggregateError> {
         let rows = inventory_aggregate::execute(connection)
             .await
-            .map_err(|error| codec::map_error(error.kind().literal(), |key| detail(&error, key)))?;
+            .map_err(|error| {
+                codec::map_error(error.error_type().literal(), |key| detail(&error, key))
+            })?;
         let rows = rows
             .into_iter()
             .map(|row| {
@@ -136,7 +138,7 @@ mod merge {
             target_status: value.target_status,
             row_version: value.row_version,
         })
-        .map_err(|error| codec::map_error(error.kind().literal(), |key| detail(&error, key)))
+        .map_err(|error| codec::map_error(error.error_type().literal(), |key| detail(&error, key)))
     }
     codec::export_operation!(
         crate::Component,
@@ -177,7 +179,7 @@ mod move_ {
             location_id: value.location_id,
             row_version: value.row_version,
         })
-        .map_err(|error| codec::map_error(error.kind().literal(), |key| detail(&error, key)))
+        .map_err(|error| codec::map_error(error.error_type().literal(), |key| detail(&error, key)))
     }
     codec::export_operation!(
         crate::Component,
@@ -225,7 +227,7 @@ mod split {
             source_status: value.source_status,
             row_version: value.row_version,
         })
-        .map_err(|error| codec::map_error(error.kind().literal(), |key| detail(&error, key)))
+        .map_err(|error| codec::map_error(error.error_type().literal(), |key| detail(&error, key)))
     }
     codec::export_operation!(
         crate::Component,

@@ -411,14 +411,14 @@ async fn run_automation(mode: Mode) -> anyhow::Result<()> {
     assert_eq!(workflows.start(&request).await?, run);
     request.input = json!({"different":true});
     assert_eq!(
-        workflows.start(&request).await.unwrap_err().kind(),
+        workflows.start(&request).await.unwrap_err().error_type(),
         WorkflowErrorType::Conflict
     );
     request.input = json!({"queued":true});
 
     // A parked run keeps its status, and no claim takes it until a release.
     assert_eq!(
-        workflows.release(&run).await.unwrap_err().kind(),
+        workflows.release(&run).await.unwrap_err().error_type(),
         WorkflowErrorType::NotParked
     );
     workflows.park(&run).await?;
@@ -433,7 +433,7 @@ async fn run_automation(mode: Mode) -> anyhow::Result<()> {
     workflows.release(&run).await?;
     assert!(!workflows.list(10).await?[0].parked);
     assert_eq!(
-        workflows.park("absent").await.unwrap_err().kind(),
+        workflows.park("absent").await.unwrap_err().error_type(),
         WorkflowErrorType::NotFound
     );
     let (_stop_first, stopped_first) = tokio::sync::watch::channel(true);
@@ -484,7 +484,7 @@ async fn run_automation(mode: Mode) -> anyhow::Result<()> {
     assert_eq!(listed[0].status, wamn_run_state::RunStatus::Completed);
     assert!(!listed[0].queued && !listed[0].parked);
     assert_eq!(
-        workflows.park(&run).await.unwrap_err().kind(),
+        workflows.park(&run).await.unwrap_err().error_type(),
         WorkflowErrorType::NotParkable
     );
     let row = admin.query_one("SELECT status,result_json::text,service_principal_id::text,deadline_adjustments_json::text FROM wamn_run.runs WHERE run_id=$1",&[&run]).await?;
@@ -565,7 +565,7 @@ async fn run_automation(mode: Mode) -> anyhow::Result<()> {
     admin.execute("UPDATE app_system.users SET status='disabled' WHERE tenant_id=$1 AND id=$2::text::uuid",&[&TENANT,&SERVICE]).await?;
     request.idempotency_key = "inactive".to_owned();
     assert_eq!(
-        workflows.start(&request).await.unwrap_err().kind(),
+        workflows.start(&request).await.unwrap_err().error_type(),
         WorkflowErrorType::Refused
     );
     second.revoke();

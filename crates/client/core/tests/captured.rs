@@ -196,7 +196,7 @@ async fn generated_code_contract_preserves_absence_and_value_on_the_wire_and_blo
     let error = build_request(fields, &item, Some(schema))
         .expect_err("the generated code field refuses null");
     assert_eq!(
-        error.kind(),
+        error.error_type(),
         wamn_client::request::RequestErrorType::NullNotAllowed
     );
     assert_eq!(error.path(), "$.change.code");
