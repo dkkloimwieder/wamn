@@ -27,7 +27,9 @@ fn stored_instance_suffix_owns_every_cluster_global_project_env_name() {
 
     let provision = compact(&source("crates/control/lib/src/provision_project_env.rs"));
     let record = provision
-        .find("let instance = record_project_env(")
+        .find(
+            "let instance = if mints_only { read_project_env_instance(system_url, &triple).await? } else { record_project_env(",
+        )
         .expect("ordinary provisioning reads or mints the stored suffix");
     let render = provision
         .find("let db_cr = render_project_env_database( &triple, &instance,")
