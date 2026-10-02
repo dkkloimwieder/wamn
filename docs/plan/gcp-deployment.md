@@ -307,7 +307,7 @@ Owner rulings of 2026-09-27:
 - Receiving release 3 (2026-10-02, `wamn-ld93.21`): Receiving release 2 is attested at `ebc75d513` and never selected. Release 3 carries the same bytes at `351f71337` and is qualified, published and selected. Release numbers are not a contract, and the attestation is. One select step sets both heads after Receiving release 3 is qualified.
 - Pool size (2026-10-02): pool `main` has 3 nodes, because the control host group is a new workload and its request stays as declared. `gcp.md` section 1.3 records the resize, and both scale-back commands say `--num-nodes 3`. No request is lowered and no replica is set to 0. The workloads and the serve check do not wait for the third node.
 - Generation retirement (2026-10-02, `wamn-ld93.25`): a retire needs a live session of the replacement generation. The gate service runs with generation `b` while both retire commands run, and then it stops. A long-lived gate deployment removes this step.
-- WMS PATs (2026-10-02): each environment holds one current PAT. The older WMS management-author PATs `035c1540a0cedefc` and `8c047af277dd545a` are revoked, and `fdae8133ac59ae6d` stays.
+- WMS PATs (2026-10-02): each environment holds one current PAT. The older WMS management-author PATs `035c1540a0cedefc` and `8c047af277dd545a` are revoked, and `fdae8133ac59ae6d` stays. The ruling covers management-author PATs only, the PATs that upgrades issue. A PAT of a user is not revoked by an upgrade (`docs/plan/upgrade-environment.md` stage 11).
 - End-to-end check (2026-10-02): the owner runs B11 and reports the result. B12 and B13 follow.
 
 ## 6. Benchmark

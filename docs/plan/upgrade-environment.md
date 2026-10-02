@@ -1,6 +1,6 @@
 # Upgrade environment
 
-Updated through: 2026-10-02, `main` at `d3be6482e`. Epic 1 of two. Epic 2, `create-environment`, is named in §6 only.
+Updated through: 2026-10-02, `main` at `d3be6482e`. Accepted by the owner on 2026-10-02 with the amendments of §4.1 and stage 11. Epic 1 of two. Epic 2, `create-environment`, is named in §6 only.
 
 ## 1. Goal
 
@@ -79,7 +79,7 @@ Eleven stops came from code or tools on their first live run. They are rows 3, 6
 
 ### 4.1 The environment file
 
-`deploy/gcp/environments/<org>--<project>--<env>.json` holds what the cutover passed by hand. It names the cluster, the kubeconfig context and the registry. It names the web client bucket and prefix, the route host, the tenant and the host group. It names the edge, the URL map, the guest workloads, the databases and the gates image digest. It holds no credential. The verb refuses an environment without this file. The `wamn-dev` files for Receiving and WMS are written from the B12 record.
+`deploy/gcp/environments/<org>--<project>--<env>.json` holds only what `registry.project_envs` does not hold. It names the cluster, the kubeconfig context and the registry. It names the web client bucket and prefix, the route host and the host group. It names the edge, the URL map, the guest workloads and the gates image digest. The tenant and the database names come from `registry.project_envs`. The file does not repeat them, because two copies drift (owner ruling, 2026-10-02). It holds no credential. The verb refuses an environment without this file. The `wamn-dev` files for Receiving and WMS are written from the B12 record.
 
 ### 4.2 The stages
 
@@ -95,12 +95,12 @@ The verb runs these stages in order. Each stage is a function over the run recor
 8. Qualify. Prepare the candidate from the stage 2 target and run `qualify-release` with `--revision <commit>`. Keep the case results of a failed case (`wamn-e6iw`). A failed qualification stops the run.
 9. Publish and select. Run `publish-qualified-release`, then one `select-release` for every environment that the run changes. A bytes refusal stops the run.
 10. Deploy. Upload the web client. Render the edge values and the URL map. Render the host values from the stage 3 host image and the workloads from the stage 4 digests. Upgrade the hosts and apply the workloads. Wait for every host group and workload to be Ready.
-11. Check and retire. Run the serve check: each released route of the manifest that the check names answers 401 without a credential, and an unknown path answers 404. A failed serve check stops the run. Then retire the old gate generation while the gate service holds its session, and revoke every PAT of the environment other than the current one.
+11. Check and retire. Run the serve check: each released route of the manifest that the check names answers 401 without a credential, and an unknown path answers 404. A failed serve check stops the run. Then retire the old gate generation while the gate service holds its session. Revoke every management-author PAT of the environment that is not the current one. The verb revokes only what upgrades issue. A PAT of a user is not the verb's to revoke (owner ruling, 2026-10-02).
 12. Record. Write the run record. The operations page cites it, and no person writes the record by hand.
 
 ### 4.3 Waits and retries
 
-A port-forward that closes is opened again. A node replacement can reset a connection. A step that fails that way waits until the nodes and the platform pods are Ready, and then runs again once. The broker check of stage 5 runs again before stages 8 and 10. These rules cover the Spot preemptions of §3.1. They do not replace `wamn-qjcd`.
+A port-forward that closes is opened again. A node replacement can reset a connection. A step that fails that way waits for Ready nodes and platform pods. Then it runs again once. A second failure stops the run, and the run record names the step. The broker check of stage 5 runs again before stages 8 and 10. These rules cover the Spot preemptions of §3.1. They do not replace `wamn-qjcd`.
 
 ### 4.4 Test tools in kind
 
