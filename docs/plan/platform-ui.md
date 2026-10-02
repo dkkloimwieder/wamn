@@ -1667,13 +1667,14 @@ Measured on main `6eba50b90` on 2026-10-02:
 - Each step of the [§5.2](#52-environment-creation) chain has a library function, except the client UI upload. `wamn web upload` is private to the `wamn_ctl` crate and runs `pnpm`. Role permission closures reconcile inside release selection, and `materialize_admin_grants` runs inside `provision-project-env`.
 - `provision-org`, `provision-project-env` and `enable-cdc-project-env` hold no Kubernetes client. They write SQL and Kubernetes manifests that an operator applies with the cluster superuser and `kubectl`, in a set order. `deploy-release` runs `kubectl`. The release selection reads a qualification file. A new environment also needs its host workload, which the chain of [§5.2](#52-environment-creation) does not name.
 
-[§9](#9-questions-for-the-owner) questions 15 to 25, answered 2026-10-02, set the items. Questions 26 and 27 are open.
+[§9](#9-questions-for-the-owner) questions 15 to 25, answered 2026-10-02, set the items.
 
 **9. Environment status (`wamn-zua8.2`).**
 
 - System migration `0008` adds `registry.project_envs.status text NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'inactive'))`. `upgrade-schema` applies it on wamn-dev. No statement is applied by hand.
 - Identity offers and mints no audience of an inactive environment, so the shell does not list it.
-- The application host refuses every route of an inactive environment after it reads the status ([§9](#9-questions-for-the-owner) question 26). The host workload keeps running.
+- The application host refuses every route of an inactive environment after it reads its own row `app_system.environment (status)` in the project database. Each status route writes that row through the administration login, leaves first ([§9](#9-questions-for-the-owner) question 26). The host workload keeps running.
+- The control family holds `UPDATE (status)` on `registry.project_envs` and nothing else on that table. The grant check and the denial matrix learn column grants (question 27).
 - Control routes `environment.activate`, `environment.inactivate`, `project.activate` and `project.inactivate`, for `org-admin` only. The project routes change every environment of the project.
 - CDC, data, memberships and role rows stay as they are.
 
@@ -1762,5 +1763,5 @@ The epic closes on one kind run after B13 of the cutover.
 23. Issue 10, answered 2026-10-02. The saga ends where [§5.2](#52-environment-creation) ends, at the run plane and the UI. For the host workload and the identity restart it records a last step `awaiting operator` with the exact commands, shown in `environment.list`. The deploy epic's `create-environment` automates those two, not this epic.
 24. Issue 10, answered 2026-10-02. The input names a built UI artifact already pushed, and the worker never runs `pnpm`. Without `ui` in the input, the saga has no UI step.
 25. Issue 10, answered 2026-10-02. Issue 10 exits on the local-process test. The epic closes on one kind run after B13.
-26. Issue 9. The application host holds only its project database login and cannot read `registry.project_envs`. How does it read the status: a copy that each status route writes into the project database through the administration login, as grants reach it, or a new system database login for the host?
-27. Issue 9. The four status routes write `registry.project_envs.status` as the control family, which can only read that table today. Does the control family get `UPDATE` on the whole table, which its grant check already supports, or `UPDATE` on the `status` column only, which needs column grants in that check?
+26. Issue 9, answered 2026-10-02. The host gets no new login and never holds a system connection. Each status route mirrors the status into one row of `app_system.environment (status)` in the project database, through the administration login, as the control host writes application rows (`wamn-a40n.6`). The order is leaves first: inactivate writes the application row and then the system row, and activate writes the system row and then the application row. The host reads its own row for each request.
+27. Issue 9, answered 2026-10-02. The control family gets `UPDATE (status)` on `registry.project_envs` and nothing else on that table, because `secret_name` and `instance_suffix` belong to provisioning. The grant check and the denial matrix learn column grants.
