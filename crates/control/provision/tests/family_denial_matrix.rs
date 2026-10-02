@@ -1717,3 +1717,42 @@ fn the_scenario_author_has_no_platform_membership_or_project_reads() {
         );
     }
 }
+
+// ---------------------------------------------------------------------------
+// THE ONE PASS-ALL POLICY of the control database
+// ---------------------------------------------------------------------------
+
+/// `catalog.package_artifacts` belongs to no tenant, so its policy admits every
+/// row (owner ruling of 2026-10-02 on `wamn-zua8.3`). That is safe only while
+/// it is the one pass-all policy of the control database and no role but its
+/// owner holds a privilege on the table. Both are read from the server.
+#[test]
+fn the_package_artifacts_table_is_the_one_pass_all_policy_and_owner_only() {
+    let fixture = fixture();
+    assert_eq!(
+        rows(
+            &fixture.control_url,
+            "SELECT n.nspname || '.' || c.relname || ' ' || p.polname \
+               FROM pg_catalog.pg_policy p \
+               JOIN pg_catalog.pg_class c ON c.oid = p.polrelid \
+               JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace \
+              WHERE pg_get_expr(p.polqual, p.polrelid) = 'true' \
+                 OR pg_get_expr(p.polwithcheck, p.polrelid) = 'true' \
+              ORDER BY (n.nspname || '.' || c.relname || ' ' || p.polname) COLLATE \"C\"",
+        ),
+        ["catalog.package_artifacts package_artifacts_all"],
+        "a pass-all policy exists on a table other than catalog.package_artifacts"
+    );
+    assert_eq!(
+        rows(
+            &fixture.control_url,
+            "SELECT pg_get_userbyid(acl.grantee) || ':' || acl.privilege_type \
+               FROM pg_catalog.pg_class c, aclexplode(c.relacl) acl \
+              WHERE c.oid = 'catalog.package_artifacts'::regclass \
+                AND acl.grantee <> c.relowner \
+              ORDER BY 1",
+        ),
+        Vec::<String>::new(),
+        "a role other than the owner holds a privilege on catalog.package_artifacts"
+    );
+}
