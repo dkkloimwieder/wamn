@@ -2080,6 +2080,229 @@ Read-only live `qualify-upgrade` ran on 2026-10-02 at 18:28:21 UTC and refused a
 
 `tools/build-components app apps/wamn_wms` passed in 224.11 seconds, from 18:28:24.625954 UTC to 18:32:08.739608 UTC. It built and normalized the three declared components. The candidate is ready for the pending platform migration and live qualification steps.
 
+
+## 10. Epic 1 WMS upgrade acceptance, 2026-10-02
+
+This record covers completed acceptance on `wamn-dev` from commit `f1f7fdb78853bdcf4f7dc3e8d0d959bf47584790`.
+The package changed from `wamn_wms@2.0.0` to `wamn_wms@2.1.0`.
+The new migration adds nullable `wms.location.description`.
+The serving release remained `dev|2` after package application and reconciliation.
+Root reviewed the live evidence after the complete cycle and accepted Epic 1 for `wamn-xvu5.5`.
+
+Private connection files and logs are under `/tmp/wamn-epic1-live-20261002`.
+Commands read database URLs from private files. No credentials appear in this record.
+The following commands completed successfully:
+
+```bash
+run_dir=/tmp/wamn-epic1-live-20261002
+export WAMN_SYSTEM_ADMIN_URL="$(cat "$run_dir/system-admin-url")"
+export WAMN_PG_ADMIN_URL="$(cat "$run_dir/wms-admin-url")"
+target/debug/wamn-ctl upgrade-schema --confirm
+
+target/debug/wamn-ctl qualify-upgrade \
+  --database-url "$WAMN_PG_ADMIN_URL" --tenant wms --environment dev \
+  --package apps/wamn_wms --presented-package apps/wamn_wms \
+  --result "$run_dir/wms-upgrade-qualification-a.json" \
+  --kubeconfig /tmp/claude-1000/-home-kaalin-dev-wamn/8f6326b9-1dc5-4a4f-b106-5a08992a6757/scratchpad/gke.kubeconfig \
+  --context gke_wamn-dev_us-central1-a_wamn \
+  --namespace hosts --host-deployment hostgroup-wms \
+  --package-workload wamn_wms=wms-flow-http
+
+target/debug/wamn-ctl apply-package --package apps/wamn_wms --tenant wms \
+  --upgrade-qualification "$run_dir/wms-upgrade-qualification-a.json"
+target/debug/wamn-ctl reconcile-package-data-access --package apps/wamn_wms --tenant wms
+target/debug/wamn-ctl reconcile-replica-identity --package apps/wamn_wms
+```
+
+`upgrade-schema` applied `migrations/project/0006_administration_release_head.sql` and `migrations/project/0007_package_upgrade_qualifications.sql` in 1.75 seconds.
+The successful `qualify-upgrade` attempt took 26.29 seconds and recorded schema `wms`.
+Its qualification hash is `sha256:d6bc7a918ce63a42fce76b9ff2eb4c1177358127f7814bd8726e4bea3ad7167b`.
+The predecessor release was 2 with manifest digest `sha256:8f4c8241b50210d9c366ed8372e0832793e66b1bc92067686ce317050085eac4`.
+Two earlier qualification attempts failed during the database tunnel connection. The successful attempt used the local tunnel with `sslmode=disable`.
+
+`apply-package` applied one migration in 9.42 seconds.
+Data access reconciliation completed in 3.29 seconds.
+Replica identity reconciliation completed in 0.51 seconds and reported all five models already at target.
+A read-only SQL query showed installed version `2.1.0` and the same stored qualification hash.
+It also showed that the serving release remained `dev|2`.
+
+Before and after snapshots contain identical counts: 10 locations, 10 packaging rows, and 19 packaging quantity rows.
+All ten recorded location IDs, codes, creation timestamps, and row versions match exactly.
+Every retained location has a null description.
+Evidence files are `wms-retained-state-before.json`, `wms-retained-state-after.json`, and their corresponding `.sql-result` files in the private directory.
+These snapshots establish equality only for the recorded fields and counts.
+
+Canonical guest and native builds completed from the same commit:
+
+```bash
+export CARGO_TARGET_DIR=/home/kaalin/.codex/worktrees/f867/wamn/target/epic1-delivery-artifacts
+tools/build-components all
+tools/delivery-owned build-native "$CARGO_TARGET_DIR"
+```
+
+The guest build took 294.48 seconds. The native build took 1063.09 seconds.
+Both commands returned exit code 0.
+The host image build took 803.98 seconds. The identity image build took 122.85 seconds.
+Both image builds returned exit code 0, and the published image pins are:
+
+```text
+HOST_IMAGE=us-central1-docker.pkg.dev/wamn-dev/wamn/wamn-host:epic1-f1f7fdb78@sha256:fde28737b7158871ec4855218e5f186f41922172774950ddb2950d94aa403f54
+IDENTITY_IMAGE=us-central1-docker.pkg.dev/wamn-dev/wamn/wamn-identity:epic1-f1f7fdb78@sha256:d8f1c455eb0a4ab5b3cae4c589d30fda9535a37290c0950337dc3134c9c2cc53
+```
+
+The build records are `delivery-build-timings.jsonl` and `image-timings.jsonl` in the private directory.
+The successful component publication attempt took 31.39 seconds and returned exit code 0.
+Its stage command was `python3 /tmp/wamn-epic1-live-20261002/run-release-stage.py push-components`.
+The two preceding attempts returned exit code 1. The second attempt admitted WMS and label rendering before the blob upload failed. The final attempt uploaded the two remaining components after credential refresh. The second failure log and final successful log remain in the private directory.
+
+Release authoring and catalog publication completed in 7.90 seconds after PostgreSQL recovered from a GKE node replacement.
+The new release ID is 3. Its manifest digest is `sha256:36830f3e2396144bdd0aee76c42e7346050dba4f2205f17877bfcb5a67621b33`.
+`prepare-release` captured the exact artifacts and images in 4.33 seconds.
+A read-only snapshot after database recovery passed in 0.41 seconds. Its selected release remained 2.
+The release qualification passed all 19 checks from the clean commit above.
+It ran from 19:18:08.125334 to 19:56:39.296079 UTC, for 2311.17 seconds.
+That interval includes a pause before cluster cases while the existing Receiving delivery run used the machine.
+The WMS cases ran alone after that run and its clusters ended.
+
+
+The qualification file is `wms-release-3-qualification.json` in the private directory.
+Its SHA-256 is `c63b0f06f817e0a0c7f48a23e9928e759b15ddfbe24ae7a0df14ade9a41efdc1`.
+All three required cases passed against the exact candidate.
+Their observed process boundaries have 0.25-second precision.
+
+| Case | UTC start | UTC end | Observed seconds | Result |
+| --- | --- | --- | ---: | --- |
+| `cluster::released_wms_routes` | 2026-10-02T19:43:39.467691+00:00 | 2026-10-02T19:47:23.791035+00:00 | 224.32 | pass |
+| `cluster::released_wms_routes_retain_committed_work_after_label_failure` | 2026-10-02T19:47:26.043790+00:00 | 2026-10-02T19:51:15.779809+00:00 | 229.74 | pass |
+| `cluster::restarted_wms_host_retains_compiled_code_and_serves_requests` | 2026-10-02T19:51:18.533619+00:00 | 2026-10-02T19:56:36.490805+00:00 | 317.96 | pass |
+
+The following publication commands completed through the private environment wrapper.
+It supplied release ID 3 from the catalog, the artifact directory, and the image pins above.
+It supplied publisher subject `wamn-management-author-dkk--wms--dev` and private registry credentials.
+
+```bash
+python3 /tmp/wamn-epic1-live-20261002/run-release-stage.py author-publish
+python3 /tmp/wamn-epic1-live-20261002/run-release-stage.py prepare
+python3 /tmp/wamn-epic1-live-20261002/run-release-stage.py qualify
+python3 /tmp/wamn-epic1-live-20261002/run-release-stage.py publish-qualified
+```
+
+The underlying qualification and publication commands were:
+
+```bash
+target/debug/wamn-ctl qualify-release --repository "$PWD" \
+  --revision f1f7fdb78853bdcf4f7dc3e8d0d959bf47584790 \
+  --candidate "$run_dir/wms-release-3-candidate.json" \
+  --result "$run_dir/wms-release-3-qualification.json"
+
+target/debug/wamn-ctl publish-qualified-release \
+  --qualification "$run_dir/wms-release-3-qualification.json" \
+  --database-url "$WAMN_PG_ADMIN_URL" --control-database-url "$WAMN_SYSTEM_ADMIN_URL" \
+  --org dkk --project wms --tenant wms --effective-release-id 3 \
+  --artifact-base us-central1-docker.pkg.dev/wamn-dev/wamn/releases \
+  --registry-auth-file "$run_dir/registry-auth/config.json"
+```
+
+Qualified manifest publication passed in 12.86 seconds after a registry credential refresh.
+The preceding attempt refused the registry probe and changed no serving selection.
+The authenticated baseline ran after SQL application, while the original 2.0.0 guest still served release 2.
+The earlier administrative SQL snapshot records the data before SQL application.
+
+The owner authorized one PAT with a 1800-second lifetime for the existing owner principal.
+The issuer Job used the existing `operator-dkk` certificate and the identity service `/pats` endpoint.
+The token remained private and served only the four acceptance reads.
+The issuer Job log was saved before Job deletion.
+
+The exact live stage commands were:
+
+```bash
+python3 /tmp/wamn-epic1-live-20261002/run-live-step.py issue-pat
+bash /tmp/wamn-epic1-live-20261002/port-forward-wms.draft.sh
+python3 /tmp/wamn-epic1-live-20261002/run-live-step.py query-baseline
+
+bash /tmp/wamn-epic1-live-20261002/render-wms-rollout.draft.sh forward
+python3 /tmp/wamn-epic1-live-20261002/run-release-stage.py select
+python3 /tmp/wamn-epic1-live-20261002/run-live-step.py rollout-forward
+bash /tmp/wamn-epic1-live-20261002/capture-wms-rollout.sh forward
+python3 /tmp/wamn-epic1-live-20261002/validate-rollout-evidence.py forward
+python3 /tmp/wamn-epic1-live-20261002/run-live-step.py query-forward
+python3 /tmp/wamn-epic1-live-20261002/run-live-step.py retained-forward
+
+bash /tmp/wamn-epic1-live-20261002/render-wms-rollout.draft.sh rollback
+python3 /tmp/wamn-epic1-live-20261002/run-release-stage.py rollback
+python3 /tmp/wamn-epic1-live-20261002/run-live-step.py rollout-rollback
+bash /tmp/wamn-epic1-live-20261002/capture-wms-rollout.sh rollback
+python3 /tmp/wamn-epic1-live-20261002/run-live-step.py validate-rollback
+python3 /tmp/wamn-epic1-live-20261002/run-live-step.py query-rollback
+python3 /tmp/wamn-epic1-live-20261002/run-live-step.py retained-rollback
+
+bash /tmp/wamn-epic1-live-20261002/render-wms-rollout.draft.sh reforward
+python3 /tmp/wamn-epic1-live-20261002/run-release-stage.py re-forward
+python3 /tmp/wamn-epic1-live-20261002/run-live-step.py rollout-reforward
+bash /tmp/wamn-epic1-live-20261002/capture-wms-rollout.sh reforward
+python3 /tmp/wamn-epic1-live-20261002/run-live-step.py validate-reforward
+python3 /tmp/wamn-epic1-live-20261002/run-live-step.py query-reforward
+python3 /tmp/wamn-epic1-live-20261002/run-live-step.py retained-reforward
+python3 /tmp/wamn-epic1-live-20261002/run-live-step.py revoke-pat
+```
+
+The HTTP tunnel restarted after each host replacement.
+It used explicit kubeconfig, context `gke_wamn-dev_us-central1-a_wamn`, namespace `hosts`, and `service/hostgroup-wms`, with loopback port `18081:80`.
+Each query used `GET /location/query`, `Host: wms.wamn.dev`, and the private bearer token.
+The baseline requested `limit=1`. Later reads filtered by its location code and matched its exact record ID.
+
+Each selector command used `select-release` with the corresponding immutable qualification and the same database, org, project, and tenant arguments above.
+Forward and re-forward selected release 3 with `wms-release-3-qualification.json`.
+Rollback selected release 2 with `/home/kaalin/.cache/wamn-f8-cut/p/wms-qualification.json`.
+All three selector commands passed. Their durations were 3.86, 10.40, and 4.14 seconds, respectively.
+Rollback changed the serving code and permissions on the retained schema. It ran no reverse SQL migration.
+
+The renderers used the already built `target/debug/examples/host_values_files` and `workload_files` programs.
+Each stage preserved Receiving manifest `sha256:28e0b694e45b2410e5a087691641e075a0726e1e7eed508360ef50ceff542be7`.
+The full merged Helm values differed from the live baseline only in the WMS image and manifest argument.
+Forward and re-forward values matched exactly.
+Each stage applied these commands with its reviewed private directory:
+
+```bash
+helm --kubeconfig "$KUBECONFIG" --kube-context "$CONTEXT" upgrade wamn-host \
+  oci://ghcr.io/wasmcloud/charts/runtime-operator --version 2.10.0 -n hosts \
+  -f "$STAGE_DIR/values-host-base.yaml" -f "$STAGE_DIR/values-host-qualified.yaml" \
+  --wait --timeout 10m
+kubectl --kubeconfig "$KUBECONFIG" --context "$CONTEXT" -n hosts apply \
+  -f "$STAGE_DIR/wms-flow-http.yaml" -f "$STAGE_DIR/wms-materializer.yaml"
+kubectl --kubeconfig "$KUBECONFIG" --context "$CONTEXT" -n hosts rollout status \
+  deployment/hostgroup-wms --timeout=240s
+kubectl --kubeconfig "$KUBECONFIG" --context "$CONTEXT" -n hosts wait --for=condition=Ready \
+  workloaddeployment/wms-flow-http workloaddeployment/wms-materializer --timeout=240s
+```
+
+The forward snapshot initially included the old terminating pod, so the ownership comparison refused it.
+A settled capture passed without another deployment. Each stage retains its initial capture separately.
+The final captures establish ready Deployment-to-pod and workload-to-host ownership chains, exact image and manifest pins, and runtime SQL schema `wms`.
+The stable WMS Deployment UID is `59e3a533-16f0-43c7-be10-78ad9de060ee`.
+The HTTP WorkloadDeployment UID is `ebabcc2e-d00a-4265-939b-a78e1a101ce7`.
+The materializer WorkloadDeployment UID is `75d68412-1237-4840-bf76-450dc6950e5a`.
+The private `validated-serving-evidence.json` files record each generation, specification hash, actual Workload UID, and placement host ID.
+
+| Stage | Selected release | Version | Rollout seconds | Query seconds | HTTP result | Description |
+| --- | ---: | --- | ---: | ---: | --- | --- |
+| Baseline | 2 | 2.0.0 | not applicable | 0.71 | 200 | absent |
+| Forward | 3 | 2.1.0 | 25.88 | 0.30 | 200 | present, null |
+| Rollback | 2 | 2.0.0 | 26.85 | 0.21 | 200 | absent |
+| Re-forward | 3 | 2.1.0 | 17.20 | 0.22 | 200 | present, null |
+
+Every HTTP response returned the same record ID, location code, creation timestamp, and row version.
+The SQL comparisons also preserved all recorded location fields and all three table counts.
+The nullable description column remained installed and null through rollback and re-forward.
+The exact UTC start and end times are in `live-cycle-timings.jsonl` and `release-timings.jsonl`.
+The operation bodies are in the private `location-*.json` files. The SQL snapshots are in `retained-*.json`.
+
+The owner PAT was revoked at 20:08:23 UTC. Its local token and response files were removed.
+Only the newly issued prefix was revoked. Existing credentials and roles remained unchanged.
+Root reviewed the successful qualification, all four authenticated responses, all three runtime ownership records, retained SQL snapshots, and revocation result.
+The final selected and serving state is WMS 2.1.0, release 3, with manifest `sha256:36830f3e2396144bdd0aee76c42e7346050dba4f2205f17877bfcb5a67621b33`.
+This evidence completes the owner-scheduled Epic 1 acceptance for `wamn-xvu5.5`.
+
 ## 11. Upgrade an environment
 
 `wamn-ctl upgrade-environment` takes one installed environment to the bytes of one commit (`docs/plan/upgrade-environment.md`). It reads `deploy/gcp/environments/<org>--<project>--<env>.json` at that commit. No live run of the verb exists yet. Its first live run waits for the word of the owner (`wamn-m511.7`).
