@@ -26,7 +26,21 @@ const BASE_WASM_ENV: &str = "WAMN_EFFECTIVE_RELEASE_BASE_COMPONENT_WASM";
 const OVERLAY_WASM_ENV: &str = "WAMN_EFFECTIVE_RELEASE_OVERLAY_COMPONENT_WASM";
 const CATALOG_SCHEMA: &str = wamn_catalog::CATALOG_SCHEMA_SQL;
 const APP_SCHEMA: &str = include_str!("../../../../../deploy/sql/app-schema.sql");
-const PACKAGE_VERSION: &str = "1.0.0";
+
+/// The fixture version, read from the compiled manifest that authors it. The
+/// base and the overlay move together, so the overlay carries the same one.
+fn package_version() -> &'static str {
+    static VERSION: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| {
+        let manifest: serde_json::Value =
+            serde_json::from_slice(&wamn_fixture_package::manifest_bytes())
+                .expect("the compiled fixture manifest is JSON");
+        manifest["package"]["version"]
+            .as_str()
+            .expect("the compiled fixture manifest declares its version")
+            .to_owned()
+    });
+    &VERSION
+}
 
 struct PackageInput {
     id: &'static str,
@@ -42,7 +56,7 @@ struct PackageInput {
 /// wamn-10yt.50: this test used to restate the same `sha256:` literal the
 /// overlay manifest pins, which is a third copy of a value that must be one.
 fn base_component_digest() -> String {
-    let base = format!("{}@{PACKAGE_VERSION}", wamn_fixture_package::PACKAGE_ID);
+    let base = format!("{}@{}", wamn_fixture_package::PACKAGE_ID, package_version());
     crate::component_declaration::authored_base_digests(&wamn_fixture_package::overlay_root())
         .expect("the overlay manifest authors its base digest")[base.as_str()]
     .to_string()
@@ -54,7 +68,7 @@ fn packages() -> [PackageInput; 2] {
     [
         PackageInput {
             id: wamn_fixture_package::PACKAGE_ID,
-            version: PACKAGE_VERSION,
+            version: package_version(),
             component_declaration: base.join("publication/components/fixture.json.in"),
             root: base,
             component_bytes: std::env::var_os(BASE_WASM_ENV)
@@ -64,7 +78,7 @@ fn packages() -> [PackageInput; 2] {
         },
         PackageInput {
             id: wamn_fixture_package::OVERLAY_PACKAGE_ID,
-            version: PACKAGE_VERSION,
+            version: package_version(),
             component_declaration: overlay
                 .join("publication/components/fixture_overlay.json.in"),
             root: overlay,
@@ -275,7 +289,7 @@ async fn author_one_node_wiring(project: &mut Client, control: &Client) -> Relea
             "operation": {
                 "component": "fixture",
                 "interface-version": "0.1.0",
-                "operation": "platform-fixture:widget/get@1.0.0",
+                "operation": format!("platform-fixture:widget/get@{}", package_version()),
                 "terminal": "respond"
             }
         }
@@ -303,7 +317,7 @@ async fn author_one_node_wiring(project: &mut Client, control: &Client) -> Relea
         &AuthorWiringRequest {
             tenant_id: TENANT,
             package_id: wamn_fixture_package::PACKAGE_ID,
-            package_version: PACKAGE_VERSION,
+            package_version: package_version(),
             document: &document,
         },
     )
@@ -315,7 +329,7 @@ async fn author_one_node_wiring(project: &mut Client, control: &Client) -> Relea
         .expect("commit wiring authorship");
     ReleaseWiringTarget {
         package_id: wamn_fixture_package::PACKAGE_ID.to_owned(),
-        package_version: PACKAGE_VERSION.to_owned(),
+        package_version: package_version().to_owned(),
         wiring_id: document.wiring_id,
         wiring_version: document.version,
     }
@@ -441,15 +455,24 @@ async fn fresh_base_and_overlay_publish_byte_identically_and_refuse_drift() {
             .map(|route| route.type_)
     };
     assert_eq!(
-        kind_of("platform-fixture-overlay:widget/get@1.0.0"),
+        kind_of(&format!(
+            "platform-fixture-overlay:widget/get@{}",
+            package_version()
+        )),
         Some(OperationType::Get)
     );
     assert_eq!(
-        kind_of("platform-fixture:widget/query@1.0.0"),
+        kind_of(&format!(
+            "platform-fixture:widget/query@{}",
+            package_version()
+        )),
         Some(OperationType::Query)
     );
     assert_eq!(
-        kind_of("platform-fixture:widget/record-batch@1.0.0"),
+        kind_of(&format!(
+            "platform-fixture:widget/record-batch@{}",
+            package_version()
+        )),
         Some(OperationType::Command)
     );
     let route_members: i64 = project
@@ -520,8 +543,9 @@ async fn fresh_base_and_overlay_publish_byte_identically_and_refuse_drift() {
         PublishManifestErrorType::PackageManifest
     );
     assert!(refusal.detail().contains(&format!(
-        "{}@{PACKAGE_VERSION}",
-        wamn_fixture_package::OVERLAY_PACKAGE_ID
+        "{}@{}",
+        wamn_fixture_package::OVERLAY_PACKAGE_ID,
+        package_version()
     )));
     assert!(refusal.detail().contains("use the exact wamn.json"));
     transaction
