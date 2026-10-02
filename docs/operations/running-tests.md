@@ -292,7 +292,7 @@ If the user requests a workspace sweep, use the retained command:
 
 ```bash
 cargo test --workspace --locked --offline --features wamn-ctl/ops \
-  --no-fail-fast -- --include-ignored --nocapture --test-threads=1 \
+  --no-fail-fast -- --nocapture --test-threads=1 \
   > "$WAMN_RESULTS/workspace.log" 2>&1
 ```
 
@@ -303,7 +303,8 @@ Do not pipe the command through `tail` or another output filter.
 The command does not turn on the `cluster` feature of `wamn-receiving-tests` and `wamn-wms-tests`, so it compiles no kind cluster test and starts no cluster.
 `--no-fail-fast` retains later binary results after a failure.
 
-`--include-ignored` also selects the [ignored tests](#ignored-tests), and each one fails when a declared prerequisite is missing.
+The sweep runs no [ignored test](#ignored-tests), because each one needs inputs that a general test run does not have.
+The ignored tests run in [the live stage](#the-live-stage).
 `--nocapture` shows the output of each test.
 
 A cluster stage runs alone, and only when the epic changed a file under the cluster tests.
@@ -345,6 +346,24 @@ The guest test belongs to another workspace, so the root sweep cannot reach it.
 Report failures, ignored cases, explicit skips, filtered cases, and executed passes separately.
 Report each failure's package, target, full test name, and actual cause.
 A changed test name does not establish a new failure or remove an earlier failure.
+
+## The live stage
+
+The live stage runs named ignored tests with their inputs set, apart from the full sweep.
+A cluster day or a live check cites the live stage on its bead.
+Run each named test with its exact filter:
+
+```bash
+cargo test --locked --offline -p <package> --test <target> <test> \
+  -- --ignored --exact --nocapture --test-threads=1 \
+  > "$WAMN_RESULTS/live.log" 2>&1
+```
+
+For a test in a library target, use `--lib` in place of `--test <target>`.
+Set each input that the ignore reason of the test names before the run.
+The bead names each test, each input by its variable name, and each result.
+A credential, such as `RESEND_API_KEY`, stays in the environment of the stage.
+Never write its value into the bead or the log.
 
 ## Live prerequisites and troubleshooting
 
