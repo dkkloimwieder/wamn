@@ -2,6 +2,10 @@
 //! (docs/plan/platform-ui.md §4.4 and §4.5, wamn-a40n.3 and wamn-a40n.6) on
 //! the org's real `control` login over the system schema.
 //!
+//! The application rows of those routes are written in project databases of
+//! the same server, with administration logins that the production prepare
+//! mints, read from a directory laid out as the mounted Secret.
+//!
 //! The test starts its own PostgreSQL 18 server and a fake identity service
 //! that requires the operator certificate. It calls the host route delivery
 //! with the caller that the control route authenticator admits; the
@@ -279,10 +283,11 @@ async fn call(
         .await;
     match report.outcome {
         Ok(DeliveryOutcome::Respond(body)) => Ok(serde_json::from_str(&body).expect("JSON")),
-        Ok(DeliveryOutcome::Failed(failure)) => {
-            assert!(matches!(failure.failure_type, FailureType::InvalidInput));
-            Err(failure.message)
-        }
+        Ok(DeliveryOutcome::Failed(failure)) => match failure.failure_type {
+            FailureType::InvalidInput => Err(failure.message),
+            FailureType::Terminal => Err(format!("terminal {}", failure.message)),
+            other => panic!("an org route refuses with invalid-input or terminal: {other:?}"),
+        },
         Err(DeliveryError::PermissionDenied(denial)) => {
             Err(format!("permission denied {}", denial.operation))
         }
@@ -318,6 +323,7 @@ async fn org_routes_write_through_the_control_login_and_refuse_a_non_admin() -> 
     let admin_url = test_database.url();
     let admin = connect(admin_url).await?;
     let control_url = install(&admin, admin_url).await?;
+    let (logins, _billing, _shop) = environments(&admin, admin_url, "org").await?;
 
     // The org owner, an enrolled user and a new user, written as provisioning.
     admin
@@ -359,6 +365,7 @@ async fn org_routes_write_through_the_control_login_and_refuse_a_non_admin() -> 
     let delivery = HostRouteDelivery::new(
         Arc::new(LoadedRelease::control_root()),
         HostRouteHandlers::Control {
+            administration: Some(logins.clone()),
             control: Arc::new(connect(&control_url).await?),
             writer: Arc::new(tokio::sync::Mutex::new(connect(&control_url).await?)),
             identity: Some(identity.config.clone()),
@@ -521,6 +528,7 @@ async fn org_routes_write_through_the_control_login_and_refuse_a_non_admin() -> 
         call(&delivery, "user/list", boss, json!({})).await,
         Err("permission denied wamn-control:user/list@0.1.0".to_owned())
     );
+    let _ = std::fs::remove_dir_all(&logins);
     Ok(())
 }
 
@@ -531,6 +539,7 @@ async fn project_routes_admit_a_project_admin_and_refuse_a_covered_revoke() -> a
     let admin_url = test_database.url();
     let admin = connect(admin_url).await?;
     let control_url = install(&admin, admin_url).await?;
+    let (logins, _billing, _shop) = environments(&admin, admin_url, "project").await?;
 
     // An org admin, a project admin of billing and a plain member.
     let provisioning = PlatformComponent::Provisioning.principal_id().to_string();
@@ -571,6 +580,7 @@ async fn project_routes_admit_a_project_admin_and_refuse_a_covered_revoke() -> a
     let delivery = HostRouteDelivery::new(
         Arc::new(LoadedRelease::control_root()),
         HostRouteHandlers::Control {
+            administration: Some(logins.clone()),
             control: Arc::new(connect(&control_url).await?),
             writer: Arc::new(tokio::sync::Mutex::new(connect(&control_url).await?)),
             identity: None,
@@ -716,5 +726,309 @@ async fn project_routes_admit_a_project_admin_and_refuse_a_covered_revoke() -> a
         .await,
         Err("permission denied wamn-control:environment/list@0.1.0".to_owned())
     );
+    let _ = std::fs::remove_dir_all(&logins);
+    Ok(())
+}
+
+/// One environment's project database on the test server, with the catalog,
+/// the application schema and one platform row of `tenant`, and its
+/// administration login minted by the production prepare. The login goes
+/// into `logins` under the key its control patch names, as the mounted
+/// Secret shows it.
+async fn project_database(
+    admin: &Client,
+    admin_url: &str,
+    system_url: &str,
+    project: &str,
+    instance: &str,
+    tenant: &str,
+    logins: &std::path::Path,
+) -> anyhow::Result<Client> {
+    use wamn_control::provision_project_env::{
+        self, WorkloadActionRequest, WorkloadActionVerb, WorkloadGenerationAction,
+    };
+    let database = wamn_control_provision::project_env_database_name(ORG, project, "dev", instance);
+    admin
+        .batch_execute(&provision_project_env::role_posture_sql())
+        .await?;
+    admin
+        .batch_execute(&format!("CREATE DATABASE \"{database}\""))
+        .await?;
+    admin
+        .batch_execute(&provision_project_env::privilege_sql(&database))
+        .await?;
+    let mut target_url = url::Url::parse(admin_url)?;
+    target_url.set_path(&format!("/{database}"));
+    let target = connect(target_url.as_str()).await?;
+    target
+        .batch_execute(
+            "DO $$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles \
+                                        WHERE rolname = 'wamn_scenario_author') THEN \
+               CREATE ROLE wamn_scenario_author NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE \
+                 NOBYPASSRLS; \
+             END IF; END $$; \
+             CREATE SCHEMA wamn_run;",
+        )
+        .await?;
+    target
+        .batch_execute(wamn_catalog::CATALOG_SCHEMA_SQL)
+        .await?;
+    target
+        .batch_execute(include_str!("../../../../deploy/sql/app-schema.sql"))
+        .await?;
+    target
+        .execute(
+            "SELECT set_config('app.user_id', $1, false), \
+                    set_config('app.operation', 'admin:control-route-fixture', false)",
+            &[&PlatformComponent::Provisioning.principal_id().to_string()],
+        )
+        .await?;
+    target
+        .execute(
+            "INSERT INTO app_system.users (tenant_id, id, type, email, display_name) \
+             VALUES ($1, $2::text::uuid, 'platform', 'provisioning@example.test', $3)",
+            &[
+                &tenant,
+                &PlatformComponent::Provisioning.principal_id().to_string(),
+                &PlatformComponent::Provisioning.principal_name(),
+            ],
+        )
+        .await?;
+
+    let secret = logins.join(format!("{project}.secret.json"));
+    let patch = logins.join(format!("{project}.patch.json"));
+    provision_project_env::run_workload_action(&WorkloadActionRequest {
+        org: ORG.to_owned(),
+        project: project.to_owned(),
+        env: "dev".to_owned(),
+        tenant: Some(tenant.to_owned()),
+        system_database_url: Some(system_url.to_owned()),
+        target_admin_database_url: Some(target_url.to_string()),
+        cluster: None,
+        db_host: target_url.host_str().map(str::to_owned),
+        db_port: target_url.port_or_known_default().unwrap_or(5432),
+        namespace: "hosts".to_owned(),
+        action: WorkloadGenerationAction {
+            family: WorkloadRoleFamily::Administration,
+            verb: WorkloadActionVerb::Prepare,
+            generation: CredentialGeneration::A,
+        },
+        secret: Some(secret.clone()),
+        emit_role_sql: None,
+        control_administration_patch: Some(patch.clone()),
+    })
+    .await?;
+    let patch: Value = serde_json::from_str(&std::fs::read_to_string(&patch)?)?;
+    for (key, url) in patch["stringData"]
+        .as_object()
+        .expect("the patch sets one key")
+    {
+        std::fs::write(logins.join(key), url.as_str().expect("the key holds a URL"))?;
+    }
+    std::fs::remove_file(secret)?;
+    Ok(target)
+}
+
+/// The project databases of `billing/dev` and `shop/dev`, with their logins
+/// in a fresh directory named for `test`.
+async fn environments(
+    admin: &Client,
+    admin_url: &str,
+    test: &str,
+) -> anyhow::Result<(PathBuf, Client, Client)> {
+    let logins = std::env::temp_dir().join(format!(
+        "wamn-control-administration-{test}-{}",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_dir_all(&logins);
+    std::fs::create_dir_all(&logins)?;
+    let billing = project_database(
+        admin,
+        admin_url,
+        admin_url,
+        "billing",
+        "aaaaaaa1",
+        "t-billing",
+        &logins,
+    )
+    .await?;
+    let shop = project_database(
+        admin, admin_url, admin_url, "shop", "aaaaaaa2", "t-shop", &logins,
+    )
+    .await?;
+    Ok((logins, billing, shop))
+}
+
+/// The application rows of one principal in one project database.
+async fn application_rows(target: &Client, principal: &str) -> Vec<String> {
+    target
+        .query(
+            "SELECT 'user ' || tenant_id FROM app_system.users WHERE id = $1::text::uuid \
+             UNION ALL SELECT 'role ' || role_name FROM app_system.user_roles \
+               WHERE user_id = $1::text::uuid \
+             ORDER BY 1",
+            &[&principal],
+        )
+        .await
+        .expect("read the application rows")
+        .iter()
+        .map(|row| row.get(0))
+        .collect()
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn admin_writes_reach_the_application_rows_of_every_environment() -> anyhow::Result<()> {
+    let mut postgres = wamn_test_postgres::start(&[])?;
+    let test_database = postgres.create_database("control_application_rows")?;
+    let admin_url = test_database.url();
+    let admin = connect(admin_url).await?;
+    let control_url = install(&admin, admin_url).await?;
+    let (logins, billing, shop) = environments(&admin, admin_url, "application").await?;
+    admin
+        .execute(
+            "SELECT set_config('app.user_id', $1, false)",
+            &[&PlatformComponent::Provisioning.principal_id().to_string()],
+        )
+        .await?;
+    let mut ids = Vec::new();
+    for (email, name, org_admin) in [
+        ("boss@example.test", "Boss", true),
+        ("ann@example.test", "Ann", false),
+    ] {
+        let user = create_or_reuse_user(&admin, email, name)
+            .await?
+            .principal_id;
+        let grants = MemberGrants {
+            org_admin,
+            ..MemberGrants::default()
+        };
+        invite_member(&admin, &user, ORG, &grants).await?;
+        ids.push(user);
+    }
+    let [boss, ann]: [PrincipalId; 2] = ids.try_into().expect("two users");
+    let (boss, ann) = (boss.as_str(), ann.as_str());
+    let delivery = HostRouteDelivery::new(
+        Arc::new(LoadedRelease::control_root()),
+        HostRouteHandlers::Control {
+            control: Arc::new(connect(&control_url).await?),
+            writer: Arc::new(tokio::sync::Mutex::new(connect(&control_url).await?)),
+            identity: None,
+            administration: Some(logins.clone()),
+            org: ORG.to_owned(),
+        },
+        None,
+    );
+    let ann_payload = json!({"principal_id": ann});
+    let billing_admin = json!({"project": "billing", "principal_id": ann});
+    let billing_member = json!({"project": "billing", "env": "dev", "principal_id": ann});
+
+    // org-admin writes the user row and admin in every environment, after its
+    // system rows; its revoke removes admin first and keeps the user row.
+    assert_eq!(
+        call(&delivery, "org-admin/grant", boss, ann_payload.clone()).await,
+        Ok(json!({"principal_id": ann, "org_admin": true}))
+    );
+    assert_eq!(
+        application_rows(&billing, ann).await,
+        ["role admin", "user t-billing"]
+    );
+    assert_eq!(
+        application_rows(&shop, ann).await,
+        ["role admin", "user t-shop"]
+    );
+    assert_eq!(
+        call(
+            &delivery,
+            "project-admin/revoke",
+            boss,
+            billing_admin.clone()
+        )
+        .await,
+        Err(format!(
+            "principal {ann} holds org-admin in org {ORG}. Revoke org-admin first"
+        ))
+    );
+    assert_eq!(
+        application_rows(&billing, ann).await,
+        ["role admin", "user t-billing"],
+        "a refused revoke changes no application row"
+    );
+    assert_eq!(
+        call(&delivery, "org-admin/revoke", boss, ann_payload.clone()).await,
+        Ok(json!({"principal_id": ann, "org_admin": false}))
+    );
+    assert_eq!(application_rows(&billing, ann).await, ["user t-billing"]);
+    assert_eq!(application_rows(&shop, ann).await, ["user t-shop"]);
+
+    // project-admin covers its project's environments only.
+    assert_eq!(
+        call(
+            &delivery,
+            "project-admin/grant",
+            boss,
+            billing_admin.clone()
+        )
+        .await,
+        Ok(json!({"principal_id": ann, "project": "billing", "project_admin": true}))
+    );
+    assert_eq!(
+        application_rows(&billing, ann).await,
+        ["role admin", "user t-billing"]
+    );
+    assert_eq!(application_rows(&shop, ann).await, ["user t-shop"]);
+    assert_eq!(
+        call(&delivery, "project-admin/revoke", boss, billing_admin).await,
+        Ok(json!({"principal_id": ann, "project": "billing", "project_admin": false}))
+    );
+    assert_eq!(application_rows(&billing, ann).await, ["user t-billing"]);
+
+    // A membership revoke removes the user row, and a grant writes it again.
+    assert_eq!(
+        call(&delivery, "member/revoke", boss, billing_member.clone()).await,
+        Ok(json!({"principal_id": ann, "project": "billing", "env": "dev", "member": false}))
+    );
+    assert!(application_rows(&billing, ann).await.is_empty());
+    assert_eq!(
+        call(&delivery, "member/grant", boss, billing_member).await,
+        Ok(json!({"principal_id": ann, "project": "billing", "env": "dev", "member": true}))
+    );
+    assert_eq!(application_rows(&billing, ann).await, ["user t-billing"]);
+
+    // A failed environment refuses with the completed ones named, and the
+    // system rows of the deactivation stay uncommitted.
+    let shop_key = logins.join("shop--dev");
+    let shop_login = std::fs::read_to_string(&shop_key)?;
+    std::fs::write(&shop_key, "postgres://nobody:wrong@127.0.0.1:1/none")?;
+    assert_eq!(
+        call(&delivery, "user/deactivate", boss, ann_payload.clone()).await,
+        Err("terminal environment shop/dev failed. Completed: billing/dev".to_owned())
+    );
+    assert!(application_rows(&billing, ann).await.is_empty());
+    assert_eq!(application_rows(&shop, ann).await, ["user t-shop"]);
+    assert_eq!(
+        grants(&admin, ann).await,
+        [
+            "env billing/dev".to_owned(),
+            "env shop/dev".to_owned(),
+            format!(
+                "member active {}",
+                PlatformComponent::Provisioning.principal_id()
+            ),
+        ],
+        "the system rows stay until every environment is done"
+    );
+
+    // With the login back, the deactivation completes.
+    std::fs::write(&shop_key, shop_login)?;
+    assert_eq!(
+        call(&delivery, "user/deactivate", boss, ann_payload).await,
+        Ok(json!({"principal_id": ann, "status": "inactive"}))
+    );
+    assert!(application_rows(&shop, ann).await.is_empty());
+    assert_eq!(
+        grants(&admin, ann).await,
+        [format!("member inactive {boss}")]
+    );
+    let _ = std::fs::remove_dir_all(&logins);
     Ok(())
 }

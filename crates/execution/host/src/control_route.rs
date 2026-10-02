@@ -9,19 +9,36 @@
 //! the role again inside it. The writes are the functions of
 //! `wamn_platform_identity::org`, which `wamn-ctl invite` also calls, so no
 //! second writer exists.
+//!
+//! A write that changes administrative authority or membership also changes
+//! the application rows of each environment it covers, with the
+//! environment's `wamn_administration` login from the mounted Secret
+//! `wamn-control-administration-<org>`, one transaction per environment
+//! (§4.4, application writes). A grant commits its system transaction first.
+//! A revoke or a deactivation writes the environments first and commits its
+//! system transaction last, so its refusals come before any application row
+//! changes. The route reports success only when every environment is done.
 
+use std::collections::BTreeMap;
+use std::path::Path;
+
+use anyhow::Context as _;
 use serde::Deserialize;
 use serde_json::{Value, json};
 use tokio::sync::Mutex;
-use tokio_postgres::{Client, Transaction};
+use tokio_postgres::{Client, NoTls, Transaction};
 use wamn_catalog::{HostAttachment, HostHandler, HostRouteAuthority};
+use wamn_control_provision::control_administration_key;
 use wamn_engine::router_delivery::{DeliveryError, PermissionDenial};
 use wamn_identity_client::{PatIssuerConfig, UserRefused, create_user, send_invitation};
+use wamn_platform_identity::application::{
+    ApplicationUser, environment_tenant, remove_admin, remove_user, write_admin, write_user,
+};
 use wamn_platform_identity::control::{is_org_admin, is_project_admin, org_projects};
 use wamn_platform_identity::org::{
     MemberGrants, deactivate_org_membership, grant_member, grant_org_admin, grant_project_admin,
-    invite_member, org_users, project_envs, project_members, reactivate_org_membership,
-    revoke_member, revoke_org_admin, revoke_project_admin,
+    invite_member, org_environments, org_users, project_envs, project_members,
+    reactivate_org_membership, revoke_member, revoke_org_admin, revoke_project_admin, user_contact,
 };
 use wamn_platform_identity::{IdentityError, IdentityErrorType, PrincipalId};
 
@@ -34,6 +51,9 @@ pub(crate) enum Refusal {
     Invalid(String),
     /// A failure of the host or of a service it calls.
     Failed(anyhow::Error),
+    /// An environment failed before every environment was done, with the
+    /// environments that completed named.
+    Incomplete(String),
 }
 
 impl From<anyhow::Error> for Refusal {
@@ -67,7 +87,20 @@ pub(crate) struct ControlRoutes<'a> {
     pub(crate) writer: &'a Mutex<Client>,
     /// The operator client of the identity service, for `user.invite`.
     pub(crate) identity: Option<&'a PatIssuerConfig>,
+    /// The mounted Secret of the org's administration logins, one file per
+    /// environment.
+    pub(crate) administration: Option<&'a Path>,
     pub(crate) org: &'a str,
+}
+
+/// What a write does to the application rows of one environment. A later
+/// variant of a grant covers an earlier one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum ApplicationWrite {
+    User,
+    Admin,
+    RemoveAdmin,
+    RemoveUser,
 }
 
 #[derive(Deserialize)]
@@ -167,6 +200,11 @@ impl ControlRoutes<'_> {
                 let mut writer = self.writer.lock().await;
                 let transaction = self.begin(&mut writer, attachment, caller).await?;
                 deactivate_org_membership(&transaction, &principal, self.org).await?;
+                let environments = self
+                    .environments(None, ApplicationWrite::RemoveUser)
+                    .await?;
+                self.write_applications(attachment, caller, &principal, &environments)
+                    .await?;
                 transaction.commit().await?;
                 Ok(json!({ "principal_id": principal.as_str(), "status": "inactive" }))
             }
@@ -176,6 +214,9 @@ impl ControlRoutes<'_> {
                 let transaction = self.begin(&mut writer, attachment, caller).await?;
                 grant_org_admin(&transaction, &principal, self.org).await?;
                 transaction.commit().await?;
+                let environments = self.environments(None, ApplicationWrite::Admin).await?;
+                self.write_applications(attachment, caller, &principal, &environments)
+                    .await?;
                 Ok(json!({ "principal_id": principal.as_str(), "org_admin": true }))
             }
             HostHandler::OrgAdminRevoke => {
@@ -183,6 +224,11 @@ impl ControlRoutes<'_> {
                 let mut writer = self.writer.lock().await;
                 let transaction = self.begin(&mut writer, attachment, caller).await?;
                 revoke_org_admin(&transaction, &principal, self.org).await?;
+                let environments = self
+                    .environments(None, ApplicationWrite::RemoveAdmin)
+                    .await?;
+                self.write_applications(attachment, caller, &principal, &environments)
+                    .await?;
                 transaction.commit().await?;
                 Ok(json!({ "principal_id": principal.as_str(), "org_admin": false }))
             }
@@ -212,6 +258,12 @@ impl ControlRoutes<'_> {
                 )
                 .await?;
                 transaction.commit().await?;
+                let environment = [(
+                    (request.project.clone(), request.env.clone()),
+                    ApplicationWrite::User,
+                )];
+                self.write_applications(attachment, caller, &principal, &environment)
+                    .await?;
                 Ok(json!({
                     "principal_id": principal.as_str(),
                     "project": request.project,
@@ -234,6 +286,12 @@ impl ControlRoutes<'_> {
                     &request.env,
                 )
                 .await?;
+                let environment = [(
+                    (request.project.clone(), request.env.clone()),
+                    ApplicationWrite::RemoveUser,
+                )];
+                self.write_applications(attachment, caller, &principal, &environment)
+                    .await?;
                 transaction.commit().await?;
                 Ok(json!({
                     "principal_id": principal.as_str(),
@@ -251,6 +309,11 @@ impl ControlRoutes<'_> {
                     .await?;
                 grant_project_admin(&transaction, &principal, self.org, &request.project).await?;
                 transaction.commit().await?;
+                let environments = self
+                    .environments(Some(&request.project), ApplicationWrite::Admin)
+                    .await?;
+                self.write_applications(attachment, caller, &principal, &environments)
+                    .await?;
                 Ok(json!({
                     "principal_id": principal.as_str(),
                     "project": request.project,
@@ -265,6 +328,11 @@ impl ControlRoutes<'_> {
                     .begin_in(&mut writer, attachment, caller, Some(&request.project))
                     .await?;
                 revoke_project_admin(&transaction, &principal, self.org, &request.project).await?;
+                let environments = self
+                    .environments(Some(&request.project), ApplicationWrite::RemoveAdmin)
+                    .await?;
+                self.write_applications(attachment, caller, &principal, &environments)
+                    .await?;
                 transaction.commit().await?;
                 Ok(json!({
                     "principal_id": principal.as_str(),
@@ -309,12 +377,36 @@ impl ControlRoutes<'_> {
                 .map(|membership| (membership.project, membership.env))
                 .collect(),
         };
-        {
-            let mut writer = self.writer.lock().await;
-            let transaction = self.begin(&mut writer, attachment, caller).await?;
-            invite_member(&transaction, &user.principal_id, self.org, &grants).await?;
-            transaction.commit().await?;
+        // The lock stays held through the application rows, so no other
+        // write of this host runs between the system rows and them.
+        let mut writer = self.writer.lock().await;
+        let transaction = self.begin(&mut writer, attachment, caller).await?;
+        invite_member(&transaction, &user.principal_id, self.org, &grants).await?;
+        transaction.commit().await?;
+        // The application rows of the grants, each environment once, with
+        // `admin` where an administrative grant covers it.
+        let mut environments: BTreeMap<(String, String), ApplicationWrite> = BTreeMap::new();
+        for environment in grants.memberships {
+            environments.insert(environment, ApplicationWrite::User);
         }
+        let admin_scopes: Vec<Option<&str>> = if grants.org_admin {
+            vec![None]
+        } else {
+            grants
+                .project_admins
+                .iter()
+                .map(|p| Some(p.as_str()))
+                .collect()
+        };
+        for project in admin_scopes {
+            for (environment, _) in self.environments(project, ApplicationWrite::Admin).await? {
+                environments.insert(environment, ApplicationWrite::Admin);
+            }
+        }
+        let environments: Vec<_> = environments.into_iter().collect();
+        self.write_applications(attachment, caller, &user.principal_id, &environments)
+            .await?;
+        drop(writer);
         if !user.enrolled {
             let reply = send_invitation(identity, &user.principal_id).await?;
             if reply.status != 201 {
@@ -329,6 +421,93 @@ impl ControlRoutes<'_> {
             "enrolled": user.enrolled,
             "invited": !user.enrolled,
         }))
+    }
+
+    /// Every environment of the org, or of one project, with one write.
+    async fn environments(
+        &self,
+        project: Option<&str>,
+        write: ApplicationWrite,
+    ) -> Result<Vec<((String, String), ApplicationWrite)>, Refusal> {
+        Ok(org_environments(self.control, self.org, project)
+            .await?
+            .into_iter()
+            .map(|environment| (environment, write))
+            .collect())
+    }
+
+    /// Write the application rows of `principal` in each environment, one
+    /// transaction each, in order. Every login is read before the first
+    /// write. When an environment fails, the route refuses and names the
+    /// environments that completed.
+    async fn write_applications(
+        &self,
+        attachment: &HostAttachment,
+        caller: &PrincipalId,
+        principal: &PrincipalId,
+        environments: &[((String, String), ApplicationWrite)],
+    ) -> Result<(), Refusal> {
+        if environments.is_empty() {
+            return Ok(());
+        }
+        let directory = self.administration.ok_or_else(|| {
+            Refusal::Failed(anyhow::anyhow!(
+                "the control host has no administration logins"
+            ))
+        })?;
+        let grants = environments
+            .iter()
+            .any(|(_, write)| *write <= ApplicationWrite::Admin);
+        let contact = if grants {
+            Some(user_contact(self.control, principal).await?)
+        } else {
+            None
+        };
+        let mut logins = Vec::with_capacity(environments.len());
+        for ((project, env), _) in environments {
+            let path = directory.join(control_administration_key(project, env));
+            match std::fs::read_to_string(&path) {
+                Ok(url) => logins.push(url.trim().to_owned()),
+                Err(error) => {
+                    tracing::warn!(%error, path = %path.display(), "no administration login");
+                    return Err(Refusal::Incomplete(format!(
+                        "environment {project}/{env} has no administration login. \
+                         Completed: none"
+                    )));
+                }
+            }
+        }
+        let mut completed: Vec<String> = Vec::new();
+        for (((project, env), write), url) in environments.iter().zip(logins) {
+            let user = contact
+                .as_ref()
+                .map(|(email, display_name)| ApplicationUser {
+                    principal_id: principal,
+                    email,
+                    display_name,
+                });
+            if let Err(error) =
+                write_application(&url, attachment, caller, principal, user, *write).await
+            {
+                tracing::warn!(
+                    error = format!("{error:#}"),
+                    project,
+                    env,
+                    reference = attachment.reference,
+                    "an application write failed"
+                );
+                let done = if completed.is_empty() {
+                    "none".to_owned()
+                } else {
+                    completed.join(", ")
+                };
+                return Err(Refusal::Incomplete(format!(
+                    "environment {project}/{env} failed. Completed: {done}"
+                )));
+            }
+            completed.push(format!("{project}/{env}"));
+        }
+        Ok(())
     }
 
     /// Open the write transaction of one org route.
@@ -380,6 +559,64 @@ impl ControlRoutes<'_> {
             None => false,
         })
     }
+}
+
+/// One environment's application write, in its own transaction on its
+/// administration login.
+async fn write_application(
+    url: &str,
+    attachment: &HostAttachment,
+    caller: &PrincipalId,
+    principal: &PrincipalId,
+    user: Option<ApplicationUser<'_>>,
+    write: ApplicationWrite,
+) -> anyhow::Result<()> {
+    let (mut client, connection) = tokio_postgres::connect(url, NoTls)
+        .await
+        .context("connect the administration login")?;
+    let connection = tokio::spawn(connection);
+    let result = async {
+        let transaction = client.transaction().await?;
+        transaction
+            .execute(
+                "SELECT pg_catalog.set_config('app.user_id', $1, true), \
+                 pg_catalog.set_config('app.operation', $2, true)",
+                &[&caller.as_str(), &attachment.operation],
+            )
+            .await?;
+        let tenant = match environment_tenant(&transaction).await {
+            Ok(tenant) => tenant,
+            // A database without platform rows holds no user row to remove.
+            Err(error)
+                if error.kind() == IdentityErrorType::NotFound
+                    && write >= ApplicationWrite::RemoveAdmin =>
+            {
+                return Ok(());
+            }
+            Err(error) => return Err(error.into()),
+        };
+        match (write, user) {
+            (ApplicationWrite::User, Some(user)) => {
+                write_user(&transaction, &tenant, user).await?;
+            }
+            (ApplicationWrite::Admin, Some(user)) => {
+                write_admin(&transaction, &tenant, user).await?;
+            }
+            (ApplicationWrite::RemoveAdmin, _) => {
+                remove_admin(&transaction, &tenant, principal).await?;
+            }
+            (ApplicationWrite::RemoveUser, _) => {
+                remove_user(&transaction, &tenant, principal).await?;
+            }
+            (write, None) => anyhow::bail!("{write:?} needs the user's email and display name"),
+        }
+        transaction.commit().await?;
+        anyhow::Ok(())
+    }
+    .await;
+    drop(client);
+    let _ = connection.await;
+    result
 }
 
 /// The request of a route, or the delivery refusal of a payload that is not

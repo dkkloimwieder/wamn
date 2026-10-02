@@ -19,6 +19,8 @@ tokio = { workspace = true, features = ["rt", "sync"] }
 tokio-postgres = { workspace = true }
 # The token profile and its verification.
 wamn-session = { workspace = true }
+# The application role names of a project database.
+wamn-project-state = { workspace = true }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time", "net", "io-util", "sync"] }

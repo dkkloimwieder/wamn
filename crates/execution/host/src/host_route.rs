@@ -42,6 +42,9 @@ pub enum HostRouteHandlers {
         writer: Arc<tokio::sync::Mutex<tokio_postgres::Client>>,
         /// The operator client of the identity service, for `user.invite`.
         identity: Option<PatIssuerConfig>,
+        /// The mounted Secret `wamn-control-administration-<org>`: one file
+        /// per environment that holds its administration login.
+        administration: Option<std::path::PathBuf>,
         org: String,
     },
 }
@@ -141,6 +144,7 @@ impl HostRouteDelivery {
                     control,
                     writer,
                     identity,
+                    administration,
                     org,
                 },
             ) => {
@@ -148,6 +152,7 @@ impl HostRouteDelivery {
                     control,
                     writer,
                     identity: identity.as_ref(),
+                    administration: administration.as_deref(),
                     org,
                 }
                 .handle(attachment, &principal, payload)
@@ -222,6 +227,13 @@ impl RouteDelivery for HostRouteDelivery {
             Err(Refusal::Invalid(message)) => {
                 report(Ok(DeliveryOutcome::Failed(DeliveryFailure {
                     failure_type: FailureType::InvalidInput,
+                    code: None,
+                    message,
+                })))
+            }
+            Err(Refusal::Incomplete(message)) => {
+                report(Ok(DeliveryOutcome::Failed(DeliveryFailure {
+                    failure_type: FailureType::Terminal,
                     code: None,
                     message,
                 })))

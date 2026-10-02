@@ -4,8 +4,8 @@
 //! Each grant here is the one write of its row. `wamn-ctl invite`, the
 //! provisioning of an org owner and the control routes call these functions,
 //! inside the caller's transaction and under the caller's bound actor.
-//! These functions write system rows only. How an administrative grant
-//! reaches an application database is §9 question 1 of the plan.
+//! These functions write system rows only. The application rows of the same
+//! grants are the functions of [`crate::application`].
 
 use tokio_postgres::GenericClient;
 
@@ -492,6 +492,57 @@ pub async fn org_users(
             })
         })
         .collect()
+}
+
+const ORG_ENVIRONMENTS_SQL: &str = "SELECT project, env FROM registry.project_envs \
+    WHERE org = $1 AND ($2::text IS NULL OR project = $2) ORDER BY project, env";
+
+/// The environments of `org`, or of one project of it, as `(project, env)`.
+pub async fn org_environments(
+    client: &(impl GenericClient + Sync),
+    org: &str,
+    project: Option<&str>,
+) -> Result<Vec<(String, String)>, IdentityError> {
+    let org = checked_scope_segment("org", org)?;
+    let project = project
+        .map(|project| checked_scope_segment("project", project))
+        .transpose()?;
+    Ok(client
+        .query(ORG_ENVIRONMENTS_SQL, &[&org, &project])
+        .await
+        .map_err(|error| database_error(&error))?
+        .iter()
+        .map(|row| (row.get(0), row.get(1)))
+        .collect())
+}
+
+const USER_CONTACT_SQL: &str = "SELECT email, display_name FROM identity.principals \
+    WHERE id = $1::text::uuid AND type = 'user'";
+
+/// The email and display name of a user principal, which its application
+/// rows carry.
+pub async fn user_contact(
+    client: &(impl GenericClient + Sync),
+    principal_id: &PrincipalId,
+) -> Result<(String, String), IdentityError> {
+    let row = client
+        .query_opt(USER_CONTACT_SQL, &[&principal_id.as_str()])
+        .await
+        .map_err(|error| database_error(&error))?
+        .ok_or_else(|| {
+            IdentityError::new(
+                IdentityErrorType::NotFound,
+                format!("principal {principal_id} is not a user"),
+            )
+        })?;
+    let email: Option<String> = row.get(0);
+    let email = email.ok_or_else(|| {
+        IdentityError::new(
+            IdentityErrorType::NotFound,
+            format!("user principal {principal_id} has no email"),
+        )
+    })?;
+    Ok((email, row.get(1)))
 }
 
 const PROJECT_ENVS_SQL: &str =

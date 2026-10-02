@@ -20,9 +20,11 @@
 //!
 //! The control host group of the org (docs/plan/platform-ui.md §4.2) joins
 //! them as `hostgroup-control`. It serves the control serving root, so it has
-//! no release, no project credential and no event stream. It reads
-//! `wamn_system` through the org's `control` login from Secret
-//! `wamn-control-<org>`, which `wamn-ctl-ops provision-org` emits.
+//! no release and no event stream. It reads `wamn_system` through the org's
+//! `control` login from Secret `wamn-control-<org>`, which
+//! `wamn-ctl-ops provision-org` emits. It mounts Secret
+//! `wamn-control-administration-<org>`, the administration login of each
+//! environment of the org (docs/plan/platform-ui.md §4.4).
 //!
 //! cargo run -p wamn-test-infrastructure --example host_values_files -- \
 //!   <output directory> <release artifact base> <Receiving manifest digest> \
@@ -332,8 +334,9 @@ fn google_cloud_overlay(overlay: &str, application: &Application) -> anyhow::Res
 }
 
 /// The control host group, from the Receiving group's listener, resources
-/// and identity CA: control mode, the org, the session issuer and the
-/// `control` login, and nothing of the application.
+/// and identity CA: control mode, the org, the session issuer, the `control`
+/// login and the mounted administration logins, and nothing of the
+/// application.
 fn control_group(application: &Value) -> anyhow::Result<Value> {
     let mut group = Mapping::new();
     for key in [
@@ -363,14 +366,26 @@ fn control_group(application: &Value) -> anyhow::Result<Value> {
         "{{name: WAMN_CONTROL_URL, valueFrom: {{secretKeyRef: \
          {{name: wamn-control-{ORG}, key: url, optional: false}}}}}}"
     ))?);
+    env.push(entry(&[
+        ("name", "WAMN_CONTROL_ADMINISTRATION_DIR"),
+        ("value", "/etc/wamn-control-administration"),
+    ]));
     group.insert("env".into(), Value::Sequence(env));
     group.insert(
         "volumes".into(),
-        serde_yaml::from_str("[{name: identity-ca, configMap: {name: identity-ca}}]")?,
+        serde_yaml::from_str(&format!(
+            "[{{name: identity-ca, configMap: {{name: identity-ca}}}}, \
+             {{name: control-administration, secret: \
+               {{secretName: wamn-control-administration-{ORG}, optional: false}}}}]"
+        ))?,
     );
     group.insert(
         "volumeMounts".into(),
-        serde_yaml::from_str("[{name: identity-ca, mountPath: /etc/identity-ca, readOnly: true}]")?,
+        serde_yaml::from_str(
+            "[{name: identity-ca, mountPath: /etc/identity-ca, readOnly: true}, \
+             {name: control-administration, mountPath: /etc/wamn-control-administration, \
+              readOnly: true}]",
+        )?,
     );
     Ok(Value::Mapping(group))
 }

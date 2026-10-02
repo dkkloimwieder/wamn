@@ -87,7 +87,11 @@ A write runs in one transaction on a second `control` login, which holds one wri
 The transaction binds `app.user_id` to the caller and `app.operation` to the sealed operation id, and it checks the role again.
 The writes are the functions of [`wamn_platform_identity::org`](../../crates/identity/platform/src/org.rs), which `wamn-ctl invite` and `provision-org --owner-email` also call.
 A refusal, for example a principal that is not an active member, answers 400 `invalid-input` with its reason.
-These routes write system rows only, and no application row.
+A write that changes administrative authority or membership also changes the application rows of each environment it covers, one transaction per environment, with the environment's `wamn_administration` login.
+The control host reads that login from the mounted Secret `wamn-control-administration-<org>`, one file per `<project>--<env>`, at each write (`--control-administration-dir`, `WAMN_CONTROL_ADMINISTRATION_DIR`).
+A grant commits its system rows first, and then writes the `users` row, with `admin` for `org-admin` and `project-admin`.
+A revoke or a deactivation removes the application rows first, and commits its system rows only when every environment is done.
+If an environment fails, the route answers `terminal` with the environments that completed, and the system rows of a revoke stay as they were.
 `user.invite` calls identity `POST /users` and `POST /invitations` with the operator certificate of `--pat-issuer`, `--pat-client-cert`, `--pat-client-key` and `--pat-server-ca`, through [`wamn-identity-client`](../../crates/identity/client/src/lib.rs).
 It writes the membership and the grants between the two calls, and it calls `/invitations` only when the user has no password.
 Application rows of these routes follow in issue 4 of the administration epic.

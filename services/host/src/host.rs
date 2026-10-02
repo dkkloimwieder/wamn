@@ -373,6 +373,13 @@ pub struct HostArgs {
     #[arg(long, env = "WAMN_PAT_SERVER_CA", requires = "pat_issuer")]
     pub pat_server_ca: Option<PathBuf>,
 
+    /// A control host: the directory where the Secret
+    /// `wamn-control-administration-<org>` is mounted, one file per
+    /// environment that holds its administration login. The host reads it at
+    /// each write, so a new environment needs no restart.
+    #[arg(long, env = "WAMN_CONTROL_ADMINISTRATION_DIR")]
+    pub control_administration_dir: Option<PathBuf>,
+
     /// Provisioned database instance suffix for the exact session audience.
     #[arg(
         long,
@@ -1298,6 +1305,7 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
                     control: Arc::clone(&connection.client),
                     writer: Arc::clone(&connection.writer),
                     identity,
+                    administration: args.control_administration_dir.clone(),
                     org: connection.org.clone(),
                 },
                 None,

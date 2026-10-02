@@ -6325,6 +6325,7 @@ dependencies = [
  "tokio",
  "tokio-postgres",
  "wamn-control-provision",
+ "wamn-project-state",
  "wamn-session",
  "wamn-test-postgres",
  "zeroize",

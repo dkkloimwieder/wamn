@@ -328,11 +328,20 @@ runtime:
           name: wamn-control-dkk
           key: url
           optional: false
+    - name: WAMN_CONTROL_ADMINISTRATION_DIR
+      value: /etc/wamn-control-administration
     volumes:
     - name: identity-ca
       configMap:
         name: identity-ca
+    - name: control-administration
+      secret:
+        secretName: wamn-control-administration-dkk
+        optional: false
     volumeMounts:
     - name: identity-ca
       mountPath: /etc/identity-ca
+      readOnly: true
+    - name: control-administration
+      mountPath: /etc/wamn-control-administration
       readOnly: true
