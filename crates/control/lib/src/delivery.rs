@@ -11,6 +11,7 @@ use wamn_catalog::{
 };
 
 pub mod deployment;
+pub mod environment;
 pub mod publication;
 pub mod qualification;
 pub mod sqlx;

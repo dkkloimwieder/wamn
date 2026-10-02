@@ -27,8 +27,11 @@
 //! environment of the org (docs/plan/platform-ui.md §4.4).
 //!
 //! cargo run -p wamn-test-infrastructure --example host_values_files -- \
-//!   <output directory> <release artifact base> <Receiving manifest digest> \
-//!   <WMS manifest digest>
+//!   <output directory> <host image> <release artifact base> \
+//!   <Receiving manifest digest> <WMS manifest digest>
+//!
+//! The host image is a registry reference with its digest
+//! (docs/plan/upgrade-environment.md §5 issue 4).
 
 use std::fs;
 use std::path::PathBuf;
@@ -45,7 +48,6 @@ const ENVIRONMENT: &str = "dev";
 /// The org that the checked-in Receiving overlay names.
 const OVERLAY_ORG: &str = "acme";
 const NAMESPACE: &str = "hosts";
-const HOST_IMAGE: &str = "us-central1-docker.pkg.dev/wamn-dev/wamn/wamn-host:src-bba6fe15a456083e@sha256:d6abaac5b196afe72a576619efa4194f15287835d3994757ae41c923fb54dbfa";
 /// The Google service account of the label store (docs/operations/gcp.md 5.1).
 const BLOB_ACCOUNT: &str = "wamn-blob@wamn-dev.iam.gserviceaccount.com";
 const COMPONENT_BASE: &str = "us-central1-docker.pkg.dev/wamn-dev/wamn/components";
@@ -98,12 +100,17 @@ const ROLE_FAMILIES: [WorkloadRoleFamily; 5] = [
 fn main() -> anyhow::Result<()> {
     let arguments: Vec<String> = std::env::args().skip(1).collect();
     ensure!(
-        arguments.len() == 4,
-        "usage: <output directory> <release artifact base> <Receiving manifest digest> <WMS manifest digest>"
+        arguments.len() == 5,
+        "usage: <output directory> <host image> <release artifact base> <Receiving manifest digest> <WMS manifest digest>"
     );
     let output = PathBuf::from(&arguments[0]);
-    let (base, receiving) = render(&RECEIVING, &arguments[1], &arguments[2])?;
-    let (_, wms) = render(&WMS, &arguments[1], &arguments[3])?;
+    let host_image = &arguments[1];
+    ensure!(
+        host_image.contains("@sha256:"),
+        "the host image {host_image} is not pinned by digest"
+    );
+    let (base, receiving) = render(&RECEIVING, &arguments[2], &arguments[3])?;
+    let (_, wms) = render(&WMS, &arguments[2], &arguments[4])?;
     let mut overlay: Value = serde_yaml::from_str(&receiving)?;
     let wms: Value = serde_yaml::from_str(&wms)?;
     let group = wms["runtime"]["hostGroups"][0].clone();
@@ -118,7 +125,7 @@ fn main() -> anyhow::Result<()> {
         .push(control);
     fs::write(
         output.join("values-host-base.yaml"),
-        google_cloud_base(&host_values(&base, HOST_IMAGE)?)?,
+        google_cloud_base(&host_values(&base, host_image)?)?,
     )?;
     fs::write(
         output.join("values-host.yaml"),

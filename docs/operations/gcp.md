@@ -1499,10 +1499,10 @@ On 2026-09-27 the Secrets took 6 seconds, the restart and the Job 41 seconds, `e
 
 ### 5.5 WMS host group and workloads
 
-The host values program renders the WMS overlay as host group `wms` next to Receiving. It names the WMS guest, event NATS and materializer Secrets and the instance suffix `0nk1lrpr`. It removes the object-store credentials of the kind overlay, because the `gcs` store needs none. Render with both release digests and upgrade the host:
+The host values program renders the WMS overlay as host group `wms` next to Receiving. It names the WMS guest, event NATS and materializer Secrets and the instance suffix `0nk1lrpr`. It removes the object-store credentials of the kind overlay, because the `gcs` store needs none. `HOST_IMAGE` is the host image with its digest (section 3.13). Render with both release digests and upgrade the host:
 
 ```bash
-cargo run -p wamn-test-infrastructure --example host_values_files -- deploy/gcp \
+cargo run -p wamn-test-infrastructure --example host_values_files -- deploy/gcp "$HOST_IMAGE" \
   us-central1-docker.pkg.dev/wamn-dev/wamn/releases <Receiving manifest digest> <WMS manifest digest>
 helm upgrade wamn-host oci://ghcr.io/wasmcloud/charts/runtime-operator --version 2.10.0 -n hosts \
   -f deploy/gcp/values-host-base.yaml -f deploy/gcp/values-host.yaml --wait --timeout 6m

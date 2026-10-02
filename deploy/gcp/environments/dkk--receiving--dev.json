@@ -1,0 +1,25 @@
+{
+  "cluster": "wamn",
+  "context": "gke_wamn-dev_us-central1-a_wamn",
+  "registry": "us-central1-docker.pkg.dev/wamn-dev/wamn",
+  "web_client": {
+    "bucket": "wamn-dev-web",
+    "prefix": "clients"
+  },
+  "route_host": "receiving.wamn.dev",
+  "host_group": "default",
+  "edge": {
+    "release": "wamn-edge",
+    "namespace": "edge",
+    "values": "deploy/gcp/values-edge.yaml"
+  },
+  "url_map": {
+    "name": "wamn-edge",
+    "file": "deploy/gcp/url-map.yaml"
+  },
+  "workloads": [
+    "deploy/gcp/flow-http.yaml",
+    "deploy/gcp/materializer.yaml"
+  ],
+  "gates_image": "us-central1-docker.pkg.dev/wamn-dev/wamn/wamn-gates:src-38f6225813d8b634@sha256:eb5cfb8f0f0531bc85ab5e9bb45d16866b902c919c76d48457a31ddd797479c4"
+}
