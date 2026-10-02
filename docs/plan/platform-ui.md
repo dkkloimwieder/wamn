@@ -1550,10 +1550,11 @@ Measured on main `a3283c7b7` on 2026-10-02:
 
 Commits, each one green:
 
-1. The role grid. `RoleGrid` in `web/ui/src/admin/role-grid.tsx` takes a `Transport`. It reads `role.list` for its role choice and `permission.list` for the chosen role, and shows one row per operation on `SetTable`. The rows group by interface, the part of the reference between `:` and the last `/`, and a search filters them by reference. Each row shows the direct selection, the effective state and the roots that require it. A served, grantable row has one toggle, which calls `permission.grant` or `permission.revoke`. A row that is effective only through other roots shows those roots and has no toggle. A selected row that another root also requires keeps its toggle, and after a revoke it stays effective and names the roots in `still_required_by`. The role `admin` shows that it holds every operation, with no toggle.
-2. The user grid. `UserGrid` in `web/ui/src/admin/user-grid.tsx` takes a `Transport`. It reads `user.list` for its user choice and `role.list` for the rows, with one toggle per role that calls `user_role.grant` or `user_role.revoke`. The effective permission set is the union of `permission.list` of each held role, or every served operation when the user holds `admin`. The `admin` row is hierarchy-controlled as [§9](#9-questions-for-the-owner) question 5 decides.
-3. Tests and gallery. `web/components` tests each grid with a fake transport, in the pattern of `delete.test.tsx`: the rows, the toggles, a refusal with its contract text, and the state after each write. The gallery shows both grids. `control-client.live.test.ts` stays the test of the routes.
-4. Documentation: the `web/ui` README export table, and execution for the screens.
+1. The covering fact. Application `user.list` answers `admin_covered` for each user, read through the identity reader as `user_role.revoke` reads it ([§9](#9-questions-for-the-owner) question 5). The contract bytes change, so the version of the control contract moves with them, and the generated clients are written again.
+2. The role grid. `RoleGrid` in `web/ui/src/admin/role-grid.tsx` takes a `Transport`. It reads `role.list` for its role choice and `permission.list` for the chosen role, and shows one row per operation on `SetTable`. The rows group by interface, the part of the reference between `:` and the last `/`, and a search filters them by reference. Each row shows the direct selection, the effective state and the roots that require it. A served, grantable row has one toggle, which calls `permission.grant` or `permission.revoke`. A row that is effective only through other roots shows those roots and has no toggle. A selected row that another root also requires keeps its toggle, and after a revoke it stays effective and names the roots in `still_required_by`. The role `admin` shows that it holds every operation, with no toggle.
+3. The user grid. `UserGrid` in `web/ui/src/admin/user-grid.tsx` takes a `Transport`. It reads `user.list` for its user choice and `role.list` for the rows, with one toggle per role that calls `user_role.grant` or `user_role.revoke`. The effective permission set is the union of `permission.list` of each held role, or every served operation when the user holds `admin`. A user with `admin_covered` shows its `admin` row as hierarchy-controlled, with no toggle.
+4. Tests and gallery. `web/components` tests each grid with a fake transport, in the pattern of `delete.test.tsx`: the rows, the toggles, a refusal with its contract text, and the state after each write. The gallery shows both grids. `control-client.live.test.ts` stays the test of the routes.
+5. Documentation: the `web/ui` README export table, and execution for the screens and the `user.list` result.
 
 Each write announces its outcome with `announceOutcome`, and a refusal shows the `text` of its contract. A grid reads again after each write, and writes no database directly.
 
@@ -1564,7 +1565,7 @@ Exit includes:
 - a row effective only through another root, with no toggle
 - `admin` with no toggle in the role grid
 - a user grid that grants and revokes a role, and shows the effective permission set
-- a hierarchy-controlled `admin`, as question 5 decides
+- `admin_covered` for a user who holds `project-admin`, and a hierarchy-controlled `admin` row with no toggle
 - each refusal shown with its contract text
 
 **7. Shell.**
@@ -1645,6 +1646,4 @@ New-project grant materialization and deterministic empty-environment copy from 
 2. Issue 3, answered 2026-10-01. `wamn-ctl invite` writes as its sibling does: `--system-database-url`, as `wamn_system`, stamped `wamn:provisioning`.
 3. Issue 3, answered 2026-10-01. The shell text "No access has been granted." lands in issue 6. The exit of issue 3 stays an invitation with no access, whose login lists no environment.
 4. Issue 5, answered 2026-10-01 with option A. Issue 5 adds the contract files of the application routes and the generated TypeScript client, and tests the routes through that client. Issue 6 starts from that client.
-5. Issue 6, open. How does the user grid know that `project-admin` or `org-admin` covers a user's `admin`?
-   - A. Application `user.list` answers `admin_covered` for each user, read through the identity reader as `user_role.revoke` reads it. This changes the result of a §4.6 route.
-   - B. The grid offers the `admin` toggle, and shows the row as hierarchy-controlled after `user_role.revoke` answers `admin_covered`.
+5. Issue 6, answered 2026-10-02 with option A. Application `user.list` answers `admin_covered` for each user, so the grid shows the covering grant before any click. A route that changes its result shape changes its version, so the version of the control contract moves with it.
