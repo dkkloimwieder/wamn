@@ -1,8 +1,8 @@
 {
-  "operation": "wamn-control:member/list@0.2.0",
+  "operation": "wamn-control:member/list@0.3.0",
   "type": "get",
   "label": "Members of a project",
-  "grant": "wamn-control:member/list@0.2.0",
+  "grant": "wamn-control:member/list@0.3.0",
   "permission_token": "member.list",
   "result": "one",
   "transaction": "implicit",

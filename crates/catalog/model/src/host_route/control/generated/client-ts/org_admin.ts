@@ -5,7 +5,7 @@
 import type { FieldMap, OperationRoute, Outcome, Transport, Uuid } from "@wamn/web-runtime";
 import { reviveOutcome, toWire } from "@wamn/web-runtime";
 
-/** Input for `wamn-control:org-admin/grant@0.2.0`. */
+/** Input for `wamn-control:org-admin/grant@0.3.0`. */
 export interface OrgAdminGrantRequest {
   /** `text` */
   requestId: string;
@@ -18,7 +18,7 @@ export interface OrgAdminGrantRequestValue {
   principalId: Uuid;
 }
 
-/** What `wamn-control:org-admin/grant@0.2.0` calls its input members. */
+/** What `wamn-control:org-admin/grant@0.3.0` calls its input members. */
 export const ORG_ADMIN_GRANT_REQUEST_FIELDS: FieldMap = {
   "request_id": "requestId",
   "value": {
@@ -29,7 +29,7 @@ export const ORG_ADMIN_GRANT_REQUEST_FIELDS: FieldMap = {
   },
 };
 
-/** Result of `wamn-control:org-admin/grant@0.2.0`. */
+/** Result of `wamn-control:org-admin/grant@0.3.0`. */
 export interface OrgAdminGrantResult {
   /** `boolean` */
   readonly orgAdmin: boolean;
@@ -37,20 +37,20 @@ export interface OrgAdminGrantResult {
   readonly principalId: Uuid;
 }
 
-/** What `wamn-control:org-admin/grant@0.2.0` calls its result members. */
+/** What `wamn-control:org-admin/grant@0.3.0` calls its result members. */
 export const ORG_ADMIN_GRANT_RESULT_FIELDS: FieldMap = {
   "org_admin": "orgAdmin",
   "principal_id": "principalId",
 };
 
 /**
- * Where the release publishes `wamn-control:org-admin/grant@0.2.0`.
+ * Where the release publishes `wamn-control:org-admin/grant@0.3.0`.
  *
  * Method and template only. The host and base URL are the application's
  * deployment configuration, not this release's facts.
  */
 export const ORG_ADMIN_GRANT_ROUTE: OperationRoute = {
-  operation: "wamn-control:org-admin/grant@0.2.0",
+  operation: "wamn-control:org-admin/grant@0.3.0",
   method: "POST",
   template: "/wamn_control/org_admin/grant",
   freshOnly: false,
@@ -73,7 +73,7 @@ export const ORG_ADMIN_GRANT_ROUTE: OperationRoute = {
   },
 };
 
-/** Invoke `wamn-control:org-admin/grant@0.2.0` through a transport the application supplies. */
+/** Invoke `wamn-control:org-admin/grant@0.3.0` through a transport the application supplies. */
 export async function grant(
   transport: Transport,
   items: readonly OrgAdminGrantRequest[],
@@ -87,7 +87,7 @@ export async function grant(
   );
 }
 
-/** Input for `wamn-control:org-admin/revoke@0.2.0`. */
+/** Input for `wamn-control:org-admin/revoke@0.3.0`. */
 export interface OrgAdminRevokeRequest {
   /** `text` */
   requestId: string;
@@ -100,7 +100,7 @@ export interface OrgAdminRevokeRequestValue {
   principalId: Uuid;
 }
 
-/** What `wamn-control:org-admin/revoke@0.2.0` calls its input members. */
+/** What `wamn-control:org-admin/revoke@0.3.0` calls its input members. */
 export const ORG_ADMIN_REVOKE_REQUEST_FIELDS: FieldMap = {
   "request_id": "requestId",
   "value": {
@@ -111,7 +111,7 @@ export const ORG_ADMIN_REVOKE_REQUEST_FIELDS: FieldMap = {
   },
 };
 
-/** Result of `wamn-control:org-admin/revoke@0.2.0`. */
+/** Result of `wamn-control:org-admin/revoke@0.3.0`. */
 export interface OrgAdminRevokeResult {
   /** `boolean` */
   readonly orgAdmin: boolean;
@@ -119,20 +119,20 @@ export interface OrgAdminRevokeResult {
   readonly principalId: Uuid;
 }
 
-/** What `wamn-control:org-admin/revoke@0.2.0` calls its result members. */
+/** What `wamn-control:org-admin/revoke@0.3.0` calls its result members. */
 export const ORG_ADMIN_REVOKE_RESULT_FIELDS: FieldMap = {
   "org_admin": "orgAdmin",
   "principal_id": "principalId",
 };
 
 /**
- * Where the release publishes `wamn-control:org-admin/revoke@0.2.0`.
+ * Where the release publishes `wamn-control:org-admin/revoke@0.3.0`.
  *
  * Method and template only. The host and base URL are the application's
  * deployment configuration, not this release's facts.
  */
 export const ORG_ADMIN_REVOKE_ROUTE: OperationRoute = {
-  operation: "wamn-control:org-admin/revoke@0.2.0",
+  operation: "wamn-control:org-admin/revoke@0.3.0",
   method: "POST",
   template: "/wamn_control/org_admin/revoke",
   freshOnly: false,
@@ -153,7 +153,7 @@ export const ORG_ADMIN_REVOKE_ROUTE: OperationRoute = {
   },
 };
 
-/** Invoke `wamn-control:org-admin/revoke@0.2.0` through a transport the application supplies. */
+/** Invoke `wamn-control:org-admin/revoke@0.3.0` through a transport the application supplies. */
 export async function revoke(
   transport: Transport,
   items: readonly OrgAdminRevokeRequest[],

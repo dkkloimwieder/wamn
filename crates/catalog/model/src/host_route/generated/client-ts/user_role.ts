@@ -5,7 +5,7 @@
 import type { FieldMap, OperationRoute, Outcome, Transport, Uuid } from "@wamn/web-runtime";
 import { reviveOutcome, toWire } from "@wamn/web-runtime";
 
-/** Input for `wamn-control:user-role/grant@0.2.0`. */
+/** Input for `wamn-control:user-role/grant@0.3.0`. */
 export interface UserRoleGrantRequest {
   /** `text` */
   requestId: string;
@@ -20,7 +20,7 @@ export interface UserRoleGrantRequestValue {
   userId: Uuid;
 }
 
-/** What `wamn-control:user-role/grant@0.2.0` calls its input members. */
+/** What `wamn-control:user-role/grant@0.3.0` calls its input members. */
 export const USER_ROLE_GRANT_REQUEST_FIELDS: FieldMap = {
   "request_id": "requestId",
   "value": {
@@ -32,25 +32,25 @@ export const USER_ROLE_GRANT_REQUEST_FIELDS: FieldMap = {
   },
 };
 
-/** Result of `wamn-control:user-role/grant@0.2.0`. */
+/** Result of `wamn-control:user-role/grant@0.3.0`. */
 export interface UserRoleGrantResult {
   /** `boolean` */
   readonly granted: boolean;
 }
 
-/** What `wamn-control:user-role/grant@0.2.0` calls its result members. */
+/** What `wamn-control:user-role/grant@0.3.0` calls its result members. */
 export const USER_ROLE_GRANT_RESULT_FIELDS: FieldMap = {
   "granted": "granted",
 };
 
 /**
- * Where the release publishes `wamn-control:user-role/grant@0.2.0`.
+ * Where the release publishes `wamn-control:user-role/grant@0.3.0`.
  *
  * Method and template only. The host and base URL are the application's
  * deployment configuration, not this release's facts.
  */
 export const USER_ROLE_GRANT_ROUTE: OperationRoute = {
-  operation: "wamn-control:user-role/grant@0.2.0",
+  operation: "wamn-control:user-role/grant@0.3.0",
   method: "POST",
   template: "/wamn_control/user_role/grant",
   freshOnly: false,
@@ -72,7 +72,7 @@ export const USER_ROLE_GRANT_ROUTE: OperationRoute = {
   },
 };
 
-/** Invoke `wamn-control:user-role/grant@0.2.0` through a transport the application supplies. */
+/** Invoke `wamn-control:user-role/grant@0.3.0` through a transport the application supplies. */
 export async function grant(
   transport: Transport,
   items: readonly UserRoleGrantRequest[],
@@ -86,7 +86,7 @@ export async function grant(
   );
 }
 
-/** Input for `wamn-control:user-role/revoke@0.2.0`. */
+/** Input for `wamn-control:user-role/revoke@0.3.0`. */
 export interface UserRoleRevokeRequest {
   /** `text` */
   requestId: string;
@@ -101,7 +101,7 @@ export interface UserRoleRevokeRequestValue {
   userId: Uuid;
 }
 
-/** What `wamn-control:user-role/revoke@0.2.0` calls its input members. */
+/** What `wamn-control:user-role/revoke@0.3.0` calls its input members. */
 export const USER_ROLE_REVOKE_REQUEST_FIELDS: FieldMap = {
   "request_id": "requestId",
   "value": {
@@ -113,25 +113,25 @@ export const USER_ROLE_REVOKE_REQUEST_FIELDS: FieldMap = {
   },
 };
 
-/** Result of `wamn-control:user-role/revoke@0.2.0`. */
+/** Result of `wamn-control:user-role/revoke@0.3.0`. */
 export interface UserRoleRevokeResult {
   /** `boolean` */
   readonly revoked: boolean;
 }
 
-/** What `wamn-control:user-role/revoke@0.2.0` calls its result members. */
+/** What `wamn-control:user-role/revoke@0.3.0` calls its result members. */
 export const USER_ROLE_REVOKE_RESULT_FIELDS: FieldMap = {
   "revoked": "revoked",
 };
 
 /**
- * Where the release publishes `wamn-control:user-role/revoke@0.2.0`.
+ * Where the release publishes `wamn-control:user-role/revoke@0.3.0`.
  *
  * Method and template only. The host and base URL are the application's
  * deployment configuration, not this release's facts.
  */
 export const USER_ROLE_REVOKE_ROUTE: OperationRoute = {
-  operation: "wamn-control:user-role/revoke@0.2.0",
+  operation: "wamn-control:user-role/revoke@0.3.0",
   method: "POST",
   template: "/wamn_control/user_role/revoke",
   freshOnly: false,
@@ -153,7 +153,7 @@ export const USER_ROLE_REVOKE_ROUTE: OperationRoute = {
   },
 };
 
-/** Invoke `wamn-control:user-role/revoke@0.2.0` through a transport the application supplies. */
+/** Invoke `wamn-control:user-role/revoke@0.3.0` through a transport the application supplies. */
 export async function revoke(
   transport: Transport,
   items: readonly UserRoleRevokeRequest[],

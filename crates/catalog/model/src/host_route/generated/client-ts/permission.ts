@@ -5,7 +5,7 @@
 import type { FieldMap, OperationRoute, Outcome, Transport } from "@wamn/web-runtime";
 import { reviveOutcome, toWire } from "@wamn/web-runtime";
 
-/** Input for `wamn-control:permission/grant@0.2.0`. */
+/** Input for `wamn-control:permission/grant@0.3.0`. */
 export interface PermissionGrantRequest {
   /** `text` */
   requestId: string;
@@ -20,7 +20,7 @@ export interface PermissionGrantRequestValue {
   role: string;
 }
 
-/** What `wamn-control:permission/grant@0.2.0` calls its input members. */
+/** What `wamn-control:permission/grant@0.3.0` calls its input members. */
 export const PERMISSION_GRANT_REQUEST_FIELDS: FieldMap = {
   "request_id": "requestId",
   "value": {
@@ -32,7 +32,7 @@ export const PERMISSION_GRANT_REQUEST_FIELDS: FieldMap = {
   },
 };
 
-/** Result of `wamn-control:permission/grant@0.2.0`. */
+/** Result of `wamn-control:permission/grant@0.3.0`. */
 export interface PermissionGrantResult {
   /** `array` */
   readonly closure: readonly string[];
@@ -40,20 +40,20 @@ export interface PermissionGrantResult {
   readonly rowsAdded: number;
 }
 
-/** What `wamn-control:permission/grant@0.2.0` calls its result members. */
+/** What `wamn-control:permission/grant@0.3.0` calls its result members. */
 export const PERMISSION_GRANT_RESULT_FIELDS: FieldMap = {
   "closure": "closure",
   "rows_added": "rowsAdded",
 };
 
 /**
- * Where the release publishes `wamn-control:permission/grant@0.2.0`.
+ * Where the release publishes `wamn-control:permission/grant@0.3.0`.
  *
  * Method and template only. The host and base URL are the application's
  * deployment configuration, not this release's facts.
  */
 export const PERMISSION_GRANT_ROUTE: OperationRoute = {
-  operation: "wamn-control:permission/grant@0.2.0",
+  operation: "wamn-control:permission/grant@0.3.0",
   method: "POST",
   template: "/wamn_control/permission/grant",
   freshOnly: false,
@@ -78,7 +78,7 @@ export const PERMISSION_GRANT_ROUTE: OperationRoute = {
   },
 };
 
-/** Invoke `wamn-control:permission/grant@0.2.0` through a transport the application supplies. */
+/** Invoke `wamn-control:permission/grant@0.3.0` through a transport the application supplies. */
 export async function grant(
   transport: Transport,
   items: readonly PermissionGrantRequest[],
@@ -92,18 +92,18 @@ export async function grant(
   );
 }
 
-/** Input for `wamn-control:permission/list@0.2.0`. */
+/** Input for `wamn-control:permission/list@0.3.0`. */
 export interface PermissionListRequest {
   /** `text` */
   role: string;
 }
 
-/** What `wamn-control:permission/list@0.2.0` calls its input members. */
+/** What `wamn-control:permission/list@0.3.0` calls its input members. */
 export const PERMISSION_LIST_REQUEST_FIELDS: FieldMap = {
   "role": "role",
 };
 
-/** Result of `wamn-control:permission/list@0.2.0`. */
+/** Result of `wamn-control:permission/list@0.3.0`. */
 export interface PermissionListResult {
   /** `boolean` */
   readonly admin: boolean;
@@ -128,7 +128,7 @@ export interface PermissionListResultOperations {
   readonly served: boolean;
 }
 
-/** What `wamn-control:permission/list@0.2.0` calls its result members. */
+/** What `wamn-control:permission/list@0.3.0` calls its result members. */
 export const PERMISSION_LIST_RESULT_FIELDS: FieldMap = {
   "admin": "admin",
   "operations": {
@@ -146,13 +146,13 @@ export const PERMISSION_LIST_RESULT_FIELDS: FieldMap = {
 };
 
 /**
- * Where the release publishes `wamn-control:permission/list@0.2.0`.
+ * Where the release publishes `wamn-control:permission/list@0.3.0`.
  *
  * Method and template only. The host and base URL are the application's
  * deployment configuration, not this release's facts.
  */
 export const PERMISSION_LIST_ROUTE: OperationRoute = {
-  operation: "wamn-control:permission/list@0.2.0",
+  operation: "wamn-control:permission/list@0.3.0",
   method: "GET",
   template: "/wamn_control/permission/list",
   freshOnly: false,
@@ -173,7 +173,7 @@ export const PERMISSION_LIST_ROUTE: OperationRoute = {
   },
 };
 
-/** Invoke `wamn-control:permission/list@0.2.0` through a transport the application supplies. */
+/** Invoke `wamn-control:permission/list@0.3.0` through a transport the application supplies. */
 export async function list(
   transport: Transport,
   items: readonly PermissionListRequest[],
@@ -187,14 +187,14 @@ export async function list(
   );
 }
 
-/** Input for `wamn-control:permission/mine@0.2.0`. */
+/** Input for `wamn-control:permission/mine@0.3.0`. */
 export interface PermissionMineRequest {
 }
 
-/** What `wamn-control:permission/mine@0.2.0` calls its input members. */
+/** What `wamn-control:permission/mine@0.3.0` calls its input members. */
 export const PERMISSION_MINE_REQUEST_FIELDS: FieldMap = {};
 
-/** Result of `wamn-control:permission/mine@0.2.0`. */
+/** Result of `wamn-control:permission/mine@0.3.0`. */
 export interface PermissionMineResult {
   /** `boolean` */
   readonly admin: boolean;
@@ -202,20 +202,20 @@ export interface PermissionMineResult {
   readonly permissions: readonly string[];
 }
 
-/** What `wamn-control:permission/mine@0.2.0` calls its result members. */
+/** What `wamn-control:permission/mine@0.3.0` calls its result members. */
 export const PERMISSION_MINE_RESULT_FIELDS: FieldMap = {
   "admin": "admin",
   "permissions": "permissions",
 };
 
 /**
- * Where the release publishes `wamn-control:permission/mine@0.2.0`.
+ * Where the release publishes `wamn-control:permission/mine@0.3.0`.
  *
  * Method and template only. The host and base URL are the application's
  * deployment configuration, not this release's facts.
  */
 export const PERMISSION_MINE_ROUTE: OperationRoute = {
-  operation: "wamn-control:permission/mine@0.2.0",
+  operation: "wamn-control:permission/mine@0.3.0",
   method: "GET",
   template: "/wamn_control/permission/mine",
   freshOnly: false,
@@ -234,7 +234,7 @@ export const PERMISSION_MINE_ROUTE: OperationRoute = {
   },
 };
 
-/** Invoke `wamn-control:permission/mine@0.2.0` through a transport the application supplies. */
+/** Invoke `wamn-control:permission/mine@0.3.0` through a transport the application supplies. */
 export async function mine(
   transport: Transport,
   items: readonly PermissionMineRequest[],
@@ -248,7 +248,7 @@ export async function mine(
   );
 }
 
-/** Input for `wamn-control:permission/revoke@0.2.0`. */
+/** Input for `wamn-control:permission/revoke@0.3.0`. */
 export interface PermissionRevokeRequest {
   /** `text` */
   requestId: string;
@@ -263,7 +263,7 @@ export interface PermissionRevokeRequestValue {
   role: string;
 }
 
-/** What `wamn-control:permission/revoke@0.2.0` calls its input members. */
+/** What `wamn-control:permission/revoke@0.3.0` calls its input members. */
 export const PERMISSION_REVOKE_REQUEST_FIELDS: FieldMap = {
   "request_id": "requestId",
   "value": {
@@ -275,25 +275,25 @@ export const PERMISSION_REVOKE_REQUEST_FIELDS: FieldMap = {
   },
 };
 
-/** Result of `wamn-control:permission/revoke@0.2.0`. */
+/** Result of `wamn-control:permission/revoke@0.3.0`. */
 export interface PermissionRevokeResult {
   /** `array` */
   readonly stillRequiredBy: readonly string[];
 }
 
-/** What `wamn-control:permission/revoke@0.2.0` calls its result members. */
+/** What `wamn-control:permission/revoke@0.3.0` calls its result members. */
 export const PERMISSION_REVOKE_RESULT_FIELDS: FieldMap = {
   "still_required_by": "stillRequiredBy",
 };
 
 /**
- * Where the release publishes `wamn-control:permission/revoke@0.2.0`.
+ * Where the release publishes `wamn-control:permission/revoke@0.3.0`.
  *
  * Method and template only. The host and base URL are the application's
  * deployment configuration, not this release's facts.
  */
 export const PERMISSION_REVOKE_ROUTE: OperationRoute = {
-  operation: "wamn-control:permission/revoke@0.2.0",
+  operation: "wamn-control:permission/revoke@0.3.0",
   method: "POST",
   template: "/wamn_control/permission/revoke",
   freshOnly: false,
@@ -316,7 +316,7 @@ export const PERMISSION_REVOKE_ROUTE: OperationRoute = {
   },
 };
 
-/** Invoke `wamn-control:permission/revoke@0.2.0` through a transport the application supplies. */
+/** Invoke `wamn-control:permission/revoke@0.3.0` through a transport the application supplies. */
 export async function revoke(
   transport: Transport,
   items: readonly PermissionRevokeRequest[],

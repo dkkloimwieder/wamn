@@ -523,7 +523,7 @@ async fn application_routes_write_the_rows_of_section_4_6() -> anyhow::Result<()
     assert_eq!(
         (stamp.get::<_, String>(0), stamp.get::<_, String>(1)),
         (
-            "wamn-control:user-role/grant@0.2.0".to_owned(),
+            "wamn-control:user-role/grant@0.3.0".to_owned(),
             first.clone()
         )
     );
@@ -579,7 +579,7 @@ async fn application_routes_write_the_rows_of_section_4_6() -> anyhow::Result<()
     Ok(())
 }
 
-/// `wamn-control:control/mine@0.2.0` on a control host: the control
+/// `wamn-control:control/mine@0.3.0` on a control host: the control
 /// serving root, the control route authenticator and the org's real
 /// `control` login. Only a browser session of a current `project-admin` or
 /// `org-admin` is admitted, and a revoked role refuses the next request.

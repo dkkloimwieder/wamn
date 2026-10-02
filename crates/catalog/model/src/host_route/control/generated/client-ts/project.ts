@@ -5,7 +5,7 @@
 import type { FieldMap, OperationRoute, Outcome, Transport } from "@wamn/web-runtime";
 import { reviveOutcome, toWire } from "@wamn/web-runtime";
 
-/** Input for `wamn-control:project/activate@0.2.0`. */
+/** Input for `wamn-control:project/activate@0.3.0`. */
 export interface ProjectActivateRequest {
   /** `text` */
   requestId: string;
@@ -18,7 +18,7 @@ export interface ProjectActivateRequestValue {
   project: string;
 }
 
-/** What `wamn-control:project/activate@0.2.0` calls its input members. */
+/** What `wamn-control:project/activate@0.3.0` calls its input members. */
 export const PROJECT_ACTIVATE_REQUEST_FIELDS: FieldMap = {
   "request_id": "requestId",
   "value": {
@@ -29,7 +29,7 @@ export const PROJECT_ACTIVATE_REQUEST_FIELDS: FieldMap = {
   },
 };
 
-/** Result of `wamn-control:project/activate@0.2.0`. */
+/** Result of `wamn-control:project/activate@0.3.0`. */
 export interface ProjectActivateResult {
   /** `text` */
   readonly project: string;
@@ -37,20 +37,20 @@ export interface ProjectActivateResult {
   readonly status: string;
 }
 
-/** What `wamn-control:project/activate@0.2.0` calls its result members. */
+/** What `wamn-control:project/activate@0.3.0` calls its result members. */
 export const PROJECT_ACTIVATE_RESULT_FIELDS: FieldMap = {
   "project": "project",
   "status": "status",
 };
 
 /**
- * Where the release publishes `wamn-control:project/activate@0.2.0`.
+ * Where the release publishes `wamn-control:project/activate@0.3.0`.
  *
  * Method and template only. The host and base URL are the application's
  * deployment configuration, not this release's facts.
  */
 export const PROJECT_ACTIVATE_ROUTE: OperationRoute = {
-  operation: "wamn-control:project/activate@0.2.0",
+  operation: "wamn-control:project/activate@0.3.0",
   method: "POST",
   template: "/wamn_control/project/activate",
   freshOnly: false,
@@ -72,7 +72,7 @@ export const PROJECT_ACTIVATE_ROUTE: OperationRoute = {
   },
 };
 
-/** Invoke `wamn-control:project/activate@0.2.0` through a transport the application supplies. */
+/** Invoke `wamn-control:project/activate@0.3.0` through a transport the application supplies. */
 export async function activate(
   transport: Transport,
   items: readonly ProjectActivateRequest[],
@@ -86,7 +86,7 @@ export async function activate(
   );
 }
 
-/** Input for `wamn-control:project/inactivate@0.2.0`. */
+/** Input for `wamn-control:project/inactivate@0.3.0`. */
 export interface ProjectInactivateRequest {
   /** `text` */
   requestId: string;
@@ -99,7 +99,7 @@ export interface ProjectInactivateRequestValue {
   project: string;
 }
 
-/** What `wamn-control:project/inactivate@0.2.0` calls its input members. */
+/** What `wamn-control:project/inactivate@0.3.0` calls its input members. */
 export const PROJECT_INACTIVATE_REQUEST_FIELDS: FieldMap = {
   "request_id": "requestId",
   "value": {
@@ -110,7 +110,7 @@ export const PROJECT_INACTIVATE_REQUEST_FIELDS: FieldMap = {
   },
 };
 
-/** Result of `wamn-control:project/inactivate@0.2.0`. */
+/** Result of `wamn-control:project/inactivate@0.3.0`. */
 export interface ProjectInactivateResult {
   /** `text` */
   readonly project: string;
@@ -118,20 +118,20 @@ export interface ProjectInactivateResult {
   readonly status: string;
 }
 
-/** What `wamn-control:project/inactivate@0.2.0` calls its result members. */
+/** What `wamn-control:project/inactivate@0.3.0` calls its result members. */
 export const PROJECT_INACTIVATE_RESULT_FIELDS: FieldMap = {
   "project": "project",
   "status": "status",
 };
 
 /**
- * Where the release publishes `wamn-control:project/inactivate@0.2.0`.
+ * Where the release publishes `wamn-control:project/inactivate@0.3.0`.
  *
  * Method and template only. The host and base URL are the application's
  * deployment configuration, not this release's facts.
  */
 export const PROJECT_INACTIVATE_ROUTE: OperationRoute = {
-  operation: "wamn-control:project/inactivate@0.2.0",
+  operation: "wamn-control:project/inactivate@0.3.0",
   method: "POST",
   template: "/wamn_control/project/inactivate",
   freshOnly: false,
@@ -153,7 +153,7 @@ export const PROJECT_INACTIVATE_ROUTE: OperationRoute = {
   },
 };
 
-/** Invoke `wamn-control:project/inactivate@0.2.0` through a transport the application supplies. */
+/** Invoke `wamn-control:project/inactivate@0.3.0` through a transport the application supplies. */
 export async function inactivate(
   transport: Transport,
   items: readonly ProjectInactivateRequest[],
@@ -167,32 +167,32 @@ export async function inactivate(
   );
 }
 
-/** Input for `wamn-control:project/list@0.2.0`. */
+/** Input for `wamn-control:project/list@0.3.0`. */
 export interface ProjectListRequest {
 }
 
-/** What `wamn-control:project/list@0.2.0` calls its input members. */
+/** What `wamn-control:project/list@0.3.0` calls its input members. */
 export const PROJECT_LIST_REQUEST_FIELDS: FieldMap = {};
 
-/** Result of `wamn-control:project/list@0.2.0`. */
+/** Result of `wamn-control:project/list@0.3.0`. */
 export interface ProjectListResult {
   /** `array` */
   readonly projects: readonly string[];
 }
 
-/** What `wamn-control:project/list@0.2.0` calls its result members. */
+/** What `wamn-control:project/list@0.3.0` calls its result members. */
 export const PROJECT_LIST_RESULT_FIELDS: FieldMap = {
   "projects": "projects",
 };
 
 /**
- * Where the release publishes `wamn-control:project/list@0.2.0`.
+ * Where the release publishes `wamn-control:project/list@0.3.0`.
  *
  * Method and template only. The host and base URL are the application's
  * deployment configuration, not this release's facts.
  */
 export const PROJECT_LIST_ROUTE: OperationRoute = {
-  operation: "wamn-control:project/list@0.2.0",
+  operation: "wamn-control:project/list@0.3.0",
   method: "GET",
   template: "/wamn_control/project/list",
   freshOnly: false,
@@ -211,7 +211,7 @@ export const PROJECT_LIST_ROUTE: OperationRoute = {
   },
 };
 
-/** Invoke `wamn-control:project/list@0.2.0` through a transport the application supplies. */
+/** Invoke `wamn-control:project/list@0.3.0` through a transport the application supplies. */
 export async function list(
   transport: Transport,
   items: readonly ProjectListRequest[],

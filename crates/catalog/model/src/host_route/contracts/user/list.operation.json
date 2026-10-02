@@ -1,8 +1,8 @@
 {
-  "operation": "wamn-control:user/list@0.2.0",
+  "operation": "wamn-control:user/list@0.3.0",
   "type": "get",
   "label": "Users",
-  "grant": "wamn-control:user/list@0.2.0",
+  "grant": "wamn-control:user/list@0.3.0",
   "permission_token": "user.list",
   "result": "one",
   "transaction": "implicit",

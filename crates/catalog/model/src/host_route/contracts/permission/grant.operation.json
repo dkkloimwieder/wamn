@@ -1,8 +1,8 @@
 {
-  "operation": "wamn-control:permission/grant@0.2.0",
+  "operation": "wamn-control:permission/grant@0.3.0",
   "type": "command",
   "label": "Grant a permission",
-  "grant": "wamn-control:permission/grant@0.2.0",
+  "grant": "wamn-control:permission/grant@0.3.0",
   "permission_token": "permission.grant",
   "result": "one",
   "transaction": "explicit_per_input",

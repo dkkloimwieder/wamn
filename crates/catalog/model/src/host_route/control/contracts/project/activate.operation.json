@@ -1,8 +1,8 @@
 {
-  "operation": "wamn-control:project/activate@0.2.0",
+  "operation": "wamn-control:project/activate@0.3.0",
   "type": "command",
   "label": "Activate every environment of a project",
-  "grant": "wamn-control:project/activate@0.2.0",
+  "grant": "wamn-control:project/activate@0.3.0",
   "permission_token": "project.activate",
   "result": "one",
   "transaction": "explicit_per_input",

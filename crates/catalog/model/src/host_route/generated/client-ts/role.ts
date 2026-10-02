@@ -5,7 +5,7 @@
 import type { FieldMap, OperationRoute, Outcome, Transport } from "@wamn/web-runtime";
 import { reviveOutcome, toWire } from "@wamn/web-runtime";
 
-/** Input for `wamn-control:role/create@0.2.0`. */
+/** Input for `wamn-control:role/create@0.3.0`. */
 export interface RoleCreateRequest {
   /** `text` */
   requestId: string;
@@ -18,7 +18,7 @@ export interface RoleCreateRequestValue {
   role: string;
 }
 
-/** What `wamn-control:role/create@0.2.0` calls its input members. */
+/** What `wamn-control:role/create@0.3.0` calls its input members. */
 export const ROLE_CREATE_REQUEST_FIELDS: FieldMap = {
   "request_id": "requestId",
   "value": {
@@ -29,25 +29,25 @@ export const ROLE_CREATE_REQUEST_FIELDS: FieldMap = {
   },
 };
 
-/** Result of `wamn-control:role/create@0.2.0`. */
+/** Result of `wamn-control:role/create@0.3.0`. */
 export interface RoleCreateResult {
   /** `boolean` */
   readonly created: boolean;
 }
 
-/** What `wamn-control:role/create@0.2.0` calls its result members. */
+/** What `wamn-control:role/create@0.3.0` calls its result members. */
 export const ROLE_CREATE_RESULT_FIELDS: FieldMap = {
   "created": "created",
 };
 
 /**
- * Where the release publishes `wamn-control:role/create@0.2.0`.
+ * Where the release publishes `wamn-control:role/create@0.3.0`.
  *
  * Method and template only. The host and base URL are the application's
  * deployment configuration, not this release's facts.
  */
 export const ROLE_CREATE_ROUTE: OperationRoute = {
-  operation: "wamn-control:role/create@0.2.0",
+  operation: "wamn-control:role/create@0.3.0",
   method: "POST",
   template: "/wamn_control/role/create",
   freshOnly: false,
@@ -68,7 +68,7 @@ export const ROLE_CREATE_ROUTE: OperationRoute = {
   },
 };
 
-/** Invoke `wamn-control:role/create@0.2.0` through a transport the application supplies. */
+/** Invoke `wamn-control:role/create@0.3.0` through a transport the application supplies. */
 export async function create(
   transport: Transport,
   items: readonly RoleCreateRequest[],
@@ -82,7 +82,7 @@ export async function create(
   );
 }
 
-/** Input for `wamn-control:role/delete@0.2.0`. */
+/** Input for `wamn-control:role/delete@0.3.0`. */
 export interface RoleDeleteRequest {
   /** `text` */
   requestId: string;
@@ -95,7 +95,7 @@ export interface RoleDeleteRequestValue {
   role: string;
 }
 
-/** What `wamn-control:role/delete@0.2.0` calls its input members. */
+/** What `wamn-control:role/delete@0.3.0` calls its input members. */
 export const ROLE_DELETE_REQUEST_FIELDS: FieldMap = {
   "request_id": "requestId",
   "value": {
@@ -106,25 +106,25 @@ export const ROLE_DELETE_REQUEST_FIELDS: FieldMap = {
   },
 };
 
-/** Result of `wamn-control:role/delete@0.2.0`. */
+/** Result of `wamn-control:role/delete@0.3.0`. */
 export interface RoleDeleteResult {
   /** `boolean` */
   readonly deleted: boolean;
 }
 
-/** What `wamn-control:role/delete@0.2.0` calls its result members. */
+/** What `wamn-control:role/delete@0.3.0` calls its result members. */
 export const ROLE_DELETE_RESULT_FIELDS: FieldMap = {
   "deleted": "deleted",
 };
 
 /**
- * Where the release publishes `wamn-control:role/delete@0.2.0`.
+ * Where the release publishes `wamn-control:role/delete@0.3.0`.
  *
  * Method and template only. The host and base URL are the application's
  * deployment configuration, not this release's facts.
  */
 export const ROLE_DELETE_ROUTE: OperationRoute = {
-  operation: "wamn-control:role/delete@0.2.0",
+  operation: "wamn-control:role/delete@0.3.0",
   method: "POST",
   template: "/wamn_control/role/delete",
   freshOnly: false,
@@ -145,7 +145,7 @@ export const ROLE_DELETE_ROUTE: OperationRoute = {
   },
 };
 
-/** Invoke `wamn-control:role/delete@0.2.0` through a transport the application supplies. */
+/** Invoke `wamn-control:role/delete@0.3.0` through a transport the application supplies. */
 export async function delete_(
   transport: Transport,
   items: readonly RoleDeleteRequest[],
@@ -159,32 +159,32 @@ export async function delete_(
   );
 }
 
-/** Input for `wamn-control:role/list@0.2.0`. */
+/** Input for `wamn-control:role/list@0.3.0`. */
 export interface RoleListRequest {
 }
 
-/** What `wamn-control:role/list@0.2.0` calls its input members. */
+/** What `wamn-control:role/list@0.3.0` calls its input members. */
 export const ROLE_LIST_REQUEST_FIELDS: FieldMap = {};
 
-/** Result of `wamn-control:role/list@0.2.0`. */
+/** Result of `wamn-control:role/list@0.3.0`. */
 export interface RoleListResult {
   /** `array` */
   readonly roles: readonly string[];
 }
 
-/** What `wamn-control:role/list@0.2.0` calls its result members. */
+/** What `wamn-control:role/list@0.3.0` calls its result members. */
 export const ROLE_LIST_RESULT_FIELDS: FieldMap = {
   "roles": "roles",
 };
 
 /**
- * Where the release publishes `wamn-control:role/list@0.2.0`.
+ * Where the release publishes `wamn-control:role/list@0.3.0`.
  *
  * Method and template only. The host and base URL are the application's
  * deployment configuration, not this release's facts.
  */
 export const ROLE_LIST_ROUTE: OperationRoute = {
-  operation: "wamn-control:role/list@0.2.0",
+  operation: "wamn-control:role/list@0.3.0",
   method: "GET",
   template: "/wamn_control/role/list",
   freshOnly: false,
@@ -203,7 +203,7 @@ export const ROLE_LIST_ROUTE: OperationRoute = {
   },
 };
 
-/** Invoke `wamn-control:role/list@0.2.0` through a transport the application supplies. */
+/** Invoke `wamn-control:role/list@0.3.0` through a transport the application supplies. */
 export async function list(
   transport: Transport,
   items: readonly RoleListRequest[],

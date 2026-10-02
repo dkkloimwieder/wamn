@@ -1,8 +1,8 @@
 {
-  "operation": "wamn-control:environment/activate@0.2.0",
+  "operation": "wamn-control:environment/activate@0.3.0",
   "type": "command",
   "label": "Activate an environment",
-  "grant": "wamn-control:environment/activate@0.2.0",
+  "grant": "wamn-control:environment/activate@0.3.0",
   "permission_token": "environment.activate",
   "result": "one",
   "transaction": "explicit_per_input",

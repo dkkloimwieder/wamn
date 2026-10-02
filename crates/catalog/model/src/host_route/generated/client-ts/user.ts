@@ -5,14 +5,14 @@
 import type { FieldMap, OperationRoute, Outcome, Transport, Uuid } from "@wamn/web-runtime";
 import { reviveOutcome, toWire } from "@wamn/web-runtime";
 
-/** Input for `wamn-control:user/list@0.2.0`. */
+/** Input for `wamn-control:user/list@0.3.0`. */
 export interface UserListRequest {
 }
 
-/** What `wamn-control:user/list@0.2.0` calls its input members. */
+/** What `wamn-control:user/list@0.3.0` calls its input members. */
 export const USER_LIST_REQUEST_FIELDS: FieldMap = {};
 
-/** Result of `wamn-control:user/list@0.2.0`. */
+/** Result of `wamn-control:user/list@0.3.0`. */
 export interface UserListResult {
   /** `array` */
   readonly users: readonly UserListResultUsers[];
@@ -31,7 +31,7 @@ export interface UserListResultUsers {
   readonly roles: readonly string[];
 }
 
-/** What `wamn-control:user/list@0.2.0` calls its result members. */
+/** What `wamn-control:user/list@0.3.0` calls its result members. */
 export const USER_LIST_RESULT_FIELDS: FieldMap = {
   "users": {
     member: "users",
@@ -46,13 +46,13 @@ export const USER_LIST_RESULT_FIELDS: FieldMap = {
 };
 
 /**
- * Where the release publishes `wamn-control:user/list@0.2.0`.
+ * Where the release publishes `wamn-control:user/list@0.3.0`.
  *
  * Method and template only. The host and base URL are the application's
  * deployment configuration, not this release's facts.
  */
 export const USER_LIST_ROUTE: OperationRoute = {
-  operation: "wamn-control:user/list@0.2.0",
+  operation: "wamn-control:user/list@0.3.0",
   method: "GET",
   template: "/wamn_control/user/list",
   freshOnly: false,
@@ -71,7 +71,7 @@ export const USER_LIST_ROUTE: OperationRoute = {
   },
 };
 
-/** Invoke `wamn-control:user/list@0.2.0` through a transport the application supplies. */
+/** Invoke `wamn-control:user/list@0.3.0` through a transport the application supplies. */
 export async function list(
   transport: Transport,
   items: readonly UserListRequest[],

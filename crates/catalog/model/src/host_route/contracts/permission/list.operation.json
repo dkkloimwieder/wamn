@@ -1,8 +1,8 @@
 {
-  "operation": "wamn-control:permission/list@0.2.0",
+  "operation": "wamn-control:permission/list@0.3.0",
   "type": "get",
   "label": "Permissions of a role",
-  "grant": "wamn-control:permission/list@0.2.0",
+  "grant": "wamn-control:permission/list@0.3.0",
   "permission_token": "permission.list",
   "result": "one",
   "transaction": "implicit",

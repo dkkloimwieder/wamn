@@ -5,7 +5,7 @@
 import type { FieldMap, OperationRoute, Outcome, Transport, Uuid } from "@wamn/web-runtime";
 import { reviveOutcome, toWire } from "@wamn/web-runtime";
 
-/** Input for `wamn-control:user/activate@0.2.0`. */
+/** Input for `wamn-control:user/activate@0.3.0`. */
 export interface UserActivateRequest {
   /** `text` */
   requestId: string;
@@ -18,7 +18,7 @@ export interface UserActivateRequestValue {
   principalId: Uuid;
 }
 
-/** What `wamn-control:user/activate@0.2.0` calls its input members. */
+/** What `wamn-control:user/activate@0.3.0` calls its input members. */
 export const USER_ACTIVATE_REQUEST_FIELDS: FieldMap = {
   "request_id": "requestId",
   "value": {
@@ -29,7 +29,7 @@ export const USER_ACTIVATE_REQUEST_FIELDS: FieldMap = {
   },
 };
 
-/** Result of `wamn-control:user/activate@0.2.0`. */
+/** Result of `wamn-control:user/activate@0.3.0`. */
 export interface UserActivateResult {
   /** `uuid` */
   readonly principalId: Uuid;
@@ -37,20 +37,20 @@ export interface UserActivateResult {
   readonly status: string;
 }
 
-/** What `wamn-control:user/activate@0.2.0` calls its result members. */
+/** What `wamn-control:user/activate@0.3.0` calls its result members. */
 export const USER_ACTIVATE_RESULT_FIELDS: FieldMap = {
   "principal_id": "principalId",
   "status": "status",
 };
 
 /**
- * Where the release publishes `wamn-control:user/activate@0.2.0`.
+ * Where the release publishes `wamn-control:user/activate@0.3.0`.
  *
  * Method and template only. The host and base URL are the application's
  * deployment configuration, not this release's facts.
  */
 export const USER_ACTIVATE_ROUTE: OperationRoute = {
-  operation: "wamn-control:user/activate@0.2.0",
+  operation: "wamn-control:user/activate@0.3.0",
   method: "POST",
   template: "/wamn_control/user/activate",
   freshOnly: false,
@@ -71,7 +71,7 @@ export const USER_ACTIVATE_ROUTE: OperationRoute = {
   },
 };
 
-/** Invoke `wamn-control:user/activate@0.2.0` through a transport the application supplies. */
+/** Invoke `wamn-control:user/activate@0.3.0` through a transport the application supplies. */
 export async function activate(
   transport: Transport,
   items: readonly UserActivateRequest[],
@@ -85,7 +85,7 @@ export async function activate(
   );
 }
 
-/** Input for `wamn-control:user/deactivate@0.2.0`. */
+/** Input for `wamn-control:user/deactivate@0.3.0`. */
 export interface UserDeactivateRequest {
   /** `text` */
   requestId: string;
@@ -98,7 +98,7 @@ export interface UserDeactivateRequestValue {
   principalId: Uuid;
 }
 
-/** What `wamn-control:user/deactivate@0.2.0` calls its input members. */
+/** What `wamn-control:user/deactivate@0.3.0` calls its input members. */
 export const USER_DEACTIVATE_REQUEST_FIELDS: FieldMap = {
   "request_id": "requestId",
   "value": {
@@ -109,7 +109,7 @@ export const USER_DEACTIVATE_REQUEST_FIELDS: FieldMap = {
   },
 };
 
-/** Result of `wamn-control:user/deactivate@0.2.0`. */
+/** Result of `wamn-control:user/deactivate@0.3.0`. */
 export interface UserDeactivateResult {
   /** `uuid` */
   readonly principalId: Uuid;
@@ -117,20 +117,20 @@ export interface UserDeactivateResult {
   readonly status: string;
 }
 
-/** What `wamn-control:user/deactivate@0.2.0` calls its result members. */
+/** What `wamn-control:user/deactivate@0.3.0` calls its result members. */
 export const USER_DEACTIVATE_RESULT_FIELDS: FieldMap = {
   "principal_id": "principalId",
   "status": "status",
 };
 
 /**
- * Where the release publishes `wamn-control:user/deactivate@0.2.0`.
+ * Where the release publishes `wamn-control:user/deactivate@0.3.0`.
  *
  * Method and template only. The host and base URL are the application's
  * deployment configuration, not this release's facts.
  */
 export const USER_DEACTIVATE_ROUTE: OperationRoute = {
-  operation: "wamn-control:user/deactivate@0.2.0",
+  operation: "wamn-control:user/deactivate@0.3.0",
   method: "POST",
   template: "/wamn_control/user/deactivate",
   freshOnly: false,
@@ -152,7 +152,7 @@ export const USER_DEACTIVATE_ROUTE: OperationRoute = {
   },
 };
 
-/** Invoke `wamn-control:user/deactivate@0.2.0` through a transport the application supplies. */
+/** Invoke `wamn-control:user/deactivate@0.3.0` through a transport the application supplies. */
 export async function deactivate(
   transport: Transport,
   items: readonly UserDeactivateRequest[],
@@ -166,7 +166,7 @@ export async function deactivate(
   );
 }
 
-/** Input for `wamn-control:user/invite@0.2.0`. */
+/** Input for `wamn-control:user/invite@0.3.0`. */
 export interface UserInviteRequest {
   /** `text` */
   requestId: string;
@@ -194,7 +194,7 @@ export interface UserInviteRequestValueMemberships {
   project: string;
 }
 
-/** What `wamn-control:user/invite@0.2.0` calls its input members. */
+/** What `wamn-control:user/invite@0.3.0` calls its input members. */
 export const USER_INVITE_REQUEST_FIELDS: FieldMap = {
   "request_id": "requestId",
   "value": {
@@ -215,7 +215,7 @@ export const USER_INVITE_REQUEST_FIELDS: FieldMap = {
   },
 };
 
-/** Result of `wamn-control:user/invite@0.2.0`. */
+/** Result of `wamn-control:user/invite@0.3.0`. */
 export interface UserInviteResult {
   /** `boolean` */
   readonly enrolled: boolean;
@@ -225,7 +225,7 @@ export interface UserInviteResult {
   readonly principalId: Uuid;
 }
 
-/** What `wamn-control:user/invite@0.2.0` calls its result members. */
+/** What `wamn-control:user/invite@0.3.0` calls its result members. */
 export const USER_INVITE_RESULT_FIELDS: FieldMap = {
   "enrolled": "enrolled",
   "invited": "invited",
@@ -233,13 +233,13 @@ export const USER_INVITE_RESULT_FIELDS: FieldMap = {
 };
 
 /**
- * Where the release publishes `wamn-control:user/invite@0.2.0`.
+ * Where the release publishes `wamn-control:user/invite@0.3.0`.
  *
  * Method and template only. The host and base URL are the application's
  * deployment configuration, not this release's facts.
  */
 export const USER_INVITE_ROUTE: OperationRoute = {
-  operation: "wamn-control:user/invite@0.2.0",
+  operation: "wamn-control:user/invite@0.3.0",
   method: "POST",
   template: "/wamn_control/user/invite",
   freshOnly: false,
@@ -264,7 +264,7 @@ export const USER_INVITE_ROUTE: OperationRoute = {
   },
 };
 
-/** Invoke `wamn-control:user/invite@0.2.0` through a transport the application supplies. */
+/** Invoke `wamn-control:user/invite@0.3.0` through a transport the application supplies. */
 export async function invite(
   transport: Transport,
   items: readonly UserInviteRequest[],
@@ -278,14 +278,14 @@ export async function invite(
   );
 }
 
-/** Input for `wamn-control:user/list@0.2.0`. */
+/** Input for `wamn-control:user/list@0.3.0`. */
 export interface UserListRequest {
 }
 
-/** What `wamn-control:user/list@0.2.0` calls its input members. */
+/** What `wamn-control:user/list@0.3.0` calls its input members. */
 export const USER_LIST_REQUEST_FIELDS: FieldMap = {};
 
-/** Result of `wamn-control:user/list@0.2.0`. */
+/** Result of `wamn-control:user/list@0.3.0`. */
 export interface UserListResult {
   /** `array` */
   readonly users: readonly UserListResultUsers[];
@@ -304,7 +304,7 @@ export interface UserListResultUsers {
   readonly status: string;
 }
 
-/** What `wamn-control:user/list@0.2.0` calls its result members. */
+/** What `wamn-control:user/list@0.3.0` calls its result members. */
 export const USER_LIST_RESULT_FIELDS: FieldMap = {
   "users": {
     member: "users",
@@ -319,13 +319,13 @@ export const USER_LIST_RESULT_FIELDS: FieldMap = {
 };
 
 /**
- * Where the release publishes `wamn-control:user/list@0.2.0`.
+ * Where the release publishes `wamn-control:user/list@0.3.0`.
  *
  * Method and template only. The host and base URL are the application's
  * deployment configuration, not this release's facts.
  */
 export const USER_LIST_ROUTE: OperationRoute = {
-  operation: "wamn-control:user/list@0.2.0",
+  operation: "wamn-control:user/list@0.3.0",
   method: "GET",
   template: "/wamn_control/user/list",
   freshOnly: false,
@@ -344,7 +344,7 @@ export const USER_LIST_ROUTE: OperationRoute = {
   },
 };
 
-/** Invoke `wamn-control:user/list@0.2.0` through a transport the application supplies. */
+/** Invoke `wamn-control:user/list@0.3.0` through a transport the application supplies. */
 export async function list(
   transport: Transport,
   items: readonly UserListRequest[],
