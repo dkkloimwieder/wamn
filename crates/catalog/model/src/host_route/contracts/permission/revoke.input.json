@@ -1,0 +1,24 @@
+{
+  "fields": [
+    {
+      "path": "request_id",
+      "type": "text",
+      "nullable": false,
+      "values": []
+    },
+    {
+      "path": "value.role",
+      "type": "text",
+      "nullable": false,
+      "values": [],
+      "label": "Role"
+    },
+    {
+      "path": "value.operation",
+      "type": "text",
+      "nullable": false,
+      "values": [],
+      "label": "Operation"
+    }
+  ]
+}

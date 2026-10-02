@@ -14,7 +14,7 @@ use hyper_util::rt::TokioIo;
 use tokio::net::TcpListener;
 use tokio::task::JoinHandle;
 use wamn_engine::flow_http_routing::{FLOW_HTTP_ROUTING_ID, FlowHttpRouting};
-use wamn_engine::router_delivery::{ROUTER_DELIVERY_ID, RouterDelivery};
+use wamn_engine::router_delivery::{ROUTER_DELIVERY_ID, RouteDelivery, RouterDelivery};
 use wamn_execution_host::RouterDeliveryBridge;
 use wash_runtime::engine::InstancePolicy;
 use wash_runtime::engine::ctx::{Ctx, SharedCtx};
@@ -136,45 +136,15 @@ impl LocalApplication {
             caller_role,
             component_digests,
         } = assembly::assemble(config).await?;
-        let listener = TcpListener::bind("127.0.0.1:0")
-            .await
-            .context("bind the local application HTTP endpoint")?;
-        let address = listener.local_addr()?;
-        let task = tokio::spawn(async move {
-            let mut requests = tokio::task::JoinSet::new();
-            loop {
-                let Ok((stream, _)) = listener.accept().await else {
-                    break;
-                };
-                let runtime = runtime.clone();
-                requests.spawn(async move {
-                    let service = service_fn(move |request: Request<hyper::body::Incoming>| {
-                        let runtime = runtime.clone();
-                        async move {
-                            let request = request
-                                .map(|body| body.map_err(|_| ErrorCode::ConnectionTerminated));
-                            stream_request(
-                                runtime.engine.as_ref(),
-                                &runtime.flow_http,
-                                Arc::clone(&runtime.routing),
-                                Arc::clone(&runtime.bridge),
-                                request,
-                            )
-                            .await
-                        }
-                    });
-                    if let Err(error) = http1::Builder::new()
-                        .serve_connection(TokioIo::new(stream), service)
-                        .await
-                    {
-                        tracing::debug!(%error, "local application HTTP connection ended");
-                    }
-                });
-                while requests.try_join_next().is_some() {}
-            }
-        });
+        let (endpoint, task) = serve(
+            Arc::clone(&runtime.engine),
+            runtime.flow_http.clone(),
+            Arc::clone(&runtime.routing),
+            Arc::clone(&runtime.bridge) as Arc<dyn RouteDelivery>,
+        )
+        .await?;
         Ok(Self {
-            endpoint: format!("http://{address}"),
+            endpoint,
             route_host,
             bearer,
             caller_secret_path,
@@ -199,6 +169,55 @@ impl Drop for LocalApplication {
     fn drop(&mut self) {
         self.task.abort();
     }
+}
+
+/// Serve the shipped flow-http component on a loopback port, with a fresh
+/// store for every request, in front of `delivery`. Returns the endpoint and
+/// the task that serves it.
+pub async fn serve(
+    engine: Arc<wash_runtime::engine::Engine>,
+    flow_http: Component,
+    routing: Arc<FlowHttpRouting>,
+    delivery: Arc<dyn RouteDelivery>,
+) -> anyhow::Result<(String, JoinHandle<()>)> {
+    let listener = TcpListener::bind("127.0.0.1:0")
+        .await
+        .context("bind the local application HTTP endpoint")?;
+    let address = listener.local_addr()?;
+    let task = tokio::spawn(async move {
+        let mut requests = tokio::task::JoinSet::new();
+        loop {
+            let Ok((stream, _)) = listener.accept().await else {
+                break;
+            };
+            let engine = Arc::clone(&engine);
+            let flow_http = flow_http.clone();
+            let routing = Arc::clone(&routing);
+            let delivery = Arc::clone(&delivery);
+            requests.spawn(async move {
+                let service = service_fn(move |request: Request<hyper::body::Incoming>| {
+                    let engine = Arc::clone(&engine);
+                    let flow_http = flow_http.clone();
+                    let routing = Arc::clone(&routing);
+                    let delivery = Arc::clone(&delivery);
+                    async move {
+                        let request =
+                            request.map(|body| body.map_err(|_| ErrorCode::ConnectionTerminated));
+                        stream_request(engine.as_ref(), &flow_http, routing, delivery, request)
+                            .await
+                    }
+                });
+                if let Err(error) = http1::Builder::new()
+                    .serve_connection(TokioIo::new(stream), service)
+                    .await
+                {
+                    tracing::debug!(%error, "local application HTTP connection ended");
+                }
+            });
+            while requests.try_join_next().is_some() {}
+        }
+    });
+    Ok((format!("http://{address}"), task))
 }
 
 /// Put a relative request's `Host` on its URI, as the wash-runtime ingress does.
@@ -232,7 +251,7 @@ async fn instantiate(
     engine: &wash_runtime::engine::Engine,
     flow_http: &Component,
     routing: Arc<FlowHttpRouting>,
-    bridge: Arc<RouterDeliveryBridge>,
+    bridge: Arc<dyn RouteDelivery>,
 ) -> anyhow::Result<(Store<SharedCtx>, Service)> {
     let raw = engine.inner();
     let mut linker = Linker::new(raw);
@@ -316,7 +335,7 @@ pub async fn stream_request<B>(
     engine: &wash_runtime::engine::Engine,
     flow_http: &Component,
     routing: Arc<FlowHttpRouting>,
-    bridge: Arc<RouterDeliveryBridge>,
+    bridge: Arc<dyn RouteDelivery>,
     request: Request<B>,
 ) -> anyhow::Result<Response<FrameBody>>
 where

@@ -1,0 +1,11 @@
+{
+  "class": "one",
+  "fields": [
+    {
+      "path": "deleted",
+      "type": "boolean",
+      "nullable": false,
+      "values": []
+    }
+  ]
+}

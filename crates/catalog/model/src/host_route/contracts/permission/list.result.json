@@ -1,0 +1,53 @@
+{
+  "class": "one",
+  "fields": [
+    {
+      "path": "role",
+      "type": "text",
+      "nullable": false,
+      "values": []
+    },
+    {
+      "path": "admin",
+      "type": "boolean",
+      "nullable": false,
+      "values": []
+    },
+    {
+      "path": "operations[].operation",
+      "type": "text",
+      "nullable": false,
+      "values": []
+    },
+    {
+      "path": "operations[].served",
+      "type": "boolean",
+      "nullable": false,
+      "values": []
+    },
+    {
+      "path": "operations[].grantable",
+      "type": "boolean",
+      "nullable": false,
+      "values": []
+    },
+    {
+      "path": "operations[].admin_only",
+      "type": "boolean",
+      "nullable": false,
+      "values": []
+    },
+    {
+      "path": "operations[].selected",
+      "type": "boolean",
+      "nullable": false,
+      "values": []
+    },
+    {
+      "path": "operations[].required_by[]",
+      "type": "text",
+      "nullable": false,
+      "values": []
+    }
+  ]
+}

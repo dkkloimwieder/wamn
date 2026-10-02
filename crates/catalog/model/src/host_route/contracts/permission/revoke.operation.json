@@ -1,0 +1,10 @@
+{
+  "operation": "wamn-control:permission/revoke@0.1.0",
+  "type": "command",
+  "label": "Revoke a permission",
+  "grant": "wamn-control:permission/revoke@0.1.0",
+  "permission_token": "permission.revoke",
+  "result": "one",
+  "transaction": "explicit_per_input",
+  "visibility": "public"
+}

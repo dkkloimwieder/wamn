@@ -1,0 +1,11 @@
+{
+  "fields": [
+    {
+      "path": "role",
+      "type": "text",
+      "nullable": false,
+      "values": [],
+      "label": "Role"
+    }
+  ]
+}

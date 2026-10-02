@@ -580,6 +580,86 @@ fn expected_files(package: &GeneratedPackage) -> Result<BTreeMap<PathBuf, &[u8]>
         .collect()
 }
 
+/// Write or check the generated TypeScript client of the application host
+/// routes (docs/plan/platform-ui.md §4.6).
+///
+/// `contract_root` is the directory of the control contract: its authored
+/// `contracts/` hold one operation, input, result and errors file per route,
+/// and its `generated/` is the one owned output set, as a package's is. The
+/// routes come from the catalog's application set, so each operation reaches
+/// the path the host serves it at.
+pub fn materialize_host_route_client(mode: MaterializeMode, contract_root: &Path) -> Result<()> {
+    let contracts = read_contract_files(&contract_root.join("contracts"))?;
+    let routes = wamn_catalog::HostRouteSet::Application
+        .attachments()
+        .map(|(_, attachment)| {
+            let template = attachment.definition["route"]["path"]
+                .as_str()
+                .context("a host route names its path")?
+                .to_owned();
+            Ok((
+                attachment.operation.clone(),
+                crate::client_ir::RouteIr {
+                    method: String::new(),
+                    template,
+                    input_schema: None,
+                    terminal_operation: Some(attachment.operation.clone()),
+                    direct: true,
+                    response: crate::client_ir::ResponseIr::default(),
+                    replay: None,
+                },
+            ))
+        })
+        .collect::<Result<BTreeMap<_, _>>>()?;
+    let ir = ClientContractIr::from_release_contracts(
+        wamn_catalog::host_route_package(),
+        &contracts,
+        &routes,
+    )
+    .context("project the client-contract IR of the host routes")?;
+    for route in routes.keys() {
+        ensure!(
+            ir.models
+                .iter()
+                .flat_map(|model| &model.operations)
+                .any(|operation| &operation.operation == route),
+            "the host route {route} has no contract"
+        );
+    }
+    let mut files = emit_ts_client(&ir).context("emit the TypeScript client bindings")?;
+    files.push(emit_ts_package_json(
+        wamn_catalog::host_route_client_package(),
+        wamn_catalog::host_route_version(),
+    ));
+    let mut expected = BTreeMap::new();
+    for file in &files {
+        let relative = Path::new(file.path())
+            .strip_prefix("generated")
+            .with_context(|| format!("client binding escaped output root: {}", file.path()))?;
+        expected.insert(relative.to_owned(), file.bytes());
+    }
+    let output_root = contract_root.join("generated");
+    match mode {
+        MaterializeMode::Write => write_files(&output_root, &expected),
+        MaterializeMode::Check => check_files(&output_root, &expected),
+    }
+}
+
+/// Every file under `root`, keyed by its path relative to `root`.
+fn read_contract_files(root: &Path) -> Result<BTreeMap<String, Vec<u8>>> {
+    let mut files = BTreeMap::new();
+    for relative in existing_files(root)? {
+        let key = relative
+            .to_str()
+            .with_context(|| format!("contract path is not UTF-8: {}", relative.display()))?
+            .to_owned();
+        let bytes = fs::read(root.join(&relative))
+            .with_context(|| format!("read contract {}", root.join(&relative).display()))?;
+        files.insert(key, bytes);
+    }
+    Ok(files)
+}
+
 fn write_files(output_root: &Path, expected: &BTreeMap<PathBuf, &[u8]>) -> Result<()> {
     refuse_unexpected(output_root, expected)?;
     for (relative, bytes) in expected {

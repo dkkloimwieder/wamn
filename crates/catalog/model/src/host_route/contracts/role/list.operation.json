@@ -1,0 +1,10 @@
+{
+  "operation": "wamn-control:role/list@0.1.0",
+  "type": "get",
+  "label": "Roles",
+  "grant": "wamn-control:role/list@0.1.0",
+  "permission_token": "role.list",
+  "result": "one",
+  "transaction": "implicit",
+  "visibility": "public"
+}

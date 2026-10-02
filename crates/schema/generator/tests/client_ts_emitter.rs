@@ -634,3 +634,18 @@ fn a_described_member_carries_its_description_and_the_rest_are_unchanged() {
         "a label is for a screen, and the bindings state none"
     );
 }
+
+/// The committed client of the application host routes is the one their
+/// contracts generate (docs/plan/platform-ui.md §4.6). After a contract
+/// change, run `cargo run -p wamn-schema-generator --example
+/// materialize_host_route_client -- write`.
+#[test]
+fn the_host_route_client_is_current() {
+    let root =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../catalog/model/src/host_route");
+    wamn_schema_generator::materialize_host_route_client(
+        wamn_schema_generator::MaterializeMode::Check,
+        &root,
+    )
+    .expect("the committed host route client is current");
+}

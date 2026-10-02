@@ -1,0 +1,35 @@
+{
+  "cases": [
+    {
+      "literal": "invalid_input",
+      "from": [
+        "malformed_input"
+      ],
+      "detail": {
+        "required": [
+          "field"
+        ]
+      }
+    },
+    {
+      "literal": "role_not_found",
+      "from": "transaction_invariant",
+      "detail": {
+        "required": [
+          "field"
+        ]
+      },
+      "text": "This role does not exist."
+    },
+    {
+      "literal": "permission_denied",
+      "from": "permission_denied",
+      "detail": {
+        "required": [
+          "operation"
+        ]
+      }
+    }
+  ],
+  "closed": true
+}

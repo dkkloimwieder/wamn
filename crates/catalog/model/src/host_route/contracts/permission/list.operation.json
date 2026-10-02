@@ -1,0 +1,10 @@
+{
+  "operation": "wamn-control:permission/list@0.1.0",
+  "type": "get",
+  "label": "Permissions of a role",
+  "grant": "wamn-control:permission/list@0.1.0",
+  "permission_token": "permission.list",
+  "result": "one",
+  "transaction": "implicit",
+  "visibility": "public"
+}

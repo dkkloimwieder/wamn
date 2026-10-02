@@ -1,0 +1,11 @@
+{
+  "class": "one",
+  "fields": [
+    {
+      "path": "revoked",
+      "type": "boolean",
+      "nullable": false,
+      "values": []
+    }
+  ]
+}

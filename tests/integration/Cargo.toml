@@ -58,6 +58,12 @@ wasmtime-wasi = { workspace = true }
 wasmtime-wasi-http = { workspace = true }
 
 [dev-dependencies]
+# The session fixture of the runtime tests, which control_client_live includes.
+base64 = { workspace = true }
+rcgen = { workspace = true }
+ring = { workspace = true }
+rustls = { workspace = true, features = ["aws_lc_rs"] }
+tokio-rustls = { workspace = true }
 wasm-encoder = { workspace = true, features = ["wasmparser"] }
 wasmparser = { workspace = true }
 async-trait = { workspace = true }

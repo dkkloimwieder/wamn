@@ -1,0 +1,11 @@
+{
+  "class": "one",
+  "fields": [
+    {
+      "path": "roles[]",
+      "type": "text",
+      "nullable": false,
+      "values": []
+    }
+  ]
+}

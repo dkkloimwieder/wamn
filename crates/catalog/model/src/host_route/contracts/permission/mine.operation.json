@@ -1,0 +1,10 @@
+{
+  "operation": "wamn-control:permission/mine@0.1.0",
+  "type": "get",
+  "label": "My permissions",
+  "grant": "wamn-control:permission/mine@0.1.0",
+  "permission_token": "permission.mine",
+  "result": "one",
+  "transaction": "implicit",
+  "visibility": "public"
+}

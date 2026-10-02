@@ -1,0 +1,17 @@
+{
+  "class": "one",
+  "fields": [
+    {
+      "path": "rows_added",
+      "type": "int32",
+      "nullable": false,
+      "values": []
+    },
+    {
+      "path": "closure[]",
+      "type": "text",
+      "nullable": false,
+      "values": []
+    }
+  ]
+}

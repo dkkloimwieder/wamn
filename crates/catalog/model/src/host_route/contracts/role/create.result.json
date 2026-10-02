@@ -1,0 +1,11 @@
+{
+  "class": "one",
+  "fields": [
+    {
+      "path": "created",
+      "type": "boolean",
+      "nullable": false,
+      "values": []
+    }
+  ]
+}

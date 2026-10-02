@@ -26,7 +26,14 @@ use crate::{AttachmentType, OperationType, PAT_AUTHENTICATION_MODE, SESSION_AUTH
 #[serde(deny_unknown_fields)]
 struct ControlContract {
     package: ControlPackage,
+    client_package: ControlClientPackage,
     routes: ControlRoutes,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ControlClientPackage {
+    name: String,
 }
 
 #[derive(Deserialize)]
@@ -51,6 +58,17 @@ static CONTRACT: LazyLock<ControlContract> = LazyLock::new(|| {
 /// The package of every host route. No application package has this id.
 pub fn host_route_package() -> &'static str {
     &CONTRACT.package.id
+}
+
+/// The authored version of the host route contract.
+pub fn host_route_version() -> &'static str {
+    &CONTRACT.package.version
+}
+
+/// The package name of the generated TypeScript client of the application
+/// routes, as an application's `client_package` names its client.
+pub fn host_route_client_package() -> &'static str {
+    &CONTRACT.client_package.name
 }
 
 /// Whether a stable operation reference or sealed operation id names a host

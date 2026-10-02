@@ -1,0 +1,10 @@
+{
+  "operation": "wamn-control:user-role/revoke@0.1.0",
+  "type": "command",
+  "label": "Take a role from a user",
+  "grant": "wamn-control:user-role/revoke@0.1.0",
+  "permission_token": "user_role.revoke",
+  "result": "one",
+  "transaction": "explicit_per_input",
+  "visibility": "public"
+}

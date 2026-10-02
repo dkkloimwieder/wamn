@@ -1,0 +1,11 @@
+{
+  "class": "one",
+  "fields": [
+    {
+      "path": "still_required_by[]",
+      "type": "text",
+      "nullable": false,
+      "values": []
+    }
+  ]
+}

@@ -1,0 +1,65 @@
+{
+  "cases": [
+    {
+      "literal": "invalid_input",
+      "from": [
+        "malformed_input"
+      ],
+      "detail": {
+        "required": [
+          "field"
+        ]
+      }
+    },
+    {
+      "literal": "admin_fixed",
+      "from": "transaction_invariant",
+      "detail": {
+        "required": [
+          "field"
+        ]
+      },
+      "text": "The admin role is built in. It holds every operation, and it cannot be created, deleted or given a permission."
+    },
+    {
+      "literal": "role_not_found",
+      "from": "transaction_invariant",
+      "detail": {
+        "required": [
+          "field"
+        ]
+      },
+      "text": "This role does not exist."
+    },
+    {
+      "literal": "operation_not_served",
+      "from": "transaction_invariant",
+      "detail": {
+        "required": [
+          "field"
+        ]
+      },
+      "text": "The current release does not serve this operation."
+    },
+    {
+      "literal": "operation_not_grantable",
+      "from": "transaction_invariant",
+      "detail": {
+        "required": [
+          "field"
+        ]
+      },
+      "text": "This operation is fixed to admin or to every member, so no role takes it."
+    },
+    {
+      "literal": "permission_denied",
+      "from": "permission_denied",
+      "detail": {
+        "required": [
+          "operation"
+        ]
+      }
+    }
+  ],
+  "closed": true
+}

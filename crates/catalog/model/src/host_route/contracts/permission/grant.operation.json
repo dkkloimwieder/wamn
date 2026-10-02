@@ -1,0 +1,10 @@
+{
+  "operation": "wamn-control:permission/grant@0.1.0",
+  "type": "command",
+  "label": "Grant a permission",
+  "grant": "wamn-control:permission/grant@0.1.0",
+  "permission_token": "permission.grant",
+  "result": "one",
+  "transaction": "explicit_per_input",
+  "visibility": "public"
+}

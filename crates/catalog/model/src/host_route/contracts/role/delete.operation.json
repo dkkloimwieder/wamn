@@ -1,0 +1,10 @@
+{
+  "operation": "wamn-control:role/delete@0.1.0",
+  "type": "command",
+  "label": "Delete a role",
+  "grant": "wamn-control:role/delete@0.1.0",
+  "permission_token": "role.delete",
+  "result": "one",
+  "transaction": "explicit_per_input",
+  "visibility": "public"
+}

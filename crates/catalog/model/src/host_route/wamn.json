@@ -3,6 +3,9 @@
     "id": "wamn_control",
     "version": "0.1.0"
   },
+  "client_package": {
+    "name": "@wamn/control-client"
+  },
   "routes": {
     "path_prefix": "/wamn_control",
     "id_prefix": "wamn-control"

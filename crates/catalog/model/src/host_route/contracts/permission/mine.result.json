@@ -1,0 +1,17 @@
+{
+  "class": "one",
+  "fields": [
+    {
+      "path": "admin",
+      "type": "boolean",
+      "nullable": false,
+      "values": []
+    },
+    {
+      "path": "permissions[]",
+      "type": "text",
+      "nullable": false,
+      "values": []
+    }
+  ]
+}

@@ -1,0 +1,45 @@
+{
+  "cases": [
+    {
+      "literal": "invalid_input",
+      "from": [
+        "malformed_input"
+      ],
+      "detail": {
+        "required": [
+          "field"
+        ]
+      }
+    },
+    {
+      "literal": "user_not_found",
+      "from": "transaction_invariant",
+      "detail": {
+        "required": [
+          "field"
+        ]
+      },
+      "text": "The application has no such user."
+    },
+    {
+      "literal": "admin_covered",
+      "from": "transaction_invariant",
+      "detail": {
+        "required": [
+          "field"
+        ]
+      },
+      "text": "The user holds project-admin or org-admin, so admin stays. Revoke that first."
+    },
+    {
+      "literal": "permission_denied",
+      "from": "permission_denied",
+      "detail": {
+        "required": [
+          "operation"
+        ]
+      }
+    }
+  ],
+  "closed": true
+}

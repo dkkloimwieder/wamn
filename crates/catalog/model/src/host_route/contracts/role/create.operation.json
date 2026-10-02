@@ -1,0 +1,10 @@
+{
+  "operation": "wamn-control:role/create@0.1.0",
+  "type": "command",
+  "label": "Create a role",
+  "grant": "wamn-control:role/create@0.1.0",
+  "permission_token": "role.create",
+  "result": "one",
+  "transaction": "explicit_per_input",
+  "visibility": "public"
+}

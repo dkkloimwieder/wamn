@@ -1,0 +1,11 @@
+{
+  "class": "one",
+  "fields": [
+    {
+      "path": "granted",
+      "type": "boolean",
+      "nullable": false,
+      "values": []
+    }
+  ]
+}
