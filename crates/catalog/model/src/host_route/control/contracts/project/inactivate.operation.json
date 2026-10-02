@@ -1,0 +1,10 @@
+{
+  "operation": "wamn-control:project/inactivate@0.2.0",
+  "type": "command",
+  "label": "Inactivate every environment of a project",
+  "grant": "wamn-control:project/inactivate@0.2.0",
+  "permission_token": "project.inactivate",
+  "result": "one",
+  "transaction": "explicit_per_input",
+  "visibility": "public"
+}

@@ -867,3 +867,212 @@ async fn admin_writes_reach_the_application_rows_of_every_environment() -> anyho
     let _ = std::fs::remove_dir_all(&logins);
     Ok(())
 }
+
+/// The system status of each environment of the org, and the status row of
+/// each project database, or `none` without one.
+async fn statuses(admin: &Client, billing: &Client, shop: &Client) -> Vec<String> {
+    let mut statuses: Vec<String> = admin
+        .query(
+            "SELECT 'system ' || project || '/' || env || ' ' || status \
+               FROM registry.project_envs WHERE org = $1 ORDER BY project, env",
+            &[&ORG],
+        )
+        .await
+        .expect("read the system statuses")
+        .iter()
+        .map(|row| row.get(0))
+        .collect();
+    for (name, target) in [("billing", billing), ("shop", shop)] {
+        let row = target
+            .query_opt("SELECT status FROM app_system.environment", &[])
+            .await
+            .expect("read the status row");
+        let status: String = row.map_or_else(|| "none".to_owned(), |row| row.get(0));
+        statuses.push(format!("row {name} {status}"));
+    }
+    statuses
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn status_routes_mirror_the_status_into_each_environment_leaves_first() -> anyhow::Result<()>
+{
+    let mut postgres = wamn_test_postgres::start(&[])?;
+    let test_database = postgres.create_database("control_status")?;
+    let admin_url = test_database.url();
+    let admin = connect(admin_url).await?;
+    let control_url = install(&admin, admin_url).await?;
+    let (logins, billing, shop) = environments(&admin, admin_url, "status").await?;
+    admin
+        .execute(
+            "SELECT set_config('app.user_id', $1, false)",
+            &[&PlatformComponent::Provisioning.principal_id().to_string()],
+        )
+        .await?;
+    let mut ids = Vec::new();
+    for (email, name, org_admin) in [
+        ("boss@example.test", "Boss", true),
+        ("ann@example.test", "Ann", false),
+    ] {
+        let user = create_or_reuse_user(&admin, email, name)
+            .await?
+            .principal_id;
+        let grants = MemberGrants {
+            org_admin,
+            project_admins: if org_admin {
+                Vec::new()
+            } else {
+                vec!["billing".to_owned()]
+            },
+            ..MemberGrants::default()
+        };
+        invite_member(&admin, &user, ORG, &grants).await?;
+        ids.push(user);
+    }
+    let [boss, ann]: [PrincipalId; 2] = ids.try_into().expect("two users");
+    let (boss, ann) = (boss.as_str(), ann.as_str());
+    let delivery = HostRouteDelivery::new(
+        Arc::new(LoadedRelease::control_root()),
+        HostRouteHandlers::Control {
+            control: Arc::new(connect(&control_url).await?),
+            writer: Arc::new(tokio::sync::Mutex::new(connect(&control_url).await?)),
+            identity: None,
+            administration: Some(logins.clone()),
+            org: ORG.to_owned(),
+        },
+        None,
+    );
+    let billing_dev = json!({"project": "billing", "env": "dev"});
+    let shop_project = json!({"project": "shop"});
+    assert_eq!(
+        statuses(&admin, &billing, &shop).await,
+        [
+            "system billing/dev active",
+            "system shop/dev active",
+            "row billing none",
+            "row shop none"
+        ],
+        "an environment without a status row is active"
+    );
+
+    // A project-admin of billing is not an org-admin.
+    assert_eq!(
+        call(
+            &delivery,
+            "environment/inactivate",
+            ann,
+            billing_dev.clone()
+        )
+        .await,
+        Err("permission denied wamn-control:environment/inactivate@0.2.0".to_owned())
+    );
+    assert_eq!(
+        call(
+            &delivery,
+            "environment/inactivate",
+            boss,
+            json!({"project": "billing", "env": "prod"})
+        )
+        .await,
+        Err(refused("environment_not_found", &json!({"field": "env"})))
+    );
+    assert_eq!(
+        call(
+            &delivery,
+            "project/inactivate",
+            boss,
+            json!({"project": "nope"})
+        )
+        .await,
+        Err(refused("project_not_found", &json!({"field": "project"})))
+    );
+
+    // One environment, then a whole project, and back.
+    assert_eq!(
+        call(
+            &delivery,
+            "environment/inactivate",
+            boss,
+            billing_dev.clone()
+        )
+        .await,
+        Ok(json!({"project": "billing", "env": "dev", "status": "inactive"}))
+    );
+    assert_eq!(
+        call(&delivery, "project/inactivate", boss, shop_project.clone()).await,
+        Ok(json!({"project": "shop", "status": "inactive"}))
+    );
+    assert_eq!(
+        statuses(&admin, &billing, &shop).await,
+        [
+            "system billing/dev inactive",
+            "system shop/dev inactive",
+            "row billing inactive",
+            "row shop inactive"
+        ]
+    );
+    assert_eq!(
+        call(&delivery, "environment/activate", boss, billing_dev.clone()).await,
+        Ok(json!({"project": "billing", "env": "dev", "status": "active"}))
+    );
+    assert_eq!(
+        statuses(&admin, &billing, &shop).await,
+        [
+            "system billing/dev active",
+            "system shop/dev inactive",
+            "row billing active",
+            "row shop inactive"
+        ]
+    );
+
+    // An activation commits the system row first, so a failed environment
+    // leaves it active and its row inactive.
+    let shop_key = logins.join("shop--dev");
+    let shop_login = std::fs::read_to_string(&shop_key)?;
+    std::fs::write(&shop_key, "postgres://nobody:wrong@127.0.0.1:1/none")?;
+    assert_eq!(
+        call(&delivery, "project/activate", boss, shop_project.clone()).await,
+        Err(refused(
+            "application_write_incomplete",
+            &json!({"environment": "shop/dev", "completed": []})
+        ))
+    );
+    assert_eq!(
+        statuses(&admin, &billing, &shop).await,
+        [
+            "system billing/dev active",
+            "system shop/dev active",
+            "row billing active",
+            "row shop inactive"
+        ],
+        "an activation commits the system row before the environment"
+    );
+    std::fs::write(&shop_key, &shop_login)?;
+    assert_eq!(
+        call(&delivery, "project/activate", boss, shop_project).await,
+        Ok(json!({"project": "shop", "status": "active"}))
+    );
+
+    // An inactivation writes the environment first, so a failed environment
+    // leaves the system row active.
+    let billing_key = logins.join("billing--dev");
+    std::fs::write(&billing_key, "postgres://nobody:wrong@127.0.0.1:1/none")?;
+    assert_eq!(
+        call(&delivery, "environment/inactivate", boss, billing_dev).await,
+        Err(refused(
+            "application_write_incomplete",
+            &json!({"environment": "billing/dev", "completed": []})
+        ))
+    );
+    assert_eq!(
+        statuses(&admin, &billing, &shop).await,
+        [
+            "system billing/dev active",
+            "system shop/dev active",
+            "row billing active",
+            "row shop active"
+        ],
+        "an inactivation commits the system row after every environment"
+    );
+    let _ = std::fs::remove_dir_all(&logins);
+    Ok(())
+}

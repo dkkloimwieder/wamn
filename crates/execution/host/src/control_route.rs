@@ -18,6 +18,11 @@
 //! A revoke or a deactivation writes the environments first and commits its
 //! system transaction last, so its refusals come before any application row
 //! changes. The route reports success only when every environment is done.
+//!
+//! The status routes mirror the status of each environment into its row of
+//! `app_system.environment` in the same way (§5.4): an inactivation writes
+//! the environments first and commits the system rows last, and an
+//! activation commits the system rows first.
 
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -32,15 +37,17 @@ use wamn_control_provision::control_administration_key;
 use wamn_engine::router_delivery::{DeliveryError, PermissionDenial};
 use wamn_identity_client::{PatIssuerConfig, UserRefused, create_user, send_invitation};
 use wamn_platform_identity::application::{
-    ApplicationUser, environment_tenant, remove_admin, remove_user, write_admin, write_user,
+    ApplicationUser, environment_tenant, remove_admin, remove_user, write_admin,
+    write_environment_status, write_user,
 };
 use wamn_platform_identity::control::{
     control_projects, is_org_admin, is_project_admin, org_projects,
 };
 use wamn_platform_identity::org::{
-    MemberGrants, deactivate_org_membership, grant_member, grant_org_admin, grant_project_admin,
-    invite_member, org_environments, org_users, project_envs, project_members,
-    reactivate_org_membership, revoke_member, revoke_org_admin, revoke_project_admin, user_contact,
+    EnvironmentStatus, MemberGrants, deactivate_org_membership, grant_member, grant_org_admin,
+    grant_project_admin, invite_member, org_environments, org_users, project_envs, project_members,
+    reactivate_org_membership, revoke_member, revoke_org_admin, revoke_project_admin,
+    set_environment_status, status_environments, user_contact,
 };
 use wamn_platform_identity::{
     IdentityError, IdentityErrorType, IdentityRefusal, PrincipalId, check_user_contact,
@@ -145,6 +152,13 @@ struct MemberRequest {
     project: String,
     env: String,
     principal_id: String,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct EnvironmentRequest {
+    project: String,
+    env: String,
 }
 
 #[derive(Deserialize)]
@@ -359,6 +373,38 @@ impl ControlRoutes<'_> {
                     "project_admin": false,
                 }))
             }
+            HostHandler::EnvironmentActivate | HostHandler::EnvironmentInactivate => {
+                let request: EnvironmentRequest = parse(payload)?;
+                let status = if attachment.route.handler == HostHandler::EnvironmentActivate {
+                    EnvironmentStatus::Active
+                } else {
+                    EnvironmentStatus::Inactive
+                };
+                self.set_status(
+                    attachment,
+                    caller,
+                    &request.project,
+                    Some(&request.env),
+                    status,
+                )
+                .await?;
+                Ok(json!({
+                    "project": request.project,
+                    "env": request.env,
+                    "status": status.as_str(),
+                }))
+            }
+            HostHandler::ProjectActivate | HostHandler::ProjectInactivate => {
+                let request: ProjectRequest = parse(payload)?;
+                let status = if attachment.route.handler == HostHandler::ProjectActivate {
+                    EnvironmentStatus::Active
+                } else {
+                    EnvironmentStatus::Inactive
+                };
+                self.set_status(attachment, caller, &request.project, None, status)
+                    .await?;
+                Ok(json!({ "project": request.project, "status": status.as_str() }))
+            }
             handler => Err(Refusal::Failed(anyhow::anyhow!(
                 "the control host does not serve the host handler {handler:?}"
             ))),
@@ -449,6 +495,91 @@ impl ControlRoutes<'_> {
         }))
     }
 
+    /// Write the status of one environment, or of every environment of a
+    /// project, in the system rows and in each environment's row. An
+    /// inactivation writes the environments first and commits the system
+    /// rows last. An activation commits the system rows first.
+    async fn set_status(
+        &self,
+        attachment: &HostAttachment,
+        caller: &PrincipalId,
+        project: &str,
+        env: Option<&str>,
+        status: EnvironmentStatus,
+    ) -> Result<(), Refusal> {
+        let mut writer = self.writer.lock().await;
+        let transaction = self.begin(&mut writer, attachment, caller).await?;
+        let envs = status_environments(&transaction, self.org, project, env).await?;
+        let environments: Vec<(String, String)> = envs
+            .iter()
+            .map(|env| (project.to_owned(), env.clone()))
+            .collect();
+        if status == EnvironmentStatus::Inactive {
+            self.write_statuses(attachment, caller, &environments, status)
+                .await?;
+        }
+        set_environment_status(&transaction, self.org, project, &envs, status).await?;
+        transaction.commit().await?;
+        if status == EnvironmentStatus::Active {
+            self.write_statuses(attachment, caller, &environments, status)
+                .await?;
+        }
+        Ok(())
+    }
+
+    /// Write the status row of each environment, one transaction each, in
+    /// order. When an environment fails, the route refuses and names the
+    /// environments that completed.
+    async fn write_statuses(
+        &self,
+        attachment: &HostAttachment,
+        caller: &PrincipalId,
+        environments: &[(String, String)],
+        status: EnvironmentStatus,
+    ) -> Result<(), Refusal> {
+        let logins = self.logins(environments)?;
+        let mut completed: Vec<String> = Vec::new();
+        for ((project, env), url) in environments.iter().zip(logins) {
+            if let Err(error) = write_status(&url, attachment, caller, status).await {
+                tracing::warn!(
+                    error = format!("{error:#}"),
+                    project,
+                    env,
+                    reference = attachment.reference,
+                    "an environment status write failed"
+                );
+                return Err(incomplete(project, env, &completed));
+            }
+            completed.push(format!("{project}/{env}"));
+        }
+        Ok(())
+    }
+
+    /// The administration login of each environment, all read before the
+    /// first write.
+    fn logins(&self, environments: &[(String, String)]) -> Result<Vec<String>, Refusal> {
+        if environments.is_empty() {
+            return Ok(Vec::new());
+        }
+        let directory = self.administration.ok_or_else(|| {
+            Refusal::Failed(anyhow::anyhow!(
+                "the control host has no administration logins"
+            ))
+        })?;
+        let mut logins = Vec::with_capacity(environments.len());
+        for (project, env) in environments {
+            let path = directory.join(control_administration_key(project, env));
+            match std::fs::read_to_string(&path) {
+                Ok(url) => logins.push(url.trim().to_owned()),
+                Err(error) => {
+                    tracing::warn!(%error, path = %path.display(), "no administration login");
+                    return Err(incomplete(project, env, &[]));
+                }
+            }
+        }
+        Ok(logins)
+    }
+
     /// Every environment of the org, or of one project, with one write.
     async fn environments(
         &self,
@@ -476,11 +607,6 @@ impl ControlRoutes<'_> {
         if environments.is_empty() {
             return Ok(());
         }
-        let directory = self.administration.ok_or_else(|| {
-            Refusal::Failed(anyhow::anyhow!(
-                "the control host has no administration logins"
-            ))
-        })?;
         let grants = environments
             .iter()
             .any(|(_, write)| *write <= ApplicationWrite::Admin);
@@ -489,17 +615,11 @@ impl ControlRoutes<'_> {
         } else {
             None
         };
-        let mut logins = Vec::with_capacity(environments.len());
-        for ((project, env), _) in environments {
-            let path = directory.join(control_administration_key(project, env));
-            match std::fs::read_to_string(&path) {
-                Ok(url) => logins.push(url.trim().to_owned()),
-                Err(error) => {
-                    tracing::warn!(%error, path = %path.display(), "no administration login");
-                    return Err(incomplete(project, env, &[]));
-                }
-            }
-        }
+        let scopes: Vec<(String, String)> = environments
+            .iter()
+            .map(|(environment, _)| environment.clone())
+            .collect();
+        let logins = self.logins(&scopes)?;
         let mut completed: Vec<String> = Vec::new();
         for (((project, env), write), url) in environments.iter().zip(logins) {
             let user = contact
@@ -626,6 +746,38 @@ async fn write_application(
             }
             (write, None) => anyhow::bail!("{write:?} needs the user's email and display name"),
         }
+        transaction.commit().await?;
+        anyhow::Ok(())
+    }
+    .await;
+    drop(client);
+    let _ = connection.await;
+    result
+}
+
+/// One environment's status row, in its own transaction on its
+/// administration login.
+async fn write_status(
+    url: &str,
+    attachment: &HostAttachment,
+    caller: &PrincipalId,
+    status: EnvironmentStatus,
+) -> anyhow::Result<()> {
+    let (mut client, connection) = tokio_postgres::connect(url, NoTls)
+        .await
+        .context("connect the administration login")?;
+    let connection = tokio::spawn(connection);
+    let result = async {
+        let transaction = client.transaction().await?;
+        transaction
+            .execute(
+                "SELECT pg_catalog.set_config('app.user_id', $1, true), \
+                 pg_catalog.set_config('app.operation', $2, true)",
+                &[&caller.as_str(), &attachment.operation],
+            )
+            .await?;
+        let tenant = environment_tenant(&transaction).await?;
+        write_environment_status(&transaction, &tenant, status).await?;
         transaction.commit().await?;
         anyhow::Ok(())
     }

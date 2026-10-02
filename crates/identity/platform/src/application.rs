@@ -40,6 +40,12 @@ const DROP_USER_ROLE_SQL: &str = "DELETE FROM app_system.user_roles \
 const DROP_USER_ROW_SQL: &str = "DELETE FROM app_system.users \
     WHERE tenant_id = $1 AND id = $2::text::uuid AND type = 'user'";
 
+/// The status row of the environment. No row means active.
+const ENVIRONMENT_STATUS_ROW_SQL: &str = "INSERT INTO app_system.environment \
+    (tenant_id, status) VALUES ($1, $2) \
+    ON CONFLICT (tenant_id) DO UPDATE SET status = EXCLUDED.status \
+    WHERE app_system.environment.status <> EXCLUDED.status";
+
 /// The user an application row names.
 #[derive(Debug, Clone, Copy)]
 pub struct ApplicationUser<'a> {
@@ -74,6 +80,20 @@ pub async fn environment_tenant(
             ),
         )),
     }
+}
+
+/// Write the status row of the environment, the mirror of its system row
+/// that its host reads (docs/plan/platform-ui.md §5.4).
+pub async fn write_environment_status(
+    client: &(impl GenericClient + Sync),
+    tenant: &str,
+    status: crate::org::EnvironmentStatus,
+) -> Result<(), IdentityError> {
+    client
+        .execute(ENVIRONMENT_STATUS_ROW_SQL, &[&tenant, &status.as_str()])
+        .await
+        .map_err(|error| database_error(&error))?;
+    Ok(())
 }
 
 /// Write the user row of `user`, and keep a row that exists.

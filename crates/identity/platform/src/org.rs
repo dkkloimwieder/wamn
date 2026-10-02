@@ -527,6 +527,93 @@ pub async fn org_environments(
         .collect())
 }
 
+/// The status of a project environment (docs/plan/platform-ui.md §5.4).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EnvironmentStatus {
+    /// Identity offers its audience and its host serves its routes.
+    Active,
+    /// Identity offers no audience and its host answers
+    /// `environment-inactive`. CDC, data and grants stay.
+    Inactive,
+}
+
+impl EnvironmentStatus {
+    /// The stored value.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Active => "active",
+            Self::Inactive => "inactive",
+        }
+    }
+}
+
+/// The environments of one project of `org` that a status route changes:
+/// one environment when `env` names it, or every environment of the project.
+/// A project or an environment outside the org is refused before anything
+/// is written.
+pub async fn status_environments(
+    client: &(impl GenericClient + Sync),
+    org: &str,
+    project: &str,
+    env: Option<&str>,
+) -> Result<Vec<String>, IdentityError> {
+    let org = checked_scope_segment("org", org)?;
+    let project = checked_scope_segment("project", project)?;
+    let Some(env) = env else {
+        let in_org: bool = client
+            .query_one(PROJECT_IN_ORG_SQL, &[&org, &project])
+            .await
+            .map_err(|error| database_error(&error))?
+            .get(0);
+        if !in_org {
+            return Err(IdentityError::refused(
+                IdentityErrorType::NotFound,
+                IdentityRefusal::ProjectNotFound,
+                format!("project {project} is not a project of org {org}"),
+            ));
+        }
+        return project_envs(client, &org, &project).await;
+    };
+    let env = checked_scope_segment("env", env)?;
+    let found: bool = client
+        .query_one(ENV_IN_PROJECT_SQL, &[&org, &project, &env])
+        .await
+        .map_err(|error| database_error(&error))?
+        .get(0);
+    if !found {
+        return Err(IdentityError::refused(
+            IdentityErrorType::NotFound,
+            IdentityRefusal::EnvironmentNotFound,
+            format!("environment {project}/{env} is not an environment of org {org}"),
+        ));
+    }
+    Ok(vec![env])
+}
+
+const ENVIRONMENT_STATUS_SQL: &str = "UPDATE registry.project_envs SET status = $4 \
+    WHERE org = $1 AND project = $2 AND env = ANY($3)";
+
+/// Write the status of the named environments of one project of `org`.
+/// The control routes read them with [`status_environments`] first.
+pub async fn set_environment_status(
+    client: &(impl GenericClient + Sync),
+    org: &str,
+    project: &str,
+    environments: &[String],
+    status: EnvironmentStatus,
+) -> Result<(), IdentityError> {
+    let org = checked_scope_segment("org", org)?;
+    let project = checked_scope_segment("project", project)?;
+    client
+        .execute(
+            ENVIRONMENT_STATUS_SQL,
+            &[&org, &project, &environments, &status.as_str()],
+        )
+        .await
+        .map_err(|error| database_error(&error))?;
+    Ok(())
+}
+
 const USER_CONTACT_SQL: &str = "SELECT email, display_name FROM identity.principals \
     WHERE id = $1::text::uuid AND type = 'user'";
 

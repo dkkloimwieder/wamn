@@ -1,0 +1,17 @@
+{
+  "class": "one",
+  "fields": [
+    {
+      "path": "project",
+      "type": "text",
+      "nullable": false,
+      "values": []
+    },
+    {
+      "path": "status",
+      "type": "text",
+      "nullable": false,
+      "values": []
+    }
+  ]
+}

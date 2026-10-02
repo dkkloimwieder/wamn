@@ -1,0 +1,24 @@
+{
+  "fields": [
+    {
+      "path": "request_id",
+      "type": "text",
+      "nullable": false,
+      "values": []
+    },
+    {
+      "path": "value.project",
+      "type": "text",
+      "nullable": false,
+      "values": [],
+      "label": "Project"
+    },
+    {
+      "path": "value.env",
+      "type": "text",
+      "nullable": false,
+      "values": [],
+      "label": "Environment"
+    }
+  ]
+}

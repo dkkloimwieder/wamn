@@ -150,6 +150,14 @@ pub enum HostHandler {
     ProjectAdminGrant,
     /// Revoke `project-admin` in one project.
     ProjectAdminRevoke,
+    /// Make one environment active (docs/plan/platform-ui.md §5.4).
+    EnvironmentActivate,
+    /// Make one environment inactive.
+    EnvironmentInactivate,
+    /// Make every environment of one project active.
+    ProjectActivate,
+    /// Make every environment of one project inactive.
+    ProjectInactivate,
 }
 
 /// Who may call one host route, beside a valid credential.
@@ -350,6 +358,34 @@ const ROUTES: &[HostRoute] = &[
         type_: OperationType::Command,
         authority: HostRouteAuthority::ProjectAdmin,
         handler: HostHandler::ProjectAdminRevoke,
+    },
+    HostRoute {
+        set: HostRouteSet::Control,
+        operation: "environment.activate",
+        type_: OperationType::Command,
+        authority: HostRouteAuthority::OrgAdmin,
+        handler: HostHandler::EnvironmentActivate,
+    },
+    HostRoute {
+        set: HostRouteSet::Control,
+        operation: "environment.inactivate",
+        type_: OperationType::Command,
+        authority: HostRouteAuthority::OrgAdmin,
+        handler: HostHandler::EnvironmentInactivate,
+    },
+    HostRoute {
+        set: HostRouteSet::Control,
+        operation: "project.activate",
+        type_: OperationType::Command,
+        authority: HostRouteAuthority::OrgAdmin,
+        handler: HostHandler::ProjectActivate,
+    },
+    HostRoute {
+        set: HostRouteSet::Control,
+        operation: "project.inactivate",
+        type_: OperationType::Command,
+        authority: HostRouteAuthority::OrgAdmin,
+        handler: HostHandler::ProjectInactivate,
     },
 ];
 
