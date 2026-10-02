@@ -190,7 +190,8 @@ BEGIN
     'connection_requirements', 'deployment_attestations',
     'effective_release_heads', 'effective_release_packages',
     'effective_releases', 'package_artifacts', 'package_migrations',
-    'packages', 'tenant_environments'
+    'packages', 'qualifications', 'release_selections',
+    'tenant_environments'
   ]::text[], format('catalog table list drifted: %s', catalog_tables);
   SELECT array_agg(tablename ORDER BY tablename) INTO run_tables
     FROM pg_tables WHERE schemaname = 'wamn_run';

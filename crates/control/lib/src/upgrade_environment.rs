@@ -878,7 +878,11 @@ impl Run {
         let pushed = crate::delivery::publication::publish(&qualification, &request)
             .await
             .context(StopRun("the qualified publication refused the bytes"))?;
-        let selected = crate::delivery::deployment::select(&qualification, &request).await?;
+        let selected = crate::delivery::deployment::select(
+            &crate::delivery::selection::QualificationSource::File(qualification.clone()),
+            &request,
+        )
+        .await?;
         let outputs = BTreeMap::from([
             ("published".to_owned(), format!("{pushed:?}")),
             (

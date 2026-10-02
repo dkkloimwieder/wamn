@@ -146,6 +146,8 @@ Every candidate carries three images: `--host-image`, `--identity-image` and `--
 
 A qualification proves bytes, not names. The provisioning worker of [Platform UI](platform-ui.md) §5.5 selects a release with a qualification whose package set and image digests equal the candidate's, whatever tenant and environment it ran under, and the select records which qualification it reused. No head is written without a qualification, and `promote` is not that path (owner ruling of 2026-10-02 on `wamn-zua8.3`, Platform UI §9 question 35).
 
+Reuse checks package set and image digests only; tenant, release id and manifest bytes are names (owner ruling of 2026-10-02 on `wamn-zua8.3`). The package set is the exact `(package_id, version, component_digest)` triples of the release. The image digests are the `@sha256` digests of the host, identity and gates images, and the registry names do not count. A select with a qualification file records a passing file in `catalog.qualifications`, keyed by the SHA-256 of the file. A select without a file takes the three images as `@sha256` references and reuses a recorded qualification with an equal key. Every select writes one row of `catalog.release_selections`.
+
 ## 5. Issues
 
 All issues land on one branch. They change the workspace and the kind cases only. No issue runs against wamn-dev.

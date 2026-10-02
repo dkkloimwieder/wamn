@@ -14,8 +14,9 @@ use tokio_postgres::{Client, NoTls, Transaction};
 use wamn_catalog::{ServingManifest, ServingRelease, WiringActivationFacts};
 use wamn_runtime::release_manifest_source::ReleaseManifestSource;
 
+use super::selection::{self, QualificationSource};
 use super::{Qualification, publication};
-use crate::print_release_env::ReleaseSnapshot;
+use crate::print_release_env::{ReleaseSnapshot, lookup_release_snapshot};
 use crate::push_release_manifest::PushReleaseManifestRequest;
 
 const SELECT_HEAD: &str = "SELECT effective_release_id FROM catalog.effective_release_heads WHERE tenant_id = $1 AND environment = $2 FOR UPDATE";
@@ -48,6 +49,8 @@ pub struct DeployRequest {
 pub struct SelectedRelease {
     pub release: ServingRelease,
     pub manifest_digest: String,
+    /// The qualification the select used.
+    pub qualification_sha256: String,
 }
 
 /// Release one environment now serves, with the source that qualified it.
@@ -59,13 +62,58 @@ pub struct DeployedRelease {
 }
 
 /// Select one published release for its environment without deploying it.
+///
+/// The qualification is checked by its package set and image digests only.
+/// The tenant, the release id and the manifest bytes are names. The control
+/// database records the selection in `catalog.release_selections`, with the
+/// qualification it used, in a transaction that commits after the head.
 pub async fn select(
-    qualification: &Path,
+    qualification: &QualificationSource,
     release: &PushReleaseManifestRequest,
 ) -> anyhow::Result<SelectedRelease> {
-    let qualification = Qualification::read(qualification)?;
-    let snapshot = publication::checked_snapshot(&qualification, release).await?;
-    publication::require_published(&qualification, &snapshot, release).await?;
+    let snapshot = lookup_release_snapshot(
+        &release.database_url,
+        &release.tenant,
+        release.effective_release_id,
+        &release.artifact_base,
+    )
+    .await?;
+    publication::require_published(None, &snapshot, release).await?;
+    crate::publish_release::on_control_plane(&release.control_database_url, async |control| {
+        let control = control.transaction().await?;
+        let qualification_sha256 =
+            selection::resolve(&control, qualification, &snapshot.manifest).await?;
+        claim(&control, &snapshot.manifest.release).await?;
+        control
+            .execute(
+                "INSERT INTO catalog.release_selections \
+                   (tenant_id, environment, effective_release_id, qualification_sha256) \
+                 VALUES ($1, $2, $3, $4)",
+                &[
+                    &release.tenant,
+                    &snapshot.manifest.release.environment,
+                    &i32::try_from(release.effective_release_id)?,
+                    &qualification_sha256,
+                ],
+            )
+            .await
+            .context("record the selection")?;
+        let selected = select_head(release, &snapshot, qualification_sha256).await?;
+        control
+            .commit()
+            .await
+            .context("commit the selection record")?;
+        Ok(selected)
+    })
+    .await
+}
+
+/// Write the head of the release's environment in the release database.
+async fn select_head(
+    release: &PushReleaseManifestRequest,
+    snapshot: &ReleaseSnapshot,
+    qualification_sha256: String,
+) -> anyhow::Result<SelectedRelease> {
     let (mut client, connection) = tokio_postgres::connect(&release.database_url, NoTls).await?;
     let connection = tokio::spawn(connection);
     let result = async {
@@ -95,6 +143,7 @@ pub async fn select(
         Ok(SelectedRelease {
             release: snapshot.manifest.release.clone(),
             manifest_digest: snapshot.carrier.manifest_digest.as_str().to_owned(),
+            qualification_sha256,
         })
     }
     .await;
@@ -132,7 +181,7 @@ pub async fn deploy_release(
     }
     let qualification = Qualification::read(qualification)?;
     let snapshot = publication::checked_snapshot(&qualification, release).await?;
-    publication::require_published(&qualification, &snapshot, release).await?;
+    publication::require_published(Some(&qualification.source_commit), &snapshot, release).await?;
     let source = ReleaseManifestSource::new(
         &release.artifact_base,
         release.insecure_registry,

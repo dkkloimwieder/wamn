@@ -15,6 +15,7 @@ pub mod environment;
 pub mod publication;
 pub mod qualification;
 pub mod run_record;
+pub mod selection;
 pub mod sqlx;
 
 /// Exact published release and explicit artifact locations captured for qualification.

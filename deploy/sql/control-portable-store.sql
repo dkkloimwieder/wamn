@@ -366,6 +366,42 @@ ALTER TABLE catalog.package_artifacts FORCE ROW LEVEL SECURITY;
 CREATE POLICY package_artifacts_all ON catalog.package_artifacts
     USING (true) WITH CHECK (true);
 
+-- One row per passing qualification that a select read from a file
+-- (wamn-zua8.3). A qualification proves bytes, not names: the package set is
+-- the (package_id, version, component_digest) triples of the release, and the
+-- image digests are those of the host, gates and identity images. It belongs
+-- to no tenant, so its policy admits every row.
+CREATE TABLE catalog.qualifications (
+    qualification_sha256 text        NOT NULL
+        CHECK (qualification_sha256 ~ '^sha256:[0-9a-f]{64}$'),
+    package_set          jsonb       NOT NULL CHECK (jsonb_typeof(package_set) = 'array'),
+    image_digests        jsonb       NOT NULL CHECK (jsonb_typeof(image_digests) = 'object'),
+    recorded_at          timestamptz NOT NULL DEFAULT clock_timestamp(),
+    CONSTRAINT qualifications_pkey PRIMARY KEY (qualification_sha256)
+);
+ALTER TABLE catalog.qualifications ENABLE ROW LEVEL SECURITY;
+ALTER TABLE catalog.qualifications FORCE ROW LEVEL SECURITY;
+CREATE POLICY qualifications_all ON catalog.qualifications
+    USING (true) WITH CHECK (true);
+
+-- Every select, with the qualification it used (wamn-zua8.3).
+CREATE TABLE catalog.release_selections (
+    tenant_id            text        NOT NULL CHECK (tenant_id <> ''),
+    environment          text        NOT NULL CHECK (environment <> ''),
+    effective_release_id int         NOT NULL CHECK (effective_release_id > 0),
+    qualification_sha256 text        NOT NULL,
+    selected_at          timestamptz NOT NULL DEFAULT clock_timestamp(),
+    CONSTRAINT release_selections_pkey
+        PRIMARY KEY (tenant_id, environment, selected_at),
+    CONSTRAINT release_selections_release_fkey
+        FOREIGN KEY (tenant_id, effective_release_id, environment)
+        REFERENCES catalog.effective_releases
+            (tenant_id, effective_release_id, environment),
+    CONSTRAINT release_selections_qualification_fkey
+        FOREIGN KEY (qualification_sha256)
+        REFERENCES catalog.qualifications (qualification_sha256)
+);
+
 -- Tenant isolation is structural even for owner-only tables.
 DO $tenant_policies$
 DECLARE
@@ -378,7 +414,7 @@ BEGIN
         'catalog.effective_release_heads', 'catalog.component_digest_owners',
         'catalog.component_library', 'catalog.connection_requirements',
         'catalog.authoring_command_audit', 'catalog.deployment_attestations',
-        'catalog.tenant_environments',
+        'catalog.tenant_environments', 'catalog.release_selections',
         'wamn_run.gate_reports'
     ] LOOP
         EXECUTE format('ALTER TABLE %s ENABLE ROW LEVEL SECURITY', relation_name);
@@ -409,6 +445,7 @@ BEGIN
         'catalog.authoring_command_audit', 'catalog.component_digest_owners',
         'catalog.component_library', 'catalog.connection_requirements',
         'catalog.deployment_attestations', 'catalog.package_artifacts',
+        'catalog.qualifications', 'catalog.release_selections',
         'wamn_run.gate_reports'
     ] LOOP
         trigger_name := split_part(relation_name, '.', 2) || '_immutable';
@@ -503,7 +540,8 @@ BEGIN
         'connection_requirements', 'deployment_attestations',
         'effective_release_heads', 'effective_release_packages',
         'effective_releases', 'package_artifacts', 'package_migrations',
-        'packages', 'tenant_environments'
+        'packages', 'qualifications', 'release_selections',
+        'tenant_environments'
     ]::text[] THEN
         RAISE EXCEPTION USING ERRCODE = '55000',
             MESSAGE = 'control-portable-catalog-inventory-drift';

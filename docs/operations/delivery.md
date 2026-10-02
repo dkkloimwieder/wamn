@@ -148,6 +148,19 @@ wamn-ctl select-release \
   --qualification "$DELIVERY_QUALIFICATION" "${release_args[@]}"
 ```
 
+The select records a passing qualification file in `catalog.qualifications` in the control database.
+A later select of another release with the same package set and images can reuse it without the file:
+
+```bash
+wamn-ctl select-release \
+  --host-image "$DELIVERY_HOST_IMAGE" --gates-image "$DELIVERY_GATES_IMAGE" \
+  --identity-image "$DELIVERY_IDENTITY_IMAGE" "${release_args[@]}"
+```
+
+Give each image as `repository@sha256:<digest>`. The select refuses a tag without a digest.
+The package set is the `(package_id, version, component_digest)` triples of the release. The tenant, the environment and the release ID do not count.
+Every select writes one row of `catalog.release_selections` with the qualification it used, and prints its `qualification_sha256`.
+
 Selection updates the existing `catalog.effective_release_heads` row for the release tenant and environment.
 Release IDs are scoped identities, and their numeric magnitude does not set deployment order.
 A deployment never selects itself again.

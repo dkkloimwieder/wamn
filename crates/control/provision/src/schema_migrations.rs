@@ -138,6 +138,10 @@ pub const SYSTEM_MIGRATIONS: &[Migration] = &[
         relative_path: "migrations/system/0010_package_artifacts.sql",
         sql: include_str!("../../../../deploy/sql/migrations/system/0010_package_artifacts.sql"),
     },
+    Migration {
+        relative_path: "migrations/system/0011_release_selections.sql",
+        sql: include_str!("../../../../deploy/sql/migrations/system/0011_release_selections.sql"),
+    },
 ];
 
 /// Every file of `deploy/sql/migrations/project/`, in order.

@@ -58,8 +58,11 @@ fn require_same_manifest(
 }
 
 /// Require the existing upload fact before selecting or deploying its artifacts.
+///
+/// A deployment also requires the source commit of its qualification. A select
+/// does not, because a qualification it reuses proves bytes, not names.
 pub(super) async fn require_published(
-    qualification: &Qualification,
+    source_commit: Option<&str>,
     snapshot: &ReleaseSnapshot,
     args: &PushReleaseManifestRequest,
 ) -> anyhow::Result<()> {
@@ -98,8 +101,10 @@ pub(super) async fn require_published(
         ensure!(
             record.get::<_, String>("deployed_manifest_hash")
                 == snapshot.carrier.manifest_digest.as_str()
-                && record.get::<_, Option<String>>("source_commit").as_deref()
-                    == Some(qualification.source_commit.as_str()),
+                && source_commit.is_none_or(|source_commit| {
+                    record.get::<_, Option<String>>("source_commit").as_deref()
+                        == Some(source_commit)
+                }),
             "the publication record differs from the qualified release or source"
         );
         transaction.commit().await?;
