@@ -142,6 +142,10 @@ The WMS fixture publishes the authored attachments unchanged, so the bytes keep 
 
 Every candidate carries three images: `--host-image`, `--identity-image` and `--gates-image` (`docs/plan/kind-to-type.md` §3.2 B0, B7 and B8). The host and identity images ship, so B0 builds them from the qualified commit, and `qualify-release` builds them again and compares the image ids. The gates image is test equipment and never ships. Since `wamn-1s38` (2026-10-02) the candidate names a pinned gates digest, and `qualify-release` pulls it and records its image id but does not build it. Only a change to the source of the gates image changes the pinned digest, in its own commit. The pin today is `us-central1-docker.pkg.dev/wamn-dev/wamn/wamn-gates:src-38f6225813d8b634@sha256:eb5cfb8f0f0531bc85ab5e9bb45d16866b902c919c76d48457a31ddd797479c4`, built at `351f71337`.
 
+### 4.5 Reuse by another environment
+
+A qualification proves bytes, not names. The provisioning worker of [Platform UI](platform-ui.md) §5.5 selects a release with a qualification whose package set and image digests equal the candidate's, whatever tenant and environment it ran under, and the select records which qualification it reused. No head is written without a qualification, and `promote` is not that path (owner ruling of 2026-10-02 on `wamn-zua8.3`, Platform UI §9 question 35).
+
 ## 5. Issues
 
 All issues land on one branch. They change the workspace and the kind cases only. No issue runs against wamn-dev.

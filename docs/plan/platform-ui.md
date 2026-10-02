@@ -1691,7 +1691,7 @@ Measured on main `6eba50b90` on 2026-10-02:
 
 **10. Provisioning worker and environment creation (`wamn-zua8.3`).**
 
-- `environment.create` takes `{project, env, tenant, packages: [{package_id, version}], ui}`, with package coordinates already in the registry. Without `ui`, the saga has no UI step. A `ui` names a built UI artifact already pushed, and the worker never runs `pnpm`.
+- `environment.create` takes `{project, env, tenant, packages: [{package_id, version}]}`. Each package is an artifact in the registry that `push-package` pushed, with its built UI, which the worker copies to the bucket path of the release digest. The worker never runs `pnpm` (questions 34 and 36).
 - `provisioning.sagas` gets the new saga type, and its own migration adds `provisioning.saga_steps`.
 - `wamn-ctl serve` runs the [§5.2](#52-environment-creation) chain to the run plane and the UI. It holds an in-cluster ServiceAccount with RBAC on `Database` CRs in `platform` and Secrets in `hosts`, and nothing else. It runs the role and privilege SQL as the Postgres login `wamn_provisioner`, which has `CREATEROLE` and `CREATEDB` and is not a superuser. No key file exists. If a statement of the role SQL needs a superuser, the work stops and names it.
 - The last step is `awaiting operator`, with the exact commands for the host workload and the identity restart, shown in `environment.list`. The worker never pauses for an operator before that step.
@@ -1709,7 +1709,7 @@ Measured on `worktree-table` `1d6c0dc83` on 2026-10-02:
 - The workspace has no Kubernetes client crate. `deploy-release` runs `kubectl`.
 - The grant surfaces name schemas that the applier owns, so a login that neither owns them nor inherits their owner cannot grant on them. `reconcile-run-plane` requires a `SUPERUSER` or `BYPASSRLS` admin login.
 
-[§9](#9-questions-for-the-owner) questions 34 to 40 set the commits of issue 10.
+[§9](#9-questions-for-the-owner) questions 34 to 40, answered 2026-10-02, set the commits of issue 10.
 
 **11. Project creation and environment copy (`wamn-zua8.4`).**
 
@@ -1795,10 +1795,10 @@ The epic closes on one kind run after B13 of the cutover.
 31. Issue 9, answered 2026-10-02. No row means `active`. The first status route writes the row.
 32. Issue 10, answered 2026-10-02. Four statements of the role SQL need a superuser, measured on PostgreSQL 18 as a `CREATEROLE CREATEDB` login (notes of `wamn-zua8.3`). The superuser stays in the CNPG operator, and the worker never has it. [§4.10](#410-provisioning-credentials) records how each statement changes.
 33. Issue 9, answered 2026-10-02. The control contract moves to `0.3.0`, because `0.2.0` is on main and a reader moves with its writer.
-34. Issue 10. No store keeps package content by `(package_id, version)`, and every chain step reads local files. Where does the worker get a package's migrations, wasm files, declarations, attachments and manifests: a package artifact in OCI that a new publish step pushes, files built into the worker image, or another source?
-35. Issue 10. `select` needs a `qualify-release` file, which only a kind run of Receiving or WMS makes. How does the worker activate the release of a new environment: with a qualification of the same release made elsewhere, by writing the head as `promote` does with no qualification, or another way?
-36. Issue 10. A built UI is not stored anywhere today, and `wamn web upload` writes under the release digest of each environment. What does `ui` name, and where is it pushed: an OCI artifact, a bucket path that the worker copies, or another place?
-37. Issue 10. Provisioning writes Secrets in `identity` and `platform` too, but ruling 20 allows Secrets in `hosts` only. Does the RBAC also cover Secrets in `identity` and `platform`, or do those Secrets join the `awaiting operator` step?
-38. Issue 10. The workspace has no Kubernetes client. Does the worker use the `kube` crate, or does it run `kubectl` as `deploy-release` does?
-39. Issue 10. The password fingerprint of ruling 32 replaces the `password_set` check. Is it a new system table, for example `registry.generation_passwords (role, sha256, recorded_at)` from system migration `0009`, with the SHA-256 of the password?
-40. Issue 10. Which one-time grants does `wamn_provisioner` hold, and who creates it? The measurement needs `REPLICATION`, `pg_signal_backend`, membership of `wamn_system`, `createrole_self_grant = 'set, inherit'`, and membership of the owner of the project schemas. `reconcile-run-plane` also needs `BYPASSRLS`.
+34. Issue 10, answered 2026-10-02. A package artifact in the registry, pushed by one new verb `push-package` from the package directory: `generated/wamn.json`, the migrations, the publication files and the built UI (`web/dist`). Components stay as they are, pushed by digest. `apply-package` takes a package source, a local directory or a fetched artifact, through one library function. Nothing is built into the worker image.
+35. Issue 10, answered 2026-10-02. The worker reuses a qualification. A qualification proves bytes, not names: the worker selects with a qualification whose package set and image digests equal the candidate's, whatever tenant and environment it ran under, and the select records which qualification it reused. No head is written without a qualification, and `promote` is not the path. [Release qualification](release-qualification.md) records the rule.
+36. Issue 10, answered 2026-10-02 by question 34. The UI is in the package artifact, and the worker copies `web/dist` to the bucket path of the release digest. The request has no separate `ui` input.
+37. Issue 10, answered 2026-10-02. The worker holds a Role on Secrets in each of `hosts`, `identity` and `platform`, and nothing else in those namespaces. No Secret moves to the operator step.
+38. Issue 10, answered 2026-10-02. The worker runs `kubectl`, as `deploy-release` does, and the binary is in the worker image. No `kube` crate.
+39. Issue 10, answered 2026-10-02. `registry.generation_passwords (role, sha256, recorded_at)`, from system migration `0009`.
+40. Issue 10, answered 2026-10-02. `wamn_provisioner` holds exactly the measured list: `REPLICATION`, `BYPASSRLS`, membership of `pg_signal_backend`, `wamn_system` and the owner role of the project schemas, and `createrole_self_grant = 'set, inherit'`. `provision-system` creates it, run once by the operator as superuser, and `docs/operations/gcp.md` §7 records the statement.
