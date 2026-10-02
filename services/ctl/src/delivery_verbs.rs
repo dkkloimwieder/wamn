@@ -18,8 +18,10 @@ use wamn_control::print_release_env::{ReleaseCarrier, lookup_release_carrier};
 use wamn_control::push_release_manifest::PushReleaseManifestRequest;
 use wamn_runtime::component_artifact_source::OCI_CA_PATHS_ENV;
 
-/// The host's carrier: per host group `extraArgs`, flags rather than env.
-const HOST_CARRIER: &str = "deploy/platform/values-host-receiving-pat.yaml";
+/// The host's carrier: per host group `extraArgs`, flags rather than env. The
+/// verb reads only the release, so it names the field, not an overlay file:
+/// each application and environment has its own host overlay.
+const HOST_CARRIER: &str = "hostGroups[].extraArgs of the selected host overlay";
 
 const ARTIFACT_BASE_FLAG: &str = "--release-artifact-base";
 const MANIFEST_DIGEST_FLAG: &str = "--release-manifest-digest";
@@ -255,7 +257,7 @@ fn release_lines(carrier: &ReleaseCarrier) -> String {
         manifest_digest,
     } = carrier;
     format!(
-        "# {HOST_CARRIER} hostGroups[].extraArgs\n\
+        "# {HOST_CARRIER}\n\
          {ARTIFACT_BASE_FLAG}={artifact_base}\n\
          {MANIFEST_DIGEST_FLAG}={manifest_digest}\n"
     )
@@ -571,7 +573,7 @@ mod tests {
         assert_eq!(
             printed,
             format!(
-                "# {HOST_CARRIER} hostGroups[].extraArgs\n\
+                "# hostGroups[].extraArgs of the selected host overlay\n\
                  --release-artifact-base=registry.example/wamn/releases\n\
                  --release-manifest-digest=sha256:{seven}\n",
                 seven = "7".repeat(64)
