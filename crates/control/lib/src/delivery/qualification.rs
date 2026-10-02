@@ -80,19 +80,36 @@ fn nonce() -> anyhow::Result<String> {
     Ok(hex::encode(bytes))
 }
 
-struct TemporaryResults(PathBuf);
+struct TemporaryResults {
+    path: PathBuf,
+    kept: bool,
+}
 
 impl TemporaryResults {
     fn create() -> anyhow::Result<Self> {
         let path = std::env::temp_dir().join(format!("wamn-qualification-{}", nonce()?));
         fs::create_dir(&path).context("create temporary application results")?;
-        Ok(Self(path))
+        Ok(Self { path, kept: false })
+    }
+
+    /// Keeps the results of a failed case and names them in the cause of the
+    /// failed check and in the error (wamn-e6iw).
+    fn keep(mut self, checks: &mut [CheckResult], error: anyhow::Error) -> anyhow::Error {
+        self.kept = true;
+        let kept = format!("the case results are kept in {}", self.path.display());
+        if let Some(cause) = checks.last_mut().and_then(|check| check.cause.as_mut()) {
+            cause.push_str("; ");
+            cause.push_str(&kept);
+        }
+        error.context(kept)
     }
 }
 
 impl Drop for TemporaryResults {
     fn drop(&mut self) {
-        let _ = fs::remove_dir_all(&self.0);
+        if !self.kept {
+            let _ = fs::remove_dir_all(&self.path);
+        }
     }
 }
 
@@ -321,50 +338,57 @@ async fn qualify_candidate(
     result.assert_artifacts()?;
     let temporary = TemporaryResults::create()?;
     for (index, case) in app.cases.iter().enumerate() {
-        ensure!(
-            Candidate::read(&request.candidate)? == result.candidate,
-            "candidate inputs changed during qualification"
-        );
-        let case_result = temporary.0.join(format!("case-{index}.json"));
-        let mut env = target_env.clone();
-        env.extend([
-            (
-                "WAMN_DELIVERY_CANDIDATE".to_owned(),
-                fs::canonicalize(&request.candidate)?.display().to_string(),
-            ),
-            (
-                "WAMN_DELIVERY_RESULT".to_owned(),
-                case_result.display().to_string(),
-            ),
-            // The case creates its own new result directory inside this parent.
-            (
-                app.evidence_env.to_owned(),
-                temporary.0.display().to_string(),
-            ),
-        ]);
-        let command = vec![
-            executable.display().to_string(),
-            (*case).to_owned(),
-            "--exact".to_owned(),
-            "--ignored".to_owned(),
-            "--nocapture".to_owned(),
-            "--test-threads=1".to_owned(),
-        ];
-        let executed = run(root, &command, &env, &mut result.checks).await?;
-        require_one_case(&executed)?;
-        let observed: ApplicationResult = serde_json::from_slice(
-            &fs::read(&case_result)
-                .context("the required application case did not report executed success")?,
-        )?;
-        let (manifest, digest) = result.candidate.manifest()?;
-        ensure!(
-            observed.candidate == result.candidate
-                && observed.result == "pass"
-                && observed.release == manifest.release
-                && observed.manifest_digest == digest.as_str(),
-            "the application observed another release or did not pass"
-        );
-        result.assert_artifacts()?;
+        let checked: anyhow::Result<()> = async {
+            ensure!(
+                Candidate::read(&request.candidate)? == result.candidate,
+                "candidate inputs changed during qualification"
+            );
+            let case_result = temporary.path.join(format!("case-{index}.json"));
+            let mut env = target_env.clone();
+            env.extend([
+                (
+                    "WAMN_DELIVERY_CANDIDATE".to_owned(),
+                    fs::canonicalize(&request.candidate)?.display().to_string(),
+                ),
+                (
+                    "WAMN_DELIVERY_RESULT".to_owned(),
+                    case_result.display().to_string(),
+                ),
+                // The case creates its own new result directory inside this parent.
+                (
+                    app.evidence_env.to_owned(),
+                    temporary.path.display().to_string(),
+                ),
+            ]);
+            let command = vec![
+                executable.display().to_string(),
+                (*case).to_owned(),
+                "--exact".to_owned(),
+                "--ignored".to_owned(),
+                "--nocapture".to_owned(),
+                "--test-threads=1".to_owned(),
+            ];
+            let executed = run(root, &command, &env, &mut result.checks).await?;
+            require_one_case(&executed)?;
+            let observed: ApplicationResult = serde_json::from_slice(
+                &fs::read(&case_result)
+                    .context("the required application case did not report executed success")?,
+            )?;
+            let (manifest, digest) = result.candidate.manifest()?;
+            ensure!(
+                observed.candidate == result.candidate
+                    && observed.result == "pass"
+                    && observed.release == manifest.release
+                    && observed.manifest_digest == digest.as_str(),
+                "the application observed another release or did not pass"
+            );
+            result.assert_artifacts()?;
+            Ok(())
+        }
+        .await;
+        if let Err(error) = checked {
+            return Err(temporary.keep(&mut result.checks, error));
+        }
     }
     let finished = read_status(repository_root).await?;
     ensure!(
@@ -1053,5 +1077,34 @@ mod tests {
                 "one passing SQLx metadata check for {package}"
             );
         }
+    }
+
+    #[test]
+    fn a_failed_case_keeps_its_results_and_names_them_in_the_cause() {
+        let passed = TemporaryResults::create().expect("create results");
+        let removed = passed.path.clone();
+        drop(passed);
+        assert!(!removed.exists(), "a passing run removes its results");
+
+        let failed = TemporaryResults::create().expect("create results");
+        let kept = failed.path.clone();
+        fs::write(kept.join("case-0.json"), "{}").expect("write a case result");
+        let mut checks = vec![CheckResult {
+            command: strings(&["case"]),
+            result: "fail".to_owned(),
+            cause: Some("command exited 101".to_owned()),
+        }];
+        let error = failed.keep(&mut checks, anyhow::anyhow!("the case failed"));
+        let named = format!("the case results are kept in {}", kept.display());
+        assert!(
+            kept.join("case-0.json").is_file(),
+            "a failed run keeps its results"
+        );
+        assert_eq!(
+            checks[0].cause.as_deref(),
+            Some(format!("command exited 101; {named}").as_str())
+        );
+        assert_eq!(format!("{error:#}"), format!("{named}: the case failed"));
+        fs::remove_dir_all(&kept).expect("remove the kept results");
     }
 }

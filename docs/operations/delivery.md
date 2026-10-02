@@ -76,7 +76,9 @@ Durable queue recovery starts its item from a wiring, and Receiving alone has no
 WMS runs its released routes, partial-label completion, and restart/cache cases against the same supplied manifest and host image.
 Both require exact canonical release bytes, executed success, unchanged artifacts, and successful cleanup.
 Qualification writes pass or fail with the source commit, command results, release inputs, and artifact hashes.
-It creates temporary application results in the system temporary directory and removes its own files after the cases.
+It creates temporary application results in the system temporary directory and removes them after the cases pass.
+If a case fails, qualification keeps that directory and names it in the cause of the failed check.
+Read the case results there, then remove the directory.
 Keep the qualification result and candidate files until publication and deployment finish.
 No source-host or CI-provider API is required.
 
