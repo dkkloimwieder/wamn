@@ -93,6 +93,12 @@ pub fn derive_host_secrets(
                 .path()
                 .extension()
                 .is_some_and(|extension| extension == "json")
+            // The administration prepare writes the control host's patch
+            // beside its Secret (crates/control/lib/src/dev/environment.rs).
+            && !entry
+                .file_name()
+                .to_string_lossy()
+                .ends_with(".control-administration-patch.json")
         {
             emitted.insert(entry.file_name());
         }
@@ -241,6 +247,20 @@ mod tests {
                 assert!(secret.path.is_file());
             }
         }
+    }
+
+    #[test]
+    fn the_control_administration_patch_beside_the_secrets_is_not_a_credential_file() {
+        let root = directory();
+        let input = input();
+        seed(&root, &input);
+        std::fs::write(
+            root.path()
+                .join("administration.control-administration-patch.json"),
+            b"{}",
+        )
+        .unwrap();
+        assert_eq!(derive_host_secrets(root.path(), &input).unwrap().len(), 5);
     }
 
     #[test]
