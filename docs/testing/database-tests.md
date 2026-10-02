@@ -30,6 +30,25 @@ Establish whether a failure occurred before commit, after commit with a lost res
 A timeout alone does not establish that boundary.
 For rollback, observe an intermediate write before forcing failure and then inspect the final business state.
 
+## Package upgrades
+
+The [upgrade qualification tests](../../crates/control/lib/src/qualify_upgrade/tests.rs) copy an installed platform fixture into disposable PostgreSQL.
+They retain rows and ownership, reproduce predecessor grants, and apply the exact candidate suffix.
+Predecessor SQL must pass before candidate grant reconciliation and again afterward.
+A whole-row query must fail when the added column lacks a predecessor grant, even when candidate grants restore access.
+The tests also compare source state, refuse changed package evidence, and require failed suffix execution to roll back.
+
+The [statement planner test](../../crates/schema/generator/tests/statement_check_live.rs) uses one exact runtime schema without an added `public` fallback.
+It requires planning to preserve grants, session authority, and the caller's surrounding transaction.
+The [workload tests](../../crates/control/lib/src/qualify_upgrade/workload.rs) exercise captured Kubernetes resources to establish convergence and the actual serving schema.
+The [carrier test](../../crates/control/lib/tests/package_upgrade_qualifications_live.rs) compares fresh installation with the numbered platform migration and requires immutable evidence.
+
+The [accepted-evidence tests](../../crates/control/lib/src/package_upgrade/tests.rs) exercise immediate-predecessor rollback against retained schema and live privileges.
+They require reconciliation evidence to match the complete current package set and presented roots, independent of timestamps or earlier qualifications.
+These database tests do not establish deployment or authenticated business success in the live WMS environment.
+That owner-scheduled proof remains separate under the [package upgrade plan](../plan/package-upgrade.md).
+The [deployment procedure](../operations/deployment.md#package-upgrades) defines the supported production order and recovery.
+
 ## Runtime claim coverage
 
 The [standard claim test](../../crates/platform/runtime/tests/production_claim_live.rs) exercises claims with a declared executor credential.

@@ -6,6 +6,7 @@ description = "The platform-owned fixture application every platform test takes"
 license = "Apache-2.0"
 
 [dependencies]
+serde_json.workspace = true
 tokio-postgres.workspace = true
 
 [lints]

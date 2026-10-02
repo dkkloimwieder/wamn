@@ -31,6 +31,7 @@ pub mod invite;
 #[cfg(feature = "ops")]
 mod ops_schema;
 pub mod owned_command;
+mod package_upgrade;
 pub use wamn_identity_client as pat_client;
 pub mod print_release_env;
 pub mod project_env_membership;
@@ -45,6 +46,7 @@ pub mod prune_run_history;
 pub mod publish_release;
 pub mod push_component;
 pub mod push_release_manifest;
+pub mod qualify_upgrade;
 pub mod reconcile_package_data_access;
 pub mod reconcile_replica_identity;
 pub mod reconcile_run_plane;
